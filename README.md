@@ -106,7 +106,7 @@ Each run produces:
 - a top-level `report.md`
 - a top-level `report.json`
 
-Default formats are `png` for plots and `csv` for exported numeric data. The included example uses `svg` so it can run in environments without Matplotlib.
+Default formats are `pdf` for plots and `csv` for exported numeric data. Plot exports use transparent backgrounds and apply `tight_layout()` before saving. The included examples can still request other formats such as `svg` when needed.
 
 ## OAuth Support For Agent Backends
 

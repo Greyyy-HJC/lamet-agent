@@ -44,7 +44,7 @@ class ManifestTests(unittest.TestCase):
     def test_manifest_from_dict_accepts_valid_payload(self) -> None:
         manifest = Manifest.from_dict(build_manifest_dict())
         self.assertEqual(manifest.goal, "parton_distribution_function")
-        self.assertEqual(manifest.outputs.plot_formats, ["png"])
+        self.assertEqual(manifest.outputs.plot_formats, ["pdf"])
 
     def test_custom_goal_requires_explicit_stages(self) -> None:
         payload = build_manifest_dict()

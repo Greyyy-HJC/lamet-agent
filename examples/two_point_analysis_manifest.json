@@ -1,0 +1,61 @@
+{
+  "goal": "custom",
+  "correlators": [
+    {
+      "kind": "two_point",
+      "path": "data/two_point_raw_demo.csv",
+      "file_format": "csv",
+      "label": "demo_two_point_raw",
+      "metadata": {
+        "boundary": "periodic",
+        "temporal_extent": 64
+      }
+    }
+  ],
+  "metadata": {
+    "ensemble": "demo-ensemble",
+    "conventions": "raw-two-point-demo"
+  },
+  "kernel": {
+    "callable_name": "identity_kernel",
+    "source": "def identity_kernel(axis, values, metadata):\n    return values\n"
+  },
+  "workflow": {
+    "stages": [
+      "correlator_analysis"
+    ],
+    "stage_parameters": {
+      "correlator_analysis": {
+        "two_point": {
+          "boundary": "periodic",
+          "resampling": {
+            "method": "jackknife",
+            "bin_size": 1,
+            "seed": 1984
+          },
+          "effective_mass": {
+            "method": "cosh"
+          },
+          "fit": {
+            "enabled": true,
+            "state_count": 2,
+            "tmin": 4,
+            "tmax": 20,
+            "normalize": true
+          }
+        }
+      }
+    }
+  },
+  "outputs": {
+    "directory": "outputs/two_point_demo",
+    "plot_formats": [
+      "pdf"
+    ],
+    "data_formats": [
+      "csv",
+      "json"
+    ],
+    "keep_intermediates": true
+  }
+}

@@ -18,7 +18,7 @@ from lamet_agent.stages.base import StageContext
 
 
 def manifest_payload() -> dict:
-    """Return a manifest payload with SVG and CSV outputs for test runs."""
+    """Return a manifest payload with PDF and CSV outputs for test runs."""
     return {
         "goal": "parton_distribution_function",
         "correlators": [
@@ -36,7 +36,7 @@ def manifest_payload() -> dict:
         },
         "outputs": {
             "directory": "outputs",
-            "plot_formats": ["svg"],
+            "plot_formats": ["pdf"],
             "data_formats": ["csv"],
             "keep_intermediates": True
         }
@@ -55,6 +55,7 @@ class StageTests(unittest.TestCase):
             path=Path("data.csv"),
             axis=[0.0, 1.0, 2.0],
             values=[1.0, 0.5, 0.2],
+            samples=None,
             metadata={},
         )
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -102,7 +102,7 @@ class OutputSpec:
     """Output preferences for a workflow run."""
 
     directory: str = "outputs"
-    plot_formats: list[str] = field(default_factory=lambda: ["png"])
+    plot_formats: list[str] = field(default_factory=lambda: ["pdf"])
     data_formats: list[str] = field(default_factory=lambda: ["csv"])
     keep_intermediates: bool = True
 
@@ -110,7 +110,7 @@ class OutputSpec:
     def from_dict(cls, data: dict[str, Any]) -> "OutputSpec":
         """Validate and construct output settings."""
         directory = str(data.get("directory", "outputs"))
-        plot_formats = list(data.get("plot_formats", ["png"]))
+        plot_formats = list(data.get("plot_formats", ["pdf"]))
         data_formats = list(data.get("data_formats", ["csv"]))
         keep_intermediates = bool(data.get("keep_intermediates", True))
         if any(fmt not in SUPPORTED_PLOT_FORMATS for fmt in plot_formats):

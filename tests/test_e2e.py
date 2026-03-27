@@ -30,7 +30,7 @@ class EndToEndTests(unittest.TestCase):
             run = execute_manifest(temp_manifest, planner=RuleBasedPlanner())
             self.assertTrue((run.run_directory / "report.md").exists())
             self.assertTrue((run.run_directory / "report.json").exists())
-            self.assertTrue((run.run_directory / "stages" / "physical_limit" / "physical_limit.svg").exists())
+            self.assertTrue((run.run_directory / "stages" / "physical_limit" / "physical_limit.pdf").exists())
 
 
 if __name__ == "__main__":

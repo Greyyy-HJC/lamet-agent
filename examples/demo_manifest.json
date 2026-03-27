@@ -40,7 +40,7 @@
   "outputs": {
     "directory": "outputs/demo",
     "plot_formats": [
-      "svg"
+      "pdf"
     ],
     "data_formats": [
       "csv",
