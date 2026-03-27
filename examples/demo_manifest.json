@@ -1,0 +1,51 @@
+{
+  "goal": "parton_distribution_function",
+  "correlators": [
+    {
+      "kind": "two_point",
+      "path": "data/two_point_demo.csv",
+      "file_format": "csv",
+      "label": "demo_two_point",
+      "metadata": {
+        "momentum_label": "pz=6"
+      }
+    },
+    {
+      "kind": "three_point",
+      "path": "data/three_point_demo.csv",
+      "file_format": "csv",
+      "label": "demo_three_point",
+      "metadata": {
+        "current": "gamma_z"
+      }
+    }
+  ],
+  "metadata": {
+    "ensemble": "demo-ensemble",
+    "conventions": "toy-example",
+    "matching_scale": 1.15,
+    "kernel_width": 0.35
+  },
+  "kernel": {
+    "callable_name": "demo_hard_kernel",
+    "source": "import numpy as np\n\ndef demo_hard_kernel(momentum_axis, values, metadata):\n    scale = float(metadata.get('matching_scale', 1.0))\n    width = float(metadata.get('kernel_width', 0.25))\n    return scale * values / (1.0 + width * np.square(momentum_axis))\n"
+  },
+  "workflow": {
+    "stage_parameters": {
+      "physical_limit": {
+        "note": "Reserved for future configuration."
+      }
+    }
+  },
+  "outputs": {
+    "directory": "outputs/demo",
+    "plot_formats": [
+      "svg"
+    ],
+    "data_formats": [
+      "csv",
+      "json"
+    ],
+    "keep_intermediates": true
+  }
+}
