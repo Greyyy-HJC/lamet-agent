@@ -36,16 +36,22 @@ The current implementations are intentionally simple demo versions. They exist t
 
 ## Quickstart
 
-Install the package and its dependencies in your preferred environment:
+Create and activate a local Python environment, then install `lamet-agent` in one command:
 
 ```bash
-python -m pip install -e .
+python -m venv .venv && . .venv/bin/activate && python -m pip install -U pip && python -m pip install -e .
 ```
 
-If you want test tooling as well:
+If you also want test tooling:
 
 ```bash
 python -m pip install -e .[dev]
+```
+
+If you plan to use migrated analysis helpers under `lamet_agent.extensions` (resampling, `gvar` fitting, and HDF5 export):
+
+```bash
+python -m pip install -e .[analysis]
 ```
 
 Run the example workflow:
@@ -143,3 +149,12 @@ The current CLI uses a rule-based planner. The planner and backend interfaces ar
 ## Incremental Code Migration
 
 If you already have analysis code, place it under `incoming/analysis_steps/` first. After that, describe which script or function implements which LaMET step, and it can be refactored into the appropriate package location with cleaner interfaces and documentation.
+
+## Migrated Analysis Helpers
+
+The reusable helpers that were previously staged under `incoming/analysis_steps/common/` are now available as package modules:
+
+- `lamet_agent.extensions.statistics`: bootstrap/jackknife resampling, `gvar` sampling, constant fitting, and HDF5 export helpers.
+- `lamet_agent.extensions.plot_presets`: plotting palettes, axis presets, and default plotting convenience helpers.
+
+This keeps `incoming/analysis_steps/` as a draft intake area while making reusable logic importable from stable package paths.

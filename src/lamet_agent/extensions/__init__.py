@@ -1,1 +1,55 @@
-"""Extension namespace for future user-provided analysis helpers."""
+"""Reusable extension helpers for user-provided analysis code."""
+
+from lamet_agent.extensions.plot_presets import (
+    AXIS_FONT,
+    COLOR_CYCLE,
+    COMMON_LABELS,
+    ERRORBAR_CIRCLE_STYLE,
+    ERRORBAR_STYLE,
+    FIGURE_SIZE,
+    MARKER_CYCLE,
+    SMALL_AXIS_FONT,
+    TICK_STYLE,
+    apply_publication_style,
+    auto_ylim,
+    default_plot,
+    default_sub_plot,
+)
+from lamet_agent.extensions.statistics import (
+    bin_data,
+    bootstrap,
+    bootstrap_average,
+    bootstrap_average_no_correlation,
+    constant_fit,
+    gvar_dict_to_correlated_samples,
+    gvar_list_to_correlated_samples,
+    jackknife,
+    jackknife_average,
+    save_gvar_dict_samples_to_h5,
+)
+
+__all__ = [
+    "AXIS_FONT",
+    "COLOR_CYCLE",
+    "COMMON_LABELS",
+    "ERRORBAR_CIRCLE_STYLE",
+    "ERRORBAR_STYLE",
+    "FIGURE_SIZE",
+    "MARKER_CYCLE",
+    "SMALL_AXIS_FONT",
+    "TICK_STYLE",
+    "apply_publication_style",
+    "auto_ylim",
+    "default_plot",
+    "default_sub_plot",
+    "bin_data",
+    "bootstrap",
+    "bootstrap_average",
+    "bootstrap_average_no_correlation",
+    "constant_fit",
+    "gvar_dict_to_correlated_samples",
+    "gvar_list_to_correlated_samples",
+    "jackknife",
+    "jackknife_average",
+    "save_gvar_dict_samples_to_h5",
+]

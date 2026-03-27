@@ -20,6 +20,11 @@ dependencies = [
 dev = [
   "pytest>=8.0",
 ]
+analysis = [
+  "gvar>=12.1",
+  "lsqfit>=13.0",
+  "h5py>=3.11",
+]
 
 [project.scripts]
 lamet-agent = "lamet_agent.cli:entrypoint"
