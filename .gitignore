@@ -6,8 +6,14 @@ build/
 dist/
 *.egg-info/
 .venv/
-examples/outputs/
-examples/data/bare_qpdf/*.txt
-incoming/
-outputs/
 .mypy_cache/
+
+# Generated workflow outputs
+examples/outputs/
+outputs/
+
+# Local-only real-data examples
+examples/data/bare_qpdf/*.txt
+
+# Local draft intake area
+incoming/

@@ -80,13 +80,32 @@ class ThreePointAnalysisTests(unittest.TestCase):
             payload = run.stage_results[0].payload
             self.assertIn("three_point", payload)
             self.assertIn("bare_qpdf", payload)
+            self.assertIn("qpdf_families", payload)
             self.assertIn("joint_ratio_fh", payload["three_point"][0]["fits"])
             self.assertEqual(
                 payload["three_point"][0]["fits"]["joint_ratio_fh"]["fit_windows"]["ratio"]["imag"]["tau_cut"],
                 3,
             )
+            self.assertEqual(payload["qpdf_families"][0]["sample_count"], 40)
+            sample_artifacts = list(stage_dir.glob("bare_qpdf_samples_*.npz"))
+            self.assertEqual(len(sample_artifacts), 1)
+            with np.load(sample_artifacts[0]) as sample_dump:
+                self.assertEqual(sample_dump["real_samples"].shape, (40, 1))
+                self.assertEqual(sample_dump["imag_samples"].shape, (40, 1))
 
-    def _write_toy_manifest(self, tmp_path: Path) -> Path:
+    def test_toy_qpdf_ft_manifest_runs_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            manifest_path = self._write_toy_manifest(tmp_path, include_fourier_transform=True)
+            run = execute_manifest(manifest_path, planner=RuleBasedPlanner())
+            stage_dir = run.run_directory / "stages" / "fourier_transform"
+            self.assertTrue((stage_dir / "qpdf_ft_summary.json").exists())
+            self.assertTrue((stage_dir / "qpdf_ft_real.pdf").exists())
+            payload = run.stage_results[-1].payload
+            self.assertIn("momentum_space", payload)
+            self.assertEqual(payload["_qpdf_ft_samples"]["real_samples"].shape[0], 40)
+
+    def _write_toy_manifest(self, tmp_path: Path, *, include_fourier_transform: bool = False) -> Path:
         rng = np.random.default_rng(123)
         lt = 32
         configuration_count = 40
@@ -113,33 +132,47 @@ class ThreePointAnalysisTests(unittest.TestCase):
         two_point_path = tmp_path / "two_point.txt"
         np.savetxt(two_point_path, two_point_rows)
 
-        rows = []
-        for tsep in (8, 10, 12):
-            denominator = np.asarray(
-                two_point_fit_function(
-                    np.array([float(tsep)]),
-                    parameters,
-                    temporal_extent=lt,
-                    state_count=2,
-                    boundary="periodic",
-                ),
-                dtype=float,
-            )[0]
-            for tau in range(12):
-                ratio = ratio_real_function(float(tsep), float(tau), parameters, lt) + 1j * ratio_imag_function(
-                    float(tsep), float(tau), parameters, lt
-                )
-                real_samples = []
-                imag_samples = []
-                for _ in range(configuration_count):
-                    noisy_denominator = denominator + rng.normal(scale=max(abs(denominator) * 0.01, 1.0e-8))
-                    noisy_ratio = ratio + (rng.normal(scale=0.002) + 1j * rng.normal(scale=0.002))
-                    three_point_value = noisy_ratio * noisy_denominator
-                    real_samples.append(three_point_value.real)
-                    imag_samples.append(three_point_value.imag)
-                rows.append([tsep, tau, *real_samples, *imag_samples])
-        three_point_path = tmp_path / "three_point_z0.txt"
-        np.savetxt(three_point_path, np.asarray(rows, dtype=float))
+        z_values = [0, 1, 2, 3, 4, 5] if include_fourier_transform else [0]
+        three_point_specs = []
+        for z_value in z_values:
+            rows = []
+            z_scale = np.exp(-0.15 * z_value)
+            for tsep in (8, 10, 12):
+                denominator = np.asarray(
+                    two_point_fit_function(
+                        np.array([float(tsep)]),
+                        parameters,
+                        temporal_extent=lt,
+                        state_count=2,
+                        boundary="periodic",
+                    ),
+                    dtype=float,
+                )[0]
+                for tau in range(12):
+                    ratio = (
+                        ratio_real_function(float(tsep), float(tau), parameters, lt)
+                        + 1j * ratio_imag_function(float(tsep), float(tau), parameters, lt)
+                    ) * z_scale
+                    real_samples = []
+                    imag_samples = []
+                    for _ in range(configuration_count):
+                        noisy_denominator = denominator + rng.normal(scale=max(abs(denominator) * 0.01, 1.0e-8))
+                        noisy_ratio = ratio + (rng.normal(scale=0.002) + 1j * rng.normal(scale=0.002))
+                        three_point_value = noisy_ratio * noisy_denominator
+                        real_samples.append(three_point_value.real)
+                        imag_samples.append(three_point_value.imag)
+                    rows.append([tsep, tau, *real_samples, *imag_samples])
+            three_point_path = tmp_path / f"three_point_z{z_value}.txt"
+            np.savetxt(three_point_path, np.asarray(rows, dtype=float))
+            three_point_specs.append(
+                {
+                    "kind": "three_point",
+                    "path": str(three_point_path),
+                    "file_format": "txt",
+                    "label": f"toy_z{z_value}",
+                    "metadata": {"z": z_value, "b": 0, "gamma": "gt", "flavor": "u-d"},
+                }
+            )
 
         manifest = {
             "goal": "custom",
@@ -151,13 +184,7 @@ class ThreePointAnalysisTests(unittest.TestCase):
                     "label": "toy_two_point",
                     "metadata": {"Lt": lt},
                 },
-                {
-                    "kind": "three_point",
-                    "path": str(three_point_path),
-                    "file_format": "txt",
-                    "label": "toy_z0",
-                    "metadata": {"z": 0, "b": 0, "gamma": "gt", "flavor": "u-d"},
-                },
+                *three_point_specs,
             ],
             "metadata": {"ensemble": "toy", "conventions": "toy"},
             "kernel": {
@@ -165,7 +192,9 @@ class ThreePointAnalysisTests(unittest.TestCase):
                 "source": "def identity_kernel(axis, values, metadata):\n    return values\n",
             },
             "workflow": {
-                "stages": ["correlator_analysis"],
+                "stages": ["correlator_analysis", "renormalization", "fourier_transform"]
+                if include_fourier_transform
+                else ["correlator_analysis"],
                 "stage_parameters": {
                     "correlator_analysis": {
                         "two_point": {
@@ -191,7 +220,24 @@ class ThreePointAnalysisTests(unittest.TestCase):
                                 },
                             },
                         },
-                    }
+                    },
+                    "fourier_transform": {
+                        "family_selector": {"fit_mode": "joint_ratio_fh", "b": 0, "gamma": "gt", "flavor": "u-d"},
+                        "gauge_type": "cg",
+                        "physics": {
+                            "lattice_spacing_fm": 0.09,
+                            "spatial_extent": 64,
+                            "momentum_vector": [4, 4, 0],
+                            "coordinate_direction": [1, 1, 0],
+                        },
+                        "x_grid": {"values": [-1.0, 0.0, 1.0]},
+                        "extrapolation": {
+                            "fit_idx_range": [2, 6],
+                            "extrapolated_length": 8.0,
+                            "weight_ini": 0.0,
+                            "m0": 0.0,
+                        },
+                    },
                 },
             },
             "outputs": {

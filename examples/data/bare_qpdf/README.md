@@ -9,3 +9,7 @@
 - The repository manifest uses `correlators[].expand` to generate the full
   `b/z` family from one three-point entry instead of listing every file
   explicitly.
+- `examples/bare_qpdf_manifest.json` uses these files for the coordinate-space
+  bare-qPDF workflow.
+- `examples/qpdf_ft_manifest.json` reuses the same raw data for the sample-wise
+  asymptotic extrapolation and Fourier-transform workflow.

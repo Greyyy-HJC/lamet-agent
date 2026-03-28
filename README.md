@@ -58,7 +58,7 @@ Inspect the resolved workflow:
 lamet-agent workflow examples/demo_manifest.json
 ```
 
-Run the default demo:
+Run the default qPDF-FT toy demo:
 
 ```bash
 lamet-agent run examples/demo_manifest.json
@@ -76,12 +76,35 @@ Run the bare-qPDF correlator analysis example:
 lamet-agent run examples/bare_qpdf_manifest.json
 ```
 
-If you are running from the repository without installing the console script,
-use:
+Run the sample-wise qPDF extrapolation + Fourier-transform example:
+
+```bash
+lamet-agent run examples/qpdf_ft_manifest.json
+```
+
+If you are running from the repository without installing the console script, use:
 
 ```bash
 python scripts/run_manifest.py run examples/demo_manifest.json
 ```
+
+## Demo Example
+
+The default demo manifest is:
+
+- [examples/demo_manifest.json](/home/jinchen/git/anl/lamet-agent/examples/demo_manifest.json)
+
+It now runs a small tracked qPDF toy workflow through the full default stage list:
+
+- `correlator_analysis`
+- `renormalization`
+- `fourier_transform`
+- `perturbative_matching`
+- `physical_limit`
+
+The tracked toy raw data live under:
+
+- [examples/data/qpdf_ft_demo](/home/jinchen/git/anl/lamet-agent/examples/data/qpdf_ft_demo)
 
 ## Two-Point Example
 
@@ -145,6 +168,41 @@ real analyses:
 - independent three-point fit windows for `ratio` and `fh`, with optional
   `real` and `imag` part overrides
 
+The `correlator_analysis` stage now also retains the final bare-qPDF samples
+for the preferred fit mode. These sample-wise `z`-dependent matrix elements are
+carried to downstream stages in the runtime payload and are also dumped as
+compact `.npz` artifacts for restart-friendly inspection.
+
+## qPDF FT Example
+
+The qPDF Fourier-transform example manifest is:
+
+- [examples/qpdf_ft_manifest.json](/home/jinchen/git/anl/lamet-agent/examples/qpdf_ft_manifest.json)
+
+Run it with:
+
+```bash
+MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/qpdf_ft_manifest.json
+```
+
+This workflow reuses the packaged `bare_qpdf` raw data, treats the bare qPDF as
+the renormalized input for now, then runs:
+
+- sample-wise asymptotic large-`\lambda` extrapolation
+- sample-wise Fourier transform to `x` space
+- averaging only after the Fourier transform
+
+The `fourier_transform` stage supports a qPDF-specific configuration with:
+
+- `family_selector`
+- `physics`
+- `x_grid`
+- `extrapolation`
+- `gauge_type`
+- `sample_transform_workers`
+
+In v1 only the Coulomb-gauge (`cg`) asymptotic form is implemented.
+
 ## Output Layout
 
 Each workflow run writes a new directory of the form:
@@ -198,6 +256,14 @@ For three-point correlator analysis, the stage parameters support:
 - part-specific `real` / `imag` overrides for `fit_tsep` and `tau_cut`
 - explicit `sample_fit_workers` for sample-wise parallel fitting
 
+For qPDF Fourier transforms, the manifest can additionally specify:
+
+- `fourier_transform.family_selector` to choose one qPDF family by metadata
+- `fourier_transform.physics` to build `\lambda = z P`
+- `fourier_transform.x_grid` for the output `x` mesh
+- `fourier_transform.extrapolation` for asymptotic-fit and tail settings
+- `fourier_transform.sample_transform_workers` for parallel sample-wise extrapolation before the batched FT
+
 ## Kernel Contract
 
 The inline hard-kernel callable must accept:
@@ -212,6 +278,7 @@ It should return an array with the same shape as `values`.
 ## Repository Layout
 
 - `src/lamet_agent/`: package code
+- `src/lamet_agent/constants.py`: shared lattice/QCD constants and running-coupling helpers
 - `examples/`: example manifests and demo data
 - `tests/`: unit and smoke tests
 - `incoming/analysis_steps/`: local draft analysis code during development;
@@ -233,3 +300,7 @@ Reusable helpers currently exposed from `lamet_agent.extensions` include:
 
 These modules are the stable place for reusable analysis logic. Keep raw drafts
 under `incoming/analysis_steps/` until they are cleaned up and integrated.
+
+Shared lattice/QCD constants that need to be reused across stages live in:
+
+- `lamet_agent.constants`

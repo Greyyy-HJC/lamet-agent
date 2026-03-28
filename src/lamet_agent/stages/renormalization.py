@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -10,7 +11,7 @@ from lamet_agent.artifacts import ArtifactRecord, StageResult
 from lamet_agent.plotting import save_line_plot
 from lamet_agent.stages.base import StageContext
 from lamet_agent.stages.registry import register_stage
-from lamet_agent.utils import ensure_directory, write_columnar_data
+from lamet_agent.utils import ensure_directory, write_columnar_data, write_json
 
 
 @register_stage
@@ -23,6 +24,18 @@ class RenormalizationStage:
     def run(self, context: StageContext) -> StageResult:
         stage_dir = ensure_directory(context.stage_directory(self.name))
         previous = context.stage_payloads["correlator_analysis"]
+        qpdf_families = previous.get("_qpdf_families")
+        if qpdf_families:
+            payload = {
+                "mode": "identity",
+                "renormalization_applied": False,
+                "qpdf_families": previous.get("qpdf_families", []),
+                "_qpdf_families": qpdf_families,
+            }
+            artifacts = self._write_qpdf_artifacts(stage_dir, qpdf_families)
+            summary = "Skipped renormalization and passed the sample-wise bare qPDF families through unchanged."
+            return StageResult(stage_name=self.name, summary=summary, payload=payload, artifacts=artifacts)
+
         axis = np.asarray(previous["axis"], dtype=float)
         values = np.asarray(previous["values"], dtype=float)
         scale = np.max(np.abs(values)) or 1.0
@@ -68,4 +81,41 @@ class RenormalizationStage:
                     format=plot_format,
                 )
             )
+        return artifacts
+
+    def _write_qpdf_artifacts(self, stage_dir: Path, qpdf_families: list[dict[str, Any]]) -> list[ArtifactRecord]:
+        artifacts: list[ArtifactRecord] = []
+        summary_payload = {
+            "mode": "identity",
+            "renormalization_applied": False,
+            "family_count": len(qpdf_families),
+            "families": [
+                {
+                    "metadata": dict(family["metadata"]),
+                    "z_axis": np.asarray(family["z_axis"], dtype=float).tolist(),
+                    "sample_count": int(family["sample_count"]),
+                    "real": {
+                        "mean": np.asarray(family["real_mean"], dtype=float).tolist(),
+                        "error": np.asarray(family["real_error"], dtype=float).tolist(),
+                    },
+                    "imag": {
+                        "mean": np.asarray(family["imag_mean"], dtype=float).tolist(),
+                        "error": np.asarray(family["imag_error"], dtype=float).tolist(),
+                    },
+                    "sample_artifact": family.get("sample_artifact"),
+                }
+                for family in qpdf_families
+            ],
+        }
+        summary_path = stage_dir / "renormalization_qpdf_summary.json"
+        write_json(summary_path, summary_payload)
+        artifacts.append(
+            ArtifactRecord(
+                name="renormalization_qpdf_summary_json",
+                kind="report",
+                path=summary_path,
+                description="Identity pass-through summary for sample-wise qPDF families.",
+                format="json",
+            )
+        )
         return artifacts

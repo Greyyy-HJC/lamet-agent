@@ -1,13 +1,13 @@
 {
-  "goal": "parton_distribution_function",
+  "goal": "custom",
   "correlators": [
     {
       "kind": "two_point",
-      "path": "data/qpdf_ft_demo/two_point_qpdf_ft_demo.txt",
+      "path": "data/bare_qpdf/two_point_ss_p440.txt",
       "file_format": "txt",
-      "label": "demo_qpdf_two_point",
+      "label": "qpdf_ft_two_point",
       "metadata": {
-        "Lt": 32,
+        "Lt": 64,
         "ss_sp": "SS",
         "px": 4,
         "py": 4,
@@ -16,41 +16,46 @@
     },
     {
       "kind": "three_point",
-      "path": "data/qpdf_ft_demo/three_point_qpdf_ft_demo_z{z:02d}.txt",
+      "path": "data/bare_qpdf/three_point_ss_ud_gt_p440_b{b}_z{z:02d}.txt",
       "file_format": "txt",
-      "label": "demo_qpdf_z{z:02d}",
+      "label": "qpdf_ft_b{b}_z{z:02d}",
       "expand": {
+        "b": [
+          0
+        ],
         "z": {
           "start": 0,
-          "stop": 5
+          "stop": 20
         }
       },
       "metadata": {
-        "b": 0,
         "gamma": "gt",
         "flavor": "u-d",
-        "ss_sp": "SS",
         "px": 4,
         "py": 4,
-        "pz": 0
+        "pz": 0,
+        "ss_sp": "SS"
       }
     }
   ],
   "metadata": {
-    "ensemble": "toy-qpdf-ft-demo",
-    "conventions": "sample-wise qPDF FT demo",
-    "matching_scale": 1.15,
-    "kernel_width": 0.35
+    "ensemble": "proton-cg-pdf-p440",
+    "conventions": "Sample-wise bare-qPDF to x-space qPDF Fourier-transform example at p=(4,4,0)"
   },
   "kernel": {
-    "callable_name": "demo_hard_kernel",
-    "source": "import numpy as np\n\ndef demo_hard_kernel(momentum_axis, values, metadata):\n    scale = float(metadata.get('matching_scale', 1.0))\n    width = float(metadata.get('kernel_width', 0.25))\n    return scale * values / (1.0 + width * np.square(momentum_axis))\n"
+    "callable_name": "identity_kernel",
+    "source": "def identity_kernel(axis, values, metadata):\n    return values\n"
   },
   "workflow": {
+    "stages": [
+      "correlator_analysis",
+      "renormalization",
+      "fourier_transform"
+    ],
     "stage_parameters": {
       "correlator_analysis": {
         "two_point": {
-          "temporal_extent": 32,
+          "temporal_extent": 64,
           "resampling": {
             "method": "jackknife",
             "bin_size": 1,
@@ -65,6 +70,12 @@
             "tmin": 4,
             "tmax": 13,
             "normalize": true
+          },
+          "bad_point_filter": {
+            "mode": "mad",
+            "mad_zcut": 8.0,
+            "ratio_cut": 50.0,
+            "replacement": "median"
           }
         },
         "three_point": {
@@ -75,23 +86,33 @@
           "ratio": {
             "fit_tsep": [
               8,
+              9,
               10,
+              11,
               12
             ],
-            "tau_cut": 2
+            "tau_cut": 3
           },
           "fh": {
             "fit_tsep": [
               8,
+              9,
               10,
+              11,
               12
             ],
-            "tau_cut": 2
+            "tau_cut": 3
           },
           "gamma": "gt",
           "flavor": "u-d",
           "b": 0,
-          "sample_fit_workers": 1
+          "bad_point_filter": {
+            "mode": "mad",
+            "mad_zcut": 8.0,
+            "ratio_cut": 50.0,
+            "replacement": "median"
+          },
+          "sample_fit_workers": 8
         }
       },
       "fourier_transform": {
@@ -109,7 +130,7 @@
         "imaginary_sign": -1,
         "physics": {
           "lattice_spacing_fm": 0.09,
-          "spatial_extent": 32,
+          "spatial_extent": 64,
           "momentum_vector": [
             4,
             4,
@@ -119,31 +140,29 @@
             1,
             1,
             0
-          ]
+          ],
+          "coordinate_step_multiplier": 1.4142135623730951
         },
         "x_grid": {
-          "start": -1.0,
-          "stop": 1.0,
-          "num": 128,
-          "endpoint": true
+          "start": -1.9995,
+          "stop": 2.0,
+          "num": 4000,
+          "endpoint": false
         },
         "extrapolation": {
           "fit_idx_range": [
-            2,
-            5
+            6,
+            14
           ],
-          "extrapolated_length": 8.0,
+          "extrapolated_length": 100.0,
           "weight_ini": 0.0,
           "m0": 0.0
         }
-      },
-      "physical_limit": {
-        "note": "Reserved for future configuration."
       }
     }
   },
   "outputs": {
-    "directory": "outputs/demo",
+    "directory": "outputs/qpdf_ft",
     "plot_formats": [
       "pdf"
     ],

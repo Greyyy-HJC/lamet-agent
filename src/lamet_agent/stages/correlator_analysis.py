@@ -157,6 +157,7 @@ class CorrelatorAnalysisStage:
         }
 
         three_point_payloads = []
+        three_point_results = []
         if analyzable_three_point_datasets:
             for dataset in sorted(analyzable_three_point_datasets, key=self._dataset_sort_key):
                 dataset_result = self._analyze_three_point_dataset(
@@ -164,6 +165,7 @@ class CorrelatorAnalysisStage:
                     two_point_result=two_point_result,
                     parameters=parameters["three_point"],
                 )
+                three_point_results.append(dataset_result)
                 three_point_payloads.append(dataset_result["payload"])
                 artifacts.extend(
                     self._write_three_point_artifacts(
@@ -179,15 +181,23 @@ class CorrelatorAnalysisStage:
             ]
 
         if analyzable_three_point_datasets:
-            bare_qpdf = self._build_bare_qpdf_summary(three_point_payloads, parameters["three_point"]["primary_fit_mode"])
-            if bare_qpdf is not None:
-                payload["bare_qpdf"] = bare_qpdf
-                artifacts.extend(self._write_bare_qpdf_artifacts(stage_dir, context, bare_qpdf))
+            qpdf_families = self._build_qpdf_families(
+                payloads=three_point_results,
+                preferred_fit_mode=parameters["three_point"]["primary_fit_mode"],
+            )
+            if qpdf_families:
+                artifacts.extend(self._write_qpdf_sample_artifacts(stage_dir, qpdf_families))
+                payload["qpdf_families"] = [self._serialize_qpdf_family(family) for family in qpdf_families]
+                payload["_qpdf_families"] = qpdf_families
+                bare_qpdf = self._build_legacy_bare_qpdf_alias(qpdf_families, parameters["three_point"]["primary_fit_mode"])
+                if bare_qpdf is not None:
+                    payload["bare_qpdf"] = bare_qpdf
+                    artifacts.extend(self._write_bare_qpdf_artifacts(stage_dir, context, bare_qpdf))
 
         summary = self._build_summary(
             label=two_point_dataset.label,
             two_point_result=two_point_result,
-            three_point_results=three_point_payloads,
+            three_point_results=three_point_results,
         )
         return StageResult(stage_name=self.name, summary=summary, payload=payload, artifacts=artifacts)
 
@@ -606,6 +616,9 @@ class CorrelatorAnalysisStage:
             "flavor": str(dataset.metadata.get("flavor", parameters["flavor"])),
             "b": int(dataset.metadata.get("b", parameters["b"])),
             "ss_sp": dataset.metadata.get("ss_sp"),
+            "px": int(dataset.metadata.get("px", 0)),
+            "py": int(dataset.metadata.get("py", 0)),
+            "pz": int(dataset.metadata.get("pz", 0)),
         }
         for fit_payload in fits.values():
             fit_payload["summary"].update(dataset_channel_metadata)
@@ -619,6 +632,9 @@ class CorrelatorAnalysisStage:
             "gamma": dataset_channel_metadata["gamma"],
             "flavor": dataset_channel_metadata["flavor"],
             "ss_sp": dataset_channel_metadata["ss_sp"],
+            "px": dataset_channel_metadata["px"],
+            "py": dataset_channel_metadata["py"],
+            "pz": dataset_channel_metadata["pz"],
             "dataset_axis": np.asarray(dataset.axis, dtype=float),
             "tau_axis": np.asarray(tau_axis, dtype=float),
             "temporal_extent": int(two_point_result["analysis_settings"]["temporal_extent"]),
@@ -656,6 +672,9 @@ class CorrelatorAnalysisStage:
                 "gamma": dataset_channel_metadata["gamma"],
                 "flavor": dataset_channel_metadata["flavor"],
                 "ss_sp": dataset_channel_metadata["ss_sp"],
+                "px": dataset_channel_metadata["px"],
+                "py": dataset_channel_metadata["py"],
+                "pz": dataset_channel_metadata["pz"],
                 "tsep_axis": np.asarray(dataset.axis, dtype=float).tolist(),
                 "tau_axis": np.asarray(tau_axis, dtype=float).tolist(),
                 "fit_windows": parameters["fit_windows"],
@@ -763,12 +782,16 @@ class CorrelatorAnalysisStage:
                     "resampling_method": resampling_method,
                 }
             )
+            bare_real_samples = np.asarray([float(record["bare_real"]) for record in sample_fit_records], dtype=float)
+            bare_imag_samples = np.asarray([float(record["bare_imag"]) for record in sample_fit_records], dtype=float)
             fits[mode] = {
                 "result": fit_result,
                 "summary": summary,
                 "text": fit_result.format(100),
                 "sample_fit_count": len(sample_fit_records),
                 "fit_windows": mode_fit_windows,
+                "bare_real_samples": bare_real_samples,
+                "bare_imag_samples": bare_imag_samples,
             }
         return fits
 
@@ -1176,21 +1199,123 @@ class CorrelatorAnalysisStage:
             )
         return artifacts
 
-    def _build_bare_qpdf_summary(self, payloads: list[dict[str, Any]], fit_mode: str) -> dict[str, Any] | None:
-        selected = [payload for payload in payloads if payload.get("z", -1) >= 0 and fit_mode in payload.get("fits", {})]
-        if not selected:
-            return None
-        selected = sorted(selected, key=lambda item: int(item["z"]))
+    def _build_qpdf_families(self, *, payloads: list[dict[str, Any]], preferred_fit_mode: str) -> list[dict[str, Any]]:
+        grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for payload in payloads:
+            z_value = int(payload.get("z", -1))
+            if z_value < 0 or preferred_fit_mode not in payload.get("fits", {}):
+                continue
+            key = (
+                preferred_fit_mode,
+                int(payload.get("b", 0)),
+                str(payload.get("gamma", "")),
+                str(payload.get("flavor", "")),
+                str(payload.get("ss_sp", "")),
+                int(payload.get("px", 0)),
+                int(payload.get("py", 0)),
+                int(payload.get("pz", 0)),
+            )
+            grouped.setdefault(key, []).append(payload)
+
+        families: list[dict[str, Any]] = []
+        for items in grouped.values():
+            ordered = sorted(items, key=lambda item: int(item["z"]))
+            sample_count = int(ordered[0]["fits"][preferred_fit_mode]["sample_fit_count"])
+            real_samples = np.vstack(
+                [np.asarray(item["fits"][preferred_fit_mode]["bare_real_samples"], dtype=float) for item in ordered]
+            ).T
+            imag_samples = np.vstack(
+                [np.asarray(item["fits"][preferred_fit_mode]["bare_imag_samples"], dtype=float) for item in ordered]
+            ).T
+            method = ordered[0]["resampling"]["method"]
+            real_average = average_resampled_samples(real_samples, method)
+            imag_average = average_resampled_samples(imag_samples, method)
+            family = {
+                "metadata": {
+                    "fit_mode": preferred_fit_mode,
+                    "b": int(ordered[0].get("b", 0)),
+                    "gamma": str(ordered[0].get("gamma", "")),
+                    "flavor": str(ordered[0].get("flavor", "")),
+                    "ss_sp": ordered[0].get("ss_sp"),
+                    "px": int(ordered[0].get("px", 0)),
+                    "py": int(ordered[0].get("py", 0)),
+                    "pz": int(ordered[0].get("pz", 0)),
+                    "resampling_method": method,
+                },
+                "z_axis": np.asarray([int(item["z"]) for item in ordered], dtype=float),
+                "real_samples": real_samples,
+                "imag_samples": imag_samples,
+                "sample_count": sample_count,
+                "real_mean": np.atleast_1d(np.asarray(gv.mean(real_average), dtype=float)),
+                "real_error": np.atleast_1d(np.asarray(gv.sdev(real_average), dtype=float)),
+                "imag_mean": np.atleast_1d(np.asarray(gv.mean(imag_average), dtype=float)),
+                "imag_error": np.atleast_1d(np.asarray(gv.sdev(imag_average), dtype=float)),
+            }
+            families.append(family)
+        return sorted(families, key=lambda family: (family["metadata"]["b"], family["metadata"]["px"], family["metadata"]["py"], family["metadata"]["pz"]))
+
+    def _serialize_qpdf_family(self, family: dict[str, Any]) -> dict[str, Any]:
         return {
-            "fit_mode": fit_mode,
-            "z": [int(item["z"]) for item in selected],
+            "metadata": dict(family["metadata"]),
+            "z_axis": np.atleast_1d(np.asarray(family["z_axis"], dtype=float)).tolist(),
+            "sample_count": int(family["sample_count"]),
             "real": {
-                "mean": [float(item["fits"][fit_mode]["bare_matrix_element"]["real"]["mean"]) for item in selected],
-                "error": [float(item["fits"][fit_mode]["bare_matrix_element"]["real"]["sdev"]) for item in selected],
+                "mean": np.atleast_1d(np.asarray(family["real_mean"], dtype=float)).tolist(),
+                "error": np.atleast_1d(np.asarray(family["real_error"], dtype=float)).tolist(),
             },
             "imag": {
-                "mean": [float(item["fits"][fit_mode]["bare_matrix_element"]["imag"]["mean"]) for item in selected],
-                "error": [float(item["fits"][fit_mode]["bare_matrix_element"]["imag"]["sdev"]) for item in selected],
+                "mean": np.atleast_1d(np.asarray(family["imag_mean"], dtype=float)).tolist(),
+                "error": np.atleast_1d(np.asarray(family["imag_error"], dtype=float)).tolist(),
+            },
+            "sample_artifact": family.get("sample_artifact"),
+        }
+
+    def _write_qpdf_sample_artifacts(self, stage_dir: Path, qpdf_families: list[dict[str, Any]]) -> list[ArtifactRecord]:
+        artifacts: list[ArtifactRecord] = []
+        for family in qpdf_families:
+            metadata = family["metadata"]
+            sample_path = stage_dir / (
+                "bare_qpdf_samples"
+                f"_{metadata['fit_mode']}"
+                f"_b{metadata['b']}"
+                f"_p{metadata['px']}{metadata['py']}{metadata['pz']}"
+                f"_{metadata['gamma']}"
+                f"_{str(metadata['flavor']).replace('-', '_')}"
+                f"_{str(metadata.get('ss_sp') or 'na')}.npz"
+            )
+            np.savez(
+                sample_path,
+                z_axis=np.asarray(family["z_axis"], dtype=float),
+                real_samples=np.asarray(family["real_samples"], dtype=float),
+                imag_samples=np.asarray(family["imag_samples"], dtype=float),
+            )
+            family["sample_artifact"] = str(sample_path)
+            artifacts.append(
+                ArtifactRecord(
+                    name=sample_path.stem,
+                    kind="data",
+                    path=sample_path,
+                    description="Sample-wise bare qPDF matrix elements retained for downstream stages.",
+                    format="npz",
+                )
+            )
+        return artifacts
+
+    def _build_legacy_bare_qpdf_alias(self, qpdf_families: list[dict[str, Any]], fit_mode: str) -> dict[str, Any] | None:
+        matching = [family for family in qpdf_families if family["metadata"]["fit_mode"] == fit_mode]
+        if len(matching) != 1:
+            return None
+        family = matching[0]
+        return {
+            "fit_mode": fit_mode,
+            "z": np.atleast_1d(np.asarray(family["z_axis"], dtype=float)).astype(int).tolist(),
+            "real": {
+                "mean": np.atleast_1d(np.asarray(family["real_mean"], dtype=float)).tolist(),
+                "error": np.atleast_1d(np.asarray(family["real_error"], dtype=float)).tolist(),
+            },
+            "imag": {
+                "mean": np.atleast_1d(np.asarray(family["imag_mean"], dtype=float)).tolist(),
+                "error": np.atleast_1d(np.asarray(family["imag_error"], dtype=float)).tolist(),
             },
         }
 

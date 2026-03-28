@@ -43,7 +43,11 @@ Run the demo manifests:
 MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/demo_manifest.json
 MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/two_point_analysis_manifest.json
 MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/bare_qpdf_manifest.json
+MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/qpdf_ft_manifest.json
 ```
+
+`examples/demo_manifest.json` is now the lightweight tracked qPDF-FT toy demo,
+not the older scalar FFT example.
 
 If you are working from the repository without the installed console script:
 
@@ -54,6 +58,7 @@ python scripts/run_manifest.py run examples/demo_manifest.json
 ## Repository Structure
 
 - `src/lamet_agent/cli.py`: CLI entry points
+- `src/lamet_agent/constants.py`: shared lattice/QCD constants and running-coupling helpers
 - `src/lamet_agent/schemas.py`: manifest models and validation
 - `src/lamet_agent/workflows.py`: workflow execution
 - `src/lamet_agent/stages/`: stage implementations and registry
@@ -83,6 +88,20 @@ For three-point analysis, manifests can now:
 - configure independent `ratio` and `fh` fit windows
 - override `fit_tsep` and `tau_cut` separately for `real` and `imag`
 - control sample-wise multiprocessing with `three_point.sample_fit_workers`
+
+For qPDF Fourier transforms, the workflow now keeps final sample-wise
+`z`-dependent bare matrix elements through:
+
+1. `correlator_analysis`
+2. `renormalization` as an identity pass-through for qPDF families
+3. `fourier_transform` for sample-wise extrapolation and FT
+
+The retained sample arrays are stored both in the runtime stage payload and as
+compact `.npz` artifacts under the stage directory.
+
+`fourier_transform.sample_transform_workers` controls multiprocessing for the
+sample-wise extrapolation step. The FT itself is then applied in one batched
+matrix pass over all samples.
 
 ## Plotting Rules
 

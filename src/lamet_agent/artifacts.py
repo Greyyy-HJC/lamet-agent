@@ -58,9 +58,12 @@ class StageResult:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the stage result for reports."""
+        serializable_payload = {
+            key: value for key, value in self.payload.items() if not str(key).startswith("_")
+        }
         return {
             "stage_name": self.stage_name,
             "summary": self.summary,
-            "payload": _to_json_safe(self.payload),
+            "payload": _to_json_safe(serializable_payload),
             "artifacts": [artifact.to_dict() for artifact in self.artifacts],
         }

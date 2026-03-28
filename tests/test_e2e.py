@@ -21,8 +21,10 @@ class EndToEndTests(unittest.TestCase):
     def test_demo_manifest_runs_and_writes_reports(self) -> None:
         example_manifest = ROOT / "examples" / "demo_manifest.json"
         payload = json.loads(example_manifest.read_text(encoding="utf-8"))
-        payload["correlators"][0]["path"] = str(ROOT / "examples" / "data" / "two_point_demo.csv")
-        payload["correlators"][1]["path"] = str(ROOT / "examples" / "data" / "three_point_demo.csv")
+        payload["correlators"][0]["path"] = str(ROOT / "examples" / "data" / "qpdf_ft_demo" / "two_point_qpdf_ft_demo.txt")
+        payload["correlators"][1]["path"] = str(
+            ROOT / "examples" / "data" / "qpdf_ft_demo" / "three_point_qpdf_ft_demo_z{z:02d}.txt"
+        )
         with tempfile.TemporaryDirectory() as tmpdir:
             payload["outputs"]["directory"] = tmpdir
             temp_manifest = Path(tmpdir) / "manifest.json"
