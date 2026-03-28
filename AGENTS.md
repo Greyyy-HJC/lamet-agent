@@ -27,12 +27,13 @@ The repository is a Python-first LaMET workflow framework. The primary goal is t
 - `src/lamet_agent/stages/`: stage protocol, registry, and concrete stage implementations.
 - `src/lamet_agent/loaders.py`: built-in correlator loaders.
 - `src/lamet_agent/kernel.py`: inline hard-kernel compilation and validation.
-- `src/lamet_agent/auth/`: OAuth provider config, PKCE helpers, callback handling, and token storage.
-- `src/lamet_agent/backends/`: descriptors for future provider-backed agent integrations.
+- `src/lamet_agent/constants.py`: shared physics constants and perturbative running helpers.
 - `src/lamet_agent/plotting.py`: shared plotting conventions and helpers.
 - `src/lamet_agent/reporting.py`: markdown and JSON report generation.
-- `src/lamet_agent/extensions/`: place future user-provided reusable analysis helpers here.
+- `src/lamet_agent/extensions/`: reusable low-level analysis helpers that stages compose.
 - `incoming/analysis_steps/`: temporary intake area for legacy, draft, or not-yet-integrated analysis code.
+- `examples/`: curated end-to-end workflows and tracked example data slices.
+- `docs/analysis_model.md`: structured metadata contract and analysis taxonomy.
 
 ## How To Add A New Stage
 
@@ -61,15 +62,18 @@ The repository is a Python-first LaMET workflow framework. The primary goal is t
 - If an existing function has its own conventions, convert inputs and outputs at the stage boundary so the rest of the workflow stays uniform.
 - When in doubt, preserve the stage payload contract and adapt the legacy code to it.
 
-## OAuth Conventions
+## Analysis Model Conventions
 
-- Treat `codex` and `claude_code` as built-in backend provider names.
-- Do not hardcode third-party OAuth endpoints in code unless there is a strong maintenance reason.
-- Prefer environment-driven configuration so provider-side auth changes do not force code churn.
-- Keep persisted tokens out of the repository and under the local config directory only.
+- Preserve the three-layer structure:
+  - reusable helpers in `src/lamet_agent/`
+  - stage implementations in `src/lamet_agent/stages/`
+  - end-to-end workflows in `examples/`
+- Keep physics metadata in the manifest, not in ad hoc stage parameters.
+- For full workflows, prefer structured `metadata.analysis` and `metadata.setups` over legacy free-form metadata.
+- When adding new correlator families, ensure selectors and emitted payload metadata remain unambiguous across `setup_id`, momentum, smearing, and operator choices.
 
 ## Testing Expectations
 
 - Add or update unit tests for schema, planner, and stage behavior when interfaces change.
 - Add an end-to-end smoke test when a change affects the full workflow path.
-- Prefer small toy arrays and deterministic demo kernels for tests.
+- Prefer small toy arrays and deterministic smoke kernels for tests.

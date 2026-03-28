@@ -66,20 +66,90 @@ class FourierTransformStage:
     def run(self, context: StageContext) -> StageResult:
         stage_dir = ensure_directory(context.stage_directory(self.name))
         previous = context.stage_payloads["renormalization"]
-        qpdf_families = previous.get("_qpdf_families")
-        if not qpdf_families:
-            raise ValueError("fourier_transform now requires sample-wise qPDF families from the renormalization stage.")
-        return self._run_qpdf_ft(context, stage_dir, qpdf_families)
-
-    def _run_qpdf_ft(self, context: StageContext, stage_dir: Path, qpdf_families: list[dict[str, Any]]) -> StageResult:
+        matrix_element_families = previous.get("_renormalized_families") or previous.get("_matrix_element_families")
+        if not matrix_element_families:
+            raise ValueError(
+                "fourier_transform requires sample-wise coordinate-space matrix-element families from the renormalization stage."
+            )
         parameters = self._resolve_qpdf_parameters(context)
-        family = self._select_family(qpdf_families, parameters["family_selector"])
+        if str(context.manifest.analysis_metadata["gauge"]) == "gi":
+            raise NotImplementedError("GI asymptotic extrapolation is not implemented yet in fourier_transform.")
+        selected_families = self._select_families(matrix_element_families, parameters["family_selector"])
+        transformed_families: list[dict[str, Any]] = []
+        artifacts: list[ArtifactRecord] = []
+        for family in selected_families:
+            transformed_family, family_artifacts = self._run_qpdf_ft_for_family(
+                context=context,
+                stage_dir=stage_dir,
+                family=family,
+                parameters=parameters,
+            )
+            transformed_families.append(transformed_family)
+            artifacts.extend(family_artifacts)
+        payload = {
+            "family_count": len(transformed_families),
+            "transformed_families": [self._serialize_transformed_family(family) for family in transformed_families],
+            "_transformed_families": transformed_families,
+        }
+        if len(transformed_families) == 1:
+            family = transformed_families[0]
+            payload.update(
+                {
+                    "axis": np.asarray(family["x_axis"], dtype=float),
+                    "values": np.asarray(family["real_mean"], dtype=float),
+                    "magnitude": np.sqrt(
+                        np.asarray(family["real_mean"], dtype=float) ** 2
+                        + np.asarray(family["imag_mean"], dtype=float) ** 2
+                    ),
+                    "family": dict(family["metadata"]),
+                    "lambda_axis": np.asarray(family["lambda_axis"], dtype=float),
+                    "x_axis": np.asarray(family["x_axis"], dtype=float),
+                    "extrapolation": dict(family["extrapolation"]),
+                    "coordinate_space": {
+                        "real": {
+                            "mean": np.asarray(family["coordinate_real_mean"], dtype=float).tolist(),
+                            "error": np.asarray(family["coordinate_real_error"], dtype=float).tolist(),
+                        },
+                        "imag": {
+                            "mean": np.asarray(family["coordinate_imag_mean"], dtype=float).tolist(),
+                            "error": np.asarray(family["coordinate_imag_error"], dtype=float).tolist(),
+                        },
+                    },
+                    "momentum_space": {
+                        "real": {
+                            "mean": np.asarray(family["real_mean"], dtype=float).tolist(),
+                            "error": np.asarray(family["real_error"], dtype=float).tolist(),
+                        },
+                        "imag": {
+                            "mean": np.asarray(family["imag_mean"], dtype=float).tolist(),
+                            "error": np.asarray(family["imag_error"], dtype=float).tolist(),
+                        },
+                    },
+                }
+            )
+        summary = (
+            f"Performed sample-wise asymptotic extrapolation and Fourier transforms for "
+            f"{len(transformed_families)} family/families."
+        )
+        return StageResult(stage_name=self.name, summary=summary, payload=payload, artifacts=artifacts)
+
+    def _run_qpdf_ft_for_family(
+        self,
+        *,
+        context: StageContext,
+        stage_dir: Path,
+        family: dict[str, Any],
+        parameters: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[ArtifactRecord]]:
+        setup = context.manifest.setup_metadata(str(family["metadata"]["setup_id"]))
+        momentum_vector = list(family["metadata"]["momentum"])
+        coordinate_direction = list(parameters["physics"].get("coordinate_direction") or momentum_vector)
         lambda_axis = build_lambda_axis(
             family["z_axis"],
-            lattice_spacing_fm=parameters["physics"]["lattice_spacing_fm"],
-            spatial_extent=parameters["physics"]["spatial_extent"],
-            momentum_vector=parameters["physics"]["momentum_vector"],
-            coordinate_direction=parameters["physics"]["coordinate_direction"],
+            lattice_spacing_fm=setup["lattice_spacing_fm"],
+            spatial_extent=setup["spatial_extent"],
+            momentum_vector=momentum_vector,
+            coordinate_direction=coordinate_direction,
             coordinate_step_multiplier=parameters["physics"]["coordinate_step_multiplier"],
         )
         x_grid = build_x_grid(parameters["x_grid"])
@@ -190,16 +260,21 @@ class FourierTransformStage:
         ft_real_avg = self._resampled_average(ft_real_array, family["metadata"]["resampling_method"])
         ft_imag_avg = self._resampled_average(ft_imag_array, family["metadata"]["resampling_method"])
 
-        payload = {
-            "axis": np.asarray(x_grid, dtype=float),
-            "values": np.asarray(gv.mean(ft_real_avg), dtype=float),
-            "magnitude": np.sqrt(
-                np.asarray(gv.mean(ft_real_avg), dtype=float) ** 2
-                + np.asarray(gv.mean(ft_imag_avg), dtype=float) ** 2
-            ),
-            "family": dict(family["metadata"]),
+        transformed_family = {
+            "metadata": dict(family["metadata"]),
             "lambda_axis": np.asarray(lambda_axis, dtype=float),
             "x_axis": np.asarray(x_grid, dtype=float),
+            "coordinate_real_mean": np.asarray(gv.mean(extrapolated_real_avg), dtype=float),
+            "coordinate_real_error": np.asarray(gv.sdev(extrapolated_real_avg), dtype=float),
+            "coordinate_imag_mean": np.asarray(gv.mean(extrapolated_imag_avg), dtype=float),
+            "coordinate_imag_error": np.asarray(gv.sdev(extrapolated_imag_avg), dtype=float),
+            "real_mean": np.asarray(gv.mean(ft_real_avg), dtype=float),
+            "real_error": np.asarray(gv.sdev(ft_real_avg), dtype=float),
+            "imag_mean": np.asarray(gv.mean(ft_imag_avg), dtype=float),
+            "imag_error": np.asarray(gv.sdev(ft_imag_avg), dtype=float),
+            "real_samples": ft_real_array,
+            "imag_samples": ft_imag_array,
+            "sample_count": int(ft_real_array.shape[0]),
             "extrapolation": {
                 "gauge_type": parameters["gauge_type"],
                 "fit_idx_range": list(parameters["extrapolation"]["fit_idx_range"]),
@@ -209,37 +284,14 @@ class FourierTransformStage:
                 "imaginary_sign": int(parameters["imaginary_sign"]),
                 "sample_transform_workers": int(parameters["sample_transform_workers"]),
                 "separate_re_im": bool(parameters["separate_re_im"]),
-            },
-            "coordinate_space": {
-                "real": {
-                    "mean": np.asarray(gv.mean(extrapolated_real_avg), dtype=float).tolist(),
-                    "error": np.asarray(gv.sdev(extrapolated_real_avg), dtype=float).tolist(),
-                },
-                "imag": {
-                    "mean": np.asarray(gv.mean(extrapolated_imag_avg), dtype=float).tolist(),
-                    "error": np.asarray(gv.sdev(extrapolated_imag_avg), dtype=float).tolist(),
-                },
-            },
-            "momentum_space": {
-                "real": {
-                    "mean": np.asarray(gv.mean(ft_real_avg), dtype=float).tolist(),
-                    "error": np.asarray(gv.sdev(ft_real_avg), dtype=float).tolist(),
-                },
-                "imag": {
-                    "mean": np.asarray(gv.mean(ft_imag_avg), dtype=float).tolist(),
-                    "error": np.asarray(gv.sdev(ft_imag_avg), dtype=float).tolist(),
-                },
-            },
-            "_qpdf_ft_samples": {
-                "x_axis": np.asarray(x_grid, dtype=float),
-                "real_samples": ft_real_array,
-                "imag_samples": ft_imag_array,
+                "coordinate_direction": list(coordinate_direction),
+                "coordinate_step_multiplier": float(parameters["physics"]["coordinate_step_multiplier"]),
             },
         }
         artifacts = self._write_qpdf_artifacts(
             stage_dir=stage_dir,
             context=context,
-            family=family,
+            family=transformed_family,
             lambda_axis=np.asarray(lambda_axis, dtype=float),
             representative_lambda=np.asarray(representative_lambda, dtype=float),
             coordinate_real_mean=np.asarray(gv.mean(real_average), dtype=float),
@@ -255,14 +307,9 @@ class FourierTransformStage:
             ft_imag_array=ft_imag_array,
             representative_real_fit=representative_real_fit,
             representative_imag_fit=representative_imag_fit,
-            extrapolation_payload=payload["extrapolation"],
+            extrapolation_payload=transformed_family["extrapolation"],
         )
-        summary = (
-            "Performed sample-wise asymptotic extrapolation and Fourier transforms for "
-            f"qPDF family b={family['metadata']['b']}, p=({family['metadata']['px']},"
-            f"{family['metadata']['py']},{family['metadata']['pz']})."
-        )
-        return StageResult(stage_name=self.name, summary=summary, payload=payload, artifacts=artifacts)
+        return transformed_family, artifacts
 
     def _resolve_qpdf_parameters(self, context: StageContext) -> dict[str, Any]:
         parameters = dict(context.parameters_for(self.name))
@@ -273,10 +320,7 @@ class FourierTransformStage:
             "gauge_type": str(parameters.get("gauge_type", "cg")).lower(),
             "imaginary_sign": int(parameters.get("imaginary_sign", -1)),
             "physics": {
-                "lattice_spacing_fm": float(physics.get("lattice_spacing_fm", 0.09)),
-                "spatial_extent": int(physics.get("spatial_extent", 64)),
-                "momentum_vector": list(physics.get("momentum_vector", [0, 0, 4])),
-                "coordinate_direction": list(physics.get("coordinate_direction", [0, 0, 1])),
+                "coordinate_direction": None if "coordinate_direction" not in physics else list(physics.get("coordinate_direction", [0, 0, 1])),
                 "coordinate_step_multiplier": float(physics.get("coordinate_step_multiplier", 1.0)),
             },
             "sample_transform_workers": max(1, int(parameters.get("sample_transform_workers", 1))),
@@ -292,11 +336,9 @@ class FourierTransformStage:
             },
         }
 
-    def _select_family(self, families: list[dict[str, Any]], selector: dict[str, Any]) -> dict[str, Any]:
+    def _select_families(self, families: list[dict[str, Any]], selector: dict[str, Any]) -> list[dict[str, Any]]:
         if not selector:
-            if len(families) != 1:
-                raise ValueError("fourier_transform requires family_selector when multiple qPDF families are available.")
-            return families[0]
+            return list(families)
         matches = []
         for family in families:
             metadata = family["metadata"]
@@ -304,9 +346,44 @@ class FourierTransformStage:
                 matches.append(family)
         if not matches:
             raise ValueError(f"fourier_transform family_selector={selector!r} did not match any qPDF family.")
-        if len(matches) > 1:
-            raise ValueError(f"fourier_transform family_selector={selector!r} matched multiple qPDF families.")
-        return matches[0]
+        return matches
+
+    def _family_slug(self, metadata: dict[str, Any]) -> str:
+        return (
+            f"{metadata['observable']}_{metadata['setup_id']}_{metadata['fit_mode']}"
+            f"_b{metadata['b']}_p{metadata['px']}{metadata['py']}{metadata['pz']}"
+            f"_{metadata['gamma']}_{str(metadata['flavor']).replace('-', '_')}_{metadata['smearing']}"
+        )
+
+    def _serialize_transformed_family(self, family: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "metadata": dict(family["metadata"]),
+            "lambda_axis": np.asarray(family["lambda_axis"], dtype=float).tolist(),
+            "x_axis": np.asarray(family["x_axis"], dtype=float).tolist(),
+            "sample_count": int(family["sample_count"]),
+            "extrapolation": dict(family["extrapolation"]),
+            "coordinate_space": {
+                "real": {
+                    "mean": np.asarray(family["coordinate_real_mean"], dtype=float).tolist(),
+                    "error": np.asarray(family["coordinate_real_error"], dtype=float).tolist(),
+                },
+                "imag": {
+                    "mean": np.asarray(family["coordinate_imag_mean"], dtype=float).tolist(),
+                    "error": np.asarray(family["coordinate_imag_error"], dtype=float).tolist(),
+                },
+            },
+            "momentum_space": {
+                "real": {
+                    "mean": np.asarray(family["real_mean"], dtype=float).tolist(),
+                    "error": np.asarray(family["real_error"], dtype=float).tolist(),
+                },
+                "imag": {
+                    "mean": np.asarray(family["imag_mean"], dtype=float).tolist(),
+                    "error": np.asarray(family["imag_error"], dtype=float).tolist(),
+                },
+            },
+            "sample_artifact": family.get("sample_artifact"),
+        }
 
     def _resampled_average(self, samples: np.ndarray, method: str):
         array = np.asarray(samples, dtype=float)
@@ -402,7 +479,8 @@ class FourierTransformStage:
         extrapolation_payload: dict[str, Any],
     ) -> list[ArtifactRecord]:
         artifacts: list[ArtifactRecord] = []
-        summary_path = stage_dir / "qpdf_ft_summary.json"
+        family_slug = self._family_slug(family["metadata"])
+        summary_path = stage_dir / f"{family_slug}_summary.json"
         write_json(
             summary_path,
             {
@@ -428,31 +506,32 @@ class FourierTransformStage:
         )
         artifacts.append(
             ArtifactRecord(
-                name="qpdf_ft_summary_json",
+                name=f"{family_slug}_summary_json",
                 kind="report",
                 path=summary_path,
-                description="Summary of the sample-wise qPDF extrapolation and Fourier transform.",
+                description="Summary of the sample-wise Fourier transform for one family.",
                 format="json",
             )
         )
-        sample_path = stage_dir / "qpdf_ft_samples.npz"
+        sample_path = stage_dir / f"{family_slug}_samples.npz"
         np.savez(
             sample_path,
             x_axis=x_grid,
             real_samples=ft_real_array,
             imag_samples=ft_imag_array,
         )
+        family["sample_artifact"] = str(sample_path)
         artifacts.append(
             ArtifactRecord(
-                name="qpdf_ft_samples_npz",
+                name=f"{family_slug}_samples_npz",
                 kind="data",
                 path=sample_path,
-                description="Sample-wise x-space qPDF values after extrapolation and Fourier transform.",
+                description="Sample-wise x-space values after extrapolation and Fourier transform.",
                 format="npz",
             )
         )
         for data_path in write_columnar_data(
-            stage_dir / "qpdf_ft",
+            stage_dir / family_slug,
             {
                 "x": x_grid,
                 "real": np.asarray(gv.mean(ft_real_avg), dtype=float),
@@ -464,28 +543,28 @@ class FourierTransformStage:
         ):
             artifacts.append(
                 ArtifactRecord(
-                    name=f"qpdf_ft_data_{data_path.suffix[1:]}",
+                    name=f"{family_slug}_data_{data_path.suffix[1:]}",
                     kind="data",
                     path=data_path,
-                    description="Final x-space qPDF after sample-wise extrapolation and Fourier transform.",
+                    description="Final x-space observable after sample-wise extrapolation and Fourier transform.",
                     format=data_path.suffix[1:],
                 )
             )
-        real_fit_path = stage_dir / "qpdf_extrapolation_fit_real.txt"
-        imag_fit_path = stage_dir / "qpdf_extrapolation_fit_imag.txt"
+        real_fit_path = stage_dir / f"{family_slug}_fit_real.txt"
+        imag_fit_path = stage_dir / f"{family_slug}_fit_imag.txt"
         real_fit_path.write_text(representative_real_fit.format(100) + "\n", encoding="utf-8")
         imag_fit_path.write_text(representative_imag_fit.format(100) + "\n", encoding="utf-8")
         artifacts.extend(
             [
                 ArtifactRecord(
-                    name="qpdf_extrapolation_fit_real_txt",
+                    name=f"{family_slug}_fit_real_txt",
                     kind="report",
                     path=real_fit_path,
                     description="Representative real-part asymptotic extrapolation fit summary.",
                     format="txt",
                 ),
                 ArtifactRecord(
-                    name="qpdf_extrapolation_fit_imag_txt",
+                    name=f"{family_slug}_fit_imag_txt",
                     kind="report",
                     path=imag_fit_path,
                     description="Representative imaginary-part asymptotic extrapolation fit summary.",
@@ -494,10 +573,10 @@ class FourierTransformStage:
             ]
         )
         for plot_format in context.manifest.outputs.plot_formats:
-            coordinate_real_plot = stage_dir / f"qpdf_coordinate_space_real.{plot_format}"
-            coordinate_imag_plot = stage_dir / f"qpdf_coordinate_space_imag.{plot_format}"
-            ft_real_plot = stage_dir / f"qpdf_ft_real.{plot_format}"
-            ft_imag_plot = stage_dir / f"qpdf_ft_imag.{plot_format}"
+            coordinate_real_plot = stage_dir / f"{family_slug}_coordinate_real.{plot_format}"
+            coordinate_imag_plot = stage_dir / f"{family_slug}_coordinate_imag.{plot_format}"
+            ft_real_plot = stage_dir / f"{family_slug}_ft_real.{plot_format}"
+            ft_imag_plot = stage_dir / f"{family_slug}_ft_imag.{plot_format}"
             fit_start = int(extrapolation_payload["fit_idx_range"][0])
             fit_stop = int(extrapolation_payload["fit_idx_range"][1]) - 1
             coordinate_xlim = self._coordinate_plot_xlim(lambda_axis, representative_lambda)
@@ -534,9 +613,9 @@ class FourierTransformStage:
                 coordinate_real_mean,
                 coordinate_real_error,
                 coordinate_real_plot,
-                "qPDF Coordinate Space (Real)",
+                f"{family['metadata']['observable']} Coordinate Space (Real)",
                 r"$\lambda$",
-                "Re qPDF",
+                f"Re {family['metadata']['observable']}",
                 fit_x=real_tail_x,
                 fit_y=real_tail_y,
                 fit_error=real_tail_error,
@@ -550,9 +629,9 @@ class FourierTransformStage:
                 coordinate_imag_mean,
                 coordinate_imag_error,
                 coordinate_imag_plot,
-                "qPDF Coordinate Space (Imag)",
+                f"{family['metadata']['observable']} Coordinate Space (Imag)",
                 r"$\lambda$",
-                "Im qPDF",
+                f"Im {family['metadata']['observable']}",
                 fit_x=imag_tail_x,
                 fit_y=imag_tail_y,
                 fit_error=imag_tail_error,
@@ -572,9 +651,9 @@ class FourierTransformStage:
                     }
                 ],
                 ft_real_plot,
-                "qPDF Fourier Transform (Real)",
+                f"{family['metadata']['observable']} Fourier Transform (Real)",
                 r"$x$",
-                "Re qPDF(x)",
+                f"Re {family['metadata']['observable']}(x)",
             )
             save_series_collection_plot(
                 [
@@ -587,38 +666,38 @@ class FourierTransformStage:
                     }
                 ],
                 ft_imag_plot,
-                "qPDF Fourier Transform (Imag)",
+                f"{family['metadata']['observable']} Fourier Transform (Imag)",
                 r"$x$",
-                "Im qPDF(x)",
+                f"Im {family['metadata']['observable']}(x)",
             )
             artifacts.extend(
                 [
                     ArtifactRecord(
-                        name=f"qpdf_coordinate_space_real_plot_{plot_format}",
+                        name=f"{family_slug}_coordinate_real_plot_{plot_format}",
                         kind="plot",
                         path=coordinate_real_plot,
-                        description="Real-part qPDF data and extrapolated tail in lambda space.",
+                        description="Real-part coordinate-space data and extrapolated tail in lambda space.",
                         format=plot_format,
                     ),
                     ArtifactRecord(
-                        name=f"qpdf_coordinate_space_imag_plot_{plot_format}",
+                        name=f"{family_slug}_coordinate_imag_plot_{plot_format}",
                         kind="plot",
                         path=coordinate_imag_plot,
-                        description="Imaginary-part qPDF data and extrapolated tail in lambda space.",
+                        description="Imaginary-part coordinate-space data and extrapolated tail in lambda space.",
                         format=plot_format,
                     ),
                     ArtifactRecord(
-                        name=f"qpdf_ft_real_plot_{plot_format}",
+                        name=f"{family_slug}_ft_real_plot_{plot_format}",
                         kind="plot",
                         path=ft_real_plot,
-                        description="Real-part x-space qPDF after Fourier transform.",
+                        description="Real-part x-space observable after Fourier transform.",
                         format=plot_format,
                     ),
                     ArtifactRecord(
-                        name=f"qpdf_ft_imag_plot_{plot_format}",
+                        name=f"{family_slug}_ft_imag_plot_{plot_format}",
                         kind="plot",
                         path=ft_imag_plot,
-                        description="Imaginary-part x-space qPDF after Fourier transform.",
+                        description="Imaginary-part x-space observable after Fourier transform.",
                         format=plot_format,
                     ),
                 ]

@@ -1,4 +1,4 @@
-"""Schema validation tests for workflow manifests."""
+"""Schema validation tests for the v1 manifest contract."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from lamet_agent.schemas import Manifest, load_manifest
 
 
 def build_manifest_dict(data_path: str = "data.csv", file_format: str = "csv") -> dict:
-    """Return a minimal valid manifest dictionary."""
     return {
         "goal": "parton_distribution_function",
         "correlators": [
@@ -25,11 +24,32 @@ def build_manifest_dict(data_path: str = "data.csv", file_format: str = "csv") -
                 "path": data_path,
                 "file_format": file_format,
                 "label": "demo",
+                "metadata": {
+                    "setup_id": "demo_setup",
+                    "momentum": [0, 0, 0],
+                    "smearing": "SS",
+                },
             }
         ],
         "metadata": {
-            "ensemble": "e1",
+            "purpose": "physics",
+            "analysis": {
+                "gauge": "cg",
+                "hadron": "pion",
+                "channel": "qpdf",
+            },
             "conventions": "demo",
+            "setups": {
+                "demo_setup": {
+                    "lattice_action": "demo",
+                    "n_f": 2,
+                    "lattice_spacing_fm": 0.09,
+                    "spatial_extent": 32,
+                    "temporal_extent": 64,
+                    "pion_mass_valence_gev": 0.3,
+                    "pion_mass_sea_gev": 0.3,
+                }
+            },
         },
         "kernel": {
             "source": "def demo_kernel(axis, values, metadata):\n    return values\n",
@@ -39,36 +59,39 @@ def build_manifest_dict(data_path: str = "data.csv", file_format: str = "csv") -
 
 
 class ManifestTests(unittest.TestCase):
-    """Cover manifest validation and path checking behavior."""
-
     def test_manifest_from_dict_accepts_valid_payload(self) -> None:
         manifest = Manifest.from_dict(build_manifest_dict())
-        self.assertEqual(manifest.goal, "parton_distribution_function")
-        self.assertEqual(manifest.outputs.plot_formats, ["pdf"])
+        self.assertEqual(manifest.analysis_metadata["channel"], "qpdf")
+        self.assertEqual(manifest.setup_metadata("demo_setup")["spatial_extent"], 32)
 
-    def test_manifest_from_dict_accepts_txt_correlators(self) -> None:
-        manifest = Manifest.from_dict(build_manifest_dict(data_path="data.txt", file_format="txt"))
-        self.assertEqual(manifest.correlators[0].file_format, "txt")
-
-    def test_manifest_expands_correlator_families(self) -> None:
-        payload = build_manifest_dict(data_path="data_{z:02d}.txt", file_format="txt")
-        payload["correlators"][0]["label"] = "toy_z{z:02d}"
-        payload["correlators"][0]["metadata"] = {"channel": "gamma_t"}
-        payload["correlators"][0]["expand"] = {"z": {"start": 0, "stop": 2}}
+    def test_manifest_expands_nested_three_point_metadata(self) -> None:
+        payload = build_manifest_dict(data_path="three_point_z{z:02d}.txt", file_format="txt")
+        payload["correlators"][0] = {
+            "kind": "three_point",
+            "path": "three_point_z{z:02d}.txt",
+            "file_format": "txt",
+            "label": "toy_z{z:02d}",
+            "expand": {"z": {"start": 0, "stop": 2}},
+            "metadata": {
+                "setup_id": "demo_setup",
+                "momentum": [0, 0, 2],
+                "smearing": "SS",
+                "displacement": {"b": 0, "z": "{z}"},
+                "operator": {"gamma": "gt", "flavor": "u-d"},
+            },
+        }
         manifest = Manifest.from_dict(payload)
-        self.assertEqual([item.label for item in manifest.correlators], ["toy_z00", "toy_z01", "toy_z02"])
-        self.assertEqual([item.path for item in manifest.correlators], ["data_00.txt", "data_01.txt", "data_02.txt"])
-        self.assertEqual([item.metadata["z"] for item in manifest.correlators], [0, 1, 2])
+        self.assertEqual([item.metadata["displacement"]["z"] for item in manifest.correlators], [0, 1, 2])
 
-    def test_custom_goal_requires_explicit_stages(self) -> None:
+    def test_goal_and_channel_must_match(self) -> None:
         payload = build_manifest_dict()
-        payload["goal"] = "custom"
+        payload["metadata"]["analysis"]["channel"] = "qda"
         with self.assertRaises(ManifestValidationError):
             Manifest.from_dict(payload)
 
-    def test_metadata_requires_ensemble_and_conventions(self) -> None:
+    def test_unknown_setup_id_fails(self) -> None:
         payload = build_manifest_dict()
-        payload["metadata"] = {"ensemble": "e1"}
+        payload["correlators"][0]["metadata"]["setup_id"] = "missing"
         with self.assertRaises(ManifestValidationError):
             Manifest.from_dict(payload)
 

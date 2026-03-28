@@ -1,62 +1,73 @@
 {
-  "goal": "custom",
+  "goal": "parton_distribution_function",
   "correlators": [
     {
       "kind": "two_point",
-      "path": "data/bare_qpdf/two_point_ss_p440.txt",
+      "path": "data/proton_cg_qpdf/two_point_ss_p440.txt",
       "file_format": "txt",
-      "label": "qpdf_ft_two_point",
+      "label": "proton_cg_qpdf_two_point",
       "metadata": {
-        "Lt": 64,
-        "complex_samples": true,
-        "ss_sp": "SS",
-        "px": 4,
-        "py": 4,
-        "pz": 0
+        "setup_id": "proton_p440",
+        "momentum": [4, 4, 0],
+        "smearing": "SS",
+        "complex_samples": true
       }
     },
     {
       "kind": "three_point",
-      "path": "data/bare_qpdf/three_point_ss_ud_gt_p440_b{b}_z{z:02d}.txt",
+      "path": "data/proton_cg_qpdf/three_point_ss_ud_gt_p440_b{b}_z{z:02d}.txt",
       "file_format": "txt",
-      "label": "qpdf_ft_b{b}_z{z:02d}",
+      "label": "proton_cg_qpdf_b{b}_z{z:02d}",
       "expand": {
-        "b": [
-          0
-        ],
+        "b": [0],
         "z": {
           "start": 0,
           "stop": 20
         }
       },
       "metadata": {
-        "gamma": "gt",
-        "flavor": "u-d",
-        "px": 4,
-        "py": 4,
-        "pz": 0,
-        "ss_sp": "SS"
+        "setup_id": "proton_p440",
+        "momentum": [4, 4, 0],
+        "smearing": "SS",
+        "displacement": {
+          "b": "{b}",
+          "z": "{z}"
+        },
+        "operator": {
+          "gamma": "gt",
+          "flavor": "u-d"
+        }
       }
     }
   ],
   "metadata": {
-    "ensemble": "proton-cg-pdf-p440",
-    "conventions": "Sample-wise bare-qPDF to x-space qPDF Fourier-transform example at p=(4,4,0)"
+    "purpose": "physics",
+    "analysis": {
+      "gauge": "cg",
+      "hadron": "proton",
+      "channel": "qpdf"
+    },
+    "conventions": "Canonical proton CG qPDF example using local raw TXT inputs.",
+    "setups": {
+      "proton_p440": {
+        "lattice_action": "CG52bxyp30",
+        "n_f": 3,
+        "lattice_spacing_fm": 0.06,
+        "spatial_extent": 48,
+        "temporal_extent": 64,
+        "pion_mass_valence_gev": 0.3,
+        "pion_mass_sea_gev": 0.3
+      }
+    }
   },
   "kernel": {
     "callable_name": "identity_kernel",
     "source": "def identity_kernel(axis, values, metadata):\n    return values\n"
   },
   "workflow": {
-    "stages": [
-      "correlator_analysis",
-      "renormalization",
-      "fourier_transform"
-    ],
     "stage_parameters": {
       "correlator_analysis": {
         "two_point": {
-          "temporal_extent": 64,
           "resampling": {
             "method": "jackknife",
             "bin_size": 1,
@@ -80,33 +91,16 @@
           }
         },
         "three_point": {
-          "fit_modes": [
-            "joint_ratio_fh"
-          ],
+          "fit_modes": ["joint_ratio_fh"],
           "primary_fit_mode": "joint_ratio_fh",
           "ratio": {
-            "fit_tsep": [
-              8,
-              9,
-              10,
-              11,
-              12
-            ],
+            "fit_tsep": [8, 9, 10, 11, 12],
             "tau_cut": 3
           },
           "fh": {
-            "fit_tsep": [
-              8,
-              9,
-              10,
-              11,
-              12
-            ],
+            "fit_tsep": [8, 9, 10, 11, 12],
             "tau_cut": 3
           },
-          "gamma": "gt",
-          "flavor": "u-d",
-          "b": 0,
           "bad_point_filter": {
             "mode": "mad",
             "mad_zcut": 8.0,
@@ -118,31 +112,18 @@
       },
       "fourier_transform": {
         "family_selector": {
+          "setup_id": "proton_p440",
           "fit_mode": "joint_ratio_fh",
           "b": 0,
           "gamma": "gt",
           "flavor": "u-d",
-          "ss_sp": "SS",
-          "px": 4,
-          "py": 4,
-          "pz": 0
+          "smearing": "SS"
         },
         "gauge_type": "cg",
         "imaginary_sign": -1,
         "separate_re_im": false,
         "physics": {
-          "lattice_spacing_fm": 0.06,
-          "spatial_extent": 48,
-          "momentum_vector": [
-            4,
-            4,
-            0
-          ],
-          "coordinate_direction": [
-            1,
-            1,
-            0
-          ],
+          "coordinate_direction": [1, 1, 0],
           "coordinate_step_multiplier": 1.4142135623730951
         },
         "x_grid": {
@@ -152,10 +133,7 @@
           "endpoint": true
         },
         "extrapolation": {
-          "fit_idx_range": [
-            6,
-            14
-          ],
+          "fit_idx_range": [6, 14],
           "extrapolated_length": 100.0,
           "weight_ini": 0.0,
           "m0": 0.0411522633744856
@@ -164,14 +142,9 @@
     }
   },
   "outputs": {
-    "directory": "outputs/qpdf_ft",
-    "plot_formats": [
-      "pdf"
-    ],
-    "data_formats": [
-      "csv",
-      "json"
-    ],
+    "directory": "outputs/proton_cg_qpdf",
+    "plot_formats": ["pdf"],
+    "data_formats": ["csv", "json"],
     "keep_intermediates": true
   }
 }

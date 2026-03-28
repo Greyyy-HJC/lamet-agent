@@ -49,10 +49,10 @@ class WorkflowRun:
     stage_results: list[StageResult]
 
 
-def _restore_qpdf_family_samples(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Rebuild hidden sample-wise qPDF family payloads from saved artifacts."""
+def _restore_matrix_element_family_samples(payload_key: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Rebuild hidden sample-wise coordinate-space family payloads from saved artifacts."""
     restored: list[dict[str, Any]] = []
-    for family in payload.get("qpdf_families", []):
+    for family in payload.get(payload_key, []):
         sample_artifact = family.get("sample_artifact")
         if not sample_artifact:
             continue
@@ -75,17 +75,36 @@ def _restore_qpdf_family_samples(payload: dict[str, Any]) -> list[dict[str, Any]
     return restored
 
 
-def _restore_fourier_samples(artifacts: list[ArtifactRecord]) -> dict[str, np.ndarray] | None:
-    """Restore hidden sample-wise x-space qPDF arrays from a saved NPZ artifact."""
-    for artifact in artifacts:
-        if artifact.format == "npz" and artifact.path.name == "qpdf_ft_samples.npz":
-            sample_dump = np.load(artifact.path)
-            return {
+def _restore_transformed_family_samples(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Restore hidden sample-wise x-space arrays for transformed families."""
+    restored: list[dict[str, Any]] = []
+    for family in payload.get("transformed_families", []):
+        sample_artifact = family.get("sample_artifact")
+        if not sample_artifact:
+            continue
+        sample_path = Path(sample_artifact)
+        sample_dump = np.load(sample_path)
+        restored.append(
+            {
+                "metadata": dict(family["metadata"]),
+                "lambda_axis": np.asarray(family["lambda_axis"], dtype=float),
                 "x_axis": np.asarray(sample_dump["x_axis"], dtype=float),
+                "sample_count": int(family["sample_count"]),
+                "extrapolation": dict(family["extrapolation"]),
+                "coordinate_real_mean": np.asarray(family["coordinate_space"]["real"]["mean"], dtype=float),
+                "coordinate_real_error": np.asarray(family["coordinate_space"]["real"]["error"], dtype=float),
+                "coordinate_imag_mean": np.asarray(family["coordinate_space"]["imag"]["mean"], dtype=float),
+                "coordinate_imag_error": np.asarray(family["coordinate_space"]["imag"]["error"], dtype=float),
+                "real_mean": np.asarray(family["momentum_space"]["real"]["mean"], dtype=float),
+                "real_error": np.asarray(family["momentum_space"]["real"]["error"], dtype=float),
+                "imag_mean": np.asarray(family["momentum_space"]["imag"]["mean"], dtype=float),
+                "imag_error": np.asarray(family["momentum_space"]["imag"]["error"], dtype=float),
                 "real_samples": np.asarray(sample_dump["real_samples"], dtype=float),
                 "imag_samples": np.asarray(sample_dump["imag_samples"], dtype=float),
+                "sample_artifact": str(sample_path),
             }
-    return None
+        )
+    return restored
 
 
 def _restore_stage_result(stage_data: dict[str, Any], resume_from: Path) -> StageResult:
@@ -102,12 +121,14 @@ def _restore_stage_result(stage_data: dict[str, Any], resume_from: Path) -> Stag
     ]
     payload = dict(stage_data.get("payload", {}))
     stage_name = str(stage_data["stage_name"])
-    if stage_name in {"correlator_analysis", "renormalization"} and payload.get("qpdf_families"):
-        payload["_qpdf_families"] = _restore_qpdf_family_samples(payload)
+    if stage_name == "correlator_analysis" and payload.get("matrix_element_families"):
+        payload["_matrix_element_families"] = _restore_matrix_element_family_samples("matrix_element_families", payload)
+    if stage_name == "renormalization" and payload.get("renormalized_families"):
+        payload["_renormalized_families"] = _restore_matrix_element_family_samples("renormalized_families", payload)
     if stage_name == "fourier_transform":
-        restored_samples = _restore_fourier_samples(artifacts)
-        if restored_samples is not None:
-            payload["_qpdf_ft_samples"] = restored_samples
+        restored_families = _restore_transformed_family_samples(payload)
+        if restored_families:
+            payload["_transformed_families"] = restored_families
     return StageResult(
         stage_name=stage_name,
         summary=f"Reused from {resume_from.name}: {stage_data['summary']}",

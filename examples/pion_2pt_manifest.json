@@ -3,27 +3,43 @@
   "correlators": [
     {
       "kind": "two_point",
-      "path": "data/two_point_raw_demo.csv",
+      "path": "data/pion_2pt/two_point_raw_demo.csv",
       "file_format": "csv",
-      "label": "demo_two_point_raw",
+      "label": "pion_2pt_raw",
       "metadata": {
-        "boundary": "periodic",
-        "temporal_extent": 64
+        "setup_id": "pion_demo",
+        "momentum": [0, 0, 0],
+        "smearing": "SS",
+        "boundary": "periodic"
       }
     }
   ],
   "metadata": {
-    "ensemble": "demo-ensemble",
-    "conventions": "raw-two-point-demo"
+    "purpose": "physics",
+    "analysis": {
+      "gauge": "cg",
+      "hadron": "pion",
+      "channel": "qpdf"
+    },
+    "conventions": "Raw pion two-point analysis example.",
+    "setups": {
+      "pion_demo": {
+        "lattice_action": "demo_periodic",
+        "n_f": 2,
+        "lattice_spacing_fm": 0.09,
+        "spatial_extent": 32,
+        "temporal_extent": 64,
+        "pion_mass_valence_gev": 0.3,
+        "pion_mass_sea_gev": 0.3
+      }
+    }
   },
   "kernel": {
     "callable_name": "identity_kernel",
     "source": "def identity_kernel(axis, values, metadata):\n    return values\n"
   },
   "workflow": {
-    "stages": [
-      "correlator_analysis"
-    ],
+    "stages": ["correlator_analysis"],
     "stage_parameters": {
       "correlator_analysis": {
         "two_point": {
@@ -49,14 +65,9 @@
     }
   },
   "outputs": {
-    "directory": "outputs/two_point_demo",
-    "plot_formats": [
-      "pdf"
-    ],
-    "data_formats": [
-      "csv",
-      "json"
-    ],
+    "directory": "outputs/pion_2pt",
+    "plot_formats": ["pdf"],
+    "data_formats": ["csv", "json"],
     "keep_intermediates": true
   }
 }

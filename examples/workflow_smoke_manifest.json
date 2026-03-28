@@ -1,0 +1,140 @@
+{
+  "goal": "parton_distribution_function",
+  "correlators": [
+    {
+      "kind": "two_point",
+      "path": "data/workflow_smoke/two_point_qpdf_ft_demo.txt",
+      "file_format": "txt",
+      "label": "workflow_smoke_two_point",
+      "metadata": {
+        "setup_id": "smoke_p440",
+        "momentum": [4, 4, 0],
+        "smearing": "SS",
+        "complex_samples": true
+      }
+    },
+    {
+      "kind": "three_point",
+      "path": "data/workflow_smoke/three_point_qpdf_ft_demo_z{z:02d}.txt",
+      "file_format": "txt",
+      "label": "workflow_smoke_z{z:02d}",
+      "expand": {
+        "z": {
+          "start": 0,
+          "stop": 2
+        }
+      },
+      "metadata": {
+        "setup_id": "smoke_p440",
+        "momentum": [4, 4, 0],
+        "smearing": "SS",
+        "displacement": {
+          "b": 0,
+          "z": "{z}"
+        },
+        "operator": {
+          "gamma": "gt",
+          "flavor": "u-d"
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "purpose": "smoke",
+    "analysis": {
+      "gauge": "cg",
+      "hadron": "proton",
+      "channel": "qpdf"
+    },
+    "conventions": "Tiny tracked full-pipeline smoke example for stage connectivity.",
+    "setups": {
+      "smoke_p440": {
+        "lattice_action": "toy_cg",
+        "n_f": 3,
+        "lattice_spacing_fm": 0.09,
+        "spatial_extent": 32,
+        "temporal_extent": 32,
+        "pion_mass_valence_gev": 0.3,
+        "pion_mass_sea_gev": 0.3
+      }
+    },
+    "matching_scale": 1.15,
+    "kernel_width": 0.35
+  },
+  "kernel": {
+    "callable_name": "workflow_smoke_kernel",
+    "source": "import numpy as np\n\ndef workflow_smoke_kernel(momentum_axis, values, metadata):\n    scale = float(metadata.get('matching_scale', 1.0))\n    width = float(metadata.get('kernel_width', 0.25))\n    return scale * values / (1.0 + width * np.square(momentum_axis))\n"
+  },
+  "workflow": {
+    "stage_parameters": {
+      "correlator_analysis": {
+        "two_point": {
+          "resampling": {
+            "method": "bootstrap",
+            "sample_count": 4,
+            "bin_size": 1,
+            "seed": 1984
+          },
+          "effective_mass": {
+            "method": "solve"
+          },
+          "fit": {
+            "enabled": true,
+            "state_count": 2,
+            "tmin": 4,
+            "tmax": 13,
+            "normalize": true
+          }
+        },
+        "three_point": {
+          "fit_modes": ["joint_ratio_fh"],
+          "primary_fit_mode": "joint_ratio_fh",
+          "ratio": {
+            "fit_tsep": [8, 10, 12],
+            "tau_cut": 2
+          },
+          "fh": {
+            "fit_tsep": [8, 10, 12],
+            "tau_cut": 2
+          },
+          "sample_fit_workers": 1
+        }
+      },
+      "fourier_transform": {
+        "family_selector": {
+          "setup_id": "smoke_p440",
+          "fit_mode": "joint_ratio_fh",
+          "b": 0,
+          "gamma": "gt",
+          "flavor": "u-d",
+          "smearing": "SS"
+        },
+        "gauge_type": "cg",
+        "imaginary_sign": -1,
+        "sample_transform_workers": 1,
+        "physics": {
+          "coordinate_direction": [1, 1, 0],
+          "coordinate_step_multiplier": 1.0
+        },
+        "x_grid": {
+          "start": -1.0,
+          "stop": 1.0,
+          "num": 64,
+          "endpoint": true
+        },
+        "extrapolation": {
+          "fit_idx_range": [1, 3],
+          "extrapolated_length": 8.0,
+          "weight_ini": 0.0,
+          "m0": 0.0
+        }
+      }
+    }
+  },
+  "outputs": {
+    "directory": "outputs/workflow_smoke",
+    "plot_formats": ["pdf"],
+    "data_formats": ["csv", "json"],
+    "keep_intermediates": true
+  }
+}

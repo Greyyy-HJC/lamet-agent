@@ -7,7 +7,6 @@ from lamet_agent.constants import (
     NF,
     TF,
     alphas_nloop,
-    beta,
     lat_unit_convert,
     lattice_unit_to_physical,
     qcd_beta,
@@ -24,7 +23,6 @@ __all__ = [
     "qcd_beta",
     "alphas_nloop",
     "lat_unit_convert",
-    "beta",
 ]
 
 __version__ = "0.1.0"
