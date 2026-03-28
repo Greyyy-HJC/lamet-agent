@@ -1,20 +1,12 @@
 # lamet-agent
 
-`lamet-agent` is a CLI-first scaffold for building agentic LaMET analysis workflows without requiring an LLM backend in the first iteration.
+`lamet-agent` is a CLI-first LaMET workflow scaffold. It validates a JSON
+manifest, loads correlator data, runs staged analysis steps, and writes plots,
+tables, and run summaries to disk.
 
-The repository is organized around a rule-based workflow engine that validates a JSON manifest, loads correlator inputs, executes staged analysis steps, writes normalized intermediate artifacts, and exports a final distribution-like observable.
+## What It Does
 
-## Goals
-
-- Keep the analysis code in plain Python modules that are easy to read and extend.
-- Make workflow resolution explicit and inspectable before model-based planning is introduced.
-- Standardize inputs, outputs, stage contracts, and plotting conventions from the start.
-- Leave clean extension points for future user analysis code and future agent backends.
-- Keep future backend authentication explicit, with first-class OAuth support for `codex` and `claude_code`.
-
-## Initial Workflow Stages
-
-The default pipeline covers:
+The default pipeline is:
 
 1. `correlator_analysis`
 2. `renormalization`
@@ -22,139 +14,167 @@ The default pipeline covers:
 4. `perturbative_matching`
 5. `physical_limit`
 
-The current implementations are intentionally simple demo versions. They exist to make the package runnable end-to-end while preserving stable interfaces for later physics-specific upgrades.
-
-## Repository Layout
-
-- `src/lamet_agent/`: package code, workflow engine, schema validation, reporting, plotting, and stage implementations.
-- `src/lamet_agent/auth/`: OAuth provider configuration, PKCE flow helpers, and token storage.
-- `src/lamet_agent/backends/`: descriptors for future provider-backed agent integrations.
-- `scripts/`: thin executable wrappers for local development.
-- `examples/`: toy correlator inputs, an example manifest, and a reference hard-kernel module.
-- `incoming/analysis_steps/`: temporary landing zone for existing or draft analysis code before it is normalized into the package.
-- `tests/`: schema, kernel, workflow, stage, and end-to-end smoke tests.
+The project also supports custom workflows where you choose the stage list
+explicitly in the manifest.
 
 ## Quickstart
 
-Create and activate a local Python environment, then install `lamet-agent` in one command:
+Create a local environment and install the package:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate && python -m pip install -U pip && python -m pip install -e .
 ```
 
-If you also want test tooling:
+If you want tests:
 
 ```bash
 python -m pip install -e .[dev]
 ```
 
-If you plan to use migrated analysis helpers under `lamet_agent.extensions` (resampling, `gvar` fitting, and HDF5 export):
+If you want the analysis helpers used by the two-point workflow, including
+`gvar`, `lsqfit`, and HDF5 support:
 
 ```bash
 python -m pip install -e .[analysis]
 ```
 
-Run the example workflow:
+If you want both:
+
+```bash
+python -m pip install -e '.[dev,analysis]'
+```
+
+## Main Commands
+
+Validate a manifest:
 
 ```bash
 lamet-agent validate examples/demo_manifest.json
-lamet-agent workflow examples/demo_manifest.json
-lamet-agent run examples/demo_manifest.json
-lamet-agent auth providers
 ```
 
-If you are developing from the repository without installing the package:
+Inspect the resolved workflow:
+
+```bash
+lamet-agent workflow examples/demo_manifest.json
+```
+
+Run the default demo:
+
+```bash
+lamet-agent run examples/demo_manifest.json
+```
+
+Run the two-point correlator analysis demo:
+
+```bash
+lamet-agent run examples/two_point_analysis_manifest.json
+```
+
+If you are running from the repository without installing the console script,
+use:
 
 ```bash
 python scripts/run_manifest.py run examples/demo_manifest.json
 ```
 
-## Manifest Contract
+## Two-Point Example
 
-The workflow manifest is JSON with the following top-level sections:
+The two-point example manifest is:
 
-- `goal`: one of `parton_distribution_function`, `distribution_amplitude`, or `custom`.
-- `correlators`: a list of correlator inputs with `kind`, `path`, `file_format`, `label`, and optional per-input metadata.
-- `metadata`: run-level metadata. The initial scaffold requires at least `ensemble` and `conventions`.
-- `kernel`: inline Python source plus `callable_name`. This source is executed dynamically and is treated as trusted input in v0.
-- `workflow`: optional explicit stage list and per-stage parameters.
-- `outputs`: output directory plus requested plot and data formats.
+- [examples/two_point_analysis_manifest.json](/home/jinchen/git/anl/lamet-agent/examples/two_point_analysis_manifest.json)
 
-## Hard-Kernel Contract
+The raw demo dataset is:
 
-The inline hard-kernel callable should accept at least two positional arguments:
+- [examples/data/two_point_raw_demo.csv](/home/jinchen/git/anl/lamet-agent/examples/data/two_point_raw_demo.csv)
+- [examples/data/two_point_raw_demo.md](/home/jinchen/git/anl/lamet-agent/examples/data/two_point_raw_demo.md)
+
+Run it with:
+
+```bash
+MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/two_point_analysis_manifest.json
+```
+
+This manifest runs only the `correlator_analysis` stage on a raw two-point
+input. The current implementation does:
+
+- resampling from raw configurations
+- effective-mass construction
+- configurable `n`-state two-point fitting
+- plot and table export
+
+Each run creates a timestamped output directory under:
+
+- [examples/outputs/two_point_demo](/home/jinchen/git/anl/lamet-agent/examples/outputs/two_point_demo)
+
+## Output Layout
+
+Each workflow run writes a new directory of the form:
+
+```text
+<output-root>/run_YYYYMMDDTHHMMSSZ/
+```
+
+Inside that directory you will find:
+
+- `report.md`
+- `report.json`
+- `summaries/<stage-name>.md`
+- `stages/<stage-name>/...`
+
+Default plot format is `pdf`. Default data format is `csv`.
+
+Matplotlib-backed plots are saved with:
+
+- `transparent=True`
+- `tight_layout()`
+
+Simple plots use the shared plotting presets in
+`lamet_agent.extensions.plot_presets`.
+
+## Manifest Overview
+
+A workflow manifest is a JSON file with these top-level fields:
+
+- `goal`: `parton_distribution_function`, `distribution_amplitude`, or `custom`
+- `correlators`: input datasets with `kind`, `path`, `file_format`, `label`,
+  and optional `metadata`
+- `metadata`: run-level metadata; currently at least `ensemble` and
+  `conventions` are required
+- `kernel`: inline Python source plus `callable_name`
+- `workflow`: optional stage list and per-stage parameters
+- `outputs`: output directory and requested plot/data formats
+
+For `goal = "custom"`, you must provide `workflow.stages`.
+
+## Kernel Contract
+
+The inline hard-kernel callable must accept:
 
 ```python
-def my_kernel(coordinate_axis, values, metadata):
+def my_kernel(axis, values, metadata):
     ...
 ```
 
-The current perturbative matching stage calls the kernel as:
+It should return an array with the same shape as `values`.
 
-```python
-kernel(momentum_axis, fourier_magnitude, manifest_metadata)
-```
+## Repository Layout
 
-Returning an array with the same shape as the input values is required.
+- `src/lamet_agent/`: package code
+- `examples/`: example manifests and demo data
+- `tests/`: unit and smoke tests
+- `incoming/analysis_steps/`: draft analysis code before integration
 
-## Outputs
-
-Each run produces:
-
-- stage-level data files and plots under `stages/<stage-name>/`
-- short stage summaries under `summaries/`
-- a top-level `report.md`
-- a top-level `report.json`
-
-Default formats are `pdf` for plots and `csv` for exported numeric data. Plot exports use transparent backgrounds and apply `tight_layout()` before saving. The included examples can still request other formats such as `svg` when needed.
-
-## OAuth Support For Agent Backends
-
-The scaffold now includes provider-aware OAuth helpers for:
-
-- `codex`
-- `claude_code`
-
-The implementation uses standard OAuth 2.0 authorization-code flow with PKCE, but it does not hardcode vendor endpoints or client registrations into the repository. Instead, you configure each provider through environment variables so the project can track provider-side changes without source rewrites.
-
-Example configuration:
-
-```bash
-export LAMET_AGENT_CODEX_CLIENT_ID="your-codex-client-id"
-export LAMET_AGENT_CODEX_AUTH_URL="https://example.com/oauth/authorize"
-export LAMET_AGENT_CODEX_TOKEN_URL="https://example.com/oauth/token"
-export LAMET_AGENT_CODEX_SCOPES="openid profile offline_access"
-
-export LAMET_AGENT_CLAUDE_CODE_CLIENT_ID="your-claude-client-id"
-export LAMET_AGENT_CLAUDE_CODE_AUTH_URL="https://example.com/oauth/authorize"
-export LAMET_AGENT_CLAUDE_CODE_TOKEN_URL="https://example.com/oauth/token"
-export LAMET_AGENT_CLAUDE_CODE_SCOPES="openid profile offline_access"
-```
-
-Available commands:
-
-```bash
-lamet-agent auth providers
-lamet-agent auth status codex
-lamet-agent auth login codex
-lamet-agent auth logout codex
-```
-
-Stored tokens are written to `~/.config/lamet-agent/oauth/`.
-
-## Future Direction
-
-The current CLI uses a rule-based planner. The planner and backend interfaces are intentionally narrow so a future natural-language or model-based backend can reuse the same manifest, workflow, artifact, and authentication contracts.
-
-## Incremental Code Migration
-
-If you already have analysis code, place it under `incoming/analysis_steps/` first. After that, describe which script or function implements which LaMET step, and it can be refactored into the appropriate package location with cleaner interfaces and documentation.
+For repository internals, local development workflow, testing, and code
+organization notes, see
+[DEVELOPMENT.md](/home/jinchen/git/anl/lamet-agent/DEVELOPMENT.md).
 
 ## Migrated Analysis Helpers
 
-The reusable helpers that were previously staged under `incoming/analysis_steps/common/` are now available as package modules:
+Reusable helpers currently exposed from `lamet_agent.extensions` include:
 
-- `lamet_agent.extensions.statistics`: bootstrap/jackknife resampling, `gvar` sampling, constant fitting, and HDF5 export helpers.
-- `lamet_agent.extensions.plot_presets`: plotting palettes, axis presets, and default plotting convenience helpers.
+- `lamet_agent.extensions.statistics`
+- `lamet_agent.extensions.plot_presets`
+- `lamet_agent.extensions.two_point`
 
-This keeps `incoming/analysis_steps/` as a draft intake area while making reusable logic importable from stable package paths.
+These modules are the stable place for reusable analysis logic. Keep raw drafts
+under `incoming/analysis_steps/` until they are cleaned up and integrated.
