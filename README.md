@@ -81,6 +81,12 @@ Run the proton CG qPDF example:
 lamet-agent run examples/proton_cg_qpdf_manifest.json
 ```
 
+Run the pion CG qTMDPDF example:
+
+```bash
+lamet-agent run examples/pion_cg_qtmdpdf_manifest.json
+```
+
 If you are running from the repository without installing the console script:
 
 ```bash
@@ -98,8 +104,11 @@ python scripts/run_manifest.py run examples/workflow_smoke_manifest.json
 - [examples/proton_cg_qpdf_manifest.json](/home/jinchen/git/anl/lamet-agent/examples/proton_cg_qpdf_manifest.json)
   - canonical proton CG qPDF workflow
   - backed by [examples/data/proton_cg_qpdf](/home/jinchen/git/anl/lamet-agent/examples/data/proton_cg_qpdf)
+- [examples/pion_cg_qtmdpdf_manifest.json](/home/jinchen/git/anl/lamet-agent/examples/pion_cg_qtmdpdf_manifest.json)
+  - pion CG qTMDPDF workflow mirroring the ratio-fit scope of `mp_zdep_samp.py`
+  - backed by [examples/data/pion_cg_qtmdpdf](/home/jinchen/git/anl/lamet-agent/examples/data/pion_cg_qtmdpdf)
 - [examples/data/pion_cg_qtmdpdf](/home/jinchen/git/anl/lamet-agent/examples/data/pion_cg_qtmdpdf)
-  - tracked representative pion CG qTMDPDF data slice for future examples
+  - local-only pion CG qTMDPDF real-data inputs, excluded from git
 
 ## Manifest Overview
 

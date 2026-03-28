@@ -46,6 +46,12 @@ Run the proton CG qPDF example:
 MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/proton_cg_qpdf_manifest.json
 ```
 
+Run the pion CG qTMDPDF example:
+
+```bash
+MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/pion_cg_qtmdpdf_manifest.json
+```
+
 If you are working from the repository without the installed console script:
 
 ```bash

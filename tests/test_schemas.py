@@ -104,6 +104,14 @@ class ManifestTests(unittest.TestCase):
             manifest = load_manifest(manifest_path)
             self.assertEqual(manifest.manifest_path, manifest_path.resolve())
 
+    def test_curated_pion_cg_qtmdpdf_manifest_loads(self) -> None:
+        manifest = load_manifest(ROOT / "examples" / "pion_cg_qtmdpdf_manifest.json")
+        self.assertEqual(manifest.goal, "parton_distribution_function")
+        self.assertEqual(manifest.analysis_metadata["hadron"], "pion")
+        self.assertEqual(manifest.analysis_metadata["channel"], "qpdf")
+        self.assertEqual(manifest.observable_name_for_b(4), "qtmdpdf")
+        self.assertEqual(len(manifest.correlators), 106)
+
 
 if __name__ == "__main__":
     unittest.main()

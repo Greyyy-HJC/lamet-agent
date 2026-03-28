@@ -45,6 +45,7 @@ def _extrapolate_qpdf_sample_from_context(sample_index: int) -> dict[str, np.nda
         extrapolated_length=context["extrapolated_length"],
         weight_ini=context["weight_ini"],
         m0=context["m0"],
+        hadron=context["hadron"],
         gauge_type=context["gauge_type"],
         real_prior_overrides=context["real_prior_overrides"],
         imag_prior_overrides=context["imag_prior_overrides"],
@@ -72,8 +73,6 @@ class FourierTransformStage:
                 "fourier_transform requires sample-wise coordinate-space matrix-element families from the renormalization stage."
             )
         parameters = self._resolve_qpdf_parameters(context)
-        if str(context.manifest.analysis_metadata["gauge"]) == "gi":
-            raise NotImplementedError("GI asymptotic extrapolation is not implemented yet in fourier_transform.")
         selected_families = self._select_families(matrix_element_families, parameters["family_selector"])
         transformed_families: list[dict[str, Any]] = []
         artifacts: list[ArtifactRecord] = []
@@ -186,6 +185,7 @@ class FourierTransformStage:
             extrapolated_length=parameters["extrapolation"]["extrapolated_length"],
             weight_ini=parameters["extrapolation"]["weight_ini"],
             m0=parameters["extrapolation"]["m0"],
+            hadron=str(family["metadata"]["hadron"]),
             gauge_type=parameters["gauge_type"],
             real_prior_overrides=parameters["extrapolation"]["real_prior_overrides"],
             imag_prior_overrides=parameters["extrapolation"]["imag_prior_overrides"],
@@ -209,6 +209,7 @@ class FourierTransformStage:
                 "extrapolated_length": parameters["extrapolation"]["extrapolated_length"],
                 "weight_ini": parameters["extrapolation"]["weight_ini"],
                 "m0": parameters["extrapolation"]["m0"],
+                "hadron": str(family["metadata"]["hadron"]),
                 "gauge_type": parameters["gauge_type"],
                 "real_prior_overrides": parameters["extrapolation"]["real_prior_overrides"],
                 "imag_prior_overrides": parameters["extrapolation"]["imag_prior_overrides"],
@@ -276,6 +277,7 @@ class FourierTransformStage:
             "imag_samples": ft_imag_array,
             "sample_count": int(ft_real_array.shape[0]),
             "extrapolation": {
+                "hadron": str(family["metadata"]["hadron"]),
                 "gauge_type": parameters["gauge_type"],
                 "fit_idx_range": list(parameters["extrapolation"]["fit_idx_range"]),
                 "extrapolated_length": float(parameters["extrapolation"]["extrapolated_length"]),

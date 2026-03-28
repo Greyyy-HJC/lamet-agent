@@ -1,0 +1,134 @@
+{
+  "goal": "parton_distribution_function",
+  "correlators": [
+    {
+      "kind": "two_point",
+      "path": "data/pion_cg_qtmdpdf/two_point_ss_p330.txt",
+      "file_format": "txt",
+      "label": "pion_cg_qtmdpdf_two_point_p330",
+      "metadata": {
+        "setup_id": "pion_cg_p330",
+        "momentum": [3, 3, 0],
+        "smearing": "SS",
+        "complex_samples": true
+      }
+    },
+    {
+      "kind": "three_point",
+      "path": "data/pion_cg_qtmdpdf/three_point_ss_g8_p330_b{b}_z{z:02d}.txt",
+      "file_format": "txt",
+      "label": "pion_cg_qtmdpdf_p330_b{b}_z{z:02d}",
+      "expand": {
+        "b": [0, 4, 6, 8, 10],
+        "z": {
+          "start": 0,
+          "stop": 20
+        }
+      },
+      "metadata": {
+        "setup_id": "pion_cg_p330",
+        "momentum": [3, 3, 0],
+        "smearing": "SS",
+        "displacement": {
+          "b": "{b}",
+          "z": "{z}"
+        },
+        "operator": {
+          "gamma": "g8",
+          "flavor": "u-d"
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "purpose": "physics",
+    "analysis": {
+      "gauge": "cg",
+      "hadron": "pion",
+      "channel": "qpdf"
+    },
+    "conventions": "Pion CG qTMDPDF example matching the ratio-fit scope of pion_cg_tmdpdf/scripts/mp_zdep_samp.py. Renormalization currently uses identity and each b family is extrapolated independently with the pion asymptotic form.",
+    "setups": {
+      "pion_cg_p330": {
+        "lattice_action": "CG52bxyp20",
+        "n_f": 3,
+        "lattice_spacing_fm": 0.06,
+        "spatial_extent": 48,
+        "temporal_extent": 64,
+        "pion_mass_valence_gev": 0.3,
+        "pion_mass_sea_gev": 0.3
+      }
+    }
+  },
+  "kernel": {
+    "callable_name": "identity_kernel",
+    "source": "def identity_kernel(axis, values, metadata):\n    return values\n"
+  },
+  "workflow": {
+    "stage_parameters": {
+      "correlator_analysis": {
+        "two_point": {
+          "resampling": {
+            "method": "jackknife",
+            "bin_size": 1,
+            "seed": 1984
+          },
+          "effective_mass": {
+            "method": "solve"
+          },
+          "fit": {
+            "enabled": true,
+            "state_count": 2,
+            "tmin": 3,
+            "tmax": 13,
+            "normalize": true
+          }
+        },
+        "three_point": {
+          "fit_modes": ["ratio"],
+          "primary_fit_mode": "ratio",
+          "ratio": {
+            "fit_tsep": [6, 8, 10, 12],
+            "tau_cut": 3
+          },
+          "sample_fit_workers": 8
+        }
+      },
+      "fourier_transform": {
+        "family_selector": {
+          "setup_id": "pion_cg_p330",
+          "fit_mode": "ratio",
+          "gamma": "g8",
+          "flavor": "u-d",
+          "smearing": "SS"
+        },
+        "gauge_type": "cg",
+        "imaginary_sign": -1,
+        "separate_re_im": false,
+        "sample_transform_workers": 8,
+        "physics": {
+          "coordinate_direction": [1, 1, 0],
+          "coordinate_step_multiplier": 1.4142135623730951
+        },
+        "x_grid": {
+          "start": -1.9995,
+          "stop": 1.9995,
+          "num": 2000,
+          "endpoint": true
+        },
+        "extrapolation": {
+          "fit_idx_range": [1, 4],
+          "extrapolated_length": 60.0,
+          "weight_ini": 0.0,
+          "m0": 0.0
+        }
+      }
+    }
+  },
+  "outputs": {
+    "directory": "outputs/pion_cg_qtmdpdf",
+    "plot_formats": ["pdf"],
+    "data_formats": ["csv", "json"],
+    "keep_intermediates": true
+  }
+}

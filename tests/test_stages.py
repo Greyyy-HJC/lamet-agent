@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from lamet_agent.kernel import load_kernel
 from lamet_agent.loaders import CorrelatorDataset, load_correlator_dataset
+from lamet_agent.extensions.qpdf_fourier import asymptotic_imag_function, asymptotic_real_function
 from lamet_agent.schemas import CorrelatorSpec, Manifest
 from lamet_agent.stages import CorrelatorAnalysisStage, FourierTransformStage, RenormalizationStage
 from lamet_agent.stages.base import StageContext
@@ -65,6 +66,38 @@ def manifest_payload() -> dict:
 
 
 class StageTests(unittest.TestCase):
+    def test_asymptotic_forms_distinguish_gi_and_cg_for_proton_and_pion(self) -> None:
+        lam = np.asarray([1.0, 2.0], dtype=float)
+
+        proton_params = {"b": 1.2, "c": 0.3, "d": 0.4, "e": -0.2, "m": 0.5, "n": 0.7}
+        proton_gi = asymptotic_real_function(hadron="proton", gauge_type="gi")(lam, proton_params)
+        proton_cg = asymptotic_real_function(hadron="proton", gauge_type="cg")(lam, proton_params)
+        np.testing.assert_allclose(proton_cg, proton_gi / (lam**proton_params["n"]))
+
+        pion_params = {
+            "b1": 0.6,
+            "b2": 1.1,
+            "b3": -0.2,
+            "d1": 0.1,
+            "d2": 0.05,
+            "d3": -0.08,
+            "c1": 0.2,
+            "c2": -0.1,
+            "c3": 0.4,
+            "e1": -0.3,
+            "e2": 0.25,
+            "e3": 0.1,
+            "m": 0.35,
+            "n": 0.9,
+        }
+        pion_gi_real = asymptotic_real_function(hadron="pion", gauge_type="gi")(lam, pion_params)
+        pion_cg_real = asymptotic_real_function(hadron="pion", gauge_type="cg")(lam, pion_params)
+        np.testing.assert_allclose(pion_cg_real, pion_gi_real / (lam**pion_params["n"]))
+
+        pion_gi_imag = asymptotic_imag_function(hadron="pion", gauge_type="gi")(lam, pion_params)
+        pion_cg_imag = asymptotic_imag_function(hadron="pion", gauge_type="cg")(lam, pion_params)
+        np.testing.assert_allclose(pion_cg_imag, pion_gi_imag / (lam**pion_params["n"]))
+
     def test_txt_two_point_loader_supports_complex_samples(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

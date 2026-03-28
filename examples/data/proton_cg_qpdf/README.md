@@ -5,4 +5,5 @@
 - The three-point files cover `tsep in [8, 9, 10, 11, 12]`.
 - Each three-point file stores the first 12 tau slots for every `tsep`, so the TXT loader reconstructs one rectangular `(tsep, tau, cfg)` array.
 - All files are unresampled raw measurements.
+- These TXT files are local-only real-data inputs and must not be committed.
 - `examples/proton_cg_qpdf_manifest.json` is the canonical local-data proton CG qPDF workflow and replaces the older split `bare_qpdf` / `qpdf_ft` example naming.

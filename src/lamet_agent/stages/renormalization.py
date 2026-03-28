@@ -26,9 +26,6 @@ class RenormalizationStage:
         previous = context.stage_payloads["correlator_analysis"]
         matrix_element_families = previous.get("_matrix_element_families")
         if matrix_element_families:
-            gauge = str(context.manifest.analysis_metadata["gauge"])
-            if gauge == "gi":
-                raise NotImplementedError("GI renormalization is not implemented yet.")
             payload = {
                 "mode": "identity",
                 "renormalization_applied": False,

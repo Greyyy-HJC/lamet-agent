@@ -40,8 +40,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--py", type=int, default=3)
     parser.add_argument("--pz", type=int, default=0)
     parser.add_argument("--gamma", type=str, default="g8")
-    parser.add_argument("--b-values", type=int, nargs="+", default=[0, 4, 8])
-    parser.add_argument("--z-values", type=int, nargs="+", default=[0, 1, 2, 3, 4])
+    parser.add_argument("--b-values", type=int, nargs="+", default=[0, 4, 6, 8, 10])
+    parser.add_argument(
+        "--z-values",
+        type=int,
+        nargs="+",
+        default=list(range(21)),
+    )
     parser.add_argument("--tsep-values", type=int, nargs="+", default=[6, 8, 10, 12])
     return parser.parse_args()
 
@@ -111,7 +116,7 @@ def write_readme(
         f"- Retained `tsep` values: `{tsep_values}`",
         "- Two-point TXT layout: `t`, all real configurations, then all imaginary configurations.",
         "- Three-point TXT layout: `tsep`, `tau`, all real configurations, then all imaginary configurations.",
-        "- These files are a repository-tracked representative slice for future pion CG qTMDPDF examples, not the full analysis dataset.",
+        "- These files are local-only real-data inputs for pion CG qTMDPDF examples and must not be committed.",
         "",
     ]
     (output_dir / "README.md").write_text("\n".join(lines), encoding="utf-8")

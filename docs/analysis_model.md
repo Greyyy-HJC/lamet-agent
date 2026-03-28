@@ -48,8 +48,8 @@ This naming is carried in family metadata through the stage payloads so downstre
 ## Stage Responsibilities
 
 - `correlator_analysis`: match 2pt and 3pt inputs by `(setup_id, momentum, smearing)`, run 2pt/3pt analysis, and emit coordinate-space matrix-element families
-- `renormalization`: apply the gauge-specific renormalization scheme; `cg` currently uses an identity pass-through and `gi` is reserved
-- `fourier_transform`: run family-wise asymptotic extrapolation and transform coordinate-space families into `x` space
+- `renormalization`: currently passes family payloads through unchanged while preserving a dedicated stage boundary for future scheme-specific renormalization
+- `fourier_transform`: run family-wise asymptotic extrapolation and transform coordinate-space families into `x` space; qPDF and qTMDPDF share the same hadron-specific asymptotic form and each nonzero-`b` family is extrapolated independently
 - `perturbative_matching`: apply the user kernel family by family
 - `physical_limit`: write per-family final outputs and record which setup, momentum, and `b` axes are available for future continuum/chiral/boost extrapolations
 
@@ -58,5 +58,6 @@ This naming is carried in family metadata through the stage payloads so downstre
 - `workflow_smoke_manifest.json`: tiny tracked full-pipeline smoke test
 - `pion_2pt_manifest.json`: minimal pion two-point analysis example
 - `proton_cg_qpdf_manifest.json`: canonical proton CG qPDF example using local raw inputs
+- `pion_cg_qtmdpdf_manifest.json`: pion CG qTMDPDF example matching the ratio-fit scope of `mp_zdep_samp.py`
 
-`examples/data/pion_cg_qtmdpdf/` is a tracked representative slice intended for the next pion CG qTMDPDF example, not a full production dataset.
+`examples/data/pion_cg_qtmdpdf/` is a local-only real-data directory for the pion CG qTMDPDF example and is intentionally excluded from git history.
