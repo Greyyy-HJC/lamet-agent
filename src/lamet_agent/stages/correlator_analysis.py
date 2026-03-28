@@ -159,6 +159,13 @@ class CorrelatorAnalysisStage:
         three_point_payloads = []
         three_point_results = []
         if analyzable_three_point_datasets:
+            context.report_progress(
+                self.name,
+                "stage_progress_start",
+                description="three-point dataset analysis",
+                total=len(analyzable_three_point_datasets),
+                unit="dataset",
+            )
             for dataset in sorted(analyzable_three_point_datasets, key=self._dataset_sort_key):
                 dataset_result = self._analyze_three_point_dataset(
                     dataset=dataset,
@@ -174,6 +181,8 @@ class CorrelatorAnalysisStage:
                         result=dataset_result,
                     )
                 )
+                context.report_progress(self.name, "stage_progress_update", advance=1)
+            context.report_progress(self.name, "stage_progress_end")
             payload["three_point"] = three_point_payloads
         if len(analyzable_three_point_datasets) != len(three_point_datasets):
             payload["ignored_three_point_inputs"] = [
@@ -307,7 +316,9 @@ class CorrelatorAnalysisStage:
 
     def _analyze_two_point(self, dataset, parameters: dict[str, Any]) -> dict[str, Any]:
         filtered_samples = None
-        filter_payload = {"mode": "disabled", "flagged_count": 0}
+        imag_resampled = None
+        filter_payload = {"mode": "disabled", "flagged_real_count": 0, "flagged_imag_count": 0}
+        raw_imag_samples = dataset.extra_axes.get("imag_samples")
         if dataset.samples is not None:
             filtered_samples, filter_info = filter_bad_points(
                 dataset.samples,
@@ -317,7 +328,8 @@ class CorrelatorAnalysisStage:
             filter_payload = {
                 "mode": filter_info.mode,
                 "replacement": filter_info.replacement,
-                "flagged_count": filter_info.flagged_count,
+                "flagged_real_count": filter_info.flagged_count,
+                "flagged_imag_count": 0,
                 "total_count": filter_info.total_count,
                 "mad_zcut": filter_info.mad_zcut,
                 "ratio_cut": filter_info.ratio_cut,
@@ -342,11 +354,48 @@ class CorrelatorAnalysisStage:
                 resample_count=generic_resampled.resample_count,
                 bin_size=generic_resampled.bin_size,
             )
+            if raw_imag_samples is not None:
+                filtered_imag_samples, imag_filter_info = filter_bad_points(
+                    np.asarray(raw_imag_samples, dtype=float),
+                    axis=-1,
+                    **parameters["bad_point_filter"],
+                )
+                filter_payload["flagged_imag_count"] = imag_filter_info.flagged_count
+                filter_payload["total_count"] += imag_filter_info.total_count
+                generic_imag_resampled = resample_observable(
+                    filtered_imag_samples,
+                    method=parameters["resampling_method"],
+                    axis=-1,
+                    bootstrap_samples=parameters["bootstrap_samples"],
+                    bootstrap_sample_size=parameters["bootstrap_sample_size"],
+                    bin_size=parameters["bin_size"],
+                    seed=parameters["seed"],
+                )
+                imag_resampled = ResampledCorrelator(
+                    method=generic_imag_resampled.method,
+                    sample_means=generic_imag_resampled.sample_means,
+                    mean=generic_imag_resampled.mean,
+                    error=generic_imag_resampled.error,
+                    average=generic_imag_resampled.average,
+                    configuration_count=generic_imag_resampled.configuration_count,
+                    resample_count=generic_imag_resampled.resample_count,
+                    bin_size=generic_imag_resampled.bin_size,
+                )
         else:
             resampled = None
 
         values = np.asarray(dataset.values, dtype=float) if resampled is None else np.asarray(resampled.mean, dtype=float)
         spread = np.zeros_like(values) if resampled is None else np.asarray(resampled.error, dtype=float)
+        imag_values = (
+            np.zeros_like(values)
+            if imag_resampled is None
+            else np.asarray(imag_resampled.mean, dtype=float)
+        )
+        imag_spread = (
+            np.zeros_like(values)
+            if imag_resampled is None
+            else np.asarray(imag_resampled.error, dtype=float)
+        )
         normalization_factor = 1.0
         if resampled is not None and resampled.average is not None and parameters["normalize"]:
             normalization_factor = abs(float(gv.mean(resampled.average[0]))) or 1.0
@@ -367,6 +416,9 @@ class CorrelatorAnalysisStage:
             "values": values,
             "spread": spread,
             "resampled": resampled,
+            "imag_values": imag_values,
+            "imag_spread": imag_spread,
+            "imag_resampled": imag_resampled,
             "effective_mass": effective_mass,
             "fit_summary": fit_summary,
             "fit_result": fit_result,
@@ -541,10 +593,14 @@ class CorrelatorAnalysisStage:
             seed=two_point_result["analysis_settings"]["seed"],
         )
 
-        zero_imag_two_point = np.zeros_like(resampled_two_point.sample_means)
+        resampled_two_point_imag = two_point_result.get("imag_resampled")
+        if resampled_two_point_imag is None or resampled_two_point_imag.sample_means is None:
+            two_point_imag_samples = np.zeros_like(resampled_two_point.sample_means)
+        else:
+            two_point_imag_samples = np.asarray(resampled_two_point_imag.sample_means, dtype=float)
         ratio_real_samples, ratio_imag_samples = build_ratio_samples(
             np.asarray(resampled_two_point.sample_means, dtype=float),
-            zero_imag_two_point,
+            two_point_imag_samples,
             np.asarray(resampled_real.sample_means, dtype=float),
             np.asarray(resampled_imag.sample_means, dtype=float),
             dataset.axis,

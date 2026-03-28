@@ -242,6 +242,8 @@ def fourier_transform_qpdf(
     real_values: Sequence[float],
     imag_values: Sequence[float],
     x_grid: Sequence[float],
+    *,
+    separate_re_im: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute the discrete Fourier transform using the Peskin-sign convention."""
 
@@ -252,8 +254,12 @@ def fourier_transform_qpdf(
     delta_lambda = float(abs(lambda_array[1] - lambda_array[0])) if len(lambda_array) > 1 else 1.0
     cos_term = np.cos(np.outer(x_array, lambda_array))
     sin_term = np.sin(np.outer(x_array, lambda_array))
-    real_out = delta_lambda / (2.0 * np.pi) * (cos_term @ real_array - sin_term @ imag_array)
-    imag_out = delta_lambda / (2.0 * np.pi) * (sin_term @ real_array + cos_term @ imag_array)
+    if separate_re_im:
+        real_out = delta_lambda / (2.0 * np.pi) * (cos_term @ real_array)
+        imag_out = delta_lambda / (2.0 * np.pi) * (-sin_term @ imag_array)
+    else:
+        real_out = delta_lambda / (2.0 * np.pi) * (cos_term @ real_array - sin_term @ imag_array)
+        imag_out = delta_lambda / (2.0 * np.pi) * (sin_term @ real_array + cos_term @ imag_array)
     return real_out, imag_out
 
 
@@ -261,6 +267,8 @@ def batch_fourier_transform_qpdf(
     kernel: dict[str, np.ndarray],
     real_samples: np.ndarray,
     imag_samples: np.ndarray,
+    *,
+    separate_re_im: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Apply the discrete qPDF Fourier transform to many samples at once."""
 
@@ -269,6 +277,10 @@ def batch_fourier_transform_qpdf(
     factor = float(np.asarray(kernel["delta_lambda"])) / (2.0 * np.pi)
     cos_term = np.asarray(kernel["cos"], dtype=float)
     sin_term = np.asarray(kernel["sin"], dtype=float)
-    real_out = factor * (real_array @ cos_term.T - imag_array @ sin_term.T)
-    imag_out = factor * (real_array @ sin_term.T + imag_array @ cos_term.T)
+    if separate_re_im:
+        real_out = factor * (real_array @ cos_term.T)
+        imag_out = factor * (-imag_array @ sin_term.T)
+    else:
+        real_out = factor * (real_array @ cos_term.T - imag_array @ sin_term.T)
+        imag_out = factor * (real_array @ sin_term.T + imag_array @ cos_term.T)
     return real_out, imag_out

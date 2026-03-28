@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any
 
-from lamet_agent.artifacts import StageResult
+import numpy as np
+
+from lamet_agent.artifacts import ArtifactRecord, StageResult
 from lamet_agent.errors import StageExecutionError
 from lamet_agent.kernel import load_kernel
 from lamet_agent.loaders import load_all_correlators
@@ -45,8 +49,95 @@ class WorkflowRun:
     stage_results: list[StageResult]
 
 
-def execute_manifest(manifest_path: str | Path, planner) -> WorkflowRun:
+def _restore_qpdf_family_samples(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Rebuild hidden sample-wise qPDF family payloads from saved artifacts."""
+    restored: list[dict[str, Any]] = []
+    for family in payload.get("qpdf_families", []):
+        sample_artifact = family.get("sample_artifact")
+        if not sample_artifact:
+            continue
+        sample_path = Path(sample_artifact)
+        sample_dump = np.load(sample_path)
+        restored.append(
+            {
+                "metadata": dict(family["metadata"]),
+                "z_axis": np.asarray(sample_dump["z_axis"], dtype=float),
+                "sample_count": int(family.get("sample_count", sample_dump["real_samples"].shape[0])),
+                "real_mean": np.asarray(family["real"]["mean"], dtype=float),
+                "real_error": np.asarray(family["real"]["error"], dtype=float),
+                "imag_mean": np.asarray(family["imag"]["mean"], dtype=float),
+                "imag_error": np.asarray(family["imag"]["error"], dtype=float),
+                "real_samples": np.asarray(sample_dump["real_samples"], dtype=float),
+                "imag_samples": np.asarray(sample_dump["imag_samples"], dtype=float),
+                "sample_artifact": str(sample_path),
+            }
+        )
+    return restored
+
+
+def _restore_fourier_samples(artifacts: list[ArtifactRecord]) -> dict[str, np.ndarray] | None:
+    """Restore hidden sample-wise x-space qPDF arrays from a saved NPZ artifact."""
+    for artifact in artifacts:
+        if artifact.format == "npz" and artifact.path.name == "qpdf_ft_samples.npz":
+            sample_dump = np.load(artifact.path)
+            return {
+                "x_axis": np.asarray(sample_dump["x_axis"], dtype=float),
+                "real_samples": np.asarray(sample_dump["real_samples"], dtype=float),
+                "imag_samples": np.asarray(sample_dump["imag_samples"], dtype=float),
+            }
+    return None
+
+
+def _restore_stage_result(stage_data: dict[str, Any], resume_from: Path) -> StageResult:
+    """Rebuild a prior stage result from a saved report entry."""
+    artifacts = [
+        ArtifactRecord(
+            name=str(item["name"]),
+            kind=str(item["kind"]),
+            path=Path(item["path"]),
+            description=str(item["description"]),
+            format=str(item["format"]),
+        )
+        for item in stage_data.get("artifacts", [])
+    ]
+    payload = dict(stage_data.get("payload", {}))
+    stage_name = str(stage_data["stage_name"])
+    if stage_name in {"correlator_analysis", "renormalization"} and payload.get("qpdf_families"):
+        payload["_qpdf_families"] = _restore_qpdf_family_samples(payload)
+    if stage_name == "fourier_transform":
+        restored_samples = _restore_fourier_samples(artifacts)
+        if restored_samples is not None:
+            payload["_qpdf_ft_samples"] = restored_samples
+    return StageResult(
+        stage_name=stage_name,
+        summary=f"Reused from {resume_from.name}: {stage_data['summary']}",
+        payload=payload,
+        artifacts=artifacts,
+    )
+
+
+def _load_prior_stage_results(resume_from: Path) -> dict[str, StageResult]:
+    """Load previously materialized stage results from one run directory."""
+    report_path = resume_from / "report.json"
+    with report_path.open("r", encoding="utf-8") as handle:
+        report = json.load(handle)
+    return {
+        str(item["stage_name"]): _restore_stage_result(item, resume_from)
+        for item in report.get("stage_results", [])
+    }
+
+
+def execute_manifest(
+    manifest_path: str | Path,
+    planner,
+    *,
+    resume_from: str | Path | None = None,
+    start_stage: str | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> WorkflowRun:
     """Load, resolve, and execute a manifest with the provided planner."""
+    if (resume_from is None) != (start_stage is None):
+        raise ValueError("execute_manifest requires both resume_from and start_stage, or neither.")
     manifest = load_manifest(manifest_path)
     plan = planner.resolve(manifest)
     run_directory = ensure_directory(manifest.resolved_output_directory / f"run_{timestamp_slug()}")
@@ -57,16 +148,74 @@ def execute_manifest(manifest_path: str | Path, planner) -> WorkflowRun:
         run_directory=run_directory,
         datasets=datasets,
         kernel=kernel,
+        progress_callback=progress_callback,
     )
     stage_results: list[StageResult] = []
-    for stage_name in plan.stage_names:
+    stage_names = list(plan.stage_names)
+    start_index = 0
+    if resume_from is not None and start_stage is not None:
+        if start_stage not in stage_names:
+            raise ValueError(f"Requested start_stage {start_stage!r} is not in the resolved workflow.")
+        prior_results = _load_prior_stage_results(Path(resume_from).resolve())
+        start_index = stage_names.index(start_stage)
+        for stage_name in stage_names[:start_index]:
+            if stage_name not in prior_results:
+                raise ValueError(
+                    f"Cannot resume from stage {start_stage!r}: prior run does not contain stage {stage_name!r}."
+                )
+            restored = prior_results[stage_name]
+            context.stage_payloads[stage_name] = restored.payload
+            stage_results.append(restored)
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "stage_reused",
+                        "stage_name": stage_name,
+                        "stage_index": len(stage_results) - 1,
+                        "stage_total": len(stage_names),
+                        "summary": restored.summary,
+                    }
+                )
+            write_stage_summary(run_directory, restored)
+    for stage_name in stage_names[start_index:]:
         stage = get_stage(stage_name)
+        stage_index = len(stage_results)
+        if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "stage_started",
+                        "stage_name": stage_name,
+                        "stage_index": stage_index,
+                        "stage_total": len(stage_names),
+                        "stage_description": stage.description,
+                    }
+                )
         try:
             result = stage.run(context)
         except Exception as exc:
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "stage_failed",
+                        "stage_name": stage_name,
+                        "stage_index": stage_index,
+                        "stage_total": len(stage_names),
+                        "error": str(exc),
+                    }
+                )
             raise StageExecutionError(f"Stage {stage_name!r} failed: {exc}") from exc
         context.stage_payloads[stage_name] = result.payload
         stage_results.append(result)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "stage_completed",
+                    "stage_name": stage_name,
+                    "stage_index": stage_index,
+                    "stage_total": len(stage_names),
+                    "summary": result.summary,
+                }
+            )
         write_stage_summary(run_directory, result)
     write_run_report(run_directory, manifest, plan, stage_results)
     return WorkflowRun(manifest=manifest, plan=plan, run_directory=run_directory, stage_results=stage_results)

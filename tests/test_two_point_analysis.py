@@ -24,6 +24,35 @@ from lamet_agent.workflows import execute_manifest
 class TwoPointAnalysisTests(unittest.TestCase):
     """Verify raw two-point data is loaded and analyzed end-to-end."""
 
+    def test_txt_two_point_loader_supports_complex_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            raw = np.array(
+                [
+                    [0.0, 1.0, 2.0, 0.1, 0.2],
+                    [1.0, 3.0, 4.0, 0.3, 0.4],
+                ],
+                dtype=float,
+            )
+            path = tmp_path / "two_point_complex.txt"
+            np.savetxt(path, raw)
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text("{}", encoding="utf-8")
+            spec = CorrelatorSpec.from_dict(
+                {
+                    "kind": "two_point",
+                    "path": str(path),
+                    "file_format": "txt",
+                    "label": "complex_two_point",
+                    "metadata": {"complex_samples": True},
+                }
+            )
+            dataset = load_correlator_dataset(spec, manifest_path)
+            self.assertEqual(dataset.samples.shape, (2, 2))
+            self.assertIn("imag_samples", dataset.extra_axes)
+            np.testing.assert_allclose(dataset.extra_axes["imag_samples"], np.array([[0.1, 0.2], [0.3, 0.4]]))
+            np.testing.assert_allclose(dataset.values, np.array([1.5, 3.5]))
+
     def test_loader_keeps_all_raw_samples(self) -> None:
         manifest_path = ROOT / "examples" / "two_point_analysis_manifest.json"
         spec = CorrelatorSpec.from_dict(

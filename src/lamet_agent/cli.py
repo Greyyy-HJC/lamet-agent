@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 from typing import Any
 
 from lamet_agent.auth import OAuthLoginManager
@@ -25,6 +26,118 @@ try:
     import typer
 except ModuleNotFoundError:  # pragma: no cover - environment dependent.
     typer = None
+
+try:
+    from tqdm.auto import tqdm
+except ModuleNotFoundError:  # pragma: no cover - environment dependent.
+    tqdm = None
+
+
+class WorkflowProgressReporter:
+    """Render per-stage progress updates for manifest execution."""
+
+    def __init__(self, stage_names: list[str]) -> None:
+        self.stage_names = stage_names
+        self.total = len(stage_names)
+        self.stream = sys.stderr
+        self.completed = 0
+        self.current_stage: str | None = None
+        self.current_bar = None
+        self.current_total = 0
+        self.current_completed = 0
+
+    def __call__(self, event: dict[str, Any]) -> None:
+        kind = str(event["event"])
+        stage_name = str(event["stage_name"])
+        if kind == "stage_progress_start":
+            self._start_stage_progress(
+                stage_name=stage_name,
+                description=str(event.get("description", stage_name)),
+                total=int(event.get("total", 0)),
+                unit=str(event.get("unit", "step")),
+            )
+            return
+        if kind == "stage_progress_update":
+            self._advance_stage_progress(int(event.get("advance", 1)))
+            return
+        if kind == "stage_progress_end":
+            self._finish_stage_progress()
+            return
+
+        stage_index = int(event["stage_index"])
+        stage_total = int(event["stage_total"])
+        if kind == "stage_started":
+            self._close_current_bar()
+            description = str(event.get("stage_description", "")).strip()
+            if description:
+                print(
+                    f"[{stage_index + 1}/{stage_total}] {stage_name}: {description}",
+                    file=self.stream,
+                )
+            else:
+                print(f"[{stage_index + 1}/{stage_total}] Running stage: {stage_name}", file=self.stream)
+            self.current_stage = stage_name
+            return
+        if kind == "stage_reused":
+            self._close_current_bar()
+            print(f"[{stage_index + 1}/{stage_total}] Reusing stage: {stage_name}", file=self.stream)
+            self.completed = max(self.completed, stage_index + 1)
+            return
+        if kind == "stage_completed":
+            self._finish_stage_progress()
+            self.completed = max(self.completed, stage_index + 1)
+            print(f"[{stage_index + 1}/{stage_total}] Completed stage: {stage_name}", file=self.stream)
+            return
+        if kind == "stage_failed":
+            message = str(event.get("error", "unknown error"))
+            self._close_current_bar()
+            print(f"[{stage_index + 1}/{stage_total}] Stage failed: {stage_name}: {message}", file=self.stream)
+
+    def _start_stage_progress(self, *, stage_name: str, description: str, total: int, unit: str) -> None:
+        self._close_current_bar()
+        self.current_stage = stage_name
+        self.current_total = max(total, 0)
+        self.current_completed = 0
+        if tqdm is not None:
+            self.current_bar = tqdm(
+                total=self.current_total,
+                desc=description,
+                unit=unit,
+                dynamic_ncols=True,
+                file=self.stream,
+            )
+            return
+        if self.current_total > 0:
+            print(f"{description}: 0/{self.current_total} {unit}", file=self.stream)
+
+    def _advance_stage_progress(self, advance: int) -> None:
+        if self.current_total <= 0:
+            return
+        self.current_completed = min(self.current_total, self.current_completed + max(advance, 0))
+        if self.current_bar is not None:
+            self.current_bar.update(max(advance, 0))
+            self.current_bar.refresh()
+            return
+        bar_width = 24
+        filled = int(round((self.current_completed / self.current_total) * bar_width))
+        filled = min(bar_width, max(0, filled))
+        bar = "#" * filled + "-" * (bar_width - filled)
+        print(f"[{bar}] {self.current_completed}/{self.current_total}", file=self.stream)
+
+    def _finish_stage_progress(self) -> None:
+        if self.current_total > 0 and self.current_completed < self.current_total:
+            self._advance_stage_progress(self.current_total - self.current_completed)
+        self._close_current_bar()
+
+    def close(self) -> None:
+        self._close_current_bar()
+
+    def _close_current_bar(self) -> None:
+        if self.current_bar is not None:
+            self.current_bar.close()
+            self.current_bar = None
+        self.current_total = 0
+        self.current_completed = 0
 
 
 def _validate_impl(manifest_path: str) -> dict[str, Any]:
@@ -44,9 +157,26 @@ def _workflow_impl(manifest_path: str) -> dict[str, Any]:
     return planner.resolve(manifest).to_dict()
 
 
-def _run_impl(manifest_path: str) -> dict[str, Any]:
+def _run_impl(
+    manifest_path: str,
+    *,
+    resume_from: str | None = None,
+    start_stage: str | None = None,
+) -> dict[str, Any]:
     planner = RuleBasedPlanner()
-    run = execute_manifest(manifest_path, planner=planner)
+    manifest = load_manifest(manifest_path)
+    plan = planner.resolve(manifest)
+    reporter = WorkflowProgressReporter(plan.stage_names)
+    try:
+        run = execute_manifest(
+            manifest_path,
+            planner=planner,
+            resume_from=resume_from,
+            start_stage=start_stage,
+            progress_callback=reporter,
+        )
+    finally:
+        reporter.close()
     return {
         "run_directory": str(run.run_directory),
         "stage_names": [result.stage_name for result in run.stage_results],
@@ -96,6 +226,8 @@ def _handle_command(
     auth_command: str | None = None,
     provider: str | None = None,
     redirect_port: int | None = None,
+    resume_from: str | None = None,
+    start_stage: str | None = None,
 ) -> int:
     configure_logging()
     try:
@@ -107,7 +239,7 @@ def _handle_command(
             _dump_result(_workflow_impl(manifest_path))
         elif command == "run":
             assert manifest_path is not None
-            _dump_result(_run_impl(manifest_path))
+            _dump_result(_run_impl(manifest_path, resume_from=resume_from, start_stage=start_stage))
         elif command == "auth":
             if auth_command == "providers":
                 _dump_result(_auth_providers_impl())
@@ -136,6 +268,9 @@ def _build_argparse() -> argparse.ArgumentParser:
     for command in ("validate", "workflow", "run"):
         command_parser = subparsers.add_parser(command)
         command_parser.add_argument("manifest_path")
+        if command == "run":
+            command_parser.add_argument("--resume-from", dest="resume_from", default=None)
+            command_parser.add_argument("--start-stage", dest="start_stage", default=None)
     auth_parser = subparsers.add_parser("auth")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
     auth_subparsers.add_parser("providers")
@@ -159,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
         auth_command=getattr(args, "auth_command", None),
         provider=getattr(args, "provider", None),
         redirect_port=getattr(args, "redirect_port", None),
+        resume_from=getattr(args, "resume_from", None),
+        start_stage=getattr(args, "start_stage", None),
     )
 
 
@@ -176,9 +313,13 @@ if typer is not None:
         _dump_result(_workflow_impl(manifest_path))
 
     @app.command("run")
-    def run_command(manifest_path: str) -> None:
+    def run_command(
+        manifest_path: str,
+        resume_from: str | None = typer.Option(None, "--resume-from"),
+        start_stage: str | None = typer.Option(None, "--start-stage"),
+    ) -> None:
         """Execute the resolved workflow and materialize output artifacts."""
-        _dump_result(_run_impl(manifest_path))
+        _dump_result(_run_impl(manifest_path, resume_from=resume_from, start_stage=start_stage))
 
     auth_app = typer.Typer(help="OAuth login helpers for provider-backed agent integrations.")
     app.add_typer(auth_app, name="auth")

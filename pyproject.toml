@@ -13,6 +13,7 @@ dependencies = [
   "scipy>=1.14",
   "matplotlib>=3.8",
   "pydantic>=2.8",
+  "tqdm>=4.66",
   "typer>=0.12",
 ]
 

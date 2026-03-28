@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import numpy as np
 
@@ -133,6 +133,8 @@ def save_uncertainty_plot(
     yscale: str = "linear",
     data_label: str | None = None,
     fit_label: str | None = None,
+    xlim: tuple[float, float] | None = None,
+    vertical_markers: Sequence[dict[str, float]] | None = None,
 ) -> None:
     """Save a plot with data as error bars and optional fit bands."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -189,6 +191,17 @@ def save_uncertainty_plot(
     axis.set_xlabel(_resolve_label(x_label), **AXIS_FONT)
     axis.set_ylabel(_resolve_label(y_label), **AXIS_FONT)
     axis.set_yscale(yscale)
+    if xlim is not None:
+        axis.set_xlim(*xlim)
+    if vertical_markers is not None:
+        for marker in vertical_markers:
+            axis.vlines(
+                float(marker["x"]),
+                float(marker["ymin"]),
+                float(marker["ymax"]),
+                color=COLOR_CYCLE[3],
+                linestyle="--",
+            )
     handles, labels = axis.get_legend_handles_labels()
     if labels:
         axis.legend()
@@ -203,6 +216,7 @@ def save_series_collection_plot(
     y_label: str,
     *,
     yscale: str = "linear",
+    xlim: tuple[float, float] | None = None,
 ) -> None:
     """Save a plot with multiple error-bar and/or fill-between series."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,6 +251,8 @@ def save_series_collection_plot(
     axis.set_xlabel(_resolve_label(x_label), **AXIS_FONT)
     axis.set_ylabel(_resolve_label(y_label), **AXIS_FONT)
     axis.set_yscale(yscale)
+    if xlim is not None:
+        axis.set_xlim(*xlim)
     handles, labels = axis.get_legend_handles_labels()
     if labels:
         axis.legend()

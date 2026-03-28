@@ -1,6 +1,6 @@
 # Bare qPDF Example Data
 
-- `two_point_ss_p440.txt`: SS two-point raw data for `p=(4,4,0)`, built from the averaged `Tg0/Tg8` real correlator in the legacy non-zero-momentum dataset.
+- `two_point_ss_p440.txt`: SS two-point raw data for `p=(4,4,0)`, built from the averaged `Tg0/Tg8` real and imaginary correlators. The packaged file follows the `proton_cg_pdf` ratio/FH denominator convention: most time slices come from the legacy non-zero-momentum dataset, while `t=9` and `t=11` use the newer `new_data/c2pt_comb` rows. The TXT layout is `t`, then all real-part configurations, then all imaginary-part configurations.
 - `three_point_ss_ud_gt_p440_b0_zXX.txt`: SS `u-d` `gamma_t` three-point raw data for `p=(4,4,0)`, `b=0`, and `z=0..20`.
 - The packaged three-point files follow the `proton_cg_pdf` `PX4_PY4_PZ0` workflow: `tsep in [8, 9, 10, 11, 12]`.
 - `tsep=8,10,12` come from the legacy non-zero-momentum HDF5 files, while `tsep=9,11` come from the newer combined-data HDF5 files.

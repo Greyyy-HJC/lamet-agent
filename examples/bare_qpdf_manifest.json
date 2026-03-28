@@ -8,6 +8,7 @@
       "label": "bare_qpdf_two_point",
       "metadata": {
         "Lt": 64,
+        "complex_samples": true,
         "ss_sp": "SS",
         "px": 4,
         "py": 4,

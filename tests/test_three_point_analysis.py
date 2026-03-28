@@ -126,8 +126,11 @@ class ThreePointAnalysisTests(unittest.TestCase):
             two_point_fit_function(t_axis, parameters, temporal_extent=lt, state_count=2, boundary="periodic"),
             dtype=float,
         )
+        two_point_imag = 0.2 * two_point
         two_point_rows = np.column_stack(
-            [t_axis] + [two_point + rng.normal(scale=two_point * 0.01 + 1.0e-6, size=lt) for _ in range(configuration_count)]
+            [t_axis]
+            + [two_point + rng.normal(scale=two_point * 0.01 + 1.0e-6, size=lt) for _ in range(configuration_count)]
+            + [two_point_imag + rng.normal(scale=np.abs(two_point_imag) * 0.01 + 1.0e-6, size=lt) for _ in range(configuration_count)]
         )
         two_point_path = tmp_path / "two_point.txt"
         np.savetxt(two_point_path, two_point_rows)
@@ -182,7 +185,7 @@ class ThreePointAnalysisTests(unittest.TestCase):
                     "path": str(two_point_path),
                     "file_format": "txt",
                     "label": "toy_two_point",
-                    "metadata": {"Lt": lt},
+                    "metadata": {"Lt": lt, "complex_samples": True},
                 },
                 *three_point_specs,
             ],

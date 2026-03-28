@@ -19,6 +19,7 @@ class StageContext:
     datasets: dict[str, CorrelatorDataset]
     kernel: Any
     stage_payloads: dict[str, dict[str, Any]] = field(default_factory=dict)
+    progress_callback: Any | None = None
 
     def stage_directory(self, stage_name: str) -> Path:
         """Return the canonical directory for a stage."""
@@ -27,6 +28,12 @@ class StageContext:
     def parameters_for(self, stage_name: str) -> dict[str, Any]:
         """Return user-supplied stage parameters."""
         return dict(self.manifest.workflow.stage_parameters.get(stage_name, {}))
+
+    def report_progress(self, stage_name: str, event: str, **payload: Any) -> None:
+        """Emit a progress event if the workflow runner provided a callback."""
+        if self.progress_callback is None:
+            return
+        self.progress_callback({"event": event, "stage_name": stage_name, **payload})
 
 
 class WorkflowStage(Protocol):

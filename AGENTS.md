@@ -16,6 +16,7 @@ The repository is a Python-first LaMET workflow framework. The primary goal is t
   - example usage
 - Add comments only where logic is non-obvious.
 - Keep stage interfaces stable. New analysis logic should fit the existing stage contract unless there is a clear reason to evolve the contract for every stage together.
+- Before any `git add` or `git commit`, check whether the change requires updates to every relevant `README` file and to `.gitignore`.
 
 ## Module Map
 

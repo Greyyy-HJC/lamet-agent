@@ -8,6 +8,7 @@
       "label": "qpdf_ft_two_point",
       "metadata": {
         "Lt": 64,
+        "complex_samples": true,
         "ss_sp": "SS",
         "px": 4,
         "py": 4,
@@ -128,9 +129,10 @@
         },
         "gauge_type": "cg",
         "imaginary_sign": -1,
+        "separate_re_im": false,
         "physics": {
-          "lattice_spacing_fm": 0.09,
-          "spatial_extent": 64,
+          "lattice_spacing_fm": 0.06,
+          "spatial_extent": 48,
           "momentum_vector": [
             4,
             4,
@@ -145,9 +147,9 @@
         },
         "x_grid": {
           "start": -1.9995,
-          "stop": 2.0,
+          "stop": 1.9995,
           "num": 4000,
-          "endpoint": false
+          "endpoint": true
         },
         "extrapolation": {
           "fit_idx_range": [
@@ -156,7 +158,7 @@
           ],
           "extrapolated_length": 100.0,
           "weight_ini": 0.0,
-          "m0": 0.0
+          "m0": 0.0411522633744856
         }
       }
     }

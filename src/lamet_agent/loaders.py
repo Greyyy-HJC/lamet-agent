@@ -108,8 +108,21 @@ def load_correlator_dataset(spec: CorrelatorSpec, manifest_path: Path) -> Correl
                     f"TXT correlator inputs must contain at least two columns, got shape {raw.shape}."
                 )
             axis = raw[:, 0]
+            complex_samples = bool(
+                spec.metadata.get("complex_samples", False) or spec.metadata.get("sample_components") == "complex"
+            )
             if raw.shape[1] == 2:
                 values = raw[:, 1]
+            elif complex_samples:
+                payload_columns = raw.shape[1] - 1
+                if payload_columns % 2 != 0:
+                    raise ManifestValidationError(
+                        "TXT two-point correlator inputs with complex samples must provide an even number of sample columns after t."
+                    )
+                configuration_count = payload_columns // 2
+                samples = np.asarray(raw[:, 1 : 1 + configuration_count], dtype=float)
+                values = np.mean(samples, axis=1)
+                extra_axes["imag_samples"] = np.asarray(raw[:, 1 + configuration_count :], dtype=float)
             else:
                 samples = np.asarray(raw[:, 1:], dtype=float)
                 values = np.mean(samples, axis=1)
@@ -118,6 +131,8 @@ def load_correlator_dataset(spec: CorrelatorSpec, manifest_path: Path) -> Correl
     metadata = dict(spec.metadata)
     if samples is not None:
         metadata.setdefault("configuration_count", int(samples.shape[-1]))
+    if "imag_samples" in extra_axes:
+        metadata.setdefault("sample_components", "complex")
     if extra_axes:
         metadata.setdefault("extra_axes", list(extra_axes))
     return CorrelatorDataset(

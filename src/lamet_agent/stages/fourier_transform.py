@@ -18,7 +18,7 @@ from lamet_agent.extensions.qpdf_fourier import (
     mirror_qpdf_coordinate_space_samples,
 )
 from lamet_agent.extensions.statistics import gv
-from lamet_agent.plotting import save_uncertainty_plot
+from lamet_agent.plotting import save_series_collection_plot, save_uncertainty_plot
 from lamet_agent.stages.base import StageContext
 from lamet_agent.stages.registry import register_stage
 from lamet_agent.utils import ensure_directory, write_columnar_data, write_json
@@ -50,6 +50,7 @@ def _extrapolate_qpdf_sample_from_context(sample_index: int) -> dict[str, np.nda
         imag_prior_overrides=context["imag_prior_overrides"],
     )
     return {
+        "sample_index": int(sample_index),
         "real": np.asarray(extrapolated["real"], dtype=float),
         "imag": np.asarray(extrapolated["imag"], dtype=float),
     }
@@ -85,11 +86,21 @@ class FourierTransformStage:
 
         real_samples = np.asarray(family["real_samples"], dtype=float)
         imag_samples = parameters["imaginary_sign"] * np.asarray(family["imag_samples"], dtype=float)
+        if imag_samples.ndim == 2 and imag_samples.shape[1] > 0 and np.isclose(float(lambda_axis[0]), 0.0):
+            imag_samples = imag_samples.copy()
+            imag_samples[:, 0] = 0.0
         real_average = self._resampled_average(real_samples, family["metadata"]["resampling_method"])
         imag_average = self._resampled_average(imag_samples, family["metadata"]["resampling_method"])
         real_errors = np.asarray(gv.sdev(real_average), dtype=float)
         imag_errors = np.asarray(gv.sdev(imag_average), dtype=float)
 
+        context.report_progress(
+            self.name,
+            "stage_progress_start",
+            description="sample-wise asymptotic extrapolation",
+            total=real_samples.shape[0],
+            unit="sample",
+        )
         extrapolated_real_samples: list[np.ndarray] = []
         extrapolated_imag_samples: list[np.ndarray] = []
         representative_real_fit = None
@@ -114,6 +125,7 @@ class FourierTransformStage:
         representative_lambda = np.asarray(representative["lambda_axis"], dtype=float)
         extrapolated_real_samples.append(np.asarray(representative["real"], dtype=float))
         extrapolated_imag_samples.append(np.asarray(representative["imag"], dtype=float))
+        context.report_progress(self.name, "stage_progress_update", advance=1)
 
         remaining_indices = list(range(1, real_samples.shape[0]))
         if remaining_indices:
@@ -140,12 +152,24 @@ class FourierTransformStage:
                     initializer=_set_qpdf_ft_pool_context,
                     initargs=(pool_context,),
                 ) as pool:
-                    remaining_results = pool.map(_extrapolate_qpdf_sample_from_context, remaining_indices, chunksize=chunksize)
+                    remaining_results = []
+                    for result in pool.imap_unordered(
+                        _extrapolate_qpdf_sample_from_context,
+                        remaining_indices,
+                        chunksize=chunksize,
+                    ):
+                        remaining_results.append(result)
+                        context.report_progress(self.name, "stage_progress_update", advance=1)
             else:
                 _set_qpdf_ft_pool_context(pool_context)
-                remaining_results = [_extrapolate_qpdf_sample_from_context(index) for index in remaining_indices]
+                remaining_results = []
+                for index in remaining_indices:
+                    remaining_results.append(_extrapolate_qpdf_sample_from_context(index))
+                    context.report_progress(self.name, "stage_progress_update", advance=1)
+            remaining_results.sort(key=lambda item: int(item["sample_index"]))
             extrapolated_real_samples.extend([result["real"] for result in remaining_results])
             extrapolated_imag_samples.extend([result["imag"] for result in remaining_results])
+        context.report_progress(self.name, "stage_progress_end")
 
         extrapolated_real_array = np.asarray(extrapolated_real_samples, dtype=float)
         extrapolated_imag_array = np.asarray(extrapolated_imag_samples, dtype=float)
@@ -159,6 +183,7 @@ class FourierTransformStage:
             fourier_kernel,
             mirrored_real_array,
             mirrored_imag_array,
+            separate_re_im=parameters["separate_re_im"],
         )
         extrapolated_real_avg = self._resampled_average(extrapolated_real_array, family["metadata"]["resampling_method"])
         extrapolated_imag_avg = self._resampled_average(extrapolated_imag_array, family["metadata"]["resampling_method"])
@@ -183,6 +208,7 @@ class FourierTransformStage:
                 "m0": float(parameters["extrapolation"]["m0"]),
                 "imaginary_sign": int(parameters["imaginary_sign"]),
                 "sample_transform_workers": int(parameters["sample_transform_workers"]),
+                "separate_re_im": bool(parameters["separate_re_im"]),
             },
             "coordinate_space": {
                 "real": {
@@ -216,6 +242,10 @@ class FourierTransformStage:
             family=family,
             lambda_axis=np.asarray(lambda_axis, dtype=float),
             representative_lambda=np.asarray(representative_lambda, dtype=float),
+            coordinate_real_mean=np.asarray(gv.mean(real_average), dtype=float),
+            coordinate_real_error=np.asarray(gv.sdev(real_average), dtype=float),
+            coordinate_imag_mean=np.asarray(gv.mean(imag_average), dtype=float),
+            coordinate_imag_error=np.asarray(gv.sdev(imag_average), dtype=float),
             extrapolated_real_avg=extrapolated_real_avg,
             extrapolated_imag_avg=extrapolated_imag_avg,
             ft_real_avg=ft_real_avg,
@@ -250,6 +280,7 @@ class FourierTransformStage:
                 "coordinate_step_multiplier": float(physics.get("coordinate_step_multiplier", 1.0)),
             },
             "sample_transform_workers": max(1, int(parameters.get("sample_transform_workers", 1))),
+            "separate_re_im": bool(parameters.get("separate_re_im", False)),
             "x_grid": dict(parameters.get("x_grid", {"start": -2.0, "stop": 2.0, "num": 4000, "endpoint": False})),
             "extrapolation": {
                 "fit_idx_range": [int(value) for value in extrapolation.get("fit_idx_range", [2, 6])],
@@ -286,6 +317,67 @@ class FourierTransformStage:
             error = np.std(array, axis=0, ddof=1)
         return gv.gvar(mean, error)
 
+    def _coordinate_plot_xlim(self, lambda_axis: np.ndarray, extrapolated_lambda: np.ndarray) -> tuple[float, float]:
+        """Match the proton_cg_pdf comparison plot: cover the data region and a moderate tail extension."""
+        data_lambda_max = float(np.max(lambda_axis))
+        lam_gap = float(abs(lambda_axis[1] - lambda_axis[0])) if len(lambda_axis) > 1 else 1.0
+        extension = max(12.0 * lam_gap, 0.9 * data_lambda_max)
+        left_edge = -max(lam_gap, 0.5)
+        right_edge = min(float(np.max(extrapolated_lambda)), data_lambda_max + extension)
+        return left_edge, right_edge
+
+    def _dense_tail_band(
+        self,
+        x_values: np.ndarray,
+        y_values: np.ndarray,
+        y_errors: np.ndarray,
+        *,
+        start_x: float,
+        stop_x: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Interpolate the extrapolated tail onto a denser grid for smoother plotting."""
+        x_array = np.asarray(x_values, dtype=float)
+        y_array = np.asarray(y_values, dtype=float)
+        error_array = np.asarray(y_errors, dtype=float)
+        mask = (x_array >= float(start_x)) & (x_array <= float(stop_x))
+        masked_x = x_array[mask]
+        masked_y = y_array[mask]
+        masked_error = error_array[mask]
+        if masked_x.size < 2:
+            return masked_x, masked_y, masked_error
+        dense_x = np.linspace(masked_x[0], masked_x[-1], max(200, masked_x.size * 10))
+        dense_y = np.interp(dense_x, masked_x, masked_y)
+        dense_error = np.interp(dense_x, masked_x, masked_error)
+        return dense_x, dense_y, dense_error
+
+    def _fit_window_markers(
+        self,
+        lambda_axis: np.ndarray,
+        y_values: np.ndarray,
+        y_errors: np.ndarray,
+        *,
+        fit_start: int,
+        fit_stop: int,
+    ) -> list[dict[str, float]]:
+        """Draw short dashed markers near the corresponding data values."""
+        y_array = np.asarray(y_values, dtype=float)
+        error_array = np.asarray(y_errors, dtype=float)
+        ymin = np.min(y_array - error_array)
+        ymax = np.max(y_array + error_array)
+        span = max(float(ymax - ymin), 1.0e-6)
+        markers: list[dict[str, float]] = []
+        for index in (fit_start, max(fit_start, fit_stop)):
+            half_height = max(2.0 * float(error_array[index]), 0.08 * span)
+            center = float(y_array[index])
+            markers.append(
+                {
+                    "x": float(lambda_axis[index]),
+                    "ymin": center - half_height,
+                    "ymax": center + half_height,
+                }
+            )
+        return markers
+
     def _write_qpdf_artifacts(
         self,
         *,
@@ -294,6 +386,10 @@ class FourierTransformStage:
         family: dict[str, Any],
         lambda_axis: np.ndarray,
         representative_lambda: np.ndarray,
+        coordinate_real_mean: np.ndarray,
+        coordinate_real_error: np.ndarray,
+        coordinate_imag_mean: np.ndarray,
+        coordinate_imag_error: np.ndarray,
         extrapolated_real_avg,
         extrapolated_imag_avg,
         ft_real_avg,
@@ -402,53 +498,98 @@ class FourierTransformStage:
             coordinate_imag_plot = stage_dir / f"qpdf_coordinate_space_imag.{plot_format}"
             ft_real_plot = stage_dir / f"qpdf_ft_real.{plot_format}"
             ft_imag_plot = stage_dir / f"qpdf_ft_imag.{plot_format}"
+            fit_start = int(extrapolation_payload["fit_idx_range"][0])
+            fit_stop = int(extrapolation_payload["fit_idx_range"][1]) - 1
+            coordinate_xlim = self._coordinate_plot_xlim(lambda_axis, representative_lambda)
+            real_markers = self._fit_window_markers(
+                lambda_axis,
+                coordinate_real_mean,
+                coordinate_real_error,
+                fit_start=fit_start,
+                fit_stop=fit_stop,
+            )
+            imag_markers = self._fit_window_markers(
+                lambda_axis,
+                coordinate_imag_mean,
+                coordinate_imag_error,
+                fit_start=fit_start,
+                fit_stop=fit_stop,
+            )
+            real_tail_x, real_tail_y, real_tail_error = self._dense_tail_band(
+                representative_lambda,
+                np.asarray(gv.mean(extrapolated_real_avg), dtype=float),
+                np.asarray(gv.sdev(extrapolated_real_avg), dtype=float),
+                start_x=float(lambda_axis[fit_start]),
+                stop_x=coordinate_xlim[1],
+            )
+            imag_tail_x, imag_tail_y, imag_tail_error = self._dense_tail_band(
+                representative_lambda,
+                np.asarray(gv.mean(extrapolated_imag_avg), dtype=float),
+                np.asarray(gv.sdev(extrapolated_imag_avg), dtype=float),
+                start_x=float(lambda_axis[fit_start]),
+                stop_x=coordinate_xlim[1],
+            )
             save_uncertainty_plot(
                 lambda_axis,
-                np.asarray(family["real_mean"], dtype=float),
-                np.asarray(family["real_error"], dtype=float),
+                coordinate_real_mean,
+                coordinate_real_error,
                 coordinate_real_plot,
                 "qPDF Coordinate Space (Real)",
                 r"$\lambda$",
                 "Re qPDF",
-                fit_x=representative_lambda,
-                fit_y=np.asarray(gv.mean(extrapolated_real_avg), dtype=float),
-                fit_error=np.asarray(gv.sdev(extrapolated_real_avg), dtype=float),
+                fit_x=real_tail_x,
+                fit_y=real_tail_y,
+                fit_error=real_tail_error,
                 data_label="Data",
                 fit_label="Extrapolated band",
+                xlim=coordinate_xlim,
+                vertical_markers=real_markers,
             )
             save_uncertainty_plot(
                 lambda_axis,
-                np.asarray(family["imag_mean"], dtype=float),
-                np.asarray(family["imag_error"], dtype=float),
+                coordinate_imag_mean,
+                coordinate_imag_error,
                 coordinate_imag_plot,
                 "qPDF Coordinate Space (Imag)",
                 r"$\lambda$",
                 "Im qPDF",
-                fit_x=representative_lambda,
-                fit_y=np.asarray(gv.mean(extrapolated_imag_avg), dtype=float),
-                fit_error=np.asarray(gv.sdev(extrapolated_imag_avg), dtype=float),
+                fit_x=imag_tail_x,
+                fit_y=imag_tail_y,
+                fit_error=imag_tail_error,
                 data_label="Data",
                 fit_label="Extrapolated band",
+                xlim=coordinate_xlim,
+                vertical_markers=imag_markers,
             )
-            save_uncertainty_plot(
-                x_grid,
-                np.asarray(gv.mean(ft_real_avg), dtype=float),
-                np.asarray(gv.sdev(ft_real_avg), dtype=float),
+            save_series_collection_plot(
+                [
+                    {
+                        "x": x_grid,
+                        "y": np.asarray(gv.mean(ft_real_avg), dtype=float),
+                        "error": np.asarray(gv.sdev(ft_real_avg), dtype=float),
+                        "label": "Sample average",
+                        "style": "fill_between",
+                    }
+                ],
                 ft_real_plot,
                 "qPDF Fourier Transform (Real)",
-                "x",
+                r"$x$",
                 "Re qPDF(x)",
-                data_label="FT result",
             )
-            save_uncertainty_plot(
-                x_grid,
-                np.asarray(gv.mean(ft_imag_avg), dtype=float),
-                np.asarray(gv.sdev(ft_imag_avg), dtype=float),
+            save_series_collection_plot(
+                [
+                    {
+                        "x": x_grid,
+                        "y": np.asarray(gv.mean(ft_imag_avg), dtype=float),
+                        "error": np.asarray(gv.sdev(ft_imag_avg), dtype=float),
+                        "label": "Sample average",
+                        "style": "fill_between",
+                    }
+                ],
                 ft_imag_plot,
                 "qPDF Fourier Transform (Imag)",
-                "x",
+                r"$x$",
                 "Im qPDF(x)",
-                data_label="FT result",
             )
             artifacts.extend(
                 [

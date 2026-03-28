@@ -64,6 +64,11 @@ Run the default qPDF-FT toy demo:
 lamet-agent run examples/demo_manifest.json
 ```
 
+When you run a manifest, the terminal now prints the current stage name and
+description. Stages that report internal progress, such as multi-dataset
+correlator analysis or sample-wise Fourier extrapolation, also show their own
+`tqdm` progress bars.
+
 Run the two-point correlator analysis demo:
 
 ```bash
