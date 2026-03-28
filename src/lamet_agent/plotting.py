@@ -52,6 +52,8 @@ def save_line_plot(
     title: str,
     x_label: str,
     y_label: str,
+    *,
+    yscale: str = "linear",
 ) -> None:
     """Save a line plot in one of the supported formats."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +73,7 @@ def save_line_plot(
     axis.set_title(title, **AXIS_FONT)
     axis.set_xlabel(_resolve_label(x_label), **AXIS_FONT)
     axis.set_ylabel(_resolve_label(y_label), **AXIS_FONT)
+    axis.set_yscale(yscale)
     _save_figure(figure, path)
 
 
@@ -126,9 +129,12 @@ def save_uncertainty_plot(
     *,
     fit_x: np.ndarray | None = None,
     fit_y: np.ndarray | None = None,
-    errorbar_threshold: int = 24,
+    fit_error: np.ndarray | None = None,
+    yscale: str = "linear",
+    data_label: str | None = None,
+    fit_label: str | None = None,
 ) -> None:
-    """Save a plot using preset styling and a density-aware uncertainty rendering."""
+    """Save a plot with data as error bars and optional fit bands."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if plt is None:
         raise OptionalDependencyError(
@@ -146,42 +152,46 @@ def save_uncertainty_plot(
     figure, axis = default_plot()
     color = COLOR_CYCLE[0]
     has_uncertainty = np.any(error_array > 0)
-    use_errorbar = has_uncertainty and len(x_array) <= errorbar_threshold
 
-    if use_errorbar:
+    if has_uncertainty:
         axis.errorbar(
             x_array,
             y_array,
             yerr=error_array,
             color=color,
+            label=data_label,
             **ERRORBAR_CIRCLE_STYLE,
         )
-    elif has_uncertainty:
-        axis.plot(x_array, y_array, color=color, linewidth=PLOT_STYLE["line_width"])
-        axis.fill_between(
-            x_array,
-            y_array - error_array,
-            y_array + error_array,
-            color=color,
-            alpha=0.25,
-        )
     else:
-        axis.plot(x_array, y_array, color=color, linewidth=PLOT_STYLE["line_width"])
+        axis.plot(
+            x_array,
+            y_array,
+            color=color,
+            linewidth=PLOT_STYLE["line_width"],
+            label=data_label,
+        )
 
-    if fit_x is not None and fit_y is not None:
+    if fit_x is not None and fit_y is not None and fit_error is not None:
         fit_x_array = np.asarray(fit_x, dtype=float)
         fit_y_array = np.asarray(fit_y, dtype=float)
-        fit_mask = np.isfinite(fit_x_array) & np.isfinite(fit_y_array)
-        axis.plot(
+        fit_error_array = np.asarray(fit_error, dtype=float)
+        fit_mask = np.isfinite(fit_x_array) & np.isfinite(fit_y_array) & np.isfinite(fit_error_array)
+        axis.fill_between(
             fit_x_array[fit_mask],
-            fit_y_array[fit_mask],
+            fit_y_array[fit_mask] - fit_error_array[fit_mask],
+            fit_y_array[fit_mask] + fit_error_array[fit_mask],
             color=COLOR_CYCLE[1],
-            linewidth=PLOT_STYLE["line_width"],
+            alpha=0.30,
+            label=fit_label,
         )
 
     axis.set_title(title, **AXIS_FONT)
     axis.set_xlabel(_resolve_label(x_label), **AXIS_FONT)
     axis.set_ylabel(_resolve_label(y_label), **AXIS_FONT)
+    axis.set_yscale(yscale)
+    handles, labels = axis.get_legend_handles_labels()
+    if labels:
+        axis.legend()
     _save_figure(figure, path)
 
 

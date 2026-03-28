@@ -49,10 +49,14 @@ class TwoPointAnalysisTests(unittest.TestCase):
             stage_dir = run.run_directory / "stages" / "correlator_analysis"
             self.assertTrue((stage_dir / "correlator_analysis.pdf").exists())
             self.assertTrue((stage_dir / "effective_mass.pdf").exists())
+            self.assertTrue((stage_dir / "effective_mass_comparison.pdf").exists())
             self.assertTrue((stage_dir / "two_point_fit_summary.json").exists())
+            self.assertTrue((stage_dir / "two_point_fit_result.txt").exists())
+            self.assertTrue((stage_dir / "correlator_analysis_settings.json").exists())
             payload = run.stage_results[0].payload
             self.assertEqual(payload["resampling"]["configuration_count"], 314)
-            self.assertEqual(len(payload["effective_mass"]["axis"]), 62)
+            self.assertEqual(payload["resampling"]["method"], "bootstrap")
+            self.assertEqual(len(payload["effective_mass"]["axis"]), 63)
 
 
 if __name__ == "__main__":

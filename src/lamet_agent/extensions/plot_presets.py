@@ -88,7 +88,7 @@ COMMON_LABELS = {
     "tsep": r"${t_{\mathrm{sep}}~/~a}$",
     "z": r"${z~/~a}$",
     "lambda": r"$\lambda = z P^z$",
-    "meff": r"${m}_{\mathrm{eff}}~/~\mathrm{GeV}$",
+    "meff": r"$m_{\rm eff}$",
 }
 
 

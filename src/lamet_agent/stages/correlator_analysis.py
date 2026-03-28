@@ -9,6 +9,7 @@ import numpy as np
 
 from lamet_agent.artifacts import ArtifactRecord, StageResult
 from lamet_agent.errors import OptionalDependencyError
+from lamet_agent.extensions.statistics import gv
 from lamet_agent.extensions.two_point import (
     effective_mass_from_correlator,
     fit_two_point_correlator,
@@ -55,11 +56,14 @@ class CorrelatorAnalysisStage:
             method=parameters["effective_mass_method"],
             boundary=parameters["boundary"],
         )
-        fit_summary = self._fit_two_point(
+        fit_summary, fit_result = self._fit_two_point(
             resampled=resampled,
             parameters=parameters,
             temporal_extent=parameters["temporal_extent"],
         )
+        fit_curve = self._build_fit_curve(dataset.axis, fit_result, parameters)
+        fit_effective_mass = self._build_fit_effective_mass(fit_curve, fit_result, parameters)
+        analysis_settings = self._build_analysis_settings(parameters)
 
         payload = {
             "axis": np.asarray(dataset.axis, dtype=float),
@@ -88,7 +92,10 @@ class CorrelatorAnalysisStage:
             spread=spread,
             effective_mass=effective_mass,
             fit_summary=fit_summary,
-            fit_curve=self._build_fit_curve(dataset.axis, fit_summary, parameters),
+            fit_curve=fit_curve,
+            fit_effective_mass=fit_effective_mass,
+            fit_result_text=None if fit_result is None else fit_result.format(100),
+            analysis_settings=analysis_settings,
         )
         summary = self._build_summary(dataset.label, resampled, fit_summary)
         return StageResult(stage_name=self.name, summary=summary, payload=payload, artifacts=artifacts)
@@ -141,22 +148,22 @@ class CorrelatorAnalysisStage:
         resampled,
         parameters: dict[str, Any],
         temporal_extent: int,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], Any | None]:
         if resampled is None or resampled.average is None:
             return {
                 "performed": False,
                 "reason": "Fit skipped because no resampled ensemble average is available.",
-            }
+            }, None
         if not parameters["fit_enabled"]:
             return {
                 "performed": False,
                 "reason": "Fit disabled by stage parameters.",
-            }
+            }, None
         if temporal_extent <= 0:
             return {
                 "performed": False,
                 "reason": "Fit skipped because the temporal lattice extent is not known.",
-            }
+            }, None
         try:
             fit_result = fit_two_point_correlator(
                 resampled.average,
@@ -172,7 +179,7 @@ class CorrelatorAnalysisStage:
             return {
                 "performed": False,
                 "reason": str(exc),
-            }
+            }, None
 
         summary = summarize_two_point_fit(fit_result, state_count=parameters["state_count"])
         summary.update(
@@ -183,32 +190,96 @@ class CorrelatorAnalysisStage:
                 "boundary": parameters["boundary"],
                 "normalize": bool(parameters["normalize"]),
                 "quality": "good" if fit_result.Q >= 0.05 else "poor",
+                "resampling_method": parameters["resampling_method"],
             }
         )
-        return summary
+        return summary, fit_result
 
     def _build_fit_curve(
         self,
         axis: np.ndarray,
-        fit_summary: dict[str, Any],
+        fit_result,
         parameters: dict[str, Any],
     ) -> dict[str, np.ndarray] | None:
-        if not fit_summary.get("performed"):
+        if fit_result is None:
             return None
-        fit_parameters = {
-            key: value["mean"]
-            for key, value in fit_summary.get("parameters", {}).items()
-        }
         fit_values = two_point_fit_function(
             axis,
-            fit_parameters,
+            fit_result.p,
             temporal_extent=parameters["temporal_extent"],
             state_count=parameters["state_count"],
             boundary=parameters["boundary"],
         )
+        fit_mean = np.asarray(gv.mean(fit_values), dtype=float) if gv is not None else np.asarray(fit_values, dtype=float)
+        fit_error = np.asarray(gv.sdev(fit_values), dtype=float) if gv is not None else np.zeros_like(fit_mean)
         return {
             "axis": np.asarray(axis, dtype=float),
-            "fit_value": np.asarray(fit_values, dtype=float),
+            "fit_value": fit_mean,
+            "fit_error": fit_error,
+        }
+
+    def _build_fit_effective_mass(
+        self,
+        fit_curve: dict[str, np.ndarray] | None,
+        fit_result,
+        parameters: dict[str, Any],
+    ) -> dict[str, np.ndarray] | None:
+        if fit_curve is None or fit_result is None or gv is None:
+            return None
+        parameter_keys = list(fit_result.p.keys())
+        parameter_values = [fit_result.p[key] for key in parameter_keys]
+        mean = np.asarray([gv.mean(value) for value in parameter_values], dtype=float)
+        covariance = np.asarray(gv.evalcov(parameter_values), dtype=float)
+        rng = np.random.default_rng(1984)
+        sampled_parameters = rng.multivariate_normal(mean, covariance, size=200)
+
+        meff_samples: list[np.ndarray] = []
+        meff_axis: np.ndarray | None = None
+        for sample in sampled_parameters:
+            parameter_sample = {key: value for key, value in zip(parameter_keys, sample, strict=True)}
+            curve_sample = np.asarray(
+                two_point_fit_function(
+                    fit_curve["axis"],
+                    parameter_sample,
+                    temporal_extent=parameters["temporal_extent"],
+                    state_count=parameters["state_count"],
+                    boundary=parameters["boundary"],
+                ),
+                dtype=float,
+            )
+            meff_sample = effective_mass_from_correlator(
+                curve_sample,
+                method=parameters["effective_mass_method"],
+                boundary=parameters["boundary"],
+            )
+            meff_axis = meff_sample.times
+            meff_samples.append(meff_sample.mean)
+
+        if not meff_samples or meff_axis is None:
+            return None
+        meff_samples_array = np.asarray(meff_samples, dtype=float)
+        return {
+            "axis": meff_axis,
+            "fit_value": np.mean(meff_samples_array, axis=0),
+            "fit_error": np.std(meff_samples_array, axis=0, ddof=1),
+        }
+
+    def _build_analysis_settings(self, parameters: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "resampling_method": parameters["resampling_method"],
+            "bootstrap_samples": parameters["bootstrap_samples"],
+            "bootstrap_sample_size": parameters["bootstrap_sample_size"],
+            "bin_size": parameters["bin_size"],
+            "seed": parameters["seed"],
+            "boundary": parameters["boundary"],
+            "effective_mass_method": parameters["effective_mass_method"],
+            "fit_enabled": parameters["fit_enabled"],
+            "state_count": parameters["state_count"],
+            "tmin": parameters["tmin"],
+            "tmax": parameters["tmax"],
+            "normalize": parameters["normalize"],
+            "temporal_extent": parameters["temporal_extent"],
+            "fit_band_sample_count": 200,
         }
 
     def _write_artifacts(
@@ -222,6 +293,9 @@ class CorrelatorAnalysisStage:
         effective_mass,
         fit_summary: dict[str, Any],
         fit_curve: dict[str, np.ndarray] | None,
+        fit_effective_mass: dict[str, np.ndarray] | None,
+        fit_result_text: str | None,
+        analysis_settings: dict[str, Any],
     ) -> list[ArtifactRecord]:
         artifacts: list[ArtifactRecord] = []
         for data_path in write_columnar_data(
@@ -277,9 +351,32 @@ class CorrelatorAnalysisStage:
                 format="json",
             )
         )
+        write_json(stage_dir / "correlator_analysis_settings.json", analysis_settings)
+        artifacts.append(
+            ArtifactRecord(
+                name="correlator_analysis_settings_json",
+                kind="report",
+                path=stage_dir / "correlator_analysis_settings.json",
+                description="Analysis settings including resampling, effective-mass, and fit options.",
+                format="json",
+            )
+        )
+        if fit_result_text is not None:
+            fit_result_path = stage_dir / "two_point_fit_result.txt"
+            fit_result_path.write_text(fit_result_text + "\n", encoding="utf-8")
+            artifacts.append(
+                ArtifactRecord(
+                    name="two_point_fit_result_txt",
+                    kind="report",
+                    path=fit_result_path,
+                    description="Verbatim lsqfit nonlinear_fit summary produced by fit_result.format(100).",
+                    format="txt",
+                )
+            )
         for plot_format in context.manifest.outputs.plot_formats:
             correlator_plot = stage_dir / f"correlator_analysis.{plot_format}"
             effective_mass_plot = stage_dir / f"effective_mass.{plot_format}"
+            effective_mass_comparison_plot = stage_dir / f"effective_mass_comparison.{plot_format}"
             if np.any(spread > 0):
                 save_uncertainty_plot(
                     axis,
@@ -291,6 +388,10 @@ class CorrelatorAnalysisStage:
                     "C2pt",
                     fit_x=None if fit_curve is None else fit_curve["axis"],
                     fit_y=None if fit_curve is None else fit_curve["fit_value"],
+                    fit_error=None if fit_curve is None else fit_curve["fit_error"],
+                    yscale="log",
+                    data_label=f"{analysis_settings['resampling_method']} average",
+                    fit_label="Fit band",
                 )
                 save_uncertainty_plot(
                     effective_mass.times,
@@ -299,17 +400,41 @@ class CorrelatorAnalysisStage:
                     effective_mass_plot,
                     "Effective Mass",
                     "tsep",
-                    "m_eff",
+                    "meff",
+                    data_label=f"{analysis_settings['resampling_method']} average",
                 )
             else:
-                save_line_plot(axis, values, correlator_plot, "Two-Point Correlator", "t", "C2pt")
+                save_line_plot(
+                    axis,
+                    values,
+                    correlator_plot,
+                    "Two-Point Correlator",
+                    "tsep",
+                    "C2pt",
+                    yscale="log",
+                )
                 save_line_plot(
                     effective_mass.times,
                     effective_mass.mean,
                     effective_mass_plot,
                     "Effective Mass",
                     "tsep",
-                    "m_eff",
+                    "meff",
+                )
+            if fit_effective_mass is not None:
+                save_uncertainty_plot(
+                    effective_mass.times,
+                    effective_mass.mean,
+                    effective_mass.error,
+                    effective_mass_comparison_plot,
+                    "Effective Mass Comparison",
+                    "tsep",
+                    "meff",
+                    fit_x=fit_effective_mass["axis"],
+                    fit_y=fit_effective_mass["fit_value"],
+                    fit_error=fit_effective_mass["fit_error"],
+                    data_label=f"{analysis_settings['resampling_method']} average",
+                    fit_label="Fit band",
                 )
             artifacts.append(
                 ArtifactRecord(
@@ -329,6 +454,16 @@ class CorrelatorAnalysisStage:
                     format=plot_format,
                 )
             )
+            if fit_effective_mass is not None:
+                artifacts.append(
+                    ArtifactRecord(
+                        name=f"effective_mass_comparison_plot_{plot_format}",
+                        kind="plot",
+                        path=effective_mass_comparison_plot,
+                        description="Comparison of the resampled effective mass and the fit-derived effective mass.",
+                        format=plot_format,
+                    )
+                )
         return artifacts
 
     def _build_summary(self, label: str, resampled, fit_summary: dict[str, Any]) -> str:

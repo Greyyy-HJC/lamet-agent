@@ -13,8 +13,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Sequence
+import warnings
 
 import numpy as np
+from scipy.optimize import fsolve
 
 from lamet_agent.errors import OptionalDependencyError
 from lamet_agent.extensions.statistics import (
@@ -320,16 +322,18 @@ def _resolve_effective_mass_method(method: str | None, boundary: str) -> str:
     if method is not None:
         method_name = method.lower()
     elif boundary in {"periodic", "anti-periodic"}:
-        method_name = "cosh" if boundary == "periodic" else "sinh"
+        method_name = "solve"
     else:
         method_name = "log"
-    if method_name not in {"cosh", "sinh", "log"}:
-        raise ValueError("Effective-mass method must be one of 'cosh', 'sinh', or 'log'.")
+    if method_name not in {"cosh", "sinh", "log", "solve"}:
+        raise ValueError("Effective-mass method must be one of 'cosh', 'sinh', 'log', or 'solve'.")
     return method_name
 
 
 def _effective_mass_array(values: np.ndarray, *, method: str, boundary: str) -> np.ndarray:
     samples = np.asarray(values, dtype=float)
+    if method == "solve":
+        return _solve_effective_mass(samples, boundary=boundary)
     if len(samples) < 3 and method in {"cosh", "sinh"}:
         raise ValueError("At least three time slices are required for cosh/sinh effective masses.")
     if len(samples) < 2 and method == "log":
@@ -345,6 +349,45 @@ def _effective_mass_array(values: np.ndarray, *, method: str, boundary: str) -> 
         else:
             result = np.log(samples[:-1] / samples[1:])
     result = np.asarray(result, dtype=float)
+    result[~np.isfinite(result)] = np.nan
+    return result
+
+
+def _solve_effective_mass(values: np.ndarray, *, boundary: str) -> np.ndarray:
+    samples = np.asarray(values, dtype=float)
+    if len(samples) < 2:
+        raise ValueError("At least two time slices are required for solve-based effective masses.")
+    if boundary not in {"periodic", "anti-periodic", "none"}:
+        raise ValueError(f"Unsupported boundary condition: {boundary}.")
+    if boundary == "none":
+        result = np.log(samples[:-1] / samples[1:])
+        result = np.asarray(result, dtype=float)
+        result[~np.isfinite(result)] = np.nan
+        return result
+
+    temporal_extent = len(samples)
+    output = []
+    for nt in range(len(samples) - 1):
+        c_t = float(samples[nt])
+        c_t1 = float(samples[nt + 1])
+
+        def equation(mass_value: float) -> float:
+            if boundary == "periodic":
+                return c_t * np.cosh(mass_value * (nt + 1 - temporal_extent / 2.0)) - c_t1 * np.cosh(
+                    mass_value * (nt - temporal_extent / 2.0)
+                )
+            return c_t * np.sinh(mass_value * (nt + 1 - temporal_extent / 2.0)) - c_t1 * np.sinh(
+                mass_value * (nt - temporal_extent / 2.0)
+            )
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                solution = float(fsolve(equation, 1.0, full_output=False)[0])
+        except Exception:
+            solution = np.nan
+        output.append(solution)
+    result = np.asarray(output, dtype=float)
     result[~np.isfinite(result)] = np.nan
     return result
 

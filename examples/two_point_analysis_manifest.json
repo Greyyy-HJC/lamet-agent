@@ -29,18 +29,19 @@
         "two_point": {
           "boundary": "periodic",
           "resampling": {
-            "method": "jackknife",
-            "bin_size": 1,
+            "method": "bootstrap",
+            "sample_count": 100,
+            "bin_size": 5,
             "seed": 1984
           },
           "effective_mass": {
-            "method": "cosh"
+            "method": "solve"
           },
           "fit": {
             "enabled": true,
             "state_count": 2,
-            "tmin": 4,
-            "tmax": 20,
+            "tmin": 8,
+            "tmax": 30,
             "normalize": true
           }
         }
