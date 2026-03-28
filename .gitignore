@@ -7,5 +7,7 @@ dist/
 *.egg-info/
 .venv/
 examples/outputs/
+examples/data/bare_qpdf/*.txt
+incoming/
 outputs/
 .mypy_cache/

@@ -42,6 +42,7 @@ Run the demo manifests:
 ```bash
 MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/demo_manifest.json
 MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/two_point_analysis_manifest.json
+MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/bare_qpdf_manifest.json
 ```
 
 If you are working from the repository without the installed console script:
@@ -61,7 +62,8 @@ python scripts/run_manifest.py run examples/demo_manifest.json
 - `src/lamet_agent/plotting.py`: shared export helpers
 - `examples/`: demo manifests and sample data
 - `tests/`: unit and end-to-end smoke tests
-- `incoming/analysis_steps/`: temporary intake area for legacy or draft code
+- `incoming/analysis_steps/`: local-only intake area for legacy or draft code;
+  ignored by git and not meant for synchronization
 
 ## Workflow Notes
 
@@ -74,6 +76,13 @@ The default rule-based pipeline is:
 5. `physical_limit`
 
 Custom workflows can override the stage list in the manifest.
+
+For three-point analysis, manifests can now:
+
+- expand one correlator entry into many datasets via `correlators[].expand`
+- configure independent `ratio` and `fh` fit windows
+- override `fit_tsep` and `tau_cut` separately for `real` and `imag`
+- control sample-wise multiprocessing with `three_point.sample_fit_workers`
 
 ## Plotting Rules
 
@@ -102,14 +111,16 @@ Typical run output contains:
 
 ## Code Migration
 
-Draft or legacy analysis code should land in `incoming/analysis_steps/` first.
-After review and cleanup, reusable logic should move into `src/lamet_agent/`.
+Draft or legacy analysis code may live in local `incoming/analysis_steps/`
+while developing. After review and cleanup, reusable logic should move into
+`src/lamet_agent/`.
 
 Current stable extension modules include:
 
 - `lamet_agent.extensions.statistics`
 - `lamet_agent.extensions.plot_presets`
 - `lamet_agent.extensions.two_point`
+- `lamet_agent.extensions.three_point`
 
 Keep scripts thin. Reusable logic belongs in the package.
 

@@ -15,7 +15,7 @@ from lamet_agent.errors import ManifestValidationError
 from lamet_agent.schemas import Manifest, load_manifest
 
 
-def build_manifest_dict(data_path: str = "data.csv") -> dict:
+def build_manifest_dict(data_path: str = "data.csv", file_format: str = "csv") -> dict:
     """Return a minimal valid manifest dictionary."""
     return {
         "goal": "parton_distribution_function",
@@ -23,7 +23,7 @@ def build_manifest_dict(data_path: str = "data.csv") -> dict:
             {
                 "kind": "two_point",
                 "path": data_path,
-                "file_format": "csv",
+                "file_format": file_format,
                 "label": "demo",
             }
         ],
@@ -45,6 +45,20 @@ class ManifestTests(unittest.TestCase):
         manifest = Manifest.from_dict(build_manifest_dict())
         self.assertEqual(manifest.goal, "parton_distribution_function")
         self.assertEqual(manifest.outputs.plot_formats, ["pdf"])
+
+    def test_manifest_from_dict_accepts_txt_correlators(self) -> None:
+        manifest = Manifest.from_dict(build_manifest_dict(data_path="data.txt", file_format="txt"))
+        self.assertEqual(manifest.correlators[0].file_format, "txt")
+
+    def test_manifest_expands_correlator_families(self) -> None:
+        payload = build_manifest_dict(data_path="data_{z:02d}.txt", file_format="txt")
+        payload["correlators"][0]["label"] = "toy_z{z:02d}"
+        payload["correlators"][0]["metadata"] = {"channel": "gamma_t"}
+        payload["correlators"][0]["expand"] = {"z": {"start": 0, "stop": 2}}
+        manifest = Manifest.from_dict(payload)
+        self.assertEqual([item.label for item in manifest.correlators], ["toy_z00", "toy_z01", "toy_z02"])
+        self.assertEqual([item.path for item in manifest.correlators], ["data_00.txt", "data_01.txt", "data_02.txt"])
+        self.assertEqual([item.metadata["z"] for item in manifest.correlators], [0, 1, 2])
 
     def test_custom_goal_requires_explicit_stages(self) -> None:
         payload = build_manifest_dict()

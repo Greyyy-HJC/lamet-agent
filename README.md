@@ -70,6 +70,12 @@ Run the two-point correlator analysis demo:
 lamet-agent run examples/two_point_analysis_manifest.json
 ```
 
+Run the bare-qPDF correlator analysis example:
+
+```bash
+lamet-agent run examples/bare_qpdf_manifest.json
+```
+
 If you are running from the repository without installing the console script,
 use:
 
@@ -105,6 +111,39 @@ input. The current implementation does:
 Each run creates a timestamped output directory under:
 
 - [examples/outputs/two_point_demo](/home/jinchen/git/anl/lamet-agent/examples/outputs/two_point_demo)
+
+## Bare qPDF Example
+
+The bare-qPDF example manifest is:
+
+- [examples/bare_qpdf_manifest.json](/home/jinchen/git/anl/lamet-agent/examples/bare_qpdf_manifest.json)
+
+The packaged raw data live under:
+
+- [examples/data/bare_qpdf](/home/jinchen/git/anl/lamet-agent/examples/data/bare_qpdf)
+
+Run it with:
+
+```bash
+MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/bare_qpdf_manifest.json
+```
+
+This custom workflow runs `correlator_analysis` on one raw two-point dataset
+and a family of raw three-point datasets for the packaged `p=(4,4,0)` bare-qPDF
+example, then writes:
+
+- ratio and FH data plots
+- data+fit comparison plots
+- `lsqfit` text summaries
+- a final bare-qPDF versus `z` plot
+
+The bundled `bare_qpdf` manifest also demonstrates two features intended for
+real analyses:
+
+- correlator-family expansion through `correlators[].expand`, so one manifest
+  entry can generate many `three_point` inputs across `b` and `z`
+- independent three-point fit windows for `ratio` and `fh`, with optional
+  `real` and `imag` part overrides
 
 ## Output Layout
 
@@ -144,7 +183,20 @@ A workflow manifest is a JSON file with these top-level fields:
 - `workflow`: optional stage list and per-stage parameters
 - `outputs`: output directory and requested plot/data formats
 
+Supported correlator `file_format` values are currently `csv`, `npz`, and
+`txt`.
+
+Correlator entries may also define an optional `expand` object. This expands
+one manifest entry into a family of correlators by formatting `path`, `label`,
+and `metadata` fields with values such as `z`, `b`, or momentum components.
+
 For `goal = "custom"`, you must provide `workflow.stages`.
+
+For three-point correlator analysis, the stage parameters support:
+
+- shared `ratio` and `fh` fit-window settings
+- part-specific `real` / `imag` overrides for `fit_tsep` and `tau_cut`
+- explicit `sample_fit_workers` for sample-wise parallel fitting
 
 ## Kernel Contract
 
@@ -162,7 +214,9 @@ It should return an array with the same shape as `values`.
 - `src/lamet_agent/`: package code
 - `examples/`: example manifests and demo data
 - `tests/`: unit and smoke tests
-- `incoming/analysis_steps/`: draft analysis code before integration
+- `incoming/analysis_steps/`: local draft analysis code during development;
+  this directory is intentionally ignored by git and not part of the shared
+  repository history
 
 For repository internals, local development workflow, testing, and code
 organization notes, see
@@ -175,6 +229,7 @@ Reusable helpers currently exposed from `lamet_agent.extensions` include:
 - `lamet_agent.extensions.statistics`
 - `lamet_agent.extensions.plot_presets`
 - `lamet_agent.extensions.two_point`
+- `lamet_agent.extensions.three_point`
 
 These modules are the stable place for reusable analysis logic. Keep raw drafts
 under `incoming/analysis_steps/` until they are cleaned up and integrated.

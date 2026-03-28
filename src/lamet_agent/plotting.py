@@ -195,6 +195,54 @@ def save_uncertainty_plot(
     _save_figure(figure, path)
 
 
+def save_series_collection_plot(
+    series: list[dict[str, object]],
+    path: Path,
+    title: str,
+    x_label: str,
+    y_label: str,
+    *,
+    yscale: str = "linear",
+) -> None:
+    """Save a plot with multiple error-bar and/or fill-between series."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if plt is None:
+        raise OptionalDependencyError(
+            f"Plot format {path.suffix.lower()} requires matplotlib, which is not installed in the current environment."
+        )
+
+    figure, axis = default_plot()
+    for index, item in enumerate(series):
+        style = str(item.get("style", "errorbar"))
+        color = str(item.get("color", COLOR_CYCLE[index % len(COLOR_CYCLE)]))
+        label = item.get("label")
+        x_values = np.asarray(item["x"], dtype=float)
+        y_values = np.asarray(item["y"], dtype=float)
+        errors = np.asarray(item.get("error", np.zeros_like(y_values)), dtype=float)
+        finite_mask = np.isfinite(x_values) & np.isfinite(y_values) & np.isfinite(errors)
+        x_values = x_values[finite_mask]
+        y_values = y_values[finite_mask]
+        errors = errors[finite_mask]
+
+        if style == "errorbar":
+            axis.errorbar(x_values, y_values, yerr=errors, color=color, label=label, **ERRORBAR_CIRCLE_STYLE)
+        elif style == "fill_between":
+            axis.fill_between(x_values, y_values - errors, y_values + errors, color=color, alpha=0.30, label=label)
+        elif style == "line":
+            axis.plot(x_values, y_values, color=color, linewidth=PLOT_STYLE["line_width"], label=label)
+        else:
+            raise ValueError(f"Unsupported series style: {style}")
+
+    axis.set_title(title, **AXIS_FONT)
+    axis.set_xlabel(_resolve_label(x_label), **AXIS_FONT)
+    axis.set_ylabel(_resolve_label(y_label), **AXIS_FONT)
+    axis.set_yscale(yscale)
+    handles, labels = axis.get_legend_handles_labels()
+    if labels:
+        axis.legend()
+    _save_figure(figure, path)
+
+
 def build_svg_line_plot(
     x_values: np.ndarray,
     y_values: np.ndarray,

@@ -13,6 +13,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from lamet_agent.extensions.statistics import gv
+from lamet_agent.extensions.two_point import fit_two_point_correlator, two_point_fit_function
 from lamet_agent.loaders import load_correlator_dataset
 from lamet_agent.planners import RuleBasedPlanner
 from lamet_agent.schemas import CorrelatorSpec
@@ -57,6 +59,30 @@ class TwoPointAnalysisTests(unittest.TestCase):
             self.assertEqual(payload["resampling"]["configuration_count"], 314)
             self.assertEqual(payload["resampling"]["method"], "bootstrap")
             self.assertEqual(len(payload["effective_mass"]["axis"]), 63)
+
+    def test_fit_handles_small_magnitude_normalized_correlator(self) -> None:
+        if gv is None:
+            self.skipTest("gvar is not installed")
+
+        times = np.arange(64, dtype=float)
+        truth = {"E0": 0.82, "log(dE1)": np.log(0.48), "z0": 0.18, "z1": 0.46}
+        scale = 1.0e-33
+        mean = scale * np.asarray(
+            two_point_fit_function(times, truth, temporal_extent=64, state_count=2, boundary="periodic"),
+            dtype=float,
+        )
+        averaged = gv.gvar(mean, 0.01 * np.abs(mean))
+        fit = fit_two_point_correlator(
+            averaged,
+            temporal_extent=64,
+            tmin=4,
+            tmax=13,
+            state_count=2,
+            boundary="periodic",
+            normalize=True,
+        )
+        self.assertGreater(fit.Q, 0.05)
+        self.assertAlmostEqual(float(gv.mean(fit.p["E0"])), truth["E0"], delta=0.1)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import product
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,9 +22,65 @@ SUPPORTED_CORRELATOR_KINDS = {
     "four_point",
     "custom",
 }
-SUPPORTED_DATA_FORMATS = {"csv", "npz"}
+SUPPORTED_DATA_FORMATS = {"csv", "npz", "txt"}
 SUPPORTED_PLOT_FORMATS = {"png", "svg", "pdf"}
 SUPPORTED_EXPORT_FORMATS = {"csv", "npz", "json"}
+
+
+def _normalize_expansion_values(name: str, raw_values: Any) -> list[Any]:
+    if isinstance(raw_values, list):
+        return raw_values
+    if isinstance(raw_values, dict):
+        if "values" in raw_values:
+            values = raw_values["values"]
+            if not isinstance(values, list):
+                raise ManifestValidationError(f"Correlator expand.{name}['values'] must be a list.")
+            return values
+        if "start" in raw_values and "stop" in raw_values:
+            start = int(raw_values["start"])
+            stop = int(raw_values["stop"])
+            step = int(raw_values.get("step", 1))
+            if step == 0:
+                raise ManifestValidationError(f"Correlator expand.{name}.step must be non-zero.")
+            inclusive = bool(raw_values.get("inclusive", True))
+            stop_value = stop + (1 if inclusive and step > 0 else -1 if inclusive else 0)
+            return list(range(start, stop_value, step))
+    raise ManifestValidationError(
+        f"Correlator expand.{name} must be a list or a range-like object with start/stop[/step]."
+    )
+
+
+def _format_with_mapping(value: Any, mapping: dict[str, Any]) -> Any:
+    if isinstance(value, str):
+        try:
+            return value.format(**mapping)
+        except KeyError:
+            return value
+    return value
+
+
+def _expand_correlator_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    expand = entry.get("expand")
+    if not expand:
+        return [entry]
+    if not isinstance(expand, dict) or not expand:
+        raise ManifestValidationError("Correlator 'expand' must be a non-empty object.")
+
+    keys = list(expand)
+    value_lists = [_normalize_expansion_values(name, expand[name]) for name in keys]
+    expanded_entries: list[dict[str, Any]] = []
+    for values in product(*value_lists):
+        mapping = {key: value for key, value in zip(keys, values, strict=True)}
+        expanded = {key: value for key, value in entry.items() if key != "expand"}
+        for field in ("path", "label"):
+            if field in expanded:
+                expanded[field] = _format_with_mapping(expanded[field], mapping)
+        metadata = {key: _format_with_mapping(value, mapping) for key, value in dict(expanded.get("metadata", {})).items()}
+        for key, value in mapping.items():
+            metadata.setdefault(key, value)
+        expanded["metadata"] = metadata
+        expanded_entries.append(expanded)
+    return expanded_entries
 
 
 @dataclass(slots=True)
@@ -149,7 +206,10 @@ class Manifest:
             raise ManifestValidationError(
                 f"Unsupported goal: {goal!r}. Expected one of {sorted(SUPPORTED_GOALS)}."
             )
-        correlators = [CorrelatorSpec.from_dict(item) for item in data.get("correlators", [])]
+        raw_correlators: list[dict[str, Any]] = []
+        for item in data.get("correlators", []):
+            raw_correlators.extend(_expand_correlator_entry(dict(item)))
+        correlators = [CorrelatorSpec.from_dict(item) for item in raw_correlators]
         if not correlators:
             raise ManifestValidationError("Manifest must define at least one correlator input.")
         metadata = dict(data.get("metadata", {}))

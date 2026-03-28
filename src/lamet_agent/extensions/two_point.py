@@ -266,21 +266,17 @@ def fit_two_point_correlator(
     priors = build_two_point_priors(state_count=state_count, prior_overrides=prior_overrides)
     times = np.arange(tmin, tmax, dtype=float)
     fit_data = averaged_correlator[tmin:tmax]
-    normalization = 1.0
     if normalize:
         normalization = abs(float(gv.mean(averaged_correlator[0]))) or 1.0
         fit_data = fit_data / normalization
 
     def model(t_sep: np.ndarray, params):
-        return (
-            two_point_fit_function(
-                t_sep,
-                params,
-                temporal_extent=temporal_extent,
-                state_count=state_count,
-                boundary=boundary,
-            )
-            / normalization
+        return two_point_fit_function(
+            t_sep,
+            params,
+            temporal_extent=temporal_extent,
+            state_count=state_count,
+            boundary=boundary,
         )
 
     return lsqfit.nonlinear_fit(
