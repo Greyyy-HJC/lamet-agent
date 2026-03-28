@@ -1,9 +1,9 @@
 """Run a LaMET workflow manifest through the package CLI.
 
 Example usage:
-    python scripts/run_manifest.py validate examples/demo_manifest.json
-    python scripts/run_manifest.py workflow examples/demo_manifest.json
-    python scripts/run_manifest.py run examples/demo_manifest.json
+    python scripts/run_manifest.py validate examples/workflow_smoke_manifest.json
+    python scripts/run_manifest.py workflow examples/workflow_smoke_manifest.json
+    python scripts/run_manifest.py run examples/workflow_smoke_manifest.json
 """
 
 from __future__ import annotations

@@ -24,16 +24,19 @@ class RenormalizationStage:
     def run(self, context: StageContext) -> StageResult:
         stage_dir = ensure_directory(context.stage_directory(self.name))
         previous = context.stage_payloads["correlator_analysis"]
-        qpdf_families = previous.get("_qpdf_families")
-        if qpdf_families:
+        matrix_element_families = previous.get("_matrix_element_families")
+        if matrix_element_families:
+            gauge = str(context.manifest.analysis_metadata["gauge"])
+            if gauge == "gi":
+                raise NotImplementedError("GI renormalization is not implemented yet.")
             payload = {
                 "mode": "identity",
                 "renormalization_applied": False,
-                "qpdf_families": previous.get("qpdf_families", []),
-                "_qpdf_families": qpdf_families,
+                "renormalized_families": previous.get("matrix_element_families", []),
+                "_renormalized_families": matrix_element_families,
             }
-            artifacts = self._write_qpdf_artifacts(stage_dir, qpdf_families)
-            summary = "Skipped renormalization and passed the sample-wise bare qPDF families through unchanged."
+            artifacts = self._write_family_artifacts(stage_dir, matrix_element_families)
+            summary = "Skipped renormalization and passed the sample-wise coordinate-space families through unchanged."
             return StageResult(stage_name=self.name, summary=summary, payload=payload, artifacts=artifacts)
 
         axis = np.asarray(previous["axis"], dtype=float)
@@ -83,12 +86,12 @@ class RenormalizationStage:
             )
         return artifacts
 
-    def _write_qpdf_artifacts(self, stage_dir: Path, qpdf_families: list[dict[str, Any]]) -> list[ArtifactRecord]:
+    def _write_family_artifacts(self, stage_dir: Path, families: list[dict[str, Any]]) -> list[ArtifactRecord]:
         artifacts: list[ArtifactRecord] = []
         summary_payload = {
             "mode": "identity",
             "renormalization_applied": False,
-            "family_count": len(qpdf_families),
+            "family_count": len(families),
             "families": [
                 {
                     "metadata": dict(family["metadata"]),
@@ -104,17 +107,17 @@ class RenormalizationStage:
                     },
                     "sample_artifact": family.get("sample_artifact"),
                 }
-                for family in qpdf_families
+                for family in families
             ],
         }
-        summary_path = stage_dir / "renormalization_qpdf_summary.json"
+        summary_path = stage_dir / "renormalization_family_summary.json"
         write_json(summary_path, summary_payload)
         artifacts.append(
             ArtifactRecord(
-                name="renormalization_qpdf_summary_json",
+                name="renormalization_family_summary_json",
                 kind="report",
                 path=summary_path,
-                description="Identity pass-through summary for sample-wise qPDF families.",
+                description="Identity pass-through summary for sample-wise coordinate-space families.",
                 format="json",
             )
         )
