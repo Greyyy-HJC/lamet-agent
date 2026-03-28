@@ -25,6 +25,142 @@ SUPPORTED_CORRELATOR_KINDS = {
 SUPPORTED_DATA_FORMATS = {"csv", "npz", "txt"}
 SUPPORTED_PLOT_FORMATS = {"png", "svg", "pdf"}
 SUPPORTED_EXPORT_FORMATS = {"csv", "npz", "json"}
+SUPPORTED_PURPOSES = {"smoke", "physics"}
+SUPPORTED_GAUGES = {"cg", "gi"}
+SUPPORTED_HADRONS = {"pion", "proton"}
+SUPPORTED_ANALYSIS_CHANNELS = {"qpdf", "qda"}
+_SETUP_REQUIRED_KEYS = (
+    "lattice_action",
+    "n_f",
+    "lattice_spacing_fm",
+    "spatial_extent",
+    "temporal_extent",
+    "pion_mass_valence_gev",
+    "pion_mass_sea_gev",
+)
+
+
+def _format_nested(value: Any, mapping: dict[str, Any]) -> Any:
+    if isinstance(value, dict):
+        return {key: _format_nested(item, mapping) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_format_nested(item, mapping) for item in value]
+    return _format_with_mapping(value, mapping)
+
+
+def _require_mapping(value: Any, *, context: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ManifestValidationError(f"{context} must be an object.")
+    return dict(value)
+
+
+def _require_sequence_of_length(value: Any, *, context: str, length: int) -> list[Any]:
+    if not isinstance(value, list) or len(value) != length:
+        raise ManifestValidationError(f"{context} must be a list of length {length}.")
+    return list(value)
+
+
+def _validate_correlator_metadata(kind: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    setup_id = metadata.get("setup_id")
+    if not isinstance(setup_id, str) or not setup_id.strip():
+        raise ManifestValidationError("Correlator metadata must define a non-empty string 'setup_id'.")
+
+    momentum = _require_sequence_of_length(metadata.get("momentum"), context="Correlator metadata 'momentum'", length=3)
+    smearing = metadata.get("smearing")
+    if not isinstance(smearing, str) or not smearing.strip():
+        raise ManifestValidationError("Correlator metadata must define a non-empty string 'smearing'.")
+
+    normalized = dict(metadata)
+    normalized["setup_id"] = setup_id
+    normalized["momentum"] = [int(component) for component in momentum]
+    normalized["smearing"] = smearing
+
+    if kind == "three_point":
+        displacement = _require_mapping(metadata.get("displacement"), context="Three-point metadata 'displacement'")
+        operator = _require_mapping(metadata.get("operator"), context="Three-point metadata 'operator'")
+        for key in ("b", "z"):
+            if key not in displacement:
+                raise ManifestValidationError(f"Three-point metadata.displacement must define '{key}'.")
+        for key in ("gamma", "flavor"):
+            value = operator.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise ManifestValidationError(f"Three-point metadata.operator must define a non-empty string '{key}'.")
+        normalized["displacement"] = {
+            "b": int(displacement["b"]),
+            "z": int(displacement["z"]),
+        }
+        normalized["operator"] = {
+            "gamma": str(operator["gamma"]),
+            "flavor": str(operator["flavor"]),
+        }
+    return normalized
+
+
+def _validate_manifest_metadata(metadata: dict[str, Any], goal: str) -> dict[str, Any]:
+    purpose = str(metadata.get("purpose", "")).lower()
+    if purpose not in SUPPORTED_PURPOSES:
+        raise ManifestValidationError(
+            f"Manifest metadata.purpose must be one of {sorted(SUPPORTED_PURPOSES)}, got {purpose!r}."
+        )
+
+    analysis = _require_mapping(metadata.get("analysis"), context="Manifest metadata.analysis")
+    gauge = str(analysis.get("gauge", "")).lower()
+    hadron = str(analysis.get("hadron", "")).lower()
+    channel = str(analysis.get("channel", "")).lower()
+    if gauge not in SUPPORTED_GAUGES:
+        raise ManifestValidationError(
+            f"Manifest metadata.analysis.gauge must be one of {sorted(SUPPORTED_GAUGES)}, got {gauge!r}."
+        )
+    if hadron not in SUPPORTED_HADRONS:
+        raise ManifestValidationError(
+            f"Manifest metadata.analysis.hadron must be one of {sorted(SUPPORTED_HADRONS)}, got {hadron!r}."
+        )
+    if channel not in SUPPORTED_ANALYSIS_CHANNELS:
+        raise ManifestValidationError(
+            f"Manifest metadata.analysis.channel must be one of {sorted(SUPPORTED_ANALYSIS_CHANNELS)}, got {channel!r}."
+        )
+    if goal == "parton_distribution_function" and channel != "qpdf":
+        raise ManifestValidationError("goal='parton_distribution_function' requires metadata.analysis.channel='qpdf'.")
+    if goal == "distribution_amplitude" and channel != "qda":
+        raise ManifestValidationError("goal='distribution_amplitude' requires metadata.analysis.channel='qda'.")
+
+    conventions = metadata.get("conventions")
+    if not isinstance(conventions, str) or not conventions.strip():
+        raise ManifestValidationError("Manifest metadata must define a non-empty string 'conventions'.")
+
+    setups = _require_mapping(metadata.get("setups"), context="Manifest metadata.setups")
+    if not setups:
+        raise ManifestValidationError("Manifest metadata.setups must define at least one setup.")
+    normalized_setups: dict[str, dict[str, Any]] = {}
+    for setup_id, raw_setup in setups.items():
+        if not isinstance(setup_id, str) or not setup_id.strip():
+            raise ManifestValidationError("Manifest metadata.setups keys must be non-empty strings.")
+        setup = _require_mapping(raw_setup, context=f"Manifest metadata.setups[{setup_id!r}]")
+        missing = [key for key in _SETUP_REQUIRED_KEYS if key not in setup]
+        if missing:
+            raise ManifestValidationError(
+                f"Manifest metadata.setups[{setup_id!r}] is missing required key(s): {missing}."
+            )
+        normalized_setups[setup_id] = {
+            "lattice_action": str(setup["lattice_action"]),
+            "n_f": int(setup["n_f"]),
+            "lattice_spacing_fm": float(setup["lattice_spacing_fm"]),
+            "spatial_extent": int(setup["spatial_extent"]),
+            "temporal_extent": int(setup["temporal_extent"]),
+            "pion_mass_valence_gev": float(setup["pion_mass_valence_gev"]),
+            "pion_mass_sea_gev": float(setup["pion_mass_sea_gev"]),
+        }
+
+    normalized = dict(metadata)
+    normalized["purpose"] = purpose
+    normalized["analysis"] = {
+        "gauge": gauge,
+        "hadron": hadron,
+        "channel": channel,
+    }
+    normalized["conventions"] = conventions
+    normalized["setups"] = normalized_setups
+    return normalized
 
 
 def _normalize_expansion_values(name: str, raw_values: Any) -> list[Any]:
@@ -75,9 +211,7 @@ def _expand_correlator_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
         for field in ("path", "label"):
             if field in expanded:
                 expanded[field] = _format_with_mapping(expanded[field], mapping)
-        metadata = {key: _format_with_mapping(value, mapping) for key, value in dict(expanded.get("metadata", {})).items()}
-        for key, value in mapping.items():
-            metadata.setdefault(key, value)
+        metadata = _format_nested(dict(expanded.get("metadata", {})), mapping)
         expanded["metadata"] = metadata
         expanded_entries.append(expanded)
     return expanded_entries
@@ -109,12 +243,13 @@ class CorrelatorSpec:
             raise ManifestValidationError(
                 f"Unsupported correlator file_format: {file_format!r}. Expected one of {sorted(SUPPORTED_DATA_FORMATS)}."
             )
+        metadata = _validate_correlator_metadata(kind, dict(data.get("metadata", {})))
         return cls(
             kind=kind,
             path=path,
             file_format=file_format,
             label=str(data.get("label", kind)),
-            metadata=dict(data.get("metadata", {})),
+            metadata=metadata,
         )
 
 
@@ -212,15 +347,17 @@ class Manifest:
         correlators = [CorrelatorSpec.from_dict(item) for item in raw_correlators]
         if not correlators:
             raise ManifestValidationError("Manifest must define at least one correlator input.")
-        metadata = dict(data.get("metadata", {}))
-        for required_key in ("ensemble", "conventions"):
-            if required_key not in metadata:
-                raise ManifestValidationError(
-                    f"Manifest metadata must define '{required_key}' so workflow reports stay interpretable."
-                )
+        metadata = _validate_manifest_metadata(dict(data.get("metadata", {})), goal)
         kernel = KernelSpec.from_dict(data.get("kernel", {}))
         workflow = WorkflowSpec.from_dict(data.get("workflow", {}))
         outputs = OutputSpec.from_dict(data.get("outputs", {}))
+        known_setup_ids = set(metadata["setups"])
+        for correlator in correlators:
+            setup_id = str(correlator.metadata["setup_id"])
+            if setup_id not in known_setup_ids:
+                raise ManifestValidationError(
+                    f"Correlator {correlator.label!r} references unknown metadata.setup_id {setup_id!r}."
+                )
         if goal == "custom" and not workflow.stages:
             raise ManifestValidationError("Goal 'custom' requires workflow.stages to be explicitly provided.")
         return cls(
@@ -239,6 +376,25 @@ class Manifest:
         if self.manifest_path is None:
             return Path(self.outputs.directory).resolve()
         return resolve_manifest_relative_path(self.manifest_path, self.outputs.directory)
+
+    @property
+    def analysis_metadata(self) -> dict[str, Any]:
+        """Return the normalized analysis metadata block."""
+        return dict(self.metadata["analysis"])
+
+    def setup_metadata(self, setup_id: str) -> dict[str, Any]:
+        """Return normalized lattice-setup metadata for one setup id."""
+        try:
+            return dict(self.metadata["setups"][setup_id])
+        except KeyError as exc:
+            raise ManifestValidationError(f"Unknown setup_id {setup_id!r}.") from exc
+
+    def observable_name_for_b(self, b_value: int | float) -> str:
+        """Return the effective observable name after accounting for nonzero transverse separation."""
+        channel = str(self.analysis_metadata["channel"])
+        if channel == "qpdf":
+            return "qtmdpdf" if int(b_value) != 0 else "qpdf"
+        return "qtmdwf" if int(b_value) != 0 else "qda"
 
 
 def load_manifest(manifest_path: str | Path) -> Manifest:

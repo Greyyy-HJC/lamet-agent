@@ -13,7 +13,7 @@ examples/outputs/
 outputs/
 
 # Local-only real-data examples
-examples/data/bare_qpdf/*.txt
+examples/data/proton_cg_qpdf/*.txt
 
 # Local draft intake area
 incoming/

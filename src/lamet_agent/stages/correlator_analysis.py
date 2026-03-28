@@ -129,36 +129,38 @@ class CorrelatorAnalysisStage:
 
     def run(self, context: StageContext) -> StageResult:
         stage_dir = ensure_directory(context.stage_directory(self.name))
-        two_point_dataset = self._select_dataset(context, kind="two_point")
+        two_point_datasets = self._select_datasets(context, kind="two_point")
+        if not two_point_datasets:
+            raise ValueError("Correlator analysis requires at least one two-point correlator input.")
         three_point_datasets = self._select_datasets(context, kind="three_point")
         analyzable_three_point_datasets = [
             dataset
             for dataset in three_point_datasets
             if dataset.samples is not None and getattr(dataset.samples, "ndim", 0) == 3 and "tau" in dataset.extra_axes
         ]
-        parameters = self._resolve_stage_parameters(context, two_point_dataset.metadata)
-
-        two_point_result = self._analyze_two_point(two_point_dataset, parameters["two_point"])
-        artifacts = self._write_two_point_artifacts(
-            stage_dir=stage_dir,
-            context=context,
-            result=two_point_result,
-        )
-
-        payload: dict[str, Any] = {
-            "axis": np.asarray(two_point_result["axis"], dtype=float),
-            "values": np.asarray(two_point_result["values"], dtype=float),
-            "spread": np.asarray(two_point_result["spread"], dtype=float),
-            "input_label": two_point_dataset.label,
-            "resampling": two_point_result["payload_resampling"],
-            "bad_point_filter": two_point_result["bad_point_filter"],
-            "effective_mass": two_point_result["payload_effective_mass"],
-            "fit": two_point_result["fit_summary"],
+        two_point_by_group = {
+            self._group_key_from_metadata(dataset.metadata): dataset for dataset in two_point_datasets
         }
+        group_order = sorted(two_point_by_group)
+        artifacts: list[ArtifactRecord] = []
+        two_point_payloads: list[dict[str, Any]] = []
+        three_point_payloads: list[dict[str, Any]] = []
+        three_point_results: list[dict[str, Any]] = []
+        ignored_three_point_labels = [
+            dataset.label for dataset in three_point_datasets if dataset not in analyzable_three_point_datasets
+        ]
 
-        three_point_payloads = []
-        three_point_results = []
         if analyzable_three_point_datasets:
+            missing = [
+                dataset.label
+                for dataset in analyzable_three_point_datasets
+                if self._group_key_from_metadata(dataset.metadata) not in two_point_by_group
+            ]
+            if missing:
+                raise ValueError(
+                    "Three-point datasets must have a matching two-point dataset with the same "
+                    f"(setup_id, momentum, smearing). Missing matches for: {missing}."
+                )
             context.report_progress(
                 self.name,
                 "stage_progress_start",
@@ -166,8 +168,33 @@ class CorrelatorAnalysisStage:
                 total=len(analyzable_three_point_datasets),
                 unit="dataset",
             )
-            for dataset in sorted(analyzable_three_point_datasets, key=self._dataset_sort_key):
+        for group_key in group_order:
+            two_point_dataset = two_point_by_group[group_key]
+            setup_id = str(two_point_dataset.metadata["setup_id"])
+            setup_metadata = context.manifest.setup_metadata(setup_id)
+            parameters = self._resolve_stage_parameters(context, two_point_dataset.metadata, setup_metadata)
+            group_slug = self._group_slug(two_point_dataset.metadata)
+            two_point_stage_dir = stage_dir if len(group_order) == 1 else ensure_directory(stage_dir / group_slug)
+
+            two_point_result = self._analyze_two_point(two_point_dataset, parameters["two_point"])
+            two_point_result["group_metadata"] = self._group_metadata(context, two_point_dataset.metadata)
+            artifacts.extend(
+                self._write_two_point_artifacts(
+                    stage_dir=two_point_stage_dir,
+                    context=context,
+                    result=two_point_result,
+                )
+            )
+            two_point_payloads.append(self._serialize_two_point_result(two_point_dataset, two_point_result))
+
+            matching_three_point = [
+                dataset
+                for dataset in analyzable_three_point_datasets
+                if self._group_key_from_metadata(dataset.metadata) == group_key
+            ]
+            for dataset in sorted(matching_three_point, key=self._dataset_sort_key):
                 dataset_result = self._analyze_three_point_dataset(
+                    context=context,
                     dataset=dataset,
                     two_point_result=two_point_result,
                     parameters=parameters["three_point"],
@@ -176,50 +203,86 @@ class CorrelatorAnalysisStage:
                 three_point_payloads.append(dataset_result["payload"])
                 artifacts.extend(
                     self._write_three_point_artifacts(
-                        stage_dir=stage_dir,
+                        stage_dir=two_point_stage_dir,
                         context=context,
                         result=dataset_result,
                     )
                 )
-                context.report_progress(self.name, "stage_progress_update", advance=1)
-            context.report_progress(self.name, "stage_progress_end")
-            payload["three_point"] = three_point_payloads
-        if len(analyzable_three_point_datasets) != len(three_point_datasets):
-            payload["ignored_three_point_inputs"] = [
-                dataset.label for dataset in three_point_datasets if dataset not in analyzable_three_point_datasets
-            ]
-
+                if analyzable_three_point_datasets:
+                    context.report_progress(self.name, "stage_progress_update", advance=1)
         if analyzable_three_point_datasets:
-            qpdf_families = self._build_qpdf_families(
-                payloads=three_point_results,
-                preferred_fit_mode=parameters["three_point"]["primary_fit_mode"],
+            context.report_progress(self.name, "stage_progress_end")
+
+        payload: dict[str, Any] = {
+            "two_point": two_point_payloads,
+            "group_count": len(group_order),
+        }
+        if len(two_point_payloads) == 1:
+            payload.update(
+                {
+                    "axis": np.asarray(two_point_payloads[0]["axis"], dtype=float),
+                    "values": np.asarray(two_point_payloads[0]["values"], dtype=float),
+                    "spread": np.asarray(two_point_payloads[0]["spread"], dtype=float),
+                    "input_label": two_point_payloads[0]["label"],
+                    "resampling": dict(two_point_payloads[0]["resampling"]),
+                    "bad_point_filter": dict(two_point_payloads[0]["bad_point_filter"]),
+                    "effective_mass": dict(two_point_payloads[0]["effective_mass"]),
+                    "fit": dict(two_point_payloads[0]["fit"]),
+                }
             )
-            if qpdf_families:
-                artifacts.extend(self._write_qpdf_sample_artifacts(stage_dir, qpdf_families))
-                payload["qpdf_families"] = [self._serialize_qpdf_family(family) for family in qpdf_families]
-                payload["_qpdf_families"] = qpdf_families
-                bare_qpdf = self._build_legacy_bare_qpdf_alias(qpdf_families, parameters["three_point"]["primary_fit_mode"])
-                if bare_qpdf is not None:
-                    payload["bare_qpdf"] = bare_qpdf
-                    artifacts.extend(self._write_bare_qpdf_artifacts(stage_dir, context, bare_qpdf))
+        if three_point_payloads:
+            payload["three_point"] = three_point_payloads
+            matrix_element_families = self._build_matrix_element_families(
+                context=context,
+                payloads=three_point_results,
+            )
+            if matrix_element_families:
+                artifacts.extend(self._write_matrix_element_sample_artifacts(stage_dir, matrix_element_families))
+                artifacts.extend(self._write_matrix_element_family_artifacts(stage_dir, context, matrix_element_families))
+                payload["matrix_element_families"] = [
+                    self._serialize_matrix_element_family(family) for family in matrix_element_families
+                ]
+                payload["_matrix_element_families"] = matrix_element_families
+        if ignored_three_point_labels:
+            payload["ignored_three_point_inputs"] = ignored_three_point_labels
 
         summary = self._build_summary(
-            label=two_point_dataset.label,
-            two_point_result=two_point_result,
+            two_point_payloads=two_point_payloads,
             three_point_results=three_point_results,
+            family_count=len(payload.get("matrix_element_families", [])),
         )
         return StageResult(stage_name=self.name, summary=summary, payload=payload, artifacts=artifacts)
-
-    def _select_dataset(self, context: StageContext, *, kind: str):
-        candidates = [dataset for dataset in context.datasets.values() if dataset.kind == kind]
-        if not candidates:
-            raise ValueError(f"Correlator analysis requires at least one {kind.replace('_', '-')!s} correlator input.")
-        return candidates[0]
 
     def _select_datasets(self, context: StageContext, *, kind: str):
         return [dataset for dataset in context.datasets.values() if dataset.kind == kind]
 
-    def _resolve_stage_parameters(self, context: StageContext, metadata: dict[str, Any]) -> dict[str, Any]:
+    def _group_key_from_metadata(self, metadata: dict[str, Any]) -> tuple[str, tuple[int, int, int], str]:
+        return (
+            str(metadata["setup_id"]),
+            tuple(int(component) for component in metadata["momentum"]),
+            str(metadata["smearing"]),
+        )
+
+    def _group_slug(self, metadata: dict[str, Any]) -> str:
+        setup_id, momentum, smearing = self._group_key_from_metadata(metadata)
+        px, py, pz = momentum
+        return self._slugify(f"{setup_id}_{smearing}_p{px}{py}{pz}")
+
+    def _group_metadata(self, context: StageContext, metadata: dict[str, Any]) -> dict[str, Any]:
+        setup_id, momentum, smearing = self._group_key_from_metadata(metadata)
+        return {
+            "setup_id": setup_id,
+            "momentum": list(momentum),
+            "smearing": smearing,
+            "setup": context.manifest.setup_metadata(setup_id),
+        }
+
+    def _resolve_stage_parameters(
+        self,
+        context: StageContext,
+        metadata: dict[str, Any],
+        setup_metadata: dict[str, Any],
+    ) -> dict[str, Any]:
         parameters = context.parameters_for(self.name)
         two_point_parameters = dict(parameters.get("two_point", parameters))
         three_point_parameters = dict(parameters.get("three_point", {}))
@@ -231,7 +294,10 @@ class CorrelatorAnalysisStage:
         temporal_extent = int(
             two_point_fit.get(
                 "temporal_extent",
-                two_point_parameters.get("temporal_extent", metadata.get("temporal_extent", metadata.get("Lt", 0))),
+                two_point_parameters.get(
+                    "temporal_extent",
+                    metadata.get("temporal_extent", metadata.get("Lt", setup_metadata.get("temporal_extent", 0))),
+                ),
             )
             or 0
         )
@@ -557,7 +623,30 @@ class CorrelatorAnalysisStage:
             "bad_point_filter": parameters["bad_point_filter"],
         }
 
-    def _analyze_three_point_dataset(self, *, dataset, two_point_result: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+    def _serialize_two_point_result(self, dataset, result: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "label": dataset.label,
+            "setup_id": str(dataset.metadata["setup_id"]),
+            "momentum": list(dataset.metadata["momentum"]),
+            "smearing": str(dataset.metadata["smearing"]),
+            "group": dict(result["group_metadata"]),
+            "axis": np.asarray(result["axis"], dtype=float).tolist(),
+            "values": np.asarray(result["values"], dtype=float).tolist(),
+            "spread": np.asarray(result["spread"], dtype=float).tolist(),
+            "resampling": dict(result["payload_resampling"]),
+            "bad_point_filter": dict(result["bad_point_filter"]),
+            "effective_mass": dict(result["payload_effective_mass"]),
+            "fit": dict(result["fit_summary"]),
+        }
+
+    def _analyze_three_point_dataset(
+        self,
+        *,
+        context: StageContext,
+        dataset,
+        two_point_result: dict[str, Any],
+        parameters: dict[str, Any],
+    ) -> dict[str, Any]:
         if dataset.samples is None:
             raise ValueError(f"Three-point dataset {dataset.label!r} must provide raw samples.")
         if dataset.samples.ndim != 3:
@@ -667,14 +756,24 @@ class CorrelatorAnalysisStage:
             },
             resampling_method=two_point_result["analysis_settings"]["resampling_method"],
         )
+        displacement = dict(dataset.metadata.get("displacement", {}))
+        operator = dict(dataset.metadata.get("operator", {}))
+        momentum = tuple(int(component) for component in dataset.metadata.get("momentum", [0, 0, 0]))
         dataset_channel_metadata = {
-            "gamma": str(dataset.metadata.get("gamma", parameters["gamma"])),
-            "flavor": str(dataset.metadata.get("flavor", parameters["flavor"])),
-            "b": int(dataset.metadata.get("b", parameters["b"])),
-            "ss_sp": dataset.metadata.get("ss_sp"),
-            "px": int(dataset.metadata.get("px", 0)),
-            "py": int(dataset.metadata.get("py", 0)),
-            "pz": int(dataset.metadata.get("pz", 0)),
+            "setup_id": str(dataset.metadata["setup_id"]),
+            "gamma": str(operator.get("gamma", parameters["gamma"])),
+            "flavor": str(operator.get("flavor", parameters["flavor"])),
+            "b": int(displacement.get("b", parameters["b"])),
+            "z": int(displacement.get("z", -1)),
+            "smearing": str(dataset.metadata.get("smearing", "")),
+            "momentum": list(momentum),
+            "px": momentum[0],
+            "py": momentum[1],
+            "pz": momentum[2],
+            "observable": context.manifest.observable_name_for_b(displacement.get("b", parameters["b"])),
+            "analysis_channel": str(context.manifest.analysis_metadata["channel"]),
+            "gauge": str(context.manifest.analysis_metadata["gauge"]),
+            "hadron": str(context.manifest.analysis_metadata["hadron"]),
         }
         for fit_payload in fits.values():
             fit_payload["summary"].update(dataset_channel_metadata)
@@ -683,14 +782,17 @@ class CorrelatorAnalysisStage:
         return {
             "label": dataset.label,
             "slug": self._slugify(dataset.label),
-            "z": int(dataset.metadata.get("z", -1)),
+            "setup_id": dataset_channel_metadata["setup_id"],
+            "z": dataset_channel_metadata["z"],
             "b": dataset_channel_metadata["b"],
             "gamma": dataset_channel_metadata["gamma"],
             "flavor": dataset_channel_metadata["flavor"],
-            "ss_sp": dataset_channel_metadata["ss_sp"],
+            "smearing": dataset_channel_metadata["smearing"],
+            "observable": dataset_channel_metadata["observable"],
             "px": dataset_channel_metadata["px"],
             "py": dataset_channel_metadata["py"],
             "pz": dataset_channel_metadata["pz"],
+            "momentum": dataset_channel_metadata["momentum"],
             "dataset_axis": np.asarray(dataset.axis, dtype=float),
             "tau_axis": np.asarray(tau_axis, dtype=float),
             "temporal_extent": int(two_point_result["analysis_settings"]["temporal_extent"]),
@@ -723,11 +825,17 @@ class CorrelatorAnalysisStage:
             },
             "payload": {
                 "label": dataset.label,
-                "z": int(dataset.metadata.get("z", -1)),
+                "setup_id": dataset_channel_metadata["setup_id"],
+                "z": dataset_channel_metadata["z"],
                 "b": dataset_channel_metadata["b"],
                 "gamma": dataset_channel_metadata["gamma"],
                 "flavor": dataset_channel_metadata["flavor"],
-                "ss_sp": dataset_channel_metadata["ss_sp"],
+                "smearing": dataset_channel_metadata["smearing"],
+                "observable": dataset_channel_metadata["observable"],
+                "analysis_channel": dataset_channel_metadata["analysis_channel"],
+                "gauge": dataset_channel_metadata["gauge"],
+                "hadron": dataset_channel_metadata["hadron"],
+                "momentum": dataset_channel_metadata["momentum"],
                 "px": dataset_channel_metadata["px"],
                 "py": dataset_channel_metadata["py"],
                 "pz": dataset_channel_metadata["pz"],
@@ -1188,85 +1296,105 @@ class CorrelatorAnalysisStage:
                     )
         return artifacts
 
-    def _write_bare_qpdf_artifacts(self, stage_dir: Path, context: StageContext, bare_qpdf: dict[str, Any]) -> list[ArtifactRecord]:
+    def _write_matrix_element_family_artifacts(
+        self,
+        stage_dir: Path,
+        context: StageContext,
+        families: list[dict[str, Any]],
+    ) -> list[ArtifactRecord]:
         artifacts: list[ArtifactRecord] = []
-        for data_path in write_columnar_data(
-            stage_dir / "bare_qpdf_vs_z",
-            {
-                "z": np.asarray(bare_qpdf["z"], dtype=float),
-                "real": np.asarray(bare_qpdf["real"]["mean"], dtype=float),
-                "real_error": np.asarray(bare_qpdf["real"]["error"], dtype=float),
-                "imag": np.asarray(bare_qpdf["imag"]["mean"], dtype=float),
-                "imag_error": np.asarray(bare_qpdf["imag"]["error"], dtype=float),
-            },
-            context.manifest.outputs.data_formats,
-        ):
+        for family in families:
+            metadata = family["metadata"]
+            family_slug = self._slugify(
+                f"{metadata['observable']}_{metadata['setup_id']}_{metadata['fit_mode']}"
+                f"_b{metadata['b']}_p{metadata['px']}{metadata['py']}{metadata['pz']}"
+                f"_{metadata['gamma']}_{metadata['flavor']}_{metadata['smearing']}"
+            )
+            for data_path in write_columnar_data(
+                stage_dir / f"{family_slug}_vs_z",
+                {
+                    "z": np.asarray(family["z_axis"], dtype=float),
+                    "real": np.asarray(family["real_mean"], dtype=float),
+                    "real_error": np.asarray(family["real_error"], dtype=float),
+                    "imag": np.asarray(family["imag_mean"], dtype=float),
+                    "imag_error": np.asarray(family["imag_error"], dtype=float),
+                },
+                context.manifest.outputs.data_formats,
+            ):
+                artifacts.append(
+                    ArtifactRecord(
+                        name=f"{family_slug}_data_{data_path.suffix[1:]}",
+                        kind="data",
+                        path=data_path,
+                        description=f"{metadata['observable']} matrix elements versus z for one family.",
+                        format=data_path.suffix[1:],
+                    )
+                )
+            summary_path = stage_dir / f"{family_slug}_summary.json"
+            write_json(summary_path, self._serialize_matrix_element_family(family))
             artifacts.append(
                 ArtifactRecord(
-                    name=f"bare_qpdf_vs_z_data_{data_path.suffix[1:]}",
-                    kind="data",
-                    path=data_path,
-                    description="Bare qPDF matrix elements versus z.",
-                    format=data_path.suffix[1:],
+                    name=f"{family_slug}_summary_json",
+                    kind="report",
+                    path=summary_path,
+                    description=f"Aggregated coordinate-space matrix elements for {metadata['observable']}.",
+                    format="json",
                 )
             )
-        write_json(stage_dir / "bare_qpdf_summary.json", bare_qpdf)
-        artifacts.append(
-            ArtifactRecord(
-                name="bare_qpdf_summary_json",
-                kind="report",
-                path=stage_dir / "bare_qpdf_summary.json",
-                description="Aggregated bare qPDF summaries extracted from the preferred fit mode.",
-                format="json",
-            )
-        )
-        for plot_format in context.manifest.outputs.plot_formats:
-            plot_path = stage_dir / f"bare_qpdf_vs_z.{plot_format}"
-            save_series_collection_plot(
-                [
-                    {
-                        "x": np.asarray(bare_qpdf["z"], dtype=float),
-                        "y": np.asarray(bare_qpdf["real"]["mean"], dtype=float),
-                        "error": np.asarray(bare_qpdf["real"]["error"], dtype=float),
-                        "label": "Real",
-                        "style": "errorbar",
-                    },
-                    {
-                        "x": np.asarray(bare_qpdf["z"], dtype=float),
-                        "y": np.asarray(bare_qpdf["imag"]["mean"], dtype=float),
-                        "error": np.asarray(bare_qpdf["imag"]["error"], dtype=float),
-                        "label": "Imag",
-                        "style": "errorbar",
-                    },
-                ],
-                plot_path,
-                f"Bare qPDF vs z ({bare_qpdf['fit_mode']})",
-                "z",
-                "bare_qpdf",
-            )
-            artifacts.append(
-                ArtifactRecord(
-                    name=f"bare_qpdf_vs_z_plot_{plot_format}",
-                    kind="plot",
-                    path=plot_path,
-                    description="Bare qPDF matrix elements versus z.",
-                    format=plot_format,
+            for plot_format in context.manifest.outputs.plot_formats:
+                plot_path = stage_dir / f"{family_slug}_vs_z.{plot_format}"
+                save_series_collection_plot(
+                    [
+                        {
+                            "x": np.asarray(family["z_axis"], dtype=float),
+                            "y": np.asarray(family["real_mean"], dtype=float),
+                            "error": np.asarray(family["real_error"], dtype=float),
+                            "label": "Real",
+                            "style": "errorbar",
+                        },
+                        {
+                            "x": np.asarray(family["z_axis"], dtype=float),
+                            "y": np.asarray(family["imag_mean"], dtype=float),
+                            "error": np.asarray(family["imag_error"], dtype=float),
+                            "label": "Imag",
+                            "style": "errorbar",
+                        },
+                    ],
+                    plot_path,
+                    f"{metadata['observable']} vs z ({metadata['fit_mode']}, {metadata['setup_id']})",
+                    "z",
+                    metadata["observable"],
                 )
-            )
+                artifacts.append(
+                    ArtifactRecord(
+                        name=f"{family_slug}_plot_{plot_format}",
+                        kind="plot",
+                        path=plot_path,
+                        description=f"{metadata['observable']} matrix elements versus z.",
+                        format=plot_format,
+                    )
+                )
         return artifacts
 
-    def _build_qpdf_families(self, *, payloads: list[dict[str, Any]], preferred_fit_mode: str) -> list[dict[str, Any]]:
+    def _build_matrix_element_families(
+        self,
+        *,
+        context: StageContext,
+        payloads: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
         for payload in payloads:
             z_value = int(payload.get("z", -1))
+            preferred_fit_mode = str(payload.get("preferred_fit_mode", ""))
             if z_value < 0 or preferred_fit_mode not in payload.get("fits", {}):
                 continue
             key = (
                 preferred_fit_mode,
+                str(payload.get("setup_id", "")),
                 int(payload.get("b", 0)),
                 str(payload.get("gamma", "")),
                 str(payload.get("flavor", "")),
-                str(payload.get("ss_sp", "")),
+                str(payload.get("smearing", "")),
                 int(payload.get("px", 0)),
                 int(payload.get("py", 0)),
                 int(payload.get("pz", 0)),
@@ -1276,6 +1404,7 @@ class CorrelatorAnalysisStage:
         families: list[dict[str, Any]] = []
         for items in grouped.values():
             ordered = sorted(items, key=lambda item: int(item["z"]))
+            preferred_fit_mode = str(ordered[0]["preferred_fit_mode"])
             sample_count = int(ordered[0]["fits"][preferred_fit_mode]["sample_fit_count"])
             real_samples = np.vstack(
                 [np.asarray(item["fits"][preferred_fit_mode]["bare_real_samples"], dtype=float) for item in ordered]
@@ -1286,16 +1415,24 @@ class CorrelatorAnalysisStage:
             method = ordered[0]["resampling"]["method"]
             real_average = average_resampled_samples(real_samples, method)
             imag_average = average_resampled_samples(imag_samples, method)
+            b_value = int(ordered[0].get("b", 0))
+            observable = context.manifest.observable_name_for_b(b_value)
             family = {
                 "metadata": {
                     "fit_mode": preferred_fit_mode,
-                    "b": int(ordered[0].get("b", 0)),
+                    "setup_id": str(ordered[0].get("setup_id", "")),
+                    "b": b_value,
                     "gamma": str(ordered[0].get("gamma", "")),
                     "flavor": str(ordered[0].get("flavor", "")),
-                    "ss_sp": ordered[0].get("ss_sp"),
+                    "smearing": str(ordered[0].get("smearing", "")),
                     "px": int(ordered[0].get("px", 0)),
                     "py": int(ordered[0].get("py", 0)),
                     "pz": int(ordered[0].get("pz", 0)),
+                    "momentum": list(ordered[0].get("momentum", [0, 0, 0])),
+                    "observable": observable,
+                    "analysis_channel": str(ordered[0].get("analysis_channel", context.manifest.analysis_metadata["channel"])),
+                    "gauge": str(ordered[0].get("gauge", context.manifest.analysis_metadata["gauge"])),
+                    "hadron": str(ordered[0].get("hadron", context.manifest.analysis_metadata["hadron"])),
                     "resampling_method": method,
                 },
                 "z_axis": np.asarray([int(item["z"]) for item in ordered], dtype=float),
@@ -1308,9 +1445,18 @@ class CorrelatorAnalysisStage:
                 "imag_error": np.atleast_1d(np.asarray(gv.sdev(imag_average), dtype=float)),
             }
             families.append(family)
-        return sorted(families, key=lambda family: (family["metadata"]["b"], family["metadata"]["px"], family["metadata"]["py"], family["metadata"]["pz"]))
+        return sorted(
+            families,
+            key=lambda family: (
+                family["metadata"]["setup_id"],
+                family["metadata"]["b"],
+                family["metadata"]["px"],
+                family["metadata"]["py"],
+                family["metadata"]["pz"],
+            ),
+        )
 
-    def _serialize_qpdf_family(self, family: dict[str, Any]) -> dict[str, Any]:
+    def _serialize_matrix_element_family(self, family: dict[str, Any]) -> dict[str, Any]:
         return {
             "metadata": dict(family["metadata"]),
             "z_axis": np.atleast_1d(np.asarray(family["z_axis"], dtype=float)).tolist(),
@@ -1326,18 +1472,24 @@ class CorrelatorAnalysisStage:
             "sample_artifact": family.get("sample_artifact"),
         }
 
-    def _write_qpdf_sample_artifacts(self, stage_dir: Path, qpdf_families: list[dict[str, Any]]) -> list[ArtifactRecord]:
+    def _write_matrix_element_sample_artifacts(
+        self,
+        stage_dir: Path,
+        families: list[dict[str, Any]],
+    ) -> list[ArtifactRecord]:
         artifacts: list[ArtifactRecord] = []
-        for family in qpdf_families:
+        for family in families:
             metadata = family["metadata"]
             sample_path = stage_dir / (
-                "bare_qpdf_samples"
+                "matrix_element_samples"
+                f"_{metadata['observable']}"
                 f"_{metadata['fit_mode']}"
+                f"_{metadata['setup_id']}"
                 f"_b{metadata['b']}"
                 f"_p{metadata['px']}{metadata['py']}{metadata['pz']}"
                 f"_{metadata['gamma']}"
                 f"_{str(metadata['flavor']).replace('-', '_')}"
-                f"_{str(metadata.get('ss_sp') or 'na')}.npz"
+                f"_{metadata['smearing']}.npz"
             )
             np.savez(
                 sample_path,
@@ -1351,29 +1503,11 @@ class CorrelatorAnalysisStage:
                     name=sample_path.stem,
                     kind="data",
                     path=sample_path,
-                    description="Sample-wise bare qPDF matrix elements retained for downstream stages.",
+                    description="Sample-wise coordinate-space matrix elements retained for downstream stages.",
                     format="npz",
                 )
             )
         return artifacts
-
-    def _build_legacy_bare_qpdf_alias(self, qpdf_families: list[dict[str, Any]], fit_mode: str) -> dict[str, Any] | None:
-        matching = [family for family in qpdf_families if family["metadata"]["fit_mode"] == fit_mode]
-        if len(matching) != 1:
-            return None
-        family = matching[0]
-        return {
-            "fit_mode": fit_mode,
-            "z": np.atleast_1d(np.asarray(family["z_axis"], dtype=float)).astype(int).tolist(),
-            "real": {
-                "mean": np.atleast_1d(np.asarray(family["real_mean"], dtype=float)).tolist(),
-                "error": np.atleast_1d(np.asarray(family["real_error"], dtype=float)).tolist(),
-            },
-            "imag": {
-                "mean": np.atleast_1d(np.asarray(family["imag_mean"], dtype=float)).tolist(),
-                "error": np.atleast_1d(np.asarray(family["imag_error"], dtype=float)).tolist(),
-            },
-        }
 
     def _ratio_series(self, result: dict[str, Any], *, part: str, include_fit_mode: str | None) -> list[dict[str, object]]:
         series: list[dict[str, object]] = []
@@ -1505,33 +1639,26 @@ class CorrelatorAnalysisStage:
         }
 
     def _dataset_sort_key(self, dataset) -> tuple[int, str]:
-        return (int(dataset.metadata.get("z", 10_000)), dataset.label)
+        displacement = dict(dataset.metadata.get("displacement", {}))
+        return (int(displacement.get("z", 10_000)), dataset.label)
 
     def _slugify(self, value: str) -> str:
         return re.sub(r"[^a-zA-Z0-9._-]+", "_", value).strip("_") or "three_point"
 
-    def _build_summary(self, *, label: str, two_point_result: dict[str, Any], three_point_results: list[dict[str, Any]]) -> str:
-        fit_summary = two_point_result["fit_summary"]
-        if fit_summary.get("performed"):
-            fit_clause = (
-                f"{fit_summary['state_count']}-state 2pt fit completed with "
-                f"chi2/dof = {fit_summary['chi2_per_dof']:.3f} and Q = {fit_summary['Q']:.3f}"
-            )
-        else:
-            fit_clause = f"2pt fit skipped ({fit_summary.get('reason', 'unknown reason')})"
+    def _build_summary(
+        self,
+        *,
+        two_point_payloads: list[dict[str, Any]],
+        three_point_results: list[dict[str, Any]],
+        family_count: int,
+    ) -> str:
+        performed_fits = sum(1 for item in two_point_payloads if item["fit"].get("performed"))
         if not three_point_results:
             return (
-                f"Resampled two-point correlator {label!r}, computed the effective mass, "
-                f"and {fit_clause}."
-            )
-        preferred = [item for item in three_point_results if item.get("preferred_bare_matrix_element") is not None]
-        if preferred:
-            fit_mode = preferred[0]["preferred_fit_mode"]
-            return (
-                f"Resampled two-point correlator {label!r}, analyzed {len(three_point_results)} three-point dataset(s), "
-                f"and built bare-qPDF summaries from the {fit_mode} fits after {fit_clause}."
+                f"Analyzed {len(two_point_payloads)} two-point group(s), computed effective-mass diagnostics, "
+                f"and completed {performed_fits} successful two-point fit(s)."
             )
         return (
-            f"Resampled two-point correlator {label!r}, analyzed {len(three_point_results)} three-point dataset(s), "
-            f"and {fit_clause}."
+            f"Analyzed {len(two_point_payloads)} two-point group(s) and {len(three_point_results)} three-point dataset(s), "
+            f"then assembled {family_count} coordinate-space matrix-element family/families."
         )

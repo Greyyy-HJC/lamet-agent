@@ -36,9 +36,5 @@ class RuleBasedPlanner:
         correlator_kinds = {correlator.kind for correlator in manifest.correlators}
         if "two_point" not in correlator_kinds:
             raise WorkflowResolutionError("At least one two-point correlator input is required for the default workflows.")
-        final_observable = (
-            "distribution_amplitude"
-            if manifest.goal == "distribution_amplitude"
-            else "parton_distribution_function"
-        )
+        final_observable = str(manifest.analysis_metadata["channel"])
         return WorkflowPlan(goal=manifest.goal, stage_names=stage_names, final_observable=final_observable)

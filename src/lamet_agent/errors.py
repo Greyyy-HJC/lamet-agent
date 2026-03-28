@@ -23,15 +23,3 @@ class StageExecutionError(LametAgentError):
 
 class OptionalDependencyError(LametAgentError):
     """Raised when an optional runtime dependency is required but unavailable."""
-
-
-class OAuthConfigurationError(LametAgentError):
-    """Raised when OAuth provider configuration is incomplete or invalid."""
-
-
-class OAuthFlowError(LametAgentError):
-    """Raised when an OAuth authorization or token exchange flow fails."""
-
-
-class TokenStoreError(LametAgentError):
-    """Raised when persisted OAuth tokens cannot be loaded or saved."""

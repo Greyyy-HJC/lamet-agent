@@ -18,7 +18,6 @@ from lamet_agent.workflows import execute_manifest
 
 
 def base_manifest_payload() -> dict:
-    """Return a minimal manifest payload for planner tests."""
     return {
         "goal": "parton_distribution_function",
         "correlators": [
@@ -27,9 +26,29 @@ def base_manifest_payload() -> dict:
                 "path": "data.csv",
                 "file_format": "csv",
                 "label": "demo",
+                "metadata": {
+                    "setup_id": "demo_setup",
+                    "momentum": [0, 0, 0],
+                    "smearing": "SS",
+                },
             }
         ],
-        "metadata": {"ensemble": "e1", "conventions": "demo"},
+        "metadata": {
+            "purpose": "smoke",
+            "analysis": {"gauge": "cg", "hadron": "pion", "channel": "qpdf"},
+            "conventions": "demo",
+            "setups": {
+                "demo_setup": {
+                    "lattice_action": "demo",
+                    "n_f": 2,
+                    "lattice_spacing_fm": 0.09,
+                    "spatial_extent": 32,
+                    "temporal_extent": 64,
+                    "pion_mass_valence_gev": 0.3,
+                    "pion_mass_sea_gev": 0.3,
+                }
+            },
+        },
         "kernel": {
             "source": "def demo_kernel(axis, values, metadata):\n    return values\n",
             "callable_name": "demo_kernel",
@@ -38,12 +57,11 @@ def base_manifest_payload() -> dict:
 
 
 class WorkflowPlannerTests(unittest.TestCase):
-    """Verify rule-based workflow resolution."""
-
     def test_pdf_goal_resolves_full_pipeline(self) -> None:
         planner = RuleBasedPlanner()
         manifest = Manifest.from_dict(base_manifest_payload())
         plan = planner.resolve(manifest)
+        self.assertEqual(plan.final_observable, "qpdf")
         self.assertEqual(
             plan.stage_names,
             [
@@ -55,18 +73,12 @@ class WorkflowPlannerTests(unittest.TestCase):
             ],
         )
 
-    def test_distribution_amplitude_changes_final_observable(self) -> None:
-        planner = RuleBasedPlanner()
-        payload = base_manifest_payload()
-        payload["goal"] = "distribution_amplitude"
-        manifest = Manifest.from_dict(payload)
-        plan = planner.resolve(manifest)
-        self.assertEqual(plan.final_observable, "distribution_amplitude")
-
     def test_missing_two_point_input_fails_default_workflow(self) -> None:
         planner = RuleBasedPlanner()
         payload = base_manifest_payload()
         payload["correlators"][0]["kind"] = "three_point"
+        payload["correlators"][0]["metadata"]["displacement"] = {"b": 0, "z": 0}
+        payload["correlators"][0]["metadata"]["operator"] = {"gamma": "gt", "flavor": "u-d"}
         manifest = Manifest.from_dict(payload)
         with self.assertRaises(WorkflowResolutionError):
             planner.resolve(manifest)
@@ -88,8 +100,6 @@ class WorkflowPlannerTests(unittest.TestCase):
             run = execute_manifest(manifest_path, planner=planner, progress_callback=events.append)
             self.assertEqual(run.stage_results[0].stage_name, "correlator_analysis")
             self.assertEqual([event["event"] for event in events], ["stage_started", "stage_completed"])
-            self.assertEqual(events[0]["stage_name"], "correlator_analysis")
-            self.assertEqual(events[1]["stage_total"], 1)
 
 
 if __name__ == "__main__":

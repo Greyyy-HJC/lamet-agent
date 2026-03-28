@@ -73,8 +73,3 @@ def lat_unit_convert(value: float | np.ndarray, a: float, Ls: int, dimension: st
 
     return lattice_unit_to_physical(value, a_fm=a, spatial_extent=Ls, dimension=dimension)
 
-
-def beta(order: int = 0, Nf: int = NF) -> float:
-    """Compatibility alias matching the legacy LaMETLat helper name."""
-
-    return qcd_beta(order=order, n_f=Nf)
