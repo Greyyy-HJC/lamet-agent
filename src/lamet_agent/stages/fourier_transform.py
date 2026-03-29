@@ -47,6 +47,9 @@ def _extrapolate_qpdf_sample_from_context(sample_index: int) -> dict[str, np.nda
         m0=context["m0"],
         hadron=context["hadron"],
         gauge_type=context["gauge_type"],
+        quark_sector=context["quark_sector"],
+        joint_re_im_fit=context["joint_re_im_fit"],
+        joint_prior_overrides=context["joint_prior_overrides"],
         real_prior_overrides=context["real_prior_overrides"],
         imag_prior_overrides=context["imag_prior_overrides"],
     )
@@ -85,6 +88,7 @@ class FourierTransformStage:
             )
             transformed_families.append(transformed_family)
             artifacts.extend(family_artifacts)
+        artifacts.extend(self._write_grouped_b_x_dependence_plots(stage_dir, context, transformed_families))
         payload = {
             "family_count": len(transformed_families),
             "transformed_families": [self._serialize_transformed_family(family) for family in transformed_families],
@@ -187,6 +191,9 @@ class FourierTransformStage:
             m0=parameters["extrapolation"]["m0"],
             hadron=str(family["metadata"]["hadron"]),
             gauge_type=parameters["gauge_type"],
+            quark_sector=parameters["extrapolation"]["quark_sector"],
+            joint_re_im_fit=parameters["extrapolation"]["joint_re_im_fit"],
+            joint_prior_overrides=parameters["extrapolation"]["joint_prior_overrides"],
             real_prior_overrides=parameters["extrapolation"]["real_prior_overrides"],
             imag_prior_overrides=parameters["extrapolation"]["imag_prior_overrides"],
         )
@@ -211,6 +218,9 @@ class FourierTransformStage:
                 "m0": parameters["extrapolation"]["m0"],
                 "hadron": str(family["metadata"]["hadron"]),
                 "gauge_type": parameters["gauge_type"],
+                "quark_sector": parameters["extrapolation"]["quark_sector"],
+                "joint_re_im_fit": parameters["extrapolation"]["joint_re_im_fit"],
+                "joint_prior_overrides": parameters["extrapolation"]["joint_prior_overrides"],
                 "real_prior_overrides": parameters["extrapolation"]["real_prior_overrides"],
                 "imag_prior_overrides": parameters["extrapolation"]["imag_prior_overrides"],
             }
@@ -283,6 +293,8 @@ class FourierTransformStage:
                 "extrapolated_length": float(parameters["extrapolation"]["extrapolated_length"]),
                 "weight_ini": float(parameters["extrapolation"]["weight_ini"]),
                 "m0": float(parameters["extrapolation"]["m0"]),
+                "quark_sector": str(parameters["extrapolation"]["quark_sector"]),
+                "joint_re_im_fit": bool(parameters["extrapolation"]["joint_re_im_fit"]),
                 "imaginary_sign": int(parameters["imaginary_sign"]),
                 "sample_transform_workers": int(parameters["sample_transform_workers"]),
                 "separate_re_im": bool(parameters["separate_re_im"]),
@@ -333,6 +345,9 @@ class FourierTransformStage:
                 "extrapolated_length": float(extrapolation.get("extrapolated_length", 50.0)),
                 "weight_ini": float(extrapolation.get("weight_ini", 0.0)),
                 "m0": float(extrapolation.get("m0", 0.0)),
+                "quark_sector": str(extrapolation.get("quark_sector", "valence")).lower(),
+                "joint_re_im_fit": bool(extrapolation.get("joint_re_im_fit", True)),
+                "joint_prior_overrides": dict(extrapolation.get("joint_prior_overrides", {})),
                 "real_prior_overrides": dict(extrapolation.get("real_prior_overrides", extrapolation.get("prior_overrides", {}))),
                 "imag_prior_overrides": dict(extrapolation.get("imag_prior_overrides", extrapolation.get("prior_overrides", {}))),
             },
@@ -355,6 +370,33 @@ class FourierTransformStage:
             f"{metadata['observable']}_{metadata['setup_id']}_{metadata['fit_mode']}"
             f"_b{metadata['b']}_p{metadata['px']}{metadata['py']}{metadata['pz']}"
             f"_{metadata['gamma']}_{str(metadata['flavor']).replace('-', '_')}_{metadata['smearing']}"
+        )
+
+    def _group_families_for_b_plots(self, families: list[dict[str, Any]]) -> dict[tuple[Any, ...], list[dict[str, Any]]]:
+        grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for family in families:
+            metadata = family["metadata"]
+            key = (
+                str(metadata["setup_id"]),
+                str(metadata["fit_mode"]),
+                str(metadata["gamma"]),
+                str(metadata["flavor"]),
+                str(metadata["smearing"]),
+                int(metadata["px"]),
+                int(metadata["py"]),
+                int(metadata["pz"]),
+                str(metadata["hadron"]),
+                str(metadata["analysis_channel"]),
+                str(metadata["gauge"]),
+            )
+            grouped.setdefault(key, []).append(family)
+        return grouped
+
+    def _b_plot_slug(self, metadata: dict[str, Any]) -> str:
+        return (
+            f"{metadata['hadron']}_{metadata['analysis_channel']}_{metadata['setup_id']}_{metadata['fit_mode']}"
+            f"_p{metadata['px']}{metadata['py']}{metadata['pz']}_{metadata['gamma']}"
+            f"_{str(metadata['flavor']).replace('-', '_')}_{metadata['smearing']}_all_b"
         )
 
     def _serialize_transformed_family(self, family: dict[str, Any]) -> dict[str, Any]:
@@ -386,6 +428,76 @@ class FourierTransformStage:
             },
             "sample_artifact": family.get("sample_artifact"),
         }
+
+    def _write_grouped_b_x_dependence_plots(
+        self,
+        stage_dir: Path,
+        context: StageContext,
+        families: list[dict[str, Any]],
+    ) -> list[ArtifactRecord]:
+        artifacts: list[ArtifactRecord] = []
+        for grouped_families in self._group_families_for_b_plots(families).values():
+            if len(grouped_families) < 2:
+                continue
+            ordered = sorted(grouped_families, key=lambda family: int(family["metadata"]["b"]))
+            reference = ordered[0]["metadata"]
+            slug = self._b_plot_slug(reference)
+            for plot_format in context.manifest.outputs.plot_formats:
+                real_plot_path = stage_dir / f"{slug}_x_real.{plot_format}"
+                imag_plot_path = stage_dir / f"{slug}_x_imag.{plot_format}"
+                real_series = [
+                    {
+                        "x": np.asarray(family["x_axis"], dtype=float),
+                        "y": np.asarray(family["real_mean"], dtype=float),
+                        "error": np.asarray(family["real_error"], dtype=float),
+                        "label": f"b={family['metadata']['b']} ({family['metadata']['observable']})",
+                        "style": "fill_between",
+                    }
+                    for family in ordered
+                ]
+                imag_series = [
+                    {
+                        "x": np.asarray(family["x_axis"], dtype=float),
+                        "y": np.asarray(family["imag_mean"], dtype=float),
+                        "error": np.asarray(family["imag_error"], dtype=float),
+                        "label": f"b={family['metadata']['b']} ({family['metadata']['observable']})",
+                        "style": "fill_between",
+                    }
+                    for family in ordered
+                ]
+                save_series_collection_plot(
+                    real_series,
+                    real_plot_path,
+                    f"{reference['hadron']} {reference['analysis_channel']} x dependence (real, {reference['fit_mode']}, {reference['setup_id']})",
+                    r"$x$",
+                    "Real x-space signal",
+                )
+                save_series_collection_plot(
+                    imag_series,
+                    imag_plot_path,
+                    f"{reference['hadron']} {reference['analysis_channel']} x dependence (imag, {reference['fit_mode']}, {reference['setup_id']})",
+                    r"$x$",
+                    "Imag x-space signal",
+                )
+                artifacts.extend(
+                    [
+                        ArtifactRecord(
+                            name=f"{slug}_x_real_plot_{plot_format}",
+                            kind="plot",
+                            path=real_plot_path,
+                            description="Real-part x-space observables with multiple b families overlaid.",
+                            format=plot_format,
+                        ),
+                        ArtifactRecord(
+                            name=f"{slug}_x_imag_plot_{plot_format}",
+                            kind="plot",
+                            path=imag_plot_path,
+                            description="Imaginary-part x-space observables with multiple b families overlaid.",
+                            format=plot_format,
+                        ),
+                    ]
+                )
+        return artifacts
 
     def _resampled_average(self, samples: np.ndarray, method: str):
         array = np.asarray(samples, dtype=float)
@@ -503,6 +615,7 @@ class FourierTransformStage:
                 "representative_fit_quality": {
                     "real_Q": float(representative_real_fit.Q),
                     "imag_Q": float(representative_imag_fit.Q),
+                    "joint_re_im_fit": bool(extrapolation_payload.get("joint_re_im_fit", False)),
                 },
             },
         )

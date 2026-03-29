@@ -18,6 +18,34 @@ def _require_fit_dependencies() -> None:
         raise OptionalDependencyError("lsqfit is required for qPDF extrapolation.")
 
 
+def _normalized_quark_sector(hadron: str, quark_sector: str | None) -> str:
+    """Return a normalized quark-sector name for asymptotic-form dispatch."""
+
+    hadron_name = str(hadron).lower()
+    if hadron_name != "pion":
+        return "generic"
+    sector = "valence" if quark_sector is None else str(quark_sector).lower()
+    if sector not in {"valence", "sea", "full"}:
+        raise ValueError(f"Unsupported pion quark_sector {quark_sector!r}.")
+    return sector
+
+
+def _merge_prior_overrides(
+    joint_prior_overrides: dict[str, Sequence[float]] | None,
+    real_prior_overrides: dict[str, Sequence[float]] | None,
+    imag_prior_overrides: dict[str, Sequence[float]] | None,
+) -> dict[str, Sequence[float]]:
+    """Merge optional prior overrides for joint fits and reject conflicting values."""
+
+    merged: dict[str, Sequence[float]] = dict(joint_prior_overrides or {})
+    for overrides in (real_prior_overrides or {}, imag_prior_overrides or {}):
+        for key, value in overrides.items():
+            if key in merged and list(merged[key]) != list(value):
+                raise ValueError(f"Conflicting prior overrides for joint fit parameter {key!r}.")
+            merged[key] = value
+    return merged
+
+
 def build_lambda_axis(
     z_axis: Sequence[float],
     *,
@@ -63,6 +91,7 @@ def exp_decay_prior(
     *,
     hadron: str,
     gauge_type: str,
+    quark_sector: str = "valence",
     prior_overrides: dict[str, Sequence[float]] | None = None,
 ):
     """Return the default asymptotic-form prior used for large-lambda fits."""
@@ -80,10 +109,22 @@ def exp_decay_prior(
         if gauge_name == "cg":
             priors["log(n)"] = gv.gvar(0.7, 1)
     elif hadron_name == "pion":
-        for name in ("b1", "b2", "b3", "d1", "d2", "d3"):
-            priors[name] = gv.gvar(0, 10)
-        for name in ("c1", "c2", "c3", "e1", "e2", "e3"):
-            priors[name] = gv.gvar(0, 10)
+        sector = _normalized_quark_sector(hadron_name, quark_sector)
+        if sector == "valence":
+            for name in ("b1", "b2", "d1", "d2"):
+                priors[name] = gv.gvar(0, 10)
+            for name in ("c1", "e1"):
+                priors[name] = gv.gvar(0, 10)
+        elif sector == "sea":
+            for name in ("b2", "d2"):
+                priors[name] = gv.gvar(0, 10)
+            for name in ("c2", "e2"):
+                priors[name] = gv.gvar(0, 10)
+        else:
+            for name in ("b1", "b2", "b3", "d1", "d2", "d3"):
+                priors[name] = gv.gvar(0, 10)
+            for name in ("c1", "c2", "c3", "e1", "e2", "e3"):
+                priors[name] = gv.gvar(0, 10)
         priors["log(m)"] = gv.gvar(-2, 2)
         if gauge_name == "cg":
             priors["log(n)"] = gv.gvar(0.7, 1)
@@ -96,94 +137,127 @@ def exp_decay_prior(
     return priors
 
 
-def asymptotic_real_function(*, hadron: str, gauge_type: str, m0: float = 0.0):
-    """Return the asymptotic real-part fit function."""
+def _tail_power(lambda_values: np.ndarray, params, *, gauge_type: str, m0: float) -> np.ndarray:
+    """Return the common exponential and CG power-law suppression factor."""
 
+    lam = np.asarray(lambda_values, dtype=float)
+    tail = np.exp(-lam * (params["m"] + m0))
+    if str(gauge_type).lower() == "cg":
+        tail = tail / (lam**params["n"])
+    return tail
+
+
+def _complex_asymptotic_components(
+    lambda_values: Sequence[float],
+    params,
+    *,
+    hadron: str,
+    gauge_type: str,
+    quark_sector: str = "valence",
+    m0: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the real and imaginary asymptotic components for one hadron/sector."""
+
+    lam = np.asarray(lambda_values, dtype=float)
     hadron_name = str(hadron).lower()
     gauge_name = str(gauge_type).lower()
 
     if hadron_name == "proton":
-        if gauge_name == "gi":
-            def fcn(lambda_values, params):
-                lam = np.asarray(lambda_values, dtype=float)
-                tail = params["b"] * np.cos(params["c"]) + params["d"] * np.cos(params["e"]) / np.abs(lam)
-                return tail * np.exp(-lam * (params["m"] + m0))
-            return fcn
-        if gauge_name == "cg":
-            def fcn(lambda_values, params):
-                lam = np.asarray(lambda_values, dtype=float)
-                tail = params["b"] * np.cos(params["c"]) + params["d"] * np.cos(params["e"]) / np.abs(lam)
-                return tail * np.exp(-lam * (params["m"] + m0)) / (lam**params["n"])
-            return fcn
-        raise ValueError(f"Unsupported proton gauge_type {gauge_type!r}.")
+        real = params["b"] * np.cos(params["c"]) + params["d"] * np.cos(params["e"]) / np.abs(lam)
+        imag = params["b"] * np.sin(params["c"]) + params["d"] * np.sin(params["e"]) / np.abs(lam)
+        tail = _tail_power(lam, params, gauge_type=gauge_name, m0=m0)
+        return real * tail, imag * tail
 
     if hadron_name == "pion":
-        if gauge_name in {"gi", "cg"}:
-            def fcn(lambda_values, params):
-                lam = np.asarray(lambda_values, dtype=float)
-                leading = (
-                    params["b2"] * np.cos(params["c2"])
-                    + params["b1"] * np.cos(params["c1"] - lam)
-                    + params["b3"] * np.cos(params["c3"] + lam)
-                )
-                subleading = (
+        sector = _normalized_quark_sector(hadron_name, quark_sector)
+        if sector == "valence":
+            real = (
+                params["b2"]
+                + 2.0 * params["b1"] * np.cos(params["c1"] - lam)
+                + (params["d2"] + 2.0 * params["d1"] * np.cos(params["e1"] - lam)) / np.abs(lam)
+            )
+            imag = np.zeros_like(lam, dtype=float)
+        elif sector == "sea":
+            real = params["b2"] * np.cos(params["c2"]) + params["d2"] * np.cos(params["e2"]) / np.abs(lam)
+            imag = params["b2"] * np.sin(params["c2"]) + params["d2"] * np.sin(params["e2"]) / np.abs(lam)
+        else:
+            real = (
+                params["b2"] * np.cos(params["c2"])
+                + params["b1"] * np.cos(params["c1"] - lam)
+                + params["b3"] * np.cos(params["c3"] + lam)
+                + (
                     params["d2"] * np.cos(params["e2"])
                     + params["d1"] * np.cos(params["e1"] - lam)
                     + params["d3"] * np.cos(params["e3"] + lam)
-                ) / np.abs(lam)
-                tail = (leading + subleading) * np.exp(-lam * (params["m"] + m0))
-                if gauge_name == "cg":
-                    tail = tail / (lam**params["n"])
-                return tail
-            return fcn
-        raise ValueError(f"Unsupported pion gauge_type {gauge_type!r}.")
-
-    raise ValueError(f"Unsupported asymptotic hadron {hadron!r}.")
-
-
-def asymptotic_imag_function(*, hadron: str, gauge_type: str, m0: float = 0.0):
-    """Return the asymptotic imaginary-part fit function."""
-
-    hadron_name = str(hadron).lower()
-    gauge_name = str(gauge_type).lower()
-
-    if hadron_name == "proton":
-        if gauge_name == "gi":
-            def fcn(lambda_values, params):
-                lam = np.asarray(lambda_values, dtype=float)
-                tail = params["b"] * np.sin(params["c"]) + params["d"] * np.sin(params["e"]) / np.abs(lam)
-                return tail * np.exp(-lam * (params["m"] + m0))
-            return fcn
-        if gauge_name == "cg":
-            def fcn(lambda_values, params):
-                lam = np.asarray(lambda_values, dtype=float)
-                tail = params["b"] * np.sin(params["c"]) + params["d"] * np.sin(params["e"]) / np.abs(lam)
-                return tail * np.exp(-lam * (params["m"] + m0)) / (lam**params["n"])
-            return fcn
-        raise ValueError(f"Unsupported proton gauge_type {gauge_type!r}.")
-
-    if hadron_name == "pion":
-        if gauge_name in {"gi", "cg"}:
-            def fcn(lambda_values, params):
-                lam = np.asarray(lambda_values, dtype=float)
-                leading = (
-                    params["b2"] * np.sin(params["c2"])
-                    + params["b1"] * np.sin(params["c1"] - lam)
-                    + params["b3"] * np.sin(params["c3"] + lam)
                 )
-                subleading = (
+                / np.abs(lam)
+            )
+            imag = (
+                params["b2"] * np.sin(params["c2"])
+                + params["b1"] * np.sin(params["c1"] - lam)
+                + params["b3"] * np.sin(params["c3"] + lam)
+                + (
                     params["d2"] * np.sin(params["e2"])
                     + params["d1"] * np.sin(params["e1"] - lam)
                     + params["d3"] * np.sin(params["e3"] + lam)
-                ) / np.abs(lam)
-                tail = (leading + subleading) * np.exp(-lam * (params["m"] + m0))
-                if gauge_name == "cg":
-                    tail = tail / (lam**params["n"])
-                return tail
-            return fcn
-        raise ValueError(f"Unsupported pion gauge_type {gauge_type!r}.")
+                )
+                / np.abs(lam)
+            )
+        tail = _tail_power(lam, params, gauge_type=gauge_name, m0=m0)
+        return real * tail, imag * tail
 
     raise ValueError(f"Unsupported asymptotic hadron {hadron!r}.")
+
+
+def asymptotic_joint_function(*, hadron: str, gauge_type: str, quark_sector: str = "valence", m0: float = 0.0):
+    """Return the joint real/imaginary asymptotic fit function."""
+
+    def fcn(lambda_values, params):
+        real, imag = _complex_asymptotic_components(
+            lambda_values,
+            params,
+            hadron=hadron,
+            gauge_type=gauge_type,
+            quark_sector=quark_sector,
+            m0=m0,
+        )
+        return {"real": real, "imag": imag}
+
+    return fcn
+
+
+def asymptotic_real_function(*, hadron: str, gauge_type: str, quark_sector: str = "valence", m0: float = 0.0):
+    """Return the asymptotic real-part fit function."""
+
+    def fcn(lambda_values, params):
+        real, _ = _complex_asymptotic_components(
+            lambda_values,
+            params,
+            hadron=hadron,
+            gauge_type=gauge_type,
+            quark_sector=quark_sector,
+            m0=m0,
+        )
+        return real
+
+    return fcn
+
+
+def asymptotic_imag_function(*, hadron: str, gauge_type: str, quark_sector: str = "valence", m0: float = 0.0):
+    """Return the asymptotic imaginary-part fit function."""
+
+    def fcn(lambda_values, params):
+        _, imag = _complex_asymptotic_components(
+            lambda_values,
+            params,
+            hadron=hadron,
+            gauge_type=gauge_type,
+            quark_sector=quark_sector,
+            m0=m0,
+        )
+        return imag
+
+    return fcn
 
 
 def extrapolate_asymptotic_qpdf(
@@ -199,6 +273,9 @@ def extrapolate_asymptotic_qpdf(
     m0: float = 0.0,
     hadron: str = "proton",
     gauge_type: str = "cg",
+    quark_sector: str = "valence",
+    joint_re_im_fit: bool = True,
+    joint_prior_overrides: dict[str, Sequence[float]] | None = None,
     real_prior_overrides: dict[str, Sequence[float]] | None = None,
     imag_prior_overrides: dict[str, Sequence[float]] | None = None,
 ) -> dict[str, Any]:
@@ -222,26 +299,84 @@ def extrapolate_asymptotic_qpdf(
     fit_real = gv.gvar(real_array[start:stop], np.clip(real_sigma[start:stop], 1.0e-12, None))
     fit_imag = gv.gvar(imag_array[start:stop], np.clip(imag_sigma[start:stop], 1.0e-12, None))
 
-    fit_result_re = lsqfit.nonlinear_fit(
-        data=(fit_lambda, fit_real),
-        prior=exp_decay_prior(hadron=hadron, gauge_type=gauge_type, prior_overrides=real_prior_overrides),
-        fcn=asymptotic_real_function(hadron=hadron, gauge_type=gauge_type, m0=m0),
-        maxit=10_000,
-        svdcut=1e-100,
-        fitter="scipy_least_squares",
-    )
-    fit_result_im = lsqfit.nonlinear_fit(
-        data=(fit_lambda, fit_imag),
-        prior=exp_decay_prior(hadron=hadron, gauge_type=gauge_type, prior_overrides=imag_prior_overrides),
-        fcn=asymptotic_imag_function(hadron=hadron, gauge_type=gauge_type, m0=m0),
-        maxit=10_000,
-        svdcut=1e-100,
-        fitter="scipy_least_squares",
-    )
+    fit_result_joint = None
+    if joint_re_im_fit:
+        merged_prior_overrides = _merge_prior_overrides(
+            joint_prior_overrides,
+            real_prior_overrides,
+            imag_prior_overrides,
+        )
+        fit_result_re = lsqfit.nonlinear_fit(
+            data=(fit_lambda, {"real": fit_real, "imag": fit_imag}),
+            prior=exp_decay_prior(
+                hadron=hadron,
+                gauge_type=gauge_type,
+                quark_sector=quark_sector,
+                prior_overrides=merged_prior_overrides,
+            ),
+            fcn=asymptotic_joint_function(
+                hadron=hadron,
+                gauge_type=gauge_type,
+                quark_sector=quark_sector,
+                m0=m0,
+            ),
+            maxit=10_000,
+            svdcut=1e-100,
+            fitter="scipy_least_squares",
+        )
+        fit_result_im = fit_result_re
+        fit_result_joint = fit_result_re
+    else:
+        fit_result_re = lsqfit.nonlinear_fit(
+            data=(fit_lambda, fit_real),
+            prior=exp_decay_prior(
+                hadron=hadron,
+                gauge_type=gauge_type,
+                quark_sector=quark_sector,
+                prior_overrides=real_prior_overrides,
+            ),
+            fcn=asymptotic_real_function(hadron=hadron, gauge_type=gauge_type, quark_sector=quark_sector, m0=m0),
+            maxit=10_000,
+            svdcut=1e-100,
+            fitter="scipy_least_squares",
+        )
+        fit_result_im = lsqfit.nonlinear_fit(
+            data=(fit_lambda, fit_imag),
+            prior=exp_decay_prior(
+                hadron=hadron,
+                gauge_type=gauge_type,
+                quark_sector=quark_sector,
+                prior_overrides=imag_prior_overrides,
+            ),
+            fcn=asymptotic_imag_function(hadron=hadron, gauge_type=gauge_type, quark_sector=quark_sector, m0=m0),
+            maxit=10_000,
+            svdcut=1e-100,
+            fitter="scipy_least_squares",
+        )
 
     lambda_tail = np.arange(lambda_array[start], float(extrapolated_length), lam_gap)
-    real_tail = asymptotic_real_function(hadron=hadron, gauge_type=gauge_type, m0=m0)(lambda_tail, fit_result_re.p)
-    imag_tail = asymptotic_imag_function(hadron=hadron, gauge_type=gauge_type, m0=m0)(lambda_tail, fit_result_im.p)
+    if joint_re_im_fit:
+        joint_tail = asymptotic_joint_function(
+            hadron=hadron,
+            gauge_type=gauge_type,
+            quark_sector=quark_sector,
+            m0=m0,
+        )(lambda_tail, fit_result_joint.p)
+        real_tail = joint_tail["real"]
+        imag_tail = joint_tail["imag"]
+    else:
+        real_tail = asymptotic_real_function(
+            hadron=hadron,
+            gauge_type=gauge_type,
+            quark_sector=quark_sector,
+            m0=m0,
+        )(lambda_tail, fit_result_re.p)
+        imag_tail = asymptotic_imag_function(
+            hadron=hadron,
+            gauge_type=gauge_type,
+            quark_sector=quark_sector,
+            m0=m0,
+        )(lambda_tail, fit_result_im.p)
 
     extrapolated_lambda = list(lambda_array[:start]) + list(lambda_tail)
     extrapolated_real = list(real_array[:start]) + list(np.asarray(gv.mean(real_tail), dtype=float))
@@ -259,6 +394,8 @@ def extrapolate_asymptotic_qpdf(
         "imag": np.asarray(extrapolated_imag, dtype=float),
         "fit_result_real": fit_result_re,
         "fit_result_imag": fit_result_im,
+        "fit_result_joint": fit_result_joint,
+        "joint_re_im_fit": bool(joint_re_im_fit),
     }
 
 

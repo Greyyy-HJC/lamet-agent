@@ -74,7 +74,7 @@ class StageTests(unittest.TestCase):
         proton_cg = asymptotic_real_function(hadron="proton", gauge_type="cg")(lam, proton_params)
         np.testing.assert_allclose(proton_cg, proton_gi / (lam**proton_params["n"]))
 
-        pion_params = {
+        pion_full_params = {
             "b1": 0.6,
             "b2": 1.1,
             "b3": -0.2,
@@ -90,13 +90,24 @@ class StageTests(unittest.TestCase):
             "m": 0.35,
             "n": 0.9,
         }
-        pion_gi_real = asymptotic_real_function(hadron="pion", gauge_type="gi")(lam, pion_params)
-        pion_cg_real = asymptotic_real_function(hadron="pion", gauge_type="cg")(lam, pion_params)
-        np.testing.assert_allclose(pion_cg_real, pion_gi_real / (lam**pion_params["n"]))
+        pion_gi_real = asymptotic_real_function(hadron="pion", gauge_type="gi", quark_sector="full")(lam, pion_full_params)
+        pion_cg_real = asymptotic_real_function(hadron="pion", gauge_type="cg", quark_sector="full")(lam, pion_full_params)
+        np.testing.assert_allclose(pion_cg_real, pion_gi_real / (lam**pion_full_params["n"]))
 
-        pion_gi_imag = asymptotic_imag_function(hadron="pion", gauge_type="gi")(lam, pion_params)
-        pion_cg_imag = asymptotic_imag_function(hadron="pion", gauge_type="cg")(lam, pion_params)
-        np.testing.assert_allclose(pion_cg_imag, pion_gi_imag / (lam**pion_params["n"]))
+        pion_gi_imag = asymptotic_imag_function(hadron="pion", gauge_type="gi", quark_sector="full")(lam, pion_full_params)
+        pion_cg_imag = asymptotic_imag_function(hadron="pion", gauge_type="cg", quark_sector="full")(lam, pion_full_params)
+        np.testing.assert_allclose(pion_cg_imag, pion_gi_imag / (lam**pion_full_params["n"]))
+
+    def test_pion_valence_and_sea_asymptotic_forms_use_distinct_constraints(self) -> None:
+        lam = np.asarray([1.0, 2.0], dtype=float)
+        valence_params = {"b1": 0.6, "b2": 1.1, "d1": 0.1, "d2": 0.05, "c1": 0.2, "e1": -0.3, "m": 0.35, "n": 0.9}
+        sea_params = {"b2": 1.1, "d2": 0.05, "c2": 0.4, "e2": -0.2, "m": 0.35, "n": 0.9}
+
+        pion_valence_imag = asymptotic_imag_function(hadron="pion", gauge_type="cg", quark_sector="valence")(lam, valence_params)
+        np.testing.assert_allclose(pion_valence_imag, np.zeros_like(lam))
+
+        pion_sea_imag = asymptotic_imag_function(hadron="pion", gauge_type="cg", quark_sector="sea")(lam, sea_params)
+        self.assertGreater(float(np.max(np.abs(pion_sea_imag))), 0.0)
 
     def test_txt_two_point_loader_supports_complex_samples(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

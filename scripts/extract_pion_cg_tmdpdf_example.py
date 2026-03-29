@@ -143,7 +143,7 @@ def main() -> int:
                 tsep_values=list(args.tsep_values),
             )
             np.savetxt(
-                output_dir / f"three_point_ss_{args.gamma}_p{args.px}{args.py}{args.pz}_b{b_value}_z{z_value:02d}.txt",
+                output_dir / f"three_point_ss_{args.gamma}_p{args.px}{args.py}{args.pz}_b{b_value}_z{z_value}.txt",
                 three_point,
             )
 

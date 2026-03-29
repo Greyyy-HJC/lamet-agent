@@ -15,9 +15,9 @@
     },
     {
       "kind": "three_point",
-      "path": "data/proton_cg_qpdf/three_point_ss_ud_gt_p440_b{b}_z{z:02d}.txt",
+      "path": "data/proton_cg_qpdf/three_point_ss_ud_gt_p440_b{b}_z{z}.txt",
       "file_format": "txt",
-      "label": "proton_cg_qpdf_b{b}_z{z:02d}",
+      "label": "proton_cg_qpdf_b{b}_z{z}",
       "expand": {
         "b": [0],
         "z": {
@@ -136,7 +136,8 @@
           "fit_idx_range": [6, 14],
           "extrapolated_length": 100.0,
           "weight_ini": 0.0,
-          "m0": 0.0411522633744856
+          "m0": 0.0411522633744856,
+          "joint_re_im_fit": true
         }
       }
     }

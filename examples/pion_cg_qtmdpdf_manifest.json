@@ -15,9 +15,9 @@
     },
     {
       "kind": "three_point",
-      "path": "data/pion_cg_qtmdpdf/three_point_ss_g8_p330_b{b}_z{z:02d}.txt",
+      "path": "data/pion_cg_qtmdpdf/three_point_ss_g8_p330_b{b}_z{z}.txt",
       "file_format": "txt",
-      "label": "pion_cg_qtmdpdf_p330_b{b}_z{z:02d}",
+      "label": "pion_cg_qtmdpdf_p330_b{b}_z{z}",
       "expand": {
         "b": [0, 4, 6, 8, 10],
         "z": {
@@ -117,10 +117,12 @@
           "endpoint": true
         },
         "extrapolation": {
-          "fit_idx_range": [1, 4],
+          "fit_idx_range": [13, 21],
           "extrapolated_length": 60.0,
           "weight_ini": 0.0,
-          "m0": 0.0
+          "m0": 0.0,
+          "joint_re_im_fit": true,
+          "quark_sector": "valence"
         }
       }
     }

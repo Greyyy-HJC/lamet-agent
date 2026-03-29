@@ -1374,6 +1374,104 @@ class CorrelatorAnalysisStage:
                         format=plot_format,
                     )
                 )
+        artifacts.extend(self._write_grouped_b_dependence_plots(stage_dir, context, families))
+        return artifacts
+
+    def _group_families_for_b_plots(self, families: list[dict[str, Any]]) -> dict[tuple[Any, ...], list[dict[str, Any]]]:
+        grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for family in families:
+            metadata = family["metadata"]
+            key = (
+                str(metadata["setup_id"]),
+                str(metadata["fit_mode"]),
+                str(metadata["gamma"]),
+                str(metadata["flavor"]),
+                str(metadata["smearing"]),
+                int(metadata["px"]),
+                int(metadata["py"]),
+                int(metadata["pz"]),
+                str(metadata["hadron"]),
+                str(metadata["analysis_channel"]),
+                str(metadata["gauge"]),
+            )
+            grouped.setdefault(key, []).append(family)
+        return grouped
+
+    def _b_plot_slug(self, metadata: dict[str, Any]) -> str:
+        return self._slugify(
+            f"{metadata['hadron']}_{metadata['analysis_channel']}_{metadata['setup_id']}_{metadata['fit_mode']}"
+            f"_p{metadata['px']}{metadata['py']}{metadata['pz']}_{metadata['gamma']}_{metadata['flavor']}_{metadata['smearing']}_all_b"
+        )
+
+    def _write_grouped_b_dependence_plots(
+        self,
+        stage_dir: Path,
+        context: StageContext,
+        families: list[dict[str, Any]],
+    ) -> list[ArtifactRecord]:
+        artifacts: list[ArtifactRecord] = []
+        for grouped_families in self._group_families_for_b_plots(families).values():
+            if len(grouped_families) < 2:
+                continue
+            ordered = sorted(grouped_families, key=lambda family: int(family["metadata"]["b"]))
+            reference = ordered[0]["metadata"]
+            slug = self._b_plot_slug(reference)
+            title_prefix = f"{reference['hadron']} {reference['analysis_channel']} vs z"
+            for plot_format in context.manifest.outputs.plot_formats:
+                real_plot_path = stage_dir / f"{slug}_real.{plot_format}"
+                imag_plot_path = stage_dir / f"{slug}_imag.{plot_format}"
+                real_series = [
+                    {
+                        "x": np.asarray(family["z_axis"], dtype=float),
+                        "y": np.asarray(family["real_mean"], dtype=float),
+                        "error": np.asarray(family["real_error"], dtype=float),
+                        "label": f"b={family['metadata']['b']} ({family['metadata']['observable']})",
+                        "style": "errorbar",
+                    }
+                    for family in ordered
+                ]
+                imag_series = [
+                    {
+                        "x": np.asarray(family["z_axis"], dtype=float),
+                        "y": np.asarray(family["imag_mean"], dtype=float),
+                        "error": np.asarray(family["imag_error"], dtype=float),
+                        "label": f"b={family['metadata']['b']} ({family['metadata']['observable']})",
+                        "style": "errorbar",
+                    }
+                    for family in ordered
+                ]
+                save_series_collection_plot(
+                    real_series,
+                    real_plot_path,
+                    f"{title_prefix} (real, {reference['fit_mode']}, {reference['setup_id']})",
+                    "z",
+                    "Real matrix element",
+                )
+                save_series_collection_plot(
+                    imag_series,
+                    imag_plot_path,
+                    f"{title_prefix} (imag, {reference['fit_mode']}, {reference['setup_id']})",
+                    "z",
+                    "Imag matrix element",
+                )
+                artifacts.extend(
+                    [
+                        ArtifactRecord(
+                            name=f"{slug}_real_plot_{plot_format}",
+                            kind="plot",
+                            path=real_plot_path,
+                            description="Real-part matrix elements versus z with multiple b families overlaid.",
+                            format=plot_format,
+                        ),
+                        ArtifactRecord(
+                            name=f"{slug}_imag_plot_{plot_format}",
+                            kind="plot",
+                            path=imag_plot_path,
+                            description="Imaginary-part matrix elements versus z with multiple b families overlaid.",
+                            format=plot_format,
+                        ),
+                    ]
+                )
         return artifacts
 
     def _build_matrix_element_families(
