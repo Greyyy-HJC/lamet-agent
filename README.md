@@ -63,6 +63,27 @@ Inspect the resolved workflow:
 lamet-agent workflow examples/workflow_smoke_manifest.json
 ```
 
+The CLI commands currently accept these arguments:
+
+- `lamet-agent validate <manifest_path>`
+- `lamet-agent workflow <manifest_path>`
+- `lamet-agent run <manifest_path> [--resume-from <run_directory>] [--start-stage <stage_name>]`
+
+Available `run` flags:
+
+- `--resume-from <run_directory>`: reuse stage outputs from an earlier run directory
+- `--start-stage <stage_name>`: restart execution from one stage onward
+
+The two `run` flags must be used together. If you omit both, the workflow runs from the beginning.
+
+Available stage names are:
+
+- `correlator_analysis`
+- `renormalization`
+- `fourier_transform`
+- `perturbative_matching`
+- `physical_limit`
+
 Run the tracked full-pipeline smoke example:
 
 ```bash
@@ -86,6 +107,30 @@ Run the pion CG qTMDPDF example:
 ```bash
 lamet-agent run examples/pion_cg_qtmdpdf_manifest.json
 ```
+
+For longer runs that use `matplotlib`, it is often convenient to point the cache to a writable directory:
+
+```bash
+MPLCONFIGDIR=/tmp/matplotlib lamet-agent run examples/pion_cg_qtmdpdf_manifest.json
+```
+
+Restart the pion CG qTMDPDF workflow from `fourier_transform` using a previous run:
+
+```bash
+MPLCONFIGDIR=/tmp/matplotlib lamet-agent run examples/pion_cg_qtmdpdf_manifest.json \
+  --resume-from examples/outputs/pion_cg_qtmdpdf/run_YYYYMMDDTHHMMSSZ \
+  --start-stage fourier_transform
+```
+
+Restart the proton CG qPDF workflow from `fourier_transform` using a previous run:
+
+```bash
+MPLCONFIGDIR=/tmp/matplotlib lamet-agent run examples/proton_cg_qpdf_manifest.json \
+  --resume-from examples/outputs/proton_cg_qpdf/run_YYYYMMDDTHHMMSSZ \
+  --start-stage fourier_transform
+```
+
+These resume commands only work if the referenced run directory already contains the earlier stages needed by the requested `start_stage`.
 
 If you are running from the repository without installing the console script:
 

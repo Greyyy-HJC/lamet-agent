@@ -120,7 +120,7 @@
           "fit_idx_range": [13, 21],
           "extrapolated_length": 60.0,
           "weight_ini": 0.0,
-          "m0": 0.0,
+          "m0_gev": 0.1,
           "joint_re_im_fit": true,
           "quark_sector": "valence"
         }

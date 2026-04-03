@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from lamet_agent.artifacts import ArtifactRecord, StageResult
+from lamet_agent.constants import lattice_unit_to_physical
 from lamet_agent.extensions.qpdf_fourier import (
     batch_fourier_transform_qpdf,
     build_fourier_kernel,
@@ -146,7 +147,21 @@ class FourierTransformStage:
     ) -> tuple[dict[str, Any], list[ArtifactRecord]]:
         setup = context.manifest.setup_metadata(str(family["metadata"]["setup_id"]))
         momentum_vector = list(family["metadata"]["momentum"])
+        momentum_components_gev = self._momentum_components_gev(setup=setup, momentum_vector=momentum_vector)
+        total_momentum_gev = float(np.linalg.norm(momentum_components_gev))
         coordinate_direction = list(parameters["physics"].get("coordinate_direction") or momentum_vector)
+        m0_gev = float(parameters["extrapolation"]["m0_gev"])
+        m0_dimensionless = self._resolve_dimensionless_m0(m0_gev=m0_gev, total_momentum_gev=total_momentum_gev)
+        context.report_progress(
+            self.name,
+            "stage_message",
+            message=(
+                f"FT family {self._family_slug(family['metadata'])}: "
+                f"momentum[GeV]={np.array2string(momentum_components_gev, precision=6, separator=', ')}, "
+                f"|P|={total_momentum_gev:.6f} GeV, "
+                f"m0={m0_gev:.6f} GeV -> m0/|P|={m0_dimensionless:.6f}"
+            ),
+        )
         lambda_axis = build_lambda_axis(
             family["z_axis"],
             lattice_spacing_fm=setup["lattice_spacing_fm"],
@@ -188,7 +203,7 @@ class FourierTransformStage:
             fit_idx_range=parameters["extrapolation"]["fit_idx_range"],
             extrapolated_length=parameters["extrapolation"]["extrapolated_length"],
             weight_ini=parameters["extrapolation"]["weight_ini"],
-            m0=parameters["extrapolation"]["m0"],
+            m0=m0_dimensionless,
             hadron=str(family["metadata"]["hadron"]),
             gauge_type=parameters["gauge_type"],
             quark_sector=parameters["extrapolation"]["quark_sector"],
@@ -215,7 +230,7 @@ class FourierTransformStage:
                 "fit_idx_range": parameters["extrapolation"]["fit_idx_range"],
                 "extrapolated_length": parameters["extrapolation"]["extrapolated_length"],
                 "weight_ini": parameters["extrapolation"]["weight_ini"],
-                "m0": parameters["extrapolation"]["m0"],
+                "m0": m0_dimensionless,
                 "hadron": str(family["metadata"]["hadron"]),
                 "gauge_type": parameters["gauge_type"],
                 "quark_sector": parameters["extrapolation"]["quark_sector"],
@@ -273,6 +288,11 @@ class FourierTransformStage:
 
         transformed_family = {
             "metadata": dict(family["metadata"]),
+            "momentum": {
+                "lattice_units": [int(value) for value in momentum_vector],
+                "components_gev": momentum_components_gev.tolist(),
+                "total_gev": total_momentum_gev,
+            },
             "lambda_axis": np.asarray(lambda_axis, dtype=float),
             "x_axis": np.asarray(x_grid, dtype=float),
             "coordinate_real_mean": np.asarray(gv.mean(extrapolated_real_avg), dtype=float),
@@ -292,7 +312,8 @@ class FourierTransformStage:
                 "fit_idx_range": list(parameters["extrapolation"]["fit_idx_range"]),
                 "extrapolated_length": float(parameters["extrapolation"]["extrapolated_length"]),
                 "weight_ini": float(parameters["extrapolation"]["weight_ini"]),
-                "m0": float(parameters["extrapolation"]["m0"]),
+                "m0_gev": m0_gev,
+                "m0_dimensionless": float(m0_dimensionless),
                 "quark_sector": str(parameters["extrapolation"]["quark_sector"]),
                 "joint_re_im_fit": bool(parameters["extrapolation"]["joint_re_im_fit"]),
                 "imaginary_sign": int(parameters["imaginary_sign"]),
@@ -344,7 +365,7 @@ class FourierTransformStage:
                 "fit_idx_range": [int(value) for value in extrapolation.get("fit_idx_range", [2, 6])],
                 "extrapolated_length": float(extrapolation.get("extrapolated_length", 50.0)),
                 "weight_ini": float(extrapolation.get("weight_ini", 0.0)),
-                "m0": float(extrapolation.get("m0", 0.0)),
+                "m0_gev": float(extrapolation.get("m0_gev", 0.0)),
                 "quark_sector": str(extrapolation.get("quark_sector", "valence")).lower(),
                 "joint_re_im_fit": bool(extrapolation.get("joint_re_im_fit", True)),
                 "joint_prior_overrides": dict(extrapolation.get("joint_prior_overrides", {})),
@@ -402,6 +423,7 @@ class FourierTransformStage:
     def _serialize_transformed_family(self, family: dict[str, Any]) -> dict[str, Any]:
         return {
             "metadata": dict(family["metadata"]),
+            "momentum": dict(family.get("momentum", {})),
             "lambda_axis": np.asarray(family["lambda_axis"], dtype=float).tolist(),
             "x_axis": np.asarray(family["x_axis"], dtype=float).tolist(),
             "sample_count": int(family["sample_count"]),
@@ -428,6 +450,34 @@ class FourierTransformStage:
             },
             "sample_artifact": family.get("sample_artifact"),
         }
+
+    def _momentum_components_gev(self, *, setup: dict[str, Any], momentum_vector: list[float]) -> np.ndarray:
+        if len(momentum_vector) != 3:
+            raise ValueError("fourier_transform momentum_vector must have length 3.")
+        return np.asarray(
+            [
+                float(
+                    np.asarray(
+                        lattice_unit_to_physical(
+                            component,
+                            a_fm=float(setup["lattice_spacing_fm"]),
+                            spatial_extent=int(setup["spatial_extent"]),
+                            dimension="P",
+                        ),
+                        dtype=float,
+                    )
+                )
+                for component in momentum_vector
+            ],
+            dtype=float,
+        )
+
+    def _resolve_dimensionless_m0(self, *, m0_gev: float, total_momentum_gev: float) -> float:
+        if np.isclose(m0_gev, 0.0):
+            return 0.0
+        if total_momentum_gev <= 0.0:
+            raise ValueError("fourier_transform requires non-zero total momentum to convert m0_gev into a dimensionless tail parameter.")
+        return float(m0_gev / total_momentum_gev)
 
     def _write_grouped_b_x_dependence_plots(
         self,

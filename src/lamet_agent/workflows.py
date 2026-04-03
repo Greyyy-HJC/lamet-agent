@@ -87,6 +87,7 @@ def _restore_transformed_family_samples(payload: dict[str, Any]) -> list[dict[st
         restored.append(
             {
                 "metadata": dict(family["metadata"]),
+                "momentum": dict(family.get("momentum", {})),
                 "lambda_axis": np.asarray(family["lambda_axis"], dtype=float),
                 "x_axis": np.asarray(sample_dump["x_axis"], dtype=float),
                 "sample_count": int(family["sample_count"]),

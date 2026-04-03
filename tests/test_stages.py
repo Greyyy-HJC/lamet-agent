@@ -12,6 +12,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from lamet_agent.constants import lattice_unit_to_physical
 from lamet_agent.kernel import load_kernel
 from lamet_agent.loaders import CorrelatorDataset, load_correlator_dataset
 from lamet_agent.extensions.qpdf_fourier import asymptotic_imag_function, asymptotic_real_function
@@ -192,7 +193,7 @@ class StageTests(unittest.TestCase):
                         "fit_idx_range": [2, 5],
                         "extrapolated_length": 8.0,
                         "weight_ini": 0.0,
-                        "m0": 0.0,
+                        "m0_gev": 0.1,
                     },
                 }
             },
@@ -273,12 +274,14 @@ class StageTests(unittest.TestCase):
             ],
         }
         with tempfile.TemporaryDirectory() as tmpdir:
+            progress_events: list[dict[str, object]] = []
             context = StageContext(
                 manifest=manifest,
                 run_directory=Path(tmpdir),
                 datasets={"demo": dataset},
                 kernel=kernel,
                 stage_payloads={"correlator_analysis": correlator_payload},
+                progress_callback=progress_events.append,
             )
             renorm_result = RenormalizationStage().run(context)
             self.assertIn("_renormalized_families", renorm_result.payload)
@@ -286,6 +289,23 @@ class StageTests(unittest.TestCase):
             fourier_result = FourierTransformStage().run(context)
             self.assertIn("transformed_families", fourier_result.payload)
             self.assertEqual(len(fourier_result.payload["transformed_families"]), 1)
+            family = fourier_result.payload["transformed_families"][0]
+            components_gev = [
+                float(lattice_unit_to_physical(component, a_fm=0.09, spatial_extent=64, dimension="P"))
+                for component in (4, 4, 0)
+            ]
+            total_momentum_gev = float(np.linalg.norm(np.asarray(components_gev, dtype=float)))
+            self.assertAlmostEqual(float(family["momentum"]["total_gev"]), total_momentum_gev)
+            self.assertAlmostEqual(float(family["extrapolation"]["m0_gev"]), 0.1)
+            self.assertAlmostEqual(float(family["extrapolation"]["m0_dimensionless"]), 0.1 / total_momentum_gev)
+            self.assertTrue(
+                any(
+                    event.get("event") == "stage_message"
+                    and "|P|=" in str(event.get("message", ""))
+                    and "m0=0.100000 GeV" in str(event.get("message", ""))
+                    for event in progress_events
+                )
+            )
 
 
 if __name__ == "__main__":

@@ -47,6 +47,9 @@ class WorkflowProgressReporter:
     def __call__(self, event: dict[str, Any]) -> None:
         kind = str(event["event"])
         stage_name = str(event["stage_name"])
+        if kind == "stage_message":
+            self._emit_stage_message(str(event.get("message", "")))
+            return
         if kind == "stage_progress_start":
             self._start_stage_progress(
                 stage_name=stage_name,
@@ -126,6 +129,15 @@ class WorkflowProgressReporter:
         if self.current_total > 0 and self.current_completed < self.current_total:
             self._advance_stage_progress(self.current_total - self.current_completed)
         self._close_current_bar()
+
+    def _emit_stage_message(self, message: str) -> None:
+        if not message:
+            return
+        if self.current_bar is not None:
+            self.current_bar.write(message)
+            self.current_bar.refresh()
+            return
+        print(message, file=self.stream)
 
     def close(self) -> None:
         self._close_current_bar()

@@ -136,7 +136,7 @@
           "fit_idx_range": [6, 14],
           "extrapolated_length": 100.0,
           "weight_ini": 0.0,
-          "m0": 0.0411522633744856,
+          "m0_gev": 0.1,
           "joint_re_im_fit": true
         }
       }
