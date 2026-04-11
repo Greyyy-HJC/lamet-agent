@@ -16,8 +16,10 @@ outputs/
 examples/data/proton_cg_qpdf/*.txt
 examples/data/pion_cg_qtmdpdf/*.txt
 
-# Root data directory: txt files are large/private; .gv files are tracked
+# Root data directory: txt files and binary caches are large/private; .gv files are tracked
 data/pion_cg_cs_kernel/*.txt
+data/pion_cg_cs_kernel_cache/*.npy
+data/pion_cg_cs_kernel_cache/*.gv
 
 # Local draft intake area
 incoming/

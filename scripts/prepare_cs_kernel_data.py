@@ -1,38 +1,56 @@
-"""Prepare a synthetic correlator_analysis run from cached pion_cg_tmdwf data.
+"""Prepare a correlator_analysis resume point from cached bare quasi matrix elements.
 
-This script reads the post-ground-state-fit bare quasi matrix elements from
-the pion_cg_tmdwf cache and writes them into the directory layout expected by
-lamet-agent's resume mechanism.  The resulting run directory can be used with:
+The script converts post-ground-state-fit bare quasi matrix elements into the
+directory layout expected by lamet-agent's ``--resume-from`` mechanism.  The
+resulting run directory is placed at::
 
-    lamet-agent run examples/pion_cg_cs_kernel_manifest.json \
-        --resume-from <output_dir> --start-stage renormalization
+    examples/outputs/pion_cg_cs_kernel/run_prepared/
 
-Expected inputs (from pion_cg_tmdwf):
-    cache/bare_quasi_zdep_p{px}_b{b}_2st_joint.jk.npy  (for px in p_ls, b in b_ls)
-    output/dump/bare_quasi_zdep_p0_1st.gv              (p=0 reference, optional)
+and can be used with::
+
+    lamet-agent run examples/pion_cg_cs_kernel_manifest.json \\
+        --resume-from examples/outputs/pion_cg_cs_kernel/run_prepared \\
+        --start-stage renormalization
+
+Cache lookup order (first match wins):
+  1. data/pion_cg_cs_kernel_cache/   (local copy — project-independent)
+  2. /home/jinchen/git/anl/pion_cg_tmdwf/cache/  (legacy fallback)
+
+Run this script once after cloning the repo (or whenever the upstream cache
+changes) to populate the local cache::
+
+    python scripts/prepare_cs_kernel_data.py --save-cache
+
+After that the project is self-contained and the external pion_cg_tmdwf
+directory is no longer needed.
 
 Example usage:
-    python scripts/prepare_cs_kernel_data.py
+    python scripts/prepare_cs_kernel_data.py            # use local cache
+    python scripts/prepare_cs_kernel_data.py --save-cache  # copy from upstream first
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
 import gvar as gv
 import numpy as np
 
-TMDWF_ROOT = Path("/home/jinchen/git/anl/pion_cg_tmdwf")
 AGENT_ROOT = Path(__file__).resolve().parent.parent
+
+# Local cache — gitignored, project-self-contained
+LOCAL_CACHE_DIR = AGENT_ROOT / "data" / "pion_cg_cs_kernel_cache"
+
+# Legacy upstream path (only needed when running --save-cache)
+UPSTREAM_ROOT = Path("/home/jinchen/git/anl/pion_cg_tmdwf")
+
 OUTPUT_DIR = AGENT_ROOT / "examples" / "outputs" / "pion_cg_cs_kernel" / "run_prepared"
 
-# Raw correlator data is written here and referenced by the manifest via ../data/pion_cg_cs_kernel/
-DATA_DIR = AGENT_ROOT / "data" / "pion_cg_cs_kernel"
-
 P_LS = [8, 9, 10]
-P0_PX = 0
 B_LS = [0, 2, 4, 6, 8, 10]
 ZMAX = 21
 
@@ -43,22 +61,91 @@ SMEARING = "SP"
 RESAMPLING = "jackknife"
 
 
+# ---------------------------------------------------------------------------
+# Cache management
+# ---------------------------------------------------------------------------
+
+def _npy_filename(px: int, b: int) -> str:
+    return f"bare_quasi_zdep_p{px}_b{b}_2st_joint.jk.npy"
+
+
+def _gv_filename() -> str:
+    return "bare_quasi_zdep_p0_1st.gv"
+
+
+def save_cache_from_upstream() -> None:
+    """Copy needed files from the upstream pion_cg_tmdwf project into LOCAL_CACHE_DIR."""
+    LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for px in P_LS:
+        for b in B_LS:
+            fname = _npy_filename(px, b)
+            src = UPSTREAM_ROOT / "cache" / fname
+            if not src.exists():
+                src = UPSTREAM_ROOT / "output" / "dump" / fname
+            if not src.exists():
+                print(f"  WARNING: {fname} not found in upstream, skipping")
+                continue
+            dst = LOCAL_CACHE_DIR / fname
+            shutil.copy2(src, dst)
+            copied += 1
+            print(f"  Copied {fname}")
+
+    # p=0 gv reference
+    gv_src = UPSTREAM_ROOT / "cache" / _gv_filename()
+    if not gv_src.exists():
+        gv_src = UPSTREAM_ROOT / "output" / "dump" / _gv_filename()
+    if gv_src.exists():
+        shutil.copy2(gv_src, LOCAL_CACHE_DIR / _gv_filename())
+        copied += 1
+        print(f"  Copied {_gv_filename()}")
+    else:
+        print(f"  WARNING: {_gv_filename()} not found in upstream")
+
+    print(f"\nSaved {copied} files to {LOCAL_CACHE_DIR}")
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+def _find_npy(px: int, b: int) -> Path:
+    fname = _npy_filename(px, b)
+    local = LOCAL_CACHE_DIR / fname
+    if local.exists():
+        return local
+    # Legacy fallback
+    for base in [UPSTREAM_ROOT / "cache", UPSTREAM_ROOT / "output" / "dump"]:
+        p = base / fname
+        if p.exists():
+            return p
+    raise FileNotFoundError(
+        f"{fname} not found. Run with --save-cache to copy from the upstream project first."
+    )
+
+
+def _find_gv() -> Path | None:
+    fname = _gv_filename()
+    local = LOCAL_CACHE_DIR / fname
+    if local.exists():
+        return local
+    for base in [UPSTREAM_ROOT / "cache", UPSTREAM_ROOT / "output" / "dump"]:
+        p = base / fname
+        if p.exists():
+            return p
+    return None
+
+
 def load_npy_bare_quasi(px: int, b: int) -> dict[str, np.ndarray]:
-    path = TMDWF_ROOT / "cache" / f"bare_quasi_zdep_p{px}_b{b}_2st_joint.jk.npy"
-    if not path.exists():
-        path = TMDWF_ROOT / "output" / "dump" / f"bare_quasi_zdep_p{px}_b{b}_2st_joint.jk.npy"
+    path = _find_npy(px, b)
     data = np.load(path, allow_pickle=True).item()
-    re = np.array(data["re"], dtype=float)
-    im = np.array(data["im"], dtype=float)
-    return {"re": re, "im": im}
+    return {"re": np.array(data["re"], dtype=float), "im": np.array(data["im"], dtype=float)}
 
 
 def load_p0_gv(b: int) -> dict[str, np.ndarray] | None:
-    """Load p=0 reference data from gvar dump."""
-    path = TMDWF_ROOT / "cache" / "bare_quasi_zdep_p0_1st.gv"
-    if not path.exists():
-        path = TMDWF_ROOT / "output" / "dump" / "bare_quasi_zdep_p0_1st.gv"
-    if not path.exists():
+    """Load p=0 reference from gvar dump and generate Gaussian samples."""
+    path = _find_gv()
+    if path is None:
         return None
     data = gv.load(str(path))
     re_gv = data[f"b{b}_re"]
@@ -73,6 +160,10 @@ def load_p0_gv(b: int) -> dict[str, np.ndarray] | None:
     im_samples = im_mean[None, :] + im_err[None, :] * rng.standard_normal((n_samp, len(im_mean)))
     return {"re": re_samples.T, "im": im_samples.T}
 
+
+# ---------------------------------------------------------------------------
+# Family construction
+# ---------------------------------------------------------------------------
 
 def build_family(
     px: int, py: int, pz: int, b: int, z_axis: np.ndarray,
@@ -122,7 +213,24 @@ def build_family(
     }
 
 
-def main():
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--save-cache",
+        action="store_true",
+        help="Copy source files from the upstream pion_cg_tmdwf project into data/pion_cg_cs_kernel_cache/ before preparing.",
+    )
+    args = parser.parse_args()
+
+    if args.save_cache:
+        print(f"Saving cache from {UPSTREAM_ROOT} -> {LOCAL_CACHE_DIR} ...")
+        save_cache_from_upstream()
+        print()
+
     stage_dir = OUTPUT_DIR / "stages" / "correlator_analysis"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -147,11 +255,7 @@ def main():
 
     two_point_payloads = []
     for px in [0] + P_LS:
-        two_point_payloads.append({
-            "momentum": [px, 0, 0],
-            "setup_id": SETUP_ID,
-            "smearing": SMEARING,
-        })
+        two_point_payloads.append({"momentum": [px, 0, 0], "setup_id": SETUP_ID, "smearing": SMEARING})
 
     payload = {
         "two_point": two_point_payloads,
@@ -164,7 +268,7 @@ def main():
         "stage_results": [
             {
                 "stage_name": "correlator_analysis",
-                "summary": "Prepared from pion_cg_tmdwf cached bare quasi data.",
+                "summary": "Prepared from local bare quasi cache (data/pion_cg_cs_kernel_cache/).",
                 "payload": payload,
                 "artifacts": [],
             }
@@ -177,9 +281,7 @@ def main():
 
     print(f"\nWrote {len(families)} families to {stage_dir}")
     print(f"Report: {report_path}")
-    print(f"\nData directory (for manifest correlator paths): {DATA_DIR}")
-    print(f"  -> populate with raw correlator .txt files if running from scratch")
-    print(f"\nTo run the CS kernel pipeline (from prepared bare-quasi cache):")
+    print(f"\nTo run the CS kernel pipeline:")
     print(f"  lamet-agent run examples/pion_cg_cs_kernel_manifest.json \\")
     print(f"    --resume-from {OUTPUT_DIR} --start-stage renormalization")
 

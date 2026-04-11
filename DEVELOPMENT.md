@@ -52,10 +52,23 @@ Run the pion CG qTMDPDF example:
 MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/pion_cg_qtmdpdf_manifest.json
 ```
 
-Run the pion CG Collins-Soper kernel example:
+Run the pion CG Collins-Soper kernel example (using the local bare-quasi cache):
 
 ```bash
-MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/pion_cg_cs_kernel_manifest.json
+# Prepare the resume point from data/pion_cg_cs_kernel_cache/ (local, gitignored)
+.venv/bin/python scripts/prepare_cs_kernel_data.py
+
+# Run from renormalization onward
+MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/pion_cg_cs_kernel_manifest.json \
+  --resume-from examples/outputs/pion_cg_cs_kernel/run_prepared \
+  --start-stage renormalization
+```
+
+If starting from scratch on a new machine (when `data/pion_cg_cs_kernel_cache/` is empty):
+
+```bash
+# Copy source files from the upstream pion_cg_tmdwf project once, then never again
+.venv/bin/python scripts/prepare_cs_kernel_data.py --save-cache
 ```
 
 If you are working from the repository without the installed console script:
