@@ -328,13 +328,23 @@ class EvaluationStage:
                         prior_mean=prior_csk_mean,
                         prior_sigma=prior_csk_sigma * 2,
                     )
+                    stat_err = float(gv.sdev(csk_constant))
+                    # Systematic: std of mean values across the x window,
+                    # capturing residual x-dependence.  Using std (not range)
+                    # is consistent with the cs_kernel_sys convention in the
+                    # reference analysis (soft_function_mpi300/cg_cs_kernel.ipynb)
+                    # where per-sample std is averaged as the systematic.
+                    means_in_window = np.array([gv.mean(v) for v in csk_in_window])
+                    valid = np.isfinite(means_in_window)
+                    sys_err = float(np.std(means_in_window[valid])) if valid.sum() > 1 else 0.0
+                    total_err = float(np.sqrt(stat_err**2 + sys_err**2))
                     reduced: dict[str, Any] = {
                         "b": b_value,
                         "group_key": list(group_key),
                         "value": float(gv.mean(csk_constant)),
-                        "stat_error": float(gv.sdev(csk_constant)),
-                        "sys_error": 0.0,
-                        "total_error": float(gv.sdev(csk_constant)),
+                        "stat_error": stat_err,
+                        "sys_error": sys_err,
+                        "total_error": total_err,
                         "n_momenta": len(b_families),
                         "n_x_points": int(np.sum(mask)),
                         "_gv": csk_constant,
