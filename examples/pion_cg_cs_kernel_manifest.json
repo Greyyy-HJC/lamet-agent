@@ -3,7 +3,7 @@
   "correlators": [
     {
       "kind": "two_point",
-      "path": "data/pion_cg_cs_kernel/two_point_ss_p000.txt",
+      "path": "../data/pion_cg_cs_kernel/two_point_ss_p000.txt",
       "file_format": "txt",
       "label": "pion_cg_cs_kernel_two_point_p000",
       "metadata": {
@@ -15,7 +15,7 @@
     },
     {
       "kind": "two_point",
-      "path": "data/pion_cg_cs_kernel/two_point_ss_p800.txt",
+      "path": "../data/pion_cg_cs_kernel/two_point_ss_p800.txt",
       "file_format": "txt",
       "label": "pion_cg_cs_kernel_two_point_p800",
       "metadata": {
@@ -27,7 +27,7 @@
     },
     {
       "kind": "two_point",
-      "path": "data/pion_cg_cs_kernel/two_point_ss_p900.txt",
+      "path": "../data/pion_cg_cs_kernel/two_point_ss_p900.txt",
       "file_format": "txt",
       "label": "pion_cg_cs_kernel_two_point_p900",
       "metadata": {
@@ -39,7 +39,7 @@
     },
     {
       "kind": "two_point",
-      "path": "data/pion_cg_cs_kernel/two_point_ss_p1000.txt",
+      "path": "../data/pion_cg_cs_kernel/two_point_ss_p1000.txt",
       "file_format": "txt",
       "label": "pion_cg_cs_kernel_two_point_p1000",
       "metadata": {
@@ -51,7 +51,7 @@
     },
     {
       "kind": "three_point",
-      "path": "data/pion_cg_cs_kernel/three_point_sp_g14_p000_b{b}_z{z}.txt",
+      "path": "../data/pion_cg_cs_kernel/three_point_sp_g14_p000_b{b}_z{z}.txt",
       "file_format": "txt",
       "label": "pion_cg_cs_kernel_p000_b{b}_z{z}",
       "expand": {
@@ -68,7 +68,7 @@
     },
     {
       "kind": "three_point",
-      "path": "data/pion_cg_cs_kernel/three_point_sp_g14_p800_b{b}_z{z}.txt",
+      "path": "../data/pion_cg_cs_kernel/three_point_sp_g14_p800_b{b}_z{z}.txt",
       "file_format": "txt",
       "label": "pion_cg_cs_kernel_p800_b{b}_z{z}",
       "expand": {
@@ -85,7 +85,7 @@
     },
     {
       "kind": "three_point",
-      "path": "data/pion_cg_cs_kernel/three_point_sp_g14_p900_b{b}_z{z}.txt",
+      "path": "../data/pion_cg_cs_kernel/three_point_sp_g14_p900_b{b}_z{z}.txt",
       "file_format": "txt",
       "label": "pion_cg_cs_kernel_p900_b{b}_z{z}",
       "expand": {
@@ -102,7 +102,7 @@
     },
     {
       "kind": "three_point",
-      "path": "data/pion_cg_cs_kernel/three_point_sp_g14_p1000_b{b}_z{z}.txt",
+      "path": "../data/pion_cg_cs_kernel/three_point_sp_g14_p1000_b{b}_z{z}.txt",
       "file_format": "txt",
       "label": "pion_cg_cs_kernel_p1000_b{b}_z{z}",
       "expand": {
@@ -125,7 +125,7 @@
       "hadron": "pion",
       "channel": "qda"
     },
-    "conventions": "Pion CG Collins-Soper kernel from qTMDWF. Uses cg_ratio renormalization (b=0 normalization + p=0 reference), imaginary zeroing before Fourier transform, and CS kernel extraction via momentum ratios. Reference lattice setup matches pion_cg_tmdwf (a=0.06 fm, 48^3 x 64, HISQ Nf=3).",
+    "conventions": "Pion CG Collins-Soper kernel from qTMDWF. Uses cg_ratio renormalization (b=0 normalization + p=0 reference), imaginary zeroing before Fourier transform, and CS kernel extraction via multi-momentum simultaneous fit. Reference lattice setup matches pion_cg_tmdwf (a=0.06 fm, 48^3 x 64, HISQ Nf=3).",
     "setups": {
       "hisq_a06": {
         "lattice_action": "CG52bxyp20",
@@ -207,10 +207,14 @@
         }
       },
       "evaluation": {
-        "method": "cs_kernel_momentum_ratio",
+        "method": "cs_kernel_momentum_fit",
         "x_window": [0.3, 0.7],
-        "constant_x_fit": true,
-        "momentum_pairs": "all"
+        "fix_pz_gev": 1.62,
+        "mu_renorm": 2.0,
+        "csk_prior_mean": -0.5,
+        "csk_prior_sigma": 1.0,
+        "plot_ylim": [-3.0, 2.0],
+        "literature_data_path": "../data/cs_kernel_literature_updated.gv"
       }
     }
   },

@@ -165,9 +165,10 @@ python scripts/run_manifest.py run examples/workflow_smoke_manifest.json
   - pion CG qTMDPDF workflow mirroring the ratio-fit scope of `mp_zdep_samp.py`
   - backed by [examples/data/pion_cg_qtmdpdf](/home/jinchen/git/anl/lamet-agent/examples/data/pion_cg_qtmdpdf)
 - [examples/pion_cg_cs_kernel_manifest.json](/home/jinchen/git/anl/lamet-agent/examples/pion_cg_cs_kernel_manifest.json)
-  - pion CG Collins-Soper kernel end-to-end workflow (2pt + QDA -> CS kernel)
-  - backed by [examples/data/pion_cg_cs_kernel](/home/jinchen/git/anl/lamet-agent/examples/data/pion_cg_cs_kernel)
-- local-only real-data directories (`pion_cg_qtmdpdf`, `pion_cg_cs_kernel`) are excluded from git
+  - pion CG Collins-Soper kernel end-to-end workflow (2pt + QDA -> CS kernel via multi-momentum fit)
+  - raw correlator inputs go in [data/pion_cg_cs_kernel/](/home/jinchen/git/anl/lamet-agent/data/pion_cg_cs_kernel/) (gitignored)
+  - tracked reference: [data/cs_kernel_literature_updated.gv](/home/jinchen/git/anl/lamet-agent/data/cs_kernel_literature_updated.gv) — compiled literature CS kernel results for comparison plot
+- local-only real-data directories (`examples/data/pion_cg_qtmdpdf/`, `data/pion_cg_cs_kernel/`) are excluded from git
 
 ## Manifest Overview
 

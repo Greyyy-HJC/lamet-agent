@@ -28,6 +28,9 @@ TMDWF_ROOT = Path("/home/jinchen/git/anl/pion_cg_tmdwf")
 AGENT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = AGENT_ROOT / "examples" / "outputs" / "pion_cg_cs_kernel" / "run_prepared"
 
+# Raw correlator data is written here and referenced by the manifest via ../data/pion_cg_cs_kernel/
+DATA_DIR = AGENT_ROOT / "data" / "pion_cg_cs_kernel"
+
 P_LS = [8, 9, 10]
 P0_PX = 0
 B_LS = [0, 2, 4, 6, 8, 10]
@@ -174,7 +177,9 @@ def main():
 
     print(f"\nWrote {len(families)} families to {stage_dir}")
     print(f"Report: {report_path}")
-    print(f"\nTo run the CS kernel pipeline:")
+    print(f"\nData directory (for manifest correlator paths): {DATA_DIR}")
+    print(f"  -> populate with raw correlator .txt files if running from scratch")
+    print(f"\nTo run the CS kernel pipeline (from prepared bare-quasi cache):")
     print(f"  lamet-agent run examples/pion_cg_cs_kernel_manifest.json \\")
     print(f"    --resume-from {OUTPUT_DIR} --start-stage renormalization")
 

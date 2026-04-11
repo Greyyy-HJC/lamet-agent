@@ -84,6 +84,8 @@ python scripts/run_manifest.py run examples/workflow_smoke_manifest.json
 - Stage parameters should describe algorithms and fit controls, not lattice setup metadata.
 - `renormalization` supports an `identity` (default) and `cg_ratio` scheme for qTMDWF/qTMDPDF.
 - `fourier_transform` supports `imaginary_zeroing` to zero imaginary samples before extrapolation (e.g. pion DA).
-- `evaluation` performs cross-family aggregation (e.g. CS kernel momentum ratios); dispatches on `method`.
+- `evaluation` performs cross-family aggregation; dispatches on `method`:
+  - `cs_kernel_momentum_ratio`: pairwise ratio of x-space quasi distributions, optional constant fit per b
+  - `cs_kernel_momentum_fit`: simultaneous fit across all momenta using `CG_tmdwf_kernel_RGR` (NLL RGR, `extensions/kernels.py`), joint covariance preservation, correlated constant fit, optional literature comparison plot via `literature_data_path` -> `data/cs_kernel_literature_updated.gv`
 - `physical_limit` currently writes per-family outputs and records available setup/momentum/`b` axes for future continuum, chiral, and boost extrapolations.
 
