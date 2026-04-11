@@ -24,7 +24,7 @@ The repository is a Python-first LaMET workflow framework. The primary goal is t
 - `src/lamet_agent/schemas.py`: manifest model and validation logic.
 - `src/lamet_agent/planners/`: workflow planner implementations.
 - `src/lamet_agent/workflows.py`: workflow execution entry point.
-- `src/lamet_agent/stages/`: stage protocol, registry, and concrete stage implementations.
+- `src/lamet_agent/stages/`: stage protocol, registry, and concrete stage implementations.  The `evaluation` stage is notable because it performs cross-family (cross-momentum) aggregation rather than processing each family independently.
 - `src/lamet_agent/loaders.py`: built-in correlator loaders.
 - `src/lamet_agent/kernel.py`: inline hard-kernel compilation and validation.
 - `src/lamet_agent/constants.py`: shared physics constants and perturbative running helpers.
@@ -41,9 +41,9 @@ The repository is a Python-first LaMET workflow framework. The primary goal is t
 2. Define a stage class with `name`, `description`, and `run(context)`.
 3. Decorate the class with `@register_stage`.
 4. Return a `StageResult` containing:
-   - a concise summary string
-   - structured payload data for downstream stages
-   - normalized artifact records
+  - a concise summary string
+  - structured payload data for downstream stages
+  - normalized artifact records
 5. Import the module from `src/lamet_agent/stages/__init__.py` so it registers automatically.
 6. Update the rule-based planner if the new stage changes the default workflow.
 

@@ -15,6 +15,7 @@ outputs/
 # Local-only real-data examples
 examples/data/proton_cg_qpdf/*.txt
 examples/data/pion_cg_qtmdpdf/*.txt
+examples/data/pion_cg_cs_kernel/*.txt
 
 # Local draft intake area
 incoming/

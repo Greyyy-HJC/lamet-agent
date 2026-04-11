@@ -52,6 +52,12 @@ Run the pion CG qTMDPDF example:
 MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/pion_cg_qtmdpdf_manifest.json
 ```
 
+Run the pion CG Collins-Soper kernel example:
+
+```bash
+MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/pion_cg_cs_kernel_manifest.json
+```
+
 If you are working from the repository without the installed console script:
 
 ```bash
@@ -76,4 +82,8 @@ python scripts/run_manifest.py run examples/workflow_smoke_manifest.json
 - Keep reusable logic in the package, not in scripts.
 - `correlator_analysis` now groups inputs by `(setup_id, momentum, smearing)`.
 - Stage parameters should describe algorithms and fit controls, not lattice setup metadata.
+- `renormalization` supports an `identity` (default) and `cg_ratio` scheme for qTMDWF/qTMDPDF.
+- `fourier_transform` supports `imaginary_zeroing` to zero imaginary samples before extrapolation (e.g. pion DA).
+- `evaluation` performs cross-family aggregation (e.g. CS kernel momentum ratios); dispatches on `method`.
 - `physical_limit` currently writes per-family outputs and records available setup/momentum/`b` axes for future continuum, chiral, and boost extrapolations.
+

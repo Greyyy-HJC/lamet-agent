@@ -174,7 +174,8 @@ def _run_impl(
     start_stage: str | None = None,
 ) -> dict[str, Any]:
     planner = RuleBasedPlanner()
-    manifest = load_manifest(manifest_path)
+    skip_file_check = resume_from is not None and start_stage is not None and start_stage != "correlator_analysis"
+    manifest = load_manifest(manifest_path, skip_file_check=skip_file_check)
     plan = planner.resolve(manifest)
     reporter = WorkflowProgressReporter(plan.stage_names)
     try:

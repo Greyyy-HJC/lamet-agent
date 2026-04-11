@@ -160,10 +160,18 @@ def execute_manifest(
     """Load, resolve, and execute a manifest with the provided planner."""
     if (resume_from is None) != (start_stage is None):
         raise ValueError("execute_manifest requires both resume_from and start_stage, or neither.")
-    manifest = load_manifest(manifest_path)
+    skip_correlator_validation = (
+        resume_from is not None
+        and start_stage is not None
+        and start_stage != "correlator_analysis"
+    )
+    manifest = load_manifest(manifest_path, skip_file_check=skip_correlator_validation)
     plan = planner.resolve(manifest)
     run_directory = ensure_directory(manifest.resolved_output_directory / f"run_{timestamp_slug()}")
-    datasets = load_all_correlators(manifest.correlators, manifest.manifest_path)
+    if skip_correlator_validation:
+        datasets = {}
+    else:
+        datasets = load_all_correlators(manifest.correlators, manifest.manifest_path)
     kernel = load_kernel(manifest.kernel)
     context = StageContext(
         manifest=manifest,

@@ -217,6 +217,7 @@ def save_series_collection_plot(
     *,
     yscale: str = "linear",
     xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
 ) -> None:
     """Save a plot with multiple error-bar and/or fill-between series."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -253,6 +254,8 @@ def save_series_collection_plot(
     axis.set_yscale(yscale)
     if xlim is not None:
         axis.set_xlim(*xlim)
+    if ylim is not None:
+        axis.set_ylim(*ylim)
     handles, labels = axis.get_legend_handles_labels()
     if labels:
         axis.legend()

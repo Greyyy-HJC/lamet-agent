@@ -1,4 +1,10 @@
-"""Helpers for qPDF/qTMDPDF asymptotic extrapolation and Fourier transforms."""
+"""Helpers for qPDF/qDA (and qTMDPDF/qTMDWF) asymptotic extrapolation and Fourier transforms.
+
+The asymptotic forms implemented here apply to both qPDF and qDA channels
+because they share the same Ioffe-time large-lambda structure.  Transverse
+separation ``b`` enters only through the family selection at the stage level;
+the lambda-space extrapolation and Fourier transform machinery is identical.
+"""
 
 from __future__ import annotations
 
@@ -138,7 +144,11 @@ def exp_decay_prior(
 
 
 def _tail_power(lambda_values: np.ndarray, params, *, gauge_type: str, m0: float) -> np.ndarray:
-    """Return the common exponential and CG power-law suppression factor."""
+    """Return the common exponential tail, with CG power-law suppression when applicable.
+
+    For GI gauge the tail is a pure exponential ``exp(-m * lambda)``.
+    For CG gauge an additional ``1 / lambda^n`` factor is included.
+    """
 
     lam = np.asarray(lambda_values, dtype=float)
     tail = np.exp(-lam * (params["m"] + m0))
@@ -156,7 +166,22 @@ def _complex_asymptotic_components(
     quark_sector: str = "valence",
     m0: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return the real and imaginary asymptotic components for one hadron/sector."""
+    """Return the real and imaginary asymptotic components for one hadron/sector.
+
+    The pion valence form implements a superset of the next-to-leading
+    asymptotic (NLA) structure given in Eq. 2.8 of arXiv:2601.12189.  That
+    equation reads (for GI gauge, positive z):
+
+        h_NLA(z, Pz) = [A1 (e^{i phi1} e^{-izPz} + e^{-i phi1})
+                        + A1'/|z| (e^{i phi1'} e^{-izPz} + e^{-i phi1'})] e^{-Lambda |z|}
+
+    In Ioffe-time variables (lambda = z Pz) the real part becomes
+    A1 [cos(phi1 - lam) + cos(phi1)] + ... which maps onto the
+    (b1, c1, b2, d1, e1, d2) parameterization used below.  For CG gauge an
+    additional 1/lambda^n power-law suppression is applied via ``_tail_power``.
+
+    This form is valid for both qPDF and qDA channels.
+    """
 
     lam = np.asarray(lambda_values, dtype=float)
     hadron_name = str(hadron).lower()
@@ -279,7 +304,11 @@ def extrapolate_asymptotic_qpdf(
     real_prior_overrides: dict[str, Sequence[float]] | None = None,
     imag_prior_overrides: dict[str, Sequence[float]] | None = None,
 ) -> dict[str, Any]:
-    """Fit the large-lambda tail and splice it onto the measured positive-lambda data."""
+    """Fit the large-lambda tail and splice it onto the measured positive-lambda data.
+
+    Works for both qPDF/qTMDPDF and qDA/qTMDWF channels; the asymptotic form
+    is dispatched by *hadron*, *gauge_type*, and *quark_sector*.
+    """
 
     _require_fit_dependencies()
     lambda_array = np.asarray(lambda_axis, dtype=float)
@@ -404,7 +433,7 @@ def mirror_qpdf_coordinate_space(
     real_values: Sequence[float],
     imag_values: Sequence[float],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Mirror positive-lambda qPDF data to negative lambda using even/odd symmetry."""
+    """Mirror positive-lambda data to negative lambda using even/odd symmetry."""
 
     lambda_array = np.asarray(lambda_axis, dtype=float)
     real_array = np.asarray(real_values, dtype=float)
@@ -421,7 +450,7 @@ def mirror_qpdf_coordinate_space_samples(
     real_samples: np.ndarray,
     imag_samples: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Mirror positive-lambda qPDF samples to negative lambda using even/odd symmetry."""
+    """Mirror positive-lambda samples to negative lambda using even/odd symmetry."""
 
     lambda_array = np.asarray(lambda_axis, dtype=float)
     real_array = np.asarray(real_samples, dtype=float)
@@ -434,7 +463,7 @@ def mirror_qpdf_coordinate_space_samples(
 
 
 def build_fourier_kernel(lambda_axis: Sequence[float], x_grid: Sequence[float]) -> dict[str, np.ndarray]:
-    """Precompute cosine/sine kernels for repeated qPDF Fourier transforms."""
+    """Precompute cosine/sine kernels for repeated Fourier transforms."""
 
     lambda_array = np.asarray(lambda_axis, dtype=float)
     x_array = np.asarray(x_grid, dtype=float)
@@ -482,7 +511,7 @@ def batch_fourier_transform_qpdf(
     *,
     separate_re_im: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Apply the discrete qPDF Fourier transform to many samples at once."""
+    """Apply the discrete Fourier transform to many samples at once."""
 
     real_array = np.asarray(real_samples, dtype=float)
     imag_array = np.asarray(imag_samples, dtype=float)

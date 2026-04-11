@@ -1,0 +1,223 @@
+{
+  "goal": "custom",
+  "correlators": [
+    {
+      "kind": "two_point",
+      "path": "data/pion_cg_cs_kernel/two_point_ss_p000.txt",
+      "file_format": "txt",
+      "label": "pion_cg_cs_kernel_two_point_p000",
+      "metadata": {
+        "setup_id": "hisq_a06",
+        "momentum": [0, 0, 0],
+        "smearing": "SS",
+        "complex_samples": true
+      }
+    },
+    {
+      "kind": "two_point",
+      "path": "data/pion_cg_cs_kernel/two_point_ss_p800.txt",
+      "file_format": "txt",
+      "label": "pion_cg_cs_kernel_two_point_p800",
+      "metadata": {
+        "setup_id": "hisq_a06",
+        "momentum": [8, 0, 0],
+        "smearing": "SS",
+        "complex_samples": true
+      }
+    },
+    {
+      "kind": "two_point",
+      "path": "data/pion_cg_cs_kernel/two_point_ss_p900.txt",
+      "file_format": "txt",
+      "label": "pion_cg_cs_kernel_two_point_p900",
+      "metadata": {
+        "setup_id": "hisq_a06",
+        "momentum": [9, 0, 0],
+        "smearing": "SS",
+        "complex_samples": true
+      }
+    },
+    {
+      "kind": "two_point",
+      "path": "data/pion_cg_cs_kernel/two_point_ss_p1000.txt",
+      "file_format": "txt",
+      "label": "pion_cg_cs_kernel_two_point_p1000",
+      "metadata": {
+        "setup_id": "hisq_a06",
+        "momentum": [10, 0, 0],
+        "smearing": "SS",
+        "complex_samples": true
+      }
+    },
+    {
+      "kind": "three_point",
+      "path": "data/pion_cg_cs_kernel/three_point_sp_g14_p000_b{b}_z{z}.txt",
+      "file_format": "txt",
+      "label": "pion_cg_cs_kernel_p000_b{b}_z{z}",
+      "expand": {
+        "b": [0, 2, 4, 6, 8, 10],
+        "z": {"start": 0, "stop": 21}
+      },
+      "metadata": {
+        "setup_id": "hisq_a06",
+        "momentum": [0, 0, 0],
+        "smearing": "SP",
+        "displacement": {"b": "{b}", "z": "{z}"},
+        "operator": {"gamma": "g14", "flavor": "u-d"}
+      }
+    },
+    {
+      "kind": "three_point",
+      "path": "data/pion_cg_cs_kernel/three_point_sp_g14_p800_b{b}_z{z}.txt",
+      "file_format": "txt",
+      "label": "pion_cg_cs_kernel_p800_b{b}_z{z}",
+      "expand": {
+        "b": [0, 2, 4, 6, 8, 10],
+        "z": {"start": 0, "stop": 21}
+      },
+      "metadata": {
+        "setup_id": "hisq_a06",
+        "momentum": [8, 0, 0],
+        "smearing": "SP",
+        "displacement": {"b": "{b}", "z": "{z}"},
+        "operator": {"gamma": "g14", "flavor": "u-d"}
+      }
+    },
+    {
+      "kind": "three_point",
+      "path": "data/pion_cg_cs_kernel/three_point_sp_g14_p900_b{b}_z{z}.txt",
+      "file_format": "txt",
+      "label": "pion_cg_cs_kernel_p900_b{b}_z{z}",
+      "expand": {
+        "b": [0, 2, 4, 6, 8, 10],
+        "z": {"start": 0, "stop": 21}
+      },
+      "metadata": {
+        "setup_id": "hisq_a06",
+        "momentum": [9, 0, 0],
+        "smearing": "SP",
+        "displacement": {"b": "{b}", "z": "{z}"},
+        "operator": {"gamma": "g14", "flavor": "u-d"}
+      }
+    },
+    {
+      "kind": "three_point",
+      "path": "data/pion_cg_cs_kernel/three_point_sp_g14_p1000_b{b}_z{z}.txt",
+      "file_format": "txt",
+      "label": "pion_cg_cs_kernel_p1000_b{b}_z{z}",
+      "expand": {
+        "b": [0, 2, 4, 6, 8, 10],
+        "z": {"start": 0, "stop": 21}
+      },
+      "metadata": {
+        "setup_id": "hisq_a06",
+        "momentum": [10, 0, 0],
+        "smearing": "SP",
+        "displacement": {"b": "{b}", "z": "{z}"},
+        "operator": {"gamma": "g14", "flavor": "u-d"}
+      }
+    }
+  ],
+  "metadata": {
+    "purpose": "physics",
+    "analysis": {
+      "gauge": "cg",
+      "hadron": "pion",
+      "channel": "qda"
+    },
+    "conventions": "Pion CG Collins-Soper kernel from qTMDWF. Uses cg_ratio renormalization (b=0 normalization + p=0 reference), imaginary zeroing before Fourier transform, and CS kernel extraction via momentum ratios. Reference lattice setup matches pion_cg_tmdwf (a=0.06 fm, 48^3 x 64, HISQ Nf=3).",
+    "setups": {
+      "hisq_a06": {
+        "lattice_action": "CG52bxyp20",
+        "n_f": 3,
+        "lattice_spacing_fm": 0.06,
+        "spatial_extent": 48,
+        "temporal_extent": 64,
+        "pion_mass_valence_gev": 0.3,
+        "pion_mass_sea_gev": 0.3
+      }
+    }
+  },
+  "kernel": {
+    "callable_name": "identity_kernel",
+    "source": "def identity_kernel(axis, values, metadata):\n    return values\n"
+  },
+  "workflow": {
+    "stages": [
+      "correlator_analysis",
+      "renormalization",
+      "fourier_transform",
+      "evaluation"
+    ],
+    "stage_parameters": {
+      "correlator_analysis": {
+        "two_point": {
+          "resampling": {
+            "method": "jackknife",
+            "bin_size": 1,
+            "seed": 1984
+          },
+          "effective_mass": {
+            "method": "solve"
+          },
+          "fit": {
+            "enabled": true,
+            "state_count": 2,
+            "tmin": 3,
+            "tmax": 11,
+            "normalize": true
+          }
+        },
+        "three_point": {
+          "fit_modes": ["joint_ratio_fh"],
+          "primary_fit_mode": "joint_ratio_fh",
+          "joint_ratio_fh": {
+            "fit_tsep": [3, 5, 7, 9],
+            "tau_cut": 2
+          },
+          "sample_fit_workers": 8
+        }
+      },
+      "renormalization": {
+        "scheme": "cg_ratio"
+      },
+      "fourier_transform": {
+        "gauge_type": "cg",
+        "imaginary_sign": -1,
+        "imaginary_zeroing": true,
+        "separate_re_im": false,
+        "sample_transform_workers": 8,
+        "x_shift": 0.5,
+        "physics": {
+          "coordinate_direction": [1, 0, 0]
+        },
+        "x_grid": {
+          "start": -2.0,
+          "stop": 2.0,
+          "num": 1000,
+          "endpoint": false
+        },
+        "extrapolation": {
+          "fit_idx_range": [9, 21],
+          "extrapolated_length": 50.0,
+          "weight_ini": 0.0,
+          "m0_gev": 0.0,
+          "joint_re_im_fit": true,
+          "quark_sector": "valence"
+        }
+      },
+      "evaluation": {
+        "method": "cs_kernel_momentum_ratio",
+        "x_window": [0.3, 0.7],
+        "constant_x_fit": true,
+        "momentum_pairs": "all"
+      }
+    }
+  },
+  "outputs": {
+    "directory": "outputs/pion_cg_cs_kernel",
+    "plot_formats": ["pdf"],
+    "data_formats": ["csv", "json"],
+    "keep_intermediates": true
+  }
+}

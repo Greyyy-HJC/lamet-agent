@@ -397,16 +397,17 @@ class Manifest:
         return "qtmdwf" if int(b_value) != 0 else "qda"
 
 
-def load_manifest(manifest_path: str | Path) -> Manifest:
+def load_manifest(manifest_path: str | Path, *, skip_file_check: bool = False) -> Manifest:
     """Load and validate a workflow manifest from disk."""
     path = Path(manifest_path).resolve()
     with path.open("r", encoding="utf-8") as handle:
         raw = json.load(handle)
     manifest = Manifest.from_dict(raw, manifest_path=path)
-    for correlator in manifest.correlators:
-        resolved = resolve_manifest_relative_path(path, correlator.path)
-        if not resolved.exists():
-            raise ManifestValidationError(
-                f"Correlator file does not exist: {resolved}."
-            )
+    if not skip_file_check:
+        for correlator in manifest.correlators:
+            resolved = resolve_manifest_relative_path(path, correlator.path)
+            if not resolved.exists():
+                raise ManifestValidationError(
+                    f"Correlator file does not exist: {resolved}."
+                )
     return manifest

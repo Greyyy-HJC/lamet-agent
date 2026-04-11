@@ -78,6 +78,12 @@ class FourierTransformStage:
             )
         parameters = self._resolve_qpdf_parameters(context)
         selected_families = self._select_families(matrix_element_families, parameters["family_selector"])
+        selected_families = [
+            f for f in selected_families
+            if any(v != 0 for v in (f["metadata"].get("px", 0), f["metadata"].get("py", 0), f["metadata"].get("pz", 0)))
+        ]
+        if not selected_families:
+            raise ValueError("fourier_transform: no families with non-zero momentum remain after filtering.")
         transformed_families: list[dict[str, Any]] = []
         artifacts: list[ArtifactRecord] = []
         for family in selected_families:
@@ -170,11 +176,15 @@ class FourierTransformStage:
             coordinate_direction=coordinate_direction,
             coordinate_step_multiplier=parameters["physics"]["coordinate_step_multiplier"],
         )
-        x_grid = build_x_grid(parameters["x_grid"])
+        x_grid_raw = build_x_grid(parameters["x_grid"])
+        x_shift = parameters["x_shift"]
+        x_grid = x_grid_raw + x_shift if x_shift != 0.0 else x_grid_raw
 
         real_samples = np.asarray(family["real_samples"], dtype=float)
         imag_samples = parameters["imaginary_sign"] * np.asarray(family["imag_samples"], dtype=float)
-        if imag_samples.ndim == 2 and imag_samples.shape[1] > 0 and np.isclose(float(lambda_axis[0]), 0.0):
+        if parameters["imaginary_zeroing"]:
+            imag_samples = np.zeros_like(imag_samples)
+        elif imag_samples.ndim == 2 and imag_samples.shape[1] > 0 and np.isclose(float(lambda_axis[0]), 0.0):
             imag_samples = imag_samples.copy()
             imag_samples[:, 0] = 0.0
         real_average = self._resampled_average(real_samples, family["metadata"]["resampling_method"])
@@ -274,7 +284,7 @@ class FourierTransformStage:
             extrapolated_real_array,
             extrapolated_imag_array,
         )
-        fourier_kernel = build_fourier_kernel(mirrored_lambda, x_grid)
+        fourier_kernel = build_fourier_kernel(mirrored_lambda, x_grid_raw)
         ft_real_array, ft_imag_array = batch_fourier_transform_qpdf(
             fourier_kernel,
             mirrored_real_array,
@@ -317,10 +327,12 @@ class FourierTransformStage:
                 "quark_sector": str(parameters["extrapolation"]["quark_sector"]),
                 "joint_re_im_fit": bool(parameters["extrapolation"]["joint_re_im_fit"]),
                 "imaginary_sign": int(parameters["imaginary_sign"]),
+                "imaginary_zeroing": bool(parameters["imaginary_zeroing"]),
                 "sample_transform_workers": int(parameters["sample_transform_workers"]),
                 "separate_re_im": bool(parameters["separate_re_im"]),
                 "coordinate_direction": list(coordinate_direction),
                 "coordinate_step_multiplier": float(parameters["physics"]["coordinate_step_multiplier"]),
+                "x_shift": float(x_shift),
             },
         }
         artifacts = self._write_qpdf_artifacts(
@@ -354,6 +366,7 @@ class FourierTransformStage:
             "family_selector": dict(parameters.get("family_selector", {})),
             "gauge_type": str(parameters.get("gauge_type", "cg")).lower(),
             "imaginary_sign": int(parameters.get("imaginary_sign", -1)),
+            "imaginary_zeroing": bool(parameters.get("imaginary_zeroing", False)),
             "physics": {
                 "coordinate_direction": None if "coordinate_direction" not in physics else list(physics.get("coordinate_direction", [0, 0, 1])),
                 "coordinate_step_multiplier": float(physics.get("coordinate_step_multiplier", 1.0)),
@@ -361,6 +374,7 @@ class FourierTransformStage:
             "sample_transform_workers": max(1, int(parameters.get("sample_transform_workers", 1))),
             "separate_re_im": bool(parameters.get("separate_re_im", False)),
             "x_grid": dict(parameters.get("x_grid", {"start": -2.0, "stop": 2.0, "num": 4000, "endpoint": False})),
+            "x_shift": float(parameters.get("x_shift", 0.0)),
             "extrapolation": {
                 "fit_idx_range": [int(value) for value in extrapolation.get("fit_idx_range", [2, 6])],
                 "extrapolated_length": float(extrapolation.get("extrapolated_length", 50.0)),

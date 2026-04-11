@@ -12,13 +12,18 @@ The repository is organized in three layers:
 2. analysis stages under `src/lamet_agent/stages/`
 3. complete example workflows under `examples/`
 
-The stage pipeline remains:
+The default stage pipeline is:
 
 1. `correlator_analysis`
 2. `renormalization`
 3. `fourier_transform`
 4. `perturbative_matching`
 5. `physical_limit`
+
+Custom workflows can select a different subset via `goal: "custom"` and an
+explicit `workflow.stages` list.  For example, the Collins-Soper kernel
+workflow uses `correlator_analysis` -> `renormalization` -> `fourier_transform`
+-> `evaluation`.
 
 More detail on the manifest contract and example taxonomy lives in
 [docs/analysis_model.md](/home/jinchen/git/anl/lamet-agent/docs/analysis_model.md).
@@ -83,6 +88,7 @@ Available stage names are:
 - `fourier_transform`
 - `perturbative_matching`
 - `physical_limit`
+- `evaluation`
 
 Run the tracked full-pipeline smoke example:
 
@@ -106,6 +112,12 @@ Run the pion CG qTMDPDF example:
 
 ```bash
 lamet-agent run examples/pion_cg_qtmdpdf_manifest.json
+```
+
+Run the pion CG Collins-Soper kernel example:
+
+```bash
+lamet-agent run examples/pion_cg_cs_kernel_manifest.json
 ```
 
 For longer runs that use `matplotlib`, it is often convenient to point the cache to a writable directory:
@@ -152,8 +164,10 @@ python scripts/run_manifest.py run examples/workflow_smoke_manifest.json
 - [examples/pion_cg_qtmdpdf_manifest.json](/home/jinchen/git/anl/lamet-agent/examples/pion_cg_qtmdpdf_manifest.json)
   - pion CG qTMDPDF workflow mirroring the ratio-fit scope of `mp_zdep_samp.py`
   - backed by [examples/data/pion_cg_qtmdpdf](/home/jinchen/git/anl/lamet-agent/examples/data/pion_cg_qtmdpdf)
-- [examples/data/pion_cg_qtmdpdf](/home/jinchen/git/anl/lamet-agent/examples/data/pion_cg_qtmdpdf)
-  - local-only pion CG qTMDPDF real-data inputs, excluded from git
+- [examples/pion_cg_cs_kernel_manifest.json](/home/jinchen/git/anl/lamet-agent/examples/pion_cg_cs_kernel_manifest.json)
+  - pion CG Collins-Soper kernel end-to-end workflow (2pt + QDA -> CS kernel)
+  - backed by [examples/data/pion_cg_cs_kernel](/home/jinchen/git/anl/lamet-agent/examples/data/pion_cg_cs_kernel)
+- local-only real-data directories (`pion_cg_qtmdpdf`, `pion_cg_cs_kernel`) are excluded from git
 
 ## Manifest Overview
 
