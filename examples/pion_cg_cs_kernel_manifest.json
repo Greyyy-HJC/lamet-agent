@@ -209,6 +209,7 @@
       "evaluation": {
         "method": "cs_kernel_momentum_fit",
         "x_window": [0.3, 0.7],
+        "b_min": 2,
         "fix_pz_gev": 1.62,
         "mu_renorm": 2.0,
         "csk_prior_mean": -0.5,

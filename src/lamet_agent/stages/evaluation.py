@@ -97,6 +97,7 @@ class EvaluationStage:
             "csk_prior_mean": float(params.get("csk_prior_mean", -0.5)),
             "csk_prior_sigma": float(params.get("csk_prior_sigma", 1.0)),
             "literature_data_path": params.get("literature_data_path", None),
+            "b_min": int(params.get("b_min", 0)),
         }
 
     # ------------------------------------------------------------------
@@ -221,7 +222,11 @@ class EvaluationStage:
         evaluation_results: list[dict[str, Any]] = []
         artifacts: list[ArtifactRecord] = []
 
+        b_min = parameters["b_min"]
         for (group_key, b_value), b_families in sorted(grouped.items()):
+            if b_value < b_min:
+                logger.debug("evaluation: skipping b=%d (below b_min=%d).", b_value, b_min)
+                continue
             if len(b_families) < 2:
                 logger.warning(
                     "evaluation: b=%d has only %d momentum; skipping CS kernel momentum fit.",
@@ -435,7 +440,7 @@ class EvaluationStage:
         b_arr = np.array([float(r["b"]) for r in cs_kernel_reduced])
         b_phys = b_arr * a_fm if a_fm is not None else b_arr
         csk_stat = np.array([float(r["value"]) for r in cs_kernel_reduced])
-        csk_stat_err = np.array([float(r["stat_error"]) for r in cs_kernel_reduced])
+        csk_total_err = np.array([float(r["total_error"]) for r in cs_kernel_reduced])
         xlabel = r"$b_\perp$ [fm]" if a_fm is not None else r"$b_\perp$ [lattice units]"
 
         artifacts: list[ArtifactRecord] = []
@@ -443,7 +448,7 @@ class EvaluationStage:
             plot_path = stage_dir / f"cs_kernel_comparison.{plot_format}"
             try:
                 self._render_comparison_plot(
-                    csk_others, b_phys, csk_stat, csk_stat_err, xlabel, plot_path,
+                    csk_others, b_phys, csk_stat, csk_total_err, xlabel, plot_path,
                 )
                 artifacts.append(ArtifactRecord(
                     name=f"cs_kernel_comparison_{plot_format}",
