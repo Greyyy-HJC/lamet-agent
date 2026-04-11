@@ -16,8 +16,6 @@ outputs/
 examples/data/proton_cg_qpdf/*.txt
 examples/data/pion_cg_qtmdpdf/*.txt
 examples/data/pion_cg_cs_kernel/*.txt
-examples/data/pion_cg_cs_kernel_cache/*.npy
-examples/data/pion_cg_cs_kernel_cache/*.gv
 
 # Local draft intake area
 incoming/

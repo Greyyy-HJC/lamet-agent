@@ -45,15 +45,8 @@ Fourier-transform, and CS-kernel-extraction stages.
 ## Access restrictions
 
 The `*.txt` files above are **local-only** (gitignored) because they contain
-unpublished measurement data.  They must be reproduced from the upstream fit
-cache using:
-
-```bash
-python scripts/prepare_cs_kernel_data.py --save-cache   # copy npy/gv from upstream once
-python scripts/prepare_cs_kernel_data.py --export-txt   # write txt files to this directory
-```
-
-or restored manually from a trusted backup.
+unpublished measurement data.  Restore them from a trusted backup if they are
+absent on a new machine.
 
 ## Physical parameters
 
