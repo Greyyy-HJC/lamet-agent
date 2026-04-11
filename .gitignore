@@ -12,14 +12,12 @@ dist/
 examples/outputs/
 outputs/
 
-# Local-only real-data examples
+# Local-only real-data examples (large private files, not committed)
 examples/data/proton_cg_qpdf/*.txt
 examples/data/pion_cg_qtmdpdf/*.txt
-
-# Root data directory: txt files and binary caches are large/private; .gv files are tracked
-data/pion_cg_cs_kernel/*.txt
-data/pion_cg_cs_kernel_cache/*.npy
-data/pion_cg_cs_kernel_cache/*.gv
+examples/data/pion_cg_cs_kernel/*.txt
+examples/data/pion_cg_cs_kernel_cache/*.npy
+examples/data/pion_cg_cs_kernel_cache/*.gv
 
 # Local draft intake area
 incoming/

@@ -35,6 +35,7 @@ from lamet_agent.extensions.statistics import (
     gv,
     jackknife_average,
 )
+from lamet_agent.extensions.plot_presets import AXIS_FONT, SMALL_AXIS_FONT, default_plot
 from lamet_agent.plotting import save_series_collection_plot
 from lamet_agent.stages.base import StageContext
 from lamet_agent.stages.registry import register_stage
@@ -455,11 +456,9 @@ class EvaluationStage:
         plot_path: Path,
     ) -> None:
         """Render and save the literature comparison figure."""
-        fig, ax = plt.subplots(figsize=(7, 5))
+        fig, ax = default_plot()
 
         # ---- Literature bands and curves ---- #
-        _color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-
         def _fill(key, label, alpha=0.35, color=None):
             if key not in csk_others:
                 return
@@ -510,12 +509,12 @@ class EvaluationStage:
             elinewidth=2, markersize=7, capsize=3, zorder=10,
         )
 
-        ax.set_xlabel(xlabel, fontsize=13)
-        ax.set_ylabel(r"$\gamma^{\overline{\mathrm{MS}}}(b_\perp;\,\mu)$", fontsize=13)
+        ax.set_xlabel(xlabel, **AXIS_FONT)
+        ax.set_ylabel(r"$\gamma^{\overline{\mathrm{MS}}}(b_\perp;\,\mu)$", **AXIS_FONT)
         ax.set_ylim([-3, 2])
-        ax.legend(ncol=4, fontsize=9, loc="upper right")
-        plt.tight_layout()
-        plt.savefig(str(plot_path), transparent=True)
+        ax.legend(ncol=4, fontsize=11, loc="upper right")
+        fig.tight_layout()
+        fig.savefig(str(plot_path), transparent=True)
         plt.close(fig)
 
     # ------------------------------------------------------------------

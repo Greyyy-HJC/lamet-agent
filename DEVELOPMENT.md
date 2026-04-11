@@ -64,11 +64,14 @@ MPLCONFIGDIR=/tmp/.mpl .venv/bin/lamet-agent run examples/pion_cg_cs_kernel_mani
   --start-stage renormalization
 ```
 
-If starting from scratch on a new machine (when `data/pion_cg_cs_kernel_cache/` is empty):
+If starting from scratch on a new machine (when `examples/data/pion_cg_cs_kernel/*.txt` are absent):
 
 ```bash
-# Copy source files from the upstream pion_cg_tmdwf project once, then never again
+# Step 1: copy npy/gv source files from the upstream project once
 .venv/bin/python scripts/prepare_cs_kernel_data.py --save-cache
+
+# Step 2: export as txt files (makes the project self-contained)
+.venv/bin/python scripts/prepare_cs_kernel_data.py --export-txt
 ```
 
 If you are working from the repository without the installed console script:

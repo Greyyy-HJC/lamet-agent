@@ -3,8 +3,8 @@
   "correlators": [
     {
       "kind": "two_point",
-      "path": "data/pion_2pt/two_point_raw_demo.csv",
-      "file_format": "csv",
+      "path": "data/pion_2pt/two_point_raw_demo.txt",
+      "file_format": "txt",
       "label": "pion_2pt_raw",
       "metadata": {
         "setup_id": "pion_demo",

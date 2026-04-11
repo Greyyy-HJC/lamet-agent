@@ -72,6 +72,12 @@ The repository is a Python-first LaMET workflow framework. The primary goal is t
 - For full workflows, prefer structured `metadata.analysis` and `metadata.setups` over legacy free-form metadata.
 - When adding new correlator families, ensure selectors and emitted payload metadata remain unambiguous across `setup_id`, momentum, smearing, and operator choices.
 
+## Plotting Conventions
+
+- **All plots must use `extensions/plot_presets`.**  Call `default_plot()` to create a figure and axis with the shared publication style (Times New Roman, golden-ratio size, inward ticks on all sides, dotted grid).  Use the exported constants `PALETTE`, `COLOR_CYCLE`, `MARKER_CYCLE`, `ERRORBAR_STYLE`, `ERRORBAR_CIRCLE_STYLE`, `AXIS_FONT`, and `SMALL_AXIS_FONT` for consistent styling.
+- Do not call `plt.subplots()` or `plt.figure()` directly in stage or extension code; go through `default_plot()` or `default_sub_plot()`.
+- This rule applies to every plot produced by a stage (cs_kernel, Fourier transform, effective mass, etc.) and to any helper that generates a standalone figure.
+
 ## Testing Expectations
 
 - Add or update unit tests for schema, planner, and stage behavior when interfaces change.

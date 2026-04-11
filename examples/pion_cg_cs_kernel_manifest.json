@@ -214,7 +214,7 @@
         "csk_prior_mean": -0.5,
         "csk_prior_sigma": 1.0,
         "plot_ylim": [-3.0, 2.0],
-        "literature_data_path": "../data/cs_kernel_literature_updated.gv"
+        "literature_data_path": "data/pion_cg_cs_kernel/cs_kernel_literature_updated.gv"
       }
     }
   },
