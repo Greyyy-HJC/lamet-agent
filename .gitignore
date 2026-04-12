@@ -1,6 +1,6 @@
 # AI assistant working directories
 .claude/
-.codex/
+.codex
 
 __pycache__/
 *.py[cod]
