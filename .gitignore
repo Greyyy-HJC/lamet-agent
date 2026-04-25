@@ -1,0 +1,11 @@
+.claude/
+.codex
+.venv/
+examples/
+incoming/
+scripts/
+src/
+tests/
+
+
+**/__pycache__/**

@@ -25,6 +25,8 @@ $$R(t, \tau) = \frac{C_\mathrm{3pt}(t, \tau)}{C_\mathrm{2pt}(t)}$$
 - 多态联合拟合直接提取出 $g_A$，也可以
 - 在 $t \gg 1$ 且 $\tau \gg 1$ 时，基态贡献主导了关联函数，拟合 $R(t, \tau) \approx g_A$ 获得裸的 $g_A$，还可以
 - 时间求和方案 $\sum_\tau R(t, \tau) \approx c + t g_A$ 线性拟合出 $g_A$。
+- 使用 Lanczos 算法构造 T-matrix，然后做本征分解得到能谱，进一步用本征矢量得到矩阵元的数值，参考文献：https://arxiv.org/pdf/2406.20009，https://arxiv.org/pdf/2407.21777，https://arxiv.org/pdf/2412.04444。
+- 此外还有 model averaging, GEVP 等方案。
 
 这些方案各有各的优缺点，因此需要智能体根据数据的特点，选择合适的分析策略来提取 $g_A$ 的数值。提取了 LQCD 的裸 $g_A$ 之后，还需要进行重整化，才能得到物理的 $g_A^\mathrm{phys} = Z_A g_A$ 数值。即在这一步通过关联函数分析得到的结果，正是下一步重整化的输入。
 
@@ -39,9 +41,95 @@ $$R(t, \tau) = \frac{C_\mathrm{3pt}(t, \tau)}{C_\mathrm{2pt}(t)}$$
 
 ## Renormalization
 
-可能的重整化方案和需要的输入包括：
+重整化步骤主要涉及将关联函数分析中得到的裸矩阵元转化为可用于后续傅里叶变换和微扰匹配的重整化矩阵元。在这一步，智能体需要根据输入的重整化方案、重整化常数、矩阵元数据以及参考公式，自动调用相应的工具或者插件完成重整化流程。需要注意，这一步通常不应该由智能体自行决定物理上应该采用哪一种重整化方案，而是应该由用户明确给出方案和必要输入；智能体的任务是检查输入是否完整，并稳定执行相对固定的计算流程。
+
+可能的重整化方案和需要的输入包括以下几类。
+
+### Hybrid scheme
+
+Hybrid scheme 指的是区分短程和长程的矩阵元，并分别应用不同的重整化方案。短程矩阵元可以被微扰论描述，但裸矩阵元中离散效应可能较严重；长程矩阵元离散效应较弱，但我们不希望引入额外的红外效应。因此，一般来说可以对短程矩阵元使用 ratio renormalization，对长程矩阵元使用 self-renormalization 或其他由微扰论控制的重整化方案。
+
+### Self-renormalization
+
+Self-renormalization 是指从格点裸矩阵元（可以是信号更好的零动量矩阵元）中拟合得到发散结构和重整化系数，关键在于 UV 发散结构不依赖于外态等 IR 物理。因此，只要输入矩阵元和目标矩阵元有相同的发散结构，就可以先从该矩阵元中抽取重整化因子，再用于重整化目标矩阵元。
+
+具体流程如下：
+- 先取裸矩阵元 $M(z,a)$，对每个 $z$ 值，拟合如下函数形式：
+$$
+\ln M(z,a)=\frac{kz}{a\ln(a\Lambda_{\mathrm{QCD}})}+g(z)+f(z)a
++\frac{3C_F}{b_0}\ln\!\left[\frac{\ln(1/(a\Lambda_{\mathrm{QCD}}))}{\ln(\mu/\Lambda_{\mathrm{QCD}})}\right]
++\ln\!\left[1+\frac{d}{\ln(a\Lambda_{\mathrm{QCD}})}\right]
+$$
+其中拟合参数是 $g(z)$ 和 $f(z)$，以及一些常数参数 $k$, $\Lambda_{\mathrm{QCD}}$, $\mu$, $d$，这些常数参数可以在 reference 里找到。上式中的每一项分别是线性发散、重整化后的剩余项、离散效应项以及两项重求和后的对数发散项。
+- 在 $g(z)$ 中，除了重整化后的剩余项外，还可能存在一些非微扰效应，比如 linear renormalon，形式是 $m_0 z$，因此需要在微扰区间内和微扰论结果进行匹配来确定 $m_0$ 的数值。在 $z < 0.3$ fm 的区间内，拟合
+$$
+g(z) - \ln Z_{\mathrm{MS}}(z) \approx m_0 z
+$$
+得到 $m_0$ 的数值。
+
+- 构造重整化矩阵元 $M_R(z) = \exp(g(z)-m_0 z)$，并检验它的 $a$ 依赖性是否消除干净。
+
+- 抽取重整化因子 $Z_R(z,a) = M(z,a)/M_R(z)$，可以用于重整化其他矩阵元。
+
+这一步需要输入一组信号较好并和目标矩阵元有相同发散结构的裸矩阵元数据，以及常数参数 $k$, $\Lambda_{\mathrm{QCD}}$, $\mu$, $d$ 等。智能体需要根据这些输入完成拟合、构造 $M_R(z)$、抽取 $Z_R(z,a)$，并检查重整化后的矩阵元是否还存在明显的格距依赖。
+
+参考文献：https://arxiv.org/pdf/2103.02965
+
+### Ratio renormalization
+
+Ratio renormalization 是指将裸矩阵元除以另一个裸矩阵元，从而抵消非微扰效应。典型例子包括 TMD 计算中的 Wilson loop renormalization，或者 CG method 中除以零动量矩阵元。此时需要输入目标裸矩阵元、作为分母的参考裸矩阵元，以及二者之间的归一化约定。
+
+### Constant renormalization
+
+Constant renormalization 常见于 CG method 的计算中。因为 CG method 里不需要 Wilson line，非定域算符的重整化被简化为波函数重整化，只需要一个依赖于格距的重整化常数。此时需要输入不同格距上的重整化常数，以及它们与目标矩阵元的对应关系。
+
+参考文献：https://arxiv.org/pdf/2602.11283
+
+根据以上分析，SKILL.md 包含以下内容：
+- 根据用户输入的重整化方案，检查所需的矩阵元数据、重整化常数、拟合参数和参考公式是否完整。
+- 对 self-renormalization，完成 $M(z,a)$ 的拟合、$m_0$ 的匹配、$M_R(z)$ 的构造以及 $Z_R(z,a)$ 的抽取。
+- 对 ratio renormalization 和 constant renormalization，根据输入约定完成矩阵元的归一化和误差传播。
+- 对 hybrid scheme，根据用户指定的短程和长程区间，分别应用对应的重整化方案，并拼接得到最终的重整化矩阵元。
+- 保留重采样信息，用于估计重整化矩阵元以及后续傅里叶变换输入的统计误差。
 
 ## Fourier Transform
+
+Fourier Transform 步骤主要涉及两部分：首先对有限 $z$ 范围内的重整化矩阵元进行 asymptotic extrapolation，补全长距离矩阵元；然后将坐标空间矩阵元傅里叶变换到动量空间，得到 quasi distribution 或其他动量空间分布。傅里叶变换本身相对固定，主要需要处理实部和虚部是否拆分贡献，以及一些 convention，例如实部在 $+z$ 和 $-z$ 方向对称化，虚部反对称化。
+
+在这一步中，智能体需要根据输入的重整化矩阵元、动量、格距和 $z$ 方向约定，选择合适的 asymptotic extrapolation 拟合函数，完成长距离延拓，并在此基础上执行傅里叶变换。asymptotic extrapolation 的拟合函数形式比较固定，参考文献：https://arxiv.org/pdf/2601.12189
+
+参考文献中只给出了 GI method 下的 quasi collinear distribution 和 GPD 的拟合函数形式，对 TMD 计算和 CG method 计算的拟合函数形式需要做小的调整。下面是几个例子：
+
+- quasi-PDF in GI method，拟合函数为
+$$
+\tilde{h}^{\mathrm{NLA}}\left(z, P^z\right)=\left[A_2 e^{i \phi_2 \operatorname{sign}(z)}+\frac{A_2^{\prime} e^{i \phi_2^{\prime} \operatorname{sign}(z)}}{|z|}\right] e^{-\Lambda|z|}
+$$
+其中 $A_2$, $A_2^{\prime}$, $\phi_2$, $\phi_2^{\prime}$ 和 $\Lambda$ 都是实数拟合参数，$\Lambda$ 的 prior 设置应该在 $500$ MeV $\pm$ $\mathcal{O}(\Lambda_{\mathrm{QCD}})$ 之间。实际操作一般会设置 $\Lambda \geq 0.1$ GeV.
+
+- quasi-PDF in CG method，拟合函数为
+$$
+\tilde{h}^{\mathrm{NLA}}\left(z, P^z\right)=\left[A_2 e^{i \phi_2 \operatorname{sign}(z)}+\frac{A_2^{\prime} e^{i \phi_2^{\prime} \operatorname{sign}(z)}}{|z|}\right] \frac{e^{-\Lambda|z|}}{|z|^n}
+$$
+CG 相比 GI 多了一个参数 $n$，表示 power law 的行为可能会不一样。
+
+在 asymptotic extrapolation 的拟合策略中还有几点需要注意：
+- 原则上实部和虚部的矩阵元应该同时进入拟合并共用相同的拟合参数；
+- 拟合区间选取的方案应该是：选取一个较大的 $z_{\max}$ 尽量包括所有有效的数据点（除非长程的矩阵元行为特别差），然后调整 $z_{\min}$，从 $z_{\min} \sim 0.5$ fm 开始，逐步增加 $z_{\min}$ 直到拟合结果的 $\chi^2 / \mathrm{dof}$ 不再显著下降。
+- 为了让数据点和 extrapolation 结果的误差带平滑连接，我们一般会添加一个平滑函数 $w$，使得延拓后的矩阵元 $\tilde{h}^{\mathrm{ext}}$ 满足
+$$
+\tilde{h}^{\mathrm{ext}}=w \cdot \tilde{h}^{\mathrm{data}}+(1-w) \cdot \tilde{h}^{\mathrm{fit}}
+$$
+其中常用的 $w$ 是在拟合区间内从 0 到 1 的线性插值。
+- 分析过程应该测试多个不同的 $z_{\min}$, $z_{\max}$ 以及 $w$ 的选择，确认合理的选择对结果的影响几乎可以忽略。
+
+完成长距离延拓之后，需要按照指定 convention 将 $\tilde{h}^{\mathrm{ext}}(z, P^z)$ 傅里叶变换到动量空间。在实际实现中，智能体需要保留实部和虚部的重采样误差，并在不同 $z_{\min}$, $z_{\max}$ 和 $w$ 的合理选择之间估计系统误差。
+
+根据以上分析，SKILL.md 包含以下内容：
+- 根据输入矩阵元和计算方法，选择并执行合适的 asymptotic extrapolation 拟合函数。
+- 同时处理矩阵元的实部和虚部，并根据 $+z$ 和 $-z$ 的 convention 完成对称化或反对称化。
+- 扫描不同的 $z_{\min}$, $z_{\max}$ 和平滑函数 $w$，评估延拓方案带来的系统误差。
+- 基于延拓后的坐标空间矩阵元执行傅里叶变换，输出动量空间结果及其统计误差。
+- 延拓和傅里叶变换应该对每个重采样样本分别执行，并在输出中保留重采样样本信息。
 
 ## Perturbative Matching
 
