@@ -2,8 +2,7 @@ import numpy as np
 import gvar as gv
 
 
-from lqcd_analysis.data import EnsembleInfo, EnsembleData
-from lqcd_analysis.renormalization import multiplicative_renormalization
+from lqcd_analysis.data import EnsembleInfo, EnsembleData, GlobalData
 
 ensemble_info = EnsembleInfo("", "", 0.06, 0.06, 48, 64, 300)
 px_list = [8, 9, 10]
@@ -19,8 +18,7 @@ for b_idx, b in enumerate(b_list):
         quasi_p0_mean[b_idx, z_idx] = re[z, 0]
         quasi_p0_sdev[b_idx, z_idx] = re[z, 1]
 
-quasi_p0 = EnsembleData(
-    ensemble=ensemble_info,
+quasi_p0 = GlobalData(
     values=1 / gv.gvar(quasi_p0_mean, quasi_p0_sdev),
     dims=["b", "z"],
     coords={"b": b_list, "z": z_list},
@@ -36,21 +34,17 @@ for px_idx, px in enumerate(px_list):
             for jk in range(533):
                 quasi[jk, px_idx, b_idx, z_idx] = re[z, jk] + 1j * im[z, jk]
 
-for jk in range(1):
-    quasi_bare_re = EnsembleData(
-        ensemble=ensemble_info,
-        values=quasi[jk].real,
-        dims=["px", "b", "z"],
-        coords={"px": px_list, "b": b_list, "z": z_list},
-    )
+quasi_bare_re = EnsembleData(
+    ensemble=ensemble_info,
+    values=[quasi[jk].real for jk in range(533)],
+    dims=["px", "b", "z"],
+    coords={"px": px_list, "b": b_list, "z": z_list},
+)
 
-    quasi_bare_im = EnsembleData(
-        ensemble=ensemble_info,
-        values=quasi[jk].imag,
-        dims=["px", "b", "z"],
-        coords={"px": px_list, "b": b_list, "z": z_list},
-    )
+print(quasi_bare_re.gvar())
+quasi_renorm_re = quasi_bare_re.multiplicative_renormalization(quasi_p0)
+print(quasi_renorm_re.gvar())
 
-    print(quasi_bare_re.values)
-    quasi_renorm_re = multiplicative_renormalization(quasi_bare_re, quasi_p0)
-    print(quasi_renorm_re.values)
+quasi_ft_re = quasi_renorm_re.spatial_fourier_transform("z", "xPz")
+quasi_ft_re_p8 = quasi_ft_re.at("px", 8)
+quasi_ft_re_p8.update_dim("xPz", "x", lambda x: x / (2 * np.pi * 8 / 48))
