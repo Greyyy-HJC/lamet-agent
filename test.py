@@ -53,20 +53,21 @@ quasi_bare_px = quasi_bare.at("px", px_pick)
 quasi_p0_z0 = quasi_p0.at("z", 0)
 quasi_renorm = quasi_bare.div(quasi_p0_z0)
 quasi_renorm_px = quasi_renorm.at("px", px_pick)
+quasi_renorm_px.padding_dim("z", 100)
 quasi_renorm_px.symmetric_dim("z")
 
 quasi_ft_px = quasi_renorm_px.fourier_transform_dim("z", "xPz")
 quasi_ft_px.update_dim("xPz", lambda x: x / (2 * np.pi * px_pick / 48) + 0.5, "x")
-quasi_ft_px.update_value("x", lambda v: 2 * np.pi * px_pick / 48 * v)
+quasi_ft_px.update_value("x", lambda v: v * (2 * np.pi * px_pick / 48))
 
 quasi_renorm_px.update_dim("z", lambda z: z * (2 * np.pi * px_pick / 48), "lambda")
 quasi_ft_px_v2 = quasi_renorm_px.fourier_transform_dim("lambda", "x", (2 * np.pi * px_pick / 48))
 quasi_ft_px_v2.update_dim("x", lambda x: x + 0.5)
 
 data = quasi_bare_px.gvar
+z = quasi_bare_px.coords["z"]
 mean = gv.mean(data)
 sdev = gv.sdev(data)
-z = quasi_bare_px.coords["z"]
 for b_idx, b in enumerate(b_list):
     plt.errorbar(z, mean[b_idx], sdev[b_idx], fmt="x", label=f"b={b}")
 plt.xlim(-0.5, 20.5)
