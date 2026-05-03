@@ -298,15 +298,25 @@ class EnsembleData:
         array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def padding_dim(self, dim: str, padding: int, d: Union[int, float] = 1):
+    def pad_dim(self, dim: str, pad_width: int, d: Union[int, float] = 1):
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         n = self.array.sizes[dim]
-        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(n) * d)
-        array_positive = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(padding)]})).assign_coords(
-            {dim: (n + numpy.arange(padding)) * d}
-        )
-        self.array = xarray.concat([self.array, array_positive], dim).sortby(dim)
+        if numpy.allclose(self.array.coords[dim].values, numpy.arange(n) * d):
+            array_right = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(pad_width)]})).assign_coords(
+                {dim: (n + numpy.arange(pad_width)) * d}
+            )
+            self.array = xarray.concat([self.array, array_right], dim).sortby(dim)
+        elif numpy.allclose(self.array.coords[dim].values, numpy.arange(-n // 2, n // 2) * d):
+            array_right = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(pad_width)]})).assign_coords(
+                {dim: (n // 2 + numpy.arange(pad_width)) * d}
+            )
+            array_left = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(pad_width)]})).assign_coords(
+                {dim: (-(n // 2 + pad_width) + numpy.arange(pad_width)) * d}
+            )
+            self.array = xarray.concat([array_left, self.array, array_right], dim).sortby(dim)
+        else:
+            raise ValueError(f"Unsupported coordinate values for dimension '{dim}'.")
 
     def symmetric_dim(self, dim: str, d: Union[int, float] = 1):
         if dim not in self.dims:

@@ -79,10 +79,10 @@ quasi_bare_re_b0_z0 = quasi_bare.at("b", 0).at("z", 0).avg_data()
 quasi_bare = quasi_bare.div(quasi_bare_re_b0_z0)
 quasi_bare_px = quasi_bare.at("px", px_pick)
 
-quasi_p0_z0 = quasi_p0_re.at("z", 0)
-quasi_renorm = quasi_bare.div(quasi_p0_z0)
+quasi_p0_z0_re = quasi_p0_re.at("z", 0)
+quasi_renorm = quasi_bare.div(quasi_p0_z0_re)
 quasi_renorm_px = quasi_renorm.at("px", px_pick)
-quasi_renorm_px.padding_dim("z", 100)
+quasi_renorm_px.pad_dim("z", 100)  # Draw smoother plots
 quasi_renorm_px.symmetric_dim("z")
 
 quasi_ft_px = quasi_renorm_px.fourier_transform_dim("z", "xPz")
