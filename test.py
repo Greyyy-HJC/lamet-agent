@@ -1,4 +1,5 @@
 import numpy as np
+from matplotlib import pyplot as plt
 import gvar as gv
 
 
@@ -46,13 +47,35 @@ quasi_bare_re = EnsembleData(
 
 quasi_p0_z0 = quasi_p0.at("z", 0)
 quasi_renorm_re = quasi_bare_re.div(quasi_p0_z0)
-quasi_renorm_re_b0_z0 = quasi_renorm_re.at("b", 0).at("z", 0).to_gvar_data()
+
+quasi_renorm_re_b0_z0 = quasi_renorm_re.at("b", 0).at("z", 0).avg_data()
 quasi_renorm_re = quasi_renorm_re.div(quasi_renorm_re_b0_z0)
-print(quasi_renorm_re.gvar)
+quasi_renorm_re_p8 = quasi_renorm_re.at("px", 8)
 
 quasi_ft_re = quasi_renorm_re.spatial_fourier_transform("z", "xPz")
 quasi_ft_re_p8 = quasi_ft_re.at("px", 8)
-quasi_ft_re_p8.update_dim("xPz", lambda x: x / 8, "x")
+quasi_ft_re_p8.update_dim("xPz", lambda x: x / 8 + 0.5, "x")
 quasi_ft_re_p8.update_value("x", lambda x: x * 8)
-print(quasi_ft_re_p8.gvar)
-print(quasi_ft_re_p8.coords)
+quasi_ft_re_p8.sort_dim("x")
+
+data = quasi_renorm_re_p8.gvar
+mean = gv.mean(data)
+sdev = gv.sdev(data)
+z = quasi_renorm_re_p8.coords["z"]
+for b_idx, b in enumerate(b_list):
+    plt.errorbar(z, mean[b_idx], sdev[b_idx], fmt="x", label=f"b={b}")
+plt.xlim(-0.5, 20.5)
+plt.legend()
+plt.show()
+plt.clf()
+
+data = quasi_ft_re_p8.gvar
+mean = gv.mean(data)
+sdev = gv.sdev(data)
+x = quasi_ft_re_p8.coords["x"]
+for b_idx, b in enumerate(b_list):
+    plt.fill_between(x, mean[b_idx] - sdev[b_idx], mean[b_idx] + sdev[b_idx], alpha=0.3, label=f"b={b}")
+plt.xlim(-0.5, 1.5)
+plt.legend()
+plt.show()
+plt.clf()

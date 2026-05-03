@@ -168,7 +168,15 @@ class EnsembleData:
         if self.resample == "gvar":
             return self.array.values[0]
         else:
-            return gvar.dataset.avg_data(self.array.values)
+            values = numpy.ascontiguousarray(self.array.values)
+            if self.resample == "jackknife":
+                avg_data = gvar.dataset.avg_data(values, unbias=False, stderr=False)
+                avg_data = gvar.gvar(gvar.mean(avg_data), gvar.evalcov(avg_data) * (self.n_sample - 1))
+            elif self.resample == "bootstrap":
+                avg_data = gvar.dataset.avg_data(values, unbias=True, stderr=False)
+            else:
+                avg_data = gvar.dataset.avg_data(values, unbias=True, stderr=True)
+            return avg_data
 
     @property
     def mean(self) -> Union[float, complex, NDArray]:
@@ -183,13 +191,13 @@ class EnsembleData:
             return gvar.sdev(self.array.values[0])
         else:
             if self.resample == "jackknife":
-                return self.array.values.std(0, ddof=1) * numpy.sqrt(self.n_sample)
+                return self.array.values.std(0, ddof=0) * (self.n_sample - 1) ** 0.5
             elif self.resample == "bootstrap":
-                return self.array.values.std(0, ddof=0)
+                return self.array.values.std(0, ddof=1)
             else:
-                return self.array.values.std(0, ddof=1) / numpy.sqrt(self.n_sample)
+                return self.array.values.std(0, ddof=1) / (self.n_sample) ** 0.5
 
-    def to_gvar_data(self) -> "EnsembleData":
+    def avg_data(self) -> "EnsembleData":
         return EnsembleData(
             self.ensemble, "gvar", self.gvar, dims=self.dims, coords=self.coords, attrs=self.attrs, name=self.name
         )
@@ -212,6 +220,9 @@ class EnsembleData:
         for coord in self.coords[dim]:
             indexer = {dim: coord}
             self.array.loc[indexer] = operator(self.array.sel(indexer).values)
+
+    def sort_dim(self, dim: str, ascending: bool = True):
+        self.array = self.array.sortby(dim, ascending=ascending)
 
     def aligned_ref_array(self, ref: "EnsembleData") -> xarray.DataArray:
         if not isinstance(ref, EnsembleData):
@@ -255,7 +266,7 @@ class EnsembleData:
     def sub(self, rhs: "EnsembleData") -> "EnsembleData":
         return self.apply_renormalization(rhs, lambda value, rhs_value: value - rhs_value)
 
-    def fast_fourier_transform(self, dim: str, n: int, dim_out: str) -> "EnsembleData":
+    def fft(self, dim: str, n: int, dim_out: str, real: bool) -> "EnsembleData":
         if n <= 0:
             raise ValueError(f"Padding length must be positive, got {n}.")
         if dim not in self.dims:
@@ -270,6 +281,8 @@ class EnsembleData:
         axis = self.array.get_axis_num(dim)
         assert isinstance(axis, int)
         transformed_values = numpy.fft.ifft(self.array.values, n=n, axis=axis)
+        if real:
+            transformed_values = transformed_values.real
 
         dims = []
         coords = {}
@@ -284,7 +297,7 @@ class EnsembleData:
         array = xarray.DataArray(transformed_values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def spatial_fourier_transform(self, dim: str, dim_out: str) -> "EnsembleData":
+    def spatial_fourier_transform(self, dim: str, dim_out: str, real: bool = True) -> "EnsembleData":
         if self.ensemble is None:
             raise ValueError("spatial_fourier_transform requires ensemble metadata with L_s.")
-        return self.fast_fourier_transform(dim, self.ensemble.L_s, dim_out)
+        return self.fft(dim, self.ensemble.L_s, dim_out, real)
