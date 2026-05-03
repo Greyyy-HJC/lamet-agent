@@ -38,7 +38,7 @@ def _is_gvar_values(values) -> bool:
 class EnsembleData:
     def __init__(
         self,
-        ensemble: Optional[EnsembleInfo],
+        ensemble: EnsembleInfo,
         resample: ResampleType,
         values: Union[List[Union[int, float, complex, NDArray]], NDArray, gvar.GVar],
         dims: Sequence[str],
@@ -149,6 +149,9 @@ class EnsembleData:
     def name(self) -> Optional[str]:
         assert self.array.name is None or isinstance(self.array.name, str)
         return self.array.name
+
+    def copy(self, deep: bool = True) -> "EnsembleData":
+        return EnsembleData._from_xarray(self.ensemble, self.resample, self.array.copy(deep=deep))
 
     @property
     def n_sample(self) -> int:
@@ -266,38 +269,62 @@ class EnsembleData:
     def sub(self, rhs: "EnsembleData") -> "EnsembleData":
         return self.apply_renormalization(rhs, lambda value, rhs_value: value - rhs_value)
 
-    def fft(self, dim: str, n: int, dim_out: str, real: bool) -> "EnsembleData":
-        if n <= 0:
-            raise ValueError(f"Padding length must be positive, got {n}.")
+    def fourier_transform_dim(self, dim: str, dim_out: str, d: Union[int, float] = 1) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
-        if n < self.array.sizes[dim]:
-            raise ValueError(
-                f"Padding length {n} is smaller than dimension '{dim}' length " f"{self.array.sizes[dim]}."
-            )
         if dim_out != dim and dim_out in self.dims:
             raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
 
+        n = self.array.sizes[dim]
+        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(-n // 2, n // 2) * d)
+
         axis = self.array.get_axis_num(dim)
         assert isinstance(axis, int)
-        transformed_values = numpy.fft.ifft(self.array.values, n=n, axis=axis)
-        if real:
-            transformed_values = transformed_values.real
+        values = numpy.fft.ifftshift(self.array.values, axes=axis)
+        values = numpy.fft.ifft(values, n=n, axis=axis)
+        values = numpy.fft.fftshift(values, axes=axis)
+        values *= (n * d) / (2 * numpy.pi)
 
         dims = []
         coords = {}
         for dim_ in self.array.dims:
             if dim_ == dim:
                 dims.append(dim_out)
-                coords[dim_out] = numpy.fft.fftfreq(n, d=1 / n).tolist()
+                coords[dim_out] = numpy.arange(-n // 2, n // 2) * (2 * numpy.pi) / (n * d)
             else:
                 dims.append(dim_)
-                coords[dim_] = self.array.coords[dim_].values.tolist()
+                coords[dim_] = self.array.coords[dim_].values
 
-        array = xarray.DataArray(transformed_values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
+        array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def spatial_fourier_transform(self, dim: str, dim_out: str, real: bool = True) -> "EnsembleData":
-        if self.ensemble is None:
-            raise ValueError("spatial_fourier_transform requires ensemble metadata with L_s.")
-        return self.fft(dim, self.ensemble.L_s, dim_out, real)
+    def padding_dim(self, dim: str, padding: int, d: Union[int, float] = 1):
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
+        n = self.array.sizes[dim]
+        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(n) * d)
+        array_positive = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(padding)]})).assign_coords(
+            {dim: (n + numpy.arange(padding)) * d}
+        )
+        self.array = xarray.concat([self.array, array_positive], dim).sortby(dim)
+
+    def symmetric_dim(self, dim: str, d: Union[int, float] = 1):
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
+        n = self.array.sizes[dim]
+        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(n) * d)
+        array_negative = self.array.isel({dim: slice(None, 0, -1)})
+        array_negative = array_negative.assign_coords({dim: -array_negative.coords[dim].values})
+        array_nyquist = xarray.zeros_like(self.array.isel({dim: [0]})).assign_coords({dim: [-n * d]})
+        self.array = xarray.concat([array_nyquist, array_negative, self.array], dim).sortby(dim)
+
+    def antisymmetric_dim(self, dim: str, d: Union[int, float] = 1):
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
+        n = self.array.sizes[dim]
+        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(n) * d)
+        self.array.loc[{dim: 0}] = 0
+        array_negative = -(self.array.isel({dim: slice(None, 0, -1)}))
+        array_negative = array_negative.assign_coords({dim: -array_negative.coords[dim].values})
+        array_nyquist = xarray.zeros_like(self.array.isel({dim: [0]})).assign_coords({dim: [-n * d]})
+        self.array = xarray.concat([array_nyquist, array_negative, self.array], dim).sortby(dim)
