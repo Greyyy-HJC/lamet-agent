@@ -304,7 +304,7 @@ class EnsembleData:
         return self.apply_renormalization(rhs, lambda value, rhs_value: value - rhs_value)
 
     def fourier_transform_dim(
-        self, dim: DimType, dim_out: DimType, coord_out: CoordType, d: Union[int, float] = 1
+        self, dim: DimType, dim_out: DimType, coord_out: CoordType, d: Union[int, float] = 1, inverse: bool = True
     ) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
@@ -317,8 +317,12 @@ class EnsembleData:
 
         axis = self.array.get_axis_num(dim)
         assert isinstance(axis, int)
-        kernel = numpy.exp(1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
-        kernel *= (1 / n) * (n * d) / (2 * numpy.pi)
+        if inverse:
+            kernel = numpy.exp(1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
+            kernel *= (1 / n) * (n * d) / (2 * numpy.pi)
+        else:
+            kernel = numpy.exp(-1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
+            kernel *= (n * d) / (2 * numpy.pi)
         values = numpy.tensordot(self.array.values, kernel, axes=([axis], [0]))
         values = numpy.moveaxis(values, -1, axis)
 
@@ -335,7 +339,9 @@ class EnsembleData:
         array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def fast_fourier_transform_dim(self, dim: DimType, dim_out: DimType, d: Union[int, float] = 1) -> "EnsembleData":
+    def fast_fourier_transform_dim(
+        self, dim: DimType, dim_out: DimType, d: Union[int, float] = 1, inverse: bool = True
+    ) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
         if dim_out != dim and dim_out in self.dims:
@@ -347,7 +353,10 @@ class EnsembleData:
         axis = self.array.get_axis_num(dim)
         assert isinstance(axis, int)
         values = numpy.fft.ifftshift(self.array.values, axes=axis)
-        values = numpy.fft.ifft(values, n=n, axis=axis)
+        if inverse:
+            values = numpy.fft.ifft(values, n=n, axis=axis)
+        else:
+            values = numpy.fft.fft(values, n=n, axis=axis)
         values = numpy.fft.fftshift(values, axes=axis)
         values *= (n * d) / (2 * numpy.pi)
 
