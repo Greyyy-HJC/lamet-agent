@@ -5,9 +5,11 @@ import numpy
 from numpy.typing import NDArray
 import xarray
 
-DimsType = Sequence[str]
-CoordType = Union[int, float, str]
-CoordsType = Dict[str, Sequence[CoordType]]
+DimType = str
+DimsType = Sequence[DimType]
+IndexType = Union[int, float, str]
+CoordType = Sequence[IndexType]
+CoordsType = Dict[DimType, CoordType]
 
 ResampleType = Literal["none", "jackknife", "bootstrap", "gvar"]
 RESAMPLE_TYPE_VALUES = get_args(ResampleType)
@@ -41,7 +43,7 @@ class EnsembleData:
         ensemble: EnsembleInfo,
         resample: ResampleType,
         values: Union[List[Union[int, float, complex, NDArray]], NDArray, gvar.GVar],
-        dims: Sequence[str],
+        dims: DimsType,
         coords: CoordsType,
         attrs: Optional[Dict[str, str]] = None,
         name: Optional[str] = None,
@@ -129,7 +131,6 @@ class EnsembleData:
     def dims(self) -> DimsType:
         dims_ = []
         for dim in self.array.dims[1:]:
-            assert isinstance(dim, str)
             dims_.append(dim)
         return dims_
 
@@ -137,7 +138,6 @@ class EnsembleData:
     def coords(self) -> CoordsType:
         coords_ = {}
         for dim in self.array.dims[1:]:
-            assert isinstance(dim, str)
             coords_[dim] = self.array.coords[dim].values.tolist()
         return coords_
 
@@ -155,11 +155,11 @@ class EnsembleData:
 
     @property
     def n_sample(self) -> int:
-        return int(self.array.sizes[self.resample])
+        return self.array.sizes[self.resample]
 
     @classmethod
     def concat(
-        cls, data_list: Sequence["EnsembleData"], dim: str, coord: Optional[Sequence[CoordType]] = None
+        cls, data_list: Sequence["EnsembleData"], dim: DimType, coord: Optional[CoordType] = None
     ) -> "EnsembleData":
         if len(data_list) == 0:
             raise ValueError("Cannot concatenate an empty list of EnsembleData.")
@@ -182,12 +182,12 @@ class EnsembleData:
         )
         return cls._from_xarray(ensemble, resample, array)
 
-    def at(self, dim: str, coord: Union[CoordType, Sequence[CoordType]]) -> "EnsembleData":
+    def at(self, dim: DimType, coord: Union[IndexType, CoordType]) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         return EnsembleData._from_xarray(self.ensemble, self.resample, self.array.sel({dim: coord}, drop=True))
 
-    def near(self, dim: str, coord: Union[CoordType, Sequence[CoordType]], tolerance: float = 1e-8) -> "EnsembleData":
+    def near(self, dim: DimType, coord: Union[IndexType, CoordType], tolerance: float = 1e-8) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         return EnsembleData._from_xarray(
@@ -233,26 +233,32 @@ class EnsembleData:
             self.ensemble, "gvar", self.gvar, dims=self.dims, coords=self.coords, attrs=self.attrs, name=self.name
         )
 
-    def update_dim(self, dim: str, operator: Callable[[CoordType], CoordType], dim_out: Optional[str] = None):
+    def update_dim(
+        self,
+        dim: DimType,
+        *,
+        dim_out: Optional[DimType] = None,
+        coord_out: Optional[CoordType] = None,
+        operator: Optional[Callable[[NDArray], NDArray]] = None,
+    ):
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
-
-        self.array = self.array.assign_coords({dim: [operator(coord) for coord in self.coords[dim]]})
 
         if dim_out is not None and dim_out != dim:
             if dim_out in self.dims:
                 raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
             self.array = self.array.rename({dim: dim_out})
+            dim = dim_out
 
-    def update_value(self, dim: str, operator: Callable[[NDArray], NDArray]):
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
+        if coord_out is not None:
+            self.array = self.array.assign_coords({dim: coord_out})
 
-        for coord in self.coords[dim]:
-            indexer = {dim: coord}
-            self.array.loc[indexer] = operator(self.array.sel(indexer).values)
+        if operator is not None:
+            for coord in self.coords[dim]:
+                indexer = {dim: coord}
+                self.array.loc[indexer] = operator(self.array.sel(indexer).values)
 
-    def sort_dim(self, dim: str, ascending: bool = True):
+    def sort_dim(self, dim: DimType, ascending: bool = True):
         self.array = self.array.sortby(dim, ascending=ascending)
 
     def aligned_ref_array(self, ref: "EnsembleData") -> xarray.DataArray:
@@ -298,7 +304,7 @@ class EnsembleData:
         return self.apply_renormalization(rhs, lambda value, rhs_value: value - rhs_value)
 
     def fourier_transform_dim(
-        self, dim: str, dim_out: str, coord_out: Sequence[CoordType], d: Union[int, float] = 1
+        self, dim: DimType, dim_out: DimType, coord_out: CoordType, d: Union[int, float] = 1
     ) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
@@ -329,7 +335,7 @@ class EnsembleData:
         array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def fast_fourier_transform_dim(self, dim: str, dim_out: str, d: Union[int, float] = 1) -> "EnsembleData":
+    def fast_fourier_transform_dim(self, dim: DimType, dim_out: DimType, d: Union[int, float] = 1) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
         if dim_out != dim and dim_out in self.dims:
@@ -358,7 +364,7 @@ class EnsembleData:
         array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def pad_dim(self, dim: str, pad_width: int, d: Union[int, float] = 1):
+    def pad_dim(self, dim: DimType, pad_width: int, d: Union[int, float] = 1):
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         n = self.array.sizes[dim]
@@ -378,7 +384,7 @@ class EnsembleData:
         else:
             raise ValueError(f"Unsupported coordinate values for dimension '{dim}'.")
 
-    def symmetric_dim(self, dim: str, d: Union[int, float] = 1):
+    def symmetric_dim(self, dim: DimType, d: Union[int, float] = 1):
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         n = self.array.sizes[dim]
@@ -388,7 +394,7 @@ class EnsembleData:
         array_nyquist = xarray.zeros_like(self.array.isel({dim: [0]})).assign_coords({dim: [-n * d]})
         self.array = xarray.concat([array_nyquist, array_negative, self.array], dim).sortby(dim)
 
-    def antisymmetric_dim(self, dim: str, d: Union[int, float] = 1):
+    def antisymmetric_dim(self, dim: DimType, d: Union[int, float] = 1):
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         n = self.array.sizes[dim]

@@ -2,6 +2,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from lqcd_analysis.data import EnsembleInfo, EnsembleData
+from lqcd_analysis.perturbative_matching.coulomb_tmdwf_kernel_rg_resum_nll import kernel
 
 
 def load_quasi_p0_re(ensemble_info, b_list, z_list):
@@ -71,6 +72,7 @@ def plt_fill_between(data, x_dim, label_dim, label_slice, xlim, ylim=None):
 
 
 ensemble_info = EnsembleInfo("", "", 0.06, 0.06, 48, 64, 300)
+a_inv_gev = 0.1973 / 0.06
 px_list = [8, 9, 10]
 b_list = [0, 2, 4, 6, 8, 10]
 z_list = list(range(21))
@@ -89,26 +91,34 @@ quasi_p0_z0_re = quasi_p0_re.at("z", 0)
 quasi_renorm = quasi_bare.div(quasi_p0_z0_re)
 
 # Fourier transform
-quasi_renorm.symmetric_dim("z")
 x_list = np.linspace(-1, 1, 201).tolist()
 quasi_ft_px_list = []
 for px in px_list:
     kx = 2 * np.pi * px / 48
     quasi_renorm_px = quasi_renorm.at("px", px)
-    quasi_renorm_px.update_dim("z", lambda z: z * kx, "lambda")
-    quasi_ft_px_list.append(quasi_renorm_px.fourier_transform_dim("lambda", "x", x_list, kx))
-    quasi_ft_px_list[-1].update_dim("x", lambda x: x + 0.5)
+    quasi_renorm_px.update_dim("z", dim_out="lambda", coord_out=[z * kx for z in z_list])
+    quasi_renorm_px.symmetric_dim("lambda", kx)
+    quasi_ft_px = quasi_renorm_px.fourier_transform_dim("lambda", "x", x_list, kx)
+    quasi_ft_px.update_dim("x", coord_out=[x + 0.5 for x in x_list])
+    quasi_ft_px_list.append(quasi_ft_px)
 quasi_ft = EnsembleData.concat(quasi_ft_px_list, "px", px_list)
 
 # CS kernel
-# TODO: perturbative matching)
+x_list = np.linspace(0.1, 0.9, 81)
 p1_p2_list = []
 cs_kernel_p1_p2_list = []
 for p1_idx, p1 in enumerate(px_list):
     for p2_idx, p2 in enumerate(px_list[p1_idx + 1 :]):
-        quasi_ft_p1 = quasi_ft.at("px", p1)
-        quasi_ft_p2 = quasi_ft.at("px", p2)
-        result_p1_p2 = np.log(quasi_ft_p2.array.real / quasi_ft_p1.array.real) / np.log(p2 / p1)
+        quasi_ft_p1 = quasi_ft.near("x", x_list.tolist()).at("px", p1)
+        quasi_ft_p2 = quasi_ft.near("x", x_list.tolist()).at("px", p2)
+        k1 = 2 * np.pi * p1 / 48
+        k2 = 2 * np.pi * p2 / 48
+        h_p1 = kernel(x_list, k1 * a_inv_gev)
+        h_p2 = kernel(x_list, k2 * a_inv_gev)
+        quasi_ft_ratio = quasi_ft_p2.array.real / quasi_ft_p1.array.real
+        h_ratio = h_p2 / h_p1
+        p_ratio = p2 / p1
+        result_p1_p2 = np.log(quasi_ft_ratio / h_ratio) / np.log(p_ratio)
         p1_p2_list.append(f"({p1}, {p2})")
         cs_kernel_p1_p2_list.append(EnsembleData._from_xarray(ensemble_info, "jackknife", result_p1_p2))
 cs_kernel = EnsembleData.concat(cs_kernel_p1_p2_list, "p1_p2", p1_p2_list)
@@ -119,5 +129,5 @@ plt_errorbar(data, "z", "b", slice(1, None), (-0.5, 20.5))
 data = quasi_ft.at("px", px_pick).avg_data()
 plt_fill_between(data, "x", "b", slice(1, None), (-0.5, 1.5))
 
-data = cs_kernel.at("p1_p2", "(8, 9)").near("x", np.linspace(0, 1, 101).tolist()).avg_data()
+data = cs_kernel.at("p1_p2", "(8, 9)").avg_data()
 plt_fill_between(data, "x", "b", slice(1, None), (0.3, 0.7), (-3, 3))
