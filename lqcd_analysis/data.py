@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 import xarray
 
 DimsType = Sequence[str]
-CoordType = Union[int, float]
+CoordType = Union[int, float, str]
 CoordsType = Dict[str, Sequence[CoordType]]
 
 ResampleType = Literal["none", "jackknife", "bootstrap", "gvar"]
@@ -157,14 +157,42 @@ class EnsembleData:
     def n_sample(self) -> int:
         return int(self.array.sizes[self.resample])
 
-    def sel(self, indexers: Dict[str, Union[CoordType, Sequence[CoordType]]]) -> "EnsembleData":
-        for dim in indexers:
-            if dim not in self.dims:
-                raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
-        return EnsembleData._from_xarray(self.ensemble, self.resample, self.array.sel(indexers, drop=True))
+    @classmethod
+    def concat(
+        cls, data_list: Sequence["EnsembleData"], dim: str, coord: Optional[Sequence[CoordType]] = None
+    ) -> "EnsembleData":
+        if len(data_list) == 0:
+            raise ValueError("Cannot concatenate an empty list of EnsembleData.")
+        ensemble = data_list[0].ensemble
+        resample = data_list[0].resample
+        dims = data_list[0].dims
+        if dim in dims:
+            dims = [resample, *dims]
+            if coord is not None:
+                raise ValueError(f"Cannot specify coordinates for existing dimension '{dim}'.")
+        else:
+            dims = [resample, dim, *dims]
+            if coord is None:
+                raise ValueError(f"Must specify coordinates for new dimension '{dim}'.")
+        array = (
+            xarray.concat([data.array for data in data_list], dim)
+            .transpose(*dims)
+            .assign_coords({dim: coord})
+            .sortby(dim)
+        )
+        return cls._from_xarray(ensemble, resample, array)
 
     def at(self, dim: str, coord: Union[CoordType, Sequence[CoordType]]) -> "EnsembleData":
-        return self.sel({dim: coord})
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
+        return EnsembleData._from_xarray(self.ensemble, self.resample, self.array.sel({dim: coord}, drop=True))
+
+    def near(self, dim: str, coord: Union[CoordType, Sequence[CoordType]], tolerance: float = 1e-8) -> "EnsembleData":
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
+        return EnsembleData._from_xarray(
+            self.ensemble, self.resample, self.array.sel({dim: coord}, method="nearest", tolerance=tolerance, drop=True)
+        )
 
     @property
     def gvar(self) -> Union[gvar.GVar, NDArray[gvar.GVar]]:
@@ -269,7 +297,39 @@ class EnsembleData:
     def sub(self, rhs: "EnsembleData") -> "EnsembleData":
         return self.apply_renormalization(rhs, lambda value, rhs_value: value - rhs_value)
 
-    def fourier_transform_dim(self, dim: str, dim_out: str, d: Union[int, float] = 1) -> "EnsembleData":
+    def fourier_transform_dim(
+        self, dim: str, dim_out: str, coord_out: Sequence[CoordType], d: Union[int, float] = 1
+    ) -> "EnsembleData":
+        if dim not in self.dims:
+            raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
+        if dim_out != dim and dim_out in self.dims:
+            raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
+
+        n = self.array.sizes[dim]
+        if not numpy.allclose(self.array.coords[dim].values, numpy.arange(-n // 2, n // 2) * d):
+            raise ValueError(f"Unsupported coordinate values for dimension '{dim}'.")
+
+        axis = self.array.get_axis_num(dim)
+        assert isinstance(axis, int)
+        kernel = numpy.exp(1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
+        kernel *= (1 / n) * (n * d) / (2 * numpy.pi)
+        values = numpy.tensordot(self.array.values, kernel, axes=([axis], [0]))
+        values = numpy.moveaxis(values, -1, axis)
+
+        dims = []
+        coords = {}
+        for dim_ in self.array.dims:
+            if dim_ == dim:
+                dims.append(dim_out)
+                coords[dim_out] = coord_out
+            else:
+                dims.append(dim_)
+                coords[dim_] = self.array.coords[dim_].values
+
+        array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
+        return EnsembleData._from_xarray(self.ensemble, self.resample, array)
+
+    def fast_fourier_transform_dim(self, dim: str, dim_out: str, d: Union[int, float] = 1) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
         if dim_out != dim and dim_out in self.dims:
