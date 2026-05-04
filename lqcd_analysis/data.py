@@ -312,17 +312,17 @@ class EnsembleData:
             raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
 
         n = self.array.sizes[dim]
-        if not numpy.allclose(self.array.coords[dim].values, numpy.arange(-n // 2, n // 2) * d):
+        if not numpy.allclose(self.array.coords[dim].values, numpy.arange(-(n // 2), n // 2 + n % 2) * d):
             raise ValueError(f"Unsupported coordinate values for dimension '{dim}'.")
 
         axis = self.array.get_axis_num(dim)
         assert isinstance(axis, int)
         if inverse:
             kernel = numpy.exp(1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
-            kernel *= (1 / n) * (n * d) / (2 * numpy.pi)
+            kernel *= d / (2 * numpy.pi)
         else:
             kernel = numpy.exp(-1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
-            kernel *= (n * d) / (2 * numpy.pi)
+            kernel *= d
         values = numpy.tensordot(self.array.values, kernel, axes=([axis], [0]))
         values = numpy.moveaxis(values, -1, axis)
 
@@ -348,24 +348,25 @@ class EnsembleData:
             raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
 
         n = self.array.sizes[dim]
-        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(-n // 2, n // 2) * d)
+        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(-(n // 2), n // 2 + n % 2) * d)
 
         axis = self.array.get_axis_num(dim)
         assert isinstance(axis, int)
         values = numpy.fft.ifftshift(self.array.values, axes=axis)
         if inverse:
             values = numpy.fft.ifft(values, n=n, axis=axis)
+            values *= (n * d) / (2 * numpy.pi)
         else:
             values = numpy.fft.fft(values, n=n, axis=axis)
+            values *= d
         values = numpy.fft.fftshift(values, axes=axis)
-        values *= (n * d) / (2 * numpy.pi)
 
         dims = []
         coords = {}
         for dim_ in self.array.dims:
             if dim_ == dim:
                 dims.append(dim_out)
-                coords[dim_out] = numpy.arange(-n // 2, n // 2) * (2 * numpy.pi) / (n * d)
+                coords[dim_out] = numpy.arange(-(n // 2), n // 2 + n % 2) * (2 * numpy.pi) / (n * d)
             else:
                 dims.append(dim_)
                 coords[dim_] = self.array.coords[dim_].values
@@ -382,9 +383,9 @@ class EnsembleData:
                 {dim: (n + numpy.arange(pad_width)) * d}
             )
             self.array = xarray.concat([self.array, array_right], dim).sortby(dim)
-        elif numpy.allclose(self.array.coords[dim].values, numpy.arange(-n // 2, n // 2) * d):
+        elif numpy.allclose(self.array.coords[dim].values, numpy.arange(-(n // 2), n // 2 + n % 2) * d):
             array_right = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(pad_width)]})).assign_coords(
-                {dim: (n // 2 + numpy.arange(pad_width)) * d}
+                {dim: (n // 2 + n % 2 + numpy.arange(pad_width)) * d}
             )
             array_left = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(pad_width)]})).assign_coords(
                 {dim: (-(n // 2 + pad_width) + numpy.arange(pad_width)) * d}
