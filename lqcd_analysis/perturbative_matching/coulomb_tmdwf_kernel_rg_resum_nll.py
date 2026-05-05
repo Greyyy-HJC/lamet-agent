@@ -131,7 +131,7 @@ def coulomb_tmdwf_kernel_rg_resum_nll(
     """CG quasi-TMDWF hard-matching kernel (product of two CG_tmd_kernel_RGR).
 
     The quasi-TMDWF involves two quark-bilinear factors (one per quark leg),
-    so the full hard kernel is the product::
+    so the full hard kernel is the product:
 
         H(x, P^z) * H(1-x, P^z)
 
@@ -142,6 +142,25 @@ def coulomb_tmdwf_kernel_rg_resum_nll(
     """
     return coulomb_tmd_kernel_rg_resum_nll(x, pz_gev, mu, vary_eps) * coulomb_tmd_kernel_rg_resum_nll(
         1.0 - x, pz_gev, mu, vary_eps
+    )
+    
+def coulomb_tmdpdf_kernel_rg_resum_nll(
+    x: Union[float, np.ndarray], pz_gev: float, mu: float = 2.0, vary_eps: float = 1.0
+) -> Union[float, np.ndarray]:
+    """CG quasi-TMDPDF hard-matching kernel (product of two CG_pdf_kernel_RGR).
+
+    The quasi-TMDPDF involves two quark-bilinear factors (one per quark leg),
+    so the full hard kernel is the product:
+
+        H(x, P^z) * H(x, P^z)
+
+    Parameters
+    ----------
+    x, pz_gev, mu, vary_eps:
+        See :func:`coulomb_tmd_kernel_rg_resum_nll`.
+    """
+    return coulomb_tmd_kernel_rg_resum_nll(x, pz_gev, mu, vary_eps) * coulomb_tmd_kernel_rg_resum_nll(
+        x, pz_gev, mu, vary_eps
     )
 
 
