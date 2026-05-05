@@ -1,4 +1,5 @@
 from typing import Callable, Dict, List, Literal, NamedTuple, Optional, Sequence, Union, get_args
+import warnings
 
 import gvar
 import numpy
@@ -156,6 +157,44 @@ class EnsembleData:
     @property
     def n_sample(self) -> int:
         return self.array.sizes[self.resample]
+
+    def bin(self, bin_size: int) -> "EnsembleData":
+        if self.resample != "none":
+            raise ValueError("Only resample='none' can be resampled to other methods.")
+        n_sample = self.n_sample
+        if bin_size <= 0 or bin_size >= self.n_sample:
+            raise ValueError("bin_size must be a positive integer smaller than the number of samples.")
+        if n_sample % bin_size != 0:
+            warnings.warn(
+                "Number of samples is not divisible by bin_size, the last few samples will be dropped.", RuntimeWarning
+            )
+        n_resample = n_sample // bin_size
+        values = [self.array.values[i * bin_size : (i + 1) * bin_size].mean(axis=0) for i in range(n_resample)]
+        return EnsembleData(
+            self.ensemble, "none", values, dims=self.dims, coords=self.coords, attrs=self.attrs, name=self.name
+        )
+
+    def jackknife(self) -> "EnsembleData":
+        if self.resample != "none":
+            raise ValueError("Only resample='none' can be resampled to other methods.")
+        values = []
+        n_sample = self.n_sample
+        values_sum = self.array.values.sum(axis=0)
+        values = [(values_sum - self.array.values[i]) / (n_sample - 1) for i in range(n_sample)]
+        return EnsembleData(
+            self.ensemble, "jackknife", values, dims=self.dims, coords=self.coords, attrs=self.attrs, name=self.name
+        )
+
+    def bootstrap(self, n_resample: int) -> "EnsembleData":
+        if self.resample != "none":
+            raise ValueError("Only resample='none' can be resampled to other methods.")
+        values = []
+        n_sample = self.n_sample
+        resample = numpy.random.randint(0, n_sample, (n_resample, n_sample))
+        values = [self.array.values[resample[i]].mean(axis=0) for i in range(n_resample)]
+        return EnsembleData(
+            self.ensemble, "bootstrap", values, dims=self.dims, coords=self.coords, attrs=self.attrs, name=self.name
+        )
 
     @classmethod
     def concat(
