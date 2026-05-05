@@ -2,7 +2,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from lqcd_analysis.data import EnsembleInfo, EnsembleData
-from lqcd_analysis.perturbative_matching.coulomb_tmdwf_kernel_rg_resum_nll import kernel
+from lqcd_analysis.perturbative_matching.coulomb_tmd_kernel_rg_resum_nll import coulomb_tmdwf_kernel_rg_resum_nll
 
 
 def load_quasi_p0_re(ensemble_info, b_list, z_list):
@@ -111,8 +111,8 @@ for p1_idx, p1 in enumerate(px_list):
     for p2_idx, p2 in enumerate(px_list[p1_idx + 1 :]):
         quasi_ft_p1 = quasi_ft.near("x", x_list.tolist()).at("px", p1)
         quasi_ft_p2 = quasi_ft.near("x", x_list.tolist()).at("px", p2)
-        h_p1 = kernel(x_list, 2 * np.pi * p1 / 48 * a_inv_gev)
-        h_p2 = kernel(x_list, 2 * np.pi * p2 / 48 * a_inv_gev)
+        h_p1 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, 2 * np.pi * p1 / 48 * a_inv_gev)
+        h_p2 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, 2 * np.pi * p2 / 48 * a_inv_gev)
         quasi_ft_ratio = quasi_ft_p2.array.real / quasi_ft_p1.array.real
         h_ratio = h_p2 / h_p1
         p_ratio = p2 / p1

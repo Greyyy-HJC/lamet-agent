@@ -143,7 +143,8 @@ def coulomb_tmdwf_kernel_rg_resum_nll(
     return coulomb_tmd_kernel_rg_resum_nll(x, pz_gev, mu, vary_eps) * coulomb_tmd_kernel_rg_resum_nll(
         1.0 - x, pz_gev, mu, vary_eps
     )
-    
+
+
 def coulomb_tmdpdf_kernel_rg_resum_nll(
     x: Union[float, np.ndarray], pz_gev: float, mu: float = 2.0, vary_eps: float = 1.0
 ) -> Union[float, np.ndarray]:
@@ -162,7 +163,3 @@ def coulomb_tmdpdf_kernel_rg_resum_nll(
     return coulomb_tmd_kernel_rg_resum_nll(x, pz_gev, mu, vary_eps) * coulomb_tmd_kernel_rg_resum_nll(
         x, pz_gev, mu, vary_eps
     )
-
-
-def kernel(x, pz_gev: float, mu: float = 2.0, vary_eps: float = 1.0) -> Union[float, np.ndarray]:
-    return coulomb_tmdwf_kernel_rg_resum_nll(x, pz_gev, mu, vary_eps)
