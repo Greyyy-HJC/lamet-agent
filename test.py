@@ -42,6 +42,10 @@ def load_quasi(ensemble_info, n_jk, px_list, b_list, z_list):
     )
 
 
+def symmetrize(value, coord, coord_out, context):
+    return np.concatenate([np.zeros_like(value[:1]), value[:0:-1].conj(), value[:1].real, value[1:]])
+
+
 def plt_errorbar(data, x_dim, label_dim, label_slice, xlim, ylim=None):
     x = data.coords[x_dim]
     for label in data.coords[label_dim][label_slice]:
@@ -72,10 +76,10 @@ def plt_fill_between(data, x_dim, label_dim, label_slice, xlim, ylim=None):
 
 
 ensemble_info = EnsembleInfo("", "", 0.06, 0.06, 48, 64, 300)
-a_inv_gev = 0.1973 / 0.06
 px_list = [8, 9, 10]
 b_list = [0, 2, 4, 6, 8, 10]
 z_list = list(range(21))
+z_list_full = list(range(-21, 21))
 px_pick = 8
 
 # Load
@@ -96,10 +100,10 @@ quasi_ft_px_list = []
 for px in px_list:
     kx = 2 * np.pi * px / 48
     quasi_renorm_px = quasi_renorm.at("px", px)
-    quasi_renorm_px.update_dim("z", dim_out="lambda", coord_out=[z * kx for z in z_list])
-    quasi_renorm_px.symmetric_dim("lambda", kx)
+    quasi_renorm_px = quasi_renorm_px.estimate_dim("z", z_list_full, symmetrize).real
+    quasi_renorm_px = quasi_renorm_px.update_dim("z", "lambda", [z * kx for z in z_list_full])
     quasi_ft_px = quasi_renorm_px.fourier_transform_dim("lambda", "x", x_list, kx)
-    quasi_ft_px.update_dim("x", coord_out=[x + 0.5 for x in x_list])
+    quasi_ft_px = quasi_ft_px.update_dim("x", "x", [x + 0.5 for x in x_list])
     quasi_ft_px_list.append(quasi_ft_px)
 quasi_ft = EnsembleData.concat(quasi_ft_px_list, "px", px_list)
 
@@ -111,8 +115,8 @@ for p1_idx, p1 in enumerate(px_list):
     for p2_idx, p2 in enumerate(px_list[p1_idx + 1 :]):
         quasi_ft_p1 = quasi_ft.near("x", x_list.tolist()).at("px", p1)
         quasi_ft_p2 = quasi_ft.near("x", x_list.tolist()).at("px", p2)
-        h_p1 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, 2 * np.pi * p1 / 48 * a_inv_gev)
-        h_p2 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, 2 * np.pi * p2 / 48 * a_inv_gev)
+        h_p1 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, p1 * ensemble_info.k_s)
+        h_p2 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, p2 * ensemble_info.k_s)
         quasi_ft_ratio = quasi_ft_p2.array.real / quasi_ft_p1.array.real
         h_ratio = h_p2 / h_p1
         p_ratio = p2 / p1

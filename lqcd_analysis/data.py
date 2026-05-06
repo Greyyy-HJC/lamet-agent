@@ -25,6 +25,14 @@ class EnsembleInfo(NamedTuple):
     L_t: int
     m_pi: float
 
+    @property
+    def k_s(self) -> float:
+        return 2 * numpy.pi / self.L_s * 0.1973 / self.a_s
+
+    @property
+    def k_t(self) -> float:
+        return 2 * numpy.pi / self.L_t * 0.1973 / self.a_t
+
 
 def _is_gvar_values(values) -> bool:
     if isinstance(values, gvar.GVar):
@@ -151,6 +159,14 @@ class EnsembleData:
         assert self.array.name is None or isinstance(self.array.name, str)
         return self.array.name
 
+    @property
+    def real(self) -> "EnsembleData":
+        return EnsembleData._from_xarray(self.ensemble, self.resample, self.array.real)
+
+    @property
+    def imag(self) -> "EnsembleData":
+        return EnsembleData._from_xarray(self.ensemble, self.resample, self.array.imag)
+
     def copy(self, deep: bool = True) -> "EnsembleData":
         return EnsembleData._from_xarray(self.ensemble, self.resample, self.array.copy(deep=deep))
 
@@ -272,33 +288,26 @@ class EnsembleData:
             self.ensemble, "gvar", self.gvar, dims=self.dims, coords=self.coords, attrs=self.attrs, name=self.name
         )
 
-    def update_dim(
-        self,
-        dim: DimType,
-        *,
-        dim_out: Optional[DimType] = None,
-        coord_out: Optional[CoordType] = None,
-        operator: Optional[Callable[[NDArray], NDArray]] = None,
-    ):
+    def update_dim(self, dim: DimType, dim_out: DimType, coord_out: Optional[CoordType] = None) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
+
+        array = self.array
 
         if dim_out is not None and dim_out != dim:
             if dim_out in self.dims:
                 raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
-            self.array = self.array.rename({dim: dim_out})
+            array = array.rename({dim: dim_out})
             dim = dim_out
 
         if coord_out is not None:
-            self.array = self.array.assign_coords({dim: coord_out})
+            array = array.assign_coords({dim: coord_out})
 
-        if operator is not None:
-            for coord in self.coords[dim]:
-                indexer = {dim: coord}
-                self.array.loc[indexer] = operator(self.array.sel(indexer).values)
+        return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def sort_dim(self, dim: DimType, ascending: bool = True):
-        self.array = self.array.sortby(dim, ascending=ascending)
+    def sort_dim(self, dim: DimType, ascending: bool = True) -> "EnsembleData":
+        array = self.array.sortby(dim, ascending=ascending)
+        return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
     def aligned_ref_array(self, ref: "EnsembleData") -> xarray.DataArray:
         if not isinstance(ref, EnsembleData):
@@ -351,19 +360,29 @@ class EnsembleData:
             raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
 
         n = self.array.sizes[dim]
-        if not numpy.allclose(self.array.coords[dim].values, numpy.arange(-(n // 2), n // 2 + n % 2) * d):
+        fourier_modes = numpy.arange(-(n // 2), n // 2 + n % 2)
+        if not numpy.allclose(self.array.coords[dim].values, fourier_modes * d):
             raise ValueError(f"Unsupported coordinate values for dimension '{dim}'.")
-
         axis = self.array.get_axis_num(dim)
         assert isinstance(axis, int)
-        if inverse:
-            kernel = numpy.exp(1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
-            kernel *= d / (2 * numpy.pi)
+        if len(coord_out) == n and numpy.allclose(coord_out, fourier_modes * (2 * numpy.pi) / (n * d)):
+            values = numpy.fft.ifftshift(self.array.values, axes=axis)
+            if inverse:
+                values = numpy.fft.ifft(values, axis=axis)
+                values *= n * d / (2 * numpy.pi)
+            else:
+                values = numpy.fft.fft(values, axis=axis)
+                values *= d
+            values = numpy.fft.fftshift(values, axes=axis)
         else:
-            kernel = numpy.exp(-1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
-            kernel *= d
-        values = numpy.tensordot(self.array.values, kernel, axes=([axis], [0]))
-        values = numpy.moveaxis(values, -1, axis)
+            if inverse:
+                kernel = numpy.exp(1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
+                kernel *= d / (2 * numpy.pi)
+            else:
+                kernel = numpy.exp(-1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
+                kernel *= d
+            values = numpy.tensordot(self.array.values, kernel, axes=([axis], [0]))
+            values = numpy.moveaxis(values, -1, axis)
 
         dims = []
         coords = {}
@@ -378,78 +397,51 @@ class EnsembleData:
         array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def fast_fourier_transform_dim(
-        self, dim: DimType, dim_out: DimType, d: Union[int, float] = 1, inverse: bool = True
-    ) -> "EnsembleData":
+    def evaluate_dim(self, dim: DimType, operator: Callable[[NDArray], NDArray]) -> "EnsembleData":
         if dim not in self.dims:
-            raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
-        if dim_out != dim and dim_out in self.dims:
-            raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
+            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
 
-        n = self.array.sizes[dim]
-        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(-(n // 2), n // 2 + n % 2) * d)
+        dims = [dim_ for dim_ in self.dims if dim_ != dim]
 
-        axis = self.array.get_axis_num(dim)
-        assert isinstance(axis, int)
-        values = numpy.fft.ifftshift(self.array.values, axes=axis)
-        if inverse:
-            values = numpy.fft.ifft(values, n=n, axis=axis)
-            values *= (n * d) / (2 * numpy.pi)
-        else:
-            values = numpy.fft.fft(values, n=n, axis=axis)
-            values *= d
-        values = numpy.fft.fftshift(values, axes=axis)
-
-        dims = []
-        coords = {}
-        for dim_ in self.array.dims:
-            if dim_ == dim:
-                dims.append(dim_out)
-                coords[dim_out] = numpy.arange(-(n // 2), n // 2 + n % 2) * (2 * numpy.pi) / (n * d)
-            else:
-                dims.append(dim_)
-                coords[dim_] = self.array.coords[dim_].values
-
-        array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
+        array = xarray.apply_ufunc(
+            operator,
+            self.array,
+            input_core_dims=[dims],
+            output_core_dims=[dims],
+            vectorize=True,
+        )
+        array = array.transpose(*self.array.dims)
+        array.attrs = self.attrs
+        array.name = self.name
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def pad_dim(self, dim: DimType, pad_width: int, d: Union[int, float] = 1):
+    def estimate_dim(
+        self,
+        dim: DimType,
+        coord_out: CoordType,
+        operator: Callable[[NDArray, CoordType, CoordType, Dict[DimType, IndexType]], NDArray],
+    ) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
-        n = self.array.sizes[dim]
-        if numpy.allclose(self.array.coords[dim].values, numpy.arange(n) * d):
-            array_right = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(pad_width)]})).assign_coords(
-                {dim: (n + numpy.arange(pad_width)) * d}
-            )
-            self.array = xarray.concat([self.array, array_right], dim).sortby(dim)
-        elif numpy.allclose(self.array.coords[dim].values, numpy.arange(-(n // 2), n // 2 + n % 2) * d):
-            array_right = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(pad_width)]})).assign_coords(
-                {dim: (n // 2 + n % 2 + numpy.arange(pad_width)) * d}
-            )
-            array_left = xarray.zeros_like(self.array.isel({dim: [0 for _ in range(pad_width)]})).assign_coords(
-                {dim: (-(n // 2 + pad_width) + numpy.arange(pad_width)) * d}
-            )
-            self.array = xarray.concat([array_left, self.array, array_right], dim).sortby(dim)
-        else:
-            raise ValueError(f"Unsupported coordinate values for dimension '{dim}'.")
 
-    def symmetric_dim(self, dim: DimType, d: Union[int, float] = 1):
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
-        n = self.array.sizes[dim]
-        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(n) * d)
-        array_negative = self.array.isel({dim: slice(None, 0, -1)})
-        array_negative = array_negative.assign_coords({dim: -array_negative.coords[dim].values})
-        array_nyquist = xarray.zeros_like(self.array.isel({dim: [0]})).assign_coords({dim: [-n * d]})
-        self.array = xarray.concat([array_nyquist, array_negative, self.array], dim).sortby(dim)
+        coord = self.coords[dim]
+        dims = [dim_ for dim_ in self.dims if dim_ != dim]
+        coord_list = [self.array.coords[dim_] for dim_ in dims]
 
-    def antisymmetric_dim(self, dim: DimType, d: Union[int, float] = 1):
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
-        n = self.array.sizes[dim]
-        assert numpy.allclose(self.array.coords[dim].values, numpy.arange(n) * d)
-        self.array.loc[{dim: 0}] = 0
-        array_negative = -(self.array.isel({dim: slice(None, 0, -1)}))
-        array_negative = array_negative.assign_coords({dim: -array_negative.coords[dim].values})
-        array_nyquist = xarray.zeros_like(self.array.isel({dim: [0]})).assign_coords({dim: [-n * d]})
-        self.array = xarray.concat([array_nyquist, array_negative, self.array], dim).sortby(dim)
+        def apply_operator(value: NDArray, *index_list: IndexType) -> NDArray:
+            return operator(value, coord, coord_out, {dim_: index_ for dim_, index_ in zip(dims, index_list)})
+
+        array = xarray.apply_ufunc(
+            apply_operator,
+            self.array,
+            *coord_list,
+            input_core_dims=[[dim]] + [[]] * len(coord_list),
+            output_core_dims=[[dim]],
+            exclude_dims={dim},
+            vectorize=True,
+            output_sizes={dim: len(coord_out)},
+        )
+        array = array.assign_coords({dim: coord_out}).transpose(*self.array.dims)
+        array.attrs = self.attrs
+        array.name = self.name
+        return EnsembleData._from_xarray(self.ensemble, self.resample, array)
