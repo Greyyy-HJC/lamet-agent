@@ -397,16 +397,21 @@ class EnsembleData:
         array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
-    def evaluate_dim(self, dim: DimType, operator: Callable[[NDArray], NDArray]) -> "EnsembleData":
+    def evaluate_dim(self, dim: DimType, operator: Callable[[NDArray, IndexType], NDArray]) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
 
         dims = [dim_ for dim_ in self.dims if dim_ != dim]
+        coord = self.array.coords[dim]
+
+        def apply_operator(value: NDArray, index: IndexType) -> NDArray:
+            return operator(value, index)
 
         array = xarray.apply_ufunc(
-            operator,
+            apply_operator,
             self.array,
-            input_core_dims=[dims],
+            coord,
+            input_core_dims=[dims, []],
             output_core_dims=[dims],
             vectorize=True,
         )
@@ -435,7 +440,7 @@ class EnsembleData:
             apply_operator,
             self.array,
             *coord_list,
-            input_core_dims=[[dim]] + [[]] * len(coord_list),
+            input_core_dims=[[dim], *([[]] * len(coord_list))],
             output_core_dims=[[dim]],
             exclude_dims={dim},
             vectorize=True,
