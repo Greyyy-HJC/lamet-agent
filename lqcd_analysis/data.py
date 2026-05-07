@@ -12,8 +12,11 @@ IndexType = Union[int, float, str]
 CoordType = Sequence[IndexType]
 CoordsType = Dict[DimType, CoordType]
 
-ResampleType = Literal["none", "jackknife", "bootstrap", "gvar"]
+ResampleType = Literal["raw", "jackknife", "bootstrap", "gvar"]
 RESAMPLE_TYPE_VALUES = get_args(ResampleType)
+RESAMPLE_DIM = "resample"
+
+HBAR_C_GEV_FM = 0.197327  # hbar * c in GeV fm
 
 
 class EnsembleInfo(NamedTuple):
@@ -27,11 +30,11 @@ class EnsembleInfo(NamedTuple):
 
     @property
     def k_s(self) -> float:
-        return 2 * numpy.pi / self.L_s * 0.1973 / self.a_s
+        return 2 * numpy.pi / self.L_s * HBAR_C_GEV_FM / self.a_s
 
     @property
     def k_t(self) -> float:
-        return 2 * numpy.pi / self.L_t * 0.1973 / self.a_t
+        return 2 * numpy.pi / self.L_t * HBAR_C_GEV_FM / self.a_t
 
 
 def _is_gvar_values(values) -> bool:
@@ -51,7 +54,7 @@ class EnsembleData:
         self,
         ensemble: EnsembleInfo,
         resample: ResampleType,
-        values: Union[List[Union[int, float, complex, NDArray]], NDArray, gvar.GVar],
+        values: Union[List[Union[int, float, complex, NDArray]], gvar.GVar, NDArray[gvar.GVar]],
         dims: DimsType,
         coords: CoordsType,
         attrs: Optional[Dict[str, str]] = None,
@@ -66,14 +69,14 @@ class EnsembleData:
     @staticmethod
     def _build_xarray(
         resample: ResampleType,
-        values: Union[List[Union[int, float, complex, NDArray]], gvar.GVar, NDArray],
+        values: Union[List[Union[int, float, complex, NDArray]], gvar.GVar, NDArray[gvar.GVar]],
         dims: DimsType,
         coords: CoordsType,
         attrs: Optional[Dict[str, str]] = None,
         name: Optional[str] = None,
     ) -> xarray.DataArray:
-        if resample in dims:
-            raise ValueError(f"Physical dimensions should not include resampling dimension '{resample}'.")
+        if RESAMPLE_DIM in dims:
+            raise ValueError(f"Physical dimensions should not include resampling dimension '{RESAMPLE_DIM}'.")
 
         if isinstance(values, list):
             if resample == "gvar":
@@ -85,7 +88,7 @@ class EnsembleData:
             resample_values = numpy.stack(values, axis=0)
         else:
             if resample != "gvar":
-                raise TypeError("none/jackknife/bootstrap data must be initialized from a list of samples.")
+                raise TypeError("raw/jackknife/bootstrap data must be initialized from a list of samples.")
             if not _is_gvar_values(values):
                 raise TypeError("resample='gvar' requires a gvar.GVar or an NDArray[gvar.GVar].")
             resample_values = numpy.expand_dims(numpy.asarray(values, dtype=object), axis=0)
@@ -96,8 +99,8 @@ class EnsembleData:
                 f"got ndim={resample_values.ndim}, physical dims={len(dims)}."
             )
 
-        resample_dims: DimsType = (resample, *dims)
-        resample_coords: CoordsType = {resample: list(range(resample_values.shape[0]))}
+        resample_dims: DimsType = (RESAMPLE_DIM, *dims)
+        resample_coords: CoordsType = {RESAMPLE_DIM: list(range(resample_values.shape[0]))}
         for dim, size in zip(dims, resample_values.shape[1:]):
             if dim not in coords:
                 raise ValueError(f"Missing dimension coordinate '{dim}'.")
@@ -115,10 +118,10 @@ class EnsembleData:
     ) -> "EnsembleData":
         if resample not in RESAMPLE_TYPE_VALUES:
             raise ValueError(f"Unknown resampling method '{resample}'.")
-        if len(array.dims) == 0 or array.dims[0] != resample:
-            raise ValueError(f"resample='{resample}' requires the first xarray dimension to be named '{resample}'.")
+        if len(array.dims) == 0 or array.dims[0] != RESAMPLE_DIM:
+            raise ValueError(f"resample='{resample}' requires the first xarray dimension to be named '{RESAMPLE_DIM}'.")
         if resample == "gvar":
-            if array.sizes["gvar"] != 1:
+            if array.sizes[RESAMPLE_DIM] != 1:
                 raise ValueError("resample='gvar' requires a length-1 gvar dimension.")
             if not _is_gvar_values(array.values):
                 raise TypeError("resample='gvar' requires values to be gvar.GVar objects.")
@@ -172,11 +175,11 @@ class EnsembleData:
 
     @property
     def n_sample(self) -> int:
-        return self.array.sizes[self.resample]
+        return self.array.sizes[RESAMPLE_DIM]
 
     def bin(self, bin_size: int) -> "EnsembleData":
-        if self.resample != "none":
-            raise ValueError("Only resample='none' can be resampled to other methods.")
+        if self.resample != "raw":
+            raise ValueError("Only resample='raw' can be resampled to other methods.")
         n_sample = self.n_sample
         if bin_size <= 0 or bin_size >= self.n_sample:
             raise ValueError("bin_size must be a positive integer smaller than the number of samples.")
@@ -187,12 +190,12 @@ class EnsembleData:
         n_resample = n_sample // bin_size
         values = [self.array.values[i * bin_size : (i + 1) * bin_size].mean(axis=0) for i in range(n_resample)]
         return EnsembleData(
-            self.ensemble, "none", values, dims=self.dims, coords=self.coords, attrs=self.attrs, name=self.name
+            self.ensemble, "raw", values, dims=self.dims, coords=self.coords, attrs=self.attrs, name=self.name
         )
 
     def jackknife(self) -> "EnsembleData":
-        if self.resample != "none":
-            raise ValueError("Only resample='none' can be resampled to other methods.")
+        if self.resample != "raw":
+            raise ValueError("Only resample='raw' can be resampled to other methods.")
         values = []
         n_sample = self.n_sample
         values_sum = self.array.values.sum(axis=0)
@@ -202,8 +205,8 @@ class EnsembleData:
         )
 
     def bootstrap(self, n_resample: int) -> "EnsembleData":
-        if self.resample != "none":
-            raise ValueError("Only resample='none' can be resampled to other methods.")
+        if self.resample != "raw":
+            raise ValueError("Only resample='raw' can be resampled to other methods.")
         values = []
         n_sample = self.n_sample
         resample = numpy.random.randint(0, n_sample, (n_resample, n_sample))
@@ -218,23 +221,38 @@ class EnsembleData:
     ) -> "EnsembleData":
         if len(data_list) == 0:
             raise ValueError("Cannot concatenate an empty list of EnsembleData.")
+        if dim == RESAMPLE_DIM:
+            raise ValueError(f"Cannot concatenate along reserved resampling dimension '{RESAMPLE_DIM}'.")
         ensemble = data_list[0].ensemble
         resample = data_list[0].resample
         dims = data_list[0].dims
+        coords = data_list[0].coords
+        coord_dims_to_match = [dim_ for dim_ in dims if dim_ != dim]
+        if dim not in dims:
+            coord_dims_to_match = list(dims)
+        for data in data_list[1:]:
+            if data.ensemble != ensemble:
+                raise ValueError("Cannot concatenate EnsembleData from different ensembles.")
+            if data.resample != resample:
+                raise ValueError("Cannot concatenate EnsembleData with different resampling methods.")
+            if data.dims != dims:
+                raise ValueError("Cannot concatenate EnsembleData with different dimensions.")
+            for dim_ in coord_dims_to_match:
+                if data.coords[dim_] != coords[dim_]:
+                    raise ValueError(
+                        f"Cannot concatenate EnsembleData with different coordinates for dimension '{dim_}'."
+                    )
+        array = xarray.concat([data.array for data in data_list], dim)
         if dim in dims:
-            dims = [resample, *dims]
             if coord is not None:
                 raise ValueError(f"Cannot specify coordinates for existing dimension '{dim}'.")
+            dims_out = [RESAMPLE_DIM, *dims]
         else:
-            dims = [resample, dim, *dims]
             if coord is None:
                 raise ValueError(f"Must specify coordinates for new dimension '{dim}'.")
-        array = (
-            xarray.concat([data.array for data in data_list], dim)
-            .transpose(*dims)
-            .assign_coords({dim: coord})
-            .sortby(dim)
-        )
+            dims_out = [RESAMPLE_DIM, dim, *dims]
+            array = array.assign_coords({dim: coord})
+        array = array.transpose(*dims_out).sortby(dim)
         return cls._from_xarray(ensemble, resample, array)
 
     def at(self, dim: DimType, coord: Union[IndexType, CoordType]) -> "EnsembleData":
@@ -292,13 +310,11 @@ class EnsembleData:
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
 
-        array = self.array
+        if dim_out != dim and (dim_out == RESAMPLE_DIM or dim_out in self.dims):
+            raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
 
-        if dim_out is not None and dim_out != dim:
-            if dim_out in self.dims:
-                raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
-            array = array.rename({dim: dim_out})
-            dim = dim_out
+        array = self.array.rename({dim: dim_out})
+        dim = dim_out
 
         if coord_out is not None:
             array = array.assign_coords({dim: coord_out})
@@ -306,18 +322,28 @@ class EnsembleData:
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
     def sort_dim(self, dim: DimType, ascending: bool = True) -> "EnsembleData":
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         array = self.array.sortby(dim, ascending=ascending)
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
 
     def aligned_ref_array(self, ref: "EnsembleData") -> xarray.DataArray:
         if not isinstance(ref, EnsembleData):
             raise TypeError("Reference data for renormalization must be an EnsembleData.")
-        if ref.resample != "gvar":
-            raise TypeError("Reference data for renormalization must use resample='gvar'.")
         if self.resample == "gvar":
             ref_array = xarray.DataArray(ref.gvar, dims=ref.dims, coords=ref.coords, attrs=ref.attrs, name=ref.name)
-        else:
+        elif self.resample == "raw":
             ref_array = xarray.DataArray(ref.mean, dims=ref.dims, coords=ref.coords, attrs=ref.attrs, name=ref.name)
+        else:
+            if ref.resample == "gvar" or ref.resample == "raw":
+                ref_array = xarray.DataArray(ref.mean, dims=ref.dims, coords=ref.coords, attrs=ref.attrs, name=ref.name)
+            elif ref.resample == self.resample:
+                ref_array = ref.array
+            else:
+                raise ValueError(
+                    f"Cannot apply renormalization with resample='{ref.resample}' reference data to "
+                    f"resample='{self.resample}' target data."
+                )
 
         for dim in ref_array.dims:
             if dim not in self.array.dims:
@@ -356,7 +382,7 @@ class EnsembleData:
     ) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
-        if dim_out != dim and dim_out in self.dims:
+        if dim_out != dim and (dim_out == RESAMPLE_DIM or dim_out in self.dims):
             raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
 
         n = self.array.sizes[dim]

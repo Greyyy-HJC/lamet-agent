@@ -109,12 +109,14 @@ quasi_ft = EnsembleData.concat(quasi_ft_px_list, "px", px_list)
 
 # CS kernel
 x_list = np.linspace(0.1, 0.9, 81)
+quasi_ft_x_list = quasi_ft.near("x", x_list.tolist())
+x_list = np.asarray(quasi_ft_x_list.coords["x"])
 p1_p2_list = []
 cs_kernel_p1_p2_list = []
 for p1_idx, p1 in enumerate(px_list):
     for p2_idx, p2 in enumerate(px_list[p1_idx + 1 :]):
-        quasi_ft_p1 = quasi_ft.near("x", x_list.tolist()).at("px", p1)
-        quasi_ft_p2 = quasi_ft.near("x", x_list.tolist()).at("px", p2)
+        quasi_ft_p1 = quasi_ft_x_list.at("px", p1)
+        quasi_ft_p2 = quasi_ft_x_list.at("px", p2)
         h_p1 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, p1 * ensemble_info.k_s)
         h_p2 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, p2 * ensemble_info.k_s)
         quasi_ft_ratio = quasi_ft_p2.array.real / quasi_ft_p1.array.real
