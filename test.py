@@ -42,8 +42,58 @@ def load_quasi(ensemble_info, n_jk, px_list, b_list, z_list):
     )
 
 
-def symmetrize(value, coord, coord_out, context):
-    return np.concatenate([np.zeros_like(value[:1]), value[:0:-1].conj(), value[:1].real, value[1:]])
+def symmetrize_func(values, z_list, z_list_out, context):
+    n = len(z_list)
+    if z_list != list(range(n)):
+        raise ValueError("z_list must be [0, 1, ..., n-1].")
+    if z_list_out != list(range(-n, n)):
+        raise ValueError("z_list_out must be [-n+1, ..., -1, 0, 1, ..., n-1].")
+    return np.concatenate([np.zeros_like(values[:1]), values[:0:-1].conj(), values[:1].real, values[1:]])
+
+
+def fourier_transform_func(values, z_list, x_list, context, inverse: bool = True):
+    n = len(z_list)
+    fourier_modes = np.arange(-n // 2, n // 2 + n % 2)
+    if not np.allclose(z_list, fourier_modes):
+        raise ValueError("z_list must be symmetric around 0 and have a length of n.")
+    px = context["px"]
+    kx = 2 * np.pi * px / 48
+    lambda_list = [z * kx for z in z_list]
+    if len(x_list) == n and np.allclose(x_list, fourier_modes * (2 * np.pi) / (n * kx)):
+        values_out = np.fft.ifftshift(values, axes=0)
+        if inverse:
+            values_out = np.fft.ifft(values_out, axis=0)
+            values_out *= n * kx / (2 * np.pi)
+        else:
+            values_out = np.fft.fft(values_out, axis=0)
+            values_out *= kx
+        values_out = np.fft.fftshift(values_out, axes=0)
+    else:
+        if inverse:
+            kernel = np.exp(1j * np.outer(np.asarray(lambda_list), np.asarray(x_list)))
+            kernel *= kx / (2 * np.pi)
+        else:
+            kernel = np.exp(-1j * np.outer(np.asarray(lambda_list), np.asarray(x_list)))
+            kernel *= kx
+        values_out = np.tensordot(values, kernel, axes=([0], [0]))
+        values_out = np.moveaxis(values_out, -1, 0)
+    return values_out
+
+
+def cs_kernel_func(values, px_list, p1_p2_list, context):
+    cs_kernel_p1_p2_list = []
+    for p1_p2 in p1_p2_list:
+        p1, p2 = p1_p2.strip("()").split(", ")
+        p1, p2 = int(p1), int(p2)
+        quasi_ft_p1 = values[px_list.index(p1)]
+        quasi_ft_p2 = values[px_list.index(p2)]
+        h_p1 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, p1 * ensemble_info.k_s)
+        h_p2 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, p2 * ensemble_info.k_s)
+        quasi_ft_ratio = quasi_ft_p2.real / quasi_ft_p1.real
+        h_ratio = h_p2 / h_p1
+        p_ratio = p2 / p1
+        cs_kernel_p1_p2_list.append(np.log(quasi_ft_ratio / h_ratio) / np.log(p_ratio))
+    return np.stack(cs_kernel_p1_p2_list, axis=0)
 
 
 def plt_errorbar(data, x_dim, label_dim, label_slice, xlim, ylim=None):
@@ -96,36 +146,17 @@ quasi_renorm = quasi_bare.div(quasi_p0_z0_re)
 
 # Fourier transform
 x_list = np.linspace(-1, 1, 201).tolist()
-quasi_ft_px_list = []
-for px in px_list:
-    kx = 2 * np.pi * px / 48
-    quasi_renorm_px = quasi_renorm.at("px", px)
-    quasi_renorm_px = quasi_renorm_px.estimate_dim("z", z_list_full, symmetrize).real
-    quasi_renorm_px = quasi_renorm_px.update_dim("z", "lambda", [z * kx for z in z_list_full])
-    quasi_ft_px = quasi_renorm_px.fourier_transform_dim("lambda", "x", x_list, kx)
-    quasi_ft_px = quasi_ft_px.update_dim("x", "x", [x + 0.5 for x in x_list])
-    quasi_ft_px_list.append(quasi_ft_px)
-quasi_ft = EnsembleData.concat(quasi_ft_px_list, "px", px_list)
+quasi_renorm = quasi_renorm.transform_dim("z", "z", z_list_full, symmetrize_func).real
+quasi_ft = quasi_renorm.transform_dim("z", "x", x_list, fourier_transform_func, ["px"])
+quasi_ft = quasi_ft.update_dim("x", "x", [x + 0.5 for x in x_list])
+
 
 # CS kernel
 x_list = np.linspace(0.1, 0.9, 81)
 quasi_ft_x_list = quasi_ft.near("x", x_list.tolist())
 x_list = np.asarray(quasi_ft_x_list.coords["x"])
-p1_p2_list = []
-cs_kernel_p1_p2_list = []
-for p1_idx, p1 in enumerate(px_list):
-    for p2_idx, p2 in enumerate(px_list[p1_idx + 1 :]):
-        quasi_ft_p1 = quasi_ft_x_list.at("px", p1)
-        quasi_ft_p2 = quasi_ft_x_list.at("px", p2)
-        h_p1 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, p1 * ensemble_info.k_s)
-        h_p2 = coulomb_tmdwf_kernel_rg_resum_nll(x_list, p2 * ensemble_info.k_s)
-        quasi_ft_ratio = quasi_ft_p2.array.real / quasi_ft_p1.array.real
-        h_ratio = h_p2 / h_p1
-        p_ratio = p2 / p1
-        result_p1_p2 = np.log(quasi_ft_ratio / h_ratio) / np.log(p_ratio)
-        p1_p2_list.append(f"({p1}, {p2})")
-        cs_kernel_p1_p2_list.append(EnsembleData._from_xarray(ensemble_info, "jackknife", result_p1_p2))
-cs_kernel = EnsembleData.concat(cs_kernel_p1_p2_list, "p1_p2", p1_p2_list)
+p1_p2_list = [f"({p1}, {p2})" for p1 in px_list for p2 in px_list if p2 > p1]
+cs_kernel = quasi_ft_x_list.transform_dim("px", "p1_p2", p1_p2_list, cs_kernel_func)
 
 data = quasi_bare.at("px", px_pick).avg_data()
 plt_errorbar(data, "z", "b", slice(1, None), (-0.5, 20.5))

@@ -377,102 +377,54 @@ class EnsembleData:
     def sub(self, rhs: "EnsembleData") -> "EnsembleData":
         return self.apply_renormalization(rhs, lambda value, rhs_value: value - rhs_value)
 
-    def fourier_transform_dim(
-        self, dim: DimType, dim_out: DimType, coord_out: CoordType, d: Union[int, float] = 1, inverse: bool = True
+    def transform_dim(
+        self,
+        dim: DimType,
+        dim_out: DimType,
+        coord_out: CoordType,
+        function: Callable[[NDArray, CoordType, CoordType, Dict[DimType, IndexType]], NDArray],
+        dims_dispatch: Union[DimType, DimsType, None] = None,
     ) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
         if dim_out != dim and (dim_out == RESAMPLE_DIM or dim_out in self.dims):
             raise ValueError(f"Output dimension '{dim_out}' already exists in data dimensions.")
 
-        n = self.array.sizes[dim]
-        fourier_modes = numpy.arange(-(n // 2), n // 2 + n % 2)
-        if not numpy.allclose(self.array.coords[dim].values, fourier_modes * d):
-            raise ValueError(f"Unsupported coordinate values for dimension '{dim}'.")
-        axis = self.array.get_axis_num(dim)
-        assert isinstance(axis, int)
-        if len(coord_out) == n and numpy.allclose(coord_out, fourier_modes * (2 * numpy.pi) / (n * d)):
-            values = numpy.fft.ifftshift(self.array.values, axes=axis)
-            if inverse:
-                values = numpy.fft.ifft(values, axis=axis)
-                values *= n * d / (2 * numpy.pi)
-            else:
-                values = numpy.fft.fft(values, axis=axis)
-                values *= d
-            values = numpy.fft.fftshift(values, axes=axis)
-        else:
-            if inverse:
-                kernel = numpy.exp(1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
-                kernel *= d / (2 * numpy.pi)
-            else:
-                kernel = numpy.exp(-1j * numpy.outer(self.array.coords[dim].values, numpy.asarray(coord_out)))
-                kernel *= d
-            values = numpy.tensordot(self.array.values, kernel, axes=([axis], [0]))
-            values = numpy.moveaxis(values, -1, axis)
+        if dims_dispatch is None:
+            dims_dispatch = []
+        elif isinstance(dims_dispatch, DimType):
+            dims_dispatch = [dims_dispatch]
+        for dim_ in dims_dispatch:
+            if dim_ == dim or dim_ == dim_out:
+                raise ValueError(
+                    f"Dispatch dimension '{dim_}' cannot be the same as the transformed or output dimension."
+                )
+            if dim_ not in self.dims:
+                raise ValueError(f"Dispatch dimension '{dim_}' not found in data dimensions.")
 
-        dims = []
-        coords = {}
-        for dim_ in self.array.dims:
-            if dim_ == dim:
-                dims.append(dim_out)
-                coords[dim_out] = coord_out
-            else:
-                dims.append(dim_)
-                coords[dim_] = self.array.coords[dim_].values
+        dims_core = [dim] + [dim_ for dim_ in self.array.dims if dim_ != dim and dim_ not in dims_dispatch]
+        dims_out_core = [dim_out] + [dim_ for dim_ in dims_core if dim_ != dim]
+        dims_out = [dim_out if dim_ == dim else dim_ for dim_ in self.array.dims]
 
-        array = xarray.DataArray(values, dims=tuple(dims), coords=coords, attrs=self.attrs, name=self.name)
-        return EnsembleData._from_xarray(self.ensemble, self.resample, array)
-
-    def evaluate_dim(self, dim: DimType, operator: Callable[[NDArray, IndexType], NDArray]) -> "EnsembleData":
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
-
-        dims = [dim_ for dim_ in self.dims if dim_ != dim]
-        coord = self.array.coords[dim]
-
-        def apply_operator(value: NDArray, index: IndexType) -> NDArray:
-            return operator(value, index)
+        def apply_function(value: NDArray, *index_list: IndexType) -> NDArray:
+            return function(
+                value,
+                self.coords[dim],
+                coord_out,
+                {dim_: index_ for dim_, index_ in zip(dims_dispatch, index_list)},
+            )
 
         array = xarray.apply_ufunc(
-            apply_operator,
+            apply_function,
             self.array,
-            coord,
-            input_core_dims=[dims, []],
-            output_core_dims=[dims],
-            vectorize=True,
-        )
-        array = array.transpose(*self.array.dims)
-        array.attrs = self.attrs
-        array.name = self.name
-        return EnsembleData._from_xarray(self.ensemble, self.resample, array)
-
-    def estimate_dim(
-        self,
-        dim: DimType,
-        coord_out: CoordType,
-        operator: Callable[[NDArray, CoordType, CoordType, Dict[DimType, IndexType]], NDArray],
-    ) -> "EnsembleData":
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
-
-        coord = self.coords[dim]
-        dims = [dim_ for dim_ in self.dims if dim_ != dim]
-        coord_list = [self.array.coords[dim_] for dim_ in dims]
-
-        def apply_operator(value: NDArray, *index_list: IndexType) -> NDArray:
-            return operator(value, coord, coord_out, {dim_: index_ for dim_, index_ in zip(dims, index_list)})
-
-        array = xarray.apply_ufunc(
-            apply_operator,
-            self.array,
-            *coord_list,
-            input_core_dims=[[dim], *([[]] * len(coord_list))],
-            output_core_dims=[[dim]],
+            *[self.array.coords[dim_] for dim_ in dims_dispatch],
+            input_core_dims=[dims_core] + [[]] * len(dims_dispatch),
+            output_core_dims=[dims_out_core],
             exclude_dims={dim},
-            vectorize=True,
-            output_sizes={dim: len(coord_out)},
+            vectorize=len(dims_dispatch) > 0,
+            output_sizes={dim_out: len(coord_out)},
         )
-        array = array.assign_coords({dim: coord_out}).transpose(*self.array.dims)
+        array = array.assign_coords({dim_out: coord_out}).transpose(*dims_out)
         array.attrs = self.attrs
         array.name = self.name
         return EnsembleData._from_xarray(self.ensemble, self.resample, array)
