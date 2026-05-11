@@ -6,6 +6,6 @@ incoming/
 scripts/
 src/
 tests/
-
+raw_scripts/data/
 
 **/__pycache__/**
