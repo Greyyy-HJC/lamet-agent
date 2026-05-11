@@ -79,7 +79,87 @@ def _alpha_s_2(mu: NDArray[np.float64], n_f: int = 3) -> NDArray[np.float64]:
     )
 
 
-def coulomb_tmd_kernel_rg_resum_nll(
+def coulomb_tmd_kernel_nlo(
+    x: Union[float, np.ndarray], pz_gev: float, mu: float = 2.0
+) -> Union[float, np.ndarray]:
+    """CG TMD hard-matching kernel (NLO expansion in alpha_s).
+
+    arXiv:2311.01391; ``pz_gev`` is longitudinal momentum in GeV.
+
+    Parameters
+    ----------
+    x:
+        Parton momentum fraction.
+    pz_gev:
+        Hadron momentum P^z in GeV.
+    mu:
+        Matching scale in GeV (default 2 GeV).
+    """
+    x = np.asarray(x, dtype=float)
+    zeta_scale = (2.0 * x * pz_gev) ** 2
+
+    log_mu2_over_zeta = np.log((mu**2) / zeta_scale)
+    temp = (
+        0.5 * log_mu2_over_zeta**2
+        + 3.0 * log_mu2_over_zeta
+        + 12.0
+        - np.pi**2 * 7.0 / 12.0
+    )
+
+    alpha_s_mu = _alpha_s_1(np.asarray(mu))
+    h = -C_F * alpha_s_mu / (4.0 * np.pi) * temp
+    return 1.0 + h
+
+
+def coulomb_tmdwf_kernel_nlo(
+    x: Union[float, np.ndarray], pz_gev: float, mu: float = 2.0
+) -> Union[float, np.ndarray]:
+    """CG quasi-TMDWF NLO kernel (product of two single-leg kernels).
+
+    Parameters
+    ----------
+    x, pz_gev, mu:
+        See :func:`coulomb_tmd_kernel_nlo`.
+    """
+    return coulomb_tmd_kernel_nlo(x, pz_gev, mu) * coulomb_tmd_kernel_nlo(1.0 - x, pz_gev, mu)
+
+
+def coulomb_tmdpdf_kernel_nlo(
+    x: Union[float, np.ndarray], pz_gev: float, mu: float = 2.0
+) -> Union[float, np.ndarray]:
+    """CG quasi-TMDPDF hard-matching kernel at NLO (PDF normalization).
+
+    Same Sudakov-like polynomial as :func:`coulomb_tmd_kernel_nlo` with the PDF
+    coupling prefactor (alpha_s / (2 pi) instead of alpha_s / (4 pi)).
+
+    arXiv:2311.01391; ``pz_gev`` in GeV.
+
+    Parameters
+    ----------
+    x:
+        Parton momentum fraction.
+    pz_gev:
+        Hadron momentum P^z in GeV.
+    mu:
+        Matching scale in GeV (default 2 GeV).
+    """
+    x = np.asarray(x, dtype=float)
+    zeta_scale = (2.0 * x * pz_gev) ** 2
+
+    log_mu2_over_zeta = np.log((mu**2) / zeta_scale)
+    temp = (
+        0.5 * log_mu2_over_zeta**2
+        + 3.0 * log_mu2_over_zeta
+        + 12.0
+        - np.pi**2 * 7.0 / 12.0
+    )
+
+    alpha_s_mu = _alpha_s_1(np.asarray(mu))
+    h = -C_F * alpha_s_mu / (2.0 * np.pi) * temp
+    return 1.0 + h
+
+
+def coulomb_tmd_kernel_rg_nll(
     x: Union[float, np.ndarray], pz_gev: float, mu: float = 2.0, vary_eps: float = 1.0
 ) -> Union[float, np.ndarray]:
     """CG TMD hard-matching kernel with RG resummation (NLL).
@@ -125,10 +205,10 @@ def coulomb_tmd_kernel_rg_resum_nll(
     return np.exp(integral)
 
 
-def coulomb_tmdwf_kernel_rg_resum_nll(
+def coulomb_tmdwf_kernel_rg_nll(
     x: Union[float, np.ndarray], pz_gev: float, mu: float = 2.0, vary_eps: float = 1.0
 ) -> Union[float, np.ndarray]:
-    """CG quasi-TMDWF hard-matching kernel (product of two CG_tmd_kernel_RGR).
+    """CG quasi-TMDWF hard-matching kernel (product of two single-leg kernels).
 
     The quasi-TMDWF involves two quark-bilinear factors (one per quark leg),
     so the full hard kernel is the product:
@@ -138,17 +218,17 @@ def coulomb_tmdwf_kernel_rg_resum_nll(
     Parameters
     ----------
     x, pz_gev, mu, vary_eps:
-        See :func:`coulomb_tmd_kernel_rg_resum_nll`.
+        See :func:`coulomb_tmd_kernel_rg_nll`.
     """
-    return coulomb_tmd_kernel_rg_resum_nll(x, pz_gev, mu, vary_eps) * coulomb_tmd_kernel_rg_resum_nll(
+    return coulomb_tmd_kernel_rg_nll(x, pz_gev, mu, vary_eps) * coulomb_tmd_kernel_rg_nll(
         1.0 - x, pz_gev, mu, vary_eps
     )
 
 
-def coulomb_tmdpdf_kernel_rg_resum_nll(
+def coulomb_tmdpdf_kernel_rg_nll(
     x: Union[float, np.ndarray], pz_gev: float, mu: float = 2.0, vary_eps: float = 1.0
 ) -> Union[float, np.ndarray]:
-    """CG quasi-TMDPDF hard-matching kernel (product of two CG_pdf_kernel_RGR).
+    """CG quasi-TMDPDF hard-matching kernel (product of two single-leg kernels).
 
     The quasi-TMDPDF involves two quark-bilinear factors (one per quark leg),
     so the full hard kernel is the product:
@@ -158,8 +238,8 @@ def coulomb_tmdpdf_kernel_rg_resum_nll(
     Parameters
     ----------
     x, pz_gev, mu, vary_eps:
-        See :func:`coulomb_tmd_kernel_rg_resum_nll`.
+        See :func:`coulomb_tmd_kernel_rg_nll`.
     """
-    return coulomb_tmd_kernel_rg_resum_nll(x, pz_gev, mu, vary_eps) * coulomb_tmd_kernel_rg_resum_nll(
+    return coulomb_tmd_kernel_rg_nll(x, pz_gev, mu, vary_eps) * coulomb_tmd_kernel_rg_nll(
         x, pz_gev, mu, vary_eps
     )
