@@ -4,12 +4,28 @@
 
 ## Core Idea
 
-Keep only one necessary input contract:
+Expected inputs:
 
-- `correlators`: correlation-function datasets
-- `kernels`: perturbative kernel Python functions
+- `correlators`: lattice correlation-function datasets
+- `kernels`: perturbative kernels provided as Python functions
 
 Kernel references use `module:function`, e.g. `lamet_agent.kernels:identity_kernel`.
+
+Expected agent behavior:
+
+- Automatically run the full LaMET analysis workflow from correlators and kernels.
+- Emit intermediate stage outputs so users can track progress and understand the
+  analysis path.
+- Produce final physics distribution functions (for example DA, PDF, and TMDs),
+  including plots in PDF format and final result arrays in `.npy` files.
+
+Ordered five-stage workflow:
+
+1. `correlator_analysis` -> `stages/correlator/`
+2. `renormalization` -> `stages/renorm/`
+3. `fourier_transform` -> `stages/fourier/`
+4. `perturbative_matching` -> `stages/matching/`
+5. `extrapolation` -> `stages/extrapolation/`
 
 ## Minimal Structure
 
@@ -25,6 +41,7 @@ Kernel references use `module:function`, e.g. `lamet_agent.kernels:identity_kern
 │   ├── cli.py
 │   ├── core/
 │   │   ├── prompting.py
+│   │   ├── data.py
 │   │   └── stages.py
 │   ├── kernels.py
 │   ├── manifest.py
@@ -79,6 +96,11 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
 - `src/lamet_agent/core/stages.py`
   - Resolves stage sequence for a workflow goal.
   - Maps stage IDs to concrete stage packages.
+- `src/lamet_agent/core/data.py`
+  - Defines typed data containers (`EnsembleInfo`, `EnsembleData`) for resampled
+    lattice data.
+  - Provides common data operations (resampling, coordinate transforms, and
+    cross-stage arithmetic/alignment helpers).
 - `src/lamet_agent/core/prompting.py`
   - Stores `SYSTEM_PROMPT` and shared output-format hint.
   - Builds stage-specific prompt payloads from manifest + state.
@@ -107,7 +129,7 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
    `max_steps`).
 2. `manifest.py` validates the input contract and resolves each kernel callable from
    `module:function`.
-3. `agent.py` asks `core/stages.py` for the ordered five-stage workflow.
+3. `agent.py` asks `core/stages.py` for the ordered stage workflow.
 4. For each stage, `core/prompting.py` assembles one prompt from:
    - shared system prompt text,
    - stage instruction in `stages/<stage>/prompts.py`,
