@@ -1,131 +1,92 @@
 # lamet-agent
 
-`lamet-agent` is a CLI-first LaMET analysis workflow scaffold.
+`lamet-agent` is a Python-first scaffold for a LaMET/LQCD analysis agent.
 
-It exists to make LQCD/LaMET analysis runs reproducible and easier to extend by combining:
+## Core Idea
 
-- structured manifests for inputs and metadata
-- deterministic stage execution
-- consistent outputs (reports, summaries, plots, and stage artifacts)
+Keep only one necessary input contract:
 
-## What You Can Do
+- `correlators`: correlation-function datasets
+- `kernels`: perturbative kernel Python functions
 
-- validate a workflow manifest before running
-- inspect the resolved stage workflow
-- execute staged analysis pipelines from tracked examples
-- resume a previous run from a chosen stage when outputs already exist
+Kernel references use `module:function`, e.g. `lamet_agent.kernels:identity_kernel`.
 
-The default stage pipeline is:
+## Minimal Structure
 
-1. `correlator_analysis`
-2. `renormalization`
-3. `fourier_transform`
-4. `perturbative_matching`
-5. `physical_limit`
+```text
+.
+├── examples/
+│   ├── fake_data/
+│   │   └── generate_fake_data.py
+│   └── workflow_smoke_manifest.json
+├── src/lamet_agent/
+│   ├── __init__.py
+│   ├── agent.py
+│   ├── cli.py
+│   ├── kernels.py
+│   ├── manifest.py
+│   ├── prompts.py
+│   └── skills.py
+└── tests/unit/
+    ├── test_schemas.py
+    └── test_validation.py
+```
 
-For custom goals, use `goal: "custom"` with an explicit `workflow.stages` list.
+`temp/` is ignored and not part of this structure.
 
-## Project Status
-
-The repository is transitioning from a stage-only CLI scaffold to the agent runtime described in `TODO.md`.
-
-- Current scaffold interface: `validate`, `workflow`, `run` (legacy path)
-- TODO target interface: `main.py` + orchestrator + config/state-driven execution
-
-## Quickstart
-
-Create a local environment first:
+## Quick Start
 
 ```bash
 python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -U pip
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-Install dependencies according to your current task:
+Generate fake data:
 
 ```bash
-python -m pip install -e '.[dev,analysis]'
+python examples/fake_data/generate_fake_data.py
 ```
 
-If you are only editing docs/plans, installation can be skipped.
-
-## Runtime Entry Points
-
-### Current scaffold commands (legacy interface)
-
-Validate a manifest:
+Validate and run manifest:
 
 ```bash
 lamet-agent validate examples/workflow_smoke_manifest.json
-```
-
-Inspect the resolved workflow:
-
-```bash
-lamet-agent workflow examples/workflow_smoke_manifest.json
-```
-
-Run a workflow:
-
-```bash
 lamet-agent run examples/workflow_smoke_manifest.json
 ```
 
-Resume a previous run from a stage:
+Run with a real-model placeholder switch:
 
 ```bash
-lamet-agent run examples/pion_cg_qtmdpdf_manifest.json \
-  --resume-from examples/outputs/pion_cg_qtmdpdf/run_YYYYMMDDTHHMMSSZ \
-  --start-stage fourier_transform
+lamet-agent run examples/workflow_smoke_manifest.json --model mock
 ```
 
-`--resume-from` and `--start-stage` must be used together.
+## File Responsibilities
 
-If Matplotlib cache writes fail in your environment:
+- `src/lamet_agent/manifest.py`
+  - Defines manifest schema (`correlators`, `kernels`, metadata).
+  - Validates kernel references in `module:function` format.
+- `src/lamet_agent/prompts.py`
+  - Stores `SYSTEM_PROMPT` and per-stage prompt templates.
+- `src/lamet_agent/skills.py`
+  - Resolves stage sequence for a workflow goal.
+  - Builds stage-specific prompt payloads from manifest + state.
+- `src/lamet_agent/agent.py`
+  - Main agent loop over stages.
+  - `call_llm_api()` is the single place for model API integration.
+  - `run_agent()` manages stage iteration, resume, and action collection.
+- `src/lamet_agent/cli.py`
+  - Exposes `validate`, `workflow`, `run` commands.
+  - Parses CLI args, validates manifest, calls `run_agent()`.
+- `src/lamet_agent/kernels.py`
+  - Built-in kernel function examples for smoke tests.
+- `examples/fake_data/generate_fake_data.py`
+  - Generates fake correlator-style datasets used for local testing.
+- `examples/workflow_smoke_manifest.json`
+  - Minimal runnable manifest example.
 
-```bash
-MPLCONFIGDIR=/tmp/matplotlib lamet-agent run examples/workflow_smoke_manifest.json
-```
+## Current Status
 
-If you are running directly from repository scripts:
-
-```bash
-python scripts/run_manifest.py run examples/workflow_smoke_manifest.json
-```
-
-These commands reflect the current scaffold and may evolve as the TODO runtime milestones are merged.
-
-### TODO-aligned target runtime (planned)
-
-Planned entry points in `TODO.md` include:
-
-- `main.py` as the runtime CLI entry
-- `orchestrator.py` for controller loop
-- `llm_client.py` for model provider integration
-- config-driven runs (for example `config.yaml`)
-- resumable state-driven execution (for example `state.json`)
-
-Refer to `DEVELOPMENT.md` for implementation phase details and milestone status.
-
-## Example Manifests (Current Scaffold)
-
-- `examples/workflow_smoke_manifest.json`: small tracked full-pipeline smoke workflow
-- `examples/pion_2pt_manifest.json`: pion two-point workflow
-- `examples/proton_cg_qpdf_manifest.json`: proton CG qPDF workflow
-- `examples/pion_cg_qtmdpdf_manifest.json`: pion CG qTMDPDF workflow
-- `examples/pion_cg_cs_kernel_manifest.json`: pion CG Collins-Soper kernel workflow
-
-See `examples/data/` and `data/` for referenced inputs. Some large or unpublished datasets are intentionally gitignored.
-
-## Documentation Map
-
-- `DEVELOPMENT.md`: developer plan, milestones, and implementation details
-- `AGENTS.md`: durable operating rules for coding agents
-- `docs/analysis_model.md`: manifest contract and analysis taxonomy
-- `PLAN.md`: high-level product and physics workflow intent
-- `TODO.md`: engineering backlog and milestone breakdown
-
-## License
-
-License is not yet finalized in this repository (no `LICENSE` file committed yet).
+- `validate` already enforces schema + kernel import checks.
+- `run` executes the stage loop and collects structured actions.
+- Real provider API wiring is intentionally centralized in `agent.py::call_llm_api`.

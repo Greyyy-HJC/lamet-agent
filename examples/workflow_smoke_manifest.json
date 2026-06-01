@@ -1,0 +1,36 @@
+{
+  "run_id": "workflow_smoke",
+  "goal": "full_lamet_pipeline",
+  "correlators": [
+    {
+      "dataset_id": "proton_2pt_fake",
+      "kind": "2pt",
+      "path": "examples/fake_data/data/fake_2pt.h5",
+      "format": "hdf5",
+      "metadata": {
+        "hadron": "proton",
+        "pz": 0
+      }
+    },
+    {
+      "dataset_id": "proton_3pt_fake_ts8",
+      "kind": "3pt",
+      "path": "examples/fake_data/data/fake_qtmdpdf_3pt_ts8.h5",
+      "format": "hdf5",
+      "metadata": {
+        "hadron": "proton",
+        "observable": "gA"
+      }
+    }
+  ],
+  "kernels": [
+    {
+      "kernel_id": "matching_identity",
+      "function": "lamet_agent.kernels:identity_kernel",
+      "description": "Identity kernel for smoke tests on fake data."
+    }
+  ],
+  "metadata": {
+    "note": "Use this manifest with user-generated fake data."
+  }
+}

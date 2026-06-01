@@ -5,15 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lamet-agent"
 version = "0.1.0"
-description = "CLI-first scaffolding for LaMET analysis workflows."
+description = "Minimal LaMET agent scaffold."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=2.0",
-  "scipy>=1.14",
-  "matplotlib>=3.8",
   "pydantic>=2.8",
-  "tqdm>=4.66",
   "typer>=0.12",
 ]
 
