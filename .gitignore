@@ -17,3 +17,4 @@ dist/
 
 # Local files
 temp/
+examples/fake_data/data/

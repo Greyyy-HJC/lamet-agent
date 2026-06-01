@@ -8,8 +8,8 @@ from pathlib import Path
 import typer
 
 from .agent import run_agent
+from .core.stages import select_stage_sequence
 from .manifest import validate_manifest_file
-from .skills import select_stage_sequence
 
 app = typer.Typer(help="CLI-first scaffold for LaMET analysis workflows.")
 

@@ -23,16 +23,26 @@ Kernel references use `module:function`, e.g. `lamet_agent.kernels:identity_kern
 │   ├── __init__.py
 │   ├── agent.py
 │   ├── cli.py
+│   ├── core/
+│   │   ├── prompting.py
+│   │   └── stages.py
 │   ├── kernels.py
 │   ├── manifest.py
-│   ├── prompts.py
-│   └── skills.py
+│   └── stages/
+│       ├── correlator/
+│       │   ├── prompts.py
+│       │   ├── skills.py
+│       │   └── functions.py
+│       ├── renorm/
+│       ├── fourier/
+│       ├── matching/
+│       └── extrapolation/
 └── tests/unit/
+    ├── test_agent.py
+    ├── test_stage_core.py
     ├── test_schemas.py
     └── test_validation.py
 ```
-
-`temp/` is ignored and not part of this structure.
 
 ## Quick Start
 
@@ -66,10 +76,11 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
 - `src/lamet_agent/manifest.py`
   - Defines manifest schema (`correlators`, `kernels`, metadata).
   - Validates kernel references in `module:function` format.
-- `src/lamet_agent/prompts.py`
-  - Stores `SYSTEM_PROMPT` and per-stage prompt templates.
-- `src/lamet_agent/skills.py`
+- `src/lamet_agent/core/stages.py`
   - Resolves stage sequence for a workflow goal.
+  - Maps stage IDs to concrete stage packages.
+- `src/lamet_agent/core/prompting.py`
+  - Stores `SYSTEM_PROMPT` and shared output-format hint.
   - Builds stage-specific prompt payloads from manifest + state.
 - `src/lamet_agent/agent.py`
   - Main agent loop over stages.
@@ -80,10 +91,33 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
   - Parses CLI args, validates manifest, calls `run_agent()`.
 - `src/lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
+- `src/lamet_agent/stages/*`
+  - Each stage owns `prompts.py`, `skills.py`, and `functions.py`.
+  - `prompts.py` contains the stage instruction text.
+  - `skills.py` performs stage-local checks and strategy scaffolding.
+  - `functions.py` holds stage-local execution placeholders.
 - `examples/fake_data/generate_fake_data.py`
   - Generates fake correlator-style datasets used for local testing.
 - `examples/workflow_smoke_manifest.json`
   - Minimal runnable manifest example.
+
+## Agent Workflow
+
+1. API or CLI receives a manifest path and runtime options (`model`, `resume_from`,
+   `max_steps`).
+2. `manifest.py` validates the input contract and resolves each kernel callable from
+   `module:function`.
+3. `agent.py` asks `core/stages.py` for the ordered five-stage workflow.
+4. For each stage, `core/prompting.py` assembles one prompt from:
+   - shared system prompt text,
+   - stage instruction in `stages/<stage>/prompts.py`,
+   - run context (run ID, completed stages, correlator IDs, kernel IDs).
+5. `agent.py` sends the prompt to `call_llm_api()` and records the returned
+   structured action.
+6. Stage-local `skills.py`/`functions.py` are the extension points where stage
+   checks and stage execution logic are implemented as the project matures.
+7. The run ends with a structured summary including completed stages and collected
+   actions.
 
 ## Current Status
 

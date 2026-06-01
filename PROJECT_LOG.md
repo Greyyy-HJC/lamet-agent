@@ -15,3 +15,14 @@
 - Added `prompts.py`, `skills.py`, and `agent.py` for minimal staged agent runtime.
 - Wired CLI `run` command to execute `run_agent` with resumable stage loop.
 - Documented per-file responsibilities in `README.md`.
+
+## 2026-06-01
+
+- Refactored runtime layout to `core/` plus `stages/*` packages.
+- Added five stage packages: `correlator`, `renorm`, `fourier`, `matching`, `extrapolation`.
+- Added per-stage `prompts.py`, `skills.py`, and `functions.py` placeholders.
+- Moved prompt assembly and stage routing into `src/lamet_agent/core/`.
+- Rewired `agent.py` and `cli.py` to use the new `core` API.
+- Removed legacy flat `src/lamet_agent/prompts.py` and `src/lamet_agent/skills.py`.
+- Updated README structure/responsibilities and added an English agent workflow section.
+- Added unit coverage for stage routing and stage prompt resolution.

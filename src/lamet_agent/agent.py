@@ -6,8 +6,9 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from .core.prompting import build_stage_prompt
+from .core.stages import select_stage_sequence
 from .manifest import AnalysisManifest
-from .skills import build_stage_prompt, select_stage_sequence
 
 
 @dataclass
