@@ -175,3 +175,7 @@
 
 - Removed ``TODO.md``; implementation backlog lives in ``PLAN.md`` and ``PROJECT_LOG.md``.
 - Updated ``AGENTS.md`` so active documentation no longer references ``TODO.md``.
+
+## 2026-06-04 (NLO matching kernel)
+
+- Simplified ``src/lamet_agent/kernels.py`` around a direct ``unpolarized_matching_kernel_nlo_gT`` implementation; removed the one-off helper stack while preserving the discrete plus prescription, delta term, and helicity alias.
