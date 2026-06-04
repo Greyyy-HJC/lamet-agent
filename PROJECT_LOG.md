@@ -152,3 +152,12 @@
 - 3pt ratio priors anchor only ``E0`` and ``z0`` from 2pt BMA; ``log(dE*)``, ``z1+``, ``O_ij`` use ``pt3_ratio_prior``.
 - ``read_pt3`` / ``compute_pt3_ratio`` / ``resample_ratio_to_gvar`` / ``plot_fit_on_data``
   accept ignored legacy ``out=``.
+
+## 2026-06-04 (slim agent.py)
+
+- Moved LLM sessions and DeepSeek HTTP from ``agent.py`` to ``core/llm.py``
+  (``make_llm_session``, ``LlmSession``).
+- Moved tool-call preparation (``resolve_tool_args``, ``filter_tool_kwargs``,
+  ``prepare_tool_args``) into ``core/tools.py``; dropped redundant agent-side
+  ``Lt`` pre-inference (correlator tools infer ``Lt`` when omitted).
+- ``agent.py`` now holds stage orchestration only (~200 lines).

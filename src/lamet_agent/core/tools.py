@@ -1,12 +1,17 @@
-"""Stage tool-registry resolution for the agent loop."""
+"""Stage tool-registry resolution and call preparation for the agent loop."""
 
 from __future__ import annotations
 
+import inspect
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable
 
+from lamet_agent.manifest import AnalysisManifest, resolve_data_path
+
 from .stages import resolve_stage_package
+
+_PLOT_TOOLS = frozenset({"plot_fit_on_data", "plot_pt3_fit_on_data"})
 
 
 def resolve_plot_save_path(
@@ -46,3 +51,59 @@ def validate_stage_inputs(stage: str, manifest: Any) -> list[str]:
     module = import_module(f"lamet_agent.stages.{package_name}.skills")
     validator = getattr(module, "validate_stage_inputs", None)
     return validator(manifest) if callable(validator) else []
+
+
+def resolve_tool_args(args: dict[str, Any], manifest: AnalysisManifest) -> dict[str, Any]:
+    """Resolve manifest-relative file paths in tool arguments."""
+    if manifest.manifest_dir is None or manifest.project_root is None:
+        return args
+    resolved = dict(args)
+    path_value = resolved.get("path")
+    if isinstance(path_value, str) and not Path(path_value).is_absolute():
+        resolved["path"] = resolve_data_path(
+            manifest.project_root,
+            manifest.manifest_dir,
+            path_value,
+        )
+    return resolved
+
+
+def filter_tool_kwargs(tool: Any, args: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Drop LLM-supplied keys that are not in the tool signature."""
+    sig = inspect.signature(tool)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return args, {}
+    allowed = {
+        name
+        for name, p in sig.parameters.items()
+        if name != "store"
+        and p.kind
+        in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    }
+    filtered = {key: value for key, value in args.items() if key in allowed}
+    dropped = {key: value for key, value in args.items() if key not in allowed}
+    return filtered, dropped
+
+
+def prepare_tool_args(
+    tool_name: str,
+    args: dict[str, Any],
+    *,
+    manifest: AnalysisManifest,
+    artifacts_dir: Path,
+    _store: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve paths and force plot output under ``artifacts_dir``."""
+    resolved = resolve_tool_args(args, manifest)
+    if tool_name in _PLOT_TOOLS:
+        raw_save = resolved.get("save_path")
+        if isinstance(raw_save, str) or raw_save is None:
+            resolved["save_path"] = resolve_plot_save_path(
+                raw_save if isinstance(raw_save, str) else None,
+                artifacts_dir=artifacts_dir,
+            )
+        resolved["artifacts_dir"] = str(artifacts_dir)
+    return resolved

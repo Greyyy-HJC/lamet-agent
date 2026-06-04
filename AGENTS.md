@@ -68,7 +68,10 @@ Define success before coding and verify outcomes after coding.
 ## Module Map
 
 - `src/lamet_agent/cli.py`: CLI surface for `validate`, `workflow`, and `run`.
-- `src/lamet_agent/schemas.py`: manifest model and validation logic.
+- `src/lamet_agent/agent.py`: staged agent orchestration (`run_agent`, per-stage tool loop).
+- `src/lamet_agent/manifest.py`: manifest model and validation logic.
+- `src/lamet_agent/core/llm.py`: LLM session backends (`mock`, `external`, `deepseek`).
+- `src/lamet_agent/core/tools.py`: stage tool registries and call preparation for the agent loop.
 - `src/lamet_agent/planners/`: workflow planner implementations.
 - `src/lamet_agent/workflows.py`: workflow execution entry point.
 - `src/lamet_agent/stages/`: stage protocol, registry, and concrete stage implementations. The `evaluation` stage performs cross-family (cross-momentum) aggregation rather than per-family processing.

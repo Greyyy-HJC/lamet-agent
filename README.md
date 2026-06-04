@@ -40,7 +40,10 @@ Ordered five-stage workflow:
 │   ├── agent.py
 │   ├── cli.py
 │   ├── core/
+│   │   ├── llm.py
 │   │   ├── prompting.py
+│   │   ├── tools.py
+│   │   ├── trace.py
 │   │   ├── data.py
 │   │   └── stages.py
 │   ├── kernels.py
@@ -112,23 +115,26 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
   - Stores `SYSTEM_PROMPT` and shared output-format hint.
   - Builds static stage context once per stage; incremental tool observations are
     appended as separate user turns in the DeepSeek multi-turn session.
+- `src/lamet_agent/core/llm.py`
+  - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), and
+    `deepseek` (multi-turn chat per stage).
+  - `make_llm_session()` selects a backend; DeepSeek HTTP lives in
+    `_post_chat_completion` (add new providers there or in `_request_llm_action`).
 - `src/lamet_agent/core/tools.py`
   - Resolves a stage's `STAGE_TOOLS` registry for the agent loop.
+  - `prepare_tool_args()` / `filter_tool_kwargs()` normalize LLM tool calls
+    (manifest paths, plot `save_path` under `artifacts/`).
   - `resolve_plot_save_path()` forces correlator plot PDFs under `artifacts/` in
     the current working directory.
+- `src/lamet_agent/core/trace.py`
+  - Optional ReAct-style stdout trace (`--verbose`).
 - `src/lamet_agent/core/plotting.py`
   - Self-contained publication-style plotting (default plot, 2pt fit-on-data).
 - `src/lamet_agent/agent.py`
-  - Main agent loop over stages with an intra-stage tool-execution loop.
-  - Pluggable session: `mock` (deterministic scaffold), `external` (replays a
-    JSONL action transcript), or `deepseek` (multi-turn chat per stage via the
-    DeepSeek chat-completions API).
+  - Stage orchestration only: `run_agent()` resolves stages, validates inputs,
+    and runs the per-stage tool loop (`_run_stage`).
   - Correlator plots are written to `artifacts/` under the process working
     directory (created automatically).
-  - `_request_llm_action()` is the single backend entry for mock and DeepSeek
-    responders; add new providers there or in `_post_chat_completion`.
-  - `run_agent()` resolves which stages to run (explicit `stages` subset or the
-    default sequence), validates per-stage inputs, and collects tool results.
 - `src/lamet_agent/cli.py`
   - Exposes `validate`, `workflow`, `run` commands.
   - `run` accepts `--stages` (comma-separated subset), `--resume-from`,
@@ -167,14 +173,14 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
      `input_issues`.
    - `core/prompting.build_stage_static_prompt()` assembles static context once
      (system prompt, stage instruction, run context, tool catalog).
-   - A pluggable `LlmSession` drives a multi-turn loop (up to `max_tool_steps`,
-     default 30): the model emits one JSON action per cycle; on `call_tool`,
-     `core/tools.resolve_stage_tools()` runs the tool and returns an observation
-     as the next user turn; on `finish` (or other non-tool actions) the stage
-     ends.
+   - `core/llm.make_llm_session()` provides a pluggable `LlmSession` that drives a
+     multi-turn loop (up to `max_tool_steps`, default 40): the model emits one
+     JSON action per cycle; on `call_tool`, `core/tools.prepare_tool_args()` and
+     `resolve_stage_tools()` run the tool and return an observation as the next
+     user turn; on `finish` (or other non-tool actions) the stage ends.
 5. Session backends: `mock` (deterministic scaffold), `external` (JSONL
    transcript replay via `--actions-path`), or `deepseek` (chat-completions API
-   via `_request_llm_action`).
+   in `core/llm.py`).
 6. The run ends with a compact JSON summary on stdout (`run_id`, `status`,
    `summary`, manifest paths, etc.). Full action traces are not printed; use
    `--verbose` for per-cycle ReAct-style logging. Programmatic callers using
@@ -184,5 +190,4 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
 
 - `validate` already enforces schema + kernel import checks.
 - `run` executes the stage loop and collects structured actions.
-- Real provider API wiring lives in `agent.py::_request_llm_action` and
-  `_post_chat_completion` (DeepSeek today).
+- Real provider API wiring lives in `core/llm.py` (DeepSeek today).
