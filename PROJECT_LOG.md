@@ -161,3 +161,17 @@
   ``prepare_tool_args``) into ``core/tools.py``; dropped redundant agent-side
   ``Lt`` pre-inference (correlator tools infer ``Lt`` when omitted).
 - ``agent.py`` now holds stage orchestration only (~200 lines).
+
+## 2026-06-04 (AGENTS.md sync)
+
+- Rewrote ``AGENTS.md`` module map and stage-integration guidance to match the
+  current five-package layout (``STAGE_TOOLS``, ``core/stages.py``).
+- Removed references to deleted paths and docs (``reporting.py``, ``extensions/``,
+  ``planners/``, ``workflows.py``, ``loaders.py``, ``SPEC.md``, ``DEVELOPMENT.md``,
+  ``CLAUDE.md``, ``incoming/``, ``docs/analysis_model.md``).
+- Documented active docs: ``README.md``, ``PLAN.md``, ``PROJECT_LOG.md``.
+
+## 2026-06-04 (remove TODO.md)
+
+- Removed ``TODO.md``; implementation backlog lives in ``PLAN.md`` and ``PROJECT_LOG.md``.
+- Updated ``AGENTS.md`` so active documentation no longer references ``TODO.md``.

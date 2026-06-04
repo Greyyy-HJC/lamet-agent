@@ -22,7 +22,7 @@ Implement only what is needed for the task at hand.
 - No speculative abstractions.
 - No optional features unless requested.
 - Prefer locally understandable logic over clever indirection.
-- Keep stage contracts stable unless all related stages are intentionally evolved together.
+- Keep stage tool contracts stable unless related stages are intentionally evolved together.
 
 ## Surgical Changes
 
@@ -30,7 +30,7 @@ Touch only what is required for the current task.
 
 - Do not refactor unrelated files without an explicit request.
 - Preserve existing style and conventions in touched files.
-- Keep reusable logic in `src/lamet_agent/`; keep `scripts/` as thin wrappers.
+- Keep reusable logic in `src/lamet_agent/`; keep `examples/` scripts as thin wrappers.
 - Add comments only where logic is non-obvious.
 
 ## Goal-Driven Execution
@@ -38,7 +38,7 @@ Touch only what is required for the current task.
 Define success before coding and verify outcomes after coding.
 
 - Prefer tests or smoke checks when interface or behavior changes.
-- Validate that stage outputs remain consumable downstream.
+- Validate that stage tool outputs remain consumable downstream.
 - Ensure changed documentation and code paths stay consistent.
 
 ## Workflow Hygiene
@@ -59,78 +59,97 @@ Define success before coding and verify outcomes after coding.
 
 ## Documentation Maintenance
 
-- Keep `README.md` as the human-facing project entry point.
-- Keep `DEVELOPMENT.md` focused on engineering plan and implementation details.
-- Keep `SPEC.md` aligned with repository structure when structure changes.
+- Keep `README.md` as the human-facing project entry point (setup, CLI, file map).
+- Keep `PLAN.md` for long-form product and physics workflow notes.
+- Keep `PROJECT_LOG.md` as an append-only engineering log.
 - Keep `AGENTS.md` as the durable, primary ruleset for coding agents.
-- Keep `CLAUDE.md` minimal and consistent with `AGENTS.md`.
 
 ## Module Map
 
-- `src/lamet_agent/cli.py`: CLI surface for `validate`, `workflow`, and `run`.
-- `src/lamet_agent/agent.py`: staged agent orchestration (`run_agent`, per-stage tool loop).
-- `src/lamet_agent/manifest.py`: manifest model and validation logic.
-- `src/lamet_agent/core/llm.py`: LLM session backends (`mock`, `external`, `deepseek`).
-- `src/lamet_agent/core/tools.py`: stage tool registries and call preparation for the agent loop.
-- `src/lamet_agent/planners/`: workflow planner implementations.
-- `src/lamet_agent/workflows.py`: workflow execution entry point.
-- `src/lamet_agent/stages/`: stage protocol, registry, and concrete stage implementations. The `evaluation` stage performs cross-family (cross-momentum) aggregation rather than per-family processing.
-- `src/lamet_agent/loaders.py`: built-in correlator loaders.
-- `src/lamet_agent/kernel.py`: inline hard-kernel compilation and validation.
-- `src/lamet_agent/constants.py`: shared physics constants and perturbative running helpers.
+Top-level layout:
+
+```text
+.
+├── examples/
+│   ├── fake_data/generate_fake_data.py
+│   └── workflow_smoke_manifest.json
+├── src/lamet_agent/
+│   ├── agent.py
+│   ├── cli.py
+│   ├── kernels.py
+│   ├── manifest.py
+│   ├── core/
+│   └── stages/
+└── tests/unit/
+```
+
+Package modules:
+
+- `src/lamet_agent/cli.py`: CLI for `validate`, `workflow`, and `run`.
+- `src/lamet_agent/agent.py`: `run_agent()` and per-stage LLM tool loop (`_run_stage`).
+- `src/lamet_agent/manifest.py`: manifest schema (`correlators`, `kernels`, `metadata`) and validation.
+- `src/lamet_agent/kernels.py`: built-in kernel callables referenced as `module:function`.
+- `src/lamet_agent/core/stages.py`: default stage order and stage-id → package routing.
+- `src/lamet_agent/core/tools.py`: resolves `STAGE_TOOLS`, prepares tool args, plot paths under `artifacts/`.
+- `src/lamet_agent/core/llm.py`: `LlmSession` backends (`mock`, `external`, `deepseek`).
+- `src/lamet_agent/core/prompting.py`: system prompt and per-stage static context assembly.
+- `src/lamet_agent/core/trace.py`: optional ReAct-style stdout trace (`--verbose`).
+- `src/lamet_agent/core/data.py`: typed ensemble containers and cross-stage data helpers.
 - `src/lamet_agent/core/plotting.py`: shared plotting conventions and helpers.
-- `src/lamet_agent/reporting.py`: markdown and JSON report generation.
-- `src/lamet_agent/extensions/`: reusable low-level analysis helpers that stages compose.
-- `incoming/analysis_steps/`: temporary intake area for legacy, draft, or not-yet-integrated analysis code.
-- `examples/`: curated end-to-end workflows and tracked example data slices.
-- `docs/analysis_model.md`: structured metadata contract and analysis taxonomy.
+- `src/lamet_agent/stages/`: five stage packages, each with `functions.py`, `prompts.py`, and `skills.py`:
+  - `correlator` (`correlator_analysis`)
+  - `renorm` (`renormalization`)
+  - `fourier` (`fourier_transform`)
+  - `matching` (`perturbative_matching`)
+  - `extrapolation` (`extrapolation`)
+- `examples/`: smoke manifests, fake data generator, and local workflow examples.
+- `tests/unit/`: schema, CLI, agent loop, tools, trace, and stage tests.
+- `runs/`: typical output location for logged runs (gitignored); correlator plots go to `artifacts/` under the process working directory.
 
 ## How To Add A New Stage
 
-1. Create a new module in `src/lamet_agent/stages/`.
-2. Define a stage class with `name`, `description`, and `run(context)`.
-3. Decorate the class with `@register_stage`.
-4. Return a `StageResult` containing:
-   - a concise summary string
-   - structured payload data for downstream stages
-   - normalized artifact records
-5. Import the module from `src/lamet_agent/stages/__init__.py` so it registers automatically.
-6. Update the rule-based planner if the new stage changes the default workflow.
+1. Add the stage id to `DEFAULT_STAGES` and `STAGE_TO_PACKAGE` in `src/lamet_agent/core/stages.py`.
+2. Create `src/lamet_agent/stages/<package>/` with:
+   - `functions.py`: stage tools and a `STAGE_TOOLS` dict mapping tool names to callables `(store, **kwargs) -> dict`.
+   - `prompts.py`: stage instruction text and action protocol for the LLM.
+   - `skills.py`: `STAGE_SKILL` strategy text, `tool_catalog()`, and `validate_stage_inputs(manifest)`.
+3. Register tools only through `STAGE_TOOLS`; `core/tools.resolve_stage_tools()` imports them dynamically.
+4. Extend `core/prompting.py` if the new stage needs shared prompt fragments.
+5. Add unit tests under `tests/unit/` and, when appropriate, extend `examples/workflow_smoke_manifest.json` or a dedicated example manifest.
 
-## How To Add A New Script
+## How To Add A New Script Or Example
 
-1. Put reusable logic in the package, not directly in the script.
-2. Keep the script as a thin wrapper around package APIs.
+1. Put reusable logic in the package, not in the example script.
+2. Keep example scripts as thin wrappers around package APIs.
 3. Start the file with a module docstring that includes example usage.
-4. If the script is repo-local, ensure `src/` is importable from repository root.
+4. Prefer manifests under `examples/` for runnable workflow demos.
 
 ## How To Integrate Existing Analysis Code
 
-- Land raw or legacy code in `incoming/analysis_steps/` before moving it into the package.
-- Prefer wrappers and adapters over copying large procedural scripts into the workflow engine.
-- Keep file-format assumptions localized to `loaders.py` or dedicated adapter modules.
-- Convert legacy input/output conventions at stage boundaries so the rest of the workflow remains uniform.
-- Preserve stage payload contracts unless a coordinated contract update is explicitly intended.
+- Land exploratory or legacy code outside `src/lamet_agent/` only when it is not yet ready for the tool-registry contract.
+- Prefer thin wrappers that expose fixed Python tools in `stages/<package>/functions.py` over copying large procedural scripts into the agent loop.
+- Keep file-format assumptions localized to the stage that reads them (or to `core/data.py` when shared).
+- Convert legacy conventions at tool boundaries so manifest paths, store keys, and observations stay uniform.
+- Preserve per-stage store keys and observation shapes unless a coordinated contract update is explicitly intended.
 
-## Analysis Model Conventions
+## Manifest Conventions
 
-- Preserve the three-layer structure:
-  - reusable helpers in `src/lamet_agent/`
-  - stage implementations in `src/lamet_agent/stages/`
-  - end-to-end workflows in `examples/`
-- Keep physics metadata in the manifest, not in ad hoc stage parameters.
-- For full workflows, prefer structured `metadata.analysis` and `metadata.setups` over legacy free-form metadata.
-- When adding new correlator families, keep selectors and emitted payload metadata unambiguous across `setup_id`, momentum, smearing, and operator choices.
+- Required manifest fields: `run_id`, `correlators`, `kernels`; optional `goal` and `metadata`.
+- Correlator `path` values resolve relative to the manifest file, with a fallback to the project root for repo-style paths (for example `examples/fake_data/...`).
+- Kernel references use `module:function` (for example `lamet_agent.kernels:identity_kernel`).
+- Put physics selectors in correlator `metadata` or top-level `metadata`, not in ad hoc CLI flags.
+- When adding correlator datasets, keep `dataset_id`, `kind` (`2pt` / `3pt`), and `format` unambiguous for downstream tools.
 
 ## Plotting Conventions
 
 - All stage plots must use `src/lamet_agent/core/plotting.py`.
-- Use `default_plot()` instead of direct `plt.subplots()` or `plt.figure()` calls in stage/extension code.
+- Use `default_plot()` and the exported helpers instead of direct `plt.subplots()` or `plt.figure()` in stage code.
 - Reuse exported style constants (`COLOR_CYCLE`, `ERRORBAR_STYLE`, `FIG_SIZE`, `LEGEND_SETS`) for consistent publication-style output.
-- Apply this rule to every stage output figure (including cs-kernel, Fourier-transform, and effective-mass plots).
+- Correlator plot tools must write PDFs under `artifacts/` in the current working directory (via `resolve_plot_save_path()` in `core/tools.py`).
 
 ## Testing Expectations
 
-- Add or update unit tests for schema, planner, and stage behavior when interfaces change.
-- Add an end-to-end smoke test when a change affects the full workflow path.
+- Add or update unit tests for manifest schema, CLI, tools, and stage behavior when interfaces change.
+- Add or extend correlator tool tests when changing `stages/correlator/functions.py`.
 - Prefer small toy arrays and deterministic smoke kernels for tests.
+- Install `[dev]` and optional `[analysis]` extras from `pyproject.toml` when tests need `gvar`, `lsqfit`, or HDF5 I/O.
