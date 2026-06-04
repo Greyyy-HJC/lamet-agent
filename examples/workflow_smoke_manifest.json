@@ -13,13 +13,47 @@
       }
     },
     {
+      "dataset_id": "proton_3pt_fake_ts4",
+      "kind": "3pt",
+      "path": "examples/fake_data/data/fake_qtmdpdf_3pt_ts4.h5",
+      "format": "hdf5",
+      "metadata": {
+        "hadron": "proton",
+        "observable": "gA",
+        "tsep": 4
+      }
+    },
+    {
+      "dataset_id": "proton_3pt_fake_ts6",
+      "kind": "3pt",
+      "path": "examples/fake_data/data/fake_qtmdpdf_3pt_ts6.h5",
+      "format": "hdf5",
+      "metadata": {
+        "hadron": "proton",
+        "observable": "gA",
+        "tsep": 6
+      }
+    },
+    {
       "dataset_id": "proton_3pt_fake_ts8",
       "kind": "3pt",
       "path": "examples/fake_data/data/fake_qtmdpdf_3pt_ts8.h5",
       "format": "hdf5",
       "metadata": {
         "hadron": "proton",
-        "observable": "gA"
+        "observable": "gA",
+        "tsep": 8
+      }
+    },
+    {
+      "dataset_id": "proton_3pt_fake_ts10",
+      "kind": "3pt",
+      "path": "examples/fake_data/data/fake_qtmdpdf_3pt_ts10.h5",
+      "format": "hdf5",
+      "metadata": {
+        "hadron": "proton",
+        "observable": "gA",
+        "tsep": 10
       }
     }
   ],
@@ -31,6 +65,6 @@
     }
   ],
   "metadata": {
-    "note": "Use this manifest with user-generated fake data."
+    "note": "Use this manifest with user-generated fake data. Load every 3pt entry with read_pt3 before fitting."
   }
 }

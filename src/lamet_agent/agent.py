@@ -229,16 +229,47 @@ def _resolve_tool_args(args: dict[str, Any], manifest: AnalysisManifest) -> dict
     return resolved
 
 
+def _filter_tool_kwargs(tool: Any, args: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Drop LLM-supplied keys that are not in the tool signature."""
+    import inspect
+
+    sig = inspect.signature(tool)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return args, {}
+    allowed = {
+        name
+        for name, p in sig.parameters.items()
+        if name != "store"
+        and p.kind
+        in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    }
+    filtered = {key: value for key, value in args.items() if key in allowed}
+    dropped = {key: value for key, value in args.items() if key not in allowed}
+    return filtered, dropped
+
+
 def _prepare_tool_args(
     tool_name: str,
     args: dict[str, Any],
     *,
     manifest: AnalysisManifest,
     artifacts_dir: Path,
+    store: dict[str, Any],
 ) -> dict[str, Any]:
     """Resolve paths and force plot output under ``artifacts_dir``."""
     resolved = _resolve_tool_args(args, manifest)
-    if tool_name == "plot_fit_on_data":
+    if tool_name == "fit_pt3_window" and resolved.get("Lt") is None:
+        from lamet_agent.stages.correlator.functions import _infer_Lt
+
+        resolved["Lt"] = _infer_Lt(store)
+    if tool_name in ("plot_fit_on_data", "plot_pt3_fit_on_data") and resolved.get("Lt") is None:
+        from lamet_agent.stages.correlator.functions import _infer_Lt
+
+        resolved["Lt"] = _infer_Lt(store)
+    if tool_name in ("plot_fit_on_data", "plot_pt3_fit_on_data"):
         raw_save = resolved.get("save_path")
         if isinstance(raw_save, str) or raw_save is None:
             resolved["save_path"] = resolve_plot_save_path(
@@ -297,6 +328,7 @@ def _run_stage(
             action.get("args", {}) or {},
             manifest=manifest,
             artifacts_dir=artifacts_dir,
+            store=store,
         )
         tool = tools.get(tool_name)
         if tool is None:
@@ -305,15 +337,18 @@ def _run_stage(
             trace.observation(observation)
             last_observation = observation
             continue
+        call_args, dropped_args = _filter_tool_kwargs(tool, args)
         try:
-            result = tool(store, **args)
-        except ValueError as exc:
+            result = tool(store, **call_args)
+        except (ValueError, TypeError) as exc:
             observation = {"tool_name": tool_name, "error": str(exc)}
             observations.append(observation)
             trace.observation(observation)
             last_observation = observation
             continue
-        observation = {"tool_name": tool_name, "result": result}
+        observation: dict[str, Any] = {"tool_name": tool_name, "result": result}
+        if dropped_args:
+            observation["ignored_args"] = dropped_args
         observations.append(observation)
         trace.observation(observation)
         last_observation = observation
@@ -358,7 +393,7 @@ def run_agent(
     api_key: str | None = None,
     deepseek_model: str = "deepseek-chat",
     base_url: str = "https://api.deepseek.com",
-    max_tool_steps: int = 30,
+    max_tool_steps: int = 40,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Run the stage loop and collect structured actions and tool results.

@@ -13,3 +13,8 @@ def identity_kernel(x: np.ndarray) -> np.ndarray:
 def damped_identity_kernel(x: np.ndarray, alpha: float = 0.05) -> np.ndarray:
     """Return a simple damped kernel transform for fake-data checks."""
     return x * np.exp(-alpha * np.abs(x))
+
+# lightcone = np.dot(matrix, quasi)
+def qpdf_kernel(x_array: np.ndarray, y_array: np.ndarray) -> np.ndarray:
+    matrix = np.zeros((len(x_array), len(y_array)))
+    return matrix

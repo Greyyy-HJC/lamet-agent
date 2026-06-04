@@ -105,3 +105,50 @@
 - Updated README agent workflow and AGENTS.md plotting conventions to match the
   current session-based loop and `core/plotting.py`.
 - Added unit test for `model=external` JSONL transcript replay.
+
+## 2026-06-03 (3pt ratio correlator stage)
+
+- Extended `stages/correlator/functions.py` with 3pt read/ratio/resample/fit/plot
+  tools (`read_pt3`, `compute_pt3_ratio`, `resample_ratio_to_gvar`,
+  `fit_pt3_window`, `plot_pt3_fit_on_data`); `read_pt2` now stores imag samples.
+- Added `plot_pt3_ratio_fit_on_data` in `core/plotting.py`; agent routes 3pt plot
+  paths through `artifacts/` like 2pt.
+- Updated correlator stage prompts/skills and 3pt input validation (3pt requires 2pt).
+- Expanded `tests/unit/test_correlator_tools.py` for 3pt fit, dof checks, and plots.
+
+## 2026-06-03 (3pt window cap and multi-tsep manifest)
+
+- Capped 3pt fit trials with `MAX_PT3_FIT_WINDOWS = 2` (2pt still allows 6).
+- `workflow_smoke_manifest.json` registers fake 3pt HDF5 for tsep 4, 6, 8, 10.
+- Prompts/skills: load all 3pt paths, agent picks `tsep_ls`/`tau_cut`, subset for
+  model_average (avoid averaging poor Q windows).
+
+## 2026-06-03 (3pt priors from 2pt model average)
+
+- `fit_pt3_window` defaults to `use_pt2_avg_prior=True`, pinning E0, log(dE1), z0,
+  z1 from `*_avg` store keys after 2pt `model_average`.
+- Prompts require 2pt BMA on E0, log(dE1), z0, z1 before 3pt fits.
+
+## 2026-06-04 (widen 3pt ratio priors from 2pt posteriors)
+
+- 3pt ratio fits now use 2pt posterior means with uncertainties scaled by
+  `PT2_PRIOR_ERROR_SCALE = 5` (`_pt2_posterior_as_prior`) for BMA and single-window paths.
+
+## 2026-06-04 (3pt ratio plot tau windows)
+
+- Ratio data error bars: tau indices ``1 .. tsep-1`` (`_pt3_ratio_data_tau_slice`).
+- Fit `fill_between` bands unchanged: each window's ``[tau_cut, tsep + 1 - tau_cut)``.
+
+## 2026-06-04 (3pt ratio plateau reference band)
+
+- Grey reference band now shows model-averaged ``R_plat`` from ``O00_re_avg`` and
+  ``E0_avg`` (`asymptotic_ratio_real_gvar`), not raw ``O00``; plateau ``~ O00/(2*E0)``.
+
+## 2026-06-04 (correlator agent tool ergonomics)
+
+- Removed stage-end ``finalize_correlator_plots``.
+- Agent drops unknown tool kwargs; ``Lt`` inferred from store for 3pt/plot tools.
+- ``fit_pt3_window`` autofills missing ``E0_avg`` / ``z0_avg`` via ``_ensure_pt2_avg_priors``.
+- 3pt ratio priors anchor only ``E0`` and ``z0`` from 2pt BMA; ``log(dE*)``, ``z1+``, ``O_ij`` use ``pt3_ratio_prior``.
+- ``read_pt3`` / ``compute_pt3_ratio`` / ``resample_ratio_to_gvar`` / ``plot_fit_on_data``
+  accept ignored legacy ``out=``.

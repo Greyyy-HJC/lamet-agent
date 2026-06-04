@@ -78,6 +78,11 @@ def run_workflow(
         "-v",
         help="Print each LLM cycle: prompt, model action, and tool observation.",
     ),
+    max_tool_steps: int = typer.Option(
+        40,
+        "--max-tool-steps",
+        help="Maximum LLM/tool cycles per stage (correlator 2pt+3pt often needs >30).",
+    ),
 ) -> None:
     """Run the staged agent loop.
 
@@ -111,6 +116,7 @@ def run_workflow(
             deepseek_model=deepseek_model,
             base_url=base_url,
             verbose=verbose,
+            max_tool_steps=max_tool_steps,
         )
     except ValueError as exc:  # pragma: no cover - CLI surface
         raise typer.BadParameter(str(exc)) from exc

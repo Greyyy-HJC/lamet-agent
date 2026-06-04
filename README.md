@@ -143,9 +143,12 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
   - `skills.py` performs stage-local checks plus `STAGE_SKILL` strategy text and
     a `tool_catalog()`.
   - `functions.py` holds the stage tools and a `STAGE_TOOLS` registry.
-  - `stages/correlator/` is the first worked example: read 2pt data, resample,
-    fit ground-state windows, logGBF model-average `E0`/`z0`, and plot the
-    fit on data (requires the `analysis` optional dependencies).
+  - `stages/correlator/` is the first worked example: read 2pt/3pt data, resample,
+    fit ground-state windows, logGBF model-average `E0`/`z0` and `O00_re`, and
+    plot fit-on-data PDFs (requires the `analysis` optional dependencies). For
+    multi-`tsep` fake 3pt data: `workflow_smoke_manifest.json` lists ts4/6/8/10;
+    call `read_pt3` per file, then at most two `fit_pt3_window` trials; pick
+    good `window_indices` before `model_average` (do not average every trial).
 - `examples/fake_data/generate_fake_data.py`
   - Generates fake correlator-style datasets used for local testing.
 - `examples/workflow_smoke_manifest.json`
