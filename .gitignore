@@ -13,8 +13,10 @@ dist/
 .mypy_cache/
 
 # Generated workflow outputs
+runs/
 
 
 # Local files
 temp/
 examples/fake_data/data/
+**/api.key

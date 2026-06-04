@@ -26,3 +26,82 @@
 - Removed legacy flat `src/lamet_agent/prompts.py` and `src/lamet_agent/skills.py`.
 - Updated README structure/responsibilities and added an English agent workflow section.
 - Added unit coverage for stage routing and stage prompt resolution.
+
+## 2026-06-03
+
+- Implemented the `correlator_analysis` stage as the first worked example.
+- Added `core/plotting.py`: self-contained LaMETLat-style plotting with a 2pt
+  fit-on-data figure (C2pt + effective mass with model-average band).
+- Rewrote `stages/correlator/functions.py` with copied LaMETLat numerics
+  (read_pt2, bootstrap/jackknife resampling, pt2 ground-state fit) plus new
+  `scan_tmin` and logGBF-weighted `model_average`; exposed a `STAGE_TOOLS`
+  registry. Added an `svdcut` (default 1e-2) to stabilize the correlated 2pt fit.
+- Added `STAGE_SKILL` strategy text and `tool_catalog()` to the stage `skills.py`
+  and expanded the stage `prompts.py` with the call_tool/finish action protocol.
+- Added `core/tools.py` and reworked `agent.py` into a pluggable responder
+  (`mock`/`external`) with an intra-stage tool-execution loop; `core/prompting.py`
+  now injects skill, tool catalog, and tool observations.
+- Added `matplotlib` to the `analysis` extras; ignored `runs/` outputs.
+- Validated end-to-end on `examples/fake_data/data/fake_2pt.h5`: recovers
+  E0 = 0.4501(12) (true 0.45) via the wired loop and writes fit-on-data PDFs.
+- Replaced the `max_steps` stage cap with an explicit `stages` selection
+  (`--stages` CLI option); running a later stage standalone now surfaces missing
+  inputs per stage via `input_issues`. Added `core/tools.validate_stage_inputs`.
+
+## 2026-06-03
+
+- Added a `deepseek` responder (`--model deepseek`): each step posts the full
+  stage prompt to the DeepSeek chat-completions API in JSON mode (stdlib
+  `urllib`, no new deps) and parses one action, so a real LLM drives the loop and
+  sees tool observations before deciding the next action. The key is read from
+  `--api-key-file` (default `api.key`, gitignored) or `DEEPSEEK_API_KEY`.
+- Removed the interim `codex exec` responder and its CLI surface to keep the
+  responder set minimal (`mock`/`external`/`deepseek`).
+
+## 2026-06-03 (correlator agent freedom)
+
+- Replaced `scan_tmin` with `fit_window` (appendable single-window fits) so the
+  agent can explore arbitrary `[tmin, tmax)` ranges in the first half (`t <
+  Lt/2`); soft warnings when windows extend past `Lt//2`.
+- Extended `model_average` and `plot_fit_on_data` with `window_indices` subset
+  selection; plots read `E0_avg` for the final result.
+- Updated `core/plotting.py`: per-window colored fit bands on C2pt and meff,
+  plus a horizontal model-averaged E0 band on meff.
+- Refreshed correlator `STAGE_SKILL` / `STAGE_PROMPT` / tool catalog for Lt/2
+  symmetry and flexible window selection; default `max_tool_steps` raised to 30.
+- Added `tests/unit/test_correlator_tools.py`.
+
+## 2026-06-03 (agent verbose trace)
+
+- Added `core/trace.py` and `run_agent(..., verbose=True)` / CLI `--verbose` to
+  print each cycle's prompt, model action, and tool observation before the final
+  JSON summary.
+
+## 2026-06-03 (ds_stage1 fixes)
+
+- Force correlator plot PDFs under `cwd/artifacts/` via `resolve_plot_save_path`;
+  `plot_fit_on_data` accepts optional `save_path` and rewrites any LLM path to a
+  stem under `artifacts/`.
+- Default legend `loc="upper right"` in `core/plotting.py`.
+- Refactored DeepSeek loop to per-stage multi-turn messages (`build_stage_static_prompt`
+  once, `format_tool_observation` per step) to avoid resending static context each
+  cycle; verbose trace prints `[Stage context]` once and `[Observation for LLM]`
+  deltas thereafter.
+
+## 2026-06-03 (fit_window constraints and CLI summary)
+
+- `fit_window` enforces `tmin >= 1`, `tmax - tmin >= 2*nstate`, at most six
+  appended windows, and hard rejection when the window extends past `Lt//2`.
+- Agent tool loop maps `ValueError` from stage tools to error observations.
+- CLI `run` always echoes a compact JSON summary (no `actions`/`stage_results`
+  on stdout); correlator prompts/skills updated for the six-window cap.
+
+## 2026-06-03 (redundant code cleanup)
+
+- Removed dead code: unused `Callable` import, legacy `AgentTrace.prompt()`,
+  unused `build_stage_context` helpers in all stage `functions.py` modules.
+- Merged LLM entry points into `_request_llm_action` (mock + DeepSeek); removed
+  standalone `call_llm_api`.
+- Updated README agent workflow and AGENTS.md plotting conventions to match the
+  current session-based loop and `core/plotting.py`.
+- Added unit test for `model=external` JSONL transcript replay.

@@ -1,4 +1,4 @@
-from lamet_agent.core.prompting import build_stage_prompt
+from lamet_agent.core.prompting import build_stage_prompt, build_stage_static_prompt
 from lamet_agent.core.stages import select_stage_sequence
 from lamet_agent.manifest import AnalysisManifest
 
@@ -34,3 +34,26 @@ def test_build_stage_prompt_uses_stage_package_instruction() -> None:
         completed_stages=["correlator_analysis"],
     )
     assert "Apply user-selected renormalization setup deterministically." in prompt
+
+
+def test_build_stage_static_prompt_excludes_observations() -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "demo",
+            "goal": "full_lamet_pipeline",
+            "correlators": [{"dataset_id": "c2", "kind": "2pt", "path": "fake/c2.txt"}],
+            "kernels": [
+                {
+                    "kernel_id": "k1",
+                    "function": "lamet_agent.kernels:identity_kernel",
+                }
+            ],
+        }
+    )
+    static = build_stage_static_prompt(
+        "correlator_analysis",
+        manifest,
+        completed_stages=[],
+    )
+    assert "Tool results so far" not in static
+    assert "read_pt2" in static

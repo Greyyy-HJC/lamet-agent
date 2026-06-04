@@ -6,6 +6,9 @@ Purpose:
 
 Expected inputs:
 - a manifest JSON file with `correlators` and `kernels`
+- correlator `path` values resolved relative to the manifest file, with a
+  fallback to the lamet-agent project root for repo-style paths such as
+  ``examples/fake_data/...``
 - kernel function references in `module:function` format
 
 Expected outputs:
@@ -24,7 +27,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class CorrelatorInput(BaseModel):
@@ -48,11 +51,15 @@ class KernelInput(BaseModel):
 class AnalysisManifest(BaseModel):
     """Top-level analysis manifest."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     run_id: str
     goal: str = "full_lamet_pipeline"
     correlators: list[CorrelatorInput] = Field(default_factory=list)
     kernels: list[KernelInput] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
+    manifest_dir: Path | None = Field(default=None, exclude=True)
+    project_root: Path | None = Field(default=None, exclude=True)
 
 
 def resolve_callable(reference: str) -> Callable:
@@ -70,14 +77,50 @@ def resolve_callable(reference: str) -> Callable:
     return fn
 
 
+def find_project_root(start: Path) -> Path:
+    """Walk upward from ``start`` to locate this package's project root."""
+    for candidate in (start, *start.parents):
+        pyproject = candidate / "pyproject.toml"
+        if not pyproject.is_file():
+            continue
+        try:
+            text = pyproject.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if 'name = "lamet-agent"' in text:
+            return candidate
+    return start
+
+
+def resolve_data_path(project_root: Path, manifest_dir: Path, path: str) -> str:
+    """Resolve a correlator path against manifest or project root."""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return str(candidate)
+
+    manifest_relative = (manifest_dir / candidate).resolve()
+    if manifest_relative.exists():
+        return str(manifest_relative)
+
+    return str((project_root / candidate).resolve())
+
+
 def validate_manifest_file(path: Path) -> AnalysisManifest:
     """Parse manifest and validate kernel function references."""
-    if not path.exists():
+    manifest_path = path.resolve()
+    if not manifest_path.exists():
         raise ValueError(f"Manifest does not exist: {path}")
 
     manifest = AnalysisManifest.model_validate(
-        json.loads(path.read_text(encoding="utf-8"))
+        json.loads(manifest_path.read_text(encoding="utf-8"))
     )
     for kernel in manifest.kernels:
         resolve_callable(kernel.function)
+
+    manifest_dir = manifest_path.parent
+    project_root = find_project_root(manifest_dir)
+    manifest.manifest_dir = manifest_dir
+    manifest.project_root = project_root
+    for correlator in manifest.correlators:
+        correlator.path = resolve_data_path(project_root, manifest_dir, correlator.path)
     return manifest

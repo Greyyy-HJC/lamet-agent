@@ -75,7 +75,7 @@ Define success before coding and verify outcomes after coding.
 - `src/lamet_agent/loaders.py`: built-in correlator loaders.
 - `src/lamet_agent/kernel.py`: inline hard-kernel compilation and validation.
 - `src/lamet_agent/constants.py`: shared physics constants and perturbative running helpers.
-- `src/lamet_agent/plotting.py`: shared plotting conventions and helpers.
+- `src/lamet_agent/core/plotting.py`: shared plotting conventions and helpers.
 - `src/lamet_agent/reporting.py`: markdown and JSON report generation.
 - `src/lamet_agent/extensions/`: reusable low-level analysis helpers that stages compose.
 - `incoming/analysis_steps/`: temporary intake area for legacy, draft, or not-yet-integrated analysis code.
@@ -121,9 +121,9 @@ Define success before coding and verify outcomes after coding.
 
 ## Plotting Conventions
 
-- All plots must use `extensions/plot_presets`.
-- Use `default_plot()` or `default_sub_plot()` instead of direct `plt.subplots()` or `plt.figure()` calls in stage/extension code.
-- Reuse exported style constants (`PALETTE`, `COLOR_CYCLE`, `MARKER_CYCLE`, `ERRORBAR_STYLE`, `ERRORBAR_CIRCLE_STYLE`, `AXIS_FONT`, `SMALL_AXIS_FONT`) for consistent publication-style output.
+- All stage plots must use `src/lamet_agent/core/plotting.py`.
+- Use `default_plot()` instead of direct `plt.subplots()` or `plt.figure()` calls in stage/extension code.
+- Reuse exported style constants (`COLOR_CYCLE`, `ERRORBAR_STYLE`, `FIG_SIZE`, `LEGEND_SETS`) for consistent publication-style output.
 - Apply this rule to every stage output figure (including cs-kernel, Fourier-transform, and effective-mass plots).
 
 ## Testing Expectations

@@ -25,7 +25,7 @@ TODO:
 
 - [ ] 编写 `main.py`，作为命令行入口。
 - [ ] 编写 `orchestrator.py`，实现 agent 主循环。
-- [ ] 编写 `llm_client.py`，封装 OpenAI / Anthropic / Codex 等 LLM API。
+- [ ] 编写 `llm_client.py`，封装 OpenAI / Anthropic / DeepSeek 等 LLM API。
 - [ ] 支持读取用户配置文件，例如 `config.yaml`。
 - [ ] 支持读取 workflow state，例如 `state.json`。
 - [ ] 支持结构化 action 输出，例如 JSON schema。

@@ -82,6 +82,13 @@ lamet-agent validate examples/workflow_smoke_manifest.json
 lamet-agent run examples/workflow_smoke_manifest.json
 ```
 
+Print each agent cycle (prompt, model action, tool observation) while the run
+executes:
+
+```bash
+lamet-agent run examples/workflow_smoke_manifest.json --model deepseek --verbose
+```
+
 Run with a real-model placeholder switch:
 
 ```bash
@@ -103,21 +110,42 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
     cross-stage arithmetic/alignment helpers).
 - `src/lamet_agent/core/prompting.py`
   - Stores `SYSTEM_PROMPT` and shared output-format hint.
-  - Builds stage-specific prompt payloads from manifest + state.
+  - Builds static stage context once per stage; incremental tool observations are
+    appended as separate user turns in the DeepSeek multi-turn session.
+- `src/lamet_agent/core/tools.py`
+  - Resolves a stage's `STAGE_TOOLS` registry for the agent loop.
+  - `resolve_plot_save_path()` forces correlator plot PDFs under `artifacts/` in
+    the current working directory.
+- `src/lamet_agent/core/plotting.py`
+  - Self-contained publication-style plotting (default plot, 2pt fit-on-data).
 - `src/lamet_agent/agent.py`
-  - Main agent loop over stages.
-  - `call_llm_api()` is the single place for model API integration.
-  - `run_agent()` manages stage iteration, resume, and action collection.
+  - Main agent loop over stages with an intra-stage tool-execution loop.
+  - Pluggable session: `mock` (deterministic scaffold), `external` (replays a
+    JSONL action transcript), or `deepseek` (multi-turn chat per stage via the
+    DeepSeek chat-completions API).
+  - Correlator plots are written to `artifacts/` under the process working
+    directory (created automatically).
+  - `_request_llm_action()` is the single backend entry for mock and DeepSeek
+    responders; add new providers there or in `_post_chat_completion`.
+  - `run_agent()` resolves which stages to run (explicit `stages` subset or the
+    default sequence), validates per-stage inputs, and collects tool results.
 - `src/lamet_agent/cli.py`
   - Exposes `validate`, `workflow`, `run` commands.
-  - Parses CLI args, validates manifest, calls `run_agent()`.
+  - `run` accepts `--stages` (comma-separated subset), `--resume-from`,
+    `--model` (`mock`/`external`/`deepseek`), `--verbose` / `-v` (ReAct-style
+    trace to stdout), `--actions-path` (for `external`), and
+    `--api-key-file`/`--deepseek-model` (for `deepseek`).
 - `src/lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
 - `src/lamet_agent/stages/*`
   - Each stage owns `prompts.py`, `skills.py`, and `functions.py`.
-  - `prompts.py` contains the stage instruction text.
-  - `skills.py` performs stage-local checks and strategy scaffolding.
-  - `functions.py` holds stage-local execution placeholders.
+  - `prompts.py` contains the stage instruction text and action protocol.
+  - `skills.py` performs stage-local checks plus `STAGE_SKILL` strategy text and
+    a `tool_catalog()`.
+  - `functions.py` holds the stage tools and a `STAGE_TOOLS` registry.
+  - `stages/correlator/` is the first worked example: read 2pt data, resample,
+    fit ground-state windows, logGBF model-average `E0`/`z0`, and plot the
+    fit on data (requires the `analysis` optional dependencies).
 - `examples/fake_data/generate_fake_data.py`
   - Generates fake correlator-style datasets used for local testing.
 - `examples/workflow_smoke_manifest.json`
@@ -125,24 +153,33 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
 
 ## Agent Workflow
 
-1. API or CLI receives a manifest path and runtime options (`model`, `resume_from`,
-   `max_steps`).
+1. CLI receives a manifest path and runtime options (`--model`, `--stages`,
+   `--resume-from`, `--verbose`).
 2. `manifest.py` validates the input contract and resolves each kernel callable from
    `module:function`.
-3. `agent.py` asks `core/stages.py` for the ordered stage workflow.
-4. For each stage, `core/prompting.py` assembles one prompt from:
-   - shared system prompt text,
-   - stage instruction in `stages/<stage>/prompts.py`,
-   - run context (run ID, completed stages, correlator IDs, kernel IDs).
-5. `agent.py` sends the prompt to `call_llm_api()` and records the returned
-   structured action.
-6. Stage-local `skills.py`/`functions.py` are the extension points where stage
-   checks and stage execution logic are implemented as the project matures.
-7. The run ends with a structured summary including completed stages and collected
-   actions.
+3. `agent.py` asks `core/stages.py` for the ordered stage workflow (explicit
+   `--stages` subset or the default sequence for the manifest goal).
+4. For each stage:
+   - `core/tools.validate_stage_inputs()` surfaces missing inputs as
+     `input_issues`.
+   - `core/prompting.build_stage_static_prompt()` assembles static context once
+     (system prompt, stage instruction, run context, tool catalog).
+   - A pluggable `LlmSession` drives a multi-turn loop (up to `max_tool_steps`,
+     default 30): the model emits one JSON action per cycle; on `call_tool`,
+     `core/tools.resolve_stage_tools()` runs the tool and returns an observation
+     as the next user turn; on `finish` (or other non-tool actions) the stage
+     ends.
+5. Session backends: `mock` (deterministic scaffold), `external` (JSONL
+   transcript replay via `--actions-path`), or `deepseek` (chat-completions API
+   via `_request_llm_action`).
+6. The run ends with a compact JSON summary on stdout (`run_id`, `status`,
+   `summary`, manifest paths, etc.). Full action traces are not printed; use
+   `--verbose` for per-cycle ReAct-style logging. Programmatic callers using
+   `run_agent()` still receive `actions` and `stage_results` in the return dict.
 
 ## Current Status
 
 - `validate` already enforces schema + kernel import checks.
 - `run` executes the stage loop and collects structured actions.
-- Real provider API wiring is intentionally centralized in `agent.py::call_llm_api`.
+- Real provider API wiring lives in `agent.py::_request_llm_action` and
+  `_post_chat_completion` (DeepSeek today).
