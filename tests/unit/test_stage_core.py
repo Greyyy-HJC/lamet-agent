@@ -57,3 +57,19 @@ def test_build_stage_static_prompt_excludes_observations() -> None:
     )
     assert "Tool results so far" not in static
     assert "read_pt2" in static
+
+
+def test_build_stage_static_prompt_includes_metadata() -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "demo",
+            "metadata": {"fourier_input": "matrix_element.npz"},
+        }
+    )
+    static = build_stage_static_prompt(
+        "fourier_transform",
+        manifest,
+        completed_stages=[],
+    )
+    assert "matrix_element.npz" in static
+    assert "load_renormalized_matrix_element_samples" in static

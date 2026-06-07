@@ -1,3 +1,33 @@
 """Prompt text for Fourier-transform stage."""
 
-STAGE_PROMPT = "Run asymptotic extension and Fourier transform conventions."
+STAGE_PROMPT = """
+Run asymptotic extrapolation and Fourier transform on coordinate-space
+matrix-element samples.
+
+Do this by emitting one action at a time:
+1. load_renormalized_matrix_element_samples on the provided input path. Pass
+   input_format='npz' for NPZ files or input_format='h5' for HDF5 files. For
+   HDF5 inputs, pass h5_group or h5_pz when the desired group cannot be inferred
+   from the file name.
+2. run_fourier_transform with explicit k_grid (list or compact {start, stop, num/step}),
+   method, order, observable, coord_unit,
+   either zmin/zmax/z_ext_max schemes or scheme_scan, and pz_gev/a_fm when needed.
+   Use observable to select the large-distance form: pion_quark_quasi_pdf,
+   nucleon_quark_unpolarized_quasi_pdf, nucleon_quark_transversity_quasi_pdf,
+   meson_quasi_da, pion_quark_quasi_gpd, or nucleon_quark_quasi_gpd.
+   For GPD observables, pass pz_prime_gev when P'^z differs from P^z.
+   order can be 'LA', 'NLA', or 'Empirical'. Empirical uses Eq. (6) of
+   arXiv:2208.08008 for the large-lambda extrapolation.
+   Prefer scheme_scan when the manifest provides it, so the tool can score and
+   model-average the fit-range choices numerically.
+3. summarize_fourier_result.
+4. plot_fourier_result.
+5. plot_fourier_extension_quality_result for the best weighted scheme unless
+   the user asks for a different scheme. This writes separate real- and
+   imaginary-part extension plots.
+6. finish, reporting the NPZ artifact path, plot paths, best scheme, scheme
+   weights, fit chi2/dof, roughness scores, fit failure counts, and the
+   statistical/systematic uncertainty arrays.
+
+Use only the listed tools. Do not write numerical code in the model response.
+""".strip()
