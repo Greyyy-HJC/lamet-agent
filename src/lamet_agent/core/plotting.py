@@ -402,3 +402,237 @@ def plot_pt3_ratio_fit_on_data(
         )
 
     return (fig_re, ax_re), (fig_im, ax_im)
+
+
+def plot_fourier_npz(
+    path: str | Path,
+    *,
+    save_path: str | Path | None = None,
+    title: str | None = None,
+    show: bool = False,
+) -> tuple[Figure, tuple[Axes, Axes]]:
+    """Plot real and imaginary momentum-space distributions from a Fourier NPZ."""
+    data = np.load(path)
+    k = np.asarray(data["k_grid"], dtype=float)
+    re = np.asarray(data["ft_re_mean"], dtype=float)
+    im = np.asarray(data["ft_im_mean"], dtype=float)
+    re_stat = np.asarray(data["ft_re_stat_sdev"], dtype=float)
+    im_stat = np.asarray(data["ft_im_stat_sdev"], dtype=float)
+    re_sys = np.asarray(data["ft_re_sys_sdev"], dtype=float) if "ft_re_sys_sdev" in data else 0.0
+    im_sys = np.asarray(data["ft_im_sys_sdev"], dtype=float) if "ft_im_sys_sdev" in data else 0.0
+    re_total = np.sqrt(re_stat**2 + re_sys**2)
+    im_total = np.sqrt(im_stat**2 + im_sys**2)
+    roundoff_floor = 1e-14
+    re = np.where(np.abs(re) < roundoff_floor, 0.0, re)
+    im = np.where(np.abs(im) < roundoff_floor, 0.0, im)
+    re_total = np.where(re_total < roundoff_floor, 0.0, re_total)
+    im_total = np.where(im_total < roundoff_floor, 0.0, im_total)
+    observable = str(data["observable"]) if "observable" in data else ""
+    default_title = "FT" if not observable else "FT " + observable.replace("_", " ")
+    pz_gev = float(data["pz_gev"]) if "pz_gev" in data and np.isfinite(data["pz_gev"]) else None
+    legend_label = rf"$P_z={pz_gev:g}\,\mathrm{{GeV}}$" if pz_gev is not None else r"$P_z$"
+
+    apply_plot_style()
+    fig, (ax_re, ax_im) = plt.subplots(
+        2,
+        1,
+        figsize=FIG_SIZE,
+        gridspec_kw={"height_ratios": [1, 1]},
+        sharex=True,
+    )
+    fig.subplots_adjust(hspace=0)
+    for ax in (ax_re, ax_im):
+        ax.tick_params(direction="in", top=True, right=True, **LABEL_SIZE)
+        ax.ticklabel_format(axis="y", style="plain", useOffset=False)
+        ax.grid(linestyle=":")
+
+    for ax in (ax_re, ax_im):
+        ax.axhline(0.0, color="black", linewidth=0.8, alpha=0.45)
+
+    ax_re.fill_between(k, re - re_total, re + re_total, color=COLOR_CYCLE[0], alpha=0.32, linewidth=0, label=legend_label)
+    ax_re.plot(k, re, color=COLOR_CYCLE[0], linewidth=0.9, alpha=0.65)
+    ax_im.fill_between(k, im - im_total, im + im_total, color=COLOR_CYCLE[1], alpha=0.32, linewidth=0, label=legend_label)
+    ax_im.plot(k, im, color=COLOR_CYCLE[1], linewidth=0.9, alpha=0.65)
+    ax_re.set_xlim(-2.0, 2.0)
+    ax_im.set_xlim(-2.0, 2.0)
+    ax_re.set_ylabel(r"$\mathrm{Re}\,\tilde{q}(x)$", **FONT_SIZE)
+    ax_im.set_ylabel(r"$\mathrm{Im}\,\tilde{q}(x)$", **FONT_SIZE)
+    ax_re.yaxis.set_label_coords(-0.11, 0.5)
+    ax_im.yaxis.set_label_coords(-0.11, 0.5)
+    ax_im.set_xlabel(r"$x$", **FONT_SIZE)
+    ax_re.legend(**LEGEND_SETS)
+    ax_im.legend(**LEGEND_SETS)
+    ax_re.set_title(default_title if title is None else title, **FONT_SIZE)
+
+    if save_path is not None:
+        output = Path(save_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output, bbox_inches="tight")
+    if show:
+        plt.show()
+    return fig, (ax_re, ax_im)
+
+
+def _sample_mean_sdev(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    arr = np.asarray(samples, dtype=float)
+    mean = np.mean(arr, axis=0)
+    if arr.shape[0] < 2:
+        return mean, np.zeros_like(mean)
+    return mean, np.std(arr, axis=0, ddof=1)
+
+
+def _coord_to_lambda(
+    coord: np.ndarray,
+    *,
+    coord_unit: str,
+    pz_gev: float | None,
+    a_fm: float | None,
+) -> np.ndarray:
+    unit = coord_unit.lower()
+    fm_to_gev_inv = 5.067731237
+    if unit == "lambda":
+        return coord
+    if unit == "gev_inv":
+        if pz_gev is None:
+            raise ValueError("pz_gev is required when coord_unit='gev_inv'")
+        return coord * float(pz_gev)
+    if unit == "fm":
+        if pz_gev is None:
+            raise ValueError("pz_gev is required when coord_unit='fm'")
+        return coord * fm_to_gev_inv * float(pz_gev)
+    if unit == "lattice":
+        if pz_gev is None or a_fm is None:
+            raise ValueError("pz_gev and a_fm are required when coord_unit='lattice'")
+        return coord * float(a_fm) * fm_to_gev_inv * float(pz_gev)
+    raise ValueError("coord_unit must be 'lambda', 'gev_inv', 'fm', or 'lattice'")
+
+
+def plot_fourier_extension_quality(
+    coord: np.ndarray,
+    samples: np.ndarray,
+    result: dict[str, Any],
+    *,
+    scheme_index: int = 0,
+    component: str = "re",
+    pz_gev: float | None = None,
+    a_fm: float | None = None,
+    save_path: str | Path | None = None,
+    title: str | None = None,
+    show: bool = False,
+) -> tuple[Figure, Axes]:
+    """Plot coordinate-space data against the smoothed long-distance extension."""
+    component = component.lower()
+    if component not in {"re", "im"}:
+        raise ValueError("component must be 're' or 'im'")
+    scheme = result["scheme_results"][scheme_index]
+    coord_unit = str(result.get("coord_unit", "lambda"))
+    if pz_gev is None:
+        pz_gev = result.get("pz_gev")
+    if a_fm is None:
+        a_fm = result.get("a_fm")
+
+    coord_arr = np.asarray(coord, dtype=float)
+    lambda_data = _coord_to_lambda(coord_arr, coord_unit=coord_unit, pz_gev=pz_gev, a_fm=a_fm)
+    data_mean, data_sdev = _sample_mean_sdev(np.asarray(samples, dtype=float))
+
+    lambda_ext = np.asarray(scheme["lambda_ext"], dtype=float)
+    ext_key = "extended_re_samples" if component == "re" else "extended_im_samples"
+    ext_mean, ext_sdev = _sample_mean_sdev(np.asarray(scheme[ext_key], dtype=float))
+
+    zmin, zmax = scheme["fit_range"]
+    fit_lambda = _coord_to_lambda(
+        np.asarray([zmin, zmax], dtype=float),
+        coord_unit=coord_unit,
+        pz_gev=pz_gev,
+        a_fm=a_fm,
+    )
+    ext_endpoint_lambda = _coord_to_lambda(
+        np.asarray([scheme["z_ext_max"]], dtype=float),
+        coord_unit=coord_unit,
+        pz_gev=pz_gev,
+        a_fm=a_fm,
+    )[0]
+    ext_mask = (lambda_ext >= fit_lambda[0]) & (lambda_ext <= ext_endpoint_lambda)
+    z_unit = coord_unit
+    if coord_unit.lower() == "lambda":
+        z_unit = r"\lambda"
+
+    apply_plot_style()
+    fig, ax = default_plot()
+    data_color = "#9ecae1"
+    ext_color = "#a1d99b"
+
+    method = str(result.get("method", "")).upper()
+    order = str(result.get("order", "")).upper()
+    model_label = "Extrapolation"
+    if method or order:
+        model_label = f"Extrapolation ({'+'.join(item for item in (method, order) if item)})"
+
+    ax.fill_between(
+        lambda_data,
+        data_mean - data_sdev,
+        data_mean + data_sdev,
+        color=data_color,
+        alpha=0.7,
+        linewidth=0,
+        label="Lattice Data",
+    )
+    ax.fill_between(
+        lambda_ext[ext_mask],
+        ext_mean[ext_mask] - ext_sdev[ext_mask],
+        ext_mean[ext_mask] + ext_sdev[ext_mask],
+        color=ext_color,
+        alpha=0.5,
+        linewidth=0,
+        label=model_label,
+        zorder=1,
+    )
+
+    for idx, value in enumerate(fit_lambda):
+        ax.axvline(
+            value,
+            color="black",
+            linestyle="--",
+            linewidth=1,
+            alpha=0.8,
+            label="Fit Range" if idx == 0 else None,
+        )
+    ax.axvline(
+        ext_endpoint_lambda,
+        color=COLOR_CYCLE[3],
+        linestyle=":",
+        linewidth=1.5,
+        alpha=0.9,
+        label="Extension Endpoint",
+    )
+
+    ax.set_xlabel(r"$\lambda = zP^z$", **FONT_SIZE)
+    h_part = "R" if component == "re" else "I"
+    if pz_gev is None:
+        ax.set_ylabel(rf"$\tilde{{h}}_{h_part}(\lambda, P^z)$", **FONT_SIZE)
+    else:
+        ax.set_ylabel(rf"$\tilde{{h}}_{h_part}(\lambda, P^z={float(pz_gev):g}\,\mathrm{{GeV}})$", **FONT_SIZE)
+    if title is None:
+        title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:g}\,{z_unit}$, $z_{{\max}}={zmax:g}\,{z_unit}$"
+    ax.set_title(title, **FONT_SIZE)
+    chi2_values = result.get("scheme_fit_chi2_dof", [])
+    if chi2_values and scheme_index < len(chi2_values):
+        ax.text(
+            0.03,
+            0.95,
+            rf"$\chi^2/\mathrm{{dof}}={float(chi2_values[scheme_index]):.3g}$",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=14,
+            bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "none", "alpha": 0.75},
+        )
+    ax.legend(**LEGEND_SETS)
+
+    if save_path is not None:
+        output = Path(save_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output, bbox_inches="tight")
+    if show:
+        plt.show()
+    return fig, ax

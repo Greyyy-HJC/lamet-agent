@@ -77,6 +77,7 @@ def build_stage_static_prompt(
         f"Completed stages: {completed_stages}\n"
         f"Correlators: {json.dumps(correlator_ids)}\n"
         f"Kernels: {kernel_ids}\n\n"
+        f"Metadata: {json.dumps(manifest.metadata)}\n\n"
         f"Stage instruction: {stage_prompt}\n\n"
         f"{stage_skill}\n\n"
         f"{ACTION_OUTPUT_HINT}\n"

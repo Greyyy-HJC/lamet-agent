@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Protocol
@@ -67,8 +70,24 @@ def _post_chat_completion(
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=180) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    payload = None
+    last_error: BaseException | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            break
+        except (TimeoutError, urllib.error.URLError, ssl.SSLError) as exc:
+            last_error = exc
+            if attempt == 2:
+                raise RuntimeError(
+                    "DeepSeek API request failed after 3 attempts. "
+                    "This is usually a transient HTTPS/network/proxy issue; retry the command or check network/proxy settings."
+                ) from exc
+            time.sleep(2**attempt)
+
+    if payload is None:
+        raise RuntimeError("DeepSeek API request failed before returning a response.") from last_error
 
     content = payload["choices"][0]["message"]["content"]
     try:
