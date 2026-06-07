@@ -2,7 +2,7 @@
 
 Purpose:
 - load coordinate-space real/imaginary samples
-- call LaMETLat's sample-preserving extrapolation and Fourier workflow
+- call the local sample-preserving extrapolation and Fourier workflow
 - keep large arrays in the stage store and write compact `.npz` artifacts
 
 Expected inputs:
@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 
 from lamet_agent.core.plotting import plot_fourier_extension_quality, plot_fourier_npz
-from lametlat.fourier_transform import run_fourier_workflow
+from lamet_agent.stages.fourier.workflow import run_fourier_workflow
 
 
 def load_renormalized_matrix_element_samples(
@@ -491,7 +491,7 @@ def run_fourier_transform(
     save_path: str | None = None,
     out: str = "fourier_result",
 ) -> dict[str, Any]:
-    """Run LaMETLat extrapolation and Fourier transform for loaded samples."""
+    """Run local extrapolation and Fourier transform for loaded samples."""
     matrix_element = store[samples]
     if scheme_scan is not None:
         schemes = _generate_scan_schemes(scheme_scan)

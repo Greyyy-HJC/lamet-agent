@@ -21,6 +21,7 @@ dev = [
 analysis = [
   "gvar>=12.1",
   "lsqfit>=13.0",
+  "scipy>=1.13",
   "h5py>=3.11",
   "matplotlib>=3.8",
 ]
