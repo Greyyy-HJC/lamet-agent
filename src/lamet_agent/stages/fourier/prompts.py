@@ -9,10 +9,12 @@ Do this by emitting one action at a time:
    them and do not call tools yet. Emit request_user_input and ask the user for
    the missing fields, summarizing the listed choices and the physical meaning
    of each option.
-1. load_renormalized_matrix_element_samples on the provided input path. Pass
-   input_format='npz' for NPZ files or input_format='h5' for HDF5 files. For
-   HDF5 inputs, pass h5_group when the desired group cannot be inferred
-   from the file name.
+1. If manifest.metadata.fourier_input is provided, call
+   load_renormalized_matrix_element_samples on that path. Pass input_format='npz'
+   for NPZ files or input_format='h5' for HDF5 files. For HDF5 inputs, pass
+   h5_group when the desired group cannot be inferred from the file name.
+   If an upstream stage already produced store['matrix_element_data'], skip the
+   loader and run the transform directly on that EnsembleData.
 2. run_fourier_transform with explicit k_grid (list or compact {start, stop, num/step}),
    method, order, observable, coord_unit, and pz_gev/a_fm when needed.
    If the manifest gives scheme_scan, pass it through. If it omits any of

@@ -24,6 +24,7 @@ analysis = [
   "scipy>=1.13",
   "h5py>=3.11",
   "matplotlib>=3.8",
+  "xarray>=2024.1",
 ]
 
 [project.scripts]

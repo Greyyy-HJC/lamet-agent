@@ -37,7 +37,6 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
                     "method": "GI",
                     "order": "Empirical",
                     "observable": "nucleon_quark_transversity_quasi_pdf",
-                    "sample_axis": 1,
                     "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
                     "plot_fourier": {"save_path": "ft.pdf", "title": "FT"},
                     "plot_extension": {"scheme_index": 2, "save_path": "ext_re.pdf"},

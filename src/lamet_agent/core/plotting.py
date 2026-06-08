@@ -28,6 +28,8 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
+from lamet_agent.core.data import EnsembleData
+
 # Publication-oriented palette and styles copied from LaMETLat plot_settings.
 BLUE = "#4E79A7"
 ORANGE = "#E69F00"
@@ -412,14 +414,32 @@ def plot_fourier_npz(
     show: bool = False,
 ) -> tuple[Figure, tuple[Axes, Axes]]:
     """Plot real and imaginary momentum-space distributions from a Fourier NPZ."""
-    data = np.load(path)
-    k = np.asarray(data["k_grid"], dtype=float)
-    re = np.asarray(data["ft_re_mean"], dtype=float)
-    im = np.asarray(data["ft_im_mean"], dtype=float)
-    re_stat = np.asarray(data["ft_re_stat_sdev"], dtype=float)
-    im_stat = np.asarray(data["ft_im_stat_sdev"], dtype=float)
-    re_sys = np.asarray(data["ft_re_sys_sdev"], dtype=float) if "ft_re_sys_sdev" in data else 0.0
-    im_sys = np.asarray(data["ft_im_sys_sdev"], dtype=float) if "ft_im_sys_sdev" in data else 0.0
+    try:
+        ft_data, extra = EnsembleData.load_npz(path)
+        if ft_data.dims != ["x"]:
+            raise ValueError("Fourier EnsembleData artifact must have dimension ['x']")
+        k = np.asarray(ft_data.coords["x"], dtype=float)
+        mean = np.asarray(ft_data.mean)
+        re = np.real(mean)
+        im = np.imag(mean)
+        re_stat = np.asarray(extra.get("ft_re_stat_sdev", np.std(np.real(ft_data.values), axis=0, ddof=1)), dtype=float)
+        im_stat = np.asarray(extra.get("ft_im_stat_sdev", np.std(np.imag(ft_data.values), axis=0, ddof=1)), dtype=float)
+        re_sys = np.asarray(extra.get("ft_re_sys_sdev", 0.0), dtype=float)
+        im_sys = np.asarray(extra.get("ft_im_sys_sdev", 0.0), dtype=float)
+        observable = str(extra["observable"]) if "observable" in extra else ft_data.attrs.get("observable", "")
+        pz_raw = extra.get("pz_gev", ft_data.attrs.get("pz_gev"))
+        pz_gev = float(pz_raw) if pz_raw is not None and np.isfinite(float(pz_raw)) else None
+    except ValueError:
+        data = np.load(path)
+        k = np.asarray(data["k_grid"], dtype=float)
+        re = np.asarray(data["ft_re_mean"], dtype=float)
+        im = np.asarray(data["ft_im_mean"], dtype=float)
+        re_stat = np.asarray(data["ft_re_stat_sdev"], dtype=float)
+        im_stat = np.asarray(data["ft_im_stat_sdev"], dtype=float)
+        re_sys = np.asarray(data["ft_re_sys_sdev"], dtype=float) if "ft_re_sys_sdev" in data else 0.0
+        im_sys = np.asarray(data["ft_im_sys_sdev"], dtype=float) if "ft_im_sys_sdev" in data else 0.0
+        observable = str(data["observable"]) if "observable" in data else ""
+        pz_gev = float(data["pz_gev"]) if "pz_gev" in data and np.isfinite(data["pz_gev"]) else None
     re_total = np.sqrt(re_stat**2 + re_sys**2)
     im_total = np.sqrt(im_stat**2 + im_sys**2)
     roundoff_floor = 1e-14
@@ -427,9 +447,7 @@ def plot_fourier_npz(
     im = np.where(np.abs(im) < roundoff_floor, 0.0, im)
     re_total = np.where(re_total < roundoff_floor, 0.0, re_total)
     im_total = np.where(im_total < roundoff_floor, 0.0, im_total)
-    observable = str(data["observable"]) if "observable" in data else ""
     default_title = "FT" if not observable else "FT " + observable.replace("_", " ")
-    pz_gev = float(data["pz_gev"]) if "pz_gev" in data and np.isfinite(data["pz_gev"]) else None
     legend_label = rf"$P_z={pz_gev:g}\,\mathrm{{GeV}}$" if pz_gev is not None else r"$P_z$"
 
     apply_plot_style()

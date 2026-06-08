@@ -73,14 +73,10 @@ def complete_z_negative(lam_ls, re_ls, im_ls, *, im_flip_for_ft=False):
     return lam_full, re_full, im_full
 
 
-def _as_sample_matrix(name: str, values, sample_axis: int) -> np.ndarray:
+def _as_sample_matrix(name: str, values) -> np.ndarray:
     arr = np.asarray(values, dtype=float)
     if arr.ndim != 2:
-        raise ValueError(f"{name} must be a 2D array with one sample axis")
-    if sample_axis not in (0, 1, -1):
-        raise ValueError("sample_axis must be 0 or 1")
-    if sample_axis in (1, -1):
-        arr = np.moveaxis(arr, sample_axis, 0)
+        raise ValueError(f"{name} must be a 2D array shaped (n_sample,n_z)")
     return arr
 
 
@@ -428,12 +424,11 @@ def _interp_samples(x: np.ndarray, y_samples: np.ndarray, x_new: np.ndarray) -> 
     return out
 
 
-def _scheme_ranges(scheme: dict[str, Any], coord: np.ndarray) -> tuple[float, float, float, float]:
+def _scheme_ranges(scheme: dict[str, Any], coord: np.ndarray) -> tuple[float, float, float]:
     zmin = float(scheme.get("zmin", coord[1]))
     zmax = float(scheme.get("zmax", coord[-1]))
     z_ext_max = float(scheme.get("z_ext_max", zmax))
-    blend_start = zmin
-    return zmin, zmax, z_ext_max, blend_start
+    return zmin, zmax, z_ext_max
 
 
 def _run_one_scheme(
@@ -453,11 +448,10 @@ def _run_one_scheme(
     phase_scale: float,
     phase_prime_scale: float | None,
 ) -> dict[str, Any]:
-    zmin, zmax, z_ext_max, blend_start = _scheme_ranges(scheme, coord)
+    zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
     zmin_fit = _convert_scheme_value(zmin, fit_scale)
     zmax_fit = _convert_scheme_value(zmax, fit_scale)
     z_ext_fit_max = _convert_scheme_value(z_ext_max, fit_scale)
-    blend_start_fit = _convert_scheme_value(blend_start, fit_scale)
 
     if zmin_fit <= 0:
         raise ValueError("zmin must be positive; asymptotic forms are singular at zero")
@@ -504,7 +498,7 @@ def _run_one_scheme(
         fit_weight = np.zeros_like(z_ext)
         fit_weight[z_ext > trusted_stop] = 1.0
     elif smooth == "linear":
-        fit_weight = _linear_fit_weight(z_ext, blend_start_fit, trusted_stop)
+        fit_weight = _linear_fit_weight(z_ext, zmin_fit, trusted_stop)
     else:
         raise ValueError("smooth must be 'linear' or 'none'")
     fit_weight[z_ext <= 0] = 0.0
@@ -621,7 +615,6 @@ def run_fourier_workflow(
     pz_gev: float | None = None,
     pz_prime_gev: float | None = None,
     a_fm: float | None = None,
-    sample_axis: int = 0,
     im_flip_for_ft: bool = False,
 ) -> dict[str, Any]:
     """Run asymptotic extension and Fourier transform for resampled data.
@@ -634,8 +627,8 @@ def run_fourier_workflow(
     if not np.isclose(coord_arr[0], 0.0):
         raise ValueError("coordinate grid must start at zero")
 
-    re_mat = _as_sample_matrix("re_samples", re_samples, sample_axis)
-    im_mat = _as_sample_matrix("im_samples", im_samples, sample_axis)
+    re_mat = _as_sample_matrix("re_samples", re_samples)
+    im_mat = _as_sample_matrix("im_samples", im_samples)
     if re_mat.shape != im_mat.shape:
         raise ValueError("re_samples and im_samples must have the same shape")
     if re_mat.shape[1] != len(coord_arr):
