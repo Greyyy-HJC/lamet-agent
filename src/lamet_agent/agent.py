@@ -29,6 +29,7 @@ class AgentState:
     actions: list[dict[str, Any]] = field(default_factory=list)
     stage_results: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     input_issues: dict[str, list[str]] = field(default_factory=dict)
+    pending_user_input: dict[str, list[str]] = field(default_factory=dict)
 
 
 def _run_stage(
@@ -37,6 +38,7 @@ def _run_stage(
     state: AgentState,
     session: LlmSession,
     *,
+    input_issues: list[str] | None,
     max_tool_steps: int,
     model: str,
     trace: AgentTrace,
@@ -52,9 +54,24 @@ def _run_stage(
         stage,
         manifest,
         completed_stages=state.completed_stages.copy(),
+        input_issues=input_issues,
     )
     session.begin_stage(static_prompt)
     trace.stage_context(static_prompt)
+
+    if input_issues:
+        action = {
+            "action": "request_user_input",
+            "reason": "Stage inputs are incomplete. Ask the user to provide or confirm the missing fields before calling tools.",
+            "questions": input_issues,
+        }
+        trace.cycle_begin(1)
+        trace.model_output(action)
+        state.actions.append({"stage": stage, "action": action})
+        state.pending_user_input[stage] = input_issues
+        state.stage_results[stage] = []
+        trace.stage_end(stage, n_steps=1)
+        return
 
     last_observation: dict[str, Any] | None = None
     cycles = 0
@@ -171,21 +188,26 @@ def run_agent(
             manifest,
             state,
             session,
+            input_issues=issues or None,
             max_tool_steps=max_tool_steps,
             model=model,
             trace=trace,
         )
+        if stage in state.pending_user_input:
+            break
         state.completed_stages.append(stage)
 
     trace.run_end(action_count=len(state.actions))
+    status = "waiting_for_user_input" if state.pending_user_input else "completed"
 
     return {
         "run_id": manifest.run_id,
-        "status": "completed",
+        "status": status,
         "model": model,
         "stages": selected,
         "completed_stages": state.completed_stages,
         "input_issues": state.input_issues,
+        "pending_user_input": state.pending_user_input,
         "actions": state.actions,
         "stage_results": state.stage_results,
         "summary": json.dumps(

@@ -12,6 +12,22 @@ from lamet_agent.manifest import AnalysisManifest, resolve_data_path
 from .stages import resolve_stage_package
 
 _PLOT_TOOLS = frozenset({"plot_fit_on_data", "plot_pt3_fit_on_data"})
+_FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key"})
+_FOURIER_RUN_KEYS = frozenset(
+    {
+        "k_grid",
+        "scheme_scan",
+        "method",
+        "order",
+        "observable",
+        "coord_unit",
+        "pz_gev",
+        "pz_prime_gev",
+        "a_fm",
+        "sample_axis",
+        "im_flip_for_ft",
+    }
+)
 
 
 def resolve_plot_save_path(
@@ -98,6 +114,28 @@ def prepare_tool_args(
 ) -> dict[str, Any]:
     """Resolve paths and force plot output under ``artifacts_dir``."""
     resolved = resolve_tool_args(args, manifest)
+    fourier = manifest.metadata.get("fourier", {})
+    if isinstance(fourier, dict):
+        if tool_name == "load_renormalized_matrix_element_samples":
+            merged = dict(resolved)
+            merged.update({key: fourier[key] for key in _FOURIER_LOAD_KEYS if key in fourier})
+            if "fourier_input" in manifest.metadata:
+                merged["path"] = manifest.metadata["fourier_input"]
+            resolved = resolve_tool_args(merged, manifest)
+        elif tool_name == "run_fourier_transform":
+            merged = dict(resolved)
+            merged.update({key: fourier[key] for key in _FOURIER_RUN_KEYS if key in fourier})
+            resolved = merged
+        elif tool_name == "plot_fourier_result":
+            merged = dict(resolved)
+            if isinstance(fourier.get("plot_fourier"), dict):
+                merged.update(fourier["plot_fourier"])
+            resolved = merged
+        elif tool_name == "plot_fourier_extension_quality_result":
+            merged = dict(resolved)
+            if isinstance(fourier.get("plot_extension"), dict):
+                merged.update(fourier["plot_extension"])
+            resolved = merged
     if tool_name in _PLOT_TOOLS:
         raw_save = resolved.get("save_path")
         if isinstance(raw_save, str) or raw_save is None:

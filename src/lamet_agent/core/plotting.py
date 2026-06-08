@@ -481,6 +481,28 @@ def _sample_mean_sdev(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return mean, np.std(arr, axis=0, ddof=1)
 
 
+def _band_segment(
+    x: np.ndarray,
+    mean: np.ndarray,
+    sdev: np.ndarray,
+    *,
+    start: float,
+    stop: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return a band segment with exact start/stop points inserted for plotting."""
+    order = np.argsort(x)
+    x_sorted = np.asarray(x, dtype=float)[order]
+    mean_sorted = np.asarray(mean, dtype=float)[order]
+    sdev_sorted = np.asarray(sdev, dtype=float)[order]
+    start = max(float(start), float(x_sorted[0]))
+    stop = min(float(stop), float(x_sorted[-1]))
+    mask = (x_sorted > start) & (x_sorted < stop)
+    x_seg = np.concatenate(([start], x_sorted[mask], [stop]))
+    mean_seg = np.interp(x_seg, x_sorted, mean_sorted)
+    sdev_seg = np.interp(x_seg, x_sorted, sdev_sorted)
+    return x_seg, mean_seg, sdev_seg
+
+
 def _coord_to_lambda(
     coord: np.ndarray,
     *,
@@ -552,7 +574,13 @@ def plot_fourier_extension_quality(
         pz_gev=pz_gev,
         a_fm=a_fm,
     )[0]
-    ext_mask = (lambda_ext >= fit_lambda[0]) & (lambda_ext <= ext_endpoint_lambda)
+    lambda_ext_plot, ext_mean_plot, ext_sdev_plot = _band_segment(
+        lambda_ext,
+        ext_mean,
+        ext_sdev,
+        start=fit_lambda[0],
+        stop=ext_endpoint_lambda,
+    )
     z_unit = coord_unit
     if coord_unit.lower() == "lambda":
         z_unit = r"\lambda"
@@ -578,9 +606,9 @@ def plot_fourier_extension_quality(
         label="Lattice Data",
     )
     ax.fill_between(
-        lambda_ext[ext_mask],
-        ext_mean[ext_mask] - ext_sdev[ext_mask],
-        ext_mean[ext_mask] + ext_sdev[ext_mask],
+        lambda_ext_plot,
+        ext_mean_plot - ext_sdev_plot,
+        ext_mean_plot + ext_sdev_plot,
         color=ext_color,
         alpha=0.5,
         linewidth=0,
@@ -597,21 +625,16 @@ def plot_fourier_extension_quality(
             alpha=0.8,
             label="Fit Range" if idx == 0 else None,
         )
-    ax.axvline(
-        ext_endpoint_lambda,
-        color=COLOR_CYCLE[3],
-        linestyle=":",
-        linewidth=1.5,
-        alpha=0.9,
-        label="Extension Endpoint",
-    )
 
     ax.set_xlabel(r"$\lambda = zP^z$", **FONT_SIZE)
-    h_part = "R" if component == "re" else "I"
+    component_label = r"\mathrm{Re}" if component == "re" else r"\mathrm{Im}"
     if pz_gev is None:
-        ax.set_ylabel(rf"$\tilde{{h}}_{h_part}(\lambda, P^z)$", **FONT_SIZE)
+        ax.set_ylabel(rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)
     else:
-        ax.set_ylabel(rf"$\tilde{{h}}_{h_part}(\lambda, P^z={float(pz_gev):g}\,\mathrm{{GeV}})$", **FONT_SIZE)
+        ax.set_ylabel(
+            rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z={float(pz_gev):g}\,\mathrm{{GeV}})$",
+            **FONT_SIZE,
+        )
     if title is None:
         title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:g}\,{z_unit}$, $z_{{\max}}={zmax:g}\,{z_unit}$"
     ax.set_title(title, **FONT_SIZE)

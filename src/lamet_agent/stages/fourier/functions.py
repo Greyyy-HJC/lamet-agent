@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 
 from lamet_agent.core.plotting import plot_fourier_extension_quality, plot_fourier_npz
-from lamet_agent.stages.fourier.workflow import run_fourier_workflow
+from lamet_agent.stages.fourier.workflow import fit_tail_quality_for_mean, run_fourier_workflow
 
 
 def load_renormalized_matrix_element_samples(
@@ -33,11 +33,9 @@ def load_renormalized_matrix_element_samples(
     path: str,
     input_format: str | None = None,
     h5_group: str | None = None,
-    h5_pz: int | str | None = None,
     coord_key: str = "coord",
     re_key: str = "re_samples",
     im_key: str = "im_samples",
-    out: str = "matrix_element",
 ) -> dict[str, Any]:
     """Load renormalized coordinate-space matrix-element samples from NPZ or HDF5."""
     fmt = _resolve_input_format(path, input_format)
@@ -47,13 +45,13 @@ def load_renormalized_matrix_element_samples(
         coord, re_samples, im_samples, group_name = _load_h5_matrix_element(
             path,
             h5_group=h5_group,
-            h5_pz=h5_pz,
             coord_key="z_ary" if coord_key == "coord" else coord_key,
             re_key="Re" if re_key == "re_samples" else re_key,
             im_key="Im" if im_key == "im_samples" else im_key,
         )
     else:
         raise ValueError("input_format must be 'npz', 'h5', or 'hdf5'")
+    out = "matrix_element"
     store[out] = {
         "coord": coord,
         "re_samples": re_samples,
@@ -71,32 +69,6 @@ def load_renormalized_matrix_element_samples(
         "re_shape": list(re_samples.shape),
         "im_shape": list(im_samples.shape),
     }
-
-
-def load_matrix_element_samples(
-    store: dict[str, Any],
-    *,
-    path: str,
-    input_format: str | None = None,
-    h5_group: str | None = None,
-    h5_pz: int | str | None = None,
-    coord_key: str = "coord",
-    re_key: str = "re_samples",
-    im_key: str = "im_samples",
-    out: str = "matrix_element",
-) -> dict[str, Any]:
-    """Compatibility alias for load_renormalized_matrix_element_samples."""
-    return load_renormalized_matrix_element_samples(
-        store,
-        path=path,
-        input_format=input_format,
-        h5_group=h5_group,
-        h5_pz=h5_pz,
-        coord_key=coord_key,
-        re_key=re_key,
-        im_key=im_key,
-        out=out,
-    )
 
 
 def _resolve_input_format(path: str, input_format: str | None) -> str:
@@ -125,13 +97,7 @@ def _load_npz_matrix_element(
     )
 
 
-def _infer_h5_group(path: str, h5_pz: int | str | None, group_names: list[str]) -> str:
-    if h5_pz is not None:
-        group = f"Pz={h5_pz}"
-        if group not in group_names:
-            raise ValueError(f"HDF5 group {group!r} not found; available groups: {group_names}")
-        return group
-
+def _infer_h5_group(path: str, group_names: list[str]) -> str:
     match = re.search(r"(?:^|_)pz([+-]?\d+)(?:\.|_|$)", Path(path).name, flags=re.IGNORECASE)
     if match:
         group = f"Pz={match.group(1)}"
@@ -147,7 +113,6 @@ def _load_h5_matrix_element(
     path: str,
     *,
     h5_group: str | None,
-    h5_pz: int | str | None,
     coord_key: str,
     re_key: str,
     im_key: str,
@@ -159,7 +124,7 @@ def _load_h5_matrix_element(
 
     with h5py.File(path, "r") as h5f:
         group_names = [name for name, item in h5f.items() if isinstance(item, h5py.Group)]
-        group_name = h5_group or _infer_h5_group(path, h5_pz, group_names)
+        group_name = h5_group or _infer_h5_group(path, group_names)
         if group_name not in h5f:
             raise ValueError(f"HDF5 group {group_name!r} not found; available groups: {group_names}")
         group = h5f[group_name]
@@ -262,6 +227,262 @@ def _scan_values(spec: dict[str, Any], key: str) -> list[float]:
     return values
 
 
+def _positive_grid(coord: np.ndarray) -> np.ndarray:
+    positive = np.asarray(coord, dtype=float)
+    positive = positive[np.isfinite(positive) & (positive > 0)]
+    if len(positive) < 4:
+        raise ValueError("automatic scheme_scan needs at least four positive coordinate points")
+    return positive
+
+
+def _last_stable_z_index(
+    coord: np.ndarray,
+    re_samples: np.ndarray,
+    im_samples: np.ndarray,
+) -> int:
+    """Return the last positive-grid index before large-z data become unreliable."""
+    positive_mask = np.asarray(coord, dtype=float) > 0
+    re = np.asarray(re_samples, dtype=float)[:, positive_mask]
+    im = np.asarray(im_samples, dtype=float)[:, positive_mask]
+    re_mean = np.mean(re, axis=0)
+    im_mean = np.mean(im, axis=0)
+    re_sdev = _sample_sdev(re)
+    im_sdev = _sample_sdev(im)
+
+    magnitude = np.hypot(re_mean, im_mean)
+    uncertainty = np.hypot(re_sdev, im_sdev)
+    scale = max(float(np.max(magnitude)), 1e-12)
+    rel_uncertainty = uncertainty / np.maximum(magnitude, 0.05 * scale)
+    baseline = float(np.median(rel_uncertainty[: min(4, len(rel_uncertainty))]))
+    uncertainty_limit = min(1.0, max(0.35, 3.0 * baseline + 0.05))
+
+    signal = re_mean + 1j * im_mean
+    signal_scale = max(float(np.max(np.abs(signal))), 1e-12)
+    jitter_unstable = np.zeros_like(rel_uncertainty, dtype=bool)
+    if len(signal) >= 5:
+        curvature = np.abs(signal[2:] - 2.0 * signal[1:-1] + signal[:-2])
+        curvature = curvature / np.maximum(np.abs(signal[1:-1]), 0.05 * signal_scale)
+        curvature_baseline = float(np.median(curvature[: min(4, len(curvature))]))
+        curvature_limit = min(2.0, max(0.5, 4.0 * curvature_baseline + 0.05))
+        jitter_unstable[1:-1] = curvature > curvature_limit
+
+    unstable = (rel_uncertainty > uncertainty_limit) | jitter_unstable
+    min_points = min(5, len(rel_uncertainty))
+    for idx in range(min_points, len(rel_uncertainty) - 1):
+        if unstable[idx] and unstable[idx + 1]:
+            return max(min_points - 1, idx - 1)
+    return len(rel_uncertainty) - 1
+
+
+def _pick_four_tail_values(grid: np.ndarray, *, end_index: int) -> list[float]:
+    end_index = int(np.clip(end_index, 0, len(grid) - 1))
+    start_index = max(0, end_index - 3)
+    values = grid[start_index : end_index + 1]
+    if len(values) < 4:
+        values = grid[: min(len(grid), 4)]
+    return [float(item) for item in values[-4:]]
+
+
+def _first_four_zmin_values(positive: np.ndarray, *, zmax_reference: float, min_width: float) -> list[float]:
+    max_allowed = float(zmax_reference) - float(min_width)
+    candidates = positive[positive <= max_allowed]
+    if len(candidates) < 4:
+        candidates = positive[positive < float(zmax_reference)]
+    return [float(item) for item in candidates[:4]]
+
+
+def _tail_quality_stable_start(qualities: list[dict[str, Any]]) -> int:
+    finite = [
+        item
+        for item in qualities
+        if item["ok"] and np.isfinite(item["chi2_dof"]) and item["n_points"] >= 2
+    ]
+    if not finite:
+        return 0
+
+    chi = np.asarray([item["chi2_dof"] for item in finite], dtype=float)
+    q_values = np.asarray([item["q_value"] for item in finite], dtype=float)
+    best = float(np.min(chi))
+    chi_limit = max(best * 1.25, best + 0.15, 1.0)
+    for idx, item in enumerate(qualities):
+        if not item["ok"] or not np.isfinite(item["chi2_dof"]):
+            continue
+        if item["chi2_dof"] > chi_limit:
+            continue
+        if item["q_value"] < 0.05 and np.nanmax(q_values) >= 0.05:
+            continue
+        later = [
+            later_item["chi2_dof"]
+            for later_item in qualities[idx : min(len(qualities), idx + 3)]
+            if later_item["ok"] and np.isfinite(later_item["chi2_dof"])
+        ]
+        if later and max(later) <= max(chi_limit * 1.1, chi_limit + 0.1):
+            return idx
+    return int(np.nanargmin([item["chi2_dof"] if item["ok"] else np.inf for item in qualities]))
+
+
+def _pick_four_zmin_values_by_tail_fit(
+    positive: np.ndarray,
+    *,
+    zmax_values: list[float],
+    min_width: float,
+    coord: np.ndarray,
+    re_samples: np.ndarray,
+    im_samples: np.ndarray,
+    method: str,
+    order: str,
+    observable: str,
+    coord_unit: str,
+    pz_gev: float | None,
+    pz_prime_gev: float | None,
+    a_fm: float | None,
+) -> list[float]:
+    stable_starts = []
+    for zmax in zmax_values:
+        candidates = positive[(positive < float(zmax)) & ((float(zmax) - positive) >= min_width)]
+        if len(candidates) == 0:
+            continue
+        qualities = [
+            fit_tail_quality_for_mean(
+                coord,
+                re_samples,
+                im_samples,
+                zmin=float(candidate),
+                zmax=float(zmax),
+                method=method,
+                order=order,
+                observable=observable,
+                coord_unit=coord_unit,
+                pz_gev=pz_gev,
+                pz_prime_gev=pz_prime_gev,
+                a_fm=a_fm,
+            )
+            for candidate in candidates
+        ]
+        stable_starts.append(float(candidates[_tail_quality_stable_start(qualities)]))
+
+    if not stable_starts:
+        return _first_four_zmin_values(positive, zmax_reference=max(zmax_values), min_width=min_width)
+
+    anchor = min(stable_starts)
+    max_allowed = max(zmax_values) - min_width
+    candidates = positive[(positive >= anchor) & (positive <= max_allowed)]
+    if len(candidates) < 4:
+        candidates = positive[positive <= max_allowed]
+    if len(candidates) <= 4:
+        return [float(item) for item in candidates]
+    indices = np.linspace(0, len(candidates) - 1, 4)
+    return [float(candidates[int(round(item))]) for item in indices]
+
+
+def _auto_fill_scheme_scan(
+    spec: dict[str, Any],
+    *,
+    coord: np.ndarray,
+    positive: np.ndarray,
+    re_samples: np.ndarray,
+    im_samples: np.ndarray,
+    stable_idx: int,
+    coord_unit: str,
+    method: str,
+    order: str,
+    observable: str,
+    pz_gev: float | None,
+    pz_prime_gev: float | None,
+    a_fm: float | None,
+) -> dict[str, Any]:
+    """Fill missing scan keys with stable zmax values and tail-fit zmin diagnostics."""
+    dz = float(np.median(np.diff(positive)))
+    if "zmax_values" not in spec and "zmax_start" not in spec:
+        spec["zmax_values"] = _pick_four_tail_values(positive, end_index=stable_idx)
+    if "zmax_values" in spec:
+        zmax_values = [float(item) for item in spec["zmax_values"]]
+    else:
+        zmax_values = _scan_values(spec, "zmax")
+    zmax_reference = max(zmax_values)
+
+    if "min_width" not in spec:
+        spec["min_width"] = float(max(3.0 * dz, 0.25 * zmax_reference))
+    min_width = float(spec["min_width"])
+
+    if "zmin_values" not in spec and "zmin_start" not in spec:
+        spec["zmin_values"] = _pick_four_zmin_values_by_tail_fit(
+            positive,
+            zmax_values=zmax_values,
+            min_width=min_width,
+            coord=coord,
+            re_samples=re_samples,
+            im_samples=im_samples,
+            method=method,
+            order=order,
+            observable=observable,
+            coord_unit=coord_unit,
+            pz_gev=pz_gev,
+            pz_prime_gev=pz_prime_gev,
+            a_fm=a_fm,
+        )
+    if "z_ext_max" not in spec:
+        spec["z_ext_max"] = float(positive[-1])
+    if "smooth" not in spec:
+        spec["smooth"] = "linear"
+    return spec
+
+
+def _scan_has_all_range_keys(spec: dict[str, Any] | None) -> bool:
+    if spec is None:
+        return False
+    has_zmin = "zmin_values" in spec or "zmin_start" in spec
+    has_zmax = "zmax_values" in spec or "zmax_start" in spec
+    return has_zmin and has_zmax and "min_width" in spec and "z_ext_max" in spec and "smooth" in spec
+
+
+def _fill_scheme_defaults(spec: dict[str, Any]) -> dict[str, Any]:
+    spec.setdefault("y_range", [-2.0, 2.0])
+    spec.setdefault("roughness_weight", 1.0)
+    spec.setdefault("model_average", True)
+    return spec
+
+
+def _auto_scheme_scan(
+    *,
+    coord: np.ndarray,
+    re_samples: np.ndarray,
+    im_samples: np.ndarray,
+    sample_axis: int,
+    coord_unit: str,
+    method: str,
+    order: str,
+    observable: str,
+    pz_gev: float | None,
+    pz_prime_gev: float | None,
+    a_fm: float | None,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Generate a conservative scan from stable zmax and tail-fit zmin diagnostics."""
+    spec = dict(existing or {})
+    positive = _positive_grid(coord)
+    re_axis0 = _samples_axis_zero(re_samples, sample_axis)
+    im_axis0 = _samples_axis_zero(im_samples, sample_axis)
+    stable_idx = _last_stable_z_index(coord, re_axis0, im_axis0)
+    spec = _auto_fill_scheme_scan(
+        spec,
+        coord=np.asarray(coord, dtype=float),
+        positive=positive,
+        re_samples=re_axis0,
+        im_samples=im_axis0,
+        stable_idx=stable_idx,
+        coord_unit=coord_unit,
+        method=method,
+        order=order,
+        observable=observable,
+        pz_gev=pz_gev,
+        pz_prime_gev=pz_prime_gev,
+        a_fm=a_fm,
+    )
+    spec["auto_generated"] = True
+    return spec
+
+
 def _generate_scan_schemes(spec: dict[str, Any]) -> list[dict[str, Any]]:
     zmin_values = _scan_values(spec, "zmin")
     zmax_values = _scan_values(spec, "zmax")
@@ -282,8 +503,6 @@ def _generate_scan_schemes(spec: dict[str, Any]) -> list[dict[str, Any]]:
                 "z_ext_max": z_ext_max,
                 "smooth": smooth,
             }
-            if "blend_start" in spec:
-                scheme["blend_start"] = float(spec["blend_start"])
             schemes.append(scheme)
             if len(schemes) >= max_schemes:
                 return schemes
@@ -475,9 +694,7 @@ def _apply_scheme_model_average(
 def run_fourier_transform(
     store: dict[str, Any],
     *,
-    samples: str = "matrix_element",
     k_grid: list[float] | dict[str, Any],
-    schemes: list[dict[str, Any]] | None = None,
     scheme_scan: dict[str, Any] | None = None,
     method: str = "GI",
     order: str = "NLA",
@@ -489,12 +706,32 @@ def run_fourier_transform(
     sample_axis: int = 0,
     im_flip_for_ft: bool = False,
     save_path: str | None = None,
-    out: str = "fourier_result",
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
-    matrix_element = store[samples]
-    if scheme_scan is not None:
-        schemes = _generate_scan_schemes(scheme_scan)
+    out = "fourier_result"
+    matrix_element = store["matrix_element"]
+    auto_scheme_scan = None
+    scan_spec = _fill_scheme_defaults(dict(scheme_scan or {}))
+    if not _scan_has_all_range_keys(scan_spec):
+        scan_spec = _auto_scheme_scan(
+            coord=np.asarray(matrix_element["coord"], dtype=float),
+            re_samples=np.asarray(matrix_element["re_samples"], dtype=float),
+            im_samples=np.asarray(matrix_element["im_samples"], dtype=float),
+            sample_axis=sample_axis,
+            coord_unit=coord_unit,
+            method=method,
+            order=order,
+            observable=observable,
+            pz_gev=pz_gev,
+            pz_prime_gev=pz_prime_gev,
+            a_fm=a_fm,
+            existing=scan_spec,
+        )
+        auto_scheme_scan = scan_spec
+    else:
+        scan_spec = _fill_scheme_defaults(scan_spec)
+    scheme_scan = scan_spec
+    schemes = _generate_scan_schemes(scheme_scan)
     k_values = _resolve_k_grid(k_grid)
     result = run_fourier_workflow(
         matrix_element["coord"],
@@ -516,6 +753,8 @@ def run_fourier_transform(
     result["pz_prime_gev"] = pz_prime_gev
     result["a_fm"] = a_fm
     result["sample_axis"] = sample_axis
+    if auto_scheme_scan is not None:
+        result["auto_scheme_scan"] = auto_scheme_scan
     model_average = bool((scheme_scan or {}).get("model_average", True)) if scheme_scan is not None else True
     if model_average:
         score_re_samples = _samples_axis_zero(matrix_element["re_samples"], sample_axis)
@@ -550,17 +789,16 @@ def run_fourier_transform(
         "fit_failures": result["fit_failures"],
         "best_scheme_index": result.get("best_scheme_index"),
         "best_scheme_label": result.get("best_scheme_label"),
+        "auto_scheme_scan": auto_scheme_scan,
     }
 
 
 def summarize_fourier_result(
     store: dict[str, Any],
-    *,
-    result: str = "fourier_result",
-    out: str = "fourier_summary",
 ) -> dict[str, Any]:
     """Store and return a compact numerical summary of the Fourier result."""
-    data = store[result]
+    out = "fourier_summary"
+    data = store["fourier_result"]
     summary = {
         "k_grid": np.asarray(data["k_grid"]).tolist(),
         "ft_re_mean": np.asarray(data["ft_re_mean"]).tolist(),
@@ -586,7 +824,6 @@ def summarize_fourier_result(
 def plot_fourier_result(
     store: dict[str, Any],
     *,
-    result: str = "fourier_result",
     npz_path: str | None = None,
     save_path: str | None = None,
     title: str | None = None,
@@ -594,8 +831,8 @@ def plot_fourier_result(
     """Plot the Fourier-stage NPZ artifact and store the figure path."""
     source = npz_path
     if source is None:
-        source = str(_artifact_path(None, default_name=f"{result}.npz"))
-    output = _artifact_path(save_path, default_name=f"{result}.pdf")
+        source = str(_artifact_path(None, default_name="fourier_result.npz"))
+    output = _artifact_path(save_path, default_name="fourier_result.pdf")
     if title is not None and title.strip().lower() in {"fourier result", "fourier transform"}:
         title = None
     fig, _ = plot_fourier_npz(source, save_path=output, title=title)
@@ -606,15 +843,13 @@ def plot_fourier_result(
 def plot_fourier_extension_quality_result(
     store: dict[str, Any],
     *,
-    samples: str = "matrix_element",
-    result: str = "fourier_result",
     scheme_index: int | None = None,
     save_path: str | None = None,
     title: str | None = None,
 ) -> dict[str, Any]:
     """Plot data and smoothed real-part extension for one Fourier scheme."""
-    matrix_element = store[samples]
-    data = store[result]
+    matrix_element = store["matrix_element"]
+    data = store["fourier_result"]
     if scheme_index is None:
         scheme_index = int(data.get("best_scheme_index", 0) or 0)
     if title is not None and title.strip().lower() in {"fourier extension quality", "lambda extrapolation"}:
@@ -653,7 +888,6 @@ def plot_fourier_extension_quality_result(
 
 STAGE_TOOLS = {
     "load_renormalized_matrix_element_samples": load_renormalized_matrix_element_samples,
-    "load_matrix_element_samples": load_matrix_element_samples,
     "run_fourier_transform": run_fourier_transform,
     "summarize_fourier_result": summarize_fourier_result,
     "plot_fourier_result": plot_fourier_result,

@@ -32,10 +32,11 @@ def _demo_manifest() -> AnalysisManifest:
     )
 
 
-def test_run_agent_executes_default_stages_with_mock_model() -> None:
+def test_run_agent_default_pipeline_stops_for_missing_fourier_input() -> None:
     result = run_agent(_demo_manifest(), model="mock")
-    assert result["status"] == "completed"
-    assert len(result["completed_stages"]) == 5
+    assert result["status"] == "waiting_for_user_input"
+    assert result["completed_stages"] == ["correlator_analysis", "renormalization"]
+    assert "fourier_transform" in result["pending_user_input"]
     assert result["actions"][0]["action"]["action"] == "call_tool"
 
 
@@ -56,6 +57,25 @@ def test_run_agent_replays_external_transcript(tmp_path: Path) -> None:
     assert result["status"] == "completed"
     assert result["completed_stages"] == ["correlator_analysis"]
     assert result["actions"][0]["action"]["reason"] == "done"
+
+
+def test_run_agent_requests_user_input_for_incomplete_fourier_metadata() -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "fourier_demo",
+            "metadata": {"fourier_input": "matrix_element.npz"},
+        }
+    )
+
+    result = run_agent(manifest, model="mock", stages=["fourier_transform"])
+
+    assert result["status"] == "waiting_for_user_input"
+    assert result["completed_stages"] == []
+    action = result["actions"][0]["action"]
+    assert action["action"] == "request_user_input"
+    assert "Missing metadata.fourier.observable/order" in "\n".join(action["questions"])
+    assert result["pending_user_input"]["fourier_transform"] == action["questions"]
+    assert result["stage_results"]["fourier_transform"] == []
 
 
 def test_deepseek_request_retries_transient_url_error(monkeypatch) -> None:

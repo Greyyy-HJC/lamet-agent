@@ -329,6 +329,87 @@ def _fit_one_sample(
     return fit.x, bool(fit.success), chi2, dof, q_value
 
 
+def fit_tail_quality_for_mean(
+    coord: Sequence[float],
+    re_samples,
+    im_samples,
+    *,
+    zmin: float,
+    zmax: float,
+    method: str,
+    order: str,
+    observable: str,
+    coord_unit: str,
+    pz_gev: float | None = None,
+    pz_prime_gev: float | None = None,
+    a_fm: float | None = None,
+) -> dict[str, Any]:
+    """Fit the mean matrix element on one range and return quality diagnostics."""
+    coord_arr = np.asarray(coord, dtype=float)
+    re_mat = np.asarray(re_samples, dtype=float)
+    im_mat = np.asarray(im_samples, dtype=float)
+    if re_mat.ndim != 2 or im_mat.ndim != 2 or re_mat.shape != im_mat.shape:
+        raise ValueError("re_samples and im_samples must be matching (n_sample,n_z) arrays")
+    if re_mat.shape[1] != len(coord_arr):
+        raise ValueError("sample arrays must have one value per coordinate point")
+
+    observable = _canonical_observable(observable)
+    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, a_fm=a_fm)
+    fit_coord = coord_arr * fit_scale
+    ft_scale_over_fit_scale = ft_scale / fit_scale
+    phase_scale, phase_prime_scale = _phase_scales(
+        coord_unit=coord_unit,
+        pz_gev=pz_gev,
+        pz_prime_gev=pz_prime_gev,
+        ft_scale_over_fit_scale=ft_scale_over_fit_scale,
+    )
+    zmin_fit = _convert_scheme_value(zmin, fit_scale)
+    zmax_fit = _convert_scheme_value(zmax, fit_scale)
+    fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
+    n_points = int(np.count_nonzero(fit_mask))
+    n_params = len(_param_template(method, order, observable)[0])
+    if 2 * n_points < n_params or n_points < 2:
+        dof = max(1, 2 * n_points - n_params)
+        return {
+            "ok": False,
+            "chi2": float("inf"),
+            "dof": int(dof),
+            "chi2_dof": float("inf"),
+            "q_value": 0.0,
+            "n_points": n_points,
+        }
+
+    z_fit = fit_coord[fit_mask]
+    mean_re = np.mean(re_mat[:, fit_mask], axis=0)
+    mean_im = np.mean(im_mat[:, fit_mask], axis=0)
+    sigma_re = _sample_sdev(re_mat[:, fit_mask])
+    sigma_im = _sample_sdev(im_mat[:, fit_mask])
+    sigma_floor = max(1e-8, 0.02 * max(float(np.max(np.abs(mean_re))), float(np.max(np.abs(mean_im))), 1.0))
+    sigma_re = np.maximum(sigma_re, sigma_floor)
+    sigma_im = np.maximum(sigma_im, sigma_floor)
+
+    _params, ok, chi2, dof, q_value = _fit_one_sample(
+        z_fit,
+        mean_re,
+        mean_im,
+        method=method,
+        order=order,
+        observable=observable,
+        phase_scale=phase_scale,
+        phase_prime_scale=phase_prime_scale,
+        sigma_re=sigma_re,
+        sigma_im=sigma_im,
+    )
+    return {
+        "ok": bool(ok),
+        "chi2": float(chi2),
+        "dof": int(dof),
+        "chi2_dof": float(chi2 / max(dof, 1)),
+        "q_value": float(q_value),
+        "n_points": n_points,
+    }
+
+
 def _linear_fit_weight(z: np.ndarray, blend_start: float, trusted_stop: float) -> np.ndarray:
     weights = np.zeros_like(z, dtype=float)
     if trusted_stop <= blend_start:
@@ -351,7 +432,7 @@ def _scheme_ranges(scheme: dict[str, Any], coord: np.ndarray) -> tuple[float, fl
     zmin = float(scheme.get("zmin", coord[1]))
     zmax = float(scheme.get("zmax", coord[-1]))
     z_ext_max = float(scheme.get("z_ext_max", zmax))
-    blend_start = float(scheme.get("blend_start", zmin))
+    blend_start = zmin
     return zmin, zmax, z_ext_max, blend_start
 
 

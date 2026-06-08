@@ -111,6 +111,9 @@ class AgentTrace:
             self._write(f"  args: {args_text}")
         elif act == "request_user_input":
             self._write("Action: request_user_input")
+            questions = action.get("questions") or []
+            for idx, question in enumerate(questions, start=1):
+                self._write(f"  {idx}. {question}")
         elif act == "finish":
             self._write("Action: finish")
         else:

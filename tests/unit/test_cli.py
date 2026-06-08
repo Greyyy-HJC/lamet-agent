@@ -13,6 +13,7 @@ def test_cli_run_summary_omits_actions_and_stage_results() -> None:
         "stages": ["correlator_analysis"],
         "completed_stages": ["correlator_analysis"],
         "input_issues": {},
+        "pending_user_input": {},
         "summary": '{"action_count": 3}',
         "manifest": "m.json",
         "correlators": ["c2"],
@@ -23,5 +24,7 @@ def test_cli_run_summary_omits_actions_and_stage_results() -> None:
     compact = _cli_run_summary(full)
     assert "actions" not in compact
     assert "stage_results" not in compact
+    assert "input_issues" not in compact
     assert compact["run_id"] == "demo"
     assert compact["manifest"] == "m.json"
+    assert compact["pending_user_input"] == {}
