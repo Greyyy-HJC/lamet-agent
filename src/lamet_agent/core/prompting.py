@@ -59,6 +59,7 @@ def build_stage_static_prompt(
     manifest: AnalysisManifest,
     *,
     completed_stages: list[str],
+    input_issues: list[str] | None = None,
 ) -> str:
     """Build the static stage context (no tool observations)."""
     stage_prompt = get_stage_instruction(stage)
@@ -78,6 +79,7 @@ def build_stage_static_prompt(
         f"Correlators: {json.dumps(correlator_ids)}\n"
         f"Kernels: {kernel_ids}\n\n"
         f"Metadata: {json.dumps(manifest.metadata)}\n\n"
+        f"Input issues: {json.dumps(input_issues or [])}\n\n"
         f"Stage instruction: {stage_prompt}\n\n"
         f"{stage_skill}\n\n"
         f"{ACTION_OUTPUT_HINT}\n"
@@ -94,6 +96,7 @@ def build_stage_prompt(
     manifest: AnalysisManifest,
     *,
     completed_stages: list[str],
+    input_issues: list[str] | None = None,
     observations: list[dict] | None = None,
 ) -> str:
     """Build one monolithic prompt (static context plus optional observation dump)."""
@@ -101,6 +104,7 @@ def build_stage_prompt(
         stage,
         manifest,
         completed_stages=completed_stages,
+        input_issues=input_issues,
     )
     if not observations:
         return static

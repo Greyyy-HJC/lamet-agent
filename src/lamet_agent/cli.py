@@ -20,7 +20,7 @@ _CLI_SUMMARY_KEYS = (
     "model",
     "stages",
     "completed_stages",
-    "input_issues",
+    "pending_user_input",
     "summary",
     "manifest",
     "correlators",
@@ -129,4 +129,3 @@ def run_workflow(
 def entrypoint() -> None:
     """Project console script entrypoint."""
     app()
-

@@ -5,13 +5,24 @@ Run asymptotic extrapolation and Fourier transform on coordinate-space
 matrix-element samples.
 
 Do this by emitting one action at a time:
+0. If the stage input issues list reports missing Fourier fields, do not guess
+   them and do not call tools yet. Emit request_user_input and ask the user for
+   the missing fields, summarizing the listed choices and the physical meaning
+   of each option.
 1. load_renormalized_matrix_element_samples on the provided input path. Pass
    input_format='npz' for NPZ files or input_format='h5' for HDF5 files. For
-   HDF5 inputs, pass h5_group or h5_pz when the desired group cannot be inferred
+   HDF5 inputs, pass h5_group when the desired group cannot be inferred
    from the file name.
 2. run_fourier_transform with explicit k_grid (list or compact {start, stop, num/step}),
-   method, order, observable, coord_unit,
-   either zmin/zmax/z_ext_max schemes or scheme_scan, and pz_gev/a_fm when needed.
+   method, order, observable, coord_unit, and pz_gev/a_fm when needed.
+   If the manifest gives scheme_scan, pass it through. If it omits any of
+   zmin_values/zmax_values/min_width/z_ext_max/smooth, the tool will fill the
+   missing scan values by choosing large stable zmax values before visible
+   jitter or sharply growing error bars. It then fixes each zmax, scans zmin
+   from smaller to larger coordinates, and chooses zmin candidates where the
+   selected method/order/observable tail fit has stable chi2/dof and Q.
+   Missing y_range, roughness_weight, and model_average default
+   to [-2,2], 1.0, and true.
    Use observable to select the large-distance form: pion_quark_quasi_pdf,
    nucleon_quark_unpolarized_quasi_pdf, nucleon_quark_transversity_quasi_pdf,
    meson_quasi_da, pion_quark_quasi_gpd, or nucleon_quark_quasi_gpd.

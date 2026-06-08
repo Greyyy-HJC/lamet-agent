@@ -40,6 +40,21 @@ def test_agent_trace_emits_cycle_sections() -> None:
     assert "[Observation for LLM]" in text
 
 
+def test_agent_trace_prints_request_user_input_questions() -> None:
+    buffer = io.StringIO()
+    trace = AgentTrace(enabled=True, emit=buffer.write)
+    trace.model_output(
+        {
+            "action": "request_user_input",
+            "reason": "missing fields",
+            "questions": ["metadata.fourier.k_grid is required"],
+        }
+    )
+    text = buffer.getvalue()
+    assert "Action: request_user_input" in text
+    assert "metadata.fourier.k_grid is required" in text
+
+
 def test_run_agent_verbose_prints_trace(capsys) -> None:
     manifest = AnalysisManifest.model_validate(
         {
