@@ -65,6 +65,7 @@
     }
   ],
   "metadata": {
-    "note": "Use this manifest with user-generated fake data. Load every 3pt entry with read_pt3 before fitting."
+    "note": "Use this manifest with user-generated fake data. Load every 3pt entry with read_pt3 before fitting.",
+    "fit_strategy": "chained"
   }
 }

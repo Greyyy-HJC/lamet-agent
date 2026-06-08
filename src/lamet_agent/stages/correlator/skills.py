@@ -23,9 +23,14 @@ Strategy:
 - Always resample ('bs' or 'jk'); never use a single configuration mean.
 - 2pt: fit_window (<=6 windows on scan); model_average E0, log(dE1), z0, z1;
   plot_fit_on_data.
-- 3pt: fit_pt3_window (<=2 trials) anchors E0,z0 to 2pt BMA (5x widened errors); log(dE), z1, O_ij use broad priors;
+- 3pt manual mode: fit_pt3_window (<=2 trials) anchors E0,z0 to 2pt BMA (5x widened errors); log(dE), z1, O_ij use broad priors;
   then model_average O00_re and O00_im on trusted window_indices; plot shows
   model-averaged O00/(2*E0) bands on both ratio re and im panels.
+- Batch grid mode: when manifest metadata defines correlator_grid, call
+  fit_bare_matrix_grid once with its fit_strategy. Chained mode uses a 2pt -> ratio path;
+  joint mode uses 2pt+ratio fits. Both select windows on sample-average data, refit
+  bootstrap or jackknife samples, and export per-z O00/(2*E0) samples, sample-0 ratio
+  plots, split tuning/sample fit logs, and a PDF under artifacts.
 - Prefer Q > 0.05 and stable plateaus on both stages.
 """.strip()
 
@@ -40,6 +45,7 @@ TOOL_CATALOG = {
     "model_average": "model_average(scan, param, window_indices) -> logGBF-weighted gvar; pass a subset of indices.",
     "plot_fit_on_data": "plot_fit_on_data(pt2_gv, scan, window_indices, E0_avg, Lt) -> C2pt/meff PDFs.",
     "plot_pt3_fit_on_data": "plot_pt3_fit_on_data(ratio_real_gv, ratio_imag_gv, scan='pt3_scan', window_indices, O00_re_avg, Lt) -> ratio PDFs.",
+    "fit_bare_matrix_grid": "fit_bare_matrix_grid(pt2_path, pt3_paths, tsep_ls, z_values, ensemble, tag, momentum, fit_strategy='chained'|'joint', resample_mode='bs'|'jk', ...) -> bare_qpdf txt files, sample-0 ratio PDFs, split fit logs, summary PDF, and report under artifacts.",
 }
 
 

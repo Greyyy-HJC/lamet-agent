@@ -4,6 +4,8 @@ STAGE_PROMPT = """
 Goal: when 2pt data are present, extract ground-state energy and overlaps with
 model-averaged 2pt fits and fit-on-data plots. When 3pt data are also present,
 extract the bare matrix element from 3pt/2pt ratio fits after the 2pt step.
+If Metadata contains a correlator_grid object, run the deterministic batch
+fit_bare_matrix_grid tool once with that object's fields, then finish.
 
 2pt: the correlator is symmetric about t = Lt/2. Fit only the first half:
 tmax <= Lt//2 (tmax exclusive), typically tmin from 1 or 2 upward.
@@ -14,6 +16,16 @@ fit_pt3_window call (tau_cut >= 1). Tau fit points: tau in [tau_cut, tsep+1-tau_
 least 10 combined re+im points for a two-state fit.
 
 Emit one action at a time.
+
+Batch grid mode (preferred when Metadata.correlator_grid is present):
+0. call fit_bare_matrix_grid with the exact fields from Metadata.correlator_grid,
+   including fit_strategy when present. The tool supports chained 2pt -> ratio
+   fits and joint 2pt+ratio fits, selects windows on sample-average data, writes
+   bare_qpdf txt files, sample-0 ratio fit plots, split tuning/sample fit logs,
+   and a bare-matrix PDF under artifacts. Then finish with those paths and the
+   selected windows.
+
+Manual mode:
 
 Phase A (2pt, if manifest includes kind=2pt):
 1. read_pt2 on the 2pt path (stores pt2_samples and pt2_imag_samples; note Lt).

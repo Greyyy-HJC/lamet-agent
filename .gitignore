@@ -20,3 +20,4 @@ runs/
 temp/
 examples/fake_data/data/
 **/api.key
+data*/

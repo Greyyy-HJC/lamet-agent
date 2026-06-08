@@ -6,7 +6,7 @@ Purpose:
 
 Expected inputs:
 - 2pt HDF5: ``source_sink/gamma/momentum`` with shape (Lt, n_cfg)
-- 3pt HDF5: ``source_sink/gamma/momentum/b_dir/eta/bT*/bz*`` with shape (tsep+2, n_cfg)
+- 3pt HDF5: ``source_sink/gamma/momentum/b_dir/eta/bT*/bz*`` with shape (tsep+1, n_cfg)
 - tool arguments supplied by the agent as JSON-compatible values
 
 Expected outputs:
@@ -21,16 +21,40 @@ Example usage:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import gvar as gv
 import h5py
 import lsqfit as lsf
+import matplotlib.pyplot as plt
 import numpy as np
 
-from lamet_agent.core.plotting import COLOR_CYCLE, plot_pt2_fit_on_data, plot_pt3_ratio_fit_on_data
-from lamet_agent.core.tools import resolve_plot_save_path
+#! ignore numpy overflow
+np.seterr(over='ignore')
+
+from lamet_agent.core.plotting import (
+    COLOR_CYCLE,
+    ERRORBAR_STYLE,
+    FONT_SIZE,
+    LEGEND_SETS,
+    default_plot,
+    plot_pt2_fit_on_data,
+    plot_pt3_ratio_fit_on_data,
+)
+from lamet_agent.core.resampling import (
+    bootstrap,
+    bootstrap_by_indices as _bootstrap_by_indices,
+    bootstrap_indices as _bootstrap_indices,
+    bs_ls_avg,
+    jackknife,
+    jk_ls_avg,
+    resample_config_samples as _resample_config_samples,
+    sample_mean_err as _sample_mean_err,
+    samples_to_gvar as _samples_to_gvar,
+)
+from lamet_agent.core.tools import log_nonlinear_fit_quality, resolve_plot_save_path, setup_logger
 
 
 # --- data reading (trimmed from LaMETLat correlators/pt2.py) ----------------
@@ -106,7 +130,7 @@ def read_pt3(
     )
     with h5py.File(path, "r") as h5f:
         data = np.swapaxes(np.asarray(h5f[dset]), 0, 1)
-    inferred = int(data.shape[1]) - 2
+    inferred = int(data.shape[1]) - 1
     tsep_key = int(tsep) if tsep is not None else inferred
     if tsep is not None and tsep_key != inferred:
         raise ValueError(
@@ -129,43 +153,7 @@ def read_pt3(
     }
 
 
-# --- resampling (copied from LaMETLat correlators/resampling.py) ------------
-
-
-def bootstrap(data: np.ndarray, n_samples: int, axis: int = 0, seed: int | None = 1984) -> np.ndarray:
-    """Generate bootstrap sample averages from ensemble data."""
-    data = np.asarray(data)
-    n_conf = data.shape[axis]
-    rng = np.random.default_rng(seed)
-    indices = rng.choice(n_conf, (n_samples, n_conf), replace=True)
-    return np.take(data, indices, axis=axis).mean(axis=axis + 1)
-
-
-def jackknife(data: np.ndarray, axis: int = 0) -> np.ndarray:
-    """Generate leave-one-out jackknife sample averages from ensemble data."""
-    data = np.asarray(data)
-    n_conf = data.shape[axis]
-    total = data.sum(axis=axis, keepdims=True)
-    return (total - data) / (n_conf - 1)
-
-
-def bs_ls_avg(bs_ls: np.ndarray) -> np.ndarray:
-    """Average bootstrap samples (sample axis first) into a gvar array."""
-    bs_arr = np.asarray(bs_ls)
-    bs_flat = bs_arr.reshape(bs_arr.shape[0], -1)
-    mean = np.mean(bs_flat, axis=0)
-    cov = np.cov(bs_flat, rowvar=False)
-    return gv.gvar(mean, cov).reshape(bs_arr.shape[1:])
-
-
-def jk_ls_avg(jk_ls: np.ndarray) -> np.ndarray:
-    """Average jackknife samples (sample axis first) into a gvar array."""
-    jk_arr = np.asarray(jk_ls)
-    jk_flat = jk_arr.reshape(jk_arr.shape[0], -1)
-    n_sample = jk_flat.shape[0]
-    mean = np.mean(jk_flat, axis=0)
-    cov = np.cov(jk_flat, rowvar=False) * (n_sample - 1)
-    return gv.gvar(mean, cov).reshape(jk_arr.shape[1:])
+# --- resampling --------------------------------------------------------------
 
 
 def resample_to_gvar(
@@ -314,6 +302,7 @@ def pt2_fit(
     Lt: int,
     nstate: int = 2,
     svdcut: float = 1e-2,
+    p0: dict[str, float] | None = None,
 ) -> lsf.nonlinear_fit:
     """Fit a two-point correlator with an n-state spectral decomposition.
 
@@ -326,8 +315,16 @@ def pt2_fit(
     def fcn(t: np.ndarray, p: dict) -> np.ndarray:
         return pt2_re_fcn(t, p, Lt, nstate=nstate)
 
+    kwargs: dict[str, Any] = {}
+    if p0 is not None:
+        kwargs["p0"] = p0
     return lsf.nonlinear_fit(
-        data=(fit_t, fit_pt2), prior=pt2_prior(nstate), fcn=fcn, svdcut=svdcut, maxit=10000
+        data=(fit_t, fit_pt2),
+        prior=pt2_prior(nstate),
+        fcn=fcn,
+        svdcut=svdcut,
+        maxit=10000,
+        **kwargs,
     )
 
 
@@ -596,6 +593,7 @@ def pt3_ratio_fit(
     pt2_fit_res: lsf.nonlinear_fit | None = None,
     part: str = "both",
     svdcut: float = 1e-2,
+    p0: dict[str, float] | None = None,
 ) -> lsf.nonlinear_fit:
     """Fit real and imaginary 3pt/2pt ratio data with an n-state ansatz."""
     parts = _fit_parts(part)
@@ -635,12 +633,16 @@ def pt3_ratio_fit(
         }
         return {key: values[key] for key in parts}
 
+    kwargs: dict[str, Any] = {}
+    if p0 is not None:
+        kwargs["p0"] = p0
     return lsf.nonlinear_fit(
         data=(x_vecs, y_data),
         prior=priors,
         fcn=fcn,
         svdcut=svdcut,
         maxit=10000,
+        **kwargs,
     )
 
 
@@ -698,6 +700,7 @@ def _pt3_fit_record(
     part: str,
     svdcut: float,
     prior: gv.BufferDict | None = None,
+    p0: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     fit = pt3_ratio_fit(
         [int(t) for t in tsep_ls],
@@ -709,8 +712,133 @@ def _pt3_fit_record(
         part=part,
         svdcut=float(svdcut),
         prior=prior,
+        p0=p0,
     )
     return {
+        "tsep_ls": [int(t) for t in tsep_ls],
+        "tau_cut": int(tau_cut),
+        "nstate": int(nstate),
+        "part": part,
+        "chi2_dof": float(fit.chi2 / fit.dof),
+        "Q": float(fit.Q),
+        "logGBF": float(fit.logGBF),
+        "fit": fit,
+    }
+
+
+def pt2_ratio_joint_fit(
+    pt2_gv: np.ndarray,
+    *,
+    tmin: int,
+    tmax: int,
+    ratio_real: dict[int, np.ndarray],
+    ratio_imag: dict[int, np.ndarray],
+    tsep_ls: list[int],
+    tau_cut: int,
+    Lt: int,
+    nstate: int = 2,
+    prior: gv.BufferDict | None = None,
+    part: str = "both",
+    svdcut: float = 1e-2,
+    p0: dict[str, float] | None = None,
+) -> lsf.nonlinear_fit:
+    """Jointly fit 2pt data and real/imag 3pt/2pt ratios."""
+    parts = _fit_parts(part)
+    priors = prior if prior is not None else pt3_ratio_prior(nstate=nstate)
+    fit_t = np.arange(int(tmin), int(tmax), dtype=int)
+    fit_pt2 = np.asarray(pt2_gv)[fit_t]
+
+    ts: list[int] = []
+    taus: list[int] = []
+    fit_real: list = []
+    fit_imag: list = []
+    for tsep in tsep_ls:
+        if int(tsep) not in ratio_real or int(tsep) not in ratio_imag:
+            raise KeyError(f"ratio data missing tsep {tsep}")
+        tau_range = range(int(tau_cut), int(tsep) + 1 - int(tau_cut))
+        if len(tau_range) == 0:
+            raise ValueError(f"empty tau fit window for tsep {tsep} and tau_cut {tau_cut}")
+        real_row = np.asarray(ratio_real[int(tsep)], dtype=object)
+        imag_row = np.asarray(ratio_imag[int(tsep)], dtype=object)
+        for tau in tau_range:
+            ts.append(int(tsep))
+            taus.append(int(tau))
+            fit_real.append(real_row[tau])
+            fit_imag.append(imag_row[tau])
+
+    x_data = {
+        "pt2_t": fit_t,
+        "ratio_t": np.array(ts, dtype=float),
+        "ratio_tau": np.array(taus, dtype=float),
+    }
+    y_data: dict[str, Any] = {"pt2": fit_pt2}
+    if "re" in parts:
+        y_data["ratio_re"] = fit_real
+    if "im" in parts:
+        y_data["ratio_im"] = fit_imag
+
+    def fcn(x: dict[str, np.ndarray], p: dict) -> dict[str, np.ndarray]:
+        values: dict[str, np.ndarray] = {
+            "pt2": pt2_re_fcn(x["pt2_t"], p, int(Lt), nstate=int(nstate)),
+        }
+        if "re" in parts:
+            values["ratio_re"] = pt3_ratio_re_fcn(
+                x["ratio_t"], x["ratio_tau"], p, int(Lt), nstate=int(nstate)
+            )
+        if "im" in parts:
+            values["ratio_im"] = pt3_ratio_im_fcn(
+                x["ratio_t"], x["ratio_tau"], p, int(Lt), nstate=int(nstate)
+            )
+        return values
+
+    kwargs: dict[str, Any] = {}
+    if p0 is not None:
+        kwargs["p0"] = p0
+    return lsf.nonlinear_fit(
+        data=(x_data, y_data),
+        prior=priors,
+        fcn=fcn,
+        svdcut=float(svdcut),
+        maxit=10000,
+        **kwargs,
+    )
+
+
+def _joint_fit_record(
+    pt2_gv: np.ndarray,
+    ratio_real: dict[int, np.ndarray],
+    ratio_imag: dict[int, np.ndarray],
+    *,
+    tmin: int,
+    tmax: int,
+    tsep_ls: list[int],
+    tau_cut: int,
+    Lt: int,
+    nstate: int,
+    part: str,
+    svdcut: float,
+    prior: gv.BufferDict | None = None,
+    p0: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    fit = pt2_ratio_joint_fit(
+        pt2_gv,
+        tmin=int(tmin),
+        tmax=int(tmax),
+        ratio_real=ratio_real,
+        ratio_imag=ratio_imag,
+        tsep_ls=[int(t) for t in tsep_ls],
+        tau_cut=int(tau_cut),
+        Lt=int(Lt),
+        nstate=int(nstate),
+        prior=prior,
+        part=part,
+        svdcut=float(svdcut),
+        p0=p0,
+    )
+    return {
+        "fit_mode": "joint_2pt_ratio",
+        "tmin": int(tmin),
+        "tmax": int(tmax),
         "tsep_ls": [int(t) for t in tsep_ls],
         "tau_cut": int(tau_cut),
         "nstate": int(nstate),
@@ -874,8 +1002,17 @@ def _fit_record(
     Lt: int,
     nstate: int,
     svdcut: float,
+    p0: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    fit = pt2_fit(data, int(tmin), int(tmax), int(Lt), nstate=int(nstate), svdcut=float(svdcut))
+    fit = pt2_fit(
+        data,
+        int(tmin),
+        int(tmax),
+        int(Lt),
+        nstate=int(nstate),
+        svdcut=float(svdcut),
+        p0=p0,
+    )
     return {
         "tmin": int(tmin),
         "tmax": int(tmax),
@@ -1171,6 +1308,1293 @@ def plot_pt3_fit_on_data(
     }
 
 
+# --- batch bare-matrix export ------------------------------------------------
+
+
+def _progress(iterable, *, desc: str):
+    """Use tqdm when available, otherwise return the iterable unchanged."""
+    try:
+        from tqdm import tqdm
+    except Exception:
+        return iterable
+    return tqdm(iterable, desc=desc)
+
+
+
+def _recenter_gvar(mean: np.ndarray, template: np.ndarray) -> np.ndarray:
+    """Use ``template`` covariance with a replacement mean vector."""
+    return gv.gvar(np.asarray(mean, dtype=float), gv.evalcov(template))
+
+
+def _fit_p0_from_prior(fit: lsf.nonlinear_fit, prior: gv.BufferDict) -> dict[str, float]:
+    """Build an lsqfit p0 dict using only keys present in the prior."""
+    p0: dict[str, float] = {}
+    for key in prior:
+        try:
+            p0[key] = float(gv.mean(fit.p[key]))
+        except Exception:
+            p0[key] = float(gv.mean(prior[key]))
+    return p0
+
+
+def _posterior_as_prior(fit: lsf.nonlinear_fit, template: gv.BufferDict) -> gv.BufferDict:
+    """Use a fit posterior as a same-key prior for follow-up sample fits."""
+    prior = gv.BufferDict()
+    for key in template:
+        prior[key] = fit.p[key] if key in fit.p else template[key]
+    return prior
+
+
+
+def _scaled_posterior_as_prior(
+    fit: lsf.nonlinear_fit,
+    template: gv.BufferDict,
+    *,
+    error_scale: float = 3.0,
+) -> gv.BufferDict:
+    """Use a fit posterior as a prior with inflated uncertainties."""
+    prior = gv.BufferDict()
+    for key in template:
+        value = fit.p[key] if key in fit.p else template[key]
+        prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * float(error_scale))
+    return prior
+
+
+def _fit_posterior_is_usable(
+    fit: lsf.nonlinear_fit,
+    template: gv.BufferDict,
+    *,
+    sdev_floor: float = 1e-12,
+    e0_floor: float = 1e-4,
+) -> tuple[bool, str | None]:
+    """Reject non-finite or numerically degenerate posteriors before sample fits."""
+    for key in template:
+        if key not in fit.p:
+            return False, f"missing posterior key {key}"
+        mean = float(gv.mean(fit.p[key]))
+        sdev = float(gv.sdev(fit.p[key]))
+        if not np.isfinite(mean) or not np.isfinite(sdev):
+            return False, f"non-finite posterior for {key}: mean={mean}, sdev={sdev}"
+        if sdev <= float(sdev_floor):
+            return False, f"degenerate posterior for {key}: sdev={sdev}"
+    e0 = float(gv.mean(fit.p["E0"]))
+    if e0 <= float(e0_floor):
+        return False, f"non-physical E0 posterior: E0={e0}"
+    return True, None
+
+
+def _scan_joint_average_windows(
+    pt2_avg_gv: np.ndarray,
+    ratio_real_avg: dict[int, np.ndarray],
+    ratio_imag_avg: dict[int, np.ndarray],
+    *,
+    pt2_windows: list[dict[str, int]],
+    pt3_windows: list[dict[str, Any]],
+    Lt: int,
+    nstate: int,
+    part: str,
+    svdcut: float,
+    prior: gv.BufferDict,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Scan joint 2pt+ratio windows and return usable records plus rejections."""
+    records: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    template = pt3_ratio_prior(nstate=int(nstate))
+    for pt2_window in pt2_windows:
+        for pt3_window in pt3_windows:
+            meta = {
+                "tmin": int(pt2_window["tmin"]),
+                "tmax": int(pt2_window["tmax"]),
+                "tsep_ls": [int(t) for t in pt3_window["tsep_ls"]],
+                "tau_cut": int(pt3_window["tau_cut"]),
+            }
+            try:
+                _validate_fit_window(
+                    tmin=meta["tmin"],
+                    tmax=meta["tmax"],
+                    Lt=int(Lt),
+                    nstate=int(nstate),
+                    append=False,
+                    n_existing=0,
+                )
+                _validate_pt3_fit_window(
+                    tsep_ls=meta["tsep_ls"],
+                    tau_cut=meta["tau_cut"],
+                    nstate=int(nstate),
+                    part=part,
+                    append=False,
+                    n_existing=0,
+                    ratio_real=ratio_real_avg,
+                )
+                record = _joint_fit_record(
+                    pt2_avg_gv,
+                    ratio_real_avg,
+                    ratio_imag_avg,
+                    tmin=meta["tmin"],
+                    tmax=meta["tmax"],
+                    tsep_ls=meta["tsep_ls"],
+                    tau_cut=meta["tau_cut"],
+                    Lt=int(Lt),
+                    nstate=int(nstate),
+                    part=part,
+                    svdcut=float(svdcut),
+                    prior=prior,
+                )
+                usable, reason = _fit_posterior_is_usable(record["fit"], template)
+                if not usable:
+                    rejected.append({**meta, "reason": reason})
+                    continue
+                records.append(record)
+            except Exception as exc:
+                rejected.append({**meta, "reason": str(exc)})
+    if not records:
+        reasons = "; ".join(str(item) for item in rejected[:5])
+        raise ValueError("all sample-average joint fit windows failed or were rejected: " + reasons)
+    return records, rejected
+
+
+def _write_sample0_ratio_plot(
+    *,
+    ratio_real_sample: dict[int, np.ndarray],
+    ratio_imag_sample: dict[int, np.ndarray],
+    fit_record: dict[str, Any],
+    Lt: int,
+    log_dir: Path,
+    z: int,
+    fit_label: str = "joint_fit",
+) -> dict[str, str]:
+    """Save sample-0 ratio fit-on-data plots only."""
+    stem = log_dir / f"{fit_label}_z{int(z)}_sample0"
+    figures = plot_pt3_ratio_fit_on_data(
+        ratio_real_sample,
+        ratio_imag_sample,
+        window_bands=[
+            {
+                "record_label": f"joint t=[{fit_record['tmin']},{fit_record['tmax']}), tau_cut={fit_record['tau_cut']}",
+                "bands": _pt3_window_fit_bands(fit_record, int(Lt)),
+                "fit": fit_record["fit"],
+            }
+        ],
+        save_path=stem,
+    )
+    for fig, _ax in figures:
+        plt.close(fig)
+    return {
+        "ratio_re_pdf": str(stem.with_name(f"{stem.name}_pt3_ratio_re.pdf")),
+        "ratio_im_pdf": str(stem.with_name(f"{stem.name}_pt3_ratio_im.pdf")),
+    }
+
+
+def _normalise_pt2_windows(
+    windows: list[dict[str, int]] | None,
+    *,
+    Lt: int,
+) -> list[dict[str, int]]:
+    if windows is not None:
+        return [{"tmin": int(w["tmin"]), "tmax": int(w["tmax"])} for w in windows]
+    quarter = max(int(Lt) // 4, 1)
+    # Default windows target the common two-state fit, which needs at least 4 points.
+    max_tmin = quarter - 4
+    tmins = list(range(2, max_tmin + 1))
+    return [{"tmin": tmin, "tmax": quarter} for tmin in tmins[:MAX_FIT_WINDOWS]]
+
+
+def _normalise_pt3_windows(
+    windows: list[dict[str, Any]] | None,
+    *,
+    tsep_ls: list[int],
+    tau_cuts: list[int] | None,
+) -> list[dict[str, Any]]:
+    if windows is not None:
+        return [
+            {
+                "tsep_ls": [int(t) for t in w.get("tsep_ls", tsep_ls)],
+                "tau_cut": int(w["tau_cut"]),
+            }
+            for w in windows
+        ]
+    cuts = [int(cut) for cut in (tau_cuts if tau_cuts is not None else [1, 2, 3, 4])]
+    return [{"tsep_ls": [int(t) for t in tsep_ls], "tau_cut": cut} for cut in cuts]
+
+
+def _select_best_fit_index(
+    records: list[dict[str, Any]],
+    *,
+    q_min: float = 0.05,
+) -> tuple[int, bool]:
+    """Select best window: max logGBF among Q-passing fits, otherwise max Q."""
+    if not records:
+        raise ValueError("cannot select a fit window from an empty scan")
+    passing = [i for i, rec in enumerate(records) if float(rec.get("Q", 0.0)) >= float(q_min)]
+    if passing:
+        return max(passing, key=lambda i: float(records[i].get("logGBF", -np.inf))), False
+    return max(range(len(records)), key=lambda i: float(records[i].get("Q", -np.inf))), True
+
+
+def _fit_summary(rec: dict[str, Any], *, fallback: bool, index: int) -> dict[str, Any]:
+    summary = {
+        "index": int(index),
+        "chi2_dof": float(rec["chi2_dof"]),
+        "Q": float(rec["Q"]),
+        "logGBF": float(rec["logGBF"]),
+        "fallback_no_q_passing": bool(fallback),
+    }
+    for key in ("tmin", "tmax", "tsep_ls", "tau_cut", "nstate", "part"):
+        if key in rec:
+            summary[key] = rec[key]
+    return summary
+
+
+def _read_pt2_complex(
+    path: str,
+    *,
+    source_sink: str,
+    gamma: str,
+    momentum: str,
+) -> np.ndarray:
+    with h5py.File(path, "r") as h5f:
+        return np.swapaxes(np.asarray(h5f[source_sink][gamma][momentum]), 0, 1)
+
+
+def _read_pt3_complex(
+    path: str,
+    *,
+    source_sink: str,
+    gamma: str,
+    momentum: str,
+    b_dir: str,
+    eta: str,
+    bt: str,
+    bz: str,
+    tsep: int,
+) -> np.ndarray:
+    dset = _pt3_dataset_path(
+        source_sink=source_sink,
+        gamma=gamma,
+        momentum=momentum,
+        b_dir=b_dir,
+        eta=eta,
+        bt=bt,
+        bz=bz,
+    )
+    with h5py.File(path, "r") as h5f:
+        data = np.swapaxes(np.asarray(h5f[dset]), 0, 1)
+    expected_ntau = int(tsep) + 1
+    if data.shape[1] != expected_ntau:
+        raise ValueError(
+            f"{path}:{dset} has ntau={data.shape[1]}, expected {expected_ntau} for tsep={tsep}"
+        )
+    return data
+
+
+def _scan_pt2_average_windows(
+    pt2_avg_gv: np.ndarray,
+    *,
+    windows: list[dict[str, int]],
+    Lt: int,
+    nstate: int,
+    svdcut: float,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for window in windows:
+        try:
+            _validate_fit_window(
+                tmin=int(window["tmin"]),
+                tmax=int(window["tmax"]),
+                Lt=int(Lt),
+                nstate=int(nstate),
+                append=False,
+                n_existing=0,
+            )
+            records.append(
+                _fit_record(
+                    pt2_avg_gv,
+                    tmin=int(window["tmin"]),
+                    tmax=int(window["tmax"]),
+                    Lt=int(Lt),
+                    nstate=int(nstate),
+                    svdcut=float(svdcut),
+                )
+            )
+        except Exception as exc:
+            errors.append(f"pt2 window {window}: {exc}")
+    if not records:
+        raise ValueError("all sample-average 2pt fit windows failed: " + "; ".join(errors))
+    return records
+
+
+def _scan_pt3_average_windows(
+    ratio_real_avg: dict[int, np.ndarray],
+    ratio_imag_avg: dict[int, np.ndarray],
+    *,
+    windows: list[dict[str, Any]],
+    Lt: int,
+    nstate: int,
+    part: str,
+    svdcut: float,
+    prior: gv.BufferDict,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for window in windows:
+        try:
+            tseps = [int(t) for t in window["tsep_ls"]]
+            tau_cut = int(window["tau_cut"])
+            _validate_pt3_fit_window(
+                tsep_ls=tseps,
+                tau_cut=tau_cut,
+                nstate=int(nstate),
+                part=part,
+                append=False,
+                n_existing=0,
+                ratio_real=ratio_real_avg,
+            )
+            records.append(
+                _pt3_fit_record(
+                    ratio_real_avg,
+                    ratio_imag_avg,
+                    tsep_ls=tseps,
+                    tau_cut=tau_cut,
+                    Lt=int(Lt),
+                    nstate=int(nstate),
+                    part=part,
+                    svdcut=float(svdcut),
+                    prior=prior,
+                )
+            )
+        except Exception as exc:
+            errors.append(f"pt3 window {window}: {exc}")
+    if not records:
+        raise ValueError("all sample-average 3pt fit windows failed: " + "; ".join(errors))
+    return records
+
+
+def _bare_matrix_samples_from_records(
+    records: list[dict[str, Any]],
+) -> tuple[np.ndarray, np.ndarray]:
+    real: list[float] = []
+    imag: list[float] = []
+    for rec in records:
+        fit = rec.get("fit")
+        if fit is None:
+            real.append(np.nan)
+            imag.append(np.nan)
+            continue
+        real.append(float(gv.mean(fit.p["O00_re"] / (2 * fit.p["E0"]))))
+        imag.append(float(gv.mean(fit.p["O00_im"] / (2 * fit.p["E0"]))))
+    return np.asarray(real, dtype=float), np.asarray(imag, dtype=float)
+
+
+def _bare_filename(
+    *,
+    ensemble: str,
+    tag: str,
+    variant: str,
+    direction: str,
+    momentum: str,
+    b_label: str,
+    z: int,
+) -> str:
+    return f"{ensemble}_{tag}_{variant}_{direction}_{momentum}_{b_label}_z{int(z)}.txt"
+
+
+def _write_bare_matrix_grid_outputs(
+    records: list[dict[str, Any]],
+    *,
+    artifacts_dir: str | Path,
+    save_path: str | None,
+    ensemble: str,
+    tag: str,
+    variant: str,
+    direction: str,
+    momentum: str,
+    b_label: str,
+    resample_mode: str,
+    output_subdir: str = "bare_qpdf",
+    ylim: tuple[float, float] = (-0.2, 1.2),
+) -> dict[str, Any]:
+    """Write per-z sample text files, summary plot, and JSON report."""
+    out_dir = Path(artifacts_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    txt_dir = out_dir / output_subdir
+    txt_dir.mkdir(parents=True, exist_ok=True)
+    resolved_save = resolve_plot_save_path(
+        save_path,
+        artifacts_dir=out_dir,
+        default_stem="bare_matrix_elements",
+    )
+
+    z_values: list[int] = []
+    real_mean: list[float] = []
+    real_err: list[float] = []
+    imag_mean: list[float] = []
+    imag_err: list[float] = []
+    outputs: list[dict[str, Any]] = []
+
+    for rec in sorted(records, key=lambda item: int(item["z"])):
+        z = int(rec["z"])
+        real = np.asarray(rec["real_samples"], dtype=float)
+        imag = np.asarray(rec["imag_samples"], dtype=float)
+        path = txt_dir / _bare_filename(
+            ensemble=ensemble,
+            tag=tag,
+            variant=variant,
+            direction=direction,
+            momentum=momentum,
+            b_label=b_label,
+            z=z,
+        )
+        np.savetxt(path, np.column_stack([real, imag]), fmt="%.10e")
+        r_mean, r_err = _sample_mean_err(real, mode=resample_mode)
+        i_mean, i_err = _sample_mean_err(imag, mode=resample_mode)
+        z_values.append(z)
+        real_mean.append(r_mean)
+        real_err.append(r_err)
+        imag_mean.append(i_mean)
+        imag_err.append(i_err)
+        outputs.append(
+            {
+                "z": z,
+                "path": str(path),
+                "n_samples": int(real.shape[0]),
+                "n_failed_samples": int(np.count_nonzero(~np.isfinite(real) | ~np.isfinite(imag))),
+                "real_mean": r_mean,
+                "real_sdev": r_err,
+                "imag_mean": i_mean,
+                "imag_sdev": i_err,
+                "pt3_window": rec["pt3_window"],
+                "joint_window": rec.get("joint_window", rec["pt3_window"]),
+                "sample0_plot_paths": rec.get("sample0_plot_paths", {}),
+            }
+        )
+
+    fig, ax = default_plot()
+    ax.errorbar(
+        z_values,
+        real_mean,
+        real_err,
+        label="Re",
+        color=COLOR_CYCLE[0],
+        **ERRORBAR_STYLE,
+    )
+    ax.errorbar(
+        z_values,
+        imag_mean,
+        imag_err,
+        label="Im",
+        color=COLOR_CYCLE[1],
+        marker="s",
+        **ERRORBAR_STYLE,
+    )
+    ax.set_xlabel(r"$z/a$", **FONT_SIZE)
+    ax.set_ylabel(r"Bare matrix element $O_{00}/(2E_0)$", **FONT_SIZE)
+    ax.set_title(f"{ensemble} {momentum} {direction} bare matrix elements", **FONT_SIZE)
+    ax.set_ylim(*ylim)
+    ax.legend(**LEGEND_SETS)
+    fig.tight_layout()
+    pdf_path = f"{resolved_save}.pdf"
+    fig.savefig(pdf_path, bbox_inches="tight", transparent=True)
+    plt.close(fig)
+
+    report = {
+        "ensemble": ensemble,
+        "tag": tag,
+        "variant": variant,
+        "direction": direction,
+        "momentum": momentum,
+        "b_label": b_label,
+        "resample_mode": resample_mode,
+        "plot_ylim": [float(ylim[0]), float(ylim[1])],
+        "output_subdir": str(txt_dir),
+        "plot_pdf": pdf_path,
+        "outputs": outputs,
+    }
+    report_path = f"{resolved_save}_report.json"
+    Path(report_path).write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return {
+        "txt_dir": str(txt_dir),
+        "plot_pdf": pdf_path,
+        "report_json": report_path,
+        "n_z": len(records),
+        "n_txt": len(outputs),
+        "plot_ylim": [float(ylim[0]), float(ylim[1])],
+        "outputs": outputs,
+    }
+
+
+
+def _normalise_fit_strategy(value: str | None) -> tuple[str, str]:
+    raw = "joint" if value is None else str(value).strip().lower()
+    aliases = {
+        "joint": ("joint", "joint_2pt_ratio"),
+        "joint_2pt_ratio": ("joint", "joint_2pt_ratio"),
+        "joint-fit": ("joint", "joint_2pt_ratio"),
+        "chained": ("chained", "chained_2pt_ratio"),
+        "chained_2pt_ratio": ("chained", "chained_2pt_ratio"),
+        "chain": ("chained", "chained_2pt_ratio"),
+    }
+    if raw not in aliases:
+        raise ValueError("fit_strategy must be 'joint' or 'chained', got %r" % value)
+    return aliases[raw]
+
+
+def _split_fit_log_paths(
+    *,
+    log_dir: Path,
+    log_path: str | Path | None,
+    ensemble: str,
+    tag: str,
+    variant: str,
+    direction: str,
+    momentum: str,
+    b_label: str,
+    fit_mode: str,
+) -> tuple[Path, Path]:
+    if log_path is not None:
+        base = Path(log_path)
+        suffix = base.suffix or ".log"
+        return (
+            base.with_name(f"{base.stem}_tuning{suffix}"),
+            base.with_name(f"{base.stem}_samples{suffix}"),
+        )
+    stem = f"{ensemble}_{tag}_{variant}_{direction}_{momentum}_{b_label}_{fit_mode}"
+    return log_dir / f"{stem}_tuning.log", log_dir / f"{stem}_samples.log"
+
+
+def _normalise_pt3_paths(
+    pt3_paths: dict[str, str] | list[str],
+    *,
+    tsep_ls: list[int],
+) -> dict[int, str]:
+    if isinstance(pt3_paths, dict):
+        return {int(k): str(v) for k, v in pt3_paths.items()}
+    if len(pt3_paths) != len(tsep_ls):
+        raise ValueError("pt3_paths list length must match tsep_ls")
+    return {int(tsep): str(path) for tsep, path in zip(tsep_ls, pt3_paths)}
+
+
+def fit_bare_matrix_grid(
+    store: dict[str, Any],
+    *,
+    pt2_path: str,
+    pt3_paths: dict[str, str] | list[str],
+    tsep_ls: list[int],
+    z_values: list[int],
+    ensemble: str,
+    tag: str,
+    momentum: str,
+    direction: str = "X",
+    variant: str = "free",
+    source_sink: str = "SS",
+    pt2_gamma: str = "5",
+    pt3_gamma: str = "T",
+    b_dir: str = "b_X",
+    eta: str = "eta0",
+    bt: str = "bT0",
+    b_label: str = "b0",
+    pt2_windows: list[dict[str, int]] | None = None,
+    pt3_windows: list[dict[str, Any]] | None = None,
+    pt3_tau_cuts: list[int] | None = None,
+    fit_strategy: str = "joint",
+    nstate: int = 2,
+    resample_mode: str = "bs",
+    n_boot: int = 200,
+    seed: int | None = 1984,
+    svdcut: float = 1e-2,
+    part: str = "both",
+    q_min: float = 0.05,
+    posterior_prior_error_scale: float = 3.0,
+    output_subdir: str = "bare_qpdf",
+    save_path: str | None = None,
+    log_dir: str | Path | None = None,
+    log_path: str | Path | None = None,
+    artifacts_dir: str | Path | None = None,
+    out: str = "bare_matrix_grid",
+) -> dict[str, Any]:
+    """Batch-fit bare matrix elements over z and export resampled samples."""
+    del out
+    strategy, fit_mode = _normalise_fit_strategy(fit_strategy)
+    if strategy == "chained":
+        return _fit_bare_matrix_grid_chained(
+            store,
+            pt2_path=pt2_path,
+            pt3_paths=pt3_paths,
+            tsep_ls=tsep_ls,
+            z_values=z_values,
+            ensemble=ensemble,
+            tag=tag,
+            momentum=momentum,
+            direction=direction,
+            variant=variant,
+            source_sink=source_sink,
+            pt2_gamma=pt2_gamma,
+            pt3_gamma=pt3_gamma,
+            b_dir=b_dir,
+            eta=eta,
+            bt=bt,
+            b_label=b_label,
+            pt2_windows=pt2_windows,
+            pt3_windows=pt3_windows,
+            pt3_tau_cuts=pt3_tau_cuts,
+            nstate=nstate,
+            resample_mode=resample_mode,
+            n_boot=n_boot,
+            seed=seed,
+            svdcut=svdcut,
+            part=part,
+            q_min=q_min,
+            posterior_prior_error_scale=posterior_prior_error_scale,
+            output_subdir=output_subdir,
+            save_path=save_path,
+            log_dir=log_dir,
+            log_path=log_path,
+            artifacts_dir=artifacts_dir,
+        )
+
+    mode = str(resample_mode)
+    if mode not in {"bs", "jk"}:
+        raise ValueError(f"resample_mode must be 'bs' or 'jk', got {resample_mode!r}")
+    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
+    fit_log_dir = Path(log_dir) if log_dir is not None else out_dir / "fit_logs"
+    fit_log_dir.mkdir(parents=True, exist_ok=True)
+    tuning_log_path, sample_log_path = _split_fit_log_paths(
+        log_dir=fit_log_dir,
+        log_path=log_path,
+        ensemble=ensemble,
+        tag=tag,
+        variant=variant,
+        direction=direction,
+        momentum=momentum,
+        b_label=b_label,
+        fit_mode=fit_mode,
+    )
+    tuning_logger = setup_logger(tuning_log_path, console_output=False, logger_name="correlator_tuning_logger")
+    sample_logger = setup_logger(sample_log_path, console_output=False, logger_name="correlator_sample_logger")
+    tuning_logger.info("Starting joint 2pt+ratio bare matrix grid fit")
+    tuning_logger.info("ensemble=%s tag=%s momentum=%s direction=%s z_values=%s", ensemble, tag, momentum, direction, z_values)
+    sample_logger.info("Starting joint 2pt+ratio per-sample fit log")
+
+    tseps = [int(t) for t in tsep_ls]
+    z_list = [int(z) for z in z_values]
+    paths_by_tsep = _normalise_pt3_paths(pt3_paths, tsep_ls=tseps)
+    missing = [tsep for tsep in tseps if tsep not in paths_by_tsep]
+    if missing:
+        raise ValueError(f"pt3_paths missing tsep entries: {missing}")
+
+    pt2_complex = _read_pt2_complex(
+        pt2_path,
+        source_sink=source_sink,
+        gamma=pt2_gamma,
+        momentum=momentum,
+    )
+    pt2_real = np.real(pt2_complex)
+    n_cfg, Lt = pt2_real.shape
+    pt2_samples, indices = _resample_config_samples(
+        pt2_real,
+        mode=mode,
+        n_boot=int(n_boot),
+        seed=seed,
+    )
+    pt2_gv = _samples_to_gvar(pt2_samples, mode=mode)
+    pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=int(Lt))
+    pt3_window_specs = _normalise_pt3_windows(
+        pt3_windows,
+        tsep_ls=tseps,
+        tau_cuts=pt3_tau_cuts,
+    )
+    tuning_logger.info("Lt=%s n_cfg=%s resample_mode=%s n_samples=%s", Lt, n_cfg, mode, pt2_samples.shape[0])
+    tuning_logger.info("pt2_windows=%s pt3_windows=%s svdcut=%s", pt2_window_specs, pt3_window_specs, svdcut)
+
+    z_records: list[dict[str, Any]] = []
+    z_report: list[dict[str, Any]] = []
+    joint_template = pt3_ratio_prior(nstate=int(nstate))
+
+    for z in _progress(z_list, desc=f"fit bare matrix {ensemble} {momentum} {direction}"):
+        tuning_logger.info("=== z=%s ===", z)
+        bz = f"bz{z}"
+        ratio_samples_re: dict[int, np.ndarray] = {}
+        ratio_samples_im: dict[int, np.ndarray] = {}
+        ratio_real_gv: dict[int, np.ndarray] = {}
+        ratio_imag_gv: dict[int, np.ndarray] = {}
+
+        for tsep in tseps:
+            pt3 = _read_pt3_complex(
+                paths_by_tsep[tsep],
+                source_sink=source_sink,
+                gamma=pt3_gamma,
+                momentum=momentum,
+                b_dir=b_dir,
+                eta=eta,
+                bt=bt,
+                bz=bz,
+                tsep=tsep,
+            )
+            if pt3.shape[0] != n_cfg:
+                raise ValueError(
+                    f"3pt n_cfg mismatch for z={z}, tsep={tsep}: {pt3.shape[0]} != {n_cfg}"
+                )
+            ratio = pt3 / pt2_complex[:, int(tsep)][:, None]
+            ratio_samples, _ = _resample_config_samples(
+                ratio,
+                mode=mode,
+                n_boot=int(n_boot),
+                seed=seed,
+                indices=indices,
+            )
+            ratio_samples_re[tsep] = np.real(ratio_samples)
+            ratio_samples_im[tsep] = np.imag(ratio_samples)
+            ratio_real_gv[tsep] = _samples_to_gvar(ratio_samples_re[tsep], mode=mode)
+            ratio_imag_gv[tsep] = _samples_to_gvar(ratio_samples_im[tsep], mode=mode)
+
+        avg_records, rejected_windows = _scan_joint_average_windows(
+            pt2_gv,
+            ratio_real_gv,
+            ratio_imag_gv,
+            pt2_windows=pt2_window_specs,
+            pt3_windows=pt3_window_specs,
+            Lt=int(Lt),
+            nstate=int(nstate),
+            part=part,
+            svdcut=float(svdcut),
+            prior=joint_template,
+        )
+        for idx, rec in enumerate(avg_records):
+            tuning_logger.info(
+                "candidate z=%s idx=%s t=[%s,%s) tau_cut=%s Q=%.6g chi2/dof=%.6g logGBF=%.6g E0=%s O00_re=%s",
+                z,
+                idx,
+                rec["tmin"],
+                rec["tmax"],
+                rec["tau_cut"],
+                rec["Q"],
+                rec["chi2_dof"],
+                rec["logGBF"],
+                rec["fit"].p["E0"],
+                rec["fit"].p["O00_re"],
+            )
+            log_nonlinear_fit_quality(
+                rec["fit"],
+                kind="sample-average joint 2pt+ratio",
+                label=f"z={z} idx={idx} t=[{rec['tmin']},{rec['tmax']}) tau_cut={rec['tau_cut']}",
+                logger=tuning_logger,
+                q_min=float(q_min),
+            )
+        for rejected in rejected_windows:
+            tuning_logger.info("rejected z=%s window=%s", z, rejected)
+
+        best_index, fallback = _select_best_fit_index(avg_records, q_min=float(q_min))
+        avg_best = avg_records[best_index]
+        tuning_logger.info(
+            "selected z=%s index=%s fallback=%s t=[%s,%s) tau_cut=%s Q=%.6g chi2/dof=%.6g logGBF=%.6g",
+            z,
+            best_index,
+            fallback,
+            avg_best["tmin"],
+            avg_best["tmax"],
+            avg_best["tau_cut"],
+            avg_best["Q"],
+            avg_best["chi2_dof"],
+            avg_best["logGBF"],
+        )
+        tuning_logger.info("selected fit format for z=%s:\n%s", z, avg_best["fit"].format(100))
+
+        sample_prior = _scaled_posterior_as_prior(
+            avg_best["fit"],
+            joint_template,
+            error_scale=float(posterior_prior_error_scale),
+        )
+        sample_p0 = _fit_p0_from_prior(avg_best["fit"], sample_prior)
+
+        n_samples = int(ratio_samples_re[tseps[0]].shape[0])
+        sample_records: list[dict[str, Any]] = []
+        sample_failures: list[dict[str, Any]] = []
+        sample0_plot_paths: dict[str, str] = {}
+        for sample_index in range(n_samples):
+            try:
+                pt2_sample = _recenter_gvar(pt2_samples[sample_index], pt2_gv)
+                ratio_real_sample = {
+                    tsep: _recenter_gvar(ratio_samples_re[tsep][sample_index], ratio_real_gv[tsep])
+                    for tsep in tseps
+                }
+                ratio_imag_sample = {
+                    tsep: _recenter_gvar(ratio_samples_im[tsep][sample_index], ratio_imag_gv[tsep])
+                    for tsep in tseps
+                }
+                sample_rec = _joint_fit_record(
+                    pt2_sample,
+                    ratio_real_sample,
+                    ratio_imag_sample,
+                    tmin=avg_best["tmin"],
+                    tmax=avg_best["tmax"],
+                    tsep_ls=avg_best["tsep_ls"],
+                    tau_cut=avg_best["tau_cut"],
+                    Lt=int(Lt),
+                    nstate=int(nstate),
+                    part=part,
+                    svdcut=float(svdcut),
+                    prior=sample_prior,
+                    p0=sample_p0,
+                )
+                sample_records.append(sample_rec)
+                log_nonlinear_fit_quality(
+                    sample_rec["fit"],
+                    kind="joint 2pt+ratio",
+                    label=f"z={z} sample={sample_index}",
+                    logger=sample_logger,
+                    q_min=float(q_min),
+                )
+                if sample_index == 0:
+                    sample_logger.info(
+                        "sample0 z=%s Q=%.6g chi2/dof=%.6g logGBF=%.6g O00/(2E0)=(%s,%s)",
+                        z,
+                        sample_rec["Q"],
+                        sample_rec["chi2_dof"],
+                        sample_rec["logGBF"],
+                        sample_rec["fit"].p["O00_re"] / (2 * sample_rec["fit"].p["E0"]),
+                        sample_rec["fit"].p["O00_im"] / (2 * sample_rec["fit"].p["E0"]),
+                    )
+                    sample0_plot_paths = _write_sample0_ratio_plot(
+                        ratio_real_sample=ratio_real_sample,
+                        ratio_imag_sample=ratio_imag_sample,
+                        fit_record=sample_rec,
+                        Lt=int(Lt),
+                        log_dir=fit_log_dir,
+                        z=z,
+                    )
+            except Exception as exc:
+                sample_records.append({"fit": None})
+                sample_failures.append({"sample": sample_index, "stage": "joint_2pt_ratio", "error": str(exc)})
+                sample_logger.info("Bad joint 2pt+ratio z=%s sample=%s: %s", z, sample_index, exc)
+
+        real_samples, imag_samples = _bare_matrix_samples_from_records(sample_records)
+        if not np.any(np.isfinite(real_samples)):
+            raise ValueError(f"all resampled joint fits failed for z={z}")
+        real_mean, real_sdev = _sample_mean_err(real_samples, mode=mode)
+        imag_mean, imag_sdev = _sample_mean_err(imag_samples, mode=mode)
+        sample_logger.info(
+            "summary z=%s real=%s +/- %s imag=%s +/- %s failed_samples=%s",
+            z,
+            real_mean,
+            real_sdev,
+            imag_mean,
+            imag_sdev,
+            len(sample_failures),
+        )
+        window_summary = _fit_summary(avg_best, fallback=fallback, index=best_index)
+        z_records.append(
+            {
+                "z": z,
+                "real_samples": real_samples,
+                "imag_samples": imag_samples,
+                "pt3_window": window_summary,
+                "joint_window": window_summary,
+                "sample0_plot_paths": sample0_plot_paths,
+            }
+        )
+        z_report.append(
+            {
+                "z": z,
+                "joint_window": window_summary,
+                "rejected_windows": rejected_windows,
+                "sample0_plot_paths": sample0_plot_paths,
+                "n_failed_samples": len(sample_failures),
+                "sample_failures": sample_failures[:10],
+            }
+        )
+
+    output = _write_bare_matrix_grid_outputs(
+        z_records,
+        artifacts_dir=out_dir,
+        save_path=save_path,
+        ensemble=ensemble,
+        tag=tag,
+        variant=variant,
+        direction=direction,
+        momentum=momentum,
+        b_label=b_label,
+        resample_mode=mode,
+        output_subdir=output_subdir,
+    )
+    report_path = Path(output["report_json"])
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    n_samples = int(pt2_samples.shape[0])
+    report.update(
+        {
+            "fit_mode": "joint_2pt_ratio",
+            "selection_rule": "sample average joint fit: choose max logGBF among Q >= q_min; otherwise choose max Q",
+            "sample_fit_prior": "sample-average joint posterior used as prior and p0 after error inflation",
+            "posterior_prior_error_scale": float(posterior_prior_error_scale),
+            "fit_strategy": strategy,
+            "fit_log_path": str(tuning_log_path),
+            "tuning_log_path": str(tuning_log_path),
+            "sample_log_path": str(sample_log_path),
+            "q_min": float(q_min),
+            "resample_mode": mode,
+            "n_samples": n_samples,
+            "n_boot": int(n_boot) if mode == "bs" else None,
+            "seed": seed if mode == "bs" else None,
+            "svdcut": float(svdcut),
+            "tsep_ls": tseps,
+            "z_values": z_list,
+            "z_fits": z_report,
+        }
+    )
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    store["bare_matrix_grid_report"] = report
+    return {
+        **output,
+        "fit_mode": "joint_2pt_ratio",
+        "fit_strategy": strategy,
+        "fit_log_path": str(tuning_log_path),
+        "tuning_log_path": str(tuning_log_path),
+        "sample_log_path": str(sample_log_path),
+        "posterior_prior_error_scale": float(posterior_prior_error_scale),
+        "resample_mode": mode,
+        "n_samples": n_samples,
+        "n_boot": report["n_boot"],
+        "z_values": z_list,
+        "selection_rule": report["selection_rule"],
+    }
+
+
+
+def _fit_bare_matrix_grid_chained(
+    store: dict[str, Any],
+    *,
+    pt2_path: str,
+    pt3_paths: dict[str, str] | list[str],
+    tsep_ls: list[int],
+    z_values: list[int],
+    ensemble: str,
+    tag: str,
+    momentum: str,
+    direction: str,
+    variant: str,
+    source_sink: str,
+    pt2_gamma: str,
+    pt3_gamma: str,
+    b_dir: str,
+    eta: str,
+    bt: str,
+    b_label: str,
+    pt2_windows: list[dict[str, int]] | None,
+    pt3_windows: list[dict[str, Any]] | None,
+    pt3_tau_cuts: list[int] | None,
+    nstate: int,
+    resample_mode: str,
+    n_boot: int,
+    seed: int | None,
+    svdcut: float,
+    part: str,
+    q_min: float,
+    posterior_prior_error_scale: float,
+    output_subdir: str,
+    save_path: str | None,
+    log_dir: str | Path | None,
+    log_path: str | Path | None,
+    artifacts_dir: str | Path | None,
+) -> dict[str, Any]:
+    """Batch chained 2pt -> ratio bare matrix export."""
+    strategy, fit_mode = _normalise_fit_strategy("chained")
+    mode = str(resample_mode)
+    if mode not in {"bs", "jk"}:
+        raise ValueError(f"resample_mode must be 'bs' or 'jk', got {resample_mode!r}")
+    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
+    fit_log_dir = Path(log_dir) if log_dir is not None else out_dir / "fit_logs"
+    fit_log_dir.mkdir(parents=True, exist_ok=True)
+    tuning_log_path, sample_log_path = _split_fit_log_paths(
+        log_dir=fit_log_dir,
+        log_path=log_path,
+        ensemble=ensemble,
+        tag=tag,
+        variant=variant,
+        direction=direction,
+        momentum=momentum,
+        b_label=b_label,
+        fit_mode=fit_mode,
+    )
+    tuning_logger = setup_logger(tuning_log_path, console_output=False, logger_name="correlator_chained_tuning_logger")
+    sample_logger = setup_logger(sample_log_path, console_output=False, logger_name="correlator_chained_sample_logger")
+    tuning_logger.info("Starting chained 2pt -> ratio bare matrix grid fit")
+    sample_logger.info("Starting chained 2pt -> ratio per-sample fit log")
+
+    tseps = [int(t) for t in tsep_ls]
+    z_list = [int(z) for z in z_values]
+    paths_by_tsep = _normalise_pt3_paths(pt3_paths, tsep_ls=tseps)
+    missing = [tsep for tsep in tseps if tsep not in paths_by_tsep]
+    if missing:
+        raise ValueError(f"pt3_paths missing tsep entries: {missing}")
+
+    pt2_complex = _read_pt2_complex(
+        pt2_path,
+        source_sink=source_sink,
+        gamma=pt2_gamma,
+        momentum=momentum,
+    )
+    pt2_real = np.real(pt2_complex)
+    n_cfg, Lt = pt2_real.shape
+    pt2_samples, indices = _resample_config_samples(
+        pt2_real,
+        mode=mode,
+        n_boot=int(n_boot),
+        seed=seed,
+    )
+    pt2_gv = _samples_to_gvar(pt2_samples, mode=mode)
+    pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=int(Lt))
+    pt3_window_specs = _normalise_pt3_windows(pt3_windows, tsep_ls=tseps, tau_cuts=pt3_tau_cuts)
+    tuning_logger.info("Lt=%s n_cfg=%s resample_mode=%s n_samples=%s", Lt, n_cfg, mode, pt2_samples.shape[0])
+    tuning_logger.info("pt2_windows=%s pt3_windows=%s svdcut=%s", pt2_window_specs, pt3_window_specs, svdcut)
+
+    pt2_records = _scan_pt2_average_windows(
+        pt2_gv,
+        windows=pt2_window_specs,
+        Lt=int(Lt),
+        nstate=int(nstate),
+        svdcut=float(svdcut),
+    )
+    for idx, rec in enumerate(pt2_records):
+        log_nonlinear_fit_quality(
+            rec["fit"],
+            kind="sample-average 2pt",
+            label=f"idx={idx} t=[{rec['tmin']},{rec['tmax']})",
+            logger=tuning_logger,
+            q_min=float(q_min),
+        )
+    pt2_best_index, pt2_fallback = _select_best_fit_index(pt2_records, q_min=float(q_min))
+    pt2_best = pt2_records[pt2_best_index]
+    tuning_logger.info(
+        "selected 2pt index=%s fallback=%s t=[%s,%s) Q=%.6g chi2/dof=%.6g logGBF=%.6g",
+        pt2_best_index,
+        pt2_fallback,
+        pt2_best["tmin"],
+        pt2_best["tmax"],
+        pt2_best["Q"],
+        pt2_best["chi2_dof"],
+        pt2_best["logGBF"],
+    )
+
+    z_records: list[dict[str, Any]] = []
+    z_report: list[dict[str, Any]] = []
+    template = pt3_ratio_prior(nstate=int(nstate))
+
+    for z in _progress(z_list, desc=f"fit bare matrix {ensemble} {momentum} {direction}"):
+        tuning_logger.info("=== z=%s ===", z)
+        bz = f"bz{z}"
+        ratio_samples_re: dict[int, np.ndarray] = {}
+        ratio_samples_im: dict[int, np.ndarray] = {}
+        ratio_real_gv: dict[int, np.ndarray] = {}
+        ratio_imag_gv: dict[int, np.ndarray] = {}
+        for tsep in tseps:
+            pt3 = _read_pt3_complex(
+                paths_by_tsep[tsep],
+                source_sink=source_sink,
+                gamma=pt3_gamma,
+                momentum=momentum,
+                b_dir=b_dir,
+                eta=eta,
+                bt=bt,
+                bz=bz,
+                tsep=tsep,
+            )
+            if pt3.shape[0] != n_cfg:
+                raise ValueError(f"3pt n_cfg mismatch for z={z}, tsep={tsep}: {pt3.shape[0]} != {n_cfg}")
+            ratio = pt3 / pt2_complex[:, int(tsep)][:, None]
+            ratio_samples, _ = _resample_config_samples(
+                ratio,
+                mode=mode,
+                n_boot=int(n_boot),
+                seed=seed,
+                indices=indices,
+            )
+            ratio_samples_re[tsep] = np.real(ratio_samples)
+            ratio_samples_im[tsep] = np.imag(ratio_samples)
+            ratio_real_gv[tsep] = _samples_to_gvar(ratio_samples_re[tsep], mode=mode)
+            ratio_imag_gv[tsep] = _samples_to_gvar(ratio_samples_im[tsep], mode=mode)
+
+        avg_prior = pt3_ratio_prior(nstate=int(nstate))
+        _update_prior_from_pt2_fit(avg_prior, pt2_best["fit"], int(nstate))
+        avg_records = _scan_pt3_average_windows(
+            ratio_real_gv,
+            ratio_imag_gv,
+            windows=pt3_window_specs,
+            Lt=int(Lt),
+            nstate=int(nstate),
+            part=part,
+            svdcut=float(svdcut),
+            prior=avg_prior,
+        )
+        for idx, rec in enumerate(avg_records):
+            log_nonlinear_fit_quality(
+                rec["fit"],
+                kind="sample-average chained ratio",
+                label=f"z={z} idx={idx} tau_cut={rec['tau_cut']}",
+                logger=tuning_logger,
+                q_min=float(q_min),
+            )
+        best_index, fallback = _select_best_fit_index(avg_records, q_min=float(q_min))
+        avg_best = avg_records[best_index]
+        avg_best["tmin"] = pt2_best["tmin"]
+        avg_best["tmax"] = pt2_best["tmax"]
+        tuning_logger.info(
+            "selected z=%s ratio index=%s fallback=%s tau_cut=%s Q=%.6g chi2/dof=%.6g logGBF=%.6g",
+            z,
+            best_index,
+            fallback,
+            avg_best["tau_cut"],
+            avg_best["Q"],
+            avg_best["chi2_dof"],
+            avg_best["logGBF"],
+        )
+
+        sample_prior = _scaled_posterior_as_prior(
+            avg_best["fit"],
+            template,
+            error_scale=float(posterior_prior_error_scale),
+        )
+        sample_p0 = _fit_p0_from_prior(avg_best["fit"], sample_prior)
+        n_samples = int(ratio_samples_re[tseps[0]].shape[0])
+        sample_records: list[dict[str, Any]] = []
+        sample_failures: list[dict[str, Any]] = []
+        sample0_plot_paths: dict[str, str] = {}
+        for sample_index in range(n_samples):
+            try:
+                ratio_real_sample = {
+                    tsep: _recenter_gvar(ratio_samples_re[tsep][sample_index], ratio_real_gv[tsep])
+                    for tsep in tseps
+                }
+                ratio_imag_sample = {
+                    tsep: _recenter_gvar(ratio_samples_im[tsep][sample_index], ratio_imag_gv[tsep])
+                    for tsep in tseps
+                }
+                sample_rec = _pt3_fit_record(
+                    ratio_real_sample,
+                    ratio_imag_sample,
+                    tsep_ls=avg_best["tsep_ls"],
+                    tau_cut=avg_best["tau_cut"],
+                    Lt=int(Lt),
+                    nstate=int(nstate),
+                    part=part,
+                    svdcut=float(svdcut),
+                    prior=sample_prior,
+                    p0=sample_p0,
+                )
+                sample_rec["tmin"] = pt2_best["tmin"]
+                sample_rec["tmax"] = pt2_best["tmax"]
+                sample_records.append(sample_rec)
+                log_nonlinear_fit_quality(
+                    sample_rec["fit"],
+                    kind="chained ratio",
+                    label=f"z={z} sample={sample_index}",
+                    logger=sample_logger,
+                    q_min=float(q_min),
+                )
+                if sample_index == 0:
+                    sample0_plot_paths = _write_sample0_ratio_plot(
+                        ratio_real_sample=ratio_real_sample,
+                        ratio_imag_sample=ratio_imag_sample,
+                        fit_record=sample_rec,
+                        Lt=int(Lt),
+                        log_dir=fit_log_dir,
+                        z=z,
+                        fit_label="chained_fit",
+                    )
+            except Exception as exc:
+                sample_records.append({"fit": None})
+                sample_failures.append({"sample": sample_index, "stage": "chained_2pt_ratio", "error": str(exc)})
+                sample_logger.info("Bad chained ratio z=%s sample=%s: %s", z, sample_index, exc)
+
+        real_samples, imag_samples = _bare_matrix_samples_from_records(sample_records)
+        if not np.any(np.isfinite(real_samples)):
+            raise ValueError(f"all resampled chained fits failed for z={z}")
+        real_mean, real_sdev = _sample_mean_err(real_samples, mode=mode)
+        imag_mean, imag_sdev = _sample_mean_err(imag_samples, mode=mode)
+        sample_logger.info(
+            "summary z=%s real=%s +/- %s imag=%s +/- %s failed_samples=%s",
+            z,
+            real_mean,
+            real_sdev,
+            imag_mean,
+            imag_sdev,
+            len(sample_failures),
+        )
+        window_summary = _fit_summary(avg_best, fallback=fallback, index=best_index)
+        pt2_summary = _fit_summary(pt2_best, fallback=pt2_fallback, index=pt2_best_index)
+        z_records.append(
+            {
+                "z": z,
+                "real_samples": real_samples,
+                "imag_samples": imag_samples,
+                "pt3_window": window_summary,
+                "chained_pt2_window": pt2_summary,
+                "sample0_plot_paths": sample0_plot_paths,
+            }
+        )
+        z_report.append(
+            {
+                "z": z,
+                "pt2_window": pt2_summary,
+                "pt3_window": window_summary,
+                "sample0_plot_paths": sample0_plot_paths,
+                "n_failed_samples": len(sample_failures),
+                "sample_failures": sample_failures[:10],
+            }
+        )
+
+    output = _write_bare_matrix_grid_outputs(
+        z_records,
+        artifacts_dir=out_dir,
+        save_path=save_path,
+        ensemble=ensemble,
+        tag=tag,
+        variant=variant,
+        direction=direction,
+        momentum=momentum,
+        b_label=b_label,
+        resample_mode=mode,
+        output_subdir=output_subdir,
+    )
+    report_path = Path(output["report_json"])
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    n_samples = int(pt2_samples.shape[0])
+    report.update(
+        {
+            "fit_strategy": strategy,
+            "fit_mode": fit_mode,
+            "selection_rule": "sample average chained fit: choose max logGBF among Q >= q_min; otherwise choose max Q",
+            "sample_fit_prior": "sample-average chained ratio posterior used as prior and p0 after error inflation",
+            "posterior_prior_error_scale": float(posterior_prior_error_scale),
+            "fit_log_path": str(tuning_log_path),
+            "tuning_log_path": str(tuning_log_path),
+            "sample_log_path": str(sample_log_path),
+            "q_min": float(q_min),
+            "resample_mode": mode,
+            "n_samples": n_samples,
+            "n_boot": int(n_boot) if mode == "bs" else None,
+            "seed": seed if mode == "bs" else None,
+            "svdcut": float(svdcut),
+            "tsep_ls": tseps,
+            "z_values": z_list,
+            "z_fits": z_report,
+        }
+    )
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    store["bare_matrix_grid_report"] = report
+    return {
+        **output,
+        "fit_strategy": strategy,
+        "fit_mode": fit_mode,
+        "fit_log_path": str(tuning_log_path),
+        "tuning_log_path": str(tuning_log_path),
+        "sample_log_path": str(sample_log_path),
+        "posterior_prior_error_scale": float(posterior_prior_error_scale),
+        "resample_mode": mode,
+        "n_samples": n_samples,
+        "n_boot": report["n_boot"],
+        "z_values": z_list,
+        "selection_rule": report["selection_rule"],
+    }
+
 def _infer_Lt(store: dict[str, Any]) -> int:
     if "Lt" in store:
         return int(store["Lt"])
@@ -1192,4 +2616,5 @@ STAGE_TOOLS = {
     "model_average": model_average,
     "plot_fit_on_data": plot_fit_on_data,
     "plot_pt3_fit_on_data": plot_pt3_fit_on_data,
+    "fit_bare_matrix_grid": fit_bare_matrix_grid,
 }

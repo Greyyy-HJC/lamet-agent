@@ -176,17 +176,17 @@ def _make_qtmdpdf_3pt(
     z: int,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    tau = np.arange(tsep + 2, dtype=float)
+    tau = np.arange(tsep + 1, dtype=float)
     source = pt2[tsep, :][None, :]
     ratio = _qtmdpdf_ratio(tau, tsep, b, z)
     noise = rng.normal(
         0.0,
         0.014 * ERROR_SCALE * PT3_ERROR_SCALE,
-        size=(tsep + 2, N_CFG),
+        size=(tsep + 1, N_CFG),
     ) + 1j * rng.normal(
         0.0,
         0.006 * ERROR_SCALE * PT3_ERROR_SCALE,
-        size=(tsep + 2, N_CFG),
+        size=(tsep + 1, N_CFG),
     )
     return source * ratio[:, None] * (1.0 + noise)
 
@@ -430,7 +430,7 @@ def _run_shape_checks() -> None:
             SOURCE_SINK_PT3, GAMMA_PT3, H5_PT3_PZ, fixed_b, fixed_z
         )
         pt3_shapes[tsep] = _dataset_shape(pt3_path, pt3_dataset)
-        _assert_shape(pt3_shapes[tsep], (tsep + 2, N_CFG), f"qTMDPDF 3pt ts{tsep}")
+        _assert_shape(pt3_shapes[tsep], (tsep + 1, N_CFG), f"qTMDPDF 3pt ts{tsep}")
 
         with h5py.File(pt3_path, "r") as h5f:
             pt3_zdep = np.stack(
@@ -448,10 +448,10 @@ def _run_shape_checks() -> None:
                 axis=0,
             )
         _assert_shape(
-            pt3_zdep.shape, (len(H5_Z_ARR), tsep + 2, N_CFG), f"qTMDPDF zdep ts{tsep}"
+            pt3_zdep.shape, (len(H5_Z_ARR), tsep + 1, N_CFG), f"qTMDPDF zdep ts{tsep}"
         )
         _assert_shape(
-            pt3_bdep.shape, (len(H5_B_ARR), tsep + 2, N_CFG), f"qTMDPDF bdep ts{tsep}"
+            pt3_bdep.shape, (len(H5_B_ARR), tsep + 1, N_CFG), f"qTMDPDF bdep ts{tsep}"
         )
 
     qtmdwf_count = _count_datasets(qtmdwf_path)

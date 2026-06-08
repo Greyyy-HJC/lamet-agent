@@ -179,3 +179,63 @@
 ## 2026-06-04 (NLO matching kernel)
 
 - Simplified ``src/lamet_agent/kernels.py`` around a direct ``unpolarized_matching_kernel_nlo_gT`` implementation; removed the one-off helper stack while preserving the discrete plus prescription, delta term, and helicity alias.
+
+## 2026-06-08 (3pt tau convention and raw correlator conversion)
+
+- ``read_pt3`` now treats 3pt HDF5 tau rows as ``0..tsep``, so compatible datasets have shape ``(tsep + 1, n_cfg)``.
+- Updated fake 3pt generation/tests to the same ``(tsep + 1, n_cfg)`` convention.
+- Converted raw ``temp/raw_data`` ensembles into read-compatible HDF5 under ignored ``data/correlators/``; ``conversion_report.json`` records zero-diff source checks and reader checks.
+
+## 2026-06-08 (CG PDF correlator bundle selection fix)
+
+- Rebuilt ignored ``data_cg_pdf/correlators/`` so retained 3pt HDF5 files are ``free`` only and drop raw column 0, which stores tau rather than a gauge configuration.
+- Reduced converted 2pt files to ``SS`` datasets matching retained free 3pt ensemble/tag/momentum where available.
+- Updated ``examples/workflow_cg_pdf_manifest.json`` to point at the retained free ``HISQa060_X`` files; read and ratio smoke checks now use aligned ``n_cfg=109`` samples.
+
+## 2026-06-08 (CG PDF HISQa060_XYZ 2pt alias)
+
+- Rebuilt ignored ``data_cg_pdf/correlators/`` with an explicit 2pt alias: ``HISQa060_XYZ`` ``CG52bxyzp00_CG52bxyzp00``/``PX0PY0PZ0`` uses raw ``CG52bxyzp20_CG52bxyzp20``/``PX0PY0PZ0`` SS 2pt data.
+- ``conversion_report.json`` now records the alias and has no missing matching 2pt entries for retained free 3pt files.
+
+## 2026-06-08 (CG PDF matrix-element samples)
+
+- Converted matching free raw matrix-element bootstrap samples from ``temp/raw_matrix_elements`` into two-column ``data_cg_pdf/matrix_elements/qtmdpdf`` txt files.
+- Output real samples use raw sample column 1; imaginary samples are written as zero.  The conversion report records 191 files and zero reload differences.
+
+## 2026-06-08 (CG PDF matrix-element plotting example)
+
+- Added ``examples/cg_pdf_data/read_cg_pdf_matrix_elements.py`` to read converted ``data_cg_pdf/matrix_elements/bare_qpdf`` samples and plot ``HISQa060_X`` ``P=0``/``P=5`` z-dependence.
+- The example writes ``examples/cg_pdf_data/cg_pdf_a060_x_p0_p5.pdf`` for quick inspection.
+
+## 2026-06-08 (CG PDF plotting display mode)
+
+- Updated ``examples/cg_pdf_data/read_cg_pdf_matrix_elements.py`` to show separate ``HISQa060_X`` ``P=0`` and ``P=5`` figures interactively instead of saving a combined PDF.
+
+## 2026-06-08 (CG PDF correlator metadata catalog)
+
+- Rewrote ``data_cg_pdf/correlators/conversion_report.json`` as a manifest-oriented correlator metadata catalog while preserving the old conversion statistics under ``conversion_summary``.
+- The catalog records 6 usable 2pt targets and 23 3pt files with pion metadata, HDF5 dataset selectors, shapes, and available ``bz`` slices for later manifest authoring.
+
+## 2026-06-08 (CG PDF bare matrix-element path)
+
+- Updated the CG PDF matrix-element reader to load the flattened ``data_cg_pdf/bare_matrix_elements`` directory after moving converted bare sample text files out of the old ``data_cg_pdf/matrix_elements`` tree.
+
+## 2026-06-08 (Correlator bare-matrix export)
+
+- Added a correlator batch grid tool that fits ``O00/(2*E0)`` over selected ``z`` values, chooses windows from bootstrap sample 0, and exports per-z bootstrap sample text files plus a PDF/report under ``artifacts``.
+- Updated ``examples/workflow_cg_pdf_manifest.json`` to run the ``HISQa060_X`` ``CG52bxp00`` ``P=0`` ``X`` grid for ``z=0..24`` through the new batch path.
+
+## 2026-06-08 (CG PDF jackknife bare fits)
+
+- Refactored the correlator bare-matrix grid tool to select windows on sample-average data, then refit jackknife samples with the sample-average 3pt posterior as prior.
+- Updated the CG PDF manifest to use jackknife samples, ``svdcut=1e-6``, ``Lt//4`` 2pt windows, and ``tau_cut=1..4`` for the all-z ``HISQa060_X`` ``P=0`` stage.
+
+## 2026-06-08 (Correlator joint-fit batch path)
+
+- Reworked the CG PDF correlator batch tool to use joint 2pt+ratio fits for sample-average window selection and per-sample refits.
+- Added fit logs and sample-0 ratio fit-on-data PDFs under artifacts, with per-sample priors built from sample-average joint posteriors widened by 3x.
+## 2026-06-08 (Correlator fit strategies and split logs)
+
+- Added explicit chained vs joint strategy selection for the correlator bare-matrix grid tool and marked the smoke/CG PDF manifests accordingly.
+- Moved reusable bootstrap/jackknife helpers into ``lamet_agent.core.resampling`` while keeping correlator compatibility imports.
+- Split batch fit logs into sample-average tuning and per-sample files, with shared ``log_nonlinear_fit_quality`` Good/Bad records.

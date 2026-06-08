@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -18,20 +21,35 @@ from lamet_agent.core.plotting import (
     _ylim_middle_third,
     plot_pt2_fit_on_data,
 )
+from lamet_agent.core.resampling import sample_mean_err as core_sample_mean_err
+from lamet_agent.core.tools import log_nonlinear_fit_quality, prepare_tool_args, setup_logger
+from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.stages.correlator.functions import (
     MAX_FIT_WINDOWS,
     MAX_PT3_FIT_WINDOWS,
     PT2_PRIOR_ERROR_SCALE,
     STAGE_TOOLS,
+    _bare_matrix_samples_from_records,
+    _normalise_fit_strategy,
+    _normalise_pt2_windows,
+    _posterior_as_prior,
+    _scaled_posterior_as_prior,
+    _fit_posterior_is_usable,
+    _resample_config_samples,
+    _sample_mean_err,
+    _select_best_fit_index,
     _pt2_posterior_as_prior,
+    _write_bare_matrix_grid_outputs,
     asymptotic_ratio_real_gvar,
     compute_pt3_ratio,
     read_pt3,
     fit_pt3_window,
     fit_window,
+    jackknife,
     model_average,
     plot_fit_on_data,
     plot_pt3_fit_on_data,
+    pt2_ratio_joint_fit,
     pt2_re_fcn,
     pt3_ratio_fit,
     pt3_ratio_im_fcn,
@@ -73,7 +91,7 @@ def _toy_pt3_ratio_gv(*, tsep_ls: list[int], Lt: int = 32) -> tuple[dict[int, np
     ratio_re: dict[int, np.ndarray] = {}
     ratio_im: dict[int, np.ndarray] = {}
     for tsep in tsep_ls:
-        tau = np.arange(tsep + 2, dtype=float)
+        tau = np.arange(tsep + 1, dtype=float)
         t_arr = np.full_like(tau, float(tsep))
         ratio_re[tsep] = pt3_ratio_re_fcn(t_arr, tau, p, Lt, nstate=2)
         ratio_im[tsep] = pt3_ratio_im_fcn(t_arr, tau, p, Lt, nstate=2)
@@ -217,8 +235,8 @@ def test_compute_pt3_ratio_from_samples() -> None:
     tsep = 8
     pt2_re = np.ones((n_cfg, lt))
     pt2_im = np.zeros((n_cfg, lt))
-    pt3_re = {tsep: np.full((n_cfg, tsep + 2), 0.5)}
-    pt3_im = {tsep: np.zeros((n_cfg, tsep + 2))}
+    pt3_re = {tsep: np.full((n_cfg, tsep + 1), 0.5)}
+    pt3_im = {tsep: np.zeros((n_cfg, tsep + 1))}
     store = {
         "pt2_samples": pt2_re,
         "pt2_imag_samples": pt2_im,
@@ -258,7 +276,7 @@ def test_read_pt3_ignores_legacy_out_kwarg(tmp_path) -> None:
     import h5py
 
     path = tmp_path / "fake.h5"
-    data = np.ones((4, 6), dtype=float)
+    data = np.ones((4, 5), dtype=float)
     with h5py.File(path, "w") as h5f:
         h5f.create_dataset(
             "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0",
@@ -461,3 +479,253 @@ def test_plot_pt2_multi_band_and_e0_hspan() -> None:
         hasattr(artist, "get_facecolor") or hasattr(artist, "get_xy")
         for artist in list(ax_meff.patches) + list(ax_meff.collections)
     )
+
+def test_select_best_fit_index_prefers_loggbf_after_q_cut() -> None:
+    records = [
+        {"Q": 0.20, "logGBF": 1.0},
+        {"Q": 0.06, "logGBF": 3.0},
+        {"Q": 0.90, "logGBF": 2.0},
+    ]
+    index, fallback = _select_best_fit_index(records, q_min=0.05)
+    assert index == 1
+    assert fallback is False
+
+
+def test_select_best_fit_index_falls_back_to_max_q() -> None:
+    records = [
+        {"Q": 0.01, "logGBF": 10.0},
+        {"Q": 0.04, "logGBF": 1.0},
+    ]
+    index, fallback = _select_best_fit_index(records, q_min=0.05)
+    assert index == 1
+    assert fallback is True
+
+
+def test_bare_matrix_samples_use_o00_over_two_e0() -> None:
+    p = gv.BufferDict()
+    p["E0"] = gv.gvar(0.5, 0.01)
+    p["O00_re"] = gv.gvar(2.0, 0.1)
+    p["O00_im"] = gv.gvar(-1.0, 0.1)
+
+    class Fit:
+        pass
+
+    fit = Fit()
+    fit.p = p
+    real, imag = _bare_matrix_samples_from_records([{"fit": fit}])
+    assert real[0] == pytest.approx(2.0)
+    assert imag[0] == pytest.approx(-1.0)
+
+
+def test_write_bare_matrix_grid_outputs_writes_txt_plot_and_report(tmp_path) -> None:
+    records = [
+        {
+            "z": 0,
+            "real_samples": np.array([1.0, 1.1, 0.9]),
+            "imag_samples": np.array([0.0, 0.1, -0.1]),
+            "pt3_window": {"tau_cut": 1, "tsep_ls": [8, 10, 12]},
+            "sample0_plot_paths": {"ratio_re_pdf": "re.pdf", "ratio_im_pdf": "im.pdf"},
+        },
+        {
+            "z": 1,
+            "real_samples": np.array([0.8, 0.9, 0.7]),
+            "imag_samples": np.array([0.2, 0.3, 0.1]),
+            "pt3_window": {"tau_cut": 2, "tsep_ls": [8, 10, 12]},
+        },
+    ]
+    result = _write_bare_matrix_grid_outputs(
+        records,
+        artifacts_dir=tmp_path,
+        save_path=str(tmp_path / "bare"),
+        ensemble="HISQa060_X",
+        tag="CG52bxp00_CG52bxp00",
+        variant="free",
+        direction="X",
+        momentum="PX0PY0PZ0",
+        b_label="b0",
+        resample_mode="jk",
+    )
+    txt0 = tmp_path / "bare_qpdf" / "HISQa060_X_CG52bxp00_CG52bxp00_free_X_PX0PY0PZ0_b0_z0.txt"
+    assert txt0.is_file()
+    loaded = np.loadtxt(txt0)
+    assert loaded.shape == (3, 2)
+    assert np.allclose(loaded[:, 0], records[0]["real_samples"])
+    assert np.allclose(loaded[:, 1], records[0]["imag_samples"])
+    assert (tmp_path / "bare.pdf").is_file()
+    report_path = tmp_path / "bare_report.json"
+    assert report_path.is_file()
+    report = json.loads(report_path.read_text())
+    assert report["resample_mode"] == "jk"
+    assert report["plot_ylim"] == [-0.2, 1.2]
+    assert report["outputs"][0]["sample0_plot_paths"] == {"ratio_re_pdf": "re.pdf", "ratio_im_pdf": "im.pdf"}
+    assert "c2pt_pdf" not in report["outputs"][0]["sample0_plot_paths"]
+    assert result["plot_ylim"] == [-0.2, 1.2]
+    assert result["n_txt"] == 2
+
+
+def test_fit_bare_matrix_grid_path_args_resolve_under_artifacts(tmp_path) -> None:
+    manifest = AnalysisManifest(
+        run_id="demo",
+        correlators=[],
+        kernels=[],
+        manifest_dir=tmp_path / "examples",
+        project_root=tmp_path,
+    )
+    args = {
+        "pt2_path": "data/pt2.h5",
+        "pt3_paths": {"8": "data/ts8.h5", "10": "/abs/ts10.h5"},
+        "save_path": None,
+    }
+    resolved = prepare_tool_args(
+        "fit_bare_matrix_grid",
+        args,
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={},
+    )
+    assert resolved["pt2_path"] == str(tmp_path / "data" / "pt2.h5")
+    assert resolved["pt3_paths"]["8"] == str(tmp_path / "data" / "ts8.h5")
+    assert resolved["pt3_paths"]["10"] == "/abs/ts10.h5"
+    assert resolved["save_path"] == str(tmp_path / "artifacts" / "bare_matrix_elements")
+    assert resolved["artifacts_dir"] == str(tmp_path / "artifacts")
+
+def test_resample_config_samples_jackknife_count_and_values() -> None:
+    data = np.arange(12, dtype=float).reshape(4, 3)
+    samples, indices = _resample_config_samples(data, mode="jk", n_boot=99, seed=7)
+    assert indices is None
+    assert samples.shape == (4, 3)
+    assert np.allclose(samples, jackknife(data))
+
+
+def test_sample_mean_err_uses_jackknife_scaling() -> None:
+    values = np.array([1.0, 2.0, 3.0])
+    mean, err = _sample_mean_err(values, mode="jk")
+    assert mean == pytest.approx(2.0)
+    assert err == pytest.approx(np.sqrt(4.0 / 3.0))
+    _, bs_err = _sample_mean_err(values, mode="bs")
+    assert bs_err == pytest.approx(1.0)
+    assert core_sample_mean_err(values, mode="jk") == pytest.approx((mean, err))
+
+
+def test_default_pt2_windows_use_l_over_four() -> None:
+    windows = _normalise_pt2_windows(None, Lt=32)
+    assert windows
+    assert {window["tmax"] for window in windows} == {8}
+    assert all(window["tmax"] - window["tmin"] >= 4 for window in windows)
+
+
+def test_posterior_as_prior_uses_fit_p_values() -> None:
+    template = pt3_ratio_prior(nstate=2)
+    posterior = gv.BufferDict()
+    for key in template:
+        posterior[key] = gv.gvar(0.25, 0.03)
+
+    class Fit:
+        pass
+
+    fit = Fit()
+    fit.p = posterior
+    prior = _posterior_as_prior(fit, template)
+    assert gv.mean(prior["O00_re"]) == pytest.approx(0.25)
+    assert gv.sdev(prior["O00_re"]) == pytest.approx(0.03)
+
+
+def test_workflow_manifests_declare_fit_strategy() -> None:
+    smoke = json.loads(Path("examples/workflow_smoke_manifest.json").read_text())
+    assert smoke["metadata"]["fit_strategy"] == "chained"
+    grid = json.loads(Path("examples/workflow_cg_pdf_manifest.json").read_text())["metadata"]["correlator_grid"]
+    assert grid["fit_strategy"] == "joint"
+    assert _normalise_fit_strategy(grid["fit_strategy"]) == ("joint", "joint_2pt_ratio")
+    assert _normalise_fit_strategy(smoke["metadata"]["fit_strategy"]) == ("chained", "chained_2pt_ratio")
+
+
+def test_workflow_cg_pdf_manifest_uses_jackknife_fast_settings() -> None:
+    path = Path("examples/workflow_cg_pdf_manifest.json")
+    grid = json.loads(path.read_text())["metadata"]["correlator_grid"]
+    assert grid["resample_mode"] == "jk"
+    assert grid["svdcut"] == pytest.approx(1e-6)
+    assert "n_boot" not in grid
+    assert grid["pt3_tau_cuts"] == [1, 2, 3, 4]
+    assert {window["tmax"] for window in grid["pt2_windows"]} == {16}
+    assert grid["posterior_prior_error_scale"] == pytest.approx(3.0)
+
+def test_pt2_ratio_joint_fit_recovers_toy_parameters() -> None:
+    tsep_ls = [6, 8, 10]
+    ratio_re, ratio_im, p_true = _toy_pt3_ratio_gv(tsep_ls=tsep_ls, Lt=32)
+    pt2_gv = _toy_pt2_gv(Lt=32, E0=0.45)
+    fit = pt2_ratio_joint_fit(
+        pt2_gv,
+        tmin=2,
+        tmax=12,
+        ratio_real=ratio_re,
+        ratio_imag=ratio_im,
+        tsep_ls=tsep_ls,
+        tau_cut=1,
+        Lt=32,
+        svdcut=1e-8,
+    )
+    assert abs(gv.mean(fit.p["E0"]) - gv.mean(p_true["E0"])) < 0.05
+    assert abs(gv.mean(fit.p["O00_re"]) - gv.mean(p_true["O00_re"])) < 0.05
+
+
+def test_scaled_posterior_as_prior_inflates_all_errors() -> None:
+    template = pt3_ratio_prior(nstate=2)
+    posterior = gv.BufferDict()
+    for key in template:
+        posterior[key] = gv.gvar(0.25, 0.03)
+
+    class Fit:
+        pass
+
+    fit = Fit()
+    fit.p = posterior
+    prior = _scaled_posterior_as_prior(fit, template, error_scale=3.0)
+    for key in template:
+        assert gv.mean(prior[key]) == pytest.approx(0.25)
+        assert gv.sdev(prior[key]) == pytest.approx(0.09)
+
+
+def test_fit_posterior_is_usable_rejects_degenerate_values() -> None:
+    template = pt3_ratio_prior(nstate=2)
+    posterior = gv.BufferDict()
+    for key in template:
+        posterior[key] = gv.gvar(0.25, 0.03)
+    posterior["E0"] = gv.gvar(1e-7, 0.03)
+
+    class Fit:
+        pass
+
+    fit = Fit()
+    fit.p = posterior
+    usable, reason = _fit_posterior_is_usable(fit, template)
+    assert usable is False
+    assert "E0" in str(reason)
+
+
+def test_setup_logger_writes_log_file(tmp_path) -> None:
+    log_path = tmp_path / "fit.log"
+    logger = setup_logger(log_path)
+    logger.info("joint fit message")
+    for handler in logger.handlers:
+        handler.flush()
+    assert "joint fit message" in log_path.read_text()
+
+
+
+def test_log_nonlinear_fit_quality_writes_good_and_bad(tmp_path) -> None:
+    class Fit:
+        def __init__(self, q: float) -> None:
+            self.Q = q
+            self.chi2 = 2.0
+            self.dof = 4
+            self.logGBF = -1.5
+
+    log_path = tmp_path / "quality.log"
+    logger = setup_logger(log_path, logger_name="quality_test_logger")
+    assert log_nonlinear_fit_quality(Fit(0.2), kind="toy", label="good", logger=logger) == "Good"
+    assert log_nonlinear_fit_quality(Fit(0.01), kind="toy", label="bad", logger=logger) == "Bad"
+    for handler in logger.handlers:
+        handler.flush()
+    log_text = log_path.read_text()
+    assert "Good toy good" in log_text
+    assert "Bad toy bad" in log_text
