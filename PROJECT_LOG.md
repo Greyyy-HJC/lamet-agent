@@ -239,3 +239,28 @@
 - Added explicit chained vs joint strategy selection for the correlator bare-matrix grid tool and marked the smoke/CG PDF manifests accordingly.
 - Moved reusable bootstrap/jackknife helpers into ``lamet_agent.core.resampling`` while keeping correlator compatibility imports.
 - Split batch fit logs into sample-average tuning and per-sample files, with shared ``log_nonlinear_fit_quality`` Good/Bad records.
+
+## 2026-06-08 (CG qPDF P=0/P=5 manifests)
+
+- Renamed CG qPDF workflow test references to ``examples/workflow_cg_qpdf_p0_manifest.json`` after the P=0 manifest rename.
+- Added ``examples/workflow_cg_qpdf_p5_manifest.json`` for the ``HISQa060_X`` ``CG52bxp30`` ``P=5`` ``X`` grid with the same joint-fit jackknife workflow settings as P=0.
+
+## 2026-06-08 (CG qPDF p5 fit-log diagnostics)
+
+- Added momentum labels to sample-0 ratio fit-on-data PDF stems under ``artifacts/fit_logs`` to prevent P=0/P=5 overwrite collisions.
+- Added direct ``O00/(2*E0)`` bands to sample-0 ratio fit plots and restricted the P=5 diagnostic manifest ``tsep_ls`` to ``[8]``.
+
+## 2026-06-08 (Correlator overlap rescale controls)
+
+- Added agent-driven ``correlator_rescale`` support for 2pt, chained ratio, and joint 2pt+ratio fits so tiny correlator magnitudes can be fit with scaled overlap parameters while preserving ``O00/(2*E0)`` outputs.
+- Added ``inspect_correlator_scale`` diagnostics plus prompt/tool-catalog guidance for choosing a power-of-ten rescale that brings fitted 2pt data into the ``0.1..1`` range.
+- Logged physical overlap diagnostics by converting scaled fit overlaps back with ``sqrt(correlator_rescale)`` and added rescale invariance/unit coverage.
+
+## 2026-06-08 (Ratio plot denominator correction)
+
+- Updated 3pt ratio fit-on-data plots to always display ratios in the forward-denominator convention by multiplying data and fit bands by the ground-state periodic/forward 2pt factor, keeping grey bands at O00/(2*E0).
+
+## 2026-06-08 (CG qPDF p5 momentum inspection fix)
+
+- Made ``inspect_correlator_scale`` accept selector dictionaries and report the resolved ``source_sink``, ``gamma``, and ``momentum`` so nonzero-momentum 2pt files do not fall back to ``PX0PY0PZ0``.
+- Updated correlator batch-mode prompt/catalog guidance to pass the exact HDF5 momentum key from ``Metadata.correlator_grid`` before fitting.

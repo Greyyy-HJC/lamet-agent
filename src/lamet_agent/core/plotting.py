@@ -290,10 +290,22 @@ def _draw_O00_band(
     )
 
 
+def _ratio_denominator_correction(
+    tsep: int,
+    *,
+    energy: gv.GVar | float,
+    Lt: int,
+) -> gv.GVar | float:
+    """Convert C3/C2_periodic ratios to a forward-denominator convention."""
+    return 1.0 + gv.exp(-energy * (float(int(Lt)) - 2.0 * float(int(tsep))))
+
+
 def plot_pt3_ratio_fit_on_data(
     ratio_real: dict[int, np.ndarray],
     ratio_imag: dict[int, np.ndarray],
     *,
+    denominator_correction_energy: gv.GVar | float,
+    denominator_correction_Lt: int,
     window_bands: list[dict[str, Any]] | None = None,
     plateau_ref_re: gv.GVar | None = None,
     plateau_ref_im: gv.GVar | None = None,
@@ -304,6 +316,9 @@ def plot_pt3_ratio_fit_on_data(
 
     Data use error bars on tau in ``[1, tsep - 1]``. Fit bands (``fill_between``)
     cover only each window's fit range ``[tau_cut, tsep + 1 - tau_cut)``.
+    Plotted ratios are always multiplied by
+    C2_periodic_ground(tsep) / C2_forward_ground(tsep) so the reference
+    band remains the infinite-time O00/(2E0) value.
     """
     tsep_ls = sorted(ratio_real.keys())
     x_min, x_max = _tau_center_limits(ratio_real)
@@ -315,8 +330,14 @@ def plot_pt3_ratio_fit_on_data(
         sl = _pt3_ratio_data_tau_slice(int(tsep))
         tau = np.arange(ratio_real[tsep].shape[-1], dtype=float)[sl]
         x = tau - tsep / 2
-        mean = np.asarray(gv.mean(ratio_real[tsep][sl]), dtype=float)
-        sdev = np.asarray(gv.sdev(ratio_real[tsep][sl]), dtype=float)
+        correction = _ratio_denominator_correction(
+            int(tsep),
+            energy=denominator_correction_energy,
+            Lt=denominator_correction_Lt,
+        )
+        corrected = ratio_real[tsep][sl] * correction
+        mean = np.asarray(gv.mean(corrected), dtype=float)
+        sdev = np.asarray(gv.sdev(corrected), dtype=float)
         y_re.append(mean)
         yerr_re.append(sdev)
         ax_re.errorbar(
@@ -331,8 +352,14 @@ def plot_pt3_ratio_fit_on_data(
         for win in window_bands:
             for band in win["bands"]:
                 fit_x = band["fit_tau"] - band["tsep"] / 2
-                fit_mean = gv.mean(band["fit_re"])
-                fit_sdev = gv.sdev(band["fit_re"])
+                correction = _ratio_denominator_correction(
+                    int(band["tsep"]),
+                    energy=denominator_correction_energy,
+                    Lt=denominator_correction_Lt,
+                )
+                corrected_fit = band["fit_re"] * correction
+                fit_mean = gv.mean(corrected_fit)
+                fit_sdev = gv.sdev(corrected_fit)
                 color = band.get("color", COLOR_CYCLE[0])
                 ax_re.fill_between(
                     fit_x,
@@ -357,8 +384,14 @@ def plot_pt3_ratio_fit_on_data(
         sl = _pt3_ratio_data_tau_slice(int(tsep))
         tau = np.arange(ratio_imag[tsep].shape[-1], dtype=float)[sl]
         x = tau - tsep / 2
-        mean = np.asarray(gv.mean(ratio_imag[tsep][sl]), dtype=float)
-        sdev = np.asarray(gv.sdev(ratio_imag[tsep][sl]), dtype=float)
+        correction = _ratio_denominator_correction(
+            int(tsep),
+            energy=denominator_correction_energy,
+            Lt=denominator_correction_Lt,
+        )
+        corrected = ratio_imag[tsep][sl] * correction
+        mean = np.asarray(gv.mean(corrected), dtype=float)
+        sdev = np.asarray(gv.sdev(corrected), dtype=float)
         y_im.append(mean)
         yerr_im.append(sdev)
         ax_im.errorbar(
@@ -372,8 +405,14 @@ def plot_pt3_ratio_fit_on_data(
         for win in window_bands:
             for band in win["bands"]:
                 fit_x = band["fit_tau"] - band["tsep"] / 2
-                fit_mean = gv.mean(band["fit_im"])
-                fit_sdev = gv.sdev(band["fit_im"])
+                correction = _ratio_denominator_correction(
+                    int(band["tsep"]),
+                    energy=denominator_correction_energy,
+                    Lt=denominator_correction_Lt,
+                )
+                corrected_fit = band["fit_im"] * correction
+                fit_mean = gv.mean(corrected_fit)
+                fit_sdev = gv.sdev(corrected_fit)
                 color = band.get("color", COLOR_CYCLE[0])
                 ax_im.fill_between(
                     fit_x,

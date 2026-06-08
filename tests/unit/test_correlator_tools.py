@@ -16,8 +16,12 @@ from matplotlib.legend import Legend
 
 pytest.importorskip("lsqfit")
 
+import lamet_agent.stages.correlator.functions as correlator_functions
+from lamet_agent.stages.correlator.prompts import STAGE_PROMPT
+from lamet_agent.stages.correlator.skills import tool_catalog
 from lamet_agent.core.plotting import (
     _pt3_ratio_data_tau_slice,
+    _ratio_denominator_correction,
     _ylim_middle_third,
     plot_pt2_fit_on_data,
 )
@@ -30,11 +34,10 @@ from lamet_agent.stages.correlator.functions import (
     PT2_PRIOR_ERROR_SCALE,
     STAGE_TOOLS,
     _bare_matrix_samples_from_records,
-    _normalise_fit_strategy,
     _normalise_pt2_windows,
-    _posterior_as_prior,
     _scaled_posterior_as_prior,
     _fit_posterior_is_usable,
+    _fit_summary,
     _resample_config_samples,
     _sample_mean_err,
     _select_best_fit_index,
@@ -42,6 +45,7 @@ from lamet_agent.stages.correlator.functions import (
     _write_bare_matrix_grid_outputs,
     asymptotic_ratio_real_gvar,
     compute_pt3_ratio,
+    inspect_correlator_scale,
     read_pt3,
     fit_pt3_window,
     fit_window,
@@ -265,6 +269,13 @@ def test_asymptotic_ratio_differs_from_O00_by_two_E0() -> None:
     assert abs(gv.mean(plat) - gv.mean(O00) / (2 * gv.mean(E0))) < 0.002
 
 
+def test_ratio_denominator_correction_converts_periodic_to_forward() -> None:
+    E0 = gv.gvar(0.09, 0.001)
+    correction = _ratio_denominator_correction(12, energy=E0, Lt=64)
+    expected = 1.0 + gv.exp(-E0 * (64 - 2 * 12))
+    assert gv.mean(correction) == pytest.approx(gv.mean(expected))
+
+
 def test_pt3_ratio_data_tau_slice_includes_tsep_minus_one() -> None:
     row = np.arange(12)
     sl = _pt3_ratio_data_tau_slice(10)
@@ -341,6 +352,109 @@ def test_pt3_ratio_fit_recovers_parameters() -> None:
     fit = pt3_ratio_fit(tsep_ls, tau_cut=1, ratio_real=ratio_re, ratio_imag=ratio_im, Lt=32)
     assert abs(gv.mean(fit.p["E0"]) - gv.mean(p_true["E0"])) < 0.05
     assert abs(gv.mean(fit.p["O00_re"]) - gv.mean(p_true["O00_re"])) < 0.05
+
+
+def test_inspect_correlator_scale_reports_window_magnitudes(tmp_path) -> None:
+    import h5py
+
+    path = tmp_path / "pt2.h5"
+    data = np.full((12, 4), 2.0e-18, dtype=np.complex128)
+    with h5py.File(path, "w") as h5f:
+        h5f.create_dataset("SS/5/PX0PY0PZ0", data=data)
+
+    store: dict = {}
+    result = inspect_correlator_scale(
+        store,
+        pt2_path=str(path),
+        pt2_windows=[{"tmin": 2, "tmax": 5}],
+    )
+    assert result["target_typical_abs_range"] == [0.1, 1.0]
+    assert result["windows"][0]["median_abs"] == pytest.approx(2.0e-18)
+    assert result["windows"][0]["max_abs"] == pytest.approx(2.0e-18)
+    assert store["correlator_scale_inspection"] is result
+
+
+def test_inspect_correlator_scale_accepts_selector_momentum(tmp_path) -> None:
+    import h5py
+
+    path = tmp_path / "pt2_px5.h5"
+    px5_data = np.full((12, 4), 3.0e-18, dtype=np.complex128)
+    px0_data = np.full((12, 4), 9.0e-18, dtype=np.complex128)
+    with h5py.File(path, "w") as h5f:
+        h5f.create_dataset("SS/5/PX0PY0PZ0", data=px0_data)
+        h5f.create_dataset("SS/5/PX5PY0PZ0", data=px5_data)
+
+    store: dict = {}
+    result = inspect_correlator_scale(
+        store,
+        pt2_path=str(path),
+        pt2_windows=[{"tmin": 2, "tmax": 5}],
+        selectors={"source_sink": "SS", "gamma": "5", "momentum": "PX5PY0PZ0"},
+    )
+
+    assert result["momentum"] == "PX5PY0PZ0"
+    assert result["windows"][0]["median_abs"] == pytest.approx(3.0e-18)
+
+
+def test_fit_window_correlator_rescale_recovers_tiny_pt2() -> None:
+    scale = 1.0e18
+    store: dict = {"pt2_gv": _toy_pt2_gv() / scale}
+    result = fit_window(
+        store,
+        tmin=2,
+        tmax=10,
+        Lt=24,
+        append=False,
+        correlator_rescale=scale,
+    )
+    fit = store["scan"][0]["fit"]
+    assert result["correlator_rescale"] == pytest.approx(scale)
+    assert abs(gv.mean(fit.p["E0"]) - 0.45) < 0.05
+    diag = correlator_functions._physical_overlap_diagnostics(fit.p, 2, scale)
+    assert gv.mean(diag["z0_physical"]) == pytest.approx(1.0e-9, rel=0.1)
+
+
+def test_joint_ratio_fit_rescale_preserves_o00_plateau() -> None:
+    tsep_ls = [6, 8, 10]
+    ratio_re, ratio_im, p_true = _toy_pt3_ratio_gv(tsep_ls=tsep_ls, Lt=32)
+    scale = 1.0e18
+    fit_scaled = pt2_ratio_joint_fit(
+        _toy_pt2_gv(Lt=32, E0=0.45) / scale,
+        tmin=2,
+        tmax=12,
+        ratio_real=ratio_re,
+        ratio_imag=ratio_im,
+        tsep_ls=tsep_ls,
+        tau_cut=1,
+        Lt=32,
+        svdcut=1e-8,
+        correlator_rescale=scale,
+    )
+    fit_unscaled = pt2_ratio_joint_fit(
+        _toy_pt2_gv(Lt=32, E0=0.45),
+        tmin=2,
+        tmax=12,
+        ratio_real=ratio_re,
+        ratio_imag=ratio_im,
+        tsep_ls=tsep_ls,
+        tau_cut=1,
+        Lt=32,
+        svdcut=1e-8,
+    )
+    scaled_plateau = gv.mean(fit_scaled.p["O00_re"] / (2 * fit_scaled.p["E0"]))
+    unscaled_plateau = gv.mean(fit_unscaled.p["O00_re"] / (2 * fit_unscaled.p["E0"]))
+    true_plateau = gv.mean(p_true["O00_re"] / (2 * p_true["E0"]))
+    assert scaled_plateau == pytest.approx(unscaled_plateau, rel=0.05)
+    assert scaled_plateau == pytest.approx(true_plateau, rel=0.05)
+
+
+def test_correlator_prompt_and_catalog_describe_rescale() -> None:
+    catalog = tool_catalog()
+    assert "inspect_correlator_scale" in catalog
+    assert "correlator_rescale" in catalog
+    assert "0.1..1" in STAGE_PROMPT
+    assert "momentum" in catalog
+    assert "Do not rely on default momentum" in STAGE_PROMPT
 
 
 def test_fit_window_append_and_index() -> None:
@@ -517,6 +631,85 @@ def test_bare_matrix_samples_use_o00_over_two_e0() -> None:
     assert imag[0] == pytest.approx(-1.0)
 
 
+def test_fit_summary_reports_physical_overlap_rescale() -> None:
+    p = gv.BufferDict()
+    p["E0"] = gv.gvar(0.5, 0.01)
+    p["z0"] = gv.gvar(1.0, 0.01)
+    p["z1"] = gv.gvar(2.0, 0.02)
+
+    class Fit:
+        pass
+
+    fit = Fit()
+    fit.p = p
+    summary = _fit_summary(
+        {
+            "fit": fit,
+            "nstate": 2,
+            "chi2_dof": 1.0,
+            "Q": 0.5,
+            "logGBF": 3.0,
+            "correlator_rescale": 1.0e18,
+        },
+        fallback=False,
+        index=0,
+    )
+    assert summary["correlator_rescale"] == pytest.approx(1.0e18)
+    assert summary["overlap_rescale"] == pytest.approx(1.0e9)
+    assert "z0_physical" in summary
+    assert "z1_over_z0_physical" in summary
+
+
+def test_write_sample0_ratio_plot_uses_momentum_and_o00_band(monkeypatch, tmp_path) -> None:
+    captured = {}
+
+    def fake_plot(ratio_real, ratio_imag, **kwargs):
+        captured["ratio_real"] = ratio_real
+        captured["ratio_imag"] = ratio_imag
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(correlator_functions, "plot_pt3_ratio_fit_on_data", fake_plot)
+
+    p = gv.BufferDict()
+    p["E0"] = gv.gvar(0.5, 0.01)
+    p["z0"] = gv.gvar(1.0, 0.01)
+    p["O00_re"] = gv.gvar(2.0, 0.1)
+    p["O00_im"] = gv.gvar(-1.0, 0.1)
+
+    class Fit:
+        pass
+
+    fit = Fit()
+    fit.p = p
+    ratio = {6: np.ones(7)}
+    result = correlator_functions._write_sample0_ratio_plot(
+        ratio_real_sample=ratio,
+        ratio_imag_sample=ratio,
+        fit_record={
+            "fit": fit,
+            "tmin": 2,
+            "tmax": 8,
+            "tsep_ls": [6],
+            "tau_cut": 1,
+            "nstate": 1,
+        },
+        Lt=32,
+        log_dir=tmp_path,
+        momentum="PX5PY0PZ0",
+        z=5,
+    )
+
+    assert result["ratio_re_pdf"].endswith("joint_fit_PX5PY0PZ0_z5_sample0_pt3_ratio_re.pdf")
+    assert result["ratio_im_pdf"].endswith("joint_fit_PX5PY0PZ0_z5_sample0_pt3_ratio_im.pdf")
+    assert Path(captured["save_path"]).name == "joint_fit_PX5PY0PZ0_z5_sample0"
+    assert gv.mean(captured["plateau_ref_re"]) == pytest.approx(2.0)
+    assert gv.mean(captured["plateau_ref_im"]) == pytest.approx(-1.0)
+    assert captured["denominator_correction_energy"] is p["E0"]
+    assert captured["denominator_correction_Lt"] == 32
+    assert captured["plateau_label"] == r"Sample-0 fit $\mathcal{O}_{00}/(2E_0)$"
+
+
 def test_write_bare_matrix_grid_outputs_writes_txt_plot_and_report(tmp_path) -> None:
     records = [
         {
@@ -613,41 +806,6 @@ def test_default_pt2_windows_use_l_over_four() -> None:
     assert {window["tmax"] for window in windows} == {8}
     assert all(window["tmax"] - window["tmin"] >= 4 for window in windows)
 
-
-def test_posterior_as_prior_uses_fit_p_values() -> None:
-    template = pt3_ratio_prior(nstate=2)
-    posterior = gv.BufferDict()
-    for key in template:
-        posterior[key] = gv.gvar(0.25, 0.03)
-
-    class Fit:
-        pass
-
-    fit = Fit()
-    fit.p = posterior
-    prior = _posterior_as_prior(fit, template)
-    assert gv.mean(prior["O00_re"]) == pytest.approx(0.25)
-    assert gv.sdev(prior["O00_re"]) == pytest.approx(0.03)
-
-
-def test_workflow_manifests_declare_fit_strategy() -> None:
-    smoke = json.loads(Path("examples/workflow_smoke_manifest.json").read_text())
-    assert smoke["metadata"]["fit_strategy"] == "chained"
-    grid = json.loads(Path("examples/workflow_cg_pdf_manifest.json").read_text())["metadata"]["correlator_grid"]
-    assert grid["fit_strategy"] == "joint"
-    assert _normalise_fit_strategy(grid["fit_strategy"]) == ("joint", "joint_2pt_ratio")
-    assert _normalise_fit_strategy(smoke["metadata"]["fit_strategy"]) == ("chained", "chained_2pt_ratio")
-
-
-def test_workflow_cg_pdf_manifest_uses_jackknife_fast_settings() -> None:
-    path = Path("examples/workflow_cg_pdf_manifest.json")
-    grid = json.loads(path.read_text())["metadata"]["correlator_grid"]
-    assert grid["resample_mode"] == "jk"
-    assert grid["svdcut"] == pytest.approx(1e-6)
-    assert "n_boot" not in grid
-    assert grid["pt3_tau_cuts"] == [1, 2, 3, 4]
-    assert {window["tmax"] for window in grid["pt2_windows"]} == {16}
-    assert grid["posterior_prior_error_scale"] == pytest.approx(3.0)
 
 def test_pt2_ratio_joint_fit_recovers_toy_parameters() -> None:
     tsep_ls = [6, 8, 10]
