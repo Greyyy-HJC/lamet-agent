@@ -1,4 +1,6 @@
+from pathlib import Path
 from typing import Callable, Dict, List, Literal, NamedTuple, Optional, Sequence, Union, get_args
+import json
 import warnings
 
 import gvar
@@ -172,6 +174,52 @@ class EnsembleData:
 
     def copy(self, deep: bool = True) -> "EnsembleData":
         return EnsembleData._from_xarray(self.ensemble, self.resample, self.array.copy(deep=deep))
+
+    def save_npz(self, path: Union[str, Path], **extra_arrays) -> None:
+        """Write this EnsembleData plus optional diagnostic arrays to an NPZ file."""
+        output = Path(path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        coords_payload = {dim: self.array.coords[dim].values.tolist() for dim in self.array.dims}
+        metadata = {
+            "format": "lamet_agent.EnsembleData",
+            "name": self.name,
+            "resample": self.resample,
+            "dims": list(self.array.dims),
+            "coords": coords_payload,
+            "attrs": self.attrs,
+            "ensemble": None if self.ensemble is None else self.ensemble._asdict(),
+        }
+        numpy.savez(output, __ensemble_data_metadata__=numpy.asarray(json.dumps(metadata)), values=self.values, **extra_arrays)
+
+    @classmethod
+    def load_npz(cls, path: Union[str, Path]) -> tuple["EnsembleData", dict[str, NDArray]]:
+        """Read an EnsembleData NPZ file and return ``(data, extra_arrays)``."""
+        with numpy.load(path, allow_pickle=False) as npz:
+            if "__ensemble_data_metadata__" not in npz or "values" not in npz:
+                raise ValueError("NPZ file does not contain lamet-agent EnsembleData metadata")
+            metadata = json.loads(str(npz["__ensemble_data_metadata__"]))
+            if metadata.get("format") != "lamet_agent.EnsembleData":
+                raise ValueError("NPZ file is not a lamet-agent EnsembleData file")
+            values = numpy.asarray(npz["values"])
+            dims_all = list(metadata["dims"])
+            coords = metadata["coords"]
+            attrs = metadata.get("attrs") or {}
+            ensemble_payload = metadata.get("ensemble")
+            ensemble = None if ensemble_payload is None else EnsembleInfo(**ensemble_payload)
+            array = xarray.DataArray(
+                values,
+                coords={dim: coords[dim] for dim in dims_all},
+                dims=dims_all,
+                name=metadata.get("name"),
+                attrs=attrs,
+            )
+            data = cls._from_xarray(ensemble, metadata["resample"], array)
+            extras = {
+                key: numpy.asarray(npz[key])
+                for key in npz.files
+                if key not in {"__ensemble_data_metadata__", "values"}
+            }
+        return data, extras
 
     @property
     def n_sample(self) -> int:

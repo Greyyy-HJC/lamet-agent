@@ -24,7 +24,6 @@ _FOURIER_RUN_KEYS = frozenset(
         "pz_gev",
         "pz_prime_gev",
         "a_fm",
-        "sample_axis",
         "im_flip_for_ft",
     }
 )

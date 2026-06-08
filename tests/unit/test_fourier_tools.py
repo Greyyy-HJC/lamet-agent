@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.tools import resolve_stage_tools
 from lamet_agent.core.plotting import _band_segment, plot_fourier_extension_quality, plot_fourier_npz
 from lamet_agent.manifest import AnalysisManifest
@@ -73,6 +74,8 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
 
     loaded = load_renormalized_matrix_element_samples(store, path=str(data_path))
     assert loaded["out"] == "matrix_element"
+    assert loaded["data"] == "matrix_element_data"
+    assert "matrix_element_data" in store
 
     run = run_fourier_transform(
         store,
@@ -84,7 +87,15 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
     assert Path(run["artifact"]).is_file()
+    ft_data, ft_extra = EnsembleData.load_npz(run["artifact"])
+    assert ft_data.dims == ["x"]
+    assert ft_data.values.shape == (3, 3)
+    assert "ft_re_mean" in ft_extra
     assert Path(run["fit_info_artifact"]).is_file()
+    fit_data, fit_extra = EnsembleData.load_npz(run["fit_info_artifact"])
+    assert fit_data.dims == ["scheme", "parameter"]
+    assert fit_data.values.shape == (3, 1, 3)
+    assert "fit_chi2" in fit_extra
     fit_info = np.load(run["fit_info_artifact"])
     assert fit_info["fit_param_labels"].tolist() == ["A2", "phi2", "Lambda"]
     assert fit_info["fit_params"].shape == (1, 3, 3)
@@ -129,7 +140,7 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
     loaded = load_renormalized_matrix_element_samples(store, path=str(data_path), input_format="h5")
     assert loaded["input_format"] == "h5"
     assert loaded["h5_group"] == "Pz=4"
-    assert loaded["re_shape"] == [5, 3]
+    assert loaded["re_shape"] == [3, 5]
 
     run = run_fourier_transform(
         store,
@@ -137,13 +148,45 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        sample_axis=1,
     )
 
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
     assert Path(run["artifact"]).is_file()
     assert Path(run["fit_info_artifact"]).is_file()
+
+
+def test_fourier_transform_accepts_upstream_ensemble_data(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    coord = np.arange(0.0, 5.0)
+    base_re = np.exp(-0.45 * coord)
+    base_im = 0.1 * np.exp(-0.45 * coord)
+    store = {
+        "matrix_element_data": EnsembleData(
+            ensemble=None,
+            resample="bootstrap",
+            values=[
+                base_re + 1j * base_im,
+                1.01 * base_re + 0.98j * base_im,
+                0.99 * base_re + 1.02j * base_im,
+            ],
+            dims=("z",),
+            coords={"z": coord.tolist()},
+            name="renormalized_matrix_element",
+        )
+    }
+
+    run = run_fourier_transform(
+        store,
+        k_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
+        method="GI",
+        order="LA",
+    )
+
+    assert run["n_samples"] == 3
+    assert "fourier_result_data" in store
+    assert store["fourier_result_data"].dims == ["x"]
 
 
 def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) -> None:
@@ -263,7 +306,6 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
         observable="nucleon_quark_transversity_quasi_pdf",
         coord_unit="fm",
         pz_gev=2.0,
-        sample_axis=0,
     )
 
     auto = run["auto_scheme_scan"]
@@ -302,7 +344,6 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
         observable="nucleon_quark_transversity_quasi_pdf",
         coord_unit="fm",
         pz_gev=2.0,
-        sample_axis=0,
     )
 
     auto = run["auto_scheme_scan"]
@@ -342,7 +383,6 @@ def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) 
         observable="nucleon_quark_transversity_quasi_pdf",
         coord_unit="fm",
         pz_gev=2.0,
-        sample_axis=0,
     )
 
     auto = run["auto_scheme_scan"]
@@ -373,7 +413,6 @@ def test_fourier_auto_zmax_stops_before_noisy_tail(tmp_path: Path, monkeypatch) 
         observable="nucleon_quark_transversity_quasi_pdf",
         coord_unit="fm",
         pz_gev=2.0,
-        sample_axis=0,
     )
 
     assert max(run["auto_scheme_scan"]["zmax_values"]) < coord[-1]
@@ -435,7 +474,6 @@ def test_fourier_stage_validation_accepts_declared_matrix_element() -> None:
                     "order": "NLA",
                     "observable": "nucleon_quark_transversity_quasi_pdf",
                     "coord_unit": "lambda",
-                    "sample_axis": 0,
                     "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
                     "scheme_scan": {
                         "zmin_values": [1.0],
@@ -461,7 +499,6 @@ def test_fourier_stage_validation_allows_auto_scheme_scan() -> None:
                     "observable": "nucleon_quark_transversity_quasi_pdf",
                     "coord_unit": "fm",
                     "pz_gev": 2.0,
-                    "sample_axis": 0,
                     "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
                 },
             },
@@ -489,7 +526,7 @@ def test_fourier_stage_validation_explains_missing_options() -> None:
     assert "Missing metadata.fourier.coord_unit" in text
     assert "Missing metadata.fourier.k_grid" in text
     assert "metadata.fourier.scheme_scan" not in text
-    assert "Missing metadata.fourier.sample_axis" in text
+    assert "sample_axis" not in text
 
 
 def test_fourier_stage_validation_flags_missing_matrix_element() -> None:

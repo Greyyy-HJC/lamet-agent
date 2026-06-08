@@ -23,8 +23,96 @@ from typing import Any
 
 import numpy as np
 
+from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.plotting import plot_fourier_extension_quality, plot_fourier_npz
 from lamet_agent.stages.fourier.workflow import fit_tail_quality_for_mean, run_fourier_workflow
+
+
+def _samples_axis_zero(values: np.ndarray, coord: np.ndarray) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    if arr.ndim != 2:
+        raise ValueError("matrix-element samples must be a 2D array")
+    n_coord = len(coord)
+    if arr.shape[1] == n_coord:
+        return arr
+    if arr.shape[0] == n_coord:
+        return np.moveaxis(arr, 1, 0)
+    raise ValueError("matrix-element samples must have one axis matching the coordinate length")
+
+
+def matrix_element_to_ensemble_data(
+    *,
+    coord: np.ndarray,
+    re_samples: np.ndarray,
+    im_samples: np.ndarray,
+    attrs: dict[str, Any] | None = None,
+    name: str = "renormalized_matrix_element",
+) -> EnsembleData:
+    """Build a complex EnsembleData matrix element with dimension z."""
+    coord_arr = np.asarray(coord, dtype=float)
+    re_axis0 = _samples_axis_zero(np.asarray(re_samples, dtype=float), coord_arr)
+    im_axis0 = _samples_axis_zero(np.asarray(im_samples, dtype=float), coord_arr)
+    if re_axis0.shape != im_axis0.shape:
+        raise ValueError("real and imaginary matrix-element samples must have matching shapes")
+    values = [re_axis0[idx] + 1j * im_axis0[idx] for idx in range(re_axis0.shape[0])]
+    return EnsembleData(
+        ensemble=None,
+        resample="bootstrap",
+        values=values,
+        dims=("z",),
+        coords={"z": coord_arr.tolist()},
+        attrs={key: str(value) for key, value in (attrs or {}).items() if value is not None},
+        name=name,
+    )
+
+
+def ensemble_data_to_legacy_arrays(data: EnsembleData) -> dict[str, np.ndarray]:
+    """Convert EnsembleData(z) back to legacy coord/re_samples/im_samples arrays."""
+    if not isinstance(data, EnsembleData):
+        raise TypeError("matrix_element_data must be an EnsembleData")
+    if data.dims != ["z"]:
+        raise ValueError("Fourier matrix_element_data must have physical dimension ['z']")
+    values = np.asarray(data.values)
+    if values.ndim != 2:
+        raise ValueError("Fourier matrix_element_data values must be shaped (resample,z)")
+    return {
+        "coord": np.asarray(data.coords["z"], dtype=float),
+        "re_samples": np.asarray(np.real(values), dtype=float),
+        "im_samples": np.asarray(np.imag(values), dtype=float),
+    }
+
+
+def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
+    """Build a complex EnsembleData(x) from Fourier workflow samples."""
+    ft_re = np.asarray(result["ft_re_samples"], dtype=float)
+    ft_im = np.asarray(result["ft_im_samples"], dtype=float)
+    weights = np.asarray(result.get("scheme_weights", []), dtype=float)
+    if weights.shape == (ft_re.shape[0],):
+        re_samples = np.sum(weights[:, None, None] * ft_re, axis=0)
+        im_samples = np.sum(weights[:, None, None] * ft_im, axis=0)
+    else:
+        re_samples = np.mean(ft_re, axis=0)
+        im_samples = np.mean(ft_im, axis=0)
+    values = [re_samples[idx] + 1j * im_samples[idx] for idx in range(re_samples.shape[0])]
+    attrs = {
+        "method": str(result.get("method", "")),
+        "order": str(result.get("order", "")),
+        "observable": str(result.get("observable", "")),
+        "coord_unit": str(result.get("coord_unit", "")),
+    }
+    for key in ("pz_gev", "pz_prime_gev", "a_fm"):
+        value = result.get(key)
+        if value is not None:
+            attrs[key] = str(value)
+    return EnsembleData(
+        ensemble=None,
+        resample="bootstrap",
+        values=values,
+        dims=("x",),
+        coords={"x": np.asarray(result["k_grid"], dtype=float).tolist()},
+        attrs=attrs,
+        name="fourier_transform",
+    )
 
 
 def load_renormalized_matrix_element_samples(
@@ -51,11 +139,17 @@ def load_renormalized_matrix_element_samples(
         )
     else:
         raise ValueError("input_format must be 'npz', 'h5', or 'hdf5'")
+    matrix_element_data = matrix_element_to_ensemble_data(
+        coord=coord,
+        re_samples=re_samples,
+        im_samples=im_samples,
+        attrs={"input_format": fmt, "h5_group": group_name, "path": str(path)},
+    )
+    legacy = ensemble_data_to_legacy_arrays(matrix_element_data)
     out = "matrix_element"
+    store["matrix_element_data"] = matrix_element_data
     store[out] = {
-        "coord": coord,
-        "re_samples": re_samples,
-        "im_samples": im_samples,
+        **legacy,
         "path": str(path),
         "input_format": fmt,
     }
@@ -63,11 +157,13 @@ def load_renormalized_matrix_element_samples(
         store[out]["h5_group"] = group_name
     return {
         "out": out,
+        "data": "matrix_element_data",
         "input_format": fmt,
         "h5_group": group_name,
-        "n_coord": int(len(coord)),
-        "re_shape": list(re_samples.shape),
-        "im_shape": list(im_samples.shape),
+        "n_coord": int(len(legacy["coord"])),
+        "n_sample": int(legacy["re_samples"].shape[0]),
+        "re_shape": list(legacy["re_samples"].shape),
+        "im_shape": list(legacy["im_samples"].shape),
     }
 
 
@@ -143,9 +239,9 @@ def _artifact_path(raw: str | None, *, default_name: str) -> Path:
 
 
 def _save_fourier_npz(path: Path, result: dict[str, Any]) -> None:
-    np.savez(
+    data = fourier_result_to_ensemble_data(result)
+    data.save_npz(
         path,
-        k_grid=result["k_grid"],
         ft_re_samples=result["ft_re_samples"],
         ft_im_samples=result["ft_im_samples"],
         ft_re_mean=result["ft_re_mean"],
@@ -163,6 +259,9 @@ def _save_fourier_npz(path: Path, result: dict[str, Any]) -> None:
         best_scheme_index=np.asarray(result.get("best_scheme_index", -1), dtype=int),
         pz_gev=np.asarray(result.get("pz_gev", np.nan), dtype=float),
         pz_prime_gev=np.asarray(result.get("pz_prime_gev", np.nan), dtype=float),
+        a_fm=np.asarray(result.get("a_fm", np.nan), dtype=float),
+        method=np.asarray(result.get("method", "")),
+        order=np.asarray(result.get("order", "")),
         observable=np.asarray(result.get("observable", "")),
     )
 
@@ -184,10 +283,26 @@ def _save_fourier_fit_info_npz(path: Path, result: dict[str, Any]) -> None:
     else:
         fit_param_sdev = np.std(fit_params, axis=1, ddof=1)
 
-    np.savez(
+    scheme_labels = np.asarray(result["scheme_labels"])
+    fit_param_labels = np.asarray(schemes[0]["fit_param_labels"])
+    param_samples = np.moveaxis(fit_params, 1, 0)
+    fit_info_data = EnsembleData(
+        ensemble=None,
+        resample="bootstrap",
+        values=[param_samples[idx] for idx in range(param_samples.shape[0])],
+        dims=("scheme", "parameter"),
+        coords={"scheme": scheme_labels.tolist(), "parameter": fit_param_labels.tolist()},
+        attrs={
+            "method": str(result.get("method", "")),
+            "order": str(result.get("order", "")),
+            "observable": str(result.get("observable", "")),
+        },
+        name="fourier_fit_parameters",
+    )
+    fit_info_data.save_npz(
         path,
-        scheme_labels=np.asarray(result["scheme_labels"]),
-        fit_param_labels=np.asarray(schemes[0]["fit_param_labels"]),
+        scheme_labels=scheme_labels,
+        fit_param_labels=fit_param_labels,
         fit_params=fit_params,
         fit_param_center=np.mean(fit_params, axis=1),
         fit_param_sdev=fit_param_sdev,
@@ -448,7 +563,6 @@ def _auto_scheme_scan(
     coord: np.ndarray,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
-    sample_axis: int,
     coord_unit: str,
     method: str,
     order: str,
@@ -461,8 +575,8 @@ def _auto_scheme_scan(
     """Generate a conservative scan from stable zmax and tail-fit zmin diagnostics."""
     spec = dict(existing or {})
     positive = _positive_grid(coord)
-    re_axis0 = _samples_axis_zero(re_samples, sample_axis)
-    im_axis0 = _samples_axis_zero(im_samples, sample_axis)
+    re_axis0 = np.asarray(re_samples, dtype=float)
+    im_axis0 = np.asarray(im_samples, dtype=float)
     stable_idx = _last_stable_z_index(coord, re_axis0, im_axis0)
     spec = _auto_fill_scheme_scan(
         spec,
@@ -527,15 +641,6 @@ def _resolve_k_grid(k_grid: list[float] | dict[str, Any]) -> list[float]:
     return [float(item) for item in k_grid]
 
 
-def _samples_axis_zero(values: np.ndarray, sample_axis: int) -> np.ndarray:
-    arr = np.asarray(values, dtype=float)
-    if sample_axis in (1, -1):
-        return np.moveaxis(arr, sample_axis, 0)
-    if sample_axis == 0:
-        return arr
-    raise ValueError("sample_axis must be 0 or 1")
-
-
 def _fit_scale(coord_unit: str, *, pz_gev: float | None, a_fm: float | None) -> float:
     unit = coord_unit.lower()
     fm_to_gev_inv = 5.067731237
@@ -564,8 +669,6 @@ def _scheme_fit_chi2_dof(
     re_samples: np.ndarray,
     im_samples: np.ndarray,
     scheme_result: dict[str, Any],
-    method: str,
-    order: str,
     coord_unit: str,
     pz_gev: float | None,
     a_fm: float | None,
@@ -621,8 +724,6 @@ def _apply_scheme_model_average(
     coord: np.ndarray,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
-    method: str,
-    order: str,
     coord_unit: str,
     pz_gev: float | None,
     a_fm: float | None,
@@ -646,8 +747,6 @@ def _apply_scheme_model_average(
                 re_samples=re_samples,
                 im_samples=im_samples,
                 scheme_result=scheme_result,
-                method=method,
-                order=order,
                 coord_unit=coord_unit,
                 pz_gev=pz_gev,
                 a_fm=a_fm,
@@ -703,13 +802,12 @@ def run_fourier_transform(
     pz_gev: float | None = None,
     pz_prime_gev: float | None = None,
     a_fm: float | None = None,
-    sample_axis: int = 0,
     im_flip_for_ft: bool = False,
     save_path: str | None = None,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
     out = "fourier_result"
-    matrix_element = store["matrix_element"]
+    matrix_element = ensemble_data_to_legacy_arrays(store["matrix_element_data"])
     auto_scheme_scan = None
     scan_spec = _fill_scheme_defaults(dict(scheme_scan or {}))
     if not _scan_has_all_range_keys(scan_spec):
@@ -717,7 +815,6 @@ def run_fourier_transform(
             coord=np.asarray(matrix_element["coord"], dtype=float),
             re_samples=np.asarray(matrix_element["re_samples"], dtype=float),
             im_samples=np.asarray(matrix_element["im_samples"], dtype=float),
-            sample_axis=sample_axis,
             coord_unit=coord_unit,
             method=method,
             order=order,
@@ -746,32 +843,27 @@ def run_fourier_transform(
         pz_gev=pz_gev,
         pz_prime_gev=pz_prime_gev,
         a_fm=a_fm,
-        sample_axis=sample_axis,
         im_flip_for_ft=im_flip_for_ft,
     )
     result["pz_gev"] = pz_gev
     result["pz_prime_gev"] = pz_prime_gev
     result["a_fm"] = a_fm
-    result["sample_axis"] = sample_axis
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
     model_average = bool((scheme_scan or {}).get("model_average", True)) if scheme_scan is not None else True
     if model_average:
-        score_re_samples = _samples_axis_zero(matrix_element["re_samples"], sample_axis)
-        score_im_samples = _samples_axis_zero(matrix_element["im_samples"], sample_axis)
         _apply_scheme_model_average(
             result,
             coord=np.asarray(matrix_element["coord"], dtype=float),
-            re_samples=score_re_samples,
-            im_samples=score_im_samples,
-            method=method,
-            order=order,
+            re_samples=np.asarray(matrix_element["re_samples"], dtype=float),
+            im_samples=np.asarray(matrix_element["im_samples"], dtype=float),
             coord_unit=coord_unit,
             pz_gev=pz_gev,
             a_fm=a_fm,
             y_range=(scheme_scan or {}).get("y_range"),
             roughness_weight=float((scheme_scan or {}).get("roughness_weight", 5.0)),
         )
+    store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
     store[out] = result
     artifact = _artifact_path(save_path, default_name=f"{out}.npz")
     fit_info_artifact = _artifact_path(None, default_name="fourier_fit_info.npz")
@@ -848,19 +940,17 @@ def plot_fourier_extension_quality_result(
     title: str | None = None,
 ) -> dict[str, Any]:
     """Plot data and smoothed real-part extension for one Fourier scheme."""
-    matrix_element = store["matrix_element"]
+    matrix_element = ensemble_data_to_legacy_arrays(store["matrix_element_data"])
     data = store["fourier_result"]
     if scheme_index is None:
         scheme_index = int(data.get("best_scheme_index", 0) or 0)
     if title is not None and title.strip().lower() in {"fourier extension quality", "lambda extrapolation"}:
         title = None
-    re_samples = _samples_axis_zero(matrix_element["re_samples"], int(data.get("sample_axis", 0)))
-    im_samples = _samples_axis_zero(matrix_element["im_samples"], int(data.get("sample_axis", 0)))
     re_output = _artifact_path(save_path, default_name="fourier_extension_re.pdf")
     im_output = _artifact_path(None, default_name="fourier_extension_im.pdf")
     fig, _ = plot_fourier_extension_quality(
         matrix_element["coord"],
-        re_samples,
+        matrix_element["re_samples"],
         data,
         scheme_index=scheme_index,
         component="re",
@@ -872,7 +962,7 @@ def plot_fourier_extension_quality_result(
     fig.clf()
     fig, _ = plot_fourier_extension_quality(
         matrix_element["coord"],
-        im_samples,
+        matrix_element["im_samples"],
         data,
         scheme_index=scheme_index,
         component="im",
