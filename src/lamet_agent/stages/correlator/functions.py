@@ -270,6 +270,95 @@ def resample_ratio_to_gvar(
 # --- ground-state fit (copied from LaMETLat ground_state) -------------------
 
 
+def _validate_correlator_rescale(correlator_rescale: float) -> float:
+    scale = float(correlator_rescale)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError(f"correlator_rescale must be positive and finite, got {correlator_rescale!r}")
+    return scale
+
+
+def _overlap_rescale(correlator_rescale: float) -> float:
+    return float(np.sqrt(_validate_correlator_rescale(correlator_rescale)))
+
+
+def _physical_overlap(value: gv.GVar, correlator_rescale: float) -> gv.GVar:
+    return value / _overlap_rescale(correlator_rescale)
+
+
+def _physical_overlap_diagnostics(p: dict, nstate: int, correlator_rescale: float) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "correlator_rescale": float(correlator_rescale),
+        "overlap_rescale": _overlap_rescale(correlator_rescale),
+    }
+    physical: list[gv.GVar] = []
+    for state in range(int(nstate)):
+        key = f"z{state}"
+        if key not in p:
+            continue
+        z_phys = _physical_overlap(p[key], correlator_rescale)
+        physical.append(z_phys)
+        diagnostics[f"{key}_physical"] = z_phys
+    if len(physical) >= 2 and gv.mean(physical[0]) != 0.0:
+        diagnostics["z1_over_z0_physical"] = physical[1] / physical[0]
+    return diagnostics
+
+
+def inspect_correlator_scale(
+    store: dict[str, Any],
+    *,
+    pt2_path: str,
+    pt2_windows: list[dict[str, int]] | None = None,
+    source_sink: str = "SS",
+    gamma: str = "5",
+    momentum: str = "PX0PY0PZ0",
+    selectors: dict[str, Any] | None = None,
+    out: str = "correlator_scale_inspection",
+) -> dict[str, Any]:
+    """Inspect 2pt correlator magnitudes so the agent can choose a rescale factor."""
+    if selectors is not None:
+        source_sink = str(selectors.get("source_sink") or source_sink)
+        gamma = str(selectors.get("gamma") or selectors.get("pt2_gamma") or gamma)
+        momentum = str(selectors.get("momentum") or momentum)
+    pt2_complex = _read_pt2_complex(
+        pt2_path,
+        source_sink=source_sink,
+        gamma=gamma,
+        momentum=momentum,
+    )
+    pt2_real = np.real(pt2_complex)
+    n_cfg, Lt = pt2_real.shape
+    windows = _normalise_pt2_windows(pt2_windows, Lt=int(Lt))
+    window_stats: list[dict[str, Any]] = []
+    for window in windows:
+        tmin = int(window["tmin"])
+        tmax = int(window["tmax"])
+        values = np.abs(pt2_real[:, tmin:tmax]).reshape(-1)
+        nonzero = values[values > 0.0]
+        min_abs_nonzero = float(np.min(nonzero)) if nonzero.size else None
+        window_stats.append(
+            {
+                "tmin": tmin,
+                "tmax": tmax,
+                "median_abs": float(np.median(values)),
+                "max_abs": float(np.max(values)),
+                "min_abs_nonzero": min_abs_nonzero,
+            }
+        )
+    result = {
+        "out": out,
+        "pt2_path": pt2_path,
+        "source_sink": source_sink,
+        "gamma": gamma,
+        "momentum": momentum,
+        "n_cfg": int(n_cfg),
+        "Lt": int(Lt),
+        "windows": window_stats,
+        "target_typical_abs_range": [0.1, 1.0],
+    }
+    store[out] = result
+    return result
+
+
 def pt2_re_fcn(t: np.ndarray, p: dict, Lt: int, nstate: int = 2) -> np.ndarray:
     """Real part of the n-state two-point correlator."""
     val = 0.0
@@ -291,7 +380,7 @@ def pt2_prior(nstate: int = 2) -> gv.BufferDict:
     for state in range(1, nstate):
         prior[f"log(dE{state})"] = gv.gvar(0, 10)
     for state in range(nstate):
-        prior[f"z{state}"] = gv.gvar(1, 10)
+        prior[f"z{state}"] = gv.gvar(1, 2) / 10**state 
     return prior
 
 
@@ -303,14 +392,16 @@ def pt2_fit(
     nstate: int = 2,
     svdcut: float = 1e-2,
     p0: dict[str, float] | None = None,
+    correlator_rescale: float = 1.0,
 ) -> lsf.nonlinear_fit:
     """Fit a two-point correlator with an n-state spectral decomposition.
 
     ``svdcut`` regularizes the strongly correlated 2pt covariance; without it
     the correlated chi-square is dominated by near-singular noise modes.
     """
+    scale = _validate_correlator_rescale(correlator_rescale)
     fit_t = np.arange(tmin, tmax, dtype=int)
-    fit_pt2 = np.asarray(pt2_gv)[fit_t]
+    fit_pt2 = np.asarray(pt2_gv)[fit_t] * scale
 
     def fcn(t: np.ndarray, p: dict) -> np.ndarray:
         return pt2_re_fcn(t, p, Lt, nstate=nstate)
@@ -447,7 +538,7 @@ def pt3_ratio_prior(nstate: int = 2) -> gv.BufferDict:
     for state in range(1, nstate):
         prior[f"log(dE{state})"] = gv.gvar(0, 10)
     for state in range(nstate):
-        prior[f"z{state}"] = gv.gvar(1, 10)
+        prior[f"z{state}"] = gv.gvar(1, 2) / 10**state 
     for row in range(nstate):
         for col in range(row, nstate):
             prior[f"O{row}{col}_re"] = gv.gvar(1, 10)
@@ -594,8 +685,10 @@ def pt3_ratio_fit(
     part: str = "both",
     svdcut: float = 1e-2,
     p0: dict[str, float] | None = None,
+    correlator_rescale: float = 1.0,
 ) -> lsf.nonlinear_fit:
     """Fit real and imaginary 3pt/2pt ratio data with an n-state ansatz."""
+    _validate_correlator_rescale(correlator_rescale)
     parts = _fit_parts(part)
     if prior is None:
         priors = pt3_ratio_prior(nstate=nstate)
@@ -701,7 +794,9 @@ def _pt3_fit_record(
     svdcut: float,
     prior: gv.BufferDict | None = None,
     p0: dict[str, float] | None = None,
+    correlator_rescale: float = 1.0,
 ) -> dict[str, Any]:
+    scale = _validate_correlator_rescale(correlator_rescale)
     fit = pt3_ratio_fit(
         [int(t) for t in tsep_ls],
         int(tau_cut),
@@ -713,6 +808,7 @@ def _pt3_fit_record(
         svdcut=float(svdcut),
         prior=prior,
         p0=p0,
+        correlator_rescale=scale,
     )
     return {
         "tsep_ls": [int(t) for t in tsep_ls],
@@ -722,6 +818,7 @@ def _pt3_fit_record(
         "chi2_dof": float(fit.chi2 / fit.dof),
         "Q": float(fit.Q),
         "logGBF": float(fit.logGBF),
+        "correlator_rescale": scale,
         "fit": fit,
     }
 
@@ -741,12 +838,14 @@ def pt2_ratio_joint_fit(
     part: str = "both",
     svdcut: float = 1e-2,
     p0: dict[str, float] | None = None,
+    correlator_rescale: float = 1.0,
 ) -> lsf.nonlinear_fit:
     """Jointly fit 2pt data and real/imag 3pt/2pt ratios."""
+    scale = _validate_correlator_rescale(correlator_rescale)
     parts = _fit_parts(part)
     priors = prior if prior is not None else pt3_ratio_prior(nstate=nstate)
     fit_t = np.arange(int(tmin), int(tmax), dtype=int)
-    fit_pt2 = np.asarray(pt2_gv)[fit_t]
+    fit_pt2 = np.asarray(pt2_gv)[fit_t] * scale
 
     ts: list[int] = []
     taus: list[int] = []
@@ -819,7 +918,9 @@ def _joint_fit_record(
     svdcut: float,
     prior: gv.BufferDict | None = None,
     p0: dict[str, float] | None = None,
+    correlator_rescale: float = 1.0,
 ) -> dict[str, Any]:
+    scale = _validate_correlator_rescale(correlator_rescale)
     fit = pt2_ratio_joint_fit(
         pt2_gv,
         tmin=int(tmin),
@@ -834,6 +935,7 @@ def _joint_fit_record(
         part=part,
         svdcut=float(svdcut),
         p0=p0,
+        correlator_rescale=scale,
     )
     return {
         "fit_mode": "joint_2pt_ratio",
@@ -846,6 +948,7 @@ def _joint_fit_record(
         "chi2_dof": float(fit.chi2 / fit.dof),
         "Q": float(fit.Q),
         "logGBF": float(fit.logGBF),
+        "correlator_rescale": scale,
         "fit": fit,
     }
 
@@ -865,6 +968,7 @@ def fit_pt3_window(
     use_pt2_avg_prior: bool = True,
     pt2_window_index: int | None = None,
     pt2_ma_window_indices: list[int] | None = None,
+    correlator_rescale: float = 1.0,
     out: str = "pt3_scan",
     append: bool = True,
 ) -> dict[str, Any]:
@@ -913,6 +1017,7 @@ def fit_pt3_window(
         part=part,
         svdcut=float(svdcut),
         prior=prior,
+        correlator_rescale=correlator_rescale,
     )
     if append and out in store:
         records = list(store[out])
@@ -932,6 +1037,7 @@ def fit_pt3_window(
         "logGBF": record["logGBF"],
         "O00_re": str(fit.p["O00_re"]),
         "E0": str(fit.p["E0"]),
+        "correlator_rescale": float(record["correlator_rescale"]),
         "n_windows": len(records),
     }
     if prior_sources:
@@ -1003,7 +1109,9 @@ def _fit_record(
     nstate: int,
     svdcut: float,
     p0: dict[str, float] | None = None,
+    correlator_rescale: float = 1.0,
 ) -> dict[str, Any]:
+    scale = _validate_correlator_rescale(correlator_rescale)
     fit = pt2_fit(
         data,
         int(tmin),
@@ -1012,6 +1120,7 @@ def _fit_record(
         nstate=int(nstate),
         svdcut=float(svdcut),
         p0=p0,
+        correlator_rescale=scale,
     )
     return {
         "tmin": int(tmin),
@@ -1020,6 +1129,7 @@ def _fit_record(
         "chi2_dof": float(fit.chi2 / fit.dof),
         "Q": float(fit.Q),
         "logGBF": float(fit.logGBF),
+        "correlator_rescale": scale,
         "fit": fit,
     }
 
@@ -1033,6 +1143,7 @@ def fit_window(
     Lt: int,
     nstate: int = 2,
     svdcut: float = 1e-2,
+    correlator_rescale: float = 1.0,
     out: str = "scan",
     append: bool = True,
 ) -> dict[str, Any]:
@@ -1054,6 +1165,7 @@ def fit_window(
         Lt=int(Lt),
         nstate=int(nstate),
         svdcut=float(svdcut),
+        correlator_rescale=correlator_rescale,
     )
     if append and out in store:
         records = list(store[out])
@@ -1072,6 +1184,7 @@ def fit_window(
         "Q": record["Q"],
         "logGBF": record["logGBF"],
         "E0": str(record["fit"].p["E0"]),
+        "correlator_rescale": float(record["correlator_rescale"]),
         "n_windows": len(records),
     }
     if warning is not None:
@@ -1138,6 +1251,7 @@ def model_average(
 def _window_fit_band(rec: dict[str, Any], Lt: int) -> tuple[np.ndarray, np.ndarray]:
     fit_t = np.arange(rec["tmin"], rec["tmax"], dtype=int)
     fit_gv = pt2_re_fcn(fit_t, rec["fit"].p, int(Lt), nstate=rec["nstate"])
+    fit_gv = fit_gv / float(rec.get("correlator_rescale", 1.0))
     return fit_t, fit_gv
 
 
@@ -1277,24 +1391,22 @@ def plot_pt3_fit_on_data(
             out=O00_im_avg,
         )
 
+    correction_energy = e0_avg if e0_avg is not None else records[0]["fit"].p["E0"]
     plateau_re = None
     plateau_im = None
     if e0_avg is not None:
-        tsep_ref = max(int(t) for t in ratio_real.keys())
         o00_re_avg = store.get(O00_re_avg)
         if o00_re_avg is not None:
-            plateau_re = asymptotic_ratio_real_gvar(
-                o00_re_avg, e0_avg, tsep=tsep_ref, Lt=int(Lt)
-            )
+            plateau_re = o00_re_avg / (2 * e0_avg)
         o00_im_avg = store.get(O00_im_avg)
         if o00_im_avg is not None:
-            plateau_im = asymptotic_ratio_imag_gvar(
-                o00_im_avg, e0_avg, tsep=tsep_ref, Lt=int(Lt)
-            )
+            plateau_im = o00_im_avg / (2 * e0_avg)
 
     plot_pt3_ratio_fit_on_data(
         ratio_real,
         ratio_imag,
+        denominator_correction_energy=correction_energy,
+        denominator_correction_Lt=int(Lt),
         window_bands=window_bands,
         plateau_ref_re=plateau_re,
         plateau_ref_im=plateau_im,
@@ -1335,15 +1447,6 @@ def _fit_p0_from_prior(fit: lsf.nonlinear_fit, prior: gv.BufferDict) -> dict[str
         except Exception:
             p0[key] = float(gv.mean(prior[key]))
     return p0
-
-
-def _posterior_as_prior(fit: lsf.nonlinear_fit, template: gv.BufferDict) -> gv.BufferDict:
-    """Use a fit posterior as a same-key prior for follow-up sample fits."""
-    prior = gv.BufferDict()
-    for key in template:
-        prior[key] = fit.p[key] if key in fit.p else template[key]
-    return prior
-
 
 
 def _scaled_posterior_as_prior(
@@ -1395,6 +1498,7 @@ def _scan_joint_average_windows(
     part: str,
     svdcut: float,
     prior: gv.BufferDict,
+    correlator_rescale: float = 1.0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Scan joint 2pt+ratio windows and return usable records plus rejections."""
     records: list[dict[str, Any]] = []
@@ -1439,6 +1543,7 @@ def _scan_joint_average_windows(
                     part=part,
                     svdcut=float(svdcut),
                     prior=prior,
+                    correlator_rescale=correlator_rescale,
                 )
                 usable, reason = _fit_posterior_is_usable(record["fit"], template)
                 if not usable:
@@ -1460,11 +1565,15 @@ def _write_sample0_ratio_plot(
     fit_record: dict[str, Any],
     Lt: int,
     log_dir: Path,
+    momentum: str,
     z: int,
     fit_label: str = "joint_fit",
 ) -> dict[str, str]:
     """Save sample-0 ratio fit-on-data plots only."""
-    stem = log_dir / f"{fit_label}_z{int(z)}_sample0"
+    stem = log_dir / f"{fit_label}_{momentum}_z{int(z)}_sample0"
+    fit_params = fit_record["fit"].p
+    plateau_re = fit_params["O00_re"] / (2 * fit_params["E0"])
+    plateau_im = fit_params["O00_im"] / (2 * fit_params["E0"])
     figures = plot_pt3_ratio_fit_on_data(
         ratio_real_sample,
         ratio_imag_sample,
@@ -1475,6 +1584,11 @@ def _write_sample0_ratio_plot(
                 "fit": fit_record["fit"],
             }
         ],
+        plateau_ref_re=plateau_re,
+        plateau_ref_im=plateau_im,
+        plateau_label=r"Sample-0 fit $\mathcal{O}_{00}/(2E_0)$",
+        denominator_correction_energy=fit_params["E0"],
+        denominator_correction_Lt=int(Lt),
         save_path=stem,
     )
     for fig, _ax in figures:
@@ -1539,9 +1653,18 @@ def _fit_summary(rec: dict[str, Any], *, fallback: bool, index: int) -> dict[str
         "logGBF": float(rec["logGBF"]),
         "fallback_no_q_passing": bool(fallback),
     }
-    for key in ("tmin", "tmax", "tsep_ls", "tau_cut", "nstate", "part"):
+    for key in ("tmin", "tmax", "tsep_ls", "tau_cut", "nstate", "part", "correlator_rescale"):
         if key in rec:
             summary[key] = rec[key]
+    fit = rec.get("fit")
+    if fit is not None and "nstate" in rec:
+        overlap = _physical_overlap_diagnostics(
+            fit.p,
+            int(rec["nstate"]),
+            float(rec.get("correlator_rescale", 1.0)),
+        )
+        for key, value in overlap.items():
+            summary[key] = str(value) if isinstance(value, gv.GVar) else value
     return summary
 
 
@@ -1594,6 +1717,7 @@ def _scan_pt2_average_windows(
     Lt: int,
     nstate: int,
     svdcut: float,
+    correlator_rescale: float = 1.0,
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -1615,6 +1739,7 @@ def _scan_pt2_average_windows(
                     Lt=int(Lt),
                     nstate=int(nstate),
                     svdcut=float(svdcut),
+                    correlator_rescale=correlator_rescale,
                 )
             )
         except Exception as exc:
@@ -1634,6 +1759,7 @@ def _scan_pt3_average_windows(
     part: str,
     svdcut: float,
     prior: gv.BufferDict,
+    correlator_rescale: float = 1.0,
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -1661,6 +1787,7 @@ def _scan_pt3_average_windows(
                     part=part,
                     svdcut=float(svdcut),
                     prior=prior,
+                    correlator_rescale=correlator_rescale,
                 )
             )
         except Exception as exc:
@@ -1905,6 +2032,7 @@ def fit_bare_matrix_grid(
     part: str = "both",
     q_min: float = 0.05,
     posterior_prior_error_scale: float = 3.0,
+    correlator_rescale: float = 1.0,
     output_subdir: str = "bare_qpdf",
     save_path: str | None = None,
     log_dir: str | Path | None = None,
@@ -1915,6 +2043,7 @@ def fit_bare_matrix_grid(
     """Batch-fit bare matrix elements over z and export resampled samples."""
     del out
     strategy, fit_mode = _normalise_fit_strategy(fit_strategy)
+    scale = _validate_correlator_rescale(correlator_rescale)
     if strategy == "chained":
         return _fit_bare_matrix_grid_chained(
             store,
@@ -1945,6 +2074,7 @@ def fit_bare_matrix_grid(
             part=part,
             q_min=q_min,
             posterior_prior_error_scale=posterior_prior_error_scale,
+            correlator_rescale=scale,
             output_subdir=output_subdir,
             save_path=save_path,
             log_dir=log_dir,
@@ -1972,6 +2102,7 @@ def fit_bare_matrix_grid(
     tuning_logger = setup_logger(tuning_log_path, console_output=False, logger_name="correlator_tuning_logger")
     sample_logger = setup_logger(sample_log_path, console_output=False, logger_name="correlator_sample_logger")
     tuning_logger.info("Starting joint 2pt+ratio bare matrix grid fit")
+    tuning_logger.info("correlator_rescale=%s overlap_rescale=%s", scale, _overlap_rescale(scale))
     tuning_logger.info("ensemble=%s tag=%s momentum=%s direction=%s z_values=%s", ensemble, tag, momentum, direction, z_values)
     sample_logger.info("Starting joint 2pt+ratio per-sample fit log")
 
@@ -2058,6 +2189,7 @@ def fit_bare_matrix_grid(
             part=part,
             svdcut=float(svdcut),
             prior=joint_template,
+            correlator_rescale=scale,
         )
         for idx, rec in enumerate(avg_records):
             tuning_logger.info(
@@ -2072,6 +2204,15 @@ def fit_bare_matrix_grid(
                 rec["logGBF"],
                 rec["fit"].p["E0"],
                 rec["fit"].p["O00_re"],
+            )
+            overlap_diag = _physical_overlap_diagnostics(rec["fit"].p, int(nstate), scale)
+            tuning_logger.info(
+                "candidate z=%s idx=%s physical overlaps z0=%s z1=%s z1/z0=%s",
+                z,
+                idx,
+                overlap_diag.get("z0_physical"),
+                overlap_diag.get("z1_physical"),
+                overlap_diag.get("z1_over_z0_physical"),
             )
             log_nonlinear_fit_quality(
                 rec["fit"],
@@ -2135,6 +2276,7 @@ def fit_bare_matrix_grid(
                     svdcut=float(svdcut),
                     prior=sample_prior,
                     p0=sample_p0,
+                    correlator_rescale=scale,
                 )
                 sample_records.append(sample_rec)
                 log_nonlinear_fit_quality(
@@ -2154,12 +2296,23 @@ def fit_bare_matrix_grid(
                         sample_rec["fit"].p["O00_re"] / (2 * sample_rec["fit"].p["E0"]),
                         sample_rec["fit"].p["O00_im"] / (2 * sample_rec["fit"].p["E0"]),
                     )
+                    overlap_diag = _physical_overlap_diagnostics(sample_rec["fit"].p, int(nstate), scale)
+                    sample_logger.info(
+                        "sample0 z=%s physical overlaps z0=%s z1=%s z1/z0=%s correlator_rescale=%s",
+                        z,
+                        overlap_diag.get("z0_physical"),
+                        overlap_diag.get("z1_physical"),
+                        overlap_diag.get("z1_over_z0_physical"),
+                        scale,
+                    )
+                    sample_logger.info("sample0 fit format for z=%s:\n%s", z, sample_rec["fit"].format(100))
                     sample0_plot_paths = _write_sample0_ratio_plot(
                         ratio_real_sample=ratio_real_sample,
                         ratio_imag_sample=ratio_imag_sample,
                         fit_record=sample_rec,
                         Lt=int(Lt),
                         log_dir=fit_log_dir,
+                        momentum=momentum,
                         z=z,
                     )
             except Exception as exc:
@@ -2225,6 +2378,8 @@ def fit_bare_matrix_grid(
             "selection_rule": "sample average joint fit: choose max logGBF among Q >= q_min; otherwise choose max Q",
             "sample_fit_prior": "sample-average joint posterior used as prior and p0 after error inflation",
             "posterior_prior_error_scale": float(posterior_prior_error_scale),
+            "correlator_rescale": scale,
+            "overlap_rescale": _overlap_rescale(scale),
             "fit_strategy": strategy,
             "fit_log_path": str(tuning_log_path),
             "tuning_log_path": str(tuning_log_path),
@@ -2250,6 +2405,8 @@ def fit_bare_matrix_grid(
         "tuning_log_path": str(tuning_log_path),
         "sample_log_path": str(sample_log_path),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
+        "correlator_rescale": scale,
+        "overlap_rescale": _overlap_rescale(scale),
         "resample_mode": mode,
         "n_samples": n_samples,
         "n_boot": report["n_boot"],
@@ -2289,6 +2446,7 @@ def _fit_bare_matrix_grid_chained(
     part: str,
     q_min: float,
     posterior_prior_error_scale: float,
+    correlator_rescale: float,
     output_subdir: str,
     save_path: str | None,
     log_dir: str | Path | None,
@@ -2297,6 +2455,7 @@ def _fit_bare_matrix_grid_chained(
 ) -> dict[str, Any]:
     """Batch chained 2pt -> ratio bare matrix export."""
     strategy, fit_mode = _normalise_fit_strategy("chained")
+    scale = _validate_correlator_rescale(correlator_rescale)
     mode = str(resample_mode)
     if mode not in {"bs", "jk"}:
         raise ValueError(f"resample_mode must be 'bs' or 'jk', got {resample_mode!r}")
@@ -2317,6 +2476,7 @@ def _fit_bare_matrix_grid_chained(
     tuning_logger = setup_logger(tuning_log_path, console_output=False, logger_name="correlator_chained_tuning_logger")
     sample_logger = setup_logger(sample_log_path, console_output=False, logger_name="correlator_chained_sample_logger")
     tuning_logger.info("Starting chained 2pt -> ratio bare matrix grid fit")
+    tuning_logger.info("correlator_rescale=%s overlap_rescale=%s", scale, _overlap_rescale(scale))
     sample_logger.info("Starting chained 2pt -> ratio per-sample fit log")
 
     tseps = [int(t) for t in tsep_ls]
@@ -2352,6 +2512,7 @@ def _fit_bare_matrix_grid_chained(
         Lt=int(Lt),
         nstate=int(nstate),
         svdcut=float(svdcut),
+        correlator_rescale=scale,
     )
     for idx, rec in enumerate(pt2_records):
         log_nonlinear_fit_quality(
@@ -2423,6 +2584,7 @@ def _fit_bare_matrix_grid_chained(
             part=part,
             svdcut=float(svdcut),
             prior=avg_prior,
+            correlator_rescale=scale,
         )
         for idx, rec in enumerate(avg_records):
             log_nonlinear_fit_quality(
@@ -2431,6 +2593,15 @@ def _fit_bare_matrix_grid_chained(
                 label=f"z={z} idx={idx} tau_cut={rec['tau_cut']}",
                 logger=tuning_logger,
                 q_min=float(q_min),
+            )
+            overlap_diag = _physical_overlap_diagnostics(rec["fit"].p, int(nstate), scale)
+            tuning_logger.info(
+                "candidate chained z=%s idx=%s physical overlaps z0=%s z1=%s z1/z0=%s",
+                z,
+                idx,
+                overlap_diag.get("z0_physical"),
+                overlap_diag.get("z1_physical"),
+                overlap_diag.get("z1_over_z0_physical"),
             )
         best_index, fallback = _select_best_fit_index(avg_records, q_min=float(q_min))
         avg_best = avg_records[best_index]
@@ -2478,6 +2649,7 @@ def _fit_bare_matrix_grid_chained(
                     svdcut=float(svdcut),
                     prior=sample_prior,
                     p0=sample_p0,
+                    correlator_rescale=scale,
                 )
                 sample_rec["tmin"] = pt2_best["tmin"]
                 sample_rec["tmax"] = pt2_best["tmax"]
@@ -2490,12 +2662,32 @@ def _fit_bare_matrix_grid_chained(
                     q_min=float(q_min),
                 )
                 if sample_index == 0:
+                    sample_logger.info(
+                        "sample0 z=%s Q=%.6g chi2/dof=%.6g logGBF=%.6g O00/(2E0)=(%s,%s)",
+                        z,
+                        sample_rec["Q"],
+                        sample_rec["chi2_dof"],
+                        sample_rec["logGBF"],
+                        sample_rec["fit"].p["O00_re"] / (2 * sample_rec["fit"].p["E0"]),
+                        sample_rec["fit"].p["O00_im"] / (2 * sample_rec["fit"].p["E0"]),
+                    )
+                    overlap_diag = _physical_overlap_diagnostics(sample_rec["fit"].p, int(nstate), scale)
+                    sample_logger.info(
+                        "sample0 z=%s physical overlaps z0=%s z1=%s z1/z0=%s correlator_rescale=%s",
+                        z,
+                        overlap_diag.get("z0_physical"),
+                        overlap_diag.get("z1_physical"),
+                        overlap_diag.get("z1_over_z0_physical"),
+                        scale,
+                    )
+                    sample_logger.info("sample0 fit format for z=%s:\n%s", z, sample_rec["fit"].format(100))
                     sample0_plot_paths = _write_sample0_ratio_plot(
                         ratio_real_sample=ratio_real_sample,
                         ratio_imag_sample=ratio_imag_sample,
                         fit_record=sample_rec,
                         Lt=int(Lt),
                         log_dir=fit_log_dir,
+                        momentum=momentum,
                         z=z,
                         fit_label="chained_fit",
                     )
@@ -2564,6 +2756,8 @@ def _fit_bare_matrix_grid_chained(
             "selection_rule": "sample average chained fit: choose max logGBF among Q >= q_min; otherwise choose max Q",
             "sample_fit_prior": "sample-average chained ratio posterior used as prior and p0 after error inflation",
             "posterior_prior_error_scale": float(posterior_prior_error_scale),
+            "correlator_rescale": scale,
+            "overlap_rescale": _overlap_rescale(scale),
             "fit_log_path": str(tuning_log_path),
             "tuning_log_path": str(tuning_log_path),
             "sample_log_path": str(sample_log_path),
@@ -2588,6 +2782,8 @@ def _fit_bare_matrix_grid_chained(
         "tuning_log_path": str(tuning_log_path),
         "sample_log_path": str(sample_log_path),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
+        "correlator_rescale": scale,
+        "overlap_rescale": _overlap_rescale(scale),
         "resample_mode": mode,
         "n_samples": n_samples,
         "n_boot": report["n_boot"],
@@ -2611,6 +2807,7 @@ STAGE_TOOLS = {
     "compute_pt3_ratio": compute_pt3_ratio,
     "resample_to_gvar": resample_to_gvar,
     "resample_ratio_to_gvar": resample_ratio_to_gvar,
+    "inspect_correlator_scale": inspect_correlator_scale,
     "fit_window": fit_window,
     "fit_pt3_window": fit_pt3_window,
     "model_average": model_average,

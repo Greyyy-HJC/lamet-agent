@@ -4,8 +4,9 @@ STAGE_PROMPT = """
 Goal: when 2pt data are present, extract ground-state energy and overlaps with
 model-averaged 2pt fits and fit-on-data plots. When 3pt data are also present,
 extract the bare matrix element from 3pt/2pt ratio fits after the 2pt step.
-If Metadata contains a correlator_grid object, run the deterministic batch
-fit_bare_matrix_grid tool once with that object's fields, then finish.
+If Metadata contains a correlator_grid object, inspect the 2pt correlator scale,
+choose an explicit correlator_rescale when needed, run the deterministic batch
+fit_bare_matrix_grid tool with that factor and the object's fields, then finish.
 
 2pt: the correlator is symmetric about t = Lt/2. Fit only the first half:
 tmax <= Lt//2 (tmax exclusive), typically tmin from 1 or 2 upward.
@@ -18,19 +19,26 @@ least 10 combined re+im points for a two-state fit.
 Emit one action at a time.
 
 Batch grid mode (preferred when Metadata.correlator_grid is present):
-0. call fit_bare_matrix_grid with the exact fields from Metadata.correlator_grid,
-   including fit_strategy when present. The tool supports chained 2pt -> ratio
+0. call inspect_correlator_scale with the pt2 path, pt2_windows, and explicit
+   source_sink, gamma=pt2_gamma, and momentum from Metadata.correlator_grid.
+   Do not rely on default momentum; nonzero-momentum datasets require their
+   exact HDF5 momentum key. Choose a power-of-ten correlator_rescale only
+   from the inspected magnitudes so typical fitted 2pt data are in the 0.1..1
+   range; use 1.0 if they already are. Then call fit_bare_matrix_grid with the
+   exact fields from Metadata.correlator_grid, including fit_strategy when present,
+   plus the chosen correlator_rescale. The tool supports chained 2pt -> ratio
    fits and joint 2pt+ratio fits, selects windows on sample-average data, writes
    bare_qpdf txt files, sample-0 ratio fit plots, split tuning/sample fit logs,
-   and a bare-matrix PDF under artifacts. Then finish with those paths and the
-   selected windows.
+   and a bare-matrix PDF under artifacts. Then finish with those paths, the
+   selected windows, and the chosen correlator_rescale.
 
 Manual mode:
 
 Phase A (2pt, if manifest includes kind=2pt):
 1. read_pt2 on the 2pt path (stores pt2_samples and pt2_imag_samples; note Lt).
-2. resample_to_gvar -> pt2_gv.
-3. fit_window up to six times (append=True); tmin>=1, tmax<=Lt//2,
+2. resample_to_gvar -> pt2_gv. Inspect the 2pt data scale; choose one
+   correlator_rescale for all later 2pt/3pt fits so fitted 2pt values are 0.1..1.
+3. fit_window up to six times (append=True) with that correlator_rescale; tmin>=1, tmax<=Lt//2,
    tmax-tmin>=2*nstate; judge Q, chi2/dof, E0.
 4. Choose window_indices; model_average on scan for E0, log(dE1), z0, and z1
    (creates E0_avg, log(dE1)_avg, z0_avg, z1_avg in the store).
@@ -41,8 +49,8 @@ Phase B (3pt, if manifest includes kind=3pt):
    available tsep (e.g. 4, 6, 8, 10) before fitting.
 7. compute_pt3_ratio using pt2_samples, pt2_imag_samples, pt3_samples_re/im.
 8. resample_ratio_to_gvar -> ratio_real_gv, ratio_imag_gv.
-9. fit_pt3_window at most TWO times (append=True, out='pt3_scan'); each call
-   picks one (tsep_ls, tau_cut). Shared 2pt parameters are pinned automatically
+9. fit_pt3_window at most TWO times (append=True, out='pt3_scan') with the same
+   correlator_rescale; each call picks one (tsep_ls, tau_cut). Shared 2pt parameters are pinned automatically
    to E0_avg and z0_avg from step 4 (default use_pt2_avg_prior); log(dE1), z1 stay broad.
 10. Pick only trustworthy window_indices (prefer Q > 0.05, stable O00_re);
     model_average O00_re and O00_im on that subset of pt3_scan — do not average all windows.

@@ -1,5 +1,5 @@
 {
-  "run_id": "workflow_cg_pdf",
+  "run_id": "workflow_cg_qpdf_p0",
   "goal": "full_lamet_pipeline",
   "correlators": [
     {
@@ -10,7 +10,7 @@
       "metadata": {
         "ensemble": "HISQa060_X",
         "tag": "CG52bxp00_CG52bxp00",
-        "hadron": "proton",
+        "hadron": "pion",
         "source_sink": "SS",
         "gamma": "5",
         "momentum": "PX0PY0PZ0",
@@ -27,7 +27,7 @@
         "ensemble": "HISQa060_X",
         "tag": "CG52bxp00_CG52bxp00",
         "variant": "free",
-        "hadron": "proton",
+        "hadron": "pion",
         "observable": "qtmdpdf",
         "source_sink": "SS",
         "gamma": "T",
@@ -49,7 +49,7 @@
         "ensemble": "HISQa060_X",
         "tag": "CG52bxp00_CG52bxp00",
         "variant": "free",
-        "hadron": "proton",
+        "hadron": "pion",
         "observable": "qtmdpdf",
         "source_sink": "SS",
         "gamma": "T",
@@ -71,7 +71,7 @@
         "ensemble": "HISQa060_X",
         "tag": "CG52bxp00_CG52bxp00",
         "variant": "free",
-        "hadron": "proton",
+        "hadron": "pion",
         "observable": "qtmdpdf",
         "source_sink": "SS",
         "gamma": "T",
@@ -152,23 +152,23 @@
       "pt2_windows": [
         {
           "tmin": 2,
-          "tmax": 16
+          "tmax": 12
         },
         {
           "tmin": 3,
-          "tmax": 16
+          "tmax": 12
         },
         {
           "tmin": 4,
-          "tmax": 16
+          "tmax": 12
         },
         {
           "tmin": 5,
-          "tmax": 16
+          "tmax": 12
         },
         {
           "tmin": 6,
-          "tmax": 16
+          "tmax": 12
         }
       ],
       "pt3_tau_cuts": [
@@ -186,7 +186,7 @@
       "save_path": "a060_x_p0_bare_matrix_elements",
       "resample_mode": "jk",
       "posterior_prior_error_scale": 3.0,
-      "fit_strategy": "joint"
+      "fit_strategy": "chained"
     }
   }
 }
