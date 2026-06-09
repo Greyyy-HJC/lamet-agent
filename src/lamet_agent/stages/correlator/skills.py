@@ -22,7 +22,7 @@ ratio fits for the bare matrix element.
 Strategy:
 - Always resample ('bs' or 'jk'); never use a single configuration mean.
 - Before fitting, inspect 2pt magnitudes and choose an explicit power-of-ten
-  correlator_rescale when needed so fitted 2pt data are typically 0.1..1.
+  correlator_rescale when needed so fitted 2pt data are typically 0.0001..0.01.
 - 2pt: fit_window (<=6 windows on scan) with the chosen correlator_rescale;
   model_average E0, log(dE1), z0, z1;
   plot_fit_on_data.
@@ -34,8 +34,8 @@ Strategy:
   magnitudes, then call fit_bare_matrix_grid once with its fit_strategy and that
   correlator_rescale. Chained mode uses a 2pt -> ratio path;
   joint mode uses 2pt+ratio fits. Both select windows on sample-average data, refit
-  bootstrap or jackknife samples, and export per-z O00/(2*E0) samples, sample-0 ratio
-  plots, split tuning/sample fit logs, and a PDF under artifacts.
+  bootstrap or jackknife samples, and export per-z O00/(2*E0) samples, sample-0 2pt
+  (chained) and ratio plots, split tuning/sample fit logs, and a PDF under artifacts.
 - Prefer Q > 0.05 and stable plateaus on both stages.
 """.strip()
 
@@ -51,7 +51,7 @@ TOOL_CATALOG = {
     "model_average": "model_average(scan, param, window_indices) -> logGBF-weighted gvar; pass a subset of indices.",
     "plot_fit_on_data": "plot_fit_on_data(pt2_gv, scan, window_indices, E0_avg, Lt) -> C2pt/meff PDFs.",
     "plot_pt3_fit_on_data": "plot_pt3_fit_on_data(ratio_real_gv, ratio_imag_gv, scan='pt3_scan', window_indices, O00_re_avg, Lt) -> ratio PDFs.",
-    "fit_bare_matrix_grid": "fit_bare_matrix_grid(pt2_path, pt3_paths, tsep_ls, z_values, ensemble, tag, momentum, correlator_rescale=..., fit_strategy='chained'|'joint', resample_mode='bs'|'jk', ...) -> bare_qpdf txt files, sample-0 ratio PDFs, split fit logs, summary PDF, and report under artifacts.",
+    "fit_bare_matrix_grid": "fit_bare_matrix_grid(pt2_path, pt3_paths, tsep_ls, z_values, ensemble, tag, momentum, correlator_rescale=..., fit_strategy='chained'|'joint', resample_mode='bs'|'jk', ...) -> bare_qpdf txt files, sample-0 2pt/ratio PDFs, split fit logs, summary PDF, and report under artifacts.",
 }
 
 

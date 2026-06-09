@@ -41,6 +41,7 @@ from lamet_agent.core.plotting import (
     LEGEND_SETS,
     default_plot,
     plot_pt2_fit_on_data,
+    plot_pt2_meff_on_data,
     plot_pt3_ratio_fit_on_data,
 )
 from lamet_agent.core.resampling import (
@@ -353,7 +354,7 @@ def inspect_correlator_scale(
         "n_cfg": int(n_cfg),
         "Lt": int(Lt),
         "windows": window_stats,
-        "target_typical_abs_range": [0.1, 1.0],
+        "target_typical_abs_range": [0.0001, 0.01],
     }
     store[out] = result
     return result
@@ -378,9 +379,9 @@ def pt2_prior(nstate: int = 2) -> gv.BufferDict:
     prior = gv.BufferDict()
     prior["E0"] = gv.gvar(1, 10)
     for state in range(1, nstate):
-        prior[f"log(dE{state})"] = gv.gvar(0, 10)
+        prior[f"log(dE{state})"] = gv.gvar(0, 1)
     for state in range(nstate):
-        prior[f"z{state}"] = gv.gvar(1, 2) / 10**state 
+        prior[f"z{state}"] = gv.gvar(1, 10) / 3**state # TODO
     return prior
 
 
@@ -536,9 +537,9 @@ def pt3_ratio_prior(nstate: int = 2) -> gv.BufferDict:
     prior = gv.BufferDict()
     prior["E0"] = gv.gvar(1, 10)
     for state in range(1, nstate):
-        prior[f"log(dE{state})"] = gv.gvar(0, 10)
+        prior[f"log(dE{state})"] = gv.gvar(0, 1)
     for state in range(nstate):
-        prior[f"z{state}"] = gv.gvar(1, 2) / 10**state 
+        prior[f"z{state}"] = gv.gvar(1, 10) / 3**state # TODO
     for row in range(nstate):
         for col in range(row, nstate):
             prior[f"O{row}{col}_re"] = gv.gvar(1, 10)
@@ -1599,6 +1600,41 @@ def _write_sample0_ratio_plot(
     }
 
 
+def _write_sample0_pt2_plot(
+    *,
+    pt2_sample: np.ndarray,
+    fit_record: dict[str, Any],
+    Lt: int,
+    log_dir: Path,
+    momentum: str,
+    fit_label: str = "chained_fit",
+) -> dict[str, str]:
+    """Save sample-0 2pt effective-mass fit-on-data plot up to ``Lt // 4``."""
+    stem = log_dir / f"{fit_label}_{momentum}_sample0"
+    fit_t, fit_gv = _window_fit_band(fit_record, int(Lt))
+    e0_band = fit_record["fit"].p["E0"]
+    fig, _ax = plot_pt2_meff_on_data(
+        pt2_sample,
+        boundary="none",
+        fit_bands=[
+            {
+                "fit_t": fit_t,
+                "fit_gv": fit_gv,
+                "label": f"2pt t=[{fit_record['tmin']},{fit_record['tmax']})",
+                "color": COLOR_CYCLE[0],
+            }
+        ],
+        E0_band=e0_band,
+        E0_label=r"Sample-0 fit $E_0$",
+        t_max=int(Lt) // 4,
+        save_path=stem,
+    )
+    plt.close(fig)
+    return {
+        "meff_pdf": str(stem.with_name(f"{stem.name}_meff.pdf")),
+    }
+
+
 def _normalise_pt2_windows(
     windows: list[dict[str, int]] | None,
     *,
@@ -2534,6 +2570,47 @@ def _fit_bare_matrix_grid_chained(
         pt2_best["chi2_dof"],
         pt2_best["logGBF"],
     )
+    tuning_logger.info("selected 2pt fit format:\n%s", pt2_best["fit"].format(100))
+
+    sample0_pt2_plot_paths: dict[str, str] = {}
+    try:
+        pt2_sample_0 = _recenter_gvar(pt2_samples[0], pt2_gv)
+        pt2_prior_template = pt2_prior(nstate=int(nstate))
+        sample0_pt2_rec = _fit_record(
+            pt2_sample_0,
+            tmin=pt2_best["tmin"],
+            tmax=pt2_best["tmax"],
+            Lt=int(Lt),
+            nstate=int(nstate),
+            svdcut=float(svdcut),
+            p0=_fit_p0_from_prior(pt2_best["fit"], pt2_prior_template),
+            correlator_rescale=scale,
+        )
+        log_nonlinear_fit_quality(
+            sample0_pt2_rec["fit"],
+            kind="chained 2pt",
+            label="sample=0",
+            logger=sample_logger,
+            q_min=float(q_min),
+        )
+        sample_logger.info(
+            "sample0 2pt Q=%.6g chi2/dof=%.6g logGBF=%.6g E0=%s",
+            sample0_pt2_rec["Q"],
+            sample0_pt2_rec["chi2_dof"],
+            sample0_pt2_rec["logGBF"],
+            sample0_pt2_rec["fit"].p["E0"],
+        )
+        sample0_pt2_plot_paths = _write_sample0_pt2_plot(
+            pt2_sample=pt2_sample_0,
+            fit_record=sample0_pt2_rec,
+            Lt=int(Lt),
+            log_dir=fit_log_dir,
+            momentum=momentum,
+            fit_label="chained_fit",
+        )
+    except Exception as exc:
+        sample_logger.info("Bad chained 2pt sample=0: %s", exc)
+        tuning_logger.info("sample0 2pt plot failed: %s", exc)
 
     z_records: list[dict[str, Any]] = []
     z_report: list[dict[str, Any]] = []
@@ -2617,6 +2694,7 @@ def _fit_bare_matrix_grid_chained(
             avg_best["chi2_dof"],
             avg_best["logGBF"],
         )
+        tuning_logger.info("selected fit format for z=%s:\n%s", z, avg_best["fit"].format(100))
 
         sample_prior = _scaled_posterior_as_prior(
             avg_best["fit"],
@@ -2770,6 +2848,7 @@ def _fit_bare_matrix_grid_chained(
             "tsep_ls": tseps,
             "z_values": z_list,
             "z_fits": z_report,
+            "sample0_pt2_plot_paths": sample0_pt2_plot_paths,
         }
     )
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -2781,6 +2860,7 @@ def _fit_bare_matrix_grid_chained(
         "fit_log_path": str(tuning_log_path),
         "tuning_log_path": str(tuning_log_path),
         "sample_log_path": str(sample_log_path),
+        "sample0_pt2_plot_paths": sample0_pt2_plot_paths,
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
         "correlator_rescale": scale,
         "overlap_rescale": _overlap_rescale(scale),

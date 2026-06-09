@@ -87,7 +87,7 @@ def log_nonlinear_fit_quality(
     loggbf = float(getattr(fit, "logGBF", float("nan")))
     chi2_dof = chi2 / dof if dof else float("nan")
     status = "Good" if q_value >= float(q_min) else "Bad"
-    use_logger.info(
+    message = (
         "%s %s: Q=%.6g chi2/dof=%.6g chi2=%.6g dof=%s logGBF=%.6g",
         status,
         name,
@@ -97,6 +97,10 @@ def log_nonlinear_fit_quality(
         dof,
         loggbf,
     )
+    if status == "Bad":
+        use_logger.warning(*message)
+    else:
+        use_logger.info(*message)
     return status
 
 def resolve_plot_save_path(

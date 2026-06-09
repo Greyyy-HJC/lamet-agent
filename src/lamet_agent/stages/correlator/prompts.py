@@ -23,7 +23,7 @@ Batch grid mode (preferred when Metadata.correlator_grid is present):
    source_sink, gamma=pt2_gamma, and momentum from Metadata.correlator_grid.
    Do not rely on default momentum; nonzero-momentum datasets require their
    exact HDF5 momentum key. Choose a power-of-ten correlator_rescale only
-   from the inspected magnitudes so typical fitted 2pt data are in the 0.1..1
+   from the inspected magnitudes so typical fitted 2pt data are in the 0.0001..0.01
    range; use 1.0 if they already are. Then call fit_bare_matrix_grid with the
    exact fields from Metadata.correlator_grid, including fit_strategy when present,
    plus the chosen correlator_rescale. The tool supports chained 2pt -> ratio
@@ -37,7 +37,7 @@ Manual mode:
 Phase A (2pt, if manifest includes kind=2pt):
 1. read_pt2 on the 2pt path (stores pt2_samples and pt2_imag_samples; note Lt).
 2. resample_to_gvar -> pt2_gv. Inspect the 2pt data scale; choose one
-   correlator_rescale for all later 2pt/3pt fits so fitted 2pt values are 0.1..1.
+   correlator_rescale for all later 2pt/3pt fits so fitted 2pt values are 0.0001..0.01.
 3. fit_window up to six times (append=True) with that correlator_rescale; tmin>=1, tmax<=Lt//2,
    tmax-tmin>=2*nstate; judge Q, chi2/dof, E0.
 4. Choose window_indices; model_average on scan for E0, log(dE1), z0, and z1

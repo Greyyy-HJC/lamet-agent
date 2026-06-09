@@ -152,27 +152,22 @@
       "pt2_windows": [
         {
           "tmin": 2,
-          "tmax": 16
+          "tmax": 12
         },
         {
           "tmin": 3,
-          "tmax": 16
+          "tmax": 12
         },
         {
           "tmin": 4,
-          "tmax": 16
+          "tmax": 12
         },
         {
           "tmin": 5,
-          "tmax": 16
-        },
-        {
-          "tmin": 6,
-          "tmax": 16
+          "tmax": 12
         }
       ],
       "pt3_tau_cuts": [
-        1,
         2,
         3,
         4
