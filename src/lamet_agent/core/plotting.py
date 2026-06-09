@@ -109,14 +109,21 @@ def _draw_fit_band(
     color: str,
     label: str,
     boundary: str | None = None,
+    t_max: int | None = None,
 ) -> None:
     """Draw a fit curve with uncertainty band on C2pt or meff axes."""
     if boundary is None:
         fit_mean = gv.mean(fit_gv)
         fit_sdev = gv.sdev(fit_gv)
-        ax.plot(fit_t, fit_mean, color=color, label=label)
+        plot_t = np.asarray(fit_t, dtype=int)
+        if t_max is not None:
+            keep = plot_t <= int(t_max)
+            plot_t = plot_t[keep]
+            fit_mean = fit_mean[keep]
+            fit_sdev = fit_sdev[keep]
+        ax.plot(plot_t, fit_mean, color=color, label=label)
         ax.fill_between(
-            fit_t,
+            plot_t,
             fit_mean - fit_sdev,
             fit_mean + fit_sdev,
             color=color,
@@ -125,7 +132,11 @@ def _draw_fit_band(
         return
 
     fit_meff = pt2_to_meff(fit_gv, boundary=boundary)
-    meff_t = _meff_trange(fit_t, boundary)
+    meff_t = _meff_trange(np.asarray(fit_t, dtype=int), boundary)
+    if t_max is not None:
+        keep = meff_t <= int(t_max)
+        meff_t = meff_t[keep]
+        fit_meff = fit_meff[keep]
     fit_mean = gv.mean(fit_meff)
     fit_sdev = gv.sdev(fit_meff)
     ax.plot(meff_t, fit_mean, color=color, label=label)
@@ -228,6 +239,92 @@ def plot_pt2_fit_on_data(
         fig_meff.savefig(path.with_name(f"{path.name}_meff.pdf"), bbox_inches="tight", transparent=True)
 
     return (fig_c2, ax_c2), (fig_meff, ax_meff)
+
+
+def plot_pt2_meff_on_data(
+    pt2_gv: np.ndarray,
+    *,
+    boundary: str = "none",
+    fit_t: np.ndarray | None = None,
+    fit_gv: np.ndarray | None = None,
+    fit_label: str = "Fit",
+    fit_bands: list[dict[str, Any]] | None = None,
+    E0_band: gv.GVar | None = None,
+    E0_label: str = r"Model-averaged $E_0$",
+    t_max: int | None = None,
+    save_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Plot effective mass with optional per-window fit bands.
+
+    When ``t_max`` is set, only points with ``t <= t_max`` are shown.
+    ``save_path`` writes ``<save_path>_meff.pdf``.
+    """
+    if fit_bands is None and fit_t is not None and fit_gv is not None:
+        fit_bands = [{"fit_t": fit_t, "fit_gv": fit_gv, "label": fit_label, "color": COLOR_CYCLE[0]}]
+
+    if t_max is not None:
+        end = min(len(pt2_gv), int(t_max) + 2)
+        pt2_plot = pt2_gv[:end]
+    else:
+        pt2_plot = pt2_gv
+
+    t = np.arange(len(pt2_plot), dtype=int)
+    meff_gv = pt2_to_meff(pt2_plot, boundary=boundary)
+    meff_x = _meff_trange(t, boundary)
+    if t_max is not None:
+        keep = meff_x <= int(t_max)
+        meff_x = meff_x[keep]
+        meff_gv = meff_gv[keep]
+
+    fig_meff, ax_meff = default_plot()
+    ax_meff.errorbar(
+        meff_x,
+        gv.mean(meff_gv),
+        yerr=gv.sdev(meff_gv),
+        label="Data",
+        **ERRORBAR_STYLE,
+    )
+    ax_meff.set_xlabel(TSEP_LABEL, **FONT_SIZE)
+    ax_meff.set_ylabel(MEFF_LABEL, **FONT_SIZE)
+    if t_max is not None:
+        ax_meff.set_xlim(left=float(np.min(meff_x)) if meff_x.size else 0.0, right=float(t_max))
+
+    if fit_bands:
+        for i, band in enumerate(fit_bands):
+            band_t = np.asarray(band["fit_t"], dtype=int)
+            band_gv = band["fit_gv"]
+            color = band.get("color", COLOR_CYCLE[i % len(COLOR_CYCLE)])
+            label = band.get("label", f"Fit {i}")
+            _draw_fit_band(
+                ax_meff,
+                band_t,
+                band_gv,
+                color=color,
+                label=label,
+                boundary=boundary,
+                t_max=t_max,
+            )
+
+    if E0_band is not None:
+        e0_mean = float(gv.mean(E0_band))
+        e0_sdev = float(gv.sdev(E0_band))
+        ax_meff.axhspan(
+            e0_mean - e0_sdev,
+            e0_mean + e0_sdev,
+            color=COLOR_CYCLE[0],
+            alpha=0.2,
+            label=E0_label,
+        )
+        ax_meff.axhline(e0_mean, color=COLOR_CYCLE[0], linestyle="--", linewidth=1)
+
+    ax_meff.legend(**LEGEND_SETS)
+
+    if save_path is not None:
+        path = Path(save_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig_meff.savefig(path.with_name(f"{path.name}_meff.pdf"), bbox_inches="tight", transparent=True)
+
+    return fig_meff, ax_meff
 
 
 def _pt3_ratio_data_tau_slice(tsep: int) -> slice:

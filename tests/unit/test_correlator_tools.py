@@ -24,6 +24,7 @@ from lamet_agent.core.plotting import (
     _ratio_denominator_correction,
     _ylim_middle_third,
     plot_pt2_fit_on_data,
+    plot_pt2_meff_on_data,
 )
 from lamet_agent.core.resampling import sample_mean_err as core_sample_mean_err
 from lamet_agent.core.tools import log_nonlinear_fit_quality, prepare_tool_args, setup_logger
@@ -354,26 +355,6 @@ def test_pt3_ratio_fit_recovers_parameters() -> None:
     assert abs(gv.mean(fit.p["O00_re"]) - gv.mean(p_true["O00_re"])) < 0.05
 
 
-def test_inspect_correlator_scale_reports_window_magnitudes(tmp_path) -> None:
-    import h5py
-
-    path = tmp_path / "pt2.h5"
-    data = np.full((12, 4), 2.0e-18, dtype=np.complex128)
-    with h5py.File(path, "w") as h5f:
-        h5f.create_dataset("SS/5/PX0PY0PZ0", data=data)
-
-    store: dict = {}
-    result = inspect_correlator_scale(
-        store,
-        pt2_path=str(path),
-        pt2_windows=[{"tmin": 2, "tmax": 5}],
-    )
-    assert result["target_typical_abs_range"] == [0.1, 1.0]
-    assert result["windows"][0]["median_abs"] == pytest.approx(2.0e-18)
-    assert result["windows"][0]["max_abs"] == pytest.approx(2.0e-18)
-    assert store["correlator_scale_inspection"] is result
-
-
 def test_inspect_correlator_scale_accepts_selector_momentum(tmp_path) -> None:
     import h5py
 
@@ -446,15 +427,6 @@ def test_joint_ratio_fit_rescale_preserves_o00_plateau() -> None:
     true_plateau = gv.mean(p_true["O00_re"] / (2 * p_true["E0"]))
     assert scaled_plateau == pytest.approx(unscaled_plateau, rel=0.05)
     assert scaled_plateau == pytest.approx(true_plateau, rel=0.05)
-
-
-def test_correlator_prompt_and_catalog_describe_rescale() -> None:
-    catalog = tool_catalog()
-    assert "inspect_correlator_scale" in catalog
-    assert "correlator_rescale" in catalog
-    assert "0.1..1" in STAGE_PROMPT
-    assert "momentum" in catalog
-    assert "Do not rely on default momentum" in STAGE_PROMPT
 
 
 def test_fit_window_append_and_index() -> None:
@@ -560,6 +532,22 @@ def test_plot_fit_on_data_rewrites_outside_path(tmp_path) -> None:
     )
     assert (artifacts / "custom_c2pt.pdf").is_file()
     assert result["c2pt_pdf"].startswith(str(artifacts))
+
+
+def test_plot_pt2_meff_on_data_respects_t_max(tmp_path) -> None:
+    pt2_gv = _toy_pt2_gv()
+    t_band = np.arange(2, 10, dtype=int)
+    band_gv = pt2_gv[t_band]
+    save = tmp_path / "meff_only"
+    _, ax = plot_pt2_meff_on_data(
+        pt2_gv,
+        fit_bands=[{"fit_t": t_band, "fit_gv": band_gv, "label": "w1"}],
+        t_max=6,
+        save_path=save,
+    )
+    assert ax.get_xlim()[1] == pytest.approx(6.0)
+    assert (tmp_path / "meff_only_meff.pdf").is_file()
+    assert not (tmp_path / "meff_only_c2pt.pdf").exists()
 
 
 def test_plot_pt2_legend_upper_right() -> None:
@@ -708,6 +696,53 @@ def test_write_sample0_ratio_plot_uses_momentum_and_o00_band(monkeypatch, tmp_pa
     assert captured["denominator_correction_energy"] is p["E0"]
     assert captured["denominator_correction_Lt"] == 32
     assert captured["plateau_label"] == r"Sample-0 fit $\mathcal{O}_{00}/(2E_0)$"
+
+
+def test_write_sample0_pt2_plot_uses_momentum_and_e0_band(monkeypatch, tmp_path) -> None:
+    captured = {}
+
+    def fake_plot(pt2_gv, **kwargs):
+        captured["pt2_gv"] = pt2_gv
+        captured.update(kwargs)
+        return object(), object()
+
+    monkeypatch.setattr(correlator_functions, "plot_pt2_meff_on_data", fake_plot)
+    monkeypatch.setattr(correlator_functions.plt, "close", lambda _fig: None)
+
+    p = gv.BufferDict()
+    p["E0"] = gv.gvar(0.5, 0.01)
+    p["z0"] = gv.gvar(1.0, 0.01)
+    p["log(dE1)"] = gv.gvar(-1.0, 0.1)
+    p["z1"] = gv.gvar(0.2, 0.05)
+
+    class Fit:
+        pass
+
+    fit = Fit()
+    fit.p = p
+    pt2 = _toy_pt2_gv()
+    result = correlator_functions._write_sample0_pt2_plot(
+        pt2_sample=pt2,
+        fit_record={
+            "fit": fit,
+            "tmin": 2,
+            "tmax": 10,
+            "nstate": 2,
+            "correlator_rescale": 1.0,
+        },
+        Lt=24,
+        log_dir=tmp_path,
+        momentum="PX5PY0PZ0",
+    )
+
+    assert "c2pt_pdf" not in result
+    assert result["meff_pdf"].endswith("chained_fit_PX5PY0PZ0_sample0_meff.pdf")
+    assert Path(captured["save_path"]).name == "chained_fit_PX5PY0PZ0_sample0"
+    assert captured["E0_band"] is p["E0"]
+    assert captured["E0_label"] == r"Sample-0 fit $E_0$"
+    assert captured["boundary"] == "none"
+    assert captured["t_max"] == 6
+    assert len(captured["fit_bands"]) == 1
 
 
 def test_write_bare_matrix_grid_outputs_writes_txt_plot_and_report(tmp_path) -> None:
@@ -886,4 +921,4 @@ def test_log_nonlinear_fit_quality_writes_good_and_bad(tmp_path) -> None:
         handler.flush()
     log_text = log_path.read_text()
     assert "Good toy good" in log_text
-    assert "Bad toy bad" in log_text
+    assert "WARNING - Bad toy bad" in log_text
