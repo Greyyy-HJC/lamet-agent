@@ -14,8 +14,8 @@
         "source_sink": "SS",
         "gamma": "5",
         "momentum": "PX0PY0PZ0",
-        "pz": 0,
-        "bz_selection": "z=0..24 handled by metadata.correlator_grid"
+        "bz_selection": "z=0..24 handled by metadata.correlator_grid",
+        "px": 0
       }
     },
     {
@@ -186,7 +186,7 @@
       "save_path": "a060_x_p0_bare_matrix_elements",
       "resample_mode": "jk",
       "posterior_prior_error_scale": 3.0,
-      "fit_strategy": "chained"
+      "fit_strategy": "joint"
     }
   }
 }

@@ -111,6 +111,45 @@ def test_deepseek_request_retries_transient_url_error(monkeypatch) -> None:
     assert action["action"] == "finish"
 
 
+def test_provider_json_parse_error_gets_repair_retry(monkeypatch) -> None:
+    calls = {"count": 0}
+    bodies: list[dict] = []
+
+    class _Response:
+        def __init__(self, content: str) -> None:
+            self._content = content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps({"choices": [{"message": {"content": self._content}}]}).encode()
+
+    def fake_urlopen(request, timeout):
+        calls["count"] += 1
+        bodies.append(json.loads(request.data.decode("utf-8")))
+        if calls["count"] == 1:
+            return _Response('{"action":"finish" "reason":"missing comma"}')
+        return _Response('{"action":"finish","reason":"done"}')
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+
+    action = llm._post_chat_completion(
+        messages=[{"role": "user", "content": "finish"}],
+        api_key="test-key",
+        model_name="deepseek-chat",
+        base_url="https://api.deepseek.com",
+    )
+
+    assert calls["count"] == 2
+    assert action == {"action": "finish", "reason": "done"}
+    assert bodies[1]["messages"][-1]["role"] == "user"
+    assert "not valid JSON" in bodies[1]["messages"][-1]["content"]
+
+
 def test_provider_config_exposes_deepseek_and_openai() -> None:
     assert llm.provider_config("deepseek")["base_url"] == "https://api.deepseek.com"
     openai = llm.provider_config("openai")

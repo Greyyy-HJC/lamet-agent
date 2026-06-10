@@ -619,8 +619,25 @@ def test_fit_bare_matrix_grid_path_args_resolve_under_artifacts(tmp_path) -> Non
     assert resolved["pt2_path"] == str(tmp_path / "data" / "pt2.h5")
     assert resolved["pt3_paths"]["8"] == str(tmp_path / "data" / "ts8.h5")
     assert resolved["pt3_paths"]["10"] == "/abs/ts10.h5"
-    assert resolved["save_path"] == str(tmp_path / "artifacts" / "bare_matrix_elements")
+    assert resolved["save_path"] == str(tmp_path / "artifacts" / "demo_bare_matrix_elements")
     assert resolved["artifacts_dir"] == str(tmp_path / "artifacts")
+
+
+def test_fit_bare_matrix_grid_uses_manifest_save_path_when_agent_omits_it(tmp_path) -> None:
+    manifest = AnalysisManifest(
+        run_id="workflow_cg_qpdf_p0",
+        correlators=[],
+        kernels=[],
+        metadata={"correlator_grid": {"save_path": "a060_x_p0_bare_matrix_elements"}},
+        manifest_dir=tmp_path,
+        project_root=tmp_path,
+    )
+
+    resolved = prepare_tool_args(
+        "fit_bare_matrix_grid", {"save_path": None}, manifest=manifest, artifacts_dir=tmp_path / "artifacts", _store={}
+    )
+
+    assert resolved["save_path"] == str(tmp_path / "artifacts" / "a060_x_p0_bare_matrix_elements")
 
 
 def test_tune_tools_get_artifacts_dir_injected(tmp_path) -> None:
@@ -669,6 +686,7 @@ def test_plot_pt2_meff_on_data_respects_t_max(tmp_path) -> None:
     t_band = np.arange(2, 10, dtype=int)
     save = tmp_path / "meff_only"
     _, ax = plot_pt2_meff_on_data(pt2_gv, fit_bands=[{"fit_t": t_band, "fit_gv": pt2_gv[t_band], "label": "w1"}], t_max=6, save_path=save)
+    assert ax.get_xlim()[0] == pytest.approx(-0.5)
     assert ax.get_xlim()[1] == pytest.approx(6.0)
     assert (tmp_path / "meff_only_meff.pdf").is_file()
 
@@ -681,6 +699,7 @@ def test_plot_pt2_fit_on_data_respects_t_max() -> None:
         fit_bands=[{"fit_t": t_band, "fit_gv": pt2_gv[t_band], "label": "w1"}],
         t_max=6,
     )
+    assert ax_meff.get_xlim()[0] == pytest.approx(0.5)
     assert ax_meff.get_xlim()[1] == pytest.approx(6.0)
     assert ax_c2.get_xlim()[1] > 6.0
 

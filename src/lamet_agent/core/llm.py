@@ -62,6 +62,23 @@ class LlmSession(Protocol):
     def decide(self, *, last_observation: dict[str, Any] | None) -> dict[str, Any]: ...
 
 
+def _parse_json_action(content: str, *, label: str) -> dict[str, Any]:
+    """Parse one JSON action from provider text, including fenced/explanatory replies."""
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as direct_exc:
+        match = re.search(r"\{.*\}", content, re.S)
+        if match is None:
+            raise ValueError(f"{label} returned no JSON action:\n{content}") from direct_exc
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError as extracted_exc:
+            raise ValueError(
+                f"{label} returned malformed JSON action: {extracted_exc.msg} "
+                f"at line {extracted_exc.lineno} column {extracted_exc.colno}. Raw content:\n{content}"
+            ) from extracted_exc
+
+
 def _post_chat_completion(
     *,
     messages: list[dict[str, str]],
@@ -76,50 +93,66 @@ def _post_chat_completion(
         "next action only. Do NOT run shell commands or edit files. Reply with "
         "exactly one JSON object matching this shape: " + json.dumps(ACTION_SCHEMA)
     )
-    body = {
-        "model": model_name,
-        "messages": [{"role": "system", "content": system}, *messages],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.0,
-        "stream": False,
-    }
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
+    request_messages = [{"role": "system", "content": system}, *messages]
     label = provider.capitalize()
-    payload = None
-    last_error: BaseException | None = None
-    for attempt in range(3):
+    last_parse_error: ValueError | None = None
+
+    for parse_attempt in range(3):
+        body = {
+            "model": model_name,
+            "messages": request_messages,
+            "response_format": {"type": "json_object"},
+            "temperature": 0.0,
+            "stream": False,
+        }
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        payload = None
+        last_error: BaseException | None = None
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(request, timeout=180) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                break
+            except (TimeoutError, urllib.error.URLError, ssl.SSLError) as exc:
+                last_error = exc
+                if attempt == 2:
+                    raise RuntimeError(
+                        f"{label} API request failed after 3 attempts. "
+                        "This is usually a transient HTTPS/network/proxy issue; retry the command or check network/proxy settings."
+                    ) from exc
+                time.sleep(2**attempt)
+
+        if payload is None:
+            raise RuntimeError(f"{label} API request failed before returning a response.") from last_error
+
+        content = payload["choices"][0]["message"]["content"]
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            break
-        except (TimeoutError, urllib.error.URLError, ssl.SSLError) as exc:
-            last_error = exc
-            if attempt == 2:
-                raise RuntimeError(
-                    f"{label} API request failed after 3 attempts. "
-                    "This is usually a transient HTTPS/network/proxy issue; retry the command or check network/proxy settings."
-                ) from exc
-            time.sleep(2**attempt)
+            return _parse_json_action(content, label=label)
+        except ValueError as exc:
+            last_parse_error = exc
+            if parse_attempt == 2:
+                raise
+            request_messages = [
+                *request_messages,
+                {"role": "assistant", "content": content},
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous response was not valid JSON for the required action object. "
+                        f"Parser error: {exc}. Return exactly one valid JSON object and no other text."
+                    ),
+                },
+            ]
 
-    if payload is None:
-        raise RuntimeError(f"{label} API request failed before returning a response.") from last_error
-
-    content = payload["choices"][0]["message"]["content"]
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", content, re.S)
-        if match is None:
-            raise ValueError(f"{label} returned no JSON action:\n{content}")
-        return json.loads(match.group(0))
+    raise RuntimeError(f"{label} failed to return a parseable JSON action.") from last_parse_error
 
 
 def _request_llm_action(
