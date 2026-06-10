@@ -248,7 +248,7 @@ def apply_ratio_scheme_renormalization(
 
     z0_idx = _z_index(z_target, z0, label="normalization")
     zs_idx = _z_index(z_denom, zs, label="long-distance denominator")
-    norm = denom_values[:, z0_idx] / target_values[:, z0_idx]
+    norm = denom_values[:, z0_idx] / target_values[:, z0_idx] 
     exponent = np.exp((float(delta_m) + float(m0)) * (np.abs(z_target) - float(zs)))
     short = norm[:, None] * target_values / denom_values
     long = norm[:, None] * exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
