@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 
 from .agent import run_agent
+from .core.llm import provider_config
 from .core.stages import select_stage_sequence
 from .manifest import validate_manifest_file
 
@@ -67,11 +68,24 @@ def run_workflow(
     manifest: Path,
     stages: str | None = None,
     resume_from: str | None = None,
-    model: str = "mock",
+    model: str = typer.Option(
+        "mock",
+        "--model",
+        help="LLM backend: mock, external, deepseek, or openai.",
+    ),
     actions_path: Path | None = None,
     api_key_file: Path = Path("api.key"),
-    deepseek_model: str = "deepseek-chat",
-    base_url: str = "https://api.deepseek.com",
+    llm_model: str | None = typer.Option(
+        None,
+        "--llm-model",
+        help="Concrete model name; defaults to the provider's cost-effective model "
+        "(deepseek-chat / gpt-4o-mini).",
+    ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        help="Override the provider API base URL.",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -90,8 +104,9 @@ def run_workflow(
     ``--stages correlator_analysis``. Running a later stage on its own requires
     the manifest to already provide that stage's inputs.
 
-    With ``--model deepseek`` the loop is driven by the DeepSeek API; the key is
-    read from ``--api-key-file`` (default ``api.key``) or ``DEEPSEEK_API_KEY``.
+    With ``--model deepseek`` or ``--model openai`` the loop is driven by that
+    provider's API. The key is read from ``--api-key-file`` (default ``api.key``)
+    or the provider environment variable (``DEEPSEEK_API_KEY`` / ``OPENAI_API_KEY``).
     """
     try:
         parsed = validate_manifest_file(manifest)
@@ -103,7 +118,9 @@ def run_workflow(
     api_key = None
     if api_key_file.exists():
         api_key = api_key_file.read_text(encoding="utf-8").strip()
-    api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+    config = provider_config(model)
+    if not api_key and config is not None:
+        api_key = os.environ.get(config["key_env"])
 
     try:
         result = run_agent(
@@ -113,7 +130,7 @@ def run_workflow(
             model=model,
             actions_path=actions_path,
             api_key=api_key,
-            deepseek_model=deepseek_model,
+            llm_model=llm_model,
             base_url=base_url,
             verbose=verbose,
             max_tool_steps=max_tool_steps,

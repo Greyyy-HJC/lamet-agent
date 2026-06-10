@@ -159,6 +159,7 @@ def plot_pt2_fit_on_data(
     fit_bands: list[dict[str, Any]] | None = None,
     E0_band: gv.GVar | None = None,
     E0_label: str = r"Model-averaged $E_0$",
+    t_max: int | None = None,
     save_path: str | Path | None = None,
 ) -> tuple[tuple[Figure, Axes], tuple[Figure, Axes]]:
     """Plot C2pt and effective mass with optional per-window fit bands.
@@ -166,6 +167,9 @@ def plot_pt2_fit_on_data(
     ``fit_bands`` entries may contain ``fit_t``, ``fit_gv``, ``label``, and
     optional ``color``. When ``E0_band`` is given, a horizontal uncertainty band
     is drawn on the meff panel at the model-averaged ground-state energy.
+
+    When ``t_max`` is set, the meff panel shows only points with ``t <= t_max``
+    and sets ``xlim`` accordingly; the C2pt panel is unchanged.
 
     Legacy single-band usage: pass ``fit_t`` and ``fit_gv`` instead of
     ``fit_bands``. ``save_path`` writes ``<save_path>_c2pt.pdf`` and
@@ -191,15 +195,23 @@ def plot_pt2_fit_on_data(
     meff_gv = pt2_to_meff(pt2_gv, boundary=boundary)
     fig_meff, ax_meff = default_plot()
     meff_x = _meff_trange(t, boundary)
+    if t_max is not None:
+        keep = meff_x <= int(t_max)
+        meff_x = meff_x[keep]
+        meff_gv = meff_gv[keep]
+    meff_mean = gv.mean(meff_gv)
     ax_meff.errorbar(
         meff_x,
-        gv.mean(meff_gv),
+        meff_mean,
         yerr=gv.sdev(meff_gv),
         label="Data",
         **ERRORBAR_STYLE,
     )
     ax_meff.set_xlabel(TSEP_LABEL, **FONT_SIZE)
     ax_meff.set_ylabel(MEFF_LABEL, **FONT_SIZE)
+    if t_max is not None:
+        ax_meff.set_xlim(left=float(np.min(meff_x)) if meff_x.size else 0.0, right=float(t_max))
+    ax_meff.set_ylim(_ylim_mean_middle_third(meff_mean))
 
     if fit_bands:
         for i, band in enumerate(fit_bands):
@@ -215,6 +227,7 @@ def plot_pt2_fit_on_data(
                 color=color,
                 label=label,
                 boundary=boundary,
+                t_max=t_max,
             )
 
     if E0_band is not None:
@@ -277,9 +290,10 @@ def plot_pt2_meff_on_data(
         meff_gv = meff_gv[keep]
 
     fig_meff, ax_meff = default_plot()
+    meff_mean = gv.mean(meff_gv)
     ax_meff.errorbar(
         meff_x,
-        gv.mean(meff_gv),
+        meff_mean,
         yerr=gv.sdev(meff_gv),
         label="Data",
         **ERRORBAR_STYLE,
@@ -288,6 +302,7 @@ def plot_pt2_meff_on_data(
     ax_meff.set_ylabel(MEFF_LABEL, **FONT_SIZE)
     if t_max is not None:
         ax_meff.set_xlim(left=float(np.min(meff_x)) if meff_x.size else 0.0, right=float(t_max))
+    ax_meff.set_ylim(_ylim_mean_middle_third(meff_mean))
 
     if fit_bands:
         for i, band in enumerate(fit_bands):
@@ -362,6 +377,21 @@ def _ylim_middle_third(
     if span <= 0.0:
         err_scale = float(np.max([np.max(np.asarray(e, dtype=float)) for e in yerr_data]))
         span = max(err_scale, 1e-6) * 2.0
+    margin = span
+    return data_min - margin, data_max + margin
+
+
+def _ylim_mean_middle_third(y: np.ndarray) -> tuple[float, float]:
+    """Y limits so the mean-value span occupies the middle third of the axis."""
+    finite = np.asarray(y, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return 0.0, 1.0
+    data_min = float(np.min(finite))
+    data_max = float(np.max(finite))
+    span = data_max - data_min
+    if span <= 0.0:
+        span = max(abs(data_min), 1e-6) * 0.2
     margin = span
     return data_min - margin, data_max + margin
 

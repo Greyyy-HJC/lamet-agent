@@ -1,4 +1,4 @@
-"""Stage-local helpers and skill guidance for correlator analysis."""
+"""Stage-local skill guidance and tool catalog for correlator analysis."""
 
 from __future__ import annotations
 
@@ -6,54 +6,29 @@ from lamet_agent.manifest import AnalysisManifest
 
 
 STAGE_SKILL = """
-Correlator-analysis skill: 2pt ground-state extraction and optional 3pt/2pt
-ratio fits for the bare matrix element.
-
-2pt physics:
-- The periodic/anti-periodic 2pt correlator is symmetric about t = Lt/2.
-- Fit only the first half: tmax <= Lt//2 and tmin < Lt/2.
-
-3pt physics:
-- Ratio R(tsep, tau) = C_3pt / C_2pt(tsep); tau_cut >= 1; fit tau in [tau_cut, tsep+1-tau_cut).
-- read_pt3 once per manifest 3pt file so keys 4,6,8,10 are available; you pick
-  tsep_ls (subset) and tau_cut per fit_pt3_window call.
-- Two-state ratio fit needs >= 10 re+im data points total across chosen tseps.
+Correlator-analysis physics:
+- The 2pt correlator is symmetric about t = Lt/2; fit only the first half
+  (tmax <= Lt//2, tmin >= 1).
+- Ratio R(tsep, tau) = C_3pt / C_2pt(tsep); a two-state ratio fit uses
+  tau in [tau_cut, tsep + 1 - tau_cut) with tau_cut >= 1, and needs enough combined
+  re+im points across the chosen tseps.
+- The bare matrix element is O00/(2*E0); it is invariant under the 2pt rescale.
 
 Strategy:
-- Always resample ('bs' or 'jk') at read time; never use a single configuration mean.
-- read_pt2 establishes bootstrap indices; read_pt3 reuses them for the same ensemble.
-- compute_pt3_ratio divides resampled 3pt by resampled 2pt; do not resample ratios.
-- Before fitting, inspect 2pt magnitudes and choose an explicit power-of-ten
-  correlator_rescale when needed so fitted 2pt data are typically 0.0001..0.01.
-- 2pt: fit_window (<=6 windows on scan) with the chosen correlator_rescale;
-  model_average E0, log(dE1), z0, z1;
-  plot_fit_on_data.
-- 3pt manual mode: fit_pt3_window (<=2 trials) anchors E0,z0 to 2pt BMA (5x widened errors); log(dE), z1, O_ij use broad priors;
-  then model_average O00_re and O00_im on trusted window_indices; plot shows
-  model-averaged O00/(2*E0) bands on both ratio re and im panels.
-- Batch grid mode: when manifest metadata defines correlator_grid, first call
-  inspect_correlator_scale, choose correlator_rescale from the inspected 2pt
-  magnitudes, then call fit_bare_matrix_grid once with its fit_strategy and that
-  correlator_rescale. Chained mode uses a 2pt -> ratio path;
-  joint mode uses 2pt+ratio fits. Both select windows on sample-average data, refit
-  bootstrap or jackknife samples, and export per-z O00/(2*E0) samples, sample-0 2pt
-  (chained) and ratio plots, split tuning/sample fit logs, and a PDF under artifacts.
-- Prefer Q > 0.05 and stable plateaus on both stages.
+- Always resample at read time ('bs' or 'jk'); never fit a single configuration mean.
+- Inspect 2pt magnitudes and pick a power-of-ten correlator_rescale so fitted 2pt data
+  are ~0.0001..0.01.
+- Tune one shared fit setting on sample-average data, then apply it to every sample:
+  this keeps all z (and b) on the same window instead of per-z choices.
+- joint strategy fits 2pt+ratio together; chained fits 2pt first, then the ratio with
+  E0/z0 anchored from the 2pt posterior. Prefer Q > 0.05 and stable plateaus.
 """.strip()
 
 TOOL_CATALOG = {
-    "read_pt2": "read_pt2(path, resample_mode='bs'|'jk', ...) -> resampled pt2_samples (real) and pt2_imag_samples.",
-    "read_pt3": "read_pt3(path, resample_mode='bs'|'jk', append=True) -> resampled pt3_samples_re/im; reuses bootstrap indices from read_pt2.",
-    "compute_pt3_ratio": "compute_pt3_ratio() -> ratio_samples_re/im from resampled pt2/pt3.",
-    "resample_to_gvar": "resample_to_gvar(samples='pt2_samples', mode='bs'|'jk') -> pt2_gv; resamples raw configs only if read_pt2 did not already resample.",
-    "resample_ratio_to_gvar": "resample_ratio_to_gvar(mode='bs'|'jk') -> ratio_real_gv, ratio_imag_gv from resampled ratio samples.",
-    "inspect_correlator_scale": "inspect_correlator_scale(pt2_path, pt2_windows, source_sink, gamma, momentum, selectors) -> 2pt magnitude diagnostics for choosing correlator_rescale.",
-    "fit_window": "fit_window(pt2_gv, tmin, tmax, Lt, correlator_rescale=..., out='scan', append=True) -> 2pt window scan (max 6).",
-    "fit_pt3_window": "fit_pt3_window(tsep_ls, tau_cut, correlator_rescale=..., append=True); Lt optional; autofills E0_avg,z0_avg; log(dE1),z1 use broad 3pt priors.",
-    "model_average": "model_average(scan, param, window_indices) -> logGBF-weighted gvar; pass a subset of indices.",
-    "plot_fit_on_data": "plot_fit_on_data(pt2_gv, scan, window_indices, E0_avg, Lt) -> C2pt/meff PDFs.",
-    "plot_pt3_fit_on_data": "plot_pt3_fit_on_data(ratio_real_gv, ratio_imag_gv, scan='pt3_scan', window_indices, O00_re_avg, Lt) -> ratio PDFs.",
-    "fit_bare_matrix_grid": "fit_bare_matrix_grid(pt2_path, pt3_paths, tsep_ls, z_values, ensemble, tag, momentum, correlator_rescale=..., fit_strategy='chained'|'joint', resample_mode='bs'|'jk', ...) -> bare_qpdf txt files, sample-0 2pt/ratio PDFs, split fit logs, summary PDF, and report under artifacts.",
+    "inspect_correlator_scale": "inspect_correlator_scale(pt2_path, momentum, source_sink, gamma, pt2_windows?) -> 2pt magnitude diagnostics for choosing correlator_rescale.",
+    "tune_ground_state": "tune_ground_state(pt2_path, pt2_windows, correlator_rescale, ...) -> per-window 2pt diagnostics + plot; window_indices+model_average store E0_avg/z0_avg.",
+    "tune_bare_matrix": "tune_bare_matrix(pt2_path, pt3_paths, tsep_ls, momentum, fit_strategy, correlator_rescale, pt2_windows, pt3_tau_cuts, tune_z?) -> ranked candidate windows with O00/(2E0) on sample-average data + tuning plot.",
+    "fit_bare_matrix_grid": "fit_bare_matrix_grid(pt2_path, pt3_paths, tsep_ls, z_values, ensemble, tag, momentum, fit_strategy, correlator_rescale, pt2_window|pt2_windows, pt3_window|pt3_tau_cuts, model_average?) -> applies one shared setting to all z/samples; writes bare_qpdf txt, sample-0 PDFs, split logs, summary PDF + report.",
 }
 
 

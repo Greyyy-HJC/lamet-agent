@@ -103,9 +103,62 @@ def test_deepseek_request_retries_transient_url_error(monkeypatch) -> None:
     action = llm._post_chat_completion(
         messages=[{"role": "user", "content": "finish"}],
         api_key="test-key",
-        deepseek_model="deepseek-chat",
+        model_name="deepseek-chat",
         base_url="https://api.deepseek.com",
     )
 
     assert calls["count"] == 2
     assert action["action"] == "finish"
+
+
+def test_provider_config_exposes_deepseek_and_openai() -> None:
+    assert llm.provider_config("deepseek")["base_url"] == "https://api.deepseek.com"
+    openai = llm.provider_config("openai")
+    assert openai["base_url"] == "https://api.openai.com/v1"
+    assert openai["default_model"] == "gpt-4o-mini"
+    assert openai["key_env"] == "OPENAI_API_KEY"
+    assert llm.provider_config("mock") is None
+
+
+def test_openai_request_targets_openai_endpoint_and_model(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"choices": [{"message": {"content": "{\"action\":\"finish\",\"reason\":\"done\"}"}}]}
+            ).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["auth"] = request.headers.get("Authorization")
+        return _Response()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+
+    action = llm._request_llm_action(
+        model="openai",
+        messages=[{"role": "user", "content": "go"}],
+        api_key="sk-test",
+    )
+
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    assert captured["body"]["model"] == "gpt-4o-mini"
+    assert captured["auth"] == "Bearer sk-test"
+    assert action["action"] == "finish"
+
+
+def test_make_llm_session_openai_requires_key() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="openai"):
+        llm.make_llm_session("openai", None, api_key=None)
+    session = llm.make_llm_session("openai", None, api_key="sk-test")
+    assert hasattr(session, "decide")

@@ -92,6 +92,17 @@ executes:
 lamet-agent run examples/workflow_smoke_manifest.json --model deepseek --verbose
 ```
 
+Choose the LLM provider with `--model` (`deepseek` or `openai`). The API key is
+read from `--api-key-file` (default `api.key`) or the provider environment
+variable (`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`). Each provider defaults to a
+cost-effective model (`deepseek-chat` / `gpt-4o-mini`); override with
+`--llm-model` and, if needed, `--base-url`:
+
+```bash
+lamet-agent run examples/workflow_smoke_manifest.json --model openai --verbose
+lamet-agent run examples/workflow_smoke_manifest.json --model openai --llm-model gpt-4o
+```
+
 Run with a real-model placeholder switch:
 
 ```bash
@@ -116,10 +127,11 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
   - Builds static stage context once per stage; incremental tool observations are
     appended as separate user turns in the DeepSeek multi-turn session.
 - `src/lamet_agent/core/llm.py`
-  - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), and
-    `deepseek` (multi-turn chat per stage).
-  - `make_llm_session()` selects a backend; DeepSeek HTTP lives in
-    `_post_chat_completion` (add new providers there or in `_request_llm_action`).
+  - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), and the
+    OpenAI-compatible providers `deepseek` and `openai` (multi-turn chat per stage).
+  - `PROVIDERS` holds each provider's base URL, default model, and API-key env var;
+    `make_llm_session()` selects a backend and shared HTTP lives in
+    `_post_chat_completion` (add new OpenAI-compatible providers to `PROVIDERS`).
 - `src/lamet_agent/core/tools.py`
   - Resolves a stage's `STAGE_TOOLS` registry for the agent loop.
   - `prepare_tool_args()` / `filter_tool_kwargs()` normalize LLM tool calls
@@ -138,9 +150,9 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
 - `src/lamet_agent/cli.py`
   - Exposes `validate`, `workflow`, `run` commands.
   - `run` accepts `--stages` (comma-separated subset), `--resume-from`,
-    `--model` (`mock`/`external`/`deepseek`), `--verbose` / `-v` (ReAct-style
-    trace to stdout), `--actions-path` (for `external`), and
-    `--api-key-file`/`--deepseek-model` (for `deepseek`).
+    `--model` (`mock`/`external`/`deepseek`/`openai`), `--verbose` / `-v`
+    (ReAct-style trace to stdout), `--actions-path` (for `external`), and
+    `--api-key-file`/`--llm-model`/`--base-url` (for `deepseek`/`openai`).
 - `src/lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
 - `src/lamet_agent/stages/*`
@@ -149,12 +161,16 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
   - `skills.py` performs stage-local checks plus `STAGE_SKILL` strategy text and
     a `tool_catalog()`.
   - `functions.py` holds the stage tools and a `STAGE_TOOLS` registry.
-  - `stages/correlator/` is the first worked example: read 2pt/3pt data, resample,
-    fit ground-state windows, logGBF model-average `E0`/`z0` and `O00_re`, and
-    plot fit-on-data PDFs (requires the `analysis` optional dependencies). For
-    multi-`tsep` fake 3pt data: `workflow_smoke_manifest.json` lists ts4/6/8/10;
-    call `read_pt3` per file, then at most two `fit_pt3_window` trials; pick
-    good `window_indices` before `model_average` (do not average every trial).
+  - `stages/correlator/` is the first worked example and exposes four agentic
+    tools (requires the `analysis` optional dependencies):
+    `inspect_correlator_scale` (choose a `correlator_rescale`), `tune_ground_state`
+    (2pt-only window scan + model average), `tune_bare_matrix` (scan bare-matrix fit
+    windows on sample-average data for one representative z), and
+    `fit_bare_matrix_grid` (apply one shared tuned window to every z and every
+    resampled sample, then export `bare_qpdf/*.txt`, fit-on-data PDFs, split logs,
+    and a JSON report). The agent tunes once on sample-average data, then applies the
+    same setting everywhere; pass a single `pt2_window`/`pt3_window` or
+    `model_average=true` to BMA-combine the window grid.
 - `examples/fake_data/generate_fake_data.py`
   - Generates fake correlator-style datasets used for local testing.
 - `examples/workflow_smoke_manifest.json`

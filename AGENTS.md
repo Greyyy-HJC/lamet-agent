@@ -91,7 +91,7 @@ Package modules:
 - `src/lamet_agent/kernels.py`: built-in kernel callables referenced as `module:function`.
 - `src/lamet_agent/core/stages.py`: default stage order and stage-id → package routing.
 - `src/lamet_agent/core/tools.py`: resolves `STAGE_TOOLS`, prepares tool args, plot paths under `artifacts/`.
-- `src/lamet_agent/core/llm.py`: `LlmSession` backends (`mock`, `external`, `deepseek`).
+- `src/lamet_agent/core/llm.py`: `LlmSession` backends (`mock`, `external`, `deepseek`, `openai`); OpenAI-compatible providers in `PROVIDERS`.
 - `src/lamet_agent/core/prompting.py`: system prompt and per-stage static context assembly.
 - `src/lamet_agent/core/trace.py`: optional ReAct-style stdout trace (`--verbose`).
 - `src/lamet_agent/core/data.py`: typed ensemble containers and cross-stage data helpers.

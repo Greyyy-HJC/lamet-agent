@@ -13,7 +13,7 @@ from lamet_agent.manifest import AnalysisManifest, resolve_data_path
 
 from .stages import resolve_stage_package
 
-_PLOT_TOOLS = frozenset({"plot_fit_on_data", "plot_pt3_fit_on_data", "fit_bare_matrix_grid"})
+_PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid"})
 _FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key"})
 _FOURIER_RUN_KEYS = frozenset(
     {

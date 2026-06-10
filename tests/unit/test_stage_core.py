@@ -56,7 +56,7 @@ def test_build_stage_static_prompt_excludes_observations() -> None:
         completed_stages=[],
     )
     assert "Tool results so far" not in static
-    assert "read_pt2" in static
+    assert "inspect_correlator_scale" in static
 
 
 def test_build_stage_static_prompt_includes_metadata() -> None:

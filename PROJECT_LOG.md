@@ -269,3 +269,18 @@
 
 - Moved bootstrap/jackknife resampling to ``read_pt2`` / ``read_pt3`` with shared bootstrap indices for one ensemble; ``compute_pt3_ratio`` now divides resampled correlators and ``resample_ratio_to_gvar`` only converts samples to gvar.
 - Fixed ``fit_bare_matrix_grid`` (joint and chained) to resample 2pt and 3pt separately with the same indices before forming ratios, instead of resampling ratios built from raw configs.
+
+## 2026-06-10 (Correlator stage agentic refactor)
+
+- Rewrote ``stages/correlator/functions.py`` (~3000 -> ~900 lines) around an agentic inspect -> tune-on-average -> apply-to-samples flow, collapsing the manual low-level tools and the duplicated joint/chained monoliths into shared physics/scan/refit/IO helpers.
+- Replaced the 12-tool registry with four tools: ``inspect_correlator_scale``, ``tune_ground_state``, ``tune_bare_matrix``, and ``fit_bare_matrix_grid``. The grid tool now tunes one shared window once (on a representative ``tune_z``) and applies it to every z and every resampled sample, instead of selecting a window per z; it accepts an explicit ``pt2_window``/``pt3_window`` or ``model_average=true`` to BMA-combine the window grid with per-z logGBF weights.
+- Removed ceremonial validators and repeated ``int(...)`` re-casting; constrained ints at tool boundaries for readability.
+- Shortened ``prompts.py`` to the four-tool flow and trimmed ``skills.py`` to physics facts plus the new tool catalog (removed prompt/skill overlap); updated ``core/tools._PLOT_TOOLS`` so the new plotting tools get ``artifacts_dir``/``save_path`` injection.
+- Rewrote ``tests/unit/test_correlator_tools.py`` for the new API (fake-data end-to-end grid coverage for single-window, explicit-window chained, and model-average modes); full unit suite passes (81 tests).
+- Behavior change: bare matrix elements now use one shared fit window across all z by default (previously per-z selection), so re-running real data may shift results vs the prior ``runs/ds_pdf_stage1`` per-z windows.
+
+## 2026-06-10 (OpenAI backend alongside DeepSeek)
+
+- Generalized ``core/llm.py`` to OpenAI-compatible providers via a ``PROVIDERS`` table (base URL, default model, API-key env var) so DeepSeek and OpenAI share one ``_post_chat_completion`` / ``_openai_compatible_session`` path; added ``provider_config()``.
+- Added ``--model openai`` (default model ``gpt-4o-mini``) next to ``--model deepseek`` (default ``deepseek-chat``); replaced the DeepSeek-specific ``--deepseek-model``/hardcoded base URL with generic ``--llm-model``/``--base-url`` and provider-aware API-key resolution (``api.key`` file or ``DEEPSEEK_API_KEY``/``OPENAI_API_KEY``).
+- Renamed ``run_agent``/``make_llm_session`` LLM params to ``llm_model``/``base_url``; updated unit tests and added OpenAI routing coverage.
