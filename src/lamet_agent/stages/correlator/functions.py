@@ -61,6 +61,66 @@ from lamet_agent.core.tools import log_nonlinear_fit_quality, resolve_plot_save_
 # --- data reading (trimmed from LaMETLat correlators/pt2.py) ----------------
 
 
+def _resample_ensemble_array(
+    data: np.ndarray,
+    store: dict[str, Any],
+    *,
+    mode: str,
+    n_boot: int,
+    seed: int | None,
+) -> np.ndarray:
+    """Resample one correlator array using shared bootstrap indices in ``store``."""
+    indices = store.get("resample_indices")
+    n_boot_use = int(store.get("resample_n_boot", n_boot))
+    seed_use = store.get("resample_seed", seed)
+    samples, new_indices = _resample_config_samples(
+        data,
+        mode=mode,
+        n_boot=n_boot_use,
+        seed=seed_use,
+        indices=indices,
+    )
+    if mode == "bs" and indices is None:
+        store["resample_indices"] = new_indices
+        store["resample_n_boot"] = n_boot_use
+        store["resample_seed"] = seed_use
+    return samples
+
+
+def _resample_pt2_complex(
+    pt2_complex: np.ndarray,
+    *,
+    mode: str,
+    n_boot: int,
+    seed: int | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Return real 2pt samples, complex 2pt samples, and optional bootstrap indices."""
+    pt2_re_samples, indices = _resample_config_samples(
+        np.real(pt2_complex),
+        mode=mode,
+        n_boot=n_boot,
+        seed=seed,
+    )
+    pt2_im_samples, _ = _resample_config_samples(
+        np.imag(pt2_complex),
+        mode=mode,
+        n_boot=n_boot,
+        seed=seed,
+        indices=indices,
+    )
+    return pt2_re_samples, pt2_re_samples + 1j * pt2_im_samples, indices
+
+
+def _ratio_samples_from_resampled(
+    pt2_complex_samples: np.ndarray,
+    pt3_samples: np.ndarray,
+    tsep: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build ratio samples from already-resampled 2pt and 3pt correlators."""
+    ratio = pt3_samples / pt2_complex_samples[:, int(tsep)][:, None]
+    return np.real(ratio), np.imag(ratio)
+
+
 def read_pt2(
     store: dict[str, Any],
     *,
@@ -70,18 +130,34 @@ def read_pt2(
     momentum: str = "PX0PY0PZ0",
     out: str = "pt2_samples",
     imag_out: str = "pt2_imag_samples",
+    resample_mode: str | None = None,
+    n_boot: int = 200,
+    seed: int | None = 1984,
 ) -> dict[str, Any]:
-    """Read one 2pt dataset; store real and imag as (n_cfg, Lt) samples."""
+    """Read one 2pt dataset; optionally resample before storing samples."""
     with h5py.File(path, "r") as h5f:
         data = np.swapaxes(np.asarray(h5f[source_sink][gamma][momentum]), 0, 1)
-    store[out] = np.real(data)
-    store[imag_out] = np.imag(data)
+    n_cfg = int(data.shape[0])
+    store["n_cfg"] = n_cfg
+    re_data = np.real(data)
+    im_data = np.imag(data)
+    if resample_mode is not None:
+        mode = str(resample_mode)
+        if mode not in {"bs", "jk"}:
+            raise ValueError(f"resample_mode must be 'bs' or 'jk', got {resample_mode!r}")
+        re_data = _resample_ensemble_array(re_data, store, mode=mode, n_boot=n_boot, seed=seed)
+        im_data = _resample_ensemble_array(im_data, store, mode=mode, n_boot=n_boot, seed=seed)
+        store["resample_mode"] = mode
+    store[out] = re_data
+    store[imag_out] = im_data
     store["Lt"] = int(store[out].shape[1])
     return {
         "out": out,
         "imag_out": imag_out,
-        "n_cfg": int(store[out].shape[0]),
+        "n_cfg": n_cfg,
         "Lt": int(store[out].shape[1]),
+        "resample_mode": store.get("resample_mode"),
+        "n_samples": int(store[out].shape[0]),
     }
 
 
@@ -114,10 +190,14 @@ def read_pt3(
     im_out: str = "pt3_samples_im",
     append: bool = True,
     out: str | None = None,
+    resample_mode: str | None = None,
+    n_boot: int = 200,
+    seed: int | None = 1984,
 ) -> dict[str, Any]:
-    """Read one 3pt slice; merge into per-tsep dicts keyed by integer tsep.
+    """Read one 3pt slice; optionally resample before merging per-tsep dicts.
 
     ``out`` is accepted for agent compatibility but ignored (use ``re_out`` / ``im_out``).
+    When resampling, reuse bootstrap indices from ``read_pt2`` when present.
     """
     del out
     dset = _pt3_dataset_path(
@@ -138,19 +218,39 @@ def read_pt3(
             f"tsep={tsep_key} does not match data length {data.shape[1]} (expected tsep={inferred})"
         )
 
+    n_cfg = int(data.shape[0])
+    store.setdefault("n_cfg", n_cfg)
+    if int(store["n_cfg"]) != n_cfg:
+        raise ValueError(
+            f"3pt n_cfg mismatch with stored ensemble size: {n_cfg} != {store['n_cfg']}"
+        )
+
+    mode = resample_mode if resample_mode is not None else store.get("resample_mode")
+    re_slice = np.real(data)
+    im_slice = np.imag(data)
+    if mode is not None:
+        mode = str(mode)
+        if mode not in {"bs", "jk"}:
+            raise ValueError(f"resample_mode must be 'bs' or 'jk', got {mode!r}")
+        re_slice = _resample_ensemble_array(re_slice, store, mode=mode, n_boot=n_boot, seed=seed)
+        im_slice = _resample_ensemble_array(im_slice, store, mode=mode, n_boot=n_boot, seed=seed)
+        store["resample_mode"] = mode
+
     re_dict: dict[int, np.ndarray] = dict(store[re_out]) if append and re_out in store else {}
     im_dict: dict[int, np.ndarray] = dict(store[im_out]) if append and im_out in store else {}
-    re_dict[tsep_key] = np.real(data)
-    im_dict[tsep_key] = np.imag(data)
+    re_dict[tsep_key] = re_slice
+    im_dict[tsep_key] = im_slice
     store[re_out] = re_dict
     store[im_out] = im_dict
     return {
         "re_out": re_out,
         "im_out": im_out,
         "tsep": tsep_key,
-        "n_cfg": int(data.shape[0]),
+        "n_cfg": n_cfg,
         "ntau": int(data.shape[1]),
         "tsep_keys": sorted(re_dict.keys()),
+        "resample_mode": store.get("resample_mode"),
+        "n_samples": int(re_slice.shape[0]),
     }
 
 
@@ -166,9 +266,17 @@ def resample_to_gvar(
     seed: int | None = 1984,
     out: str = "pt2_gv",
 ) -> dict[str, Any]:
-    """Resample stored samples and reduce them to a gvar correlator array."""
+    """Convert stored samples to gvar, resampling raw configs when needed."""
     data = store[samples]
-    if mode == "bs":
+    stored_mode = store.get("resample_mode")
+    n_cfg = store.get("n_cfg")
+    already_resampled = stored_mode is not None or (
+        n_cfg is not None and int(np.asarray(data).shape[0]) != int(n_cfg)
+    )
+    if already_resampled:
+        use_mode = str(stored_mode or mode)
+        gv_arr = _samples_to_gvar(data, mode=use_mode)
+    elif mode == "bs":
         resampled = bootstrap(data, n_samples=n_samples, seed=seed)
         gv_arr = bs_ls_avg(resampled)
     elif mode == "jk":
@@ -179,22 +287,6 @@ def resample_to_gvar(
     store[out] = gv_arr
     store["Lt"] = int(len(gv_arr))
     return {"out": out, "mode": mode, "Lt": int(len(gv_arr))}
-
-
-def _bs_dict_to_gvar(
-    data: dict[int, np.ndarray],
-    *,
-    n_samples: int,
-    seed: int | None,
-) -> dict[int, np.ndarray]:
-    return {
-        key: bs_ls_avg(bootstrap(arr, n_samples=n_samples, seed=seed))
-        for key, arr in data.items()
-    }
-
-
-def _jk_dict_to_gvar(data: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
-    return {key: jk_ls_avg(jackknife(arr)) for key, arr in data.items()}
 
 
 def compute_pt3_ratio(
@@ -208,7 +300,7 @@ def compute_pt3_ratio(
     im_out: str = "ratio_samples_im",
     out: str | None = None,
 ) -> dict[str, Any]:
-    """Build per-tsep 3pt/2pt ratio sample dicts from stored correlators."""
+    """Build per-tsep 3pt/2pt ratio sample dicts from resampled correlators."""
     del out
     pt2_re = np.asarray(store[pt2_samples])
     pt2_im = np.asarray(store[pt2_imag_samples])
@@ -253,19 +345,24 @@ def resample_ratio_to_gvar(
     im_out: str = "ratio_imag_gv",
     out: str | None = None,
 ) -> dict[str, Any]:
-    """Resample per-tsep ratio samples into gvar arrays."""
-    del out
+    """Convert resampled ratio samples into gvar arrays (no second resampling)."""
+    del out, n_samples, seed
     re_data: dict[int, np.ndarray] = store[ratio_samples_re]
     im_data: dict[int, np.ndarray] = store[ratio_samples_im]
-    if mode == "bs":
-        store[re_out] = _bs_dict_to_gvar(re_data, n_samples=n_samples, seed=seed)
-        store[im_out] = _bs_dict_to_gvar(im_data, n_samples=n_samples, seed=seed)
-    elif mode == "jk":
-        store[re_out] = _jk_dict_to_gvar(re_data)
-        store[im_out] = _jk_dict_to_gvar(im_data)
-    else:
-        raise ValueError(f"unsupported resampling mode: {mode!r}")
-    return {"re_out": re_out, "im_out": im_out, "mode": mode, "tsep_keys": sorted(re_data.keys())}
+    use_mode = str(store.get("resample_mode") or mode)
+    if use_mode not in {"bs", "jk"}:
+        raise ValueError(f"unsupported resampling mode: {use_mode!r}")
+    n_cfg = store.get("n_cfg")
+    if n_cfg is not None and re_data:
+        first_key = next(iter(re_data))
+        if int(np.asarray(re_data[first_key]).shape[0]) == int(n_cfg):
+            raise ValueError(
+                "ratio samples are still configuration-level; resample pt2/pt3 at read "
+                "time with the same resample_mode, then compute_pt3_ratio"
+            )
+    store[re_out] = {key: _samples_to_gvar(arr, mode=use_mode) for key, arr in re_data.items()}
+    store[im_out] = {key: _samples_to_gvar(arr, mode=use_mode) for key, arr in im_data.items()}
+    return {"re_out": re_out, "im_out": im_out, "mode": use_mode, "tsep_keys": sorted(re_data.keys())}
 
 
 # --- ground-state fit (copied from LaMETLat ground_state) -------------------
@@ -2155,10 +2252,9 @@ def fit_bare_matrix_grid(
         gamma=pt2_gamma,
         momentum=momentum,
     )
-    pt2_real = np.real(pt2_complex)
-    n_cfg, Lt = pt2_real.shape
-    pt2_samples, indices = _resample_config_samples(
-        pt2_real,
+    n_cfg, Lt = pt2_complex.shape
+    pt2_samples, pt2_complex_samples, indices = _resample_pt2_complex(
+        pt2_complex,
         mode=mode,
         n_boot=int(n_boot),
         seed=seed,
@@ -2201,16 +2297,18 @@ def fit_bare_matrix_grid(
                 raise ValueError(
                     f"3pt n_cfg mismatch for z={z}, tsep={tsep}: {pt3.shape[0]} != {n_cfg}"
                 )
-            ratio = pt3 / pt2_complex[:, int(tsep)][:, None]
-            ratio_samples, _ = _resample_config_samples(
-                ratio,
+            pt3_samples, _ = _resample_config_samples(
+                pt3,
                 mode=mode,
                 n_boot=int(n_boot),
                 seed=seed,
                 indices=indices,
             )
-            ratio_samples_re[tsep] = np.real(ratio_samples)
-            ratio_samples_im[tsep] = np.imag(ratio_samples)
+            ratio_samples_re[tsep], ratio_samples_im[tsep] = _ratio_samples_from_resampled(
+                pt2_complex_samples,
+                pt3_samples,
+                tsep,
+            )
             ratio_real_gv[tsep] = _samples_to_gvar(ratio_samples_re[tsep], mode=mode)
             ratio_imag_gv[tsep] = _samples_to_gvar(ratio_samples_im[tsep], mode=mode)
 
@@ -2528,10 +2626,9 @@ def _fit_bare_matrix_grid_chained(
         gamma=pt2_gamma,
         momentum=momentum,
     )
-    pt2_real = np.real(pt2_complex)
-    n_cfg, Lt = pt2_real.shape
-    pt2_samples, indices = _resample_config_samples(
-        pt2_real,
+    n_cfg, Lt = pt2_complex.shape
+    pt2_samples, pt2_complex_samples, indices = _resample_pt2_complex(
+        pt2_complex,
         mode=mode,
         n_boot=int(n_boot),
         seed=seed,
@@ -2637,16 +2734,18 @@ def _fit_bare_matrix_grid_chained(
             )
             if pt3.shape[0] != n_cfg:
                 raise ValueError(f"3pt n_cfg mismatch for z={z}, tsep={tsep}: {pt3.shape[0]} != {n_cfg}")
-            ratio = pt3 / pt2_complex[:, int(tsep)][:, None]
-            ratio_samples, _ = _resample_config_samples(
-                ratio,
+            pt3_samples, _ = _resample_config_samples(
+                pt3,
                 mode=mode,
                 n_boot=int(n_boot),
                 seed=seed,
                 indices=indices,
             )
-            ratio_samples_re[tsep] = np.real(ratio_samples)
-            ratio_samples_im[tsep] = np.imag(ratio_samples)
+            ratio_samples_re[tsep], ratio_samples_im[tsep] = _ratio_samples_from_resampled(
+                pt2_complex_samples,
+                pt3_samples,
+                tsep,
+            )
             ratio_real_gv[tsep] = _samples_to_gvar(ratio_samples_re[tsep], mode=mode)
             ratio_imag_gv[tsep] = _samples_to_gvar(ratio_samples_im[tsep], mode=mode)
 

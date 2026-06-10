@@ -20,7 +20,9 @@ ratio fits for the bare matrix element.
 - Two-state ratio fit needs >= 10 re+im data points total across chosen tseps.
 
 Strategy:
-- Always resample ('bs' or 'jk'); never use a single configuration mean.
+- Always resample ('bs' or 'jk') at read time; never use a single configuration mean.
+- read_pt2 establishes bootstrap indices; read_pt3 reuses them for the same ensemble.
+- compute_pt3_ratio divides resampled 3pt by resampled 2pt; do not resample ratios.
 - Before fitting, inspect 2pt magnitudes and choose an explicit power-of-ten
   correlator_rescale when needed so fitted 2pt data are typically 0.0001..0.01.
 - 2pt: fit_window (<=6 windows on scan) with the chosen correlator_rescale;
@@ -40,11 +42,11 @@ Strategy:
 """.strip()
 
 TOOL_CATALOG = {
-    "read_pt2": "read_pt2(path, ...) -> pt2_samples (real) and pt2_imag_samples, shape (n_cfg, Lt).",
-    "read_pt3": "read_pt3(path, append=True) -> pt3_samples_re/im; do not pass out=.",
-    "compute_pt3_ratio": "compute_pt3_ratio() -> ratio_samples_re/im.",
-    "resample_to_gvar": "resample_to_gvar(samples='pt2_samples', mode='bs'|'jk') -> pt2_gv.",
-    "resample_ratio_to_gvar": "resample_ratio_to_gvar(mode='bs'|'jk') -> ratio_real_gv, ratio_imag_gv.",
+    "read_pt2": "read_pt2(path, resample_mode='bs'|'jk', ...) -> resampled pt2_samples (real) and pt2_imag_samples.",
+    "read_pt3": "read_pt3(path, resample_mode='bs'|'jk', append=True) -> resampled pt3_samples_re/im; reuses bootstrap indices from read_pt2.",
+    "compute_pt3_ratio": "compute_pt3_ratio() -> ratio_samples_re/im from resampled pt2/pt3.",
+    "resample_to_gvar": "resample_to_gvar(samples='pt2_samples', mode='bs'|'jk') -> pt2_gv; resamples raw configs only if read_pt2 did not already resample.",
+    "resample_ratio_to_gvar": "resample_ratio_to_gvar(mode='bs'|'jk') -> ratio_real_gv, ratio_imag_gv from resampled ratio samples.",
     "inspect_correlator_scale": "inspect_correlator_scale(pt2_path, pt2_windows, source_sink, gamma, momentum, selectors) -> 2pt magnitude diagnostics for choosing correlator_rescale.",
     "fit_window": "fit_window(pt2_gv, tmin, tmax, Lt, correlator_rescale=..., out='scan', append=True) -> 2pt window scan (max 6).",
     "fit_pt3_window": "fit_pt3_window(tsep_ls, tau_cut, correlator_rescale=..., append=True); Lt optional; autofills E0_avg,z0_avg; log(dE1),z1 use broad 3pt priors.",
