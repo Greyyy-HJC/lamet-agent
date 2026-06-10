@@ -289,3 +289,18 @@
 
 - Added repair retries for OpenAI-compatible LLM action parsing so malformed provider JSON is fed back for correction instead of aborting the stage immediately.
 - Scoped injected plot save stems by ``run_id`` and expanded effective-mass x limits to start at ``min(meff_x) - 0.5`` to avoid adjacent-run plot overwrites and clipped first points.
+
+## 2026-06-10 (CG qPDF ratio-renormalization flow)
+
+- Added sample-preserving ratio/hybrid renormalization tools that read correlator bare-matrix txt grids, apply Eq. 15 with CG defaults (`zs=4`, `delta_m=m0=0`), write compatible `EnsembleData` NPZ artifacts, and plot renormalized matrix elements.
+- Made the agent store persist across stages so renormalization can hand `matrix_element_data` directly to Fourier in one run; added manifest argument merging for `metadata.renormalization`.
+- Updated the PX5 CG qPDF example and stage1 run script for a correlator -> renormalization -> Fourier smoke flow using the PX0 report as the ratio denominator.
+
+## 2026-06-10 (Correlator sample fit quality logging)
+
+- Added per-sample nonlinear fit quality logging to correlator bare-matrix grid fits so successful resampled ground-state/joint fits write Good/Bad Q, chi2/dof, and logGBF lines to the samples log.
+
+## 2026-06-10 (Correlator grid argument defaults)
+
+- Made ``prepare_tool_args`` fill missing correlator tool selectors and grid fields from ``metadata.correlator_grid``, so nonzero-momentum workflows keep the manifest momentum key even when the LLM omits it in later tool calls.
+- Added unit coverage for PX5-style correlator argument preparation.

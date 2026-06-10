@@ -14,6 +14,9 @@ from lamet_agent.manifest import AnalysisManifest, resolve_data_path
 from .stages import resolve_stage_package
 
 _PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid"})
+_RENORM_ARTIFACT_TOOLS = frozenset({"apply_ratio_scheme_renormalization", "plot_renormalized_matrix_element"})
+_RENORM_APPLY_KEYS = frozenset({"target", "denominator", "zs", "delta_m", "m0", "z0", "save_path"})
+_RENORM_PLOT_KEYS = frozenset({"data", "title"})
 _FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key"})
 _FOURIER_RUN_KEYS = frozenset(
     {
@@ -29,6 +32,43 @@ _FOURIER_RUN_KEYS = frozenset(
         "im_flip_for_ft",
     }
 )
+_CORRELATOR_PT2_TOOLS = frozenset({"inspect_correlator_scale", "tune_ground_state"})
+_CORRELATOR_GRID_TOOLS = frozenset({"tune_bare_matrix", "fit_bare_matrix_grid"})
+_CORRELATOR_PT2_KEYS = frozenset({"pt2_path", "pt2_windows", "nstate", "svdcut", "resample_mode", "n_boot", "seed"})
+_CORRELATOR_GRID_KEYS = frozenset(
+    {
+        "pt2_path",
+        "pt3_paths",
+        "tsep_ls",
+        "z_values",
+        "ensemble",
+        "tag",
+        "variant",
+        "momentum",
+        "direction",
+        "source_sink",
+        "pt2_gamma",
+        "pt3_gamma",
+        "b_dir",
+        "eta",
+        "bt",
+        "b_label",
+        "pt2_windows",
+        "pt3_windows",
+        "pt3_tau_cuts",
+        "fit_strategy",
+        "nstate",
+        "seed",
+        "svdcut",
+        "part",
+        "q_min",
+        "output_subdir",
+        "resample_mode",
+        "n_boot",
+        "posterior_prior_error_scale",
+    }
+)
+
 
 def setup_logger(
     log_file: str | Path,
@@ -171,10 +211,44 @@ def resolve_tool_args(args: dict[str, Any], manifest: AnalysisManifest) -> dict[
     if manifest.manifest_dir is None or manifest.project_root is None:
         return args
     resolved = dict(args)
-    for key in ("path", "pt2_path", "pt3_paths"):
+    for key in ("path", "pt2_path", "pt3_paths", "report_json", "target_report_json", "denominator_report_json"):
         if key in resolved:
             resolved[key] = _resolve_path_container(resolved[key], manifest)
     return resolved
+
+
+def _fill_missing(target: dict[str, Any], defaults: dict[str, Any], keys: frozenset[str]) -> None:
+    for key in keys:
+        if key in defaults and (key not in target or target[key] is None):
+            target[key] = defaults[key]
+
+
+def _merge_correlator_grid_args(
+    tool_name: str,
+    args: dict[str, Any],
+    manifest: AnalysisManifest,
+) -> dict[str, Any]:
+    grid = manifest.metadata.get("correlator_grid", {})
+    if not isinstance(grid, dict):
+        return args
+
+    merged = dict(args)
+    if tool_name in _CORRELATOR_PT2_TOOLS:
+        _fill_missing(merged, grid, _CORRELATOR_PT2_KEYS)
+        if "source_sink" not in merged or merged["source_sink"] is None:
+            if "source_sink" in grid:
+                merged["source_sink"] = grid["source_sink"]
+        if "gamma" not in merged or merged["gamma"] is None:
+            if "pt2_gamma" in grid:
+                merged["gamma"] = grid["pt2_gamma"]
+            elif "gamma" in grid:
+                merged["gamma"] = grid["gamma"]
+        if "momentum" not in merged or merged["momentum"] is None:
+            if "momentum" in grid:
+                merged["momentum"] = grid["momentum"]
+    elif tool_name in _CORRELATOR_GRID_TOOLS:
+        _fill_missing(merged, grid, _CORRELATOR_GRID_KEYS)
+    return resolve_tool_args(merged, manifest)
 
 
 def filter_tool_kwargs(tool: Any, args: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -206,7 +280,35 @@ def prepare_tool_args(
     _store: dict[str, Any],
 ) -> dict[str, Any]:
     """Resolve paths and force plot output under ``artifacts_dir``."""
-    resolved = resolve_tool_args(args, manifest)
+    resolved = _merge_correlator_grid_args(tool_name, resolve_tool_args(args, manifest), manifest)
+    renorm = manifest.metadata.get("renormalization", {})
+    if isinstance(renorm, dict):
+        if tool_name == "load_bare_matrix_element_grid":
+            merged = dict(resolved)
+            if "out" not in merged:
+                merged["out"] = (
+                    "target_bare_matrix_element"
+                    if "target_bare_matrix_element" not in _store
+                    else "denominator_bare_matrix_element"
+                )
+            if "report_json" not in merged:
+                if merged.get("out") == "denominator_bare_matrix_element" and renorm.get("denominator_report_json"):
+                    merged["report_json"] = renorm["denominator_report_json"]
+                elif renorm.get("target_report_json"):
+                    merged["report_json"] = renorm["target_report_json"]
+            if "resample" not in merged and "resample" in renorm:
+                merged["resample"] = renorm["resample"]
+            resolved = resolve_tool_args(merged, manifest)
+        elif tool_name == "apply_ratio_scheme_renormalization":
+            merged = dict(resolved)
+            merged.update({key: renorm[key] for key in _RENORM_APPLY_KEYS if key in renorm})
+            resolved = merged
+        elif tool_name == "plot_renormalized_matrix_element":
+            merged = dict(resolved)
+            if isinstance(renorm.get("plot"), dict):
+                merged.update({key: renorm["plot"][key] for key in _RENORM_PLOT_KEYS | {"save_path"} if key in renorm["plot"]})
+            resolved = merged
+
     fourier = manifest.metadata.get("fourier", {})
     if isinstance(fourier, dict):
         if tool_name == "load_renormalized_matrix_element_samples":
@@ -229,6 +331,17 @@ def prepare_tool_args(
             if isinstance(fourier.get("plot_extension"), dict):
                 merged.update(fourier["plot_extension"])
             resolved = merged
+    if tool_name in _RENORM_ARTIFACT_TOOLS:
+        raw_save = resolved.get("save_path")
+        if isinstance(raw_save, str) or raw_save is None:
+            stem = "renormalized_matrix_element"
+            default_stem = _run_scoped_plot_stem(manifest, stem)
+            resolved["save_path"] = resolve_plot_save_path(
+                raw_save if isinstance(raw_save, str) else None,
+                artifacts_dir=artifacts_dir,
+                default_stem=default_stem,
+            )
+        resolved["artifacts_dir"] = str(artifacts_dir)
     if tool_name in _PLOT_TOOLS:
         raw_save = resolved.get("save_path")
         if raw_save is None and tool_name == "fit_bare_matrix_grid":

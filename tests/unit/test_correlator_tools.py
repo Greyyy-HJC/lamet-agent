@@ -551,6 +551,9 @@ def test_fit_bare_matrix_grid_single_shared_window(tmp_path) -> None:
         txt = tmp_path / "artifacts" / "bare_qpdf" / f"E_T_free_X_PX0PY0PZ0_b0_z{z}.txt"
         assert txt.is_file()
         assert np.loadtxt(txt).shape[1] == 2
+    sample_log = Path(result["sample_log_path"]).read_text(encoding="utf-8")
+    assert "sample ground-state joint_2pt_ratio" in sample_log
+    assert "sample=0" in sample_log
 
 
 def test_fit_bare_matrix_grid_explicit_window_and_chained(tmp_path) -> None:
