@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from lamet_agent.core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FONT_SIZE, default_plot, LEGEND_SETS
-from lamet_agent.stages.correlator.functions import bs_ls_avg
+from lamet_agent.core.resampling import bs_ls_avg
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MATRIX_ELEMENT_DIR = PROJECT_ROOT / "data_cg_pdf" / "bare_matrix_elements"

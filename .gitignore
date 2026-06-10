@@ -1,6 +1,7 @@
 # AI assistant working directories
 .claude/
 .codex
+.cursor/
 
 __pycache__/
 *.py[cod]
@@ -21,3 +22,4 @@ temp/
 examples/fake_data/data/
 **/api.key
 data*/
+artifacts/
