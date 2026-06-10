@@ -264,3 +264,8 @@
 
 - Made ``inspect_correlator_scale`` accept selector dictionaries and report the resolved ``source_sink``, ``gamma``, and ``momentum`` so nonzero-momentum 2pt files do not fall back to ``PX0PY0PZ0``.
 - Updated correlator batch-mode prompt/catalog guidance to pass the exact HDF5 momentum key from ``Metadata.correlator_grid`` before fitting.
+
+## 2026-06-10 (Ensemble resampling before 3pt/2pt ratios)
+
+- Moved bootstrap/jackknife resampling to ``read_pt2`` / ``read_pt3`` with shared bootstrap indices for one ensemble; ``compute_pt3_ratio`` now divides resampled correlators and ``resample_ratio_to_gvar`` only converts samples to gvar.
+- Fixed ``fit_bare_matrix_grid`` (joint and chained) to resample 2pt and 3pt separately with the same indices before forming ratios, instead of resampling ratios built from raw configs.

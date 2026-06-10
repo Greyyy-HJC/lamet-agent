@@ -35,7 +35,8 @@ Batch grid mode (preferred when Metadata.correlator_grid is present):
 Manual mode:
 
 Phase A (2pt, if manifest includes kind=2pt):
-1. read_pt2 on the 2pt path (stores pt2_samples and pt2_imag_samples; note Lt).
+1. read_pt2 on the 2pt path with resample_mode='bs' or 'jk' (stores resampled
+   pt2_samples and pt2_imag_samples; note Lt and n_cfg).
 2. resample_to_gvar -> pt2_gv. Inspect the 2pt data scale; choose one
    correlator_rescale for all later 2pt/3pt fits so fitted 2pt values are 0.0001..0.01.
 3. fit_window up to six times (append=True) with that correlator_rescale; tmin>=1, tmax<=Lt//2,
@@ -45,10 +46,13 @@ Phase A (2pt, if manifest includes kind=2pt):
 5. plot_fit_on_data with the same window_indices and E0_avg='E0_avg'.
 
 Phase B (3pt, if manifest includes kind=3pt):
-6. read_pt3 once per 3pt dataset path in the manifest (append=True); load all
-   available tsep (e.g. 4, 6, 8, 10) before fitting.
-7. compute_pt3_ratio using pt2_samples, pt2_imag_samples, pt3_samples_re/im.
-8. resample_ratio_to_gvar -> ratio_real_gv, ratio_imag_gv.
+6. read_pt3 once per 3pt dataset path in the manifest with the same
+   resample_mode as step 1 (append=True); load all available tsep (e.g. 4, 6, 8, 10)
+   before fitting. Bootstrap reuses the indices from read_pt2.
+7. compute_pt3_ratio using the resampled pt2_samples, pt2_imag_samples,
+   pt3_samples_re/im.
+8. resample_ratio_to_gvar -> ratio_real_gv, ratio_imag_gv (converts resampled
+   ratio samples to gvar; no second resampling).
 9. fit_pt3_window at most TWO times (append=True, out='pt3_scan') with the same
    correlator_rescale; each call picks one (tsep_ls, tau_cut). Shared 2pt parameters are pinned automatically
    to E0_avg and z0_avg from step 4 (default use_pt2_avg_prior); log(dE1), z1 stay broad.

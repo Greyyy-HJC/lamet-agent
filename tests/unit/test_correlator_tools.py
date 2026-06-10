@@ -253,6 +253,78 @@ def test_compute_pt3_ratio_from_samples() -> None:
     assert np.allclose(store["ratio_samples_re"][tsep], 0.5)
 
 
+def test_read_pt2_pt3_share_bootstrap_indices(tmp_path) -> None:
+    import h5py
+
+    from lamet_agent.stages.correlator.functions import read_pt2, resample_ratio_to_gvar
+
+    n_cfg, lt = 6, 10
+    tsep = 4
+    pt2_path = tmp_path / "pt2.h5"
+    pt3_path = tmp_path / "pt3.h5"
+    pt2_data = np.arange(n_cfg * lt, dtype=float).reshape(lt, n_cfg) + 1.0
+    pt3_data = np.arange(n_cfg * (tsep + 1), dtype=float).reshape(tsep + 1, n_cfg) + 2.0
+    with h5py.File(pt2_path, "w") as h5f:
+        h5f.create_dataset("SS/5/PX0PY0PZ0", data=pt2_data)
+    with h5py.File(pt3_path, "w") as h5f:
+        h5f.create_dataset("SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", data=pt3_data)
+
+    store: dict = {}
+    read_pt2(store, path=str(pt2_path), resample_mode="bs", n_boot=20, seed=123)
+    read_pt3(store, path=str(pt3_path), append=False, resample_mode="bs", n_boot=20, seed=999)
+    compute_pt3_ratio(store)
+    resample_ratio_to_gvar(store)
+
+    assert store["pt2_samples"].shape[0] == 20
+    assert store["pt3_samples_re"][tsep].shape[0] == 20
+    assert store["resample_indices"] is not None
+    assert store["ratio_real_gv"][tsep].shape == (tsep + 1,)
+
+
+def test_resample_ratio_to_gvar_rejects_config_level_ratio() -> None:
+    from lamet_agent.stages.correlator.functions import resample_ratio_to_gvar
+
+    store = {
+        "n_cfg": 4,
+        "ratio_samples_re": {8: np.ones((4, 9))},
+        "ratio_samples_im": {8: np.zeros((4, 9))},
+    }
+    with pytest.raises(ValueError, match="configuration-level"):
+        resample_ratio_to_gvar(store)
+
+
+def test_ratio_after_resample_differs_from_resample_after_ratio() -> None:
+    rng = np.random.default_rng(0)
+    n_cfg, lt, tsep = 40, 24, 8
+    pt2 = rng.normal(size=(n_cfg, lt)) + 2.0
+    pt3 = rng.normal(size=(n_cfg, tsep + 1)) + 1.0
+    pt2_complex = pt2.astype(complex)
+    pt2_samples, pt2_complex_samples, indices = correlator_functions._resample_pt2_complex(
+        pt2_complex,
+        mode="bs",
+        n_boot=200,
+        seed=1984,
+    )
+    pt3_samples, _ = _resample_config_samples(
+        pt3,
+        mode="bs",
+        n_boot=200,
+        seed=1984,
+        indices=indices,
+    )
+    ratio_first, _ = correlator_functions._ratio_samples_from_resampled(
+        pt2_complex_samples, pt3_samples, tsep
+    )
+    wrong_ratio, _ = _resample_config_samples(
+        pt3 / pt2[:, tsep][:, None],
+        mode="bs",
+        n_boot=200,
+        seed=1984,
+        indices=indices,
+    )
+    assert not np.allclose(ratio_first, wrong_ratio)
+
+
 def test_ylim_middle_third_places_data_in_center_band() -> None:
     y = [np.array([1.0, 2.0])]
     err = [np.array([0.1, 0.1])]
