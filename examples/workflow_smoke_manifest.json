@@ -65,7 +65,7 @@
     }
   ],
   "metadata": {
-    "note": "Use this manifest with user-generated fake data. Load every 3pt entry with read_pt3 before fitting.",
+    "note": "Use this manifest with user-generated fake data. Inspect the 2pt scale, tune the bare-matrix window on sample-average data, then apply it with fit_bare_matrix_grid.",
     "fit_strategy": "chained"
   }
 }

@@ -32,6 +32,27 @@ _MOCK_TOOL_ACTION: dict[str, Any] = {
     "reason": "Scaffold mode: deterministic mock action.",
 }
 
+# OpenAI-compatible chat-completions providers. DeepSeek and OpenAI share the same
+# request/response shape, so they only differ by base URL, default model, and the
+# environment variable used to read the API key.
+PROVIDERS: dict[str, dict[str, str]] = {
+    "deepseek": {
+        "base_url": "https://api.deepseek.com",
+        "default_model": "deepseek-chat",
+        "key_env": "DEEPSEEK_API_KEY",
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-4o-mini",
+        "key_env": "OPENAI_API_KEY",
+    },
+}
+
+
+def provider_config(model: str) -> dict[str, str] | None:
+    """Return the OpenAI-compatible provider config for a backend name, if any."""
+    return PROVIDERS.get(model)
+
 
 class LlmSession(Protocol):
     """Per-stage LLM conversation handle."""
@@ -45,8 +66,9 @@ def _post_chat_completion(
     *,
     messages: list[dict[str, str]],
     api_key: str,
-    deepseek_model: str,
+    model_name: str,
     base_url: str,
+    provider: str = "deepseek",
 ) -> dict[str, Any]:
     url = base_url.rstrip("/") + "/chat/completions"
     system = (
@@ -55,7 +77,7 @@ def _post_chat_completion(
         "exactly one JSON object matching this shape: " + json.dumps(ACTION_SCHEMA)
     )
     body = {
-        "model": deepseek_model,
+        "model": model_name,
         "messages": [{"role": "system", "content": system}, *messages],
         "response_format": {"type": "json_object"},
         "temperature": 0.0,
@@ -70,6 +92,7 @@ def _post_chat_completion(
         },
         method="POST",
     )
+    label = provider.capitalize()
     payload = None
     last_error: BaseException | None = None
     for attempt in range(3):
@@ -81,13 +104,13 @@ def _post_chat_completion(
             last_error = exc
             if attempt == 2:
                 raise RuntimeError(
-                    "DeepSeek API request failed after 3 attempts. "
+                    f"{label} API request failed after 3 attempts. "
                     "This is usually a transient HTTPS/network/proxy issue; retry the command or check network/proxy settings."
                 ) from exc
             time.sleep(2**attempt)
 
     if payload is None:
-        raise RuntimeError("DeepSeek API request failed before returning a response.") from last_error
+        raise RuntimeError(f"{label} API request failed before returning a response.") from last_error
 
     content = payload["choices"][0]["message"]["content"]
     try:
@@ -95,7 +118,7 @@ def _post_chat_completion(
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", content, re.S)
         if match is None:
-            raise ValueError(f"DeepSeek returned no JSON action:\n{content}")
+            raise ValueError(f"{label} returned no JSON action:\n{content}")
         return json.loads(match.group(0))
 
 
@@ -104,20 +127,22 @@ def _request_llm_action(
     model: str,
     messages: list[dict[str, str]],
     api_key: str | None = None,
-    deepseek_model: str = "deepseek-chat",
-    base_url: str = "https://api.deepseek.com",
+    model_name: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     """Return one structured agent action from the configured LLM backend."""
     if model == "mock":
         return dict(_MOCK_TOOL_ACTION)
-    if model == "deepseek":
+    config = provider_config(model)
+    if config is not None:
         if not api_key:
-            raise ValueError("model='deepseek' requires an API key.")
+            raise ValueError(f"model={model!r} requires an API key.")
         return _post_chat_completion(
             messages=messages,
             api_key=api_key,
-            deepseek_model=deepseek_model,
-            base_url=base_url,
+            model_name=model_name or config["default_model"],
+            base_url=base_url or config["base_url"],
+            provider=model,
         )
     raise NotImplementedError(
         f"LLM backend {model!r} is not implemented. Add provider logic in `_request_llm_action`."
@@ -159,14 +184,15 @@ def _external_session(actions_path: str | Path) -> LlmSession:
     return _ExternalSession()
 
 
-def _deepseek_session(
+def _openai_compatible_session(
+    provider: str,
     api_key: str,
-    deepseek_model: str = "deepseek-chat",
-    base_url: str = "https://api.deepseek.com",
+    model_name: str,
+    base_url: str,
 ) -> LlmSession:
-    """Return a multi-turn session backed by the DeepSeek chat-completions API."""
+    """Return a multi-turn session backed by an OpenAI-compatible chat API."""
 
-    class _DeepSeekSession:
+    class _ChatSession:
         def __init__(self) -> None:
             self._messages: list[dict[str, str]] = []
 
@@ -182,10 +208,10 @@ def _deepseek_session(
                     }
                 )
             action = _request_llm_action(
-                model="deepseek",
+                model=provider,
                 messages=self._messages,
                 api_key=api_key,
-                deepseek_model=deepseek_model,
+                model_name=model_name,
                 base_url=base_url,
             )
             self._messages.append(
@@ -193,23 +219,33 @@ def _deepseek_session(
             )
             return action
 
-    return _DeepSeekSession()
+    return _ChatSession()
 
 
 def make_llm_session(
     model: str,
     actions_path: str | Path | None,
     api_key: str | None = None,
-    deepseek_model: str = "deepseek-chat",
-    base_url: str = "https://api.deepseek.com",
+    llm_model: str | None = None,
+    base_url: str | None = None,
 ) -> LlmSession:
-    """Build an LLM session for mock, external transcript, or DeepSeek backends."""
+    """Build an LLM session for mock, external, DeepSeek, or OpenAI backends.
+
+    ``model`` selects the backend (``mock``/``external``/``deepseek``/``openai``);
+    ``llm_model`` and ``base_url`` override the provider defaults when given.
+    """
     if model == "external":
         if actions_path is None:
             raise ValueError("model='external' requires an actions_path transcript.")
         return _external_session(actions_path)
-    if model == "deepseek":
+    config = provider_config(model)
+    if config is not None:
         if not api_key:
-            raise ValueError("model='deepseek' requires an API key.")
-        return _deepseek_session(api_key, deepseek_model, base_url)
+            raise ValueError(f"model={model!r} requires an API key.")
+        return _openai_compatible_session(
+            model,
+            api_key,
+            llm_model or config["default_model"],
+            base_url or config["base_url"],
+        )
     return _mock_session()

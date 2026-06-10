@@ -21,21 +21,21 @@ def test_agent_trace_emits_cycle_sections() -> None:
     trace.model_output(
         {
             "action": "call_tool",
-            "reason": "read data first",
-            "tool_name": "read_pt2",
-            "args": {"path": "fake.h5"},
+            "reason": "inspect scale first",
+            "tool_name": "inspect_correlator_scale",
+            "args": {"pt2_path": "fake.h5"},
         }
     )
-    trace.observation({"tool_name": "read_pt2", "result": {"Lt": 24}})
+    trace.observation({"tool_name": "inspect_correlator_scale", "result": {"Lt": 24}})
     trace.cycle_begin(2)
-    trace.prompt_delta({"tool_name": "read_pt2", "result": {"Lt": 24}})
+    trace.prompt_delta({"tool_name": "inspect_correlator_scale", "result": {"Lt": 24}})
     text = buffer.getvalue()
     assert "Cycle 1" in text
     assert "[Stage context]" in text
     assert "static stage context" in text
     assert "[Prompt to LLM]" not in text
-    assert "Reason: read data first" in text
-    assert "read_pt2" in text
+    assert "Reason: inspect scale first" in text
+    assert "inspect_correlator_scale" in text
     assert "[Observation]" in text
     assert "[Observation for LLM]" in text
 

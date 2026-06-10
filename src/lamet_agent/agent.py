@@ -159,8 +159,8 @@ def run_agent(
     model: str = "mock",
     actions_path: str | Path | None = None,
     api_key: str | None = None,
-    deepseek_model: str = "deepseek-chat",
-    base_url: str = "https://api.deepseek.com",
+    llm_model: str | None = None,
+    base_url: str | None = None,
     max_tool_steps: int = 40,
     verbose: bool = False,
 ) -> dict[str, Any]:
@@ -173,7 +173,7 @@ def run_agent(
     selected = _resolve_stages(manifest, stages, resume_from)
 
     state = AgentState(run_id=manifest.run_id)
-    session = make_llm_session(model, actions_path, api_key, deepseek_model, base_url)
+    session = make_llm_session(model, actions_path, api_key, llm_model, base_url)
     trace = AgentTrace(enabled=verbose)
 
     trace.run_begin(run_id=manifest.run_id, model=model, stages=selected)
