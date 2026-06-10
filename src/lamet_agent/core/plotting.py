@@ -210,8 +210,8 @@ def plot_pt2_fit_on_data(
     ax_meff.set_xlabel(TSEP_LABEL, **FONT_SIZE)
     ax_meff.set_ylabel(MEFF_LABEL, **FONT_SIZE)
     if t_max is not None:
-        ax_meff.set_xlim(left=float(np.min(meff_x)) if meff_x.size else 0.0, right=float(t_max))
-    ax_meff.set_ylim(_ylim_mean_middle_third(meff_mean))
+        ax_meff.set_xlim(left=float(np.min(meff_x)) - 0.5 if meff_x.size else -0.5, right=float(t_max))
+    ax_meff.set_ylim(_ylim_mean_middle_half(meff_mean))
 
     if fit_bands:
         for i, band in enumerate(fit_bands):
@@ -301,8 +301,8 @@ def plot_pt2_meff_on_data(
     ax_meff.set_xlabel(TSEP_LABEL, **FONT_SIZE)
     ax_meff.set_ylabel(MEFF_LABEL, **FONT_SIZE)
     if t_max is not None:
-        ax_meff.set_xlim(left=float(np.min(meff_x)) if meff_x.size else 0.0, right=float(t_max))
-    ax_meff.set_ylim(_ylim_mean_middle_third(meff_mean))
+        ax_meff.set_xlim(left=float(np.min(meff_x)) - 0.5 if meff_x.size else -0.5, right=float(t_max))
+    ax_meff.set_ylim(_ylim_mean_middle_half(meff_mean))
 
     if fit_bands:
         for i, band in enumerate(fit_bands):
@@ -393,6 +393,25 @@ def _ylim_mean_middle_third(y: np.ndarray) -> tuple[float, float]:
     if span <= 0.0:
         span = max(abs(data_min), 1e-6) * 0.2
     margin = span
+    return data_min - margin, data_max + margin
+
+
+def _ylim_mean_middle_half(y: np.ndarray) -> tuple[float, float]:
+    """Y limits so the mean-value span occupies the middle half of the axis."""
+    finite = np.asarray(y, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return 0.0, 1.0
+
+    data_min = float(np.min(finite))
+    data_max = float(np.max(finite))
+    span = data_max - data_min
+
+    if span <= 0.0:
+        span = max(abs(data_min), 1e-6) * 0.2
+
+    margin = 0.5 * span
+
     return data_min - margin, data_max + margin
 
 

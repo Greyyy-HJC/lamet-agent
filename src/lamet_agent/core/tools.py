@@ -123,6 +123,12 @@ def resolve_plot_save_path(
     return str(artifacts_dir / stem)
 
 
+def _run_scoped_plot_stem(manifest: AnalysisManifest, stem: str) -> str:
+    """Prefix default plot stems with the run id so adjacent runs do not collide."""
+    run_id = Path(str(manifest.run_id)).name or "run"
+    return f"{run_id}_{stem}"
+
+
 def resolve_stage_tools(stage: str) -> dict[str, Callable[..., dict[str, Any]]]:
     """Return the ``STAGE_TOOLS`` registry for a stage, or an empty dict."""
     package_name = resolve_stage_package(stage)
@@ -225,8 +231,13 @@ def prepare_tool_args(
             resolved = merged
     if tool_name in _PLOT_TOOLS:
         raw_save = resolved.get("save_path")
+        if raw_save is None and tool_name == "fit_bare_matrix_grid":
+            grid = manifest.metadata.get("correlator_grid", {})
+            if isinstance(grid, dict) and isinstance(grid.get("save_path"), str):
+                raw_save = grid["save_path"]
         if isinstance(raw_save, str) or raw_save is None:
-            default_stem = "bare_matrix_elements" if tool_name == "fit_bare_matrix_grid" else "fit_on_data"
+            stem = "bare_matrix_elements" if tool_name == "fit_bare_matrix_grid" else "fit_on_data"
+            default_stem = _run_scoped_plot_stem(manifest, stem)
             resolved["save_path"] = resolve_plot_save_path(
                 raw_save if isinstance(raw_save, str) else None,
                 artifacts_dir=artifacts_dir,
