@@ -33,7 +33,7 @@ def test_build_stage_prompt_uses_stage_package_instruction() -> None:
         manifest,
         completed_stages=["correlator_analysis"],
     )
-    assert "Apply user-selected renormalization setup deterministically." in prompt
+    assert "Apply ratio/hybrid-scheme renormalization deterministically" in prompt
 
 
 def test_build_stage_static_prompt_excludes_observations() -> None:

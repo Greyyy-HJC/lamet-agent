@@ -58,7 +58,7 @@ from lamet_agent.core.tools import (
 )
 
 # 2pt ground-state posteriors anchor the chained 3pt prior with widened errors.
-PT2_PRIOR_ERROR_SCALE = 5.0
+PT2_PRIOR_ERROR_SCALE = 3.0
 
 
 # --- physics models and priors ----------------------------------------------
@@ -1362,6 +1362,14 @@ def fit_bare_matrix_grid(
                 first_rre = first_rim = None
                 for (spec, (prior, p0)) in zip(eff_specs, priors):
                     fit, rre, rim = _fit_one_sample(spec, sample_index, prior, p0, **common)
+                    log_nonlinear_fit_quality(
+                        fit, kind=f"sample ground-state {fit_mode}",
+                        label=(
+                            f"z={z} sample={sample_index} t=[{spec['tmin']},{spec['tmax']}) "
+                            f"tseps={spec['tsep_ls']} tau_cut={spec['tau_cut']}"
+                        ),
+                        logger=sample_logger, q_min=q_min,
+                    )
                     re_vals.append(float(gv.mean(fit.p["O00_re"] / (2 * fit.p["E0"]))))
                     im_vals.append(float(gv.mean(fit.p["O00_im"] / (2 * fit.p["E0"]))))
                     if first_fit is None:

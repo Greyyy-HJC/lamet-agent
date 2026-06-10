@@ -84,3 +84,118 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
         _store={},
     )
     assert extension_args == {"scheme_index": 2, "save_path": "ext_re.pdf"}
+
+
+def test_prepare_tool_args_fills_correlator_grid_defaults(tmp_path: Path) -> None:
+    manifest = AnalysisManifest(
+        run_id="workflow_cg_qpdf_p5",
+        correlators=[],
+        kernels=[],
+        metadata={
+            "correlator_grid": {
+                "pt2_path": "data/pt2.h5",
+                "pt3_paths": {"8": "data/ts8.h5", "10": "/abs/ts10.h5"},
+                "tsep_ls": [8, 10],
+                "z_values": [0, 1],
+                "ensemble": "HISQa060_X",
+                "tag": "CG52bxp30_CG52bxp30",
+                "source_sink": "SS",
+                "pt2_gamma": "5",
+                "pt3_gamma": "T",
+                "momentum": "PX5PY0PZ0",
+                "pt2_windows": [{"tmin": 2, "tmax": 12}],
+                "pt3_tau_cuts": [2, 3],
+                "fit_strategy": "joint",
+                "resample_mode": "jk",
+            }
+        },
+        manifest_dir=tmp_path / "examples",
+        project_root=tmp_path,
+    )
+
+    ground_args = prepare_tool_args(
+        "tune_ground_state",
+        {"correlator_rescale": 1e20},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={},
+    )
+    assert ground_args["pt2_path"] == str(tmp_path / "data" / "pt2.h5")
+    assert ground_args["source_sink"] == "SS"
+    assert ground_args["gamma"] == "5"
+    assert ground_args["momentum"] == "PX5PY0PZ0"
+    assert ground_args["pt2_windows"] == [{"tmin": 2, "tmax": 12}]
+
+    bare_args = prepare_tool_args(
+        "tune_bare_matrix",
+        {"correlator_rescale": 1e20},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={},
+    )
+    assert bare_args["pt2_path"] == str(tmp_path / "data" / "pt2.h5")
+    assert bare_args["pt3_paths"]["8"] == str(tmp_path / "data" / "ts8.h5")
+    assert bare_args["pt3_paths"]["10"] == "/abs/ts10.h5"
+    assert bare_args["momentum"] == "PX5PY0PZ0"
+    assert bare_args["pt2_gamma"] == "5"
+    assert bare_args["pt3_gamma"] == "T"
+    assert bare_args["tsep_ls"] == [8, 10]
+    assert bare_args["pt3_tau_cuts"] == [2, 3]
+
+
+def test_prepare_tool_args_merges_renormalization_manifest_options(tmp_path: Path) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "renorm",
+            "metadata": {
+                "renormalization": {
+                    "denominator_report_json": "p0_report.json",
+                    "zs": 4,
+                    "delta_m": 0.0,
+                    "m0": 0.0,
+                    "save_path": "renorm_npz",
+                    "plot": {"save_path": "renorm_plot.pdf", "title": "Renorm"},
+                }
+            },
+        }
+    )
+
+    load_target = prepare_tool_args(
+        "load_bare_matrix_element_grid",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={"bare_matrix_grid_report": {"outputs": []}},
+    )
+    assert load_target["out"] == "target_bare_matrix_element"
+    assert "report_json" not in load_target
+
+    load_denom = prepare_tool_args(
+        "load_bare_matrix_element_grid",
+        {"out": "denominator_bare_matrix_element"},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={"target_bare_matrix_element": object()},
+    )
+    assert load_denom["report_json"] == "p0_report.json"
+
+    apply_args = prepare_tool_args(
+        "apply_ratio_scheme_renormalization",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={},
+    )
+    assert apply_args["zs"] == 4
+    assert apply_args["save_path"] == str(tmp_path / "artifacts" / "renorm_npz")
+    assert apply_args["artifacts_dir"] == str(tmp_path / "artifacts")
+
+    plot_args = prepare_tool_args(
+        "plot_renormalized_matrix_element",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={},
+    )
+    assert plot_args["save_path"] == str(tmp_path / "artifacts" / "renorm_plot")
+    assert plot_args["title"] == "Renorm"

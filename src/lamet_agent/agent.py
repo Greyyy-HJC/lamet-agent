@@ -42,10 +42,10 @@ def _run_stage(
     max_tool_steps: int,
     model: str,
     trace: AgentTrace,
+    store: dict[str, Any],
 ) -> None:
     """Run one stage: drive the session and execute tool calls."""
     tools = resolve_stage_tools(stage)
-    store: dict[str, Any] = {}
     observations: list[dict[str, Any]] = []
     artifacts_dir = Path.cwd() / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -108,7 +108,7 @@ def _run_stage(
         call_args, dropped_args = filter_tool_kwargs(tool, args)
         try:
             result = tool(store, **call_args)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, FileNotFoundError) as exc:
             observation = {"tool_name": tool_name, "error": str(exc)}
             observations.append(observation)
             trace.observation(observation)
@@ -175,6 +175,7 @@ def run_agent(
     state = AgentState(run_id=manifest.run_id)
     session = make_llm_session(model, actions_path, api_key, llm_model, base_url)
     trace = AgentTrace(enabled=verbose)
+    store: dict[str, Any] = {}
 
     trace.run_begin(run_id=manifest.run_id, model=model, stages=selected)
 
@@ -192,6 +193,7 @@ def run_agent(
             max_tool_steps=max_tool_steps,
             model=model,
             trace=trace,
+            store=store,
         )
         if stage in state.pending_user_input:
             break

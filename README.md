@@ -27,6 +27,8 @@ Ordered five-stage workflow:
 4. `perturbative_matching` -> `stages/matching/`
 5. `extrapolation` -> `stages/extrapolation/`
 
+The CG qPDF example manifests can run a connected correlator -> ratio-renormalization -> Fourier smoke flow. The renormalization stage reads correlator bare-matrix txt grids, applies the Eq. 15 ratio/hybrid scheme while preserving every resampled sample, writes a compatible `.npz`, and hands `matrix_element_data` directly to Fourier when stages run in one agent process.
+
 ## Minimal Structure
 
 ```text

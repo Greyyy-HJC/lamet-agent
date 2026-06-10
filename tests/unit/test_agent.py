@@ -201,3 +201,46 @@ def test_make_llm_session_openai_requires_key() -> None:
         llm.make_llm_session("openai", None, api_key=None)
     session = llm.make_llm_session("openai", None, api_key="sk-test")
     assert hasattr(session, "decide")
+
+
+def test_run_agent_reuses_store_across_stages(tmp_path: Path, monkeypatch) -> None:
+    transcript = tmp_path / "actions.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"action": "call_tool", "tool_name": "set_value", "args": {}, "reason": "set"}),
+                json.dumps({"action": "finish", "reason": "first done"}),
+                json.dumps({"action": "call_tool", "tool_name": "read_value", "args": {}, "reason": "read"}),
+                json.dumps({"action": "finish", "reason": "second done"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def set_value(store):
+        store["shared"] = "ok"
+        return {"out": "shared"}
+
+    def read_value(store):
+        return {"value": store["shared"]}
+
+    def fake_tools(stage):
+        if stage == "correlator_analysis":
+            return {"set_value": set_value}
+        if stage == "fourier_transform":
+            return {"read_value": read_value}
+        return {}
+
+    monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", fake_tools)
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest: [])
+
+    result = run_agent(
+        _demo_manifest(),
+        model="external",
+        actions_path=transcript,
+        stages=["correlator_analysis", "fourier_transform"],
+    )
+
+    assert result["status"] == "completed"
+    assert result["stage_results"]["fourier_transform"][0]["result"] == {"value": "ok"}
