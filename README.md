@@ -87,6 +87,61 @@ lamet-agent validate examples/workflow_smoke_manifest.json
 lamet-agent run examples/workflow_smoke_manifest.json
 ```
 
+Stage plots and other artifacts are written under `artifacts/` in the **current
+working directory**. For real runs, create a directory under `runs/` and execute
+from there so outputs stay isolated (see `runs/ds_pdf_cont/run.sh`):
+
+```bash
+mkdir -p runs/my_run && cd runs/my_run
+lamet-agent run ../../examples/workflow_cg_qpdf_cont_manifest.json \
+  --stages renormalization,fourier_transform
+# artifacts -> runs/my_run/artifacts/
+```
+
+Paths inside the manifest (correlator datasets, precomputed NPZ files, etc.)
+are resolved relative to the manifest file, with a fallback to the repo root for
+paths like `examples/fake_data/...`.
+
+Run a subset of stages with `--stages` (comma-separated stage IDs, in the order
+you want them executed). Omit `--stages` to run the full default pipeline for
+the manifest `goal` (see `lamet-agent workflow`).
+
+Valid stage IDs:
+
+| Stage ID | Package |
+| --- | --- |
+| `correlator_analysis` | correlator |
+| `renormalization` | renorm |
+| `fourier_transform` | fourier |
+| `perturbative_matching` | matching |
+| `extrapolation` | extrapolation |
+
+Examples:
+
+```bash
+# Correlator stage only
+lamet-agent run examples/workflow_cg_qpdf_p0_manifest.json --stages correlator_analysis
+
+# Renormalization then Fourier (continuation from pre-computed bare matrix elements)
+lamet-agent run examples/workflow_cg_qpdf_cont_manifest.json \
+  --stages renormalization,fourier_transform
+
+# Two stages in one run
+lamet-agent run examples/workflow_cg_qpdf_p5_manifest.json \
+  --stages correlator_analysis,renormalization
+```
+
+To start from a middle stage without listing every later stage explicitly, use
+`--resume-from` instead. It slices the default goal sequence from that stage
+onward (for example `--resume-from fourier_transform` runs Fourier, matching,
+and extrapolation). `--stages` takes precedence when both are set.
+
+When you skip earlier stages, the manifest must already supply that stage's
+inputs (for example bare-matrix report paths under `metadata.renormalization`,
+or a renormalized NPZ path under `metadata.fourier_input`). Missing inputs
+surface as `input_issues` and the run stops with
+`status: waiting_for_user_input`.
+
 Print each agent cycle (prompt, model action, tool observation) while the run
 executes:
 
