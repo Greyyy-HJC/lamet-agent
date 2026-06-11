@@ -13,10 +13,14 @@ Do this by emitting one action at a time:
    load_renormalized_matrix_element_samples on that path. Pass input_format='npz'
    for NPZ files or input_format='h5' for HDF5 files. For HDF5 inputs, pass
    h5_group when the desired group cannot be inferred from the file name.
+   If metadata.fourier specifies coord_key, re_key, im_key, or resample_mode,
+   pass those values to the loader.
    If an upstream stage already produced store['matrix_element_data'], skip the
    loader and run the transform directly on that EnsembleData.
 2. run_fourier_transform with explicit k_grid (list or compact {start, stop, num/step}),
    method, order, observable, coord_unit, and pz_gev/a_fm when needed.
+   If metadata.fourier specifies im_flip_for_ft, Lambda0, or save_path, pass
+   those values to run_fourier_transform.
    If the manifest gives scheme_scan, pass it through. If it omits any of
    zmin_values/zmax_values/min_width/z_ext_max/smooth, the tool will fill the
    missing scan values by choosing large stable zmax values before visible
@@ -31,6 +35,10 @@ Do this by emitting one action at a time:
    For GPD observables, pass pz_prime_gev when P'^z differs from P^z.
    order can be 'LA', 'NLA', or 'Empirical'. Empirical uses Eq. (6) of
    arXiv:2208.08008 for the large-lambda extrapolation.
+   Lambda0 optionally sets the lower bound of the fitted large-distance
+   exponential scale Lambda; default is 0.1 GeV for physical-z inputs.
+   Fit windows must include at least as many coordinate points as the selected
+   model has parameters.
    Prefer scheme_scan when the manifest provides it, so the tool can score and
    model-average the fit-range choices numerically.
 3. summarize_fourier_result.

@@ -25,7 +25,14 @@ import numpy as np
 
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.plotting import plot_fourier_extension_quality, plot_fourier_npz
-from lamet_agent.stages.fourier.workflow import fit_tail_quality_for_mean, run_fourier_workflow
+from lamet_agent.stages.fourier.workflow import (
+    _coord_scale,
+    _normalise_resample_mode,
+    _n_fit_parameters,
+    _sample_sdev,
+    fit_tail_quality_for_mean,
+    run_fourier_workflow,
+)
 
 
 def _samples_axis_zero(values: np.ndarray, coord: np.ndarray) -> np.ndarray:
@@ -45,6 +52,7 @@ def matrix_element_to_ensemble_data(
     coord: np.ndarray,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
+    resample: str = "bootstrap",
     attrs: dict[str, Any] | None = None,
     name: str = "renormalized_matrix_element",
 ) -> EnsembleData:
@@ -57,7 +65,7 @@ def matrix_element_to_ensemble_data(
     values = [re_axis0[idx] + 1j * im_axis0[idx] for idx in range(re_axis0.shape[0])]
     return EnsembleData(
         ensemble=None,
-        resample="bootstrap",
+        resample=_normalise_resample_mode(resample),
         values=values,
         dims=("z",),
         coords={"z": coord_arr.tolist()},
@@ -79,6 +87,7 @@ def ensemble_data_to_legacy_arrays(data: EnsembleData) -> dict[str, np.ndarray]:
         "coord": np.asarray(data.coords["z"], dtype=float),
         "re_samples": np.asarray(np.real(values), dtype=float),
         "im_samples": np.asarray(np.imag(values), dtype=float),
+        "resample_mode": data.resample,
     }
 
 
@@ -106,7 +115,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
             attrs[key] = str(value)
     return EnsembleData(
         ensemble=None,
-        resample="bootstrap",
+        resample=_normalise_resample_mode(str(result.get("resample_mode", "bootstrap"))),
         values=values,
         dims=("x",),
         coords={"x": np.asarray(result["k_grid"], dtype=float).tolist()},
@@ -124,26 +133,17 @@ def load_renormalized_matrix_element_samples(
     coord_key: str = "coord",
     re_key: str = "re_samples",
     im_key: str = "im_samples",
+    resample_mode: str = "bootstrap",
 ) -> dict[str, Any]:
     """Load renormalized coordinate-space matrix-element samples from NPZ or HDF5."""
-    fmt = _resolve_input_format(path, input_format)
-    if fmt == "npz":
-        coord, re_samples, im_samples, group_name = _load_npz_matrix_element(path, coord_key, re_key, im_key)
-    elif fmt == "h5":
-        coord, re_samples, im_samples, group_name = _load_h5_matrix_element(
-            path,
-            h5_group=h5_group,
-            coord_key="z_ary" if coord_key == "coord" else coord_key,
-            re_key="Re" if re_key == "re_samples" else re_key,
-            im_key="Im" if im_key == "im_samples" else im_key,
-        )
-    else:
-        raise ValueError("input_format must be 'npz', 'h5', or 'hdf5'")
-    matrix_element_data = matrix_element_to_ensemble_data(
-        coord=coord,
-        re_samples=re_samples,
-        im_samples=im_samples,
-        attrs={"input_format": fmt, "h5_group": group_name, "path": str(path)},
+    matrix_element_data, fmt, group_name = _load_matrix_element_data(
+        path=path,
+        input_format=input_format,
+        h5_group=h5_group,
+        coord_key=coord_key,
+        re_key=re_key,
+        im_key=im_key,
+        resample_mode=resample_mode,
     )
     legacy = ensemble_data_to_legacy_arrays(matrix_element_data)
     out = "matrix_element"
@@ -152,6 +152,7 @@ def load_renormalized_matrix_element_samples(
         **legacy,
         "path": str(path),
         "input_format": fmt,
+        "resample_mode": matrix_element_data.resample,
     }
     if group_name is not None:
         store[out]["h5_group"] = group_name
@@ -160,6 +161,7 @@ def load_renormalized_matrix_element_samples(
         "data": "matrix_element_data",
         "input_format": fmt,
         "h5_group": group_name,
+        "resample_mode": matrix_element_data.resample,
         "n_coord": int(len(legacy["coord"])),
         "n_sample": int(legacy["re_samples"].shape[0]),
         "re_shape": list(legacy["re_samples"].shape),
@@ -167,7 +169,17 @@ def load_renormalized_matrix_element_samples(
     }
 
 
-def _resolve_input_format(path: str, input_format: str | None) -> str:
+def _load_matrix_element_data(
+    *,
+    path: str,
+    input_format: str | None,
+    h5_group: str | None,
+    coord_key: str,
+    re_key: str,
+    im_key: str,
+    resample_mode: str,
+) -> tuple[EnsembleData, str, str | None]:
+    """Load NPZ/HDF5 matrix-element samples and normalize them to EnsembleData."""
     if input_format is not None:
         fmt = input_format.lower()
     else:
@@ -175,22 +187,54 @@ def _resolve_input_format(path: str, input_format: str | None) -> str:
         fmt = "h5" if suffix in {".h5", ".hdf5"} else suffix.lstrip(".")
     if fmt == "hdf5":
         fmt = "h5"
-    return fmt
+    resample = _normalise_resample_mode(resample_mode)
 
+    if fmt == "npz":
+        try:
+            data, _extras = EnsembleData.load_npz(path)
+        except ValueError:
+            with np.load(path, allow_pickle=False) as npz:
+                data = matrix_element_to_ensemble_data(
+                    coord=np.asarray(npz[coord_key], dtype=float),
+                    re_samples=np.asarray(npz[re_key], dtype=float),
+                    im_samples=np.asarray(npz[im_key], dtype=float),
+                    resample=resample,
+                    attrs={"input_format": fmt, "path": str(path)},
+                )
+        if data.dims != ["z"]:
+            raise ValueError("Fourier NPZ EnsembleData input must have physical dimension ['z']")
+        values = np.asarray(data.values)
+        if values.ndim != 2:
+            raise ValueError("Fourier NPZ EnsembleData input must be shaped (resample,z)")
+        return data, fmt, None
 
-def _load_npz_matrix_element(
-    path: str,
-    coord_key: str,
-    re_key: str,
-    im_key: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, None]:
-    data = np.load(path)
-    return (
-        np.asarray(data[coord_key], dtype=float),
-        np.asarray(data[re_key], dtype=float),
-        np.asarray(data[im_key], dtype=float),
-        None,
-    )
+    if fmt == "h5":
+        try:
+            import h5py
+        except ImportError as exc:
+            raise RuntimeError(
+                "Reading HDF5 Fourier inputs requires installing lamet-agent with the analysis extra"
+            ) from exc
+
+        use_coord_key = "z_ary" if coord_key == "coord" else coord_key
+        use_re_key = "Re" if re_key == "re_samples" else re_key
+        use_im_key = "Im" if im_key == "im_samples" else im_key
+        with h5py.File(path, "r") as h5f:
+            group_names = [name for name, item in h5f.items() if isinstance(item, h5py.Group)]
+            group_name = h5_group or _infer_h5_group(path, group_names)
+            if group_name not in h5f:
+                raise ValueError(f"HDF5 group {group_name!r} not found; available groups: {group_names}")
+            group = h5f[group_name]
+            data = matrix_element_to_ensemble_data(
+                coord=np.asarray(group[use_coord_key], dtype=float),
+                re_samples=np.asarray(group[use_re_key], dtype=float),
+                im_samples=np.asarray(group[use_im_key], dtype=float),
+                resample=resample,
+                attrs={"input_format": fmt, "h5_group": group_name, "path": str(path)},
+            )
+        return data, fmt, group_name
+
+    raise ValueError("input_format must be 'npz', 'h5', or 'hdf5'")
 
 
 def _infer_h5_group(path: str, group_names: list[str]) -> str:
@@ -203,31 +247,6 @@ def _infer_h5_group(path: str, group_names: list[str]) -> str:
     if len(group_names) == 1:
         return group_names[0]
     raise ValueError("h5_group is required when the HDF5 file has multiple groups and no pz can be inferred")
-
-
-def _load_h5_matrix_element(
-    path: str,
-    *,
-    h5_group: str | None,
-    coord_key: str,
-    re_key: str,
-    im_key: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
-    try:
-        import h5py
-    except ImportError as exc:
-        raise RuntimeError("Reading HDF5 Fourier inputs requires installing lamet-agent with the analysis extra") from exc
-
-    with h5py.File(path, "r") as h5f:
-        group_names = [name for name, item in h5f.items() if isinstance(item, h5py.Group)]
-        group_name = h5_group or _infer_h5_group(path, group_names)
-        if group_name not in h5f:
-            raise ValueError(f"HDF5 group {group_name!r} not found; available groups: {group_names}")
-        group = h5f[group_name]
-        coord = np.asarray(group[coord_key], dtype=float)
-        re_samples = np.asarray(group[re_key], dtype=float)
-        im_samples = np.asarray(group[im_key], dtype=float)
-    return coord, re_samples, im_samples, group_name
 
 
 def _artifact_path(raw: str | None, *, default_name: str) -> Path:
@@ -277,18 +296,19 @@ def _save_fourier_fit_info_npz(path: Path, result: dict[str, Any]) -> None:
     mean_fit_dof = np.asarray([item["mean_fit_dof"] for item in schemes], dtype=int)
     mean_fit_q = np.asarray([item["mean_fit_q"] for item in schemes], dtype=float)
 
+    resample_mode = _normalise_resample_mode(str(result.get("resample_mode", "bootstrap")))
     fit_chi2_dof = fit_chi2 / np.maximum(fit_dof, 1)
     if fit_params.shape[1] < 2:
         fit_param_sdev = np.zeros((fit_params.shape[0], fit_params.shape[2]), dtype=float)
     else:
-        fit_param_sdev = np.std(fit_params, axis=1, ddof=1)
+        fit_param_sdev = np.asarray([_sample_sdev(item, resample_mode=resample_mode) for item in fit_params])
 
     scheme_labels = np.asarray(result["scheme_labels"])
     fit_param_labels = np.asarray(schemes[0]["fit_param_labels"])
     param_samples = np.moveaxis(fit_params, 1, 0)
     fit_info_data = EnsembleData(
         ensemble=None,
-        resample="bootstrap",
+        resample=resample_mode,
         values=[param_samples[idx] for idx in range(param_samples.shape[0])],
         dims=("scheme", "parameter"),
         coords={"scheme": scheme_labels.tolist(), "parameter": fit_param_labels.tolist()},
@@ -354,6 +374,8 @@ def _last_stable_z_index(
     coord: np.ndarray,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
+    *,
+    resample_mode: str,
 ) -> int:
     """Return the last positive-grid index before large-z data become unreliable."""
     positive_mask = np.asarray(coord, dtype=float) > 0
@@ -361,8 +383,8 @@ def _last_stable_z_index(
     im = np.asarray(im_samples, dtype=float)[:, positive_mask]
     re_mean = np.mean(re, axis=0)
     im_mean = np.mean(im, axis=0)
-    re_sdev = _sample_sdev(re)
-    im_sdev = _sample_sdev(im)
+    re_sdev = _sample_sdev(re, resample_mode=resample_mode)
+    im_sdev = _sample_sdev(im, resample_mode=resample_mode)
 
     magnitude = np.hypot(re_mean, im_mean)
     uncertainty = np.hypot(re_sdev, im_sdev)
@@ -451,10 +473,17 @@ def _pick_four_zmin_values_by_tail_fit(
     pz_gev: float | None,
     pz_prime_gev: float | None,
     a_fm: float | None,
+    resample_mode: str,
+    Lambda0: float,
+    min_fit_points: int,
 ) -> list[float]:
     stable_starts = []
     for zmax in zmax_values:
         candidates = positive[(positive < float(zmax)) & ((float(zmax) - positive) >= min_width)]
+        candidates = np.asarray(
+            [candidate for candidate in candidates if np.count_nonzero((positive >= candidate) & (positive <= zmax)) >= min_fit_points],
+            dtype=float,
+        )
         if len(candidates) == 0:
             continue
         qualities = [
@@ -471,6 +500,9 @@ def _pick_four_zmin_values_by_tail_fit(
                 pz_gev=pz_gev,
                 pz_prime_gev=pz_prime_gev,
                 a_fm=a_fm,
+                resample_mode=resample_mode,
+                Lambda0=Lambda0,
+                min_fit_points=min_fit_points,
             )
             for candidate in candidates
         ]
@@ -505,6 +537,9 @@ def _auto_fill_scheme_scan(
     pz_gev: float | None,
     pz_prime_gev: float | None,
     a_fm: float | None,
+    resample_mode: str,
+    Lambda0: float,
+    min_fit_points: int,
 ) -> dict[str, Any]:
     """Fill missing scan keys with stable zmax values and tail-fit zmin diagnostics."""
     dz = float(np.median(np.diff(positive)))
@@ -517,7 +552,7 @@ def _auto_fill_scheme_scan(
     zmax_reference = max(zmax_values)
 
     if "min_width" not in spec:
-        spec["min_width"] = float(max(3.0 * dz, 0.25 * zmax_reference))
+        spec["min_width"] = float(max((min_fit_points - 1) * dz, 3.0 * dz, 0.25 * zmax_reference))
     min_width = float(spec["min_width"])
 
     if "zmin_values" not in spec and "zmin_start" not in spec:
@@ -535,11 +570,15 @@ def _auto_fill_scheme_scan(
             pz_gev=pz_gev,
             pz_prime_gev=pz_prime_gev,
             a_fm=a_fm,
+            resample_mode=resample_mode,
+            Lambda0=Lambda0,
+            min_fit_points=min_fit_points,
         )
     if "z_ext_max" not in spec:
         spec["z_ext_max"] = float(positive[-1])
     if "smooth" not in spec:
         spec["smooth"] = "linear"
+    spec["min_fit_points"] = int(min_fit_points)
     return spec
 
 
@@ -570,6 +609,9 @@ def _auto_scheme_scan(
     pz_gev: float | None,
     pz_prime_gev: float | None,
     a_fm: float | None,
+    resample_mode: str,
+    Lambda0: float,
+    min_fit_points: int,
     existing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate a conservative scan from stable zmax and tail-fit zmin diagnostics."""
@@ -577,7 +619,7 @@ def _auto_scheme_scan(
     positive = _positive_grid(coord)
     re_axis0 = np.asarray(re_samples, dtype=float)
     im_axis0 = np.asarray(im_samples, dtype=float)
-    stable_idx = _last_stable_z_index(coord, re_axis0, im_axis0)
+    stable_idx = _last_stable_z_index(coord, re_axis0, im_axis0, resample_mode=resample_mode)
     spec = _auto_fill_scheme_scan(
         spec,
         coord=np.asarray(coord, dtype=float),
@@ -592,24 +634,33 @@ def _auto_scheme_scan(
         pz_gev=pz_gev,
         pz_prime_gev=pz_prime_gev,
         a_fm=a_fm,
+        resample_mode=resample_mode,
+        Lambda0=Lambda0,
+        min_fit_points=min_fit_points,
     )
     spec["auto_generated"] = True
     return spec
 
 
-def _generate_scan_schemes(spec: dict[str, Any]) -> list[dict[str, Any]]:
+def _generate_scan_schemes(spec: dict[str, Any], *, coord: np.ndarray | None = None) -> list[dict[str, Any]]:
     zmin_values = _scan_values(spec, "zmin")
     zmax_values = _scan_values(spec, "zmax")
     min_width = float(spec.get("min_width", 0.0))
     z_ext_max = float(spec["z_ext_max"])
     smooth = str(spec.get("smooth", "linear"))
     max_schemes = int(spec.get("max_schemes", 200))
+    min_fit_points = int(spec.get("min_fit_points", 0))
+    coord_arr = None if coord is None else np.asarray(coord, dtype=float)
 
     schemes = []
     for zmin in zmin_values:
         for zmax in zmax_values:
             if zmax <= zmin or zmax - zmin < min_width:
                 continue
+            if coord_arr is not None and min_fit_points > 0:
+                fit_count = np.count_nonzero((coord_arr >= float(zmin)) & (coord_arr <= float(zmax)) & (coord_arr > 0))
+                if fit_count < min_fit_points:
+                    continue
             scheme = {
                 "label": f"zmin_{zmin:g}_zmax_{zmax:g}".replace(".", "p"),
                 "zmin": zmin,
@@ -641,28 +692,6 @@ def _resolve_k_grid(k_grid: list[float] | dict[str, Any]) -> list[float]:
     return [float(item) for item in k_grid]
 
 
-def _fit_scale(coord_unit: str, *, pz_gev: float | None, a_fm: float | None) -> float:
-    unit = coord_unit.lower()
-    fm_to_gev_inv = 5.067731237
-    if unit == "lambda":
-        return 1.0
-    if unit == "gev_inv":
-        return 1.0
-    if unit == "fm":
-        return fm_to_gev_inv
-    if unit == "lattice":
-        if a_fm is None:
-            raise ValueError("a_fm is required when coord_unit='lattice'")
-        return float(a_fm) * fm_to_gev_inv
-    raise ValueError("coord_unit must be 'lambda', 'gev_inv', 'fm', or 'lattice'")
-
-
-def _sample_sdev(samples: np.ndarray) -> np.ndarray:
-    if samples.shape[0] < 2:
-        return np.zeros(samples.shape[1], dtype=float)
-    return np.std(samples, axis=0, ddof=1)
-
-
 def _scheme_fit_chi2_dof(
     *,
     coord: np.ndarray,
@@ -672,8 +701,9 @@ def _scheme_fit_chi2_dof(
     coord_unit: str,
     pz_gev: float | None,
     a_fm: float | None,
+    resample_mode: str,
 ) -> float:
-    scale = _fit_scale(coord_unit, pz_gev=pz_gev, a_fm=a_fm)
+    scale, _ = _coord_scale(coord_unit, pz_gev=pz_gev, a_fm=a_fm)
     fit_coord = coord * scale
     zmin, zmax = scheme_result["fit_range"]
     fit_mask = (coord >= float(zmin)) & (coord <= float(zmax)) & (coord > 0)
@@ -683,8 +713,8 @@ def _scheme_fit_chi2_dof(
     target_z = fit_coord[fit_mask]
     data_re = np.mean(re_samples[:, fit_mask], axis=0)
     data_im = np.mean(im_samples[:, fit_mask], axis=0)
-    sigma_re = _sample_sdev(re_samples[:, fit_mask])
-    sigma_im = _sample_sdev(im_samples[:, fit_mask])
+    sigma_re = _sample_sdev(re_samples[:, fit_mask], resample_mode=resample_mode)
+    sigma_im = _sample_sdev(im_samples[:, fit_mask], resample_mode=resample_mode)
     floor = max(1e-8, 0.02 * max(float(np.max(np.abs(data_re))), float(np.max(np.abs(data_im))), 1.0))
     sigma_re = np.maximum(sigma_re, floor)
     sigma_im = np.maximum(sigma_im, floor)
@@ -729,14 +759,15 @@ def _apply_scheme_model_average(
     a_fm: float | None,
     y_range: list[float] | tuple[float, float] | None,
     roughness_weight: float,
+    resample_mode: str,
 ) -> None:
     ft_re = np.asarray(result["ft_re_samples"], dtype=float)
     ft_im = np.asarray(result["ft_im_samples"], dtype=float)
     k_grid = np.asarray(result["k_grid"], dtype=float)
     re_mean_by_scheme = np.mean(ft_re, axis=1)
     im_mean_by_scheme = np.mean(ft_im, axis=1)
-    re_stat_by_scheme = np.asarray([_sample_sdev(item) for item in ft_re])
-    im_stat_by_scheme = np.asarray([_sample_sdev(item) for item in ft_im])
+    re_stat_by_scheme = np.asarray([_sample_sdev(item, resample_mode=resample_mode) for item in ft_re])
+    im_stat_by_scheme = np.asarray([_sample_sdev(item, resample_mode=resample_mode) for item in ft_im])
 
     fit_chi2 = []
     roughness = []
@@ -750,6 +781,7 @@ def _apply_scheme_model_average(
                 coord_unit=coord_unit,
                 pz_gev=pz_gev,
                 a_fm=a_fm,
+                resample_mode=resample_mode,
             )
         )
         roughness.append(_roughness_score(k_grid, re_mean_by_scheme[idx], y_range))
@@ -803,13 +835,21 @@ def run_fourier_transform(
     pz_prime_gev: float | None = None,
     a_fm: float | None = None,
     im_flip_for_ft: bool = False,
+    Lambda0: float = 0.1,
     save_path: str | None = None,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
     out = "fourier_result"
-    matrix_element = ensemble_data_to_legacy_arrays(store["matrix_element_data"])
+    matrix_element_data = store["matrix_element_data"]
+    resample_mode = _normalise_resample_mode(getattr(matrix_element_data, "resample", "bootstrap"))
+    matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
     auto_scheme_scan = None
     scan_spec = _fill_scheme_defaults(dict(scheme_scan or {}))
+    min_fit_points = max(
+        _n_fit_parameters(method, order, observable),
+        int(scan_spec.get("min_fit_points", 0) or 0),
+    )
+    scan_spec["min_fit_points"] = min_fit_points
     if not _scan_has_all_range_keys(scan_spec):
         scan_spec = _auto_scheme_scan(
             coord=np.asarray(matrix_element["coord"], dtype=float),
@@ -822,13 +862,16 @@ def run_fourier_transform(
             pz_gev=pz_gev,
             pz_prime_gev=pz_prime_gev,
             a_fm=a_fm,
+            resample_mode=resample_mode,
+            Lambda0=float(Lambda0),
+            min_fit_points=min_fit_points,
             existing=scan_spec,
         )
         auto_scheme_scan = scan_spec
     else:
         scan_spec = _fill_scheme_defaults(scan_spec)
     scheme_scan = scan_spec
-    schemes = _generate_scan_schemes(scheme_scan)
+    schemes = _generate_scan_schemes(scheme_scan, coord=np.asarray(matrix_element["coord"], dtype=float))
     k_values = _resolve_k_grid(k_grid)
     result = run_fourier_workflow(
         matrix_element["coord"],
@@ -844,10 +887,15 @@ def run_fourier_transform(
         pz_prime_gev=pz_prime_gev,
         a_fm=a_fm,
         im_flip_for_ft=im_flip_for_ft,
+        resample_mode=resample_mode,
+        Lambda0=float(Lambda0),
+        min_fit_points=min_fit_points,
     )
+    result["resample_mode"] = resample_mode
     result["pz_gev"] = pz_gev
     result["pz_prime_gev"] = pz_prime_gev
     result["a_fm"] = a_fm
+    result["Lambda0"] = float(Lambda0)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
     model_average = bool((scheme_scan or {}).get("model_average", True)) if scheme_scan is not None else True
@@ -862,6 +910,7 @@ def run_fourier_transform(
             a_fm=a_fm,
             y_range=(scheme_scan or {}).get("y_range"),
             roughness_weight=float((scheme_scan or {}).get("roughness_weight", 5.0)),
+            resample_mode=resample_mode,
         )
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
     store[out] = result

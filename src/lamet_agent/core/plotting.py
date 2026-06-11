@@ -29,6 +29,7 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
 from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.resampling import bs_ls_avg, jk_ls_avg
 
 # Publication-oriented palette and styles copied from LaMETLat plot_settings.
 BLUE = "#4E79A7"
@@ -676,14 +677,6 @@ def plot_fourier_npz(
     return fig, (ax_re, ax_im)
 
 
-def _sample_mean_sdev(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    arr = np.asarray(samples, dtype=float)
-    mean = np.mean(arr, axis=0)
-    if arr.shape[0] < 2:
-        return mean, np.zeros_like(mean)
-    return mean, np.std(arr, axis=0, ddof=1)
-
-
 def _band_segment(
     x: np.ndarray,
     mean: np.ndarray,
@@ -758,11 +751,32 @@ def plot_fourier_extension_quality(
 
     coord_arr = np.asarray(coord, dtype=float)
     lambda_data = _coord_to_lambda(coord_arr, coord_unit=coord_unit, pz_gev=pz_gev, a_fm=a_fm)
-    data_mean, data_sdev = _sample_mean_sdev(np.asarray(samples, dtype=float))
+    resample_mode = str(result.get("resample_mode", "bootstrap"))
 
     lambda_ext = np.asarray(scheme["lambda_ext"], dtype=float)
     ext_key = "extended_re_samples" if component == "re" else "extended_im_samples"
-    ext_mean, ext_sdev = _sample_mean_sdev(np.asarray(scheme[ext_key], dtype=float))
+    mode = resample_mode.strip().lower()
+    band_stats = []
+    for sample_values in (samples, scheme[ext_key]):
+        arr = np.asarray(sample_values, dtype=float)
+        if arr.shape[0] < 2:
+            mean = np.mean(arr, axis=0)
+            sdev = np.zeros_like(mean, dtype=float)
+        elif mode in {"jk", "jackknife"}:
+            values = jk_ls_avg(arr)
+            mean = np.asarray(gv.mean(values), dtype=float)
+            sdev = np.asarray(gv.sdev(values), dtype=float)
+        elif mode in {"bs", "boot", "bootstrap"}:
+            values = bs_ls_avg(arr)
+            mean = np.asarray(gv.mean(values), dtype=float)
+            sdev = np.asarray(gv.sdev(values), dtype=float)
+        elif mode == "raw":
+            mean = np.mean(arr, axis=0)
+            sdev = np.std(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])
+        else:
+            raise ValueError("resample_mode must be 'bs'/'bootstrap', 'jk'/'jackknife', or 'raw'")
+        band_stats.append((mean, sdev))
+    (data_mean, data_sdev), (ext_mean, ext_sdev) = band_stats
 
     zmin, zmax = scheme["fit_range"]
     fit_lambda = _coord_to_lambda(

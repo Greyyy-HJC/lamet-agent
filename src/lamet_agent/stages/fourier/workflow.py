@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+import gvar as gv
+import lsqfit
 import numpy as np
-from scipy.optimize import least_squares
-from scipy.stats import chi2 as chi2_distribution
+
+from lamet_agent.core.resampling import bs_ls_avg, jk_ls_avg
 
 FM_TO_GEV_INV = 5.067731237
 
@@ -27,6 +29,55 @@ OBSERVABLE_ALIASES = {
     "nucleon_quark_quasi_gpd": "nucleon_quark_quasi_gpd",
     "nucleon_gpd": "nucleon_quark_quasi_gpd",
 }
+
+
+def _normalise_resample_mode(value: str | None) -> str:
+    mode = "bootstrap" if value is None else str(value).strip().lower()
+    aliases = {
+        "bs": "bootstrap",
+        "boot": "bootstrap",
+        "bootstrap": "bootstrap",
+        "jk": "jackknife",
+        "jackknife": "jackknife",
+        "raw": "raw",
+    }
+    if mode not in aliases:
+        raise ValueError("resample_mode must be 'bs'/'bootstrap', 'jk'/'jackknife', or 'raw'")
+    return aliases[mode]
+
+
+def _sample_gvar(samples, *, resample_mode: str = "bootstrap") -> np.ndarray:
+    arr = np.asarray(samples, dtype=float)
+    if arr.ndim == 0:
+        return gv.gvar(arr, np.zeros_like(arr, dtype=float))
+    if arr.shape[0] < 2:
+        mean = np.mean(arr, axis=0)
+        return gv.gvar(mean, np.zeros_like(mean, dtype=float))
+
+    mode = _normalise_resample_mode(resample_mode)
+    trailing_shape = arr.shape[1:]
+    if mode in {"bootstrap", "jackknife"} and int(np.prod(trailing_shape or (1,))) == 1:
+        flat = arr.reshape(arr.shape[0], 1)
+        duplicated = np.repeat(flat, 2, axis=1)
+        values = jk_ls_avg(duplicated) if mode == "jackknife" else bs_ls_avg(duplicated)
+        value = values.reshape(-1)[0]
+        mean = float(gv.mean(value))
+        sdev = float(gv.sdev(value))
+        if trailing_shape == ():
+            return gv.gvar(mean, sdev)
+        return gv.gvar(np.full(trailing_shape, mean), np.full(trailing_shape, sdev))
+    if mode == "jackknife":
+        return jk_ls_avg(arr)
+    if mode == "bootstrap":
+        return bs_ls_avg(arr)
+
+    mean = np.mean(arr, axis=0)
+    sdev = np.std(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])
+    return gv.gvar(mean, sdev)
+
+
+def _sample_sdev(samples, *, resample_mode: str = "bootstrap") -> np.ndarray:
+    return np.asarray(gv.sdev(_sample_gvar(samples, resample_mode=resample_mode)), dtype=float)
 
 
 def sum_ft_re_im(x_ls, fx_re_ls, fx_im_ls, output_k):
@@ -176,9 +227,16 @@ def _term_phase_scales(
     raise ValueError(f"unsupported observable {observable!r}")
 
 
-def _param_template(method: str, order: str, observable: str) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
+def _param_template(
+    method: str,
+    order: str,
+    observable: str,
+    *,
+    Lambda0: float = 0.1,
+) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     method = method.upper()
     order = order.upper()
+    lambda_lower = float(Lambda0)
     if method not in {"GI", "CG"}:
         raise ValueError("method must be 'GI' or 'CG'")
     if order not in {"LA", "NLA", "EMPIRICAL"}:
@@ -186,8 +244,8 @@ def _param_template(method: str, order: str, observable: str) -> tuple[np.ndarra
 
     if order == "EMPIRICAL":
         p0 = [1.0, 0.1, 1.0, 1.0, 5.0]
-        lower = [-np.inf, -np.inf, -5.0, -5.0, 0.1]
-        upper = [np.inf, np.inf, 5.0, 5.0, 100.0]
+        lower = [-np.inf, -np.inf, -5.0, -5.0, lambda_lower]
+        upper = [np.inf, np.inf, 5.0, 5.0, max(100.0, lambda_lower + 1.0)]
         return np.asarray(p0, dtype=float), (np.asarray(lower, dtype=float), np.asarray(upper, dtype=float))
 
     term_names = _observable_term_names(observable)
@@ -205,9 +263,9 @@ def _param_template(method: str, order: str, observable: str) -> tuple[np.ndarra
             lower.extend([-np.inf, -np.pi])
             upper.extend([np.inf, np.pi])
 
-    p0.append(0.5)
-    lower.append(0.1)
-    upper.append(3.0)
+    p0.append(max(0.5, lambda_lower + 0.05))
+    lower.append(lambda_lower)
+    upper.append(max(3.0, lambda_lower + 1.0))
 
     if method == "CG":
         p0.append(0.5)
@@ -215,6 +273,10 @@ def _param_template(method: str, order: str, observable: str) -> tuple[np.ndarra
         upper.append(4.0)
 
     return np.asarray(p0, dtype=float), (np.asarray(lower, dtype=float), np.asarray(upper, dtype=float))
+
+
+def _n_fit_parameters(method: str, order: str, observable: str) -> int:
+    return len(_param_labels(method, order, observable))
 
 
 def _param_labels(method: str, order: str, observable: str) -> list[str]:
@@ -250,9 +312,18 @@ def _asymptotic_values(
     if order.upper() == "EMPIRICAL":
         lambda_pos = phase_scale * z
         c1, c2, a, b, lambda0 = params[:5]
-        values = (c1 / (1j * lambda_pos) ** a + np.exp(-1j * lambda_pos) * c2 / (-1j * lambda_pos) ** b)
-        values = values * np.exp(-lambda_pos / lambda0)
-        return np.real(values), np.imag(values)
+        lam_a = gv.exp(-a * np.log(lambda_pos))
+        lam_b = gv.exp(-b * np.log(lambda_pos))
+        term1_re = c1 * lam_a * gv.cos(0.5 * np.pi * a)
+        term1_im = -c1 * lam_a * gv.sin(0.5 * np.pi * a)
+        base2_re = c2 * lam_b * gv.cos(0.5 * np.pi * b)
+        base2_im = c2 * lam_b * gv.sin(0.5 * np.pi * b)
+        cos_lam = np.cos(lambda_pos)
+        sin_lam = np.sin(lambda_pos)
+        term2_re = base2_re * cos_lam + base2_im * sin_lam
+        term2_im = base2_im * cos_lam - base2_re * sin_lam
+        decay = gv.exp(-lambda_pos / lambda0)
+        return (term1_re + term2_re) * decay, (term1_im + term2_im) * decay
 
     term_names = _observable_term_names(observable)
     phase_scales = _term_phase_scales(
@@ -260,27 +331,71 @@ def _asymptotic_values(
         phase_scale=phase_scale,
         phase_prime_scale=phase_prime_scale,
     )
-    amp = np.zeros_like(z, dtype=complex)
+    re = np.zeros_like(z, dtype=object)
+    im = np.zeros_like(z, dtype=object)
     cursor = 0
     for phase in phase_scales:
-        amp = amp + params[cursor] * np.exp(1j * (params[cursor + 1] + phase * z))
+        arg = params[cursor + 1] + phase * z
+        re = re + params[cursor] * gv.cos(arg)
+        im = im + params[cursor] * gv.sin(arg)
         cursor += 2
 
     if order.upper() == "NLA":
-        subleading = np.zeros_like(z, dtype=complex)
         for phase in phase_scales:
-            subleading = subleading + params[cursor] * np.exp(1j * (params[cursor + 1] + phase * z))
+            arg = params[cursor + 1] + phase * z
+            re = re + params[cursor] * gv.cos(arg) / z
+            im = im + params[cursor] * gv.sin(arg) / z
             cursor += 2
-        amp = amp + subleading / z
 
     lam = params[cursor]
-    tail = np.exp(-lam * z)
+    tail = gv.exp(-lam * z)
     if method.upper() == "CG":
         n = params[-1]
-        tail = tail / z**n
+        tail = tail * gv.exp(-n * np.log(z))
 
-    values = amp * tail
-    return np.real(values), np.imag(values)
+    return re * tail, im * tail
+
+
+def _bounded_to_internal(value: float, lower: float, upper: float) -> float:
+    if np.isfinite(lower) and np.isfinite(upper):
+        width = upper - lower
+        if width <= 0:
+            raise ValueError("parameter upper bound must be larger than lower bound")
+        clipped = min(max(float(value), lower + 1e-8 * width), upper - 1e-8 * width)
+        ratio = (clipped - lower) / (upper - lower)
+        return float(np.log(ratio / (1.0 - ratio)))
+    if np.isfinite(lower):
+        return float(np.log(max(float(value) - lower, 1e-8)))
+    if np.isfinite(upper):
+        return float(np.log(max(upper - float(value), 1e-8)))
+    return float(value)
+
+
+def _internal_to_bounded(value: Any, lower: float, upper: float) -> Any:
+    if np.isfinite(lower) and np.isfinite(upper):
+        width = upper - lower
+        return lower + width / (1.0 + gv.exp(-value))
+    if np.isfinite(lower):
+        return lower + gv.exp(value)
+    if np.isfinite(upper):
+        return upper - gv.exp(value)
+    return value
+
+
+def _internal_p0(params: np.ndarray, bounds: tuple[np.ndarray, np.ndarray]) -> gv.BufferDict:
+    lower, upper = bounds
+    p0 = gv.BufferDict()
+    for idx, value in enumerate(np.asarray(params, dtype=float)):
+        p0[f"u{idx}"] = _bounded_to_internal(float(value), float(lower[idx]), float(upper[idx]))
+    return p0
+
+
+def _physical_params(p: gv.BufferDict, bounds: tuple[np.ndarray, np.ndarray]) -> list[Any]:
+    lower, upper = bounds
+    return [
+        _internal_to_bounded(p[f"u{idx}"], float(lower[idx]), float(upper[idx]))
+        for idx in range(len(lower))
+    ]
 
 
 def _fit_one_sample(
@@ -296,15 +411,19 @@ def _fit_one_sample(
     p0: np.ndarray | None = None,
     sigma_re: np.ndarray | None = None,
     sigma_im: np.ndarray | None = None,
+    Lambda0: float = 0.1,
 ) -> tuple[np.ndarray, bool, float, int, float]:
-    default_p0, bounds = _param_template(method, order, observable)
+    default_p0, bounds = _param_template(method, order, observable, Lambda0=Lambda0)
     start = default_p0 if p0 is None else np.asarray(p0, dtype=float)
     re_scale = np.ones_like(re_fit, dtype=float) if sigma_re is None else np.asarray(sigma_re, dtype=float)
     im_scale = np.ones_like(im_fit, dtype=float) if sigma_im is None else np.asarray(sigma_im, dtype=float)
+    sigma = np.maximum(np.concatenate([re_scale, im_scale]), 1e-12)
+    y_data = gv.gvar(np.concatenate([re_fit, im_fit]), sigma)
 
-    def residual(params: np.ndarray) -> np.ndarray:
+    def fcn(z: np.ndarray, p: gv.BufferDict) -> np.ndarray:
+        params = _physical_params(p, bounds)
         pred_re, pred_im = _asymptotic_values(
-            z_fit,
+            z,
             params,
             method=method,
             order=order,
@@ -312,17 +431,24 @@ def _fit_one_sample(
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
         )
-        return np.concatenate([(pred_re - re_fit) / re_scale, (pred_im - im_fit) / im_scale])
+        return np.concatenate([pred_re, pred_im])
 
     dof = max(1, 2 * len(z_fit) - len(default_p0))
     try:
-        fit = least_squares(residual, start, bounds=bounds, max_nfev=2000)
-    except ValueError:
+        fit = lsqfit.nonlinear_fit(
+            data=(z_fit, y_data),
+            fcn=fcn,
+            p0=_internal_p0(start, bounds),
+            maxit=2000,
+            svdcut=1e-12,
+            fitter="scipy_least_squares",
+        )
+        physical = _physical_params(fit.p, bounds)
+        params = np.asarray([float(gv.mean(item)) for item in physical], dtype=float)
+    except (FloatingPointError, RuntimeError, ValueError, OverflowError):
         return default_p0, False, float("inf"), dof, 0.0
 
-    chi2 = float(np.sum(residual(fit.x) ** 2))
-    q_value = float(chi2_distribution.sf(chi2, dof))
-    return fit.x, bool(fit.success), chi2, dof, q_value
+    return params, bool(np.isfinite(fit.chi2)), float(fit.chi2), int(fit.dof), float(fit.Q)
 
 
 def fit_tail_quality_for_mean(
@@ -339,6 +465,9 @@ def fit_tail_quality_for_mean(
     pz_gev: float | None = None,
     pz_prime_gev: float | None = None,
     a_fm: float | None = None,
+    resample_mode: str = "bootstrap",
+    Lambda0: float = 0.1,
+    min_fit_points: int | None = None,
 ) -> dict[str, Any]:
     """Fit the mean matrix element on one range and return quality diagnostics."""
     coord_arr = np.asarray(coord, dtype=float)
@@ -363,8 +492,9 @@ def fit_tail_quality_for_mean(
     zmax_fit = _convert_scheme_value(zmax, fit_scale)
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
     n_points = int(np.count_nonzero(fit_mask))
-    n_params = len(_param_template(method, order, observable)[0])
-    if 2 * n_points < n_params or n_points < 2:
+    n_params = _n_fit_parameters(method, order, observable)
+    required_points = max(n_params, int(min_fit_points or 0), 2)
+    if n_points < required_points:
         dof = max(1, 2 * n_points - n_params)
         return {
             "ok": False,
@@ -373,13 +503,14 @@ def fit_tail_quality_for_mean(
             "chi2_dof": float("inf"),
             "q_value": 0.0,
             "n_points": n_points,
+            "min_fit_points": required_points,
         }
 
     z_fit = fit_coord[fit_mask]
     mean_re = np.mean(re_mat[:, fit_mask], axis=0)
     mean_im = np.mean(im_mat[:, fit_mask], axis=0)
-    sigma_re = _sample_sdev(re_mat[:, fit_mask])
-    sigma_im = _sample_sdev(im_mat[:, fit_mask])
+    sigma_re = _sample_sdev(re_mat[:, fit_mask], resample_mode=resample_mode)
+    sigma_im = _sample_sdev(im_mat[:, fit_mask], resample_mode=resample_mode)
     sigma_floor = max(1e-8, 0.02 * max(float(np.max(np.abs(mean_re))), float(np.max(np.abs(mean_im))), 1.0))
     sigma_re = np.maximum(sigma_re, sigma_floor)
     sigma_im = np.maximum(sigma_im, sigma_floor)
@@ -395,6 +526,7 @@ def fit_tail_quality_for_mean(
         phase_prime_scale=phase_prime_scale,
         sigma_re=sigma_re,
         sigma_im=sigma_im,
+        Lambda0=Lambda0,
     )
     return {
         "ok": bool(ok),
@@ -403,6 +535,7 @@ def fit_tail_quality_for_mean(
         "chi2_dof": float(chi2 / max(dof, 1)),
         "q_value": float(q_value),
         "n_points": n_points,
+        "min_fit_points": required_points,
     }
 
 
@@ -447,6 +580,9 @@ def _run_one_scheme(
     im_flip_for_ft: bool,
     phase_scale: float,
     phase_prime_scale: float | None,
+    resample_mode: str,
+    Lambda0: float,
+    min_fit_points: int | None,
 ) -> dict[str, Any]:
     zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
     zmin_fit = _convert_scheme_value(zmin, fit_scale)
@@ -461,14 +597,16 @@ def _run_one_scheme(
         raise ValueError("z_ext_max must be >= zmax")
 
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
-    if 2 * np.count_nonzero(fit_mask) < len(_param_template(method, order, observable)[0]):
+    n_params = _n_fit_parameters(method, order, observable)
+    required_points = max(n_params, int(min_fit_points or 0), 2)
+    if np.count_nonzero(fit_mask) < required_points:
         raise ValueError("fit range has too few points for the selected asymptotic form")
 
     z_fit = fit_coord[fit_mask]
     mean_re = np.mean(re_samples, axis=0)[fit_mask]
     mean_im = np.mean(im_samples, axis=0)[fit_mask]
-    sigma_re = _sample_sdev(re_samples[:, fit_mask])
-    sigma_im = _sample_sdev(im_samples[:, fit_mask])
+    sigma_re = _sample_sdev(re_samples[:, fit_mask], resample_mode=resample_mode)
+    sigma_im = _sample_sdev(im_samples[:, fit_mask], resample_mode=resample_mode)
     sigma_floor = max(1e-8, 0.02 * max(float(np.max(np.abs(mean_re))), float(np.max(np.abs(mean_im))), 1.0))
     sigma_re = np.maximum(sigma_re, sigma_floor)
     sigma_im = np.maximum(sigma_im, sigma_floor)
@@ -483,6 +621,7 @@ def _run_one_scheme(
         phase_prime_scale=phase_prime_scale,
         sigma_re=sigma_re,
         sigma_im=sigma_im,
+        Lambda0=Lambda0,
     )
 
     dz = _uniform_step(fit_coord)
@@ -510,7 +649,6 @@ def _run_one_scheme(
     fit_im_samples = np.empty_like(ext_re)
     ft_re = np.empty((n_samples, len(k_grid)), dtype=float)
     ft_im = np.empty_like(ft_re)
-    n_params = len(_param_template(method, order, observable)[0])
     fit_params = np.empty((n_samples, n_params), dtype=float)
     fit_chi2 = np.empty(n_samples, dtype=float)
     fit_dof = np.empty(n_samples, dtype=int)
@@ -531,6 +669,7 @@ def _run_one_scheme(
             p0=mean_params,
             sigma_re=sigma_re,
             sigma_im=sigma_im,
+            Lambda0=Lambda0,
         )
         if not ok:
             failures += 1
@@ -595,12 +734,6 @@ def _run_one_scheme(
     }
 
 
-def _sample_sdev(samples: np.ndarray) -> np.ndarray:
-    if samples.shape[0] < 2:
-        return np.zeros(samples.shape[1], dtype=float)
-    return np.std(samples, axis=0, ddof=1)
-
-
 def run_fourier_workflow(
     coord: Sequence[float],
     re_samples,
@@ -616,6 +749,9 @@ def run_fourier_workflow(
     pz_prime_gev: float | None = None,
     a_fm: float | None = None,
     im_flip_for_ft: bool = False,
+    resample_mode: str = "bootstrap",
+    Lambda0: float = 0.1,
+    min_fit_points: int | None = None,
 ) -> dict[str, Any]:
     """Run asymptotic extension and Fourier transform for resampled data.
 
@@ -623,6 +759,7 @@ def run_fourier_workflow(
     sample information as arrays shaped ``(scheme, sample, k)``.
     """
     coord_arr = np.asarray(coord, dtype=float)
+    resample_mode = _normalise_resample_mode(resample_mode)
     _uniform_step(coord_arr)
     if not np.isclose(coord_arr[0], 0.0):
         raise ValueError("coordinate grid must start at zero")
@@ -667,6 +804,9 @@ def run_fourier_workflow(
             im_flip_for_ft=im_flip_for_ft,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
+            resample_mode=resample_mode,
+            Lambda0=Lambda0,
+            min_fit_points=min_fit_points,
         )
         for scheme in schemes
     ]
@@ -675,8 +815,12 @@ def run_fourier_workflow(
     ft_im = np.asarray([item["ft_im_samples"] for item in scheme_results])
     re_mean_by_scheme = np.mean(ft_re, axis=1)
     im_mean_by_scheme = np.mean(ft_im, axis=1)
-    re_stat_by_scheme = np.asarray([_sample_sdev(item["ft_re_samples"]) for item in scheme_results])
-    im_stat_by_scheme = np.asarray([_sample_sdev(item["ft_im_samples"]) for item in scheme_results])
+    re_stat_by_scheme = np.asarray(
+        [_sample_sdev(item["ft_re_samples"], resample_mode=resample_mode) for item in scheme_results]
+    )
+    im_stat_by_scheme = np.asarray(
+        [_sample_sdev(item["ft_im_samples"], resample_mode=resample_mode) for item in scheme_results]
+    )
 
     re_mean = np.mean(re_mean_by_scheme, axis=0)
     im_mean = np.mean(im_mean_by_scheme, axis=0)
@@ -703,4 +847,6 @@ def run_fourier_workflow(
         "observable": observable,
         "coord_unit": coord_unit,
         "fit_coord_unit": "lambda" if coord_unit.lower() == "lambda" else "gev_inv",
+        "resample_mode": resample_mode,
+        "Lambda0": float(Lambda0),
     }

@@ -64,7 +64,8 @@ Strategy:
 - Load real/imaginary matrix-element samples from either an NPZ file with coord,
   re_samples, and im_samples, or an HDF5 file with a group such as Pz=4 that
   contains z_ary, Re, and Im. The loader normalizes samples into EnsembleData
-  with dimensions (resample,z); users do not need to pass sample_axis.
+  with dimensions (resample,z); users do not need to pass sample_axis. Pass
+  resample_mode='bs' or 'jk' when the manifest declares the input resampling.
 - Use explicit units. coord_unit='lambda' means the transform coordinate is
   already Ioffe time. coord_unit='fm', 'gev_inv', or 'lattice' requires pz_gev
   for the Fourier phase; lattice also requires a_fm. For physical coordinate
@@ -81,6 +82,9 @@ Strategy:
   nucleon_quark_quasi_gpd uses Eqs. (2.11)/(2.12).
   For GPD observables, pass pz_prime_gev if P'^z differs from P^z.
 - zmin must be positive because NLA and CG forms are singular at zero.
+- Lambda0 optionally sets the fitted large-distance Lambda lower bound; default
+  is 0.1. Fit windows must contain at least as many coordinate points as the
+  selected large-distance model has parameters.
 - Scan a small list of schemes with zmin, zmax, z_ext_max, smooth='linear' or
   'none'. Linear smoothing starts at each scheme's zmin and reaches pure fit at zmax.
 - If scheme_scan is provided, pass it to run_fourier_transform. If scheme_scan
@@ -91,6 +95,8 @@ Strategy:
   Q. Model-average schemes using chi2/dof, Fourier roughness, and fit-failure
   penalties. Missing y_range, roughness_weight, and model_average default to
   [-2,2], 1.0, and true.
+- Pass run_fourier_transform save_path when the manifest requests a non-default
+  Fourier NPZ artifact name.
 - After run_fourier_transform, call summarize_fourier_result, plot_fourier_result,
   and plot_fourier_extension_quality_result. Finish with the NPZ artifact path,
   plot paths, best scheme, scheme weights, chi2/dof, roughness scores, fit
@@ -98,8 +104,8 @@ Strategy:
 """.strip()
 
 TOOL_CATALOG = {
-    "load_renormalized_matrix_element_samples": "load_renormalized_matrix_element_samples(path, input_format='npz'|'h5', h5_group=None, coord_key='coord' or 'z_ary', re_key='re_samples' or 'Re', im_key='im_samples' or 'Im') -> load renormalized coordinate-space samples from NPZ or HDF5.",
-    "run_fourier_transform": "run_fourier_transform(k_grid=[...] or {start,stop,num/step}, optional scheme_scan={zmin_values/zmin_start,zmax_values/zmax_start,z_ext_max,y_range,roughness_weight}; if omitted or incomplete, choose large stable zmax values and zmin values from stable tail-fit chi2/dof and Q diagnostics; method='GI'|'CG', order='LA'|'NLA'|'Empirical', observable='pion_quark_quasi_pdf'|'nucleon_quark_unpolarized_quasi_pdf'|'nucleon_quark_transversity_quasi_pdf'|'meson_quasi_da'|'pion_quark_quasi_gpd'|'nucleon_quark_quasi_gpd', coord_unit='lambda'|'fm'|'gev_inv'|'lattice', pz_gev=None, pz_prime_gev=None, a_fm=None) -> run the local Fourier workflow, score schemes, model-average results, and write artifacts/fourier_result.npz.",
+    "load_renormalized_matrix_element_samples": "load_renormalized_matrix_element_samples(path, input_format='npz'|'h5', h5_group=None, coord_key='coord' or 'z_ary', re_key='re_samples' or 'Re', im_key='im_samples' or 'Im', resample_mode='bs'|'jk') -> load renormalized coordinate-space samples from NPZ or HDF5 into EnsembleData.",
+    "run_fourier_transform": "run_fourier_transform(k_grid=[...] or {start,stop,num/step}, optional scheme_scan={zmin_values/zmin_start,zmax_values/zmax_start,z_ext_max,y_range,roughness_weight,model_average,max_schemes,min_fit_points}; if omitted or incomplete, choose large stable zmax values and zmin values from stable tail-fit chi2/dof and Q diagnostics; method='GI'|'CG', order='LA'|'NLA'|'Empirical', observable='pion_quark_quasi_pdf'|'nucleon_quark_unpolarized_quasi_pdf'|'nucleon_quark_transversity_quasi_pdf'|'meson_quasi_da'|'pion_quark_quasi_gpd'|'nucleon_quark_quasi_gpd', coord_unit='lambda'|'fm'|'gev_inv'|'lattice', pz_gev=None, pz_prime_gev=None, a_fm=None, im_flip_for_ft=False, Lambda0=0.1, save_path=None) -> run the local Fourier workflow, score schemes, model-average results, and write artifacts/fourier_result.npz.",
     "summarize_fourier_result": "summarize_fourier_result() -> compact mean/stat/sys arrays plus best scheme, scheme weights, chi2/dof, and roughness diagnostics for reporting.",
     "plot_fourier_result": "plot_fourier_result(save_path=None, title='Fourier result') -> plot artifacts/fourier_result.npz and write artifacts/fourier_result.pdf.",
     "plot_fourier_extension_quality_result": "plot_fourier_extension_quality_result(scheme_index=None, save_path=None) -> write artifacts/fourier_extension_re.pdf and artifacts/fourier_extension_im.pdf for coordinate-space data and smoothed extension with fit-range markers for the best weighted scheme by default.",

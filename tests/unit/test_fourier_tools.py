@@ -75,6 +75,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     loaded = load_renormalized_matrix_element_samples(store, path=str(data_path))
     assert loaded["out"] == "matrix_element"
     assert loaded["data"] == "matrix_element_data"
+    assert loaded["resample_mode"] == "bootstrap"
     assert "matrix_element_data" in store
 
     run = run_fourier_transform(
@@ -83,22 +84,26 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
+        Lambda0=0.3,
     )
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
     assert Path(run["artifact"]).is_file()
     ft_data, ft_extra = EnsembleData.load_npz(run["artifact"])
     assert ft_data.dims == ["x"]
+    assert ft_data.resample == "bootstrap"
     assert ft_data.values.shape == (3, 3)
     assert "ft_re_mean" in ft_extra
     assert Path(run["fit_info_artifact"]).is_file()
     fit_data, fit_extra = EnsembleData.load_npz(run["fit_info_artifact"])
     assert fit_data.dims == ["scheme", "parameter"]
+    assert fit_data.resample == "bootstrap"
     assert fit_data.values.shape == (3, 1, 3)
     assert "fit_chi2" in fit_extra
     fit_info = np.load(run["fit_info_artifact"])
     assert fit_info["fit_param_labels"].tolist() == ["A2", "phi2", "Lambda"]
     assert fit_info["fit_params"].shape == (1, 3, 3)
+    assert np.all(fit_info["fit_params"][:, :, 2] >= 0.3)
     assert fit_info["fit_param_center"].shape == (1, 3)
     assert fit_info["fit_param_sdev"].shape == (1, 3)
     assert fit_info["fit_chi2"].shape == (1, 3)
@@ -156,6 +161,60 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
     assert Path(run["fit_info_artifact"]).is_file()
 
 
+def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    _write_npz(data_path)
+    store = {}
+
+    loaded = load_renormalized_matrix_element_samples(store, path=str(data_path), resample_mode="jk")
+    assert loaded["resample_mode"] == "jackknife"
+    assert store["matrix_element_data"].resample == "jackknife"
+
+    run = run_fourier_transform(
+        store,
+        k_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
+        method="GI",
+        order="LA",
+    )
+
+    ft_data, _ft_extra = EnsembleData.load_npz(run["artifact"])
+    fit_data, _fit_extra = EnsembleData.load_npz(run["fit_info_artifact"])
+    assert store["fourier_result"]["resample_mode"] == "jackknife"
+    assert store["fourier_result_data"].resample == "jackknife"
+    assert ft_data.resample == "jackknife"
+    assert fit_data.resample == "jackknife"
+
+
+def test_fourier_loader_accepts_ensemble_data_npz(tmp_path: Path) -> None:
+    coord = np.arange(0.0, 5.0)
+    base_re = np.exp(-0.45 * coord)
+    base_im = 0.1 * np.exp(-0.45 * coord)
+    data = EnsembleData(
+        ensemble=None,
+        resample="jackknife",
+        values=[
+            base_re + 1j * base_im,
+            1.01 * base_re + 0.98j * base_im,
+            0.99 * base_re + 1.02j * base_im,
+        ],
+        dims=("z",),
+        coords={"z": coord.tolist()},
+        name="renormalized_matrix_element",
+    )
+    path = tmp_path / "matrix_element_ensemble.npz"
+    data.save_npz(path)
+    store = {}
+
+    loaded = load_renormalized_matrix_element_samples(store, path=str(path), input_format="npz", resample_mode="bs")
+
+    assert loaded["resample_mode"] == "jackknife"
+    assert store["matrix_element_data"].resample == "jackknife"
+    assert store["matrix_element"]["re_samples"].shape == (3, 5)
+    assert store["matrix_element"]["im_samples"].shape == (3, 5)
+
+
 def test_fourier_transform_accepts_upstream_ensemble_data(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     coord = np.arange(0.0, 5.0)
@@ -192,7 +251,7 @@ def test_fourier_transform_accepts_upstream_ensemble_data(tmp_path: Path, monkey
 def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
-    coord = np.arange(0.0, 13.0)
+    coord = np.arange(0.0, 16.0)
     base_re = np.exp(-0.25 * coord)
     base_im = 0.1 * np.exp(-0.25 * coord)
     re_samples = np.vstack([base_re, 1.01 * base_re, 0.99 * base_re])
@@ -204,7 +263,7 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
     run = run_fourier_transform(
         store,
         k_grid=[0.0],
-        scheme_scan={"zmin_values": [1.0], "zmax_values": [11.0], "z_ext_max": 12.0},
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [13.0], "z_ext_max": 15.0},
         method="GI",
         order="NLA",
         observable="pion_quark_quasi_pdf",
