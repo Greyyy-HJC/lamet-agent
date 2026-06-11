@@ -443,9 +443,9 @@ def _fit_one_sample(
             svdcut=1e-12,
             fitter="scipy_least_squares",
         )
-        physical = _physical_params(fit.p, bounds)
-        params = np.asarray([float(gv.mean(item)) for item in physical], dtype=float)
-    except (FloatingPointError, RuntimeError, ValueError, OverflowError):
+        physical = _physical_params(fit.pmean, bounds)
+        params = np.asarray([float(item) for item in physical], dtype=float)
+    except (FloatingPointError, RuntimeError, ValueError, OverflowError, AssertionError):
         return default_p0, False, float("inf"), dof, 0.0
 
     return params, bool(np.isfinite(fit.chi2)), float(fit.chi2), int(fit.dof), float(fit.Q)
