@@ -836,6 +836,7 @@ def run_fourier_transform(
     a_fm: float | None = None,
     im_flip_for_ft: bool = False,
     Lambda0: float = 0.1,
+    posterior_prior_error_scale: float = 3.0,
     save_path: str | None = None,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
@@ -890,12 +891,14 @@ def run_fourier_transform(
         resample_mode=resample_mode,
         Lambda0=float(Lambda0),
         min_fit_points=min_fit_points,
+        posterior_prior_error_scale=float(posterior_prior_error_scale),
     )
     result["resample_mode"] = resample_mode
     result["pz_gev"] = pz_gev
     result["pz_prime_gev"] = pz_prime_gev
     result["a_fm"] = a_fm
     result["Lambda0"] = float(Lambda0)
+    result["posterior_prior_error_scale"] = float(posterior_prior_error_scale)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
     model_average = bool((scheme_scan or {}).get("model_average", True)) if scheme_scan is not None else True

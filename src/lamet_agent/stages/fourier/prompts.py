@@ -19,8 +19,9 @@ Do this by emitting one action at a time:
    loader and run the transform directly on that EnsembleData.
 2. run_fourier_transform with explicit k_grid (list or compact {start, stop, num/step}),
    method, order, observable, coord_unit, and pz_gev/a_fm when needed.
-   If metadata.fourier specifies im_flip_for_ft, Lambda0, or save_path, pass
-   those values to run_fourier_transform.
+   If metadata.fourier specifies im_flip_for_ft, Lambda0,
+   posterior_prior_error_scale, or save_path, pass those values to
+   run_fourier_transform.
    If the manifest gives scheme_scan, pass it through. If it omits any of
    zmin_values/zmax_values/min_width/z_ext_max/smooth, the tool will fill the
    missing scan values by choosing large stable zmax values before visible
@@ -37,6 +38,9 @@ Do this by emitting one action at a time:
    arXiv:2208.08008 for the large-lambda extrapolation.
    Lambda0 optionally sets the lower bound of the fitted large-distance
    exponential scale Lambda; default is 0.1 GeV for physical-z inputs.
+   posterior_prior_error_scale inflates the sample-average fit parameter
+   errors when using that posterior as a weak prior for bootstrap/jackknife
+   sample fits; default is 3.0.
    Fit windows must include at least as many coordinate points as the selected
    model has parameters.
    Prefer scheme_scan when the manifest provides it, so the tool can score and

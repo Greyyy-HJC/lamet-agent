@@ -398,6 +398,15 @@ def _physical_params(p: gv.BufferDict, bounds: tuple[np.ndarray, np.ndarray]) ->
     ]
 
 
+def _scaled_internal_prior(pmean: gv.BufferDict, psdev: gv.BufferDict, scale: float) -> gv.BufferDict:
+    prior = gv.BufferDict()
+    width_scale = max(float(scale), 0.0)
+    for key in pmean:
+        width = float(psdev[key]) * width_scale
+        prior[key] = gv.gvar(float(pmean[key]), max(width, 1e-8))
+    return prior
+
+
 def _fit_one_sample(
     z_fit: np.ndarray,
     re_fit: np.ndarray,
@@ -411,8 +420,9 @@ def _fit_one_sample(
     p0: np.ndarray | None = None,
     sigma_re: np.ndarray | None = None,
     sigma_im: np.ndarray | None = None,
+    prior: gv.BufferDict | None = None,
     Lambda0: float = 0.1,
-) -> tuple[np.ndarray, bool, float, int, float]:
+) -> tuple[np.ndarray, gv.BufferDict | None, gv.BufferDict | None, bool, float, int, float]:
     default_p0, bounds = _param_template(method, order, observable, Lambda0=Lambda0)
     start = default_p0 if p0 is None else np.asarray(p0, dtype=float)
     re_scale = np.ones_like(re_fit, dtype=float) if sigma_re is None else np.asarray(sigma_re, dtype=float)
@@ -435,20 +445,23 @@ def _fit_one_sample(
 
     dof = max(1, 2 * len(z_fit) - len(default_p0))
     try:
-        fit = lsqfit.nonlinear_fit(
-            data=(z_fit, y_data),
-            fcn=fcn,
-            p0=_internal_p0(start, bounds),
-            maxit=2000,
-            svdcut=1e-12,
-            fitter="scipy_least_squares",
-        )
+        fit_args = {
+            "data": (z_fit, y_data),
+            "fcn": fcn,
+            "p0": _internal_p0(start, bounds),
+            "maxit": 2000,
+            "svdcut": 1e-12,
+            "fitter": "scipy_least_squares",
+        }
+        if prior is not None:
+            fit_args["prior"] = prior
+        fit = lsqfit.nonlinear_fit(**fit_args)
         physical = _physical_params(fit.pmean, bounds)
         params = np.asarray([float(item) for item in physical], dtype=float)
     except (FloatingPointError, RuntimeError, ValueError, OverflowError, AssertionError):
-        return default_p0, False, float("inf"), dof, 0.0
+        return default_p0, None, None, False, float("inf"), dof, 0.0
 
-    return params, bool(np.isfinite(fit.chi2)), float(fit.chi2), int(fit.dof), float(fit.Q)
+    return params, fit.pmean, fit.psdev, bool(np.isfinite(fit.chi2)), float(fit.chi2), int(fit.dof), float(fit.Q)
 
 
 def fit_tail_quality_for_mean(
@@ -468,6 +481,7 @@ def fit_tail_quality_for_mean(
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
     min_fit_points: int | None = None,
+    posterior_prior_error_scale: float = 3.0,
 ) -> dict[str, Any]:
     """Fit the mean matrix element on one range and return quality diagnostics."""
     coord_arr = np.asarray(coord, dtype=float)
@@ -515,7 +529,7 @@ def fit_tail_quality_for_mean(
     sigma_re = np.maximum(sigma_re, sigma_floor)
     sigma_im = np.maximum(sigma_im, sigma_floor)
 
-    _params, ok, chi2, dof, q_value = _fit_one_sample(
+    _params, _pmean, _psdev, ok, chi2, dof, q_value = _fit_one_sample(
         z_fit,
         mean_re,
         mean_im,
@@ -583,6 +597,7 @@ def _run_one_scheme(
     resample_mode: str,
     Lambda0: float,
     min_fit_points: int | None,
+    posterior_prior_error_scale: float,
 ) -> dict[str, Any]:
     zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
     zmin_fit = _convert_scheme_value(zmin, fit_scale)
@@ -610,7 +625,7 @@ def _run_one_scheme(
     sigma_floor = max(1e-8, 0.02 * max(float(np.max(np.abs(mean_re))), float(np.max(np.abs(mean_im))), 1.0))
     sigma_re = np.maximum(sigma_re, sigma_floor)
     sigma_im = np.maximum(sigma_im, sigma_floor)
-    mean_params, _, mean_chi2, mean_dof, mean_q = _fit_one_sample(
+    mean_params, mean_pmean, mean_psdev, mean_ok, mean_chi2, mean_dof, mean_q = _fit_one_sample(
         z_fit,
         mean_re,
         mean_im,
@@ -623,6 +638,9 @@ def _run_one_scheme(
         sigma_im=sigma_im,
         Lambda0=Lambda0,
     )
+    sample_prior = None
+    if mean_ok and mean_pmean is not None and mean_psdev is not None:
+        sample_prior = _scaled_internal_prior(mean_pmean, mean_psdev, posterior_prior_error_scale)
 
     dz = _uniform_step(fit_coord)
     z_ext = np.arange(0.0, z_ext_fit_max + 0.5 * dz, dz)
@@ -657,7 +675,7 @@ def _run_one_scheme(
 
     positive = z_ext > 0
     for sample in range(n_samples):
-        params, ok, chi2, dof, q_value = _fit_one_sample(
+        params, _sample_pmean, _sample_psdev, ok, chi2, dof, q_value = _fit_one_sample(
             z_fit,
             re_samples[sample, fit_mask],
             im_samples[sample, fit_mask],
@@ -669,6 +687,7 @@ def _run_one_scheme(
             p0=mean_params,
             sigma_re=sigma_re,
             sigma_im=sigma_im,
+            prior=sample_prior,
             Lambda0=Lambda0,
         )
         if not ok:
@@ -752,6 +771,7 @@ def run_fourier_workflow(
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
     min_fit_points: int | None = None,
+    posterior_prior_error_scale: float = 3.0,
 ) -> dict[str, Any]:
     """Run asymptotic extension and Fourier transform for resampled data.
 
@@ -807,6 +827,7 @@ def run_fourier_workflow(
             resample_mode=resample_mode,
             Lambda0=Lambda0,
             min_fit_points=min_fit_points,
+            posterior_prior_error_scale=posterior_prior_error_scale,
         )
         for scheme in schemes
     ]
@@ -849,4 +870,5 @@ def run_fourier_workflow(
         "fit_coord_unit": "lambda" if coord_unit.lower() == "lambda" else "gev_inv",
         "resample_mode": resample_mode,
         "Lambda0": float(Lambda0),
+        "posterior_prior_error_scale": float(posterior_prior_error_scale),
     }
