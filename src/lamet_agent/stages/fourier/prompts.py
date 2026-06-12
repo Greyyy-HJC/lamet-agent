@@ -35,8 +35,7 @@ Do this by emitting one action at a time:
    nucleon_quark_unpolarized_quasi_pdf, nucleon_quark_transversity_quasi_pdf,
    meson_quasi_da, pion_quark_quasi_gpd, or nucleon_quark_quasi_gpd.
    For GPD observables, pass pz_prime_gev when P'^z differs from P^z.
-   order can be 'LA', 'NLA', or 'Empirical'. Empirical uses Eq. (6) of
-   arXiv:2208.08008 for the large-lambda extrapolation.
+   order can be 'LA' or 'NLA'.
    Lambda0 optionally sets the lower bound of the fitted large-distance
    exponential scale Lambda; default is 0.1 GeV for physical-z inputs.
    posterior_prior_error_scale inflates the sample-average fit parameter

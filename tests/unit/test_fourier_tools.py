@@ -287,32 +287,6 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
     ]
     assert fit_info["fit_params"].shape == (1, 3, 13)
 
-
-def test_fourier_tool_chain_accepts_empirical_order(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    coord = np.arange(0.0, 9.0)
-    base_re = np.exp(-0.25 * coord)
-    base_im = 0.1 * np.exp(-0.25 * coord)
-    re_samples = np.vstack([base_re, 1.01 * base_re, 0.99 * base_re])
-    im_samples = np.vstack([base_im, 0.98 * base_im, 1.02 * base_im])
-    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
-    store = {}
-    load_renormalized_matrix_element_samples(store, path=str(data_path))
-
-    run = run_fourier_transform(
-        store,
-        k_grid=[0.0],
-        scheme_scan={"zmin_values": [1.0], "zmax_values": [7.0], "z_ext_max": 8.0},
-        method="GI",
-        order="Empirical",
-    )
-
-    fit_info = np.load(run["fit_info_artifact"])
-    assert fit_info["fit_param_labels"].tolist() == ["c1", "c2", "a", "b", "lambda0"]
-    assert fit_info["fit_params"].shape == (1, 3, 5)
-
-
 def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
@@ -574,7 +548,7 @@ def test_fourier_stage_validation_allows_auto_scheme_scan() -> None:
                 "fourier_input": "matrix_element.npz",
                 "fourier": {
                     "method": "GI",
-                    "order": "Empirical",
+                    "order": "NLA",
                     "observable": "nucleon_quark_transversity_quasi_pdf",
                     "coord_unit": "fm",
                     "pz_gev": 2.0,
@@ -601,11 +575,10 @@ def test_fourier_stage_validation_explains_missing_options() -> None:
     assert "Missing metadata.fourier.observable/order" in text
     assert "pion_quark_quasi_pdf" in text
     assert "2601.12189 2.1/2.2" in text
-    assert "Empirical uses arXiv:2208.08008 Eq. (6)" in text
+    assert "Fill order with LA or NLA" in text
     assert "Missing metadata.fourier.coord_unit" in text
     assert "Missing metadata.fourier.k_grid" in text
     assert "metadata.fourier.scheme_scan" not in text
-    assert "sample_axis" not in text
 
 
 def test_fourier_stage_validation_flags_missing_matrix_element() -> None:

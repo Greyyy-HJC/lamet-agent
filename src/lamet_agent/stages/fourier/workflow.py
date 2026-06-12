@@ -284,14 +284,8 @@ def _param_template(
     lambda_lower = float(Lambda0)
     if method not in {"GI", "CG"}:
         raise ValueError("method must be 'GI' or 'CG'")
-    if order not in {"LA", "NLA", "EMPIRICAL"}:
-        raise ValueError("order must be 'LA', 'NLA', or 'Empirical'")
-
-    if order == "EMPIRICAL":
-        p0 = [1.0, 0.1, 1.0, 1.0, 5.0]
-        lower = [-np.inf, -np.inf, -5.0, -5.0, lambda_lower]
-        upper = [np.inf, np.inf, 5.0, 5.0, max(100.0, lambda_lower + 1.0)]
-        return np.asarray(p0, dtype=float), (np.asarray(lower, dtype=float), np.asarray(upper, dtype=float))
+    if order not in {"LA", "NLA"}:
+        raise ValueError("order must be 'LA' or 'NLA'")
 
     term_names = _observable_term_names(observable)
     p0 = []
@@ -325,8 +319,6 @@ def _n_fit_parameters(method: str, order: str, observable: str) -> int:
 
 
 def _param_labels(method: str, order: str, observable: str) -> list[str]:
-    if order.upper() == "EMPIRICAL":
-        return ["c1", "c2", "a", "b", "lambda0"]
     term_names = _observable_term_names(observable)
     labels = []
     for name in term_names:
@@ -353,22 +345,6 @@ def _asymptotic_values(
     z = np.asarray(z, dtype=float)
     if np.any(z <= 0):
         raise ValueError("asymptotic form requires positive coordinates")
-
-    if order.upper() == "EMPIRICAL":
-        lambda_pos = phase_scale * z
-        c1, c2, a, b, lambda0 = params[:5]
-        lam_a = gv.exp(-a * np.log(lambda_pos))
-        lam_b = gv.exp(-b * np.log(lambda_pos))
-        term1_re = c1 * lam_a * gv.cos(0.5 * np.pi * a)
-        term1_im = -c1 * lam_a * gv.sin(0.5 * np.pi * a)
-        base2_re = c2 * lam_b * gv.cos(0.5 * np.pi * b)
-        base2_im = c2 * lam_b * gv.sin(0.5 * np.pi * b)
-        cos_lam = np.cos(lambda_pos)
-        sin_lam = np.sin(lambda_pos)
-        term2_re = base2_re * cos_lam + base2_im * sin_lam
-        term2_im = base2_im * cos_lam - base2_re * sin_lam
-        decay = gv.exp(-lambda_pos / lambda0)
-        return (term1_re + term2_re) * decay, (term1_im + term2_im) * decay
 
     term_names = _observable_term_names(observable)
     phase_scales = _term_phase_scales(

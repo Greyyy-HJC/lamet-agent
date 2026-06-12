@@ -17,7 +17,7 @@ _PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matr
 _RENORM_ARTIFACT_TOOLS = frozenset({"apply_ratio_scheme_renormalization", "plot_renormalized_matrix_element"})
 _RENORM_APPLY_KEYS = frozenset({"target", "denominator", "zs", "delta_m", "m0", "z0", "save_path"})
 _RENORM_PLOT_KEYS = frozenset({"data", "title"})
-_FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key"})
+_FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key", "resample_mode"})
 _FOURIER_RUN_KEYS = frozenset(
     {
         "k_grid",
@@ -30,8 +30,10 @@ _FOURIER_RUN_KEYS = frozenset(
         "pz_prime_gev",
         "a_fm",
         "im_flip_for_ft",
+        "Lambda0",
         "posterior_prior_error_scale",
         "fit_error_mode",
+        "save_path",
     }
 )
 _CORRELATOR_PT2_TOOLS = frozenset({"inspect_correlator_scale", "tune_ground_state"})

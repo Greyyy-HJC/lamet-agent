@@ -709,45 +709,6 @@ def _resolve_k_grid(k_grid: list[float] | dict[str, Any]) -> list[float]:
     return [float(item) for item in k_grid]
 
 
-def _scheme_fit_chi2_dof(
-    *,
-    coord: np.ndarray,
-    re_samples: np.ndarray,
-    im_samples: np.ndarray,
-    scheme_result: dict[str, Any],
-    coord_unit: str,
-    pz_gev: float | None,
-    a_fm: float | None,
-    resample_mode: str,
-) -> float:
-    scale, _ = _coord_scale(coord_unit, pz_gev=pz_gev, a_fm=a_fm)
-    fit_coord = coord * scale
-    zmin, zmax = scheme_result["fit_range"]
-    fit_mask = (coord >= float(zmin)) & (coord <= float(zmax)) & (coord > 0)
-    if np.count_nonzero(fit_mask) == 0:
-        return float("inf")
-
-    target_z = fit_coord[fit_mask]
-    data_re = np.mean(re_samples[:, fit_mask], axis=0)
-    data_im = np.mean(im_samples[:, fit_mask], axis=0)
-    sigma_re = _sample_sdev(re_samples[:, fit_mask], resample_mode=resample_mode)
-    sigma_im = _sample_sdev(im_samples[:, fit_mask], resample_mode=resample_mode)
-    floor = max(1e-8, 0.02 * max(float(np.max(np.abs(data_re))), float(np.max(np.abs(data_im))), 1.0))
-    sigma_re = np.maximum(sigma_re, floor)
-    sigma_im = np.maximum(sigma_im, floor)
-
-    z_ext = np.asarray(scheme_result["z_ext"], dtype=float)
-    fit_re_mean = np.mean(np.asarray(scheme_result["fit_re_samples"], dtype=float), axis=0)
-    fit_im_mean = np.mean(np.asarray(scheme_result["fit_im_samples"], dtype=float), axis=0)
-    fit_re = np.interp(target_z, z_ext, fit_re_mean)
-    fit_im = np.interp(target_z, z_ext, fit_im_mean)
-
-    chi2 = np.sum(((fit_re - data_re) / sigma_re) ** 2) + np.sum(((fit_im - data_im) / sigma_im) ** 2)
-    n_params = int(np.asarray(scheme_result["fit_params"]).shape[1])
-    dof = max(1, 2 * int(np.count_nonzero(fit_mask)) - n_params)
-    return float(chi2 / dof)
-
-
 def _roughness_score(k_grid: np.ndarray, ft_mean: np.ndarray, y_range: list[float] | tuple[float, float] | None) -> float:
     if y_range is None:
         mask = np.ones_like(k_grid, dtype=bool)
@@ -768,12 +729,6 @@ def _roughness_score(k_grid: np.ndarray, ft_mean: np.ndarray, y_range: list[floa
 def _apply_scheme_model_average(
     result: dict[str, Any],
     *,
-    coord: np.ndarray,
-    re_samples: np.ndarray,
-    im_samples: np.ndarray,
-    coord_unit: str,
-    pz_gev: float | None,
-    a_fm: float | None,
     y_range: list[float] | tuple[float, float] | None,
     roughness_weight: float,
     resample_mode: str,
@@ -789,18 +744,7 @@ def _apply_scheme_model_average(
     fit_chi2 = []
     roughness = []
     for idx, scheme_result in enumerate(result["scheme_results"]):
-        fit_chi2.append(
-            _scheme_fit_chi2_dof(
-                coord=coord,
-                re_samples=re_samples,
-                im_samples=im_samples,
-                scheme_result=scheme_result,
-                coord_unit=coord_unit,
-                pz_gev=pz_gev,
-                a_fm=a_fm,
-                resample_mode=resample_mode,
-            )
-        )
+        fit_chi2.append(float(scheme_result["mean_fit_chi2"]) / max(float(scheme_result["mean_fit_dof"]), 1.0))
         roughness.append(_roughness_score(k_grid, re_mean_by_scheme[idx], y_range))
 
     fit_arr = np.asarray(fit_chi2, dtype=float)
@@ -887,8 +831,6 @@ def run_fourier_transform(
             existing=scan_spec,
         )
         auto_scheme_scan = scan_spec
-    else:
-        scan_spec = _fill_scheme_defaults(scan_spec)
     scheme_scan = scan_spec
     schemes = _generate_scan_schemes(scheme_scan, coord=np.asarray(matrix_element["coord"], dtype=float))
     k_values = _resolve_k_grid(k_grid)
@@ -921,18 +863,12 @@ def run_fourier_transform(
     result["fit_error_mode"] = str(fit_error_mode)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
-    model_average = bool((scheme_scan or {}).get("model_average", True)) if scheme_scan is not None else True
+    model_average = bool(scheme_scan.get("model_average", True))
     if model_average:
         _apply_scheme_model_average(
             result,
-            coord=np.asarray(matrix_element["coord"], dtype=float),
-            re_samples=np.asarray(matrix_element["re_samples"], dtype=float),
-            im_samples=np.asarray(matrix_element["im_samples"], dtype=float),
-            coord_unit=coord_unit,
-            pz_gev=pz_gev,
-            a_fm=a_fm,
-            y_range=(scheme_scan or {}).get("y_range"),
-            roughness_weight=float((scheme_scan or {}).get("roughness_weight", 5.0)),
+            y_range=scheme_scan.get("y_range"),
+            roughness_weight=float(scheme_scan["roughness_weight"]),
             resample_mode=resample_mode,
         )
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result)

@@ -197,7 +197,7 @@
     "fourier": {
       "method": "CG",
       "observable": "pion_quark_quasi_pdf",
-      "order": "Empirical",
+      "order": "NLA",
       "coord_unit": "lattice",
       "pz_gev": 2.15,
       "a_fm": 0.0574,

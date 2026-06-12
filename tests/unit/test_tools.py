@@ -32,11 +32,14 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
                 "fourier": {
                     "input_format": "h5",
                     "h5_group": "Pz=6",
+                    "resample_mode": "jk",
                     "coord_unit": "fm",
                     "pz_gev": 2.43,
                     "method": "GI",
-                    "order": "Empirical",
+                    "order": "NLA",
                     "observable": "nucleon_quark_transversity_quasi_pdf",
+                    "Lambda0": 0.2,
+                    "save_path": "ft_result.npz",
                     "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
                     "plot_fourier": {"save_path": "ft.pdf", "title": "FT"},
                     "plot_extension": {"scheme_index": 2, "save_path": "ext_re.pdf"},
@@ -55,6 +58,7 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
     assert load_args["path"] == "matrix_element.h5"
     assert load_args["input_format"] == "h5"
     assert load_args["h5_group"] == "Pz=6"
+    assert load_args["resample_mode"] == "jk"
 
     run_args = prepare_tool_args(
         "run_fourier_transform",
@@ -64,7 +68,9 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
         _store={},
     )
     assert run_args["method"] == "GI"
-    assert run_args["order"] == "Empirical"
+    assert run_args["order"] == "NLA"
+    assert run_args["Lambda0"] == 0.2
+    assert run_args["save_path"] == "ft_result.npz"
     assert run_args["k_grid"]["num"] == 401
 
     plot_args = prepare_tool_args(
