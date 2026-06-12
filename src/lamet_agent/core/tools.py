@@ -31,6 +31,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "a_fm",
         "im_flip_for_ft",
         "posterior_prior_error_scale",
+        "fit_error_mode",
     }
 )
 _CORRELATOR_PT2_TOOLS = frozenset({"inspect_correlator_scale", "tune_ground_state"})

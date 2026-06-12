@@ -374,7 +374,7 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
     assert auto["zmin_values"][0] > 0.0
     assert auto["zmax_values"] == pytest.approx([0.9, 1.0, 1.1, 1.2])
     assert auto["min_width"] > 0
-    assert auto["z_ext_max"] >= max(auto["zmax_values"])
+    assert auto["z_ext_max"] == pytest.approx(1.2 + 8.0 / (5.067731237 * 2.0))
     assert auto["smooth"] == "linear"
     assert auto["y_range"] == [-2.0, 2.0]
     assert auto["roughness_weight"] == 1.0
@@ -520,6 +520,26 @@ def test_fourier_accepts_compact_k_grid_spec(tmp_path: Path, monkeypatch) -> Non
 
     assert run["n_k"] == 21
     assert len(summary["k_grid"]) == 21
+
+
+def test_fourier_accepts_covariance_fit_error_mode(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    _write_npz(data_path)
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+
+    run = run_fourier_transform(
+        store,
+        k_grid={"start": -0.5, "stop": 0.5, "num": 5},
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
+        method="GI",
+        order="LA",
+        fit_error_mode="covariance",
+    )
+
+    assert run["n_schemes"] == 1
+    assert store["fourier_result"]["fit_error_mode"] == "covariance"
 
 
 def test_fourier_stage_validation_accepts_declared_matrix_element() -> None:

@@ -522,6 +522,18 @@ def _pick_four_zmin_values_by_tail_fit(
     return [float(candidates[int(round(item))]) for item in indices]
 
 
+def _default_z_ext_max(
+    coord: np.ndarray,
+    *,
+    coord_unit: str,
+    pz_gev: float | None,
+    a_fm: float | None,
+) -> float:
+    """Return the coordinate value whose lambda is eight units past the data."""
+    _fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, a_fm=a_fm)
+    return float(np.max(coord) + 8.0 / ft_scale)
+
+
 def _auto_fill_scheme_scan(
     spec: dict[str, Any],
     *,
@@ -575,7 +587,12 @@ def _auto_fill_scheme_scan(
             min_fit_points=min_fit_points,
         )
     if "z_ext_max" not in spec:
-        spec["z_ext_max"] = float(positive[-1])
+        spec["z_ext_max"] = _default_z_ext_max(
+            coord,
+            coord_unit=coord_unit,
+            pz_gev=pz_gev,
+            a_fm=a_fm,
+        )
     if "smooth" not in spec:
         spec["smooth"] = "linear"
     spec["min_fit_points"] = int(min_fit_points)
@@ -837,6 +854,7 @@ def run_fourier_transform(
     im_flip_for_ft: bool = False,
     Lambda0: float = 0.1,
     posterior_prior_error_scale: float = 3.0,
+    fit_error_mode: str = "diagonal",
     save_path: str | None = None,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
@@ -892,6 +910,7 @@ def run_fourier_transform(
         Lambda0=float(Lambda0),
         min_fit_points=min_fit_points,
         posterior_prior_error_scale=float(posterior_prior_error_scale),
+        fit_error_mode=fit_error_mode,
     )
     result["resample_mode"] = resample_mode
     result["pz_gev"] = pz_gev
@@ -899,6 +918,7 @@ def run_fourier_transform(
     result["a_fm"] = a_fm
     result["Lambda0"] = float(Lambda0)
     result["posterior_prior_error_scale"] = float(posterior_prior_error_scale)
+    result["fit_error_mode"] = str(fit_error_mode)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
     model_average = bool((scheme_scan or {}).get("model_average", True)) if scheme_scan is not None else True

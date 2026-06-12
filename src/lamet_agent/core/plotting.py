@@ -738,7 +738,7 @@ def plot_fourier_extension_quality(
     title: str | None = None,
     show: bool = False,
 ) -> tuple[Figure, Axes]:
-    """Plot coordinate-space data against the smoothed long-distance extension."""
+    """Plot coordinate-space data against the fitted long-distance extrapolation."""
     component = component.lower()
     if component not in {"re", "im"}:
         raise ValueError("component must be 're' or 'im'")
@@ -754,10 +754,10 @@ def plot_fourier_extension_quality(
     resample_mode = str(result.get("resample_mode", "bootstrap"))
 
     lambda_ext = np.asarray(scheme["lambda_ext"], dtype=float)
-    ext_key = "extended_re_samples" if component == "re" else "extended_im_samples"
+    model_key = "fit_re_samples" if component == "re" else "fit_im_samples"
     mode = resample_mode.strip().lower()
     band_stats = []
-    for sample_values in (samples, scheme[ext_key]):
+    for sample_values in (samples, scheme[model_key]):
         arr = np.asarray(sample_values, dtype=float)
         if arr.shape[0] < 2:
             mean = np.mean(arr, axis=0)
