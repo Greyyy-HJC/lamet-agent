@@ -20,7 +20,7 @@ Steps:
    
 4. apply_matching -> lightcone_gv = kernel_matrix @ quasi_gv.
 
-5. plot_matched_pdf to compare quasi vs light-cone and write the artifact PDF.
+5. plot_matched_pdf to compare quasi vs light-cone and write the artifact PDF. metadata.matching.plot may set xlim/ylim; otherwise the plot defaults to xlim=[-2.2, 2.2] and ylim=[-0.1, 2.51].
 
 6. finish, reporting the chosen kernel_id, pz_gev, mu, component, the number of x points, and the comparison PDF path.
 

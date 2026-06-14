@@ -13,7 +13,7 @@ from lamet_agent.manifest import AnalysisManifest, resolve_data_path
 
 from .stages import resolve_stage_package
 
-_PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid"})
+_PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid", "plot_matched_pdf"})
 _RENORM_ARTIFACT_TOOLS = frozenset({"apply_ratio_scheme_renormalization", "plot_renormalized_matrix_element"})
 _RENORM_APPLY_KEYS = frozenset({"target", "denominator", "zs", "delta_m", "m0", "z0", "save_path"})
 _RENORM_PLOT_KEYS = frozenset({"data", "title"})
@@ -36,6 +36,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "save_path",
     }
 )
+_MATCHING_PLOT_KEYS = frozenset({"save_path", "xlim", "ylim"})
 _CORRELATOR_PT2_TOOLS = frozenset({"inspect_correlator_scale", "tune_ground_state"})
 _CORRELATOR_GRID_TOOLS = frozenset({"tune_bare_matrix", "fit_bare_matrix_grid"})
 _CORRELATOR_PT2_KEYS = frozenset({"pt2_path", "pt2_windows", "nstate", "svdcut", "resample_mode", "n_boot", "seed"})
@@ -335,6 +336,12 @@ def prepare_tool_args(
             if isinstance(fourier.get("plot_extension"), dict):
                 merged.update(fourier["plot_extension"])
             resolved = merged
+    matching = manifest.metadata.get("matching", {})
+    if isinstance(matching, dict) and tool_name == "plot_matched_pdf":
+        merged = dict(resolved)
+        if isinstance(matching.get("plot"), dict):
+            merged.update({key: matching["plot"][key] for key in _MATCHING_PLOT_KEYS if key in matching["plot"]})
+        resolved = merged
     if tool_name in _RENORM_ARTIFACT_TOOLS:
         raw_save = resolved.get("save_path")
         if isinstance(raw_save, str) or raw_save is None:
@@ -353,7 +360,12 @@ def prepare_tool_args(
             if isinstance(grid, dict) and isinstance(grid.get("save_path"), str):
                 raw_save = grid["save_path"]
         if isinstance(raw_save, str) or raw_save is None:
-            stem = "bare_matrix_elements" if tool_name == "fit_bare_matrix_grid" else "fit_on_data"
+            if tool_name == "fit_bare_matrix_grid":
+                stem = "bare_matrix_elements"
+            elif tool_name == "plot_matched_pdf":
+                stem = "matched_pdf"
+            else:
+                stem = "fit_on_data"
             default_stem = _run_scoped_plot_stem(manifest, stem)
             resolved["save_path"] = resolve_plot_save_path(
                 raw_save if isinstance(raw_save, str) else None,

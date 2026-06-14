@@ -287,6 +287,8 @@ def plot_matched_pdf(
     lightcone: str = "lightcone_gv",
     save_path: str | None = None,
     artifacts_dir: str | None = None,
+    xlim: list[float] | tuple[float, float] | None = None,
+    ylim: list[float] | tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Plot quasi vs matched (light-cone) PDF and save a PDF artifact.
 
@@ -338,6 +340,10 @@ def plot_matched_pdf(
     _band(lightcone_gv, label="light-cone", color=ORANGE)
     ax.set_xlabel(r"$x$", **FONT_SIZE)
     ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
+    x_limits = (-2.2, 2.2) if xlim is None else (float(xlim[0]), float(xlim[1]))
+    y_limits = (-0.1, 2.51) if ylim is None else (float(ylim[0]), float(ylim[1]))
+    ax.set_xlim(*x_limits)
+    ax.set_ylim(*y_limits)
     ax.legend(**LEGEND_SETS)
     fig.savefig(resolved_save, bbox_inches="tight", transparent=True)
     plt.close(fig)

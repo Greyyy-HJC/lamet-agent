@@ -237,7 +237,9 @@
       "mu": 2.0,
       "component": "re",
       "plot": {
-        "save_path": "artifacts/matched_pdf"
+        "save_path": "artifacts/matched_pdf",
+		"xlim": [-0.01, 1.01],
+        "ylim": [-0.3, 4.5]
       }
     }
   }

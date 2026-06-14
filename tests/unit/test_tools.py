@@ -205,3 +205,33 @@ def test_prepare_tool_args_merges_renormalization_manifest_options(tmp_path: Pat
     )
     assert plot_args["save_path"] == str(tmp_path / "artifacts" / "renorm_plot")
     assert plot_args["title"] == "Renorm"
+
+
+def test_prepare_tool_args_merges_matching_plot_options(tmp_path: Path) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "matching",
+            "metadata": {
+                "matching": {
+                    "plot": {
+                        "save_path": "matched_pdf.pdf",
+                        "xlim": [-1.5, 1.5],
+                        "ylim": [-0.2, 2.0],
+                    }
+                }
+            },
+        }
+    )
+
+    plot_args = prepare_tool_args(
+        "plot_matched_pdf",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={},
+    )
+
+    assert plot_args["save_path"] == str(tmp_path / "artifacts" / "matched_pdf")
+    assert plot_args["artifacts_dir"] == str(tmp_path / "artifacts")
+    assert plot_args["xlim"] == [-1.5, 1.5]
+    assert plot_args["ylim"] == [-0.2, 2.0]
