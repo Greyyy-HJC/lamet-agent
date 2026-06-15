@@ -22,6 +22,10 @@ OBSERVABLE_ALIASES = {
     "nucleon_quark_transversity_quasi_pdf": "nucleon_quark_transversity_quasi_pdf",
     "nucleon_transversity_pdf": "nucleon_quark_transversity_quasi_pdf",
     "transversity_pdf": "nucleon_quark_transversity_quasi_pdf",
+    "pion_gluon_quasi_pdf": "pion_gluon_quasi_pdf",
+    "pion_gluon_pdf": "pion_gluon_quasi_pdf",
+    "nucleon_gluon_quasi_pdf": "nucleon_gluon_quasi_pdf",
+    "nucleon_gluon_pdf": "nucleon_gluon_quasi_pdf",
     "meson_quasi_da": "meson_quasi_da",
     "quasi_da": "meson_quasi_da",
     "pion_quark_quasi_gpd": "pion_quark_quasi_gpd",
@@ -272,6 +276,24 @@ def _term_phase_scales(
     raise ValueError(f"unsupported observable {observable!r}")
 
 
+def _append_tail_parameter_bounds(
+    p0: list[float],
+    lower: list[float],
+    upper: list[float],
+    *,
+    method: str,
+    lambda_lower: float,
+) -> None:
+    p0.append(max(0.5, lambda_lower + 0.05))
+    lower.append(lambda_lower)
+    upper.append(max(3.0, lambda_lower + 1.0))
+
+    if method == "CG":
+        p0.append(0.5)
+        lower.append(-2.0)
+        upper.append(4.0)
+
+
 def _param_template(
     method: str,
     order: str,
@@ -286,6 +308,29 @@ def _param_template(
         raise ValueError("method must be 'GI' or 'CG'")
     if order not in {"LA", "NLA"}:
         raise ValueError("order must be 'LA' or 'NLA'")
+
+    observable = _canonical_observable(observable)
+    if observable == "nucleon_gluon_quasi_pdf":
+        p0 = [1.0]
+        lower = [-np.inf]
+        upper = [np.inf]
+        if order == "NLA":
+            p0.append(0.1)
+            lower.append(-np.inf)
+            upper.append(np.inf)
+        _append_tail_parameter_bounds(p0, lower, upper, method=method, lambda_lower=lambda_lower)
+        return np.asarray(p0, dtype=float), (np.asarray(lower, dtype=float), np.asarray(upper, dtype=float))
+
+    if observable == "pion_gluon_quasi_pdf":
+        p0 = [1.0]
+        lower = [-np.inf]
+        upper = [np.inf]
+        if order == "NLA":
+            p0.extend([0.1, 0.1, 0.0])
+            lower.extend([-np.inf, -np.inf, -np.pi])
+            upper.extend([np.inf, np.inf, np.pi])
+        _append_tail_parameter_bounds(p0, lower, upper, method=method, lambda_lower=lambda_lower)
+        return np.asarray(p0, dtype=float), (np.asarray(lower, dtype=float), np.asarray(upper, dtype=float))
 
     term_names = _observable_term_names(observable)
     p0 = []
@@ -302,14 +347,7 @@ def _param_template(
             lower.extend([-np.inf, -np.pi])
             upper.extend([np.inf, np.pi])
 
-    p0.append(max(0.5, lambda_lower + 0.05))
-    lower.append(lambda_lower)
-    upper.append(max(3.0, lambda_lower + 1.0))
-
-    if method == "CG":
-        p0.append(0.5)
-        lower.append(-2.0)
-        upper.append(4.0)
+    _append_tail_parameter_bounds(p0, lower, upper, method=method, lambda_lower=lambda_lower)
 
     return np.asarray(p0, dtype=float), (np.asarray(lower, dtype=float), np.asarray(upper, dtype=float))
 
@@ -319,6 +357,24 @@ def _n_fit_parameters(method: str, order: str, observable: str) -> int:
 
 
 def _param_labels(method: str, order: str, observable: str) -> list[str]:
+    observable = _canonical_observable(observable)
+    if observable == "nucleon_gluon_quasi_pdf":
+        labels = ["A"]
+        if order.upper() == "NLA":
+            labels.append("Ap")
+        labels.append("Lambda")
+        if method.upper() == "CG":
+            labels.append("n")
+        return labels
+    if observable == "pion_gluon_quasi_pdf":
+        labels = ["A2"]
+        if order.upper() == "NLA":
+            labels.extend(["A2p", "A1", "phi"])
+        labels.append("Lambda")
+        if method.upper() == "CG":
+            labels.append("n")
+        return labels
+
     term_names = _observable_term_names(observable)
     labels = []
     for name in term_names:
@@ -330,6 +386,13 @@ def _param_labels(method: str, order: str, observable: str) -> list[str]:
     if method.upper() == "CG":
         labels.append("n")
     return labels
+
+
+def _tail_factor(z: np.ndarray, params: np.ndarray, *, cursor: int, method: str) -> Any:
+    tail = gv.exp(-params[cursor] * z)
+    if method.upper() == "CG":
+        tail = tail * gv.exp(-params[-1] * np.log(z))
+    return tail
 
 
 def _asymptotic_values(
@@ -345,6 +408,29 @@ def _asymptotic_values(
     z = np.asarray(z, dtype=float)
     if np.any(z <= 0):
         raise ValueError("asymptotic form requires positive coordinates")
+
+    observable = _canonical_observable(observable)
+    if observable == "nucleon_gluon_quasi_pdf":
+        re = params[0] * z
+        im = np.zeros_like(z, dtype=object)
+        cursor = 1
+        if order.upper() == "NLA":
+            re = re + params[cursor]
+            cursor += 1
+        tail = _tail_factor(z, params, cursor=cursor, method=method)
+        return re * tail, im * tail
+
+    if observable == "pion_gluon_quasi_pdf":
+        re = params[0] * z
+        im = np.zeros_like(z, dtype=object)
+        cursor = 1
+        if order.upper() == "NLA":
+            re = re + params[cursor]
+            cursor += 1
+            re = re + 2.0 * params[cursor] * gv.cos(params[cursor + 1] - phase_scale * z)
+            cursor += 2
+        tail = _tail_factor(z, params, cursor=cursor, method=method)
+        return re * tail, im * tail
 
     term_names = _observable_term_names(observable)
     phase_scales = _term_phase_scales(
@@ -368,11 +454,7 @@ def _asymptotic_values(
             im = im + params[cursor] * gv.sin(arg) / z
             cursor += 2
 
-    lam = params[cursor]
-    tail = gv.exp(-lam * z)
-    if method.upper() == "CG":
-        n = params[-1]
-        tail = tail * gv.exp(-n * np.log(z))
+    tail = _tail_factor(z, params, cursor=cursor, method=method)
 
     return re * tail, im * tail
 

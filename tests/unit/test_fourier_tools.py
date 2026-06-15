@@ -17,6 +17,7 @@ from lamet_agent.stages.fourier.functions import (
     summarize_fourier_result,
 )
 from lamet_agent.stages.fourier.skills import validate_stage_inputs
+from lamet_agent.stages.fourier.workflow import _asymptotic_values
 
 
 def _write_npz(path: Path) -> None:
@@ -286,6 +287,77 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
         "Lambda",
     ]
     assert fit_info["fit_params"].shape == (1, 3, 13)
+
+
+def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    coord = np.arange(0.0, 14.0)
+    base_re = (coord + 0.2) * np.exp(-0.25 * coord)
+    base_re[0] = base_re[1]
+    re_samples = np.vstack([base_re, 1.01 * base_re, 0.99 * base_re])
+    im_samples = np.zeros_like(re_samples)
+
+    cases = [
+        ("nucleon_gluon_quasi_pdf", "LA", ["A", "Lambda"]),
+        ("nucleon_gluon_quasi_pdf", "NLA", ["A", "Ap", "Lambda"]),
+        ("pion_gluon_quasi_pdf", "LA", ["A2", "Lambda"]),
+        ("pion_gluon_quasi_pdf", "NLA", ["A2", "A2p", "A1", "phi", "Lambda"]),
+    ]
+    for observable, order, expected_labels in cases:
+        data_path = tmp_path / f"{observable}_{order}.npz"
+        np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
+        store = {}
+        load_renormalized_matrix_element_samples(store, path=str(data_path))
+
+        run = run_fourier_transform(
+            store,
+            k_grid=[0.0],
+            scheme_scan={"zmin_values": [1.0], "zmax_values": [10.0], "z_ext_max": 12.0},
+            method="GI",
+            order=order,
+            observable=observable,
+        )
+
+        fit_info = np.load(run["fit_info_artifact"])
+        assert fit_info["fit_param_labels"].tolist() == expected_labels
+        assert fit_info["fit_params"].shape == (1, 3, len(expected_labels))
+
+
+def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
+    z = np.array([2.0, 3.0])
+
+    re, im = _asymptotic_values(
+        z,
+        np.array([1.5, 0.4]),
+        method="GI",
+        order="LA",
+        observable="nucleon_gluon_quasi_pdf",
+        phase_scale=2.0,
+    )
+    assert np.asarray(re, dtype=float).tolist() == pytest.approx((1.5 * z * np.exp(-0.4 * z)).tolist())
+    assert np.asarray(im, dtype=float).tolist() == pytest.approx([0.0, 0.0])
+
+    re, _im = _asymptotic_values(
+        z,
+        np.array([1.5, 0.2, 0.4]),
+        method="GI",
+        order="NLA",
+        observable="nucleon_gluon_quasi_pdf",
+        phase_scale=2.0,
+    )
+    assert np.asarray(re, dtype=float).tolist() == pytest.approx(((1.5 * z + 0.2) * np.exp(-0.4 * z)).tolist())
+
+    re, _im = _asymptotic_values(
+        z,
+        np.array([1.5, 0.2, 0.3, 0.1, 0.4]),
+        method="GI",
+        order="NLA",
+        observable="pion_gluon_quasi_pdf",
+        phase_scale=2.0,
+    )
+    expected = (1.5 * z + 0.2 + 0.6 * np.cos(0.1 - 2.0 * z)) * np.exp(-0.4 * z)
+    assert np.asarray(re, dtype=float).tolist() == pytest.approx(expected.tolist())
+
 
 def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)

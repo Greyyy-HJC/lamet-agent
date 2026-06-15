@@ -33,7 +33,8 @@ Do this by emitting one action at a time:
    roughness_weight, and model_average default to [-2,2], 1.0, and true.
    Use observable to select the large-distance form: pion_quark_quasi_pdf,
    nucleon_quark_unpolarized_quasi_pdf, nucleon_quark_transversity_quasi_pdf,
-   meson_quasi_da, pion_quark_quasi_gpd, or nucleon_quark_quasi_gpd.
+   pion_gluon_quasi_pdf, nucleon_gluon_quasi_pdf, meson_quasi_da,
+   pion_quark_quasi_gpd, or nucleon_quark_quasi_gpd.
    For GPD observables, pass pz_prime_gev when P'^z differs from P^z.
    order can be 'LA' or 'NLA'.
    Lambda0 optionally sets the lower bound of the fitted large-distance
