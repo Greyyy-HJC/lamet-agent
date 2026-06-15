@@ -33,6 +33,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "Lambda0",
         "posterior_prior_error_scale",
         "fit_error_mode",
+        "part",
         "save_path",
     }
 )

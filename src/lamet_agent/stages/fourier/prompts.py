@@ -20,8 +20,8 @@ Do this by emitting one action at a time:
 2. run_fourier_transform with explicit k_grid (list or compact {start, stop, num/step}),
    method, order, observable, coord_unit, and pz_gev/a_fm when needed.
    If metadata.fourier specifies im_flip_for_ft, Lambda0,
-   posterior_prior_error_scale, fit_error_mode, or save_path, pass those values
-   to run_fourier_transform.
+   posterior_prior_error_scale, fit_error_mode, part, or save_path, pass those
+   values to run_fourier_transform.
    If the manifest gives scheme_scan, pass it through. If it omits any of
    zmin_values/zmax_values/min_width/z_ext_max/smooth, the tool will fill the
    missing scan values by choosing large stable zmax values before visible
@@ -45,6 +45,11 @@ Do this by emitting one action at a time:
    fit_error_mode controls the tail-fit data covariance: 'diagonal' uses
    pointwise standard deviations, while 'covariance' uses the full covariance
    estimated from bootstrap/jackknife samples. The default is 'diagonal'.
+   part controls which matrix-element component enters the tail fit and
+   extension: 'both' fits real and imaginary parts, 're' fits/extends only the
+   real part and sets the coordinate-space imaginary extension to zero, and
+   'im' does the corresponding imaginary-only fit with coordinate-space real
+   extension fixed to zero. The default is 'both'.
    Fit windows must include at least as many coordinate points as the selected
    model has parameters.
    Prefer scheme_scan when the manifest provides it, so the tool can score and

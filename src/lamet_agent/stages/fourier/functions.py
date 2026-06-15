@@ -282,6 +282,7 @@ def _save_fourier_npz(path: Path, result: dict[str, Any]) -> None:
         method=np.asarray(result.get("method", "")),
         order=np.asarray(result.get("order", "")),
         observable=np.asarray(result.get("observable", "")),
+        part=np.asarray(result.get("part", "both")),
     )
 
 
@@ -316,6 +317,7 @@ def _save_fourier_fit_info_npz(path: Path, result: dict[str, Any]) -> None:
             "method": str(result.get("method", "")),
             "order": str(result.get("order", "")),
             "observable": str(result.get("observable", "")),
+            "part": str(result.get("part", "both")),
         },
         name="fourier_fit_parameters",
     )
@@ -476,6 +478,7 @@ def _pick_four_zmin_values_by_tail_fit(
     resample_mode: str,
     Lambda0: float,
     min_fit_points: int,
+    part: str,
 ) -> list[float]:
     stable_starts = []
     for zmax in zmax_values:
@@ -503,6 +506,7 @@ def _pick_four_zmin_values_by_tail_fit(
                 resample_mode=resample_mode,
                 Lambda0=Lambda0,
                 min_fit_points=min_fit_points,
+                part=part,
             )
             for candidate in candidates
         ]
@@ -552,6 +556,7 @@ def _auto_fill_scheme_scan(
     resample_mode: str,
     Lambda0: float,
     min_fit_points: int,
+    part: str,
 ) -> dict[str, Any]:
     """Fill missing scan keys with stable zmax values and tail-fit zmin diagnostics."""
     dz = float(np.median(np.diff(positive)))
@@ -585,6 +590,7 @@ def _auto_fill_scheme_scan(
             resample_mode=resample_mode,
             Lambda0=Lambda0,
             min_fit_points=min_fit_points,
+            part=part,
         )
     if "z_ext_max" not in spec:
         spec["z_ext_max"] = _default_z_ext_max(
@@ -629,6 +635,7 @@ def _auto_scheme_scan(
     resample_mode: str,
     Lambda0: float,
     min_fit_points: int,
+    part: str,
     existing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate a conservative scan from stable zmax and tail-fit zmin diagnostics."""
@@ -654,6 +661,7 @@ def _auto_scheme_scan(
         resample_mode=resample_mode,
         Lambda0=Lambda0,
         min_fit_points=min_fit_points,
+        part=part,
     )
     spec["auto_generated"] = True
     return spec
@@ -799,6 +807,7 @@ def run_fourier_transform(
     Lambda0: float = 0.1,
     posterior_prior_error_scale: float = 3.0,
     fit_error_mode: str = "diagonal",
+    part: str = "both",
     save_path: str | None = None,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
@@ -828,6 +837,7 @@ def run_fourier_transform(
             resample_mode=resample_mode,
             Lambda0=float(Lambda0),
             min_fit_points=min_fit_points,
+            part=part,
             existing=scan_spec,
         )
         auto_scheme_scan = scan_spec
@@ -853,6 +863,7 @@ def run_fourier_transform(
         min_fit_points=min_fit_points,
         posterior_prior_error_scale=float(posterior_prior_error_scale),
         fit_error_mode=fit_error_mode,
+        part=part,
     )
     result["resample_mode"] = resample_mode
     result["pz_gev"] = pz_gev
@@ -861,6 +872,7 @@ def run_fourier_transform(
     result["Lambda0"] = float(Lambda0)
     result["posterior_prior_error_scale"] = float(posterior_prior_error_scale)
     result["fit_error_mode"] = str(fit_error_mode)
+    result["part"] = str(part)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
     model_average = bool(scheme_scan.get("model_average", True))

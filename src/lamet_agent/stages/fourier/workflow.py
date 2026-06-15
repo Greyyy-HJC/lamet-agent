@@ -100,33 +100,95 @@ def _normalise_fit_error_mode(value: str | None) -> str:
     return aliases[mode]
 
 
+def _normalise_part(value: str | None) -> str:
+    part = "both" if value is None else str(value).strip().lower()
+    aliases = {
+        "both": "both",
+        "re": "re",
+        "real": "re",
+        "im": "im",
+        "imag": "im",
+        "imaginary": "im",
+    }
+    if part not in aliases:
+        raise ValueError("part must be 'both', 're', or 'im'")
+    return aliases[part]
+
+
+def _uses_re(part: str) -> bool:
+    return _normalise_part(part) in {"both", "re"}
+
+
+def _uses_im(part: str) -> bool:
+    return _normalise_part(part) in {"both", "im"}
+
+
+def _n_fit_channels(part: str) -> int:
+    return int(_uses_re(part)) + int(_uses_im(part))
+
+
 def _fit_y_data(
     re_fit: np.ndarray,
     im_fit: np.ndarray,
     *,
     fit_error_mode: str,
     resample_mode: str,
+    part: str = "both",
     re_fit_samples: np.ndarray | None = None,
     im_fit_samples: np.ndarray | None = None,
     sigma_re: np.ndarray | None = None,
     sigma_im: np.ndarray | None = None,
 ) -> np.ndarray:
     mode = _normalise_fit_error_mode(fit_error_mode)
+    part = _normalise_part(part)
     if mode == "covariance":
-        if re_fit_samples is None or im_fit_samples is None:
-            raise ValueError("fit_error_mode='covariance' requires re_fit_samples and im_fit_samples")
-        sample_matrix = np.concatenate(
-            [np.asarray(re_fit_samples, dtype=float), np.asarray(im_fit_samples, dtype=float)],
-            axis=1,
-        )
+        blocks = []
+        centers = []
+        if _uses_re(part):
+            if re_fit_samples is None:
+                raise ValueError("fit_error_mode='covariance' requires re_fit_samples for part='re' or 'both'")
+            blocks.append(np.asarray(re_fit_samples, dtype=float))
+            centers.append(np.asarray(re_fit, dtype=float))
+        if _uses_im(part):
+            if im_fit_samples is None:
+                raise ValueError("fit_error_mode='covariance' requires im_fit_samples for part='im' or 'both'")
+            blocks.append(np.asarray(im_fit_samples, dtype=float))
+            centers.append(np.asarray(im_fit, dtype=float))
+        sample_matrix = np.concatenate(blocks, axis=1)
         covariance_data = _sample_gvar(sample_matrix, resample_mode=resample_mode)
-        center = np.concatenate([re_fit, im_fit])
+        center = np.concatenate(centers)
         return gv.gvar(center, gv.evalcov(covariance_data))
 
     re_scale = np.ones_like(re_fit, dtype=float) if sigma_re is None else np.asarray(sigma_re, dtype=float)
     im_scale = np.ones_like(im_fit, dtype=float) if sigma_im is None else np.asarray(sigma_im, dtype=float)
-    sigma = np.maximum(np.concatenate([re_scale, im_scale]), 1e-12)
-    return gv.gvar(np.concatenate([re_fit, im_fit]), sigma)
+    values = []
+    errors = []
+    if _uses_re(part):
+        values.append(np.asarray(re_fit, dtype=float))
+        errors.append(re_scale)
+    if _uses_im(part):
+        values.append(np.asarray(im_fit, dtype=float))
+        errors.append(im_scale)
+    sigma = np.maximum(np.concatenate(errors), 1e-12)
+    return gv.gvar(np.concatenate(values), sigma)
+
+
+def _select_fit_prediction(pred_re: np.ndarray, pred_im: np.ndarray, part: str) -> np.ndarray:
+    part = _normalise_part(part)
+    if part == "re":
+        return pred_re
+    if part == "im":
+        return pred_im
+    return np.concatenate([pred_re, pred_im])
+
+
+def _zero_inactive_channel(re_values: np.ndarray, im_values: np.ndarray, part: str) -> tuple[np.ndarray, np.ndarray]:
+    part = _normalise_part(part)
+    if part == "re":
+        return re_values, np.zeros_like(im_values, dtype=float)
+    if part == "im":
+        return np.zeros_like(re_values, dtype=float), im_values
+    return re_values, im_values
 
 
 def sum_ft_re_im(x_ls, fx_re_ls, fx_im_ls, output_k):
@@ -517,6 +579,7 @@ def _fit_one_sample(
     method: str,
     order: str,
     observable: str,
+    part: str,
     phase_scale: float,
     phase_prime_scale: float | None = None,
     p0: np.ndarray | None = None,
@@ -537,9 +600,9 @@ def _fit_one_sample(
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
         )
-        return np.concatenate([pred_re, pred_im])
+        return _select_fit_prediction(pred_re, pred_im, part)
 
-    dof = max(1, 2 * len(z_fit) - len(default_p0))
+    dof = max(1, _n_fit_channels(part) * len(z_fit) - len(default_p0))
     try:
         fit_args = {
             "data": (z_fit, y_data),
@@ -578,6 +641,7 @@ def fit_tail_quality_for_mean(
     Lambda0: float = 0.1,
     min_fit_points: int | None = None,
     fit_error_mode: str = "diagonal",
+    part: str = "both",
 ) -> dict[str, Any]:
     """Fit the mean matrix element on one range and return quality diagnostics."""
     coord_arr = np.asarray(coord, dtype=float)
@@ -605,7 +669,7 @@ def fit_tail_quality_for_mean(
     n_params = _n_fit_parameters(method, order, observable)
     required_points = max(n_params, int(min_fit_points or 0), 2)
     if n_points < required_points:
-        dof = max(1, 2 * n_points - n_params)
+        dof = max(1, _n_fit_channels(part) * n_points - n_params)
         return {
             "ok": False,
             "chi2": float("inf"),
@@ -629,6 +693,7 @@ def fit_tail_quality_for_mean(
         mean_im,
         fit_error_mode=fit_error_mode,
         resample_mode=resample_mode,
+        part=part,
         re_fit_samples=re_mat[:, fit_mask],
         im_fit_samples=im_mat[:, fit_mask],
         sigma_re=sigma_re,
@@ -641,6 +706,7 @@ def fit_tail_quality_for_mean(
         method=method,
         order=order,
         observable=observable,
+        part=part,
         phase_scale=phase_scale,
         phase_prime_scale=phase_prime_scale,
         Lambda0=Lambda0,
@@ -702,6 +768,7 @@ def _run_one_scheme(
     min_fit_points: int | None,
     posterior_prior_error_scale: float,
     fit_error_mode: str,
+    part: str,
 ) -> dict[str, Any]:
     zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
     zmin_fit = _convert_scheme_value(zmin, fit_scale)
@@ -734,6 +801,7 @@ def _run_one_scheme(
         mean_im,
         fit_error_mode=fit_error_mode,
         resample_mode=resample_mode,
+        part=part,
         re_fit_samples=re_samples[:, fit_mask],
         im_fit_samples=im_samples[:, fit_mask],
         sigma_re=sigma_re,
@@ -745,6 +813,7 @@ def _run_one_scheme(
         method=method,
         order=order,
         observable=observable,
+        part=part,
         phase_scale=phase_scale,
         phase_prime_scale=phase_prime_scale,
         Lambda0=Lambda0,
@@ -791,6 +860,7 @@ def _run_one_scheme(
             im_samples[sample, fit_mask],
             fit_error_mode=fit_error_mode,
             resample_mode=resample_mode,
+            part=part,
             re_fit_samples=re_samples[:, fit_mask],
             im_fit_samples=im_samples[:, fit_mask],
             sigma_re=sigma_re,
@@ -802,6 +872,7 @@ def _run_one_scheme(
             method=method,
             order=order,
             observable=observable,
+            part=part,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
             p0=mean_params,
@@ -831,10 +902,12 @@ def _run_one_scheme(
             phase_prime_scale=phase_prime_scale,
         )
 
+        fit_re, fit_im = _zero_inactive_channel(fit_re, fit_im, part)
         fit_re_samples[sample] = fit_re
         fit_im_samples[sample] = fit_im
-        ext_re[sample] = fit_weight * fit_re + (1.0 - fit_weight) * data_re[sample]
-        ext_im[sample] = fit_weight * fit_im + (1.0 - fit_weight) * data_im[sample]
+        ext_re_sample = fit_weight * fit_re + (1.0 - fit_weight) * data_re[sample]
+        ext_im_sample = fit_weight * fit_im + (1.0 - fit_weight) * data_im[sample]
+        ext_re[sample], ext_im[sample] = _zero_inactive_channel(ext_re_sample, ext_im_sample, part)
 
         lam_full, re_full, im_full = complete_z_negative(
             lambda_ext,
@@ -891,6 +964,7 @@ def run_fourier_workflow(
     min_fit_points: int | None = None,
     posterior_prior_error_scale: float = 3.0,
     fit_error_mode: str = "diagonal",
+    part: str = "both",
 ) -> dict[str, Any]:
     """Run asymptotic extension and Fourier transform for resampled data.
 
@@ -900,6 +974,7 @@ def run_fourier_workflow(
     coord_arr = np.asarray(coord, dtype=float)
     resample_mode = _normalise_resample_mode(resample_mode)
     fit_error_mode = _normalise_fit_error_mode(fit_error_mode)
+    part = _normalise_part(part)
     _uniform_step(coord_arr)
     if not np.isclose(coord_arr[0], 0.0):
         raise ValueError("coordinate grid must start at zero")
@@ -956,6 +1031,7 @@ def run_fourier_workflow(
             min_fit_points=min_fit_points,
             posterior_prior_error_scale=posterior_prior_error_scale,
             fit_error_mode=fit_error_mode,
+            part=part,
         )
         for scheme in schemes
     ]
@@ -1000,4 +1076,5 @@ def run_fourier_workflow(
         "Lambda0": float(Lambda0),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
         "fit_error_mode": fit_error_mode,
+        "part": part,
     }

@@ -162,6 +162,54 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
     assert Path(run["fit_info_artifact"]).is_file()
 
 
+def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    coord = np.arange(0.0, 7.0)
+    base_re = np.exp(-0.35 * coord)
+    base_im = 0.7 * np.exp(-0.30 * coord)
+    re_samples = np.vstack([base_re, 1.01 * base_re, 0.99 * base_re])
+    im_samples = np.vstack([base_im, 1.02 * base_im, 0.98 * base_im])
+    data_path = tmp_path / "matrix_element.npz"
+    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
+
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+    run_re = run_fourier_transform(
+        store,
+        k_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [6.0], "z_ext_max": 7.0},
+        method="GI",
+        order="LA",
+        observable="nucleon_quark_unpolarized_quasi_pdf",
+        part="re",
+    )
+    result_re = store["fourier_result"]
+    assert result_re["part"] == "re"
+    assert np.allclose(result_re["ft_im_samples"], 0.0)
+    assert np.allclose(result_re["scheme_results"][0]["extended_im_samples"], 0.0)
+    artifact_re = np.load(run_re["artifact"])
+    assert str(artifact_re["part"]) == "re"
+
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+    run_im = run_fourier_transform(
+        store,
+        k_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [6.0], "z_ext_max": 7.0},
+        method="GI",
+        order="LA",
+        observable="nucleon_quark_unpolarized_quasi_pdf",
+        part="im",
+    )
+    result_im = store["fourier_result"]
+    assert result_im["part"] == "im"
+    assert np.allclose(result_im["scheme_results"][0]["extended_re_samples"], 0.0)
+    assert np.all(np.isfinite(result_im["ft_re_samples"]))
+    assert np.all(np.isfinite(result_im["ft_im_samples"]))
+    artifact_im = np.load(run_im["artifact"])
+    assert str(artifact_im["part"]) == "im"
+
+
 def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"

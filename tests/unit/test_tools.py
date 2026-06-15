@@ -39,6 +39,7 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
                     "order": "NLA",
                     "observable": "nucleon_quark_transversity_quasi_pdf",
                     "Lambda0": 0.2,
+                    "part": "im",
                     "save_path": "ft_result.npz",
                     "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
                     "plot_fourier": {"save_path": "ft.pdf", "title": "FT"},
@@ -70,6 +71,7 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
     assert run_args["method"] == "GI"
     assert run_args["order"] == "NLA"
     assert run_args["Lambda0"] == 0.2
+    assert run_args["part"] == "im"
     assert run_args["save_path"] == "ft_result.npz"
     assert run_args["k_grid"]["num"] == 401
 
