@@ -9,26 +9,21 @@ STAGE_SKILL = """
 Correlator-analysis physics:
 - The 2pt correlator is symmetric about t = Lt/2; fit only the first half
   (tmax <= Lt//2, tmin >= 1).
-- Ratio R(tsep, tau) = C_3pt / C_2pt(tsep); a two-state ratio fit uses
-  tau in [tau_cut, tsep + 1 - tau_cut) with tau_cut >= 1, and needs enough combined
-  re+im points across the chosen tseps.
+- Ratio R(tsep, tau) = C_3pt / C_2pt(tsep); a two-state ratio fit uses tau in
+  [tau_cut, tsep + 1 - tau_cut) with tau_cut >= 1.
 - The bare matrix element is O00/(2*E0); it is invariant under the 2pt rescale.
 
-Strategy:
+Fit-quality rules:
 - Always resample at read time ('bs' or 'jk'); never fit a single configuration mean.
-- Inspect 2pt magnitudes and pick a power-of-ten correlator_rescale so fitted 2pt data
-  are ~0.0001..0.01.
-- Tune one shared fit setting on sample-average data, then apply it to every sample:
-  this keeps all z (and b) on the same window instead of per-z choices.
-- joint strategy fits 2pt+ratio together; chained fits 2pt first, then the ratio with
-  E0/z0 anchored from the 2pt posterior. Prefer Q > 0.05 and stable plateaus.
+- joint fits 2pt+ratio together; chained fits 2pt first, then anchors the ratio
+  with E0/z0 from the 2pt posterior. Prefer Q > 0.05 and stable plateaus.
 """.strip()
 
 TOOL_CATALOG = {
-    "inspect_correlator_scale": "inspect_correlator_scale(pt2_path, momentum, source_sink, gamma, pt2_windows?) -> 2pt magnitude diagnostics for choosing correlator_rescale.",
-    "tune_ground_state": "tune_ground_state(pt2_path, pt2_windows, correlator_rescale, ...) -> per-window 2pt diagnostics + plot; window_indices+model_average store E0_avg/z0_avg.",
-    "tune_bare_matrix": "tune_bare_matrix(pt2_path, pt3_paths, tsep_ls, momentum, fit_strategy, correlator_rescale, pt2_windows, pt3_tau_cuts, tune_z?) -> ranked candidate windows with O00/(2E0) on sample-average data + tuning plot.",
-    "fit_bare_matrix_grid": "fit_bare_matrix_grid(pt2_path, pt3_paths, tsep_ls, z_values, ensemble, tag, momentum, fit_strategy, correlator_rescale, pt2_window|pt2_windows, pt3_window|pt3_tau_cuts, model_average?) -> applies one shared setting to all z/samples; writes bare_qpdf txt, sample-0 PDFs, split logs, summary PDF + report.",
+    "inspect_correlator_scale": "inspect_correlator_scale(...) -> 2pt magnitude diagnostics for correlator_rescale.",
+    "tune_ground_state": "tune_ground_state(...) -> per-window 2pt diagnostics and stored E0_avg/z0_avg.",
+    "tune_bare_matrix": "tune_bare_matrix(...) -> ranked 3pt/2pt window candidates on sample-average data.",
+    "fit_bare_matrix_grid": "fit_bare_matrix_grid(...) -> apply one shared setting to all z/samples and write bare-matrix artifacts.",
 }
 
 

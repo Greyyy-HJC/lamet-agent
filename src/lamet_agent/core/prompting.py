@@ -54,6 +54,42 @@ def get_stage_skill(stage: str) -> str:
     return "\n\n".join(parts)
 
 
+def _stage_metadata(stage: str, manifest: AnalysisManifest) -> dict:
+    """Return the manifest metadata slice needed by one stage prompt."""
+    metadata = manifest.metadata
+    if stage == "fourier_transform":
+        return dict(metadata)
+
+    keys_by_stage = {
+        "correlator_analysis": (
+            "tau_convention",
+            "conversion_report",
+            "config_count_note",
+            "conversion_selection",
+            "correlator_grid",
+        ),
+        "renormalization": ("renormalization",),
+        "perturbative_matching": ("matching", "fourier"),
+        "extrapolation": ("extrapolation",),
+    }
+    keys = keys_by_stage.get(stage)
+    if keys is None:
+        return dict(metadata)
+    return {key: metadata[key] for key in keys if key in metadata}
+
+
+def _stage_correlator_refs(stage: str, manifest: AnalysisManifest) -> list[dict]:
+    """Return correlator references with paths only where stage prompts need them."""
+    include_paths = stage in {"correlator_analysis", "fourier_transform"}
+    refs = []
+    for item in manifest.correlators:
+        ref = {"dataset_id": item.dataset_id, "kind": item.kind}
+        if include_paths:
+            ref["path"] = item.path
+        refs.append(ref)
+    return refs
+
+
 def build_stage_static_prompt(
     stage: str,
     manifest: AnalysisManifest,
@@ -64,11 +100,9 @@ def build_stage_static_prompt(
     """Build the static stage context (no tool observations)."""
     stage_prompt = get_stage_instruction(stage)
     stage_skill = get_stage_skill(stage)
-    correlator_ids = [
-        {"dataset_id": item.dataset_id, "kind": item.kind, "path": item.path}
-        for item in manifest.correlators
-    ]
+    correlator_ids = _stage_correlator_refs(stage, manifest)
     kernel_ids = [item.kernel_id for item in manifest.kernels]
+    metadata = _stage_metadata(stage, manifest)
 
     return (
         f"{SYSTEM_PROMPT}\n\n"
@@ -78,7 +112,7 @@ def build_stage_static_prompt(
         f"Completed stages: {completed_stages}\n"
         f"Correlators: {json.dumps(correlator_ids)}\n"
         f"Kernels: {kernel_ids}\n\n"
-        f"Metadata: {json.dumps(manifest.metadata)}\n\n"
+        f"Metadata: {json.dumps(metadata)}\n\n"
         f"Input issues: {json.dumps(input_issues or [])}\n\n"
         f"Stage instruction: {stage_prompt}\n\n"
         f"{stage_skill}\n\n"

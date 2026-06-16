@@ -309,3 +309,8 @@
 
 - Added ``examples/workflow_cg_qpdf_complete_manifest.json`` for HISQa060_X PX5 correlator through ``perturbative_matching``, with NLA Fourier settings from ``ds_pdf_cont`` and ``metadata.matching`` for ``unpolarized_gT``.
 - Added ``runs/ds_pdf_complete/run.sh``: step 1 runs ``workflow_cg_qpdf_p0_manifest.json`` (``correlator_analysis`` only); step 2 runs the complete manifest with ``correlator_analysis,renormalization,fourier_transform,perturbative_matching``, using ``runs/ds_pdf_complete/artifacts/a060_x_p0_bare_matrix_elements_report.json`` as the ratio denominator.
+
+## 2026-06-16 (Prompt context trimming)
+
+- Trimmed non-Fourier stage prompts by filtering stage metadata, omitting repeated correlator paths outside correlator/Fourier stages, and removing duplicated action-protocol wording from correlator, renormalization, and matching prompts.
+- Kept Fourier stage prompt/context behavior unchanged while preserving the multi-turn API conversation shape; verbose traces now print a compact observation-forwarded marker instead of duplicating full observations.

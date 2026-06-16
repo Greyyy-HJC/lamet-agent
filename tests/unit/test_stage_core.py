@@ -33,7 +33,7 @@ def test_build_stage_prompt_uses_stage_package_instruction() -> None:
         manifest,
         completed_stages=["correlator_analysis"],
     )
-    assert "Apply ratio/hybrid-scheme renormalization deterministically" in prompt
+    assert "Apply ratio/hybrid-scheme renormalization while preserving" in prompt
 
 
 def test_build_stage_static_prompt_excludes_observations() -> None:
@@ -73,3 +73,31 @@ def test_build_stage_static_prompt_includes_metadata() -> None:
     )
     assert "matrix_element.npz" in static
     assert "load_renormalized_matrix_element_samples" in static
+
+
+def test_build_stage_static_prompt_filters_non_stage_metadata() -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "demo",
+            "correlators": [
+                {"dataset_id": "c2", "kind": "2pt", "path": "fake/c2.txt"}
+            ],
+            "metadata": {
+                "correlator_grid": {"pt2_path": "fake/c2.txt"},
+                "renormalization": {"denominator_report_json": "p0_report.json"},
+                "fourier_input": "matrix_element.npz",
+                "matching": {"kernel_id": "unpolarized_gT"},
+                "note": "workflow note",
+            },
+        }
+    )
+    static = build_stage_static_prompt(
+        "renormalization",
+        manifest,
+        completed_stages=["correlator_analysis"],
+    )
+    assert "p0_report.json" in static
+    assert "matrix_element.npz" not in static
+    assert "unpolarized_gT" not in static
+    assert "fake/c2.txt" not in static
+    assert '"dataset_id": "c2"' in static

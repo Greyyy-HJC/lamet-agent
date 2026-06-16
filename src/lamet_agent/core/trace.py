@@ -90,10 +90,10 @@ class AgentTrace:
         self._write("LLM response received.")
 
     def prompt_delta(self, observation: dict[str, Any]) -> None:
-        """Print the incremental user turn for multi-turn stages."""
+        """Print a compact note for the incremental user turn."""
+        tool_name = observation.get("tool_name", "unknown tool")
         self._write("")
-        self._write("[Observation for LLM]")
-        self._write(json.dumps(observation, ensure_ascii=False, indent=2))
+        self._write(f"[Observation forwarded to LLM: {tool_name}]")
 
     def model_output(self, action: dict[str, Any]) -> None:
         self._write("")

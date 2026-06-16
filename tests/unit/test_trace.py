@@ -37,7 +37,8 @@ def test_agent_trace_emits_cycle_sections() -> None:
     assert "Reason: inspect scale first" in text
     assert "inspect_correlator_scale" in text
     assert "[Observation]" in text
-    assert "[Observation for LLM]" in text
+    assert "[Observation forwarded to LLM: inspect_correlator_scale]" in text
+    assert text.count('"Lt": 24') == 1
 
 
 def test_agent_trace_prints_request_user_input_questions() -> None:
