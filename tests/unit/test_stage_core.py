@@ -1,4 +1,4 @@
-from lamet_agent.core.prompting import build_stage_static_prompt
+from lamet_agent.core.prompting import build_stage_static_prompt, format_tool_observation
 from lamet_agent.core.stages import select_stage_sequence
 from lamet_agent.manifest import AnalysisManifest
 
@@ -79,3 +79,17 @@ def test_build_stage_static_prompt_filters_non_stage_metadata() -> None:
     assert "unpolarized_gT" not in static
     assert "fake/c2.txt" not in static
     assert '"dataset_id": "c2"' in static
+
+
+def test_format_tool_observation_omits_ignored_args_for_llm() -> None:
+    observation = {
+        "tool_name": "plot_matched_pdf",
+        "result": {"path": "artifacts/matched_pdf.pdf"},
+        "ignored_args": {"correlator_grid": {"pt2_path": "large/path.h5"}},
+    }
+    text = format_tool_observation(observation)
+    assert "plot_matched_pdf" in text
+    assert "matched_pdf.pdf" in text
+    assert "ignored_args" not in text
+    assert "large/path.h5" not in text
+    assert "ignored_args" in observation

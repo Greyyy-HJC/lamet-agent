@@ -319,3 +319,7 @@
 
 - Removed the unused monolithic `build_stage_prompt` helper and its core export now that agent runs use `build_stage_static_prompt` plus per-turn observations.
 - Removed the unused `set_my_logger` compatibility wrapper while keeping `setup_logger` as the active logging helper.
+
+## 2026-06-16 (LLM observation filtering)
+
+- Stopped forwarding dropped `ignored_args` payloads to the LLM while keeping them available in tool observations for trace/debug output.

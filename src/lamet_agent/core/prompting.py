@@ -122,4 +122,5 @@ def build_stage_static_prompt(
 
 def format_tool_observation(observation: dict) -> str:
     """Format one tool result as a compact follow-up user turn."""
-    return "Tool result:\n" + json.dumps(observation, indent=2)
+    llm_observation = {key: value for key, value in observation.items() if key != "ignored_args"}
+    return "Tool result:\n" + json.dumps(llm_observation, indent=2)
