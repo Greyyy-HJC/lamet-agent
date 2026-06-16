@@ -15,9 +15,9 @@ denominator for |z| >= zs. Keep all samples for downstream error propagation.
 
 
 TOOL_CATALOG = {
-    "load_bare_matrix_element_grid": "load_bare_matrix_element_grid(report_json=None, txt_dir=None, out='target_bare_matrix_element'|'denominator_bare_matrix_element') -> load correlator-stage two-column real/imag txt samples as EnsembleData(z).",
-    "apply_ratio_scheme_renormalization": "apply_ratio_scheme_renormalization(target='target_bare_matrix_element', denominator='denominator_bare_matrix_element', zs=4, delta_m=0, m0=0, z0=0, save_path=None) -> apply Eq. 15 sample-by-sample, store matrix_element_data, and write a compatible NPZ.",
-    "plot_renormalized_matrix_element": "plot_renormalized_matrix_element(save_path=None) -> plot sample averages/errors of the renormalized matrix elements to PDF.",
+    "load_bare_matrix_element_grid": "load_bare_matrix_element_grid(...) -> load bare real/imag txt samples as EnsembleData(z).",
+    "apply_ratio_scheme_renormalization": "apply_ratio_scheme_renormalization(...) -> apply Eq. 15 sample-by-sample and write a Fourier-compatible NPZ.",
+    "plot_renormalized_matrix_element": "plot_renormalized_matrix_element(...) -> plot renormalized matrix elements to PDF.",
 }
 
 
