@@ -10,6 +10,9 @@ from lamet_agent.core.tools import resolve_stage_tools
 from lamet_agent.core.plotting import _band_segment, plot_fourier_extension_quality, plot_fourier_npz
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.stages.fourier.functions import (
+    _asymptotic_values,
+    _param_labels,
+    _param_template,
     load_renormalized_matrix_element_samples,
     plot_fourier_extension_quality_result,
     plot_fourier_result,
@@ -17,7 +20,6 @@ from lamet_agent.stages.fourier.functions import (
     summarize_fourier_result,
 )
 from lamet_agent.stages.fourier.skills import validate_stage_inputs
-from lamet_agent.stages.fourier.workflow import _asymptotic_values
 
 
 def _write_npz(path: Path) -> None:
@@ -405,6 +407,19 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
     )
     expected = (1.5 * z + 0.2 + 0.6 * np.cos(0.1 - 2.0 * z)) * np.exp(-0.4 * z)
     assert np.asarray(re, dtype=float).tolist() == pytest.approx(expected.tolist())
+
+
+def test_fourier_cg_parameter_order_keeps_lambda_before_power() -> None:
+    labels = _param_labels("CG", "NLA", "pion_gluon_quasi_pdf")
+    p0, bounds = _param_template("CG", "NLA", "pion_gluon_quasi_pdf", Lambda0=0.3)
+
+    assert labels == ["A2", "A2p", "A1", "phi", "Lambda", "n"]
+    assert p0.shape == (6,)
+    assert bounds[0].shape == (6,)
+    assert bounds[1].shape == (6,)
+    assert bounds[0][4] == pytest.approx(0.3)
+    assert bounds[0][5] == pytest.approx(-2.0)
+    assert bounds[1][5] == pytest.approx(4.0)
 
 
 def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypatch) -> None:
