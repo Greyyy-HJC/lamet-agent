@@ -123,24 +123,3 @@ def build_stage_static_prompt(
 def format_tool_observation(observation: dict) -> str:
     """Format one tool result as a compact follow-up user turn."""
     return "Tool result:\n" + json.dumps(observation, indent=2)
-
-
-def build_stage_prompt(
-    stage: str,
-    manifest: AnalysisManifest,
-    *,
-    completed_stages: list[str],
-    input_issues: list[str] | None = None,
-    observations: list[dict] | None = None,
-) -> str:
-    """Build one monolithic prompt (static context plus optional observation dump)."""
-    static = build_stage_static_prompt(
-        stage,
-        manifest,
-        completed_stages=completed_stages,
-        input_issues=input_issues,
-    )
-    if not observations:
-        return static
-    observation_text = "Tool results so far:\n" + json.dumps(observations, indent=2) + "\n\n"
-    return static + "\n" + observation_text

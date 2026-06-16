@@ -314,3 +314,8 @@
 
 - Trimmed non-Fourier stage prompts by filtering stage metadata, omitting repeated correlator paths outside correlator/Fourier stages, and removing duplicated action-protocol wording from correlator, renormalization, and matching prompts.
 - Kept Fourier stage prompt/context behavior unchanged while preserving the multi-turn API conversation shape; verbose traces now print a compact observation-forwarded marker instead of duplicating full observations.
+
+## 2026-06-16 (Legacy helper cleanup)
+
+- Removed the unused monolithic `build_stage_prompt` helper and its core export now that agent runs use `build_stage_static_prompt` plus per-turn observations.
+- Removed the unused `set_my_logger` compatibility wrapper while keeping `setup_logger` as the active logging helper.

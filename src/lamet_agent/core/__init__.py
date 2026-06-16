@@ -3,7 +3,6 @@
 from .prompting import (
     ACTION_OUTPUT_HINT,
     SYSTEM_PROMPT,
-    build_stage_prompt,
     build_stage_static_prompt,
     format_tool_observation,
 )
@@ -14,7 +13,6 @@ __all__ = [
     "ACTION_OUTPUT_HINT",
     "SYSTEM_PROMPT",
     "DEFAULT_STAGES",
-    "build_stage_prompt",
     "build_stage_static_prompt",
     "format_tool_observation",
     "resolve_plot_save_path",

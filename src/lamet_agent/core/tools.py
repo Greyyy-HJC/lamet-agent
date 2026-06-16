@@ -107,15 +107,6 @@ def setup_logger(
     return logger
 
 
-def set_my_logger(
-    log_file: str | Path,
-    console_output: bool = False,
-    mode: str = "w",
-) -> logging.Logger:
-    """Compatibility wrapper for LaMETLat-style logger setup."""
-    return setup_logger(log_file, console_output=console_output, mode=mode)
-
-
 def log_nonlinear_fit_quality(
     fit: Any,
     *,
