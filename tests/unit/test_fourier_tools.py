@@ -256,6 +256,47 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     assert str(artifact_im["part"]) == "im"
 
 
+def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    _write_npz(data_path)
+
+    base_store = {}
+    load_renormalized_matrix_element_samples(base_store, path=str(data_path))
+    run_fourier_transform(
+        base_store,
+        k_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
+        method="GI",
+        order="LA",
+        part="re",
+        output_scale=1.0,
+    )
+    base = base_store["fourier_result"]
+
+    scaled_store = {}
+    load_renormalized_matrix_element_samples(scaled_store, path=str(data_path))
+    scaled_run = run_fourier_transform(
+        scaled_store,
+        k_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
+        method="GI",
+        order="LA",
+        part="re",
+        output_scale=2.0,
+    )
+    scaled = scaled_store["fourier_result"]
+
+    assert scaled["output_scale"] == 2.0
+    assert scaled_run["output_scale"] == 2.0
+    assert np.allclose(scaled["ft_re_samples"], 2.0 * base["ft_re_samples"])
+    assert np.allclose(scaled["ft_re_mean"], 2.0 * base["ft_re_mean"])
+    assert np.allclose(scaled["ft_re_stat_sdev"], 2.0 * base["ft_re_stat_sdev"])
+    assert np.allclose(scaled["ft_re_sys_sdev"], 2.0 * base["ft_re_sys_sdev"])
+    artifact = np.load(scaled_run["artifact"])
+    assert float(artifact["output_scale"]) == 2.0
+
+
 def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"

@@ -14,13 +14,15 @@ Do this by emitting one action at a time:
    for NPZ files or input_format='h5' for HDF5 files. For HDF5 inputs, pass
    h5_group when the desired group cannot be inferred from the file name.
    If metadata.fourier specifies coord_key, re_key, im_key, or resample_mode,
-   pass those values to the loader.
+   pass those values to the loader. Do not pass resample_mode to
+   run_fourier_transform; the transform reads the mode from the loaded
+   EnsembleData.
    If an upstream stage already produced store['matrix_element_data'], skip the
    loader and run the transform directly on that EnsembleData.
 2. run_fourier_transform with explicit k_grid (list or compact {start, stop, num/step}),
    method, order, observable, coord_unit, and pz_gev/a_fm when needed.
    If metadata.fourier specifies im_flip_for_ft, Lambda0,
-   posterior_prior_error_scale, fit_error_mode, part, or save_path, pass those
+   posterior_prior_error_scale, fit_error_mode, part, output_scale, or save_path, pass those
    values to run_fourier_transform.
    If the manifest gives scheme_scan, pass it through. If it omits any of
    zmin_values/zmax_values/min_width/z_ext_max/smooth, the tool will fill the
@@ -50,6 +52,10 @@ Do this by emitting one action at a time:
    real part and sets the coordinate-space imaginary extension to zero, and
    'im' does the corresponding imaginary-only fit with coordinate-space real
    extension fixed to zero. The default is 'both'.
+   output_scale multiplies the final Fourier-space samples, means, and
+   statistical/systematic errors after fitting and model averaging. Use
+   output_scale=2.0 with part='re' when a real-part Fourier transform should be
+   converted to the valence q-qbar convention.
    Fit windows must include at least as many coordinate points as the selected
    model has parameters.
    Prefer scheme_scan when the manifest provides it, so the tool can score and

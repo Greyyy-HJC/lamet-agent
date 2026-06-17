@@ -42,6 +42,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "posterior_prior_error_scale",
         "fit_error_mode",
         "part",
+        "output_scale",
         "save_path",
         "plot_fourier",
         "plot_extension",
@@ -382,7 +383,7 @@ def prepare_tool_args(
                 merged["path"] = manifest.metadata["fourier_input"]
             resolved = resolve_tool_args(merged, manifest)
         elif tool_name == "run_fourier_transform":
-            merged = dict(resolved)
+            merged = {key: resolved[key] for key in _FOURIER_RUN_KEYS if key in resolved}
             merged.update({key: fourier[key] for key in _FOURIER_RUN_KEYS if key in fourier})
             _resolve_nested_output_paths(merged, manifest, ("plot_fourier", "plot_extension", "report"))
             resolved = merged

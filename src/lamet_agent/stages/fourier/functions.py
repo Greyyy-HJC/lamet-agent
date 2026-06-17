@@ -1437,6 +1437,7 @@ def _save_fourier_npz(path: Path, result: dict[str, Any]) -> None:
         order=np.asarray(result.get("order", "")),
         observable=np.asarray(result.get("observable", "")),
         part=np.asarray(result.get("part", "both")),
+        output_scale=np.asarray(result.get("output_scale", 1.0), dtype=float),
     )
 
 
@@ -1988,6 +1989,32 @@ def _apply_scheme_model_average(
     result["best_scheme_label"] = result["scheme_labels"][best]
 
 
+def _apply_fourier_output_scale(result: dict[str, Any], output_scale: float) -> None:
+    """Scale Fourier-space outputs without changing coordinate-space fits."""
+    scale = float(output_scale)
+    if scale == 1.0:
+        result["output_scale"] = scale
+        return
+    for key in (
+        "ft_re_samples",
+        "ft_im_samples",
+        "ft_re_mean",
+        "ft_im_mean",
+    ):
+        if key in result:
+            result[key] = np.asarray(result[key], dtype=float) * scale
+    error_scale = abs(scale)
+    for key in (
+        "ft_re_stat_sdev",
+        "ft_im_stat_sdev",
+        "ft_re_sys_sdev",
+        "ft_im_sys_sdev",
+    ):
+        if key in result:
+            result[key] = np.asarray(result[key], dtype=float) * error_scale
+    result["output_scale"] = scale
+
+
 def run_fourier_transform(
     store: dict[str, Any],
     *,
@@ -2005,6 +2032,7 @@ def run_fourier_transform(
     posterior_prior_error_scale: float = 3.0,
     fit_error_mode: str = "diagonal",
     part: str = "both",
+    output_scale: float = 1.0,
     save_path: str | None = None,
     plot_fourier: dict[str, Any] | None = None,
     plot_extension: dict[str, Any] | None = None,
@@ -2086,6 +2114,7 @@ def run_fourier_transform(
             roughness_weight=float(scheme_scan["roughness_weight"]),
             resample_mode=resample_mode,
         )
+    _apply_fourier_output_scale(result, float(output_scale))
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
     store[out] = result
     artifact = _artifact_path(save_path, default_name=f"{out}.npz", artifacts_dir=artifacts_dir)
@@ -2121,6 +2150,7 @@ def run_fourier_transform(
         "fit_failures": result["fit_failures"],
         "best_scheme_index": result.get("best_scheme_index"),
         "best_scheme_label": result.get("best_scheme_label"),
+        "output_scale": result.get("output_scale", 1.0),
         "auto_scheme_scan": auto_scheme_scan,
     }
 
@@ -2148,6 +2178,7 @@ def summarize_fourier_result(
         "best_scheme_index": data.get("best_scheme_index"),
         "best_scheme_label": data.get("best_scheme_label"),
         "fit_info_artifact": data.get("fit_info_artifact"),
+        "output_scale": data.get("output_scale", 1.0),
     }
     store[out] = summary
     return {"out": out, **summary}

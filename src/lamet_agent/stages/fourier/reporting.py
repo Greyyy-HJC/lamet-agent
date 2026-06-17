@@ -170,6 +170,93 @@ def _field_definitions(*, language: str) -> list[str]:
     ]
 
 
+def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
+    part = str(result.get("part", "both")).lower()
+    scale = float(result.get("output_scale", 1.0))
+    if language == "zh":
+        intro = (
+            f"本次设置为 `part={part}` 且 `output_scale={_fmt(scale)}`。"
+            "在常用的扩展分布约定"
+            "$q_{\\rm ext}(x)=q(x)$（$x>0$）和 $q_{\\rm ext}(-x)=-\\bar q(x)$ 下，"
+            "坐标空间矩阵元满足"
+            "$h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$。"
+        )
+        if part == "both":
+            meaning = (
+                "因此 `both` 使用完整复矩阵元，目标是重建完整的扩展 quasi 分布 "
+                "$q_{\\rm ext}(x)$。若 `output_scale=1`，这就是未额外归一化的完整 Fourier 结果；"
+                "若使用其它缩放因子，则只是整体改变输出归一化，并不自动变成新的投影物理量。"
+            )
+        elif part == "re":
+            meaning = (
+                "实部对应余弦投影，即"
+                "$\\mathrm{FT}[\\mathrm{Re}\\,h]=[q_{\\rm ext}(x)+q_{\\rm ext}(-x)]/2$。"
+                "对 $x>0$，这等于 $[q(x)-\\bar q(x)]/2$。"
+            )
+            if np.isclose(scale, 2.0):
+                meaning += " 因此 `part=re, output_scale=2` 给出 valence 组合 $q(x)-\\bar q(x)$。"
+            elif np.isclose(scale, 1.0):
+                meaning += " 因此 `output_scale=1` 给出 valence 组合的一半。"
+            else:
+                meaning += f" 当前缩放因子 {_fmt(scale)} 给出按该因子归一化后的实部投影。"
+        elif part == "im":
+            meaning = (
+                "虚部对应正弦/反对称投影，即"
+                "$\\mathrm{FT}[\\mathrm{Im}\\,h]$ 隔离与 $[q_{\\rm ext}(x)-q_{\\rm ext}(-x)]/2$ 对应的组合；"
+                "对 $x>0$，在符号约定一致时对应 $[q(x)+\\bar q(x)]/2$。"
+            )
+            if np.isclose(scale, 2.0):
+                meaning += " 因此 `part=im, output_scale=2` 对应 $q(x)+\\bar q(x)$ 型组合，整体符号仍取决于虚部和 `im_flip_for_ft` 约定。"
+            elif np.isclose(scale, 1.0):
+                meaning += " 因此 `output_scale=1` 给出该组合的一半。"
+            else:
+                meaning += f" 当前缩放因子 {_fmt(scale)} 给出按该因子归一化后的虚部投影。"
+        else:
+            meaning = "该 `part` 设置未识别，报告只记录数值缩放，不赋予额外物理投影解释。"
+        return ["## Part/Scale 物理解释", intro, "", meaning]
+
+    intro = (
+        f"This run uses `part={part}` and `output_scale={_fmt(scale)}`. "
+        "With the common extended-distribution convention "
+        "$q_{\\rm ext}(x)=q(x)$ for $x>0$ and $q_{\\rm ext}(-x)=-\\bar q(x)$, "
+        "the coordinate-space matrix element obeys "
+        "$h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$."
+    )
+    if part == "both":
+        meaning = (
+            "`both` uses the full complex matrix element and reconstructs the full extended quasi-distribution "
+            "$q_{\\rm ext}(x)$. With `output_scale=1`, this is the unscaled full Fourier result; other scale values "
+            "change only the overall normalization and do not define a new projection by themselves."
+        )
+    elif part == "re":
+        meaning = (
+            "The real part gives the cosine projection "
+            "$\\mathrm{FT}[\\mathrm{Re}\\,h]=[q_{\\rm ext}(x)+q_{\\rm ext}(-x)]/2$, "
+            "which equals $[q(x)-\\bar q(x)]/2$ for $x>0$."
+        )
+        if np.isclose(scale, 2.0):
+            meaning += " Therefore `part=re, output_scale=2` gives the valence combination $q(x)-\\bar q(x)$."
+        elif np.isclose(scale, 1.0):
+            meaning += " Therefore `output_scale=1` gives one half of the valence combination."
+        else:
+            meaning += f" The current scale {_fmt(scale)} returns this real-part projection with that overall normalization."
+    elif part == "im":
+        meaning = (
+            "The imaginary part gives the sine/antisymmetric projection associated with "
+            "$[q_{\\rm ext}(x)-q_{\\rm ext}(-x)]/2$, which corresponds to $[q(x)+\\bar q(x)]/2$ for $x>0$ "
+            "when the sign convention is aligned."
+        )
+        if np.isclose(scale, 2.0):
+            meaning += " Therefore `part=im, output_scale=2` corresponds to a $q(x)+\\bar q(x)$-type combination, with the overall sign set by the imaginary-part and `im_flip_for_ft` convention."
+        elif np.isclose(scale, 1.0):
+            meaning += " Therefore `output_scale=1` gives one half of that combination."
+        else:
+            meaning += f" The current scale {_fmt(scale)} returns this imaginary-part projection with that overall normalization."
+    else:
+        meaning = "This `part` setting is not recognized, so only the numerical output scale is reported."
+    return ["## Part/Scale Physical Interpretation", intro, "", meaning]
+
+
 def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
     failures = np.asarray(result.get("fit_failures", []), dtype=float)
     chi2 = np.asarray(result.get("scheme_fit_chi2_dof", []), dtype=float)
@@ -315,6 +402,7 @@ def _settings_table(
         ("Coordinate unit", f"{_display_unit(result.get('coord_unit', 'not recorded'))}; fit unit {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
         ("Fit lower bound", f"$\\Lambda_0\\ge {_fmt(result.get('Lambda0'))}$"),
         ("Weak-prior scale", f"$p_i=\\bar p_i\\pm s\\sigma_{{p_i}}$ with $s={_fmt(result.get('posterior_prior_error_scale'))}$"),
+        ("Output scale", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
         ("Best fit range", fit_range_text),
         ("Extension endpoint", f"$z_{{\\rm ext}}^{{\\rm max}}={_fmt(z_ext_max)}$"),
         ("Fourier grid", _format_grid(k_grid, language=language)),
@@ -328,6 +416,7 @@ def _settings_table(
             ("坐标单位", f"{_display_unit(result.get('coord_unit', 'not recorded'))}；拟合单位 {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
             ("拟合下界", f"$\\Lambda_0\\ge {_fmt(result.get('Lambda0'))}$"),
             ("弱先验尺度", f"$p_i=\\bar p_i\\pm s\\sigma_{{p_i}}$，其中 $s={_fmt(result.get('posterior_prior_error_scale'))}$"),
+            ("输出缩放", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
             ("最优拟合区间", fit_range_text),
             ("外推终点", f"$z_{{\\rm ext}}^{{\\rm max}}={_fmt(z_ext_max)}$"),
             ("傅立叶网格", _format_grid(k_grid, language=language)),
@@ -422,6 +511,8 @@ def build_fourier_report_markdown(
             "### 条目解释",
             *_field_definitions(language="zh"),
             "",
+            *_projection_text(result, language="zh"),
+            "",
             "## 长程外推形式",
             _tail_formula_text(result, language="zh"),
             "",
@@ -464,6 +555,8 @@ def build_fourier_report_markdown(
             "",
             "### Field Definitions",
             *_field_definitions(language="en"),
+            "",
+            *_projection_text(result, language="en"),
             "",
             "## Large-Distance Extrapolation",
             _tail_formula_text(result, language="en"),

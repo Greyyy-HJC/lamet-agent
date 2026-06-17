@@ -202,7 +202,8 @@
       "observable": "pion_quark_quasi_pdf",
       "order": "NLA",
       "fit_error_mode": "covariance",
-	  "part": "both",
+      "part": "re",
+      "output_scale": 2.0,
       "coord_unit": "lattice",
 	  "im_flip_for_ft": true,
       "pz_gev": 2.15,
@@ -243,8 +244,8 @@
       "component": "re",
       "plot": {
         "save_path": "examples/artifacts/matched_pdf",
-		"xlim": [-2, 2],
-		"ylim": [-0.3, 3]
+        "xlim": [-0.01, 1.01],
+        "ylim": [-0.2, 4.4]
       }
     }
   }

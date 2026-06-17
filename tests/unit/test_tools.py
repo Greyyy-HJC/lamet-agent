@@ -64,7 +64,7 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
 
     run_args = prepare_tool_args(
         "run_fourier_transform",
-        {"method": "CG"},
+        {"method": "CG", "resample_mode": "bs"},
         manifest=manifest,
         artifacts_dir=tmp_path / "artifacts",
         _store={},
@@ -79,6 +79,7 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
     assert run_args["plot_extension"] == {"scheme_index": 2, "save_path": "ext_re.pdf"}
     assert run_args["report"] == {"save_path": "report_fourier.md"}
     assert run_args["artifacts_dir"] == str(tmp_path / "artifacts")
+    assert "resample_mode" not in run_args
 
     plot_args = prepare_tool_args(
         "plot_fourier_result",
