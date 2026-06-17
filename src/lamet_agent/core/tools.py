@@ -9,12 +9,20 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable
 
-from lamet_agent.manifest import AnalysisManifest, resolve_data_path
+from lamet_agent.manifest import AnalysisManifest, resolve_data_path, resolve_root_path
 
 from .stages import resolve_stage_package
 
 _PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid", "plot_matched_pdf"})
 _RENORM_ARTIFACT_TOOLS = frozenset({"apply_ratio_scheme_renormalization", "plot_renormalized_matrix_element"})
+_FOURIER_ARTIFACT_TOOLS = frozenset(
+    {
+        "run_fourier_transform",
+        "plot_fourier_result",
+        "plot_fourier_extension_quality_result",
+        "report_fourier_result",
+    }
+)
 _RENORM_APPLY_KEYS = frozenset({"target", "denominator", "zs", "delta_m", "m0", "z0", "save_path"})
 _RENORM_PLOT_KEYS = frozenset({"data", "title"})
 _FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key", "resample_mode"})
@@ -35,9 +43,14 @@ _FOURIER_RUN_KEYS = frozenset(
         "fit_error_mode",
         "part",
         "save_path",
+        "plot_fourier",
+        "plot_extension",
+        "report",
     }
 )
 _MATCHING_PLOT_KEYS = frozenset({"save_path", "xlim", "ylim"})
+_MATCHING_LOAD_KEYS = frozenset({"quasi_input", "component"})
+_MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "pz_gev", "mu"})
 _CORRELATOR_PT2_TOOLS = frozenset({"inspect_correlator_scale", "tune_ground_state"})
 _CORRELATOR_GRID_TOOLS = frozenset({"tune_bare_matrix", "fit_bare_matrix_grid"})
 _CORRELATOR_PT2_KEYS = frozenset({"pt2_path", "pt2_windows", "nstate", "svdcut", "resample_mode", "n_boot", "seed"})
@@ -145,19 +158,70 @@ def resolve_plot_save_path(
     *,
     artifacts_dir: Path,
     default_stem: str = "fit_on_data",
+    root_directory: Path | None = None,
 ) -> str:
-    """Map any plot save_path to a stem under ``artifacts_dir``."""
+    """Resolve output stems.
+
+    Defaults go under ``artifacts_dir``. Explicit relative paths are resolved
+    against ``root_directory`` when the manifest declares one; otherwise they
+    preserve the historical behavior of writing under ``artifacts_dir``.
+    """
     if raw:
-        stem = Path(raw).name
+        if root_directory is None:
+            stem = Path(raw).name
+            for suffix in (".png", ".pdf", ".svg"):
+                if stem.lower().endswith(suffix):
+                    stem = stem[: -len(suffix)]
+                    break
+            if not stem:
+                stem = default_stem
+            return str(artifacts_dir / stem)
+
+        stem_path = Path(raw).expanduser()
+        stem_text = str(stem_path)
         for suffix in (".png", ".pdf", ".svg"):
-            if stem.lower().endswith(suffix):
-                stem = stem[: -len(suffix)]
+            if stem_text.lower().endswith(suffix):
+                stem_text = stem_text[: -len(suffix)]
                 break
-        if not stem:
-            stem = default_stem
+        stem_path = Path(stem_text)
+        if str(stem_path) in {"", "."}:
+            stem_path = Path(default_stem)
+        if stem_path.is_absolute():
+            return str(stem_path)
+        if root_directory is not None:
+            return str((root_directory / stem_path).resolve())
     else:
         stem = default_stem
     return str(artifacts_dir / stem)
+
+
+def _manifest_root(manifest: AnalysisManifest) -> Path | None:
+    root = manifest.root_directory
+    return Path(root).expanduser().resolve() if root is not None else None
+
+
+def _default_artifacts_dir(manifest: AnalysisManifest, fallback: Path) -> Path:
+    root = _manifest_root(manifest)
+    if root is not None:
+        return root / "examples" / "artifacts"
+    return fallback
+
+
+def _resolve_output_path(value: str, manifest: AnalysisManifest) -> str:
+    candidate = Path(value).expanduser()
+    if candidate.is_absolute():
+        return str(candidate)
+    root = _manifest_root(manifest)
+    if root is not None:
+        return str((root / candidate).resolve())
+    return value
+
+
+def _resolve_nested_output_paths(config: dict[str, Any], manifest: AnalysisManifest, keys: tuple[str, ...]) -> None:
+    for key in keys:
+        value = config.get(key)
+        if isinstance(value, dict) and isinstance(value.get("save_path"), str):
+            value["save_path"] = _resolve_output_path(value["save_path"], manifest)
 
 
 def _run_scoped_plot_stem(manifest: AnalysisManifest, stem: str) -> str:
@@ -188,6 +252,8 @@ def validate_stage_inputs(stage: str, manifest: Any) -> list[str]:
 def _resolve_one_data_path(value: str, manifest: AnalysisManifest) -> str:
     if Path(value).is_absolute():
         return value
+    if manifest.root_directory is not None:
+        return resolve_root_path(manifest.root_directory, value)
     if manifest.manifest_dir is None or manifest.project_root is None:
         return value
     return resolve_data_path(manifest.project_root, manifest.manifest_dir, value)
@@ -205,7 +271,7 @@ def _resolve_path_container(value: Any, manifest: AnalysisManifest) -> Any:
 
 def resolve_tool_args(args: dict[str, Any], manifest: AnalysisManifest) -> dict[str, Any]:
     """Resolve manifest-relative file paths in tool arguments."""
-    if manifest.manifest_dir is None or manifest.project_root is None:
+    if manifest.root_directory is None and (manifest.manifest_dir is None or manifest.project_root is None):
         return args
     resolved = dict(args)
     for key in ("path", "pt2_path", "pt3_paths", "report_json", "target_report_json", "denominator_report_json"):
@@ -277,6 +343,7 @@ def prepare_tool_args(
     _store: dict[str, Any],
 ) -> dict[str, Any]:
     """Resolve paths and force plot output under ``artifacts_dir``."""
+    artifacts_dir = _default_artifacts_dir(manifest, artifacts_dir)
     resolved = _merge_correlator_grid_args(tool_name, resolve_tool_args(args, manifest), manifest)
     renorm = manifest.metadata.get("renormalization", {})
     if isinstance(renorm, dict):
@@ -317,6 +384,7 @@ def prepare_tool_args(
         elif tool_name == "run_fourier_transform":
             merged = dict(resolved)
             merged.update({key: fourier[key] for key in _FOURIER_RUN_KEYS if key in fourier})
+            _resolve_nested_output_paths(merged, manifest, ("plot_fourier", "plot_extension", "report"))
             resolved = merged
         elif tool_name == "plot_fourier_result":
             merged = dict(resolved)
@@ -328,12 +396,33 @@ def prepare_tool_args(
             if isinstance(fourier.get("plot_extension"), dict):
                 merged.update(fourier["plot_extension"])
             resolved = merged
+        elif tool_name == "report_fourier_result":
+            merged = dict(resolved)
+            if isinstance(fourier.get("report"), dict):
+                merged.update(fourier["report"])
+            resolved = merged
+        if tool_name in _FOURIER_ARTIFACT_TOOLS:
+            if isinstance(resolved.get("save_path"), str):
+                resolved["save_path"] = _resolve_output_path(resolved["save_path"], manifest)
+            resolved["artifacts_dir"] = str(artifacts_dir)
     matching = manifest.metadata.get("matching", {})
-    if isinstance(matching, dict) and tool_name == "plot_matched_pdf":
-        merged = dict(resolved)
-        if isinstance(matching.get("plot"), dict):
-            merged.update({key: matching["plot"][key] for key in _MATCHING_PLOT_KEYS if key in matching["plot"]})
-        resolved = merged
+    if isinstance(matching, dict):
+        if tool_name == "load_quasi_pdf":
+            merged = dict(resolved)
+            if "path" not in merged and isinstance(matching.get("quasi_input"), str):
+                merged["path"] = matching["quasi_input"]
+            if "component" in matching and "component" not in merged:
+                merged["component"] = matching["component"]
+            resolved = resolve_tool_args(merged, manifest)
+        elif tool_name == "build_matching_kernel":
+            merged = dict(resolved)
+            merged.update({key: matching[key] for key in _MATCHING_KERNEL_KEYS if key in matching})
+            resolved = merged
+        elif tool_name == "plot_matched_pdf":
+            merged = dict(resolved)
+            if isinstance(matching.get("plot"), dict):
+                merged.update({key: matching["plot"][key] for key in _MATCHING_PLOT_KEYS if key in matching["plot"]})
+            resolved = merged
     if tool_name in _RENORM_ARTIFACT_TOOLS:
         raw_save = resolved.get("save_path")
         if isinstance(raw_save, str) or raw_save is None:
@@ -343,6 +432,7 @@ def prepare_tool_args(
                 raw_save if isinstance(raw_save, str) else None,
                 artifacts_dir=artifacts_dir,
                 default_stem=default_stem,
+                root_directory=_manifest_root(manifest),
             )
         resolved["artifacts_dir"] = str(artifacts_dir)
     if tool_name in _PLOT_TOOLS:
@@ -363,6 +453,7 @@ def prepare_tool_args(
                 raw_save if isinstance(raw_save, str) else None,
                 artifacts_dir=artifacts_dir,
                 default_stem=default_stem,
+                root_directory=_manifest_root(manifest),
             )
         resolved["artifacts_dir"] = str(artifacts_dir)
     return resolved

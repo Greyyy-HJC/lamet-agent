@@ -47,7 +47,11 @@ def _run_stage(
     """Run one stage: drive the session and execute tool calls."""
     tools = resolve_stage_tools(stage)
     observations: list[dict[str, Any]] = []
-    artifacts_dir = Path.cwd() / "artifacts"
+    artifacts_dir = (
+        manifest.root_directory / "examples" / "artifacts"
+        if manifest.root_directory is not None
+        else Path.cwd() / "artifacts"
+    )
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     static_prompt = build_stage_static_prompt(

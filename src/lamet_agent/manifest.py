@@ -55,6 +55,7 @@ class AnalysisManifest(BaseModel):
 
     run_id: str
     goal: str = "full_lamet_pipeline"
+    root_directory: Path | None = None
     correlators: list[CorrelatorInput] = Field(default_factory=list)
     kernels: list[KernelInput] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
@@ -92,6 +93,14 @@ def find_project_root(start: Path) -> Path:
     return start
 
 
+def resolve_root_path(root_directory: Path, path: str) -> str:
+    """Resolve an absolute or root-directory-relative path."""
+    candidate = Path(path).expanduser()
+    if candidate.is_absolute():
+        return str(candidate)
+    return str((root_directory / candidate).resolve())
+
+
 def resolve_data_path(project_root: Path, manifest_dir: Path, path: str) -> str:
     """Resolve a correlator path against manifest or project root."""
     candidate = Path(path)
@@ -118,9 +127,20 @@ def validate_manifest_file(path: Path) -> AnalysisManifest:
         resolve_callable(kernel.function)
 
     manifest_dir = manifest_path.parent
-    project_root = find_project_root(manifest_dir)
+    declared_root = manifest.root_directory
+    if declared_root is not None:
+        root_directory = Path(declared_root).expanduser().resolve()
+        if not root_directory.is_absolute():
+            raise ValueError("root_directory must be an absolute path or '~'-expanded absolute path")
+        manifest.root_directory = root_directory
+        project_root = root_directory
+    else:
+        project_root = find_project_root(manifest_dir)
     manifest.manifest_dir = manifest_dir
     manifest.project_root = project_root
     for correlator in manifest.correlators:
-        correlator.path = resolve_data_path(project_root, manifest_dir, correlator.path)
+        if manifest.root_directory is not None:
+            correlator.path = resolve_root_path(manifest.root_directory, correlator.path)
+        else:
+            correlator.path = resolve_data_path(project_root, manifest_dir, correlator.path)
     return manifest

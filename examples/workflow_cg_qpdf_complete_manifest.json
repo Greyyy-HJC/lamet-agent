@@ -1,6 +1,7 @@
 {
   "run_id": "workflow_cg_qpdf_complete",
   "goal": "full_lamet_pipeline",
+  "root_directory": "~/lamet-agent",
   "correlators": [
     {
       "dataset_id": "hisqa060_x_cg52bxp30_2pt",
@@ -184,7 +185,7 @@
       "fit_strategy": "joint"
     },
     "renormalization": {
-      "denominator_report_json": "runs/ds_pdf_complete/artifacts/a060_x_p0_bare_matrix_elements_report.json",
+      "denominator_report_json": "examples/artifacts/a060_x_p0_bare_matrix_elements_report.json",
       "zs": 4,
       "delta_m": 0,
       "m0": 0,
@@ -194,13 +195,14 @@
         "title": "HISQa060_X PX5 ratio-scheme renormalized matrix elements"
       }
     },
-    "fourier_input": "runs/ds_pdf_complete/artifacts/a060_x_p5_renormalized_matrix_elements.npz",
+    "fourier_input": "examples/artifacts/a060_x_p5_renormalized_matrix_elements.npz",
     "fourier": {
       "resample_mode": "jk",
       "method": "CG",
       "observable": "pion_quark_quasi_pdf",
       "order": "NLA",
       "fit_error_mode": "covariance",
+	  "part": "both",
       "coord_unit": "lattice",
 	  "im_flip_for_ft": true,
       "pz_gev": 2.15,
@@ -228,18 +230,21 @@
         "roughness_weight": 1.0,
         "model_average": false,
         "max_schemes": 1
+      },
+      "report": {
+        "save_path": "examples/artifacts/report_fourier.md"
       }
     },
     "matching": {
-      "quasi_input": "runs/ds_pdf_complete/artifacts/fourier_result.npz",
+      "quasi_input": "examples/artifacts/fourier_result.npz",
       "kernel_id": "unpolarized_gT",
       "pz_gev": 2.15,
       "mu": 2.0,
       "component": "re",
       "plot": {
-        "save_path": "artifacts/matched_pdf",
-		"xlim": [-0.01, 1.01],
-        "ylim": [-0.3, 4.5]
+        "save_path": "examples/artifacts/matched_pdf",
+		"xlim": [-2, 2],
+		"ylim": [-0.3, 3]
       }
     }
   }

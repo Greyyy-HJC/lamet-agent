@@ -16,6 +16,7 @@ from lamet_agent.stages.fourier.functions import (
     load_renormalized_matrix_element_samples,
     plot_fourier_extension_quality_result,
     plot_fourier_result,
+    report_fourier_result,
     run_fourier_transform,
     summarize_fourier_result,
 )
@@ -67,6 +68,7 @@ def test_fourier_stage_tools_are_registered() -> None:
     assert "summarize_fourier_result" in tools
     assert "plot_fourier_result" in tools
     assert "plot_fourier_extension_quality_result" in tools
+    assert "report_fourier_result" in tools
 
 
 def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None:
@@ -88,16 +90,26 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         method="GI",
         order="LA",
         Lambda0=0.3,
+        artifacts_dir=str(tmp_path / "artifacts"),
     )
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
     assert Path(run["artifact"]).is_file()
+    assert Path(run["artifact"]).parent == tmp_path / "artifacts"
     ft_data, ft_extra = EnsembleData.load_npz(run["artifact"])
     assert ft_data.dims == ["x"]
     assert ft_data.resample == "bootstrap"
     assert ft_data.values.shape == (3, 3)
     assert "ft_re_mean" in ft_extra
     assert Path(run["fit_info_artifact"]).is_file()
+    assert Path(run["plot"]).is_file()
+    assert Path(run["plot"]).with_suffix(".png").is_file()
+    assert Path(run["plot_re"]).is_file()
+    assert Path(run["plot_re"]).with_suffix(".png").is_file()
+    assert Path(run["plot_im"]).is_file()
+    assert Path(run["plot_im"]).with_suffix(".png").is_file()
+    assert Path(run["report"]).is_file()
+    assert Path(run["report_cn"]).is_file()
     fit_data, fit_extra = EnsembleData.load_npz(run["fit_info_artifact"])
     assert fit_data.dims == ["scheme", "parameter"]
     assert fit_data.resample == "bootstrap"
@@ -125,6 +137,38 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     extension_plot = plot_fourier_extension_quality_result(store)
     assert Path(extension_plot["plot_re"]).is_file()
     assert Path(extension_plot["plot_im"]).is_file()
+
+    report = report_fourier_result(store)
+    report_path = Path(report["report"])
+    report_cn_path = Path(report["report_cn"])
+    assert report_path.is_file()
+    assert report_cn_path.is_file()
+    report_text = report_path.read_text(encoding="utf-8")
+    report_cn_text = report_cn_path.read_text(encoding="utf-8")
+    assert "# Fourier Transform Analysis Report" in report_text
+    assert "nucleon_quark_transversity_quasi_pdf" in report_text
+    assert "GI" in report_text
+    assert "LA" in report_text
+    assert "Active fitted component" in report_text
+    assert "fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together" in report_text
+    assert "Scheme Diagnostics" in report_text
+    assert "q(x)=\\frac{\\Delta\\lambda}{2\\pi}" in report_text
+    assert "![Fourier result]" in report_text
+    assert "fourier_result.png" in report_text
+    assert "Reading the NPZ Outputs" in report_text
+    assert "fourier_result.npz" in report_text
+    assert "fourier_fit_info.npz" in report_text
+    assert Path(run["artifact"]).name in report_text
+    assert Path(run["fit_info_artifact"]).name in report_text
+    assert report_cn_path.name == "report_fourier_CN.md"
+    assert "# 傅立叶变换分析报告" in report_cn_text
+    assert "Active fitted component" in report_cn_text
+    assert "实部和虚部同时参与拟合" in report_cn_text
+    assert "图像与可视化评估" in report_cn_text
+    assert "如何读取 NPZ 输出" in report_cn_text
+    assert "fourier_result.npz" in report_cn_text
+    assert "fourier_fit_info.npz" in report_cn_text
+    assert "fourier_result.png" in report_cn_text
 
     data = store["fourier_result"]
     fig, ax = plot_fourier_extension_quality(
@@ -522,6 +566,63 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
     assert "min_width" in auto
     assert "z_ext_max" in auto
     assert auto["smooth"] == "linear"
+
+
+def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    coord = np.arange(0.0, 25.0)
+    base_re = np.exp(-0.08 * coord) * np.cos(0.15 * coord)
+    base_im = 0.2 * np.exp(-0.08 * coord) * np.sin(0.12 * coord)
+    scales = np.array([0.98, 1.0, 1.02, 1.01])
+    re_samples = scales[:, None] * base_re[None, :]
+    im_samples = scales[:, None] * base_im[None, :]
+    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path), resample_mode="jk")
+
+    run = run_fourier_transform(
+        store,
+        k_grid={"start": -0.5, "stop": 0.5, "num": 6},
+        method="CG",
+        order="NLA",
+        observable="pion_quark_quasi_pdf",
+        part="both",
+    )
+
+    assert run["n_schemes"] > 0
+    assert run["auto_scheme_scan"]["min_fit_points"] == 7
+
+
+def test_fourier_auto_scan_prefers_tail_region_for_lattice_units(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    coord = np.arange(0.0, 25.0)
+    base_re = np.exp(-0.08 * coord) * np.cos(0.15 * coord)
+    base_im = 0.2 * np.exp(-0.08 * coord) * np.sin(0.12 * coord)
+    scales = np.array([0.98, 1.0, 1.02, 1.01, 0.99])
+    re_samples = scales[:, None] * base_re[None, :]
+    im_samples = scales[:, None] * base_im[None, :]
+    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path), resample_mode="jk")
+
+    run = run_fourier_transform(
+        store,
+        k_grid={"start": -0.5, "stop": 0.5, "num": 6},
+        method="CG",
+        order="NLA",
+        observable="pion_quark_quasi_pdf",
+        coord_unit="lattice",
+        pz_gev=2.15,
+        a_fm=0.0574,
+        part="both",
+    )
+
+    auto = run["auto_scheme_scan"]
+    assert auto["zmax_values"] == [21.0, 22.0, 23.0, 24.0]
+    assert auto["zmin_values"] == [9.0, 10.0, 11.0, 12.0]
+    assert min(auto["zmin_values"]) > 8.0
 
 
 def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) -> None:

@@ -44,6 +44,7 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
                     "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
                     "plot_fourier": {"save_path": "ft.pdf", "title": "FT"},
                     "plot_extension": {"scheme_index": 2, "save_path": "ext_re.pdf"},
+                    "report": {"save_path": "report_fourier.md"},
                 },
             },
         }
@@ -74,6 +75,10 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
     assert run_args["part"] == "im"
     assert run_args["save_path"] == "ft_result.npz"
     assert run_args["k_grid"]["num"] == 401
+    assert run_args["plot_fourier"] == {"save_path": "ft.pdf", "title": "FT"}
+    assert run_args["plot_extension"] == {"scheme_index": 2, "save_path": "ext_re.pdf"}
+    assert run_args["report"] == {"save_path": "report_fourier.md"}
+    assert run_args["artifacts_dir"] == str(tmp_path / "artifacts")
 
     plot_args = prepare_tool_args(
         "plot_fourier_result",
@@ -82,7 +87,7 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
         artifacts_dir=tmp_path / "artifacts",
         _store={},
     )
-    assert plot_args == {"save_path": "ft.pdf", "title": "FT"}
+    assert plot_args == {"save_path": "ft.pdf", "title": "FT", "artifacts_dir": str(tmp_path / "artifacts")}
 
     extension_args = prepare_tool_args(
         "plot_fourier_extension_quality_result",
@@ -91,7 +96,82 @@ def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> No
         artifacts_dir=tmp_path / "artifacts",
         _store={},
     )
-    assert extension_args == {"scheme_index": 2, "save_path": "ext_re.pdf"}
+    assert extension_args == {
+        "scheme_index": 2,
+        "save_path": "ext_re.pdf",
+        "artifacts_dir": str(tmp_path / "artifacts"),
+    }
+
+    report_args = prepare_tool_args(
+        "report_fourier_result",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={},
+    )
+    assert report_args == {"save_path": "report_fourier.md", "artifacts_dir": str(tmp_path / "artifacts")}
+
+
+def test_prepare_tool_args_uses_root_directory_for_fourier_paths(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "fourier",
+            "goal": "full_lamet_pipeline",
+            "root_directory": str(root),
+            "metadata": {
+                "fourier_input": "examples/artifacts/matrix_element.npz",
+                "fourier": {
+                    "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
+                    "save_path": "outputs/ft_result.npz",
+                    "plot_fourier": {"save_path": "plots/ft.pdf"},
+                    "report": {"save_path": "reports/report_fourier.md"},
+                },
+            },
+        }
+    )
+
+    load_args = prepare_tool_args(
+        "load_renormalized_matrix_element_samples",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert load_args["path"] == str(root / "examples" / "artifacts" / "matrix_element.npz")
+
+    run_args = prepare_tool_args(
+        "run_fourier_transform",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert run_args["save_path"] == str(root / "outputs" / "ft_result.npz")
+    assert run_args["plot_fourier"]["save_path"] == str(root / "plots" / "ft.pdf")
+    assert run_args["report"]["save_path"] == str(root / "reports" / "report_fourier.md")
+    assert run_args["artifacts_dir"] == str(root / "examples" / "artifacts")
+
+    plot_args = prepare_tool_args(
+        "plot_fourier_result",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert plot_args["save_path"] == str(root / "plots" / "ft.pdf")
+    assert plot_args["artifacts_dir"] == str(root / "examples" / "artifacts")
+
+    report_args = prepare_tool_args(
+        "report_fourier_result",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert report_args["save_path"] == str(root / "reports" / "report_fourier.md")
+    assert report_args["artifacts_dir"] == str(root / "examples" / "artifacts")
 
 
 def test_prepare_tool_args_fills_correlator_grid_defaults(tmp_path: Path) -> None:
@@ -237,3 +317,55 @@ def test_prepare_tool_args_merges_matching_plot_options(tmp_path: Path) -> None:
     assert plot_args["artifacts_dir"] == str(tmp_path / "artifacts")
     assert plot_args["xlim"] == [-1.5, 1.5]
     assert plot_args["ylim"] == [-0.2, 2.0]
+
+
+def test_prepare_tool_args_uses_root_directory_for_matching_paths(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "matching",
+            "root_directory": str(root),
+            "metadata": {
+                "matching": {
+                    "quasi_input": "examples/artifacts/fourier_result.npz",
+                    "kernel_id": "unpolarized_gT",
+                    "pz_gev": 2.15,
+                    "mu": 2.0,
+                    "component": "re",
+                    "plot": {"save_path": "artifacts/matched_pdf", "xlim": [-2, 2]},
+                }
+            },
+        }
+    )
+
+    load_args = prepare_tool_args(
+        "load_quasi_pdf",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert load_args["path"] == str(root / "examples" / "artifacts" / "fourier_result.npz")
+    assert load_args["component"] == "re"
+
+    kernel_args = prepare_tool_args(
+        "build_matching_kernel",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert kernel_args["kernel_id"] == "unpolarized_gT"
+    assert kernel_args["pz_gev"] == 2.15
+    assert kernel_args["mu"] == 2.0
+
+    plot_args = prepare_tool_args(
+        "plot_matched_pdf",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert plot_args["save_path"] == str(root / "artifacts" / "matched_pdf")
+    assert plot_args["artifacts_dir"] == str(root / "examples" / "artifacts")

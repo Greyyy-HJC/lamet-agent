@@ -25,11 +25,13 @@ from typing import Any
 
 import gvar as gv
 import lsqfit
+import matplotlib.pyplot as plt
 import numpy as np
 
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.plotting import plot_fourier_extension_quality, plot_fourier_npz
 from lamet_agent.core.resampling import bs_ls_avg, jk_ls_avg
+from lamet_agent.stages.fourier.reporting import write_fourier_report
 
 FM_TO_GEV_INV = 5.067731237
 
@@ -153,6 +155,13 @@ def _uses_im(part: str) -> bool:
 
 def _n_fit_channels(part: str) -> int:
     return int(_uses_re(part)) + int(_uses_im(part))
+
+
+def _minimum_fit_points_for_parameters(n_params: int, part: str, requested: int | None = None) -> int:
+    """Minimum coordinate points needed to provide at least n_params data values."""
+    channel_count = max(_n_fit_channels(part), 1)
+    from_parameters = int(np.ceil(float(n_params) / float(channel_count)))
+    return max(from_parameters, int(requested or 0), 2)
 
 
 def _fit_y_data(
@@ -757,7 +766,7 @@ def fit_tail_quality_for_mean(
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
     n_points = int(np.count_nonzero(fit_mask))
     n_params = len(_param_labels(method, order, observable))
-    required_points = max(n_params, int(min_fit_points or 0), 2)
+    required_points = _minimum_fit_points_for_parameters(n_params, part, min_fit_points)
     if n_points < required_points:
         dof = max(1, _n_fit_channels(part) * n_points - n_params)
         return {
@@ -874,7 +883,7 @@ def _run_one_scheme(
 
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
     n_params = len(_param_labels(method, order, observable))
-    required_points = max(n_params, int(min_fit_points or 0), 2)
+    required_points = _minimum_fit_points_for_parameters(n_params, part, min_fit_points)
     if np.count_nonzero(fit_mask) < required_points:
         raise ValueError("fit range has too few points for the selected asymptotic form")
 
@@ -1385,12 +1394,21 @@ def _infer_h5_group(path: str, group_names: list[str]) -> str:
     raise ValueError("h5_group is required when the HDF5 file has multiple groups and no pz can be inferred")
 
 
-def _artifact_path(raw: str | None, *, default_name: str) -> Path:
-    out_dir = Path.cwd() / "artifacts"
+def _artifact_path(raw: str | None, *, default_name: str, artifacts_dir: str | Path | None = None) -> Path:
+    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
     out_dir.mkdir(parents=True, exist_ok=True)
     if raw:
-        return out_dir / Path(raw).name
+        path = Path(raw).expanduser()
+        if path.is_absolute():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return path
+        return out_dir / path
     return out_dir / default_name
+
+
+def _png_companion_path(path: Path) -> Path:
+    """Return a PNG companion path for Markdown image embedding."""
+    return path.with_suffix(".png")
 
 
 def _save_fourier_npz(path: Path, result: dict[str, Any]) -> None:
@@ -1541,7 +1559,15 @@ def _last_stable_z_index(
         curvature_limit = min(2.0, max(0.5, 4.0 * curvature_baseline + 0.05))
         jitter_unstable[1:-1] = curvature > curvature_limit
 
-    unstable = (rel_uncertainty > uncertainty_limit) | jitter_unstable
+    rel_growth = np.ones_like(rel_uncertainty, dtype=float)
+    if len(rel_uncertainty) > 1:
+        previous = np.maximum(rel_uncertainty[:-1], max(baseline, 1e-12))
+        rel_growth[1:] = rel_uncertainty[1:] / previous
+    sharp_uncertainty = (
+        (rel_uncertainty > max(1.0, uncertainty_limit))
+        | ((rel_uncertainty > max(0.7, 2.0 * uncertainty_limit)) & (rel_growth > 1.5))
+    )
+    unstable = sharp_uncertainty | jitter_unstable
     min_points = min(5, len(rel_uncertainty))
     for idx in range(min_points, len(rel_uncertainty) - 1):
         if unstable[idx] and unstable[idx + 1]:
@@ -1564,6 +1590,25 @@ def _first_four_zmin_values(positive: np.ndarray, *, zmax_reference: float, min_
     if len(candidates) < 4:
         candidates = positive[positive < float(zmax_reference)]
     return [float(item) for item in candidates[:4]]
+
+
+def _preferred_tail_start(
+    *,
+    coord_unit: str,
+    pz_gev: float | None,
+    a_fm: float | None,
+) -> float | None:
+    """Return the coordinate closest to z ~= 0.5 fm when unit metadata allows it."""
+    unit = coord_unit.lower()
+    if unit == "fm":
+        return 0.5
+    if unit == "lattice" and a_fm is not None and float(a_fm) > 0:
+        return 0.5 / float(a_fm)
+    if unit == "gev_inv":
+        return 0.5 * FM_TO_GEV_INV
+    if unit == "lambda" and pz_gev is not None:
+        return 0.5 * FM_TO_GEV_INV * float(pz_gev)
+    return None
 
 
 def _tail_quality_stable_start(qualities: list[dict[str, Any]]) -> int:
@@ -1615,6 +1660,7 @@ def _pick_four_zmin_values_by_tail_fit(
     Lambda0: float,
     min_fit_points: int,
     part: str,
+    preferred_zmin: float | None,
 ) -> list[float]:
     stable_starts = []
     for zmax in zmax_values:
@@ -1623,6 +1669,10 @@ def _pick_four_zmin_values_by_tail_fit(
             [candidate for candidate in candidates if np.count_nonzero((positive >= candidate) & (positive <= zmax)) >= min_fit_points],
             dtype=float,
         )
+        if preferred_zmin is not None:
+            preferred_candidates = candidates[candidates >= float(preferred_zmin)]
+            if len(preferred_candidates) > 0:
+                candidates = preferred_candidates
         if len(candidates) == 0:
             continue
         qualities = [
@@ -1649,17 +1699,22 @@ def _pick_four_zmin_values_by_tail_fit(
         stable_starts.append(float(candidates[_tail_quality_stable_start(qualities)]))
 
     if not stable_starts:
-        return _first_four_zmin_values(positive, zmax_reference=max(zmax_values), min_width=min_width)
+        fallback = _first_four_zmin_values(positive, zmax_reference=max(zmax_values), min_width=min_width)
+        if preferred_zmin is None:
+            return fallback
+        preferred = positive[(positive >= float(preferred_zmin)) & (positive <= max(zmax_values) - min_width)]
+        return [float(item) for item in (preferred[:4] if len(preferred) >= 4 else fallback)]
 
     anchor = min(stable_starts)
+    if preferred_zmin is not None:
+        anchor = max(anchor, float(preferred_zmin))
     max_allowed = max(zmax_values) - min_width
     candidates = positive[(positive >= anchor) & (positive <= max_allowed)]
     if len(candidates) < 4:
         candidates = positive[positive <= max_allowed]
     if len(candidates) <= 4:
         return [float(item) for item in candidates]
-    indices = np.linspace(0, len(candidates) - 1, 4)
-    return [float(candidates[int(round(item))]) for item in indices]
+    return [float(item) for item in candidates[:4]]
 
 
 def _default_z_ext_max(
@@ -1709,6 +1764,11 @@ def _auto_fill_scheme_scan(
     min_width = float(spec["min_width"])
 
     if "zmin_values" not in spec and "zmin_start" not in spec:
+        preferred_zmin = _preferred_tail_start(
+            coord_unit=coord_unit,
+            pz_gev=pz_gev,
+            a_fm=a_fm,
+        )
         spec["zmin_values"] = _pick_four_zmin_values_by_tail_fit(
             positive,
             zmax_values=zmax_values,
@@ -1727,6 +1787,7 @@ def _auto_fill_scheme_scan(
             Lambda0=Lambda0,
             min_fit_points=min_fit_points,
             part=part,
+            preferred_zmin=preferred_zmin,
         )
     if "z_ext_max" not in spec:
         spec["z_ext_max"] = _default_z_ext_max(
@@ -1945,6 +2006,10 @@ def run_fourier_transform(
     fit_error_mode: str = "diagonal",
     part: str = "both",
     save_path: str | None = None,
+    plot_fourier: dict[str, Any] | None = None,
+    plot_extension: dict[str, Any] | None = None,
+    report: dict[str, Any] | None = None,
+    artifacts_dir: str | None = None,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
     out = "fourier_result"
@@ -1953,8 +2018,9 @@ def run_fourier_transform(
     matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
     auto_scheme_scan = None
     scan_spec = _fill_scheme_defaults(dict(scheme_scan or {}))
-    min_fit_points = max(
+    min_fit_points = _minimum_fit_points_for_parameters(
         len(_param_labels(method, order, observable)),
+        part,
         int(scan_spec.get("min_fit_points", 0) or 0),
     )
     scan_spec["min_fit_points"] = min_fit_points
@@ -2005,6 +2071,7 @@ def run_fourier_transform(
     result["pz_gev"] = pz_gev
     result["pz_prime_gev"] = pz_prime_gev
     result["a_fm"] = a_fm
+    result["im_flip_for_ft"] = bool(im_flip_for_ft)
     result["Lambda0"] = float(Lambda0)
     result["posterior_prior_error_scale"] = float(posterior_prior_error_scale)
     result["fit_error_mode"] = str(fit_error_mode)
@@ -2021,15 +2088,32 @@ def run_fourier_transform(
         )
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
     store[out] = result
-    artifact = _artifact_path(save_path, default_name=f"{out}.npz")
-    fit_info_artifact = _artifact_path(None, default_name="fourier_fit_info.npz")
+    artifact = _artifact_path(save_path, default_name=f"{out}.npz", artifacts_dir=artifacts_dir)
+    fit_info_artifact = _artifact_path(None, default_name="fourier_fit_info.npz", artifacts_dir=artifacts_dir)
     _save_fourier_npz(artifact, result)
     _save_fourier_fit_info_npz(fit_info_artifact, result)
+    result["artifact"] = str(artifact)
     result["fit_info_artifact"] = str(fit_info_artifact)
+    summary = summarize_fourier_result(store)
+    plot_kwargs = dict(plot_fourier or {})
+    extension_kwargs = dict(plot_extension or {})
+    report_kwargs = dict(report or {})
+    plot = plot_fourier_result(store, artifacts_dir=artifacts_dir, **plot_kwargs)
+    extension_plot = plot_fourier_extension_quality_result(store, artifacts_dir=artifacts_dir, **extension_kwargs)
+    report_result = report_fourier_result(store, artifacts_dir=artifacts_dir, **report_kwargs)
     return {
         "out": out,
         "artifact": str(artifact),
         "fit_info_artifact": str(fit_info_artifact),
+        "summary": summary["out"],
+        "plot": plot["plot"],
+        "plot_image": plot.get("plot_image"),
+        "plot_re": extension_plot["plot_re"],
+        "plot_re_image": extension_plot.get("plot_re_image"),
+        "plot_im": extension_plot["plot_im"],
+        "plot_im_image": extension_plot.get("plot_im_image"),
+        "report": report_result["report"],
+        "report_cn": report_result["report_cn"],
         "n_schemes": int(result["ft_re_samples"].shape[0]),
         "n_samples": int(result["ft_re_samples"].shape[1]),
         "n_k": int(result["ft_re_samples"].shape[2]),
@@ -2075,17 +2159,22 @@ def plot_fourier_result(
     npz_path: str | None = None,
     save_path: str | None = None,
     title: str | None = None,
+    artifacts_dir: str | None = None,
 ) -> dict[str, Any]:
     """Plot the Fourier-stage NPZ artifact and store the figure path."""
     source = npz_path
     if source is None:
-        source = str(_artifact_path(None, default_name="fourier_result.npz"))
-    output = _artifact_path(save_path, default_name="fourier_result.pdf")
+        source = str(_artifact_path(None, default_name="fourier_result.npz", artifacts_dir=artifacts_dir))
+    output = _artifact_path(save_path, default_name="fourier_result.pdf", artifacts_dir=artifacts_dir)
     if title is not None and title.strip().lower() in {"fourier result", "fourier transform"}:
         title = None
     fig, _ = plot_fourier_npz(source, save_path=output, title=title)
-    fig.clf()
-    return {"plot": str(output), "source": str(source)}
+    png_output = _png_companion_path(output)
+    fig.savefig(png_output, bbox_inches="tight")
+    plt.close(fig)
+    result = {"plot": str(output), "plot_image": str(png_output), "source": str(source)}
+    store["fourier_plot"] = result
+    return result
 
 
 def plot_fourier_extension_quality_result(
@@ -2094,6 +2183,7 @@ def plot_fourier_extension_quality_result(
     scheme_index: int | None = None,
     save_path: str | None = None,
     title: str | None = None,
+    artifacts_dir: str | None = None,
 ) -> dict[str, Any]:
     """Plot data and smoothed real-part extension for one Fourier scheme."""
     matrix_element = ensemble_data_to_legacy_arrays(store["matrix_element_data"])
@@ -2102,8 +2192,8 @@ def plot_fourier_extension_quality_result(
         scheme_index = int(data.get("best_scheme_index", 0) or 0)
     if title is not None and title.strip().lower() in {"fourier extension quality", "lambda extrapolation"}:
         title = None
-    re_output = _artifact_path(save_path, default_name="fourier_extension_re.pdf")
-    im_output = _artifact_path(None, default_name="fourier_extension_im.pdf")
+    re_output = _artifact_path(save_path, default_name="fourier_extension_re.pdf", artifacts_dir=artifacts_dir)
+    im_output = _artifact_path(None, default_name="fourier_extension_im.pdf", artifacts_dir=artifacts_dir)
     fig, _ = plot_fourier_extension_quality(
         matrix_element["coord"],
         matrix_element["re_samples"],
@@ -2115,7 +2205,9 @@ def plot_fourier_extension_quality_result(
         save_path=re_output,
         title=title,
     )
-    fig.clf()
+    re_png_output = _png_companion_path(re_output)
+    fig.savefig(re_png_output, bbox_inches="tight")
+    plt.close(fig)
     fig, _ = plot_fourier_extension_quality(
         matrix_element["coord"],
         matrix_element["im_samples"],
@@ -2127,9 +2219,58 @@ def plot_fourier_extension_quality_result(
         save_path=im_output,
         title=title,
     )
-    fig.clf()
+    im_png_output = _png_companion_path(im_output)
+    fig.savefig(im_png_output, bbox_inches="tight")
+    plt.close(fig)
     scheme_label = data["scheme_labels"][scheme_index]
-    return {"plot_re": str(re_output), "plot_im": str(im_output), "scheme_label": scheme_label}
+    result = {
+        "plot_re": str(re_output),
+        "plot_im": str(im_output),
+        "plot_re_image": str(re_png_output),
+        "plot_im_image": str(im_png_output),
+        "scheme_label": scheme_label,
+    }
+    store["fourier_extension_plot"] = result
+    return result
+
+
+def report_fourier_result(
+    store: dict[str, Any],
+    *,
+    save_path: str | None = None,
+    artifacts_dir: str | None = None,
+) -> dict[str, Any]:
+    """Write a Markdown report explaining the Fourier-stage computation."""
+    data = store["fourier_result"]
+    output = _artifact_path(save_path, default_name="report_fourier.md", artifacts_dir=artifacts_dir)
+    artifacts = {
+        "fourier_npz": data.get("artifact")
+        or str(_artifact_path(None, default_name="fourier_result.npz", artifacts_dir=artifacts_dir)),
+        "fit_info_npz": data.get("fit_info_artifact"),
+    }
+    if isinstance(store.get("fourier_plot"), dict):
+        artifacts["fourier_plot"] = store["fourier_plot"].get("plot")
+        artifacts["fourier_plot_image"] = store["fourier_plot"].get("plot_image")
+        artifacts["fourier_npz"] = store["fourier_plot"].get("source", artifacts["fourier_npz"])
+    if isinstance(store.get("fourier_extension_plot"), dict):
+        artifacts["extension_plot_re"] = store["fourier_extension_plot"].get("plot_re")
+        artifacts["extension_plot_im"] = store["fourier_extension_plot"].get("plot_im")
+        artifacts["extension_plot_re_image"] = store["fourier_extension_plot"].get("plot_re_image")
+        artifacts["extension_plot_im_image"] = store["fourier_extension_plot"].get("plot_im_image")
+    paths = write_fourier_report(
+        result=data,
+        summary=store.get("fourier_summary") or summarize_fourier_result(store),
+        artifacts=artifacts,
+        path=output,
+    )
+    report = {
+        "report": str(paths["en"]),
+        "report_cn": str(paths["zh"]),
+        "source": artifacts.get("fourier_npz"),
+        "fit_info_artifact": artifacts.get("fit_info_npz"),
+    }
+    store["fourier_report"] = report
+    return report
 
 
 STAGE_TOOLS = {
@@ -2138,4 +2279,5 @@ STAGE_TOOLS = {
     "summarize_fourier_result": summarize_fourier_result,
     "plot_fourier_result": plot_fourier_result,
     "plot_fourier_extension_quality_result": plot_fourier_extension_quality_result,
+    "report_fourier_result": report_fourier_result,
 }

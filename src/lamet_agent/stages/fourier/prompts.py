@@ -59,7 +59,14 @@ Do this by emitting one action at a time:
 5. plot_fourier_extension_quality_result for the best weighted scheme unless
    the user asks for a different scheme. This writes separate real- and
    imaginary-part extension plots.
-6. finish, reporting the NPZ artifact path, plot paths, best scheme, scheme
+6. report_fourier_result. If metadata.fourier.report gives save_path, use it.
+   This writes an English Markdown report at save_path/default path and a
+   Chinese companion report named with the same stem plus _CN.md. The reports
+   should explain the physical quantity, selected LA/NLA tail form, fit
+   diagnostics, Fourier-transform formula used by the code, output artifacts,
+   embedded PNG plots with PDF artifact links, NPZ contents, and a compact
+   numerical result preview.
+7. finish, reporting the Markdown report paths, NPZ artifact path, PDF/PNG plot paths, best scheme, scheme
    weights, fit chi2/dof, roughness scores, fit failure counts, and the
    statistical/systematic uncertainty arrays.
 
