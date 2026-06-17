@@ -12,6 +12,7 @@ dist/
 *.egg-info/
 .venv/
 .mypy_cache/
+.DS_Store
 
 # Generated workflow outputs
 runs/
