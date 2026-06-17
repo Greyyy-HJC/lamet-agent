@@ -283,22 +283,37 @@ def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
         label = labels[best] if best < len(labels) else str(best)
         if language == "zh":
             lines.append(
-                f"- Model averaging 使用 $S_s=\\chi_s^2/{{\\rm dof}}+w_{{\\rm rough}}R_s+100N_s^{{\\rm fail}}$ "
-                f"与 $W_s=\\exp[-(S_s-S_{{\\rm min}})/2]/\\sum_t\\exp[-(S_t-S_{{\\rm min}})/2]$。"
-                f"最高权重 scheme 为 {label}，权重 {_fmt(weights[best])}。"
+                f"- Model averaging 对每个 scheme $s$ 定义综合分数 "
+                f"$S_s=\\chi_s^2/{{\\rm dof}}+w_{{\\rm rough}}R_s+100N_s^{{\\rm fail}}$，其中 "
+                f"$\\chi_s^2/{{\\rm dof}}$ 衡量长程拟合质量，$R_s$ 惩罚傅立叶结果的振荡粗糙度，"
+                f"$w_{{\\rm rough}}$ 是粗糙度权重，$N_s^{{\\rm fail}}$ 是该 scheme 下重采样拟合失败次数。"
+                f"权重按 $W_s=\\exp[-(S_s-S_{{\\rm min}})/2]/\\sum_t\\exp[-(S_t-S_{{\\rm min}})/2]$ 归一化。"
+                f"因此分数越低的 scheme 越优先；拟合更好、曲线更平滑、失败次数更少会得到更大权重。"
+                f"本次最高权重 scheme 为 {label}，权重 {_fmt(weights[best])}。"
             )
         else:
             lines.append(
-                f"- Model averaging uses $S_s=\\chi_s^2/{{\\rm dof}}+w_{{\\rm rough}}R_s+100N_s^{{\\rm fail}}$ "
-                f"and $W_s=\\exp[-(S_s-S_{{\\rm min}})/2]/\\sum_t\\exp[-(S_t-S_{{\\rm min}})/2]$. "
+                f"- Model averaging assigns each scheme $s$ the score "
+                f"$S_s=\\chi_s^2/{{\\rm dof}}+w_{{\\rm rough}}R_s+100N_s^{{\\rm fail}}$, where "
+                f"$\\chi_s^2/{{\\rm dof}}$ measures tail-fit quality, $R_s$ penalizes oscillatory Fourier roughness, "
+                f"$w_{{\\rm rough}}$ is the roughness weight, and $N_s^{{\\rm fail}}$ is the number of failed resampled fits. "
+                f"Weights are normalized as $W_s=\\exp[-(S_s-S_{{\\rm min}})/2]/\\sum_t\\exp[-(S_t-S_{{\\rm min}})/2]$. "
+                f"Lower scores are preferred: better fits, smoother Fourier curves, and fewer failures get larger weights. "
                 f"The highest-weight scheme is {label} with weight {_fmt(weights[best])}."
             )
     if roughness.size and np.any(np.isfinite(roughness)):
-        lines.append(
-            f"- 傅立叶结果粗糙度分数 $R_s$ 范围：{_fmt(np.nanmin(roughness))} 到 {_fmt(np.nanmax(roughness))}。"
-            if language == "zh"
-            else f"- Fourier roughness score $R_s$ range: {_fmt(np.nanmin(roughness))} to {_fmt(np.nanmax(roughness))}."
-        )
+        if language == "zh":
+            lines.append(
+                f"- 傅立叶结果粗糙度分数 $R_s$ 是对输出 $x$ 空间曲线局部二阶差分的归一化惩罚，"
+                f"用来压低由外推区间选择造成的高频抖动；$R_s$ 越小表示 Fourier 曲线越平滑。"
+                f"本次 $R_s$ 范围为 {_fmt(np.nanmin(roughness))} 到 {_fmt(np.nanmax(roughness))}。"
+            )
+        else:
+            lines.append(
+                f"- The Fourier roughness score $R_s$ is a normalized penalty on local second differences of the output curve in $x$ space. "
+                f"It suppresses high-frequency oscillations induced by the extrapolation-window choice; smaller $R_s$ means a smoother Fourier curve. "
+                f"In this run, $R_s$ ranges from {_fmt(np.nanmin(roughness))} to {_fmt(np.nanmax(roughness))}."
+            )
     return lines or (["- 无可用拟合诊断。"] if language == "zh" else ["- Fit diagnostics were not available."])
 
 
@@ -427,11 +442,74 @@ def _settings_table(
     return lines
 
 
+def _npz_field_table(kind: str, *, language: str) -> list[str]:
+    if kind == "result":
+        rows = [
+            ("`__ensemble_data_metadata__`", "EnsembleData metadata: name, dimensions, coordinates, attrs, and resampling mode.", "EnsembleData 元数据：名称、维度、坐标、属性和重采样模式。"),
+            ("`values`", "Main EnsembleData array after model averaging, with complex Fourier samples on the $x$ grid.", "模型平均后的主 EnsembleData 数组，即 $x$ 网格上的复数 Fourier 样本。"),
+            ("`ft_re_samples`", "Real-part Fourier samples for each scheme and resample.", "每个 scheme 和每个重采样样本的 Fourier 实部。"),
+            ("`ft_im_samples`", "Imaginary-part Fourier samples for each scheme and resample.", "每个 scheme 和每个重采样样本的 Fourier 虚部。"),
+            ("`ft_re_mean`", "Model-averaged real-part central value.", "模型平均后的 Fourier 实部中心值。"),
+            ("`ft_im_mean`", "Model-averaged imaginary-part central value.", "模型平均后的 Fourier 虚部中心值。"),
+            ("`ft_re_stat_sdev`", "Statistical standard deviation of the real part from bootstrap/jackknife samples.", "由 bootstrap/jackknife 样本给出的实部统计误差。"),
+            ("`ft_im_stat_sdev`", "Statistical standard deviation of the imaginary part from bootstrap/jackknife samples.", "由 bootstrap/jackknife 样本给出的虚部统计误差。"),
+            ("`ft_re_sys_sdev`", "Real-part systematic spread from scheme variation.", "由 scheme 变化估计的实部系统误差。"),
+            ("`ft_im_sys_sdev`", "Imaginary-part systematic spread from scheme variation.", "由 scheme 变化估计的虚部系统误差。"),
+            ("`scheme_labels`", "Text labels for the scanned extrapolation schemes.", "所有外推 scheme 的文本标签。"),
+            ("`fit_failures`", "Number of failed resampled tail fits in each scheme.", "每个 scheme 中重采样长程拟合失败的次数。"),
+            ("`scheme_weights`", "Model-averaging weights $W_s$ for schemes.", "scheme 的模型平均权重 $W_s$。"),
+            ("`scheme_fit_chi2_dof`", "Scheme-level fit-quality diagnostic $\\chi_s^2/{\\rm dof}$.", "scheme 级别的拟合质量诊断 $\\chi_s^2/{\\rm dof}$。"),
+            ("`scheme_roughness`", "Fourier roughness score $R_s$ used in model averaging.", "模型平均中使用的 Fourier 粗糙度分数 $R_s$。"),
+            ("`scheme_scores`", "Total scheme score $S_s$ used to compute $W_s$.", "用于计算 $W_s$ 的总评分 $S_s$。"),
+            ("`best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
+            ("`pz_gev`", "Initial hadron momentum $P_z$ in GeV.", "初态强子动量 $P_z$，单位 GeV。"),
+            ("`pz_prime_gev`", "Final hadron momentum $P'_z$ in GeV, when relevant.", "末态强子动量 $P'_z$，适用于 GPD 等情形。"),
+            ("`a_fm`", "Lattice spacing $a$ in fm for lattice-coordinate inputs.", "使用格点坐标输入时的格距 $a$，单位 fm。"),
+            ("`method`", "Large-distance method, such as GI or CG.", "长程外推方法，例如 GI 或 CG。"),
+            ("`order`", "Large-distance order, LA or NLA.", "长程外推阶数，LA 或 NLA。"),
+            ("`observable`", "Observable name selecting the tail formula.", "选择长程外推公式的物理量名称。"),
+            ("`part`", "Fitted and transformed component: both, re, or im.", "参与拟合和变换的分量：both、re 或 im。"),
+            ("`output_scale`", "Final multiplicative factor applied to Fourier-space outputs.", "施加在最终 Fourier 空间输出上的整体乘法因子。"),
+        ]
+    else:
+        rows = [
+            ("`__ensemble_data_metadata__`", "EnsembleData metadata for fit-parameter samples with dimensions scheme and parameter.", "拟合参数 EnsembleData 的元数据，维度为 scheme 和 parameter。"),
+            ("`values`", "Main fit-parameter sample array arranged as resample by scheme by parameter.", "主拟合参数样本数组，按 resample、scheme、parameter 排列。"),
+            ("`scheme_labels`", "Text labels for the scanned extrapolation schemes.", "所有外推 scheme 的文本标签。"),
+            ("`fit_param_labels`", "Names of the fitted tail parameters.", "长程外推拟合参数名。"),
+            ("`fit_params`", "Tail-fit parameters for every scheme and resample.", "每个 scheme 和每个重采样样本的长程拟合参数。"),
+            ("`fit_param_center`", "Sample mean of fit parameters for each scheme.", "每个 scheme 中拟合参数的样本平均值。"),
+            ("`fit_param_sdev`", "Statistical standard deviation of fit parameters.", "拟合参数的统计误差。"),
+            ("`fit_chi2`", "Tail-fit $\\chi^2$ for each scheme and resample.", "每个 scheme 和重采样样本的长程拟合 $\\chi^2$。"),
+            ("`fit_dof`", "Fit degrees of freedom for each scheme and resample.", "每个 scheme 和重采样样本的拟合自由度。"),
+            ("`fit_q`", "Fit quality $Q$ value for each scheme and resample.", "每个 scheme 和重采样样本的拟合质量 $Q$ 值。"),
+            ("`fit_chi2_dof`", "Per-resample $\\chi^2/{\\rm dof}$.", "每个重采样样本的 $\\chi^2/{\\rm dof}$。"),
+            ("`fit_chi2_center`", "Sample mean of $\\chi^2$ for each scheme.", "每个 scheme 的 $\\chi^2$ 样本平均值。"),
+            ("`fit_chi2_dof_center`", "Sample mean of $\\chi^2/{\\rm dof}$ for each scheme.", "每个 scheme 的 $\\chi^2/{\\rm dof}$ 样本平均值。"),
+            ("`fit_q_center`", "Sample mean of $Q$ for each scheme.", "每个 scheme 的 $Q$ 样本平均值。"),
+            ("`mean_fit_params`", "Parameters from the initial sample-average fit used as central initial values.", "样本平均拟合得到的参数，用作中心初值。"),
+            ("`mean_fit_chi2`", "$\\chi^2$ from the sample-average fit.", "样本平均拟合的 $\\chi^2$。"),
+            ("`mean_fit_dof`", "Degrees of freedom from the sample-average fit.", "样本平均拟合的自由度。"),
+            ("`mean_fit_q`", "$Q$ value from the sample-average fit.", "样本平均拟合的 $Q$ 值。"),
+            ("`scheme_weights`", "Model-averaging weights $W_s$ copied from the Fourier result.", "从 Fourier 结果复制的模型平均权重 $W_s$。"),
+            ("`scheme_fit_chi2_dof`", "Scheme-level $\\chi_s^2/{\\rm dof}$ used in scoring.", "评分中使用的 scheme 级别 $\\chi_s^2/{\\rm dof}$。"),
+            ("`scheme_roughness`", "Scheme roughness score $R_s$ used in scoring.", "评分中使用的 scheme 粗糙度 $R_s$。"),
+            ("`scheme_scores`", "Total model-averaging score $S_s$.", "模型平均总评分 $S_s$。"),
+            ("`best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
+        ]
+    header = "| Field | Meaning |" if language == "en" else "| 字段 | 含义 |"
+    lines = [header, "|---|---|"]
+    for field, en, zh in rows:
+        lines.append(f"| {field} | {zh if language == 'zh' else en} |")
+    return lines
+
+
 def _npz_help(*, language: str) -> list[str]:
     if language == "zh":
         return [
             "## 如何读取 NPZ 输出",
-            "`fourier_result.npz` 保存傅立叶变换后的样本、均值、统计误差、系统误差和 scheme 权重；`fourier_fit_info.npz` 保存长程拟合参数与拟合质量。",
+            "`fourier_result.npz` 保存傅立叶变换后的样本、均值、统计误差、系统误差和 scheme 权重；`fourier_fit_info.npz` 保存长程拟合参数与拟合质量。"
+            "两者都可以用 `EnsembleData.load_npz` 读取主数组，也可以用 `numpy.load` 查看所有附加字段。",
             "```python",
             "import numpy as np",
             "from lamet_agent.core.data import EnsembleData",
@@ -439,10 +517,17 @@ def _npz_help(*, language: str) -> list[str]:
             "raw = np.load('fourier_result.npz', allow_pickle=False)",
             "print(data.values.shape, raw.files)",
             "```",
+            "",
+            "### `fourier_result.npz` 字段说明",
+            *_npz_field_table("result", language="zh"),
+            "",
+            "### `fourier_fit_info.npz` 字段说明",
+            *_npz_field_table("fit_info", language="zh"),
         ]
     return [
         "## Reading the NPZ Outputs",
-        "`fourier_result.npz` stores transformed samples, means, statistical/systematic errors, and scheme weights; `fourier_fit_info.npz` stores tail-fit parameters and quality diagnostics.",
+        "`fourier_result.npz` stores transformed samples, means, statistical/systematic errors, and scheme weights; `fourier_fit_info.npz` stores tail-fit parameters and quality diagnostics. "
+        "Both files can be read with `EnsembleData.load_npz` for the main array or with `numpy.load` for all auxiliary fields.",
         "```python",
         "import numpy as np",
         "from lamet_agent.core.data import EnsembleData",
@@ -450,24 +535,46 @@ def _npz_help(*, language: str) -> list[str]:
         "raw = np.load('fourier_result.npz', allow_pickle=False)",
         "print(data.values.shape, raw.files)",
         "```",
+        "",
+        "### `fourier_result.npz` Field Reference",
+        *_npz_field_table("result", language="en"),
+        "",
+        "### `fourier_fit_info.npz` Field Reference",
+        *_npz_field_table("fit_info", language="en"),
     ]
 
 
 def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
-    rows = [
-        ("Fourier NPZ", artifacts.get("fourier_npz")),
-        ("Fit-info NPZ", artifacts.get("fit_info_npz")),
-        ("Fourier PDF", artifacts.get("fourier_plot")),
-        ("Fourier PNG", artifacts.get("fourier_plot_image")),
-        ("Real extension PDF", artifacts.get("extension_plot_re")),
-        ("Real extension PNG", artifacts.get("extension_plot_re_image")),
-        ("Imaginary extension PDF", artifacts.get("extension_plot_im")),
-        ("Imaginary extension PNG", artifacts.get("extension_plot_im_image")),
-    ]
-    header = "| Artifact | Path |" if language == "en" else "| 文件 | 路径 |"
+    descriptions = {
+        "fourier_npz": ("Fourier result samples and diagnostics", "傅立叶变换后的样本、均值、误差和 scheme 权重"),
+        "fit_info_npz": ("Tail-fit parameters and fit-quality diagnostics", "长程外推拟合参数和拟合质量诊断"),
+        "fourier_plot": ("PDF plot of the Fourier-space result", "傅立叶变换结果 PDF 图"),
+        "fourier_plot_image": ("PNG companion for Markdown embedding", "供 Markdown 嵌入的傅立叶结果 PNG 图"),
+        "extension_plot_re": ("PDF plot of real-part extension quality", "实部长程外推质量 PDF 图"),
+        "extension_plot_re_image": ("PNG companion for real-part extension quality", "供 Markdown 嵌入的实部长程外推 PNG 图"),
+        "extension_plot_im": ("PDF plot of imaginary-part extension quality", "虚部长程外推质量 PDF 图"),
+        "extension_plot_im_image": ("PNG companion for imaginary-part extension quality", "供 Markdown 嵌入的虚部长程外推 PNG 图"),
+    }
+    order = (
+        "fourier_npz",
+        "fit_info_npz",
+        "fourier_plot",
+        "fourier_plot_image",
+        "extension_plot_re",
+        "extension_plot_re_image",
+        "extension_plot_im",
+        "extension_plot_im_image",
+    )
+    header = "| File | Description |" if language == "en" else "| 文件名 | 文件描述 |"
     lines = [header, "|---|---|"]
-    for name, value in rows:
-        lines.append(f"| {name} | `{value}` |" if value else f"| {name} | not available |")
+    for key in order:
+        value = artifacts.get(key)
+        if not value:
+            continue
+        desc = descriptions[key][1 if language == "zh" else 0]
+        lines.append(f"| `{value}` | {desc} |")
+    if len(lines) == 2:
+        lines.append("| not available | not available |")
     return lines
 
 
@@ -528,9 +635,6 @@ def build_fourier_report_markdown(
             "",
             *_figure_block(artifacts, language="zh"),
             "",
-            "## 数值结果预览",
-            f"实部中心值预览：`{_fmt_list(summary.get('ft_re_mean', result.get('ft_re_mean', [])))}`；虚部中心值预览：`{_fmt_list(summary.get('ft_im_mean', result.get('ft_im_mean', [])))}`。",
-            "",
             "## 输出文件",
             *_outputs_table(artifacts, language="zh"),
             "",
@@ -572,9 +676,6 @@ def build_fourier_report_markdown(
             *_scheme_table(result, language="en"),
             "",
             *_figure_block(artifacts, language="en"),
-            "",
-            "## Numerical Result Preview",
-            f"Real mean preview: `{_fmt_list(summary.get('ft_re_mean', result.get('ft_re_mean', [])))}`; imaginary mean preview: `{_fmt_list(summary.get('ft_im_mean', result.get('ft_im_mean', [])))}`.",
             "",
             "## Output Artifacts",
             *_outputs_table(artifacts, language="en"),
