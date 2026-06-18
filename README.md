@@ -36,6 +36,7 @@ The CG qPDF example manifests can run a connected correlator -> ratio-renormaliz
 ├── examples/
 │   ├── fake_data/
 │   │   └── generate_fake_data.py
+│   ├── sample_manifest.jsonc
 │   └── workflow_smoke_manifest.json
 ├── src/lamet_agent/
 │   ├── __init__.py
@@ -65,6 +66,24 @@ The CG qPDF example manifests can run a connected correlator -> ratio-renormaliz
     ├── test_schemas.py
     └── test_validation.py
 ```
+
+## Manifest Example
+
+`examples/sample_manifest.jsonc` is the annotated reference manifest. It is written
+as **JSONC** (JSON with `//` comments) so that every field can document its allowed
+options inline (for example `target_observable` is `"pdf"` or `"da"`, and `gfix` is
+`"CG"` or `"GI"`). It is organized into three top-level blocks:
+
+- `metadata`: run-level settings (`run_id`, `root_directory`, `artifacts_directory`,
+  `target_observable`, ordered `stages` to run).
+- `inputs`: the `correlators` (each with its kinematics such as `a_fm`, `pz_gev`,
+  gammas, and for `3pt` the `bt`/`bz` separation lists) and the `kernels`.
+- `stages`: per-stage analysis settings, keeping nothing that is already derivable
+  from `inputs`.
+
+Use it as a template: copy it, fill in your own values, **remove the `//` comments**,
+and save it as a plain `.json` file (the loader expects strict JSON). The comments
+exist only to explain the available options while you author your manifest.
 
 ## Quick Start
 
@@ -213,11 +232,14 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
 - `src/lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
 - `src/lamet_agent/stages/*`
-  - Each stage owns `prompts.py`, `skills.py`, and `functions.py`.
+  - Each stage owns `prompts.py`, `skills.py`, `functions.py`, and `reporting.py`.
   - `prompts.py` contains the stage instruction text and action protocol.
   - `skills.py` performs stage-local checks plus `STAGE_SKILL` strategy text and
     a `tool_catalog()`.
   - `functions.py` holds the stage tools and a `STAGE_TOOLS` registry.
+  - `reporting.py` controls the per-stage report that is generated after the stage
+    finishes, so users can track the analysis progress and inspect intermediate
+    results.
   - `stages/correlator/` is the first worked example and exposes four agentic
     tools (requires the `analysis` optional dependencies):
     `inspect_correlator_scale` (choose a `correlator_rescale`), `tune_ground_state`
@@ -230,6 +252,9 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
     `model_average=true` to BMA-combine the window grid.
 - `examples/fake_data/generate_fake_data.py`
   - Generates fake correlator-style datasets used for local testing.
+- `examples/sample_manifest.jsonc`
+  - Annotated reference manifest (JSONC). Copy it, drop the `//` comments, and save
+    as `.json` to author a real run.
 - `examples/workflow_smoke_manifest.json`
   - Minimal runnable manifest example.
 
@@ -251,6 +276,8 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
      JSON action per cycle; on `call_tool`, `core/tools.prepare_tool_args()` and
      `resolve_stage_tools()` run the tool and return an observation as the next
      user turn; on `finish` (or other non-tool actions) the stage ends.
+   - After the stage finishes, the stage's `reporting.py` emits a report so users
+     can track analysis progress and inspect that stage's intermediate results.
 5. Session backends: `mock` (deterministic scaffold), `external` (JSONL
    transcript replay via `--actions-path`), or `deepseek` (chat-completions API
    in `core/llm.py`).
