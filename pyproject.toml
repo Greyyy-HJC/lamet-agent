@@ -25,6 +25,7 @@ analysis = [
   "h5py>=3.11",
   "matplotlib>=3.8",
   "xarray>=2024.1",
+  "netCDF4>=1.6",
 ]
 
 [project.scripts]

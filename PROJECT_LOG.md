@@ -323,3 +323,8 @@
 ## 2026-06-16 (LLM observation filtering)
 
 - Stopped forwarding dropped `ignored_args` payloads to the LLM while keeping them available in tool observations for trace/debug output.
+
+## 2026-06-18 (EnsembleData NetCDF serialization)
+
+- Added `EnsembleData.to_netcdf` / `from_netcdf` support using xarray NetCDF4 output with `auto_complex=True` so complex arrays round-trip without manual real/imag splitting.
+- Stored `ensemble` and `resample` metadata in DataArray attrs, added `netCDF4` to the analysis extra, and added a focused I/O smoke test for complex NetCDF round-tripping.

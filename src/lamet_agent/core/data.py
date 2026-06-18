@@ -134,6 +134,19 @@ class EnsembleData:
         obj.array = array.copy(deep=False)
         return obj
 
+    def to_netcdf(self, path: Union[str, Path]) -> None:
+        array = self.array.copy(deep=False)
+        array.attrs["ensemble"] = json.dumps(self.ensemble._asdict())
+        array.attrs["resample"] = self.resample
+        array.to_netcdf(path, format="NETCDF4", auto_complex=True)
+
+    @classmethod
+    def from_netcdf(cls, path: Union[str, Path]) -> "EnsembleData":
+        array = xarray.load_dataarray(path, auto_complex=True)
+        ensemble = EnsembleInfo(**json.loads(array.attrs.pop("ensemble")))
+        resample = array.attrs.pop("resample")
+        return cls._from_xarray(ensemble, resample, array)
+
     def __repr__(self) -> str:
         return repr(self.array)
 
@@ -189,7 +202,9 @@ class EnsembleData:
             "attrs": self.attrs,
             "ensemble": None if self.ensemble is None else self.ensemble._asdict(),
         }
-        numpy.savez(output, __ensemble_data_metadata__=numpy.asarray(json.dumps(metadata)), values=self.values, **extra_arrays)
+        numpy.savez(
+            output, __ensemble_data_metadata__=numpy.asarray(json.dumps(metadata)), values=self.values, **extra_arrays
+        )
 
     @classmethod
     def load_npz(cls, path: Union[str, Path]) -> tuple["EnsembleData", dict[str, NDArray]]:
@@ -215,9 +230,7 @@ class EnsembleData:
             )
             data = cls._from_xarray(ensemble, metadata["resample"], array)
             extras = {
-                key: numpy.asarray(npz[key])
-                for key in npz.files
-                if key not in {"__ensemble_data_metadata__", "values"}
+                key: numpy.asarray(npz[key]) for key in npz.files if key not in {"__ensemble_data_metadata__", "values"}
             }
         return data, extras
 
