@@ -14,8 +14,8 @@ Kernel references use `module:function`, e.g. `lamet_agent.kernels:identity_kern
 Expected agent behavior:
 
 - Automatically run the full LaMET analysis workflow from correlators and kernels.
-- Emit intermediate stage outputs so users can track progress and understand the
-  analysis path.
+- Emit intermediate stage outputs as NetCDF (`.nc`) files so users can track
+  progress and understand the analysis path.
 - Produce final physics distribution functions (for example DA, PDF, and TMDs),
   including plots in PDF format and final result arrays in `.npy` files.
 
@@ -27,7 +27,7 @@ Ordered five-stage workflow:
 4. `perturbative_matching` -> `stages/matching/`
 5. `extrapolation` -> `stages/extrapolation/`
 
-The CG qPDF example manifests can run a connected correlator -> ratio-renormalization -> Fourier smoke flow. The renormalization stage reads correlator bare-matrix txt grids, applies the Eq. 15 ratio/hybrid scheme while preserving every resampled sample, writes a compatible `.npz`, and hands `matrix_element_data` directly to Fourier when stages run in one agent process.
+The CG qPDF example manifests can run a connected correlator -> ratio-renormalization -> Fourier smoke flow. The renormalization stage reads correlator bare-matrix txt grids, applies the Eq. 15 ratio/hybrid scheme while preserving every resampled sample, writes a compatible NetCDF artifact, and hands `matrix_element_data` directly to Fourier when stages run in one agent process.
 
 ## Minimal Structure
 
@@ -67,6 +67,73 @@ The CG qPDF example manifests can run a connected correlator -> ratio-renormaliz
     └── test_validation.py
 ```
 
+## Intermediate Data (NetCDF)
+
+Stage-to-stage artifacts are **`EnsembleData` NetCDF files** (convention: `.nc`) written
+under `artifacts/` in the current working directory. Each file stores one resampled
+array plus its lattice metadata:
+
+- **Leading dimension** `resample`: bootstrap, jackknife, or raw sample index (length 1
+  for `resample='gvar'`).
+- **Physical dimensions** and coordinates: for example `z` for coordinate-space matrix
+  elements, or `x` after Fourier transform.
+- **Attributes**: `ensemble` (JSON `EnsembleInfo`: series, id, lattice spacing, volume,
+  pion mass, …) and `resample` (`raw`, `jackknife`, `bootstrap`, or `gvar`), plus any
+  stage-specific attrs on the underlying xarray object.
+
+Typical artifact chain (paths are relative to `artifacts/` unless noted):
+
+| Stage | Example artifact |
+| --- | --- |
+| `renormalization` | `renormalization_results/..._renormalized_matrix_elements.nc` |
+| `fourier_transform` | `fourier_results/fourier_result.nc`, `fourier_results/fourier_fit_info.nc` |
+| `perturbative_matching` | `matching_results/quasi_pdf.nc` |
+
+Manifest stage settings point at these files (for example `stages.fourier_transform.input`
+for a renormalized matrix-element NetCDF, or `stages.perturbative_matching.input` for a
+Fourier result NetCDF). When stages run in one agent process, later stages can also
+read the in-memory store without reloading from disk.
+
+### Write and read (Python)
+
+Install the analysis extras (includes `xarray` and `netCDF4`):
+
+```bash
+pip install -e ".[dev,analysis]"
+```
+
+Use the typed helpers in `core/data.py`:
+
+```python
+from lamet_agent.core.data import EnsembleData
+
+data.to_netcdf("artifacts/fourier_results/fourier_result.nc")
+reload = EnsembleData.from_netcdf("artifacts/fourier_results/fourier_result.nc")
+```
+
+Complex arrays round-trip natively (`auto_complex=True`); you do not need to split real
+and imaginary parts before saving.
+
+### Inspect or read without lamet-agent
+
+NetCDF is self-describing. Inspect with `ncdump -h file.nc`, Panoply, or xarray:
+
+```python
+import json
+import xarray as xr
+from lamet_agent.core.data import EnsembleInfo
+
+da = xr.load_dataarray("fourier_result.nc", auto_complex=True)
+ensemble = EnsembleInfo(**json.loads(da.attrs["ensemble"]))
+resample = da.attrs["resample"]
+values = da.values  # shape (n_sample, *physical_dims)
+physical_dims = [d for d in da.dims if d != "resample"]
+coords = {d: da.coords[d].values for d in physical_dims}
+```
+
+The first dimension is always named `resample`; remaining dims and coordinate variables
+match the physical layout documented in each stage report.
+
 ## Manifest Example
 
 `examples/sample_manifest.jsonc` is the annotated reference manifest. It is written
@@ -90,7 +157,7 @@ exist only to explain the available options while you author your manifest.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,analysis]"
 ```
 
 Generate fake data:
@@ -117,7 +184,7 @@ lamet-agent run ../../examples/workflow_cg_qpdf_cont_manifest.json \
 # artifacts -> runs/my_run/artifacts/
 ```
 
-Paths inside the manifest (correlator datasets, precomputed NPZ files, etc.)
+Paths inside the manifest (correlator datasets, precomputed NetCDF artifacts, etc.)
 are resolved relative to the manifest file, with a fallback to the repo root for
 paths like `examples/fake_data/...`.
 
@@ -157,9 +224,9 @@ and extrapolation). `--stages` takes precedence when both are set.
 
 When you skip earlier stages, the manifest must already supply that stage's
 inputs (for example bare-matrix report paths under `metadata.renormalization`,
-or a renormalized NPZ path under `metadata.fourier_input`). Missing inputs
-surface as `input_issues` and the run stops with
-`status: waiting_for_user_input`.
+or a renormalized NetCDF path under `metadata.fourier_input` or
+`stages.fourier_transform.input`). Missing inputs surface as `input_issues` and
+the run stops with `status: waiting_for_user_input`.
 
 Print each agent cycle (prompt, model action, tool observation) while the run
 executes:
@@ -196,6 +263,8 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
 - `src/lamet_agent/core/data.py`
   - Defines typed data containers (`EnsembleInfo`, `EnsembleData`) for resampled
     lattice data.
+  - Serializes stage artifacts with `EnsembleData.to_netcdf` /
+    `EnsembleData.from_netcdf` (NETCDF4, complex-aware).
   - Provides common data operations (resampling, coordinate transforms, and
     cross-stage arithmetic/alignment helpers).
 - `src/lamet_agent/core/prompting.py`

@@ -328,3 +328,8 @@
 
 - Added `EnsembleData.to_netcdf` / `from_netcdf` support using xarray NetCDF4 output with `auto_complex=True` so complex arrays round-trip without manual real/imag splitting.
 - Stored `ensemble` and `resample` metadata in DataArray attrs, added `netCDF4` to the analysis extra, and added a focused I/O smoke test for complex NetCDF round-tripping.
+
+## 2026-06-18 (README NetCDF intermediate I/O)
+
+- Documented NetCDF as the standard stage-to-stage artifact format in `README.md`, including artifact naming, manifest path conventions, and Python/xarray read/write examples.
+- Updated Quick Start to recommend the `[analysis]` extra for NetCDF I/O dependencies.
