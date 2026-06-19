@@ -1,0 +1,143 @@
+{
+  // NOTE: JSONC (JSON with comments). Comments document the design; strip them
+  // if a strict-JSON parser is required.
+  //
+  // PARTIAL / RESUME EXAMPLE: start the pipeline from fourier_transform.
+  //
+  // This is the companion to examples/sample_manifest_modified.jsonc (the full
+  // p0+p4+p5 run). It shows how to begin mid-pipeline when the upstream
+  // products already exist on disk.
+  //
+  // Two ingredients make "resume from a middle stage" work:
+  //   1. metadata.stages lists ONLY the stages you want to run (order = run order).
+  //   2. The first job(s) of the resumed sub-pipeline read their input from an
+  //      EXTERNAL SOURCE NODE declared under inputs.artifacts, instead of from
+  //      an upstream job id.
+  //
+  // Reference resolution rule (for any `inputs` value, which is always an id):
+  //   1. a job id produced earlier in THIS run (upstream output), else
+  //   2. an external source id under inputs.artifacts, else
+  //   3. a correlator id under inputs.correlators (first stage only).
+  //
+  // Here p4 and p5 each resume from their pre-computed renormalized matrix
+  // elements, run fourier_transform -> perturbative_matching, and reconverge at
+  // the extrapolation placeholder (MERGE POINT).
+  "metadata": {
+    "run_id": "workflow_cg_qpdf_partial_from_fourier",
+    "root_directory": "~/lamet-agent",
+    "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
+    "target_observable": "pdf", // "pdf" or "da"
+    "resample_mode": "jk", // "jk" or "bs"
+    // Only the stages to run, in execution order. correlator_analysis and
+    // renormalization are intentionally absent (their products come in as
+    // external source nodes below).
+    "stages": ["fourier_transform", "perturbative_matching", "extrapolation"]
+  },
+  "inputs": {
+    // No raw `correlators` here: we are not running the correlator stage.
+    // External pre-computed products enter as SOURCE NODES with their own ids,
+    // so downstream jobs can reference them uniformly by id.
+    "artifacts": [
+      {
+        "id": "rn_p4_ext", // handle referenced by the fourier job below
+        "stage": "renormalization", // which stage this product is equivalent to (implies its kind)
+        "path": "examples/artifacts/a060_x_p4_renormalized_matrix_elements.nc", // relative to root_directory
+        "pz_gev": 1.72 // extra metadata the consuming stage needs
+      },
+      {
+        "id": "rn_p5_ext",
+        "stage": "renormalization",
+        "path": "examples/artifacts/a060_x_p5_renormalized_matrix_elements.nc",
+        "pz_gev": 2.15
+      }
+    ],
+    "kernels": [
+      {
+        "stage": "matching",
+        "kernel_id": "unpolarized_gT",
+        "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
+        "scheme": "ratio",
+        "kernel_parameters": {
+          "zs_fm": 0.18,
+          "pz_gev": 2.15
+        }
+      }
+    ]
+  },
+  "stages": {
+    "fourier_transform": {
+      "defaults": {
+        "observable": "pion_quark_quasi_pdf",
+        "order": "NLA",
+        "part": "re", // "re" or "im"
+        "coord_unit": "lattice", // "lattice" or "fm"
+        "im_flip_for_ft": true,
+        "output_scale": 2.0,
+        "fit_error_mode": "covariance", // "covariance" or "diagonal"
+        "k_grid": {
+          "start": -2.0,
+          "stop": 2.0,
+          "num": 100
+        },
+        "scheme_scan": {
+          "zmin_values": [8.0],
+          "zmax_values": [24.0],
+          "min_width": 8.0,
+          "z_ext_max": 37.0,
+          "smooth": "linear", // "linear" or "exp"
+          "min_fit_points": 5,
+          "y_range": [-2.0, 2.0],
+          "roughness_weight": 1.0,
+          "model_average": false,
+          "max_schemes": 1
+        }
+      },
+      "jobs": [
+        {
+          "id": "ft_p4",
+          "inputs": { "input": "rn_p4_ext" }, // resolves to the external source node
+          "params": { "pz_gev": 1.72 }
+        },
+        {
+          "id": "ft_p5",
+          "inputs": { "input": "rn_p5_ext" },
+          "params": { "pz_gev": 2.15 }
+        }
+      ]
+    },
+    "perturbative_matching": {
+      "defaults": {
+        "mu": 2.0,
+        "component": "re", // "re" or "im" or "re+im"
+        "kernel_id": "unpolarized_gT"
+      },
+      "jobs": [
+        {
+          "id": "mt_p4",
+          "inputs": { "quasi": "ft_p4" }, // from here on, internal job-id references
+          "params": { "pz_gev": 1.72 }
+        },
+        {
+          "id": "mt_p5",
+          "inputs": { "quasi": "ft_p5" },
+          "params": { "pz_gev": 2.15 }
+        }
+      ]
+    },
+    "extrapolation": {
+      // PLACEHOLDER: this stage is not implemented yet. Shown only to illustrate
+      // MERGE POINT (combine multiple momenta for the large-momentum
+      // extrapolation). Params are intentionally minimal.
+      "defaults": {},
+      "jobs": [
+        {
+          "id": "ex_pdf",
+          "inputs": { "momenta": ["mt_p4", "mt_p5"] },
+          "params": {
+            "pz_list_gev": [1.72, 2.15] // momenta entering the large-pz extrapolation
+          }
+        }
+      ]
+    }
+  }
+}

@@ -260,6 +260,11 @@
         "tsep": 12
       }
     ],
+    // External pre-computed products as SOURCE NODES with their own ids, so a job
+    // can resume mid-pipeline by referencing one instead of an upstream job id.
+    // Empty here (this example runs the full chain). See partial_sample_manifest.jsonc.
+    // Each entry: { "id", "stage" (implies kind), "path", plus consuming-stage metadata }.
+    "artifacts": [],
     "kernels": [
       {
         "stage": "matching",
