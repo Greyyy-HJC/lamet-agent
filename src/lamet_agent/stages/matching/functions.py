@@ -34,7 +34,7 @@ Example usage:
 - from lamet_agent.stages.matching.functions import STAGE_TOOLS
 - store = {}
 - STAGE_TOOLS["load_quasi_pdf"](store, path="artifacts/quasi_pdf.npz")
-- STAGE_TOOLS["build_matching_kernel"](store, kernel_id="unpolarized_gT", pz_gev=1.5)
+- STAGE_TOOLS["build_matching_kernel"](store, kernel_id="CG_gt_PDF_msbar", pz_gev=1.5)
 - STAGE_TOOLS["apply_matching"](store)
 """
 
@@ -46,10 +46,17 @@ from typing import Any, Callable
 import numpy as np
 
 from lamet_agent.core.data import EnsembleData
+from lamet_agent.stages.matching.reporting import write_matching_report
+
+# All matching kernels live in the self-contained kernels.py.
 from lamet_agent.kernels import (
-    helicity_matching_kernel_nlo_gTg5,
-    unpolarized_gluon_matching_kernel_nlo,
-    unpolarized_matching_kernel_nlo_gT,
+    CG_gluon_PDF_msbar,
+    CG_gt_PDF_hybrid,
+    CG_gt_PDF_msbar,
+    CG_gt_PDF_ratio,
+    CG_gtg5_PDF_hybrid,
+    CG_gtg5_PDF_msbar,
+    CG_gtg5_PDF_ratio,
 )
 
 
@@ -67,13 +74,35 @@ from lamet_agent.kernels import (
 #
 # Every registered kernel obeys the same signature (so build_matching_kernel can
 # call them uniformly):
-#   builder(x_ls, pz_gev, mu=2.0, y_ls=None, eps=1e-12) -> (nx, ny) float matrix
+#   builder(x_ls, pz_gev, mu=2.0, y_ls=None, eps=1e-12, zspz=None) -> (nx, ny) matrix
+#
+# Naming convention: CG_<operator>_PDF_<scheme>. "CG" is the Coulomb-gauge PDF
+# setup (arXiv:2602.11283); <operator> is the Dirac structure (gt = gamma^t,
+# gtg5 = gamma^t gamma5, gluon); <scheme> is the matching scheme and is always
+# written out explicitly (msbar / ratio / hybrid). Only the "_hybrid" kernels use
+# the Wilson-line scale zspz (built from the zs_fm input below); the others ignore it.
 KERNEL_REGISTRY: dict[str, Callable[..., np.ndarray]] = {
-    "unpolarized_gT": unpolarized_matching_kernel_nlo_gT,
-    "helicity_gTg5": helicity_matching_kernel_nlo_gTg5,
-    "unpolarized_gluon": unpolarized_gluon_matching_kernel_nlo,
-    # "transversity_gTg5gj": transversity_matching_kernel_nlo_...,  # TODO
+    # unpolarized gamma^t
+    "CG_gt_PDF_msbar": CG_gt_PDF_msbar,
+    "CG_gt_PDF_ratio": CG_gt_PDF_ratio,
+    "CG_gt_PDF_hybrid": CG_gt_PDF_hybrid,
+    # helicity gamma^t gamma5
+    "CG_gtg5_PDF_msbar": CG_gtg5_PDF_msbar,
+    "CG_gtg5_PDF_ratio": CG_gtg5_PDF_ratio,
+    "CG_gtg5_PDF_hybrid": CG_gtg5_PDF_hybrid,
+    # gluon
+    "CG_gluon_PDF_msbar": CG_gluon_PDF_msbar,
 }
+
+
+# --- hybrid-scheme scale -----------------------------------------------------
+# The hybrid kernel needs the dimensionless Wilson-line scale zspz = z_s * P_z.
+# Both z_s (the Wilson-line length, in fm) and P_z (the hadron momentum, in GeV)
+# come from the manifest JSON as build_matching_kernel inputs (zs_fm and pz_gev);
+# nothing ensemble-specific is hardcoded here. GEV_FM is the only constant -- the
+# physical hbar*c used to make zspz dimensionless:
+#     zspz = zs_fm * pz_gev / GEV_FM
+GEV_FM = 0.1973269631  # hbar*c in GeV*fm
 
 
 # Each tool below follows the same pattern: take this stage's shared store, do
@@ -198,11 +227,18 @@ def build_matching_kernel(
     kernel_id: str,
     pz_gev: float,
     mu: float = 2.0,
+    zs_fm: float | None = None,
     grid: str = "x_ls",
     y_grid: str | None = None,
     out: str = "kernel_matrix",
 ) -> dict[str, Any]:
-    """Build the (nx, ny) matching kernel for the chosen operator/kernel_id."""
+    """Build the (nx, ny) matching kernel for the chosen operator/kernel_id.
+
+    Hybrid kernels also need the Wilson-line length ``zs_fm`` (z_s in fm); together
+    with ``pz_gev`` it sets the dimensionless scale ``zspz = zs_fm * pz_gev / GEV_FM``.
+    Both ``zs_fm`` and ``pz_gev`` are manifest inputs (metadata.matching). MSbar,
+    ratio and gluon kernels ignore ``zs_fm``.
+    """
     if kernel_id not in KERNEL_REGISTRY:
         raise ValueError(
             f"Unknown kernel_id '{kernel_id}'. Available: {sorted(KERNEL_REGISTRY)}"
@@ -221,8 +257,23 @@ def build_matching_kernel(
     x_ls = np.asarray(store[grid], dtype=float)
     y_ls = None if y_grid is None else np.asarray(store[y_grid], dtype=float)
 
+    # Hybrid kernels need the Wilson-line scale zspz = z_s * P_z, built from the
+    # manifest inputs zs_fm (fm) and pz_gev (GeV). Only the hybrid builders accept a
+    # zspz keyword (msbar/ratio/gluon do not), so it is computed and passed only for
+    # the "_hybrid" ids.
+    zspz: float | None = None
+    builder_kwargs: dict[str, Any] = {"pz_gev": pz_gev, "mu": mu, "y_ls": y_ls}
+    if kernel_id.endswith("_hybrid"):
+        if zs_fm is None:
+            raise ValueError(
+                f"Kernel '{kernel_id}' is a hybrid kernel and needs zs_fm (z_s in fm) "
+                "from metadata.matching.zs_fm to build zspz = zs_fm * pz_gev / GEV_FM."
+            )
+        zspz = float(zs_fm) * pz_gev / GEV_FM
+        builder_kwargs["zspz"] = zspz
+
     # Build the already-discretized kernel matrix, typically shaped (len(x_ls), len(y_ls)).
-    matrix = builder(x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls)
+    matrix = builder(x_ls, **builder_kwargs)
     if matrix.ndim != 2:
         raise ValueError(f"Kernel builder returned a non-matrix object with ndim={matrix.ndim}.")
     if matrix.shape[0] != x_ls.size:
@@ -237,6 +288,7 @@ def build_matching_kernel(
         "shape": list(matrix.shape),
         "pz_gev": pz_gev,
         "mu": mu,
+        "zspz": zspz,  # None for MSbar/ratio/gluon; zs_fm * pz_gev / GEV_FM for hybrid
     }
 
 
@@ -385,7 +437,86 @@ def plot_matched_pdf(
     fig.savefig(resolved_save, bbox_inches="tight", transparent=True)
     plt.close(fig)
 
-    return {"path": str(resolved_save), "n_points": int(x_ls.size)}
+    result = {"path": str(resolved_save), "n_points": int(x_ls.size)}
+    # Leave the plot path in the store so the report can link it.
+    store["matching_plot"] = result
+    return result
+
+
+# --- reporting --------------------------------------------------------------
+
+
+def _report_path(raw: str | None, *, default_name: str, artifacts_dir: str | None = None) -> Path:
+    """Resolve the report output path under ``artifacts_dir`` (mirrors the Fourier stage)."""
+    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if raw:
+        path = Path(raw).expanduser()
+        if path.is_absolute():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return path
+        return out_dir / path
+    return out_dir / default_name
+
+
+def report_matching_result(
+    store: dict[str, Any],
+    *,
+    kernel_id: str | None = None,
+    pz_gev: float | None = None,
+    mu: float = 2.0,
+    zs_fm: float | None = None,
+    component: str | None = None,
+    quasi_input: str | None = None,
+    save_path: str | None = None,
+    artifacts_dir: str | None = None,
+) -> dict[str, Any]:
+    """Write English + Chinese Markdown reports for the matching stage.
+
+    The physics parameters (kernel_id, pz_gev, mu, zs_fm, component) come from
+    ``metadata.matching`` -- the harness injects them the same way it does for
+    ``build_matching_kernel`` -- while the x grid, quasi-PDF, and matched PDF are
+    read back from the store that the earlier tools populated.
+    """
+    if "quasi_ed" not in store or "lightcone_ed" not in store or "x_ls" not in store:
+        raise ValueError(
+            "report_matching_result needs the quasi-PDF, matched PDF, and x grid in "
+            "the store; run load_quasi_pdf, build_matching_kernel and apply_matching first."
+        )
+    quasi_ed: EnsembleData = store["quasi_ed"]
+    lightcone_ed: EnsembleData = store["lightcone_ed"]
+    x_ls = np.asarray(store["x_ls"], dtype=float)
+
+    # Hybrid kernels carry the dimensionless Wilson-line scale; recompute it here
+    # from the manifest inputs (same formula as build_matching_kernel).
+    zspz = None
+    if kernel_id is not None and str(kernel_id).endswith("_hybrid") and zs_fm is not None and pz_gev is not None:
+        zspz = float(zs_fm) * float(pz_gev) / GEV_FM
+
+    result = {
+        "kernel_id": kernel_id,
+        "pz_gev": pz_gev,
+        "mu": mu,
+        "zspz": zspz,
+        "component": component,
+        "source": quasi_input,
+        "resample": lightcone_ed.resample,
+        "n_sample": int(lightcone_ed.n_sample),
+        "n_points": int(x_ls.size),
+        "x_grid": x_ls.tolist(),
+        "quasi_mean": [float(v) for v in np.asarray(quasi_ed.mean)],
+        "lightcone_mean": [float(v) for v in np.asarray(lightcone_ed.mean)],
+    }
+
+    artifacts: dict[str, Any] = {}
+    if isinstance(store.get("matching_plot"), dict):
+        artifacts["matched_plot"] = store["matching_plot"].get("path")
+
+    output = _report_path(save_path, default_name="report_matching.md", artifacts_dir=artifacts_dir)
+    paths = write_matching_report(result=result, artifacts=artifacts, path=output)
+    report = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
+    store["matching_report"] = report
+    return report
 
 
 # --- tool registry exposed to the agent -------------------------------------
@@ -399,4 +530,5 @@ STAGE_TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "build_matching_kernel": build_matching_kernel,
     "apply_matching": apply_matching,
     "plot_matched_pdf": plot_matched_pdf,
+    "report_matching_result": report_matching_result,
 }

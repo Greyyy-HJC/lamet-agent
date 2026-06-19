@@ -25,11 +25,17 @@ Inputs:
 
 Kernel choice:
 - Each operator has its own kernel, registered under a logical kernel_id in
-  KERNEL_REGISTRY. Call list_kernels to see them, then pick the one matching the
-  operator (unpolarized_gT for the unpolarized gamma^t PDF in Coulomb gauge,
-  reference arXiv:2602.11283 Eq. (2.14)).
+  KERNEL_REGISTRY following the CG_<operator>_PDF_<scheme> convention (e.g.
+  CG_gt_PDF_msbar for the unpolarized gamma^t PDF in Coulomb gauge, MSbar scheme,
+  reference arXiv:2602.11283 Eq. (2.14)). Call list_kernels to see them all, then
+  pick the operator and scheme (msbar / ratio / hybrid) you need.
 - pz_gev is the hadron momentum P_z in GeV and must match the Fourier stage; mu
   is the MSbar renormalization scale in GeV (default 2.0).
+- Schemes are selected by the kernel_id suffix: "<op>_msbar" is MSbar, "<op>_ratio"
+  is the ratio scheme, "<op>_hybrid" is the hybrid scheme. Hybrid kernels also need
+  the Wilson-line length zs_fm (z_s in fm) from metadata.matching; together with
+  pz_gev it sets zspz = zs_fm * pz_gev / GEV_FM (arXiv:2602.11283 Eq. (2.20)).
+  MSbar, ratio and gluon kernels do not use zs_fm.
 
 Strategy:
 - The matching is the matrix product lightcone = K @ quasi; with gvar arrays the
@@ -41,7 +47,8 @@ Strategy:
   should stay close to the quasi-PDF and nearly preserve the norm (integral of
   f(x) dx). A large departure or wild oscillation signals a problem (e.g. a bad
   grid or pz_gev).
-- Finish with plot_matched_pdf, which draws quasi vs light-cone as error bands.
+- Finish with plot_matched_pdf, which draws quasi vs light-cone as error bands,
+  then report_matching_result to write the English and Chinese Markdown reports.
 """.strip()
 
 
@@ -50,9 +57,10 @@ Strategy:
 TOOL_CATALOG = {
     "list_kernels": "list_kernels() -> the registered kernel_ids you may pass to build_matching_kernel.",
     "load_quasi_pdf": "load_quasi_pdf(path, component='re'|'im') -> read the quasi-PDF and its x grid (stores x_ls, quasi_gv); auto-detects the Fourier EnsembleData npz (real part, sqrt(stat^2+sys^2) error) or a simple x_ls/quasi_mean/quasi_sdev npz.",
-    "build_matching_kernel": "build_matching_kernel(kernel_id, pz_gev, mu=2.0, grid='x_ls') -> the (nx, ny) NLO matching matrix for the chosen operator; x grid must avoid x=0.",
+    "build_matching_kernel": "build_matching_kernel(kernel_id, pz_gev, mu=2.0, zs_fm=None, grid='x_ls') -> the (nx, ny) NLO matching matrix for the chosen operator; the scheme follows the kernel_id suffix (_msbar, _ratio, _hybrid); hybrid kernels require zs_fm (z_s in fm) and form zspz = zs_fm * pz_gev / GEV_FM; x grid must avoid x=0.",
     "apply_matching": "apply_matching(kernel='kernel_matrix', quasi='quasi_gv') -> lightcone_gv = kernel @ quasi with gvar error propagation.",
     "plot_matched_pdf": "plot_matched_pdf(save_path=None) -> quasi vs light-cone f(x) comparison as error bands, written to artifacts/matched_pdf.pdf.",
+    "report_matching_result": "report_matching_result(save_path=None) -> write an English report at artifacts/report_matching.md and a Chinese companion at artifacts/report_matching_CN.md with the chosen kernel/operator/scheme, pz_gev/mu (and zspz for hybrid), the matching convolution formula, scheme explanation, norm-preservation and quasi-vs-light-cone deviation diagnostics, the embedded comparison plot, and artifact paths.",
 }
 
 
@@ -73,6 +81,12 @@ PZ_HELP = (
     "metadata.matching.pz_gev is required. It is the hadron momentum P_z in GeV "
     "and must match the value used in the Fourier stage; it sets the kernel's "
     "log(4 y^2 P_z^2 / mu^2) terms."
+)
+
+ZS_FM_HELP = (
+    "metadata.matching.zs_fm is required for hybrid kernels. It is the Wilson-line "
+    "length z_s in fm; with pz_gev it forms the dimensionless zspz = zs_fm * pz_gev "
+    "/ GEV_FM in the hybrid correction."
 )
 
 QUASI_HELP = (
@@ -117,7 +131,11 @@ def validate_stage_inputs(manifest: AnalysisManifest) -> list[str]:
     if "pz_gev" not in matching:
         issues.append(PZ_HELP)
 
-    # 3) quasi input: not an error if absent; the note says it defaults to the
+    # 3) zs_fm: only hybrid kernels need the Wilson-line length to form zspz.
+    if kernel_id is not None and kernel_id.endswith("_hybrid") and "zs_fm" not in matching:
+        issues.append(ZS_FM_HELP)
+
+    # 4) quasi input: not an error if absent; the note says it defaults to the
     #    Fourier-stage artifact.
     if not matching.get("quasi_input"):
         issues.append(QUASI_HELP)
