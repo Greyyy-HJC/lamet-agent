@@ -27,7 +27,7 @@ Ordered five-stage workflow:
 4. `perturbative_matching` -> `stages/matching/`
 5. `extrapolation` -> `stages/extrapolation/`
 
-The CG qPDF example manifests can run a connected correlator -> ratio-renormalization -> Fourier smoke flow. The renormalization stage reads correlator bare-matrix txt grids, applies the Eq. 15 ratio/hybrid scheme while preserving every resampled sample, writes a compatible NetCDF artifact, and hands `matrix_element_data` directly to Fourier when stages run in one agent process.
+The CG qPDF example manifests can run a connected correlator -> ratio-renormalization -> Fourier smoke flow. The correlator stage writes bare matrix elements as NetCDF, and the renormalization stage reads those artifacts, applies the Eq. 15 ratio/hybrid scheme while preserving every resampled sample, and writes a renormalized NetCDF artifact.
 
 ## Minimal Structure
 
@@ -77,14 +77,14 @@ array plus its lattice metadata:
   for `resample='gvar'`).
 - **Physical dimensions** and coordinates: for example `z` for coordinate-space matrix
   elements, or `x` after Fourier transform.
-- **Attributes**: `ensemble` (JSON `EnsembleInfo`: series, id, lattice spacing, volume,
-  pion mass, …) and `resample` (`raw`, `jackknife`, `bootstrap`, or `gvar`), plus any
-  stage-specific attrs on the underlying xarray object.
+- **Attributes**: reserved `ensemble` / `resample` metadata for `EnsembleInfo` and
+  resampling mode, plus any stage-specific attrs on the underlying xarray object.
 
 Typical artifact chain (paths are relative to `artifacts/` unless noted):
 
 | Stage | Example artifact |
 | --- | --- |
+| `correlator_analysis` | `correlator_results/..._bare_matrix_elements.nc` |
 | `renormalization` | `renormalization_results/..._renormalized_matrix_elements.nc` |
 | `fourier_transform` | `fourier_results/fourier_result.nc`, `fourier_results/fourier_fit_info.nc` |
 | `perturbative_matching` | `matching_results/quasi_pdf.nc` |
@@ -315,8 +315,8 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
     (2pt-only window scan + model average), `tune_bare_matrix` (scan bare-matrix fit
     windows on sample-average data for one representative z), and
     `fit_bare_matrix_grid` (apply one shared tuned window to every z and every
-    resampled sample, then export `bare_qpdf/*.txt`, fit-on-data PDFs, split logs,
-    and a JSON report). The agent tunes once on sample-average data, then applies the
+    resampled sample, then export a bare-matrix NetCDF artifact, fit-on-data PDFs,
+    and split logs). The agent tunes once on sample-average data, then applies the
     same setting everywhere; pass a single `pt2_window`/`pt3_window` or
     `model_average=true` to BMA-combine the window grid.
 - `examples/fake_data/generate_fake_data.py`

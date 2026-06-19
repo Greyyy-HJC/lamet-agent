@@ -62,7 +62,7 @@ def test_build_stage_static_prompt_filters_non_stage_metadata() -> None:
             ],
             "metadata": {
                 "correlator_grid": {"pt2_path": "fake/c2.txt"},
-                "renormalization": {"denominator_report_json": "p0_report.json"},
+                "renormalization": {"denominator_netcdf_path": "p0.nc"},
                 "fourier_input": "matrix_element.npz",
                 "matching": {"kernel_id": "unpolarized_gT"},
                 "note": "workflow note",
@@ -74,7 +74,7 @@ def test_build_stage_static_prompt_filters_non_stage_metadata() -> None:
         manifest,
         completed_stages=["correlator_analysis"],
     )
-    assert "p0_report.json" in static
+    assert "p0.nc" in static
     assert "matrix_element.npz" not in static
     assert "unpolarized_gT" not in static
     assert "fake/c2.txt" not in static

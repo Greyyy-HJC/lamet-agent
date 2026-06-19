@@ -12,8 +12,8 @@ Expected inputs:
 
 Expected outputs:
 - fit diagnostics for the agent to judge candidate windows
-- per-z bare matrix-element samples (``bare_qpdf/*.txt``), fit-on-data PDFs, split
-  fit logs, a summary PDF, and a JSON report under ``artifacts/``
+- bare matrix-element NetCDF, fit-on-data PDFs, split fit logs, and a summary PDF
+  under ``artifacts/``
 
 Example usage:
 - from lamet_agent.stages.correlator.functions import STAGE_TOOLS
@@ -23,7 +23,6 @@ Example usage:
 
 from __future__ import annotations
 
-import json
 from itertools import product
 from pathlib import Path
 from typing import Any, Callable
@@ -36,6 +35,7 @@ import numpy as np
 
 np.seterr(over="ignore")
 
+from lamet_agent.core.data import EnsembleData, EnsembleInfo
 from lamet_agent.core.plotting import (
     COLOR_CYCLE,
     ERRORBAR_STYLE,
@@ -601,13 +601,6 @@ def _plot_sample0_pt2(
     return {"meff_pdf": str(stem.with_name(f"{stem.name}_meff.pdf"))}
 
 
-# --- bare matrix output ------------------------------------------------------
-
-
-def _bare_filename(*, ensemble: str, tag: str, variant: str, direction: str, momentum: str, b_label: str, z: int) -> str:
-    return f"{ensemble}_{tag}_{variant}_{direction}_{momentum}_{b_label}_z{z}.txt"
-
-
 def _split_log_paths(
     *,
     log_dir: Path,
@@ -628,6 +621,54 @@ def _split_log_paths(
     return log_dir / f"{stem}_tuning.log", log_dir / f"{stem}_samples.log"
 
 
+def _ensemble_resample_name(mode: str) -> str:
+    if mode == "bs":
+        return "bootstrap"
+    if mode == "jk":
+        return "jackknife"
+    return mode
+
+
+def _artifact_ensemble_info(ensemble_id: str) -> EnsembleInfo:
+    return EnsembleInfo("", str(ensemble_id), 1.0, 1.0, 1, 1, 0.0)
+
+
+def _bare_records_to_ensemble(
+    records: list[dict[str, Any]],
+    *,
+    resample_mode: str,
+    attrs: dict[str, Any],
+) -> EnsembleData:
+    z_values: list[int] = []
+    samples_by_z: list[np.ndarray] = []
+    n_sample: int | None = None
+    for rec in sorted(records, key=lambda item: item["z"]):
+        real = np.asarray(rec["real_samples"], dtype=float)
+        imag = np.asarray(rec["imag_samples"], dtype=float)
+        if real.shape != imag.shape:
+            raise ValueError(f"real/imag sample shape mismatch for z={rec['z']}")
+        if n_sample is None:
+            n_sample = int(real.shape[0])
+        elif real.shape[0] != n_sample:
+            raise ValueError(f"sample count mismatch for z={rec['z']}: {real.shape[0]} != {n_sample}")
+        z_values.append(int(rec["z"]))
+        samples_by_z.append(real + 1j * imag)
+    if not samples_by_z:
+        raise ValueError("no bare matrix-element records were produced")
+
+    samples = np.stack(samples_by_z, axis=1)
+    values = [samples[idx] for idx in range(samples.shape[0])]
+    return EnsembleData(
+        ensemble=_artifact_ensemble_info(str(attrs.get("ensemble", ""))),
+        resample=_ensemble_resample_name(resample_mode),
+        values=values,
+        dims=("z",),
+        coords={"z": z_values},
+        attrs={key: str(value) for key, value in attrs.items() if value is not None},
+        name="bare_matrix_element",
+    )
+
+
 def _write_outputs(
     records: list[dict[str, Any]],
     *,
@@ -640,13 +681,10 @@ def _write_outputs(
     momentum: str,
     b_label: str,
     resample_mode: str,
-    output_subdir: str,
     ylim: tuple[float, float] = (-0.2, 1.2),
 ) -> dict[str, Any]:
-    """Write per-z sample text files, a summary plot, and a JSON report."""
+    """Write the bare matrix-element NetCDF plus diagnostic plot."""
     artifacts_dir.mkdir(parents=True, exist_ok=True)
-    txt_dir = artifacts_dir / output_subdir
-    txt_dir.mkdir(parents=True, exist_ok=True)
     resolved_save = resolve_plot_save_path(save_path, artifacts_dir=artifacts_dir, default_stem="bare_matrix_elements")
 
     z_values: list[int] = []
@@ -660,10 +698,6 @@ def _write_outputs(
         z = rec["z"]
         real = np.asarray(rec["real_samples"], dtype=float)
         imag = np.asarray(rec["imag_samples"], dtype=float)
-        path = txt_dir / _bare_filename(
-            ensemble=ensemble, tag=tag, variant=variant, direction=direction, momentum=momentum, b_label=b_label, z=z
-        )
-        np.savetxt(path, np.column_stack([real, imag]), fmt="%.10e")
         r_mean, r_err = sample_mean_err(real, mode=resample_mode)
         i_mean, i_err = sample_mean_err(imag, mode=resample_mode)
         z_values.append(z)
@@ -674,7 +708,6 @@ def _write_outputs(
         outputs.append(
             {
                 "z": z,
-                "path": str(path),
                 "n_samples": int(real.shape[0]),
                 "n_failed_samples": int(np.count_nonzero(~np.isfinite(real) | ~np.isfinite(imag))),
                 "real_mean": r_mean,
@@ -699,25 +732,28 @@ def _write_outputs(
     fig.savefig(pdf_path, bbox_inches="tight", transparent=True)
     plt.close(fig)
 
-    report = {
-        "ensemble": ensemble,
-        "tag": tag,
-        "variant": variant,
-        "direction": direction,
-        "momentum": momentum,
-        "b_label": b_label,
-        "resample_mode": resample_mode,
-        "output_subdir": str(txt_dir),
-        "plot_pdf": pdf_path,
-        "outputs": outputs,
-    }
-    report_path = f"{resolved_save}_report.json"
-    Path(report_path).write_text(json.dumps(report, indent=2), encoding="utf-8")
+    data = _bare_records_to_ensemble(
+        records,
+        resample_mode=resample_mode,
+        attrs={
+            "ensemble": ensemble,
+            "tag": tag,
+            "variant": variant,
+            "direction": direction,
+            "momentum": momentum,
+            "b_label": b_label,
+            "resample_mode": resample_mode,
+        },
+    )
+    artifact = f"{resolved_save}.nc"
+    data.to_netcdf(artifact)
     return {
-        "txt_dir": str(txt_dir),
+        "artifact": artifact,
+        "netcdf_path": artifact,
+        "data": data,
         "plot_pdf": pdf_path,
-        "report_json": report_path,
         "n_z": len(records),
+        "n_sample": data.n_sample,
         "outputs": outputs,
     }
 
@@ -1183,7 +1219,6 @@ def fit_bare_matrix_grid(
     q_min: float = 0.05,
     posterior_prior_error_scale: float = 3.0,
     correlator_rescale: float = 1.0,
-    output_subdir: str = "bare_qpdf",
     save_path: str | None = None,
     log_dir: str | Path | None = None,
     log_path: str | Path | None = None,
@@ -1399,35 +1434,11 @@ def fit_bare_matrix_grid(
 
     output = _write_outputs(
         z_records, artifacts_dir=out_dir, save_path=save_path, ensemble=ensemble, tag=tag, variant=variant,
-        direction=direction, momentum=momentum, b_label=b_label, resample_mode=mode, output_subdir=output_subdir,
+        direction=direction, momentum=momentum, b_label=b_label, resample_mode=mode,
     )
-    report = json.loads(Path(output["report_json"]).read_text(encoding="utf-8"))
-    report.update(
-        {
-            "fit_strategy": strategy,
-            "fit_mode": fit_mode,
-            "model_average": model_average,
-            "selection_rule": selection_rule,
-            "shared_window_specs": shared_specs,
-            "posterior_prior_error_scale": float(posterior_prior_error_scale),
-            "correlator_rescale": scale,
-            "tuning_log_path": str(tuning_log_path),
-            "sample_log_path": str(sample_log_path),
-            "q_min": float(q_min),
-            "resample_mode": mode,
-            "n_samples": n_samples,
-            "n_boot": int(n_boot) if mode == "bs" else None,
-            "seed": seed if mode == "bs" else None,
-            "svdcut": float(svdcut),
-            "tsep_ls": tseps,
-            "z_values": z_list,
-            "tune_z": tune_z_value,
-            "z_fits": z_report,
-            "sample0_pt2_plot_paths": sample0_pt2_paths,
-        }
-    )
-    Path(output["report_json"]).write_text(json.dumps(report, indent=2), encoding="utf-8")
-    store["bare_matrix_grid_report"] = report
+    bare_data = output.pop("data")
+    store["bare_matrix_element_data"] = bare_data
+    store["bare_matrix_element_netcdf"] = output["netcdf_path"]
     return {
         **output,
         "fit_strategy": strategy,
@@ -1442,6 +1453,7 @@ def fit_bare_matrix_grid(
         "n_samples": n_samples,
         "z_values": z_list,
         "tune_z": tune_z_value,
+        "z_fits": z_report,
         "sample0_pt2_plot_paths": sample0_pt2_paths,
     }
 

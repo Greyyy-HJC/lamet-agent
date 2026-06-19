@@ -82,7 +82,6 @@ _CORRELATOR_GRID_KEYS = frozenset(
         "svdcut",
         "part",
         "q_min",
-        "output_subdir",
         "resample_mode",
         "n_boot",
         "posterior_prior_error_scale",
@@ -275,7 +274,7 @@ def resolve_tool_args(args: dict[str, Any], manifest: AnalysisManifest) -> dict[
     if manifest.root_directory is None and (manifest.manifest_dir is None or manifest.project_root is None):
         return args
     resolved = dict(args)
-    for key in ("path", "pt2_path", "pt3_paths", "report_json", "target_report_json", "denominator_report_json"):
+    for key in ("path", "pt2_path", "pt3_paths", "netcdf_path", "target_netcdf_path", "denominator_netcdf_path"):
         if key in resolved:
             resolved[key] = _resolve_path_container(resolved[key], manifest)
     return resolved
@@ -356,11 +355,11 @@ def prepare_tool_args(
                     if "target_bare_matrix_element" not in _store
                     else "denominator_bare_matrix_element"
                 )
-            if "report_json" not in merged:
-                if merged.get("out") == "denominator_bare_matrix_element" and renorm.get("denominator_report_json"):
-                    merged["report_json"] = renorm["denominator_report_json"]
-                elif renorm.get("target_report_json"):
-                    merged["report_json"] = renorm["target_report_json"]
+            if "netcdf_path" not in merged:
+                if merged.get("out") == "denominator_bare_matrix_element" and renorm.get("denominator_netcdf_path"):
+                    merged["netcdf_path"] = renorm["denominator_netcdf_path"]
+                elif renorm.get("target_netcdf_path"):
+                    merged["netcdf_path"] = renorm["target_netcdf_path"]
             if "resample" not in merged and "resample" in renorm:
                 merged["resample"] = renorm["resample"]
             resolved = resolve_tool_args(merged, manifest)

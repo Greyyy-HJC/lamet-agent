@@ -238,11 +238,11 @@ def test_prepare_tool_args_merges_renormalization_manifest_options(tmp_path: Pat
             "run_id": "renorm",
             "metadata": {
                 "renormalization": {
-                    "denominator_report_json": "p0_report.json",
+                    "denominator_netcdf_path": "p0.nc",
                     "zs": 4,
                     "delta_m": 0.0,
                     "m0": 0.0,
-                    "save_path": "renorm_npz",
+                    "save_path": "renorm",
                     "plot": {"save_path": "renorm_plot.pdf", "title": "Renorm"},
                 }
             },
@@ -254,10 +254,10 @@ def test_prepare_tool_args_merges_renormalization_manifest_options(tmp_path: Pat
         {},
         manifest=manifest,
         artifacts_dir=tmp_path / "artifacts",
-        _store={"bare_matrix_grid_report": {"outputs": []}},
+        _store={"bare_matrix_element_data": object()},
     )
     assert load_target["out"] == "target_bare_matrix_element"
-    assert "report_json" not in load_target
+    assert "netcdf_path" not in load_target
 
     load_denom = prepare_tool_args(
         "load_bare_matrix_element_grid",
@@ -266,7 +266,7 @@ def test_prepare_tool_args_merges_renormalization_manifest_options(tmp_path: Pat
         artifacts_dir=tmp_path / "artifacts",
         _store={"target_bare_matrix_element": object()},
     )
-    assert load_denom["report_json"] == "p0_report.json"
+    assert load_denom["netcdf_path"] == "p0.nc"
 
     apply_args = prepare_tool_args(
         "apply_ratio_scheme_renormalization",
@@ -276,7 +276,7 @@ def test_prepare_tool_args_merges_renormalization_manifest_options(tmp_path: Pat
         _store={},
     )
     assert apply_args["zs"] == 4
-    assert apply_args["save_path"] == str(tmp_path / "artifacts" / "renorm_npz")
+    assert apply_args["save_path"] == str(tmp_path / "artifacts" / "renorm")
     assert apply_args["artifacts_dir"] == str(tmp_path / "artifacts")
 
     plot_args = prepare_tool_args(

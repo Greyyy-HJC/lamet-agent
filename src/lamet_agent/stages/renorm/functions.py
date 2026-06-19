@@ -6,7 +6,7 @@ Purpose:
 - fit a self-renormalization factor zR from zero-momentum reference data
 
 Expected inputs:
-- correlator-stage bare matrix-element txt grids or report JSON files
+- correlator-stage bare matrix-element NetCDF files
 - NPZ with ``z`` (fm) and ``samples`` (n_sample x n_z or n_sample x n_a x n_z)
 - tool arguments supplied by the agent as JSON-compatible values
 
@@ -24,7 +24,6 @@ Example usage:
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any, Literal
@@ -60,23 +59,6 @@ def _resample_mode(data: EnsembleData) -> str:
     if data.resample == "jackknife":
         return "jk"
     return data.resample
-
-
-def _bare_grid_paths_from_report(report_json: str | Path) -> tuple[list[tuple[float, Path]], dict[str, Any]]:
-    report_path = Path(report_json)
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-    outputs = report.get("outputs")
-    if not isinstance(outputs, list):
-        raise ValueError(f"bare matrix report has no outputs list: {report_json}")
-    paths: list[tuple[float, Path]] = []
-    for item in outputs:
-        if not isinstance(item, dict) or "path" not in item or "z" not in item:
-            raise ValueError("each bare matrix report output must contain path and z")
-        path = Path(str(item["path"]))
-        if not path.is_absolute():
-            path = (report_path.parent / path).resolve()
-        paths.append((float(item["z"]), path))
-    return paths, report
 
 
 def _bare_grid_paths_from_dir(
@@ -128,8 +110,9 @@ def _matrix_to_ensemble(
     name: str,
 ) -> EnsembleData:
     values = [np.asarray(samples[idx], dtype=complex) for idx in range(samples.shape[0])]
+    ensemble_id = "" if attrs is None else str(attrs.get("ensemble", ""))
     return EnsembleData(
-        ensemble=None,
+        ensemble=EnsembleInfo("", ensemble_id, 1.0, 1.0, 1, 1, 0.0),
         resample=resample,
         values=values,
         dims=("z",),
@@ -167,42 +150,46 @@ def _artifact_stem(raw: str | None, *, artifacts_dir: str | Path | None, default
 def load_bare_matrix_element_grid(
     store: dict[str, Any],
     *,
-    report_json: str | None = None,
+    netcdf_path: str | None = None,
     txt_dir: str | None = None,
     filename_glob: str = "*.txt",
     z_regex: str = r"_z([+-]?\d+(?:\.\d+)?)\.txt$",
     resample: Literal["bootstrap", "jackknife", "raw", "bs", "jk"] | None = None,
     out: str = "bare_matrix_element",
 ) -> dict[str, Any]:
-    """Load correlator-stage bare matrix-element txt grid into complex EnsembleData."""
-    if report_json is None and txt_dir is None:
-        report = store.get("bare_matrix_grid_report")
-        if isinstance(report, dict) and isinstance(report.get("outputs"), list):
-            paths = [(float(item["z"]), Path(str(item["path"]))) for item in report["outputs"]]
-            metadata = report
+    """Load correlator-stage bare matrix elements into complex EnsembleData."""
+    source: str
+    if netcdf_path is not None:
+        data = EnsembleData.from_netcdf(netcdf_path)
+        source = netcdf_path
+    elif txt_dir is None:
+        existing = store.get("bare_matrix_element_data")
+        if isinstance(existing, EnsembleData):
+            data = existing
+            source = "bare_matrix_element_data"
+        elif isinstance(store.get("bare_matrix_element_netcdf"), str):
+            source = str(store["bare_matrix_element_netcdf"])
+            data = EnsembleData.from_netcdf(source)
         else:
-            raise ValueError("provide report_json or txt_dir, or run fit_bare_matrix_grid first")
-    elif report_json is not None:
-        paths, metadata = _bare_grid_paths_from_report(report_json)
+            raise ValueError("provide netcdf_path or txt_dir, or run fit_bare_matrix_grid first")
     else:
         assert txt_dir is not None
         paths, metadata = _bare_grid_paths_from_dir(txt_dir, filename_glob=filename_glob, z_regex=z_regex)
+        z_values, samples = _load_complex_txt_grid(paths)
+        resample_name = _resample_name(resample or str(metadata.get("resample_mode", "bootstrap")))
+        data = _matrix_to_ensemble(
+            z_values=z_values,
+            samples=samples,
+            resample=resample_name,
+            attrs={"source": txt_dir, "resample_mode": metadata.get("resample_mode", resample_name)},
+            name="bare_matrix_element",
+        )
+        source = txt_dir
 
-    z_values, samples = _load_complex_txt_grid(paths)
-    resample_name = _resample_name(resample or str(metadata.get("resample_mode", "bootstrap")))
-    data = _matrix_to_ensemble(
-        z_values=z_values,
-        samples=samples,
-        resample=resample_name,
-        attrs={
-            "source": report_json or txt_dir or "bare_matrix_grid_report",
-            "resample_mode": metadata.get("resample_mode", resample_name),
-            "ensemble": metadata.get("ensemble"),
-            "momentum": metadata.get("momentum"),
-        },
-        name="bare_matrix_element",
-    )
     store[out] = data
+    loaded = _require_matrix_data(store, out)
+    z_values = np.asarray(loaded.coords["z"], dtype=float)
+    samples = np.asarray(loaded.values, dtype=complex)
     store[f"{out}_arrays"] = {
         "coord": z_values,
         "re_samples": np.real(samples),
@@ -214,7 +201,8 @@ def load_bare_matrix_element_grid(
         "n_z": int(len(z_values)),
         "n_sample": int(samples.shape[0]),
         "z_values": z_values.tolist(),
-        "resample": data.resample,
+        "resample": loaded.resample,
+        "source": source,
     }
 
 
@@ -280,13 +268,9 @@ def apply_ratio_scheme_renormalization(
     }
 
     stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="renormalized_matrix_element")
-    artifact = stem.with_suffix(".npz")
-    result.save_npz(
-        artifact,
-        coord=z_target,
-        re_samples=np.real(renorm_values),
-        im_samples=np.imag(renorm_values),
-    )
+    artifact = stem.with_suffix(".nc")
+    result.to_netcdf(artifact)
+    store["matrix_element_netcdf"] = str(artifact)
     return {
         "out": out,
         "data": "matrix_element_data",

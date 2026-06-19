@@ -23,5 +23,6 @@ Flow:
 3.  fit_bare_matrix_grid with the exact correlator_grid fields plus the chosen
     correlator_rescale. Provide the tuned setting as pt2_window+pt3_window for a
     single shared window, or model_average=true to BMA-combine the window grid.
-4.  finish with the bare-matrix paths, chosen window, and correlator_rescale.
+4.  finish with the bare-matrix NetCDF artifact path, chosen window, and
+    correlator_rescale.
 """.strip()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import matplotlib
@@ -18,6 +17,7 @@ from matplotlib.legend import Legend
 pytest.importorskip("lsqfit")
 
 import lamet_agent.stages.correlator.functions as correlator_functions
+from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.plotting import (
     _pt3_ratio_data_tau_slice,
     _ratio_denominator_correction,
@@ -415,7 +415,7 @@ def test_sample_mean_err_matches_core_helper() -> None:
 # --- output writer -----------------------------------------------------------
 
 
-def test_write_outputs_writes_txt_plot_and_report(tmp_path) -> None:
+def test_write_outputs_writes_netcdf_and_plot_without_txt(tmp_path) -> None:
     records = [
         {
             "z": 0,
@@ -442,17 +442,13 @@ def test_write_outputs_writes_txt_plot_and_report(tmp_path) -> None:
         momentum="PX0PY0PZ0",
         b_label="b0",
         resample_mode="jk",
-        output_subdir="bare_qpdf",
     )
-    txt0 = tmp_path / "bare_qpdf" / "HISQa060_X_CG52bxp00_CG52bxp00_free_X_PX0PY0PZ0_b0_z0.txt"
-    assert txt0.is_file()
-    loaded = np.loadtxt(txt0)
-    assert loaded.shape == (3, 2)
-    assert np.allclose(loaded[:, 0], records[0]["real_samples"])
     assert (tmp_path / "bare.pdf").is_file()
-    report = json.loads((tmp_path / "bare_report.json").read_text())
-    assert report["resample_mode"] == "jk"
-    assert report["outputs"][0]["sample0_plot_paths"] == {"ratio_re_pdf": "re.pdf"}
+    assert (tmp_path / "bare.nc").is_file()
+    saved = EnsembleData.from_netcdf(result["netcdf_path"])
+    assert saved.resample == "jackknife"
+    assert saved.values.shape == (3, 2)
+    assert result["outputs"][0]["sample0_plot_paths"] == {"ratio_re_pdf": "re.pdf"}
     assert result["n_z"] == 2
 
 
@@ -544,13 +540,15 @@ def test_fit_bare_matrix_grid_single_shared_window(tmp_path) -> None:
     )
     # one shared window applied to every z
     assert len(result["shared_window_specs"]) == 1
-    report = json.loads(Path(result["report_json"]).read_text())
-    tau_cuts = {z["window"]["tau_cut"] for z in report["z_fits"]}
+    assert result["artifact"].endswith(".nc")
+    assert "report_json" not in result
+    saved = EnsembleData.from_netcdf(result["artifact"])
+    assert saved.dims == ["z"]
+    assert saved.resample == "jackknife"
+    assert saved.values.shape[1] == 2
+    tau_cuts = {z["window"]["tau_cut"] for z in result["z_fits"]}
     assert len(tau_cuts) == 1
-    for z in (0, 1):
-        txt = tmp_path / "artifacts" / "bare_qpdf" / f"E_T_free_X_PX0PY0PZ0_b0_z{z}.txt"
-        assert txt.is_file()
-        assert np.loadtxt(txt).shape[1] == 2
+    assert not (tmp_path / "artifacts" / "bare_qpdf").exists()
     sample_log = Path(result["sample_log_path"]).read_text(encoding="utf-8")
     assert "sample ground-state joint_2pt_ratio" in sample_log
     assert "sample=0" in sample_log
@@ -600,8 +598,7 @@ def test_fit_bare_matrix_grid_model_average_uses_window_set(tmp_path) -> None:
     )
     assert result["model_average"] is True
     assert len(result["shared_window_specs"]) == 2
-    txt = tmp_path / "artifacts" / "bare_qpdf" / "E_T_free_X_PX0PY0PZ0_b0_z0.txt"
-    assert txt.is_file()
+    assert result["artifact"].endswith(".nc")
 
 
 # --- agent plumbing ----------------------------------------------------------

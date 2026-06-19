@@ -333,3 +333,9 @@
 
 - Documented NetCDF as the standard stage-to-stage artifact format in `README.md`, including artifact naming, manifest path conventions, and Python/xarray read/write examples.
 - Updated Quick Start to recommend the `[analysis]` extra for NetCDF I/O dependencies.
+
+## 2026-06-18 (Correlator-renormalization NetCDF handoff)
+
+- Migrated the correlator-to-renormalization handoff from JSON report/txt-grid loading to `EnsembleData` NetCDF artifacts.
+- Changed ratio-scheme renormalization output from `.npz` to `.nc` while leaving Fourier and matching IO for a later coordinated update.
+- Removed correlator-stage per-z bare matrix `.txt` output so the bare matrix element artifact is NetCDF-only.

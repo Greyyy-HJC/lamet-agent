@@ -182,7 +182,6 @@
       "svdcut": 1e-06,
       "part": "both",
       "q_min": 0.05,
-      "output_subdir": "bare_qpdf",
       "save_path": "a060_x_p0_bare_matrix_elements",
       "resample_mode": "jk",
       "posterior_prior_error_scale": 3.0,

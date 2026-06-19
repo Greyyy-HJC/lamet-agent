@@ -15,8 +15,8 @@ denominator for |z| >= zs. Keep all samples for downstream error propagation.
 
 
 TOOL_CATALOG = {
-    "load_bare_matrix_element_grid": "load_bare_matrix_element_grid(...) -> load bare real/imag txt samples as EnsembleData(z).",
-    "apply_ratio_scheme_renormalization": "apply_ratio_scheme_renormalization(...) -> apply Eq. 15 sample-by-sample and write a Fourier-compatible NPZ.",
+    "load_bare_matrix_element_grid": "load_bare_matrix_element_grid(...) -> load bare matrix-element NetCDF as EnsembleData(z).",
+    "apply_ratio_scheme_renormalization": "apply_ratio_scheme_renormalization(...) -> apply Eq. 15 sample-by-sample and write renormalized NetCDF.",
     "plot_renormalized_matrix_element": "plot_renormalized_matrix_element(...) -> plot renormalized matrix elements to PDF.",
 }
 
@@ -33,10 +33,10 @@ def validate_stage_inputs(manifest: AnalysisManifest) -> list[str]:
     if renorm and not isinstance(renorm, dict):
         return ["metadata.renormalization must be an object when provided."]
     if isinstance(renorm, dict):
-        if "denominator_report_json" not in renorm and "target_report_json" in renorm:
+        if "denominator_netcdf_path" not in renorm and "target_netcdf_path" in renorm:
             issues.append(
-                "metadata.renormalization.denominator_report_json is required when renormalization is run from "
-                "manifest-provided target_report_json instead of an upstream correlator stage."
+                "metadata.renormalization.denominator_netcdf_path is required when renormalization is run from "
+                "manifest-provided target_netcdf_path instead of an upstream correlator stage."
             )
         if any(key in renorm for key in {"zs", "delta_m", "m0"}) and "zs" in renorm:
             try:

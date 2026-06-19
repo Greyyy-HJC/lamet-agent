@@ -23,7 +23,7 @@ TOOL_CATALOG = {
     "inspect_correlator_scale": "inspect_correlator_scale(...) -> 2pt magnitude diagnostics for correlator_rescale.",
     "tune_ground_state": "tune_ground_state(...) -> per-window 2pt diagnostics and stored E0_avg/z0_avg.",
     "tune_bare_matrix": "tune_bare_matrix(...) -> ranked 3pt/2pt window candidates on sample-average data.",
-    "fit_bare_matrix_grid": "fit_bare_matrix_grid(...) -> apply one shared setting to all z/samples and write bare-matrix artifacts.",
+    "fit_bare_matrix_grid": "fit_bare_matrix_grid(...) -> apply one shared setting to all z/samples and write a bare-matrix NetCDF artifact.",
 }
 
 
