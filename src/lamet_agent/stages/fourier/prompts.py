@@ -10,9 +10,10 @@ Do this by emitting one action at a time:
    the missing fields, summarizing the listed choices and the physical meaning
    of each option.
 1. If manifest.metadata.fourier_input is provided, call
-   load_renormalized_matrix_element_samples on that path. Pass input_format='npz'
-   for NPZ files or input_format='h5' for HDF5 files. For HDF5 inputs, pass
-   h5_group when the desired group cannot be inferred from the file name.
+   load_renormalized_matrix_element_samples on that path. Pass input_format='nc'
+   for NetCDF EnsembleData files, input_format='npz' for legacy NPZ files, or
+   input_format='h5' for HDF5 files. For HDF5 inputs, pass h5_group when the
+   desired group cannot be inferred from the file name.
    If metadata.fourier specifies coord_key, re_key, im_key, or resample_mode,
    pass those values to the loader. Do not pass resample_mode to
    run_fourier_transform; the transform reads the mode from the loaded
@@ -60,19 +61,12 @@ Do this by emitting one action at a time:
    model has parameters.
    Prefer scheme_scan when the manifest provides it, so the tool can score and
    model-average the fit-range choices numerically.
-3. summarize_fourier_result.
-4. plot_fourier_result.
-5. plot_fourier_extension_quality_result for the best weighted scheme unless
-   the user asks for a different scheme. This writes separate real- and
-   imaginary-part extension plots.
-6. report_fourier_result. If metadata.fourier.report gives save_path, use it.
-   This writes an English Markdown report at save_path/default path and a
-   Chinese companion report named with the same stem plus _CN.md. The reports
-   should explain the physical quantity, selected LA/NLA tail form, fit
-   diagnostics, Fourier-transform formula used by the code, output artifacts,
-   embedded PNG plots with PDF artifact links, NPZ contents, and a compact
-   numerical result preview.
-7. finish, reporting the Markdown report paths, NPZ artifact path, PDF/PNG plot paths, best scheme, scheme
+   run_fourier_transform writes the Fourier NetCDF artifact, fit-info NetCDF,
+   Fourier plot, extension plots, and English/Chinese Markdown reports in one
+   call. Do not call summarize_fourier_result, plot_fourier_result,
+   plot_fourier_extension_quality_result, or report_fourier_result again unless
+   the user explicitly asks to regenerate a specific artifact.
+3. finish, reporting the Markdown report paths, NetCDF artifact path, PDF/PNG plot paths, best scheme, scheme
    weights, fit chi2/dof, roughness scores, fit failure counts, and the
    statistical/systematic uncertainty arrays.
 

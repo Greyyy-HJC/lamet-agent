@@ -136,14 +136,15 @@ class EnsembleData:
 
     def to_netcdf(self, path: Union[str, Path]) -> None:
         array = self.array.copy(deep=False)
-        array.attrs["ensemble"] = json.dumps(self.ensemble._asdict())
+        array.attrs["ensemble"] = json.dumps(None if self.ensemble is None else self.ensemble._asdict())
         array.attrs["resample"] = self.resample
         array.to_netcdf(path, format="NETCDF4", auto_complex=True)
 
     @classmethod
     def from_netcdf(cls, path: Union[str, Path]) -> "EnsembleData":
         array = xarray.load_dataarray(path, auto_complex=True)
-        ensemble = EnsembleInfo(**json.loads(array.attrs.pop("ensemble")))
+        ensemble_payload = json.loads(array.attrs.pop("ensemble"))
+        ensemble = None if ensemble_payload is None else EnsembleInfo(**ensemble_payload)
         resample = array.attrs.pop("resample")
         return cls._from_xarray(ensemble, resample, array)
 

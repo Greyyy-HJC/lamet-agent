@@ -18,8 +18,8 @@ light-cone PDF with an NLO matching kernel, carrying gvar errors through.
 Inputs:
 - The quasi-PDF is the Fourier stage's output, read from disk (each stage starts
   with a fresh store). load_quasi_pdf accepts either the Fourier EnsembleData
-  npz (default; grid from coords['x'], quasi-PDF = ft_<component>_mean with
-  error sqrt(stat^2 + sys^2)) or a simple npz with x_ls/quasi_mean/quasi_sdev.
+  NetCDF artifact (default; grid from coords['x'], quasi-PDF from the requested
+  component samples) or a legacy/simple npz with x_ls/quasi_samples.
 - component selects the real ('re', default) or imaginary ('im') channel. The
   unpolarized quasi-PDF lives in the real part.
 
@@ -56,7 +56,7 @@ Strategy:
 #     under "Available tools" -------------------------------------------------
 TOOL_CATALOG = {
     "list_kernels": "list_kernels() -> the registered kernel_ids you may pass to build_matching_kernel.",
-    "load_quasi_pdf": "load_quasi_pdf(path, component='re'|'im') -> read the quasi-PDF and its x grid (stores x_ls, quasi_gv); auto-detects the Fourier EnsembleData npz (real part, sqrt(stat^2+sys^2) error) or a simple x_ls/quasi_mean/quasi_sdev npz.",
+    "load_quasi_pdf": "load_quasi_pdf(path, component='re'|'im') -> read the quasi-PDF and its x grid (stores x_ls, quasi_gv); auto-detects the Fourier EnsembleData NetCDF artifact or a legacy/simple x_ls/quasi_samples npz.",
     "build_matching_kernel": "build_matching_kernel(kernel_id, pz_gev, mu=2.0, zs_fm=None, grid='x_ls') -> the (nx, ny) NLO matching matrix for the chosen operator; the scheme follows the kernel_id suffix (_msbar, _ratio, _hybrid); hybrid kernels require zs_fm (z_s in fm) and form zspz = zs_fm * pz_gev / GEV_FM; x grid must avoid x=0.",
     "apply_matching": "apply_matching(kernel='kernel_matrix', quasi='quasi_gv') -> lightcone_gv = kernel @ quasi with gvar error propagation.",
     "plot_matched_pdf": "plot_matched_pdf(save_path=None) -> quasi vs light-cone f(x) comparison as error bands, written to artifacts/matched_pdf.pdf.",
@@ -91,8 +91,8 @@ ZS_FM_HELP = (
 
 QUASI_HELP = (
     "metadata.matching.quasi_input is not set; defaulting to the Fourier-stage "
-    "artifact artifacts/quasi_pdf.npz. Set it explicitly to read a different "
-    "quasi-PDF npz."
+    "artifact artifacts/fourier_result.nc. Set it explicitly to read a different "
+    "quasi-PDF artifact."
 )
 
 

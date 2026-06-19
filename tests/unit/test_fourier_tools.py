@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import numpy as np
 import pytest
 
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.tools import resolve_stage_tools
-from lamet_agent.core.plotting import _band_segment, plot_fourier_extension_quality, plot_fourier_npz
+from lamet_agent.core.plotting import _band_segment, plot_fourier_artifact, plot_fourier_extension_quality
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.stages.fourier.functions import (
     _asymptotic_values,
@@ -96,11 +97,13 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert run["n_samples"] == 3
     assert Path(run["artifact"]).is_file()
     assert Path(run["artifact"]).parent == tmp_path / "artifacts"
-    ft_data, ft_extra = EnsembleData.load_npz(run["artifact"])
+    assert Path(run["artifact"]).suffix == ".nc"
+    assert Path(run["fit_info_artifact"]).suffix == ".nc"
+    ft_data = EnsembleData.from_netcdf(run["artifact"])
     assert ft_data.dims == ["x"]
     assert ft_data.resample == "bootstrap"
     assert ft_data.values.shape == (3, 3)
-    assert "ft_re_mean" in ft_extra
+    assert "ft_re_mean" in ft_data.attrs
     assert Path(run["fit_info_artifact"]).is_file()
     assert Path(run["plot"]).is_file()
     assert Path(run["plot"]).with_suffix(".png").is_file()
@@ -110,19 +113,12 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert Path(run["plot_im"]).with_suffix(".png").is_file()
     assert Path(run["report"]).is_file()
     assert Path(run["report_cn"]).is_file()
-    fit_data, fit_extra = EnsembleData.load_npz(run["fit_info_artifact"])
+    fit_data = EnsembleData.from_netcdf(run["fit_info_artifact"])
     assert fit_data.dims == ["scheme", "parameter"]
     assert fit_data.resample == "bootstrap"
     assert fit_data.values.shape == (3, 1, 3)
-    assert "fit_chi2" in fit_extra
-    fit_info = np.load(run["fit_info_artifact"])
-    assert fit_info["fit_param_labels"].tolist() == ["A2", "phi2", "Lambda"]
-    assert fit_info["fit_params"].shape == (1, 3, 3)
-    assert np.all(fit_info["fit_params"][:, :, 2] >= 0.3)
-    assert fit_info["fit_param_center"].shape == (1, 3)
-    assert fit_info["fit_param_sdev"].shape == (1, 3)
-    assert fit_info["fit_chi2"].shape == (1, 3)
-    assert fit_info["fit_q"].shape == (1, 3)
+    assert "fit_chi2" in fit_data.attrs
+    assert fit_data.coords["parameter"] == ["A2", "phi2", "Lambda"]
 
     summary = summarize_fourier_result(store)
     assert summary["out"] == "fourier_summary"
@@ -155,9 +151,9 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "q(x)=\\frac{\\Delta\\lambda}{2\\pi}" in report_text
     assert "![Fourier result]" in report_text
     assert "fourier_result.png" in report_text
-    assert "Reading the NPZ Outputs" in report_text
-    assert "fourier_result.npz" in report_text
-    assert "fourier_fit_info.npz" in report_text
+    assert "Reading the NetCDF Outputs" in report_text
+    assert "fourier_result.nc" in report_text
+    assert "fourier_fit_info.nc" in report_text
     assert Path(run["artifact"]).name in report_text
     assert Path(run["fit_info_artifact"]).name in report_text
     assert report_cn_path.name == "report_fourier_CN.md"
@@ -165,9 +161,9 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "Active fitted component" in report_cn_text
     assert "实部和虚部同时参与拟合" in report_cn_text
     assert "图像与可视化评估" in report_cn_text
-    assert "如何读取 NPZ 输出" in report_cn_text
-    assert "fourier_result.npz" in report_cn_text
-    assert "fourier_fit_info.npz" in report_cn_text
+    assert "如何读取 NetCDF 输出" in report_cn_text
+    assert "fourier_result.nc" in report_cn_text
+    assert "fourier_fit_info.nc" in report_cn_text
     assert "fourier_result.png" in report_cn_text
 
     data = store["fourier_result"]
@@ -233,8 +229,8 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     assert result_re["part"] == "re"
     assert np.allclose(result_re["ft_im_samples"], 0.0)
     assert np.allclose(result_re["scheme_results"][0]["extended_im_samples"], 0.0)
-    artifact_re = np.load(run_re["artifact"])
-    assert str(artifact_re["part"]) == "re"
+    artifact_re = EnsembleData.from_netcdf(run_re["artifact"])
+    assert artifact_re.attrs["part"] == "re"
 
     store = {}
     load_renormalized_matrix_element_samples(store, path=str(data_path))
@@ -252,8 +248,8 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     assert np.allclose(result_im["scheme_results"][0]["extended_re_samples"], 0.0)
     assert np.all(np.isfinite(result_im["ft_re_samples"]))
     assert np.all(np.isfinite(result_im["ft_im_samples"]))
-    artifact_im = np.load(run_im["artifact"])
-    assert str(artifact_im["part"]) == "im"
+    artifact_im = EnsembleData.from_netcdf(run_im["artifact"])
+    assert artifact_im.attrs["part"] == "im"
 
 
 def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, monkeypatch) -> None:
@@ -293,8 +289,8 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
     assert np.allclose(scaled["ft_re_mean"], 2.0 * base["ft_re_mean"])
     assert np.allclose(scaled["ft_re_stat_sdev"], 2.0 * base["ft_re_stat_sdev"])
     assert np.allclose(scaled["ft_re_sys_sdev"], 2.0 * base["ft_re_sys_sdev"])
-    artifact = np.load(scaled_run["artifact"])
-    assert float(artifact["output_scale"]) == 2.0
+    artifact = EnsembleData.from_netcdf(scaled_run["artifact"])
+    assert float(json.loads(artifact.attrs["output_scale"])) == 2.0
 
 
 def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monkeypatch) -> None:
@@ -315,8 +311,8 @@ def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monke
         order="LA",
     )
 
-    ft_data, _ft_extra = EnsembleData.load_npz(run["artifact"])
-    fit_data, _fit_extra = EnsembleData.load_npz(run["fit_info_artifact"])
+    ft_data = EnsembleData.from_netcdf(run["artifact"])
+    fit_data = EnsembleData.from_netcdf(run["fit_info_artifact"])
     assert store["fourier_result"]["resample_mode"] == "jackknife"
     assert store["fourier_result_data"].resample == "jackknife"
     assert ft_data.resample == "jackknife"
@@ -349,6 +345,34 @@ def test_fourier_loader_accepts_ensemble_data_npz(tmp_path: Path) -> None:
     assert store["matrix_element_data"].resample == "jackknife"
     assert store["matrix_element"]["re_samples"].shape == (3, 5)
     assert store["matrix_element"]["im_samples"].shape == (3, 5)
+
+
+def test_fourier_loader_accepts_ensemble_data_netcdf(tmp_path: Path) -> None:
+    coord = np.arange(0.0, 5.0)
+    base_re = np.exp(-0.45 * coord)
+    base_im = 0.1 * np.exp(-0.45 * coord)
+    data = EnsembleData(
+        ensemble=None,
+        resample="jackknife",
+        values=[
+            base_re + 1j * base_im,
+            1.01 * base_re + 0.98j * base_im,
+            0.99 * base_re + 1.02j * base_im,
+        ],
+        dims=("z",),
+        coords={"z": coord.tolist()},
+        name="renormalized_matrix_element",
+    )
+    path = tmp_path / "matrix_element.nc"
+    data.to_netcdf(path)
+    store = {}
+
+    loaded = load_renormalized_matrix_element_samples(store, path=str(path), input_format="nc")
+
+    assert loaded["input_format"] == "nc"
+    assert loaded["resample_mode"] == "jackknife"
+    assert store["matrix_element_data"].resample == "jackknife"
+    assert store["matrix_element"]["re_samples"].shape == (3, 5)
 
 
 def test_fourier_transform_accepts_upstream_ensemble_data(tmp_path: Path, monkeypatch) -> None:
@@ -405,8 +429,8 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
         observable="pion_quark_quasi_pdf",
     )
 
-    fit_info = np.load(run["fit_info_artifact"])
-    assert fit_info["fit_param_labels"].tolist() == [
+    fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
+    assert json.loads(fit_info.attrs["fit_param_labels"]) == [
         "A2",
         "phi2",
         "A1",
@@ -421,7 +445,7 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
         "phi3p",
         "Lambda",
     ]
-    assert fit_info["fit_params"].shape == (1, 3, 13)
+    assert np.asarray(json.loads(fit_info.attrs["fit_params"])).shape == (1, 3, 13)
 
 
 def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatch) -> None:
@@ -453,9 +477,9 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
             observable=observable,
         )
 
-        fit_info = np.load(run["fit_info_artifact"])
-        assert fit_info["fit_param_labels"].tolist() == expected_labels
-        assert fit_info["fit_params"].shape == (1, 3, len(expected_labels))
+        fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
+        assert json.loads(fit_info.attrs["fit_param_labels"]) == expected_labels
+        assert np.asarray(json.loads(fit_info.attrs["fit_params"])).shape == (1, 3, len(expected_labels))
 
 
 def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
@@ -817,6 +841,56 @@ def test_fourier_stage_validation_accepts_declared_matrix_element() -> None:
     assert validate_stage_inputs(manifest) == []
 
 
+def test_fourier_stage_validation_accepts_stage_defaults() -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "demo",
+            "metadata": {"fourier_input": "matrix_element.nc"},
+            "stages": {
+                "fourier_transform": {
+                    "defaults": {
+                        "method": "GI",
+                        "order": "NLA",
+                        "observable": "nucleon_quark_transversity_quasi_pdf",
+                        "coord_unit": "lambda",
+                        "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
+                    }
+                }
+            },
+        }
+    )
+    assert validate_stage_inputs(manifest) == []
+
+
+def test_fourier_stage_validation_derives_observable_from_global_inputs() -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "demo",
+            "metadata": {
+                "fourier_input": "matrix_element.nc",
+                "target_observable": "pdf",
+            },
+            "inputs": {
+                "correlators": [
+                    {"kind": "2pt", "hadron": "proton", "gfix": "GI", "a_fm": 0.08, "pz_gev": 1.5},
+                    {"kind": "3pt", "hadron": "proton", "gfix": "GI", "a_fm": 0.08, "pz_gev": 1.5},
+                ]
+            },
+            "stages": {
+                "fourier_transform": {
+                    "defaults": {
+                        "parton": "quark",
+                        "order": "NLA",
+                        "coord_unit": "lattice",
+                        "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
+                    }
+                }
+            },
+        }
+    )
+    assert validate_stage_inputs(manifest) == []
+
+
 def test_fourier_stage_validation_allows_auto_scheme_scan() -> None:
     manifest = AnalysisManifest.model_validate(
         {
@@ -863,7 +937,7 @@ def test_fourier_stage_validation_flags_missing_matrix_element() -> None:
     assert validate_stage_inputs(manifest)
 
 
-def test_plot_fourier_npz_writes_figure(tmp_path: Path) -> None:
+def test_plot_fourier_artifact_writes_figure(tmp_path: Path) -> None:
     path = tmp_path / "fourier_result.npz"
     save_path = tmp_path / "fourier.pdf"
     np.savez(
@@ -878,7 +952,7 @@ def test_plot_fourier_npz_writes_figure(tmp_path: Path) -> None:
         observable=np.asarray("nucleon_quark_transversity_quasi_pdf"),
     )
 
-    fig, (ax_re, _ax_im) = plot_fourier_npz(path, save_path=save_path)
+    fig, (ax_re, _ax_im) = plot_fourier_artifact(path, save_path=save_path)
 
     assert save_path.is_file()
     assert ax_re.get_title() == "FT nucleon quark transversity quasi pdf"

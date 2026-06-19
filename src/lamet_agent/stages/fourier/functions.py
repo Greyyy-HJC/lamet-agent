@@ -3,10 +3,10 @@
 Purpose:
 - load coordinate-space real/imaginary samples
 - call the local sample-preserving extrapolation and Fourier workflow
-- keep large arrays in the stage store and write compact `.npz` artifacts
+- keep large arrays in the stage store and write `.nc` EnsembleData artifacts
 
 Expected inputs:
-- an `.npz` file with `coord`, `re_samples`, and `im_samples`, or
+- an `.nc` EnsembleData file, an `.npz` file with `coord`, `re_samples`, and `im_samples`, or
   an HDF5 file with group datasets such as `Pz=4/z_ary`, `Pz=4/Re`, `Pz=4/Im`
 - tool arguments supplied by the agent as JSON-compatible values
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -29,7 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from lamet_agent.core.data import EnsembleData
-from lamet_agent.core.plotting import plot_fourier_extension_quality, plot_fourier_npz
+from lamet_agent.core.plotting import plot_fourier_artifact, plot_fourier_extension_quality
 from lamet_agent.core.resampling import bs_ls_avg, jk_ls_avg
 from lamet_agent.stages.fourier.reporting import write_fourier_report
 
@@ -1253,13 +1254,34 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "order": str(result.get("order", "")),
         "observable": str(result.get("observable", "")),
         "coord_unit": str(result.get("coord_unit", "")),
+        "fit_coord_unit": str(result.get("fit_coord_unit", "")),
+        "part": str(result.get("part", "both")),
+        "resample_mode": str(result.get("resample_mode", "")),
     }
     for key in ("pz_gev", "pz_prime_gev", "a_fm"):
         value = result.get(key)
         if value is not None:
             attrs[key] = str(value)
+    for key in (
+        "ft_re_mean",
+        "ft_im_mean",
+        "ft_re_stat_sdev",
+        "ft_im_stat_sdev",
+        "ft_re_sys_sdev",
+        "ft_im_sys_sdev",
+        "scheme_labels",
+        "fit_failures",
+        "scheme_weights",
+        "scheme_fit_chi2_dof",
+        "scheme_roughness",
+        "scheme_scores",
+        "best_scheme_index",
+        "output_scale",
+    ):
+        if key in result:
+            attrs[key] = json.dumps(np.asarray(result[key]).tolist())
     return EnsembleData(
-        ensemble=None,
+        ensemble=result.get("ensemble"),
         resample=_normalise_resample_mode(str(result.get("resample_mode", "bootstrap"))),
         values=values,
         dims=("x",),
@@ -1332,7 +1354,13 @@ def _load_matrix_element_data(
         fmt = "h5" if suffix in {".h5", ".hdf5"} else suffix.lstrip(".")
     if fmt == "hdf5":
         fmt = "h5"
+    if fmt == "netcdf":
+        fmt = "nc"
     resample = _normalise_resample_mode(resample_mode)
+
+    if fmt == "nc":
+        data = EnsembleData.from_netcdf(path)
+        return data, fmt, None
 
     if fmt == "npz":
         try:
@@ -1379,7 +1407,7 @@ def _load_matrix_element_data(
             )
         return data, fmt, group_name
 
-    raise ValueError("input_format must be 'npz', 'h5', or 'hdf5'")
+    raise ValueError("input_format must be 'nc', 'netcdf', 'npz', 'h5', or 'hdf5'")
 
 
 def _infer_h5_group(path: str, group_names: list[str]) -> str:
@@ -1402,6 +1430,9 @@ def _artifact_path(raw: str | None, *, default_name: str, artifacts_dir: str | P
         if path.is_absolute():
             path.parent.mkdir(parents=True, exist_ok=True)
             return path
+        if path.parent != Path("."):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return path
         return out_dir / path
     return out_dir / default_name
 
@@ -1411,37 +1442,7 @@ def _png_companion_path(path: Path) -> Path:
     return path.with_suffix(".png")
 
 
-def _save_fourier_npz(path: Path, result: dict[str, Any]) -> None:
-    data = fourier_result_to_ensemble_data(result)
-    data.save_npz(
-        path,
-        ft_re_samples=result["ft_re_samples"],
-        ft_im_samples=result["ft_im_samples"],
-        ft_re_mean=result["ft_re_mean"],
-        ft_im_mean=result["ft_im_mean"],
-        ft_re_stat_sdev=result["ft_re_stat_sdev"],
-        ft_im_stat_sdev=result["ft_im_stat_sdev"],
-        ft_re_sys_sdev=result["ft_re_sys_sdev"],
-        ft_im_sys_sdev=result["ft_im_sys_sdev"],
-        scheme_labels=np.asarray(result["scheme_labels"]),
-        fit_failures=np.asarray(result["fit_failures"], dtype=int),
-        scheme_weights=np.asarray(result.get("scheme_weights", []), dtype=float),
-        scheme_fit_chi2_dof=np.asarray(result.get("scheme_fit_chi2_dof", []), dtype=float),
-        scheme_roughness=np.asarray(result.get("scheme_roughness", []), dtype=float),
-        scheme_scores=np.asarray(result.get("scheme_scores", []), dtype=float),
-        best_scheme_index=np.asarray(result.get("best_scheme_index", -1), dtype=int),
-        pz_gev=np.asarray(result.get("pz_gev", np.nan), dtype=float),
-        pz_prime_gev=np.asarray(result.get("pz_prime_gev", np.nan), dtype=float),
-        a_fm=np.asarray(result.get("a_fm", np.nan), dtype=float),
-        method=np.asarray(result.get("method", "")),
-        order=np.asarray(result.get("order", "")),
-        observable=np.asarray(result.get("observable", "")),
-        part=np.asarray(result.get("part", "both")),
-        output_scale=np.asarray(result.get("output_scale", 1.0), dtype=float),
-    )
-
-
-def _save_fourier_fit_info_npz(path: Path, result: dict[str, Any]) -> None:
+def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
     schemes = result["scheme_results"]
     fit_params = np.asarray([item["fit_params"] for item in schemes], dtype=float)
     fit_chi2 = np.asarray([item["fit_chi2"] for item in schemes], dtype=float)
@@ -1463,7 +1464,7 @@ def _save_fourier_fit_info_npz(path: Path, result: dict[str, Any]) -> None:
     fit_param_labels = np.asarray(schemes[0]["fit_param_labels"])
     param_samples = np.moveaxis(fit_params, 1, 0)
     fit_info_data = EnsembleData(
-        ensemble=None,
+        ensemble=result.get("ensemble"),
         resample=resample_mode,
         values=[param_samples[idx] for idx in range(param_samples.shape[0])],
         dims=("scheme", "parameter"),
@@ -1473,33 +1474,31 @@ def _save_fourier_fit_info_npz(path: Path, result: dict[str, Any]) -> None:
             "order": str(result.get("order", "")),
             "observable": str(result.get("observable", "")),
             "part": str(result.get("part", "both")),
+            "scheme_labels": json.dumps(scheme_labels.tolist()),
+            "fit_param_labels": json.dumps(fit_param_labels.tolist()),
+            "fit_params": json.dumps(fit_params.tolist()),
+            "fit_param_center": json.dumps(np.mean(fit_params, axis=1).tolist()),
+            "fit_param_sdev": json.dumps(fit_param_sdev.tolist()),
+            "fit_chi2": json.dumps(fit_chi2.tolist()),
+            "fit_dof": json.dumps(fit_dof.tolist()),
+            "fit_q": json.dumps(fit_q.tolist()),
+            "fit_chi2_dof": json.dumps(fit_chi2_dof.tolist()),
+            "fit_chi2_center": json.dumps(np.mean(fit_chi2, axis=1).tolist()),
+            "fit_chi2_dof_center": json.dumps(np.mean(fit_chi2_dof, axis=1).tolist()),
+            "fit_q_center": json.dumps(np.mean(fit_q, axis=1).tolist()),
+            "mean_fit_params": json.dumps(mean_fit_params.tolist()),
+            "mean_fit_chi2": json.dumps(mean_fit_chi2.tolist()),
+            "mean_fit_dof": json.dumps(mean_fit_dof.tolist()),
+            "mean_fit_q": json.dumps(mean_fit_q.tolist()),
+            "scheme_weights": json.dumps(np.asarray(result.get("scheme_weights", []), dtype=float).tolist()),
+            "scheme_fit_chi2_dof": json.dumps(np.asarray(result.get("scheme_fit_chi2_dof", []), dtype=float).tolist()),
+            "scheme_roughness": json.dumps(np.asarray(result.get("scheme_roughness", []), dtype=float).tolist()),
+            "scheme_scores": json.dumps(np.asarray(result.get("scheme_scores", []), dtype=float).tolist()),
+            "best_scheme_index": json.dumps(np.asarray(result.get("best_scheme_index", -1), dtype=int).tolist()),
         },
         name="fourier_fit_parameters",
     )
-    fit_info_data.save_npz(
-        path,
-        scheme_labels=scheme_labels,
-        fit_param_labels=fit_param_labels,
-        fit_params=fit_params,
-        fit_param_center=np.mean(fit_params, axis=1),
-        fit_param_sdev=fit_param_sdev,
-        fit_chi2=fit_chi2,
-        fit_dof=fit_dof,
-        fit_q=fit_q,
-        fit_chi2_dof=fit_chi2_dof,
-        fit_chi2_center=np.mean(fit_chi2, axis=1),
-        fit_chi2_dof_center=np.mean(fit_chi2_dof, axis=1),
-        fit_q_center=np.mean(fit_q, axis=1),
-        mean_fit_params=mean_fit_params,
-        mean_fit_chi2=mean_fit_chi2,
-        mean_fit_dof=mean_fit_dof,
-        mean_fit_q=mean_fit_q,
-        scheme_weights=np.asarray(result.get("scheme_weights", []), dtype=float),
-        scheme_fit_chi2_dof=np.asarray(result.get("scheme_fit_chi2_dof", []), dtype=float),
-        scheme_roughness=np.asarray(result.get("scheme_roughness", []), dtype=float),
-        scheme_scores=np.asarray(result.get("scheme_scores", []), dtype=float),
-        best_scheme_index=np.asarray(result.get("best_scheme_index", -1), dtype=int),
-    )
+    fit_info_data.to_netcdf(path)
 
 
 def _scan_values(spec: dict[str, Any], key: str) -> list[float]:
@@ -2104,6 +2103,7 @@ def run_fourier_transform(
     result["posterior_prior_error_scale"] = float(posterior_prior_error_scale)
     result["fit_error_mode"] = str(fit_error_mode)
     result["part"] = str(part)
+    result["ensemble"] = matrix_element_data.ensemble
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
     model_average = bool(scheme_scan.get("model_average", True))
@@ -2117,10 +2117,10 @@ def run_fourier_transform(
     _apply_fourier_output_scale(result, float(output_scale))
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
     store[out] = result
-    artifact = _artifact_path(save_path, default_name=f"{out}.npz", artifacts_dir=artifacts_dir)
-    fit_info_artifact = _artifact_path(None, default_name="fourier_fit_info.npz", artifacts_dir=artifacts_dir)
-    _save_fourier_npz(artifact, result)
-    _save_fourier_fit_info_npz(fit_info_artifact, result)
+    artifact = _artifact_path(save_path, default_name=f"{out}.nc", artifacts_dir=artifacts_dir).with_suffix(".nc")
+    fit_info_artifact = _artifact_path(None, default_name="fourier_fit_info.nc", artifacts_dir=artifacts_dir)
+    store["fourier_result_data"].to_netcdf(artifact)
+    _save_fourier_fit_info_netcdf(fit_info_artifact, result)
     result["artifact"] = str(artifact)
     result["fit_info_artifact"] = str(fit_info_artifact)
     summary = summarize_fourier_result(store)
@@ -2187,19 +2187,19 @@ def summarize_fourier_result(
 def plot_fourier_result(
     store: dict[str, Any],
     *,
-    npz_path: str | None = None,
+    artifact_path: str | None = None,
     save_path: str | None = None,
     title: str | None = None,
     artifacts_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Plot the Fourier-stage NPZ artifact and store the figure path."""
-    source = npz_path
+    """Plot the Fourier-stage artifact and store the figure path."""
+    source = artifact_path
     if source is None:
-        source = str(_artifact_path(None, default_name="fourier_result.npz", artifacts_dir=artifacts_dir))
+        source = str(_artifact_path(None, default_name="fourier_result.nc", artifacts_dir=artifacts_dir))
     output = _artifact_path(save_path, default_name="fourier_result.pdf", artifacts_dir=artifacts_dir)
     if title is not None and title.strip().lower() in {"fourier result", "fourier transform"}:
         title = None
-    fig, _ = plot_fourier_npz(source, save_path=output, title=title)
+    fig, _ = plot_fourier_artifact(source, save_path=output, title=title)
     png_output = _png_companion_path(output)
     fig.savefig(png_output, bbox_inches="tight")
     plt.close(fig)
@@ -2275,14 +2275,14 @@ def report_fourier_result(
     data = store["fourier_result"]
     output = _artifact_path(save_path, default_name="report_fourier.md", artifacts_dir=artifacts_dir)
     artifacts = {
-        "fourier_npz": data.get("artifact")
-        or str(_artifact_path(None, default_name="fourier_result.npz", artifacts_dir=artifacts_dir)),
-        "fit_info_npz": data.get("fit_info_artifact"),
+        "fourier_artifact": data.get("artifact")
+        or str(_artifact_path(None, default_name="fourier_result.nc", artifacts_dir=artifacts_dir)),
+        "fit_info_artifact": data.get("fit_info_artifact"),
     }
     if isinstance(store.get("fourier_plot"), dict):
         artifacts["fourier_plot"] = store["fourier_plot"].get("plot")
         artifacts["fourier_plot_image"] = store["fourier_plot"].get("plot_image")
-        artifacts["fourier_npz"] = store["fourier_plot"].get("source", artifacts["fourier_npz"])
+        artifacts["fourier_artifact"] = store["fourier_plot"].get("source", artifacts["fourier_artifact"])
     if isinstance(store.get("fourier_extension_plot"), dict):
         artifacts["extension_plot_re"] = store["fourier_extension_plot"].get("plot_re")
         artifacts["extension_plot_im"] = store["fourier_extension_plot"].get("plot_im")
@@ -2297,8 +2297,8 @@ def report_fourier_result(
     report = {
         "report": str(paths["en"]),
         "report_cn": str(paths["zh"]),
-        "source": artifacts.get("fourier_npz"),
-        "fit_info_artifact": artifacts.get("fit_info_npz"),
+        "source": artifacts.get("fourier_artifact"),
+        "fit_info_artifact": artifacts.get("fit_info_artifact"),
     }
     store["fourier_report"] = report
     return report

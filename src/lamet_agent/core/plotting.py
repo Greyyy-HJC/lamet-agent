@@ -18,6 +18,7 @@ Example usage:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -592,16 +593,40 @@ def plot_pt3_ratio_fit_on_data(
     return (fig_re, ax_re), (fig_im, ax_im)
 
 
-def plot_fourier_npz(
+def plot_fourier_artifact(
     path: str | Path,
     *,
     save_path: str | Path | None = None,
     title: str | None = None,
     show: bool = False,
 ) -> tuple[Figure, tuple[Axes, Axes]]:
-    """Plot real and imaginary momentum-space distributions from a Fourier NPZ."""
+    """Plot real and imaginary momentum-space distributions from a Fourier artifact."""
+    path = Path(path)
     try:
-        ft_data, extra = EnsembleData.load_npz(path)
+        if path.suffix.lower() == ".nc":
+            ft_data = EnsembleData.from_netcdf(path)
+            extra = {
+                key: np.asarray(json.loads(value))
+                for key, value in ft_data.attrs.items()
+                if key
+                in {
+                    "ft_re_mean",
+                    "ft_im_mean",
+                    "ft_re_stat_sdev",
+                    "ft_im_stat_sdev",
+                    "ft_re_sys_sdev",
+                    "ft_im_sys_sdev",
+                    "scheme_labels",
+                    "fit_failures",
+                    "scheme_weights",
+                    "scheme_fit_chi2_dof",
+                    "scheme_roughness",
+                    "scheme_scores",
+                    "best_scheme_index",
+                }
+            }
+        else:
+            ft_data, extra = EnsembleData.load_npz(path)
         if ft_data.dims != ["x"]:
             raise ValueError("Fourier EnsembleData artifact must have dimension ['x']")
         k = np.asarray(ft_data.coords["x"], dtype=float)

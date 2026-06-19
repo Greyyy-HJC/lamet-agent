@@ -22,6 +22,7 @@ Example usage:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from importlib import import_module
 from pathlib import Path
@@ -58,6 +59,8 @@ class AnalysisManifest(BaseModel):
     root_directory: Path | None = None
     correlators: list[CorrelatorInput] = Field(default_factory=list)
     kernels: list[KernelInput] = Field(default_factory=list)
+    inputs: dict = Field(default_factory=dict)
+    stages: dict = Field(default_factory=dict)
     metadata: dict = Field(default_factory=dict)
     manifest_dir: Path | None = Field(default=None, exclude=True)
     project_root: Path | None = Field(default=None, exclude=True)
@@ -120,9 +123,17 @@ def validate_manifest_file(path: Path) -> AnalysisManifest:
     if not manifest_path.exists():
         raise ValueError(f"Manifest does not exist: {path}")
 
-    manifest = AnalysisManifest.model_validate(
-        json.loads(manifest_path.read_text(encoding="utf-8"))
-    )
+    text = manifest_path.read_text(encoding="utf-8")
+    if "//" in text or "/*" in text:
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+        text = re.sub(r"//.*", "", text)
+        text = re.sub(r",(\s*[}\]])", r"\1", text)
+    payload = json.loads(text)
+    metadata = payload.setdefault("metadata", {})
+    for key in ("run_id", "root_directory"):
+        if key not in payload and key in metadata:
+            payload[key] = metadata[key]
+    manifest = AnalysisManifest.model_validate(payload)
     for kernel in manifest.kernels:
         resolve_callable(kernel.function)
 

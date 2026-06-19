@@ -104,8 +104,8 @@ def _md_path(value: Any, *, base_dir: Path) -> str | None:
 def _markdown_artifacts(artifacts: dict[str, Any] | None, *, base_dir: Path) -> dict[str, Any]:
     output = dict(artifacts or {})
     for key in (
-        "fourier_npz",
-        "fit_info_npz",
+        "fourier_artifact",
+        "fit_info_artifact",
         "fourier_plot",
         "fourier_plot_image",
         "extension_plot_re",
@@ -442,60 +442,36 @@ def _settings_table(
     return lines
 
 
-def _npz_field_table(kind: str, *, language: str) -> list[str]:
+def _artifact_field_table(kind: str, *, language: str) -> list[str]:
     if kind == "result":
         rows = [
-            ("`__ensemble_data_metadata__`", "EnsembleData metadata: name, dimensions, coordinates, attrs, and resampling mode.", "EnsembleData 元数据：名称、维度、坐标、属性和重采样模式。"),
-            ("`values`", "Main EnsembleData array after model averaging, with complex Fourier samples on the $x$ grid.", "模型平均后的主 EnsembleData 数组，即 $x$ 网格上的复数 Fourier 样本。"),
-            ("`ft_re_samples`", "Real-part Fourier samples for each scheme and resample.", "每个 scheme 和每个重采样样本的 Fourier 实部。"),
-            ("`ft_im_samples`", "Imaginary-part Fourier samples for each scheme and resample.", "每个 scheme 和每个重采样样本的 Fourier 虚部。"),
-            ("`ft_re_mean`", "Model-averaged real-part central value.", "模型平均后的 Fourier 实部中心值。"),
-            ("`ft_im_mean`", "Model-averaged imaginary-part central value.", "模型平均后的 Fourier 虚部中心值。"),
-            ("`ft_re_stat_sdev`", "Statistical standard deviation of the real part from bootstrap/jackknife samples.", "由 bootstrap/jackknife 样本给出的实部统计误差。"),
-            ("`ft_im_stat_sdev`", "Statistical standard deviation of the imaginary part from bootstrap/jackknife samples.", "由 bootstrap/jackknife 样本给出的虚部统计误差。"),
-            ("`ft_re_sys_sdev`", "Real-part systematic spread from scheme variation.", "由 scheme 变化估计的实部系统误差。"),
-            ("`ft_im_sys_sdev`", "Imaginary-part systematic spread from scheme variation.", "由 scheme 变化估计的虚部系统误差。"),
-            ("`scheme_labels`", "Text labels for the scanned extrapolation schemes.", "所有外推 scheme 的文本标签。"),
-            ("`fit_failures`", "Number of failed resampled tail fits in each scheme.", "每个 scheme 中重采样长程拟合失败的次数。"),
-            ("`scheme_weights`", "Model-averaging weights $W_s$ for schemes.", "scheme 的模型平均权重 $W_s$。"),
-            ("`scheme_fit_chi2_dof`", "Scheme-level fit-quality diagnostic $\\chi_s^2/{\\rm dof}$.", "scheme 级别的拟合质量诊断 $\\chi_s^2/{\\rm dof}$。"),
-            ("`scheme_roughness`", "Fourier roughness score $R_s$ used in model averaging.", "模型平均中使用的 Fourier 粗糙度分数 $R_s$。"),
-            ("`scheme_scores`", "Total scheme score $S_s$ used to compute $W_s$.", "用于计算 $W_s$ 的总评分 $S_s$。"),
-            ("`best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
-            ("`pz_gev`", "Initial hadron momentum $P_z$ in GeV.", "初态强子动量 $P_z$，单位 GeV。"),
-            ("`pz_prime_gev`", "Final hadron momentum $P'_z$ in GeV, when relevant.", "末态强子动量 $P'_z$，适用于 GPD 等情形。"),
-            ("`a_fm`", "Lattice spacing $a$ in fm for lattice-coordinate inputs.", "使用格点坐标输入时的格距 $a$，单位 fm。"),
-            ("`method`", "Large-distance method, such as GI or CG.", "长程外推方法，例如 GI 或 CG。"),
-            ("`order`", "Large-distance order, LA or NLA.", "长程外推阶数，LA 或 NLA。"),
-            ("`observable`", "Observable name selecting the tail formula.", "选择长程外推公式的物理量名称。"),
-            ("`part`", "Fitted and transformed component: both, re, or im.", "参与拟合和变换的分量：both、re 或 im。"),
-            ("`output_scale`", "Final multiplicative factor applied to Fourier-space outputs.", "施加在最终 Fourier 空间输出上的整体乘法因子。"),
+            ("`values`", "Complex model-averaged Fourier samples with dimensions `(resample, x)`.", "复数模型平均 Fourier 样本，维度为 `(resample, x)`。"),
+            ("coordinate `x`", "Fourier momentum-fraction grid.", "傅立叶变换后的动量分数网格。"),
+            ("attr `resample`", "Resampling mode recorded by `EnsembleData`.", "`EnsembleData` 记录的重采样模式。"),
+            ("attr `ft_re_mean` / `ft_im_mean`", "Model-averaged real/imaginary central values.", "模型平均后的实部/虚部中心值。"),
+            ("attr `ft_re_stat_sdev` / `ft_im_stat_sdev`", "Statistical standard deviations from bootstrap/jackknife samples.", "由 bootstrap/jackknife 样本给出的统计误差。"),
+            ("attr `ft_re_sys_sdev` / `ft_im_sys_sdev`", "Systematic spread from scheme variation.", "由 scheme 变化估计的系统误差。"),
+            ("attr `scheme_labels`", "Text labels for scanned extrapolation schemes.", "所有外推 scheme 的文本标签。"),
+            ("attr `fit_failures`", "Number of failed resampled tail fits in each scheme.", "每个 scheme 中重采样长程拟合失败的次数。"),
+            ("attr `scheme_weights`", "Model-averaging weights $W_s$ for schemes.", "scheme 的模型平均权重 $W_s$。"),
+            ("attr `scheme_fit_chi2_dof`", "Scheme-level fit-quality diagnostic $\\chi_s^2/{\\rm dof}$.", "scheme 级别的拟合质量诊断 $\\chi_s^2/{\\rm dof}$。"),
+            ("attr `scheme_roughness`", "Fourier roughness score $R_s$ used in model averaging.", "模型平均中使用的 Fourier 粗糙度分数 $R_s$。"),
+            ("attr `scheme_scores`", "Total scheme score $S_s$ used to compute $W_s$.", "用于计算 $W_s$ 的总评分 $S_s$。"),
+            ("attr `best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
+            ("attrs `pz_gev`, `pz_prime_gev`, `a_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
+            ("attrs `method`, `order`, `observable`, `part`, `output_scale`", "Physics/formula choices and final output normalization.", "物理公式选择和最终输出归一化。"),
         ]
     else:
         rows = [
-            ("`__ensemble_data_metadata__`", "EnsembleData metadata for fit-parameter samples with dimensions scheme and parameter.", "拟合参数 EnsembleData 的元数据，维度为 scheme 和 parameter。"),
-            ("`values`", "Main fit-parameter sample array arranged as resample by scheme by parameter.", "主拟合参数样本数组，按 resample、scheme、parameter 排列。"),
-            ("`scheme_labels`", "Text labels for the scanned extrapolation schemes.", "所有外推 scheme 的文本标签。"),
-            ("`fit_param_labels`", "Names of the fitted tail parameters.", "长程外推拟合参数名。"),
-            ("`fit_params`", "Tail-fit parameters for every scheme and resample.", "每个 scheme 和每个重采样样本的长程拟合参数。"),
-            ("`fit_param_center`", "Sample mean of fit parameters for each scheme.", "每个 scheme 中拟合参数的样本平均值。"),
-            ("`fit_param_sdev`", "Statistical standard deviation of fit parameters.", "拟合参数的统计误差。"),
-            ("`fit_chi2`", "Tail-fit $\\chi^2$ for each scheme and resample.", "每个 scheme 和重采样样本的长程拟合 $\\chi^2$。"),
-            ("`fit_dof`", "Fit degrees of freedom for each scheme and resample.", "每个 scheme 和重采样样本的拟合自由度。"),
-            ("`fit_q`", "Fit quality $Q$ value for each scheme and resample.", "每个 scheme 和重采样样本的拟合质量 $Q$ 值。"),
-            ("`fit_chi2_dof`", "Per-resample $\\chi^2/{\\rm dof}$.", "每个重采样样本的 $\\chi^2/{\\rm dof}$。"),
-            ("`fit_chi2_center`", "Sample mean of $\\chi^2$ for each scheme.", "每个 scheme 的 $\\chi^2$ 样本平均值。"),
-            ("`fit_chi2_dof_center`", "Sample mean of $\\chi^2/{\\rm dof}$ for each scheme.", "每个 scheme 的 $\\chi^2/{\\rm dof}$ 样本平均值。"),
-            ("`fit_q_center`", "Sample mean of $Q$ for each scheme.", "每个 scheme 的 $Q$ 样本平均值。"),
-            ("`mean_fit_params`", "Parameters from the initial sample-average fit used as central initial values.", "样本平均拟合得到的参数，用作中心初值。"),
-            ("`mean_fit_chi2`", "$\\chi^2$ from the sample-average fit.", "样本平均拟合的 $\\chi^2$。"),
-            ("`mean_fit_dof`", "Degrees of freedom from the sample-average fit.", "样本平均拟合的自由度。"),
-            ("`mean_fit_q`", "$Q$ value from the sample-average fit.", "样本平均拟合的 $Q$ 值。"),
-            ("`scheme_weights`", "Model-averaging weights $W_s$ copied from the Fourier result.", "从 Fourier 结果复制的模型平均权重 $W_s$。"),
-            ("`scheme_fit_chi2_dof`", "Scheme-level $\\chi_s^2/{\\rm dof}$ used in scoring.", "评分中使用的 scheme 级别 $\\chi_s^2/{\\rm dof}$。"),
-            ("`scheme_roughness`", "Scheme roughness score $R_s$ used in scoring.", "评分中使用的 scheme 粗糙度 $R_s$。"),
-            ("`scheme_scores`", "Total model-averaging score $S_s$.", "模型平均总评分 $S_s$。"),
-            ("`best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
+            ("`values`", "Fit-parameter samples with dimensions `(resample, scheme, parameter)`.", "拟合参数样本，维度为 `(resample, scheme, parameter)`。"),
+            ("coordinates `scheme`, `parameter`", "Scheme labels and fitted parameter names.", "scheme 标签和拟合参数名。"),
+            ("attr `fit_params`", "Tail-fit parameters for every scheme and resample.", "每个 scheme 和每个重采样样本的长程拟合参数。"),
+            ("attr `fit_param_center` / `fit_param_sdev`", "Sample mean and statistical standard deviation of fit parameters.", "拟合参数的样本平均值和统计误差。"),
+            ("attrs `fit_chi2`, `fit_dof`, `fit_q`, `fit_chi2_dof`", "Per-resample fit quality diagnostics.", "每个重采样样本的拟合质量诊断。"),
+            ("attrs `fit_chi2_center`, `fit_chi2_dof_center`, `fit_q_center`", "Sample-averaged fit quality diagnostics for each scheme.", "每个 scheme 的样本平均拟合质量诊断。"),
+            ("attrs `mean_fit_params`, `mean_fit_chi2`, `mean_fit_dof`, `mean_fit_q`", "Initial sample-average fit results used to seed resampled fits.", "用于初始化重采样拟合的样本平均拟合结果。"),
+            ("attrs `scheme_weights`, `scheme_fit_chi2_dof`, `scheme_roughness`, `scheme_scores`", "Scheme scoring diagnostics used in model averaging.", "模型平均中使用的 scheme 评分诊断。"),
+            ("attr `best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
         ]
     header = "| Field | Meaning |" if language == "en" else "| 字段 | 含义 |"
     lines = [header, "|---|---|"]
@@ -504,50 +480,46 @@ def _npz_field_table(kind: str, *, language: str) -> list[str]:
     return lines
 
 
-def _npz_help(*, language: str) -> list[str]:
+def _artifact_help(*, language: str) -> list[str]:
     if language == "zh":
         return [
-            "## 如何读取 NPZ 输出",
-            "`fourier_result.npz` 保存傅立叶变换后的样本、均值、统计误差、系统误差和 scheme 权重；`fourier_fit_info.npz` 保存长程拟合参数与拟合质量。"
-            "两者都可以用 `EnsembleData.load_npz` 读取主数组，也可以用 `numpy.load` 查看所有附加字段。",
+            "## 如何读取 NetCDF 输出",
+            "`fourier_result.nc` 保存傅立叶变换后的复数样本；`fourier_fit_info.nc` 保存长程拟合参数样本。"
+            "两者都可以用 `EnsembleData.from_netcdf` 读取主数组；诊断量保存在 `data.attrs` 中。",
             "```python",
-            "import numpy as np",
             "from lamet_agent.core.data import EnsembleData",
-            "data, extra = EnsembleData.load_npz('fourier_result.npz')",
-            "raw = np.load('fourier_result.npz', allow_pickle=False)",
-            "print(data.values.shape, raw.files)",
+            "data = EnsembleData.from_netcdf('fourier_result.nc')",
+            "print(data.values.shape, data.coords, data.attrs.keys())",
             "```",
             "",
-            "### `fourier_result.npz` 字段说明",
-            *_npz_field_table("result", language="zh"),
+            "### `fourier_result.nc` 字段说明",
+            *_artifact_field_table("result", language="zh"),
             "",
-            "### `fourier_fit_info.npz` 字段说明",
-            *_npz_field_table("fit_info", language="zh"),
+            "### `fourier_fit_info.nc` 字段说明",
+            *_artifact_field_table("fit_info", language="zh"),
         ]
     return [
-        "## Reading the NPZ Outputs",
-        "`fourier_result.npz` stores transformed samples, means, statistical/systematic errors, and scheme weights; `fourier_fit_info.npz` stores tail-fit parameters and quality diagnostics. "
-        "Both files can be read with `EnsembleData.load_npz` for the main array or with `numpy.load` for all auxiliary fields.",
+        "## Reading the NetCDF Outputs",
+        "`fourier_result.nc` stores complex Fourier-transform samples; `fourier_fit_info.nc` stores large-distance fit-parameter samples. "
+        "Both files can be read with `EnsembleData.from_netcdf`; diagnostics are stored in `data.attrs`.",
         "```python",
-        "import numpy as np",
         "from lamet_agent.core.data import EnsembleData",
-        "data, extra = EnsembleData.load_npz('fourier_result.npz')",
-        "raw = np.load('fourier_result.npz', allow_pickle=False)",
-        "print(data.values.shape, raw.files)",
+        "data = EnsembleData.from_netcdf('fourier_result.nc')",
+        "print(data.values.shape, data.coords, data.attrs.keys())",
         "```",
         "",
-        "### `fourier_result.npz` Field Reference",
-        *_npz_field_table("result", language="en"),
+        "### `fourier_result.nc` Field Reference",
+        *_artifact_field_table("result", language="en"),
         "",
-        "### `fourier_fit_info.npz` Field Reference",
-        *_npz_field_table("fit_info", language="en"),
+        "### `fourier_fit_info.nc` Field Reference",
+        *_artifact_field_table("fit_info", language="en"),
     ]
 
 
 def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
     descriptions = {
-        "fourier_npz": ("Fourier result samples and diagnostics", "傅立叶变换后的样本、均值、误差和 scheme 权重"),
-        "fit_info_npz": ("Tail-fit parameters and fit-quality diagnostics", "长程外推拟合参数和拟合质量诊断"),
+        "fourier_artifact": ("Fourier result samples and diagnostics", "傅立叶变换后的样本、均值、误差和 scheme 权重"),
+        "fit_info_artifact": ("Tail-fit parameters and fit-quality diagnostics", "长程外推拟合参数和拟合质量诊断"),
         "fourier_plot": ("PDF plot of the Fourier-space result", "傅立叶变换结果 PDF 图"),
         "fourier_plot_image": ("PNG companion for Markdown embedding", "供 Markdown 嵌入的傅立叶结果 PNG 图"),
         "extension_plot_re": ("PDF plot of real-part extension quality", "实部长程外推质量 PDF 图"),
@@ -556,8 +528,8 @@ def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
         "extension_plot_im_image": ("PNG companion for imaginary-part extension quality", "供 Markdown 嵌入的虚部长程外推 PNG 图"),
     }
     order = (
-        "fourier_npz",
-        "fit_info_npz",
+        "fourier_artifact",
+        "fit_info_artifact",
         "fourier_plot",
         "fourier_plot_image",
         "extension_plot_re",
@@ -638,7 +610,7 @@ def build_fourier_report_markdown(
             "## 输出文件",
             *_outputs_table(artifacts, language="zh"),
             "",
-            *_npz_help(language="zh"),
+            *_artifact_help(language="zh"),
         ]
     else:
         title = "# Fourier Transform Analysis Report"
@@ -680,7 +652,7 @@ def build_fourier_report_markdown(
             "## Output Artifacts",
             *_outputs_table(artifacts, language="en"),
             "",
-            *_npz_help(language="en"),
+            *_artifact_help(language="en"),
         ]
     return "\n".join(lines) + "\n"
 

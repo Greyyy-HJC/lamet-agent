@@ -175,6 +175,129 @@ def test_prepare_tool_args_uses_root_directory_for_fourier_paths(tmp_path: Path)
     assert report_args["artifacts_dir"] == str(root / "examples" / "artifacts")
 
 
+def test_prepare_tool_args_keeps_report_path_relative_to_root_directory(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "fourier",
+            "root_directory": str(root),
+            "metadata": {
+                "artifacts_directory": "examples/artifacts/CGpdf",
+                "fourier": {
+                    "report": {
+                        "save_path": "examples/artifacts/CGpdf/report_fourier.md",
+                    },
+                },
+            },
+        }
+    )
+
+    run_args = prepare_tool_args(
+        "run_fourier_transform",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert run_args["report"]["save_path"] == str(
+        root / "examples" / "artifacts" / "CGpdf" / "report_fourier.md"
+    )
+    assert run_args["artifacts_dir"] == str(root / "examples" / "artifacts" / "CGpdf")
+
+
+def test_prepare_tool_args_reads_stage_defaults_and_global_artifacts_dir(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "fourier",
+            "root_directory": str(root),
+            "metadata": {
+                "fourier_input": "examples/artifacts/matrix_element.nc",
+                "resample_mode": "jk",
+                "artifacts_directory": "runs/artifacts",
+            },
+            "stages": {
+                "fourier_transform": {
+                    "defaults": {
+                        "observable": "pion_quark_quasi_pdf",
+                        "order": "NLA",
+                        "component": "re",
+                        "coord_unit": "lattice",
+                        "a_fm": 0.0574,
+                        "pz_gev": 2.15,
+                        "k_grid": {"start": -2.0, "stop": 2.0, "num": 100},
+                    }
+                }
+            },
+        }
+    )
+
+    load_args = prepare_tool_args(
+        "load_renormalized_matrix_element_samples",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert load_args["path"] == str(root / "examples" / "artifacts" / "matrix_element.nc")
+    assert load_args["resample_mode"] == "jk"
+
+    run_args = prepare_tool_args(
+        "run_fourier_transform",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "ignored",
+        _store={},
+    )
+    assert run_args["part"] == "re"
+    assert run_args["observable"] == "pion_quark_quasi_pdf"
+    assert run_args["artifacts_dir"] == str(root / "runs" / "artifacts")
+
+
+def test_prepare_tool_args_derives_fourier_observable_from_global_inputs(tmp_path: Path) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "run_id": "fourier",
+            "metadata": {
+                "fourier_input": "matrix_element.nc",
+                "target_observable": "pdf",
+            },
+            "inputs": {
+                "correlators": [
+                    {"kind": "2pt", "hadron": "pion", "gfix": "CG", "a_fm": 0.0574, "pz_gev": 2.15},
+                    {"kind": "3pt", "hadron": "pion", "gfix": "CG", "a_fm": 0.0574, "pz_gev": 2.15},
+                ]
+            },
+            "stages": {
+                "fourier_transform": {
+                    "defaults": {
+                        "parton": "gluon",
+                        "order": "LA",
+                        "coord_unit": "lattice",
+                        "k_grid": {"start": -2.0, "stop": 2.0, "num": 100},
+                    }
+                }
+            },
+        }
+    )
+
+    run_args = prepare_tool_args(
+        "run_fourier_transform",
+        {},
+        manifest=manifest,
+        artifacts_dir=tmp_path / "artifacts",
+        _store={},
+    )
+
+    assert run_args["method"] == "CG"
+    assert run_args["observable"] == "pion_gluon_quasi_pdf"
+    assert run_args["pz_gev"] == 2.15
+    assert run_args["a_fm"] == 0.0574
+    assert "parton" not in run_args
+
+
 def test_prepare_tool_args_fills_correlator_grid_defaults(tmp_path: Path) -> None:
     manifest = AnalysisManifest(
         run_id="workflow_cg_qpdf_p5",

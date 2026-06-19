@@ -483,26 +483,25 @@ def bs_dict_avg(data: dict[str, np.ndarray]) -> dict[str, list[gv.GVar]]:
     return out
 
 
-def plot_fourier_npz(
+def plot_fourier_artifact(
     path,
     *,
     save_path=None,
     title=None,
     show=False,
 ) -> tuple[Figure, tuple[Axes, Axes]]:
-    """Plot real and imaginary momentum-space distributions from a Fourier NPZ.
+    """Plot real and imaginary momentum-space distributions from a Fourier artifact.
 
-    Expected input is the artifact written by the Fourier stage, with keys
-    ``k_grid``, ``ft_re_mean``, ``ft_im_mean``, statistical errors, and optional
-    systematic errors.
+    Expected input is the NetCDF artifact written by the Fourier stage. Legacy
+    NPZ artifacts remain accepted for old examples.
 
     Example
     -------
-    ``plot_fourier_npz("artifacts/fourier_result.npz", save_path="fourier.pdf")``
+    ``plot_fourier_artifact("artifacts/fourier_result.nc", save_path="fourier.pdf")``
     """
-    from lamet_agent.core.plotting import plot_fourier_npz as _plot_fourier_npz
+    from lamet_agent.core.plotting import plot_fourier_artifact as _plot_fourier_artifact
 
-    return _plot_fourier_npz(
+    return _plot_fourier_artifact(
         path,
         save_path=save_path,
         title=title,

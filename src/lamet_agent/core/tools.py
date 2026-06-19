@@ -202,6 +202,15 @@ def _manifest_root(manifest: AnalysisManifest) -> Path | None:
 
 def _default_artifacts_dir(manifest: AnalysisManifest, fallback: Path) -> Path:
     root = _manifest_root(manifest)
+    artifacts_directory = manifest.metadata.get("artifacts_directory")
+    if isinstance(artifacts_directory, str):
+        path = Path(artifacts_directory).expanduser()
+        if path.is_absolute():
+            return path
+        if root is not None:
+            return root / path
+        if manifest.manifest_dir is not None:
+            return manifest.manifest_dir / path
     if root is not None:
         return root / "examples" / "artifacts"
     return fallback
@@ -373,7 +382,72 @@ def prepare_tool_args(
                 merged.update({key: renorm["plot"][key] for key in _RENORM_PLOT_KEYS | {"save_path"} if key in renorm["plot"]})
             resolved = merged
 
-    fourier = manifest.metadata.get("fourier", {})
+    fourier = dict(manifest.stages.get("fourier_transform", {}).get("defaults", {}))
+    if "component" in fourier and "part" not in fourier:
+        fourier["part"] = fourier.pop("component")
+    if "resample_mode" not in fourier and "resample_mode" in manifest.metadata:
+        fourier["resample_mode"] = manifest.metadata["resample_mode"]
+    if isinstance(manifest.metadata.get("fourier"), dict):
+        explicit_fourier = dict(manifest.metadata["fourier"])
+        if "component" in explicit_fourier and "part" not in explicit_fourier:
+            explicit_fourier["part"] = explicit_fourier.pop("component")
+        fourier.update(explicit_fourier)
+    input_correlators = manifest.inputs.get("correlators", [])
+    if not isinstance(input_correlators, list):
+        input_correlators = []
+    if "hadron" not in fourier and "hadron" in manifest.metadata:
+        fourier["hadron"] = manifest.metadata["hadron"]
+    if "gfix" not in fourier and "gfix" in manifest.metadata:
+        fourier["gfix"] = manifest.metadata["gfix"]
+    if "pz_gev" not in fourier and "pz_gev" in manifest.metadata:
+        fourier["pz_gev"] = manifest.metadata["pz_gev"]
+    if "a_fm" not in fourier and "a_fm" in manifest.metadata:
+        fourier["a_fm"] = manifest.metadata["a_fm"]
+    for key in ("hadron", "gfix", "a_fm", "pz_gev"):
+        if key in fourier:
+            continue
+        values = [
+            item[key]
+            for item in input_correlators
+            if isinstance(item, dict) and key in item and item[key] not in (None, "")
+        ]
+        if key == "pz_gev":
+            values = [
+                value
+                for value in values
+                if not isinstance(value, int | float) or float(value) != 0.0
+            ]
+        if values and len({str(value).lower() for value in values}) == 1:
+            fourier[key] = values[0]
+    if "method" not in fourier:
+        gfix = str(fourier.get("gfix", "")).upper()
+        if gfix in {"CG", "GI"}:
+            fourier["method"] = gfix
+    if "observable" not in fourier:
+        target = str(
+            fourier.get("target_observable") or manifest.metadata.get("target_observable", "")
+        ).lower()
+        target = target.replace("-", "_")
+        hadron = str(fourier.get("hadron", "")).lower()
+        parton = str(fourier.get("parton") or fourier.get("parton_type") or "").lower()
+        is_pion = hadron in {"pion", "pi", "meson"}
+        is_nucleon = hadron in {"nucleon", "proton", "neutron"}
+        if target in {"pdf", "qpdf", "quasi_pdf"}:
+            if is_pion and parton == "quark":
+                fourier["observable"] = "pion_quark_quasi_pdf"
+            elif is_pion and parton == "gluon":
+                fourier["observable"] = "pion_gluon_quasi_pdf"
+            elif is_nucleon and parton == "quark":
+                fourier["observable"] = "nucleon_quark_unpolarized_quasi_pdf"
+            elif is_nucleon and parton == "gluon":
+                fourier["observable"] = "nucleon_gluon_quasi_pdf"
+        elif target in {"da", "quasi_da"} and is_pion:
+            fourier["observable"] = "meson_quasi_da"
+        elif target in {"gpd", "quasi_gpd"}:
+            if is_pion and parton == "quark":
+                fourier["observable"] = "pion_quark_quasi_gpd"
+            elif is_nucleon and parton == "quark":
+                fourier["observable"] = "nucleon_quark_quasi_gpd"
     if isinstance(fourier, dict):
         if tool_name == "load_renormalized_matrix_element_samples":
             merged = dict(resolved)

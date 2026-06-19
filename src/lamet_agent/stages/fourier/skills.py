@@ -43,8 +43,8 @@ SCHEME_HELP = (
 )
 
 INPUT_FORMAT_HELP = (
-    "Missing metadata.fourier.input_format and the suffix is unclear. Use npz for coord/re_samples/im_samples, "
-    "or h5 for Pz=*/z_ary, Re, Im."
+    "Missing metadata.fourier.input_format and the suffix is unclear. Use nc for EnsembleData NetCDF, "
+    "npz for legacy coord/re_samples/im_samples, or h5 for Pz=*/z_ary, Re, Im."
 )
 
 VALID_METHODS = {"gi", "cg"}
@@ -66,9 +66,9 @@ Fourier-transform skill: extend coordinate-space matrix elements and transform
 them to momentum space while preserving resampling samples.
 
 Strategy:
-- Load real/imaginary matrix-element samples from either an NPZ file with coord,
-  re_samples, and im_samples, or an HDF5 file with a group such as Pz=4 that
-  contains z_ary, Re, and Im. The loader normalizes samples into EnsembleData
+- Load real/imaginary matrix-element samples from either an EnsembleData NetCDF
+  file, a legacy NPZ file with coord, re_samples, and im_samples, or an HDF5
+  file with a group such as Pz=4 that contains z_ary, Re, and Im. The loader normalizes samples into EnsembleData
   with dimensions (resample,z); users do not need to pass sample_axis. Pass
   resample_mode='bs' or 'jk' to the loader when the manifest declares the input
   resampling. Do not pass resample_mode to run_fourier_transform; it uses the
@@ -116,20 +116,22 @@ Strategy:
   penalties. Missing z_ext_max defaults to lambda_max + 8; missing y_range,
   roughness_weight, and model_average default to [-2,2], 1.0, and true.
 - Pass run_fourier_transform save_path when the manifest requests a non-default
-  Fourier NPZ artifact name.
-- After run_fourier_transform, call summarize_fourier_result, plot_fourier_result,
-  plot_fourier_extension_quality_result, and report_fourier_result. Finish with
-  the English and Chinese Markdown report paths, NPZ artifact path, PDF/PNG plot paths, best scheme, scheme
-  weights, chi2/dof, roughness scores, fit failure counts, and stat/sys errors.
+  Fourier NetCDF artifact name.
+- run_fourier_transform already writes the summary, plots, and English/Chinese
+  Markdown reports. After it returns, finish with the report paths, NetCDF
+  artifact path, PDF/PNG plot paths, best scheme, scheme weights, chi2/dof,
+  roughness scores, fit failure counts, and stat/sys errors. Call the standalone
+  summarize/plot/report tools only when the user explicitly asks to regenerate
+  one artifact.
 """.strip()
 
 TOOL_CATALOG = {
-    "load_renormalized_matrix_element_samples": "load_renormalized_matrix_element_samples(path, input_format='npz'|'h5', h5_group=None, coord_key='coord' or 'z_ary', re_key='re_samples' or 'Re', im_key='im_samples' or 'Im', resample_mode='bs'|'jk') -> load renormalized coordinate-space samples from NPZ or HDF5 into EnsembleData.",
-    "run_fourier_transform": "run_fourier_transform(k_grid=[...] or {start,stop,num/step}, optional scheme_scan={zmin_values/zmin_start,zmax_values/zmax_start,z_ext_max,y_range,roughness_weight,model_average,max_schemes,min_fit_points}; if omitted or incomplete, choose large stable zmax values and zmin values from stable tail-fit chi2/dof and Q diagnostics; missing z_ext_max defaults to lambda_max + 8; method='GI'|'CG', order='LA'|'NLA', observable='pion_quark_quasi_pdf'|'nucleon_quark_unpolarized_quasi_pdf'|'nucleon_quark_transversity_quasi_pdf'|'pion_gluon_quasi_pdf'|'nucleon_gluon_quasi_pdf'|'meson_quasi_da'|'pion_quark_quasi_gpd'|'nucleon_quark_quasi_gpd', coord_unit='lambda'|'fm'|'gev_inv'|'lattice', pz_gev=None, pz_prime_gev=None, a_fm=None, im_flip_for_ft=False, Lambda0=0.1, posterior_prior_error_scale=3.0, fit_error_mode='diagonal'|'covariance', part='both'|'re'|'im', output_scale=1.0, save_path=None) -> run the local Fourier workflow using the resampling mode stored on EnsembleData, score schemes, model-average results, optionally scale final Fourier-space outputs, and write artifacts/fourier_result.npz.",
+    "load_renormalized_matrix_element_samples": "load_renormalized_matrix_element_samples(path, input_format='nc'|'npz'|'h5', h5_group=None, coord_key='coord' or 'z_ary', re_key='re_samples' or 'Re', im_key='im_samples' or 'Im', resample_mode='bs'|'jk') -> load renormalized coordinate-space samples from NetCDF, legacy NPZ, or HDF5 into EnsembleData.",
+    "run_fourier_transform": "run_fourier_transform(k_grid=[...] or {start,stop,num/step}, optional scheme_scan={zmin_values/zmin_start,zmax_values/zmax_start,z_ext_max,y_range,roughness_weight,model_average,max_schemes,min_fit_points}; if omitted or incomplete, choose large stable zmax values and zmin values from stable tail-fit chi2/dof and Q diagnostics; missing z_ext_max defaults to lambda_max + 8; method='GI'|'CG', order='LA'|'NLA', observable='pion_quark_quasi_pdf'|'nucleon_quark_unpolarized_quasi_pdf'|'nucleon_quark_transversity_quasi_pdf'|'pion_gluon_quasi_pdf'|'nucleon_gluon_quasi_pdf'|'meson_quasi_da'|'pion_quark_quasi_gpd'|'nucleon_quark_quasi_gpd', coord_unit='lambda'|'fm'|'gev_inv'|'lattice', pz_gev=None, pz_prime_gev=None, a_fm=None, im_flip_for_ft=False, Lambda0=0.1, posterior_prior_error_scale=3.0, fit_error_mode='diagonal'|'covariance', part='both'|'re'|'im', output_scale=1.0, save_path=None) -> run the local Fourier workflow using the resampling mode stored on EnsembleData, score schemes, model-average results, optionally scale final Fourier-space outputs, and write artifacts/fourier_result.nc.",
     "summarize_fourier_result": "summarize_fourier_result() -> compact mean/stat/sys arrays plus best scheme, scheme weights, chi2/dof, and roughness diagnostics for reporting.",
-    "plot_fourier_result": "plot_fourier_result(save_path=None, title='Fourier result') -> plot artifacts/fourier_result.npz and write artifacts/fourier_result.pdf plus a PNG companion for Markdown embedding.",
+    "plot_fourier_result": "plot_fourier_result(save_path=None, title='Fourier result') -> plot artifacts/fourier_result.nc and write artifacts/fourier_result.pdf plus a PNG companion for Markdown embedding.",
     "plot_fourier_extension_quality_result": "plot_fourier_extension_quality_result(scheme_index=None, save_path=None) -> write artifacts/fourier_extension_re.pdf and artifacts/fourier_extension_im.pdf plus PNG companions for coordinate-space data and extrapolation-band quality with fit-range markers for the best weighted scheme by default.",
-    "report_fourier_result": "report_fourier_result(save_path=None) -> write an English report at artifacts/report_fourier.md and a Chinese companion report at artifacts/report_fourier_CN.md with the physical quantity, implemented LA/NLA tail form, fit diagnostics, Fourier transform formula, embedded PNG plots, PDF artifact links, NPZ contents, artifact paths, and compact result preview.",
+    "report_fourier_result": "report_fourier_result(save_path=None) -> write an English report at artifacts/report_fourier.md and a Chinese companion report at artifacts/report_fourier_CN.md with the physical quantity, implemented LA/NLA tail form, fit diagnostics, Fourier transform formula, embedded PNG plots, PDF artifact links, NetCDF contents, and artifact paths.",
 }
 
 
@@ -150,13 +152,76 @@ def validate_stage_inputs(manifest: AnalysisManifest) -> list[str]:
         )
         return issues
 
-    fourier = manifest.metadata.get("fourier", {})
-    if not isinstance(fourier, dict):
+    fourier = dict(manifest.stages.get("fourier_transform", {}).get("defaults", {}))
+    if "component" in fourier and "part" not in fourier:
+        fourier["part"] = fourier.pop("component")
+    if isinstance(manifest.metadata.get("fourier"), dict):
+        explicit_fourier = dict(manifest.metadata["fourier"])
+        if "component" in explicit_fourier and "part" not in explicit_fourier:
+            explicit_fourier["part"] = explicit_fourier.pop("component")
+        fourier.update(explicit_fourier)
+    elif "fourier" in manifest.metadata:
         return ["metadata.fourier must be an object containing Fourier-stage options."]
+    input_correlators = manifest.inputs.get("correlators", [])
+    if not isinstance(input_correlators, list):
+        input_correlators = []
+    if "hadron" not in fourier and "hadron" in manifest.metadata:
+        fourier["hadron"] = manifest.metadata["hadron"]
+    if "gfix" not in fourier and "gfix" in manifest.metadata:
+        fourier["gfix"] = manifest.metadata["gfix"]
+    if "pz_gev" not in fourier and "pz_gev" in manifest.metadata:
+        fourier["pz_gev"] = manifest.metadata["pz_gev"]
+    if "a_fm" not in fourier and "a_fm" in manifest.metadata:
+        fourier["a_fm"] = manifest.metadata["a_fm"]
+    for key in ("hadron", "gfix", "a_fm", "pz_gev"):
+        if key in fourier:
+            continue
+        values = [
+            item[key]
+            for item in input_correlators
+            if isinstance(item, dict) and key in item and item[key] not in (None, "")
+        ]
+        if key == "pz_gev":
+            values = [
+                value
+                for value in values
+                if not isinstance(value, int | float) or float(value) != 0.0
+            ]
+        if values and len({str(value).lower() for value in values}) == 1:
+            fourier[key] = values[0]
+    if "method" not in fourier:
+        gfix = str(fourier.get("gfix", "")).upper()
+        if gfix in {"CG", "GI"}:
+            fourier["method"] = gfix
+    if "observable" not in fourier:
+        target = str(
+            fourier.get("target_observable") or manifest.metadata.get("target_observable", "")
+        ).lower()
+        target = target.replace("-", "_")
+        hadron = str(fourier.get("hadron", "")).lower()
+        parton = str(fourier.get("parton") or fourier.get("parton_type") or "").lower()
+        is_pion = hadron in {"pion", "pi", "meson"}
+        is_nucleon = hadron in {"nucleon", "proton", "neutron"}
+        if target in {"pdf", "qpdf", "quasi_pdf"}:
+            if is_pion and parton == "quark":
+                fourier["observable"] = "pion_quark_quasi_pdf"
+            elif is_pion and parton == "gluon":
+                fourier["observable"] = "pion_gluon_quasi_pdf"
+            elif is_nucleon and parton == "quark":
+                fourier["observable"] = "nucleon_quark_unpolarized_quasi_pdf"
+            elif is_nucleon and parton == "gluon":
+                fourier["observable"] = "nucleon_gluon_quasi_pdf"
+        elif target in {"da", "quasi_da"} and is_pion:
+            fourier["observable"] = "meson_quasi_da"
+        elif target in {"gpd", "quasi_gpd"}:
+            if is_pion and parton == "quark":
+                fourier["observable"] = "pion_quark_quasi_gpd"
+            elif is_nucleon and parton == "quark":
+                fourier["observable"] = "nucleon_quark_quasi_gpd"
 
     input_path = str(manifest.metadata.get("fourier_input", ""))
     suffix = Path(input_path).suffix.lower()
-    if suffix not in {"", ".npz", ".h5", ".hdf5"} and not fourier.get("input_format"):
+    if suffix not in {"", ".nc", ".npz", ".h5", ".hdf5"} and not fourier.get("input_format"):
         issues.append(INPUT_FORMAT_HELP)
 
     if "method" not in fourier:

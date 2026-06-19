@@ -20,7 +20,7 @@ Design:
   its result under ``store[out]``, and returns a small summary dict.
 
 Expected inputs:
-- a quasi-PDF produced by the Fourier stage (loaded from an artifact on disk,
+- a quasi-PDF produced by the Fourier stage (loaded from a NetCDF artifact on disk,
   since each stage starts with a fresh store). The artifact carries the full
   per-sample quasi-PDF (an ``EnsembleData`` with a leading resampling axis).
 - a momentum grid ``x_ls`` and the nucleon momentum ``pz_gev``
@@ -33,7 +33,7 @@ Expected outputs:
 Example usage:
 - from lamet_agent.stages.matching.functions import STAGE_TOOLS
 - store = {}
-- STAGE_TOOLS["load_quasi_pdf"](store, path="artifacts/quasi_pdf.npz")
+- STAGE_TOOLS["load_quasi_pdf"](store, path="artifacts/fourier_result.nc")
 - STAGE_TOOLS["build_matching_kernel"](store, kernel_id="CG_gt_PDF_msbar", pz_gev=1.5)
 - STAGE_TOOLS["apply_matching"](store)
 """
@@ -168,8 +168,10 @@ def load_quasi_pdf(
     is done sample by sample, so this loads the **full resampling axis** (every
     bootstrap/jackknife sample), not just a central value with an error.
 
-    Two artifact layouts are accepted automatically:
-    - the real Fourier-stage ``EnsembleData`` npz (default): the complex
+    Three artifact layouts are accepted automatically:
+    - the Fourier-stage ``EnsembleData`` NetCDF artifact (default): the complex
+      quasi-PDF samples live in the DataArray values and the x grid in coord ``x``;
+    - the legacy Fourier-stage ``EnsembleData`` npz: the complex
       quasi-PDF samples live in ``values`` (shape ``(n_sample, n_x)``) and the x
       grid in the JSON metadata ``coords["x"]``;
     - a simple hand-made npz with ``x_ls`` and a 2D ``quasi_samples`` array
@@ -178,18 +180,15 @@ def load_quasi_pdf(
     ``component`` selects the real (``"re"``) or imaginary (``"im"``) channel of
     the Fourier output; the unpolarized quasi-PDF lives in the real part.
     """
-    # Auto-detect the artifact format. The real Fourier output is an EnsembleData
-    # npz; load it (with its per-sample values) via EnsembleData.load_npz and take
-    # the requested channel. Otherwise fall back to the simple hand-made format.
     try:
-        data, _extras = EnsembleData.load_npz(path)
+        data = EnsembleData.from_netcdf(path) if Path(path).suffix.lower() == ".nc" else EnsembleData.load_npz(path)[0]
         quasi_ed = _component_ensemble_data(data, component)
     except ValueError:
         raw = np.load(path, allow_pickle=False)
         if "quasi_samples" not in raw or "x_ls" not in raw:
             raise ValueError(
                 f"Unrecognized quasi-PDF artifact '{path}': expected a Fourier-stage "
-                "EnsembleData npz or an npz with x_ls/quasi_samples."
+                "EnsembleData NetCDF artifact or an npz with x_ls/quasi_samples."
             )
         quasi_ed = _samples_ensemble_data_from_npz(raw)
 

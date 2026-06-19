@@ -13,7 +13,7 @@ Each operator uses its own kernel, selected by kernel_id. The quasi-PDF is read 
 Steps:
 1. list_kernels to see the registered kernel_ids (CG_<operator>_PDF_<scheme>), then choose the one that matches this operator and scheme (e.g. CG_gt_PDF_msbar for the unpolarized gamma^t PDF in MSbar).
 
-2. load_quasi_pdf on metadata.matching.quasi_input (default the Fourier artifacts/quasi_pdf.npz). It auto-detects the Fourier EnsembleData npz and takes the real part with stat (+) sys error; pass component='im' only if the quasi-PDF lives in the imaginary channel. Stores x_ls and quasi_gv.
+2. load_quasi_pdf on metadata.matching.quasi_input (default the Fourier artifact artifacts/fourier_result.nc). It auto-detects the Fourier EnsembleData NetCDF artifact and takes the requested component; pass component='im' only if the quasi-PDF lives in the imaginary channel. Stores x_ls and quasi_gv.
 
 3. build_matching_kernel(kernel_id=..., pz_gev=..., mu=2.0, zs_fm=...) -> kernel_matrix. The scheme follows the kernel_id suffix (_msbar, _ratio, _hybrid). For hybrid kernels pass zs_fm (z_s in fm) from metadata.matching; it forms zspz = zs_fm * pz_gev / GEV_FM. MSbar/ratio/gluon do not need zs_fm. Use the same pz_gev as the Fourier stage. The x grid must avoid x=0 because the kernel uses xi=x/y; if the grid includes 0, ask the user to regenerate
    the quasi-PDF on a zero-avoiding grid (e.g. an even number of points).
