@@ -9,7 +9,6 @@ import pytest
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.tools import resolve_stage_tools
 from lamet_agent.core.plotting import _band_segment, plot_fourier_artifact, plot_fourier_extension_quality
-from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.stages.fourier.functions import (
     _asymptotic_values,
     _param_labels,
@@ -21,7 +20,6 @@ from lamet_agent.stages.fourier.functions import (
     run_fourier_transform,
     summarize_fourier_result,
 )
-from lamet_agent.stages.fourier.skills import validate_stage_inputs
 
 
 def _write_npz(path: Path) -> None:
@@ -406,6 +404,7 @@ def test_fourier_transform_accepts_upstream_ensemble_data(tmp_path: Path, monkey
     assert run["n_samples"] == 3
     assert "fourier_result_data" in store
     assert store["fourier_result_data"].dims == ["x"]
+    assert store["output"] is store["fourier_result_data"]
 
 
 def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) -> None:
@@ -811,126 +810,6 @@ def test_fourier_accepts_covariance_fit_error_mode(tmp_path: Path, monkeypatch) 
 
     assert run["n_schemes"] == 1
     assert store["fourier_result"]["fit_error_mode"] == "covariance"
-
-
-def test_fourier_stage_validation_accepts_declared_matrix_element() -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "demo",
-            "metadata": {
-                "fourier_input": "matrix_element.npz",
-                "fourier": {
-                    "method": "GI",
-                    "order": "NLA",
-                    "observable": "nucleon_quark_transversity_quasi_pdf",
-                    "coord_unit": "lambda",
-                    "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
-                    "scheme_scan": {
-                        "zmin_values": [1.0],
-                        "zmax_values": [4.0],
-                        "z_ext_max": 5.0,
-                    },
-                },
-            },
-        }
-    )
-    assert validate_stage_inputs(manifest) == []
-
-
-def test_fourier_stage_validation_accepts_stage_defaults() -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "demo",
-            "metadata": {"fourier_input": "matrix_element.nc"},
-            "stages": {
-                "fourier_transform": {
-                    "defaults": {
-                        "method": "GI",
-                        "order": "NLA",
-                        "observable": "nucleon_quark_transversity_quasi_pdf",
-                        "coord_unit": "lambda",
-                        "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
-                    }
-                }
-            },
-        }
-    )
-    assert validate_stage_inputs(manifest) == []
-
-
-def test_fourier_stage_validation_derives_observable_from_global_inputs() -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "demo",
-            "metadata": {
-                "fourier_input": "matrix_element.nc",
-                "target_observable": "pdf",
-            },
-            "inputs": {
-                "correlators": [
-                    {"kind": "2pt", "hadron": "proton", "gfix": "GI", "a_fm": 0.08, "pz_gev": 1.5},
-                    {"kind": "3pt", "hadron": "proton", "gfix": "GI", "a_fm": 0.08, "pz_gev": 1.5},
-                ]
-            },
-            "stages": {
-                "fourier_transform": {
-                    "defaults": {
-                        "parton": "quark",
-                        "order": "NLA",
-                        "coord_unit": "lattice",
-                        "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
-                    }
-                }
-            },
-        }
-    )
-    assert validate_stage_inputs(manifest) == []
-
-
-def test_fourier_stage_validation_allows_auto_scheme_scan() -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "demo",
-            "metadata": {
-                "fourier_input": "matrix_element.npz",
-                "fourier": {
-                    "method": "GI",
-                    "order": "NLA",
-                    "observable": "nucleon_quark_transversity_quasi_pdf",
-                    "coord_unit": "fm",
-                    "pz_gev": 2.0,
-                    "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
-                },
-            },
-        }
-    )
-    assert validate_stage_inputs(manifest) == []
-
-
-def test_fourier_stage_validation_explains_missing_options() -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "demo",
-            "metadata": {"fourier_input": "matrix_element.npz"},
-        }
-    )
-
-    issues = validate_stage_inputs(manifest)
-    text = "\n".join(issues)
-
-    assert "Fourier stage needs more metadata" in text
-    assert "Missing metadata.fourier.observable/order" in text
-    assert "pion_quark_quasi_pdf" in text
-    assert "2601.12189 2.1/2.2" in text
-    assert "Fill order with LA or NLA" in text
-    assert "Missing metadata.fourier.coord_unit" in text
-    assert "Missing metadata.fourier.k_grid" in text
-    assert "metadata.fourier.scheme_scan" not in text
-
-
-def test_fourier_stage_validation_flags_missing_matrix_element() -> None:
-    manifest = AnalysisManifest.model_validate({"run_id": "demo"})
-    assert validate_stage_inputs(manifest)
 
 
 def test_plot_fourier_artifact_writes_figure(tmp_path: Path) -> None:

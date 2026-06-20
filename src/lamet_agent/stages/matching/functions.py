@@ -20,9 +20,9 @@ Design:
   its result under ``store[out]``, and returns a small summary dict.
 
 Expected inputs:
-- a quasi-PDF produced by the Fourier stage (loaded from a NetCDF artifact on disk,
-  since each stage starts with a fresh store). The artifact carries the full
-  per-sample quasi-PDF (an ``EnsembleData`` with a leading resampling axis).
+- a quasi-PDF produced by the Fourier stage, passed in memory by job id or loaded
+  from an external NetCDF source. It carries the full per-sample quasi-PDF (an
+  ``EnsembleData`` with a leading resampling axis).
 - a momentum grid ``x_ls`` and the nucleon momentum ``pz_gev``
 
 Expected outputs:
@@ -95,6 +95,18 @@ KERNEL_REGISTRY: dict[str, Callable[..., np.ndarray]] = {
 }
 
 
+def resolve_kernel_id(kernel_id: str, scheme: str) -> str:
+    """Resolve a manifest logical kernel id to the registered implementation id."""
+    if kernel_id in KERNEL_REGISTRY:
+        return kernel_id
+    scheme_name = "hybrid" if scheme == "hybrid_ratio" else scheme
+    aliases = {"unpolarized_gT": f"CG_gt_PDF_{scheme_name}"}
+    resolved = aliases.get(kernel_id, kernel_id)
+    if resolved not in KERNEL_REGISTRY:
+        raise ValueError(f"Unknown kernel_id {kernel_id!r} with scheme {scheme!r}.")
+    return resolved
+
+
 # --- hybrid-scheme scale -----------------------------------------------------
 # The hybrid kernel needs the dimensionless Wilson-line scale zspz = z_s * P_z.
 # Both z_s (the Wilson-line length, in fm) and P_z (the hadron momentum, in GeV)
@@ -157,16 +169,16 @@ def _samples_ensemble_data_from_npz(raw: Any) -> EnsembleData:
 def load_quasi_pdf(
     store: dict[str, Any],
     *,
-    path: str,
+    path: str | None = None,
     component: str = "re",
     quasi_out: str = "quasi_ed",
     grid_out: str = "x_ls",
 ) -> dict[str, Any]:
     """Load the per-sample quasi-PDF and its momentum grid from a Fourier artifact.
 
-    The store is fresh each stage, so cross-stage data is passed on disk. Matching
-    is done sample by sample, so this loads the **full resampling axis** (every
-    bootstrap/jackknife sample), not just a central value with an error.
+    Matching is done sample by sample, so this selects the **full resampling
+    axis** from the in-memory job input or an external artifact, not just a
+    central value with an error.
 
     Three artifact layouts are accepted automatically:
     - the Fourier-stage ``EnsembleData`` NetCDF artifact (default): the complex
@@ -180,17 +192,22 @@ def load_quasi_pdf(
     ``component`` selects the real (``"re"``) or imaginary (``"im"``) channel of
     the Fourier output; the unpolarized quasi-PDF lives in the real part.
     """
-    try:
-        data = EnsembleData.from_netcdf(path) if Path(path).suffix.lower() == ".nc" else EnsembleData.load_npz(path)[0]
-        quasi_ed = _component_ensemble_data(data, component)
-    except ValueError:
-        raw = np.load(path, allow_pickle=False)
-        if "quasi_samples" not in raw or "x_ls" not in raw:
-            raise ValueError(
-                f"Unrecognized quasi-PDF artifact '{path}': expected a Fourier-stage "
-                "EnsembleData NetCDF artifact or an npz with x_ls/quasi_samples."
-            )
-        quasi_ed = _samples_ensemble_data_from_npz(raw)
+    if path is None and isinstance(store.get("quasi"), EnsembleData):
+        quasi_ed = _component_ensemble_data(store["quasi"], component)
+    elif path is not None:
+        try:
+            data = EnsembleData.from_netcdf(path) if Path(path).suffix.lower() == ".nc" else EnsembleData.load_npz(path)[0]
+            quasi_ed = _component_ensemble_data(data, component)
+        except ValueError:
+            raw = np.load(path, allow_pickle=False)
+            if "quasi_samples" not in raw or "x_ls" not in raw:
+                raise ValueError(
+                    f"Unrecognized quasi-PDF artifact '{path}': expected a Fourier-stage "
+                    "EnsembleData NetCDF artifact or an npz with x_ls/quasi_samples."
+                )
+            quasi_ed = _samples_ensemble_data_from_npz(raw)
+    else:
+        raise ValueError("load_quasi_pdf needs the job's quasi input or an artifact path.")
 
     if quasi_ed.resample == "gvar":
         raise ValueError(
@@ -235,8 +252,8 @@ def build_matching_kernel(
 
     Hybrid kernels also need the Wilson-line length ``zs_fm`` (z_s in fm); together
     with ``pz_gev`` it sets the dimensionless scale ``zspz = zs_fm * pz_gev / GEV_FM``.
-    Both ``zs_fm`` and ``pz_gev`` are manifest inputs (metadata.matching). MSbar,
-    ratio and gluon kernels ignore ``zs_fm``.
+    Both ``zs_fm`` and ``pz_gev`` come from the matching job and its declared
+    kernel parameters. MSbar, ratio and gluon kernels ignore ``zs_fm``.
     """
     if kernel_id not in KERNEL_REGISTRY:
         raise ValueError(
@@ -266,7 +283,7 @@ def build_matching_kernel(
         if zs_fm is None:
             raise ValueError(
                 f"Kernel '{kernel_id}' is a hybrid kernel and needs zs_fm (z_s in fm) "
-                "from metadata.matching.zs_fm to build zspz = zs_fm * pz_gev / GEV_FM."
+                "from inputs.kernels[].kernel_parameters to build zspz = zs_fm * pz_gev / GEV_FM."
             )
         zspz = float(zs_fm) * pz_gev / GEV_FM
         builder_kwargs["zspz"] = zspz
@@ -301,6 +318,8 @@ def apply_matching(
     quasi: str = "quasi_ed",
     grid: str = "x_ls",
     out: str = "lightcone_ed",
+    save_path: str | None = None,
+    artifacts_dir: str | None = None,
 ) -> dict[str, Any]:
     """Apply the matching kernel sample by sample: ``lightcone_i = K @ quasi_i``.
 
@@ -350,6 +369,11 @@ def apply_matching(
         name="lightcone_pdf",
     )
     store[out] = lightcone_ed
+    output = Path(save_path) if save_path is not None else Path(artifacts_dir or "artifacts") / "matched_pdf"
+    artifact = output.with_suffix(".nc")
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    lightcone_ed.to_netcdf(artifact)
+    store["output"] = lightcone_ed
 
     # Summarize with the sample-built central value (mean over samples) so the
     # agent can sanity-check the result without re-reading the store.
@@ -358,6 +382,7 @@ def apply_matching(
         "resample": lightcone_ed.resample,
         "n_sample": int(lightcone_ed.n_sample),
         "n_points": int(x_out.size),
+        "artifact": str(artifact),
         "mean_sample": [float(v) for v in np.asarray(lightcone_ed.mean)[:3]],
     }
 
@@ -428,7 +453,7 @@ def plot_matched_pdf(
     _band(lightcone_ed, label="light-cone", color=ORANGE)
     ax.set_xlabel(r"$x$", **FONT_SIZE)
     ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
-    x_limits = (-2.2, 2.2) if xlim is None else (float(xlim[0]), float(xlim[1]))
+    x_limits = (0.0, 2.0) if xlim is None else (float(xlim[0]), float(xlim[1]))
     y_limits = (-0.1, 2.51) if ylim is None else (float(ylim[0]), float(ylim[1]))
     ax.set_xlim(*x_limits)
     ax.set_ylim(*y_limits)
@@ -466,16 +491,13 @@ def report_matching_result(
     mu: float = 2.0,
     zs_fm: float | None = None,
     component: str | None = None,
-    quasi_input: str | None = None,
     save_path: str | None = None,
     artifacts_dir: str | None = None,
 ) -> dict[str, Any]:
     """Write English + Chinese Markdown reports for the matching stage.
 
-    The physics parameters (kernel_id, pz_gev, mu, zs_fm, component) come from
-    ``metadata.matching`` -- the harness injects them the same way it does for
-    ``build_matching_kernel`` -- while the x grid, quasi-PDF, and matched PDF are
-    read back from the store that the earlier tools populated.
+    Physics parameters come from the matching job and kernel declaration; the x
+    grid, quasi-PDF, and matched PDF come from the current job store.
     """
     if "quasi_ed" not in store or "lightcone_ed" not in store or "x_ls" not in store:
         raise ValueError(
@@ -498,7 +520,7 @@ def report_matching_result(
         "mu": mu,
         "zspz": zspz,
         "component": component,
-        "source": quasi_input,
+        "source": "job input",
         "resample": lightcone_ed.resample,
         "n_sample": int(lightcone_ed.n_sample),
         "n_points": int(x_ls.size),

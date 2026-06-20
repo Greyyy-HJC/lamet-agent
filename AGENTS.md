@@ -72,7 +72,7 @@ Top-level layout:
 .
 ├── examples/
 │   ├── fake_data/generate_fake_data.py
-│   └── workflow_smoke_manifest.json
+│   └── cg_pion_pdf_manifest.json
 ├── src/lamet_agent/
 │   ├── agent.py
 │   ├── cli.py
@@ -85,11 +85,11 @@ Top-level layout:
 
 Package modules:
 
-- `src/lamet_agent/cli.py`: CLI for `validate`, `workflow`, and `run`.
-- `src/lamet_agent/agent.py`: `run_agent()` and per-stage LLM tool loop (`_run_stage`).
-- `src/lamet_agent/manifest.py`: manifest schema (`correlators`, `kernels`, `metadata`) and validation.
-- `src/lamet_agent/kernels.py`: built-in kernel callables referenced as `module:function`.
-- `src/lamet_agent/core/stages.py`: default stage order and stage-id → package routing.
+- `src/lamet_agent/cli.py`: CLI for `validate` and `run`.
+- `src/lamet_agent/agent.py`: stage/job DAG runner and per-job LLM tool loop.
+- `src/lamet_agent/manifest.py`: `metadata`/`inputs`/`stages` schema, path resolution, and DAG validation.
+- `src/lamet_agent/kernels.py`: built-in matching kernels.
+- `src/lamet_agent/core/stages.py`: stage-id → package routing.
 - `src/lamet_agent/core/tools.py`: resolves `STAGE_TOOLS`, prepares tool args, plot paths under `artifacts/`.
 - `src/lamet_agent/core/llm.py`: `LlmSession` backends (`mock`, `external`, `deepseek`, `openai`); OpenAI-compatible providers in `PROVIDERS`.
 - `src/lamet_agent/core/prompting.py`: system prompt and per-stage static context assembly.
@@ -104,18 +104,18 @@ Package modules:
   - `extrapolation` (`extrapolation`)
 - `examples/`: smoke manifests, fake data generator, and local workflow examples.
 - `tests/unit/`: schema, CLI, agent loop, tools, trace, and stage tests.
-- `runs/`: typical output location for logged runs (gitignored); correlator plots go to `artifacts/` under the process working directory.
+- `runs/`: typical output location for logged runs (gitignored); artifact placement comes from the manifest.
 
 ## How To Add A New Stage
 
-1. Add the stage id to `DEFAULT_STAGES` and `STAGE_TO_PACKAGE` in `src/lamet_agent/core/stages.py`.
+1. Add the stage id to `StageId` in `manifest.py` and `STAGE_TO_PACKAGE` in `core/stages.py`.
 2. Create `src/lamet_agent/stages/<package>/` with:
    - `functions.py`: stage tools and a `STAGE_TOOLS` dict mapping tool names to callables `(store, **kwargs) -> dict`.
    - `prompts.py`: stage instruction text and action protocol for the LLM.
-   - `skills.py`: `STAGE_SKILL` strategy text, `tool_catalog()`, and `validate_stage_inputs(manifest)`.
+   - `skills.py`: `STAGE_SKILL` strategy text, `tool_catalog()`, and `validate_stage_inputs(manifest, job)`.
 3. Register tools only through `STAGE_TOOLS`; `core/tools.resolve_stage_tools()` imports them dynamically.
 4. Extend `core/prompting.py` if the new stage needs shared prompt fragments.
-5. Add unit tests under `tests/unit/` and, when appropriate, extend `examples/workflow_smoke_manifest.json` or a dedicated example manifest.
+5. Add unit tests under `tests/unit/` and, when appropriate, extend a dedicated example manifest.
 
 ## How To Add A New Script Or Example
 
@@ -134,18 +134,21 @@ Package modules:
 
 ## Manifest Conventions
 
-- Required manifest fields: `run_id`, `correlators`, `kernels`; optional `goal` and `metadata`.
-- Correlator `path` values resolve relative to the manifest file, with a fallback to the project root for repo-style paths (for example `examples/fake_data/...`).
-- Kernel references use `module:function` (for example `lamet_agent.kernels:identity_kernel`).
-- Put physics selectors in correlator `metadata` or top-level `metadata`, not in ad hoc CLI flags.
-- When adding correlator datasets, keep `dataset_id`, `kind` (`2pt` / `3pt`), and `format` unambiguous for downstream tools.
+- Required top-level fields are `metadata`, `inputs`, and `stages`.
+- `metadata.stages` is the sole execution order; stage selection is not a CLI override.
+- Stage entries contain `defaults` and `jobs`; job `params` shallow-merge over defaults.
+- Correlator jobs group `inputs.correlators` by `correlator_ids`; downstream jobs reference earlier job ids through role-named `inputs`.
+- All ids are globally unique. External partial-run sources are declared in `inputs.artifacts`.
+- Paths resolve from `metadata.root_directory`; default job artifacts are `<artifacts_directory>/<stage>/<job_id>.nc`.
+- Terminal stage tools must place their primary in-memory result in `store["output"]`.
+- Fourier jobs consume role `input`; matching jobs consume role `quasi`. Partial Fourier runs declare the renormalized NetCDF and its `a_fm`, `pz_gev`, `hadron`, and `gfix` metadata under `inputs.artifacts`.
 
 ## Plotting Conventions
 
 - All stage plots must use `src/lamet_agent/core/plotting.py`.
 - Use `default_plot()` and the exported helpers instead of direct `plt.subplots()` or `plt.figure()` in stage code.
 - Reuse exported style constants (`COLOR_CYCLE`, `ERRORBAR_STYLE`, `FIG_SIZE`, `LEGEND_SETS`) for consistent publication-style output.
-- Correlator plot tools must write PDFs under `artifacts/` in the current working directory (via `resolve_plot_save_path()` in `core/tools.py`).
+- Correlator plot tools must write PDFs under the job's manifest-controlled stage artifact directory.
 
 ## Testing Expectations
 

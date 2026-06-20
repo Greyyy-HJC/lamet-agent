@@ -339,3 +339,34 @@
 - Migrated the correlator-to-renormalization handoff from JSON report/txt-grid loading to `EnsembleData` NetCDF artifacts.
 - Changed ratio-scheme renormalization output from `.npz` to `.nc` while leaving Fourier and matching IO for a later coordinated update.
 - Removed correlator-stage per-z bare matrix `.txt` output so the bare matrix element artifact is NetCDF-only.
+
+## 2026-06-20 (Job-DAG manifest migration, phase 1)
+
+- Replaced the legacy top-level manifest contract with `metadata`, global `inputs`, and per-stage `defaults`/`jobs`; `metadata.stages` is now the sole execution order.
+- Added per-job isolated stores and job-id output registration so role-named downstream inputs resolve in memory without a second run.
+- Migrated correlator analysis to derive paths/selectors from `correlator_ids`, scan configured nstate/strategy candidates, and write job-scoped NetCDF outputs with lattice metadata.
+- Migrated renormalization to consume `target`/`denominator` job roles and apply `hybrid_ratio` using `scheme_parameters.zs_fm` and the target lattice spacing.
+- Added the P0+P5 `cg_pion_pdf_manifest.json` and reduced `runs/ds_pdf_complete/run.sh` to one manifest and one run command.
+
+## 2026-06-20 (Correlator model-average control)
+
+- Added an authoritative correlator `model_average` manifest default so LLM tool arguments cannot accidentally switch a single-window production run into the roughly 12x more expensive full-window BMA path.
+
+## 2026-06-20 (Fourier and matching job-DAG migration)
+
+- Migrated Fourier and perturbative matching parameter preparation from legacy metadata fields to stage defaults, job params, role-named upstream outputs, and kernel declarations.
+- Kept the Fourier numerical workflow unchanged while registering its EnsembleData as the job output and scoping its NetCDF, fit-info, plot, and report artifacts by job id.
+- Added logical `unpolarized_gT` kernel resolution, in-memory Fourier-to-matching handoff, and matched-PDF NetCDF output.
+- Extended `cg_pion_pdf_manifest.json` through matching and added `partial_cg_pion_pdf_manifest.json` for restart from the saved renormalization artifact.
+
+## 2026-06-20 (Partial-run external artifact hydration)
+
+- Auto-load declared `inputs.artifacts` into job stores before the LLM tool loop for Fourier (`input` → `load_renormalized_matrix_element_samples`) and matching (`quasi` → `load_quasi_pdf`).
+- Clarified system prompt that external artifact inputs are pre-loaded so partial/resume runs do not depend on the model calling loader tools first.
+- Added agent unit tests covering hydration without a manual loader action.
+
+## 2026-06-20 (Partial-run loader path injection)
+
+- Resolve declared artifact paths in `prepare_tool_args` when job inputs were pre-hydrated to `EnsembleData`, so redundant loader calls still receive `path`.
+- Made `load_renormalized_matrix_element_samples` idempotent when `matrix_element_data` is already loaded.
+- Updated Fourier stage prompt to call `run_fourier_transform` directly after pre-load.

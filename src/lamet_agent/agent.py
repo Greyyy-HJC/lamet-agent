@@ -1,4 +1,4 @@
-"""Agent runtime loop for staged LaMET workflows."""
+"""Agent runtime loop for job-based LaMET workflows."""
 
 from __future__ import annotations
 
@@ -9,54 +9,110 @@ from typing import Any
 
 from .core.llm import LlmSession, make_llm_session
 from .core.prompting import build_stage_static_prompt
-from .core.stages import DEFAULT_STAGES, select_stage_sequence
-from .core.tools import (
-    filter_tool_kwargs,
-    prepare_tool_args,
-    resolve_stage_tools,
-    validate_stage_inputs,
-)
+from .core.tools import filter_tool_kwargs, prepare_tool_args, resolve_stage_tools, validate_stage_inputs
 from .core.trace import AgentTrace
-from .manifest import AnalysisManifest
+from .manifest import AnalysisManifest, ArtifactInput, StageJob
+
+# Partial runs reference external artifacts by id; hydrate them before the LLM loop.
+_STAGE_ARTIFACT_LOADERS: dict[str, dict[str, tuple[str, str]]] = {
+    "fourier_transform": {
+        "input": ("load_renormalized_matrix_element_samples", "matrix_element_data"),
+    },
+    "perturbative_matching": {
+        "quasi": ("load_quasi_pdf", "quasi_ed"),
+    },
+}
+
+
+def _hydrate_external_artifact_inputs(
+    stage: str,
+    job: StageJob,
+    manifest: AnalysisManifest,
+    store: dict[str, Any],
+    *,
+    effective_params: dict[str, Any],
+    artifacts_dir: Path,
+) -> None:
+    """Load declared external artifacts into the job store before tool execution."""
+    loaders = _STAGE_ARTIFACT_LOADERS.get(stage, {})
+    if not loaders:
+        return
+    tools = resolve_stage_tools(stage)
+    for role, (tool_name, data_key) in loaders.items():
+        value = store.get(role)
+        if not isinstance(value, ArtifactInput):
+            continue
+        tool = tools.get(tool_name)
+        if tool is None:
+            raise ValueError(f"stage {stage!r} missing hydration tool {tool_name!r}")
+        args = prepare_tool_args(
+            tool_name,
+            {},
+            manifest=manifest,
+            stage=stage,
+            job=job,
+            effective_params=effective_params,
+            artifacts_dir=artifacts_dir,
+            store=store,
+        )
+        call_args, _ = filter_tool_kwargs(tool, args)
+        tool(store, **call_args)
+        loaded = store.get(data_key)
+        if loaded is not None:
+            store[role] = loaded
 
 
 @dataclass
 class AgentState:
-    """In-memory agent state for one run."""
+    """Structured state for one manifest run."""
 
     run_id: str
     completed_stages: list[str] = field(default_factory=list)
     actions: list[dict[str, Any]] = field(default_factory=list)
-    stage_results: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
-    input_issues: dict[str, list[str]] = field(default_factory=dict)
-    pending_user_input: dict[str, list[str]] = field(default_factory=dict)
+    stage_results: dict[str, dict[str, list[dict[str, Any]]]] = field(default_factory=dict)
+    input_issues: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    pending_user_input: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
 
-def _run_stage(
+def _run_job(
     stage: str,
+    job: StageJob,
     manifest: AnalysisManifest,
     state: AgentState,
     session: LlmSession,
     *,
-    input_issues: list[str] | None,
+    input_issues: list[str],
     max_tool_steps: int,
     model: str,
     trace: AgentTrace,
     store: dict[str, Any],
-) -> None:
-    """Run one stage: drive the session and execute tool calls."""
+) -> list[dict[str, Any]]:
+    """Drive the LLM/tool loop for one isolated job store."""
     tools = resolve_stage_tools(stage)
     observations: list[dict[str, Any]] = []
-    artifacts_dir = (
-        manifest.root_directory / "examples" / "artifacts"
-        if manifest.root_directory is not None
-        else Path.cwd() / "artifacts"
+    stage_dir = manifest.artifacts_directory / stage
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    if stage == "perturbative_matching":
+        from lamet_agent.stages.matching.skills import effective_matching_params
+
+        effective_params = effective_matching_params(manifest, job)
+    else:
+        effective_params = {**manifest.stages[stage].defaults, **job.params}
+
+    _hydrate_external_artifact_inputs(
+        stage,
+        job,
+        manifest,
+        store,
+        effective_params=effective_params,
+        artifacts_dir=stage_dir,
     )
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     static_prompt = build_stage_static_prompt(
         stage,
         manifest,
+        job=job,
+        effective_params=effective_params,
         completed_stages=state.completed_stages.copy(),
         input_issues=input_issues,
     )
@@ -66,100 +122,63 @@ def _run_stage(
     if input_issues:
         action = {
             "action": "request_user_input",
-            "reason": "Stage inputs are incomplete. Ask the user to provide or confirm the missing fields before calling tools.",
+            "reason": "This job's manifest inputs are incomplete.",
             "questions": input_issues,
         }
         trace.cycle_begin(1)
         trace.model_output(action)
-        state.actions.append({"stage": stage, "action": action})
-        state.pending_user_input[stage] = input_issues
-        state.stage_results[stage] = []
-        trace.stage_end(stage, n_steps=1)
-        return
+        state.actions.append({"stage": stage, "job": job.id, "action": action})
+        state.pending_user_input.setdefault(stage, {})[job.id] = input_issues
+        return observations
 
     last_observation: dict[str, Any] | None = None
-    cycles = 0
-
-    for _ in range(max_tool_steps):
-        cycles += 1
-        trace.cycle_begin(cycles)
-        if cycles > 1 and last_observation is not None:
+    for cycle in range(1, max_tool_steps + 1):
+        trace.cycle_begin(cycle)
+        if last_observation is not None:
             trace.prompt_delta(last_observation)
         trace.llm_call_begin(model=model)
         action = session.decide(last_observation=last_observation)
         trace.llm_call_end()
         trace.model_output(action)
-        state.actions.append({"stage": stage, "action": action})
+        state.actions.append({"stage": stage, "job": job.id, "action": action})
 
         if action.get("action") != "call_tool":
             break
 
         tool_name = action.get("tool_name", "")
-        args = prepare_tool_args(
-            tool_name,
-            action.get("args", {}) or {},
-            manifest=manifest,
-            artifacts_dir=artifacts_dir,
-            _store=store,
-        )
         tool = tools.get(tool_name)
         if tool is None:
             observation = {"tool_name": tool_name, "error": "unknown tool"}
-            observations.append(observation)
-            trace.observation(observation)
-            last_observation = observation
-            continue
-        call_args, dropped_args = filter_tool_kwargs(tool, args)
-        try:
-            result = tool(store, **call_args)
-        except (ValueError, TypeError, FileNotFoundError) as exc:
-            observation = {"tool_name": tool_name, "error": str(exc)}
-            observations.append(observation)
-            trace.observation(observation)
-            last_observation = observation
-            continue
-        observation: dict[str, Any] = {"tool_name": tool_name, "result": result}
-        if dropped_args:
-            observation["ignored_args"] = dropped_args
+        else:
+            args = prepare_tool_args(
+                tool_name,
+                action.get("args", {}) or {},
+                manifest=manifest,
+                stage=stage,
+                job=job,
+                effective_params=effective_params,
+                artifacts_dir=stage_dir,
+                store=store,
+            )
+            call_args, dropped_args = filter_tool_kwargs(tool, args)
+            try:
+                result = tool(store, **call_args)
+                observation = {"tool_name": tool_name, "result": result}
+                if dropped_args:
+                    observation["ignored_args"] = dropped_args
+            except (ValueError, TypeError, FileNotFoundError) as exc:
+                observation = {"tool_name": tool_name, "error": str(exc)}
         observations.append(observation)
         trace.observation(observation)
         last_observation = observation
 
-    state.stage_results[stage] = observations
-    trace.stage_end(stage, n_steps=cycles)
-
-
-def _resolve_stages(
-    manifest: AnalysisManifest,
-    stages: list[str] | None,
-    resume_from: str | None,
-) -> list[str]:
-    """Resolve which stages to run.
-
-    ``stages`` (an explicit ordered subset) takes precedence; otherwise the
-    default sequence is used, optionally sliced from ``resume_from`` onward.
-    Running a later stage on its own requires the user to supply that stage's
-    inputs in the manifest (surfaced per stage as ``input_issues``).
-    """
-    if stages is not None:
-        unknown = [stage for stage in stages if stage not in DEFAULT_STAGES]
-        if unknown:
-            raise ValueError(f"Unknown stage(s): {unknown}. Known stages: {DEFAULT_STAGES}")
-        return list(stages)
-
-    sequence = select_stage_sequence(manifest.goal)
-    if resume_from is not None:
-        if resume_from in sequence:
-            return sequence[sequence.index(resume_from):]
-        return [resume_from]
-    return sequence
+    trace.stage_end(f"{stage}/{job.id}", n_steps=cycle)
+    return observations
 
 
 def run_agent(
     manifest: AnalysisManifest,
     *,
-    stages: list[str] | None = None,
-    resume_from: str | None = None,
     model: str = "mock",
     actions_path: str | Path | None = None,
     api_key: str | None = None,
@@ -168,44 +187,56 @@ def run_agent(
     max_tool_steps: int = 40,
     verbose: bool = False,
 ) -> dict[str, Any]:
-    """Run the stage loop and collect structured actions and tool results.
-
-    When ``verbose`` is True, print each cycle's model action and tool
-    observation to stdout in a ReAct-style trace before the final JSON summary.
-    Static stage context is printed once per stage.
-    """
-    selected = _resolve_stages(manifest, stages, resume_from)
-
+    """Execute the manifest's ordered stages and per-stage jobs."""
+    selected = list(manifest.metadata.stages)
     state = AgentState(run_id=manifest.run_id)
     session = make_llm_session(model, actions_path, api_key, llm_model, base_url)
     trace = AgentTrace(enabled=verbose)
-    store: dict[str, Any] = {}
+    outputs: dict[str, Any] = {item.id: item for item in manifest.inputs.artifacts}
 
     trace.run_begin(run_id=manifest.run_id, model=model, stages=selected)
-
     for stage in selected:
-        issues = validate_stage_inputs(stage, manifest)
-        if issues:
-            state.input_issues[stage] = issues
-        trace.stage_begin(stage, input_issues=issues or None)
-        _run_stage(
-            stage,
-            manifest,
-            state,
-            session,
-            input_issues=issues or None,
-            max_tool_steps=max_tool_steps,
-            model=model,
-            trace=trace,
-            store=store,
-        )
+        state.stage_results[stage] = {}
+        for job in manifest.stages[stage].jobs:
+            issues = validate_stage_inputs(stage, manifest, job)
+            if issues:
+                state.input_issues.setdefault(stage, {})[job.id] = issues
+            trace.stage_begin(f"{stage}/{job.id}", input_issues=issues or None)
+
+            store: dict[str, Any] = {}
+            for role, value in job.inputs.items():
+                if isinstance(value, list):
+                    missing = [ref for ref in value if ref not in outputs]
+                    if missing:
+                        raise ValueError(f"job {job.id!r} has upstream jobs without output: {missing}")
+                    store[role] = [outputs[ref] for ref in value]
+                else:
+                    if value not in outputs:
+                        raise ValueError(f"job {job.id!r} has an upstream job without output: {value!r}")
+                    store[role] = outputs[value]
+            observations = _run_job(
+                stage,
+                job,
+                manifest,
+                state,
+                session,
+                input_issues=issues,
+                max_tool_steps=max_tool_steps,
+                model=model,
+                trace=trace,
+                store=store,
+            )
+            state.stage_results[stage][job.id] = observations
+            if job.id in state.pending_user_input.get(stage, {}):
+                break
+            if "output" in store:
+                outputs[job.id] = store["output"]
         if stage in state.pending_user_input:
             break
         state.completed_stages.append(stage)
 
     trace.run_end(action_count=len(state.actions))
     status = "waiting_for_user_input" if state.pending_user_input else "completed"
-
     return {
         "run_id": manifest.run_id,
         "status": status,
@@ -216,11 +247,8 @@ def run_agent(
         "pending_user_input": state.pending_user_input,
         "actions": state.actions,
         "stage_results": state.stage_results,
+        "outputs": sorted(outputs),
         "summary": json.dumps(
-            {
-                "run_id": manifest.run_id,
-                "stage_count": len(state.completed_stages),
-                "action_count": len(state.actions),
-            }
+            {"run_id": manifest.run_id, "stage_count": len(state.completed_stages), "action_count": len(state.actions)}
         ),
     }

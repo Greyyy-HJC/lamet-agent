@@ -1,126 +1,208 @@
-"""Minimal manifest schema and validation helpers.
-
-Purpose:
-- define the only required runtime input contract
-- validate manifest JSON and kernel callable references
-
-Expected inputs:
-- a manifest JSON file with `correlators` and `kernels`
-- correlator `path` values resolved relative to the manifest file, with a
-  fallback to the lamet-agent project root for repo-style paths such as
-  ``examples/fake_data/...``
-- kernel function references in `module:function` format
-
-Expected outputs:
-- parsed `AnalysisManifest` object used by CLI commands
-
-Example usage:
-- from lamet_agent.manifest import validate_manifest_file
-- manifest = validate_manifest_file(Path("examples/workflow_smoke_manifest.json"))
-"""
+"""Manifest schema and validation for job-based LaMET workflows."""
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
-from importlib import import_module
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+
+
+StageId = Literal[
+    "correlator_analysis",
+    "renormalization",
+    "fourier_transform",
+    "perturbative_matching",
+    "extrapolation",
+]
+
+
+class RunMetadata(BaseModel):
+    """Settings shared by every job in one run."""
+
+    model_config = ConfigDict(extra="allow")
+
+    run_id: str
+    root_directory: str
+    artifacts_directory: str = "artifacts"
+    target_observable: Literal["pdf", "da"]
+    parton: Literal["quark", "gluon"]
+    resample_mode: Literal["jk", "bs"]
+    stages: list[StageId]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+    def __contains__(self, key: str) -> bool:
+        return hasattr(self, key)
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class CorrelatorInput(BaseModel):
-    """Single correlator dataset descriptor."""
+    """One raw 2pt or 3pt correlator dataset."""
 
-    dataset_id: str
+    model_config = ConfigDict(extra="allow")
+
+    correlator_id: str
     kind: Literal["2pt", "3pt"]
+    data_path: str
+    ensemble: str
+    hadron: str
+    gfix: str
+    source_sink: str
+    momentum: str
+    a_fm: float
+    pz_gev: float
+    src_gamma: str
+    sink_gamma: str
+    current_gamma: str | None = None
+    z_direction: str | None = None
+    eta: str | None = None
+    bt: list[int] | None = None
+    bz: list[int] | None = None
+    tsep: int | None = None
+
+
+class ArtifactInput(BaseModel):
+    """Precomputed stage output that can seed a partial workflow."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    stage: StageId
     path: str
-    format: Literal["txt", "npy", "hdf5", "csv"] = "txt"
-    metadata: dict = Field(default_factory=dict)
 
 
 class KernelInput(BaseModel):
-    """Reference to a perturbative kernel callable."""
+    """Matching-kernel declaration."""
 
+    model_config = ConfigDict(extra="allow")
+
+    stage: str
     kernel_id: str
-    function: str
-    description: str = ""
+    kernel_path: str
+    scheme: str
+    kernel_parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class ManifestInputs(BaseModel):
+    """Global source-node pools."""
+
+    correlators: list[CorrelatorInput] = Field(default_factory=list)
+    artifacts: list[ArtifactInput] = Field(default_factory=list)
+    kernels: list[KernelInput] = Field(default_factory=list)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+
+class StageJob(BaseModel):
+    """One independently executed stage job."""
+
+    id: str
+    correlator_ids: list[str] = Field(default_factory=list)
+    inputs: dict[str, str | list[str]] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class StageConfig(BaseModel):
+    """Shared defaults and jobs for one stage."""
+
+    defaults: dict[str, Any] = Field(default_factory=dict)
+    jobs: list[StageJob]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
 
 
 class AnalysisManifest(BaseModel):
-    """Top-level analysis manifest."""
+    """Top-level job-DAG manifest."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    metadata: RunMetadata
+    inputs: ManifestInputs = Field(default_factory=ManifestInputs)
+    stages: dict[StageId, StageConfig]
 
-    run_id: str
-    goal: str = "full_lamet_pipeline"
-    root_directory: Path | None = None
-    correlators: list[CorrelatorInput] = Field(default_factory=list)
-    kernels: list[KernelInput] = Field(default_factory=list)
-    inputs: dict = Field(default_factory=dict)
-    stages: dict = Field(default_factory=dict)
-    metadata: dict = Field(default_factory=dict)
-    manifest_dir: Path | None = Field(default=None, exclude=True)
-    project_root: Path | None = Field(default=None, exclude=True)
+    _manifest_path: Path | None = PrivateAttr(default=None)
+    _root_directory: Path | None = PrivateAttr(default=None)
+    _artifacts_directory: Path | None = PrivateAttr(default=None)
+
+    @property
+    def run_id(self) -> str:
+        return self.metadata.run_id
+
+    @property
+    def root_directory(self) -> Path:
+        if self._root_directory is None:
+            return Path(self.metadata.root_directory).expanduser()
+        return self._root_directory
+
+    @property
+    def artifacts_directory(self) -> Path:
+        if self._artifacts_directory is None:
+            return self.root_directory / self.metadata.artifacts_directory
+        return self._artifacts_directory
+
+    @property
+    def manifest_dir(self) -> Path | None:
+        return None if self._manifest_path is None else self._manifest_path.parent
+
+    @property
+    def project_root(self) -> Path:
+        return self.root_directory
+
+    @property
+    def correlators(self) -> list[CorrelatorInput]:
+        return self.inputs.correlators
+
+    @property
+    def kernels(self) -> list[KernelInput]:
+        return self.inputs.kernels
+
+    @model_validator(mode="after")
+    def validate_dag(self) -> "AnalysisManifest":
+        if len(set(self.metadata.stages)) != len(self.metadata.stages):
+            raise ValueError("metadata.stages contains duplicate stage ids")
+        missing = [stage for stage in self.metadata.stages if stage not in self.stages]
+        if missing:
+            raise ValueError(f"metadata.stages has no job configuration for: {missing}")
+
+        correlator_ids = [item.correlator_id for item in self.inputs.correlators]
+        source_ids = [item.id for item in self.inputs.artifacts]
+        job_ids = [job.id for config in self.stages.values() for job in config.jobs]
+        all_ids = correlator_ids + source_ids + job_ids
+        duplicates = sorted({value for value in all_ids if all_ids.count(value) > 1})
+        if duplicates:
+            raise ValueError(f"manifest ids must be globally unique: {duplicates}")
+
+        known = set(source_ids)
+        correlator_id_set = set(correlator_ids)
+        for stage in self.metadata.stages:
+            for job in self.stages[stage].jobs:
+                unknown_correlators = sorted(set(job.correlator_ids) - correlator_id_set)
+                if unknown_correlators:
+                    raise ValueError(f"job {job.id!r} references unknown correlators: {unknown_correlators}")
+                for value in job.inputs.values():
+                    refs = value if isinstance(value, list) else [value]
+                    unknown = [ref for ref in refs if ref not in known]
+                    if unknown:
+                        raise ValueError(f"job {job.id!r} references unavailable upstream ids: {unknown}")
+                known.add(job.id)
+        return self
 
 
-def resolve_callable(reference: str) -> Callable:
-    """Resolve `module:function` into a Python callable."""
-    if ":" not in reference:
-        raise ValueError(
-            f"Invalid callable reference '{reference}'. Use 'module:function'."
-        )
-
-    module_name, fn_name = reference.split(":", maxsplit=1)
-    module = import_module(module_name)
-    fn = getattr(module, fn_name, None)
-    if fn is None or not callable(fn):
-        raise ValueError(f"Reference is not a callable: {reference}")
-    return fn
-
-
-def find_project_root(start: Path) -> Path:
-    """Walk upward from ``start`` to locate this package's project root."""
-    for candidate in (start, *start.parents):
-        pyproject = candidate / "pyproject.toml"
-        if not pyproject.is_file():
-            continue
-        try:
-            text = pyproject.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if 'name = "lamet-agent"' in text:
-            return candidate
-    return start
-
-
-def resolve_root_path(root_directory: Path, path: str) -> str:
-    """Resolve an absolute or root-directory-relative path."""
-    candidate = Path(path).expanduser()
-    if candidate.is_absolute():
-        return str(candidate)
-    return str((root_directory / candidate).resolve())
-
-
-def resolve_data_path(project_root: Path, manifest_dir: Path, path: str) -> str:
-    """Resolve a correlator path against manifest or project root."""
-    candidate = Path(path)
-    if candidate.is_absolute():
-        return str(candidate)
-
-    manifest_relative = (manifest_dir / candidate).resolve()
-    if manifest_relative.exists():
-        return str(manifest_relative)
-
-    return str((project_root / candidate).resolve())
+def _resolve_from_root(root: Path, value: str) -> str:
+    path = Path(value).expanduser()
+    return str(path if path.is_absolute() else (root / path).resolve())
 
 
 def validate_manifest_file(path: Path) -> AnalysisManifest:
-    """Parse manifest and validate kernel function references."""
-    manifest_path = path.resolve()
-    if not manifest_path.exists():
+    """Parse a JSON/JSONC manifest, validate its DAG, and resolve input paths."""
+    manifest_path = path.expanduser().resolve()
+    if not manifest_path.is_file():
         raise ValueError(f"Manifest does not exist: {path}")
 
     text = manifest_path.read_text(encoding="utf-8")
@@ -128,30 +210,19 @@ def validate_manifest_file(path: Path) -> AnalysisManifest:
         text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
         text = re.sub(r"//.*", "", text)
         text = re.sub(r",(\s*[}\]])", r"\1", text)
-    payload = json.loads(text)
-    metadata = payload.setdefault("metadata", {})
-    for key in ("run_id", "root_directory"):
-        if key not in payload and key in metadata:
-            payload[key] = metadata[key]
-    manifest = AnalysisManifest.model_validate(payload)
-    for kernel in manifest.kernels:
-        resolve_callable(kernel.function)
+    manifest = AnalysisManifest.model_validate(json.loads(text))
 
-    manifest_dir = manifest_path.parent
-    declared_root = manifest.root_directory
-    if declared_root is not None:
-        root_directory = Path(declared_root).expanduser().resolve()
-        if not root_directory.is_absolute():
-            raise ValueError("root_directory must be an absolute path or '~'-expanded absolute path")
-        manifest.root_directory = root_directory
-        project_root = root_directory
-    else:
-        project_root = find_project_root(manifest_dir)
-    manifest.manifest_dir = manifest_dir
-    manifest.project_root = project_root
-    for correlator in manifest.correlators:
-        if manifest.root_directory is not None:
-            correlator.path = resolve_root_path(manifest.root_directory, correlator.path)
-        else:
-            correlator.path = resolve_data_path(project_root, manifest_dir, correlator.path)
+    declared_root = Path(manifest.metadata.root_directory).expanduser()
+    root = declared_root if declared_root.is_absolute() else manifest_path.parent / declared_root
+    manifest._manifest_path = manifest_path
+    manifest._root_directory = root.resolve()
+    artifacts = Path(manifest.metadata.artifacts_directory).expanduser()
+    manifest._artifacts_directory = artifacts if artifacts.is_absolute() else (manifest.root_directory / artifacts).resolve()
+
+    for correlator in manifest.inputs.correlators:
+        correlator.data_path = _resolve_from_root(manifest.root_directory, correlator.data_path)
+    for artifact in manifest.inputs.artifacts:
+        artifact.path = _resolve_from_root(manifest.root_directory, artifact.path)
+    for kernel in manifest.inputs.kernels:
+        kernel.kernel_path = _resolve_from_root(manifest.root_directory, kernel.kernel_path)
     return manifest

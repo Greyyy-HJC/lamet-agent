@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from importlib import import_module
 
-from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.manifest import AnalysisManifest, StageJob
 
 from .stages import resolve_stage_package
 
@@ -13,7 +13,10 @@ SYSTEM_PROMPT = """
 You are a LaMET analysis agent.
 Drive each stage by emitting one JSON action at a time.
 All numerical work goes through the listed stage tools; do not invent tools.
-Reference data produced by earlier tools through their 'out' keys.
+Each job has an isolated store. Upstream inputs are already available under the
+role names shown in Job inputs. External artifact inputs declared in the manifest
+are pre-loaded into the job store before tools run. The stage's primary result
+must be stored as store['output'] by its terminal tool.
 If required inputs are missing, ask for user input.
 """.strip()
 
@@ -54,65 +57,34 @@ def get_stage_skill(stage: str) -> str:
     return "\n\n".join(parts)
 
 
-def _stage_metadata(stage: str, manifest: AnalysisManifest) -> dict:
-    """Return the manifest metadata slice needed by one stage prompt."""
-    metadata = manifest.metadata
-    if stage == "fourier_transform":
-        return dict(metadata)
-
-    keys_by_stage = {
-        "correlator_analysis": (
-            "tau_convention",
-            "conversion_report",
-            "config_count_note",
-            "conversion_selection",
-            "correlator_grid",
-        ),
-        "renormalization": ("renormalization",),
-        "perturbative_matching": ("matching", "fourier"),
-        "extrapolation": ("extrapolation",),
-    }
-    keys = keys_by_stage.get(stage)
-    if keys is None:
-        return dict(metadata)
-    return {key: metadata[key] for key in keys if key in metadata}
-
-
-def _stage_correlator_refs(stage: str, manifest: AnalysisManifest) -> list[dict]:
-    """Return correlator references with paths only where stage prompts need them."""
-    include_paths = stage in {"correlator_analysis", "fourier_transform"}
-    refs = []
-    for item in manifest.correlators:
-        ref = {"dataset_id": item.dataset_id, "kind": item.kind}
-        if include_paths:
-            ref["path"] = item.path
-        refs.append(ref)
-    return refs
-
-
 def build_stage_static_prompt(
     stage: str,
     manifest: AnalysisManifest,
     *,
+    job: StageJob,
+    effective_params: dict,
     completed_stages: list[str],
     input_issues: list[str] | None = None,
 ) -> str:
-    """Build the static stage context (no tool observations)."""
+    """Build the static context for one stage job."""
     stage_prompt = get_stage_instruction(stage)
     stage_skill = get_stage_skill(stage)
-    correlator_ids = _stage_correlator_refs(stage, manifest)
-    kernel_ids = [item.kernel_id for item in manifest.kernels]
-    metadata = _stage_metadata(stage, manifest)
+    correlators = [
+        item.model_dump()
+        for item in manifest.correlators
+        if item.correlator_id in job.correlator_ids
+    ]
 
     return (
         f"{SYSTEM_PROMPT}\n\n"
         f"Run ID: {manifest.run_id}\n"
-        f"Goal: {manifest.goal}\n"
         f"Current stage: {stage}\n"
+        f"Current job: {job.id}\n"
         f"Completed stages: {completed_stages}\n"
-        f"Correlators: {json.dumps(correlator_ids)}\n"
-        f"Kernels: {kernel_ids}\n\n"
-        f"Metadata: {json.dumps(metadata)}\n\n"
+        f"Run metadata: {json.dumps(manifest.metadata.model_dump())}\n"
+        f"Correlators: {json.dumps(correlators)}\n"
+        f"Job inputs: {json.dumps(job.inputs)}\n"
+        f"Effective job parameters: {json.dumps(effective_params)}\n\n"
         f"Input issues: {json.dumps(input_issues or [])}\n\n"
         f"Stage instruction: {stage_prompt}\n\n"
         f"{stage_skill}\n\n"

@@ -837,6 +837,14 @@ def _interp_samples(x: np.ndarray, y_samples: np.ndarray, x_new: np.ndarray) -> 
     return out
 
 
+def _progress(iterable, *, desc: str, leave: bool = True):
+    try:
+        from tqdm import tqdm
+    except Exception:
+        return iterable
+    return tqdm(iterable, desc=desc, leave=leave)
+
+
 def _scheme_ranges(scheme: dict[str, Any], coord: np.ndarray) -> tuple[float, float, float]:
     zmin = float(scheme.get("zmin", coord[1]))
     zmax = float(scheme.get("zmax", coord[-1]))
@@ -867,6 +875,7 @@ def _run_one_scheme(
     part: str,
 ) -> dict[str, Any]:
     zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
+    label = str(scheme.get("label", f"{method}_{order}_{zmin}_{zmax}"))
     zmin_fit = _convert_scheme_value(zmin, fit_scale)
     zmax_fit = _convert_scheme_value(zmax, fit_scale)
     z_ext_fit_max = _convert_scheme_value(z_ext_max, fit_scale)
@@ -950,7 +959,7 @@ def _run_one_scheme(
     failures = 0
 
     positive = z_ext > 0
-    for sample in range(n_samples):
+    for sample in _progress(range(n_samples), desc=f"fourier {label}", leave=False):
         sample_y_data = _fit_y_data(
             re_samples[sample, fit_mask],
             im_samples[sample, fit_mask],
@@ -1014,7 +1023,7 @@ def _run_one_scheme(
         ft_re[sample], ft_im[sample] = sum_ft_re_im(lam_full, re_full, im_full, k_grid)
 
     return {
-        "label": str(scheme.get("label", f"{method}_{order}_{zmin}_{zmax}")),
+        "label": label,
         "z_ext": z_ext,
         "lambda_ext": lambda_ext,
         "fit_weight": fit_weight,
@@ -1105,30 +1114,31 @@ def run_fourier_workflow(
             }
         ]
 
-    scheme_results = [
-        _run_one_scheme(
-            coord=coord_arr,
-            fit_coord=fit_coord,
-            ft_scale_over_fit_scale=ft_scale_over_fit_scale,
-            re_samples=re_mat,
-            im_samples=im_mat,
-            k_grid=k_arr,
-            scheme=scheme,
-            method=method,
-            order=order,
-            observable=observable,
-            fit_scale=fit_scale,
-            im_flip_for_ft=im_flip_for_ft,
-            phase_scale=phase_scale,
-            phase_prime_scale=phase_prime_scale,
-            resample_mode=resample_mode,
-            Lambda0=Lambda0,
-            posterior_prior_error_scale=posterior_prior_error_scale,
-            fit_error_mode=fit_error_mode,
-            part=part,
+    scheme_results = []
+    for scheme in _progress(schemes, desc="fourier schemes"):
+        scheme_results.append(
+            _run_one_scheme(
+                coord=coord_arr,
+                fit_coord=fit_coord,
+                ft_scale_over_fit_scale=ft_scale_over_fit_scale,
+                re_samples=re_mat,
+                im_samples=im_mat,
+                k_grid=k_arr,
+                scheme=scheme,
+                method=method,
+                order=order,
+                observable=observable,
+                fit_scale=fit_scale,
+                im_flip_for_ft=im_flip_for_ft,
+                phase_scale=phase_scale,
+                phase_prime_scale=phase_prime_scale,
+                resample_mode=resample_mode,
+                Lambda0=Lambda0,
+                posterior_prior_error_scale=posterior_prior_error_scale,
+                fit_error_mode=fit_error_mode,
+                part=part,
+            )
         )
-        for scheme in schemes
-    ]
 
     ft_re = np.asarray([item["ft_re_samples"] for item in scheme_results])
     ft_im = np.asarray([item["ft_im_samples"] for item in scheme_results])
@@ -1297,6 +1307,33 @@ def load_renormalized_matrix_element_samples(
     resample_mode: str = "bootstrap",
 ) -> dict[str, Any]:
     """Load renormalized coordinate-space matrix-element samples from NPZ or HDF5."""
+    existing = store.get("matrix_element_data")
+    if isinstance(existing, EnsembleData):
+        legacy = ensemble_data_to_legacy_arrays(existing)
+        out = "matrix_element"
+        stored = store.get(out, {})
+        fmt = stored.get("input_format", "nc") if isinstance(stored, dict) else "nc"
+        group_name = stored.get("h5_group") if isinstance(stored, dict) else None
+        store[out] = {
+            **legacy,
+            "path": str(path),
+            "input_format": fmt,
+            "resample_mode": existing.resample,
+        }
+        if group_name is not None:
+            store[out]["h5_group"] = group_name
+        return {
+            "out": out,
+            "data": "matrix_element_data",
+            "input_format": fmt,
+            "h5_group": group_name,
+            "resample_mode": existing.resample,
+            "n_coord": int(len(legacy["coord"])),
+            "n_sample": int(legacy["re_samples"].shape[0]),
+            "re_shape": list(legacy["re_samples"].shape),
+            "im_shape": list(legacy["im_samples"].shape),
+        }
+
     matrix_element_data, fmt, group_name = _load_matrix_element_data(
         path=path,
         input_format=input_format,
@@ -1999,7 +2036,10 @@ def run_fourier_transform(
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
     out = "fourier_result"
-    matrix_element_data = store["matrix_element_data"]
+    matrix_element_data = store.get("matrix_element_data")
+    if matrix_element_data is None:
+        matrix_element_data = store["input"]
+        store["matrix_element_data"] = matrix_element_data
     resample_mode = _normalise_resample_mode(getattr(matrix_element_data, "resample", "bootstrap"))
     matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
     auto_scheme_scan = None
@@ -2090,18 +2130,20 @@ def run_fourier_transform(
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
     store[out] = result
     artifact = _artifact_path(save_path, default_name=f"{out}.nc", artifacts_dir=artifacts_dir).with_suffix(".nc")
-    fit_info_artifact = _artifact_path(None, default_name="fourier_fit_info.nc", artifacts_dir=artifacts_dir)
+    fit_info_artifact = _artifact_path(None, default_name=f"{artifact.stem}_fit_info.nc", artifacts_dir=artifacts_dir)
     store["fourier_result_data"].to_netcdf(artifact)
     _save_fourier_fit_info_netcdf(fit_info_artifact, result)
     result["artifact"] = str(artifact)
     result["fit_info_artifact"] = str(fit_info_artifact)
     summary = summarize_fourier_result(store)
     plot_kwargs = dict(plot_fourier or {})
+    plot_kwargs.setdefault("artifact_path", str(artifact))
     extension_kwargs = dict(plot_extension or {})
     report_kwargs = dict(report or {})
     plot = plot_fourier_result(store, artifacts_dir=artifacts_dir, **plot_kwargs)
     extension_plot = plot_fourier_extension_quality_result(store, artifacts_dir=artifacts_dir, **extension_kwargs)
     report_result = report_fourier_result(store, artifacts_dir=artifacts_dir, **report_kwargs)
+    store["output"] = store["fourier_result_data"]
     return {
         "out": out,
         "artifact": str(artifact),
@@ -2196,7 +2238,7 @@ def plot_fourier_extension_quality_result(
     if title is not None and title.strip().lower() in {"fourier extension quality", "lambda extrapolation"}:
         title = None
     re_output = _artifact_path(save_path, default_name="fourier_extension_re.pdf", artifacts_dir=artifacts_dir)
-    im_output = _artifact_path(None, default_name="fourier_extension_im.pdf", artifacts_dir=artifacts_dir)
+    im_output = re_output.with_name(f"{re_output.stem}_im.pdf")
     fig, _ = plot_fourier_extension_quality(
         matrix_element["coord"],
         matrix_element["re_samples"],

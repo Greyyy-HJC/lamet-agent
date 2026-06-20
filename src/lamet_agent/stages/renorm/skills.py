@@ -1,46 +1,33 @@
-"""Stage-local helpers for renormalization."""
+"""Stage-local skill guidance and validation for renormalization."""
 
 from __future__ import annotations
 
-from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.manifest import AnalysisManifest, StageJob
 
 
 STAGE_SKILL = """
-Ratio/hybrid renormalization takes complex bare matrix-element samples on a z
-grid and outputs complex renormalized samples on the same grid. For Eq. 15, use
-the P=0 matrix element as h(z,0,a), the target boosted matrix element as
-h(z,P,a), N=h(0,0,a)/h(0,P,a), and switch from h(z,0,a) to h(zs,0,a) in the
-denominator for |z| >= zs. Keep all samples for downstream error propagation.
+Hybrid-ratio renormalization consumes target and denominator EnsembleData from
+the current job store. The physical switch length zs_fm is converted with the
+target artifact's a_fm, and the nearest available denominator z is used.
 """.strip()
 
-
 TOOL_CATALOG = {
-    "load_bare_matrix_element_grid": "load_bare_matrix_element_grid(...) -> load bare matrix-element NetCDF as EnsembleData(z).",
-    "apply_ratio_scheme_renormalization": "apply_ratio_scheme_renormalization(...) -> apply Eq. 15 sample-by-sample and write renormalized NetCDF.",
-    "plot_renormalized_matrix_element": "plot_renormalized_matrix_element(...) -> plot renormalized matrix elements to PDF.",
+    "apply_ratio_scheme_renormalization": "Consume target/denominator roles and write the renormalized NetCDF plus store['output'].",
+    "plot_renormalized_matrix_element": "Plot store['output'] to PDF.",
 }
 
 
 def tool_catalog() -> str:
-    """Return a human-readable catalog of available renormalization-stage tools."""
-    return "\n".join(f"- {name}: {desc}" for name, desc in TOOL_CATALOG.items())
+    return "\n".join(f"- {name}: {description}" for name, description in TOOL_CATALOG.items())
 
 
-def validate_stage_inputs(manifest: AnalysisManifest) -> list[str]:
-    """Return stage-local issues only."""
-    issues = []
-    renorm = manifest.metadata.get("renormalization", {})
-    if renorm and not isinstance(renorm, dict):
-        return ["metadata.renormalization must be an object when provided."]
-    if isinstance(renorm, dict):
-        if "denominator_netcdf_path" not in renorm and "target_netcdf_path" in renorm:
-            issues.append(
-                "metadata.renormalization.denominator_netcdf_path is required when renormalization is run from "
-                "manifest-provided target_netcdf_path instead of an upstream correlator stage."
-            )
-        if any(key in renorm for key in {"zs", "delta_m", "m0"}) and "zs" in renorm:
-            try:
-                float(renorm["zs"])
-            except (TypeError, ValueError):
-                issues.append("metadata.renormalization.zs must be numeric.")
-    return issues
+def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str]:
+    if set(job.inputs) != {"target", "denominator"}:
+        return ["A renormalization job requires target and denominator inputs."]
+    params = {**manifest.stages["renormalization"].defaults, **job.params}
+    if params.get("scheme") != "hybrid_ratio":
+        return ["The current renormalization stage supports scheme='hybrid_ratio'."]
+    scheme_parameters = params.get("scheme_parameters")
+    if not isinstance(scheme_parameters, dict) or "zs_fm" not in scheme_parameters:
+        return ["hybrid_ratio requires scheme_parameters.zs_fm."]
+    return []

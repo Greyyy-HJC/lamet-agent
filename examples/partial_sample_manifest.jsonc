@@ -40,16 +40,22 @@
     // so downstream jobs can reference them uniformly by id.
     "artifacts": [
       {
-        "id": "rn_p4_ext", // handle referenced by the fourier job below
+        "id": "rn_p4", // handle referenced by the fourier job below
         "stage": "renormalization", // which stage this product is equivalent to (implies its kind)
         "path": "examples/artifacts/a060_x_p4_renormalized_matrix_elements.nc", // relative to root_directory
-        "pz_gev": 1.72 // extra metadata the consuming stage needs
+        "pz_gev": 1.72, // extra metadata the consuming stage needs
+        "a_fm": 0.0574,
+        "hadron": "pion",
+        "gfix": "CG"
       },
       {
-        "id": "rn_p5_ext",
+        "id": "rn_p5",
         "stage": "renormalization",
         "path": "examples/artifacts/a060_x_p5_renormalized_matrix_elements.nc",
-        "pz_gev": 2.15
+        "pz_gev": 2.15,
+        "a_fm": 0.0574,
+        "hadron": "pion",
+        "gfix": "CG"
       }
     ],
     "kernels": [
@@ -57,7 +63,7 @@
         "stage": "matching",
         "kernel_id": "unpolarized_gT",
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
-        "scheme": "ratio",
+        "scheme": "hybrid_ratio",
         "kernel_parameters": {
           "zs_fm": 0.18,
           "pz_gev": 2.15
@@ -69,38 +75,49 @@
     "fourier_transform": {
       "defaults": {
         "order": "NLA",
-        "part": "re", // "re" or "im"
-        "coord_unit": "lattice", // "lattice" or "fm"
-        "im_flip_for_ft": true,
+        "fit_error_mode": "covariance",
+        "part": "re",
         "output_scale": 2.0,
-        "fit_error_mode": "covariance", // "covariance" or "diagonal"
+        "coord_unit": "lattice",
+        "im_flip_for_ft": true,
         "k_grid": {
           "start": -2.0,
           "stop": 2.0,
           "num": 100
         },
-        "scheme_scan": {
-          "zmin_values": [8.0],
-          "zmax_values": [24.0],
-          "min_width": 8.0,
+        "scheme_scan": { // optional, auto-filled if omitted
+          "zmin_values": [
+            9.0,
+            10.0,
+            11.0,
+            12.0
+          ],
+          "zmax_values": [
+            21.0,
+            22.0,
+            23.0,
+            24.0
+          ],
           "z_ext_max": 37.0,
-          "smooth": "linear", // "linear" or "exp"
-          "min_fit_points": 5,
-          "y_range": [-2.0, 2.0],
+          "smooth": "linear",
+          "y_range": [
+            -2.0,
+            2.0
+          ],
           "roughness_weight": 1.0,
           "model_average": false,
-          "max_schemes": 1
+          "max_schemes": 200
         }
       },
       "jobs": [
         {
           "id": "ft_p4",
-          "inputs": { "input": "rn_p4_ext" }, // resolves to the external source node
+          "inputs": { "input": "rn_p4" },
           "params": { "pz_gev": 1.72 }
         },
         {
           "id": "ft_p5",
-          "inputs": { "input": "rn_p5_ext" },
+          "inputs": { "input": "rn_p5" },
           "params": { "pz_gev": 2.15 }
         }
       ]
@@ -108,8 +125,7 @@
     "perturbative_matching": {
       "defaults": {
         "mu": 2.0,
-        "component": "re", // "re" or "im" or "re+im"
-        "kernel_id": "unpolarized_gT"
+        "component": "re" // "re" or "im" or "re+im"
       },
       "jobs": [
         {

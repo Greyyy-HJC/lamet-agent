@@ -28,8 +28,7 @@ from lamet_agent.core.plotting import (
 )
 from lamet_agent.core.resampling import jackknife
 from lamet_agent.core.resampling import sample_mean_err as core_sample_mean_err
-from lamet_agent.core.tools import log_nonlinear_fit_quality, prepare_tool_args, setup_logger
-from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.core.tools import log_nonlinear_fit_quality, setup_logger
 from lamet_agent.stages.correlator.functions import (
     PT2_PRIOR_ERROR_SCALE,
     STAGE_TOOLS,
@@ -599,53 +598,6 @@ def test_fit_bare_matrix_grid_model_average_uses_window_set(tmp_path) -> None:
     assert result["model_average"] is True
     assert len(result["shared_window_specs"]) == 2
     assert result["artifact"].endswith(".nc")
-
-
-# --- agent plumbing ----------------------------------------------------------
-
-
-def test_fit_bare_matrix_grid_path_args_resolve_under_artifacts(tmp_path) -> None:
-    manifest = AnalysisManifest(
-        run_id="demo",
-        correlators=[],
-        kernels=[],
-        manifest_dir=tmp_path / "examples",
-        project_root=tmp_path,
-    )
-    args = {"pt2_path": "data/pt2.h5", "pt3_paths": {"8": "data/ts8.h5", "10": "/abs/ts10.h5"}, "save_path": None}
-    resolved = prepare_tool_args(
-        "fit_bare_matrix_grid", args, manifest=manifest, artifacts_dir=tmp_path / "artifacts", _store={}
-    )
-    assert resolved["pt2_path"] == str(tmp_path / "data" / "pt2.h5")
-    assert resolved["pt3_paths"]["8"] == str(tmp_path / "data" / "ts8.h5")
-    assert resolved["pt3_paths"]["10"] == "/abs/ts10.h5"
-    assert resolved["save_path"] == str(tmp_path / "artifacts" / "demo_bare_matrix_elements")
-    assert resolved["artifacts_dir"] == str(tmp_path / "artifacts")
-
-
-def test_fit_bare_matrix_grid_uses_manifest_save_path_when_agent_omits_it(tmp_path) -> None:
-    manifest = AnalysisManifest(
-        run_id="workflow_cg_qpdf_p0",
-        correlators=[],
-        kernels=[],
-        metadata={"correlator_grid": {"save_path": "a060_x_p0_bare_matrix_elements"}},
-        manifest_dir=tmp_path,
-        project_root=tmp_path,
-    )
-
-    resolved = prepare_tool_args(
-        "fit_bare_matrix_grid", {"save_path": None}, manifest=manifest, artifacts_dir=tmp_path / "artifacts", _store={}
-    )
-
-    assert resolved["save_path"] == str(tmp_path / "artifacts" / "a060_x_p0_bare_matrix_elements")
-
-
-def test_tune_tools_get_artifacts_dir_injected(tmp_path) -> None:
-    manifest = AnalysisManifest(run_id="demo", correlators=[], kernels=[], manifest_dir=tmp_path, project_root=tmp_path)
-    resolved = prepare_tool_args(
-        "tune_bare_matrix", {"save_path": None}, manifest=manifest, artifacts_dir=tmp_path / "artifacts", _store={}
-    )
-    assert resolved["artifacts_dir"] == str(tmp_path / "artifacts")
 
 
 # --- plotting helpers retained ----------------------------------------------

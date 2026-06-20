@@ -2,14 +2,6 @@
 
 from __future__ import annotations
 
-DEFAULT_STAGES = [
-    "correlator_analysis",
-    "renormalization",
-    "fourier_transform",
-    "perturbative_matching",
-    "extrapolation",
-]
-
 STAGE_TO_PACKAGE = {
     "correlator_analysis": "correlator",
     "renormalization": "renorm",
@@ -17,13 +9,6 @@ STAGE_TO_PACKAGE = {
     "perturbative_matching": "matching",
     "extrapolation": "extrapolation",
 }
-
-
-def select_stage_sequence(goal: str) -> list[str]:
-    """Resolve stage sequence for a goal."""
-    if goal == "custom":
-        return []
-    return DEFAULT_STAGES.copy()
 
 
 def resolve_stage_package(stage: str) -> str:
