@@ -4,7 +4,7 @@
 # stage instruction sent to the LLM. It tells the agent the stage goal and the
 # order in which to call the tools.
 STAGE_PROMPT = """
-Goal: convert the quasi-PDF produced by the Fourier stage into the light-cone PDF by applying an NLO perturbative matching kernel, propagating gvar uncertainties through the convolution.
+Goal: convert the quasi-PDF produced by the Fourier stage into the light-cone PDF by applying an NLO perturbative matching kernel sample by sample. The kernel is applied to every resampling (bootstrap/jackknife/raw) sample of the quasi-PDF independently, preserving the full sample-level correlation structure; the statistics (mean, error, covariance) are rebuilt from the matched samples.
 
 Each operator uses its own kernel, selected by kernel_id. The quasi-PDF is read from the Fourier-stage artifact on disk because every stage starts with a fresh store. Emit one action at a time and reference earlier outputs by their 'out' keys.
 
@@ -18,7 +18,7 @@ Steps:
 3. build_matching_kernel(kernel_id=..., pz_gev=..., mu=2.0, zs_fm=...) -> kernel_matrix. The scheme follows the kernel_id suffix (_msbar, _ratio, _hybrid). For hybrid kernels pass zs_fm (z_s in fm) from metadata.matching; it forms zspz = zs_fm * pz_gev / GEV_FM. MSbar/ratio/gluon do not need zs_fm. Use the same pz_gev as the Fourier stage. The x grid must avoid x=0 because the kernel uses xi=x/y; if the grid includes 0, ask the user to regenerate
    the quasi-PDF on a zero-avoiding grid (e.g. an even number of points).
    
-4. apply_matching -> lightcone_gv = kernel_matrix @ quasi_ed.
+4. apply_matching -> lightcone_ed: applies the kernel to every sample (lightcone_i = kernel_matrix @ quasi_i) and stores the matched PDF as an EnsembleData under lightcone_ed.
 
 5. plot_matched_pdf to compare quasi vs light-cone and write the artifact PDF.
 
