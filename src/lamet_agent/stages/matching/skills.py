@@ -13,7 +13,8 @@ from lamet_agent.stages.matching.functions import KERNEL_REGISTRY
 # --- domain/strategy guidance shown to the LLM ------------------------------
 STAGE_SKILL = """
 Perturbative-matching skill: turn a finite-momentum quasi-PDF into the
-light-cone PDF with an NLO matching kernel, carrying gvar errors through.
+light-cone PDF with an NLO matching kernel, applied sample by sample so the
+full resampling axis (and its correlations) carries through.
 
 Inputs:
 - The quasi-PDF is the Fourier stage's output, read from disk (each stage starts
@@ -38,8 +39,10 @@ Kernel choice:
   MSbar, ratio and gluon kernels do not use zs_fm.
 
 Strategy:
-- The matching is the matrix product lightcone = K @ quasi; with gvar arrays the
-  quasi-PDF uncertainty propagates automatically. K is (nx, ny) on the x grid.
+- The matching is the matrix product lightcone_i = K @ quasi_i applied to every
+  resampling sample i independently; the matched samples are stored as an
+  EnsembleData and the uncertainty/covariance is rebuilt from them. K is (nx, ny)
+  on the x grid.
 - The x grid must avoid x=0 because the kernel uses xi=x/y; a symmetric grid
   with an even number of points avoids the singular point. If load_quasi_pdf
   reports a grid that hits 0, regenerate the quasi-PDF on a zero-avoiding grid.
@@ -58,7 +61,7 @@ TOOL_CATALOG = {
     "list_kernels": "list_kernels() -> the registered kernel_ids you may pass to build_matching_kernel.",
     "load_quasi_pdf": "load_quasi_pdf(path, component='re'|'im') -> read the quasi-PDF and its x grid (stores x_ls, quasi_ed); auto-detects the Fourier EnsembleData NetCDF artifact or a legacy/simple x_ls/quasi_samples npz.",
     "build_matching_kernel": "build_matching_kernel(kernel_id, pz_gev, mu=2.0, zs_fm=None, grid='x_ls') -> the (nx, ny) NLO matching matrix for the chosen operator; the scheme follows the kernel_id suffix (_msbar, _ratio, _hybrid); hybrid kernels require zs_fm (z_s in fm) and form zspz = zs_fm * pz_gev / GEV_FM; x grid must avoid x=0.",
-    "apply_matching": "apply_matching(kernel='kernel_matrix', quasi='quasi_ed') -> lightcone_gv = kernel @ quasi with gvar error propagation.",
+    "apply_matching": "apply_matching(kernel='kernel_matrix', quasi='quasi_ed') -> lightcone_ed: applies the kernel to every sample (lightcone_i = kernel @ quasi_i) and stores the matched PDF as an EnsembleData, rebuilding its statistics from the samples.",
     "plot_matched_pdf": "plot_matched_pdf(save_path=None) -> quasi vs light-cone f(x) comparison as error bands, written to artifacts/matched_pdf.pdf.",
     "report_matching_result": "report_matching_result(save_path=None) -> write an English report at artifacts/report_matching.md and a Chinese companion at artifacts/report_matching_CN.md with the chosen kernel/operator/scheme, pz_gev/mu (and zspz for hybrid), the matching convolution formula, scheme explanation, norm-preservation and quasi-vs-light-cone deviation diagnostics, the embedded comparison plot, and artifact paths.",
 }
