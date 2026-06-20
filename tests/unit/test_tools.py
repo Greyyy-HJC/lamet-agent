@@ -1,495 +1,141 @@
-"""Unit tests for core tool helpers."""
-
-from __future__ import annotations
+"""Unit tests for job-aware core tool preparation."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
-from lamet_agent.core.tools import prepare_tool_args, resolve_plot_save_path
-from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.core.tools import prepare_tool_args, resolve_plot_save_path, validate_stage_inputs
+from lamet_agent.manifest import validate_manifest_file
+from lamet_agent.stages.matching.skills import effective_matching_params
 
 
-def test_resolve_plot_save_path_strips_suffix_and_uses_artifacts(tmp_path: Path) -> None:
-    artifacts = tmp_path / "artifacts"
-    resolved = resolve_plot_save_path(
-        "/elsewhere/plots/fit_on_data.png",
-        artifacts_dir=artifacts,
+def _manifest():
+    return validate_manifest_file(Path("examples/cg_pion_pdf_manifest.json"))
+
+
+def test_resolve_plot_save_path_uses_artifact_directory(tmp_path: Path) -> None:
+    assert resolve_plot_save_path("elsewhere/fit.png", artifacts_dir=tmp_path) == str(tmp_path / "fit")
+    assert resolve_plot_save_path(None, artifacts_dir=tmp_path) == str(tmp_path / "fit_on_data")
+
+
+def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["correlator_analysis"].jobs[1]
+    effective = manifest.stages["correlator_analysis"].defaults
+    args = prepare_tool_args(
+        "tune_bare_matrix", {}, manifest=manifest, stage="correlator_analysis", job=job,
+        effective_params=effective, artifacts_dir=tmp_path,
     )
-    assert resolved == str(artifacts / "fit_on_data")
+    assert args["momentum"] == "PX5PY0PZ0"
+    assert args["tsep_ls"] == [8, 10, 12]
+    assert args["z_values"] == list(range(25))
+    assert args["nstate_values"] == [2]
+    assert args["fit_strategies"] == ["joint"]
+    assert args["pt3_paths"]["8"].endswith("_3pt_ts8.h5")
 
 
-def test_resolve_plot_save_path_default_stem(tmp_path: Path) -> None:
-    artifacts = tmp_path / "artifacts"
-    resolved = resolve_plot_save_path(None, artifacts_dir=artifacts)
-    assert resolved == str(artifacts / "fit_on_data")
-
-
-def test_prepare_tool_args_merges_fourier_manifest_options(tmp_path: Path) -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "fourier",
-            "metadata": {
-                "fourier_input": "matrix_element.h5",
-                "fourier": {
-                    "input_format": "h5",
-                    "h5_group": "Pz=6",
-                    "resample_mode": "jk",
-                    "coord_unit": "fm",
-                    "pz_gev": 2.43,
-                    "method": "GI",
-                    "order": "NLA",
-                    "observable": "nucleon_quark_transversity_quasi_pdf",
-                    "Lambda0": 0.2,
-                    "part": "im",
-                    "save_path": "ft_result.npz",
-                    "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
-                    "plot_fourier": {"save_path": "ft.pdf", "title": "FT"},
-                    "plot_extension": {"scheme_index": 2, "save_path": "ext_re.pdf"},
-                    "report": {"save_path": "report_fourier.md"},
-                },
-            },
-        }
+def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["correlator_analysis"].jobs[0]
+    args = prepare_tool_args(
+        "fit_bare_matrix_grid", {"nstate": 2, "fit_strategy": "joint", "model_average": True},
+        manifest=manifest, stage="correlator_analysis", job=job,
+        effective_params=manifest.stages["correlator_analysis"].defaults,
+        artifacts_dir=tmp_path,
     )
+    assert args["save_path"] == str(tmp_path / "ca_p0")
+    assert args["job_id"] == "ca_p0"
+    assert args["a_fm"] == 0.0574
+    assert args["nstate"] == 2
+    assert args["model_average"] is False
 
-    load_args = prepare_tool_args(
+
+def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["renormalization"].jobs[0]
+    args = prepare_tool_args(
+        "apply_ratio_scheme_renormalization", {}, manifest=manifest, stage="renormalization", job=job,
+        effective_params=manifest.stages["renormalization"].defaults,
+        artifacts_dir=tmp_path,
+    )
+    assert args["target"] == "target"
+    assert args["denominator"] == "denominator"
+    assert args["scheme"] == "hybrid_ratio"
+    assert args["scheme_parameters"] == manifest.stages["renormalization"].defaults["scheme_parameters"]
+    assert args["save_path"] == str(tmp_path / "rn_p5")
+
+
+def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["fourier_transform"].jobs[0]
+    source = SimpleNamespace(attrs={"a_fm": "0.0574", "pz_gev": "2.15", "hadron": "pion", "gfix": "CG"})
+    effective = {**manifest.stages["fourier_transform"].defaults, **job.params}
+    args = prepare_tool_args(
+        "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
+        effective_params=effective, artifacts_dir=tmp_path, store={"input": source},
+    )
+    assert args["method"] == "CG"
+    assert args["observable"] == "pion_quark_quasi_pdf"
+    assert args["a_fm"] == "0.0574"
+    assert args["pz_gev"] == 2.15
+    assert args["save_path"] == str(tmp_path / "ft_p5")
+
+
+def test_prepare_partial_fourier_loader_uses_external_artifact(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(Path("examples/partial_cg_pion_pdf_manifest.json"))
+    job = manifest.stages["fourier_transform"].jobs[0]
+    source = manifest.inputs.artifacts[0]
+    args = prepare_tool_args(
+        "load_renormalized_matrix_element_samples", {}, manifest=manifest,
+        stage="fourier_transform", job=job,
+        effective_params={**manifest.stages["fourier_transform"].defaults, **job.params},
+        artifacts_dir=tmp_path, store={"input": source},
+    )
+    assert args["path"] == source.path
+
+
+def test_prepare_partial_fourier_loader_uses_manifest_artifact_after_hydration(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(Path("examples/partial_cg_pion_pdf_manifest.json"))
+    job = manifest.stages["fourier_transform"].jobs[0]
+    source = manifest.inputs.artifacts[0]
+    from lamet_agent.core.data import EnsembleData
+
+    quasi = EnsembleData(
+        ensemble=None,
+        resample="jackknife",
+        values=[[1.0 + 0.1j]],
+        dims=("z",),
+        coords={"z": [0.0]},
+        name="renormalized_matrix_element",
+    )
+    args = prepare_tool_args(
         "load_renormalized_matrix_element_samples",
         {},
         manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
+        stage="fourier_transform",
+        job=job,
+        effective_params={**manifest.stages["fourier_transform"].defaults, **job.params},
+        artifacts_dir=tmp_path,
+        store={"input": quasi, "matrix_element_data": quasi},
     )
-    assert load_args["path"] == "matrix_element.h5"
-    assert load_args["input_format"] == "h5"
-    assert load_args["h5_group"] == "Pz=6"
-    assert load_args["resample_mode"] == "jk"
+    assert args["path"] == source.path
+    assert args["resample_mode"] == "jk"
 
-    run_args = prepare_tool_args(
-        "run_fourier_transform",
-        {"method": "CG", "resample_mode": "bs"},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
+
+def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["perturbative_matching"].jobs[0]
+    args = prepare_tool_args(
+        "build_matching_kernel", {}, manifest=manifest, stage="perturbative_matching", job=job,
+        effective_params=effective_matching_params(manifest, job),
+        artifacts_dir=tmp_path, store={"quasi": object()},
     )
-    assert run_args["method"] == "GI"
-    assert run_args["order"] == "NLA"
-    assert run_args["Lambda0"] == 0.2
-    assert run_args["part"] == "im"
-    assert run_args["save_path"] == "ft_result.npz"
-    assert run_args["k_grid"]["num"] == 401
-    assert run_args["plot_fourier"] == {"save_path": "ft.pdf", "title": "FT"}
-    assert run_args["plot_extension"] == {"scheme_index": 2, "save_path": "ext_re.pdf"}
-    assert run_args["report"] == {"save_path": "report_fourier.md"}
-    assert run_args["artifacts_dir"] == str(tmp_path / "artifacts")
-    assert "resample_mode" not in run_args
-
-    plot_args = prepare_tool_args(
-        "plot_fourier_result",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
-    )
-    assert plot_args == {"save_path": "ft.pdf", "title": "FT", "artifacts_dir": str(tmp_path / "artifacts")}
-
-    extension_args = prepare_tool_args(
-        "plot_fourier_extension_quality_result",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
-    )
-    assert extension_args == {
-        "scheme_index": 2,
-        "save_path": "ext_re.pdf",
-        "artifacts_dir": str(tmp_path / "artifacts"),
-    }
-
-    report_args = prepare_tool_args(
-        "report_fourier_result",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
-    )
-    assert report_args == {"save_path": "report_fourier.md", "artifacts_dir": str(tmp_path / "artifacts")}
+    assert args["kernel_id"] == "CG_gt_PDF_hybrid"
+    assert args["pz_gev"] == 2.15
+    assert args["zs_fm"] == 0.1722
 
 
-def test_prepare_tool_args_uses_root_directory_for_fourier_paths(tmp_path: Path) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "fourier",
-            "goal": "full_lamet_pipeline",
-            "root_directory": str(root),
-            "metadata": {
-                "fourier_input": "examples/artifacts/matrix_element.npz",
-                "fourier": {
-                    "k_grid": {"start": -2.0, "stop": 2.0, "num": 401},
-                    "save_path": "outputs/ft_result.npz",
-                    "plot_fourier": {"save_path": "plots/ft.pdf"},
-                    "report": {"save_path": "reports/report_fourier.md"},
-                },
-            },
-        }
-    )
-
-    load_args = prepare_tool_args(
-        "load_renormalized_matrix_element_samples",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert load_args["path"] == str(root / "examples" / "artifacts" / "matrix_element.npz")
-
-    run_args = prepare_tool_args(
-        "run_fourier_transform",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert run_args["save_path"] == str(root / "outputs" / "ft_result.npz")
-    assert run_args["plot_fourier"]["save_path"] == str(root / "plots" / "ft.pdf")
-    assert run_args["report"]["save_path"] == str(root / "reports" / "report_fourier.md")
-    assert run_args["artifacts_dir"] == str(root / "examples" / "artifacts")
-
-    plot_args = prepare_tool_args(
-        "plot_fourier_result",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert plot_args["save_path"] == str(root / "plots" / "ft.pdf")
-    assert plot_args["artifacts_dir"] == str(root / "examples" / "artifacts")
-
-    report_args = prepare_tool_args(
-        "report_fourier_result",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert report_args["save_path"] == str(root / "reports" / "report_fourier.md")
-    assert report_args["artifacts_dir"] == str(root / "examples" / "artifacts")
-
-
-def test_prepare_tool_args_keeps_report_path_relative_to_root_directory(tmp_path: Path) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "fourier",
-            "root_directory": str(root),
-            "metadata": {
-                "artifacts_directory": "examples/artifacts/CGpdf",
-                "fourier": {
-                    "report": {
-                        "save_path": "examples/artifacts/CGpdf/report_fourier.md",
-                    },
-                },
-            },
-        }
-    )
-
-    run_args = prepare_tool_args(
-        "run_fourier_transform",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert run_args["report"]["save_path"] == str(
-        root / "examples" / "artifacts" / "CGpdf" / "report_fourier.md"
-    )
-    assert run_args["artifacts_dir"] == str(root / "examples" / "artifacts" / "CGpdf")
-
-
-def test_prepare_tool_args_reads_stage_defaults_and_global_artifacts_dir(tmp_path: Path) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "fourier",
-            "root_directory": str(root),
-            "metadata": {
-                "fourier_input": "examples/artifacts/matrix_element.nc",
-                "resample_mode": "jk",
-                "artifacts_directory": "runs/artifacts",
-            },
-            "stages": {
-                "fourier_transform": {
-                    "defaults": {
-                        "observable": "pion_quark_quasi_pdf",
-                        "order": "NLA",
-                        "component": "re",
-                        "coord_unit": "lattice",
-                        "a_fm": 0.0574,
-                        "pz_gev": 2.15,
-                        "k_grid": {"start": -2.0, "stop": 2.0, "num": 100},
-                    }
-                }
-            },
-        }
-    )
-
-    load_args = prepare_tool_args(
-        "load_renormalized_matrix_element_samples",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert load_args["path"] == str(root / "examples" / "artifacts" / "matrix_element.nc")
-    assert load_args["resample_mode"] == "jk"
-
-    run_args = prepare_tool_args(
-        "run_fourier_transform",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert run_args["part"] == "re"
-    assert run_args["observable"] == "pion_quark_quasi_pdf"
-    assert run_args["artifacts_dir"] == str(root / "runs" / "artifacts")
-
-
-def test_prepare_tool_args_derives_fourier_observable_from_global_inputs(tmp_path: Path) -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "fourier",
-            "metadata": {
-                "fourier_input": "matrix_element.nc",
-                "target_observable": "pdf",
-            },
-            "inputs": {
-                "correlators": [
-                    {"kind": "2pt", "hadron": "pion", "gfix": "CG", "a_fm": 0.0574, "pz_gev": 2.15},
-                    {"kind": "3pt", "hadron": "pion", "gfix": "CG", "a_fm": 0.0574, "pz_gev": 2.15},
-                ]
-            },
-            "stages": {
-                "fourier_transform": {
-                    "defaults": {
-                        "parton": "gluon",
-                        "order": "LA",
-                        "coord_unit": "lattice",
-                        "k_grid": {"start": -2.0, "stop": 2.0, "num": 100},
-                    }
-                }
-            },
-        }
-    )
-
-    run_args = prepare_tool_args(
-        "run_fourier_transform",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
-    )
-
-    assert run_args["method"] == "CG"
-    assert run_args["observable"] == "pion_gluon_quasi_pdf"
-    assert run_args["pz_gev"] == 2.15
-    assert run_args["a_fm"] == 0.0574
-    assert "parton" not in run_args
-
-
-def test_prepare_tool_args_fills_correlator_grid_defaults(tmp_path: Path) -> None:
-    manifest = AnalysisManifest(
-        run_id="workflow_cg_qpdf_p5",
-        correlators=[],
-        kernels=[],
-        metadata={
-            "correlator_grid": {
-                "pt2_path": "data/pt2.h5",
-                "pt3_paths": {"8": "data/ts8.h5", "10": "/abs/ts10.h5"},
-                "tsep_ls": [8, 10],
-                "z_values": [0, 1],
-                "ensemble": "HISQa060_X",
-                "tag": "CG52bxp30_CG52bxp30",
-                "source_sink": "SS",
-                "pt2_gamma": "5",
-                "pt3_gamma": "T",
-                "momentum": "PX5PY0PZ0",
-                "pt2_windows": [{"tmin": 2, "tmax": 12}],
-                "pt3_tau_cuts": [2, 3],
-                "fit_strategy": "joint",
-                "resample_mode": "jk",
-            }
-        },
-        manifest_dir=tmp_path / "examples",
-        project_root=tmp_path,
-    )
-
-    ground_args = prepare_tool_args(
-        "tune_ground_state",
-        {"correlator_rescale": 1e20},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
-    )
-    assert ground_args["pt2_path"] == str(tmp_path / "data" / "pt2.h5")
-    assert ground_args["source_sink"] == "SS"
-    assert ground_args["gamma"] == "5"
-    assert ground_args["momentum"] == "PX5PY0PZ0"
-    assert ground_args["pt2_windows"] == [{"tmin": 2, "tmax": 12}]
-
-    bare_args = prepare_tool_args(
-        "tune_bare_matrix",
-        {"correlator_rescale": 1e20},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
-    )
-    assert bare_args["pt2_path"] == str(tmp_path / "data" / "pt2.h5")
-    assert bare_args["pt3_paths"]["8"] == str(tmp_path / "data" / "ts8.h5")
-    assert bare_args["pt3_paths"]["10"] == "/abs/ts10.h5"
-    assert bare_args["momentum"] == "PX5PY0PZ0"
-    assert bare_args["pt2_gamma"] == "5"
-    assert bare_args["pt3_gamma"] == "T"
-    assert bare_args["tsep_ls"] == [8, 10]
-    assert bare_args["pt3_tau_cuts"] == [2, 3]
-
-
-def test_prepare_tool_args_merges_renormalization_manifest_options(tmp_path: Path) -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "renorm",
-            "metadata": {
-                "renormalization": {
-                    "denominator_netcdf_path": "p0.nc",
-                    "zs": 4,
-                    "delta_m": 0.0,
-                    "m0": 0.0,
-                    "save_path": "renorm",
-                    "plot": {"save_path": "renorm_plot.pdf", "title": "Renorm"},
-                }
-            },
-        }
-    )
-
-    load_target = prepare_tool_args(
-        "load_bare_matrix_element_grid",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={"bare_matrix_element_data": object()},
-    )
-    assert load_target["out"] == "target_bare_matrix_element"
-    assert "netcdf_path" not in load_target
-
-    load_denom = prepare_tool_args(
-        "load_bare_matrix_element_grid",
-        {"out": "denominator_bare_matrix_element"},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={"target_bare_matrix_element": object()},
-    )
-    assert load_denom["netcdf_path"] == "p0.nc"
-
-    apply_args = prepare_tool_args(
-        "apply_ratio_scheme_renormalization",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
-    )
-    assert apply_args["zs"] == 4
-    assert apply_args["save_path"] == str(tmp_path / "artifacts" / "renorm")
-    assert apply_args["artifacts_dir"] == str(tmp_path / "artifacts")
-
-    plot_args = prepare_tool_args(
-        "plot_renormalized_matrix_element",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
-    )
-    assert plot_args["save_path"] == str(tmp_path / "artifacts" / "renorm_plot")
-    assert plot_args["title"] == "Renorm"
-
-
-def test_prepare_tool_args_merges_matching_plot_options(tmp_path: Path) -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "matching",
-            "metadata": {
-                "matching": {
-                    "plot": {
-                        "save_path": "matched_pdf.pdf",
-                        "xlim": [-1.5, 1.5],
-                        "ylim": [-0.2, 2.0],
-                    }
-                }
-            },
-        }
-    )
-
-    plot_args = prepare_tool_args(
-        "plot_matched_pdf",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "artifacts",
-        _store={},
-    )
-
-    assert plot_args["save_path"] == str(tmp_path / "artifacts" / "matched_pdf")
-    assert plot_args["artifacts_dir"] == str(tmp_path / "artifacts")
-    assert plot_args["xlim"] == [-1.5, 1.5]
-    assert plot_args["ylim"] == [-0.2, 2.0]
-
-
-def test_prepare_tool_args_uses_root_directory_for_matching_paths(tmp_path: Path) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "matching",
-            "root_directory": str(root),
-            "metadata": {
-                "matching": {
-                    "quasi_input": "examples/artifacts/fourier_result.npz",
-                    "kernel_id": "unpolarized_gT",
-                    "pz_gev": 2.15,
-                    "mu": 2.0,
-                    "component": "re",
-                    "plot": {"save_path": "artifacts/matched_pdf", "xlim": [-2, 2]},
-                }
-            },
-        }
-    )
-
-    load_args = prepare_tool_args(
-        "load_quasi_pdf",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert load_args["path"] == str(root / "examples" / "artifacts" / "fourier_result.npz")
-    assert load_args["component"] == "re"
-
-    kernel_args = prepare_tool_args(
-        "build_matching_kernel",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert kernel_args["kernel_id"] == "unpolarized_gT"
-    assert kernel_args["pz_gev"] == 2.15
-    assert kernel_args["mu"] == 2.0
-
-    plot_args = prepare_tool_args(
-        "plot_matched_pdf",
-        {},
-        manifest=manifest,
-        artifacts_dir=tmp_path / "ignored",
-        _store={},
-    )
-    assert plot_args["save_path"] == str(root / "artifacts" / "matched_pdf")
-    assert plot_args["artifacts_dir"] == str(root / "examples" / "artifacts")
+def test_new_downstream_job_validators_accept_full_manifest() -> None:
+    manifest = _manifest()
+    for stage in ("fourier_transform", "perturbative_matching"):
+        job = manifest.stages[stage].jobs[0]
+        assert validate_stage_inputs(stage, manifest, job) == []

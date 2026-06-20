@@ -19,7 +19,7 @@ def _write_bare_netcdf(base: Path, stem: str, values: np.ndarray, *, resample: s
         values=[values[idx] for idx in range(values.shape[0])],
         dims=("z",),
         coords={"z": [0, 1, 4, 5]},
-        attrs={"ensemble": "E", "momentum": "PX0PY0PZ0"},
+        attrs={"ensemble": "E", "momentum": "PX0PY0PZ0", "a_fm": "0.1"},
         name="bare_matrix_element",
     )
     path = base / f"{stem}.nc"
@@ -55,7 +55,8 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
 
     result = apply_ratio_scheme_renormalization(
         store,
-        zs=4,
+        scheme="hybrid_ratio",
+        scheme_parameters={"zs_fm": 0.4},
         delta_m=0,
         m0=0,
         save_path="renorm",
@@ -75,3 +76,29 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
 
     plot = plot_renormalized_matrix_element(store, save_path="renorm")
     assert Path(plot["plot"]).is_file()
+
+
+def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path) -> None:
+    z = list(range(6))
+    target = EnsembleData(
+        EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+        values=[np.full(6, 2.0), np.full(6, 4.0)], dims=("z",), coords={"z": z},
+        attrs={"a_fm": "0.0574"}, name="target",
+    )
+    denominator_values = np.asarray([[1, 2, 3, 4, 5, 6], [2, 4, 6, 8, 10, 12]], dtype=complex)
+    denominator = EnsembleData(
+        EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+        values=list(denominator_values), dims=("z",), coords={"z": z}, name="denominator",
+    )
+    store = {"target": target, "denominator": denominator}
+
+    result = apply_ratio_scheme_renormalization(
+        store, target="target", denominator="denominator",
+        scheme_parameters={"zs_fm": 0.18}, save_path=str(tmp_path / "hybrid"),
+    )
+
+    assert result["zs_grid"] == 3.0
+    assert result["zs_lattice"] == 0.18 / 0.0574
+    # z=3 remains in the short-distance branch; z=4 uses h(z_s=3) in the denominator.
+    assert np.allclose(store["output"].values[:, 3], [0.25, 0.25])
+    assert np.allclose(store["output"].values[:, 4], [0.25, 0.25])

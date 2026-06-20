@@ -211,15 +211,19 @@ def apply_ratio_scheme_renormalization(
     *,
     target: str = "target_bare_matrix_element",
     denominator: str = "denominator_bare_matrix_element",
-    zs: float = 4.0,
+    scheme: str = "hybrid_ratio",
+    scheme_parameters: dict[str, float] | None = None,
     delta_m: float = 0.0,
     m0: float = 0.0,
     z0: float = 0.0,
     out: str = "matrix_element_data",
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Apply Eq. 15 ratio/hybrid renormalization and preserve all samples."""
+    """Apply hybrid-ratio renormalization and preserve all samples."""
+    if scheme != "hybrid_ratio":
+        raise ValueError(f"unsupported renormalization scheme: {scheme!r}")
     target_data = _require_matrix_data(store, target)
     denom_data = _require_matrix_data(store, denominator)
     if target_data.resample != denom_data.resample:
@@ -234,22 +238,30 @@ def apply_ratio_scheme_renormalization(
     if target_values.shape != denom_values.shape:
         raise ValueError("target and denominator sample arrays must have matching shape")
 
+    params = scheme_parameters or {}
+    zs_fm = float(params["zs_fm"])
+    a_fm = float(target_data.attrs["a_fm"])
+    zs_lattice = zs_fm / a_fm
     z0_idx = _z_index(z_target, z0, label="normalization")
-    zs_idx = _z_index(z_denom, zs, label="long-distance denominator")
+    zs_idx = int(np.argmin(np.abs(np.abs(z_denom) - zs_lattice)))
     norm = denom_values[:, z0_idx] / target_values[:, z0_idx] 
-    exponent = np.exp((float(delta_m) + float(m0)) * (np.abs(z_target) - float(zs)))
+    exponent = np.exp((float(delta_m) + float(m0)) * (np.abs(z_target) - zs_lattice))
     short = norm[:, None] * target_values / denom_values
     long = norm[:, None] * exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
-    renorm_values = np.where(np.abs(z_target)[None, :] <= float(zs), short, long)
+    renorm_values = np.where((np.abs(z_target) * a_fm)[None, :] <= zs_fm, short, long)
 
     attrs = {
-        "scheme": "ratio_hybrid_eq15",
-        "zs": str(float(zs)),
+        **target_data.attrs,
+        "scheme": scheme,
+        "zs_fm": str(zs_fm),
+        "zs_lattice": str(zs_lattice),
+        "zs_grid": str(float(z_denom[zs_idx])),
         "delta_m": str(float(delta_m)),
         "m0": str(float(m0)),
         "z0": str(float(z0)),
         "target": target,
         "denominator": denominator,
+        "job_id": job_id,
     }
     result = _matrix_to_ensemble(
         z_values=z_target,
@@ -260,11 +272,12 @@ def apply_ratio_scheme_renormalization(
     )
     store[out] = result
     store["matrix_element_data"] = result
+    store["output"] = result
     store["matrix_element"] = {
         "coord": z_target,
         "re_samples": np.real(renorm_values),
         "im_samples": np.imag(renorm_values),
-        "scheme": "ratio_hybrid_eq15",
+        "scheme": scheme,
     }
 
     stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="renormalized_matrix_element")
@@ -277,7 +290,9 @@ def apply_ratio_scheme_renormalization(
         "artifact": str(artifact),
         "n_z": int(len(z_target)),
         "n_sample": int(renorm_values.shape[0]),
-        "zs": float(zs),
+        "zs_fm": zs_fm,
+        "zs_lattice": zs_lattice,
+        "zs_grid": float(z_denom[zs_idx]),
         "delta_m": float(delta_m),
         "m0": float(m0),
         "normalization_z": float(z0),

@@ -10,7 +10,6 @@ import typer
 
 from .agent import run_agent
 from .core.llm import provider_config
-from .core.stages import select_stage_sequence
 from .manifest import validate_manifest_file
 
 app = typer.Typer(help="CLI-first scaffold for LaMET analysis workflows.")
@@ -46,9 +45,9 @@ def validate_manifest(path: Path) -> None:
         json.dumps(
             {
                 "run_id": manifest.run_id,
-                "goal": manifest.goal,
-                "correlator_count": len(manifest.correlators),
-                "kernel_count": len(manifest.kernels),
+                "stages": manifest.metadata.stages,
+                "correlator_count": len(manifest.inputs.correlators),
+                "kernel_count": len(manifest.inputs.kernels),
                 "status": "valid",
             },
             indent=2,
@@ -56,18 +55,9 @@ def validate_manifest(path: Path) -> None:
     )
 
 
-@app.command("workflow")
-def show_workflow(goal: str = "full_lamet_pipeline") -> None:
-    """Print the resolved workflow stages for a goal."""
-    stages = select_stage_sequence(goal)
-    typer.echo(json.dumps({"goal": goal, "stages": stages}, indent=2))
-
-
 @app.command("run")
 def run_workflow(
     manifest: Path,
-    stages: str | None = None,
-    resume_from: str | None = None,
     model: str = typer.Option(
         "mock",
         "--model",
@@ -100,10 +90,6 @@ def run_workflow(
 ) -> None:
     """Run the staged agent loop.
 
-    Use ``--stages`` (comma-separated) to run a specific ordered subset, e.g.
-    ``--stages correlator_analysis``. Running a later stage on its own requires
-    the manifest to already provide that stage's inputs.
-
     With ``--model deepseek`` or ``--model openai`` the loop is driven by that
     provider's API. The key is read from ``--api-key-file`` (default ``api.key``)
     or the provider environment variable (``DEEPSEEK_API_KEY`` / ``OPENAI_API_KEY``).
@@ -112,8 +98,6 @@ def run_workflow(
         parsed = validate_manifest_file(manifest)
     except Exception as exc:  # pragma: no cover - CLI surface
         raise typer.BadParameter(str(exc)) from exc
-
-    stage_list = [s.strip() for s in stages.split(",") if s.strip()] if stages else None
 
     api_key = None
     if api_key_file.exists():
@@ -125,8 +109,6 @@ def run_workflow(
     try:
         result = run_agent(
             parsed,
-            stages=stage_list,
-            resume_from=resume_from,
             model=model,
             actions_path=actions_path,
             api_key=api_key,
@@ -138,7 +120,7 @@ def run_workflow(
     except ValueError as exc:  # pragma: no cover - CLI surface
         raise typer.BadParameter(str(exc)) from exc
     result["manifest"] = str(manifest)
-    result["correlators"] = [item.dataset_id for item in parsed.correlators]
+    result["correlators"] = [item.correlator_id for item in parsed.correlators]
     result["kernels"] = [item.kernel_id for item in parsed.kernels]
     typer.echo(json.dumps(_cli_run_summary(result), indent=2))
 

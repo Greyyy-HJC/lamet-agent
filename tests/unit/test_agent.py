@@ -4,78 +4,41 @@ import json
 import urllib.error
 from pathlib import Path
 
-from lamet_agent.agent import run_agent
+import numpy as np
+
+from lamet_agent.agent import _hydrate_external_artifact_inputs, run_agent
 from lamet_agent.core import llm
+from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.tools import resolve_stage_tools
 from lamet_agent.manifest import AnalysisManifest
 
 
 def _demo_manifest() -> AnalysisManifest:
     return AnalysisManifest.model_validate(
         {
-            "run_id": "demo",
-            "goal": "full_lamet_pipeline",
-            "correlators": [
-                {
-                    "dataset_id": "c2",
-                    "kind": "2pt",
-                    "path": "fake/c2.h5",
-                    "format": "hdf5",
-                }
-            ],
-            "kernels": [
-                {
-                    "kernel_id": "k1",
-                    "function": "lamet_agent.kernels:identity_kernel",
-                }
-            ],
+            "metadata": {
+                "run_id": "demo", "root_directory": ".", "target_observable": "pdf",
+                "parton": "quark", "resample_mode": "jk", "stages": ["correlator_analysis"],
+            },
+            "inputs": {"correlators": [], "artifacts": [], "kernels": []},
+            "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]}},
         }
     )
 
 
-def test_run_agent_default_pipeline_stops_for_missing_fourier_input() -> None:
-    result = run_agent(_demo_manifest(), model="mock")
-    assert result["status"] == "waiting_for_user_input"
-    assert result["completed_stages"] == ["correlator_analysis", "renormalization"]
-    assert "fourier_transform" in result["pending_user_input"]
-    assert result["actions"][0]["action"]["action"] == "call_tool"
-
-
-def test_run_agent_replays_external_transcript(tmp_path: Path) -> None:
+def test_run_agent_uses_manifest_stage_order(tmp_path: Path, monkeypatch) -> None:
     transcript = tmp_path / "actions.jsonl"
     transcript.write_text(
         json.dumps({"action": "finish", "reason": "done"}) + "\n",
         encoding="utf-8",
     )
 
-    result = run_agent(
-        _demo_manifest(),
-        model="external",
-        actions_path=transcript,
-        stages=["correlator_analysis"],
-    )
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+    result = run_agent(_demo_manifest(), model="external", actions_path=transcript)
 
     assert result["status"] == "completed"
     assert result["completed_stages"] == ["correlator_analysis"]
     assert result["actions"][0]["action"]["reason"] == "done"
-
-
-def test_run_agent_requests_user_input_for_incomplete_fourier_metadata() -> None:
-    manifest = AnalysisManifest.model_validate(
-        {
-            "run_id": "fourier_demo",
-            "metadata": {"fourier_input": "matrix_element.npz"},
-        }
-    )
-
-    result = run_agent(manifest, model="mock", stages=["fourier_transform"])
-
-    assert result["status"] == "waiting_for_user_input"
-    assert result["completed_stages"] == []
-    action = result["actions"][0]["action"]
-    assert action["action"] == "request_user_input"
-    assert "Missing metadata.fourier.observable/order" in "\n".join(action["questions"])
-    assert result["pending_user_input"]["fourier_transform"] == action["questions"]
-    assert result["stage_results"]["fourier_transform"] == []
 
 
 def test_deepseek_request_retries_transient_url_error(monkeypatch) -> None:
@@ -203,7 +166,7 @@ def test_make_llm_session_openai_requires_key() -> None:
     assert hasattr(session, "decide")
 
 
-def test_run_agent_reuses_store_across_stages(tmp_path: Path, monkeypatch) -> None:
+def test_run_agent_registers_job_output_for_downstream_role(tmp_path: Path, monkeypatch) -> None:
     transcript = tmp_path / "actions.jsonl"
     transcript.write_text(
         "\n".join(
@@ -219,28 +182,210 @@ def test_run_agent_reuses_store_across_stages(tmp_path: Path, monkeypatch) -> No
     )
 
     def set_value(store):
-        store["shared"] = "ok"
-        return {"out": "shared"}
+        store["output"] = "ok"
+        return {"out": "output"}
 
     def read_value(store):
-        return {"value": store["shared"]}
+        store["output"] = store["input"]
+        return {"value": store["input"]}
 
     def fake_tools(stage):
         if stage == "correlator_analysis":
             return {"set_value": set_value}
-        if stage == "fourier_transform":
+        if stage == "renormalization":
             return {"read_value": read_value}
         return {}
 
     monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", fake_tools)
-    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest: [])
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+
+    manifest = AnalysisManifest.model_validate({
+        "metadata": {
+            "run_id": "dag", "root_directory": ".", "target_observable": "pdf",
+            "parton": "quark", "resample_mode": "jk",
+            "stages": ["correlator_analysis", "renormalization"],
+        },
+        "inputs": {"correlators": [], "artifacts": [], "kernels": []},
+        "stages": {
+            "correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]},
+            "renormalization": {"defaults": {}, "jobs": [{"id": "rn", "inputs": {"input": "ca"}}]},
+        },
+    })
 
     result = run_agent(
-        _demo_manifest(),
+        manifest,
         model="external",
         actions_path=transcript,
-        stages=["correlator_analysis", "fourier_transform"],
     )
 
     assert result["status"] == "completed"
-    assert result["stage_results"]["fourier_transform"][0]["result"] == {"value": "ok"}
+    assert result["stage_results"]["renormalization"]["rn"][0]["result"] == {"value": "ok"}
+
+
+def _write_renorm_nc(path: Path) -> None:
+    coord = np.arange(0.0, 5.0)
+    base_re = np.exp(-0.45 * coord)
+    base_im = 0.1 * np.exp(-0.45 * coord)
+    data = EnsembleData(
+        ensemble=None,
+        resample="jackknife",
+        values=[
+            base_re + 1j * base_im,
+            1.01 * base_re + 0.98j * base_im,
+            0.99 * base_re + 1.02j * base_im,
+        ],
+        dims=("z",),
+        coords={"z": coord.tolist()},
+        name="renormalized_matrix_element",
+    )
+    data.to_netcdf(path)
+
+
+def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) -> None:
+    nc_path = tmp_path / "rn_p5.nc"
+    _write_renorm_nc(nc_path)
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "partial",
+                "root_directory": str(tmp_path),
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "stages": ["fourier_transform"],
+            },
+            "inputs": {
+                "correlators": [],
+                "artifacts": [
+                    {
+                        "id": "rn_p5",
+                        "stage": "renormalization",
+                        "path": str(nc_path),
+                        "a_fm": 0.0574,
+                        "pz_gev": 2.15,
+                        "hadron": "pion",
+                        "gfix": "CG",
+                    }
+                ],
+                "kernels": [],
+            },
+            "stages": {
+                "fourier_transform": {
+                    "defaults": {
+                        "order": "NLA",
+                        "fit_error_mode": "covariance",
+                        "part": "re",
+                        "coord_unit": "lattice",
+                        "k_grid": {"start": -1.0, "stop": 1.0, "num": 3},
+                    },
+                    "jobs": [{"id": "ft_p5", "inputs": {"input": "rn_p5"}, "params": {"pz_gev": 2.15}}],
+                },
+            },
+        }
+    )
+    artifact = manifest.inputs.artifacts[0]
+    store = {"input": artifact}
+    job = manifest.stages["fourier_transform"].jobs[0]
+    effective_params = {**manifest.stages["fourier_transform"].defaults, **job.params}
+
+    _hydrate_external_artifact_inputs(
+        "fourier_transform",
+        job,
+        manifest,
+        store,
+        effective_params=effective_params,
+        artifacts_dir=tmp_path / "artifacts" / "fourier_transform",
+    )
+
+    assert isinstance(store["input"], EnsembleData)
+    assert "matrix_element_data" in store
+    assert store["matrix_element_data"].dims == ["z"]
+
+
+def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path, monkeypatch) -> None:
+    nc_path = tmp_path / "rn_p5.nc"
+    _write_renorm_nc(nc_path)
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "partial",
+                "root_directory": str(tmp_path),
+                "artifacts_directory": "artifacts",
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "stages": ["fourier_transform"],
+            },
+            "inputs": {
+                "correlators": [],
+                "artifacts": [
+                    {
+                        "id": "rn_p5",
+                        "stage": "renormalization",
+                        "path": str(nc_path),
+                        "a_fm": 0.0574,
+                        "pz_gev": 2.15,
+                        "hadron": "pion",
+                        "gfix": "CG",
+                    }
+                ],
+                "kernels": [],
+            },
+            "stages": {
+                "fourier_transform": {
+                    "defaults": {
+                        "order": "NLA",
+                        "fit_error_mode": "covariance",
+                        "part": "re",
+                        "coord_unit": "lattice",
+                        "k_grid": {"start": -1.0, "stop": 1.0, "num": 3},
+                    },
+                    "jobs": [{"id": "ft_p5", "inputs": {"input": "rn_p5"}, "params": {"pz_gev": 2.15}}],
+                },
+            },
+        }
+    )
+    manifest._root_directory = tmp_path.resolve()
+    manifest._artifacts_directory = (tmp_path / "artifacts").resolve()
+
+    transcript = tmp_path / "actions.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"action": "call_tool", "tool_name": "run_fourier_transform", "args": {}, "reason": "ft"}),
+                json.dumps({"action": "finish", "reason": "done"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    observed: dict[str, object] = {}
+
+    def fake_run_fourier_transform(store, **kwargs):
+        observed["input_type"] = type(store["input"]).__name__
+        observed["has_matrix_element_data"] = "matrix_element_data" in store
+        store["output"] = store["matrix_element_data"]
+        return {"artifact": str(tmp_path / "ft_p5.nc")}
+
+    real_tools = resolve_stage_tools
+
+    def fake_resolve(stage):
+        tools = real_tools(stage)
+        if stage == "fourier_transform":
+            tools = dict(tools)
+            tools["run_fourier_transform"] = fake_run_fourier_transform
+        return tools
+
+    monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", fake_resolve)
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+
+    result = run_agent(manifest, model="external", actions_path=transcript)
+
+    assert result["status"] == "completed"
+    assert observed["input_type"] == "EnsembleData"
+    assert observed["has_matrix_element_data"] is True
+    assert result["actions"][0]["action"]["tool_name"] == "run_fourier_transform"
+    assert "load_renormalized_matrix_element_samples" not in {
+        action["action"].get("tool_name") for action in result["actions"]
+    }

@@ -1034,8 +1034,10 @@ def tune_bare_matrix(
     pt2_windows: list[dict[str, int]] | None = None,
     pt3_windows: list[dict[str, Any]] | None = None,
     pt3_tau_cuts: list[int] | None = None,
-    fit_strategy: str = "joint",
-    nstate: int = 2,
+    fit_strategies: list[str] | None = None,
+    nstate_values: list[int] | None = None,
+    fit_strategy: str | None = None,
+    nstate: int | None = None,
     svdcut: float = 1e-2,
     correlator_rescale: float = 1.0,
     resample_mode: str = "jk",
@@ -1052,7 +1054,6 @@ def tune_bare_matrix(
     Returns ranked candidate diagnostics (with O00/(2E0)) and writes a tuning ratio
     plot so the agent can choose one shared window to pass to ``fit_bare_matrix_grid``.
     """
-    strategy, _ = _normalise_strategy(fit_strategy)
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
     out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
@@ -1079,26 +1080,45 @@ def tune_bare_matrix(
     pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=Lt)
     pt3_window_specs = _normalise_pt3_windows(pt3_windows, tsep_ls=tseps, tau_cuts=pt3_tau_cuts)
 
-    pt2_best = None
-    if strategy == "chained":
-        pt2_records: list[dict[str, Any]] = []
-        for window in pt2_window_specs:
-            try:
-                fit = fit_two_point(pt2_gv, window["tmin"], window["tmax"], Lt, nstate=nstate, svdcut=svdcut, rescale=scale)
-                pt2_records.append(_record(fit, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate, correlator_rescale=scale))
-            except Exception:
-                continue
-        if not pt2_records:
-            raise ValueError("all 2pt windows failed during chained tuning")
-        pt2_best = pt2_records[select_best(pt2_records, q_min=q_min)[0]]
+    records: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    strategies = fit_strategies or ([fit_strategy] if fit_strategy is not None else ["joint"])
+    states = nstate_values or ([nstate] if nstate is not None else [2])
+    for strategy_value in strategies:
+        strategy, _ = _normalise_strategy(strategy_value)
+        for nstate_value in states:
+            pt2_best = None
+            if strategy == "chained":
+                pt2_records: list[dict[str, Any]] = []
+                for window in pt2_window_specs:
+                    try:
+                        fit = fit_two_point(
+                            pt2_gv, window["tmin"], window["tmax"], Lt,
+                            nstate=nstate_value, svdcut=svdcut, rescale=scale,
+                        )
+                        pt2_records.append(
+                            _record(fit, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate_value, correlator_rescale=scale)
+                        )
+                    except Exception as exc:
+                        rejected.append({**window, "fit_strategy": strategy, "nstate": nstate_value, "reason": str(exc)})
+                if not pt2_records:
+                    continue
+                pt2_best = pt2_records[select_best(pt2_records, q_min=q_min)[0]]
 
-    specs = _candidate_specs(
-        strategy=strategy, pt2_window_specs=pt2_window_specs, pt3_window_specs=pt3_window_specs, pt2_best=pt2_best
-    )
-    records, rejected = _scan_average(
-        specs, strategy=strategy, pt2_gv=pt2_gv, ratio_re=ratio_re, ratio_im=ratio_im,
-        pt2_best=pt2_best, Lt=Lt, nstate=nstate, part=part, svdcut=svdcut, scale=scale,
-    )
+            specs = _candidate_specs(
+                strategy=strategy,
+                pt2_window_specs=pt2_window_specs,
+                pt3_window_specs=pt3_window_specs,
+                pt2_best=pt2_best,
+            )
+            found, failed = _scan_average(
+                specs, strategy=strategy, pt2_gv=pt2_gv, ratio_re=ratio_re, ratio_im=ratio_im,
+                pt2_best=pt2_best, Lt=Lt, nstate=nstate_value, part=part, svdcut=svdcut, scale=scale,
+            )
+            for rec in found:
+                rec["fit_strategy"] = strategy
+            records.extend(found)
+            rejected.extend({**item, "fit_strategy": strategy, "nstate": nstate_value} for item in failed)
     if not records:
         raise ValueError("all bare-matrix tuning windows failed: " + "; ".join(str(item) for item in rejected[:5]))
     store[out] = records
@@ -1107,7 +1127,7 @@ def tune_bare_matrix(
     best = records[best_index]
     best_fig = _plot_sample0_ratio(
         ratio_re=ratio_re, ratio_im=ratio_im, rec=best, Lt=Lt, log_dir=out_dir,
-        momentum=momentum, z=int(tune_z), fit_label=f"tune_{strategy}",
+        momentum=momentum, z=int(tune_z), fit_label=f"tune_{best['fit_strategy']}_n{best['nstate']}",
     )
 
     candidates = []
@@ -1116,6 +1136,8 @@ def tune_bare_matrix(
         candidates.append(
             {
                 "index": i,
+                "fit_strategy": rec["fit_strategy"],
+                "nstate": rec["nstate"],
                 "tmin": rec["tmin"],
                 "tmax": rec["tmax"],
                 "tsep_ls": rec["tsep_ls"],
@@ -1129,7 +1151,8 @@ def tune_bare_matrix(
         )
     return {
         "out": out,
-        "fit_strategy": strategy,
+        "fit_strategies": strategies,
+        "nstate_values": states,
         "tune_z": int(tune_z),
         "Lt": int(Lt),
         "n_cfg": int(n_cfg),
@@ -1193,6 +1216,8 @@ def fit_bare_matrix_grid(
     ensemble: str,
     tag: str,
     momentum: str,
+    hadron: str | None = None,
+    gfix: str | None = None,
     direction: str = "X",
     variant: str = "free",
     source_sink: str = "SS",
@@ -1204,6 +1229,7 @@ def fit_bare_matrix_grid(
     b_label: str = "b0",
     pt2_window: dict[str, int] | None = None,
     pt3_window: dict[str, Any] | None = None,
+    pt3_tau_cut: int | None = None,
     pt2_windows: list[dict[str, int]] | None = None,
     pt3_windows: list[dict[str, Any]] | None = None,
     pt3_tau_cuts: list[int] | None = None,
@@ -1219,6 +1245,9 @@ def fit_bare_matrix_grid(
     q_min: float = 0.05,
     posterior_prior_error_scale: float = 3.0,
     correlator_rescale: float = 1.0,
+    job_id: str | None = None,
+    a_fm: float | None = None,
+    pz_gev: float | None = None,
     save_path: str | None = None,
     log_dir: str | Path | None = None,
     log_path: str | Path | None = None,
@@ -1248,6 +1277,8 @@ def fit_bare_matrix_grid(
     tuning_logger.info("ensemble=%s tag=%s momentum=%s direction=%s rescale=%s", ensemble, tag, momentum, direction, scale)
 
     tseps = [int(t) for t in tsep_ls]
+    if pt3_window is None and pt3_tau_cut is not None:
+        pt3_window = {"tsep_ls": tseps, "tau_cut": int(pt3_tau_cut)}
     z_list = [int(z) for z in z_values]
     paths_by_tsep = _normalise_pt3_paths(pt3_paths, tsep_ls=tseps)
     missing = [tsep for tsep in tseps if tsep not in paths_by_tsep]
@@ -1437,8 +1468,23 @@ def fit_bare_matrix_grid(
         direction=direction, momentum=momentum, b_label=b_label, resample_mode=mode,
     )
     bare_data = output.pop("data")
+    bare_data.array.attrs.update(
+        {
+            key: str(value)
+            for key, value in {
+                "job_id": job_id,
+                "a_fm": a_fm,
+                "pz_gev": pz_gev,
+                "hadron": hadron,
+                "gfix": gfix,
+            }.items()
+            if value is not None
+        }
+    )
+    bare_data.to_netcdf(output["netcdf_path"])
     store["bare_matrix_element_data"] = bare_data
     store["bare_matrix_element_netcdf"] = output["netcdf_path"]
+    store["output"] = bare_data
     return {
         **output,
         "fit_strategy": strategy,

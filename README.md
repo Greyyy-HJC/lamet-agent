@@ -4,12 +4,9 @@
 
 ## Core Idea
 
-Expected inputs:
-
-- `correlators`: lattice correlation-function datasets
-- `kernels`: perturbative kernels provided as Python functions
-
-Kernel references use `module:function`, e.g. `lamet_agent.kernels:identity_kernel`.
+The manifest defines global source pools and per-stage job lists. Job ids form a
+DAG: correlator jobs group raw datasets, and later jobs consume upstream job ids
+through role-named inputs such as `target` and `denominator`.
 
 Expected agent behavior:
 
@@ -27,7 +24,8 @@ Ordered five-stage workflow:
 4. `perturbative_matching` -> `stages/matching/`
 5. `extrapolation` -> `stages/extrapolation/`
 
-The CG qPDF example manifests can run a connected correlator -> ratio-renormalization -> Fourier smoke flow. The correlator stage writes bare matrix elements as NetCDF, and the renormalization stage reads those artifacts, applies the Eq. 15 ratio/hybrid scheme while preserving every resampled sample, and writes a renormalized NetCDF artifact.
+The current job-DAG migration covers correlator analysis and hybrid-ratio
+renormalization. Fourier, matching, and extrapolation remain the next migration step.
 
 ## Minimal Structure
 
@@ -37,7 +35,7 @@ The CG qPDF example manifests can run a connected correlator -> ratio-renormaliz
 │   ├── fake_data/
 │   │   └── generate_fake_data.py
 │   ├── sample_manifest.jsonc
-│   └── workflow_smoke_manifest.json
+│   └── cg_pion_pdf_manifest.json
 ├── src/lamet_agent/
 │   ├── __init__.py
 │   ├── agent.py
@@ -69,8 +67,8 @@ The CG qPDF example manifests can run a connected correlator -> ratio-renormaliz
 
 ## Intermediate Data (NetCDF)
 
-Stage-to-stage artifacts are **`EnsembleData` NetCDF files** (convention: `.nc`) written
-under `artifacts/` in the current working directory. Each file stores one resampled
+Stage-to-stage artifacts are **`EnsembleData` NetCDF files** written under the
+manifest's `artifacts_directory` as `<stage>/<job_id>.nc`. Each file stores one resampled
 array plus its lattice metadata:
 
 - **Leading dimension** `resample`: bootstrap, jackknife, or raw sample index (length 1
@@ -84,15 +82,13 @@ Typical artifact chain (paths are relative to `artifacts/` unless noted):
 
 | Stage | Example artifact |
 | --- | --- |
-| `correlator_analysis` | `correlator_results/..._bare_matrix_elements.nc` |
-| `renormalization` | `renormalization_results/..._renormalized_matrix_elements.nc` |
+| `correlator_analysis` | `correlator_analysis/ca_p5.nc` |
+| `renormalization` | `renormalization/rn_p5.nc` |
 | `fourier_transform` | `fourier_results/fourier_result.nc`, `fourier_results/fourier_fit_info.nc` |
 | `perturbative_matching` | `matching_results/quasi_pdf.nc` |
 
-Manifest stage settings point at these files (for example `stages.fourier_transform.input`
-for a renormalized matrix-element NetCDF, or `stages.perturbative_matching.input` for a
-Fourier result NetCDF). When stages run in one agent process, later stages can also
-read the in-memory store without reloading from disk.
+Within one run, downstream inputs resolve job ids to in-memory primary outputs.
+`inputs.artifacts` provides equivalent source nodes for partial workflows.
 
 ### Write and read (Python)
 
@@ -145,12 +141,40 @@ options inline (for example `target_observable` is `"pdf"` or `"da"`, and `gfix`
   `target_observable`, ordered `stages` to run).
 - `inputs`: the `correlators` (each with its kinematics such as `a_fm`, `pz_gev`,
   gammas, and for `3pt` the `bt`/`bz` separation lists) and the `kernels`.
-- `stages`: per-stage analysis settings, keeping nothing that is already derivable
-  from `inputs`.
+- `stages`: `defaults` plus a `jobs` list. A job's `params` shallow-merge over
+  defaults, and later jobs reference earlier job ids through role-named `inputs`.
 
-Use it as a template: copy it, fill in your own values, **remove the `//` comments**,
-and save it as a plain `.json` file (the loader expects strict JSON). The comments
-exist only to explain the available options while you author your manifest.
+Use it as a template and save runnable manifests as plain `.json`. The loader also
+accepts JSONC for annotated authoring templates.
+
+## Manifest Parameter Semantics
+
+Some manifest parameters change both the statistical treatment and the runtime
+substantially. This section records behavior that is not obvious from the field
+name alone.
+
+### `correlator_analysis.defaults.model_average`
+
+This boolean controls how `fit_bare_matrix_grid` uses the candidate fit windows.
+It does not control whether tuning scans the candidates: `tune_bare_matrix` always
+tests the configured `pt2_windows` and `pt3_tau_cuts` (and the configured
+`nstate` / `fit_strategy` candidates) on sample-average data first.
+
+- `false` (recommended production default): use one tuned window for every `z`
+  and every resampled sample. The agent may provide the selected `pt2_window` and
+  `pt3_window`; if it does not, the tool selects the best usable window on
+  `tune_z`. This is the faster path and keeps one fit definition across the grid.
+- `true`: retain every usable `pt2_window` / `pt3_tau_cut` combination for the
+  selected scalar `nstate` and `fit_strategy`. Every combination is fitted for
+  every `z` and every resampled sample, then combined using `logGBF` weights. The
+  Bayesian model average includes both fit uncertainty and variation between
+  window choices, but its runtime grows approximately linearly with the number
+  of window combinations.
+
+For example, four `pt2_windows` and three `pt3_tau_cuts` produce up to 12 models.
+With 109 jackknife samples and 25 `z` values, `model_average: true` performs about
+12 times as many nonlinear fits as the single-window path. The manifest value is
+authoritative and cannot be overridden by an LLM tool call.
 
 ## Quick Start
 
@@ -160,37 +184,32 @@ source .venv/bin/activate
 pip install -e ".[dev,analysis]"
 ```
 
-Generate fake data:
-
-```bash
-python examples/fake_data/generate_fake_data.py
-```
-
 Validate and run manifest:
 
 ```bash
-lamet-agent validate examples/workflow_smoke_manifest.json
-lamet-agent run examples/workflow_smoke_manifest.json
+lamet-agent validate examples/cg_pion_pdf_manifest.json
+lamet-agent run examples/cg_pion_pdf_manifest.json
 ```
 
-Stage plots and other artifacts are written under `artifacts/` in the **current
-working directory**. For real runs, create a directory under `runs/` and execute
-from there so outputs stay isolated (see `runs/ds_pdf_cont/run.sh`):
+Artifact placement and stage order come from the manifest. The complete first-phase
+CG pion PDF check is available in `runs/ds_pdf_complete/run.sh`:
 
 ```bash
-mkdir -p runs/my_run && cd runs/my_run
-lamet-agent run ../../examples/workflow_cg_qpdf_cont_manifest.json \
-  --stages renormalization,fourier_transform
-# artifacts -> runs/my_run/artifacts/
+cd runs/ds_pdf_complete
+./run.sh
 ```
 
-Paths inside the manifest (correlator datasets, precomputed NetCDF artifacts, etc.)
-are resolved relative to the manifest file, with a fallback to the repo root for
-paths like `examples/fake_data/...`.
+`root_directory` resolves relative to the manifest file when it is not absolute.
+Correlator, artifact, kernel, and artifact-output paths resolve from that root.
+`metadata.stages` is the sole ordered list of stages to execute; partial runs use a
+manifest with a shorter list and source nodes under `inputs.artifacts`.
 
-Run a subset of stages with `--stages` (comma-separated stage IDs, in the order
-you want them executed). Omit `--stages` to run the full default pipeline for
-the manifest `goal` (see `lamet-agent workflow`).
+`examples/cg_pion_pdf_manifest.json` runs the current P0/P5 workflow through
+correlator analysis, hybrid-ratio renormalization, Fourier transformation, and
+perturbative matching. `examples/partial_cg_pion_pdf_manifest.json` starts from
+the saved `rn_p5` renormalization artifact and runs only Fourier and matching.
+External renormalization sources include `a_fm`, `pz_gev`, `hadron`, and `gfix`
+because those values normally propagate in memory from the correlator jobs.
 
 Valid stage IDs:
 
@@ -202,37 +221,11 @@ Valid stage IDs:
 | `perturbative_matching` | matching |
 | `extrapolation` | extrapolation |
 
-Examples:
-
-```bash
-# Correlator stage only
-lamet-agent run examples/workflow_cg_qpdf_p0_manifest.json --stages correlator_analysis
-
-# Renormalization then Fourier (continuation from pre-computed bare matrix elements)
-lamet-agent run examples/workflow_cg_qpdf_cont_manifest.json \
-  --stages renormalization,fourier_transform
-
-# Two stages in one run
-lamet-agent run examples/workflow_cg_qpdf_p5_manifest.json \
-  --stages correlator_analysis,renormalization
-```
-
-To start from a middle stage without listing every later stage explicitly, use
-`--resume-from` instead. It slices the default goal sequence from that stage
-onward (for example `--resume-from fourier_transform` runs Fourier, matching,
-and extrapolation). `--stages` takes precedence when both are set.
-
-When you skip earlier stages, the manifest must already supply that stage's
-inputs (for example bare-matrix report paths under `metadata.renormalization`,
-or a renormalized NetCDF path under `metadata.fourier_input` or
-`stages.fourier_transform.input`). Missing inputs surface as `input_issues` and
-the run stops with `status: waiting_for_user_input`.
-
 Print each agent cycle (prompt, model action, tool observation) while the run
 executes:
 
 ```bash
-lamet-agent run examples/workflow_smoke_manifest.json --model deepseek --verbose
+lamet-agent run examples/cg_pion_pdf_manifest.json --model deepseek --verbose
 ```
 
 Choose the LLM provider with `--model` (`deepseek` or `openai`). The API key is
@@ -242,23 +235,22 @@ cost-effective model (`deepseek-chat` / `gpt-4o-mini`); override with
 `--llm-model` and, if needed, `--base-url`:
 
 ```bash
-lamet-agent run examples/workflow_smoke_manifest.json --model openai --verbose
-lamet-agent run examples/workflow_smoke_manifest.json --model openai --llm-model gpt-4o
+lamet-agent run examples/cg_pion_pdf_manifest.json --model openai --verbose
+lamet-agent run examples/cg_pion_pdf_manifest.json --model openai --llm-model gpt-4o
 ```
 
 Run with a real-model placeholder switch:
 
 ```bash
-lamet-agent run examples/workflow_smoke_manifest.json --model mock
+lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
 ```
 
 ## File Responsibilities
 
 - `src/lamet_agent/manifest.py`
-  - Defines manifest schema (`correlators`, `kernels`, metadata).
-  - Validates kernel references in `module:function` format.
+  - Defines the `metadata`, source `inputs`, and stage-job schema.
+  - Validates ids, ordered job references, and root-relative paths.
 - `src/lamet_agent/core/stages.py`
-  - Resolves stage sequence for a workflow goal.
   - Maps stage IDs to concrete stage packages.
 - `src/lamet_agent/core/data.py`
   - Defines typed data containers (`EnsembleInfo`, `EnsembleData`) for resampled
@@ -269,7 +261,7 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
     cross-stage arithmetic/alignment helpers).
 - `src/lamet_agent/core/prompting.py`
   - Stores `SYSTEM_PROMPT` and shared output-format hint.
-  - Builds static stage context once per stage; incremental tool observations are
+  - Builds static context once per job; incremental tool observations are
     appended as separate user turns in the DeepSeek multi-turn session.
 - `src/lamet_agent/core/llm.py`
   - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), and the
@@ -281,21 +273,17 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
   - Resolves a stage's `STAGE_TOOLS` registry for the agent loop.
   - `prepare_tool_args()` / `filter_tool_kwargs()` normalize LLM tool calls
     (manifest paths, plot `save_path` under `artifacts/`).
-  - `resolve_plot_save_path()` forces correlator plot PDFs under `artifacts/` in
-    the current working directory.
+  - `resolve_plot_save_path()` keeps plots under the manifest's stage artifact directory.
 - `src/lamet_agent/core/trace.py`
   - Optional ReAct-style stdout trace (`--verbose`).
 - `src/lamet_agent/core/plotting.py`
   - Self-contained publication-style plotting (default plot, 2pt fit-on-data).
 - `src/lamet_agent/agent.py`
-  - Stage orchestration only: `run_agent()` resolves stages, validates inputs,
-    and runs the per-stage tool loop (`_run_stage`).
-  - Correlator plots are written to `artifacts/` under the process working
-    directory (created automatically).
+  - `run_agent()` executes `metadata.stages`, runs each declared job with an
+    isolated store, and registers `store["output"]` under the job id.
 - `src/lamet_agent/cli.py`
-  - Exposes `validate`, `workflow`, `run` commands.
-  - `run` accepts `--stages` (comma-separated subset), `--resume-from`,
-    `--model` (`mock`/`external`/`deepseek`/`openai`), `--verbose` / `-v`
+  - Exposes `validate` and `run` commands.
+  - `run` accepts `--model` (`mock`/`external`/`deepseek`/`openai`), `--verbose` / `-v`
     (ReAct-style trace to stdout), `--actions-path` (for `external`), and
     `--api-key-file`/`--llm-model`/`--base-url` (for `deepseek`/`openai`).
 - `src/lamet_agent/kernels.py`
@@ -324,27 +312,24 @@ lamet-agent run examples/workflow_smoke_manifest.json --model mock
 - `examples/sample_manifest.jsonc`
   - Annotated reference manifest (JSONC). Copy it, drop the `//` comments, and save
     as `.json` to author a real run.
-- `examples/workflow_smoke_manifest.json`
-  - Minimal runnable manifest example.
+- `examples/cg_pion_pdf_manifest.json`
+  - Runnable P0/P5 correlator and hybrid-ratio renormalization manifest.
 
 ## Agent Workflow
 
-1. CLI receives a manifest path and runtime options (`--model`, `--stages`,
-   `--resume-from`, `--verbose`).
-2. `manifest.py` validates the input contract and resolves each kernel callable from
-   `module:function`.
-3. `agent.py` asks `core/stages.py` for the ordered stage workflow (explicit
-   `--stages` subset or the default sequence for the manifest goal).
-4. For each stage:
+1. CLI receives a manifest path and runtime options (`--model`, `--verbose`).
+2. `manifest.py` validates source ids, job ids, ordered dependencies, and paths.
+3. `agent.py` executes the ordered `metadata.stages` list.
+4. For each stage job:
    - `core/tools.validate_stage_inputs()` surfaces missing inputs as
      `input_issues`.
    - `core/prompting.build_stage_static_prompt()` assembles static context once
-     (system prompt, stage instruction, run context, tool catalog).
+     (system prompt, job inputs, effective params, tool catalog).
    - `core/llm.make_llm_session()` provides a pluggable `LlmSession` that drives a
      multi-turn loop (up to `max_tool_steps`, default 40): the model emits one
      JSON action per cycle; on `call_tool`, `core/tools.prepare_tool_args()` and
      `resolve_stage_tools()` run the tool and return an observation as the next
-     user turn; on `finish` (or other non-tool actions) the stage ends.
+     user turn; terminal tools place the primary data in `store["output"]`.
    - After the stage finishes, the stage's `reporting.py` emits a report so users
      can track analysis progress and inspect that stage's intermediate results.
 5. Session backends: `mock` (deterministic scaffold), `external` (JSONL

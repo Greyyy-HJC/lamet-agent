@@ -1,74 +1,16 @@
-"""Prompt text for Fourier-transform stage."""
+"""Prompt text for one Fourier-transform job."""
 
 STAGE_PROMPT = """
-Run asymptotic extrapolation and Fourier transform on coordinate-space
-matrix-element samples.
+Transform the current job's renormalized coordinate-space matrix elements into a
+quasi-distribution while preserving every resampled sample.
 
-Do this by emitting one action at a time:
-0. If the stage input issues list reports missing Fourier fields, do not guess
-   them and do not call tools yet. Emit request_user_input and ask the user for
-   the missing fields, summarizing the listed choices and the physical meaning
-   of each option.
-1. If manifest.metadata.fourier_input is provided, call
-   load_renormalized_matrix_element_samples on that path. Pass input_format='nc'
-   for NetCDF EnsembleData files, input_format='npz' for legacy NPZ files, or
-   input_format='h5' for HDF5 files. For HDF5 inputs, pass h5_group when the
-   desired group cannot be inferred from the file name.
-   If metadata.fourier specifies coord_key, re_key, im_key, or resample_mode,
-   pass those values to the loader. Do not pass resample_mode to
-   run_fourier_transform; the transform reads the mode from the loaded
-   EnsembleData.
-   If an upstream stage already produced store['matrix_element_data'], skip the
-   loader and run the transform directly on that EnsembleData.
-2. run_fourier_transform with explicit k_grid (list or compact {start, stop, num/step}),
-   method, order, observable, coord_unit, and pz_gev/a_fm when needed.
-   If metadata.fourier specifies im_flip_for_ft, Lambda0,
-   posterior_prior_error_scale, fit_error_mode, part, output_scale, or save_path, pass those
-   values to run_fourier_transform.
-   If the manifest gives scheme_scan, pass it through. If it omits any of
-   zmin_values/zmax_values/z_ext_max/smooth, the tool will fill the missing scan
-   values by choosing large stable zmax values before visible jitter or sharply
-   growing error bars. It then fixes each zmax, scans zmin from the coordinate
-   closest to 0.5 fm toward larger z, and chooses zmin candidates where the
-   selected method/order/observable/part tail fit has stable chi2/dof and Q.
-   Missing z_ext_max defaults to the largest input-data lambda plus 8,
-   converted back to the input coordinate unit. Missing y_range,
-   roughness_weight, and model_average default to [-2,2], 1.0, and true.
-   Use observable to select the large-distance form: pion_quark_quasi_pdf,
-   nucleon_quark_unpolarized_quasi_pdf, nucleon_quark_transversity_quasi_pdf,
-   pion_gluon_quasi_pdf, nucleon_gluon_quasi_pdf, meson_quasi_da,
-   pion_quark_quasi_gpd, or nucleon_quark_quasi_gpd.
-   For GPD observables, pass pz_prime_gev when P'^z differs from P^z.
-   order can be 'LA' or 'NLA'.
-   Lambda0 optionally sets the lower bound of the fitted large-distance
-   exponential scale Lambda; default is 0.1 GeV for physical-z inputs.
-   posterior_prior_error_scale inflates the sample-average fit parameter
-   errors when using that posterior as a weak prior for bootstrap/jackknife
-   sample fits; default is 3.0.
-   fit_error_mode controls the tail-fit data covariance: 'diagonal' uses
-   pointwise standard deviations, while 'covariance' uses the full covariance
-   estimated from bootstrap/jackknife samples. The default is 'diagonal'.
-   part controls which matrix-element component enters the tail fit and
-   extension: 'both' fits real and imaginary parts, 're' fits/extends only the
-   real part and sets the coordinate-space imaginary extension to zero, and
-   'im' does the corresponding imaginary-only fit with coordinate-space real
-   extension fixed to zero. The default is 'both'.
-   output_scale multiplies the final Fourier-space samples, means, and
-   statistical/systematic errors after fitting and model averaging. Use
-   output_scale=2.0 with part='re' when a real-part Fourier transform should be
-   converted to the valence q-qbar convention.
-   Fit windows must include at least as many coordinate points as the selected
-   model has parameters.
-   Prefer scheme_scan when the manifest provides it, so the tool can score and
-   model-average the fit-range choices numerically.
-   run_fourier_transform writes the Fourier NetCDF artifact, fit-info NetCDF,
-   Fourier plot, extension plots, and English/Chinese Markdown reports in one
-   call. Do not call summarize_fourier_result, plot_fourier_result,
-   plot_fourier_extension_quality_result, or report_fourier_result again unless
-   the user explicitly asks to regenerate a specific artifact.
-3. finish, reporting the Markdown report paths, NetCDF artifact path, PDF/PNG plot paths, best scheme, scheme
-   weights, fit chi2/dof, roughness scores, fit failure counts, and the
-   statistical/systematic uncertainty arrays.
-
-Use only the listed tools. Do not write numerical code in the model response.
+1. External artifact inputs are pre-loaded before tools run. Do not call
+   load_renormalized_matrix_element_samples when the input is already in memory.
+   Call run_fourier_transform directly.
+2. Call run_fourier_transform once. Job defaults/params and source metadata supply
+   k_grid, scheme_scan, method, observable, order, part, coordinate units, lattice
+   spacing, momentum, output paths, and fit controls. Do not override them.
+3. The run tool writes the primary NetCDF, fit-info NetCDF, plots, and bilingual
+   reports and registers store['output']. Finish by reporting those paths and the
+   best scheme diagnostics; do not call the individual plot/report tools again.
 """.strip()

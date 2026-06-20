@@ -9,7 +9,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable
 
-from lamet_agent.manifest import AnalysisManifest, resolve_data_path, resolve_root_path
+from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob
 
 from .stages import resolve_stage_package
 
@@ -23,8 +23,6 @@ _FOURIER_ARTIFACT_TOOLS = frozenset(
         "report_fourier_result",
     }
 )
-_RENORM_APPLY_KEYS = frozenset({"target", "denominator", "zs", "delta_m", "m0", "z0", "save_path"})
-_RENORM_PLOT_KEYS = frozenset({"data", "title"})
 _FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key", "resample_mode"})
 _FOURIER_RUN_KEYS = frozenset(
     {
@@ -49,44 +47,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "report",
     }
 )
-_MATCHING_PLOT_KEYS = frozenset({"save_path", "xlim", "ylim"})
-_MATCHING_LOAD_KEYS = frozenset({"quasi_input", "component"})
 _MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "pz_gev", "mu", "zs_fm"})
-_CORRELATOR_PT2_TOOLS = frozenset({"inspect_correlator_scale", "tune_ground_state"})
-_CORRELATOR_GRID_TOOLS = frozenset({"tune_bare_matrix", "fit_bare_matrix_grid"})
-_CORRELATOR_PT2_KEYS = frozenset({"pt2_path", "pt2_windows", "nstate", "svdcut", "resample_mode", "n_boot", "seed"})
-_CORRELATOR_GRID_KEYS = frozenset(
-    {
-        "pt2_path",
-        "pt3_paths",
-        "tsep_ls",
-        "z_values",
-        "ensemble",
-        "tag",
-        "variant",
-        "momentum",
-        "direction",
-        "source_sink",
-        "pt2_gamma",
-        "pt3_gamma",
-        "b_dir",
-        "eta",
-        "bt",
-        "b_label",
-        "pt2_windows",
-        "pt3_windows",
-        "pt3_tau_cuts",
-        "fit_strategy",
-        "nstate",
-        "seed",
-        "svdcut",
-        "part",
-        "q_min",
-        "resample_mode",
-        "n_boot",
-        "posterior_prior_error_scale",
-    }
-)
 
 
 def setup_logger(
@@ -200,39 +161,6 @@ def _manifest_root(manifest: AnalysisManifest) -> Path | None:
     return Path(root).expanduser().resolve() if root is not None else None
 
 
-def _default_artifacts_dir(manifest: AnalysisManifest, fallback: Path) -> Path:
-    root = _manifest_root(manifest)
-    artifacts_directory = manifest.metadata.get("artifacts_directory")
-    if isinstance(artifacts_directory, str):
-        path = Path(artifacts_directory).expanduser()
-        if path.is_absolute():
-            return path
-        if root is not None:
-            return root / path
-        if manifest.manifest_dir is not None:
-            return manifest.manifest_dir / path
-    if root is not None:
-        return root / "examples" / "artifacts"
-    return fallback
-
-
-def _resolve_output_path(value: str, manifest: AnalysisManifest) -> str:
-    candidate = Path(value).expanduser()
-    if candidate.is_absolute():
-        return str(candidate)
-    root = _manifest_root(manifest)
-    if root is not None:
-        return str((root / candidate).resolve())
-    return value
-
-
-def _resolve_nested_output_paths(config: dict[str, Any], manifest: AnalysisManifest, keys: tuple[str, ...]) -> None:
-    for key in keys:
-        value = config.get(key)
-        if isinstance(value, dict) and isinstance(value.get("save_path"), str):
-            value["save_path"] = _resolve_output_path(value["save_path"], manifest)
-
-
 def _run_scoped_plot_stem(manifest: AnalysisManifest, stem: str) -> str:
     """Prefix default plot stems with the run id so adjacent runs do not collide."""
     run_id = Path(str(manifest.run_id)).name or "run"
@@ -248,24 +176,20 @@ def resolve_stage_tools(stage: str) -> dict[str, Callable[..., dict[str, Any]]]:
     return getattr(module, "STAGE_TOOLS", {})
 
 
-def validate_stage_inputs(stage: str, manifest: Any) -> list[str]:
+def validate_stage_inputs(stage: str, manifest: Any, job: StageJob) -> list[str]:
     """Return a stage's input issues via its ``validate_stage_inputs`` helper."""
     package_name = resolve_stage_package(stage)
     if not package_name:
         return []
     module = import_module(f"lamet_agent.stages.{package_name}.skills")
     validator = getattr(module, "validate_stage_inputs", None)
-    return validator(manifest) if callable(validator) else []
+    return validator(manifest, job) if callable(validator) else []
 
 
 def _resolve_one_data_path(value: str, manifest: AnalysisManifest) -> str:
     if Path(value).is_absolute():
         return value
-    if manifest.root_directory is not None:
-        return resolve_root_path(manifest.root_directory, value)
-    if manifest.manifest_dir is None or manifest.project_root is None:
-        return value
-    return resolve_data_path(manifest.project_root, manifest.manifest_dir, value)
+    return str((manifest.root_directory / value).resolve())
 
 
 def _resolve_path_container(value: Any, manifest: AnalysisManifest) -> Any:
@@ -278,6 +202,17 @@ def _resolve_path_container(value: Any, manifest: AnalysisManifest) -> Any:
     return value
 
 
+def _declared_artifact_path(manifest: AnalysisManifest, job: StageJob, role: str) -> str | None:
+    """Return the resolved path for a job input role backed by inputs.artifacts."""
+    ref = job.inputs.get(role)
+    if not isinstance(ref, str):
+        return None
+    for artifact in manifest.inputs.artifacts:
+        if artifact.id == ref:
+            return artifact.path
+    return None
+
+
 def resolve_tool_args(args: dict[str, Any], manifest: AnalysisManifest) -> dict[str, Any]:
     """Resolve manifest-relative file paths in tool arguments."""
     if manifest.root_directory is None and (manifest.manifest_dir is None or manifest.project_root is None):
@@ -287,40 +222,6 @@ def resolve_tool_args(args: dict[str, Any], manifest: AnalysisManifest) -> dict[
         if key in resolved:
             resolved[key] = _resolve_path_container(resolved[key], manifest)
     return resolved
-
-
-def _fill_missing(target: dict[str, Any], defaults: dict[str, Any], keys: frozenset[str]) -> None:
-    for key in keys:
-        if key in defaults and (key not in target or target[key] is None):
-            target[key] = defaults[key]
-
-
-def _merge_correlator_grid_args(
-    tool_name: str,
-    args: dict[str, Any],
-    manifest: AnalysisManifest,
-) -> dict[str, Any]:
-    grid = manifest.metadata.get("correlator_grid", {})
-    if not isinstance(grid, dict):
-        return args
-
-    merged = dict(args)
-    if tool_name in _CORRELATOR_PT2_TOOLS:
-        _fill_missing(merged, grid, _CORRELATOR_PT2_KEYS)
-        if "source_sink" not in merged or merged["source_sink"] is None:
-            if "source_sink" in grid:
-                merged["source_sink"] = grid["source_sink"]
-        if "gamma" not in merged or merged["gamma"] is None:
-            if "pt2_gamma" in grid:
-                merged["gamma"] = grid["pt2_gamma"]
-            elif "gamma" in grid:
-                merged["gamma"] = grid["gamma"]
-        if "momentum" not in merged or merged["momentum"] is None:
-            if "momentum" in grid:
-                merged["momentum"] = grid["momentum"]
-    elif tool_name in _CORRELATOR_GRID_TOOLS:
-        _fill_missing(merged, grid, _CORRELATOR_GRID_KEYS)
-    return resolve_tool_args(merged, manifest)
 
 
 def filter_tool_kwargs(tool: Any, args: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -348,155 +249,155 @@ def prepare_tool_args(
     args: dict[str, Any],
     *,
     manifest: AnalysisManifest,
+    stage: str,
+    job: StageJob,
+    effective_params: dict[str, Any],
     artifacts_dir: Path,
-    _store: dict[str, Any],
+    store: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve paths and force plot output under ``artifacts_dir``."""
-    artifacts_dir = _default_artifacts_dir(manifest, artifacts_dir)
-    resolved = _merge_correlator_grid_args(tool_name, resolve_tool_args(args, manifest), manifest)
-    renorm = manifest.metadata.get("renormalization", {})
-    if isinstance(renorm, dict):
-        if tool_name == "load_bare_matrix_element_grid":
-            merged = dict(resolved)
-            if "out" not in merged:
-                merged["out"] = (
-                    "target_bare_matrix_element"
-                    if "target_bare_matrix_element" not in _store
-                    else "denominator_bare_matrix_element"
-                )
-            if "netcdf_path" not in merged:
-                if merged.get("out") == "denominator_bare_matrix_element" and renorm.get("denominator_netcdf_path"):
-                    merged["netcdf_path"] = renorm["denominator_netcdf_path"]
-                elif renorm.get("target_netcdf_path"):
-                    merged["netcdf_path"] = renorm["target_netcdf_path"]
-            if "resample" not in merged and "resample" in renorm:
-                merged["resample"] = renorm["resample"]
-            resolved = resolve_tool_args(merged, manifest)
-        elif tool_name == "apply_ratio_scheme_renormalization":
-            merged = dict(resolved)
-            merged.update({key: renorm[key] for key in _RENORM_APPLY_KEYS if key in renorm})
-            resolved = merged
-        elif tool_name == "plot_renormalized_matrix_element":
-            merged = dict(resolved)
-            if isinstance(renorm.get("plot"), dict):
-                merged.update({key: renorm["plot"][key] for key in _RENORM_PLOT_KEYS | {"save_path"} if key in renorm["plot"]})
-            resolved = merged
+    artifacts_dir = Path(artifacts_dir)
+    store = store or {}
+    resolved = resolve_tool_args(args, manifest)
 
-    fourier = dict(manifest.stages.get("fourier_transform", {}).get("defaults", {}))
-    if "component" in fourier and "part" not in fourier:
-        fourier["part"] = fourier.pop("component")
-    if "resample_mode" not in fourier and "resample_mode" in manifest.metadata:
-        fourier["resample_mode"] = manifest.metadata["resample_mode"]
-    if isinstance(manifest.metadata.get("fourier"), dict):
-        explicit_fourier = dict(manifest.metadata["fourier"])
-        if "component" in explicit_fourier and "part" not in explicit_fourier:
-            explicit_fourier["part"] = explicit_fourier.pop("component")
-        fourier.update(explicit_fourier)
-    input_correlators = manifest.inputs.get("correlators", [])
-    if not isinstance(input_correlators, list):
-        input_correlators = []
-    if "hadron" not in fourier and "hadron" in manifest.metadata:
-        fourier["hadron"] = manifest.metadata["hadron"]
-    if "gfix" not in fourier and "gfix" in manifest.metadata:
-        fourier["gfix"] = manifest.metadata["gfix"]
-    if "pz_gev" not in fourier and "pz_gev" in manifest.metadata:
-        fourier["pz_gev"] = manifest.metadata["pz_gev"]
-    if "a_fm" not in fourier and "a_fm" in manifest.metadata:
-        fourier["a_fm"] = manifest.metadata["a_fm"]
-    for key in ("hadron", "gfix", "a_fm", "pz_gev"):
-        if key in fourier:
-            continue
-        values = [
-            item[key]
-            for item in input_correlators
-            if isinstance(item, dict) and key in item and item[key] not in (None, "")
-        ]
-        if key == "pz_gev":
-            values = [
-                value
-                for value in values
-                if not isinstance(value, int | float) or float(value) != 0.0
-            ]
-        if values and len({str(value).lower() for value in values}) == 1:
-            fourier[key] = values[0]
-    if "method" not in fourier:
-        gfix = str(fourier.get("gfix", "")).upper()
-        if gfix in {"CG", "GI"}:
-            fourier["method"] = gfix
-    if "observable" not in fourier:
-        target = str(
-            fourier.get("target_observable") or manifest.metadata.get("target_observable", "")
-        ).lower()
-        target = target.replace("-", "_")
-        hadron = str(fourier.get("hadron", "")).lower()
-        parton = str(fourier.get("parton") or fourier.get("parton_type") or "").lower()
-        is_pion = hadron in {"pion", "pi", "meson"}
-        is_nucleon = hadron in {"nucleon", "proton", "neutron"}
-        if target in {"pdf", "qpdf", "quasi_pdf"}:
-            if is_pion and parton == "quark":
-                fourier["observable"] = "pion_quark_quasi_pdf"
-            elif is_pion and parton == "gluon":
-                fourier["observable"] = "pion_gluon_quasi_pdf"
-            elif is_nucleon and parton == "quark":
-                fourier["observable"] = "nucleon_quark_unpolarized_quasi_pdf"
-            elif is_nucleon and parton == "gluon":
-                fourier["observable"] = "nucleon_gluon_quasi_pdf"
-        elif target in {"da", "quasi_da"} and is_pion:
-            fourier["observable"] = "meson_quasi_da"
-        elif target in {"gpd", "quasi_gpd"}:
-            if is_pion and parton == "quark":
-                fourier["observable"] = "pion_quark_quasi_gpd"
-            elif is_nucleon and parton == "quark":
-                fourier["observable"] = "nucleon_quark_quasi_gpd"
-    if isinstance(fourier, dict):
+    if stage == "correlator_analysis":
+        selected = [item for item in manifest.correlators if item.correlator_id in job.correlator_ids]
+        pt2 = next((item for item in selected if item.kind == "2pt"), None)
+        pt3 = sorted((item for item in selected if item.kind == "3pt"), key=lambda item: item.tsep or 0)
+        defaults = dict(effective_params)
+        if "component" in defaults:
+            defaults["part"] = defaults.pop("component")
+        defaults["resample_mode"] = manifest.metadata.resample_mode
+        if pt2 is not None:
+            defaults.update(
+                {
+                    "pt2_path": pt2.data_path,
+                    "source_sink": pt2.source_sink,
+                    "momentum": pt2.momentum,
+                    "gamma": pt2.src_gamma,
+                    "pt2_gamma": pt2.src_gamma,
+                    "ensemble": pt2.ensemble,
+                    "tag": job.id,
+                    "hadron": pt2.hadron,
+                    "gfix": pt2.gfix,
+                }
+            )
+        if pt3:
+            first = pt3[0]
+            defaults.update(
+                {
+                    "pt3_paths": {str(item.tsep): item.data_path for item in pt3},
+                    "tsep_ls": [item.tsep for item in pt3],
+                    "z_values": first.bz,
+                    "direction": first.z_direction,
+                    "pt3_gamma": first.current_gamma,
+                    "b_dir": f"b_{first.z_direction}",
+                    "eta": first.eta,
+                    "bt": f"bT{first.bt[0]}",
+                    "b_label": f"b{first.bt[0]}",
+                }
+            )
+        if tool_name == "tune_bare_matrix":
+            if "nstate" in defaults:
+                defaults["nstate_values"] = defaults.pop("nstate")
+            if "fit_strategy" in defaults:
+                defaults["fit_strategies"] = defaults.pop("fit_strategy")
+        elif tool_name == "fit_bare_matrix_grid":
+            for key in ("nstate", "fit_strategy"):
+                if isinstance(defaults.get(key), list):
+                    defaults.pop(key)
+            defaults["save_path"] = str(artifacts_dir / job.id)
+            defaults["job_id"] = job.id
+            defaults["a_fm"] = pt2.a_fm if pt2 is not None else None
+            defaults["pz_gev"] = pt2.pz_gev if pt2 is not None else None
+        for key, value in defaults.items():
+            if key not in resolved or resolved[key] is None:
+                resolved[key] = value
+        if tool_name == "fit_bare_matrix_grid" and "model_average" in defaults:
+            resolved["model_average"] = defaults["model_average"]
+
+    if stage == "renormalization":
+        if tool_name == "apply_ratio_scheme_renormalization":
+            for key, value in effective_params.items():
+                if key not in resolved or resolved[key] is None:
+                    resolved[key] = value
+            resolved.update(
+                {
+                    "target": "target",
+                    "denominator": "denominator",
+                    "save_path": str(artifacts_dir / job.id),
+                    "job_id": job.id,
+                }
+            )
+        elif tool_name == "plot_renormalized_matrix_element":
+            resolved.update({"data": "output", "save_path": str(artifacts_dir / job.id)})
+    if stage == "fourier_transform":
+        fourier = dict(effective_params)
+        if "component" in fourier and "part" not in fourier:
+            fourier["part"] = fourier.pop("component")
+        source = store.get("input")
+        source_metadata = source.model_dump() if isinstance(source, ArtifactInput) else getattr(source, "attrs", {})
+        for key in ("a_fm", "pz_gev", "hadron", "gfix"):
+            if key not in fourier and key in source_metadata:
+                fourier[key] = source_metadata[key]
+        if "method" not in fourier and str(fourier.get("gfix", "")).upper() in {"CG", "GI"}:
+            fourier["method"] = str(fourier["gfix"]).upper()
+        if "observable" not in fourier:
+            target = manifest.metadata.target_observable
+            parton = manifest.metadata.parton
+            hadron = str(fourier.get("hadron", "")).lower()
+            if target == "pdf" and hadron == "pion":
+                fourier["observable"] = f"pion_{parton}_quasi_pdf"
+            elif target == "da" and hadron == "pion":
+                fourier["observable"] = "meson_quasi_da"
         if tool_name == "load_renormalized_matrix_element_samples":
-            merged = dict(resolved)
-            merged.update({key: fourier[key] for key in _FOURIER_LOAD_KEYS if key in fourier})
-            if "fourier_input" in manifest.metadata:
-                merged["path"] = manifest.metadata["fourier_input"]
-            resolved = resolve_tool_args(merged, manifest)
+            resolved.update({key: fourier[key] for key in _FOURIER_LOAD_KEYS if key in fourier})
+            if isinstance(source, ArtifactInput):
+                resolved["path"] = source.path
+            elif "path" not in resolved:
+                artifact_path = _declared_artifact_path(manifest, job, "input")
+                if artifact_path is not None:
+                    resolved["path"] = artifact_path
+            if "resample_mode" not in resolved:
+                resolved["resample_mode"] = manifest.metadata.resample_mode
         elif tool_name == "run_fourier_transform":
-            merged = {key: resolved[key] for key in _FOURIER_RUN_KEYS if key in resolved}
-            merged.update({key: fourier[key] for key in _FOURIER_RUN_KEYS if key in fourier})
-            _resolve_nested_output_paths(merged, manifest, ("plot_fourier", "plot_extension", "report"))
-            resolved = merged
-        elif tool_name == "plot_fourier_result":
-            merged = dict(resolved)
-            if isinstance(fourier.get("plot_fourier"), dict):
-                merged.update(fourier["plot_fourier"])
-            resolved = merged
-        elif tool_name == "plot_fourier_extension_quality_result":
-            merged = dict(resolved)
-            if isinstance(fourier.get("plot_extension"), dict):
-                merged.update(fourier["plot_extension"])
-            resolved = merged
-        elif tool_name == "report_fourier_result":
-            merged = dict(resolved)
-            if isinstance(fourier.get("report"), dict):
-                merged.update(fourier["report"])
-            resolved = merged
+            resolved.update({key: fourier[key] for key in _FOURIER_RUN_KEYS if key in fourier})
+            resolved["save_path"] = str(artifacts_dir / job.id)
+            resolved.setdefault("plot_fourier", {"save_path": f"{job.id}.pdf"})
+            resolved.setdefault("plot_extension", {"save_path": f"{job.id}_extension.pdf"})
+            resolved.setdefault("report", {"save_path": f"{job.id}_report.md"})
         if tool_name in _FOURIER_ARTIFACT_TOOLS:
-            if isinstance(resolved.get("save_path"), str):
-                resolved["save_path"] = _resolve_output_path(resolved["save_path"], manifest)
             resolved["artifacts_dir"] = str(artifacts_dir)
-    matching = manifest.metadata.get("matching", {})
-    if isinstance(matching, dict):
+
+    if stage == "perturbative_matching":
+        from lamet_agent.stages.matching.functions import resolve_kernel_id
+
+        matching = dict(effective_params)
+        declared_id = str(matching.get("kernel_id", ""))
+        declaration = next((item for item in manifest.kernels if item.kernel_id == declared_id), None)
+        if declaration is not None:
+            parameters = dict(declaration.kernel_parameters)
+            parameters.update(matching)
+            matching = parameters
+            matching["kernel_id"] = resolve_kernel_id(declared_id, declaration.scheme)
         if tool_name == "load_quasi_pdf":
-            merged = dict(resolved)
-            if "path" not in merged and isinstance(matching.get("quasi_input"), str):
-                merged["path"] = matching["quasi_input"]
-            if "component" in matching and "component" not in merged:
-                merged["component"] = matching["component"]
-            resolved = resolve_tool_args(merged, manifest)
+            resolved["component"] = matching.get("component", "re")
+            quasi = store.get("quasi")
+            if isinstance(quasi, ArtifactInput):
+                resolved["path"] = quasi.path
+            elif "path" not in resolved:
+                artifact_path = _declared_artifact_path(manifest, job, "quasi")
+                if artifact_path is not None:
+                    resolved["path"] = artifact_path
         elif tool_name == "build_matching_kernel":
-            merged = dict(resolved)
-            merged.update({key: matching[key] for key in _MATCHING_KERNEL_KEYS if key in matching})
-            resolved = merged
+            resolved.update({key: matching[key] for key in _MATCHING_KERNEL_KEYS if key in matching})
+        elif tool_name == "apply_matching":
+            resolved.update({"save_path": str(artifacts_dir / job.id), "artifacts_dir": str(artifacts_dir)})
         elif tool_name == "plot_matched_pdf":
-            merged = dict(resolved)
-            if isinstance(matching.get("plot"), dict):
-                merged.update({key: matching["plot"][key] for key in _MATCHING_PLOT_KEYS if key in matching["plot"]})
-            resolved = merged
+            resolved.update({"save_path": str(artifacts_dir / job.id), "artifacts_dir": str(artifacts_dir)})
+        elif tool_name == "report_matching_result":
+            resolved.update({key: matching[key] for key in ("kernel_id", "pz_gev", "mu", "zs_fm", "component") if key in matching})
+            resolved.update({"save_path": f"{job.id}_report.md", "artifacts_dir": str(artifacts_dir)})
     if tool_name in _RENORM_ARTIFACT_TOOLS:
         raw_save = resolved.get("save_path")
         if isinstance(raw_save, str) or raw_save is None:

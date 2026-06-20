@@ -48,36 +48,34 @@ def test_agent_trace_prints_request_user_input_questions() -> None:
         {
             "action": "request_user_input",
             "reason": "missing fields",
-            "questions": ["metadata.fourier.k_grid is required"],
+            "questions": ["fourier job k_grid is required"],
         }
     )
     text = buffer.getvalue()
     assert "Action: request_user_input" in text
-    assert "metadata.fourier.k_grid is required" in text
+    assert "fourier job k_grid is required" in text
 
 
 def test_run_agent_verbose_prints_trace(capsys) -> None:
     manifest = AnalysisManifest.model_validate(
         {
-            "run_id": "demo",
-            "goal": "full_lamet_pipeline",
-            "correlators": [
-                {
-                    "dataset_id": "c2",
-                    "kind": "2pt",
-                    "path": "fake/c2.h5",
-                    "format": "hdf5",
-                }
-            ],
-            "kernels": [
-                {
-                    "kernel_id": "k1",
-                    "function": "lamet_agent.kernels:identity_kernel",
-                }
-            ],
+            "metadata": {
+                "run_id": "demo", "root_directory": ".", "target_observable": "pdf",
+                "parton": "quark", "resample_mode": "jk", "stages": ["correlator_analysis"],
+            },
+            "inputs": {"correlators": [
+                {"correlator_id": "c2", "kind": "2pt", "data_path": "c2.h5", "ensemble": "E",
+                 "hadron": "pion", "gfix": "CG", "source_sink": "SS", "momentum": "P",
+                 "a_fm": 0.1, "pz_gev": 0, "src_gamma": "5", "sink_gamma": "5"},
+                {"correlator_id": "c3", "kind": "3pt", "data_path": "c3.h5", "ensemble": "E",
+                 "hadron": "pion", "gfix": "CG", "source_sink": "SS", "momentum": "P",
+                 "a_fm": 0.1, "pz_gev": 0, "src_gamma": "5", "sink_gamma": "5",
+                 "current_gamma": "T", "z_direction": "X", "eta": "eta0", "bt": [0], "bz": [0], "tsep": 8}
+            ], "artifacts": [], "kernels": []},
+            "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}]}},
         }
     )
-    run_agent(manifest, model="mock", stages=["correlator_analysis"], verbose=True)
+    run_agent(manifest, model="mock", verbose=True)
     out = capsys.readouterr().out
     assert "Agent run: demo" in out
     assert "Cycle 1" in out
