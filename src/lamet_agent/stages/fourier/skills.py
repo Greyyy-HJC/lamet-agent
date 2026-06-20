@@ -35,9 +35,9 @@ K_GRID_HELP = (
 SCHEME_HELP = (
     "metadata.fourier.scheme_scan is optional. If omitted or incomplete, the tool chooses four large zmax "
     "candidates ending at the last stable long-distance point before the central values visibly jitter or the "
-    "error bars grow sharply, then chooses zmin candidates by scanning upward at fixed zmax until the selected "
-    "method/order/observable tail fit has stable chi2/dof and Q. It fills min_width, "
-    "z_ext_max, and smooth='linear'. Missing z_ext_max defaults to lambda_max + 8, converted "
+    "error bars grow sharply, then chooses zmin candidates by scanning upward from z ~= 0.5 fm at fixed zmax "
+    "until the selected method/order/observable/part tail fit has stable chi2/dof and Q. It fills "
+    "z_ext_max and smooth='linear'. Missing z_ext_max defaults to lambda_max + 8, converted "
     "back to the input coordinate unit. It also defaults y_range=[-2,2], roughness_weight=1.0, "
     "and model_average=true when omitted. Use explicit scheme_scan to override fit-range values."
 )
@@ -111,8 +111,8 @@ Strategy:
   is omitted or incomplete, let the tool auto-generate a four-by-four scan:
   choose zmax as large as possible before central-value jitter or sharply
   growing error bars, then choose zmin by fixing each zmax and increasing zmin
-  until the selected method/order/observable tail fit has stable chi2/dof and
-  Q. Model-average schemes using chi2/dof, Fourier roughness, and fit-failure
+  from z ~= 0.5 fm until the selected method/order/observable/part tail fit has
+  stable chi2/dof and Q. Model-average schemes using chi2/dof, Fourier roughness, and fit-failure
   penalties. Missing z_ext_max defaults to lambda_max + 8; missing y_range,
   roughness_weight, and model_average default to [-2,2], 1.0, and true.
 - Pass run_fourier_transform save_path when the manifest requests a non-default
@@ -127,7 +127,7 @@ Strategy:
 
 TOOL_CATALOG = {
     "load_renormalized_matrix_element_samples": "load_renormalized_matrix_element_samples(path, input_format='nc'|'npz'|'h5', h5_group=None, coord_key='coord' or 'z_ary', re_key='re_samples' or 'Re', im_key='im_samples' or 'Im', resample_mode='bs'|'jk') -> load renormalized coordinate-space samples from NetCDF, legacy NPZ, or HDF5 into EnsembleData.",
-    "run_fourier_transform": "run_fourier_transform(k_grid=[...] or {start,stop,num/step}, optional scheme_scan={zmin_values/zmin_start,zmax_values/zmax_start,z_ext_max,y_range,roughness_weight,model_average,max_schemes,min_fit_points}; if omitted or incomplete, choose large stable zmax values and zmin values from stable tail-fit chi2/dof and Q diagnostics; missing z_ext_max defaults to lambda_max + 8; method='GI'|'CG', order='LA'|'NLA', observable='pion_quark_quasi_pdf'|'nucleon_quark_unpolarized_quasi_pdf'|'nucleon_quark_transversity_quasi_pdf'|'pion_gluon_quasi_pdf'|'nucleon_gluon_quasi_pdf'|'meson_quasi_da'|'pion_quark_quasi_gpd'|'nucleon_quark_quasi_gpd', coord_unit='lambda'|'fm'|'gev_inv'|'lattice', pz_gev=None, pz_prime_gev=None, a_fm=None, im_flip_for_ft=False, Lambda0=0.1, posterior_prior_error_scale=3.0, fit_error_mode='diagonal'|'covariance', part='both'|'re'|'im', output_scale=1.0, save_path=None) -> run the local Fourier workflow using the resampling mode stored on EnsembleData, score schemes, model-average results, optionally scale final Fourier-space outputs, and write artifacts/fourier_result.nc.",
+    "run_fourier_transform": "run_fourier_transform(k_grid=[...] or {start,stop,num/step}, optional scheme_scan={zmin_values/zmin_start,zmax_values/zmax_start,z_ext_max,smooth,y_range,roughness_weight,model_average,max_schemes}; if omitted or incomplete, choose large stable zmax values and zmin values from stable tail-fit chi2/dof and Q diagnostics starting near z=0.5 fm; missing z_ext_max defaults to lambda_max + 8; method='GI'|'CG', order='LA'|'NLA', observable='pion_quark_quasi_pdf'|'nucleon_quark_unpolarized_quasi_pdf'|'nucleon_quark_transversity_quasi_pdf'|'pion_gluon_quasi_pdf'|'nucleon_gluon_quasi_pdf'|'meson_quasi_da'|'pion_quark_quasi_gpd'|'nucleon_quark_quasi_gpd', coord_unit='lambda'|'fm'|'gev_inv'|'lattice', pz_gev=None, pz_prime_gev=None, a_fm=None, im_flip_for_ft=False, Lambda0=0.1, posterior_prior_error_scale=3.0, fit_error_mode='diagonal'|'covariance', part='both'|'re'|'im', output_scale=1.0, save_path=None) -> run the local Fourier workflow using the resampling mode stored on EnsembleData, score schemes, model-average results, optionally scale final Fourier-space outputs, and write artifacts/fourier_result.nc.",
     "summarize_fourier_result": "summarize_fourier_result() -> compact mean/stat/sys arrays plus best scheme, scheme weights, chi2/dof, and roughness diagnostics for reporting.",
     "plot_fourier_result": "plot_fourier_result(save_path=None, title='Fourier result') -> plot artifacts/fourier_result.nc and write artifacts/fourier_result.pdf plus a PNG companion for Markdown embedding.",
     "plot_fourier_extension_quality_result": "plot_fourier_extension_quality_result(scheme_index=None, save_path=None) -> write artifacts/fourier_extension_re.pdf and artifacts/fourier_extension_im.pdf plus PNG companions for coordinate-space data and extrapolation-band quality with fit-range markers for the best weighted scheme by default.",

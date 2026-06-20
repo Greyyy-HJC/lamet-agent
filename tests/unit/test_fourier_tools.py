@@ -544,7 +544,6 @@ def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypat
         scheme_scan={
             "zmin_values": [1.0, 2.0],
             "zmax_values": [3.0, 4.0],
-            "min_width": 2.0,
             "z_ext_max": 5.0,
             "smooth": "linear",
             "y_range": [-0.6, 0.6],
@@ -555,12 +554,12 @@ def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypat
     )
     summary = summarize_fourier_result(store)
 
-    assert run["n_schemes"] == 3
-    assert summary["best_scheme_index"] in {0, 1, 2}
-    assert len(summary["scheme_weights"]) == 3
+    assert run["n_schemes"] == 4
+    assert summary["best_scheme_index"] in {0, 1, 2, 3}
+    assert len(summary["scheme_weights"]) == 4
     assert np.isclose(sum(summary["scheme_weights"]), 1.0)
-    assert len(summary["scheme_fit_chi2_dof"]) == 3
-    assert len(summary["scheme_roughness"]) == 3
+    assert len(summary["scheme_fit_chi2_dof"]) == 4
+    assert len(summary["scheme_roughness"]) == 4
 
 
 def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None:
@@ -591,7 +590,6 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
     assert len(auto["zmax_values"]) == 4
     assert auto["zmin_values"][0] > 0.0
     assert auto["zmax_values"] == pytest.approx([0.9, 1.0, 1.1, 1.2])
-    assert auto["min_width"] > 0
     assert auto["z_ext_max"] == pytest.approx(1.2 + 8.0 / (5.067731237 * 2.0))
     assert auto["smooth"] == "linear"
     assert auto["y_range"] == [-2.0, 2.0]
@@ -628,7 +626,6 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
     assert auto["roughness_weight"] == 2.0
     assert len(auto["zmin_values"]) == 4
     assert len(auto["zmax_values"]) == 4
-    assert "min_width" in auto
     assert "z_ext_max" in auto
     assert auto["smooth"] == "linear"
 
@@ -656,7 +653,7 @@ def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path
     )
 
     assert run["n_schemes"] > 0
-    assert run["auto_scheme_scan"]["min_fit_points"] == 7
+    assert min(run["auto_scheme_scan"]["zmin_values"]) > 0.0
 
 
 def test_fourier_auto_scan_prefers_tail_region_for_lattice_units(tmp_path: Path, monkeypatch) -> None:
@@ -765,7 +762,6 @@ def test_fourier_defaults_scheme_scoring_options_for_complete_scan(tmp_path: Pat
         scheme_scan={
             "zmin_values": [1.0],
             "zmax_values": [4.0],
-            "min_width": 1.0,
             "z_ext_max": 5.0,
             "smooth": "linear",
         },

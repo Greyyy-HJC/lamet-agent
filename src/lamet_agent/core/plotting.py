@@ -878,7 +878,20 @@ def plot_fourier_extension_quality(
             **FONT_SIZE,
         )
     if title is None:
-        title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:g}\,{z_unit}$, $z_{{\max}}={zmax:g}\,{z_unit}$"
+        if coord_unit.lower() == "lambda" and pz_gev is None:
+            title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:g}\,\lambda$, $z_{{\max}}={zmax:g}\,\lambda$"
+        else:
+            unit = coord_unit.lower()
+            if unit == "fm":
+                zmin_fm, zmax_fm = zmin, zmax
+            elif unit == "lattice":
+                zmin_fm, zmax_fm = zmin * float(a_fm), zmax * float(a_fm)
+            elif unit == "gev_inv":
+                zmin_fm, zmax_fm = zmin / 5.067731237, zmax / 5.067731237
+            else:
+                scale = 5.067731237 * float(pz_gev)
+                zmin_fm, zmax_fm = zmin / scale, zmax / scale
+            title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin_fm:g}\,\mathrm{{fm}}$, $z_{{\max}}={zmax_fm:g}\,\mathrm{{fm}}$"
     ax.set_title(title, **FONT_SIZE)
     chi2_values = result.get("scheme_fit_chi2_dof", [])
     if chi2_values and scheme_index < len(chi2_values):

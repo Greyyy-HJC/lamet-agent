@@ -26,11 +26,11 @@ Do this by emitting one action at a time:
    posterior_prior_error_scale, fit_error_mode, part, output_scale, or save_path, pass those
    values to run_fourier_transform.
    If the manifest gives scheme_scan, pass it through. If it omits any of
-   zmin_values/zmax_values/min_width/z_ext_max/smooth, the tool will fill the
-   missing scan values by choosing large stable zmax values before visible
-   jitter or sharply growing error bars. It then fixes each zmax, scans zmin
-   from smaller to larger coordinates, and chooses zmin candidates where the
-   selected method/order/observable tail fit has stable chi2/dof and Q.
+   zmin_values/zmax_values/z_ext_max/smooth, the tool will fill the missing scan
+   values by choosing large stable zmax values before visible jitter or sharply
+   growing error bars. It then fixes each zmax, scans zmin from the coordinate
+   closest to 0.5 fm toward larger z, and chooses zmin candidates where the
+   selected method/order/observable/part tail fit has stable chi2/dof and Q.
    Missing z_ext_max defaults to the largest input-data lambda plus 8,
    converted back to the input coordinate unit. Missing y_range,
    roughness_weight, and model_average default to [-2,2], 1.0, and true.

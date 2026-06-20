@@ -158,11 +158,11 @@ def _n_fit_channels(part: str) -> int:
     return int(_uses_re(part)) + int(_uses_im(part))
 
 
-def _minimum_fit_points_for_parameters(n_params: int, part: str, requested: int | None = None) -> int:
+def _minimum_fit_points_for_parameters(n_params: int, part: str) -> int:
     """Minimum coordinate points needed to provide at least n_params data values."""
     channel_count = max(_n_fit_channels(part), 1)
     from_parameters = int(np.ceil(float(n_params) / float(channel_count)))
-    return max(from_parameters, int(requested or 0), 2)
+    return max(from_parameters, 2)
 
 
 def _fit_y_data(
@@ -739,7 +739,6 @@ def fit_tail_quality_for_mean(
     a_fm: float | None = None,
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
-    min_fit_points: int | None = None,
     fit_error_mode: str = "diagonal",
     part: str = "both",
 ) -> dict[str, Any]:
@@ -767,7 +766,7 @@ def fit_tail_quality_for_mean(
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
     n_points = int(np.count_nonzero(fit_mask))
     n_params = len(_param_labels(method, order, observable))
-    required_points = _minimum_fit_points_for_parameters(n_params, part, min_fit_points)
+    required_points = _minimum_fit_points_for_parameters(n_params, part)
     if n_points < required_points:
         dof = max(1, _n_fit_channels(part) * n_points - n_params)
         return {
@@ -777,7 +776,6 @@ def fit_tail_quality_for_mean(
             "chi2_dof": float("inf"),
             "q_value": 0.0,
             "n_points": n_points,
-            "min_fit_points": required_points,
         }
 
     z_fit = fit_coord[fit_mask]
@@ -818,7 +816,6 @@ def fit_tail_quality_for_mean(
         "chi2_dof": float(chi2 / max(dof, 1)),
         "q_value": float(q_value),
         "n_points": n_points,
-        "min_fit_points": required_points,
     }
 
 
@@ -865,7 +862,6 @@ def _run_one_scheme(
     phase_prime_scale: float | None,
     resample_mode: str,
     Lambda0: float,
-    min_fit_points: int | None,
     posterior_prior_error_scale: float,
     fit_error_mode: str,
     part: str,
@@ -884,7 +880,7 @@ def _run_one_scheme(
 
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
     n_params = len(_param_labels(method, order, observable))
-    required_points = _minimum_fit_points_for_parameters(n_params, part, min_fit_points)
+    required_points = _minimum_fit_points_for_parameters(n_params, part)
     if np.count_nonzero(fit_mask) < required_points:
         raise ValueError("fit range has too few points for the selected asymptotic form")
 
@@ -1061,7 +1057,6 @@ def run_fourier_workflow(
     im_flip_for_ft: bool = False,
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
-    min_fit_points: int | None = None,
     posterior_prior_error_scale: float = 3.0,
     fit_error_mode: str = "diagonal",
     part: str = "both",
@@ -1128,7 +1123,6 @@ def run_fourier_workflow(
             phase_prime_scale=phase_prime_scale,
             resample_mode=resample_mode,
             Lambda0=Lambda0,
-            min_fit_points=min_fit_points,
             posterior_prior_error_scale=posterior_prior_error_scale,
             fit_error_mode=fit_error_mode,
             part=part,
@@ -1431,6 +1425,8 @@ def _artifact_path(raw: str | None, *, default_name: str, artifacts_dir: str | P
             path.parent.mkdir(parents=True, exist_ok=True)
             return path
         if path.parent != Path("."):
+            if artifacts_dir is not None:
+                return out_dir / path.name
             path.parent.mkdir(parents=True, exist_ok=True)
             return path
         return out_dir / path
@@ -1584,14 +1580,6 @@ def _pick_four_tail_values(grid: np.ndarray, *, end_index: int) -> list[float]:
     return [float(item) for item in values[-4:]]
 
 
-def _first_four_zmin_values(positive: np.ndarray, *, zmax_reference: float, min_width: float) -> list[float]:
-    max_allowed = float(zmax_reference) - float(min_width)
-    candidates = positive[positive <= max_allowed]
-    if len(candidates) < 4:
-        candidates = positive[positive < float(zmax_reference)]
-    return [float(item) for item in candidates[:4]]
-
-
 def _preferred_tail_start(
     *,
     coord_unit: str,
@@ -1645,7 +1633,6 @@ def _pick_four_zmin_values_by_tail_fit(
     positive: np.ndarray,
     *,
     zmax_values: list[float],
-    min_width: float,
     coord: np.ndarray,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
@@ -1658,21 +1645,19 @@ def _pick_four_zmin_values_by_tail_fit(
     a_fm: float | None,
     resample_mode: str,
     Lambda0: float,
-    min_fit_points: int,
     part: str,
     preferred_zmin: float | None,
 ) -> list[float]:
     stable_starts = []
+    required_points = _minimum_fit_points_for_parameters(len(_param_labels(method, order, observable)), part)
     for zmax in zmax_values:
-        candidates = positive[(positive < float(zmax)) & ((float(zmax) - positive) >= min_width)]
+        candidates = positive[positive < float(zmax)]
         candidates = np.asarray(
-            [candidate for candidate in candidates if np.count_nonzero((positive >= candidate) & (positive <= zmax)) >= min_fit_points],
+            [candidate for candidate in candidates if np.count_nonzero((positive >= candidate) & (positive <= zmax)) >= required_points],
             dtype=float,
         )
         if preferred_zmin is not None:
-            preferred_candidates = candidates[candidates >= float(preferred_zmin)]
-            if len(preferred_candidates) > 0:
-                candidates = preferred_candidates
+            candidates = candidates[candidates >= float(preferred_zmin)]
         if len(candidates) == 0:
             continue
         qualities = [
@@ -1691,30 +1676,23 @@ def _pick_four_zmin_values_by_tail_fit(
                 a_fm=a_fm,
                 resample_mode=resample_mode,
                 Lambda0=Lambda0,
-                min_fit_points=min_fit_points,
                 part=part,
             )
             for candidate in candidates
         ]
         stable_starts.append(float(candidates[_tail_quality_stable_start(qualities)]))
 
-    if not stable_starts:
-        fallback = _first_four_zmin_values(positive, zmax_reference=max(zmax_values), min_width=min_width)
-        if preferred_zmin is None:
-            return fallback
-        preferred = positive[(positive >= float(preferred_zmin)) & (positive <= max(zmax_values) - min_width)]
-        return [float(item) for item in (preferred[:4] if len(preferred) >= 4 else fallback)]
-
-    anchor = min(stable_starts)
-    if preferred_zmin is not None:
-        anchor = max(anchor, float(preferred_zmin))
-    max_allowed = max(zmax_values) - min_width
-    candidates = positive[(positive >= anchor) & (positive <= max_allowed)]
-    if len(candidates) < 4:
-        candidates = positive[positive <= max_allowed]
-    if len(candidates) <= 4:
-        return [float(item) for item in candidates]
-    return [float(item) for item in candidates[:4]]
+    stable_starts = sorted({float(item) for item in stable_starts})
+    if len(stable_starts) >= 4:
+        return stable_starts[:4]
+    anchor = max(stable_starts) if stable_starts else (float(preferred_zmin) if preferred_zmin is not None else positive[0])
+    candidates = [float(item) for item in positive if item >= anchor and any(item < zmax for zmax in zmax_values)]
+    for candidate in candidates:
+        if candidate not in stable_starts:
+            stable_starts.append(candidate)
+        if len(stable_starts) >= 4:
+            break
+    return stable_starts[:4]
 
 
 def _default_z_ext_max(
@@ -1746,22 +1724,15 @@ def _auto_fill_scheme_scan(
     a_fm: float | None,
     resample_mode: str,
     Lambda0: float,
-    min_fit_points: int,
     part: str,
 ) -> dict[str, Any]:
     """Fill missing scan keys with stable zmax values and tail-fit zmin diagnostics."""
-    dz = float(np.median(np.diff(positive)))
     if "zmax_values" not in spec and "zmax_start" not in spec:
         spec["zmax_values"] = _pick_four_tail_values(positive, end_index=stable_idx)
     if "zmax_values" in spec:
         zmax_values = [float(item) for item in spec["zmax_values"]]
     else:
         zmax_values = _scan_values(spec, "zmax")
-    zmax_reference = max(zmax_values)
-
-    if "min_width" not in spec:
-        spec["min_width"] = float(max((min_fit_points - 1) * dz, 3.0 * dz, 0.25 * zmax_reference))
-    min_width = float(spec["min_width"])
 
     if "zmin_values" not in spec and "zmin_start" not in spec:
         preferred_zmin = _preferred_tail_start(
@@ -1772,7 +1743,6 @@ def _auto_fill_scheme_scan(
         spec["zmin_values"] = _pick_four_zmin_values_by_tail_fit(
             positive,
             zmax_values=zmax_values,
-            min_width=min_width,
             coord=coord,
             re_samples=re_samples,
             im_samples=im_samples,
@@ -1785,7 +1755,6 @@ def _auto_fill_scheme_scan(
             a_fm=a_fm,
             resample_mode=resample_mode,
             Lambda0=Lambda0,
-            min_fit_points=min_fit_points,
             part=part,
             preferred_zmin=preferred_zmin,
         )
@@ -1798,7 +1767,6 @@ def _auto_fill_scheme_scan(
         )
     if "smooth" not in spec:
         spec["smooth"] = "linear"
-    spec["min_fit_points"] = int(min_fit_points)
     return spec
 
 
@@ -1807,7 +1775,7 @@ def _scan_has_all_range_keys(spec: dict[str, Any] | None) -> bool:
         return False
     has_zmin = "zmin_values" in spec or "zmin_start" in spec
     has_zmax = "zmax_values" in spec or "zmax_start" in spec
-    return has_zmin and has_zmax and "min_width" in spec and "z_ext_max" in spec and "smooth" in spec
+    return has_zmin and has_zmax and "z_ext_max" in spec and "smooth" in spec
 
 
 def _fill_scheme_defaults(spec: dict[str, Any]) -> dict[str, Any]:
@@ -1831,7 +1799,6 @@ def _auto_scheme_scan(
     a_fm: float | None,
     resample_mode: str,
     Lambda0: float,
-    min_fit_points: int,
     part: str,
     existing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1857,32 +1824,24 @@ def _auto_scheme_scan(
         a_fm=a_fm,
         resample_mode=resample_mode,
         Lambda0=Lambda0,
-        min_fit_points=min_fit_points,
         part=part,
     )
     spec["auto_generated"] = True
     return spec
 
 
-def _generate_scan_schemes(spec: dict[str, Any], *, coord: np.ndarray | None = None) -> list[dict[str, Any]]:
+def _generate_scan_schemes(spec: dict[str, Any]) -> list[dict[str, Any]]:
     zmin_values = _scan_values(spec, "zmin")
     zmax_values = _scan_values(spec, "zmax")
-    min_width = float(spec.get("min_width", 0.0))
     z_ext_max = float(spec["z_ext_max"])
     smooth = str(spec.get("smooth", "linear"))
     max_schemes = int(spec.get("max_schemes", 200))
-    min_fit_points = int(spec.get("min_fit_points", 0))
-    coord_arr = None if coord is None else np.asarray(coord, dtype=float)
 
     schemes = []
     for zmin in zmin_values:
         for zmax in zmax_values:
-            if zmax <= zmin or zmax - zmin < min_width:
+            if zmax <= zmin:
                 continue
-            if coord_arr is not None and min_fit_points > 0:
-                fit_count = np.count_nonzero((coord_arr >= float(zmin)) & (coord_arr <= float(zmax)) & (coord_arr > 0))
-                if fit_count < min_fit_points:
-                    continue
             scheme = {
                 "label": f"zmin_{zmin:g}_zmax_{zmax:g}".replace(".", "p"),
                 "zmin": zmin,
@@ -2044,16 +2003,11 @@ def run_fourier_transform(
     resample_mode = _normalise_resample_mode(getattr(matrix_element_data, "resample", "bootstrap"))
     matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
     auto_scheme_scan = None
+    coord_arr = np.asarray(matrix_element["coord"], dtype=float)
     scan_spec = _fill_scheme_defaults(dict(scheme_scan or {}))
-    min_fit_points = _minimum_fit_points_for_parameters(
-        len(_param_labels(method, order, observable)),
-        part,
-        int(scan_spec.get("min_fit_points", 0) or 0),
-    )
-    scan_spec["min_fit_points"] = min_fit_points
     if not _scan_has_all_range_keys(scan_spec):
         scan_spec = _auto_scheme_scan(
-            coord=np.asarray(matrix_element["coord"], dtype=float),
+            coord=coord_arr,
             re_samples=np.asarray(matrix_element["re_samples"], dtype=float),
             im_samples=np.asarray(matrix_element["im_samples"], dtype=float),
             coord_unit=coord_unit,
@@ -2065,13 +2019,21 @@ def run_fourier_transform(
             a_fm=a_fm,
             resample_mode=resample_mode,
             Lambda0=float(Lambda0),
-            min_fit_points=min_fit_points,
             part=part,
             existing=scan_spec,
         )
         auto_scheme_scan = scan_spec
     scheme_scan = scan_spec
-    schemes = _generate_scan_schemes(scheme_scan, coord=np.asarray(matrix_element["coord"], dtype=float))
+    schemes = _generate_scan_schemes(scheme_scan)
+    required_points = _minimum_fit_points_for_parameters(len(_param_labels(method, order, observable)), part)
+    schemes = [
+        scheme
+        for scheme in schemes
+        if np.count_nonzero((coord_arr >= float(scheme["zmin"])) & (coord_arr <= float(scheme["zmax"])) & (coord_arr > 0))
+        >= required_points
+    ]
+    if not schemes:
+        raise ValueError("scheme_scan produced no valid zmin/zmax combinations")
     k_values = _resolve_k_grid(k_grid)
     result = run_fourier_workflow(
         matrix_element["coord"],
@@ -2089,7 +2051,6 @@ def run_fourier_transform(
         im_flip_for_ft=im_flip_for_ft,
         resample_mode=resample_mode,
         Lambda0=float(Lambda0),
-        min_fit_points=min_fit_points,
         posterior_prior_error_scale=float(posterior_prior_error_scale),
         fit_error_mode=fit_error_mode,
         part=part,
@@ -2114,6 +2075,17 @@ def run_fourier_transform(
             roughness_weight=float(scheme_scan["roughness_weight"]),
             resample_mode=resample_mode,
         )
+    else:
+        fit_arr = [
+            float(item["mean_fit_chi2"]) / max(float(item["mean_fit_dof"]), 1.0)
+            for item in result["scheme_results"]
+        ]
+        result["scheme_weights"] = [1.0] if len(fit_arr) == 1 else [1.0 / len(fit_arr)] * len(fit_arr)
+        result["scheme_fit_chi2_dof"] = fit_arr
+        result["scheme_roughness"] = [0.0] * len(fit_arr)
+        result["scheme_scores"] = fit_arr
+        result["best_scheme_index"] = int(np.argmin(fit_arr)) if fit_arr else 0
+        result["best_scheme_label"] = result["scheme_labels"][result["best_scheme_index"]]
     _apply_fourier_output_scale(result, float(output_scale))
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
     store[out] = result
