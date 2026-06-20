@@ -27,6 +27,7 @@
     "root_directory": "~/lamet-agent",
     "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
     "target_observable": "pdf", // "pdf" or "da"
+    "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs"
     // Only the stages to run, in execution order. correlator_analysis and
     // renormalization are intentionally absent (their products come in as
@@ -67,7 +68,6 @@
   "stages": {
     "fourier_transform": {
       "defaults": {
-        "observable": "pion_quark_quasi_pdf",
         "order": "NLA",
         "part": "re", // "re" or "im"
         "coord_unit": "lattice", // "lattice" or "fm"

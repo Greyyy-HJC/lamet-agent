@@ -87,9 +87,9 @@
   ],
   "kernels": [
     {
-      "kernel_id": "matching_identity",
-      "function": "lamet_agent.kernels:identity_kernel",
-      "description": "Identity kernel for workflow checks on converted CG qTMDPDF correlators."
+      "kernel_id": "unpolarized_gT",
+      "function": "lamet_agent.kernels:CG_gt_PDF_msbar",
+      "description": "Unpolarized matching kernel for workflow checks on converted CG qTMDPDF correlators."
     }
   ],
   "metadata": {

@@ -56,9 +56,9 @@ Strategy:
 #     under "Available tools" -------------------------------------------------
 TOOL_CATALOG = {
     "list_kernels": "list_kernels() -> the registered kernel_ids you may pass to build_matching_kernel.",
-    "load_quasi_pdf": "load_quasi_pdf(path, component='re'|'im') -> read the quasi-PDF and its x grid (stores x_ls, quasi_gv); auto-detects the Fourier EnsembleData NetCDF artifact or a legacy/simple x_ls/quasi_samples npz.",
+    "load_quasi_pdf": "load_quasi_pdf(path, component='re'|'im') -> read the quasi-PDF and its x grid (stores x_ls, quasi_ed); auto-detects the Fourier EnsembleData NetCDF artifact or a legacy/simple x_ls/quasi_samples npz.",
     "build_matching_kernel": "build_matching_kernel(kernel_id, pz_gev, mu=2.0, zs_fm=None, grid='x_ls') -> the (nx, ny) NLO matching matrix for the chosen operator; the scheme follows the kernel_id suffix (_msbar, _ratio, _hybrid); hybrid kernels require zs_fm (z_s in fm) and form zspz = zs_fm * pz_gev / GEV_FM; x grid must avoid x=0.",
-    "apply_matching": "apply_matching(kernel='kernel_matrix', quasi='quasi_gv') -> lightcone_gv = kernel @ quasi with gvar error propagation.",
+    "apply_matching": "apply_matching(kernel='kernel_matrix', quasi='quasi_ed') -> lightcone_gv = kernel @ quasi with gvar error propagation.",
     "plot_matched_pdf": "plot_matched_pdf(save_path=None) -> quasi vs light-cone f(x) comparison as error bands, written to artifacts/matched_pdf.pdf.",
     "report_matching_result": "report_matching_result(save_path=None) -> write an English report at artifacts/report_matching.md and a Chinese companion at artifacts/report_matching_CN.md with the chosen kernel/operator/scheme, pz_gev/mu (and zspz for hybrid), the matching convolution formula, scheme explanation, norm-preservation and quasi-vs-light-cone deviation diagnostics, the embedded comparison plot, and artifact paths.",
 }

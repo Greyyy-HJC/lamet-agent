@@ -23,6 +23,7 @@
     "root_directory": "~/lamet-agent",
     "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
     "target_observable": "pdf", // "pdf" or "da"
+    "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs" — shared by correlator and fourier stages
     // Global stage ORDER only. Which data sets flow through each stage is
     // decided by the jobs declared under "stages", not here.
@@ -338,7 +339,6 @@
     },
     "fourier_transform": {
       "defaults": {
-        "observable": "pion_quark_quasi_pdf",
         "order": "NLA",
         "component": "re", // "re" or "im"
         "coord_unit": "lattice", // "lattice" or "fm"

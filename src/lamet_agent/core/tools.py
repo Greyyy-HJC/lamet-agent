@@ -51,7 +51,7 @@ _FOURIER_RUN_KEYS = frozenset(
 )
 _MATCHING_PLOT_KEYS = frozenset({"save_path", "xlim", "ylim"})
 _MATCHING_LOAD_KEYS = frozenset({"quasi_input", "component"})
-_MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "pz_gev", "mu"})
+_MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "pz_gev", "mu", "zs_fm"})
 _CORRELATOR_PT2_TOOLS = frozenset({"inspect_correlator_scale", "tune_ground_state"})
 _CORRELATOR_GRID_TOOLS = frozenset({"tune_bare_matrix", "fit_bare_matrix_grid"})
 _CORRELATOR_PT2_KEYS = frozenset({"pt2_path", "pt2_windows", "nstate", "svdcut", "resample_mode", "n_boot", "seed"})
