@@ -37,7 +37,7 @@
       {
         "correlator_id": "a060_x_p0_2pt",
         "kind": "2pt", // "2pt" or "3pt"
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp30_CG52bxp30_2pt.h5", // relative to the root directory
+        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp00_CG52bxp00_2pt.h5", // relative to the root directory
         "ensemble": "HISQa060",
         "hadron": "pion", // "pion" or "proton"
         "gfix": "CG", // "CG" or "GI"
@@ -51,7 +51,7 @@
       {
         "correlator_id": "a060_x_p0_3pt_ts8",
         "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
+        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
         "ensemble": "HISQa060",
         "hadron": "pion",
         "gfix": "CG",
@@ -71,7 +71,7 @@
       {
         "correlator_id": "a060_x_p0_3pt_ts10",
         "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
+        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
         "ensemble": "HISQa060",
         "hadron": "pion",
         "gfix": "CG",
@@ -91,7 +91,7 @@
       {
         "correlator_id": "a060_x_p0_3pt_ts12",
         "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
+        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
         "ensemble": "HISQa060",
         "hadron": "pion",
         "gfix": "CG",
@@ -374,6 +374,10 @@
             2.0
           ],
           "roughness_weight": 1.0,
+          // Fourier scheme policy lives inside scheme_scan:
+          //   true  -> run all scanned schemes and combine them by model averaging.
+          //   false -> use the sample-average matrix element to select one best
+          //            zmin/zmax scheme, then apply only that scheme to all samples.
           "model_average": true,
           "max_schemes": 200
         }
