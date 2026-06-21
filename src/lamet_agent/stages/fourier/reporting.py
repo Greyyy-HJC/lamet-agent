@@ -465,6 +465,10 @@ def _settings_table(
     k_grid: np.ndarray,
     language: str,
 ) -> list[str]:
+    try:
+        z_ext_text = f"$z_{{\\rm ext}}^{{\\rm max}}={_fmt(float(z_ext_max))}$"
+    except (TypeError, ValueError):
+        z_ext_text = str(z_ext_max)
     rows = [
         ("Observable", f"`{observable}` ({observable_text})"),
         ("Tail method/order", f"`{method}` / `{order}`"),
@@ -475,7 +479,7 @@ def _settings_table(
         ("Weak-prior scale", f"$p_i=\\bar p_i\\pm s\\sigma_{{p_i}}$ with $s={_fmt(result.get('posterior_prior_error_scale'))}$"),
         ("Output scale", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
         ("Best fit range", fit_range_text),
-        ("Extension endpoint", f"$z_{{\\rm ext}}^{{\\rm max}}={_fmt(z_ext_max)}$"),
+        ("Extension endpoint", z_ext_text),
         ("Fourier grid", _format_grid(k_grid, language=language)),
     ]
     if language == "zh":
@@ -489,7 +493,7 @@ def _settings_table(
             ("弱先验尺度", f"$p_i=\\bar p_i\\pm s\\sigma_{{p_i}}$，其中 $s={_fmt(result.get('posterior_prior_error_scale'))}$"),
             ("输出缩放", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
             ("最优拟合区间", fit_range_text),
-            ("外推终点", f"$z_{{\\rm ext}}^{{\\rm max}}={_fmt(z_ext_max)}$"),
+            ("外推终点", z_ext_text),
             ("傅立叶网格", _format_grid(k_grid, language=language)),
         ]
     header = "| Quantity | Value |" if language == "en" else "| 条目 | 数值或设置 |"
