@@ -224,6 +224,7 @@ def load_quasi_pdf(
     # read the data back from here.
     store[grid_out] = x_ls
     store[quasi_out] = quasi_ed
+    store["matching_component"] = component
     return {
         "quasi_out": quasi_out,
         "grid_out": grid_out,
@@ -298,6 +299,7 @@ def build_matching_kernel(
         )
 
     store[out] = matrix  # apply_matching reads it back under this name
+    store["matching_kernel_info"] = {"kernel_id": kernel_id, "pz_gev": pz_gev, "mu": mu, "zspz": zspz}
     return {
         "out": out,
         "kernel_id": kernel_id,
@@ -374,6 +376,7 @@ def apply_matching(
     artifact.parent.mkdir(parents=True, exist_ok=True)
     lightcone_ed.to_netcdf(artifact)
     store["output"] = lightcone_ed
+    store["matching_artifact"] = str(artifact)
 
     # Summarize with the sample-built central value (mean over samples) so the
     # agent can sanity-check the result without re-reading the store.
@@ -530,6 +533,8 @@ def report_matching_result(
     }
 
     artifacts: dict[str, Any] = {}
+    if isinstance(store.get("matching_artifact"), str):
+        artifacts["lightcone_artifact"] = store["matching_artifact"]
     if isinstance(store.get("matching_plot"), dict):
         artifacts["matched_plot"] = store["matching_plot"].get("path")
 

@@ -14,7 +14,7 @@ fit quality and roughness; scheme_scan.model_average controls their combination.
 
 TOOL_CATALOG = {
     "load_renormalized_matrix_element_samples": "Load the external NetCDF source for a partial run; skip this for an in-memory upstream input.",
-    "run_fourier_transform": "Run tail fits, Fourier transform, plots, reports, and write the job NetCDF to store['output'].",
+    "run_fourier_transform": "Run tail fits, Fourier transform, plots, and write the job NetCDF to store['output']; the runner writes one stage report after all Fourier jobs.",
 }
 
 

@@ -31,6 +31,28 @@ FORMULA_REFERENCES = {
     "pion_gluon_quasi_pdf": ("arXiv:2601.12189 Appendix F Eqs. (F.8)/(F.9)", "pion gluon real tail"),
 }
 
+FOURIER_ARTIFACT_DESCRIPTIONS = {
+    "fourier_artifact": ("Fourier result samples and diagnostics", "傅立叶变换后的样本、均值、误差和 scheme 权重"),
+    "fit_info_artifact": ("Tail-fit parameters and fit-quality diagnostics", "长程外推拟合参数和拟合质量诊断"),
+    "fourier_plot": ("PDF plot of the Fourier-space result", "傅立叶变换结果 PDF 图"),
+    "fourier_plot_image": ("PNG companion for Markdown embedding", "供 Markdown 嵌入的傅立叶结果 PNG 图"),
+    "extension_plot_re": ("PDF plot of real-part extension quality", "实部长程外推质量 PDF 图"),
+    "extension_plot_re_image": ("PNG companion for real-part extension quality", "供 Markdown 嵌入的实部长程外推 PNG 图"),
+    "extension_plot_im": ("PDF plot of imaginary-part extension quality", "虚部长程外推质量 PDF 图"),
+    "extension_plot_im_image": ("PNG companion for imaginary-part extension quality", "供 Markdown 嵌入的虚部长程外推 PNG 图"),
+}
+
+FOURIER_ARTIFACT_ORDER = (
+    "fourier_artifact",
+    "fit_info_artifact",
+    "fourier_plot",
+    "fourier_plot_image",
+    "extension_plot_re",
+    "extension_plot_re_image",
+    "extension_plot_im",
+    "extension_plot_im_image",
+)
+
 
 def _fmt(value: Any, digits: int = 4) -> str:
     if value is None:
@@ -263,6 +285,7 @@ def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
     weights = np.asarray(result.get("scheme_weights", []), dtype=float)
     roughness = np.asarray(result.get("scheme_roughness", []), dtype=float)
     labels = list(result.get("scheme_labels", []))
+    selection_mode = str(result.get("selection_mode", "model_average"))
     lines: list[str] = []
 
     if failures.size:
@@ -278,7 +301,40 @@ def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
             if language == "zh"
             else f"- $\\chi^2/{{\\rm dof}}$ range: {_fmt(np.min(finite))} to {_fmt(np.max(finite))}."
         )
-    if weights.size:
+    if selection_mode == "sample_average_best_scheme":
+        candidate_labels = list(result.get("candidate_scheme_labels", []))
+        candidate_weights = np.asarray(result.get("candidate_scheme_weights", []), dtype=float)
+        candidate_chi2 = np.asarray(result.get("candidate_scheme_fit_chi2_dof", []), dtype=float)
+        selected = int(result.get("selected_candidate_index", 0) or 0)
+        selected_label = str(result.get("selected_candidate_label", candidate_labels[selected] if selected < len(candidate_labels) else selected))
+        if language == "zh":
+            lines.append(
+                f"- `model_average=false` 时，代码先用 sample-average 矩阵元扫描所有候选 scheme，"
+                f"按 $\\chi_s^2/{{\\rm dof}}$ 选择拟合质量最好的窗口；随后只对选中的 scheme 跑全部重采样样本。"
+                f"本次选中 {selected_label}。"
+            )
+        else:
+            lines.append(
+                f"- With `model_average=false`, the code first scans all candidate schemes using the sample-average matrix element, "
+                f"selects the window with the best $\\chi_s^2/{{\\rm dof}}$, and then runs all resampled Fourier transforms only for that scheme. "
+                f"The selected scheme is {selected_label}."
+            )
+        if candidate_weights.size:
+            best = int(np.argmax(candidate_weights))
+            label = candidate_labels[best] if best < len(candidate_labels) else str(best)
+            lines.append(
+                f"- 候选 scheme 权重是一热选择；{label} 的权重为 {_fmt(candidate_weights[best])}，其它候选权重为 0。"
+                if language == "zh"
+                else f"- Candidate-scheme weights are one-hot; {label} has weight {_fmt(candidate_weights[best])}, and all other candidates have weight 0."
+            )
+        if candidate_chi2.size and np.any(np.isfinite(candidate_chi2)):
+            finite = candidate_chi2[np.isfinite(candidate_chi2)]
+            lines.append(
+                f"- 候选 scheme 的 $\\chi^2/{{\\rm dof}}$ 范围：{_fmt(np.min(finite))} 到 {_fmt(np.max(finite))}。"
+                if language == "zh"
+                else f"- Candidate $\\chi^2/{{\\rm dof}}$ range: {_fmt(np.min(finite))} to {_fmt(np.max(finite))}."
+            )
+    elif weights.size:
         best = int(np.argmax(weights))
         label = labels[best] if best < len(labels) else str(best)
         if language == "zh":
@@ -301,7 +357,7 @@ def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
                 f"Lower scores are preferred: better fits, smoother Fourier curves, and fewer failures get larger weights. "
                 f"The highest-weight scheme is {label} with weight {_fmt(weights[best])}."
             )
-    if roughness.size and np.any(np.isfinite(roughness)):
+    if selection_mode != "sample_average_best_scheme" and roughness.size and np.any(np.isfinite(roughness)):
         if language == "zh":
             lines.append(
                 f"- 傅立叶结果粗糙度分数 $R_s$ 是对输出 $x$ 空间曲线局部二阶差分的归一化惩罚，"
@@ -458,6 +514,8 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attr `scheme_roughness`", "Fourier roughness score $R_s$ used in model averaging.", "模型平均中使用的 Fourier 粗糙度分数 $R_s$。"),
             ("attr `scheme_scores`", "Total scheme score $S_s$ used to compute $W_s$.", "用于计算 $W_s$ 的总评分 $S_s$。"),
             ("attr `best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
+            ("attrs `candidate_scheme_*`", "Full candidate-window diagnostics when `model_average=false` selects one scheme before fitting all samples.", "`model_average=false` 时先选一个 scheme 再跑所有样本；这些字段保存完整候选窗口诊断。"),
+            ("attr `selection_mode`", "Scheme-selection mode: model averaging or sample-average best-scheme selection.", "scheme 选择模式：模型平均或 sample-average 最优窗口选择。"),
             ("attrs `pz_gev`, `pz_prime_gev`, `a_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
             ("attrs `method`, `order`, `observable`, `part`, `output_scale`", "Physics/formula choices and final output normalization.", "物理公式选择和最终输出归一化。"),
         ]
@@ -472,6 +530,7 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attrs `mean_fit_params`, `mean_fit_chi2`, `mean_fit_dof`, `mean_fit_q`", "Initial sample-average fit results used to seed resampled fits.", "用于初始化重采样拟合的样本平均拟合结果。"),
             ("attrs `scheme_weights`, `scheme_fit_chi2_dof`, `scheme_roughness`, `scheme_scores`", "Scheme scoring diagnostics used in model averaging.", "模型平均中使用的 scheme 评分诊断。"),
             ("attr `best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
+            ("attrs `candidate_scheme_*`, `selection_mode`", "Candidate diagnostics and selection mode when `model_average=false`.", "`model_average=false` 时的候选窗口诊断和选择模式。"),
         ]
     header = "| Field | Meaning |" if language == "en" else "| 字段 | 含义 |"
     lines = [header, "|---|---|"]
@@ -517,33 +576,13 @@ def _artifact_help(*, language: str) -> list[str]:
 
 
 def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
-    descriptions = {
-        "fourier_artifact": ("Fourier result samples and diagnostics", "傅立叶变换后的样本、均值、误差和 scheme 权重"),
-        "fit_info_artifact": ("Tail-fit parameters and fit-quality diagnostics", "长程外推拟合参数和拟合质量诊断"),
-        "fourier_plot": ("PDF plot of the Fourier-space result", "傅立叶变换结果 PDF 图"),
-        "fourier_plot_image": ("PNG companion for Markdown embedding", "供 Markdown 嵌入的傅立叶结果 PNG 图"),
-        "extension_plot_re": ("PDF plot of real-part extension quality", "实部长程外推质量 PDF 图"),
-        "extension_plot_re_image": ("PNG companion for real-part extension quality", "供 Markdown 嵌入的实部长程外推 PNG 图"),
-        "extension_plot_im": ("PDF plot of imaginary-part extension quality", "虚部长程外推质量 PDF 图"),
-        "extension_plot_im_image": ("PNG companion for imaginary-part extension quality", "供 Markdown 嵌入的虚部长程外推 PNG 图"),
-    }
-    order = (
-        "fourier_artifact",
-        "fit_info_artifact",
-        "fourier_plot",
-        "fourier_plot_image",
-        "extension_plot_re",
-        "extension_plot_re_image",
-        "extension_plot_im",
-        "extension_plot_im_image",
-    )
     header = "| File | Description |" if language == "en" else "| 文件名 | 文件描述 |"
     lines = [header, "|---|---|"]
-    for key in order:
+    for key in FOURIER_ARTIFACT_ORDER:
         value = artifacts.get(key)
         if not value:
             continue
-        desc = descriptions[key][1 if language == "zh" else 0]
+        desc = FOURIER_ARTIFACT_DESCRIPTIONS[key][1 if language == "zh" else 0]
         lines.append(f"| `{value}` | {desc} |")
     if len(lines) == 2:
         lines.append("| not available | not available |")
@@ -678,4 +717,176 @@ def write_fourier_report(
         build_fourier_report_markdown(result=result, summary=summary, artifacts=report_artifacts, language="zh"),
         encoding="utf-8",
     )
+    return {"en": output, "zh": cn_output}
+
+
+def write_fourier_stage_report(
+    *,
+    jobs: list[dict[str, Any]],
+    path: str | Path,
+) -> dict[str, Path]:
+    """Write one bilingual report summarizing all Fourier jobs in a stage."""
+    output = Path(path)
+    cn_output = _cn_report_path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    cn_output.parent.mkdir(parents=True, exist_ok=True)
+    first = jobs[0]["result"]
+    for language, target in (("en", output), ("zh", cn_output)):
+        observable = str(first.get("observable", ""))
+        observable_text = OBSERVABLE_TEXT.get(observable, observable or "not recorded")
+        method = str(first.get("method", "not recorded"))
+        order = str(first.get("order", "not recorded"))
+        k_grid = np.asarray(first.get("k_grid", []), dtype=float)
+        z_ext_values = []
+        for item in jobs:
+            result = item["result"]
+            schemes = list(result.get("scheme_results", []))
+            best_idx = int(result.get("best_scheme_index", 0) or 0)
+            if schemes and 0 <= best_idx < len(schemes):
+                z_ext_values.append(schemes[best_idx].get("z_ext_max"))
+        finite_z_ext = [float(value) for value in z_ext_values if value is not None]
+        same_z_ext = bool(finite_z_ext) and np.allclose(finite_z_ext, finite_z_ext[0])
+        fit_range_text = "见下方各动量诊断表" if language == "zh" else "see the per-momentum diagnostics below"
+        z_ext_max = finite_z_ext[0] if same_z_ext else ("见下方各动量诊断表" if language == "zh" else "see the per-momentum diagnostics below")
+        transform_text = (
+            "$$\n"
+            "q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}e^{ix\\lambda}h(\\lambda),\\qquad \\lambda=P_z z.\n"
+            "$$"
+        )
+        lines = [
+            "# Fourier Transform Stage Report" if language == "en" else "# 傅立叶变换阶段报告",
+            "",
+            f"This report summarizes all Fourier-transform jobs in this stage for `{observable}` ({observable_text})."
+            if language == "en"
+            else f"本报告汇总当前 Fourier transform 阶段中 `{observable}`（{observable_text}）的所有动量。",
+            "",
+            "## Job Summary" if language == "en" else "## Job 汇总",
+            "| job | $P_z$ | best scheme | output | plot |"
+            if language == "en"
+            else "| job | $P_z$ | 最优 scheme | 输出 | 图像 |",
+            "|---|---:|---|---|---|",
+        ]
+        for item in jobs:
+            result = item["result"]
+            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            lines.append(
+                f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | "
+                f"{result.get('best_scheme_label', 'n/a')} | "
+                f"{artifacts.get('fourier_artifact', 'n/a')} | "
+                f"{artifacts.get('fourier_plot', 'n/a')} |"
+            )
+        lines.extend(
+            [
+                "",
+                "## Analysis Setup" if language == "en" else "## 分析设置",
+                *_settings_table(
+                    result=first,
+                    observable=observable,
+                    observable_text=observable_text,
+                    method=method,
+                    order=order,
+                    fit_range_text=fit_range_text,
+                    z_ext_max=z_ext_max,
+                    k_grid=k_grid,
+                    language=language,
+                ),
+                "",
+                "### Field Definitions" if language == "en" else "### 条目解释",
+                *_field_definitions(language=language),
+                "",
+                *_projection_text(first, language=language),
+                "",
+                "## Large-Distance Extrapolation" if language == "en" else "## 长程外推形式",
+                _tail_formula_text(first, language=language),
+                "",
+                "## Fourier Transform Method" if language == "en" else "## 傅立叶变换方法",
+                transform_text,
+                "",
+                "## Fit Quality and Scheme Diagnostics" if language == "en" else "## 拟合质量与 Scheme 诊断",
+            ]
+        )
+        if str(first.get("selection_mode", "model_average")) == "sample_average_best_scheme":
+            lines.append(
+                "`model_average=false` 时，代码先用 sample-average 矩阵元选择一个最优候选窗口，再把该窗口用于所有重采样样本。"
+                if language == "zh"
+                else "With `model_average=false`, the sample-average matrix element selects one best candidate window, which is then applied to all resampled samples."
+            )
+        else:
+            lines.append(
+                "Model averaging 使用 $S_s=\\chi_s^2/{\\rm dof}+w_{\\rm rough}R_s+100N_s^{\\rm fail}$ 给每个 scheme 评分，并用 $W_s=\\exp[-(S_s-S_{\\rm min})/2]/\\sum_t\\exp[-(S_t-S_{\\rm min})/2]$ 归一化权重。分数越低的 scheme 权重越大。"
+                if language == "zh"
+                else "Model averaging scores each scheme with $S_s=\\chi_s^2/{\\rm dof}+w_{\\rm rough}R_s+100N_s^{\\rm fail}$ and normalizes weights as $W_s=\\exp[-(S_s-S_{\\rm min})/2]/\\sum_t\\exp[-(S_t-S_{\\rm min})/2]$. Lower-scored schemes receive larger weights."
+            )
+        lines.extend(
+            [
+                "",
+                "| job | $P_z$ | best scheme | best fit range | $\\chi^2/{\\rm dof}$ range | fit failures |"
+                if language == "en"
+                else "| job | $P_z$ | 最优 scheme | 最优拟合区间 | $\\chi^2/{\\rm dof}$ 范围 | 拟合失败次数 |",
+                "|---|---:|---|---|---:|---:|",
+            ]
+        )
+        for item in jobs:
+            result = item["result"]
+            schemes = list(result.get("scheme_results", []))
+            best_idx = int(result.get("best_scheme_index", 0) or 0)
+            best_scheme = schemes[best_idx] if schemes and 0 <= best_idx < len(schemes) else {}
+            chi2 = np.asarray(result.get("scheme_fit_chi2_dof", []), dtype=float)
+            finite = chi2[np.isfinite(chi2)]
+            chi_text = "n/a" if finite.size == 0 else f"{_fmt(np.min(finite))} to {_fmt(np.max(finite))}"
+            lines.append(
+                f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | "
+                f"{result.get('best_scheme_label', 'n/a')} | "
+                f"{_format_fit_range(best_scheme.get('fit_range'), language=language)} | "
+                f"{chi_text} | "
+                f"{int(np.sum(np.asarray(result.get('fit_failures', []), dtype=float)))} |"
+            )
+        lines.extend(["", *_smooth_explanation(first, language=language)])
+        for item in jobs:
+            result = item["result"]
+            lines.extend(
+                [
+                    "",
+                    f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV",
+                    "",
+                    *_scheme_table(result, language=language),
+                ]
+            )
+        lines.append("")
+        lines.append("## Figures and Visual Assessment" if language == "en" else "## 图像与可视化评估")
+        for item in jobs:
+            result = item["result"]
+            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV"])
+            for key, title in (
+                ("fourier_plot", "Fourier result" if language == "en" else "傅立叶变换结果图"),
+                ("extension_plot_re", "Real-part extension" if language == "en" else "实部长程外推图"),
+                ("extension_plot_im", "Imaginary-part extension" if language == "en" else "虚部长程外推图"),
+            ):
+                image_value = artifacts.get(f"{key}_image") or artifacts.get(key)
+                pdf_value = artifacts.get(key)
+                lines.append("")
+                lines.append(f"#### {title}")
+                if image_value:
+                    lines.append(f"![{title}]({image_value})")
+                    if pdf_value:
+                        lines.append(f"[PDF artifact]({pdf_value})")
+                else:
+                    lines.append("未生成。" if language == "zh" else "Not available.")
+        lines.extend(["", "## Output Artifacts" if language == "en" else "## 输出文件"])
+        lines.extend(
+            [
+                "| File | Description |" if language == "en" else "| 文件名 | 文件描述 |",
+                "|---|---|",
+            ]
+        )
+        for item in jobs:
+            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            for key in FOURIER_ARTIFACT_ORDER:
+                value = artifacts.get(key)
+                if value:
+                    desc = FOURIER_ARTIFACT_DESCRIPTIONS[key]
+                    lines.append(f"| [{Path(value).name}]({value}) | `{item['job_id']}`: {desc[1 if language == 'zh' else 0]} |")
+        lines.extend(["", *_artifact_help(language=language)])
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"en": output, "zh": cn_output}

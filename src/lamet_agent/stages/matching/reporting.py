@@ -31,6 +31,13 @@ SCHEME_TEXT = {
     "hybrid": ("hybrid", "arXiv:2602.11283 Eqs. (2.19)/(2.20)"),
 }
 
+MATCHING_ARTIFACT_DESCRIPTIONS = {
+    "lightcone_artifact": ("Matched light-cone PDF samples (EnsembleData NetCDF)", "匹配后的光锥 PDF 样本（EnsembleData NetCDF）"),
+    "matched_plot": ("PDF plot comparing quasi and light-cone PDFs", "quasi 与光锥 PDF 对比 PDF 图"),
+}
+
+MATCHING_ARTIFACT_ORDER = ("lightcone_artifact", "matched_plot")
+
 
 def _fmt(value: Any, digits: int = 4) -> str:
     if value is None:
@@ -100,7 +107,7 @@ def _md_path(value: Any, *, base_dir: Path) -> str | None:
 
 def _markdown_artifacts(artifacts: dict[str, Any] | None, *, base_dir: Path) -> dict[str, Any]:
     output = dict(artifacts or {})
-    for key in ("matched_plot", "lightcone_npz"):
+    for key in ("matched_plot", "lightcone_artifact"):
         if key in output:
             output[key] = _md_path(output[key], base_dir=base_dir)
     return output
@@ -123,13 +130,18 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     scheme_en, _scheme_ref = SCHEME_TEXT.get(scheme, (scheme or "not recorded", ""))
     x_grid = np.asarray(data.get("x_grid", []), dtype=float)
     zspz = data.get("zspz")
+    pz_value = data.get("pz_gev")
+    try:
+        pz_text = f"$P_z={_fmt(float(pz_value))}$ GeV"
+    except (TypeError, ValueError):
+        pz_text = str(pz_value or "not recorded")
 
     if language == "zh":
         rows = [
             ("矩阵元/算符", f"`{kernel_id}`（{op_zh}）"),
             ("匹配方案", f"`{scheme}`（{scheme_en}）"),
             ("夸克/胶子分量", f"`{data.get('component', 'not recorded')}`"),
-            ("强子动量", f"$P_z={_fmt(data.get('pz_gev'))}$ GeV"),
+            ("强子动量", pz_text),
             ("重整化标度", f"$\\mu={_fmt(data.get('mu'))}$ GeV"),
         ]
         if zspz is not None:
@@ -147,7 +159,7 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
             ("Operator / kernel", f"`{kernel_id}` ({op_en})"),
             ("Matching scheme", f"`{scheme}` ({scheme_en})"),
             ("Quark/gluon component", f"`{data.get('component', 'not recorded')}`"),
-            ("Hadron momentum", f"$P_z={_fmt(data.get('pz_gev'))}$ GeV"),
+            ("Hadron momentum", pz_text),
             ("Renormalization scale", f"$\\mu={_fmt(data.get('mu'))}$ GeV"),
         ]
         if zspz is not None:
@@ -278,18 +290,13 @@ def _figure_block(artifacts: dict[str, Any], *, language: str) -> list[str]:
 
 
 def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
-    descriptions = {
-        "matched_plot": ("PDF plot comparing quasi and light-cone PDFs", "quasi 与光锥 PDF 对比 PDF 图"),
-        "lightcone_npz": ("Matched light-cone PDF samples (EnsembleData npz)", "匹配后的光锥 PDF 样本（EnsembleData npz）"),
-    }
-    order = ("lightcone_npz", "matched_plot")
     header = "| File | Description |" if language == "en" else "| 文件名 | 文件描述 |"
     lines = [header, "|---|---|"]
-    for key in order:
+    for key in MATCHING_ARTIFACT_ORDER:
         value = artifacts.get(key)
         if not value:
             continue
-        desc = descriptions[key][1 if language == "zh" else 0]
+        desc = MATCHING_ARTIFACT_DESCRIPTIONS[key][1 if language == "zh" else 0]
         lines.append(f"| `{value}` | {desc} |")
     if len(lines) == 2:
         lines.append("| not available | not available |")
@@ -383,4 +390,123 @@ def write_matching_report(
         build_matching_report_markdown(result=result, artifacts=report_artifacts, language="zh"),
         encoding="utf-8",
     )
+    return {"en": output, "zh": cn_output}
+
+
+def write_matching_stage_report(
+    *,
+    jobs: list[dict[str, Any]],
+    path: str | Path,
+) -> dict[str, Path]:
+    """Write one bilingual report summarizing all matching jobs in a stage."""
+    output = Path(path)
+    cn_output = _cn_report_path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    cn_output.parent.mkdir(parents=True, exist_ok=True)
+    first = jobs[0]["result"]
+    for language, target in (("en", output), ("zh", cn_output)):
+        kernel_id = str(first.get("kernel_id", "not recorded"))
+        operator, scheme = _parse_kernel_id(kernel_id)
+        op_en, op_zh = OPERATOR_TEXT.get(operator, (operator or "not recorded",) * 2)
+        scheme_en, _ref = SCHEME_TEXT.get(scheme, (scheme or "not recorded", ""))
+        lines = [
+            "# Perturbative Matching Stage Report" if language == "en" else "# 微扰匹配阶段报告",
+            "",
+            f"This report summarizes all perturbative-matching jobs for `{kernel_id}` ({op_en}) using the `{scheme_en}` scheme."
+            if language == "en"
+            else f"本报告汇总 `{kernel_id}`（{op_zh}）在 `{scheme_en}` 方案下的所有动量匹配。",
+            "",
+            "## Job Summary" if language == "en" else "## Job 汇总",
+            "| job | kernel | $P_z$ | output | plot |"
+            if language == "en"
+            else "| job | kernel | $P_z$ | 输出 | 图像 |",
+            "|---|---|---:|---|---|",
+        ]
+        for item in jobs:
+            result = item["result"]
+            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            lines.append(
+                f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
+                f"{_fmt(result.get('pz_gev'))} | "
+                f"{artifacts.get('lightcone_artifact', 'n/a')} | "
+                f"{artifacts.get('matched_plot', 'n/a')} |"
+            )
+        setting_data = {**first, "pz_gev": "see per-momentum table" if language == "en" else "见下方动量表"}
+        lines.extend(
+            [
+                "",
+                "## Analysis Setup" if language == "en" else "## 分析设置",
+                *_settings_table(setting_data, language=language),
+                "",
+                "### Field Definitions" if language == "en" else "### 条目解释",
+                *_field_definitions(language=language),
+                "",
+                "## Matching Formula" if language == "en" else "## 匹配公式",
+                _matching_formula_text(first, language=language),
+                "",
+                *_scheme_explanation(first, language=language),
+                "",
+                "## Diagnostics and Consistency Checks" if language == "en" else "## 诊断与一致性检查",
+                "| job | $P_z$ | quasi norm | matched norm | norm change | max pointwise deviation |"
+                if language == "en"
+                else "| job | $P_z$ | quasi 归一 | 匹配后归一 | 归一变化 | 最大逐点偏差 |",
+                "|---|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in jobs:
+            result = item["result"]
+            x_grid = np.asarray(result.get("x_grid", []), dtype=float)
+            quasi_mean = np.asarray(result.get("quasi_mean", []), dtype=float)
+            lc_mean = np.asarray(result.get("lightcone_mean", []), dtype=float)
+            if x_grid.size >= 2 and quasi_mean.size == x_grid.size and lc_mean.size == x_grid.size:
+                quasi_norm = _trapz_norm(x_grid, quasi_mean)
+                lc_norm = _trapz_norm(x_grid, lc_mean)
+                rel = abs(lc_norm - quasi_norm) / abs(quasi_norm) if quasi_norm != 0.0 else float("nan")
+                denom = np.where(np.abs(quasi_mean) > 1e-12, np.abs(quasi_mean), np.nan)
+                max_dev = float(np.nanmax(np.abs(lc_mean - quasi_mean) / denom))
+                lines.append(
+                    f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | {_fmt(quasi_norm)} | "
+                    f"{_fmt(lc_norm)} | {_fmt(100 * rel)}% | {_fmt(100 * max_dev)}% |"
+                )
+            else:
+                lines.append(f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | n/a | n/a | n/a | n/a |")
+        lines.extend(
+            [
+                "",
+                "The table compares the quasi-PDF and matched light-cone PDF for each momentum. Moderate norm changes are expected from the NLO kernel; large oscillations or very large pointwise deviations usually indicate an x-grid or momentum-convention issue."
+                if language == "en"
+                else "上表逐动量比较 quasi-PDF 与匹配后光锥 PDF。NLO 匹配会带来有限修正；若逐点偏差很大或曲线剧烈振荡，通常需要检查 x 网格或动量约定。",
+                "",
+                "## Figures and Visual Assessment" if language == "en" else "## 图像与可视化评估",
+            ]
+        )
+        for item in jobs:
+            result = item["result"]
+            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            plot = artifacts.get("matched_plot")
+            lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV"])
+            if plot:
+                lines.append(
+                    f"[Quasi vs light-cone comparison (PDF)]({plot})"
+                    if language == "en"
+                    else f"[quasi 与光锥 PDF 对比图（PDF）]({plot})"
+                )
+            else:
+                lines.append("未生成。" if language == "zh" else "Not available.")
+        lines.extend(
+            [
+                "",
+                "## Output Artifacts" if language == "en" else "## 输出文件",
+                "| File | Description |" if language == "en" else "| 文件名 | 文件描述 |",
+                "|---|---|",
+            ]
+        )
+        for item in jobs:
+            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            for key in MATCHING_ARTIFACT_ORDER:
+                value = artifacts.get(key)
+                if value:
+                    desc = MATCHING_ARTIFACT_DESCRIPTIONS[key]
+                    lines.append(f"| [{Path(value).name}]({value}) | `{item['job_id']}`: {desc[1 if language == 'zh' else 0]} |")
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"en": output, "zh": cn_output}

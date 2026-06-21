@@ -109,8 +109,8 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert Path(run["plot_re"]).with_suffix(".png").is_file()
     assert Path(run["plot_im"]).is_file()
     assert Path(run["plot_im"]).with_suffix(".png").is_file()
-    assert Path(run["report"]).is_file()
-    assert Path(run["report_cn"]).is_file()
+    assert run["report"] is None
+    assert run["report_cn"] is None
     fit_data = EnsembleData.from_netcdf(run["fit_info_artifact"])
     assert fit_data.dims == ["scheme", "parameter"]
     assert fit_data.resample == "bootstrap"
@@ -559,6 +559,39 @@ def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypat
     assert np.isclose(sum(summary["scheme_weights"]), 1.0)
     assert len(summary["scheme_fit_chi2_dof"]) == 4
     assert len(summary["scheme_roughness"]) == 4
+
+
+def test_fourier_model_average_false_selects_one_scheme_from_mean_scan(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    _write_npz(data_path)
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+
+    run = run_fourier_transform(
+        store,
+        k_grid=[-0.6, -0.3, 0.0, 0.3, 0.6],
+        scheme_scan={
+            "zmin_values": [1.0, 2.0],
+            "zmax_values": [3.0, 4.0],
+            "z_ext_max": 5.0,
+            "smooth": "linear",
+            "model_average": False,
+        },
+        method="GI",
+        order="LA",
+    )
+    result = store["fourier_result"]
+
+    assert run["n_schemes"] == 1
+    assert result["selection_mode"] == "sample_average_best_scheme"
+    assert result["scheme_weights"] == [1.0]
+    assert len(result["candidate_scheme_labels"]) == 4
+    assert len(result["candidate_scheme_fit_chi2_dof"]) == 4
+    assert np.isclose(sum(result["candidate_scheme_weights"]), 1.0)
+    assert result["candidate_scheme_weights"].count(1.0) == 1
+    assert result["selected_candidate_label"] in result["candidate_scheme_labels"]
+    assert store["fourier_result_data"].values.shape == (3, 5)
 
 
 def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None:

@@ -10,7 +10,8 @@ quasi-distribution while preserving every resampled sample.
 2. Call run_fourier_transform once. Job defaults/params and source metadata supply
    k_grid, scheme_scan, method, observable, order, part, coordinate units, lattice
    spacing, momentum, output paths, and fit controls. Do not override them.
-3. The run tool writes the primary NetCDF, fit-info NetCDF, plots, and bilingual
-   reports and registers store['output']. Finish by reporting those paths and the
-   best scheme diagnostics; do not call the individual plot/report tools again.
+3. The run tool writes the primary NetCDF, fit-info NetCDF, plots, and registers
+   store['output']. A single bilingual stage report is written after all Fourier
+   jobs finish. Finish by reporting the NetCDF/plot paths and best scheme
+   diagnostics; do not call the individual plot/report tools again.
 """.strip()

@@ -20,7 +20,7 @@ TOOL_CATALOG = {
     "build_matching_kernel": "Build the manifest-selected NLO matching matrix.",
     "apply_matching": "Apply the kernel sample by sample and write the job NetCDF to store['output'].",
     "plot_matched_pdf": "Plot quasi and matched PDFs.",
-    "report_matching_result": "Write English and Chinese matching reports.",
+    "report_matching_result": "Regenerate an optional per-job English/Chinese report; the runner writes one stage report after all matching jobs.",
 }
 
 

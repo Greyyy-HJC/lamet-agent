@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from .core.llm import LlmSession, make_llm_session
 from .core.prompting import build_stage_static_prompt
 from .core.tools import filter_tool_kwargs, prepare_tool_args, resolve_stage_tools, validate_stage_inputs
@@ -193,10 +195,12 @@ def run_agent(
     session = make_llm_session(model, actions_path, api_key, llm_model, base_url)
     trace = AgentTrace(enabled=verbose)
     outputs: dict[str, Any] = {item.id: item for item in manifest.inputs.artifacts}
+    stage_reports: dict[str, dict[str, str]] = {}
 
     trace.run_begin(run_id=manifest.run_id, model=model, stages=selected)
     for stage in selected:
         state.stage_results[stage] = {}
+        stage_job_records: list[dict[str, Any]] = []
         for job in manifest.stages[stage].jobs:
             issues = validate_stage_inputs(stage, manifest, job)
             if issues:
@@ -231,8 +235,67 @@ def run_agent(
                 break
             if "output" in store:
                 outputs[job.id] = store["output"]
+            if stage == "fourier_transform" and "fourier_result" in store:
+                stage_job_records.append(
+                    {
+                        "job_id": job.id,
+                        "result": store["fourier_result"],
+                        "summary": store.get("fourier_summary"),
+                        "artifacts": {
+                            "fourier_artifact": store["fourier_result"].get("artifact"),
+                            "fit_info_artifact": store["fourier_result"].get("fit_info_artifact"),
+                            "fourier_plot": store.get("fourier_plot", {}).get("plot"),
+                            "fourier_plot_image": store.get("fourier_plot", {}).get("plot_image"),
+                            "extension_plot_re": store.get("fourier_extension_plot", {}).get("plot_re"),
+                            "extension_plot_re_image": store.get("fourier_extension_plot", {}).get("plot_re_image"),
+                            "extension_plot_im": store.get("fourier_extension_plot", {}).get("plot_im"),
+                            "extension_plot_im_image": store.get("fourier_extension_plot", {}).get("plot_im_image"),
+                        },
+                    }
+                )
+            if stage == "perturbative_matching" and "lightcone_ed" in store and "quasi_ed" in store and "x_ls" in store:
+                quasi_ed = store["quasi_ed"]
+                lightcone_ed = store["lightcone_ed"]
+                kernel_info = dict(store.get("matching_kernel_info", {}))
+                x_ls = np.asarray(store["x_ls"], dtype=float)
+                stage_job_records.append(
+                    {
+                        "job_id": job.id,
+                        "result": {
+                            **kernel_info,
+                            "component": store.get("matching_component"),
+                            "source": "job input",
+                            "resample": lightcone_ed.resample,
+                            "n_sample": int(lightcone_ed.n_sample),
+                            "n_points": int(x_ls.size),
+                            "x_grid": x_ls.tolist(),
+                            "quasi_mean": [float(v) for v in np.asarray(quasi_ed.mean)],
+                            "lightcone_mean": [float(v) for v in np.asarray(lightcone_ed.mean)],
+                        },
+                        "artifacts": {
+                            "lightcone_artifact": store.get("matching_artifact"),
+                            "matched_plot": store.get("matching_plot", {}).get("path"),
+                        },
+                    }
+                )
         if stage in state.pending_user_input:
             break
+        if stage == "fourier_transform" and stage_job_records:
+            from lamet_agent.stages.fourier.reporting import write_fourier_stage_report
+
+            paths = write_fourier_stage_report(
+                jobs=stage_job_records,
+                path=manifest.artifacts_directory / stage / "ft_report.md",
+            )
+            stage_reports[stage] = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
+        if stage == "perturbative_matching" and stage_job_records:
+            from lamet_agent.stages.matching.reporting import write_matching_stage_report
+
+            paths = write_matching_stage_report(
+                jobs=stage_job_records,
+                path=manifest.artifacts_directory / stage / "matching_report.md",
+            )
+            stage_reports[stage] = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
         state.completed_stages.append(stage)
 
     trace.run_end(action_count=len(state.actions))
@@ -247,6 +310,7 @@ def run_agent(
         "pending_user_input": state.pending_user_input,
         "actions": state.actions,
         "stage_results": state.stage_results,
+        "stage_reports": stage_reports,
         "outputs": sorted(outputs),
         "summary": json.dumps(
             {"run_id": manifest.run_id, "stage_count": len(state.completed_stages), "action_count": len(state.actions)}

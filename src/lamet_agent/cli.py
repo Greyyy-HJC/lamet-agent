@@ -20,6 +20,7 @@ _CLI_SUMMARY_KEYS = (
     "model",
     "stages",
     "completed_stages",
+    "stage_reports",
     "pending_user_input",
     "summary",
     "manifest",

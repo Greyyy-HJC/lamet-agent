@@ -389,3 +389,119 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
     assert "load_renormalized_matrix_element_samples" not in {
         action["action"].get("tool_name") for action in result["actions"]
     }
+
+
+def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkeypatch) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "demo",
+                "root_directory": ".",
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "stages": ["fourier_transform"],
+            },
+            "inputs": {
+                "artifacts": [
+                        {
+                            "id": "rn_p4",
+                            "stage": "renormalization",
+                            "path": str(tmp_path / "rn_p4.nc"),
+                            "kind": "renormalized_matrix_element",
+                            "format": "nc",
+                    }
+                ],
+                "correlators": [],
+                "kernels": [],
+            },
+            "stages": {
+                "fourier_transform": {
+                    "defaults": {},
+                    "jobs": [{"id": "ft_p4", "inputs": {"input": "rn_p4"}}],
+                },
+            },
+        }
+    )
+    manifest._root_directory = tmp_path.resolve()
+    manifest._artifacts_directory = (tmp_path / "artifacts").resolve()
+    transcript = tmp_path / "actions.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"action": "call_tool", "tool_name": "run_fourier_transform", "args": {}, "reason": "ft"}),
+                json.dumps({"action": "finish", "reason": "done"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_run_fourier_transform(store, **kwargs):
+        store["fourier_result"] = {
+            "observable": "pion_quark_quasi_pdf",
+            "method": "GI",
+            "order": "LA",
+            "part": "re",
+            "resample_mode": "jackknife",
+            "coord_unit": "fm",
+            "fit_coord_unit": "fm",
+            "pz_gev": 1.72,
+            "Lambda0": 0.1,
+            "posterior_prior_error_scale": 3.0,
+            "output_scale": 2.0,
+            "k_grid": [-0.5, 0.0, 0.5],
+            "scheme_labels": ["zmin_1_zmax_4"],
+            "scheme_weights": [1.0],
+            "scheme_fit_chi2_dof": [0.8],
+            "scheme_roughness": [0.0],
+            "scheme_scores": [0.8],
+            "fit_failures": [0],
+            "best_scheme_index": 0,
+            "best_scheme_label": "zmin_1_zmax_4",
+            "scheme_results": [
+                {
+                    "label": "zmin_1_zmax_4",
+                    "fit_range": [1.0, 4.0],
+                    "z_ext_max": 5.0,
+                    "smooth": "linear",
+                }
+            ],
+            "artifact": str(tmp_path / "fourier_result.nc"),
+            "fit_info_artifact": str(tmp_path / "fourier_fit_info.nc"),
+        }
+        store["fourier_summary"] = {"out": "fourier_summary"}
+        store["fourier_plot"] = {"plot": str(tmp_path / "fourier_result.pdf")}
+        store["fourier_extension_plot"] = {
+            "plot_re": str(tmp_path / "fourier_extension_re.pdf"),
+            "plot_im": str(tmp_path / "fourier_extension_im.pdf"),
+        }
+        store["output"] = EnsembleData(
+            ensemble=None,
+            resample="jackknife",
+            values=[np.array([0.1, 0.2, 0.1])],
+            dims=("x",),
+            coords={"x": [-0.5, 0.0, 0.5]},
+        )
+        return {"artifact": store["fourier_result"]["artifact"]}
+
+    real_tools = resolve_stage_tools
+
+    def fake_resolve(stage):
+        tools = real_tools(stage)
+        if stage == "fourier_transform":
+            tools = dict(tools)
+            tools["run_fourier_transform"] = fake_run_fourier_transform
+        return tools
+
+    monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", fake_resolve)
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+    monkeypatch.setattr("lamet_agent.agent._hydrate_external_artifact_inputs", lambda *args, **kwargs: None)
+
+    result = run_agent(manifest, model="external", actions_path=transcript)
+
+    report_path = Path(result["stage_reports"]["fourier_transform"]["report"])
+    report_cn_path = Path(result["stage_reports"]["fourier_transform"]["report_cn"])
+    assert report_path.exists()
+    assert report_cn_path.exists()
+    assert "`ft_p4`" in report_path.read_text(encoding="utf-8")
