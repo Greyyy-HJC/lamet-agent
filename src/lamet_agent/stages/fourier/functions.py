@@ -26,6 +26,9 @@ from typing import Any
 
 import gvar as gv
 import lsqfit
+import matplotlib
+
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -859,7 +862,7 @@ def _run_one_scheme(
     ft_scale_over_fit_scale: float,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
-    k_grid: np.ndarray,
+    y_grid: np.ndarray,
     scheme: dict[str, Any],
     method: str,
     order: str,
@@ -950,7 +953,7 @@ def _run_one_scheme(
     ext_im = np.empty_like(ext_re)
     fit_re_samples = np.empty_like(ext_re)
     fit_im_samples = np.empty_like(ext_re)
-    ft_re = np.empty((n_samples, len(k_grid)), dtype=float)
+    ft_re = np.empty((n_samples, len(y_grid)), dtype=float)
     ft_im = np.empty_like(ft_re)
     fit_params = np.empty((n_samples, n_params), dtype=float)
     fit_chi2 = np.empty(n_samples, dtype=float)
@@ -1020,7 +1023,7 @@ def _run_one_scheme(
             ext_im[sample],
             im_flip_for_ft=im_flip_for_ft,
         )
-        ft_re[sample], ft_im[sample] = sum_ft_re_im(lam_full, re_full, im_full, k_grid)
+        ft_re[sample], ft_im[sample] = sum_ft_re_im(lam_full, re_full, im_full, y_grid)
 
     return {
         "label": label,
@@ -1053,7 +1056,7 @@ def run_fourier_workflow(
     coord: Sequence[float],
     re_samples,
     im_samples,
-    k_grid: Sequence[float],
+    y_grid: Sequence[float],
     *,
     schemes: list[dict[str, Any]] | None = None,
     method: str = "GI",
@@ -1073,7 +1076,7 @@ def run_fourier_workflow(
     """Run asymptotic extension and Fourier transform for resampled data.
 
     ``schemes`` values are in the same unit as ``coord``. The output keeps
-    sample information as arrays shaped ``(scheme, sample, k)``.
+    sample information as arrays shaped ``(scheme, sample, y)``.
     """
     coord_arr = np.asarray(coord, dtype=float)
     resample_mode = _normalise_resample_mode(resample_mode)
@@ -1100,9 +1103,9 @@ def run_fourier_workflow(
         pz_prime_gev=pz_prime_gev,
         ft_scale_over_fit_scale=ft_scale_over_fit_scale,
     )
-    k_arr = np.asarray(k_grid, dtype=float)
-    if k_arr.ndim != 1:
-        raise ValueError("k_grid must be one-dimensional")
+    y_arr = np.asarray(y_grid, dtype=float)
+    if y_arr.ndim != 1:
+        raise ValueError("y_grid must be one-dimensional")
 
     if schemes is None:
         schemes = [
@@ -1123,7 +1126,7 @@ def run_fourier_workflow(
                 ft_scale_over_fit_scale=ft_scale_over_fit_scale,
                 re_samples=re_mat,
                 im_samples=im_mat,
-                k_grid=k_arr,
+                y_grid=y_arr,
                 scheme=scheme,
                 method=method,
                 order=order,
@@ -1159,7 +1162,7 @@ def run_fourier_workflow(
     im_sys = np.std(im_mean_by_scheme, axis=0, ddof=0)
 
     return {
-        "k_grid": k_arr,
+        "y_grid": y_arr,
         "ft_re_samples": ft_re,
         "ft_im_samples": ft_im,
         "ft_re_mean": re_mean,
@@ -1296,7 +1299,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         resample=_normalise_resample_mode(str(result.get("resample_mode", "bootstrap"))),
         values=values,
         dims=("x",),
-        coords={"x": np.asarray(result["k_grid"], dtype=float).tolist()},
+        coords={"x": np.asarray(result["y_grid"], dtype=float).tolist()},
         attrs=attrs,
         name="fourier_transform",
     )
@@ -1840,7 +1843,6 @@ def _scan_has_all_range_keys(spec: dict[str, Any] | None) -> bool:
 
 
 def _fill_scheme_defaults(spec: dict[str, Any]) -> dict[str, Any]:
-    spec.setdefault("y_range", [-2.0, 2.0])
     spec.setdefault("roughness_weight", 1.0)
     spec.setdefault("model_average", True)
     return spec
@@ -1918,30 +1920,25 @@ def _generate_scan_schemes(spec: dict[str, Any]) -> list[dict[str, Any]]:
     return schemes
 
 
-def _resolve_k_grid(k_grid: list[float] | dict[str, Any]) -> list[float]:
-    if isinstance(k_grid, dict):
-        start = float(k_grid["start"])
-        stop = float(k_grid["stop"])
-        if "num" in k_grid:
-            num = int(k_grid["num"])
+def _resolve_y_grid(y_grid: list[float] | dict[str, Any]) -> list[float]:
+    if isinstance(y_grid, dict):
+        start = float(y_grid["start"])
+        stop = float(y_grid["stop"])
+        if "num" in y_grid:
+            num = int(y_grid["num"])
             if num < 2:
-                raise ValueError("k_grid num must be at least 2")
+                raise ValueError("y_grid num must be at least 2")
             return np.linspace(start, stop, num).tolist()
-        step = float(k_grid["step"])
+        step = float(y_grid["step"])
         if step <= 0:
-            raise ValueError("k_grid step must be positive")
+            raise ValueError("y_grid step must be positive")
         return np.arange(start, stop + 0.5 * step, step).tolist()
-    return [float(item) for item in k_grid]
+    return [float(item) for item in y_grid]
 
 
-def _roughness_score(k_grid: np.ndarray, ft_mean: np.ndarray, y_range: list[float] | tuple[float, float] | None) -> float:
-    if y_range is None:
-        mask = np.ones_like(k_grid, dtype=bool)
-    else:
-        low, high = float(y_range[0]), float(y_range[1])
-        mask = (k_grid >= low) & (k_grid <= high)
-    y = k_grid[mask]
-    curve = ft_mean[mask]
+def _roughness_score(y_grid: np.ndarray, ft_mean: np.ndarray) -> float:
+    y = y_grid
+    curve = ft_mean
     if len(y) < 3:
         return 0.0
     order = np.argsort(y)
@@ -1954,13 +1951,12 @@ def _roughness_score(k_grid: np.ndarray, ft_mean: np.ndarray, y_range: list[floa
 def _apply_scheme_model_average(
     result: dict[str, Any],
     *,
-    y_range: list[float] | tuple[float, float] | None,
     roughness_weight: float,
     resample_mode: str,
 ) -> None:
     ft_re = np.asarray(result["ft_re_samples"], dtype=float)
     ft_im = np.asarray(result["ft_im_samples"], dtype=float)
-    k_grid = np.asarray(result["k_grid"], dtype=float)
+    y_grid = np.asarray(result["y_grid"], dtype=float)
     re_mean_by_scheme = np.mean(ft_re, axis=1)
     im_mean_by_scheme = np.mean(ft_im, axis=1)
     re_stat_by_scheme = np.asarray([_sample_sdev(item, resample_mode=resample_mode) for item in ft_re])
@@ -1970,7 +1966,7 @@ def _apply_scheme_model_average(
     roughness = []
     for idx, scheme_result in enumerate(result["scheme_results"]):
         fit_chi2.append(float(scheme_result["mean_fit_chi2"]) / max(float(scheme_result["mean_fit_dof"]), 1.0))
-        roughness.append(_roughness_score(k_grid, re_mean_by_scheme[idx], y_range))
+        roughness.append(_roughness_score(y_grid, re_mean_by_scheme[idx]))
 
     fit_arr = np.asarray(fit_chi2, dtype=float)
     rough_arr = np.asarray(roughness, dtype=float)
@@ -2037,7 +2033,7 @@ def _apply_fourier_output_scale(result: dict[str, Any], output_scale: float) -> 
 def run_fourier_transform(
     store: dict[str, Any],
     *,
-    k_grid: list[float] | dict[str, Any],
+    y_grid: list[float] | dict[str, Any],
     scheme_scan: dict[str, Any] | None = None,
     method: str = "GI",
     order: str = "NLA",
@@ -2098,7 +2094,7 @@ def run_fourier_transform(
     ]
     if not schemes:
         raise ValueError("scheme_scan produced no valid zmin/zmax combinations")
-    k_values = _resolve_k_grid(k_grid)
+    y_values = _resolve_y_grid(y_grid)
     model_average = bool(scheme_scan.get("model_average", True))
     candidate_diagnostics = None
     if not model_average:
@@ -2143,7 +2139,7 @@ def run_fourier_transform(
         matrix_element["coord"],
         matrix_element["re_samples"],
         matrix_element["im_samples"],
-        k_values,
+        y_values,
         schemes=schemes,
         method=method,
         order=order,
@@ -2174,7 +2170,6 @@ def run_fourier_transform(
     if model_average:
         _apply_scheme_model_average(
             result,
-            y_range=scheme_scan.get("y_range"),
             roughness_weight=float(scheme_scan["roughness_weight"]),
             resample_mode=resample_mode,
         )
@@ -2228,7 +2223,7 @@ def run_fourier_transform(
         "report_cn": report_result.get("report_cn"),
         "n_schemes": int(result["ft_re_samples"].shape[0]),
         "n_samples": int(result["ft_re_samples"].shape[1]),
-        "n_k": int(result["ft_re_samples"].shape[2]),
+        "n_y": int(result["ft_re_samples"].shape[2]),
         "scheme_labels": result["scheme_labels"],
         "fit_failures": result["fit_failures"],
         "best_scheme_index": result.get("best_scheme_index"),
@@ -2245,7 +2240,7 @@ def summarize_fourier_result(
     out = "fourier_summary"
     data = store["fourier_result"]
     summary = {
-        "k_grid": np.asarray(data["k_grid"]).tolist(),
+        "y_grid": np.asarray(data["y_grid"]).tolist(),
         "ft_re_mean": np.asarray(data["ft_re_mean"]).tolist(),
         "ft_im_mean": np.asarray(data["ft_im_mean"]).tolist(),
         "ft_re_stat_sdev": np.asarray(data["ft_re_stat_sdev"]).tolist(),

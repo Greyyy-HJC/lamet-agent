@@ -26,7 +26,7 @@ _FOURIER_ARTIFACT_TOOLS = frozenset(
 _FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key", "resample_mode"})
 _FOURIER_RUN_KEYS = frozenset(
     {
-        "k_grid",
+        "y_grid",
         "scheme_scan",
         "method",
         "order",

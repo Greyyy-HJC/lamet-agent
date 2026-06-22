@@ -84,7 +84,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
 
     run = run_fourier_transform(
         store,
-        k_grid=[-0.5, 0.0, 0.5],
+        y_grid=[-0.5, 0.0, 0.5],
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
@@ -190,7 +190,7 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
 
     run = run_fourier_transform(
         store,
-        k_grid=[-0.5, 0.0, 0.5],
+        y_grid=[-0.5, 0.0, 0.5],
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
@@ -216,7 +216,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     load_renormalized_matrix_element_samples(store, path=str(data_path))
     run_re = run_fourier_transform(
         store,
-        k_grid=[-0.5, 0.0, 0.5],
+        y_grid=[-0.5, 0.0, 0.5],
         scheme_scan={"zmin_values": [1.0], "zmax_values": [6.0], "z_ext_max": 7.0},
         method="GI",
         order="LA",
@@ -234,7 +234,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     load_renormalized_matrix_element_samples(store, path=str(data_path))
     run_im = run_fourier_transform(
         store,
-        k_grid=[-0.5, 0.0, 0.5],
+        y_grid=[-0.5, 0.0, 0.5],
         scheme_scan={"zmin_values": [1.0], "zmax_values": [6.0], "z_ext_max": 7.0},
         method="GI",
         order="LA",
@@ -259,7 +259,7 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
     load_renormalized_matrix_element_samples(base_store, path=str(data_path))
     run_fourier_transform(
         base_store,
-        k_grid=[-0.5, 0.0, 0.5],
+        y_grid=[-0.5, 0.0, 0.5],
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
@@ -272,7 +272,7 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
     load_renormalized_matrix_element_samples(scaled_store, path=str(data_path))
     scaled_run = run_fourier_transform(
         scaled_store,
-        k_grid=[-0.5, 0.0, 0.5],
+        y_grid=[-0.5, 0.0, 0.5],
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
@@ -303,7 +303,7 @@ def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monke
 
     run = run_fourier_transform(
         store,
-        k_grid=[-0.5, 0.0, 0.5],
+        y_grid=[-0.5, 0.0, 0.5],
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
@@ -395,7 +395,7 @@ def test_fourier_transform_accepts_upstream_ensemble_data(tmp_path: Path, monkey
 
     run = run_fourier_transform(
         store,
-        k_grid=[-0.5, 0.0, 0.5],
+        y_grid=[-0.5, 0.0, 0.5],
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
@@ -421,7 +421,7 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
 
     run = run_fourier_transform(
         store,
-        k_grid=[0.0],
+        y_grid=[0.0],
         scheme_scan={"zmin_values": [1.0], "zmax_values": [13.0], "z_ext_max": 15.0},
         method="GI",
         order="NLA",
@@ -469,7 +469,7 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
 
         run = run_fourier_transform(
             store,
-            k_grid=[0.0],
+            y_grid=[0.0],
             scheme_scan={"zmin_values": [1.0], "zmax_values": [10.0], "z_ext_max": 12.0},
             method="GI",
             order=order,
@@ -539,13 +539,12 @@ def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypat
 
     run = run_fourier_transform(
         store,
-        k_grid=[-0.6, -0.3, 0.0, 0.3, 0.6],
+        y_grid=[-0.6, -0.3, 0.0, 0.3, 0.6],
         scheme_scan={
             "zmin_values": [1.0, 2.0],
             "zmax_values": [3.0, 4.0],
             "z_ext_max": 5.0,
             "smooth": "linear",
-            "y_range": [-0.6, 0.6],
             "roughness_weight": 2.0,
         },
         method="GI",
@@ -570,7 +569,7 @@ def test_fourier_model_average_false_selects_one_scheme_from_mean_scan(tmp_path:
 
     run = run_fourier_transform(
         store,
-        k_grid=[-0.6, -0.3, 0.0, 0.3, 0.6],
+        y_grid=[-0.6, -0.3, 0.0, 0.3, 0.6],
         scheme_scan={
             "zmin_values": [1.0, 2.0],
             "zmax_values": [3.0, 4.0],
@@ -608,7 +607,7 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
 
     run = run_fourier_transform(
         store,
-        k_grid={"start": -0.5, "stop": 0.5, "num": 5},
+        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
         method="GI",
         order="LA",
         observable="nucleon_quark_transversity_quasi_pdf",
@@ -624,7 +623,7 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
     assert auto["zmax_values"] == pytest.approx([0.9, 1.0, 1.1, 1.2])
     assert auto["z_ext_max"] == pytest.approx(1.2 + 8.0 / (5.067731237 * 2.0))
     assert auto["smooth"] == "linear"
-    assert auto["y_range"] == [-2.0, 2.0]
+    assert "y_range" not in auto
     assert auto["roughness_weight"] == 1.0
     assert auto["model_average"] is True
     assert run["n_schemes"] >= 4
@@ -644,8 +643,8 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
 
     run = run_fourier_transform(
         store,
-        k_grid={"start": -0.5, "stop": 0.5, "num": 5},
-        scheme_scan={"y_range": [-0.5, 0.5], "roughness_weight": 2.0},
+        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
+        scheme_scan={"roughness_weight": 2.0},
         method="GI",
         order="LA",
         observable="nucleon_quark_transversity_quasi_pdf",
@@ -654,7 +653,7 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
     )
 
     auto = run["auto_scheme_scan"]
-    assert auto["y_range"] == [-0.5, 0.5]
+    assert "y_range" not in auto
     assert auto["roughness_weight"] == 2.0
     assert len(auto["zmin_values"]) == 4
     assert len(auto["zmax_values"]) == 4
@@ -677,7 +676,7 @@ def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path
 
     run = run_fourier_transform(
         store,
-        k_grid={"start": -0.5, "stop": 0.5, "num": 6},
+        y_grid={"start": -0.5, "stop": 0.5, "num": 6},
         method="CG",
         order="NLA",
         observable="pion_quark_quasi_pdf",
@@ -703,7 +702,7 @@ def test_fourier_auto_scan_prefers_tail_region_for_lattice_units(tmp_path: Path,
 
     run = run_fourier_transform(
         store,
-        k_grid={"start": -0.5, "stop": 0.5, "num": 6},
+        y_grid={"start": -0.5, "stop": 0.5, "num": 6},
         method="CG",
         order="NLA",
         observable="pion_quark_quasi_pdf",
@@ -740,7 +739,7 @@ def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) 
 
     run = run_fourier_transform(
         store,
-        k_grid={"start": -0.5, "stop": 0.5, "num": 5},
+        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
         method="GI",
         order="LA",
         observable="nucleon_quark_transversity_quasi_pdf",
@@ -770,7 +769,7 @@ def test_fourier_auto_zmax_stops_before_noisy_tail(tmp_path: Path, monkeypatch) 
 
     run = run_fourier_transform(
         store,
-        k_grid={"start": -0.5, "stop": 0.5, "num": 5},
+        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
         method="GI",
         order="LA",
         observable="nucleon_quark_transversity_quasi_pdf",
@@ -790,7 +789,7 @@ def test_fourier_defaults_scheme_scoring_options_for_complete_scan(tmp_path: Pat
 
     run_fourier_transform(
         store,
-        k_grid={"start": -0.5, "stop": 0.5, "num": 5},
+        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
         scheme_scan={
             "zmin_values": [1.0],
             "zmax_values": [4.0],
@@ -805,7 +804,7 @@ def test_fourier_defaults_scheme_scoring_options_for_complete_scan(tmp_path: Pat
     assert len(store["fourier_result"]["scheme_roughness"]) == 1
 
 
-def test_fourier_accepts_compact_k_grid_spec(tmp_path: Path, monkeypatch) -> None:
+def test_fourier_accepts_compact_y_grid_spec(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
     _write_npz(data_path)
@@ -814,15 +813,15 @@ def test_fourier_accepts_compact_k_grid_spec(tmp_path: Path, monkeypatch) -> Non
 
     run = run_fourier_transform(
         store,
-        k_grid={"start": -1.0, "stop": 1.0, "num": 21},
+        y_grid={"start": -1.0, "stop": 1.0, "num": 21},
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
     )
     summary = summarize_fourier_result(store)
 
-    assert run["n_k"] == 21
-    assert len(summary["k_grid"]) == 21
+    assert run["n_y"] == 21
+    assert len(summary["y_grid"]) == 21
 
 
 def test_fourier_accepts_covariance_fit_error_mode(tmp_path: Path, monkeypatch) -> None:
@@ -834,7 +833,7 @@ def test_fourier_accepts_covariance_fit_error_mode(tmp_path: Path, monkeypatch) 
 
     run = run_fourier_transform(
         store,
-        k_grid={"start": -0.5, "stop": 0.5, "num": 5},
+        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
@@ -850,7 +849,7 @@ def test_plot_fourier_artifact_writes_figure(tmp_path: Path) -> None:
     save_path = tmp_path / "fourier.pdf"
     np.savez(
         path,
-        k_grid=np.array([-0.5, 0.0, 0.5]),
+        y_grid=np.array([-0.5, 0.0, 0.5]),
         ft_re_mean=np.array([0.2, 0.3, 0.2]),
         ft_im_mean=np.array([-0.1, 0.0, 0.1]),
         ft_re_stat_sdev=np.array([0.01, 0.02, 0.01]),

@@ -26,7 +26,7 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     if set(job.inputs) != {"input"}:
         return ["A fourier_transform job requires exactly one input role."]
     params = {**manifest.stages["fourier_transform"].defaults, **job.params}
-    missing = [key for key in ("order", "part", "coord_unit", "k_grid", "pz_gev") if key not in params]
+    missing = [key for key in ("order", "part", "coord_unit", "y_grid", "pz_gev") if key not in params]
     if missing:
         return [f"Fourier job {job.id!r} is missing parameters: {missing}"]
     if params["order"] not in {"LA", "NLA"}:

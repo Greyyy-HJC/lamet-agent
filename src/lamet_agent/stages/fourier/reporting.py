@@ -95,19 +95,19 @@ def _format_fit_range(fit_range: Any, *, language: str) -> str:
     return rf"$z^{{\rm min}}={_fmt(fit_range[0])}$ to $z^{{\rm max}}={_fmt(fit_range[1])}$"
 
 
-def _format_grid(k_grid: np.ndarray, *, language: str) -> str:
-    if k_grid.size == 0:
+def _format_grid(y_grid: np.ndarray, *, language: str) -> str:
+    if y_grid.size == 0:
         return "未记录" if language == "zh" else "not recorded"
-    if k_grid.size == 1:
-        return f"one point at $x={_fmt(k_grid[0])}$"
-    diffs = np.diff(k_grid)
+    if y_grid.size == 1:
+        return f"one point at $x={_fmt(y_grid[0])}$"
+    diffs = np.diff(y_grid)
     if np.allclose(diffs, diffs[0], rtol=1e-7, atol=1e-12):
         if language == "zh":
-            return f"从 $x={_fmt(k_grid[0])}$ 到 $x={_fmt(k_grid[-1])}$，每隔 $\\Delta x={_fmt(diffs[0])}$ 取一个点，共 {k_grid.size} 个点"
-        return f"from $x={_fmt(k_grid[0])}$ to $x={_fmt(k_grid[-1])}$ with spacing $\\Delta x={_fmt(diffs[0])}$, for {k_grid.size} points"
+            return f"从 $x={_fmt(y_grid[0])}$ 到 $x={_fmt(y_grid[-1])}$，每隔 $\\Delta x={_fmt(diffs[0])}$ 取一个点，共 {y_grid.size} 个点"
+        return f"from $x={_fmt(y_grid[0])}$ to $x={_fmt(y_grid[-1])}$ with spacing $\\Delta x={_fmt(diffs[0])}$, for {y_grid.size} points"
     if language == "zh":
-        return f"非均匀网格，共 {k_grid.size} 个点；预览 `{_fmt_list(k_grid)}`"
-    return f"nonuniform grid with {k_grid.size} points; preview `{_fmt_list(k_grid)}`"
+        return f"非均匀网格，共 {y_grid.size} 个点；预览 `{_fmt_list(y_grid)}`"
+    return f"nonuniform grid with {y_grid.size} points; preview `{_fmt_list(y_grid)}`"
 
 
 def _cn_report_path(path: Path) -> Path:
@@ -462,7 +462,7 @@ def _settings_table(
     order: str,
     fit_range_text: str,
     z_ext_max: Any,
-    k_grid: np.ndarray,
+    y_grid: np.ndarray,
     language: str,
 ) -> list[str]:
     try:
@@ -480,7 +480,7 @@ def _settings_table(
         ("Output scale", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
         ("Best fit range", fit_range_text),
         ("Extension endpoint", z_ext_text),
-        ("Fourier grid", _format_grid(k_grid, language=language)),
+        ("Fourier grid", _format_grid(y_grid, language=language)),
     ]
     if language == "zh":
         rows = [
@@ -494,7 +494,7 @@ def _settings_table(
             ("输出缩放", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
             ("最优拟合区间", fit_range_text),
             ("外推终点", z_ext_text),
-            ("傅立叶网格", _format_grid(k_grid, language=language)),
+            ("傅立叶网格", _format_grid(y_grid, language=language)),
         ]
     header = "| Quantity | Value |" if language == "en" else "| 条目 | 数值或设置 |"
     lines = [header, "|---|---|"]
@@ -606,7 +606,7 @@ def build_fourier_report_markdown(
     observable_text = OBSERVABLE_TEXT.get(observable, observable or "not recorded")
     method = str(result.get("method", "not recorded"))
     order = str(result.get("order", "not recorded"))
-    k_grid = np.asarray(result.get("k_grid", []), dtype=float)
+    y_grid = np.asarray(result.get("y_grid", []), dtype=float)
     schemes = list(result.get("scheme_results", []))
     best_idx = int(result.get("best_scheme_index", 0) or 0)
     best_scheme = schemes[best_idx] if schemes and 0 <= best_idx < len(schemes) else {}
@@ -628,7 +628,7 @@ def build_fourier_report_markdown(
             abstract,
             "",
             "## 分析设置",
-            *_settings_table(result=result, observable=observable, observable_text=observable_text, method=method, order=order, fit_range_text=fit_range_text, z_ext_max=z_ext_max, k_grid=k_grid, language="zh"),
+            *_settings_table(result=result, observable=observable, observable_text=observable_text, method=method, order=order, fit_range_text=fit_range_text, z_ext_max=z_ext_max, y_grid=y_grid, language="zh"),
             "",
             "### 条目解释",
             *_field_definitions(language="zh"),
@@ -670,7 +670,7 @@ def build_fourier_report_markdown(
             abstract,
             "",
             "## Analysis Setup",
-            *_settings_table(result=result, observable=observable, observable_text=observable_text, method=method, order=order, fit_range_text=fit_range_text, z_ext_max=z_ext_max, k_grid=k_grid, language="en"),
+            *_settings_table(result=result, observable=observable, observable_text=observable_text, method=method, order=order, fit_range_text=fit_range_text, z_ext_max=z_ext_max, y_grid=y_grid, language="en"),
             "",
             "### Field Definitions",
             *_field_definitions(language="en"),
@@ -740,7 +740,7 @@ def write_fourier_stage_report(
         observable_text = OBSERVABLE_TEXT.get(observable, observable or "not recorded")
         method = str(first.get("method", "not recorded"))
         order = str(first.get("order", "not recorded"))
-        k_grid = np.asarray(first.get("k_grid", []), dtype=float)
+        y_grid = np.asarray(first.get("y_grid", []), dtype=float)
         z_ext_values = []
         for item in jobs:
             result = item["result"]
@@ -791,7 +791,7 @@ def write_fourier_stage_report(
                     order=order,
                     fit_range_text=fit_range_text,
                     z_ext_max=z_ext_max,
-                    k_grid=k_grid,
+                    y_grid=y_grid,
                     language=language,
                 ),
                 "",

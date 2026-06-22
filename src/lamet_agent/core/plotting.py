@@ -23,7 +23,10 @@ from pathlib import Path
 from typing import Any
 
 import gvar as gv
+import matplotlib
 import numpy as np
+
+matplotlib.use("Agg", force=True)
 from matplotlib import rcParams
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -642,7 +645,7 @@ def plot_fourier_artifact(
         pz_gev = float(pz_raw) if pz_raw is not None and np.isfinite(float(pz_raw)) else None
     except ValueError:
         data = np.load(path)
-        k = np.asarray(data["k_grid"], dtype=float)
+        k = np.asarray(data["y_grid"], dtype=float)
         re = np.asarray(data["ft_re_mean"], dtype=float)
         im = np.asarray(data["ft_im_mean"], dtype=float)
         re_stat = np.asarray(data["ft_re_stat_sdev"], dtype=float)
