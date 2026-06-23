@@ -294,23 +294,35 @@ def _uniform_step(coord: np.ndarray) -> float:
     return float(diffs[0])
 
 
-def _coord_scale(coord_unit: str, *, pz_gev: float | None, a_fm: float | None) -> tuple[float, float]:
+def _ft_scale_momentum(pz_gev: float | None, pz_prime_gev: float | None = None) -> float:
+    """Return the momentum used only for coord->lambda scaling."""
+    return max(abs(float(pz_gev or 0.0)), abs(float(pz_prime_gev or 0.0)))
+
+
+def _coord_scale(
+    coord_unit: str,
+    *,
+    pz_gev: float | None,
+    a_fm: float | None,
+    pz_prime_gev: float | None = None,
+) -> tuple[float, float]:
     """Return ``(fit_scale, ft_scale)`` from input coordinates."""
     unit = coord_unit.lower()
+    ft_momentum = _ft_scale_momentum(pz_gev, pz_prime_gev)
     if unit == "lambda":
         return 1.0, 1.0
     if unit == "gev_inv":
-        if pz_gev is None:
-            raise ValueError("pz_gev is required when coord_unit='gev_inv'")
-        return 1.0, float(pz_gev)
+        if ft_momentum == 0.0:
+            raise ValueError("pz_gev or pz_prime_gev is required when coord_unit='gev_inv'")
+        return 1.0, ft_momentum
     if unit == "fm":
-        if pz_gev is None:
-            raise ValueError("pz_gev is required when coord_unit='fm'")
-        return FM_TO_GEV_INV, FM_TO_GEV_INV * float(pz_gev)
+        if ft_momentum == 0.0:
+            raise ValueError("pz_gev or pz_prime_gev is required when coord_unit='fm'")
+        return FM_TO_GEV_INV, FM_TO_GEV_INV * ft_momentum
     if unit == "lattice":
-        if pz_gev is None or a_fm is None:
-            raise ValueError("pz_gev and a_fm are required when coord_unit='lattice'")
-        return float(a_fm) * FM_TO_GEV_INV, float(a_fm) * FM_TO_GEV_INV * float(pz_gev)
+        if a_fm is None or ft_momentum == 0.0:
+            raise ValueError("a_fm and pz_gev or pz_prime_gev are required when coord_unit='lattice'")
+        return float(a_fm) * FM_TO_GEV_INV, float(a_fm) * FM_TO_GEV_INV * ft_momentum
     raise ValueError("coord_unit must be 'lambda', 'gev_inv', 'fm', or 'lattice'")
 
 
@@ -755,7 +767,7 @@ def fit_tail_quality_for_mean(
         raise ValueError("sample arrays must have one value per coordinate point")
 
     observable = _canonical_observable(observable)
-    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, a_fm=a_fm)
+    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_prime_gev=pz_prime_gev, a_fm=a_fm)
     fit_coord = coord_arr * fit_scale
     ft_scale_over_fit_scale = ft_scale / fit_scale
     phase_scale, phase_prime_scale = _phase_scales(
@@ -1094,7 +1106,7 @@ def run_fourier_workflow(
         raise ValueError("sample arrays must have one value per coordinate point")
 
     observable = _canonical_observable(observable)
-    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, a_fm=a_fm)
+    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_prime_gev=pz_prime_gev, a_fm=a_fm)
     fit_coord = coord_arr * fit_scale
     ft_scale_over_fit_scale = ft_scale / fit_scale
     phase_scale, phase_prime_scale = _phase_scales(
@@ -1764,10 +1776,11 @@ def _default_z_ext_max(
     *,
     coord_unit: str,
     pz_gev: float | None,
+    pz_prime_gev: float | None,
     a_fm: float | None,
 ) -> float:
     """Return the coordinate value whose lambda is eight units past the data."""
-    _fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, a_fm=a_fm)
+    _fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_prime_gev=pz_prime_gev, a_fm=a_fm)
     return float(np.max(coord) + 8.0 / ft_scale)
 
 
@@ -1827,6 +1840,7 @@ def _auto_fill_scheme_scan(
             coord,
             coord_unit=coord_unit,
             pz_gev=pz_gev,
+            pz_prime_gev=pz_prime_gev,
             a_fm=a_fm,
         )
     if "smooth" not in spec:

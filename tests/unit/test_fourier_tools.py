@@ -661,6 +661,35 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
     assert auto["smooth"] == "linear"
 
 
+def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    coord = np.linspace(0.0, 10.0, 11)
+    base_re = np.exp(-0.2 * coord)
+    base_im = 0.05 * np.exp(-0.2 * coord)
+    re_samples = np.vstack([base_re, 1.01 * base_re, 0.99 * base_re, 1.02 * base_re])
+    im_samples = np.vstack([base_im, 0.98 * base_im, 1.02 * base_im, 0.99 * base_im])
+    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+
+    run = run_fourier_transform(
+        store,
+        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
+        method="GI",
+        order="LA",
+        observable="pion_quark_quasi_gpd",
+        coord_unit="lattice",
+        pz_gev=0.0,
+        pz_prime_gev=0.49,
+        a_fm=0.105,
+    )
+
+    auto = run["auto_scheme_scan"]
+    expected_ft_scale = 0.105 * 5.067731237 * 0.49
+    assert auto["z_ext_max"] == pytest.approx(10.0 + 8.0 / expected_ft_scale)
+
+
 def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
