@@ -262,9 +262,27 @@ def prepare_tool_args(
 
     if stage == "correlator_analysis":
         selected = [item for item in manifest.correlators if item.correlator_id in job.correlator_ids]
-        pt2 = next((item for item in selected if item.kind == "2pt"), None)
-        pt3 = sorted((item for item in selected if item.kind == "3pt"), key=lambda item: item.tsep or 0)
         defaults = dict(effective_params)
+        fitting_form = str(defaults.get("fitting_form", "Breit"))
+        pt2_all = [item for item in selected if item.kind == "2pt"]
+        pt3 = sorted((item for item in selected if item.kind == "3pt"), key=lambda item: item.tsep or 0)
+        first_pt3 = pt3[0] if pt3 else None
+        pz_in = defaults.get("pz_gev")
+        if pz_in is None and first_pt3 is not None:
+            pz_in = first_pt3.pz_gev
+        pz_out = defaults.get("pz_out_gev")
+        if pz_out is None and first_pt3 is not None:
+            pz_out = first_pt3.pz_out_gev if first_pt3.pz_out_gev is not None else first_pt3.pz_gev
+        pt2 = next((item for item in pt2_all if pz_in is not None and float(item.pz_gev) == float(pz_in)), None)
+        if pt2 is None:
+            pt2 = pt2_all[0] if pt2_all else None
+        pt2_out = None
+        if fitting_form == "NonBreit":
+            pt2_out = next((item for item in pt2_all if pz_out is not None and float(item.pz_gev) == float(pz_out)), None)
+            if pt2_out is None and len(pt2_all) > 1:
+                pt2_out = pt2_all[1] if pt2_all[0] is pt2 else pt2_all[0]
+        else:
+            pt2_out = pt2
         if "component" in defaults:
             defaults["part"] = defaults.pop("component")
         defaults["resample_mode"] = manifest.metadata.resample_mode
@@ -272,8 +290,10 @@ def prepare_tool_args(
             defaults.update(
                 {
                     "pt2_path": pt2.data_path,
+                    "pt2_out_path": pt2_out.data_path if pt2_out is not None else pt2.data_path,
                     "source_sink": pt2.source_sink,
                     "momentum": pt2.momentum,
+                    "momentum_out": pt2_out.momentum if pt2_out is not None else pt2.momentum,
                     "gamma": pt2.src_gamma,
                     "pt2_gamma": pt2.src_gamma,
                     "ensemble": pt2.ensemble,
@@ -289,6 +309,7 @@ def prepare_tool_args(
                     "pt3_paths": {str(item.tsep): item.data_path for item in pt3},
                     "tsep_ls": [item.tsep for item in pt3],
                     "z_values": first.bz,
+                    "pt3_momentum": first.momentum,
                     "direction": first.z_direction,
                     "pt3_gamma": first.current_gamma,
                     "b_dir": f"b_{first.z_direction}",
@@ -310,6 +331,7 @@ def prepare_tool_args(
             defaults["job_id"] = job.id
             defaults["a_fm"] = pt2.a_fm if pt2 is not None else None
             defaults["pz_gev"] = pt2.pz_gev if pt2 is not None else None
+            defaults["pz_out_gev"] = pt2_out.pz_gev if pt2_out is not None else defaults.get("pz_out_gev")
         for key, value in defaults.items():
             if key not in resolved or resolved[key] is None:
                 resolved[key] = value
@@ -350,6 +372,10 @@ def prepare_tool_args(
                 fourier["observable"] = f"pion_{parton}_quasi_pdf"
             elif target == "da" and hadron == "pion":
                 fourier["observable"] = "meson_quasi_da"
+            elif target == "gpd" and hadron == "pion":
+                fourier["observable"] = "pion_quark_quasi_gpd"
+            elif target == "gpd" and hadron in {"proton", "nucleon"}:
+                fourier["observable"] = "nucleon_quark_quasi_gpd"
         if tool_name == "load_renormalized_matrix_element_samples":
             resolved.update({key: fourier[key] for key in _FOURIER_LOAD_KEYS if key in fourier})
             if isinstance(source, ArtifactInput):

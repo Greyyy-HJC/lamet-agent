@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from lamet_agent.core.tools import prepare_tool_args, resolve_plot_save_path, validate_stage_inputs
 from lamet_agent.manifest import validate_manifest_file
+from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.stages.matching.skills import effective_matching_params
 
 
@@ -47,6 +48,108 @@ def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) 
     assert args["a_fm"] == 0.0574
     assert args["nstate"] == 2
     assert args["model_average"] is False
+
+
+def test_prepare_nonbreit_correlator_args_match_initial_final_momenta(tmp_path: Path) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "nonbreit",
+                "root_directory": str(tmp_path),
+                "artifacts_directory": "artifacts",
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "stages": ["correlator_analysis"],
+            },
+            "inputs": {
+                "correlators": [
+                    {
+                        "correlator_id": "pt2_i",
+                        "kind": "2pt",
+                        "data_path": "pt2_i.h5",
+                        "ensemble": "E",
+                        "hadron": "pion",
+                        "gfix": "GI",
+                        "source_sink": "SS",
+                        "momentum": "PX0PY0PZ0",
+                        "a_fm": 0.1,
+                        "pz_gev": 0.0,
+                        "src_gamma": "5",
+                        "sink_gamma": "5",
+                    },
+                    {
+                        "correlator_id": "pt2_f",
+                        "kind": "2pt",
+                        "data_path": "pt2_f.h5",
+                        "ensemble": "E",
+                        "hadron": "pion",
+                        "gfix": "GI",
+                        "source_sink": "SS",
+                        "momentum": "PX0PY0PZ1",
+                        "a_fm": 0.1,
+                        "pz_gev": 0.5,
+                        "src_gamma": "5",
+                        "sink_gamma": "5",
+                    },
+                    {
+                        "correlator_id": "pt3_fi",
+                        "kind": "3pt",
+                        "data_path": "pt3.h5",
+                        "ensemble": "E",
+                        "hadron": "pion",
+                        "gfix": "GI",
+                        "source_sink": "SS",
+                        "momentum": "PX0PY0PZ1",
+                        "a_fm": 0.1,
+                        "pz_gev": 0.0,
+                        "pz_out_gev": 0.5,
+                        "src_gamma": "5",
+                        "sink_gamma": "5",
+                        "current_gamma": "T",
+                        "z_direction": "Z",
+                        "eta": "eta0",
+                        "bt": [0],
+                        "bz": [0],
+                        "tsep": 8,
+                    },
+                ]
+            },
+            "stages": {
+                "correlator_analysis": {
+                    "defaults": {"fitting_form": "NonBreit"},
+                    "jobs": [{"id": "ca", "correlator_ids": ["pt2_i", "pt2_f", "pt3_fi"]}],
+                }
+            },
+        }
+    )
+    manifest._root_directory = tmp_path
+    manifest._artifacts_directory = tmp_path / "artifacts"
+    job = manifest.stages["correlator_analysis"].jobs[0]
+    assert validate_stage_inputs("correlator_analysis", manifest, job) == []
+    args = prepare_tool_args(
+        "fit_bare_matrix_grid", {},
+        manifest=manifest,
+        stage="correlator_analysis",
+        job=job,
+        effective_params=manifest.stages["correlator_analysis"].defaults,
+        artifacts_dir=tmp_path,
+    )
+    assert args["pt2_path"].endswith("pt2_i.h5")
+    assert args["pt2_out_path"].endswith("pt2_f.h5")
+    assert args["momentum"] == "PX0PY0PZ0"
+    assert args["momentum_out"] == "PX0PY0PZ1"
+    assert args["pt3_momentum"] == "PX0PY0PZ1"
+    assert args["pz_gev"] == 0.0
+    assert args["pz_out_gev"] == 0.5
+
+
+def test_nonbreit_requires_two_two_point_correlators(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["correlator_analysis"].jobs[0].model_copy(update={"params": {"fitting_form": "NonBreit"}})
+    assert validate_stage_inputs("correlator_analysis", manifest, job) == [
+        "A NonBreit correlator_analysis job requires exactly two 2pt correlators."
+    ]
 
 
 def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> None:

@@ -27,7 +27,7 @@ class RunMetadata(BaseModel):
     run_id: str
     root_directory: str
     artifacts_directory: str = "artifacts"
-    target_observable: Literal["pdf", "da"]
+    target_observable: Literal["pdf", "da", "gpd"]
     parton: Literal["quark", "gluon"]
     resample_mode: Literal["jk", "bs"]
     stages: list[StageId]
@@ -57,6 +57,7 @@ class CorrelatorInput(BaseModel):
     momentum: str
     a_fm: float
     pz_gev: float
+    pz_out_gev: float | None = None
     src_gamma: str
     sink_gamma: str
     current_gamma: str | None = None

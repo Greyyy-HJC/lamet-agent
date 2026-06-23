@@ -11,6 +11,11 @@
   // - A job's `params` shallow-merge over the stage `defaults`.
   // - References resolve by job id to that stage's primary output.
   // - The default save path is <artifacts_directory>/<stage>/<job_id>.nc.
+  // - correlator_analysis defaults to `fitting_form: "Breit"` for forward
+  //   matrix elements. For non-forward data use `fitting_form: "NonBreit"`,
+  //   include two 2pt inputs identified by their `pz_gev`, and set each 3pt
+  //   transition with `pz_gev` as P_i and optional `pz_out_gev` as P_f.
+  //   If `pz_out_gev` is omitted, the 3pt is treated as forward.
   //
   // This example wires up p0 + p4 + p5:
   //   - p0 runs ONLY correlator_analysis, then serves as the renormalization
@@ -22,7 +27,7 @@
     "run_id": "sample_run_id",
     "root_directory": "~/lamet-agent",
     "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
-    "target_observable": "pdf", // "pdf" or "da"
+    "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs" — shared by correlator and fourier stages
     // Global stage ORDER only. Which data sets flow through each stage is
@@ -78,7 +83,7 @@
         "source_sink": "SS",
         "momentum": "PX0PY0PZ0",
         "a_fm": 0.0574,
-        "pz_gev": 0.0,
+        "pz_gev": 0.0, // pz_out_gev and pz_gev default to be same with no momentum transfer case
         "src_gamma": "5",
         "sink_gamma": "5",
         "current_gamma": "T",
@@ -295,6 +300,7 @@
         "seed": 1984,
         "svdcut": 1e-06,
         "posterior_prior_error_scale": 3.0,
+        "fitting_form": "Breit", // "Breit" for forward 3pt/2pt; "NonBreit" for P_i != P_f
         "component": "both", // "both", "re", or "im"
         "q_min": 0.05, // minimum q value for a good fit
         "model_average": false // false: use one tuned window; true: BMA over the full window grid

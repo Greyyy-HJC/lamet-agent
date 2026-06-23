@@ -43,6 +43,7 @@ from lamet_agent.stages.correlator.functions import (
     _normalise_pt2_windows,
     _normalise_pt3_windows,
     _normalise_strategy,
+    _non_forward_ratio_samples,
     _overlaps,
     _ratio_samples,
     _resample_pt2,
@@ -57,6 +58,7 @@ from lamet_agent.stages.correlator.functions import (
     inspect_correlator_scale,
     pt2_prior,
     pt2_re_fcn,
+    pt3_nonbreit_ratio_fcn,
     pt3_ratio_fcn,
     pt3_ratio_prior,
     select_best,
@@ -174,6 +176,42 @@ def test_pt3_ratio_prior_extends_pt2_prior_with_matrix_elements() -> None:
     base = pt2_prior(nstate=2)
     assert set(base).issubset(set(prior))
     assert {"O00_re", "O00_im", "O01_re", "O11_re"}.issubset(set(prior))
+
+
+def test_pt3_nonbreit_ratio_fcn_uses_separate_initial_final_spectra() -> None:
+    p = gv.BufferDict()
+    p["E0_i"] = gv.gvar(0.45, 1e-4)
+    p["log(dE1_i)"] = gv.gvar(np.log(0.5), 1e-4)
+    p["z0_i"] = gv.gvar(1.0, 1e-4)
+    p["z1_i"] = gv.gvar(0.0, 1e-4)
+    p["E0_f"] = gv.gvar(0.60, 1e-4)
+    p["log(dE1_f)"] = gv.gvar(np.log(0.5), 1e-4)
+    p["z0_f"] = gv.gvar(1.2, 1e-4)
+    p["z1_f"] = gv.gvar(0.0, 1e-4)
+    for snk in range(2):
+        for src in range(2):
+            p[f"O{snk}{src}_re"] = gv.gvar(0.0, 1e-4)
+            p[f"O{snk}{src}_im"] = gv.gvar(0.0, 1e-4)
+    p["O00_re"] = gv.gvar(0.42, 1e-4)
+    ratio = pt3_nonbreit_ratio_fcn(np.array([8.0]), np.array([4.0]), p, 64, nstate=2, part="re")
+    expected = gv.mean(p["O00_re"] / (2 * gv.sqrt(p["E0_i"] * p["E0_f"])))
+    assert gv.mean(ratio[0]) == pytest.approx(expected, rel=1e-4)
+
+
+def test_non_forward_ratio_samples_omits_kinematic_prefactor() -> None:
+    n_sample = 2
+    tsep = 4
+    tau = np.arange(tsep + 1)
+    pt2_i = np.full((n_sample, tsep + 1), 2.0 + 0.0j)
+    pt2_f = np.full((n_sample, tsep + 1), 8.0 + 0.0j)
+    pt3 = np.full((n_sample, tsep + 1), 16.0 + 0.0j)
+    re, im = _non_forward_ratio_samples(pt2_i, pt2_f, pt3, tsep)
+    expected = (pt3 / pt2_f[:, tsep][:, None]) * np.sqrt(
+        (pt2_i[:, tsep - tau] * pt2_f[:, tau] * pt2_f[:, tsep][:, None])
+        / (pt2_f[:, tsep - tau] * pt2_i[:, tau] * pt2_i[:, tsep][:, None])
+    )
+    assert np.allclose(re, expected.real)
+    assert np.allclose(im, 0.0)
 
 
 def test_fit_two_point_recovers_e0() -> None:
