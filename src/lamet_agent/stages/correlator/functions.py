@@ -24,6 +24,7 @@ Example usage:
 from __future__ import annotations
 
 from itertools import product
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -42,6 +43,7 @@ from lamet_agent.core.plotting import (
     FONT_SIZE,
     LEGEND_SETS,
     default_plot,
+    plot_fh_fit_on_data,
     plot_pt2_fit_on_data,
     plot_pt2_meff_on_data,
     plot_pt3_ratio_fit_on_data,
@@ -206,6 +208,108 @@ def pt3_nonbreit_ratio_prior(nstate: int = 2) -> gv.BufferDict:
     return prior
 
 
+def _fh_extra_prior(nstate: int = 2) -> gv.BufferDict:
+    """Nuisance priors for the FH finite-difference summed-ratio model."""
+    if nstate > 2:
+        raise ValueError("FH fits currently support nstate <= 2")
+    prior = gv.BufferDict()
+    if nstate == 1:
+        return prior
+    for part in ("re", "im"):
+        prior[f"sum_{part}_excited_coeff"] = gv.gvar(0, 10)
+        prior[f"sum_{part}_offset"] = gv.gvar(0, 10)
+        prior[f"sum_{part}_exp_offset"] = gv.gvar(0, 10)
+    prior["sum_den_exp_coeff"] = gv.gvar(0, 10)
+    return prior
+
+
+def fh_prior(nstate: int = 2) -> gv.BufferDict:
+    """Broad priors for an FH-only fit."""
+    if nstate > 2:
+        raise ValueError("FH fits currently support nstate <= 2")
+    prior = gv.BufferDict()
+    prior["E0"] = gv.gvar(1, 10)
+    for state in range(1, nstate):
+        prior[f"log(dE{state})"] = gv.gvar(0, 1)
+    prior["O00_re"] = gv.gvar(1, 10)
+    prior["O00_im"] = gv.gvar(1, 10)
+    prior.update(_fh_extra_prior(nstate))
+    return prior
+
+
+def _joint_fh_prior(nstate: int = 2) -> gv.BufferDict:
+    """FH prior with 2pt overlap parameters for simultaneous 2pt+FH fits."""
+    prior = pt2_prior(nstate)
+    prior["O00_re"] = gv.gvar(1, 10)
+    prior["O00_im"] = gv.gvar(1, 10)
+    prior.update(_fh_extra_prior(nstate))
+    return prior
+
+
+def _ratio_fh_prior(nstate: int = 2) -> gv.BufferDict:
+    """Ratio prior extended with the FH summed-ratio nuisance parameters."""
+    prior = pt3_ratio_prior(nstate)
+    prior.update(_fh_extra_prior(nstate))
+    return prior
+
+
+def sum_ratio_fcn(
+    t: np.ndarray,
+    tau_cut: int,
+    p: dict,
+    *,
+    nstate: int = 2,
+    part: str = "re",
+) -> np.ndarray:
+    """Summed-ratio ansatz used to define the FH finite difference."""
+    if nstate > 2:
+        raise ValueError("summed-ratio fit functions currently support nstate <= 2")
+    e0 = p["E0"]
+    if nstate == 1:
+        return p[f"O00_{part}"] * (t - 2 * tau_cut + 1) / (2 * e0)
+    d_e1 = p["dE1"]
+    exp_term = np.exp(-d_e1 * t)
+    numerator = (
+        p[f"O00_{part}"]
+        * (t - 2 * tau_cut + 1)
+        * (1 + p[f"sum_{part}_excited_coeff"] * exp_term)
+        + p[f"sum_{part}_offset"]
+        + p[f"sum_{part}_exp_offset"] * exp_term
+    )
+    denominator = 2 * e0 * (1 + p["sum_den_exp_coeff"] * exp_term)
+    return numerator / denominator
+
+
+def fh_fcn(
+    t: np.ndarray,
+    tau_cut: int,
+    p: dict,
+    *,
+    nstate: int = 2,
+    part: str = "re",
+    dt: int | float = 1,
+) -> np.ndarray:
+    """FH ansatz from neighboring summed-ratio finite differences."""
+    if nstate > 2:
+        raise ValueError("FH fits currently support nstate <= 2")
+    if nstate == 1:
+        return p[f"O00_{part}"] / (2 * p["E0"]) + np.asarray(t, dtype=float) * 0
+    return (
+        sum_ratio_fcn(np.asarray(t, dtype=float) + dt, tau_cut, p, nstate=nstate, part=part)
+        - sum_ratio_fcn(np.asarray(t, dtype=float), tau_cut, p, nstate=nstate, part=part)
+    ) / dt
+
+
+def fh_re_fcn(t: np.ndarray, tau_cut: int, p: dict, *, nstate: int = 2, dt: int | float = 1) -> np.ndarray:
+    """Real FH finite-difference fit function."""
+    return fh_fcn(t, tau_cut, p, nstate=nstate, part="re", dt=dt)
+
+
+def fh_im_fcn(t: np.ndarray, tau_cut: int, p: dict, *, nstate: int = 2, dt: int | float = 1) -> np.ndarray:
+    """Imaginary FH finite-difference fit function."""
+    return fh_fcn(t, tau_cut, p, nstate=nstate, part="im", dt=dt)
+
+
 def asymptotic_ratio(o00: gv.GVar, E0: gv.GVar, *, tsep: int, Lt: int) -> gv.GVar:
     """Ground-state ratio plateau at symmetric tau (wrap-aware)."""
     forward = gv.exp(-E0 * float(tsep))
@@ -238,6 +342,22 @@ def _normalise_fitting_form(value: str | None) -> str:
     return form
 
 
+def _normalise_fit_scope(value: str | None) -> tuple[str, str]:
+    raw = "ratio" if value is None else str(value).strip().lower().replace(" ", "")
+    if raw in {"ratio", "pt3_ratio", "3pt_ratio"}:
+        return "ratio", "ratio"
+    if raw in {"fh", "feynman-hellmann", "feynman_hellmann"}:
+        return "FH", "fh"
+    if raw in {"ratio+fh", "fh+ratio", "ratio_fh", "fh_ratio", "joint_ratio_fh"}:
+        return "ratio+FH", "ratio_fh"
+    raise ValueError(f"fit_scope must be 'ratio', 'FH', or 'ratio+FH', got {value!r}")
+
+
+def _validate_scope_form(scope: str, fitting_form: str) -> None:
+    if "FH" in scope and fitting_form == "NonBreit":
+        raise ValueError("fit_scope values containing 'FH' currently require fitting_form='Breit'")
+
+
 def _ratio_points(
     ratio_re: dict[int, np.ndarray],
     ratio_im: dict[int, np.ndarray],
@@ -263,6 +383,52 @@ def _ratio_points(
             re_vals.append(re_row[tau])
             im_vals.append(im_row[tau])
     return ts, taus, re_vals, im_vals
+
+
+def _summed_ratio_samples(ratio: dict[int, np.ndarray], tsep_ls: list[int], tau_cut: int) -> dict[int, np.ndarray]:
+    """Sum ratio samples over tau in [tau_cut, tsep - tau_cut]."""
+    summed: dict[int, np.ndarray] = {}
+    for tsep in tsep_ls:
+        if tsep not in ratio:
+            raise KeyError(f"ratio data missing tsep {tsep}")
+        row = np.asarray(ratio[tsep], dtype=object)
+        start = int(tau_cut)
+        stop = int(tsep) - int(tau_cut) + 1
+        if row.shape[-1] < stop:
+            raise ValueError(f"requested tau upper bound exceeds available tau range for tsep={tsep}")
+        if start >= stop:
+            raise ValueError(f"tau_cut={tau_cut} leaves no tau points for tsep={tsep}")
+        summed[tsep] = np.sum(row[..., start:stop], axis=-1)
+    return summed
+
+
+def _fh_samples_from_ratios(
+    ratio_re: dict[int, np.ndarray],
+    ratio_im: dict[int, np.ndarray],
+    tsep_ls: list[int],
+    tau_cut: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build FH samples by finite-differencing adjacent summed ratios."""
+    tseps = [int(tsep) for tsep in tsep_ls]
+    if len(tseps) < 2:
+        raise ValueError("FH construction requires at least two tsep values")
+    sum_re = _summed_ratio_samples(ratio_re, tseps, tau_cut)
+    sum_im = _summed_ratio_samples(ratio_im, tseps, tau_cut)
+    fh_re_cols = []
+    fh_im_cols = []
+    for t0, t1 in zip(tseps[:-1], tseps[1:]):
+        dt = t1 - t0
+        if dt <= 0:
+            raise ValueError("tsep values must be strictly increasing for FH construction")
+        fh_re_cols.append((sum_re[t1] - sum_re[t0]) / dt)
+        fh_im_cols.append((sum_im[t1] - sum_im[t0]) / dt)
+    return np.stack(fh_re_cols, axis=-1), np.stack(fh_im_cols, axis=-1)
+
+
+def _fh_dt(tsep_ls: list[int]) -> int | float:
+    if len(tsep_ls) < 2:
+        raise ValueError("FH fit requires at least two tsep values")
+    return int(tsep_ls[1]) - int(tsep_ls[0])
 
 
 def fit_two_point(
@@ -451,6 +617,189 @@ def fit_nonbreit_joint(
     )
 
 
+def fit_fh(
+    fh_re: np.ndarray,
+    fh_im: np.ndarray,
+    tsep_ls: list[int],
+    tau_cut: int,
+    *,
+    nstate: int = 2,
+    part: str = "both",
+    svdcut: float = 1e-2,
+    prior: gv.BufferDict,
+    p0: dict[str, float] | None = None,
+) -> lsf.nonlinear_fit:
+    """Fit real/imag FH data with a finite-difference summed-ratio ansatz."""
+    parts = _parts(part)
+    fit_t = np.asarray(tsep_ls[:-1], dtype=float)
+    re_vals = np.asarray(fh_re, dtype=object)
+    im_vals = np.asarray(fh_im, dtype=object)
+    if fit_t.size == 0:
+        raise ValueError("FH fit window must contain at least one point")
+    if re_vals.ndim != 1 or im_vals.ndim != 1:
+        raise ValueError("FH fit data must be one-dimensional")
+    if len(re_vals) != len(fit_t) or len(im_vals) != len(fit_t):
+        raise ValueError("FH data length must match len(tsep_ls) - 1")
+    all_y = {"re": re_vals, "im": im_vals}
+    y_data = {key: all_y[key] for key in parts}
+    dt = _fh_dt(tsep_ls)
+
+    def fcn(t: np.ndarray, p: dict) -> dict[str, np.ndarray]:
+        return {key: fh_fcn(t, tau_cut, p, nstate=nstate, part=key, dt=dt) for key in parts}
+
+    kwargs = {"p0": p0} if p0 is not None else {}
+    return lsf.nonlinear_fit(
+        data=(fit_t, y_data), prior=prior, fcn=fcn, svdcut=svdcut, maxit=10000, **kwargs
+    )
+
+
+def fit_ratio_fh(
+    ratio_re: dict[int, np.ndarray],
+    ratio_im: dict[int, np.ndarray],
+    fh_re: np.ndarray,
+    fh_im: np.ndarray,
+    tsep_ls: list[int],
+    tau_cut: int,
+    Lt: int,
+    *,
+    nstate: int = 2,
+    part: str = "both",
+    svdcut: float = 1e-2,
+    prior: gv.BufferDict,
+    p0: dict[str, float] | None = None,
+) -> lsf.nonlinear_fit:
+    """Jointly fit ratio and FH observables without refitting the 2pt data."""
+    parts = _parts(part)
+    ts, taus, re_vals, im_vals = _ratio_points(ratio_re, ratio_im, tsep_ls, tau_cut)
+    fh_t = np.asarray(tsep_ls[:-1], dtype=float)
+    x_data = {
+        "ratio_t": np.array(ts, dtype=float),
+        "ratio_tau": np.array(taus, dtype=float),
+        "fh_t": fh_t,
+    }
+    y_data: dict[str, Any] = {}
+    if "re" in parts:
+        y_data["ratio_re"] = re_vals
+        y_data["fh_re"] = np.asarray(fh_re, dtype=object)
+    if "im" in parts:
+        y_data["ratio_im"] = im_vals
+        y_data["fh_im"] = np.asarray(fh_im, dtype=object)
+    dt = _fh_dt(tsep_ls)
+
+    def fcn(x: dict[str, np.ndarray], p: dict) -> dict[str, np.ndarray]:
+        values: dict[str, Any] = {}
+        if "re" in parts:
+            values["ratio_re"] = pt3_ratio_fcn(x["ratio_t"], x["ratio_tau"], p, Lt, nstate=nstate, part="re")
+            values["fh_re"] = fh_re_fcn(x["fh_t"], tau_cut, p, nstate=nstate, dt=dt)
+        if "im" in parts:
+            values["ratio_im"] = pt3_ratio_fcn(x["ratio_t"], x["ratio_tau"], p, Lt, nstate=nstate, part="im")
+            values["fh_im"] = fh_im_fcn(x["fh_t"], tau_cut, p, nstate=nstate, dt=dt)
+        return values
+
+    kwargs = {"p0": p0} if p0 is not None else {}
+    return lsf.nonlinear_fit(
+        data=(x_data, y_data), prior=prior, fcn=fcn, svdcut=svdcut, maxit=10000, **kwargs
+    )
+
+
+def fit_joint_fh(
+    pt2_gv: np.ndarray,
+    tmin: int,
+    tmax: int,
+    fh_re: np.ndarray,
+    fh_im: np.ndarray,
+    tsep_ls: list[int],
+    tau_cut: int,
+    Lt: int,
+    *,
+    nstate: int = 2,
+    part: str = "both",
+    svdcut: float = 1e-2,
+    rescale: float = 1.0,
+    prior: gv.BufferDict,
+    p0: dict[str, float] | None = None,
+) -> lsf.nonlinear_fit:
+    """Jointly fit 2pt data and FH data."""
+    parts = _parts(part)
+    fit_t = np.arange(tmin, tmax, dtype=int)
+    fh_t = np.asarray(tsep_ls[:-1], dtype=float)
+    x_data = {"pt2_t": fit_t, "fh_t": fh_t}
+    y_data: dict[str, Any] = {"pt2": np.asarray(pt2_gv)[fit_t] * rescale}
+    if "re" in parts:
+        y_data["fh_re"] = np.asarray(fh_re, dtype=object)
+    if "im" in parts:
+        y_data["fh_im"] = np.asarray(fh_im, dtype=object)
+    dt = _fh_dt(tsep_ls)
+
+    def fcn(x: dict[str, np.ndarray], p: dict) -> dict[str, np.ndarray]:
+        values: dict[str, Any] = {"pt2": pt2_re_fcn(x["pt2_t"], p, Lt, nstate=nstate)}
+        if "re" in parts:
+            values["fh_re"] = fh_re_fcn(x["fh_t"], tau_cut, p, nstate=nstate, dt=dt)
+        if "im" in parts:
+            values["fh_im"] = fh_im_fcn(x["fh_t"], tau_cut, p, nstate=nstate, dt=dt)
+        return values
+
+    kwargs = {"p0": p0} if p0 is not None else {}
+    return lsf.nonlinear_fit(
+        data=(x_data, y_data), prior=prior, fcn=fcn, svdcut=svdcut, maxit=10000, **kwargs
+    )
+
+
+def fit_joint_ratio_fh(
+    pt2_gv: np.ndarray,
+    tmin: int,
+    tmax: int,
+    ratio_re: dict[int, np.ndarray],
+    ratio_im: dict[int, np.ndarray],
+    fh_re: np.ndarray,
+    fh_im: np.ndarray,
+    tsep_ls: list[int],
+    tau_cut: int,
+    Lt: int,
+    *,
+    nstate: int = 2,
+    part: str = "both",
+    svdcut: float = 1e-2,
+    rescale: float = 1.0,
+    prior: gv.BufferDict,
+    p0: dict[str, float] | None = None,
+) -> lsf.nonlinear_fit:
+    """Jointly fit 2pt, ratio, and FH data."""
+    parts = _parts(part)
+    fit_t = np.arange(tmin, tmax, dtype=int)
+    ts, taus, re_vals, im_vals = _ratio_points(ratio_re, ratio_im, tsep_ls, tau_cut)
+    fh_t = np.asarray(tsep_ls[:-1], dtype=float)
+    x_data = {
+        "pt2_t": fit_t,
+        "ratio_t": np.array(ts, dtype=float),
+        "ratio_tau": np.array(taus, dtype=float),
+        "fh_t": fh_t,
+    }
+    y_data: dict[str, Any] = {"pt2": np.asarray(pt2_gv)[fit_t] * rescale}
+    if "re" in parts:
+        y_data["ratio_re"] = re_vals
+        y_data["fh_re"] = np.asarray(fh_re, dtype=object)
+    if "im" in parts:
+        y_data["ratio_im"] = im_vals
+        y_data["fh_im"] = np.asarray(fh_im, dtype=object)
+    dt = _fh_dt(tsep_ls)
+
+    def fcn(x: dict[str, np.ndarray], p: dict) -> dict[str, np.ndarray]:
+        values: dict[str, Any] = {"pt2": pt2_re_fcn(x["pt2_t"], p, Lt, nstate=nstate)}
+        if "re" in parts:
+            values["ratio_re"] = pt3_ratio_fcn(x["ratio_t"], x["ratio_tau"], p, Lt, nstate=nstate, part="re")
+            values["fh_re"] = fh_re_fcn(x["fh_t"], tau_cut, p, nstate=nstate, dt=dt)
+        if "im" in parts:
+            values["ratio_im"] = pt3_ratio_fcn(x["ratio_t"], x["ratio_tau"], p, Lt, nstate=nstate, part="im")
+            values["fh_im"] = fh_im_fcn(x["fh_t"], tau_cut, p, nstate=nstate, dt=dt)
+        return values
+
+    kwargs = {"p0": p0} if p0 is not None else {}
+    return lsf.nonlinear_fit(
+        data=(x_data, y_data), prior=prior, fcn=fcn, svdcut=svdcut, maxit=10000, **kwargs
+    )
+
+
 # --- fit records, selection, and model averaging ----------------------------
 
 
@@ -487,6 +836,23 @@ def bayesian_average(values: np.ndarray, weights: np.ndarray) -> gv.GVar:
     mean = np.sum(weights * gv.mean(values))
     var = np.sum(weights * (gv.sdev(values) ** 2 + gv.mean(values) ** 2)) - mean**2
     return gv.gvar(mean, np.sqrt(var))
+
+
+def _weighted_model_sdev(values: np.ndarray, weights: np.ndarray, *, center: float | None = None) -> float:
+    """Weighted spread of model central values around their combined mean."""
+    vals = np.asarray(values, dtype=float)
+    wgt = np.asarray(weights, dtype=float)
+    finite = np.isfinite(vals) & np.isfinite(wgt)
+    if not np.any(finite):
+        return float("nan")
+    vals = vals[finite]
+    wgt = wgt[finite]
+    total = float(np.sum(wgt))
+    if total <= 0:
+        return float("nan")
+    wgt = wgt / total
+    avg = float(np.sum(wgt * vals)) if center is None else float(center)
+    return float(np.sqrt(np.sum(wgt * (vals - avg) ** 2)))
 
 
 def _fit_usable(
@@ -540,6 +906,14 @@ def _anchor_pt2_prior(prior: gv.BufferDict, pt2_fit: lsf.nonlinear_fit, suffix: 
         prior[_state_key(key, suffix=suffix)] = gv.gvar(gv.mean(value), gv.sdev(value) * PT2_PRIOR_ERROR_SCALE)
 
 
+def _anchor_fh_energy_prior(prior: gv.BufferDict, pt2_fit: lsf.nonlinear_fit, nstate: int) -> None:
+    """Pin FH energy priors to widened 2pt posteriors in chained mode."""
+    for key in ("E0", *(f"log(dE{state})" for state in range(1, nstate))):
+        if key in prior and key in pt2_fit.p:
+            value = pt2_fit.p[key]
+            prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * PT2_PRIOR_ERROR_SCALE)
+
+
 def _overlaps(p: dict, nstate: int, rescale: float) -> dict[str, gv.GVar]:
     """Physical overlaps z_state / sqrt(rescale) for tuning logs."""
     overlap_rescale = np.sqrt(rescale)
@@ -583,6 +957,17 @@ def _ratio_prior_template(fitting_form: str, nstate: int) -> gv.BufferDict:
     return pt3_ratio_prior(nstate)
 
 
+def _scope_prior_template(fitting_form: str, nstate: int, fit_scope: str, strategy: str) -> gv.BufferDict:
+    _validate_scope_form(fit_scope, fitting_form)
+    if fit_scope == "ratio":
+        return _ratio_prior_template(fitting_form, nstate)
+    if fit_scope == "FH":
+        return _joint_fh_prior(nstate) if strategy == "joint" else fh_prior(nstate)
+    if fit_scope == "ratio+FH":
+        return _ratio_fh_prior(nstate)
+    raise ValueError(f"unsupported fit_scope {fit_scope!r}")
+
+
 def _fit_summary(rec: dict[str, Any], *, fallback: bool, index: int) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "index": index,
@@ -591,7 +976,7 @@ def _fit_summary(rec: dict[str, Any], *, fallback: bool, index: int) -> dict[str
         "logGBF": float(rec["logGBF"]),
         "fallback_no_q_passing": bool(fallback),
     }
-    for key in ("tmin", "tmax", "tsep_ls", "tau_cut", "nstate", "part", "correlator_rescale"):
+    for key in ("tmin", "tmax", "tsep_ls", "tau_cut", "nstate", "part", "fit_scope", "correlator_rescale"):
         if key in rec:
             summary[key] = rec[key]
     fit = rec.get("fit")
@@ -792,6 +1177,59 @@ def _plot_sample0_ratio(
     }
 
 
+def _fh_bands(rec: dict[str, Any]) -> list[dict[str, Any]]:
+    tsep_fit = np.asarray(rec["tsep_ls"][:-1], dtype=float)
+    if tsep_fit.size == 0:
+        raise ValueError("FH plot requires at least two tsep values")
+    if tsep_fit.size == 1:
+        fit_t = tsep_fit
+    else:
+        fit_t = np.linspace(float(np.min(tsep_fit)), float(np.max(tsep_fit)), 200)
+    p = rec["fit"].p
+    nstate = rec["nstate"]
+    tau_cut = rec["tau_cut"]
+    dt = _fh_dt(rec["tsep_ls"])
+    return [
+        {
+            "fit_t": fit_t,
+            "fit_re": fh_re_fcn(fit_t, tau_cut, p, nstate=nstate, dt=dt),
+            "fit_im": fh_im_fcn(fit_t, tau_cut, p, nstate=nstate, dt=dt),
+            "color": COLOR_CYCLE[0],
+        }
+    ]
+
+
+def _plot_sample0_fh(
+    *,
+    ratio_re: dict[int, np.ndarray],
+    ratio_im: dict[int, np.ndarray],
+    rec: dict[str, Any],
+    log_dir: Path,
+    momentum: str,
+    z: int,
+    fit_label: str,
+) -> dict[str, str]:
+    stem = log_dir / f"{fit_label}_{momentum}_z{z}_sample0"
+    fh_re, fh_im = _fh_samples_from_ratios(ratio_re, ratio_im, rec["tsep_ls"], rec["tau_cut"])
+    p = rec["fit"].p
+    figures = plot_fh_fit_on_data(
+        fh_re,
+        fh_im,
+        tsep_ls=rec["tsep_ls"],
+        window_bands=_fh_bands(rec),
+        plateau_ref_re=p["O00_re"] / (2 * p["E0"]),
+        plateau_ref_im=p["O00_im"] / (2 * p["E0"]),
+        plateau_label=r"Sample-0 fit bare matrix element",
+        save_path=stem,
+    )
+    for fig, _ax in figures:
+        plt.close(fig)
+    return {
+        "fh_re_pdf": str(stem.with_name(f"{stem.name}_fh_re.pdf")),
+        "fh_im_pdf": str(stem.with_name(f"{stem.name}_fh_im.pdf")),
+    }
+
+
 def _plot_sample0_pt2(
     *,
     pt2_sample: np.ndarray,
@@ -873,13 +1311,25 @@ def _bare_records_to_ensemble(
 
     samples = np.stack(samples_by_z, axis=1)
     values = [samples[idx] for idx in range(samples.shape[0])]
+    sorted_records = sorted(records, key=lambda item: item["z"])
+    bare_attrs = dict(attrs)
+    bare_attrs.update(
+        {
+            "bare_re_mean": json.dumps([float(rec["real_mean"]) for rec in sorted_records]),
+            "bare_im_mean": json.dumps([float(rec["imag_mean"]) for rec in sorted_records]),
+            "bare_re_stat_sdev": json.dumps([float(rec["real_stat_sdev"]) for rec in sorted_records]),
+            "bare_im_stat_sdev": json.dumps([float(rec["imag_stat_sdev"]) for rec in sorted_records]),
+            "bare_re_sys_sdev": json.dumps([float(rec.get("real_sys_sdev", 0.0)) for rec in sorted_records]),
+            "bare_im_sys_sdev": json.dumps([float(rec.get("imag_sys_sdev", 0.0)) for rec in sorted_records]),
+        }
+    )
     return EnsembleData(
-        ensemble=_artifact_ensemble_info(str(attrs.get("ensemble", ""))),
+        ensemble=_artifact_ensemble_info(str(bare_attrs.get("ensemble", ""))),
         resample=_ensemble_resample_name(resample_mode),
         values=values,
         dims=("z",),
         coords={"z": z_values},
-        attrs={key: str(value) for key, value in attrs.items() if value is not None},
+        attrs={key: str(value) for key, value in bare_attrs.items() if value is not None},
         name="bare_matrix_element",
     )
 
@@ -916,6 +1366,10 @@ def _write_outputs(
         imag = np.asarray(rec["imag_samples"], dtype=float)
         r_mean, r_err = sample_mean_err(real, mode=resample_mode)
         i_mean, i_err = sample_mean_err(imag, mode=resample_mode)
+        rec["real_mean"] = r_mean
+        rec["imag_mean"] = i_mean
+        rec["real_stat_sdev"] = r_err
+        rec["imag_stat_sdev"] = i_err
         z_values.append(z)
         real_mean.append(r_mean)
         real_err.append(r_err)
@@ -928,8 +1382,12 @@ def _write_outputs(
                 "n_failed_samples": int(np.count_nonzero(~np.isfinite(real) | ~np.isfinite(imag))),
                 "real_mean": r_mean,
                 "real_sdev": r_err,
+                "real_stat_sdev": r_err,
+                "real_sys_sdev": float(rec.get("real_sys_sdev", 0.0)),
                 "imag_mean": i_mean,
                 "imag_sdev": i_err,
+                "imag_stat_sdev": i_err,
+                "imag_sys_sdev": float(rec.get("imag_sys_sdev", 0.0)),
                 "window": rec["window"],
                 "sample0_plot_paths": rec.get("sample0_plot_paths", {}),
             }
@@ -1150,10 +1608,15 @@ def _normalise_strategy(value: str | None) -> tuple[str, str]:
     raise ValueError(f"fit_strategy must be 'joint' or 'chained', got {value!r}")
 
 
+def _fit_mode_label(strategy: str, scope_label: str) -> str:
+    return f"{strategy}_2pt_{scope_label}"
+
+
 def _fit_average(
     spec: dict[str, Any],
     *,
     strategy: str,
+    fit_scope: str,
     pt2_gv: np.ndarray,
     pt2_f_gv: np.ndarray | None,
     ratio_re: dict[int, np.ndarray],
@@ -1168,12 +1631,26 @@ def _fit_average(
     fitting_form: str,
 ) -> lsf.nonlinear_fit:
     """Fit one candidate window on sample-average data for the chosen strategy."""
-    template = _ratio_prior_template(fitting_form, nstate)
+    template = _scope_prior_template(fitting_form, nstate, fit_scope, strategy)
+    fh_re = fh_im = None
+    if "FH" in fit_scope:
+        fh_re, fh_im = _fh_samples_from_ratios(ratio_re, ratio_im, spec["tsep_ls"], spec["tau_cut"])
     if strategy == "joint":
         if fitting_form == "NonBreit":
             return fit_nonbreit_joint(
                 pt2_gv, pt2_f_gv if pt2_f_gv is not None else pt2_gv,
                 spec["tmin"], spec["tmax"], ratio_re, ratio_im, spec["tsep_ls"], spec["tau_cut"], Lt,
+                nstate=nstate, part=part, svdcut=svdcut, rescale=scale, prior=template,
+            )
+        if fit_scope == "FH":
+            return fit_joint_fh(
+                pt2_gv, spec["tmin"], spec["tmax"], fh_re, fh_im, spec["tsep_ls"], spec["tau_cut"], Lt,
+                nstate=nstate, part=part, svdcut=svdcut, rescale=scale, prior=template,
+            )
+        if fit_scope == "ratio+FH":
+            return fit_joint_ratio_fh(
+                pt2_gv, spec["tmin"], spec["tmax"], ratio_re, ratio_im, fh_re, fh_im,
+                spec["tsep_ls"], spec["tau_cut"], Lt,
                 nstate=nstate, part=part, svdcut=svdcut, rescale=scale, prior=template,
             )
         return fit_joint(
@@ -1188,6 +1665,19 @@ def _fit_average(
             ratio_re, ratio_im, spec["tsep_ls"], spec["tau_cut"], Lt,
             nstate=nstate, part=part, svdcut=svdcut, prior=prior,
         )
+    if fit_scope == "FH":
+        _anchor_fh_energy_prior(prior, pt2_best["fit"], nstate)
+        return fit_fh(
+            fh_re, fh_im, spec["tsep_ls"], spec["tau_cut"],
+            nstate=nstate, part=part, svdcut=svdcut, prior=prior,
+        )
+    if fit_scope == "ratio+FH":
+        _anchor_pt2_prior(prior, pt2_best["fit"])
+        _anchor_fh_energy_prior(prior, pt2_best["fit"], nstate)
+        return fit_ratio_fh(
+            ratio_re, ratio_im, fh_re, fh_im, spec["tsep_ls"], spec["tau_cut"], Lt,
+            nstate=nstate, part=part, svdcut=svdcut, prior=prior,
+        )
     _anchor_pt2_prior(prior, pt2_best["fit"])
     return fit_ratio(
         ratio_re, ratio_im, spec["tsep_ls"], spec["tau_cut"], Lt,
@@ -1199,6 +1689,7 @@ def _scan_average(
     specs: list[dict[str, Any]],
     *,
     strategy: str,
+    fit_scope: str,
     pt2_gv: np.ndarray,
     pt2_f_gv: np.ndarray | None,
     ratio_re: dict[int, np.ndarray],
@@ -1213,13 +1704,13 @@ def _scan_average(
     fitting_form: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Fit every candidate window on sample-average data; drop unusable posteriors."""
-    template = _ratio_prior_template(fitting_form, nstate)
+    template = _scope_prior_template(fitting_form, nstate, fit_scope, strategy)
     records: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     for spec in specs:
         try:
             fit = _fit_average(
-                spec, strategy=strategy, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
+                spec, strategy=strategy, fit_scope=fit_scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
                 ratio_re=ratio_re, ratio_im=ratio_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
                 Lt=Lt, nstate=nstate, part=part, svdcut=svdcut, scale=scale, fitting_form=fitting_form,
             )
@@ -1227,7 +1718,7 @@ def _scan_average(
             if not usable:
                 rejected.append({**spec, "reason": reason})
                 continue
-            records.append(_record(fit, nstate=nstate, part=part, correlator_rescale=scale, **spec))
+            records.append(_record(fit, nstate=nstate, part=part, fit_scope=fit_scope, correlator_rescale=scale, **spec))
         except Exception as exc:
             rejected.append({**spec, "reason": str(exc)})
     return records, rejected
@@ -1275,6 +1766,8 @@ def tune_bare_matrix(
     pt2_windows: list[dict[str, int]] | None = None,
     pt3_windows: list[dict[str, Any]] | None = None,
     pt3_tau_cuts: list[int] | None = None,
+    fit_scope_values: list[str] | None = None,
+    fit_scope: str | None = None,
     fit_strategies: list[str] | None = None,
     nstate_values: list[int] | None = None,
     fit_strategy: str | None = None,
@@ -1338,71 +1831,75 @@ def tune_bare_matrix(
     records: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     strategies = fit_strategies or ([fit_strategy] if fit_strategy is not None else ["joint"])
+    scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["ratio"])
     states = nstate_values or ([nstate] if nstate is not None else [2])
     for strategy_value in strategies:
         strategy, _ = _normalise_strategy(strategy_value)
-        for nstate_value in states:
-            pt2_best = None
-            pt2_f_best = None
-            if strategy == "chained":
-                pt2_records: list[dict[str, Any]] = []
-                pt2_f_records: list[dict[str, Any]] = []
-                for window in pt2_window_specs:
-                    try:
-                        fit = fit_two_point(
-                            pt2_gv, window["tmin"], window["tmax"], Lt,
-                            nstate=nstate_value, svdcut=svdcut, rescale=scale,
-                        )
-                        pt2_records.append(
-                            _record(fit, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate_value, correlator_rescale=scale)
-                        )
-                    except Exception as exc:
-                        rejected.append({**window, "fit_strategy": strategy, "nstate": nstate_value, "reason": str(exc)})
-                    if form == "NonBreit" and pt2_f_gv is not None:
+        for scope_value in scopes:
+            scope, _ = _normalise_fit_scope(scope_value)
+            _validate_scope_form(scope, form)
+            for nstate_value in states:
+                nstate_int = int(nstate_value)
+                if "FH" in scope and nstate_int > 2:
+                    rejected.append({"fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int, "reason": "FH fits currently support nstate <= 2"})
+                    continue
+                pt2_best = None
+                pt2_f_best = None
+                if strategy == "chained":
+                    pt2_records: list[dict[str, Any]] = []
+                    pt2_f_records: list[dict[str, Any]] = []
+                    for window in pt2_window_specs:
                         try:
-                            fit_f = fit_two_point(
-                                pt2_f_gv, window["tmin"], window["tmax"], Lt,
-                                nstate=nstate_value, svdcut=svdcut, rescale=scale,
+                            fit = fit_two_point(
+                                pt2_gv, window["tmin"], window["tmax"], Lt,
+                                nstate=nstate_int, svdcut=svdcut, rescale=scale,
                             )
-                            pt2_f_records.append(
-                                _record(fit_f, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate_value, correlator_rescale=scale)
+                            pt2_records.append(
+                                _record(fit, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate_int, correlator_rescale=scale)
                             )
                         except Exception as exc:
-                            rejected.append({**window, "fit_strategy": strategy, "nstate": nstate_value, "reason": str(exc)})
-                if not pt2_records:
-                    continue
-                pt2_best = pt2_records[select_best(pt2_records, q_min=q_min)[0]]
-                if form == "NonBreit":
-                    if not pt2_f_records:
+                            rejected.append({**window, "fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int, "reason": str(exc)})
+                        if form == "NonBreit" and pt2_f_gv is not None:
+                            try:
+                                fit_f = fit_two_point(
+                                    pt2_f_gv, window["tmin"], window["tmax"], Lt,
+                                    nstate=nstate_int, svdcut=svdcut, rescale=scale,
+                                )
+                                pt2_f_records.append(
+                                    _record(fit_f, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate_int, correlator_rescale=scale)
+                                )
+                            except Exception as exc:
+                                rejected.append({**window, "fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int, "reason": str(exc)})
+                    if not pt2_records:
                         continue
-                    pt2_f_best = pt2_f_records[select_best(pt2_f_records, q_min=q_min)[0]]
+                    pt2_best = pt2_records[select_best(pt2_records, q_min=q_min)[0]]
+                    if form == "NonBreit":
+                        if not pt2_f_records:
+                            continue
+                        pt2_f_best = pt2_f_records[select_best(pt2_f_records, q_min=q_min)[0]]
 
-            specs = _candidate_specs(
-                strategy=strategy,
-                pt2_window_specs=pt2_window_specs,
-                pt3_window_specs=pt3_window_specs,
-                pt2_best=pt2_best,
-            )
-            found, failed = _scan_average(
-                specs, strategy=strategy, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
-                ratio_re=ratio_re, ratio_im=ratio_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
-                Lt=Lt, nstate=nstate_value, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
-            )
-            for rec in found:
-                rec["fit_strategy"] = strategy
-            records.extend(found)
-            rejected.extend({**item, "fit_strategy": strategy, "nstate": nstate_value} for item in failed)
+                specs = _candidate_specs(
+                    strategy=strategy,
+                    pt2_window_specs=pt2_window_specs,
+                    pt3_window_specs=pt3_window_specs,
+                    pt2_best=pt2_best,
+                )
+                found, failed = _scan_average(
+                    specs, strategy=strategy, fit_scope=scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
+                    ratio_re=ratio_re, ratio_im=ratio_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
+                    Lt=Lt, nstate=nstate_int, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
+                )
+                for rec in found:
+                    rec["fit_strategy"] = strategy
+                    rec["fit_scope"] = scope
+                records.extend(found)
+                rejected.extend({**item, "fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int} for item in failed)
     if not records:
         raise ValueError("all bare-matrix tuning windows failed: " + "; ".join(str(item) for item in rejected[:5]))
     store[out] = records
 
     best_index, fallback = select_best(records, q_min=q_min)
     best = records[best_index]
-    best_fig = _plot_sample0_ratio(
-        ratio_re=ratio_re, ratio_im=ratio_im, rec=best, Lt=Lt, log_dir=out_dir,
-        momentum=momentum, z=int(tune_z), fit_label=f"tune_{best['fit_strategy']}_n{best['nstate']}",
-        fitting_form=form,
-    )
 
     candidates = []
     for i, rec in enumerate(records):
@@ -1410,6 +1907,7 @@ def tune_bare_matrix(
         candidate = {
             "index": i,
             "fit_strategy": rec["fit_strategy"],
+            "fit_scope": rec["fit_scope"],
             "nstate": rec["nstate"],
             "tmin": rec["tmin"],
             "tmax": rec["tmax"],
@@ -1428,6 +1926,7 @@ def tune_bare_matrix(
     return {
         "out": out,
         "fit_strategies": strategies,
+        "fit_scopes": scopes,
         "nstate_values": states,
         "tune_z": int(tune_z),
         "Lt": int(Lt),
@@ -1439,7 +1938,7 @@ def tune_bare_matrix(
         "recommended_index": best_index,
         "recommended_fallback_no_q_passing": fallback,
         "recommended_window": _fit_summary(best, fallback=fallback, index=best_index),
-        "tuning_ratio_pdf": best_fig,
+        "tuning_diagnostic_pdfs": {},
     }
 
 
@@ -1453,6 +1952,7 @@ def _fit_one_sample(
     p0: dict[str, float],
     *,
     strategy: str,
+    fit_scope: str,
     pt2_samples: np.ndarray,
     pt2_gv: np.ndarray,
     pt2_f_samples: np.ndarray | None,
@@ -1472,6 +1972,9 @@ def _fit_one_sample(
     """Refit one resampled sample with the fixed shared window and tuned prior."""
     rre = {t: _recenter(samples_re[t][sample_index], ratio_re[t]) for t in tseps}
     rim = {t: _recenter(samples_im[t][sample_index], ratio_im[t]) for t in tseps}
+    fh_re = fh_im = None
+    if "FH" in fit_scope:
+        fh_re, fh_im = _fh_samples_from_ratios(rre, rim, spec["tsep_ls"], spec["tau_cut"])
     if strategy == "joint":
         pt2_s = _recenter(pt2_samples[sample_index], pt2_gv)
         if fitting_form == "NonBreit":
@@ -1483,14 +1986,35 @@ def _fit_one_sample(
                 nstate=nstate, part=part, svdcut=svdcut, rescale=scale, prior=prior, p0=p0,
             )
         else:
-            fit = fit_joint(
-                pt2_s, spec["tmin"], spec["tmax"], rre, rim, spec["tsep_ls"], spec["tau_cut"], Lt,
-                nstate=nstate, part=part, svdcut=svdcut, rescale=scale, prior=prior, p0=p0,
-            )
+            if fit_scope == "FH":
+                fit = fit_joint_fh(
+                    pt2_s, spec["tmin"], spec["tmax"], fh_re, fh_im, spec["tsep_ls"], spec["tau_cut"], Lt,
+                    nstate=nstate, part=part, svdcut=svdcut, rescale=scale, prior=prior, p0=p0,
+                )
+            elif fit_scope == "ratio+FH":
+                fit = fit_joint_ratio_fh(
+                    pt2_s, spec["tmin"], spec["tmax"], rre, rim, fh_re, fh_im, spec["tsep_ls"], spec["tau_cut"], Lt,
+                    nstate=nstate, part=part, svdcut=svdcut, rescale=scale, prior=prior, p0=p0,
+                )
+            else:
+                fit = fit_joint(
+                    pt2_s, spec["tmin"], spec["tmax"], rre, rim, spec["tsep_ls"], spec["tau_cut"], Lt,
+                    nstate=nstate, part=part, svdcut=svdcut, rescale=scale, prior=prior, p0=p0,
+                )
     else:
         if fitting_form == "NonBreit":
             fit = fit_nonbreit_ratio(
                 rre, rim, spec["tsep_ls"], spec["tau_cut"], Lt,
+                nstate=nstate, part=part, svdcut=svdcut, prior=prior, p0=p0,
+            )
+        elif fit_scope == "FH":
+            fit = fit_fh(
+                fh_re, fh_im, spec["tsep_ls"], spec["tau_cut"],
+                nstate=nstate, part=part, svdcut=svdcut, prior=prior, p0=p0,
+            )
+        elif fit_scope == "ratio+FH":
+            fit = fit_ratio_fh(
+                rre, rim, fh_re, fh_im, spec["tsep_ls"], spec["tau_cut"], Lt,
                 nstate=nstate, part=part, svdcut=svdcut, prior=prior, p0=p0,
             )
         else:
@@ -1535,6 +2059,7 @@ def fit_bare_matrix_grid(
     model_average: bool = False,
     tune_z: int | None = None,
     fit_strategy: str = "joint",
+    fit_scope: str = "ratio",
     nstate: int = 2,
     resample_mode: str = "bs",
     n_boot: int = 200,
@@ -1562,7 +2087,12 @@ def fit_bare_matrix_grid(
     """
     del out
     form = _normalise_fitting_form(fitting_form)
-    strategy, fit_mode = _normalise_strategy(fit_strategy)
+    strategy, _ = _normalise_strategy(fit_strategy)
+    scope, scope_label = _normalise_fit_scope(fit_scope)
+    _validate_scope_form(scope, form)
+    if "FH" in scope and int(nstate) > 2:
+        raise ValueError("FH fits currently support nstate <= 2")
+    fit_mode = _fit_mode_label(strategy, scope_label)
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
     out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
@@ -1697,7 +2227,7 @@ def fit_bare_matrix_grid(
         selection_rule = "single fixed window provided by the agent"
     else:
         tune_records, _ = _scan_average(
-            candidate_specs, strategy=strategy, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
+            candidate_specs, strategy=strategy, fit_scope=scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
             ratio_re=tune_gv_re, ratio_im=tune_gv_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
             Lt=Lt, nstate=nstate, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
         )
@@ -1709,7 +2239,7 @@ def fit_bare_matrix_grid(
         selection_rule = f"auto-selected single window on z={tune_z_value} (fallback_no_q_passing={fallback})"
     tuning_logger.info("shared setting (%s): %s", selection_rule, shared_specs)
 
-    template = _ratio_prior_template(form, nstate)
+    template = _scope_prior_template(form, nstate, scope, strategy)
     z_records: list[dict[str, Any]] = []
     z_report: list[dict[str, Any]] = []
 
@@ -1721,7 +2251,7 @@ def fit_bare_matrix_grid(
             samples_re, samples_im, gv_re, gv_im = read_ratios(z)
 
         avg_records, rejected = _scan_average(
-            shared_specs, strategy=strategy, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
+            shared_specs, strategy=strategy, fit_scope=scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
             ratio_re=gv_re, ratio_im=gv_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
             Lt=Lt, nstate=nstate, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
         )
@@ -1735,6 +2265,18 @@ def fit_bare_matrix_grid(
         weights = _loggbf_weights(avg_records)
         priors = [(_scaled_prior(rec["fit"], template, error_scale=posterior_prior_error_scale),
                    _p0_from_fit(rec["fit"], template)) for rec in avg_records]
+        avg_re_vals = np.asarray(
+            [float(gv.mean(_bare_matrix_element_from_fit(rec["fit"].p, part="re", fitting_form=form))) for rec in avg_records],
+            dtype=float,
+        )
+        avg_im_vals = np.asarray(
+            [float(gv.mean(_bare_matrix_element_from_fit(rec["fit"].p, part="im", fitting_form=form))) for rec in avg_records],
+            dtype=float,
+        )
+        avg_re_mean = float(np.sum(weights * avg_re_vals))
+        avg_im_mean = float(np.sum(weights * avg_im_vals))
+        real_sys_sdev = _weighted_model_sdev(avg_re_vals, weights, center=avg_re_mean)
+        imag_sys_sdev = _weighted_model_sdev(avg_im_vals, weights, center=avg_im_mean)
         for rec in avg_records:
             log_nonlinear_fit_quality(
                 rec["fit"], kind=f"sample-average {fit_mode}",
@@ -1747,7 +2289,7 @@ def fit_bare_matrix_grid(
         failures: list[dict[str, Any]] = []
         sample0_paths: dict[str, str] = {}
         common = dict(
-            strategy=strategy, pt2_samples=pt2_samples, pt2_gv=pt2_gv,
+            strategy=strategy, fit_scope=scope, pt2_samples=pt2_samples, pt2_gv=pt2_gv,
             pt2_f_samples=pt2_f_samples, pt2_f_gv=pt2_f_gv,
             samples_re=samples_re, samples_im=samples_im,
             ratio_re=gv_re, ratio_im=gv_im, tseps=tseps, Lt=Lt, nstate=nstate, part=part, svdcut=svdcut, scale=scale,
@@ -1777,10 +2319,16 @@ def fit_bare_matrix_grid(
                 imag_samples[sample_index] = float(np.sum(weights * np.array(im_vals)))
                 if sample_index == 0:
                     rec0 = _record(first_fit, **eff_specs[0], nstate=nstate, part=part, correlator_rescale=scale)
-                    sample0_paths = _plot_sample0_ratio(
-                        ratio_re=first_rre, ratio_im=first_rim, rec=rec0, Lt=Lt, log_dir=fit_log_dir,
-                        momentum=momentum, z=z, fit_label=f"{strategy}_fit", fitting_form=form,
-                    )
+                    if scope != "FH":
+                        sample0_paths.update(_plot_sample0_ratio(
+                            ratio_re=first_rre, ratio_im=first_rim, rec=rec0, Lt=Lt, log_dir=fit_log_dir,
+                            momentum=momentum, z=z, fit_label=f"{strategy}_{scope_label}_fit", fitting_form=form,
+                        ))
+                    if "FH" in scope:
+                        sample0_paths.update(_plot_sample0_fh(
+                            ratio_re=first_rre, ratio_im=first_rim, rec=rec0, log_dir=fit_log_dir,
+                            momentum=momentum, z=z, fit_label=f"{strategy}_{scope_label}_fit",
+                        ))
             except Exception as exc:
                 failures.append({"sample": sample_index, "error": str(exc)})
                 sample_logger.info("Bad %s z=%s sample=%s: %s", fit_mode, z, sample_index, exc)
@@ -1793,8 +2341,29 @@ def fit_bare_matrix_grid(
 
         best_avg_index, fallback = select_best(avg_records, q_min=q_min)
         window_summary = _fit_summary(avg_records[best_avg_index], fallback=fallback, index=best_avg_index)
-        z_records.append({"z": z, "real_samples": real_samples, "imag_samples": imag_samples, "window": window_summary, "sample0_plot_paths": sample0_paths})
-        z_report.append({"z": z, "window": window_summary, "rejected_windows": rejected, "n_failed_samples": len(failures), "sample_failures": failures[:10], "sample0_plot_paths": sample0_paths})
+        z_records.append(
+            {
+                "z": z,
+                "real_samples": real_samples,
+                "imag_samples": imag_samples,
+                "real_sys_sdev": real_sys_sdev,
+                "imag_sys_sdev": imag_sys_sdev,
+                "window": window_summary,
+                "sample0_plot_paths": sample0_paths,
+            }
+        )
+        z_report.append(
+            {
+                "z": z,
+                "window": window_summary,
+                "rejected_windows": rejected,
+                "n_failed_samples": len(failures),
+                "sample_failures": failures[:10],
+                "real_sys_sdev": real_sys_sdev,
+                "imag_sys_sdev": imag_sys_sdev,
+                "sample0_plot_paths": sample0_paths,
+            }
+        )
 
     output = _write_outputs(
         z_records, artifacts_dir=out_dir, save_path=save_path, ensemble=ensemble, tag=tag, variant=variant,
@@ -1815,6 +2384,7 @@ def fit_bare_matrix_grid(
                 "pz_gev": pz_gev,
                 "pz_out_gev": pz_out_gev,
                 "fitting_form": form,
+                "fit_scope": scope,
                 "momentum_out": final_momentum,
                 "pt3_momentum": three_point_momentum,
                 "hadron": hadron,
@@ -1830,6 +2400,7 @@ def fit_bare_matrix_grid(
     return {
         **output,
         "fit_strategy": strategy,
+        "fit_scope": scope,
         "fit_mode": fit_mode,
         "fitting_form": form,
         "model_average": model_average,

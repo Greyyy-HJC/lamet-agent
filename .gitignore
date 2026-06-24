@@ -25,5 +25,6 @@ examples/fake_data/data/
 data*/
 artifacts/
 examples/artifacts/
+**/temp*
 
 examples/workflow_cg_qpdf_complete_manifest.json

@@ -9,10 +9,13 @@ STAGE_SKILL = """
 Correlator-analysis physics:
 - Fit the symmetric 2pt correlator only in the first half of the lattice.
 - Form 3pt/2pt ratios after resampling both correlators with shared indices.
+- fit_scope selects the 3pt observable to fit: ratio, FH, or ratio+FH. FH is
+  constructed by summing ratio data over tau after pt3_tau_cuts and finite
+  differencing neighboring tsep values.
 - The optional fitting_form selects the default Breit ratio or a NonBreit ratio
   with separate initial/final 2pt correlators matched by pz_gev/pz_out_gev.
-- Tune nstate, fit strategy, and windows on sample-average data, then pass one
-  selected scalar nstate and fit_strategy to fit_bare_matrix_grid.
+- Tune nstate, fit scope, fit strategy, and windows on sample-average data, then
+  pass one selected scalar nstate, fit_scope, and fit_strategy to fit_bare_matrix_grid.
 - The bare matrix element is O00/(2*E0) and is invariant under 2pt rescaling.
 """.strip()
 
@@ -33,6 +36,14 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     fitting_form = str(params.get("fitting_form", "Breit"))
     if fitting_form not in {"Breit", "NonBreit"}:
         return ["fitting_form must be 'Breit' or 'NonBreit'."]
+    raw_scopes = params.get("fit_scope", ["ratio"])
+    scopes = raw_scopes if isinstance(raw_scopes, list) else [raw_scopes]
+    normalised_scopes = {str(scope).strip().lower().replace(" ", "") for scope in scopes}
+    allowed_scopes = {"ratio", "fh", "ratio+fh"}
+    if not normalised_scopes.issubset(allowed_scopes):
+        return ["fit_scope must contain only 'ratio', 'FH', or 'ratio+FH'."]
+    if fitting_form == "NonBreit" and any("fh" in scope for scope in normalised_scopes):
+        return ["fit_scope values containing 'FH' currently require fitting_form 'Breit'."]
     n_2pt = len([item for item in selected if item.kind == "2pt"])
     if fitting_form == "Breit" and n_2pt != 1:
         return ["A Breit correlator_analysis job requires exactly one 2pt correlator."]
@@ -41,6 +52,8 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     pt3 = [item for item in selected if item.kind == "3pt"]
     if not pt3:
         return ["A correlator_analysis job requires at least one 3pt correlator."]
+    if any("fh" in scope for scope in normalised_scopes) and len(pt3) < 2:
+        return ["FH correlator_analysis jobs require at least two 3pt tsep correlators."]
     if any(item.bt is None or len(item.bt) != 1 for item in pt3):
         return ["The current correlator stage requires exactly one bt value per 3pt correlator."]
     return []

@@ -171,6 +171,12 @@ tests the configured `pt2_windows` and `pt3_tau_cuts` (and the configured
   window choices, but its runtime grows approximately linearly with the number
   of window combinations.
 
+The correlator NetCDF artifact stores the weighted resampled bare matrix-element
+samples as usual and records per-`z` uncertainty summaries in attrs:
+`bare_re_stat_sdev` / `bare_im_stat_sdev` from the resampling spread and
+`bare_re_sys_sdev` / `bare_im_sys_sdev` from the window-model spread. The
+systematic arrays are zero for the single-window `model_average: false` path.
+
 For example, four `pt2_windows` and three `pt3_tau_cuts` produce up to 12 models.
 With 109 jackknife samples and 25 `z` values, `model_average: true` performs about
 12 times as many nonlinear fits as the single-window path. The manifest value is

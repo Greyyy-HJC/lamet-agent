@@ -73,6 +73,8 @@ TAU_CENTER_LABEL = r"$(\tau - t_{\mathrm{sep}}/2)~/~a$"
 RATIO_REAL_LABEL = r"$\Re\left[\mathcal{R}(t_{\mathrm{sep}},\tau)\right]$"
 RATIO_IMAG_LABEL = r"$\Im\left[\mathcal{R}(t_{\mathrm{sep}},\tau)\right]$"
 TSEP_TAG = r"$t_{\mathrm{sep}}$"
+FH_REAL_LABEL = r"$\Re\left[\mathrm{FH}(t_{\mathrm{sep}})\right]$"
+FH_IMAG_LABEL = r"$\Im\left[\mathrm{FH}(t_{\mathrm{sep}})\right]$"
 
 
 def apply_plot_style() -> None:
@@ -592,6 +594,83 @@ def plot_pt3_ratio_fit_on_data(
             bbox_inches="tight",
             transparent=True,
         )
+
+    return (fig_re, ax_re), (fig_im, ax_im)
+
+
+def plot_fh_fit_on_data(
+    fh_real: np.ndarray,
+    fh_imag: np.ndarray,
+    *,
+    tsep_ls: list[int],
+    window_bands: list[dict[str, Any]] | None = None,
+    plateau_ref_re: gv.GVar | None = None,
+    plateau_ref_im: gv.GVar | None = None,
+    plateau_label: str = r"Sample-0 fit bare matrix element",
+    save_path: str | Path | None = None,
+) -> tuple[tuple[Figure, Axes], tuple[Figure, Axes]]:
+    """Plot FH real and imag vs tsep with optional fit bands."""
+    fit_tseps = np.asarray(tsep_ls[:-1], dtype=float)
+    if fit_tseps.size == 0:
+        raise ValueError("FH plot requires at least two tsep values")
+
+    fig_re, ax_re = default_plot()
+    mean_re = np.asarray(gv.mean(fh_real), dtype=float)
+    sdev_re = np.asarray(gv.sdev(fh_real), dtype=float)
+    y_re = [mean_re]
+    yerr_re = [sdev_re]
+    ax_re.errorbar(fit_tseps, mean_re, yerr=sdev_re, label="Data", **ERRORBAR_STYLE)
+
+    if window_bands:
+        for win in window_bands:
+            fit_t = np.asarray(win["fit_t"], dtype=float)
+            fit = win["fit_re"]
+            fit_mean = np.asarray(gv.mean(fit), dtype=float)
+            fit_sdev = np.asarray(gv.sdev(fit), dtype=float)
+            color = win.get("color", COLOR_CYCLE[0])
+            ax_re.fill_between(fit_t, fit_mean - fit_sdev, fit_mean + fit_sdev, color=color, alpha=0.3)
+            y_re.append(fit_mean)
+            yerr_re.append(fit_sdev)
+
+    if plateau_ref_re is not None:
+        _draw_O00_band(ax_re, plateau_ref_re, float(np.min(fit_tseps)), float(np.max(fit_tseps)), label=plateau_label)
+
+    ax_re.set_xlabel(TSEP_LABEL, **FONT_SIZE)
+    ax_re.set_ylabel(FH_REAL_LABEL, **FONT_SIZE)
+    ax_re.set_ylim(_ylim_middle_third(y_re, yerr_re))
+    ax_re.legend(**LEGEND_SETS)
+
+    fig_im, ax_im = default_plot()
+    mean_im = np.asarray(gv.mean(fh_imag), dtype=float)
+    sdev_im = np.asarray(gv.sdev(fh_imag), dtype=float)
+    y_im = [mean_im]
+    yerr_im = [sdev_im]
+    ax_im.errorbar(fit_tseps, mean_im, yerr=sdev_im, label="Data", **ERRORBAR_STYLE)
+
+    if window_bands:
+        for win in window_bands:
+            fit_t = np.asarray(win["fit_t"], dtype=float)
+            fit = win["fit_im"]
+            fit_mean = np.asarray(gv.mean(fit), dtype=float)
+            fit_sdev = np.asarray(gv.sdev(fit), dtype=float)
+            color = win.get("color", COLOR_CYCLE[0])
+            ax_im.fill_between(fit_t, fit_mean - fit_sdev, fit_mean + fit_sdev, color=color, alpha=0.3)
+            y_im.append(fit_mean)
+            yerr_im.append(fit_sdev)
+
+    if plateau_ref_im is not None:
+        _draw_O00_band(ax_im, plateau_ref_im, float(np.min(fit_tseps)), float(np.max(fit_tseps)), label=plateau_label)
+
+    ax_im.set_xlabel(TSEP_LABEL, **FONT_SIZE)
+    ax_im.set_ylabel(FH_IMAG_LABEL, **FONT_SIZE)
+    ax_im.set_ylim(_ylim_middle_third(y_im, yerr_im))
+    ax_im.legend(**LEGEND_SETS)
+
+    if save_path is not None:
+        path = Path(save_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig_re.savefig(path.with_name(f"{path.name}_fh_re.pdf"), bbox_inches="tight", transparent=True)
+        fig_im.savefig(path.with_name(f"{path.name}_fh_im.pdf"), bbox_inches="tight", transparent=True)
 
     return (fig_re, ax_re), (fig_im, ax_im)
 
