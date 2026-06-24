@@ -22,7 +22,7 @@ Correlator-analysis physics:
 TOOL_CATALOG = {
     "inspect_correlator_scale": "Inspect the selected job's 2pt magnitude.",
     "tune_bare_matrix": "Scan every configured nstate, fit strategy, and fit window.",
-    "fit_bare_matrix_grid": "Apply the selected scalar configuration to every z/sample and write store['output'].",
+    "fit_bare_matrix_grid": "Apply the selected scalar configuration to every z/sample and write store['output']; the runner writes one stage report with fit_logs links.",
 }
 
 
