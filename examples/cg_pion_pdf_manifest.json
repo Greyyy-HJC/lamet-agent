@@ -176,6 +176,7 @@
         "pt2_windows": [{"tmin": 2, "tmax": 12}, {"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}],
         "pt3_tau_cuts": [2, 3, 4],
         "nstate": [2],
+        "fit_scope": ["ratio"],
         "fit_strategy": ["joint"],
         "seed": 1984,
         "svdcut": 1e-6,

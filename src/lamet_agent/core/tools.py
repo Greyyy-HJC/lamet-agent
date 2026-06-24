@@ -323,8 +323,10 @@ def prepare_tool_args(
                 defaults["nstate_values"] = defaults.pop("nstate")
             if "fit_strategy" in defaults:
                 defaults["fit_strategies"] = defaults.pop("fit_strategy")
+            if "fit_scope" in defaults:
+                defaults["fit_scope_values"] = defaults.pop("fit_scope")
         elif tool_name == "fit_bare_matrix_grid":
-            for key in ("nstate", "fit_strategy"):
+            for key in ("nstate", "fit_strategy", "fit_scope"):
                 if isinstance(defaults.get(key), list):
                     defaults.pop(key)
             defaults["save_path"] = str(artifacts_dir / job.id)

@@ -31,6 +31,7 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
     assert args["z_values"] == list(range(25))
     assert args["nstate_values"] == [2]
     assert args["fit_strategies"] == ["joint"]
+    assert args["fit_scope_values"] == ["ratio"]
     assert args["pt3_paths"]["8"].endswith("_3pt_ts8.h5")
 
 
@@ -47,7 +48,20 @@ def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) 
     assert args["job_id"] == "ca_p0"
     assert args["a_fm"] == 0.0574
     assert args["nstate"] == 2
+    assert "fit_scope" not in args
     assert args["model_average"] is False
+
+
+def test_prepare_correlator_terminal_args_keep_scalar_fit_scope(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["correlator_analysis"].jobs[0]
+    args = prepare_tool_args(
+        "fit_bare_matrix_grid", {"nstate": 2, "fit_strategy": "joint", "fit_scope": "FH"},
+        manifest=manifest, stage="correlator_analysis", job=job,
+        effective_params=manifest.stages["correlator_analysis"].defaults,
+        artifacts_dir=tmp_path,
+    )
+    assert args["fit_scope"] == "FH"
 
 
 def test_prepare_nonbreit_correlator_args_match_initial_final_momenta(tmp_path: Path) -> None:

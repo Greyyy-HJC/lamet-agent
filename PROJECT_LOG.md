@@ -370,3 +370,18 @@
 - Resolve declared artifact paths in `prepare_tool_args` when job inputs were pre-hydrated to `EnsembleData`, so redundant loader calls still receive `path`.
 - Made `load_renormalized_matrix_element_samples` idempotent when `matrix_element_data` is already loaded.
 - Updated Fourier stage prompt to call `run_fourier_transform` directly after pre-load.
+
+## 2026-06-23 (Correlator FH fit scope)
+
+- Added correlator `fit_scope` support for `ratio`, `FH`, and `ratio+FH`, including FH construction from summed ratios and joint/chained fitting through the existing bare-matrix tools.
+- Updated correlator manifests, prompts, and tests so agents can scan scope choices while preserving the NetCDF `EnsembleData` output contract.
+
+## 2026-06-23 (Correlator FH diagnostics)
+
+- Added FH sample-0 fit diagnostic PDFs under correlator `fit_logs` for FH and `ratio+FH` grid fits.
+- Stopped `tune_bare_matrix` from writing root-level `tune_*_sample0_pt3_ratio_*.pdf` diagnostics; tuning now returns ranked candidates without producing those PDFs.
+
+## 2026-06-23 (Correlator systematic-error attrs)
+
+- Added correlator bare-matrix `EnsembleData` attrs for per-z real/imag mean, resampling statistical error, and window-model systematic error.
+- Kept stored correlator samples unchanged while reporting zero systematic spread for single-window fits and logGBF-weighted window spread for model-averaged fits.

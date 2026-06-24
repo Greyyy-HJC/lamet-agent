@@ -296,6 +296,7 @@
         ],
         "pt3_tau_cuts": [2, 3, 4],
         "nstate": [2],
+        "fit_scope": ["ratio"], // "ratio", "FH", or "ratio+FH"; multiple entries let the agent scan scopes
         "fit_strategy": ["joint"], // "joint" or "chained"
         "seed": 1984,
         "svdcut": 1e-06,

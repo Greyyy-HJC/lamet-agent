@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import matplotlib
@@ -39,9 +40,11 @@ from lamet_agent.stages.correlator.functions import (
     _check_rescale,
     _fit_summary,
     _fit_usable,
+    _fh_samples_from_ratios,
     _loggbf_weights,
     _normalise_pt2_windows,
     _normalise_pt3_windows,
+    _normalise_fit_scope,
     _normalise_strategy,
     _non_forward_ratio_samples,
     _overlaps,
@@ -52,9 +55,11 @@ from lamet_agent.stages.correlator.functions import (
     asymptotic_ratio,
     bayesian_average,
     fit_bare_matrix_grid,
+    fit_fh,
     fit_joint,
     fit_ratio,
     fit_two_point,
+    fh_prior,
     inspect_correlator_scale,
     pt2_prior,
     pt2_re_fcn,
@@ -235,6 +240,27 @@ def test_fit_ratio_recovers_parameters() -> None:
     assert abs(gv.mean(fit.p["O00_re"]) - gv.mean(p_true["O00_re"])) < 0.05
 
 
+def test_fh_samples_from_ratios_finite_differences_summed_ratio() -> None:
+    ratio_re = {
+        4: np.full((2, 5), 0.3),
+        6: np.full((2, 7), 0.3),
+        8: np.full((2, 9), 0.3),
+    }
+    ratio_im = {tsep: np.zeros_like(values) for tsep, values in ratio_re.items()}
+    fh_re, fh_im = _fh_samples_from_ratios(ratio_re, ratio_im, [4, 6, 8], tau_cut=1)
+    assert fh_re.shape == (2, 2)
+    assert np.allclose(fh_re, 0.3)
+    assert np.allclose(fh_im, 0.0)
+
+
+def test_fit_fh_one_state_recovers_plateau() -> None:
+    fh_re = np.array([gv.gvar(0.30, 0.01), gv.gvar(0.30, 0.01)], dtype=object)
+    fh_im = np.array([gv.gvar(0.05, 0.01), gv.gvar(0.05, 0.01)], dtype=object)
+    fit = fit_fh(fh_re, fh_im, [4, 6, 8], 1, nstate=1, prior=fh_prior(1), svdcut=1e-8)
+    assert gv.mean(fit.p["O00_re"] / (2 * fit.p["E0"])) == pytest.approx(0.30, abs=0.03)
+    assert gv.mean(fit.p["O00_im"] / (2 * fit.p["E0"])) == pytest.approx(0.05, abs=0.03)
+
+
 def test_fit_joint_recovers_parameters_and_is_rescale_invariant() -> None:
     tsep_ls = [6, 8, 10]
     ratio_re, ratio_im, p_true = _toy_ratio_gv(tsep_ls=tsep_ls, Lt=32)
@@ -411,6 +437,14 @@ def test_normalise_strategy_aliases() -> None:
         _normalise_strategy("nonsense")
 
 
+def test_normalise_fit_scope_aliases() -> None:
+    assert _normalise_fit_scope(None) == ("ratio", "ratio")
+    assert _normalise_fit_scope("FH") == ("FH", "fh")
+    assert _normalise_fit_scope("ratio+FH") == ("ratio+FH", "ratio_fh")
+    with pytest.raises(ValueError, match="fit_scope"):
+        _normalise_fit_scope("summed")
+
+
 def test_check_helpers_validate_arguments() -> None:
     assert _check_rescale(10.0) == 10.0
     with pytest.raises(ValueError, match="correlator_rescale"):
@@ -485,7 +519,13 @@ def test_write_outputs_writes_netcdf_and_plot_without_txt(tmp_path) -> None:
     saved = EnsembleData.from_netcdf(result["netcdf_path"])
     assert saved.resample == "jackknife"
     assert saved.values.shape == (3, 2)
+    assert json.loads(saved.attrs["bare_re_mean"]) == pytest.approx([1.0, 0.8])
+    assert json.loads(saved.attrs["bare_im_mean"]) == pytest.approx([0.0, 0.2])
+    assert json.loads(saved.attrs["bare_re_sys_sdev"]) == pytest.approx([0.0, 0.0])
+    assert json.loads(saved.attrs["bare_im_sys_sdev"]) == pytest.approx([0.0, 0.0])
     assert result["outputs"][0]["sample0_plot_paths"] == {"ratio_re_pdf": "re.pdf"}
+    assert "real_stat_sdev" in result["outputs"][0]
+    assert "real_sys_sdev" in result["outputs"][0]
     assert result["n_z"] == 2
 
 
@@ -551,7 +591,9 @@ def test_tune_bare_matrix_returns_ranked_candidates(tmp_path) -> None:
     assert result["candidates"]
     assert "O00_re_over_2E0" in result["candidates"][0]
     assert "recommended_index" in result
-    assert Path(result["tuning_ratio_pdf"]["ratio_re_pdf"]).is_file()
+    assert result["tuning_diagnostic_pdfs"] == {}
+    assert not list((tmp_path / "artifacts").glob("tune_*_sample0_pt3_ratio_*.pdf"))
+    assert result["candidates"][0]["fit_scope"] == "ratio"
 
 
 # --- apply tool (end to end) -------------------------------------------------
@@ -582,7 +624,11 @@ def test_fit_bare_matrix_grid_single_shared_window(tmp_path) -> None:
     saved = EnsembleData.from_netcdf(result["artifact"])
     assert saved.dims == ["z"]
     assert saved.resample == "jackknife"
+    assert saved.attrs["fit_scope"] == "ratio"
     assert saved.values.shape[1] == 2
+    assert len(json.loads(saved.attrs["bare_re_stat_sdev"])) == 2
+    assert json.loads(saved.attrs["bare_re_sys_sdev"]) == pytest.approx([0.0, 0.0])
+    assert json.loads(saved.attrs["bare_im_sys_sdev"]) == pytest.approx([0.0, 0.0])
     tau_cuts = {z["window"]["tau_cut"] for z in result["z_fits"]}
     assert len(tau_cuts) == 1
     assert not (tmp_path / "artifacts" / "bare_qpdf").exists()
@@ -614,6 +660,64 @@ def test_fit_bare_matrix_grid_explicit_window_and_chained(tmp_path) -> None:
     assert result["sample0_pt2_plot_paths"].get("meff_pdf")
 
 
+def test_fit_bare_matrix_grid_fh_scope_writes_output(tmp_path) -> None:
+    pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0,))
+    result = fit_bare_matrix_grid(
+        {},
+        pt2_path=pt2_path,
+        pt3_paths=pt3_paths,
+        tsep_ls=[6, 8],
+        z_values=[0],
+        ensemble="E",
+        tag="T",
+        momentum="PX0PY0PZ0",
+        pt2_window={"tmin": 2, "tmax": 10},
+        pt3_window={"tsep_ls": [6, 8], "tau_cut": 1},
+        fit_strategy="joint",
+        fit_scope="FH",
+        nstate=1,
+        resample_mode="jk",
+        svdcut=1e-6,
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    saved = EnsembleData.from_netcdf(result["artifact"])
+    assert result["fit_scope"] == "FH"
+    assert saved.attrs["fit_scope"] == "FH"
+    assert saved.values.shape[1] == 1
+    sample0_paths = result["z_fits"][0]["sample0_plot_paths"]
+    assert Path(sample0_paths["fh_re_pdf"]).is_file()
+    assert Path(sample0_paths["fh_im_pdf"]).is_file()
+
+
+def test_fit_bare_matrix_grid_ratio_fh_scope_writes_output(tmp_path) -> None:
+    pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0,))
+    result = fit_bare_matrix_grid(
+        {},
+        pt2_path=pt2_path,
+        pt3_paths=pt3_paths,
+        tsep_ls=[6, 8],
+        z_values=[0],
+        ensemble="E",
+        tag="T",
+        momentum="PX0PY0PZ0",
+        pt2_window={"tmin": 2, "tmax": 10},
+        pt3_window={"tsep_ls": [6, 8], "tau_cut": 1},
+        fit_strategy="joint",
+        fit_scope="ratio+FH",
+        nstate=1,
+        resample_mode="jk",
+        svdcut=1e-6,
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    saved = EnsembleData.from_netcdf(result["artifact"])
+    assert result["fit_scope"] == "ratio+FH"
+    assert saved.attrs["fit_scope"] == "ratio+FH"
+    assert saved.values.shape[1] == 1
+    sample0_paths = result["z_fits"][0]["sample0_plot_paths"]
+    assert Path(sample0_paths["ratio_re_pdf"]).is_file()
+    assert Path(sample0_paths["fh_re_pdf"]).is_file()
+
+
 def test_fit_bare_matrix_grid_model_average_uses_window_set(tmp_path) -> None:
     pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0,))
     result = fit_bare_matrix_grid(
@@ -636,6 +740,15 @@ def test_fit_bare_matrix_grid_model_average_uses_window_set(tmp_path) -> None:
     assert result["model_average"] is True
     assert len(result["shared_window_specs"]) == 2
     assert result["artifact"].endswith(".nc")
+    saved = EnsembleData.from_netcdf(result["artifact"])
+    assert len(json.loads(saved.attrs["bare_re_mean"])) == 1
+    assert len(json.loads(saved.attrs["bare_im_mean"])) == 1
+    assert len(json.loads(saved.attrs["bare_re_stat_sdev"])) == 1
+    assert len(json.loads(saved.attrs["bare_im_stat_sdev"])) == 1
+    assert len(json.loads(saved.attrs["bare_re_sys_sdev"])) == 1
+    assert len(json.loads(saved.attrs["bare_im_sys_sdev"])) == 1
+    assert "real_sys_sdev" in result["z_fits"][0]
+    assert "imag_sys_sdev" in result["z_fits"][0]
 
 
 # --- plotting helpers retained ----------------------------------------------
