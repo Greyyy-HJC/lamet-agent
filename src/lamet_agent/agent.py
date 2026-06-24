@@ -178,6 +178,33 @@ def _run_job(
     return observations
 
 
+def _last_tool_result(observations: list[dict[str, Any]], tool_name: str) -> dict[str, Any] | None:
+    """Return the last successful result for ``tool_name`` in a job observation list."""
+    for observation in reversed(observations):
+        if observation.get("tool_name") == tool_name and isinstance(observation.get("result"), dict):
+            return observation["result"]
+    return None
+
+
+def _path_values(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        return [str(item) for item in value.values() if item]
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if item]
+    if value:
+        return [str(value)]
+    return []
+
+
+def _correlator_sample0_plots(result: dict[str, Any]) -> list[str]:
+    plots: list[str] = []
+    for z_fit in result.get("z_fits", []) or []:
+        if not isinstance(z_fit, dict):
+            continue
+        plots.extend(_path_values(z_fit.get("sample0_plot_paths")))
+    return plots
+
+
 def run_agent(
     manifest: AnalysisManifest,
     *,
@@ -235,6 +262,46 @@ def run_agent(
                 break
             if "output" in store:
                 outputs[job.id] = store["output"]
+            if stage == "correlator_analysis" and "output" in store:
+                fit_result = _last_tool_result(observations, "fit_bare_matrix_grid")
+                if fit_result is not None:
+                    stage_job_records.append(
+                        {
+                            "job_id": job.id,
+                            "result": fit_result,
+                            "artifacts": {
+                                "bare_artifact": fit_result.get("artifact") or fit_result.get("netcdf_path"),
+                                "summary_plot": fit_result.get("plot_pdf"),
+                                "tuning_log": fit_result.get("tuning_log_path"),
+                                "sample_log": fit_result.get("sample_log_path"),
+                                "sample0_pt2_plots": _path_values(fit_result.get("sample0_pt2_plot_paths")),
+                                "sample0_fit_plots": _correlator_sample0_plots(fit_result),
+                            },
+                        }
+                    )
+            if stage == "renormalization" and "output" in store:
+                renorm_result = _last_tool_result(observations, "apply_ratio_scheme_renormalization")
+                if renorm_result is not None:
+                    plot_result = _last_tool_result(observations, "plot_renormalized_matrix_element") or {}
+                    z_grid = []
+                    matrix = store.get("matrix_element_data") or store.get("output")
+                    if hasattr(matrix, "coords") and "z" in matrix.coords:
+                        z_grid = np.asarray(matrix.coords["z"], dtype=float).tolist()
+                    stage_job_records.append(
+                        {
+                            "job_id": job.id,
+                            "result": {
+                                **renorm_result,
+                                "scheme": renorm_result.get("scheme", "hybrid_ratio"),
+                                "z_grid": z_grid,
+                            },
+                            "artifacts": {
+                                "renormalized_artifact": renorm_result.get("artifact")
+                                or store.get("matrix_element_netcdf"),
+                                "renormalized_plot": plot_result.get("plot"),
+                            },
+                        }
+                    )
             if stage == "fourier_transform" and "fourier_result" in store:
                 stage_job_records.append(
                     {
@@ -280,6 +347,22 @@ def run_agent(
                 )
         if stage in state.pending_user_input:
             break
+        if stage == "correlator_analysis" and stage_job_records:
+            from lamet_agent.stages.correlator.reporting import write_correlator_stage_report
+
+            paths = write_correlator_stage_report(
+                jobs=stage_job_records,
+                path=manifest.artifacts_directory / stage / "ca_report.md",
+            )
+            stage_reports[stage] = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
+        if stage == "renormalization" and stage_job_records:
+            from lamet_agent.stages.renorm.reporting import write_renorm_stage_report
+
+            paths = write_renorm_stage_report(
+                jobs=stage_job_records,
+                path=manifest.artifacts_directory / stage / "renorm_report.md",
+            )
+            stage_reports[stage] = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
         if stage == "fourier_transform" and stage_job_records:
             from lamet_agent.stages.fourier.reporting import write_fourier_stage_report
 

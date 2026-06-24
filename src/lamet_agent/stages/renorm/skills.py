@@ -12,7 +12,7 @@ target artifact's a_fm, and the nearest available denominator z is used.
 """.strip()
 
 TOOL_CATALOG = {
-    "apply_ratio_scheme_renormalization": "Consume target/denominator roles and write the renormalized NetCDF plus store['output'].",
+    "apply_ratio_scheme_renormalization": "Consume target/denominator roles and write the renormalized NetCDF plus store['output']; the runner writes one stage report.",
     "plot_renormalized_matrix_element": "Plot store['output'] to PDF.",
 }
 

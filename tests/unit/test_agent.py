@@ -505,3 +505,180 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
     assert report_path.exists()
     assert report_cn_path.exists()
     assert "`ft_p4`" in report_path.read_text(encoding="utf-8")
+
+
+def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, monkeypatch) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "demo",
+                "root_directory": ".",
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "stages": ["correlator_analysis"],
+            },
+            "inputs": {"correlators": [], "artifacts": [], "kernels": []},
+            "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca_p4"}]}},
+        }
+    )
+    manifest._root_directory = tmp_path.resolve()
+    manifest._artifacts_directory = (tmp_path / "artifacts").resolve()
+    transcript = tmp_path / "actions.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"action": "call_tool", "tool_name": "fit_bare_matrix_grid", "args": {}, "reason": "fit"}),
+                json.dumps({"action": "finish", "reason": "done"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_fit_bare_matrix_grid(store, **kwargs):
+        store["output"] = EnsembleData(
+            ensemble=None,
+            resample="jackknife",
+            values=[np.array([0.3 + 0.1j, 0.2 + 0.05j])],
+            dims=("z",),
+            coords={"z": [0, 1]},
+        )
+        return {
+            "artifact": str(tmp_path / "ca_p4.nc"),
+            "plot_pdf": str(tmp_path / "ca_p4.pdf"),
+            "fit_strategy": "joint",
+            "fit_scope": "ratio+FH",
+            "fit_mode": "bare_matrix",
+            "fitting_form": "Breit",
+            "model_average": False,
+            "selection_rule": "best_Q",
+            "shared_window_specs": [{"fit_scope": "ratio", "fit_strategy": "joint", "nstate": 2}],
+            "tuning_log_path": str(tmp_path / "fit_logs" / "ca_p4_tuning.log"),
+            "sample_log_path": str(tmp_path / "fit_logs" / "ca_p4_samples.log"),
+            "z_values": [0, 1],
+            "tune_z": 0,
+            "z_fits": [
+                {
+                    "z": 0,
+                    "Q": 0.8,
+                    "chi2_dof": 0.9,
+                    "logGBF": 1.2,
+                    "n_failed_samples": 0,
+                    "real_sys_sdev": 0.01,
+                    "imag_sys_sdev": 0.02,
+                    "sample0_plot_paths": {"ratio_re_pdf": str(tmp_path / "fit_logs" / "ca_p4_z0_sample0.pdf")},
+                }
+            ],
+            "sample0_pt2_plot_paths": {"meff_pdf": str(tmp_path / "fit_logs" / "ca_p4_meff.pdf")},
+            "n_samples": 1,
+            "resample_mode": "jackknife",
+        }
+
+    monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", lambda stage: {"fit_bare_matrix_grid": fake_fit_bare_matrix_grid})
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+
+    result = run_agent(manifest, model="external", actions_path=transcript)
+
+    report_path = Path(result["stage_reports"]["correlator_analysis"]["report"])
+    report_cn_path = Path(result["stage_reports"]["correlator_analysis"]["report_cn"])
+    assert report_path.exists()
+    assert report_cn_path.exists()
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "`ca_p4`" in report_text
+    assert "fit_logs" in report_text
+    assert "tuning log records window selection" in report_text
+    assert "ca_p4.nc" in report_text
+    assert ".png" not in report_text
+    assert "# Correlator Analysis 阶段报告" in report_cn_path.read_text(encoding="utf-8")
+
+
+def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeypatch) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "demo",
+                "root_directory": ".",
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "stages": ["renormalization"],
+            },
+            "inputs": {
+                "correlators": [],
+                "artifacts": [
+                    {"id": "target", "stage": "correlator_analysis", "path": str(tmp_path / "target.nc")},
+                    {"id": "denom", "stage": "correlator_analysis", "path": str(tmp_path / "denom.nc")},
+                ],
+                "kernels": [],
+            },
+            "stages": {
+                "renormalization": {
+                    "defaults": {"scheme": "hybrid_ratio", "scheme_parameters": {"zs_fm": 0.3}},
+                    "jobs": [{"id": "rn_p4", "inputs": {"target": "target", "denominator": "denom"}}],
+                },
+            },
+        }
+    )
+    manifest._root_directory = tmp_path.resolve()
+    manifest._artifacts_directory = (tmp_path / "artifacts").resolve()
+    transcript = tmp_path / "actions.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"action": "call_tool", "tool_name": "apply_ratio_scheme_renormalization", "args": {}, "reason": "renorm"}),
+                json.dumps({"action": "call_tool", "tool_name": "plot_renormalized_matrix_element", "args": {}, "reason": "plot"}),
+                json.dumps({"action": "finish", "reason": "done"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_apply_ratio_scheme_renormalization(store, **kwargs):
+        store["output"] = EnsembleData(
+            ensemble=None,
+            resample="jackknife",
+            values=[np.array([1.0 + 0.0j, 0.9 + 0.1j])],
+            dims=("z",),
+            coords={"z": [0, 1]},
+        )
+        store["matrix_element_data"] = store["output"]
+        store["matrix_element_netcdf"] = str(tmp_path / "rn_p4.nc")
+        return {
+            "artifact": str(tmp_path / "rn_p4.nc"),
+            "n_z": 2,
+            "n_sample": 1,
+            "zs_fm": 0.3,
+            "zs_lattice": 5.2,
+            "zs_grid": 5.0,
+            "delta_m": 0.1,
+            "m0": 0.2,
+            "normalization_z": 0.0,
+        }
+
+    def fake_plot_renormalized_matrix_element(store, **kwargs):
+        return {"plot": str(tmp_path / "rn_p4.pdf")}
+
+    monkeypatch.setattr(
+        "lamet_agent.agent.resolve_stage_tools",
+        lambda stage: {
+            "apply_ratio_scheme_renormalization": fake_apply_ratio_scheme_renormalization,
+            "plot_renormalized_matrix_element": fake_plot_renormalized_matrix_element,
+        },
+    )
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+
+    result = run_agent(manifest, model="external", actions_path=transcript)
+
+    report_path = Path(result["stage_reports"]["renormalization"]["report"])
+    report_cn_path = Path(result["stage_reports"]["renormalization"]["report_cn"])
+    assert report_path.exists()
+    assert report_cn_path.exists()
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "`rn_p4`" in report_text
+    assert "hybrid-ratio" in report_text
+    assert "rn_p4.nc" in report_text
+    assert "rn_p4.pdf" in report_text
+    assert ".png" not in report_text
+    assert "# Renormalization 阶段报告" in report_cn_path.read_text(encoding="utf-8")

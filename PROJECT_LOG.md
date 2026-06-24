@@ -385,3 +385,8 @@
 
 - Added correlator bare-matrix `EnsembleData` attrs for per-z real/imag mean, resampling statistical error, and window-model systematic error.
 - Kept stored correlator samples unchanged while reporting zero systematic spread for single-window fits and logGBF-weighted window spread for model-averaged fits.
+
+## 2026-06-23 (Correlator and renormalization reports)
+
+- Added concise bilingual stage reports for correlator analysis and renormalization, wired through the same post-stage runner hook used by Fourier and matching.
+- Included correlator `fit_logs` descriptions and links to existing NetCDF/PDF artifacts without adding PNG companions.
