@@ -301,7 +301,7 @@
         "seed": 1984,
         "svdcut": 1e-06,
         "posterior_prior_error_scale": 3.0,
-        "fitting_form": "Breit", // "Breit" for forward 3pt/2pt; "NonBreit" for P_i != P_f
+        "fitting_form": "Breit", // "Breit" for forward and Breit non-forward 3pt/2pt; "NonBreit" for non-Breit non-forward 3pt/2pt
         "component": "both", // "both", "re", or "im"
         "q_min": 0.05, // minimum q value for a good fit
         "model_average": false // false: use one tuned window; true: BMA over the full window grid

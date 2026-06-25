@@ -2110,12 +2110,11 @@ def run_fourier_transform(
         raise ValueError("scheme_scan produced no valid zmin/zmax combinations")
     y_values = _resolve_y_grid(y_grid)
     model_average = bool(scheme_scan.get("model_average", True))
-    candidate_diagnostics = None
-    if not model_average:
-        candidate_labels = [str(scheme.get("label", f"scheme_{idx}")) for idx, scheme in enumerate(schemes)]
-        candidate_chi2 = []
-        for scheme in schemes:
-            quality = fit_tail_quality_for_mean(
+    candidate_labels = [str(scheme.get("label", f"scheme_{idx}")) for idx, scheme in enumerate(schemes)]
+    candidate_qualities = []
+    for scheme in schemes:
+        candidate_qualities.append(
+            fit_tail_quality_for_mean(
                 matrix_element["coord"],
                 matrix_element["re_samples"],
                 matrix_element["im_samples"],
@@ -2133,22 +2132,50 @@ def run_fourier_transform(
                 fit_error_mode=fit_error_mode,
                 part=part,
             )
-            candidate_chi2.append(float(quality["chi2_dof"]))
-        candidate_scores = np.asarray(candidate_chi2, dtype=float)
-        finite = np.isfinite(candidate_scores)
-        best_candidate = int(np.argmin(np.where(finite, candidate_scores, np.inf))) if np.any(finite) else 0
-        candidate_weights = np.zeros(len(schemes), dtype=float)
+        )
+    candidate_chi2 = [float(item["chi2_dof"]) for item in candidate_qualities]
+    finite_candidate_chi2 = np.asarray(
+        [item["chi2_dof"] if item["ok"] and np.isfinite(item["chi2_dof"]) else np.inf for item in candidate_qualities],
+        dtype=float,
+    )
+    best_candidate = int(np.argmin(finite_candidate_chi2)) if len(finite_candidate_chi2) else 0
+    best_candidate_chi2 = finite_candidate_chi2[best_candidate]
+    chi_cut = max(float(best_candidate_chi2) * 1.25, float(best_candidate_chi2) + 0.15, 1.0)
+    effective_idx = [
+        idx
+        for idx, item in enumerate(candidate_qualities)
+        if item["ok"] and np.isfinite(item["chi2_dof"]) and float(item["chi2_dof"]) <= chi_cut
+    ]
+    if not effective_idx:
+        effective_idx = [best_candidate]
+    shared_labels = [candidate_labels[idx] for idx in effective_idx]
+    candidate_weights = np.zeros(len(schemes), dtype=float)
+    if model_average:
+        candidate_weights[effective_idx] = 1.0 / len(effective_idx)
+    else:
         candidate_weights[best_candidate] = 1.0
-        candidate_diagnostics = {
-            "candidate_scheme_labels": candidate_labels,
-            "candidate_scheme_weights": candidate_weights.tolist(),
-            "candidate_scheme_fit_chi2_dof": candidate_chi2,
-            "candidate_scheme_scores": candidate_scores.tolist(),
-            "selected_candidate_index": best_candidate,
-            "selected_candidate_label": candidate_labels[best_candidate],
-            "selection_mode": "sample_average_best_scheme",
-        }
-        schemes = [schemes[best_candidate]]
+    candidate_scores = finite_candidate_chi2.tolist()
+    candidate_diagnostics = {
+        "candidate_scheme_labels": candidate_labels,
+        "candidate_scheme_weights": candidate_weights.tolist(),
+        "candidate_scheme_fit_chi2_dof": candidate_chi2,
+        "candidate_scheme_scores": candidate_scores,
+        "shared_scheme_labels": shared_labels,
+        "shared_scheme_fit_chi2_dof": [candidate_chi2[idx] for idx in effective_idx],
+        "chi_cut": float(chi_cut),
+        "best_candidate_chi2_dof": float(best_candidate_chi2),
+        "scheme_grid_size": int(len(schemes)),
+        "shared_scheme_count": int(len(effective_idx)),
+        "required_points": int(required_points),
+        "scheme_scan": dict(scheme_scan),
+        "selected_candidate_index": best_candidate,
+        "selected_candidate_label": candidate_labels[best_candidate],
+        "selection_mode": "sample_average_best_scheme" if not model_average else "model_average",
+    }
+    schemes = [schemes[idx] for idx in effective_idx]
+    if not model_average:
+        selected_idx = int(np.argmin([candidate_qualities[idx]["chi2_dof"] for idx in effective_idx]))
+        schemes = [schemes[selected_idx]]
     result = run_fourier_workflow(
         matrix_element["coord"],
         matrix_element["re_samples"],
@@ -2179,6 +2206,7 @@ def run_fourier_transform(
     result["fit_error_mode"] = str(fit_error_mode)
     result["part"] = str(part)
     result["ensemble"] = matrix_element_data.ensemble
+    result.update(candidate_diagnostics)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
     if model_average:
@@ -2197,8 +2225,6 @@ def run_fourier_transform(
         result["scheme_fit_chi2_dof"] = fit_arr
         result["scheme_roughness"] = [0.0] * len(fit_arr)
         result["scheme_scores"] = fit_arr
-        if candidate_diagnostics is not None:
-            result.update(candidate_diagnostics)
         result["best_scheme_index"] = 0
         result["best_scheme_label"] = result["scheme_labels"][0]
     _apply_fourier_output_scale(result, float(output_scale))

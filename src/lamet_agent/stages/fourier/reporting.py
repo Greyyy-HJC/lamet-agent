@@ -21,14 +21,14 @@ OBSERVABLE_TEXT = {
 }
 
 FORMULA_REFERENCES = {
-    "pion_quark_quasi_pdf": ("arXiv:2601.12189 Eqs. (2.1)/(2.2)", "quark-like oscillatory tail"),
-    "nucleon_quark_unpolarized_quasi_pdf": ("arXiv:2601.12189 Eqs. (2.3)/(2.4)", "quark-like oscillatory tail"),
-    "nucleon_quark_transversity_quasi_pdf": ("arXiv:2601.12189 Eqs. (2.5)/(2.6)", "quark-like oscillatory tail"),
-    "meson_quasi_da": ("arXiv:2601.12189 Eqs. (2.7)/(2.8)", "quark-like oscillatory tail"),
-    "pion_quark_quasi_gpd": ("arXiv:2601.12189 Eqs. (2.9)/(2.10)", "quark-like oscillatory tail"),
-    "nucleon_quark_quasi_gpd": ("arXiv:2601.12189 Eqs. (2.11)/(2.12)", "quark-like oscillatory tail"),
-    "nucleon_gluon_quasi_pdf": ("arXiv:2601.12189 Appendix F Eqs. (F.6)/(F.7)", "nucleon gluon real tail"),
-    "pion_gluon_quasi_pdf": ("arXiv:2601.12189 Appendix F Eqs. (F.8)/(F.9)", "pion gluon real tail"),
+    "pion_quark_quasi_pdf": "arXiv:2601.12189 Eqs. (2.1)/(2.2)",
+    "nucleon_quark_unpolarized_quasi_pdf": "arXiv:2601.12189 Eqs. (2.3)/(2.4)",
+    "nucleon_quark_transversity_quasi_pdf": "arXiv:2601.12189 Eqs. (2.5)/(2.6)",
+    "meson_quasi_da": "arXiv:2601.12189 Eqs. (2.7)/(2.8)",
+    "pion_quark_quasi_gpd": "arXiv:2601.12189 Eqs. (2.9)/(2.10)",
+    "nucleon_quark_quasi_gpd": "arXiv:2601.12189 Eqs. (2.11)/(2.12)",
+    "nucleon_gluon_quasi_pdf": "arXiv:2601.12189 Appendix F Eqs. (F.6)/(F.7)",
+    "pion_gluon_quasi_pdf": "arXiv:2601.12189 Appendix F Eqs. (F.8)/(F.9)",
 }
 
 FOURIER_ARTIFACT_DESCRIPTIONS = {
@@ -144,30 +144,435 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     method = str(result.get("method", "")).upper()
     order = str(result.get("order", "")).upper()
     observable = str(result.get("observable", ""))
-    reference, family = FORMULA_REFERENCES.get(observable, ("code-selected LA/NLA formula", "tail formula"))
-    common_tail = r"\exp(-\Lambda z)"
-    method_note = ""
+    reference = FORMULA_REFERENCES.get(observable, "code-selected LA/NLA formula")
+    article_tail = r"\exp(-\Lambda |z|)"
+    implementation_tail = r"\exp(-\Lambda z)"
     if method == "CG":
-        common_tail += r"z^{-n}"
-        method_note = (
-            "本地 CG 实现会在该尾部上额外乘以 $z^{-n}$。"
-            if language == "zh"
-            else "The local CG implementation additionally multiplies this tail by $z^{-n}$."
-        )
+        implementation_tail += r"\,z^{-n}"
 
-    if observable == "nucleon_gluon_quasi_pdf":
-        body = r"A z" if order == "LA" else r"A z + A'"
-        formula = rf"\mathrm{{Re}}\,h(z)=({body}){common_tail},\qquad \mathrm{{Im}}\,h(z)=0."
+    if observable == "pion_quark_quasi_gpd":
+        if order == "LA":
+            article_formula = (
+                r"\tilde{h}^{\rm LA}(z,P^z,P'^z)="
+                r"\left["
+                r"A_1 e^{i\phi_1\,{\rm sign}(z)} e^{-i z P^z}"
+                r"+A_3 e^{i\phi_3\,{\rm sign}(z)} e^{i z P'^z}"
+                r"+A_2 e^{i\phi_2\,{\rm sign}(z)}"
+                r"+\tilde{A}_2 e^{i\tilde{\phi}_2\,{\rm sign}(z)} e^{-i(P^z-P'^z)z}"
+                r"\right]"
+                + article_tail
+                + r"."
+            )
+            implementation_formula = (
+                r"\tilde{h}^{\rm LA}_{\rm agent}(z>0;P^z,P'^z)="
+                r"\left["
+                r"A_1 e^{i(\phi_1-P^z z)}"
+                r"+A_3 e^{i(\phi_3+P'^z z)}"
+                r"+A_2 e^{i\phi_2}"
+                r"+\tilde{A}_2 e^{i(\tilde{\phi}_2-(P^z-P'^z)z)}"
+                r"\right]"
+                + implementation_tail
+                + r"."
+            )
+            mapping_lines = [
+                "- $A_1,\\phi_1$ correspond to the incoming-momentum oscillatory term $e^{-i z P^z}$."
+                if language == "en"
+                else "- $A_1,\\phi_1$ 对应入射动量振荡项 $e^{-i z P^z}$。",
+                "- $A_3,\\phi_3$ correspond to the outgoing-momentum oscillatory term $e^{+i z P'^z}$."
+                if language == "en"
+                else "- $A_3,\\phi_3$ 对应出射动量振荡项 $e^{+i z P'^z}$。",
+                "- $A_2,\\phi_2$ correspond to the non-oscillatory central term."
+                if language == "en"
+                else "- $A_2,\\phi_2$ 对应不带额外动量相位的中心项。",
+                "- $\\tilde A_2,\\tilde\\phi_2$ correspond to the momentum-transfer term $e^{-i(P^z-P'^z)z}$."
+                if language == "en"
+                else "- $\\tilde A_2,\\tilde\\phi_2$ 对应动量转移项 $e^{-i(P^z-P'^z)z}$。",
+                "- $\\Lambda$ is the common exponential decay parameter."
+                if language == "en"
+                else "- $\\Lambda$ 是共同的指数衰减参数。",
+                "- `Lambda0` is not an extra analytic term; it enforces the fit constraint $\\Lambda\\ge\\Lambda_0$."
+                if language == "en"
+                else "- `Lambda0` 不是解析公式中的额外项，而是拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+            ]
+        else:
+            article_formula = (
+                r"\tilde{h}^{\rm NLA}(z,P^z,P'^z)="
+                r"\left["
+                r"A_1 e^{i\phi_1\,{\rm sign}(z)} e^{-i z P^z}"
+                r"+A_3 e^{i\phi_3\,{\rm sign}(z)} e^{i z P'^z}"
+                r"+A_2 e^{i\phi_2\,{\rm sign}(z)}"
+                r"+\tilde{A}_2 e^{i\tilde{\phi}_2\,{\rm sign}(z)} e^{-i(P^z-P'^z)z}"
+                r"+\frac{A'_1}{|z|} e^{i\phi'_1\,{\rm sign}(z)} e^{-i z P^z}"
+                r"+\frac{A'_3}{|z|} e^{i\phi'_3\,{\rm sign}(z)} e^{i z P'^z}"
+                r"+\frac{A'_2}{|z|} e^{i\phi'_2\,{\rm sign}(z)}"
+                r"+\frac{\tilde{A}'_2}{|z|} e^{i\tilde{\phi}'_2\,{\rm sign}(z)} e^{-i(P^z-P'^z)z}"
+                r"\right]"
+                + article_tail
+                + r"."
+            )
+            implementation_formula = (
+                r"\tilde{h}^{\rm NLA}_{\rm agent}(z>0;P^z,P'^z)="
+                r"\left["
+                r"A_1 e^{i(\phi_1-P^z z)}"
+                r"+A_3 e^{i(\phi_3+P'^z z)}"
+                r"+A_2 e^{i\phi_2}"
+                r"+\tilde{A}_2 e^{i(\tilde{\phi}_2-(P^z-P'^z)z)}"
+                r"+\frac{A'_1}{z} e^{i(\phi'_1-P^z z)}"
+                r"+\frac{A'_3}{z} e^{i(\phi'_3+P'^z z)}"
+                r"+\frac{A'_2}{z} e^{i\phi'_2}"
+                r"+\frac{\tilde{A}'_2}{z} e^{i(\tilde{\phi}'_2-(P^z-P'^z)z)}"
+                r"\right]"
+                + implementation_tail
+                + r"."
+            )
+            mapping_lines = [
+                "- $A_1,\\phi_1$ and $A'_1,\\phi'_1$ correspond to the incoming-momentum terms proportional to $e^{-i z P^z}$."
+                if language == "en"
+                else "- $A_1,\\phi_1$ 以及 $A'_1,\\phi'_1$ 对应与 $e^{-i z P^z}$ 相乘的入射动量项。",
+                "- $A_3,\\phi_3$ and $A'_3,\\phi'_3$ correspond to the outgoing-momentum terms proportional to $e^{+i z P'^z}$."
+                if language == "en"
+                else "- $A_3,\\phi_3$ 以及 $A'_3,\\phi'_3$ 对应与 $e^{+i z P'^z}$ 相乘的出射动量项。",
+                "- $A_2,\\phi_2$ and $A'_2,\\phi'_2$ correspond to the central non-oscillatory LA/NLA terms."
+                if language == "en"
+                else "- $A_2,\\phi_2$ 以及 $A'_2,\\phi'_2$ 对应中心的 LA/NLA 非振荡项。",
+                "- $\\tilde A_2,\\tilde\\phi_2$ and $\\tilde A'_2,\\tilde\\phi'_2$ correspond to the momentum-transfer terms proportional to $e^{-i(P^z-P'^z)z}$."
+                if language == "en"
+                else "- $\\tilde A_2,\\tilde\\phi_2$ 以及 $\\tilde A'_2,\\tilde\\phi'_2$ 对应与 $e^{-i(P^z-P'^z)z}$ 相乘的动量转移项。",
+                "- $\\Lambda$ is the common exponential decay parameter, while the primed amplitudes are the $1/|z|$ NLA corrections."
+                if language == "en"
+                else "- $\\Lambda$ 是共同衰减参数，所有带撇振幅对应 $1/|z|$ 的 NLA 修正。",
+                "- `Lambda0` is not an extra analytic term; it enforces the fit constraint $\\Lambda\\ge\\Lambda_0$."
+                if language == "en"
+                else "- `Lambda0` 不是解析公式中的额外项，而是拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+            ]
+        scope_lines = [
+            "The article formula is the full $\\pm z$ expression. The lamet-agent fit uses the explicit positive-$z$ branch, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval."
+            if language == "en"
+            else "文献公式是完整的 $\\pm z$ 表达式；lamet-agent 实际拟合时只用正 $z$ 分支，因此在拟合区间上有 ${\\rm sign}(z)=1$ 且 $|z|=z$。",
+            "When `method=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$."
+            if language == "en"
+            else "当 `method=CG` 时，lamet-agent 会在该正 $z$ 分支外再乘一个 $z^{-n}$ 因子。",
+        ]
+    elif observable == "nucleon_quark_quasi_gpd":
+        if order == "LA":
+            article_formula = (
+                r"\tilde{h}^{\rm LA}(z,P^z,P'^z)="
+                r"\left["
+                r"A_2 e^{i\phi_2\,{\rm sign}(z)}"
+                r"+\tilde{A}_2 e^{i\tilde{\phi}_2\,{\rm sign}(z)} e^{-i(P^z-P'^z)z}"
+                r"\right]"
+                + article_tail
+                + r"."
+            )
+            implementation_formula = (
+                r"\tilde{h}^{\rm LA}_{\rm agent}(z>0;P^z,P'^z)="
+                r"\left["
+                r"A_2 e^{i\phi_2}"
+                r"+\tilde{A}_2 e^{i(\tilde{\phi}_2-(P^z-P'^z)z)}"
+                r"\right]"
+                + implementation_tail
+                + r"."
+            )
+            mapping_lines = [
+                "- $A_2,\\phi_2$ correspond to the forward-like central term."
+                if language == "en"
+                else "- $A_2,\\phi_2$ 对应 forward-like 的中心项。",
+                "- $\\tilde A_2,\\tilde\\phi_2$ correspond to the momentum-transfer term $e^{-i(P^z-P'^z)z}$."
+                if language == "en"
+                else "- $\\tilde A_2,\\tilde\\phi_2$ 对应动量转移项 $e^{-i(P^z-P'^z)z}$。",
+                "- $\\Lambda$ is the common exponential decay parameter."
+                if language == "en"
+                else "- $\\Lambda$ 是共同的指数衰减参数。",
+                "- `Lambda0` is not an extra analytic term; it enforces the fit constraint $\\Lambda\\ge\\Lambda_0$."
+                if language == "en"
+                else "- `Lambda0` 不是解析公式中的额外项，而是拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+            ]
+        else:
+            article_formula = (
+                r"\tilde{h}^{\rm NLA}(z,P^z,P'^z)="
+                r"\left["
+                r"A_2 e^{i\phi_2\,{\rm sign}(z)}"
+                r"+\tilde{A}_2 e^{i\tilde{\phi}_2\,{\rm sign}(z)} e^{-i(P^z-P'^z)z}"
+                r"+\frac{A'_2}{|z|} e^{i\phi'_2\,{\rm sign}(z)}"
+                r"+\frac{\tilde{A}'_2}{|z|} e^{i\tilde{\phi}'_2\,{\rm sign}(z)} e^{-i(P^z-P'^z)z}"
+                r"\right]"
+                + article_tail
+                + r"."
+            )
+            implementation_formula = (
+                r"\tilde{h}^{\rm NLA}_{\rm agent}(z>0;P^z,P'^z)="
+                r"\left["
+                r"A_2 e^{i\phi_2}"
+                r"+\tilde{A}_2 e^{i(\tilde{\phi}_2-(P^z-P'^z)z)}"
+                r"+\frac{A'_2}{z} e^{i\phi'_2}"
+                r"+\frac{\tilde{A}'_2}{z} e^{i(\tilde{\phi}'_2-(P^z-P'^z)z)}"
+                r"\right]"
+                + implementation_tail
+                + r"."
+            )
+            mapping_lines = [
+                "- $A_2,\\phi_2$ and $A'_2,\\phi'_2$ correspond to the forward-like LA/NLA central terms."
+                if language == "en"
+                else "- $A_2,\\phi_2$ 以及 $A'_2,\\phi'_2$ 对应 forward-like 的 LA/NLA 中心项。",
+                "- $\\tilde A_2,\\tilde\\phi_2$ and $\\tilde A'_2,\\tilde\\phi'_2$ correspond to the momentum-transfer terms proportional to $e^{-i(P^z-P'^z)z}$."
+                if language == "en"
+                else "- $\\tilde A_2,\\tilde\\phi_2$ 以及 $\\tilde A'_2,\\tilde\\phi'_2$ 对应与 $e^{-i(P^z-P'^z)z}$ 相乘的动量转移项。",
+                "- $\\Lambda$ is the common exponential decay parameter, while the primed amplitudes are the $1/|z|$ NLA corrections."
+                if language == "en"
+                else "- $\\Lambda$ 是共同衰减参数，所有带撇振幅对应 $1/|z|$ 的 NLA 修正。",
+                "- `Lambda0` is not an extra analytic term; it enforces the fit constraint $\\Lambda\\ge\\Lambda_0$."
+                if language == "en"
+                else "- `Lambda0` 不是解析公式中的额外项，而是拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+            ]
+        scope_lines = [
+            "The article formula is the full $\\pm z$ expression. The lamet-agent fit uses the explicit positive-$z$ branch, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval."
+            if language == "en"
+            else "文献公式是完整的 $\\pm z$ 表达式；lamet-agent 实际拟合时只用正 $z$ 分支，因此在拟合区间上有 ${\\rm sign}(z)=1$ 且 $|z|=z$。",
+            "When `method=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$."
+            if language == "en"
+            else "当 `method=CG` 时，lamet-agent 会在该正 $z$ 分支外再乘一个 $z^{-n}$ 因子。",
+        ]
+    elif observable in {
+        "pion_quark_quasi_pdf",
+        "nucleon_quark_unpolarized_quasi_pdf",
+        "nucleon_quark_transversity_quasi_pdf",
+        "meson_quasi_da",
+    }:
+        if observable == "pion_quark_quasi_pdf":
+            phases_text = (
+                "- In the implementation rewrite, $\\omega_2=0$, $\\omega_1=-P^z$, and $\\omega_3=+P^z$."
+                if language == "en"
+                else "- 在实现中的等价重写里，$\\omega_2=0$、$\\omega_1=-P^z$、$\\omega_3=+P^z$。"
+            )
+        elif observable == "meson_quasi_da":
+            phases_text = (
+                "- In the implementation rewrite, $\\omega_1=-P^z$ and $\\omega_2=0$."
+                if language == "en"
+                else "- 在实现中的等价重写里，$\\omega_1=-P^z$、$\\omega_2=0$。"
+            )
+        else:
+            phases_text = (
+                "- In the implementation rewrite, the only retained phase is the central frequency $\\omega_2=0$."
+                if language == "en"
+                else "- 在实现中的等价重写里，只保留中心频率 $\\omega_2=0$。"
+            )
+        if observable == "pion_quark_quasi_pdf":
+            article_core = (
+                r"A_2 e^{i\phi_2\,{\rm sign}(z)}"
+                r"+A_1 e^{i\phi_1\,{\rm sign}(z)} e^{-i z P^z}"
+                r"+A_3 e^{i\phi_3\,{\rm sign}(z)} e^{i z P^z}"
+            )
+        elif observable == "meson_quasi_da":
+            article_core = (
+                r"A_1 e^{i\phi_1\,{\rm sign}(z)} e^{-i z P^z}"
+                r"+A_2 e^{i\phi_2\,{\rm sign}(z)}"
+            )
+        else:
+            article_core = r"A_2 e^{i\phi_2\,{\rm sign}(z)}"
+        article_formula = (
+            r"h^{\rm " + order + r"}_{\rm art}(z)="
+            r"\left["
+            + article_core
+            + (
+                r"+\sum_j \frac{A'_j}{|z|} e^{i\phi'_j\,{\rm sign}(z)} e^{i\omega_j z}"
+                if order == "NLA"
+                else ""
+            )
+            + r"\right]"
+            + article_tail
+            + r"."
+        )
+        implementation_formula = (
+            r"h^{\rm " + order + r"}_{\rm agent}(z>0)="
+            r"\left[\sum_j A_j e^{i(\phi_j+\omega_j z)}"
+            + (r"+\sum_j \frac{A'_j}{z} e^{i(\phi'_j+\omega_j z)}" if order == "NLA" else "")
+            + r"\right]"
+            + implementation_tail
+            + r"."
+        )
+        mapping_lines = [
+            phases_text,
+            "- The article form keeps explicit ${\\rm sign}(z)$ and $|z|$, while lamet-agent rewrites the same positive-$z$ branch as a sum over frequencies $\\omega_j$."
+            if language == "en"
+            else "- 文献公式保留显式的 ${\\rm sign}(z)$ 和 $|z|$；lamet-agent 则把同一正 $z$ 分支等价重写为频率和形式 $\\omega_j$ 的求和。",
+            "- The amplitudes $A_j,\\phi_j$ map one-to-one between the two formulas, and the primed amplitudes give the NLA $1/|z|$ corrections when present."
+            if language == "en"
+            else "- 两种写法中的 $A_j,\\phi_j$ 一一对应；若存在带撇项，它们对应 NLA 的 $1/|z|$ 修正。",
+            "- $\\Lambda$ is the common decay parameter, and `Lambda0` imposes the fit constraint $\\Lambda\\ge\\Lambda_0$."
+            if language == "en"
+            else "- $\\Lambda$ 是共同衰减参数，`Lambda0` 对其施加拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+        ]
+        scope_lines = [
+            "For these forward-like quark observables, the report distinguishes the article formula from the lamet-agent parameterized equivalent rewrite."
+            if language == "en"
+            else "对这些 forward-like 夸克物理量，报告会明确区分文献原式与 lamet-agent 的参数化等价重写。",
+            "The implementation fits only positive coordinates, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval; `method=CG` adds the explicit factor $z^{-n}$ shown in the implementation formula."
+            if language == "en"
+            else "实现时只拟合正坐标，因此在拟合区间上有 ${\\rm sign}(z)=1$、$|z|=z$；`method=CG` 时再额外乘上实现公式中已经写出的 $z^{-n}$。",
+        ]
+    elif observable == "nucleon_gluon_quasi_pdf":
+        article_formula = (
+            (
+                r"\mathrm{Re}\,h^{\rm LA}_{\rm art}(z)=\left[A\,|z|\right]"
+                if order == "LA"
+                else r"\mathrm{Re}\,h^{\rm NLA}_{\rm art}(z)=\left[A\,|z|+A'\right]"
+            )
+            + article_tail
+            + r",\qquad \mathrm{Im}\,h(z)=0."
+        )
+        implementation_formula = (
+            (
+                r"\mathrm{Re}\,h^{\rm LA}_{\rm agent}(z>0)=\left[A\,z\right]"
+                if order == "LA"
+                else r"\mathrm{Re}\,h^{\rm NLA}_{\rm agent}(z>0)=\left[A\,z+A'\right]"
+            )
+            + implementation_tail
+            + r",\qquad \mathrm{Im}\,h(z)=0."
+        )
+        mapping_lines = [
+            "- This is the implementation-oriented real-tail rewrite of the Appendix-F gluon form; the report does not claim a universal term-by-term correspondence beyond this specialized real-part ansatz."
+            if language == "en"
+            else "- 这里给出的是 Appendix F 胶子实部尾项在代码中的实现版本；除该特定实部参数化外，报告不强行宣称逐项完全对应。",
+            "- $A$ controls the linear large-distance growth before exponential damping; $A'$ is the NLA constant correction when present."
+            if language == "en"
+            else "- $A$ 控制指数衰减前的线性长程增长；若存在，$A'$ 是 NLA 常数修正。",
+            "- $\\Lambda$ is the common decay parameter, and `Lambda0` imposes the fit constraint $\\Lambda\\ge\\Lambda_0$."
+            if language == "en"
+            else "- $\\Lambda$ 是共同衰减参数，`Lambda0` 对其施加拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+        ]
+        scope_lines = [
+            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `method=CG` adds the explicit factor $z^{-n}$ shown above."
+            if language == "en"
+            else "文献式写成 $|z|$ 形式，而 lamet-agent 采用正 $z$ 实现；`method=CG` 时再额外乘上上式中写出的 $z^{-n}$。",
+        ]
     elif observable == "pion_gluon_quasi_pdf":
-        body = r"A_2 z" if order == "LA" else r"A_2 z + A_2' + 2 A_1\cos(\phi-P_z z)"
-        formula = rf"\mathrm{{Re}}\,h(z)=({body}){common_tail},\qquad \mathrm{{Im}}\,h(z)=0."
+        article_formula = (
+            (
+                r"\mathrm{Re}\,h^{\rm LA}_{\rm art}(z)=\left[A_2\,|z|\right]"
+                if order == "LA"
+                else r"\mathrm{Re}\,h^{\rm NLA}_{\rm art}(z)=\left[A_2\,|z|+A_2'+2A_1\cos(\phi-P^z z)\right]"
+            )
+            + article_tail
+            + r",\qquad \mathrm{Im}\,h(z)=0."
+        )
+        implementation_formula = (
+            (
+                r"\mathrm{Re}\,h^{\rm LA}_{\rm agent}(z>0)=\left[A_2\,z\right]"
+                if order == "LA"
+                else r"\mathrm{Re}\,h^{\rm NLA}_{\rm agent}(z>0)=\left[A_2\,z+A_2'+2A_1\cos(\phi-P^z z)\right]"
+            )
+            + implementation_tail
+            + r",\qquad \mathrm{Im}\,h(z)=0."
+        )
+        mapping_lines = [
+            "- This is the implementation-oriented real-tail rewrite of the Appendix-F gluon form; the report does not claim a universal term-by-term correspondence beyond this specialized real-part ansatz."
+            if language == "en"
+            else "- 这里给出的是 Appendix F 胶子实部尾项在代码中的实现版本；除该特定实部参数化外，报告不强行宣称逐项完全对应。",
+            "- $A_2$ controls the linear large-distance part, while $A_2'$, $A_1$, and $\\phi$ parameterize the NLA constant and oscillatory corrections."
+            if language == "en"
+            else "- $A_2$ 控制线性的长程部分，$A_2'$、$A_1$ 和 $\\phi$ 则参数化 NLA 的常数与振荡修正。",
+            "- $\\Lambda$ is the common decay parameter, and `Lambda0` imposes the fit constraint $\\Lambda\\ge\\Lambda_0$."
+            if language == "en"
+            else "- $\\Lambda$ 是共同衰减参数，`Lambda0` 对其施加拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+        ]
+        scope_lines = [
+            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `method=CG` adds the explicit factor $z^{-n}$ shown above."
+            if language == "en"
+            else "文献式写成 $|z|$ 形式，而 lamet-agent 采用正 $z$ 实现；`method=CG` 时再额外乘上上式中写出的 $z^{-n}$。",
+        ]
     else:
-        nla = r" + \sum_j \frac{A'_j}{z}\exp[i(\phi'_j+\omega_j z)]" if order == "NLA" else ""
-        formula = rf"h(z)=\left[\sum_j A_j\exp[i(\phi_j+\omega_j z)]{nla}\right]{common_tail}."
+        article_formula = rf"h^{{\rm {order}}}_{{\rm art}}(z)=\left[\sum_j A_j e^{{i\phi_j\,{{\rm sign}}(z)}} e^{{i\omega_j z}}\right]{article_tail}."
+        implementation_formula = (
+            rf"h^{{\rm {order}}}_{{\rm agent}}(z>0)=\left[\sum_j A_j e^{{i(\phi_j+\omega_j z)}}"
+            + (r"+\sum_j \frac{A'_j}{z} e^{i(\phi'_j+\omega_j z)}" if order == "NLA" else "")
+            + rf"\right]{implementation_tail}."
+        )
+        mapping_lines = [
+            "- The implementation is the positive-$z$ rewrite of the article-style oscillatory tail."
+            if language == "en"
+            else "- 实现公式是文献风格振荡尾项在正 $z$ 分支上的重写。",
+            "- $\\Lambda$ is the common decay parameter, and `Lambda0` imposes the fit constraint $\\Lambda\\ge\\Lambda_0$."
+            if language == "en"
+            else "- $\\Lambda$ 是共同衰减参数，`Lambda0` 对其施加拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+        ]
+        scope_lines = [
+            "The implementation fits only positive coordinates."
+            if language == "en"
+            else "实现时只拟合正坐标。",
+        ]
 
     if language == "zh":
-        return f"{reference}。代码实现的 {family} 为\n\n$$\n{formula}\n$$\n\n{method_note}"
-    return f"{reference}. The implemented {family} is\n\n$$\n{formula}\n$$\n\n{method_note}"
+        lines = [
+            f"### 文献公式\n{reference}。\n\n$$\n{article_formula}\n$$",
+            f"### lamet-agent 实际拟合公式\n本次分析中代码实际使用的拟合形式为\n\n$$\n{implementation_formula}\n$$",
+            "### 参数对应关系",
+            *mapping_lines,
+            "### 适用范围说明",
+            *scope_lines,
+        ]
+        return "\n\n".join(lines)
+    lines = [
+        f"### Article Formula\n{reference}.\n\n$$\n{article_formula}\n$$",
+        f"### lamet-agent Implementation\nThe fit actually used by lamet-agent in this run is\n\n$$\n{implementation_formula}\n$$",
+        "### Parameter Correspondence",
+        *mapping_lines,
+        "### Scope and Equivalence",
+        *scope_lines,
+    ]
+    return "\n\n".join(lines)
+
+
+def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
+    part = str(result.get("part", "both")).lower()
+    if language == "zh":
+        if part == "re":
+            return (
+                "$$\n"
+                "q_{\\rm re}(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
+                "\\cos(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda).\n"
+                "$$"
+            )
+        if part == "im":
+            return (
+                "$$\n"
+                "q_{\\rm im}(x)=-\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
+                "\\sin(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda).\n"
+                "$$"
+            )
+        return (
+            "$$\n"
+            "\\mathrm{Re}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
+            "\\left[\\cos(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda)-\\sin(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda)\\right],\n"
+            "$$\n"
+            "$$\n"
+            "\\mathrm{Im}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
+            "\\left[\\sin(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda)+\\cos(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda)\\right].\n"
+            "$$"
+        )
+    if part == "re":
+        return (
+            "$$\n"
+            "q_{\\rm re}(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
+            "\\cos(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda).\n"
+            "$$"
+        )
+    if part == "im":
+        return (
+            "$$\n"
+            "q_{\\rm im}(x)=-\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
+            "\\sin(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda).\n"
+            "$$"
+        )
+    return (
+        "$$\n"
+        "\\mathrm{Re}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
+        "\\left[\\cos(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda)-\\sin(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda)\\right],\n"
+        "$$\n"
+        "$$\n"
+        "\\mathrm{Im}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
+        "\\left[\\sin(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda)+\\cos(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda)\\right].\n"
+        "$$"
+    )
 
 
 def _field_definitions(*, language: str) -> list[str]:
@@ -286,6 +691,14 @@ def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
     roughness = np.asarray(result.get("scheme_roughness", []), dtype=float)
     labels = list(result.get("scheme_labels", []))
     selection_mode = str(result.get("selection_mode", "model_average"))
+    scheme_scan = dict(result.get("scheme_scan", {}))
+    candidate_labels = list(result.get("candidate_scheme_labels", []))
+    shared_labels = list(result.get("shared_scheme_labels", []))
+    chi_cut = result.get("chi_cut")
+    best_candidate_chi2 = result.get("best_candidate_chi2_dof")
+    scheme_grid_size = int(result.get("scheme_grid_size", len(candidate_labels) or len(labels)))
+    shared_scheme_count = int(result.get("shared_scheme_count", len(shared_labels) or len(labels)))
+    required_points = result.get("required_points")
     lines: list[str] = []
 
     if failures.size:
@@ -301,23 +714,52 @@ def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
             if language == "zh"
             else f"- $\\chi^2/{{\\rm dof}}$ range: {_fmt(np.min(finite))} to {_fmt(np.max(finite))}."
         )
+    if scheme_scan:
+        zmin_values = scheme_scan.get("zmin_values", [])
+        zmax_values = scheme_scan.get("zmax_values", [])
+        z_ext_max = scheme_scan.get("z_ext_max")
+        smooth = scheme_scan.get("smooth", "linear")
+        roughness_weight = scheme_scan.get("roughness_weight", 1.0)
+        model_average_flag = bool(scheme_scan.get("model_average", True))
+        lines.append(
+            f"- `scheme_scan` 是由 `zmin_values={_fmt_list(zmin_values)}`、`zmax_values={_fmt_list(zmax_values)}`、`z_ext_max={_fmt(z_ext_max)}`、`smooth={smooth}`、`roughness_weight={_fmt(roughness_weight)}`、`model_average={model_average_flag}` 组成的方案搜索设置。"
+            if language == "zh"
+            else f"- `scheme_scan` is the scheme-search configuration built from `zmin_values={_fmt_list(zmin_values)}`, `zmax_values={_fmt_list(zmax_values)}`, `z_ext_max={_fmt(z_ext_max)}`, `smooth={smooth}`, `roughness_weight={_fmt(roughness_weight)}`, and `model_average={model_average_flag}`."
+        )
+    lines.append(
+        f"- `scheme grid` 就是 `zmin_values × zmax_values` 的笛卡尔积：每个 `(zmin, zmax)` 组合都对应一个候选 tail-fit 窗口。"
+        f"本次共有 {scheme_grid_size} 个候选 scheme；任何候选只有在拟合窗口内包含不少于 {required_points} 个正坐标点时才会被保留。"
+        if language == "zh"
+        else f"- The `scheme grid` is the Cartesian product of `zmin_values × zmax_values`: every `(zmin, zmax)` pair defines one candidate tail-fit window. "
+        f"This run has {scheme_grid_size} candidate schemes, and a candidate is kept only if its fit window contains at least {required_points} positive-coordinate points."
+    )
     if selection_mode == "sample_average_best_scheme":
-        candidate_labels = list(result.get("candidate_scheme_labels", []))
         candidate_weights = np.asarray(result.get("candidate_scheme_weights", []), dtype=float)
         candidate_chi2 = np.asarray(result.get("candidate_scheme_fit_chi2_dof", []), dtype=float)
+        shared_chi2 = np.asarray(result.get("shared_scheme_fit_chi2_dof", []), dtype=float)
         selected = int(result.get("selected_candidate_index", 0) or 0)
         selected_label = str(result.get("selected_candidate_label", candidate_labels[selected] if selected < len(candidate_labels) else selected))
         if language == "zh":
             lines.append(
-                f"- `model_average=false` 时，代码先用 sample-average 矩阵元扫描所有候选 scheme，"
-                f"按 $\\chi_s^2/{{\\rm dof}}$ 选择拟合质量最好的窗口；随后只对选中的 scheme 跑全部重采样样本。"
+                f"- `model_average=false` 时，先只用 sample-average 矩阵元扫描候选窗口，"
+                f"得到每个候选窗口的 mean tail-fit $\\chi^2/{{\\rm dof}}$；`best` 指其中最小且可用的值，"
+                f"本次为 {_fmt(best_candidate_chi2)}。"
+                f"随后只在入围集合中选择 $\\chi^2/{{\\rm dof}}$ 最小者，并只对该窗口跑全部重采样样本。"
                 f"本次选中 {selected_label}。"
             )
         else:
             lines.append(
-                f"- With `model_average=false`, the code first scans all candidate schemes using the sample-average matrix element, "
-                f"selects the window with the best $\\chi_s^2/{{\\rm dof}}$, and then runs all resampled Fourier transforms only for that scheme. "
+                f"- With `model_average=false`, the code first evaluates every candidate window using the sample-average matrix element, "
+                f"and records the mean tail-fit $\\chi^2/{{\\rm dof}}$ for each window. "
+                f"`best` is the minimum admissible value, which is {_fmt(best_candidate_chi2)} in this run. "
+                f"The code then selects the minimum-$\\chi^2/{{\\rm dof}}$ window only within that admitted set, and finally runs all resampled Fourier transforms only for that window. "
                 f"The selected scheme is {selected_label}."
+            )
+        if shared_labels:
+            lines.append(
+                f"- 入围的 shared effective grid 包含：{', '.join(f'`{label}`' for label in shared_labels)}。"
+                if language == "zh"
+                else f"- The shared effective grid contains: {', '.join(f'`{label}`' for label in shared_labels)}."
             )
         if candidate_weights.size:
             best = int(np.argmax(candidate_weights))
@@ -334,12 +776,24 @@ def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
                 if language == "zh"
                 else f"- Candidate $\\chi^2/{{\\rm dof}}$ range: {_fmt(np.min(finite))} to {_fmt(np.max(finite))}."
             )
+        if shared_chi2.size and np.any(np.isfinite(shared_chi2)):
+            finite = shared_chi2[np.isfinite(shared_chi2)]
+            lines.append(
+                f"- 入围 shared effective grid 的 $\\chi^2/{{\\rm dof}}$ 范围：{_fmt(np.min(finite))} 到 {_fmt(np.max(finite))}。"
+                if language == "zh"
+                else f"- The admitted shared effective grid has $\\chi^2/{{\\rm dof}}$ in the range {_fmt(np.min(finite))} to {_fmt(np.max(finite))}."
+            )
     elif weights.size:
         best = int(np.argmax(weights))
         label = labels[best] if best < len(labels) else str(best)
         if language == "zh":
             lines.append(
-                f"- Model averaging 对每个 scheme $s$ 定义综合分数 "
+                f"- `model_average=true` 时，先只用 sample-average 矩阵元扫描候选窗口，"
+                f"得到每个候选窗口的 mean tail-fit $\\chi^2/{{\\rm dof}}$；`best` 是其中最小且可用的值，本次为 {_fmt(best_candidate_chi2)}。"
+                f"然后只对这组入围 scheme 跑全部重采样样本。"
+            )
+            lines.append(
+                f"- 在入围的 scheme 内，model averaging 对每个 scheme $s$ 定义综合分数 "
                 f"$S_s=\\chi_s^2/{{\\rm dof}}+w_{{\\rm rough}}R_s+100N_s^{{\\rm fail}}$，其中 "
                 f"$\\chi_s^2/{{\\rm dof}}$ 衡量长程拟合质量，$R_s$ 惩罚傅立叶结果的振荡粗糙度，"
                 f"$w_{{\\rm rough}}$ 是粗糙度权重，$N_s^{{\\rm fail}}$ 是该 scheme 下重采样拟合失败次数。"
@@ -347,9 +801,17 @@ def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
                 f"因此分数越低的 scheme 越优先；拟合更好、曲线更平滑、失败次数更少会得到更大权重。"
                 f"本次最高权重 scheme 为 {label}，权重 {_fmt(weights[best])}。"
             )
+            if shared_labels:
+                lines.append(f"- 入围的 shared effective grid 包含：{', '.join(f'`{item}`' for item in shared_labels)}。")
         else:
             lines.append(
-                f"- Model averaging assigns each scheme $s$ the score "
+                f"- With `model_average=true`, the code first evaluates every candidate window using the sample-average matrix element, "
+                f"and records the mean tail-fit $\\chi^2/{{\\rm dof}}$ for each window. "
+                f"`best` is the minimum admissible value, which is {_fmt(best_candidate_chi2)} in this run. "
+                f"The code then runs all resampled Fourier transforms only inside that admitted set."
+            )
+            lines.append(
+                f"- Inside the admitted set, model averaging assigns each scheme $s$ the score "
                 f"$S_s=\\chi_s^2/{{\\rm dof}}+w_{{\\rm rough}}R_s+100N_s^{{\\rm fail}}$, where "
                 f"$\\chi_s^2/{{\\rm dof}}$ measures tail-fit quality, $R_s$ penalizes oscillatory Fourier roughness, "
                 f"$w_{{\\rm rough}}$ is the roughness weight, and $N_s^{{\\rm fail}}$ is the number of failed resampled fits. "
@@ -357,6 +819,8 @@ def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
                 f"Lower scores are preferred: better fits, smoother Fourier curves, and fewer failures get larger weights. "
                 f"The highest-weight scheme is {label} with weight {_fmt(weights[best])}."
             )
+            if shared_labels:
+                lines.append(f"- The shared effective grid contains: {', '.join(f'`{item}`' for item in shared_labels)}.")
     if selection_mode != "sample_average_best_scheme" and roughness.size and np.any(np.isfinite(roughness)):
         if language == "zh":
             lines.append(
@@ -404,6 +868,48 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
             f"{_fmt(scheme.get('z_ext_max'))} | "
             f"`{scheme.get('smooth', 'n/a')}` |"
         )
+    return lines
+
+
+def _format_fit_value(mean: float, sdev: float) -> str:
+    if not np.isfinite(mean):
+        return "n/a"
+    if not np.isfinite(sdev) or sdev <= 0.0:
+        return _fmt(mean)
+    exponent = 0 if sdev == 0 else int(np.floor(np.log10(abs(sdev))))
+    decimals = max(0, -exponent + 1)
+    scale = 10**decimals
+    mean_rounded = round(mean, decimals)
+    err_digits = int(round(sdev * scale))
+    return f"{mean_rounded:.{decimals}f}({err_digits:0d})"
+
+
+def _scheme_parameter_table(result: dict[str, Any], *, language: str) -> list[str]:
+    schemes = list(result.get("scheme_results", []))
+    if not schemes:
+        return []
+    labels = list(result.get("scheme_labels", []))
+    param_labels = list(schemes[0].get("fit_param_labels", []))
+    if not param_labels:
+        return []
+
+    header_title = "### Scheme Fit Parameters" if language == "en" else "### Scheme 拟合参数"
+    header = (
+        "| # | label | " + " | ".join(f"`{label}`" for label in param_labels) + " |"
+        if language == "en"
+        else "| # | 标签 | " + " | ".join(f"`{label}`" for label in param_labels) + " |"
+    )
+    lines = [header_title, "", header, "|" + "---|" * (len(param_labels) + 2)]
+    for idx, scheme in enumerate(schemes):
+        label = labels[idx] if idx < len(labels) else scheme.get("label", str(idx))
+        fit_params = np.asarray(scheme.get("fit_params", []), dtype=float)
+        if fit_params.ndim != 2 or fit_params.shape[1] != len(param_labels):
+            values = ["n/a"] * len(param_labels)
+        else:
+            means = np.mean(fit_params, axis=0)
+            sdevs = np.std(fit_params, axis=0, ddof=1) if fit_params.shape[0] > 1 else np.zeros(len(param_labels), dtype=float)
+            values = [_format_fit_value(float(mean), float(sdev)) for mean, sdev in zip(means, sdevs)]
+        lines.append("| " + f"{idx} | {label} | " + " | ".join(values) + " |")
     return lines
 
 
@@ -616,11 +1122,7 @@ def build_fourier_report_markdown(
     if language == "zh":
         title = "# 傅立叶变换分析报告"
         abstract = f"本报告总结 `{observable}`（{observable_text}）的傅立叶变换分析，长程外推采用 `{method}` / `{order}`。"
-        transform_text = (
-            "$$\n"
-            "q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}e^{ix\\lambda}h(\\lambda),\\qquad \\lambda=P_z z.\n"
-            "$$"
-        )
+        transform_text = _fourier_transform_text(result, language="zh")
         lines = [
             title,
             "",
@@ -642,11 +1144,11 @@ def build_fourier_report_markdown(
             transform_text,
             "",
             "## 拟合质量与 Scheme 诊断",
-            *_fit_assessment(result, language="zh"),
-            "",
-            *_smooth_explanation(result, language="zh"),
+            "本单 job 报告只保留最优 scheme 与对应数值结果；完整的 `scheme grid`、`shared effective grid` 和 `chi_cut` 口径见 stage 汇总报告。",
             "",
             *_scheme_table(result, language="zh"),
+            "",
+            *_scheme_parameter_table(result, language="zh"),
             "",
             *_figure_block(artifacts, language="zh"),
             "",
@@ -658,11 +1160,7 @@ def build_fourier_report_markdown(
     else:
         title = "# Fourier Transform Analysis Report"
         abstract = f"This report summarizes the Fourier transform for `{observable}` ({observable_text}) using `{method}` / `{order}` large-distance extrapolation."
-        transform_text = (
-            "$$\n"
-            "q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}e^{ix\\lambda}h(\\lambda),\\qquad \\lambda=P_z z.\n"
-            "$$"
-        )
+        transform_text = _fourier_transform_text(result, language="en")
         lines = [
             title,
             "",
@@ -684,11 +1182,11 @@ def build_fourier_report_markdown(
             transform_text,
             "",
             "## Fit Quality and Scheme Diagnostics",
-            *_fit_assessment(result, language="en"),
-            "",
-            *_smooth_explanation(result, language="en"),
+            "This single-job report keeps only the best scheme and its numerical outputs; the full `scheme grid`, `shared effective grid`, and `chi_cut` explanation lives in the stage summary report.",
             "",
             *_scheme_table(result, language="en"),
+            "",
+            *_scheme_parameter_table(result, language="en"),
             "",
             *_figure_block(artifacts, language="en"),
             "",
@@ -752,11 +1250,7 @@ def write_fourier_stage_report(
         same_z_ext = bool(finite_z_ext) and np.allclose(finite_z_ext, finite_z_ext[0])
         fit_range_text = "见下方各动量诊断表" if language == "zh" else "see the per-momentum diagnostics below"
         z_ext_max = finite_z_ext[0] if same_z_ext else ("见下方各动量诊断表" if language == "zh" else "see the per-momentum diagnostics below")
-        transform_text = (
-            "$$\n"
-            "q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}e^{ix\\lambda}h(\\lambda),\\qquad \\lambda=P_z z.\n"
-            "$$"
-        )
+        transform_text = _fourier_transform_text(first, language=language)
         lines = [
             "# Fourier Transform Stage Report" if language == "en" else "# 傅立叶变换阶段报告",
             "",
@@ -807,19 +1301,22 @@ def write_fourier_stage_report(
                 transform_text,
                 "",
                 "## Fit Quality and Scheme Diagnostics" if language == "en" else "## 拟合质量与 Scheme 诊断",
-            ]
-        )
+                ]
+            )
         if str(first.get("selection_mode", "model_average")) == "sample_average_best_scheme":
             lines.append(
-                "`model_average=false` 时，代码先用 sample-average 矩阵元选择一个最优候选窗口，再把该窗口用于所有重采样样本。"
+                "`model_average=false` 时，代码先用 sample-average 矩阵元扫描完整 scheme grid，按 mean tail-fit 的 "
+                "$\\chi^2/{\\rm dof}$ 形成 shared effective grid，再只在这组入围 scheme 中选一个最优者并用于所有重采样样本。"
                 if language == "zh"
-                else "With `model_average=false`, the sample-average matrix element selects one best candidate window, which is then applied to all resampled samples."
+                else "With `model_average=false`, the sample-average matrix element first scans the full scheme grid, builds a shared effective grid from the mean tail-fit $\\chi^2/{\\rm dof}$, and then applies only the best admitted scheme to all resampled samples."
             )
         else:
             lines.append(
-                "Model averaging 使用 $S_s=\\chi_s^2/{\\rm dof}+w_{\\rm rough}R_s+100N_s^{\\rm fail}$ 给每个 scheme 评分，并用 $W_s=\\exp[-(S_s-S_{\\rm min})/2]/\\sum_t\\exp[-(S_t-S_{\\rm min})/2]$ 归一化权重。分数越低的 scheme 权重越大。"
+                "`model_average=true` 时，代码先用 sample-average 矩阵元扫描完整 scheme grid，按 mean tail-fit 的 "
+                "$\\chi^2/{\\rm dof}$ 形成 shared effective grid，再只在入围 scheme 中使用 "
+                "$S_s=\\chi_s^2/{\\rm dof}+w_{\\rm rough}R_s+100N_s^{\\rm fail}$ 做模型平均。"
                 if language == "zh"
-                else "Model averaging scores each scheme with $S_s=\\chi_s^2/{\\rm dof}+w_{\\rm rough}R_s+100N_s^{\\rm fail}$ and normalizes weights as $W_s=\\exp[-(S_s-S_{\\rm min})/2]/\\sum_t\\exp[-(S_t-S_{\\rm min})/2]$. Lower-scored schemes receive larger weights."
+                else "With `model_average=true`, the code first scans the full scheme grid on the sample-average matrix element, builds a shared effective grid from the mean tail-fit $\\chi^2/{\\rm dof}$, and then performs model averaging only inside that admitted set using $S_s=\\chi_s^2/{\\rm dof}+w_{\\rm rough}R_s+100N_s^{\\rm fail}$."
             )
         lines.extend(
             [
@@ -846,6 +1343,30 @@ def write_fourier_stage_report(
                 f"{int(np.sum(np.asarray(result.get('fit_failures', []), dtype=float)))} |"
             )
         lines.extend(["", *_smooth_explanation(first, language=language)])
+        if language == "zh":
+            lines.extend(
+                [
+                    "",
+                    "- `scheme grid` 不是单个窗口，而是由 `zmin_values × zmax_values` 组成的候选窗口笛卡尔积；"
+                    "每一对 $(z_{\min}, z_{\max})$ 都对应一个可试的尾部拟合区间。",
+                    "- `shared effective grid` 是先用 sample-average 矩阵元筛出来、再供所有重采样样本共同使用的候选子集；"
+                    "只有满足 `True` 且 $\\chi^2/{\\rm dof}\\le chi_{cut}$ 的窗口才会进入这个集合。",
+                    "- `chi_cut` 是入围阈值，定义为 `max(best*1.25, best+0.15, 1.0)`；"
+                    "它的作用是保留接近最优且稳定的窗口，同时挡掉明显不稳的候选。",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "",
+                    "- The `scheme grid` is not a single window but the Cartesian product of `zmin_values × zmax_values`; "
+                    "each $(z_{\\min}, z_{\\max})$ pair defines one candidate tail-fit interval.",
+                    "- The `shared effective grid` is the admitted candidate subset obtained from the sample-average matrix element and then reused for all resampled samples; "
+                    "only windows satisfying `True` and $\\chi^2/{\\rm dof}\\le chi_{cut}$ enter this set.",
+                    "- `chi_cut` is the admission threshold, defined as `max(best*1.25, best+0.15, 1.0)`; "
+                    "it keeps windows close to the best stable candidate while rejecting visibly unstable ones.",
+                ]
+            )
         for item in jobs:
             result = item["result"]
             lines.extend(
@@ -854,6 +1375,8 @@ def write_fourier_stage_report(
                     f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV",
                     "",
                     *_scheme_table(result, language=language),
+                    "",
+                    *_scheme_parameter_table(result, language=language),
                 ]
             )
         lines.append("")
