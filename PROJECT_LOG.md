@@ -390,3 +390,18 @@
 
 - Added concise bilingual stage reports for correlator analysis and renormalization, wired through the same post-stage runner hook used by Fourier and matching.
 - Included correlator `fit_logs` descriptions and links to existing NetCDF/PDF artifacts without adding PNG companions.
+
+## 2026-06-26 (GI PX4 x_dependence reference tables)
+
+- Added ``temp/Fig16/read.py`` to convert Fig. 16 ``App2_*_GI_pz4.dat`` tables into ``# x y_mean y_sdev`` text files under ``data_gi_pdf/x_dependence/``.
+- Wrote ``HISQa060_X_GI_PX4_Pion_PDF_NLO_LRR.txt`` (100 x points) and ``HISQa060_X_GI_PX4_Pion_qPDF.txt`` (349 x points); x grids match the CG reference layout in ``data_cg_pdf/x_dependence/``.
+
+## 2026-06-26 (GI pion PDF manifest)
+
+- Added ``examples/gi_pion_pdf_manifest.json`` for the HISQa060_X GI ``hyp`` correlators under ``data_gi_pdf/``, running P0+P4 through correlator analysis, hybrid-ratio renormalization, Fourier transform, and perturbative matching at ``pz_gev=1.72``; the P4 2pt uses ``PX4PY0PZ0`` from the shared ``CG52bxp30`` HDF5 file.
+- Added ``runs/ds_gi_pdf/run.sh`` and ``plot_matched_pdf_compare.py`` mirroring ``runs/ds_pdf_complete`` for the GI PX4 reference tables.
+
+## 2026-06-26 (Hybrid-ratio manifest parameters)
+
+- Declared explicit ``m0``, ``delta_m``, and ``z0`` in ``examples/cg_pion_pdf_manifest.json``, ``examples/gi_pion_pdf_manifest.json``, and ``examples/sample_manifest.jsonc`` renormalization defaults; CG uses zeros, GI uses ``m0=0.1232`` GeV and ``delta_m=0.545227463`` GeV (``0.1586 * GEV_FM / a_fm`` at ``a_fm=0.0574``).
+- Extended ``test_prepare_renormalization_args_bind_roles_and_scheme`` to assert manifest passthrough of the new top-level hybrid-ratio fields.
