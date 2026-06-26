@@ -1,8 +1,8 @@
 {
   "metadata": {
-    "run_id": "cg_pion_pdf",
+    "run_id": "gi_pion_pdf",
     "root_directory": "..",
-    "artifacts_directory": "runs/ds_pdf_complete/artifacts",
+    "artifacts_directory": "runs/ds_gi_pdf/artifacts",
     "target_observable": "pdf",
     "parton": "quark",
     "resample_mode": "jk",
@@ -13,10 +13,10 @@
       {
         "correlator_id": "a060_x_p0_2pt",
         "kind": "2pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp00_CG52bxp00_2pt.h5",
+        "data_path": "data_gi_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp00_CG52bxp00_2pt.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
-        "gfix": "CG",
+        "gfix": "GI",
         "source_sink": "SS",
         "momentum": "PX0PY0PZ0",
         "a_fm": 0.0574,
@@ -27,10 +27,10 @@
       {
         "correlator_id": "a060_x_p0_3pt_ts8",
         "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
+        "data_path": "data_gi_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_hyp_PX0PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
-        "gfix": "CG",
+        "gfix": "GI",
         "source_sink": "SS",
         "momentum": "PX0PY0PZ0",
         "a_fm": 0.0574,
@@ -47,10 +47,10 @@
       {
         "correlator_id": "a060_x_p0_3pt_ts10",
         "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
+        "data_path": "data_gi_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_hyp_PX0PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
-        "gfix": "CG",
+        "gfix": "GI",
         "source_sink": "SS",
         "momentum": "PX0PY0PZ0",
         "a_fm": 0.0574,
@@ -67,10 +67,10 @@
       {
         "correlator_id": "a060_x_p0_3pt_ts12",
         "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
+        "data_path": "data_gi_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_hyp_PX0PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
-        "gfix": "CG",
+        "gfix": "GI",
         "source_sink": "SS",
         "momentum": "PX0PY0PZ0",
         "a_fm": 0.0574,
@@ -85,30 +85,30 @@
         "tsep": 12
       },
       {
-        "correlator_id": "a060_x_p5_2pt",
+        "correlator_id": "a060_x_p4_2pt",
         "kind": "2pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp30_CG52bxp30_2pt.h5",
+        "data_path": "data_gi_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp30_CG52bxp30_2pt.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
-        "gfix": "CG",
+        "gfix": "GI",
         "source_sink": "SS",
-        "momentum": "PX5PY0PZ0",
+        "momentum": "PX4PY0PZ0",
         "a_fm": 0.0574,
-        "pz_gev": 2.15,
+        "pz_gev": 1.72,
         "src_gamma": "5",
         "sink_gamma": "5"
       },
       {
-        "correlator_id": "a060_x_p5_3pt_ts8",
+        "correlator_id": "a060_x_p4_3pt_ts8",
         "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX5PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
+        "data_path": "data_gi_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_hyp_PX4PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
-        "gfix": "CG",
+        "gfix": "GI",
         "source_sink": "SS",
-        "momentum": "PX5PY0PZ0",
+        "momentum": "PX4PY0PZ0",
         "a_fm": 0.0574,
-        "pz_gev": 2.15,
+        "pz_gev": 1.72,
         "src_gamma": "5",
         "sink_gamma": "5",
         "current_gamma": "T",
@@ -119,16 +119,16 @@
         "tsep": 8
       },
       {
-        "correlator_id": "a060_x_p5_3pt_ts10",
+        "correlator_id": "a060_x_p4_3pt_ts10",
         "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX5PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
+        "data_path": "data_gi_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_hyp_PX4PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
-        "gfix": "CG",
+        "gfix": "GI",
         "source_sink": "SS",
-        "momentum": "PX5PY0PZ0",
+        "momentum": "PX4PY0PZ0",
         "a_fm": 0.0574,
-        "pz_gev": 2.15,
+        "pz_gev": 1.72,
         "src_gamma": "5",
         "sink_gamma": "5",
         "current_gamma": "T",
@@ -139,16 +139,16 @@
         "tsep": 10
       },
       {
-        "correlator_id": "a060_x_p5_3pt_ts12",
+        "correlator_id": "a060_x_p4_3pt_ts12",
         "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX5PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
+        "data_path": "data_gi_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_hyp_PX4PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
-        "gfix": "CG",
+        "gfix": "GI",
         "source_sink": "SS",
-        "momentum": "PX5PY0PZ0",
+        "momentum": "PX4PY0PZ0",
         "a_fm": 0.0574,
-        "pz_gev": 2.15,
+        "pz_gev": 1.72,
         "src_gamma": "5",
         "sink_gamma": "5",
         "current_gamma": "T",
@@ -177,7 +177,7 @@
         "pt3_tau_cuts": [2, 3, 4],
         "nstate": [2],
         "fit_scope": ["ratio"],
-        "fit_strategy": ["joint"],
+        "fit_strategy": ["chained"],
         "seed": 1984,
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 3.0,
@@ -187,19 +187,19 @@
       },
       "jobs": [
         {"id": "ca_p0", "correlator_ids": ["a060_x_p0_2pt", "a060_x_p0_3pt_ts8", "a060_x_p0_3pt_ts10", "a060_x_p0_3pt_ts12"]},
-        {"id": "ca_p5", "correlator_ids": ["a060_x_p5_2pt", "a060_x_p5_3pt_ts8", "a060_x_p5_3pt_ts10", "a060_x_p5_3pt_ts12"]}
+        {"id": "ca_p4", "correlator_ids": ["a060_x_p4_2pt", "a060_x_p4_3pt_ts8", "a060_x_p4_3pt_ts10", "a060_x_p4_3pt_ts12"]}
       ]
     },
     "renormalization": {
       "defaults": {
         "scheme": "hybrid_ratio",
         "scheme_parameters": {"zs_fm": 0.1722},
-        "m0": 0.0,
-        "delta_m": 0.0,
+        "m0": 0.1232,
+        "delta_m": 0.545227463,
         "z0": 0.0
       },
       "jobs": [
-        {"id": "rn_p5", "inputs": {"target": "ca_p5", "denominator": "ca_p0"}}
+        {"id": "rn_p4", "inputs": {"target": "ca_p4", "denominator": "ca_p0"}}
       ]
     },
     "fourier_transform": {
@@ -217,18 +217,18 @@
           "z_ext_max": 37.0,
           "smooth": "linear",
           "roughness_weight": 1.0,
-          "model_average": true,
+          "model_average": false,
           "max_schemes": 200
         }
       },
       "jobs": [
-        {"id": "ft_p5", "inputs": {"input": "rn_p5"}, "params": {"pz_gev": 2.15}}
+        {"id": "ft_p4", "inputs": {"input": "rn_p4"}, "params": {"pz_gev": 1.72}}
       ]
     },
     "perturbative_matching": {
       "defaults": {"mu": 2.0, "component": "re"},
       "jobs": [
-        {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"pz_gev": 2.15}}
+        {"id": "mt_p4", "inputs": {"quasi": "ft_p4"}, "params": {"pz_gev": 1.72}}
       ]
     }
   }

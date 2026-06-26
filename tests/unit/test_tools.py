@@ -178,6 +178,9 @@ def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> N
     assert args["denominator"] == "denominator"
     assert args["scheme"] == "hybrid_ratio"
     assert args["scheme_parameters"] == manifest.stages["renormalization"].defaults["scheme_parameters"]
+    assert args["m0"] == manifest.stages["renormalization"].defaults["m0"]
+    assert args["delta_m"] == manifest.stages["renormalization"].defaults["delta_m"]
+    assert args["z0"] == manifest.stages["renormalization"].defaults["z0"]
     assert args["save_path"] == str(tmp_path / "rn_p5")
 
 
