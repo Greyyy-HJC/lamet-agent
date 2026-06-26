@@ -405,3 +405,10 @@
 
 - Declared explicit ``m0``, ``delta_m``, and ``z0`` in ``examples/cg_pion_pdf_manifest.json``, ``examples/gi_pion_pdf_manifest.json``, and ``examples/sample_manifest.jsonc`` renormalization defaults; CG uses zeros, GI uses ``m0=0.1232`` GeV and ``delta_m=0.545227463`` GeV (``0.1586 * GEV_FM / a_fm`` at ``a_fm=0.0574``).
 - Extended ``test_prepare_renormalization_args_bind_roles_and_scheme`` to assert manifest passthrough of the new top-level hybrid-ratio fields.
+
+## 2026-06-26 (Renormalization parameter cleanup and unit fix)
+
+- Removed configurable ``z0``; hybrid-ratio normalization is fixed at lattice ``z=0``.
+- Moved ``m0_gev`` and ``delta_m_gev`` into ``scheme_parameters`` (GeV); updated GI/CG/sample manifests accordingly.
+- Fixed long-range exponent to use physical distance: ``exp((m0_gev + delta_m_gev) * (|z|_fm - z_s) / GEV_FM)``.
+- Updated renormalization reporting formula and unit tests for the corrected exponent scaling.

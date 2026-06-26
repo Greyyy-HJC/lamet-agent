@@ -67,9 +67,8 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
             ("$z_s$ [fm]", _fmt(result.get("zs_fm"))),
             ("$z_s/a$", _fmt(result.get("zs_lattice"))),
             ("选中的 denominator z grid", _fmt(result.get("zs_grid"))),
-            ("$\\delta m$", _fmt(result.get("delta_m"))),
-            ("$m_0$", _fmt(result.get("m0"))),
-            ("归一化 z", _fmt(result.get("normalization_z"))),
+            ("$\\delta m$ [GeV]", _fmt(result.get("delta_m_gev"))),
+            ("$m_0$ [GeV]", _fmt(result.get("m0_gev"))),
             ("z 网格", _fmt_list(result.get("z_grid", []))),
             ("重采样", f"{result.get('n_sample', 'n/a')} 个样本"),
         ]
@@ -80,9 +79,8 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
             ("$z_s$ [fm]", _fmt(result.get("zs_fm"))),
             ("$z_s/a$", _fmt(result.get("zs_lattice"))),
             ("Selected denominator z grid", _fmt(result.get("zs_grid"))),
-            ("$\\delta m$", _fmt(result.get("delta_m"))),
-            ("$m_0$", _fmt(result.get("m0"))),
-            ("Normalization z", _fmt(result.get("normalization_z"))),
+            ("$\\delta m$ [GeV]", _fmt(result.get("delta_m_gev"))),
+            ("$m_0$ [GeV]", _fmt(result.get("m0_gev"))),
             ("z grid", _fmt_list(result.get("z_grid", []))),
             ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
         ]
@@ -94,8 +92,8 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
 
 def _formula_text(*, language: str) -> str:
     formula = (
-        r"h^R(z)=N\,h(z)/h_{\rm den}(z)\quad (|z|\le z_s),\qquad "
-        r"h^R(z)=N\,e^{(\delta m+m_0)(|z|-z_s/a)}h(z)/h_{\rm den}(z_s)\quad (|z|>z_s)."
+        r"h^R(z)=N\,h(z)/h_{\rm den}(z)\quad (|z|_{\rm fm}\le z_s),\qquad "
+        r"h^R(z)=N\,e^{(\delta m+m_0)(|z|_{\rm fm}-z_s)}h(z)/h_{\rm den}(z_s)\quad (|z|_{\rm fm}>z_s)."
     )
     if language == "zh":
         return (

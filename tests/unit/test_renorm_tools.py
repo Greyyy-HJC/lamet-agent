@@ -57,8 +57,6 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
         store,
         scheme="hybrid_ratio",
         scheme_parameters={"zs_fm": 0.4},
-        delta_m=0,
-        m0=0,
         save_path="renorm",
     )
 
@@ -102,3 +100,37 @@ def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path
     # z=3 remains in the short-distance branch; z=4 uses h(z_s=3) in the denominator.
     assert np.allclose(store["output"].values[:, 3], [0.25, 0.25])
     assert np.allclose(store["output"].values[:, 4], [0.25, 0.25])
+
+
+def test_hybrid_ratio_long_range_exponent_uses_physical_distance(tmp_path: Path) -> None:
+    """Long-range exponent uses (m0_gev + delta_m_gev) * (z_fm - zs_fm) / GEV_FM."""
+    from lamet_agent.stages.renorm.functions import GEV_FM
+
+    z = [0, 1, 2, 3, 4, 5]
+    a_fm = 0.1
+    zs_fm = 0.3
+    m0_gev = 0.2
+    delta_m_gev = 0.1
+    target = EnsembleData(
+        EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+        values=[np.ones(6, dtype=complex), np.full(6, 2.0, dtype=complex)],
+        dims=("z",), coords={"z": z}, attrs={"a_fm": str(a_fm)}, name="target",
+    )
+    denominator = EnsembleData(
+        EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+        values=[np.ones(6, dtype=complex), np.full(6, 2.0, dtype=complex)],
+        dims=("z",), coords={"z": z}, attrs={"a_fm": str(a_fm)}, name="denominator",
+    )
+    store = {"target": target, "denominator": denominator}
+
+    apply_ratio_scheme_renormalization(
+        store,
+        target="target",
+        denominator="denominator",
+        scheme_parameters={"zs_fm": zs_fm, "m0_gev": m0_gev, "delta_m_gev": delta_m_gev},
+        save_path=str(tmp_path / "exponent"),
+    )
+
+    z4_fm = 4 * a_fm
+    expected_exp = np.exp((m0_gev + delta_m_gev) * (z4_fm - zs_fm) / GEV_FM)
+    assert np.allclose(store["output"].values[:, 4], expected_exp)

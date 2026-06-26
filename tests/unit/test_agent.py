@@ -652,9 +652,8 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
             "zs_fm": 0.3,
             "zs_lattice": 5.2,
             "zs_grid": 5.0,
-            "delta_m": 0.1,
-            "m0": 0.2,
-            "normalization_z": 0.0,
+            "delta_m_gev": 0.1,
+            "m0_gev": 0.2,
         }
 
     def fake_plot_renormalized_matrix_element(store, **kwargs):

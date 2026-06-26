@@ -330,14 +330,12 @@
     },
     "renormalization": {
       "defaults": {
-        "scheme": "hybrid_ratio", // long-range exponential correction; zs_fm lives in scheme_parameters
+        "scheme": "hybrid_ratio", // long-range exponential correction
         "scheme_parameters": {
-          "zs_fm": 0.1772 // physical switch length (fm); converted to lattice units via target a_fm
-        },
-        // CG method: m0 and delta_m are zero. GI example: m0=0.1232 GeV, delta_m=0.1586*GEV_FM/a_fm (~0.545 GeV at a_fm=0.0574).
-        "m0": 0.0, // linear renormalon slope (GeV), applied in the long-range exponent
-        "delta_m": 0.0, // mass-difference correction (GeV), same exponent as m0
-        "z0": 0.0 // normalization z (fm) for the ratio prefactor N
+          "zs_fm": 0.1772, // hybrid switch length (fm); short vs long branch
+          "m0_gev": 0.0, // linear renormalon slope (GeV); long-range exponent only
+          "delta_m_gev": 0.0 // target–denominator mass gap (GeV); GI example ~0.545 (= 0.1586*ℏc/a_fm at a=0.0574 fm)
+        }
       },
       "jobs": [
         // MERGE POINT 1: p0 (ca_p0) is the shared denominator for p4 and p5.

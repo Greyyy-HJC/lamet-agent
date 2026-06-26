@@ -174,10 +174,10 @@
     "correlator_analysis": {
       "defaults": {
         "pt2_windows": [{"tmin": 2, "tmax": 12}, {"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}],
-        "pt3_tau_cuts": [2, 3, 4],
+        "pt3_tau_cuts": [3, 4],
         "nstate": [2],
         "fit_scope": ["ratio"],
-        "fit_strategy": ["chained"],
+        "fit_strategy": ["joint"],
         "seed": 1984,
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 3.0,
@@ -193,10 +193,11 @@
     "renormalization": {
       "defaults": {
         "scheme": "hybrid_ratio",
-        "scheme_parameters": {"zs_fm": 0.1722},
-        "m0": 0.1232,
-        "delta_m": 0.545227463,
-        "z0": 0.0
+        "scheme_parameters": {
+          "zs_fm": 0.1722,
+          "m0_gev": 0.1232,
+          "delta_m_gev": 0.545227463
+        }
       },
       "jobs": [
         {"id": "rn_p4", "inputs": {"target": "ca_p4", "denominator": "ca_p0"}}

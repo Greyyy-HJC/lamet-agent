@@ -213,9 +213,6 @@ def apply_ratio_scheme_renormalization(
     denominator: str = "denominator_bare_matrix_element",
     scheme: str = "hybrid_ratio",
     scheme_parameters: dict[str, float] | None = None,
-    delta_m: float = 0.0,
-    m0: float = 0.0,
-    z0: float = 0.0,
     out: str = "matrix_element_data",
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
@@ -240,12 +237,16 @@ def apply_ratio_scheme_renormalization(
 
     params = scheme_parameters or {}
     zs_fm = float(params["zs_fm"])
+    m0_gev = float(params.get("m0_gev", 0.0))
+    delta_m_gev = float(params.get("delta_m_gev", 0.0))
     a_fm = float(target_data.attrs["a_fm"])
     zs_lattice = zs_fm / a_fm
-    z0_idx = _z_index(z_target, z0, label="normalization")
+    z0_idx = _z_index(z_target, 0.0, label="normalization")
     zs_idx = int(np.argmin(np.abs(np.abs(z_denom) - zs_lattice)))
-    norm = denom_values[:, z0_idx] / target_values[:, z0_idx] 
-    exponent = np.exp((float(delta_m) + float(m0)) * (np.abs(z_target) - zs_lattice))
+    norm = denom_values[:, z0_idx] / target_values[:, z0_idx]
+    z_fm = np.abs(z_target) * a_fm
+    mass_scale = (delta_m_gev + m0_gev) / GEV_FM
+    exponent = np.exp(mass_scale * (z_fm - zs_fm))
     short = norm[:, None] * target_values / denom_values
     long = norm[:, None] * exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
     renorm_values = np.where((np.abs(z_target) * a_fm)[None, :] <= zs_fm, short, long)
@@ -256,9 +257,8 @@ def apply_ratio_scheme_renormalization(
         "zs_fm": str(zs_fm),
         "zs_lattice": str(zs_lattice),
         "zs_grid": str(float(z_denom[zs_idx])),
-        "delta_m": str(float(delta_m)),
-        "m0": str(float(m0)),
-        "z0": str(float(z0)),
+        "delta_m_gev": str(delta_m_gev),
+        "m0_gev": str(m0_gev),
         "target": target,
         "denominator": denominator,
         "job_id": job_id,
@@ -293,9 +293,8 @@ def apply_ratio_scheme_renormalization(
         "zs_fm": zs_fm,
         "zs_lattice": zs_lattice,
         "zs_grid": float(z_denom[zs_idx]),
-        "delta_m": float(delta_m),
-        "m0": float(m0),
-        "normalization_z": float(z0),
+        "delta_m_gev": float(delta_m_gev),
+        "m0_gev": float(m0_gev),
     }
 
 
