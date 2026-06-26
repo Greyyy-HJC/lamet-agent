@@ -128,6 +128,11 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     operator, scheme = _parse_kernel_id(kernel_id)
     op_en, op_zh = OPERATOR_TEXT.get(operator, (operator or "not recorded",) * 2)
     scheme_en, _scheme_ref = SCHEME_TEXT.get(scheme, (scheme or "not recorded", ""))
+    # The `CG` prefix of the kernel_id marks the Coulomb-gauge (no Wilson line)
+    # construction; anything else is the conventional gauge-invariant one.
+    is_coulomb = kernel_id.upper().startswith("CG")
+    gauge_en = "Coulomb gauge ($\\partial_i A_i=0$, no Wilson line)" if is_coulomb else "gauge-invariant (straight Wilson line)"
+    gauge_zh = "库伦规范（Coulomb gauge，$\\partial_i A_i=0$，无 Wilson 线）" if is_coulomb else "规范不变（gauge-invariant，含直 Wilson 线）"
     x_grid = np.asarray(data.get("x_grid", []), dtype=float)
     zspz = data.get("zspz")
     pz_value = data.get("pz_gev")
@@ -139,6 +144,7 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     if language == "zh":
         rows = [
             ("矩阵元/算符", f"`{kernel_id}`（{op_zh}）"),
+            ("规范约定", gauge_zh),
             ("匹配方案", f"`{scheme}`（{scheme_en}）"),
             ("夸克/胶子分量", f"`{data.get('component', 'not recorded')}`"),
             ("强子动量", pz_text),
@@ -157,6 +163,7 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     else:
         rows = [
             ("Operator / kernel", f"`{kernel_id}` ({op_en})"),
+            ("Gauge convention", gauge_en),
             ("Matching scheme", f"`{scheme}` ({scheme_en})"),
             ("Quark/gluon component", f"`{data.get('component', 'not recorded')}`"),
             ("Hadron momentum", pz_text),
@@ -199,27 +206,108 @@ def _field_definitions(*, language: str) -> list[str]:
     ]
 
 
+def _explicit_kernel_text(operator: str, scheme: str, *, language: str) -> str:
+    r"""Return the explicit analytic NLO matching coefficient for ``operator``.
+
+    Mirrors the closed forms implemented in :mod:`lamet_agent.kernels`
+    (``_ratio_regular_entry``, ``_hybrid_delta_entry`` and ``CG_gluon_PDF_msbar``).
+    """
+    if operator == "gluon":
+        poly = r"P_g(\xi)=\frac{2\,(1-\xi+\xi^2)^2}{1-\xi}"
+        gluon = (
+            r"C_g^{(1)}(\xi)=P_g(\xi)\Big[L+\ln\!\big(\xi(1-\xi)\big)\Big]"
+            r"-\frac{15-56\xi+102\xi^2-96\xi^3+48\xi^4}{6\,(1-\xi)},\qquad 0<\xi<1,"
+        )
+        if language == "zh":
+            return (
+                "胶子核为 $C_A$ 正比、纯 MSbar（无 ratio/hybrid 方案）。记 $\\xi=x/y$、$L=\\ln(4y^2P_z^2/\\mu^2)$，"
+                "并令\n\n"
+                f"$$\n{poly}\n$$\n\n"
+                "则物理区 $0<\\xi<1$ 的正则系数为\n\n"
+                f"$$\n{gluon}\n$$\n\n"
+                "$\\xi=1$ 处的奇异性由加法（plus）规则恢复，即令每个 $y$ 列积分为零。"
+            )
+        return (
+            "The gluon kernel is $C_A$-proportional and pure MSbar (no ratio/hybrid scheme). "
+            "With $\\xi=x/y$, $L=\\ln(4y^2P_z^2/\\mu^2)$ and\n\n"
+            f"$$\n{poly}\n$$\n\n"
+            "the regular coefficient in the physical region $0<\\xi<1$ is\n\n"
+            f"$$\n{gluon}\n$$\n\n"
+            "The $\\xi=1$ singularity is restored by the plus prescription (each $y$ column integrates to zero)."
+        )
+
+    # gt / gtg5 quark kernels share the same gamma^t structure.
+    c_ratio = (
+        r"C_r^{(1)}(\xi)=\frac{1+\xi^2}{1-\xi}\Big[L+\ln|\xi|+\ln|1-\xi|\Big]"
+        r"+(\xi-1)+1+A(\xi)-\frac{3}{2\,|1-\xi|},\qquad 0<\xi<1,"
+    )
+    arctan = (
+        r"A(\xi)=\frac{3\xi-1}{\xi-1}\times"
+        r"\begin{cases}\dfrac{\arctan\!\big(\sqrt{1-2\xi}/|\xi|\big)}{\sqrt{1-2\xi}},&\xi<\tfrac12\\[2.2ex]"
+        r"\dfrac{\operatorname{artanh}\!\big(\sqrt{2\xi-1}/|\xi|\big)}{\sqrt{2\xi-1}},&\xi>\tfrac12\end{cases}"
+    )
+    corrections = (
+        r"\Delta C_{\overline{\rm MS}}=+\frac{1}{2|1-\xi|},\qquad"
+        r"\Delta C_{\rm hy}=\frac{1}{2}\Big[\frac{1}{|1-\xi|}"
+        r"-\frac{2}{\pi}\,\frac{\mathrm{Si}\!\big((1-\xi)\,z_sP_z\big)}{1-\xi}\Big]."
+    )
+    diag = r"+\frac{1}{2}\big(1+L\big)\quad(\text{MSbar diagonal, plus-prescription row})."
+    if language == "zh":
+        return (
+            "夸克 $\\gamma^t$（及 $\\gamma^t\\gamma_5$）核的骨架是 ratio 方案正则系数。记 $\\xi=x/y$、"
+            "$L=\\ln(4y^2P_z^2/\\mu^2)$，物理区 $0<\\xi<1$：\n\n"
+            f"$$\n{c_ratio}\n$$\n\n"
+            "其中 arctan/arctanh 项按 $\\xi$ 相对 $1/2$ 取分支：\n\n"
+            f"$$\n{arctan}\n$$\n\n"
+            "三种方案仅相差一个加在 $C_r^{(1)}$ 上的有限修正（off-diagonal）：\n\n"
+            f"$$\n{corrections}\n$$\n\n"
+            "ratio 方案修正为零；$\\xi=1$ 由加法规则恢复，MSbar 另在对角元加上 "
+            f"${diag}$"
+        )
+    return (
+        "The quark $\\gamma^t$ (and $\\gamma^t\\gamma_5$) kernels share the ratio-scheme regular "
+        "coefficient as their backbone. With $\\xi=x/y$ and $L=\\ln(4y^2P_z^2/\\mu^2)$, in the "
+        "physical region $0<\\xi<1$:\n\n"
+        f"$$\n{c_ratio}\n$$\n\n"
+        "where the arctan/arctanh term picks its branch by where $\\xi$ sits relative to $1/2$:\n\n"
+        f"$$\n{arctan}\n$$\n\n"
+        "The three schemes differ only by a finite off-diagonal correction added on top of $C_r^{(1)}$:\n\n"
+        f"$$\n{corrections}\n$$\n\n"
+        "the ratio scheme adds zero; the $\\xi=1$ singularity is restored by the plus prescription, "
+        f"and MSbar additionally adds ${diag}$"
+    )
+
+
 def _matching_formula_text(data: dict[str, Any], *, language: str) -> str:
     kernel_id = str(data.get("kernel_id", ""))
-    _operator, scheme = _parse_kernel_id(kernel_id)
+    operator, scheme = _parse_kernel_id(kernel_id)
     _scheme_en, reference = SCHEME_TEXT.get(scheme, ("", "arXiv:2602.11283"))
     formula = (
         r"f(x,\mu)=\int\frac{dy}{|y|}\,C^{-1}\!\left(\frac{x}{y},\frac{\mu}{yP_z}\right)"
         r"\tilde f\!\left(y,P_z\right),"
     )
     discrete = r"f_i=\sum_j K_{ij}\,\tilde f_j,\qquad K=\text{(nx, ny) NLO matrix}."
+    explicit = _explicit_kernel_text(operator, scheme, language=language)
     if language == "zh":
         return (
             f"{reference}。光锥 PDF 由 quasi-PDF 经 NLO 匹配核反卷积得到：\n\n"
             f"$$\n{formula}\n$$\n\n"
             "离散化后即矩阵乘法（本阶段对每个重采样样本独立施加，再重建统计量）：\n\n"
-            f"$$\n{discrete}\n$$"
+            f"$$\n{discrete}\n$$\n\n"
+            "其中 LO 为单位阵，NLO 修正为 "
+            "$K=\\mathbb{1}-\\dfrac{\\alpha_s\\,C_{F/A}}{2\\pi}\\,C^{(1)}(\\xi)\\,\\dfrac{dy}{|y|}$，"
+            "解析形式为：\n\n"
+            f"{explicit}"
         )
     return (
         f"{reference}. The light-cone PDF is obtained from the quasi-PDF by inverting the NLO matching kernel:\n\n"
         f"$$\n{formula}\n$$\n\n"
         "After discretization this is a matrix product (applied to every resampling sample independently, then the statistics are rebuilt):\n\n"
-        f"$$\n{discrete}\n$$"
+        f"$$\n{discrete}\n$$\n\n"
+        "Here the LO part is the identity and the NLO correction is "
+        "$K=\\mathbb{1}-\\dfrac{\\alpha_s\\,C_{F/A}}{2\\pi}\\,C^{(1)}(\\xi)\\,\\dfrac{dy}{|y|}$, "
+        "with the explicit coefficient:\n\n"
+        f"{explicit}"
     )
 
 
@@ -253,14 +341,11 @@ def _diagnostics(data: dict[str, Any], *, language: str) -> list[str]:
         quasi_norm = _trapz_norm(x_grid, quasi_mean)
         lc_norm = _trapz_norm(x_grid, lc_mean)
         rel = abs(lc_norm - quasi_norm) / abs(quasi_norm) if quasi_norm not in (0.0, float("nan")) else float("nan")
-        denom = np.where(np.abs(quasi_mean) > 1e-12, np.abs(quasi_mean), np.nan)
-        max_dev = float(np.nanmax(np.abs(lc_mean - quasi_mean) / denom))
         if language == "zh":
             lines.extend(
                 [
                     f"- quasi-PDF 归一 $\\int f\\,dx={_fmt(quasi_norm)}$；光锥 PDF 归一 $\\int f\\,dx={_fmt(lc_norm)}$。",
                     f"- 归一相对变化 {_fmt(100 * rel)}%。NLO 匹配是微扰修正，应当接近守恒。",
-                    f"- quasi 与光锥逐点最大相对偏差 {_fmt(100 * max_dev)}%。偏差过大或剧烈振荡通常意味着 x 网格触及 0 或 $P_z$ 设置有误。",
                 ]
             )
         else:
@@ -268,7 +353,6 @@ def _diagnostics(data: dict[str, Any], *, language: str) -> list[str]:
                 [
                     f"- Quasi-PDF norm $\\int f\\,dx={_fmt(quasi_norm)}$; light-cone norm $\\int f\\,dx={_fmt(lc_norm)}$.",
                     f"- Relative norm change {_fmt(100 * rel)}%. NLO matching is a perturbative correction and should nearly preserve the norm.",
-                    f"- Maximum pointwise relative quasi-vs-light-cone deviation {_fmt(100 * max_dev)}%. A large deviation or wild oscillation usually signals an x grid hitting 0 or a wrong $P_z$.",
                 ]
             )
     else:
@@ -447,10 +531,10 @@ def write_matching_stage_report(
                 *_scheme_explanation(first, language=language),
                 "",
                 "## Diagnostics and Consistency Checks" if language == "en" else "## 诊断与一致性检查",
-                "| job | $P_z$ | quasi norm | matched norm | norm change | max pointwise deviation |"
+                "| job | $P_z$ | quasi norm | matched norm | norm change |"
                 if language == "en"
-                else "| job | $P_z$ | quasi 归一 | 匹配后归一 | 归一变化 | 最大逐点偏差 |",
-                "|---|---:|---:|---:|---:|---:|",
+                else "| job | $P_z$ | quasi 归一 | 匹配后归一 | 归一变化 |",
+                "|---|---:|---:|---:|---:|",
             ]
         )
         for item in jobs:
@@ -462,20 +546,18 @@ def write_matching_stage_report(
                 quasi_norm = _trapz_norm(x_grid, quasi_mean)
                 lc_norm = _trapz_norm(x_grid, lc_mean)
                 rel = abs(lc_norm - quasi_norm) / abs(quasi_norm) if quasi_norm != 0.0 else float("nan")
-                denom = np.where(np.abs(quasi_mean) > 1e-12, np.abs(quasi_mean), np.nan)
-                max_dev = float(np.nanmax(np.abs(lc_mean - quasi_mean) / denom))
                 lines.append(
                     f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | {_fmt(quasi_norm)} | "
-                    f"{_fmt(lc_norm)} | {_fmt(100 * rel)}% | {_fmt(100 * max_dev)}% |"
+                    f"{_fmt(lc_norm)} | {_fmt(100 * rel)}% |"
                 )
             else:
-                lines.append(f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | n/a | n/a | n/a | n/a |")
+                lines.append(f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | n/a | n/a | n/a |")
         lines.extend(
             [
                 "",
-                "The table compares the quasi-PDF and matched light-cone PDF for each momentum. Moderate norm changes are expected from the NLO kernel; large oscillations or very large pointwise deviations usually indicate an x-grid or momentum-convention issue."
+                "The table compares the quasi-PDF and matched light-cone PDF norm for each momentum. Moderate norm changes are expected from the NLO kernel; a very large norm change usually indicates an x-grid or momentum-convention issue."
                 if language == "en"
-                else "上表逐动量比较 quasi-PDF 与匹配后光锥 PDF。NLO 匹配会带来有限修正；若逐点偏差很大或曲线剧烈振荡，通常需要检查 x 网格或动量约定。",
+                else "上表逐动量比较 quasi-PDF 与匹配后光锥 PDF 的归一。NLO 匹配会带来有限修正；若归一变化很大，通常需要检查 x 网格或动量约定。",
                 "",
                 "## Figures and Visual Assessment" if language == "en" else "## 图像与可视化评估",
             ]
