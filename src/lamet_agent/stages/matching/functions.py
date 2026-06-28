@@ -50,13 +50,21 @@ from lamet_agent.stages.matching.reporting import write_matching_report
 
 # All matching kernels live in the self-contained kernels.py.
 from lamet_agent.kernels import (
-    CG_gluon_PDF_msbar,
     CG_gt_PDF_hybrid,
     CG_gt_PDF_msbar,
     CG_gt_PDF_ratio,
     CG_gtg5_PDF_hybrid,
     CG_gtg5_PDF_msbar,
     CG_gtg5_PDF_ratio,
+    CG_gtgpg5_PDF_hybrid,
+    CG_gtgpg5_PDF_msbar,
+    CG_gtgpg5_PDF_ratio,
+    CG_gz_PDF_hybrid,
+    CG_gz_PDF_msbar,
+    CG_gz_PDF_ratio,
+    CG_gzg5_PDF_hybrid,
+    CG_gzg5_PDF_msbar,
+    CG_gzg5_PDF_ratio,
 )
 
 
@@ -78,7 +86,7 @@ from lamet_agent.kernels import (
 #
 # Naming convention: CG_<operator>_PDF_<scheme>. "CG" is the Coulomb-gauge PDF
 # setup (arXiv:2602.11283); <operator> is the Dirac structure (gt = gamma^t,
-# gtg5 = gamma^t gamma5, gluon); <scheme> is the matching scheme and is always
+# gtg5 = gamma^t gamma5); <scheme> is the matching scheme and is always
 # written out explicitly (msbar / ratio / hybrid). Only the "_hybrid" kernels use
 # the Wilson-line scale zspz (built from the zs_fm input below); the others ignore it.
 KERNEL_REGISTRY: dict[str, Callable[..., np.ndarray]] = {
@@ -90,21 +98,35 @@ KERNEL_REGISTRY: dict[str, Callable[..., np.ndarray]] = {
     "CG_gtg5_PDF_msbar": CG_gtg5_PDF_msbar,
     "CG_gtg5_PDF_ratio": CG_gtg5_PDF_ratio,
     "CG_gtg5_PDF_hybrid": CG_gtg5_PDF_hybrid,
-    # gluon
-    "CG_gluon_PDF_msbar": CG_gluon_PDF_msbar,
+    # unpolarized / helicity gamma^z
+    "CG_gz_PDF_msbar": CG_gz_PDF_msbar,
+    "CG_gz_PDF_ratio": CG_gz_PDF_ratio,
+    "CG_gz_PDF_hybrid": CG_gz_PDF_hybrid,
+    "CG_gzg5_PDF_msbar": CG_gzg5_PDF_msbar,
+    "CG_gzg5_PDF_ratio": CG_gzg5_PDF_ratio,
+    "CG_gzg5_PDF_hybrid": CG_gzg5_PDF_hybrid,
+    # transversity gamma^t gamma_perp gamma5
+    "CG_gtgpg5_PDF_msbar": CG_gtgpg5_PDF_msbar,
+    "CG_gtgpg5_PDF_ratio": CG_gtgpg5_PDF_ratio,
+    "CG_gtgpg5_PDF_hybrid": CG_gtgpg5_PDF_hybrid,
 }
 
 
 def resolve_kernel_id(kernel_id: str, scheme: str) -> str:
-    """Resolve a manifest logical kernel id to the registered implementation id."""
+    """Validate that ``kernel_id`` is a registered kernel and return it.
+
+    Kernels are selected by their own registry name -- e.g. ``CG_gt_PDF_ratio``,
+    ``CG_gz_PDF_msbar``, ``CG_gtgpg5_PDF_hybrid`` -- so the manifest names the exact
+    operator+scheme it wants; there is no logical alias to translate. ``scheme`` is
+    still part of the manifest declaration (it also drives the renormalization stage)
+    and is only used here to make the error message clearer.
+    """
     if kernel_id in KERNEL_REGISTRY:
         return kernel_id
-    scheme_name = "hybrid" if scheme == "hybrid_ratio" else scheme
-    aliases = {"unpolarized_gT": f"CG_gt_PDF_{scheme_name}"}
-    resolved = aliases.get(kernel_id, kernel_id)
-    if resolved not in KERNEL_REGISTRY:
-        raise ValueError(f"Unknown kernel_id {kernel_id!r} with scheme {scheme!r}.")
-    return resolved
+    raise ValueError(
+        f"Unknown kernel_id {kernel_id!r} (scheme {scheme!r}). "
+        f"Available: {sorted(KERNEL_REGISTRY)}"
+    )
 
 
 # --- hybrid-scheme scale -----------------------------------------------------
@@ -254,7 +276,7 @@ def build_matching_kernel(
     Hybrid kernels also need the Wilson-line length ``zs_fm`` (z_s in fm); together
     with ``pz_gev`` it sets the dimensionless scale ``zspz = zs_fm * pz_gev / GEV_FM``.
     Both ``zs_fm`` and ``pz_gev`` come from the matching job and its declared
-    kernel parameters. MSbar, ratio and gluon kernels ignore ``zs_fm``.
+    kernel parameters. MSbar and ratio kernels ignore ``zs_fm``.
     """
     if kernel_id not in KERNEL_REGISTRY:
         raise ValueError(
@@ -276,7 +298,7 @@ def build_matching_kernel(
 
     # Hybrid kernels need the Wilson-line scale zspz = z_s * P_z, built from the
     # manifest inputs zs_fm (fm) and pz_gev (GeV). Only the hybrid builders accept a
-    # zspz keyword (msbar/ratio/gluon do not), so it is computed and passed only for
+    # zspz keyword (msbar/ratio do not), so it is computed and passed only for
     # the "_hybrid" ids.
     zspz: float | None = None
     builder_kwargs: dict[str, Any] = {"pz_gev": pz_gev, "mu": mu, "y_ls": y_ls}
@@ -306,7 +328,7 @@ def build_matching_kernel(
         "shape": list(matrix.shape),
         "pz_gev": pz_gev,
         "mu": mu,
-        "zspz": zspz,  # None for MSbar/ratio/gluon; zs_fm * pz_gev / GEV_FM for hybrid
+        "zspz": zspz,  # None for MSbar/ratio; zs_fm * pz_gev / GEV_FM for hybrid
     }
 
 

@@ -1,38 +1,41 @@
-"""Compact (DRY) NLO unpolarized ``gamma^t`` matching kernels.
+"""NLO Coulomb-gauge matching kernels (arXiv:2602.11283).
 
-This is the deliberately *simple* counterpart of the fully-inlined
-``kernels_example.py`` style: instead of copying the whole discretization into
-every scheme, a single builder ``_quark_matching_kernel`` does the work once and
-the three public schemes differ only by a couple of clearly-marked lines chosen
-via the ``scheme`` argument.
+Written in the same spirit as a hand script: a few explicit *coefficient
+functions* ``C_<scheme>(ksi, ...)`` carry the closed-form physics, and a single
+*discretization* ``build_matching_matrix`` turns any of them into the matching
+matrix. ``x`` and ``y`` stay independent open grids (lists/arrays):
 
-    CG_gt_PDF_ratio   C_r   -- Eq. (2.16) of arXiv:2602.11283 (the bare regular part)
-    CG_gt_PDF_msbar   C_MS = C_r + finite MSbar conversion        -- Eq. (2.14)
-    CG_gt_PDF_hybrid  C_hy = C_r + Wilson-line Si correction       -- Eq. (2.19)-(2.20)
+    lightcone(x) = sum_y  K(x, y) * quasi(y)          # K = kernel @ quasi
 
-The three differ by exactly:
+with ``ksi = x / y`` and the lamet log scale ``L = log(4 y^2 P_z^2 / mu^2)``.
 
-    off-diagonal       diagonal (plus-prescription row)
-    -----------------  ------------------------------------
-    ratio    + 0                + 0
-    MSbar    + 0.5/|1-xi|       + 0.5 (1 + log) / dy
-    hybrid   + delta_hybrid     + 0
+Three operator classes are implemented (arXiv:2602.11283, Eqs. 2.14-2.21), each in
+the ratio / msbar / hybrid scheme via ``CG_<operator>_PDF_<scheme>``:
 
-Numerically ``CG_gt_PDF_msbar`` reproduces
-``kernels_example.unpolarized_matching_kernel_nlo_gT`` to floating-point
-rounding (~1e-16).
+    gt    / gtg5    gamma^t / gamma^t gamma5  (unpolarized / helicity, time comp.)
+    gz    / gzg5    gamma^z / gamma^z gamma5  (unpolarized / helicity, z comp.)
+    gtgpg5          gamma^t gamma_perp gamma5 (transversity)
+
+Scheme structure straight from the paper:
+  * gt/gtg5: ratio = C_ratio (2.16); msbar = +1/(2|1-ksi|) + diagonal (2.14);
+    hybrid = +Wilson-line Si term (2.19-2.20).
+  * gz/gzg5: ratio and hybrid are identical to gt (2.16, 2.20); only msbar differs,
+    by +2(1-ksi)_+ + delta(1-ksi) (2.15).
+  * gtgpg5: ratio = msbar = hybrid = C_ratio_perp (2.17, 2.18, 2.21) -- no scheme
+    dependence at NLO.
+
+Each public kernel is a one-line wrapper picking a coefficient function; the
+discretization (loop + plus prescription + LO delta) is shared.
 """
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Callable, Final
 
 import numpy as np
 
 
-# --- shared numeric plumbing (alpha_s, Si, colour factors) ------------------
-# Kept inline so this module is self-contained (no dependency on other kernel
-# files). The kernel *structure* below is what the schemes actually differ in.
+# --- physical constants & running coupling ----------------------------------
 
 # Conversion factor: 1 fm^{-1} = 0.1973269631 GeV
 GEV_FM: Final[float] = 0.1973269631
@@ -114,18 +117,144 @@ def _sine_integral(value: float) -> float:
     return sign * float(integral)
 
 
-# --- grid validation --------------------------------------------------------
+# --- coefficient functions C_<scheme>(ksi, ...) -----------------------------
+# Each returns the bare regular coefficient C^(1) for one (x, y) pair. They know
+# nothing about grids, the plus prescription or alpha_s -- that is the job of
+# build_matching_matrix below. ``ksi = x / y`` and ``log_scale = log(4 y^2 P_z^2 / mu^2)``.
 
 
-def _validate_grids(
+def _atan_piece(ksi: float, eps: float) -> float:
+    """The (3ksi-1)/(ksi-1) * arctan/arctanh term shared by C_ratio and C_ratio_perp.
+
+    Identical in Eq. (2.16) and Eq. (2.18); the branch is chosen by where ksi sits
+    relative to 1/2 (analytic across ksi = 1/2 despite the apparent square roots).
+    """
+    if ksi < 0.5 - eps:
+        sqrt_term = np.sqrt(1.0 - 2.0 * ksi)
+        piece = (3.0 * ksi - 1.0) / (ksi - 1.0 + eps)
+        return piece * np.arctan(sqrt_term / (np.abs(ksi) + eps)) / (sqrt_term + eps)
+    if ksi > 0.5 + eps:
+        sqrt_term = np.sqrt(2.0 * ksi - 1.0)
+        piece = (3.0 * ksi - 1.0) / (ksi - 1.0 + eps)
+        return piece * np.arctanh(sqrt_term / (np.abs(ksi) + eps)) / (sqrt_term + eps)
+    # ksi = 1/2: analytic limit, since arctan(sqrt(1-2ksi)/|ksi|)/sqrt(1-2ksi) -> 1/|ksi|.
+    return (3.0 * ksi - 1.0) / (ksi - 1.0) / (np.abs(ksi) + eps)
+
+
+def C_ratio(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
+    """Ratio-scheme regular coefficient C_r^(1)(ksi), Eq. (2.16).
+
+    Backbone of the unpolarized/helicity (gamma^t, gamma^z) schemes; MSbar and
+    hybrid add a finite correction on top of it.
+    """
+    one_minus_ksi = 1.0 - ksi
+    entry = 0.0
+
+    # Splitting-function piece, only inside the physical 0 < ksi < 1 window.
+    if eps < ksi < 1.0 - eps:
+        entry += (1.0 + ksi**2) / one_minus_ksi * log_scale + ksi - 1.0
+
+    # Logarithmic + remaining regular terms. The trailing -1.5/|1-ksi| is the bare
+    # ratio coefficient; MSbar/hybrid shift it via their own corrections.
+    sign_safe_denominator = one_minus_ksi + np.sign(one_minus_ksi) * eps
+    signed_logs = (
+        np.sign(ksi) * np.log(np.abs(ksi) + eps)
+        + np.sign(one_minus_ksi) * np.log(np.abs(one_minus_ksi) + eps)
+    )
+    entry += (1.0 + ksi**2) / sign_safe_denominator * signed_logs
+    entry += np.sign(ksi) + _atan_piece(ksi, eps) - 1.5 / (np.abs(one_minus_ksi) + eps)
+    return float(entry)
+
+
+def C_ratio_perp(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
+    """Transversity ratio coefficient C_r^perp(1)(ksi), Eq. (2.18).
+
+    Same shape as C_ratio but with the transversity splitting 2 ksi/(1-ksi), no
+    ``+ksi-1`` / ``+sgn(ksi)`` terms, and a ``-1/|1-ksi|`` tail (vs ``-1.5/|1-ksi|``).
+    For the transversity operator MSbar = ratio = hybrid all equal this (Eqs 2.17, 2.21).
+    """
+    one_minus_ksi = 1.0 - ksi
+    entry = 0.0
+
+    if eps < ksi < 1.0 - eps:
+        entry += 2.0 * ksi / one_minus_ksi * log_scale
+
+    sign_safe_denominator = one_minus_ksi + np.sign(one_minus_ksi) * eps
+    signed_logs = (
+        np.sign(ksi) * np.log(np.abs(ksi) + eps)
+        + np.sign(one_minus_ksi) * np.log(np.abs(one_minus_ksi) + eps)
+    )
+    entry += 2.0 * ksi / sign_safe_denominator * signed_logs
+    entry += _atan_piece(ksi, eps) - 1.0 / (np.abs(one_minus_ksi) + eps)
+    return float(entry)
+
+
+def C_msbar(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
+    """MSbar off-diagonal coefficient: C_ratio + 0.5/|1-ksi|, Eq. (2.14).
+
+    The finite *diagonal* conversion term (``0.5(1 + log_scale)``) is not part of
+    the per-element coefficient; it is added on the plus-prescription row inside
+    build_matching_matrix.
+    """
+    return C_ratio(ksi, log_scale, eps) + 0.5 / (np.abs(1.0 - ksi) + eps)
+
+
+def C_msbar_gz(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
+    """gamma^z MSbar off-diagonal coefficient, Eq. (2.15).
+
+    ``C_msbar^{gamma^z} = C_msbar^{gamma^t} + 2(1-ksi)`` on 0 < ksi < 1 (plus a
+    ``delta(1-ksi)`` term carried on the diagonal -- see CG_gz_PDF_msbar). The
+    ``2(1-ksi)`` is plus-prescribed at ksi = 1 by the shared discretization.
+    """
+    entry = C_msbar(ksi, log_scale, eps)
+    if eps < ksi < 1.0 - eps:
+        entry += 2.0 * (1.0 - ksi)
+    return entry
+
+
+def C_hybrid(ksi: float, log_scale: float, y: float, zspz: float, eps: float = 1e-12) -> float:
+    """Hybrid coefficient: C_ratio + Wilson-line Si correction, Eq. (2.19)-(2.20).
+
+    ``zspz = z_s * P_z`` is the dimensionless Wilson-line length (constant in y).
+    The parton momentum is ``y P_z``, so the per-y Wilson-line scale that enters
+    the sine integral is ``z_s y P_z = |y| * zspz`` -- the ``|y|`` factor is what
+    makes the correction y-dependent. The term replaces the MSbar ``0.5/|1-ksi|``.
+    """
+    one_minus_ksi = 1.0 - ksi
+    sign_safe_denominator = one_minus_ksi + np.sign(one_minus_ksi) * eps
+    wilson_scale = np.abs(y) * zspz  # z_s * |y| * P_z
+    delta = 0.5 * (
+        1.0 / (np.abs(one_minus_ksi) + eps)
+        - 2.0 * _sine_integral(one_minus_ksi * wilson_scale) / (np.pi * sign_safe_denominator)
+    )
+    return C_ratio(ksi, log_scale, eps) + delta
+
+
+# --- the unified discretization ---------------------------------------------
+# A coefficient function has the signature ``coeff(ksi, log_scale, y) -> float``.
+# ``y`` is passed so y-dependent scales (the hybrid Wilson-line scale z_s y P_z)
+# can be formed; schemes that do not need it simply ignore the argument.
+CoeffFn = Callable[[float, float, float], float]
+
+
+def build_matching_matrix(
     x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float,
     y_ls: np.ndarray | None,
     eps: float,
-) -> tuple[np.ndarray, np.ndarray, float]:
-    """Return validated (x_grid, y_grid, dy) for a uniform y integration grid.
+    *,
+    coeff: CoeffFn,
+    color_factor: float = CF,
+    diagonal_extra: Callable[[float], float] | None = None,
+) -> np.ndarray:
+    """Discretize a coefficient function ``coeff(ksi, log_scale)`` into an (nx, ny) matrix.
 
-    ``y_ls`` defaults to ``x_ls`` (quasi- and light-cone PDFs share the grid).
-    ``dy`` is the uniform spacing used as the integration measure.
+    ``x_ls`` and ``y_ls`` are independent open grids (``y_ls`` defaults to ``x_ls``).
+    The loop fills the off-diagonal (ksi != 1) entries from ``coeff``; the
+    plus-prescription makes every y column integrate to zero and restores the
+    ksi = 1 singularity; ``diagonal_extra(log_scale)`` (MSbar only) adds the finite
+    diagonal conversion term. Returns ``identity - alpha_s C_x/(2 pi) * matrix * dy``.
     """
     x_grid = np.asarray(x_ls, dtype=float)
     y_grid = np.asarray(x_grid if y_ls is None else y_ls, dtype=float)
@@ -135,98 +264,15 @@ def _validate_grids(
     if y_grid.ndim != 1 or y_grid.size < 2:
         raise ValueError("`y_ls` must be a 1D array with at least 2 points.")
     if np.any(np.abs(y_grid) <= eps):
-        raise ValueError("`y_ls` must avoid values too close to 0 to keep xi=x/y finite.")
+        raise ValueError("`y_ls` must avoid values too close to 0 to keep ksi=x/y finite.")
 
     y_step = np.diff(y_grid)
-    dy = float(np.abs(y_step[0]))
+    dy = float(np.abs(y_step[0]))  # uniform integration measure
     if dy <= eps:
         raise ValueError("`y_ls` spacing must be non-zero.")
     if not np.allclose(y_step, y_step[0], rtol=0.0, atol=eps):
         raise ValueError("`y_ls` must be uniformly spaced.")
 
-    return x_grid, y_grid, dy
-
-
-# --- per-element coefficients ----------------------------------------------
-
-
-def _ratio_regular_entry(xi: float, log_scale: float, eps: float) -> float:
-    """Bare ratio-scheme regular coefficient C_r^(1)(xi), Eq. (2.16).
-
-    This is the common backbone of all three schemes. MSbar and hybrid only add
-    a small correction on top of it (see ``_quark_matching_kernel``).
-    """
-    one_minus_xi = 1.0 - xi
-    entry = 0.0
-
-    # Splitting-function piece, only inside the physical 0 < xi < 1 window.
-    if eps < xi < 1.0 - eps:
-        splitting = (1.0 + xi**2) / one_minus_xi
-        entry += splitting * log_scale + xi - 1.0
-
-    # arctan/arctanh piece, with the branch chosen by where xi sits relative to 1/2.
-    if xi < 0.5 - eps:
-        sqrt_term = np.sqrt(1.0 - 2.0 * xi)
-        atan_piece = (3.0 * xi - 1.0) / (xi - 1.0 + eps)
-        atan_piece *= np.arctan(sqrt_term / (np.abs(xi) + eps)) / (sqrt_term + eps)
-    elif xi > 0.5 + eps:
-        sqrt_term = np.sqrt(2.0 * xi - 1.0)
-        atan_piece = (3.0 * xi - 1.0) / (xi - 1.0 + eps)
-        atan_piece *= np.arctanh(sqrt_term / (np.abs(xi) + eps)) / (sqrt_term + eps)
-    else:
-        atan_piece = (3.0 * xi - 1.0) / (xi - 1.0)
-
-    # Logarithmic + remaining regular terms. The trailing -1.5/|1-xi| is the
-    # bare ratio coefficient; MSbar/hybrid shift it via their own corrections.
-    sign_safe_denominator = one_minus_xi + np.sign(one_minus_xi) * eps
-    signed_logs = (
-        np.sign(xi) * np.log(np.abs(xi) + eps)
-        + np.sign(one_minus_xi) * np.log(np.abs(one_minus_xi) + eps)
-    )
-    entry += (1.0 + xi**2) / sign_safe_denominator * signed_logs
-    entry += np.sign(xi) + atan_piece - 1.5 / (np.abs(one_minus_xi) + eps)
-    return float(entry)
-
-
-def _hybrid_delta_entry(xi: float, zspz: float, eps: float) -> float:
-    """Hybrid-minus-ratio off-diagonal correction, Eq. (2.20).
-
-    ``zspz`` is the dimensionless Wilson-line length ``z_s * P_z``. This replaces
-    the MSbar ``+0.5/|1-xi|`` term by the ``Si(z_s P_z (1-xi))`` sine-integral.
-    """
-    one_minus_xi = 1.0 - xi
-    sign_safe_denominator = one_minus_xi + np.sign(one_minus_xi) * eps
-    return 0.5 * (
-        1.0 / (np.abs(one_minus_xi) + eps)
-        - 2.0 * _sine_integral(one_minus_xi * zspz) / (np.pi * sign_safe_denominator)
-    )
-
-
-# --- shared builder ---------------------------------------------------------
-
-
-def _quark_matching_kernel(
-    x_ls: np.ndarray,
-    pz_gev: float,
-    mu: float = 2.0,
-    y_ls: np.ndarray | None = None,
-    eps: float = 1e-12,
-    *,
-    scheme: str,
-    zspz: float | None = None,
-) -> np.ndarray:
-    """Build the NLO unpolarized ``gamma^t`` matching matrix for one scheme.
-
-    The result maps a quasi-PDF on ``y_ls`` to a light-cone PDF on ``x_ls`` via
-    ``lightcone = kernel @ quasi``. The discretization (loop + plus prescription)
-    is identical for every scheme; only the marked ``scheme``-specific lines differ.
-    """
-    if scheme not in ("ratio", "msbar", "hybrid"):
-        raise ValueError(f"Unknown matching scheme: {scheme!r}.")
-    if scheme == "hybrid" and zspz is None:
-        raise ValueError("`zspz` is required for the hybrid matching kernel.")
-
-    x_grid, y_grid, dy = _validate_grids(x_ls, y_ls, eps)
     alpha_s = alphas_nloop(mu, order=1, Nf=3)
 
     nx, ny = len(x_grid), len(y_grid)
@@ -235,39 +281,34 @@ def _quark_matching_kernel(
     # For each y column, the x row closest to that y point carries the plus-function.
     diag_rows = np.abs(x_grid[:, None] - y_grid[None, :]).argmin(axis=0)
 
-    # 1) Off-diagonal (xi != 1) regular coefficients.
+    # 1) Off-diagonal (ksi != 1) regular coefficients from the coeff function.
     for idx, x_val in enumerate(x_grid):
         for idy, y_val in enumerate(y_grid):
             if np.isclose(x_val, y_val, atol=eps, rtol=0.0):
                 identity[idx, idy] = 1.0  # leading-order delta(x - y)
 
-            xi = x_val / y_val
-            if np.abs(1.0 - xi) <= eps:
-                continue  # the xi = 1 singularity is restored by the plus prescription
+            ksi = x_val / y_val
+            if np.abs(1.0 - ksi) <= eps:
+                continue  # the ksi = 1 singularity is restored by the plus prescription
 
             log_scale = np.log(4.0 * y_val**2 * pz_gev**2 / mu**2)
-            entry = _ratio_regular_entry(xi, log_scale, eps)
-            if scheme == "msbar":
-                entry += 0.5 / (np.abs(1.0 - xi) + eps)          # <-- MSbar off-diagonal
-            elif scheme == "hybrid":
-                entry += _hybrid_delta_entry(xi, float(zspz), eps)  # <-- hybrid off-diagonal
-
-            nlo_matrix[idx, idy] = entry / np.abs(y_val)
+            nlo_matrix[idx, idy] = coeff(ksi, log_scale, y_val) / np.abs(y_val)
 
     # 2) Diagonal plus-prescription: make every y column integrate to zero, then
-    #    add the MSbar-only finite conversion term.
+    #    add the optional finite scheme-conversion term.
     for idy, diag_row in enumerate(diag_rows):
         nlo_matrix[int(diag_row), idy] -= np.sum(nlo_matrix[:, idy])
-        if scheme == "msbar":
-            nlo_matrix[int(diag_row), idy] += 0.5 * (
-                1.0 + np.log(4.0 * y_grid[idy] ** 2 * pz_gev**2 / mu**2)
-            ) / dy
+        if diagonal_extra is not None:
+            log_scale = np.log(4.0 * y_grid[idy] ** 2 * pz_gev**2 / mu**2)
+            nlo_matrix[int(diag_row), idy] += diagonal_extra(log_scale) / dy
 
     # 3) Assemble: LO identity minus the NLO correction (times the dy measure).
-    return identity - alpha_s * CF / (2.0 * np.pi) * nlo_matrix * dy
+    return identity - alpha_s * color_factor / (2.0 * np.pi) * nlo_matrix * dy
 
 
-# --- public scheme wrappers -------------------------------------------------
+# --- public quark kernels: CG_<operator>_PDF_<scheme> ------------------------
+# Each is one line: pick a coefficient function (and, for MSbar, the diagonal
+# conversion term) and hand it to build_matching_matrix.
 
 
 def CG_gt_PDF_ratio(
@@ -280,7 +321,10 @@ def CG_gt_PDF_ratio(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel ``C_r`` for the Coulomb-gauge ``gamma^t`` PDF (Eq. 2.16)."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-    return _quark_matching_kernel(x_ls, pz_gev, mu, y_ls, eps, scheme="ratio")
+    return build_matching_matrix(
+        x_ls, pz_gev, mu, y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_ratio(ksi, log_scale, eps),
+    )
 
 
 def CG_gt_PDF_msbar(
@@ -293,7 +337,11 @@ def CG_gt_PDF_msbar(
 ) -> np.ndarray:
     """NLO MSbar kernel for the Coulomb-gauge ``gamma^t`` PDF (Eq. 2.14)."""
     del zspz  # MSbar has no Wilson-line scale; kept for a uniform signature.
-    return _quark_matching_kernel(x_ls, pz_gev, mu, y_ls, eps, scheme="msbar")
+    return build_matching_matrix(
+        x_ls, pz_gev, mu, y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_msbar(ksi, log_scale, eps),
+        diagonal_extra=lambda log_scale: 0.5 * (1.0 + log_scale),
+    )
 
 
 def CG_gt_PDF_hybrid(
@@ -306,9 +354,15 @@ def CG_gt_PDF_hybrid(
 ) -> np.ndarray:
     """NLO hybrid-scheme kernel for the Coulomb-gauge ``gamma^t`` PDF (Eq. 2.19-2.20).
 
-    ``zspz`` is the dimensionless Wilson-line length ``z_s * P_z`` and is required.
+    ``zspz = z_s * P_z`` (the dimensionless Wilson-line length) is required.
     """
-    return _quark_matching_kernel(x_ls, pz_gev, mu, y_ls, eps, scheme="hybrid", zspz=zspz)
+    if zspz is None:
+        raise ValueError("`zspz` is required for the hybrid matching kernel.")
+    z = float(zspz)
+    return build_matching_matrix(
+        x_ls, pz_gev, mu, y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_hybrid(ksi, log_scale, y, z, eps),
+    )
 
 
 # --- helicity gamma^t gamma5 PDF --------------------------------------------
@@ -352,76 +406,135 @@ def CG_gtg5_PDF_hybrid(
     return CG_gt_PDF_hybrid(x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls, eps=eps, zspz=zspz)
 
 
-# --- unpolarized gluon PDF --------------------------------------------------
+# --- gamma^z / gamma^z gamma5 PDF -------------------------------------------
+# Eq. (2.15): only the MSbar scheme differs from gamma^t (by 2(1-ksi)_+ + delta).
+# In the ratio and hybrid schemes gamma^z shares gamma^t's coefficient
+# (C_r in Eq. 2.16; delta C_hyb in Eq. 2.20 is identical for gamma^t and gamma^z),
+# so those two delegate to the gamma^t builders.
 
 
-def CG_gluon_PDF_msbar(
+def CG_gz_PDF_ratio(
     x_ls: np.ndarray,
     pz_gev: float,
     mu: float = 2.0,
     y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
+    zspz: float | None = None,
 ) -> np.ndarray:
-    """NLO unpolarized **gluon** kernel for the Coulomb-gauge PDF in MSbar.
+    """NLO ratio-scheme kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.16; = gamma^t)."""
+    return CG_gt_PDF_ratio(x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls, eps=eps, zspz=zspz)
 
-    Gluon analogue of :func:`CG_gt_PDF_msbar`: same signature and structure, but the
-    matching is ``C_A``-proportional and uses the gluon splitting/coefficient
-    functions. No Wilson-line (z_s) term -- plain MSbar, no ratio/hybrid scheme.
+
+def CG_gz_PDF_msbar(
+    x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO MSbar kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.15).
+
+    ``= gamma^t MSbar + 2(1-ksi)_+ + delta(1-ksi)``: the off-diagonal carries the
+    extra ``2(1-ksi)`` and the diagonal carries the extra ``delta(1-ksi)`` (coefficient 1).
     """
-    x_grid = np.asarray(x_ls, dtype=float)
-    y_grid = np.asarray(x_grid if y_ls is None else y_ls, dtype=float)
+    del zspz  # MSbar has no Wilson-line scale; kept for a uniform signature.
+    return build_matching_matrix(
+        x_ls, pz_gev, mu, y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_msbar_gz(ksi, log_scale, eps),
+        diagonal_extra=lambda log_scale: 0.5 * (1.0 + log_scale) + 1.0,
+    )
 
-    if x_grid.ndim != 1:
-        raise ValueError("`x_ls` must be a 1D array.")
-    if y_grid.ndim != 1 or y_grid.size < 2:
-        raise ValueError("`y_ls` must be a 1D array with at least 2 points.")
-    if np.any(np.abs(y_grid) <= eps):
-        raise ValueError("`y_ls` must avoid values too close to 0 to keep xi=x/y finite.")
 
-    y_step = np.diff(y_grid) #! step[i] = y_grid[i+1] - y_grid[i]
-    dy = float(np.abs(y_step[0])) #! here we assume the step is the same for all i
-    if dy <= eps:
-        raise ValueError("`y_ls` spacing must be non-zero.")
-    if not np.allclose(y_step, y_step[0], rtol=0.0, atol=eps):
-        raise ValueError("`y_ls` must be uniformly spaced.")
+def CG_gz_PDF_hybrid(
+    x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO hybrid-scheme kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.19-2.20; = gamma^t)."""
+    return CG_gt_PDF_hybrid(x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls, eps=eps, zspz=zspz)
 
-    alpha_s = alphas_nloop(mu, order=1, Nf=3)
 
-    nx = len(x_grid)
-    ny = len(y_grid)
-    identity = np.zeros((nx, ny))
-    diag_rows = np.abs(x_grid[:, None] - y_grid[None, :]).argmin(axis=0)
-    nlo_matrix = np.zeros((nx, ny))
+def CG_gzg5_PDF_ratio(
+    x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO ratio-scheme helicity kernel for the Coulomb-gauge ``gamma^z gamma5`` PDF."""
+    return CG_gz_PDF_ratio(x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls, eps=eps, zspz=zspz)
 
-    for idx, x_val in enumerate(x_grid):
-        for idy, y_val in enumerate(y_grid):
-            if np.isclose(x_val, y_val, atol=eps, rtol=0.0):
-                identity[idx, idy] = 1.0
 
-            xi = x_val / y_val
-            one_minus_xi = 1.0 - xi
-            if np.abs(one_minus_xi) <= eps:
-                continue
+def CG_gzg5_PDF_msbar(
+    x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO MSbar helicity kernel for the Coulomb-gauge ``gamma^z gamma5`` PDF."""
+    return CG_gz_PDF_msbar(x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls, eps=eps, zspz=zspz)
 
-            y_norm = np.abs(y_val)
-            log_scale = np.log(4.0 * y_val**2 * pz_gev**2 / mu**2)
 
-            poly = 2.0 * (1.0 - xi + xi**2) ** 2 / (1.0 - xi)
-            cubic = (11.0 - 28.0 * xi + 18.0 * xi**2 - 12.0 * xi**3) / (6.0 * (1.0 - xi))
+def CG_gzg5_PDF_hybrid(
+    x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO hybrid-scheme helicity kernel for the Coulomb-gauge ``gamma^z gamma5`` PDF."""
+    return CG_gz_PDF_hybrid(x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls, eps=eps, zspz=zspz)
 
-            entry = 0.0
-            if xi > 1.0 + eps:
-                entry = poly * np.log(xi / (xi - 1.0)) + cubic
-            elif eps < xi < 1.0 - eps:
-                entry = poly * (log_scale + np.log(xi * (1.0 - xi))) - (
-                    15.0 - 56.0 * xi + 102.0 * xi**2 - 96.0 * xi**3 + 48.0 * xi**4
-                ) / (6.0 * (1.0 - xi))
-            elif xi < -eps:
-                entry = -poly * np.log(xi / (xi - 1.0)) - cubic
 
-            nlo_matrix[idx, idy] = entry / y_norm
+# --- transversity gamma^t gamma_perp gamma5 PDF -----------------------------
+# Eqs. (2.17), (2.18), (2.21): the transversity coefficient is C_r^perp in *every*
+# scheme -- MSbar = ratio (no extra finite term, Eq. 2.17) and the hybrid Wilson-line
+# correction vanishes (delta C_hyb = 0, Eq. 2.21). So all three schemes coincide.
 
-    for idy, diag_row in enumerate(diag_rows):
-        nlo_matrix[int(diag_row), idy] -= np.sum(nlo_matrix[:, idy]) #! plus function: column sum gives zero
 
-    return identity - alpha_s * CA / (2.0 * np.pi) * nlo_matrix * dy
+def CG_gtgpg5_PDF_ratio(
+    x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO ratio-scheme kernel for the Coulomb-gauge transversity ``gamma^t gamma_perp gamma5`` PDF (Eq. 2.18)."""
+    del zspz  # transversity has no Wilson-line scale at NLO (Eq. 2.21).
+    return build_matching_matrix(
+        x_ls, pz_gev, mu, y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_ratio_perp(ksi, log_scale, eps),
+    )
+
+
+def CG_gtgpg5_PDF_msbar(
+    x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO MSbar transversity kernel (Eq. 2.17: equals the ratio coefficient C_r^perp)."""
+    return CG_gtgpg5_PDF_ratio(x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls, eps=eps, zspz=zspz)
+
+
+def CG_gtgpg5_PDF_hybrid(
+    x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO hybrid transversity kernel (Eq. 2.21: delta C_hyb = 0, so equals C_r^perp)."""
+    return CG_gtgpg5_PDF_ratio(x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls, eps=eps, zspz=zspz)

@@ -9,11 +9,25 @@ focuses on the chosen kernel, the matching convolution, and a small set of
 
 from __future__ import annotations
 
+import gzip
+import html
+import inspect
+import io
+import json
 import os
+import re
+import ssl
+import subprocess
+import tarfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from lamet_agent import kernels
 
 
 # Logical operator -> human text, keyed by the ``<operator>`` field of a
@@ -21,7 +35,12 @@ import numpy as np
 OPERATOR_TEXT = {
     "gt": ("unpolarized $\\gamma^t$ quark PDF", "非极化 $\\gamma^t$ 夸克 PDF"),
     "gtg5": ("helicity $\\gamma^t\\gamma_5$ quark PDF", "螺旋度 $\\gamma^t\\gamma_5$ 夸克 PDF"),
-    "gluon": ("unpolarized gluon PDF", "非极化胶子 PDF"),
+    "gz": ("unpolarized $\\gamma^z$ quark PDF", "非极化 $\\gamma^z$ 夸克 PDF"),
+    "gzg5": ("helicity $\\gamma^z\\gamma_5$ quark PDF", "螺旋度 $\\gamma^z\\gamma_5$ 夸克 PDF"),
+    "gtgpg5": (
+        "transversity $\\gamma^t\\gamma_\\perp\\gamma_5$ quark PDF",
+        "横向 $\\gamma^t\\gamma_\\perp\\gamma_5$ 夸克 PDF",
+    ),
 }
 
 # Scheme -> (human text, reference equation in arXiv:2602.11283).
@@ -105,11 +124,57 @@ def _md_path(value: Any, *, base_dir: Path) -> str | None:
     return str(value)
 
 
+def _ensure_png(pdf_path: Path) -> Path | None:
+    """Rasterize a one-page plot PDF to a sibling PNG so Markdown can show it inline.
+
+    Markdown cannot embed a PDF, so the matched-PDF plot was only ever *linked*. To
+    display it directly we convert it to a PNG next to the PDF, best-effort, trying
+    ``pdftoppm`` -> ``gs`` -> ``sips`` (whichever the system has). The PNG is cached
+    by mtime so repeated reports do not re-render it. Returns the PNG path, or
+    ``None`` if the file is missing or no converter is available (the caller then
+    falls back to linking the PDF).
+    """
+    if pdf_path.suffix.lower() != ".pdf" or not pdf_path.is_file():
+        return None
+    png_path = pdf_path.with_suffix(".png")
+    try:
+        if png_path.is_file() and png_path.stat().st_mtime >= pdf_path.stat().st_mtime:
+            return png_path
+    except OSError:
+        pass
+    # 150 dpi keeps text crisp without bloating the PNG. pdftoppm wants the output
+    # *root* (it appends ".png"); gs/sips want the full output path.
+    commands = (
+        ["pdftoppm", "-png", "-r", "150", "-singlefile", str(pdf_path), str(png_path.with_suffix(""))],
+        ["gs", "-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=png16m", "-r150", "-dUseCropBox", "-o", str(png_path), str(pdf_path)],
+        ["sips", "-s", "format", "png", str(pdf_path), "--out", str(png_path)],
+    )
+    for cmd in commands:
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        except (FileNotFoundError, subprocess.SubprocessError, OSError):
+            continue
+        if png_path.is_file():
+            return png_path
+    return None
+
+
 def _markdown_artifacts(artifacts: dict[str, Any] | None, *, base_dir: Path) -> dict[str, Any]:
     output = dict(artifacts or {})
     for key in ("matched_plot", "lightcone_artifact"):
         if key in output:
             output[key] = _md_path(output[key], base_dir=base_dir)
+    # Render the comparison plot to an inline-displayable PNG (best-effort). The
+    # original (absolute) PDF path is rasterized next to itself; the report embeds
+    # the PNG and keeps the PDF as a high-res vector link.
+    plot = (artifacts or {}).get("matched_plot")
+    if plot:
+        abs_pdf = Path(str(plot))
+        if not abs_pdf.is_absolute():
+            abs_pdf = base_dir / abs_pdf
+        png = _ensure_png(abs_pdf)
+        if png is not None:
+            output["matched_plot_png"] = _md_path(png, base_dir=base_dir)
     return output
 
 
@@ -189,7 +254,7 @@ def _field_definitions(*, language: str) -> list[str]:
         return [
             "| 条目 | 含义 |",
             "|---|---|",
-            "| Operator / kernel | 选定的匹配核 `CG_<算符>_PDF_<方案>`；算符决定 Dirac 结构（gt、gtg5、gluon），方案决定有限项。 |",
+            "| Operator / kernel | 选定的匹配核 `CG_<算符>_PDF_<方案>`；算符决定 Dirac 结构（gt、gtg5），方案决定有限项。 |",
             "| Matching scheme | `msbar` / `ratio` / `hybrid`，由 kernel_id 后缀选定；hybrid 还需要 Wilson 线长度 $z_s$。 |",
             "| Hadron momentum | $P_z$，必须与傅立叶阶段一致，进入核的 $\\log(4y^2P_z^2/\\mu^2)$ 项。 |",
             "| Renormalization scale | MSbar 重整化标度 $\\mu$（GeV），默认 2.0。 |",
@@ -198,7 +263,7 @@ def _field_definitions(*, language: str) -> list[str]:
     return [
         "| Entry | Meaning |",
         "|---|---|",
-        "| Operator / kernel | The selected matching kernel `CG_<operator>_PDF_<scheme>`; the operator sets the Dirac structure (gt, gtg5, gluon) and the scheme sets the finite terms. |",
+        "| Operator / kernel | The selected matching kernel `CG_<operator>_PDF_<scheme>`; the operator sets the Dirac structure (gt, gtg5) and the scheme sets the finite terms. |",
         "| Matching scheme | `msbar` / `ratio` / `hybrid`, chosen by the kernel_id suffix; hybrid also needs the Wilson-line length $z_s$. |",
         "| Hadron momentum | $P_z$, which must match the Fourier stage and enters the kernel's $\\log(4y^2P_z^2/\\mu^2)$ terms. |",
         "| Renormalization scale | MSbar renormalization scale $\\mu$ in GeV (default 2.0). |",
@@ -206,76 +271,280 @@ def _field_definitions(*, language: str) -> list[str]:
     ]
 
 
-def _explicit_kernel_text(operator: str, scheme: str, *, language: str) -> str:
-    r"""Return the explicit analytic NLO matching coefficient for ``operator``.
+# --- LLM-derived kernel formula --------------------------------------------
+# The explicit matching coefficient is NOT stored as a hand-written formula. At
+# report time the model reads the exact ``kernels.py`` code that produced the
+# number (the source of truth) and writes the closed form. Everything needed for
+# the call lives in this file so only ``reporting.py`` carries the change; the LLM
+# config is read from the environment because the report cannot receive it from
+# the agent.
 
-    Mirrors the closed forms implemented in :mod:`lamet_agent.kernels`
-    (``_ratio_regular_entry``, ``_hybrid_delta_entry`` and ``CG_gluon_PDF_msbar``).
+# OpenAI-compatible providers (same shape as core.llm.PROVIDERS), kept here so
+# this module stays self-contained.
+_FORMULA_PROVIDERS = {
+    "deepseek": {"base_url": "https://api.deepseek.com", "default_model": "deepseek-chat", "key_env": "DEEPSEEK_API_KEY"},
+    "openai": {"base_url": "https://api.openai.com/v1", "default_model": "gpt-4o-mini", "key_env": "OPENAI_API_KEY"},
+}
+
+# The paper the kernels come from; can be overridden via env for a local copy.
+DEFAULT_ARXIV_ID = "2602.11283"
+
+# Generating a formula is a network round-trip; memoize so the per-job and the
+# stage-level report reuse one call per (operator, scheme, language). The value
+# is ``(markdown, paper_used)`` so the provenance note knows whether the paper
+# text actually made it into the prompt.
+_FORMULA_CACHE: dict[tuple[str, str, str], tuple[str, bool]] = {}
+# Paper text fetched once per source (local path or arXiv id).
+_PAPER_CACHE: dict[str, str | None] = {}
+
+
+def _resolve_formula_llm() -> tuple[str, str, str]:
+    """Return ``(api_key, model_name, base_url)`` for formula generation, from env.
+
+    Only ``reporting.py`` changes, so the LLM config cannot be threaded in from
+    the agent and is read from the environment instead. ``LAMET_FORMULA_*`` take
+    precedence, else whichever provider key (``DEEPSEEK_API_KEY`` /
+    ``OPENAI_API_KEY``) is set decides the provider.
     """
-    if operator == "gluon":
-        poly = r"P_g(\xi)=\frac{2\,(1-\xi+\xi^2)^2}{1-\xi}"
-        gluon = (
-            r"C_g^{(1)}(\xi)=P_g(\xi)\Big[L+\ln\!\big(\xi(1-\xi)\big)\Big]"
-            r"-\frac{15-56\xi+102\xi^2-96\xi^3+48\xi^4}{6\,(1-\xi)},\qquad 0<\xi<1,"
-        )
-        if language == "zh":
-            return (
-                "胶子核为 $C_A$ 正比、纯 MSbar（无 ratio/hybrid 方案）。记 $\\xi=x/y$、$L=\\ln(4y^2P_z^2/\\mu^2)$，"
-                "并令\n\n"
-                f"$$\n{poly}\n$$\n\n"
-                "则物理区 $0<\\xi<1$ 的正则系数为\n\n"
-                f"$$\n{gluon}\n$$\n\n"
-                "$\\xi=1$ 处的奇异性由加法（plus）规则恢复，即令每个 $y$ 列积分为零。"
+    provider = os.environ.get("LAMET_FORMULA_MODEL")
+    if provider is None:
+        if os.environ.get("DEEPSEEK_API_KEY"):
+            provider = "deepseek"
+        elif os.environ.get("OPENAI_API_KEY"):
+            provider = "openai"
+        else:
+            raise RuntimeError(
+                "Matching report formula generation needs an LLM: set DEEPSEEK_API_KEY or "
+                "OPENAI_API_KEY (or LAMET_FORMULA_MODEL + LAMET_FORMULA_API_KEY)."
             )
-        return (
-            "The gluon kernel is $C_A$-proportional and pure MSbar (no ratio/hybrid scheme). "
-            "With $\\xi=x/y$, $L=\\ln(4y^2P_z^2/\\mu^2)$ and\n\n"
-            f"$$\n{poly}\n$$\n\n"
-            "the regular coefficient in the physical region $0<\\xi<1$ is\n\n"
-            f"$$\n{gluon}\n$$\n\n"
-            "The $\\xi=1$ singularity is restored by the plus prescription (each $y$ column integrates to zero)."
+    config = _FORMULA_PROVIDERS.get(provider)
+    if config is None:
+        raise RuntimeError(
+            f"Unknown LAMET_FORMULA_MODEL={provider!r}; use one of {sorted(_FORMULA_PROVIDERS)}."
         )
+    api_key = os.environ.get("LAMET_FORMULA_API_KEY") or os.environ.get(config["key_env"])
+    if not api_key:
+        raise RuntimeError(
+            f"Matching report formula generation needs {config['key_env']} (or LAMET_FORMULA_API_KEY)."
+        )
+    model_name = os.environ.get("LAMET_FORMULA_LLM_MODEL") or config["default_model"]
+    base_url = os.environ.get("LAMET_FORMULA_BASE_URL") or config["base_url"]
+    return api_key, model_name, base_url
 
-    # gt / gtg5 quark kernels share the same gamma^t structure.
-    c_ratio = (
-        r"C_r^{(1)}(\xi)=\frac{1+\xi^2}{1-\xi}\Big[L+\ln|\xi|+\ln|1-\xi|\Big]"
-        r"+(\xi-1)+1+A(\xi)-\frac{3}{2\,|1-\xi|},\qquad 0<\xi<1,"
+
+def _kernel_source(operator: str, scheme: str) -> str:
+    """Return the implemented kernel + coefficient functions as LLM ground truth."""
+    pieces: list[str] = []
+    builder = getattr(kernels, f"CG_{operator}_PDF_{scheme}", None)
+    if builder is not None:
+        pieces.append(inspect.getsource(builder))
+    for name in ("C_ratio", "C_ratio_perp", "C_msbar", "C_msbar_gz", "C_hybrid", "_atan_piece", "build_matching_matrix"):
+        fn = getattr(kernels, name, None)
+        if fn is not None:
+            pieces.append(inspect.getsource(fn))
+    if not pieces:
+        return inspect.getsource(kernels)
+    return "\n\n".join(pieces)
+
+
+def _strip_html(raw: str) -> str:
+    """Crude HTML -> text so an arXiv HTML page is usable as LLM context."""
+    no_scripts = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", raw, flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", no_scripts)
+    return re.sub(r"[ \t\f\v]+", " ", html.unescape(text))
+
+
+def _fetch_arxiv_source(arxiv_id: str) -> str | None:
+    """Download the arXiv LaTeX e-print source and return its ``.tex`` text.
+
+    The ``e-print`` endpoint returns a gzipped tar of the LaTeX source (sometimes a
+    single gzipped ``.tex``). Extracting the ``.tex`` files gives the LLM the raw
+    ``\\begin{equation}`` math -- the plus-prescription notation survives intact,
+    unlike the HTML mirrors which mangle the formulas. Best-effort: any failure
+    returns ``None``. The largest ``.tex`` (usually the main manuscript, where the
+    matching coefficients live) is placed first so it survives truncation.
+    """
+    url = f"https://arxiv.org/e-print/{arxiv_id}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "lamet-agent/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read()
+    except (TimeoutError, urllib.error.URLError, ssl.SSLError, ValueError):
+        return None
+
+    texts: list[str] = []
+    try:
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:*") as tar:
+            for member in tar.getmembers():
+                if not member.isfile() or not member.name.lower().endswith(".tex"):
+                    continue
+                handle = tar.extractfile(member)
+                if handle is None:
+                    continue
+                texts.append(handle.read().decode("utf-8", errors="replace"))
+    except (tarfile.TarError, OSError, EOFError):
+        # Not a tar: try a single gzipped member, else treat the bytes as plain text.
+        try:
+            texts.append(gzip.decompress(raw).decode("utf-8", errors="replace"))
+        except (OSError, EOFError):
+            try:
+                texts.append(raw.decode("utf-8", errors="replace"))
+            except UnicodeDecodeError:
+                return None
+
+    texts = [t for t in texts if t.strip()]
+    if not texts:
+        return None
+    texts.sort(key=len, reverse=True)
+    return "\n\n".join(texts)
+
+
+def _fetch_paper_text(*, max_chars: int = 80_000) -> str | None:
+    """Return the paper text (local copy preferred, else arXiv LaTeX source), or None.
+
+    A local copy is the most robust source: set ``LAMET_FORMULA_PAPER_PATH`` to a
+    ``.txt``/``.md``/``.tex``/HTML file. Otherwise the arXiv LaTeX e-print source for
+    ``LAMET_FORMULA_ARXIV_ID`` (default :data:`DEFAULT_ARXIV_ID`) is fetched so the
+    LLM reads the real equations; the HTML mirrors are only a last-resort fallback
+    (their math is mangled). The fetch is best-effort: any failure returns ``None``
+    and the formula is then generated from the kernel code alone.
+    """
+    local = os.environ.get("LAMET_FORMULA_PAPER_PATH")
+    arxiv_id = os.environ.get("LAMET_FORMULA_ARXIV_ID") or DEFAULT_ARXIV_ID
+    cache_key = local or f"arxiv:{arxiv_id}"
+    if cache_key in _PAPER_CACHE:
+        return _PAPER_CACHE[cache_key]
+
+    text: str | None = None
+    if local:
+        candidate = Path(local).expanduser()
+        if candidate.is_file():
+            raw = candidate.read_text(encoding="utf-8", errors="replace")
+            text = raw if candidate.suffix.lower() in {".txt", ".md", ".tex"} else _strip_html(raw)
+    if text is None:
+        # Preferred: the LaTeX e-print source (clean math). Fall back to HTML only
+        # if the source is unreachable.
+        text = _fetch_arxiv_source(arxiv_id)
+    if text is None:
+        for url in (
+            f"https://ar5iv.labs.arxiv.org/html/{arxiv_id}",
+            f"https://ar5iv.org/abs/{arxiv_id}",
+            f"https://arxiv.org/abs/{arxiv_id}",
+        ):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "lamet-agent/1.0"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    text = _strip_html(resp.read().decode("utf-8", errors="replace"))
+                break
+            except (TimeoutError, urllib.error.URLError, ssl.SSLError, ValueError):
+                continue
+
+    if text is not None:
+        text = text.strip()[:max_chars] or None
+    _PAPER_CACHE[cache_key] = text
+    return text
+
+
+def _formula_prompt(
+    operator: str, scheme: str, language: str, *, source: str, paper_text: str | None
+) -> str:
+    lang_line = (
+        "Write the prose in Simplified Chinese." if language == "zh" else "Write the prose in English."
     )
-    arctan = (
-        r"A(\xi)=\frac{3\xi-1}{\xi-1}\times"
-        r"\begin{cases}\dfrac{\arctan\!\big(\sqrt{1-2\xi}/|\xi|\big)}{\sqrt{1-2\xi}},&\xi<\tfrac12\\[2.2ex]"
-        r"\dfrac{\operatorname{artanh}\!\big(\sqrt{2\xi-1}/|\xi|\big)}{\sqrt{2\xi-1}},&\xi>\tfrac12\end{cases}"
+    paper_block = (
+        f"LaTeX source of the paper (arXiv:{DEFAULT_ARXIV_ID}). It is the authority for the "
+        "NOTATION: copy its symbols and, in particular, its exact plus-prescription convention "
+        "for the matching coefficient verbatim.\n\"\"\"\n" + paper_text + "\n\"\"\"\n\n"
+        if paper_text
+        else "No paper text was available; rely on the code below as the source of truth and use "
+        "the paper's $[\\,g(\\xi)\\,]^{D}_{+(1)}$ plus-prescription convention (subtraction point "
+        "$\\xi=1$, domain $D$ in the superscript).\n\n"
     )
-    corrections = (
-        r"\Delta C_{\overline{\rm MS}}=+\frac{1}{2|1-\xi|},\qquad"
-        r"\Delta C_{\rm hy}=\frac{1}{2}\Big[\frac{1}{|1-\xi|}"
-        r"-\frac{2}{\pi}\,\frac{\mathrm{Si}\!\big((1-\xi)\,z_sP_z\big)}{1-\xi}\Big]."
-    )
-    diag = r"+\frac{1}{2}\big(1+L\big)\quad(\text{MSbar diagonal, plus-prescription row})."
-    if language == "zh":
-        return (
-            "夸克 $\\gamma^t$（及 $\\gamma^t\\gamma_5$）核的骨架是 ratio 方案正则系数。记 $\\xi=x/y$、"
-            "$L=\\ln(4y^2P_z^2/\\mu^2)$，物理区 $0<\\xi<1$：\n\n"
-            f"$$\n{c_ratio}\n$$\n\n"
-            "其中 arctan/arctanh 项按 $\\xi$ 相对 $1/2$ 取分支：\n\n"
-            f"$$\n{arctan}\n$$\n\n"
-            "三种方案仅相差一个加在 $C_r^{(1)}$ 上的有限修正（off-diagonal）：\n\n"
-            f"$$\n{corrections}\n$$\n\n"
-            "ratio 方案修正为零；$\\xi=1$ 由加法规则恢复，MSbar 另在对角元加上 "
-            f"${diag}$"
-        )
     return (
-        "The quark $\\gamma^t$ (and $\\gamma^t\\gamma_5$) kernels share the ratio-scheme regular "
-        "coefficient as their backbone. With $\\xi=x/y$ and $L=\\ln(4y^2P_z^2/\\mu^2)$, in the "
-        "physical region $0<\\xi<1$:\n\n"
-        f"$$\n{c_ratio}\n$$\n\n"
-        "where the arctan/arctanh term picks its branch by where $\\xi$ sits relative to $1/2$:\n\n"
-        f"$$\n{arctan}\n$$\n\n"
-        "The three schemes differ only by a finite off-diagonal correction added on top of $C_r^{(1)}$:\n\n"
-        f"$$\n{corrections}\n$$\n\n"
-        "the ratio scheme adds zero; the $\\xi=1$ singularity is restored by the plus prescription, "
-        f"and MSbar additionally adds ${diag}$"
+        "You are documenting one stage of a LaMET lattice-QCD analysis. Produce a Markdown "
+        f"fragment giving the explicit NLO matching coefficient for the `{operator}` operator "
+        f"in the `{scheme}` scheme, exactly as the paper presents it.\n\n"
+        f"{paper_block}"
+        "The number in the report was produced by this exact Python code -- it is the single "
+        "source of truth for WHICH terms are present. Read it together with the paper and write "
+        "the closed-form coefficient it implements: the splitting function, the logs, the "
+        "arctan/arctanh branch, and any scheme-specific finite correction. If the paper and the "
+        "code disagree on a term, follow the code; but for NOTATION always follow the paper.\n"
+        f"```python\n{source}\n```\n\n"
+        "Requirements:\n"
+        "- Use $...$ for inline math and $$...$$ for display equations (KaTeX/MathJax).\n"
+        "- Define notation once: $\\xi=x/y$ and $L=\\ln(4y^2P_z^2/\\mu^2)$.\n"
+        "- The coefficient has a plus-prescription at $\\xi=1$ (the code restores it by making "
+        "each $y$-column integrate to zero). Reproduce it using the paper's EXACT "
+        "plus-prescription notation, copying the bracket structure verbatim from the LaTeX "
+        "above: the paper writes $[\\,g(\\xi)\\,]^{D}_{+(x_0)}$ where the subscript $+(x_0)$ marks "
+        "the subtraction point ($x_0=1$, i.e. $+(1)$) and the superscript $D$ marks the domain. "
+        "Keep that subscript/superscript placement precisely -- do NOT move the $(1)$ into the "
+        "superscript or drop the domain. The paper splits the coefficient into more than one "
+        "plus-bracket over different domains (e.g. $[0,1]$ and $(-\\infty,\\infty)$): reproduce "
+        "exactly that split, and include the paper's definition of $[g]^{D}_{+(x_0)}$ plus any "
+        "$\\delta(1-\\xi)$ term.\n"
+        "- State the explicit regular coefficient and any scheme-specific correction.\n"
+        "- Be concise (a few sentences plus the equations); no headings, no preamble like "
+        "'Here is'. Output only the Markdown fragment.\n"
+        f"- {lang_line}"
     )
+
+
+def _llm_kernel_formula(operator: str, scheme: str, *, language: str) -> tuple[str, bool]:
+    """Generate the explicit kernel coefficient with an LLM, returning ``(md, paper_used)``.
+
+    The model reads the source paper's LaTeX (arXiv:2602.11283, when reachable)
+    together with the exact ``kernels.py`` code that produced the number, and writes
+    the closed form using the paper's own plus-prescription notation. The code is
+    authoritative for which terms are present; the paper is authoritative for the
+    notation. The report stores no hand-written formula; this raises on any LLM
+    failure (formula generation is required, no offline fallback). The boolean
+    reports whether the paper text actually reached the prompt.
+    """
+    cache_key = (operator, scheme, language)
+    if cache_key in _FORMULA_CACHE:
+        return _FORMULA_CACHE[cache_key]
+
+    api_key, model_name, base_url = _resolve_formula_llm()
+    source = _kernel_source(operator, scheme)
+    paper_text = _fetch_paper_text()
+    prompt = _formula_prompt(operator, scheme, language, source=source, paper_text=paper_text)
+    body = json.dumps(
+        {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "stream": False,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        base_url.rstrip("/") + "/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+
+    last_error: BaseException | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            text = str(payload["choices"][0]["message"]["content"]).strip()
+            if not text:
+                raise RuntimeError("LLM returned an empty matching formula.")
+            result = (text, paper_text is not None)
+            _FORMULA_CACHE[cache_key] = result
+            return result
+        except (TimeoutError, urllib.error.URLError, ssl.SSLError) as exc:
+            last_error = exc
+            if attempt == 2:
+                raise RuntimeError(
+                    "Matching report formula LLM request failed after 3 attempts "
+                    "(transient HTTPS/network/proxy issue)."
+                ) from exc
+            time.sleep(2**attempt)
+    raise RuntimeError("Matching report formula LLM request failed.") from last_error
 
 
 def _matching_formula_text(data: dict[str, Any], *, language: str) -> str:
@@ -287,7 +556,22 @@ def _matching_formula_text(data: dict[str, Any], *, language: str) -> str:
         r"\tilde f\!\left(y,P_z\right),"
     )
     discrete = r"f_i=\sum_j K_{ij}\,\tilde f_j,\qquad K=\text{(nx, ny) NLO matrix}."
-    explicit = _explicit_kernel_text(operator, scheme, language=language)
+    # The explicit coefficient is generated at report time by an LLM that reads
+    # the source paper together with the kernels.py code which produced the number
+    # (no formula is hardcoded). A short note records the provenance so a reader
+    # knows it was machine-derived and from which sources.
+    generated, paper_used = _llm_kernel_formula(operator, scheme, language=language)
+    if language == "zh":
+        source_zh = f"文章 arXiv:{DEFAULT_ARXIV_ID} 与 `kernels.py` 实现" if paper_used else "`kernels.py` 实现"
+        note = f"（以下解析形式由模型阅读{source_zh}后生成）\n\n"
+    else:
+        source_en = (
+            f"arXiv:{DEFAULT_ARXIV_ID} together with the `kernels.py` implementation"
+            if paper_used
+            else "the `kernels.py` implementation"
+        )
+        note = f"(the explicit form below was generated by the model from {source_en})\n\n"
+    explicit = note + generated
     if language == "zh":
         return (
             f"{reference}。光锥 PDF 由 quasi-PDF 经 NLO 匹配核反卷积得到：\n\n"
@@ -363,10 +647,17 @@ def _diagnostics(data: dict[str, Any], *, language: str) -> list[str]:
 def _figure_block(artifacts: dict[str, Any], *, language: str) -> list[str]:
     heading = "## 图像与可视化评估" if language == "zh" else "## Figures and Visual Assessment"
     label = "quasi 与光锥 PDF 对比图" if language == "zh" else "Quasi vs light-cone comparison"
+    png_value = artifacts.get("matched_plot_png")
     pdf_value = artifacts.get("matched_plot")
     lines = [heading, "", f"### {label}"]
-    if pdf_value:
-        # The plot is a single PDF artifact; Markdown cannot embed PDFs inline, so link it.
+    if png_value:
+        # Embed the rasterized plot inline so it shows directly; link the PDF for the vector version.
+        lines.append(f"![{label}]({png_value})")
+        if pdf_value:
+            lines.append("")
+            lines.append(f"[{label}（PDF 矢量图）]({pdf_value})" if language == "zh" else f"[{label} (PDF, vector)]({pdf_value})")
+    elif pdf_value:
+        # No PNG converter available; fall back to linking the PDF.
         lines.append(f"[{label} (PDF)]({pdf_value})" if language == "en" else f"[{label}（PDF）]({pdf_value})")
     else:
         lines.append("未生成。" if language == "zh" else "Not available.")
@@ -565,13 +856,25 @@ def write_matching_stage_report(
         for item in jobs:
             result = item["result"]
             artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            png = artifacts.get("matched_plot_png")
             plot = artifacts.get("matched_plot")
+            label = "Quasi vs light-cone comparison" if language == "en" else "quasi 与光锥 PDF 对比图"
             lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV"])
-            if plot:
+            if png:
+                # Embed the rasterized plot inline; keep the PDF as a vector link.
+                lines.append(f"![{label}]({png})")
+                if plot:
+                    lines.append("")
+                    lines.append(
+                        f"[{label} (PDF, vector)]({plot})"
+                        if language == "en"
+                        else f"[{label}（PDF 矢量图）]({plot})"
+                    )
+            elif plot:
                 lines.append(
-                    f"[Quasi vs light-cone comparison (PDF)]({plot})"
+                    f"[{label} (PDF)]({plot})"
                     if language == "en"
-                    else f"[quasi 与光锥 PDF 对比图（PDF）]({plot})"
+                    else f"[{label}（PDF）]({plot})"
                 )
             else:
                 lines.append("未生成。" if language == "zh" else "Not available.")
