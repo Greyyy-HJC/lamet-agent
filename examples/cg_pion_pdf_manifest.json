@@ -181,9 +181,10 @@
         "seed": 1984,
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 3.0,
+        "prior_width": [0.5, 1.0, 2.0],
         "component": "both",
         "q_min": 0.05,
-        "model_average": false
+        "model_average": true
       },
       "jobs": [
         {"id": "ca_p0", "correlator_ids": ["a060_x_p0_2pt", "a060_x_p0_3pt_ts8", "a060_x_p0_3pt_ts10", "a060_x_p0_3pt_ts12"]},
@@ -216,7 +217,7 @@
           "zmax_values": [21.0, 22.0, 23.0, 24.0],
           "z_ext_max": 37.0,
           "smooth": "linear",
-          "model_average": true,
+          "model_average": false,
           "max_schemes": 200
         }
       },

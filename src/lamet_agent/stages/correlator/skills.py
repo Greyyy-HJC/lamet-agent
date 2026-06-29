@@ -14,15 +14,20 @@ Correlator-analysis physics:
   differencing neighboring tsep values.
 - The optional fitting_form selects the default Breit ratio or a NonBreit ratio
   with separate initial/final 2pt correlators matched by pz_gev/pz_out_gev.
-- Tune nstate, fit scope, fit strategy, and windows on sample-average data, then
-  pass one selected scalar nstate, fit_scope, and fit_strategy to fit_bare_matrix_grid.
+- Tune data windows on sample-average data. fit_bare_matrix_grid then keeps one
+  shared window and either selects one fit function on sample-average data or,
+  when model_average is enabled, averages nstate/prior_width fit functions
+  sample by sample.
+- Data-window candidates with different pt2/pt3 points should not be ranked by
+  raw logGBF. Choose windows after the Q and n_data > n_params gates, favoring
+  good chi2/dof and more data points when chi2/dof values are comparable.
 - The bare matrix element is O00/(2*E0) and is invariant under 2pt rescaling.
 """.strip()
 
 TOOL_CATALOG = {
     "inspect_correlator_scale": "Inspect the selected job's 2pt magnitude.",
-    "tune_bare_matrix": "Scan every configured nstate, fit strategy, and fit window.",
-    "fit_bare_matrix_grid": "Apply the selected scalar configuration to every z/sample and write store['output']; the runner writes one stage report with fit_logs links.",
+    "tune_bare_matrix": "Scan every configured nstate, prior_width, fit strategy, and fit window.",
+    "fit_bare_matrix_grid": "Apply one shared data window, optionally model-average fit functions per sample, and write store['output']; the runner writes one stage report with fit_logs links.",
 }
 
 

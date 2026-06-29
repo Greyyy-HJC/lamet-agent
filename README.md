@@ -155,31 +155,27 @@ name alone.
 
 ### `correlator_analysis.defaults.model_average`
 
-This boolean controls how `fit_bare_matrix_grid` uses the candidate fit windows.
+This boolean controls how `fit_bare_matrix_grid` uses fit-function candidates.
 It does not control whether tuning scans the candidates: `tune_bare_matrix` always
-tests the configured `pt2_windows` and `pt3_tau_cuts` (and the configured
-`nstate` / `fit_strategy` candidates) on sample-average data first.
+tests the configured `pt2_windows`, `pt3_tau_cuts`, `nstate`, `prior_width`, and
+`fit_strategy` candidates on sample-average data first.
 
-- `false` (recommended production default): use one tuned window for every `z`
-  and every resampled sample. The agent may provide the selected `pt2_window` and
-  `pt3_window`; if it does not, the tool selects the best usable window on
-  `tune_z`. This is the faster path and keeps one fit definition across the grid.
-- `true`: retain every usable `pt2_window` / `pt3_tau_cut` combination for the
-  selected scalar `nstate` and `fit_strategy`. Every combination is fitted for
-  every `z` and every resampled sample, then combined using `logGBF` weights. The
-  Bayesian model average includes both fit uncertainty and variation between
-  window choices, but its runtime grows approximately linearly with the number
-  of window combinations.
+- `false` (recommended production default): use one tuned data window and one
+  sample-average-selected fit-function setting for every `z` and every resampled
+  sample. The agent may provide the selected `pt2_window` and `pt3_window`; if it
+  does not, the tool selects the best usable window on `tune_z`.
+- `true`: still use one tuned data window, but scan `nstate` and `prior_width`
+  fit-function candidates for each resampled sample and combine successful fits
+  with `logGBF` weights. The default prior-width scan is `[0.5, 1.0, 2.0]`.
 
 The correlator NetCDF artifact stores the weighted resampled bare matrix-element
 samples as usual and records per-`z` uncertainty summaries in attrs:
 `bare_re_stat_sdev` / `bare_im_stat_sdev` from the resampling spread and
-`bare_re_sys_sdev` / `bare_im_sys_sdev` from the window-model spread. The
-systematic arrays are zero for the single-window `model_average: false` path.
+`bare_re_sys_sdev` / `bare_im_sys_sdev` from the fit-function model spread. The
+systematic arrays are zero for the single-model `model_average: false` path.
 
-For example, four `pt2_windows` and three `pt3_tau_cuts` produce up to 12 models.
-With 109 jackknife samples and 25 `z` values, `model_average: true` performs about
-12 times as many nonlinear fits as the single-window path. The manifest value is
+For example, two `nstate` values and three `prior_width` values produce up to six
+fit-function models inside the fixed data window. The manifest value is
 authoritative and cannot be overridden by an LLM tool call.
 
 ## Quick Start
@@ -311,8 +307,8 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
     `fit_bare_matrix_grid` (apply one shared tuned window to every z and every
     resampled sample, then export a bare-matrix NetCDF artifact, fit-on-data PDFs,
     and split logs). The agent tunes once on sample-average data, then applies the
-    same setting everywhere; pass a single `pt2_window`/`pt3_window` or
-    `model_average=true` to BMA-combine the window grid.
+    same data window everywhere; `model_average=true` BMA-combines fit-function
+    candidates within that fixed window.
 - `examples/fake_data/generate_fake_data.py`
   - Generates fake correlator-style datasets used for local testing.
 - `examples/sample_manifest.jsonc`

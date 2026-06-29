@@ -328,9 +328,27 @@ def prepare_tool_args(
             if "fit_scope" in defaults:
                 defaults["fit_scope_values"] = defaults.pop("fit_scope")
         elif tool_name == "fit_bare_matrix_grid":
-            for key in ("nstate", "fit_strategy", "fit_scope"):
+            use_model_average = bool(defaults.get("model_average", False))
+            if use_model_average and isinstance(defaults.get("nstate"), list):
+                defaults["nstate_values"] = defaults.pop("nstate")
+                resolved.pop("nstate", None)
+            elif isinstance(defaults.get("nstate"), list):
+                if "nstate" in resolved and resolved["nstate"] is not None:
+                    defaults.pop("nstate")
+                else:
+                    defaults["nstate_values"] = defaults.pop("nstate")
+            if use_model_average and isinstance(defaults.get("prior_width"), list):
+                resolved["prior_width"] = defaults["prior_width"]
+            for key in ("fit_strategy", "fit_scope"):
                 if isinstance(defaults.get(key), list):
                     defaults.pop(key)
+            if "pt2_window" not in resolved and "tmin" in resolved and "tmax" in resolved:
+                resolved["pt2_window"] = {"tmin": int(resolved["tmin"]), "tmax": int(resolved["tmax"])}
+            if "pt3_window" not in resolved and "tau_cut" in resolved:
+                resolved["pt3_window"] = {
+                    "tsep_ls": [int(t) for t in resolved.get("tsep_ls", defaults.get("tsep_ls", []))],
+                    "tau_cut": int(resolved["tau_cut"]),
+                }
             defaults["save_path"] = str(artifacts_dir / job.id)
             defaults["job_id"] = job.id
             defaults["a_fm"] = pt2.a_fm if pt2 is not None else None

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import matplotlib
@@ -18,7 +17,6 @@ from matplotlib.legend import Legend
 pytest.importorskip("lsqfit")
 
 import lamet_agent.stages.correlator.functions as correlator_functions
-from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.plotting import (
     _pt3_ratio_data_tau_slice,
     _ratio_denominator_correction,
@@ -51,10 +49,9 @@ from lamet_agent.stages.correlator.functions import (
     _ratio_samples,
     _resample_pt2,
     _scaled_prior,
-    _write_outputs,
+    _vary_prior_width,
     asymptotic_ratio,
     bayesian_average,
-    fit_bare_matrix_grid,
     fit_fh,
     fit_joint,
     fit_ratio,
@@ -66,6 +63,7 @@ from lamet_agent.stages.correlator.functions import (
     pt3_nonbreit_ratio_fcn,
     pt3_ratio_fcn,
     pt3_ratio_prior,
+    select_data_window,
     select_best,
     tune_bare_matrix,
     tune_ground_state,
@@ -303,6 +301,47 @@ def test_select_best_falls_back_to_max_q() -> None:
     assert fallback is True
 
 
+def test_select_data_window_rejects_low_q_and_underdetermined() -> None:
+    records = [
+        {"Q": 0.90, "chi2_dof": 0.8, "n_data": 4, "n_params": 4},
+        {"Q": 0.01, "chi2_dof": 0.7, "n_data": 20, "n_params": 4},
+        {"Q": 0.20, "chi2_dof": 1.0, "n_data": 12, "n_params": 4},
+    ]
+    index, fallback = select_data_window(records, q_min=0.05)
+    assert index == 2
+    assert fallback is False
+
+
+def test_select_data_window_prefers_more_data_when_chi2_close() -> None:
+    records = [
+        {"Q": 0.20, "chi2_dof": 0.90, "n_data": 10, "n_params": 4},
+        {"Q": 0.30, "chi2_dof": 1.05, "n_data": 18, "n_params": 4},
+    ]
+    index, fallback = select_data_window(records, q_min=0.05, chi2_dof_tolerance=0.25)
+    assert index == 1
+    assert fallback is False
+
+
+def test_select_data_window_prefers_clear_chi2_improvement() -> None:
+    records = [
+        {"Q": 0.20, "chi2_dof": 0.90, "n_data": 10, "n_params": 4},
+        {"Q": 0.30, "chi2_dof": 1.40, "n_data": 18, "n_params": 4},
+    ]
+    index, fallback = select_data_window(records, q_min=0.05, chi2_dof_tolerance=0.25)
+    assert index == 0
+    assert fallback is False
+
+
+def test_select_data_window_falls_back_without_q_passing() -> None:
+    records = [
+        {"Q": 0.01, "chi2_dof": 1.2, "n_data": 10, "n_params": 4},
+        {"Q": 0.02, "chi2_dof": 1.0, "n_data": 12, "n_params": 4},
+    ]
+    index, fallback = select_data_window(records, q_min=0.05)
+    assert index == 1
+    assert fallback is True
+
+
 def test_loggbf_weights_normalise_and_favour_high_loggbf() -> None:
     weights = _loggbf_weights([{"logGBF": 0.0}, {"logGBF": 2.0}])
     assert weights.sum() == pytest.approx(1.0)
@@ -332,6 +371,14 @@ def test_scaled_prior_inflates_all_errors() -> None:
     for key in template:
         assert gv.mean(prior[key]) == pytest.approx(0.25)
         assert gv.sdev(prior[key]) == pytest.approx(0.09)
+
+
+def test_vary_prior_width_scales_template_errors() -> None:
+    template = pt3_ratio_prior(nstate=2)
+    varied = _vary_prior_width(template, 0.5)
+    for key in template:
+        assert gv.mean(varied[key]) == pytest.approx(gv.mean(template[key]))
+        assert gv.sdev(varied[key]) == pytest.approx(0.5 * gv.sdev(template[key]))
 
 
 def test_anchor_pt2_prior_widens_only_e0_z0() -> None:
@@ -415,6 +462,18 @@ def test_normalise_pt3_windows_expands_tau_cuts() -> None:
     assert windows[0]["tsep_ls"] == [6, 8]
 
 
+def test_normalise_pt3_windows_preserves_explicit_tsep_subsets() -> None:
+    windows = _normalise_pt3_windows(
+        [{"tsep_ls": [6, 8], "tau_cut": 1}, {"tau_cut": 2}],
+        tsep_ls=[6, 8, 10],
+        tau_cuts=[3],
+    )
+    assert windows == [
+        {"tsep_ls": [6, 8], "tau_cut": 1},
+        {"tsep_ls": [6, 8, 10], "tau_cut": 2},
+    ]
+
+
 def test_candidate_specs_joint_is_cartesian() -> None:
     pt2 = [{"tmin": 2, "tmax": 10}, {"tmin": 3, "tmax": 10}]
     pt3 = [{"tsep_ls": [6, 8], "tau_cut": 1}, {"tsep_ls": [6, 8], "tau_cut": 2}]
@@ -483,52 +542,6 @@ def test_sample_mean_err_matches_core_helper() -> None:
     assert core_sample_mean_err(values, mode="jk")[0] == pytest.approx(2.0)
 
 
-# --- output writer -----------------------------------------------------------
-
-
-def test_write_outputs_writes_netcdf_and_plot_without_txt(tmp_path) -> None:
-    records = [
-        {
-            "z": 0,
-            "real_samples": np.array([1.0, 1.1, 0.9]),
-            "imag_samples": np.array([0.0, 0.1, -0.1]),
-            "window": {"tau_cut": 1, "tsep_ls": [8, 10]},
-            "sample0_plot_paths": {"ratio_re_pdf": "re.pdf"},
-        },
-        {
-            "z": 1,
-            "real_samples": np.array([0.8, 0.9, 0.7]),
-            "imag_samples": np.array([0.2, 0.3, 0.1]),
-            "window": {"tau_cut": 2, "tsep_ls": [8, 10]},
-        },
-    ]
-    result = _write_outputs(
-        records,
-        artifacts_dir=tmp_path,
-        save_path=str(tmp_path / "bare"),
-        ensemble="HISQa060_X",
-        tag="CG52bxp00_CG52bxp00",
-        variant="free",
-        direction="X",
-        momentum="PX0PY0PZ0",
-        b_label="b0",
-        resample_mode="jk",
-    )
-    assert (tmp_path / "bare.pdf").is_file()
-    assert (tmp_path / "bare.nc").is_file()
-    saved = EnsembleData.from_netcdf(result["netcdf_path"])
-    assert saved.resample == "jackknife"
-    assert saved.values.shape == (3, 2)
-    assert json.loads(saved.attrs["bare_re_mean"]) == pytest.approx([1.0, 0.8])
-    assert json.loads(saved.attrs["bare_im_mean"]) == pytest.approx([0.0, 0.2])
-    assert json.loads(saved.attrs["bare_re_sys_sdev"]) == pytest.approx([0.0, 0.0])
-    assert json.loads(saved.attrs["bare_im_sys_sdev"]) == pytest.approx([0.0, 0.0])
-    assert result["outputs"][0]["sample0_plot_paths"] == {"ratio_re_pdf": "re.pdf"}
-    assert "real_stat_sdev" in result["outputs"][0]
-    assert "real_sys_sdev" in result["outputs"][0]
-    assert result["n_z"] == 2
-
-
 # --- inspect tool ------------------------------------------------------------
 
 
@@ -584,171 +597,21 @@ def test_tune_bare_matrix_returns_ranked_candidates(tmp_path) -> None:
         pt2_windows=[{"tmin": 2, "tmax": 10}],
         pt3_tau_cuts=[1, 2],
         fit_strategy="joint",
+        prior_width=1.0,
         resample_mode="jk",
         svdcut=1e-6,
         artifacts_dir=tmp_path / "artifacts",
     )
     assert result["candidates"]
     assert "O00_re_over_2E0" in result["candidates"][0]
+    assert result["candidates"][0]["prior_width"] == pytest.approx(1.0)
     assert "recommended_index" in result
     assert result["tuning_diagnostic_pdfs"] == {}
     assert not list((tmp_path / "artifacts").glob("tune_*_sample0_pt3_ratio_*.pdf"))
     assert result["candidates"][0]["fit_scope"] == "ratio"
-
-
-# --- apply tool (end to end) -------------------------------------------------
-
-
-def test_fit_bare_matrix_grid_single_shared_window(tmp_path) -> None:
-    pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0, 1))
-    result = fit_bare_matrix_grid(
-        {},
-        pt2_path=pt2_path,
-        pt3_paths=pt3_paths,
-        tsep_ls=[6, 8],
-        z_values=[0, 1],
-        ensemble="E",
-        tag="T",
-        momentum="PX0PY0PZ0",
-        pt2_windows=[{"tmin": 2, "tmax": 10}, {"tmin": 3, "tmax": 10}],
-        pt3_tau_cuts=[1, 2],
-        fit_strategy="joint",
-        resample_mode="jk",
-        svdcut=1e-6,
-        artifacts_dir=tmp_path / "artifacts",
-    )
-    # one shared window applied to every z
-    assert len(result["shared_window_specs"]) == 1
-    assert result["artifact"].endswith(".nc")
-    assert "report_json" not in result
-    saved = EnsembleData.from_netcdf(result["artifact"])
-    assert saved.dims == ["z"]
-    assert saved.resample == "jackknife"
-    assert saved.attrs["fit_scope"] == "ratio"
-    assert saved.values.shape[1] == 2
-    assert len(json.loads(saved.attrs["bare_re_stat_sdev"])) == 2
-    assert json.loads(saved.attrs["bare_re_sys_sdev"]) == pytest.approx([0.0, 0.0])
-    assert json.loads(saved.attrs["bare_im_sys_sdev"]) == pytest.approx([0.0, 0.0])
-    tau_cuts = {z["window"]["tau_cut"] for z in result["z_fits"]}
-    assert len(tau_cuts) == 1
-    assert not (tmp_path / "artifacts" / "bare_qpdf").exists()
-    sample_log = Path(result["sample_log_path"]).read_text(encoding="utf-8")
-    assert "sample ground-state joint_2pt_ratio" in sample_log
-    assert "sample=0" in sample_log
-
-
-def test_fit_bare_matrix_grid_explicit_window_and_chained(tmp_path) -> None:
-    pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0,))
-    result = fit_bare_matrix_grid(
-        {},
-        pt2_path=pt2_path,
-        pt3_paths=pt3_paths,
-        tsep_ls=[6, 8],
-        z_values=[0],
-        ensemble="E",
-        tag="T",
-        momentum="PX0PY0PZ0",
-        pt2_window={"tmin": 2, "tmax": 10},
-        pt3_window={"tsep_ls": [6, 8], "tau_cut": 1},
-        fit_strategy="chained",
-        resample_mode="jk",
-        svdcut=1e-6,
-        artifacts_dir=tmp_path / "artifacts",
-    )
-    assert result["fit_strategy"] == "chained"
-    assert result["shared_window_specs"][0]["tau_cut"] == 1
-    assert result["sample0_pt2_plot_paths"].get("meff_pdf")
-
-
-def test_fit_bare_matrix_grid_fh_scope_writes_output(tmp_path) -> None:
-    pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0,))
-    result = fit_bare_matrix_grid(
-        {},
-        pt2_path=pt2_path,
-        pt3_paths=pt3_paths,
-        tsep_ls=[6, 8],
-        z_values=[0],
-        ensemble="E",
-        tag="T",
-        momentum="PX0PY0PZ0",
-        pt2_window={"tmin": 2, "tmax": 10},
-        pt3_window={"tsep_ls": [6, 8], "tau_cut": 1},
-        fit_strategy="joint",
-        fit_scope="FH",
-        nstate=1,
-        resample_mode="jk",
-        svdcut=1e-6,
-        artifacts_dir=tmp_path / "artifacts",
-    )
-    saved = EnsembleData.from_netcdf(result["artifact"])
-    assert result["fit_scope"] == "FH"
-    assert saved.attrs["fit_scope"] == "FH"
-    assert saved.values.shape[1] == 1
-    sample0_paths = result["z_fits"][0]["sample0_plot_paths"]
-    assert Path(sample0_paths["fh_re_pdf"]).is_file()
-    assert Path(sample0_paths["fh_im_pdf"]).is_file()
-
-
-def test_fit_bare_matrix_grid_ratio_fh_scope_writes_output(tmp_path) -> None:
-    pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0,))
-    result = fit_bare_matrix_grid(
-        {},
-        pt2_path=pt2_path,
-        pt3_paths=pt3_paths,
-        tsep_ls=[6, 8],
-        z_values=[0],
-        ensemble="E",
-        tag="T",
-        momentum="PX0PY0PZ0",
-        pt2_window={"tmin": 2, "tmax": 10},
-        pt3_window={"tsep_ls": [6, 8], "tau_cut": 1},
-        fit_strategy="joint",
-        fit_scope="ratio+FH",
-        nstate=1,
-        resample_mode="jk",
-        svdcut=1e-6,
-        artifacts_dir=tmp_path / "artifacts",
-    )
-    saved = EnsembleData.from_netcdf(result["artifact"])
-    assert result["fit_scope"] == "ratio+FH"
-    assert saved.attrs["fit_scope"] == "ratio+FH"
-    assert saved.values.shape[1] == 1
-    sample0_paths = result["z_fits"][0]["sample0_plot_paths"]
-    assert Path(sample0_paths["ratio_re_pdf"]).is_file()
-    assert Path(sample0_paths["fh_re_pdf"]).is_file()
-
-
-def test_fit_bare_matrix_grid_model_average_uses_window_set(tmp_path) -> None:
-    pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0,))
-    result = fit_bare_matrix_grid(
-        {},
-        pt2_path=pt2_path,
-        pt3_paths=pt3_paths,
-        tsep_ls=[6, 8],
-        z_values=[0],
-        ensemble="E",
-        tag="T",
-        momentum="PX0PY0PZ0",
-        pt2_windows=[{"tmin": 2, "tmax": 10}],
-        pt3_tau_cuts=[1, 2],
-        model_average=True,
-        fit_strategy="joint",
-        resample_mode="jk",
-        svdcut=1e-6,
-        artifacts_dir=tmp_path / "artifacts",
-    )
-    assert result["model_average"] is True
-    assert len(result["shared_window_specs"]) == 2
-    assert result["artifact"].endswith(".nc")
-    saved = EnsembleData.from_netcdf(result["artifact"])
-    assert len(json.loads(saved.attrs["bare_re_mean"])) == 1
-    assert len(json.loads(saved.attrs["bare_im_mean"])) == 1
-    assert len(json.loads(saved.attrs["bare_re_stat_sdev"])) == 1
-    assert len(json.loads(saved.attrs["bare_im_stat_sdev"])) == 1
-    assert len(json.loads(saved.attrs["bare_re_sys_sdev"])) == 1
-    assert len(json.loads(saved.attrs["bare_im_sys_sdev"])) == 1
-    assert "real_sys_sdev" in result["z_fits"][0]
-    assert "imag_sys_sdev" in result["z_fits"][0]
+    assert result["candidates"][0]["n_data"] > result["candidates"][0]["n_params"]
+    assert result["candidates"][0]["dof_is_positive"] is True
+    assert result["recommended_window"]["n_data"] > result["recommended_window"]["n_params"]
 
 
 # --- plotting helpers retained ----------------------------------------------

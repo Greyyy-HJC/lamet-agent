@@ -106,23 +106,30 @@ def _window_text(result: dict[str, Any], *, language: str) -> list[str]:
     if not isinstance(specs, list):
         specs = [specs]
     lines = [
-        "| scope | strategy | nstate | pt2 window | pt3 window |"
+        "| scope | strategy | nstate | pt2 window | pt3 window | n_data | n_params |"
         if language == "en"
-        else "| 拟合对象 | 策略 | nstate | 2pt 窗口 | 3pt 窗口 |",
-        "|---|---|---:|---|---|",
+        else "| 拟合对象 | 策略 | nstate | 2pt 窗口 | 3pt 窗口 | n_data | n_params |",
+        "|---|---|---:|---|---|---:|---:|",
     ]
     for spec in specs:
         if not isinstance(spec, dict):
             continue
+        pt2_window = spec.get("pt2_window", f"[{spec.get('tmin', 'n/a')},{spec.get('tmax', 'n/a')})")
+        pt3_window = spec.get(
+            "pt3_window",
+            f"tsep={_fmt_list(spec.get('tsep_ls', []))}, tau_cut={spec.get('tau_cut', 'n/a')}",
+        )
         lines.append(
             f"| `{spec.get('fit_scope', spec.get('scope', 'n/a'))}` | "
             f"`{spec.get('fit_strategy', spec.get('strategy', 'n/a'))}` | "
             f"{spec.get('nstate', 'n/a')} | "
-            f"{spec.get('pt2_window', 'n/a')} | "
-            f"{spec.get('pt3_window', 'n/a')} |"
+            f"{pt2_window} | "
+            f"{pt3_window} | "
+            f"{spec.get('n_data', 'n/a')} | "
+            f"{spec.get('n_params', 'n/a')} |"
         )
     if len(lines) == 2:
-        lines.append("| n/a | n/a | n/a | n/a | n/a |")
+        lines.append("| n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
     return lines
 
 
