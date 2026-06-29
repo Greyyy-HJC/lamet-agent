@@ -831,6 +831,35 @@ def _loggbf_weights(records: list[dict[str, Any]]) -> np.ndarray:
     return weights / np.sum(weights)
 
 
+DEFAULT_PRIOR_WIDTH = [0.5, 1.0, 2.0]
+
+
+def _normalise_prior_width(prior_width: float | list[float] | tuple[float, ...] | None) -> list[float]:
+    """Return positive prior-width factors for fit-function scans."""
+    if prior_width is None:
+        values = DEFAULT_PRIOR_WIDTH
+    elif isinstance(prior_width, (list, tuple)):
+        values = list(prior_width)
+    else:
+        values = [prior_width]
+    widths = [float(value) for value in values]
+    if not widths:
+        raise ValueError("prior_width must contain at least one value")
+    if any((not np.isfinite(width)) or width <= 0.0 for width in widths):
+        raise ValueError(f"prior_width values must be positive and finite, got {prior_width!r}")
+    return widths
+
+
+def _vary_prior_width(prior: gv.BufferDict, prior_width: float) -> gv.BufferDict:
+    """Copy a prior while multiplying every parameter width by ``prior_width``."""
+    width = float(prior_width)
+    varied = gv.BufferDict()
+    for key in prior:
+        value = prior[key]
+        varied[key] = gv.gvar(gv.mean(value), gv.sdev(value) * width)
+    return varied
+
+
 def bayesian_average(values: np.ndarray, weights: np.ndarray) -> gv.GVar:
     """Combine fit values with statistical and systematic spread (BMA)."""
     mean = np.sum(weights * gv.mean(values))
@@ -853,6 +882,98 @@ def _weighted_model_sdev(values: np.ndarray, weights: np.ndarray, *, center: flo
     wgt = wgt / total
     avg = float(np.sum(wgt * vals)) if center is None else float(center)
     return float(np.sqrt(np.sum(wgt * (vals - avg) ** 2)))
+
+
+DATA_WINDOW_CHI2_DOF_TOLERANCE = 0.25
+
+
+def _prior_parameter_count(prior: gv.BufferDict) -> int:
+    """Count scalar fit parameters represented by a prior BufferDict."""
+    return int(sum(np.size(gv.mean(prior[key])) for key in prior))
+
+
+def _ratio_data_count(tsep_ls: list[int], tau_cut: int) -> int:
+    """Count 3pt ratio tau points before real/imag component expansion."""
+    count = 0
+    for tsep in tsep_ls:
+        count += max(int(tsep) + 1 - 2 * int(tau_cut), 0)
+    return int(count)
+
+
+def _fit_data_count(
+    spec: dict[str, Any],
+    *,
+    strategy: str,
+    fit_scope: str,
+    part: str,
+    fitting_form: str,
+) -> int:
+    """Count data points implied by a correlator fit window."""
+    components = len(_parts(part))
+    pt2_points = max(int(spec["tmax"]) - int(spec["tmin"]), 0)
+    ratio_points = _ratio_data_count([int(t) for t in spec["tsep_ls"]], int(spec["tau_cut"]))
+    fh_points = max(len(spec["tsep_ls"]) - 1, 0)
+
+    total = 0
+    if strategy == "joint":
+        total += pt2_points * (2 if fitting_form == "NonBreit" else 1)
+    if fit_scope in {"ratio", "ratio+FH"}:
+        total += ratio_points * components
+    if "FH" in fit_scope:
+        total += fh_points * components
+    return int(total)
+
+
+def _with_fit_size_metadata(
+    metadata: dict[str, Any],
+    *,
+    n_data: int,
+    n_params: int,
+) -> dict[str, Any]:
+    """Attach determinedness metadata used by data-window selection."""
+    return {
+        **metadata,
+        "n_data": int(n_data),
+        "n_params": int(n_params),
+        "dof_is_positive": int(n_data) > int(n_params),
+    }
+
+
+def select_data_window(
+    records: list[dict[str, Any]],
+    *,
+    q_min: float = 0.05,
+    chi2_dof_tolerance: float = DATA_WINDOW_CHI2_DOF_TOLERANCE,
+) -> tuple[int, bool]:
+    """Select a data window without comparing raw logGBF across data sets."""
+    if not records:
+        raise ValueError("no fit windows to select from")
+    overdetermined = [
+        i
+        for i, rec in enumerate(records)
+        if int(rec.get("n_data", 0)) > int(rec.get("n_params", 0))
+        and np.isfinite(float(rec.get("chi2_dof", np.inf)))
+    ]
+    if not overdetermined:
+        raise ValueError("no overdetermined fit windows to select from")
+
+    passing = [i for i in overdetermined if float(records[i]["Q"]) >= q_min]
+    candidate_indices = passing or overdetermined
+    fallback = not bool(passing)
+    best_chi2 = min(float(records[i]["chi2_dof"]) for i in candidate_indices)
+    comparable = [
+        i
+        for i in candidate_indices
+        if float(records[i]["chi2_dof"]) <= best_chi2 + float(chi2_dof_tolerance)
+    ]
+    return max(
+        comparable,
+        key=lambda i: (
+            int(records[i]["n_data"]),
+            -float(records[i]["chi2_dof"]),
+            float(records[i]["Q"]),
+        ),
+    ), fallback
 
 
 def _fit_usable(
@@ -879,13 +1000,13 @@ def _fit_usable(
 
 
 def _scaled_prior(
-    fit: lsf.nonlinear_fit, template: gv.BufferDict, *, error_scale: float
+    fit: lsf.nonlinear_fit, template: gv.BufferDict, *, error_scale: float, prior_width: float = 1.0
 ) -> gv.BufferDict:
     """Use a fit posterior as a prior with inflated uncertainties."""
     prior = gv.BufferDict()
     for key in template:
         value = fit.p[key] if key in fit.p else template[key]
-        prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * error_scale)
+        prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * error_scale * float(prior_width))
     return prior
 
 
@@ -968,6 +1089,12 @@ def _scope_prior_template(fitting_form: str, nstate: int, fit_scope: str, strate
     raise ValueError(f"unsupported fit_scope {fit_scope!r}")
 
 
+def _scope_prior_with_width(
+    fitting_form: str, nstate: int, fit_scope: str, strategy: str, prior_width: float
+) -> gv.BufferDict:
+    return _vary_prior_width(_scope_prior_template(fitting_form, nstate, fit_scope, strategy), prior_width)
+
+
 def _fit_summary(rec: dict[str, Any], *, fallback: bool, index: int) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "index": index,
@@ -976,7 +1103,20 @@ def _fit_summary(rec: dict[str, Any], *, fallback: bool, index: int) -> dict[str
         "logGBF": float(rec["logGBF"]),
         "fallback_no_q_passing": bool(fallback),
     }
-    for key in ("tmin", "tmax", "tsep_ls", "tau_cut", "nstate", "part", "fit_scope", "correlator_rescale"):
+    for key in (
+        "tmin",
+        "tmax",
+        "tsep_ls",
+        "tau_cut",
+        "nstate",
+        "prior_width",
+        "part",
+        "fit_scope",
+        "correlator_rescale",
+        "n_data",
+        "n_params",
+        "dof_is_positive",
+    ):
         if key in rec:
             summary[key] = rec[key]
     fit = rec.get("fit")
@@ -1629,9 +1769,10 @@ def _fit_average(
     svdcut: float,
     scale: float,
     fitting_form: str,
+    prior_width: float = 1.0,
 ) -> lsf.nonlinear_fit:
     """Fit one candidate window on sample-average data for the chosen strategy."""
-    template = _scope_prior_template(fitting_form, nstate, fit_scope, strategy)
+    template = _scope_prior_with_width(fitting_form, nstate, fit_scope, strategy, prior_width)
     fh_re = fh_im = None
     if "FH" in fit_scope:
         fh_re, fh_im = _fh_samples_from_ratios(ratio_re, ratio_im, spec["tsep_ls"], spec["tau_cut"])
@@ -1702,25 +1843,46 @@ def _scan_average(
     svdcut: float,
     scale: float,
     fitting_form: str,
+    prior_width: float = 1.0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Fit every candidate window on sample-average data; drop unusable posteriors."""
-    template = _scope_prior_template(fitting_form, nstate, fit_scope, strategy)
+    template = _scope_prior_with_width(fitting_form, nstate, fit_scope, strategy, prior_width)
+    n_params = _prior_parameter_count(template)
     records: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     for spec in specs:
+        n_data = _fit_data_count(
+            spec,
+            strategy=strategy,
+            fit_scope=fit_scope,
+            part=part,
+            fitting_form=fitting_form,
+        )
+        size_metadata = _with_fit_size_metadata(spec, n_data=n_data, n_params=n_params)
         try:
             fit = _fit_average(
                 spec, strategy=strategy, fit_scope=fit_scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
                 ratio_re=ratio_re, ratio_im=ratio_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
                 Lt=Lt, nstate=nstate, part=part, svdcut=svdcut, scale=scale, fitting_form=fitting_form,
+                prior_width=prior_width,
             )
             usable, reason = _fit_usable(fit, template)
             if not usable:
-                rejected.append({**spec, "reason": reason})
+                rejected.append({**size_metadata, "nstate": nstate, "prior_width": prior_width, "reason": reason})
                 continue
-            records.append(_record(fit, nstate=nstate, part=part, fit_scope=fit_scope, correlator_rescale=scale, **spec))
+            records.append(
+                _record(
+                    fit,
+                    nstate=nstate,
+                    prior_width=float(prior_width),
+                    part=part,
+                    fit_scope=fit_scope,
+                    correlator_rescale=scale,
+                    **size_metadata,
+                )
+            )
         except Exception as exc:
-            rejected.append({**spec, "reason": str(exc)})
+            rejected.append({**size_metadata, "nstate": nstate, "prior_width": prior_width, "reason": str(exc)})
     return records, rejected
 
 
@@ -1772,6 +1934,7 @@ def tune_bare_matrix(
     nstate_values: list[int] | None = None,
     fit_strategy: str | None = None,
     nstate: int | None = None,
+    prior_width: float | list[float] | None = None,
     svdcut: float = 1e-2,
     correlator_rescale: float = 1.0,
     resample_mode: str = "jk",
@@ -1833,6 +1996,7 @@ def tune_bare_matrix(
     strategies = fit_strategies or ([fit_strategy] if fit_strategy is not None else ["joint"])
     scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["ratio"])
     states = nstate_values or ([nstate] if nstate is not None else [2])
+    prior_widths = _normalise_prior_width(prior_width)
     for strategy_value in strategies:
         strategy, _ = _normalise_strategy(strategy_value)
         for scope_value in scopes:
@@ -1843,62 +2007,93 @@ def tune_bare_matrix(
                 if "FH" in scope and nstate_int > 2:
                     rejected.append({"fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int, "reason": "FH fits currently support nstate <= 2"})
                     continue
-                pt2_best = None
-                pt2_f_best = None
-                if strategy == "chained":
-                    pt2_records: list[dict[str, Any]] = []
-                    pt2_f_records: list[dict[str, Any]] = []
-                    for window in pt2_window_specs:
-                        try:
-                            fit = fit_two_point(
-                                pt2_gv, window["tmin"], window["tmax"], Lt,
-                                nstate=nstate_int, svdcut=svdcut, rescale=scale,
-                            )
-                            pt2_records.append(
-                                _record(fit, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate_int, correlator_rescale=scale)
-                            )
-                        except Exception as exc:
-                            rejected.append({**window, "fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int, "reason": str(exc)})
-                        if form == "NonBreit" and pt2_f_gv is not None:
+                for prior_width_value in prior_widths:
+                    pt2_best = None
+                    pt2_f_best = None
+                    if strategy == "chained":
+                        pt2_records: list[dict[str, Any]] = []
+                        pt2_f_records: list[dict[str, Any]] = []
+                        pt2_prior_template = _vary_prior_width(pt2_prior(nstate_int), prior_width_value)
+                        for window in pt2_window_specs:
                             try:
-                                fit_f = fit_two_point(
-                                    pt2_f_gv, window["tmin"], window["tmax"], Lt,
-                                    nstate=nstate_int, svdcut=svdcut, rescale=scale,
+                                fit = fit_two_point(
+                                    pt2_gv, window["tmin"], window["tmax"], Lt,
+                                    nstate=nstate_int, svdcut=svdcut, rescale=scale, prior=pt2_prior_template,
                                 )
-                                pt2_f_records.append(
-                                    _record(fit_f, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate_int, correlator_rescale=scale)
+                                pt2_records.append(
+                                    _record(
+                                        fit,
+                                        tmin=window["tmin"],
+                                        tmax=window["tmax"],
+                                        nstate=nstate_int,
+                                        prior_width=prior_width_value,
+                                        correlator_rescale=scale,
+                                    )
                                 )
                             except Exception as exc:
-                                rejected.append({**window, "fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int, "reason": str(exc)})
-                    if not pt2_records:
-                        continue
-                    pt2_best = pt2_records[select_best(pt2_records, q_min=q_min)[0]]
-                    if form == "NonBreit":
-                        if not pt2_f_records:
+                                rejected.append({
+                                    **window,
+                                    "fit_strategy": strategy,
+                                    "fit_scope": scope,
+                                    "nstate": nstate_int,
+                                    "prior_width": prior_width_value,
+                                    "reason": str(exc),
+                                })
+                            if form == "NonBreit" and pt2_f_gv is not None:
+                                try:
+                                    fit_f = fit_two_point(
+                                        pt2_f_gv, window["tmin"], window["tmax"], Lt,
+                                        nstate=nstate_int, svdcut=svdcut, rescale=scale, prior=pt2_prior_template,
+                                    )
+                                    pt2_f_records.append(
+                                        _record(
+                                            fit_f,
+                                            tmin=window["tmin"],
+                                            tmax=window["tmax"],
+                                            nstate=nstate_int,
+                                            prior_width=prior_width_value,
+                                            correlator_rescale=scale,
+                                        )
+                                    )
+                                except Exception as exc:
+                                    rejected.append({
+                                        **window,
+                                        "fit_strategy": strategy,
+                                        "fit_scope": scope,
+                                        "nstate": nstate_int,
+                                        "prior_width": prior_width_value,
+                                        "reason": str(exc),
+                                    })
+                        if not pt2_records:
                             continue
-                        pt2_f_best = pt2_f_records[select_best(pt2_f_records, q_min=q_min)[0]]
+                        pt2_best = pt2_records[select_best(pt2_records, q_min=q_min)[0]]
+                        if form == "NonBreit":
+                            if not pt2_f_records:
+                                continue
+                            pt2_f_best = pt2_f_records[select_best(pt2_f_records, q_min=q_min)[0]]
 
-                specs = _candidate_specs(
-                    strategy=strategy,
-                    pt2_window_specs=pt2_window_specs,
-                    pt3_window_specs=pt3_window_specs,
-                    pt2_best=pt2_best,
-                )
-                found, failed = _scan_average(
-                    specs, strategy=strategy, fit_scope=scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
-                    ratio_re=ratio_re, ratio_im=ratio_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
-                    Lt=Lt, nstate=nstate_int, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
-                )
-                for rec in found:
-                    rec["fit_strategy"] = strategy
-                    rec["fit_scope"] = scope
-                records.extend(found)
-                rejected.extend({**item, "fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int} for item in failed)
+                    specs = _candidate_specs(
+                        strategy=strategy,
+                        pt2_window_specs=pt2_window_specs,
+                        pt3_window_specs=pt3_window_specs,
+                        pt2_best=pt2_best,
+                    )
+                    found, failed = _scan_average(
+                        specs, strategy=strategy, fit_scope=scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
+                        ratio_re=ratio_re, ratio_im=ratio_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
+                        Lt=Lt, nstate=nstate_int, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
+                        prior_width=prior_width_value,
+                    )
+                    for rec in found:
+                        rec["fit_strategy"] = strategy
+                        rec["fit_scope"] = scope
+                    records.extend(found)
+                    rejected.extend({**item, "fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int} for item in failed)
     if not records:
         raise ValueError("all bare-matrix tuning windows failed: " + "; ".join(str(item) for item in rejected[:5]))
     store[out] = records
 
-    best_index, fallback = select_best(records, q_min=q_min)
+    best_index, fallback = select_data_window(records, q_min=q_min)
     best = records[best_index]
 
     candidates = []
@@ -1909,6 +2104,7 @@ def tune_bare_matrix(
             "fit_strategy": rec["fit_strategy"],
             "fit_scope": rec["fit_scope"],
             "nstate": rec["nstate"],
+            "prior_width": rec["prior_width"],
             "tmin": rec["tmin"],
             "tmax": rec["tmax"],
             "tsep_ls": rec["tsep_ls"],
@@ -1916,6 +2112,9 @@ def tune_bare_matrix(
             "Q": rec["Q"],
             "chi2_dof": rec["chi2_dof"],
             "logGBF": rec["logGBF"],
+            "n_data": rec["n_data"],
+            "n_params": rec["n_params"],
+            "dof_is_positive": rec["dof_is_positive"],
             "bare_re": str(_bare_matrix_element_from_fit(p, part="re", fitting_form=form)),
             "bare_im": str(_bare_matrix_element_from_fit(p, part="im", fitting_form=form)),
         }
@@ -1928,6 +2127,7 @@ def tune_bare_matrix(
         "fit_strategies": strategies,
         "fit_scopes": scopes,
         "nstate_values": states,
+        "prior_width": prior_widths,
         "tune_z": int(tune_z),
         "Lt": int(Lt),
         "n_cfg": int(n_cfg),
@@ -2060,7 +2260,9 @@ def fit_bare_matrix_grid(
     tune_z: int | None = None,
     fit_strategy: str = "joint",
     fit_scope: str = "ratio",
-    nstate: int = 2,
+    nstate: int | list[int] = 2,
+    nstate_values: list[int] | None = None,
+    prior_width: float | list[float] | None = None,
     resample_mode: str = "bs",
     n_boot: int = 200,
     seed: int | None = 1984,
@@ -2079,19 +2281,25 @@ def fit_bare_matrix_grid(
     artifacts_dir: str | Path | None = None,
     out: str = "bare_matrix_grid",
 ) -> dict[str, Any]:
-    """Apply one shared fit setting to all samples and z, then export bare matrix elements.
+    """Apply one shared window to all samples and z, then export bare matrix elements.
 
-    The shared setting is tuned once on sample-average data (for ``tune_z``) and used
-    for every z and every resampled sample. Pass an explicit ``pt2_window`` /
-    ``pt3_window`` to fix it, or ``model_average=True`` to BMA-combine the window grid.
+    Window/tau-cut choices are tuned once on sample-average data (for ``tune_z``)
+    and used for every z and every resampled sample. ``model_average=True`` varies
+    fit-function choices (nstate and prior_width) within that fixed data window.
     """
     del out
     form = _normalise_fitting_form(fitting_form)
     strategy, _ = _normalise_strategy(fit_strategy)
     scope, scope_label = _normalise_fit_scope(fit_scope)
     _validate_scope_form(scope, form)
-    if "FH" in scope and int(nstate) > 2:
+    raw_states = nstate_values if nstate_values is not None else (nstate if isinstance(nstate, list) else [nstate])
+    fit_nstates = [int(value) for value in raw_states]
+    if not fit_nstates:
+        raise ValueError("nstate_values must contain at least one value")
+    if "FH" in scope and any(value > 2 for value in fit_nstates):
         raise ValueError("FH fits currently support nstate <= 2")
+    primary_nstate = fit_nstates[0]
+    prior_widths = _normalise_prior_width(prior_width)
     fit_mode = _fit_mode_label(strategy, scope_label)
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
@@ -2134,6 +2342,10 @@ def fit_bare_matrix_grid(
         pt2_f_gv = samples_to_gvar(pt2_f_samples, mode=mode)
     n_samples = int(pt2_samples.shape[0])
     pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=Lt)
+    if pt2_window is not None:
+        explicit_pt2_spec = {"tmin": int(pt2_window["tmin"]), "tmax": int(pt2_window["tmax"])}
+        if explicit_pt2_spec not in pt2_window_specs:
+            pt2_window_specs = [explicit_pt2_spec, *pt2_window_specs]
     pt3_window_specs = _normalise_pt3_windows(pt3_windows, tsep_ls=tseps, tau_cuts=pt3_tau_cuts)
     tuning_logger.info("Lt=%s n_cfg=%s mode=%s n_samples=%s", Lt, n_cfg, mode, n_samples)
 
@@ -2167,35 +2379,82 @@ def fit_bare_matrix_grid(
     if strategy == "chained":
         pt2_records: list[dict[str, Any]] = []
         pt2_f_records: list[dict[str, Any]] = []
+        pt2_prior_template = _vary_prior_width(pt2_prior(primary_nstate), 1.0)
+        pt2_n_params = _prior_parameter_count(pt2_prior_template)
         for window in pt2_window_specs:
+            pt2_size_metadata = _with_fit_size_metadata(
+                window,
+                n_data=max(int(window["tmax"]) - int(window["tmin"]), 0),
+                n_params=pt2_n_params,
+            )
             try:
-                fit = fit_two_point(pt2_gv, window["tmin"], window["tmax"], Lt, nstate=nstate, svdcut=svdcut, rescale=scale)
-                pt2_records.append(_record(fit, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate, correlator_rescale=scale))
+                fit = fit_two_point(
+                    pt2_gv, window["tmin"], window["tmax"], Lt,
+                    nstate=primary_nstate, svdcut=svdcut, rescale=scale, prior=pt2_prior_template,
+                )
+                pt2_records.append(
+                    _record(
+                        fit,
+                        nstate=primary_nstate,
+                        prior_width=1.0,
+                        correlator_rescale=scale,
+                        **pt2_size_metadata,
+                    )
+                )
             except Exception as exc:
                 tuning_logger.info("2pt window %s rejected: %s", window, exc)
             if form == "NonBreit" and pt2_f_gv is not None:
                 try:
-                    fit_f = fit_two_point(pt2_f_gv, window["tmin"], window["tmax"], Lt, nstate=nstate, svdcut=svdcut, rescale=scale)
-                    pt2_f_records.append(_record(fit_f, tmin=window["tmin"], tmax=window["tmax"], nstate=nstate, correlator_rescale=scale))
+                    fit_f = fit_two_point(
+                        pt2_f_gv, window["tmin"], window["tmax"], Lt,
+                        nstate=primary_nstate, svdcut=svdcut, rescale=scale, prior=pt2_prior_template,
+                    )
+                    pt2_f_records.append(
+                        _record(
+                            fit_f,
+                            nstate=primary_nstate,
+                            prior_width=1.0,
+                            correlator_rescale=scale,
+                            **pt2_size_metadata,
+                        )
+                    )
                 except Exception as exc:
                     tuning_logger.info("final 2pt window %s rejected: %s", window, exc)
+        pt2_window_matched = False
         if pt2_window is not None:
-            pt2_records = [
+            matching_pt2_records = [
                 rec for rec in pt2_records
                 if rec["tmin"] == int(pt2_window["tmin"]) and rec["tmax"] == int(pt2_window["tmax"])
-            ] or pt2_records
-        pt2_best_index, pt2_fallback = select_best(pt2_records, q_min=q_min)
+            ]
+            if matching_pt2_records:
+                pt2_records = matching_pt2_records
+                pt2_window_matched = True
+        if pt2_window_matched:
+            pt2_best_index, pt2_fallback = 0, False
+        else:
+            pt2_best_index, pt2_fallback = select_data_window(pt2_records, q_min=q_min)
         pt2_best = pt2_records[pt2_best_index]
         if form == "NonBreit":
-            pt2_f_best_index, _ = select_best(pt2_f_records, q_min=q_min)
+            if pt2_window_matched:
+                pt2_f_records = [
+                    rec for rec in pt2_f_records
+                    if rec["tmin"] == int(pt2_window["tmin"]) and rec["tmax"] == int(pt2_window["tmax"])
+                ] or pt2_f_records
+                pt2_f_best_index = 0
+            else:
+                pt2_f_best_index, _ = select_data_window(pt2_f_records, q_min=q_min)
             pt2_f_best = pt2_f_records[pt2_f_best_index]
         tuning_logger.info("selected 2pt window t=[%s,%s) Q=%.4g", pt2_best["tmin"], pt2_best["tmax"], pt2_best["Q"])
         try:
             pt2_sample0 = _recenter(pt2_samples[0], pt2_gv)
             rec0 = _record(
-                fit_two_point(pt2_sample0, pt2_best["tmin"], pt2_best["tmax"], Lt, nstate=nstate, svdcut=svdcut,
-                              rescale=scale, p0=_p0_from_fit(pt2_best["fit"], pt2_prior(nstate))),
-                tmin=pt2_best["tmin"], tmax=pt2_best["tmax"], nstate=nstate, correlator_rescale=scale,
+                fit_two_point(
+                    pt2_sample0, pt2_best["tmin"], pt2_best["tmax"], Lt,
+                    nstate=primary_nstate, svdcut=svdcut, rescale=scale,
+                    prior=pt2_prior_template, p0=_p0_from_fit(pt2_best["fit"], pt2_prior_template),
+                ),
+                tmin=pt2_best["tmin"], tmax=pt2_best["tmax"], nstate=primary_nstate, prior_width=1.0,
+                correlator_rescale=scale,
             )
             sample0_pt2_paths = _plot_sample0_pt2(
                 pt2_sample=pt2_sample0, rec=rec0, Lt=Lt, log_dir=fit_log_dir, momentum=momentum, fit_label="chained_fit"
@@ -2209,7 +2468,7 @@ def fit_bare_matrix_grid(
         strategy=strategy, pt2_window_specs=pt2_window_specs, pt3_window_specs=pt3_window_specs, pt2_best=pt2_best
     )
     explicit_spec = None
-    if not model_average and pt3_window is not None:
+    if pt3_window is not None:
         tmin = int(pt2_window["tmin"]) if pt2_window is not None else (pt2_best["tmin"] if pt2_best else pt2_window_specs[0]["tmin"])
         tmax = int(pt2_window["tmax"]) if pt2_window is not None else (pt2_best["tmax"] if pt2_best else pt2_window_specs[0]["tmax"])
         explicit_spec = {
@@ -2218,28 +2477,50 @@ def fit_bare_matrix_grid(
             "tsep_ls": [int(t) for t in pt3_window.get("tsep_ls", tseps)],
             "tau_cut": int(pt3_window["tau_cut"]),
         }
+        explicit_template = _scope_prior_with_width(form, primary_nstate, scope, strategy, 1.0)
+        explicit_spec = _with_fit_size_metadata(
+            explicit_spec,
+            n_data=_fit_data_count(
+                explicit_spec,
+                strategy=strategy,
+                fit_scope=scope,
+                part=part,
+                fitting_form=form,
+            ),
+            n_params=_prior_parameter_count(explicit_template),
+        )
 
-    if model_average:
-        shared_specs = candidate_specs
-        selection_rule = "model average: BMA over the shared window grid with per-z logGBF weights"
-    elif explicit_spec is not None:
+    if explicit_spec is not None:
         shared_specs = [explicit_spec]
         selection_rule = "single fixed window provided by the agent"
     else:
         tune_records, _ = _scan_average(
             candidate_specs, strategy=strategy, fit_scope=scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
             ratio_re=tune_gv_re, ratio_im=tune_gv_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
-            Lt=Lt, nstate=nstate, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
+            Lt=Lt, nstate=primary_nstate, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
+            prior_width=1.0,
         )
         if not tune_records:
             raise ValueError("all shared-window tuning fits failed on tune_z")
-        best_index, fallback = select_best(tune_records, q_min=q_min)
+        best_index, fallback = select_data_window(tune_records, q_min=q_min)
         chosen = tune_records[best_index]
-        shared_specs = [{"tmin": chosen["tmin"], "tmax": chosen["tmax"], "tsep_ls": chosen["tsep_ls"], "tau_cut": chosen["tau_cut"]}]
-        selection_rule = f"auto-selected single window on z={tune_z_value} (fallback_no_q_passing={fallback})"
+        shared_specs = [
+            {
+                "tmin": chosen["tmin"],
+                "tmax": chosen["tmax"],
+                "tsep_ls": chosen["tsep_ls"],
+                "tau_cut": chosen["tau_cut"],
+                "n_data": chosen["n_data"],
+                "n_params": chosen["n_params"],
+                "dof_is_positive": chosen["dof_is_positive"],
+            }
+        ]
+        selection_rule = (
+            f"auto-selected single data window on z={tune_z_value} "
+            f"(Q>={q_min}, n_data>n_params, fallback_no_q_passing={fallback}, "
+            f"chi2_dof_tolerance={DATA_WINDOW_CHI2_DOF_TOLERANCE})"
+        )
     tuning_logger.info("shared setting (%s): %s", selection_rule, shared_specs)
-
-    template = _scope_prior_template(form, nstate, scope, strategy)
     z_records: list[dict[str, Any]] = []
     z_report: list[dict[str, Any]] = []
 
@@ -2250,21 +2531,39 @@ def fit_bare_matrix_grid(
         else:
             samples_re, samples_im, gv_re, gv_im = read_ratios(z)
 
-        avg_records, rejected = _scan_average(
-            shared_specs, strategy=strategy, fit_scope=scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
-            ratio_re=gv_re, ratio_im=gv_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
-            Lt=Lt, nstate=nstate, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
-        )
-        if not avg_records:
+        candidate_records: list[dict[str, Any]] = []
+        rejected: list[dict[str, Any]] = []
+        for nstate_value in fit_nstates:
+            for prior_width_value in prior_widths:
+                found, failed = _scan_average(
+                    shared_specs, strategy=strategy, fit_scope=scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
+                    ratio_re=gv_re, ratio_im=gv_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
+                    Lt=Lt, nstate=nstate_value, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
+                    prior_width=prior_width_value,
+                )
+                candidate_records.extend(found)
+                rejected.extend(failed)
+        if not candidate_records:
             raise ValueError(f"shared window failed on sample-average for z={z}: {rejected[:3]}")
-        # Effective specs track only the windows that produced a usable posterior.
-        eff_specs = [
-            {"tmin": rec["tmin"], "tmax": rec["tmax"], "tsep_ls": rec["tsep_ls"], "tau_cut": rec["tau_cut"]}
-            for rec in avg_records
+
+        best_avg_index, fallback = select_best(candidate_records, q_min=q_min)
+        selected_avg_record = candidate_records[best_avg_index]
+        avg_records = candidate_records if model_average else [selected_avg_record]
+        fit_model_candidates = [
+            {
+                "index": i,
+                "nstate": int(rec["nstate"]),
+                "prior_width": float(rec["prior_width"]),
+                "Q": float(rec["Q"]),
+                "chi2_dof": float(rec["chi2_dof"]),
+                "logGBF": float(rec["logGBF"]),
+                "n_data": int(rec["n_data"]),
+                "n_params": int(rec["n_params"]),
+                "dof_is_positive": bool(rec["dof_is_positive"]),
+            }
+            for i, rec in enumerate(candidate_records)
         ]
-        weights = _loggbf_weights(avg_records)
-        priors = [(_scaled_prior(rec["fit"], template, error_scale=posterior_prior_error_scale),
-                   _p0_from_fit(rec["fit"], template)) for rec in avg_records]
+        avg_weights = _loggbf_weights(avg_records)
         avg_re_vals = np.asarray(
             [float(gv.mean(_bare_matrix_element_from_fit(rec["fit"].p, part="re", fitting_form=form))) for rec in avg_records],
             dtype=float,
@@ -2273,14 +2572,33 @@ def fit_bare_matrix_grid(
             [float(gv.mean(_bare_matrix_element_from_fit(rec["fit"].p, part="im", fitting_form=form))) for rec in avg_records],
             dtype=float,
         )
-        avg_re_mean = float(np.sum(weights * avg_re_vals))
-        avg_im_mean = float(np.sum(weights * avg_im_vals))
-        real_sys_sdev = _weighted_model_sdev(avg_re_vals, weights, center=avg_re_mean)
-        imag_sys_sdev = _weighted_model_sdev(avg_im_vals, weights, center=avg_im_mean)
+        avg_re_mean = float(np.sum(avg_weights * avg_re_vals))
+        avg_im_mean = float(np.sum(avg_weights * avg_im_vals))
+        real_sys_sdev = _weighted_model_sdev(avg_re_vals, avg_weights, center=avg_re_mean) if model_average else 0.0
+        imag_sys_sdev = _weighted_model_sdev(avg_im_vals, avg_weights, center=avg_im_mean) if model_average else 0.0
+        templates = [
+            _scope_prior_with_width(form, int(rec["nstate"]), scope, strategy, float(rec["prior_width"]))
+            for rec in avg_records
+        ]
+        priors = [
+            (
+                _scaled_prior(
+                    rec["fit"],
+                    template,
+                    error_scale=posterior_prior_error_scale,
+                    prior_width=float(rec["prior_width"]),
+                ),
+                _p0_from_fit(rec["fit"], template),
+            )
+            for rec, template in zip(avg_records, templates)
+        ]
         for rec in avg_records:
             log_nonlinear_fit_quality(
                 rec["fit"], kind=f"sample-average {fit_mode}",
-                label=f"z={z} t=[{rec['tmin']},{rec['tmax']}) tau_cut={rec['tau_cut']}",
+                label=(
+                    f"z={z} t=[{rec['tmin']},{rec['tmax']}) tau_cut={rec['tau_cut']} "
+                    f"nstate={rec['nstate']} prior_width={rec['prior_width']}"
+                ),
                 logger=tuning_logger, q_min=q_min,
             )
 
@@ -2292,22 +2610,50 @@ def fit_bare_matrix_grid(
             strategy=strategy, fit_scope=scope, pt2_samples=pt2_samples, pt2_gv=pt2_gv,
             pt2_f_samples=pt2_f_samples, pt2_f_gv=pt2_f_gv,
             samples_re=samples_re, samples_im=samples_im,
-            ratio_re=gv_re, ratio_im=gv_im, tseps=tseps, Lt=Lt, nstate=nstate, part=part, svdcut=svdcut, scale=scale,
+            ratio_re=gv_re, ratio_im=gv_im, tseps=tseps, Lt=Lt, part=part, svdcut=svdcut, scale=scale,
             fitting_form=form,
         )
+        weight_sums = np.zeros(len(avg_records), dtype=float)
+        weight_counts = 0
         for sample_index in range(n_samples):
             try:
                 re_vals: list[float] = []
                 im_vals: list[float] = []
+                sample_records: list[dict[str, Any]] = []
                 first_fit = None
                 first_rre = first_rim = None
-                for (spec, (prior, p0)) in zip(eff_specs, priors):
-                    fit, rre, rim = _fit_one_sample(spec, sample_index, prior, p0, **common)
+                first_meta = None
+                for candidate_index, (rec, template, (prior, p0)) in enumerate(zip(avg_records, templates, priors)):
+                    spec = {"tmin": rec["tmin"], "tmax": rec["tmax"], "tsep_ls": rec["tsep_ls"], "tau_cut": rec["tau_cut"]}
+                    fit, rre, rim = _fit_one_sample(
+                        spec, sample_index, prior, p0, nstate=int(rec["nstate"]), **common
+                    )
+                    usable, reason = _fit_usable(fit, template)
+                    if not usable:
+                        if not model_average:
+                            raise ValueError(str(reason))
+                        sample_logger.info(
+                            "Rejected %s z=%s sample=%s nstate=%s prior_width=%s: %s",
+                            fit_mode, z, sample_index, rec["nstate"], rec["prior_width"], reason,
+                        )
+                        continue
+                    sample_record = _record(
+                        fit,
+                        candidate_index=candidate_index,
+                        nstate=int(rec["nstate"]),
+                        prior_width=float(rec["prior_width"]),
+                        part=part,
+                        fit_scope=scope,
+                        correlator_rescale=scale,
+                        **spec,
+                    )
+                    sample_records.append(sample_record)
                     log_nonlinear_fit_quality(
                         fit, kind=f"sample ground-state {fit_mode}",
                         label=(
                             f"z={z} sample={sample_index} t=[{spec['tmin']},{spec['tmax']}) "
-                            f"tseps={spec['tsep_ls']} tau_cut={spec['tau_cut']}"
+                            f"tseps={spec['tsep_ls']} tau_cut={spec['tau_cut']} "
+                            f"nstate={rec['nstate']} prior_width={rec['prior_width']}"
                         ),
                         logger=sample_logger, q_min=q_min,
                     )
@@ -2315,10 +2661,17 @@ def fit_bare_matrix_grid(
                     im_vals.append(float(gv.mean(_bare_matrix_element_from_fit(fit.p, part="im", fitting_form=form))))
                     if first_fit is None:
                         first_fit, first_rre, first_rim = fit, rre, rim
-                real_samples[sample_index] = float(np.sum(weights * np.array(re_vals)))
-                imag_samples[sample_index] = float(np.sum(weights * np.array(im_vals)))
+                        first_meta = {**spec, "nstate": int(rec["nstate"]), "prior_width": float(rec["prior_width"])}
+                if not sample_records:
+                    raise ValueError("all fit-function candidates failed")
+                sample_weights = _loggbf_weights(sample_records) if model_average else np.ones(1, dtype=float)
+                for weight, sample_record in zip(sample_weights, sample_records):
+                    weight_sums[int(sample_record["candidate_index"])] += float(weight)
+                weight_counts += 1
+                real_samples[sample_index] = float(np.sum(sample_weights * np.array(re_vals)))
+                imag_samples[sample_index] = float(np.sum(sample_weights * np.array(im_vals)))
                 if sample_index == 0:
-                    rec0 = _record(first_fit, **eff_specs[0], nstate=nstate, part=part, correlator_rescale=scale)
+                    rec0 = _record(first_fit, **first_meta, part=part, fit_scope=scope, correlator_rescale=scale)
                     if scope != "FH":
                         sample0_paths.update(_plot_sample0_ratio(
                             ratio_re=first_rre, ratio_im=first_rim, rec=rec0, Lt=Lt, log_dir=fit_log_dir,
@@ -2339,8 +2692,8 @@ def fit_bare_matrix_grid(
         imag_mean, imag_sdev = sample_mean_err(imag_samples, mode=mode)
         sample_logger.info("summary z=%s real=%s +/- %s imag=%s +/- %s failed=%s", z, real_mean, real_sdev, imag_mean, imag_sdev, len(failures))
 
-        best_avg_index, fallback = select_best(avg_records, q_min=q_min)
-        window_summary = _fit_summary(avg_records[best_avg_index], fallback=fallback, index=best_avg_index)
+        mean_weights = (weight_sums / weight_counts).tolist() if weight_counts else [float("nan")] * len(avg_records)
+        window_summary = _fit_summary(selected_avg_record, fallback=fallback, index=best_avg_index)
         z_records.append(
             {
                 "z": z,
@@ -2349,6 +2702,8 @@ def fit_bare_matrix_grid(
                 "real_sys_sdev": real_sys_sdev,
                 "imag_sys_sdev": imag_sys_sdev,
                 "window": window_summary,
+                "fit_model_candidates": fit_model_candidates,
+                "fit_model_weights": mean_weights,
                 "sample0_plot_paths": sample0_paths,
             }
         )
@@ -2357,6 +2712,10 @@ def fit_bare_matrix_grid(
                 "z": z,
                 "window": window_summary,
                 "rejected_windows": rejected,
+                "rejected_fit_models": rejected,
+                "fit_model_candidates": fit_model_candidates,
+                "fit_model_weights": mean_weights,
+                "selected_fit_model": window_summary,
                 "n_failed_samples": len(failures),
                 "sample_failures": failures[:10],
                 "real_sys_sdev": real_sys_sdev,
@@ -2385,6 +2744,8 @@ def fit_bare_matrix_grid(
                 "pz_out_gev": pz_out_gev,
                 "fitting_form": form,
                 "fit_scope": scope,
+                "nstate_values": json.dumps(fit_nstates),
+                "prior_width": json.dumps(prior_widths),
                 "momentum_out": final_momentum,
                 "pt3_momentum": three_point_momentum,
                 "hadron": hadron,
@@ -2404,6 +2765,8 @@ def fit_bare_matrix_grid(
         "fit_mode": fit_mode,
         "fitting_form": form,
         "model_average": model_average,
+        "nstate_values": fit_nstates,
+        "prior_width": prior_widths,
         "selection_rule": selection_rule,
         "shared_window_specs": shared_specs,
         "tuning_log_path": str(tuning_log_path),

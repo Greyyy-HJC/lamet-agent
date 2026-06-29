@@ -412,3 +412,15 @@
 - Moved ``m0_gev`` and ``delta_m_gev`` into ``scheme_parameters`` (GeV); updated GI/CG/sample manifests accordingly.
 - Fixed long-range exponent to use physical distance: ``exp((m0_gev + delta_m_gev) * (|z|_fm - z_s) / GEV_FM)``.
 - Updated renormalization reporting formula and unit tests for the corrected exponent scaling.
+
+## 2026-06-29 (Correlator fit-function model averaging)
+
+- Reworked correlator ``model_average`` semantics so data-window choices are fixed from sample-average tuning and model averaging varies fit-function choices only.
+- Added correlator ``prior_width`` scans with default factors ``[0.5, 1.0, 2.0]`` and documented the revised systematic-error meaning as fit-model spread.
+
+## 2026-06-29 (Correlator data-window selection)
+
+- Added explicit ``pt3_windows`` guidance to the sample manifest so tau-cut scans can use all selected tseps by default or opt into tsep subsets.
+- Split correlator data-window selection from fit-model selection: data windows now gate on ``Q`` and ``n_data > n_params``, then prefer low ``chi2/dof`` with a bias toward more data when fits are comparable.
+- Exposed data-window size metadata in tuning candidates and updated correlator prompts so the agent chooses windows from ``Q``/``n_data``-passing candidates without ranking different data windows by raw ``logGBF``.
+- Hardened correlator terminal-tool argument preparation so ``model_average=true`` preserves manifest ``nstate``/``prior_width`` scan lists even if the LLM proposes a single fit model, and normalized bare ``tmin``/``tmax``/``tau_cut`` shorthand into explicit window arguments.

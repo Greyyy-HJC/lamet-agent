@@ -29,7 +29,7 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
     assert args["momentum"] == "PX5PY0PZ0"
     assert args["tsep_ls"] == [8, 10, 12]
     assert args["z_values"] == list(range(25))
-    assert args["nstate_values"] == [2]
+    assert args["nstate_values"] == effective["nstate"]
     assert args["fit_strategies"] == ["joint"]
     assert args["fit_scope_values"] == ["ratio"]
     assert args["pt3_paths"]["8"].endswith("_3pt_ts8.h5")
@@ -47,9 +47,52 @@ def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) 
     assert args["save_path"] == str(tmp_path / "ca_p0")
     assert args["job_id"] == "ca_p0"
     assert args["a_fm"] == 0.0574
-    assert args["nstate"] == 2
+    if manifest.stages["correlator_analysis"].defaults["model_average"]:
+        assert args["nstate_values"] == manifest.stages["correlator_analysis"].defaults["nstate"]
+        assert "nstate" not in args
+    else:
+        assert args["nstate"] == 2
     assert "fit_scope" not in args
-    assert args["model_average"] is False
+    assert args["model_average"] == manifest.stages["correlator_analysis"].defaults["model_average"]
+
+
+def test_prepare_correlator_terminal_args_pass_nstate_values_when_not_selected(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["correlator_analysis"].jobs[0]
+    args = prepare_tool_args(
+        "fit_bare_matrix_grid", {"fit_strategy": "joint"},
+        manifest=manifest, stage="correlator_analysis", job=job,
+        effective_params=manifest.stages["correlator_analysis"].defaults,
+        artifacts_dir=tmp_path,
+    )
+    assert args["nstate_values"] == manifest.stages["correlator_analysis"].defaults["nstate"]
+    assert "nstate" not in args
+
+
+def test_prepare_correlator_model_average_keeps_fit_function_scan(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["correlator_analysis"].jobs[0]
+    effective = {
+        **manifest.stages["correlator_analysis"].defaults,
+        "model_average": True,
+        "nstate": [2, 3],
+        "prior_width": [0.5, 1.0, 2.0],
+    }
+    args = prepare_tool_args(
+        "fit_bare_matrix_grid",
+        {"nstate": 2, "prior_width": 2.0, "tmin": 4, "tmax": 12, "tau_cut": 2},
+        manifest=manifest,
+        stage="correlator_analysis",
+        job=job,
+        effective_params=effective,
+        artifacts_dir=tmp_path,
+    )
+    assert args["model_average"] is True
+    assert args["nstate_values"] == [2, 3]
+    assert "nstate" not in args
+    assert args["prior_width"] == [0.5, 1.0, 2.0]
+    assert args["pt2_window"] == {"tmin": 4, "tmax": 12}
+    assert args["pt3_window"] == {"tsep_ls": [8, 10, 12], "tau_cut": 2}
 
 
 def test_prepare_correlator_terminal_args_keep_scalar_fit_scope(tmp_path: Path) -> None:

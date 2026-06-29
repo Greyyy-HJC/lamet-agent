@@ -294,17 +294,24 @@
           { "tmin": 4, "tmax": 12 },
           { "tmin": 5, "tmax": 12 }
         ],
-        "pt3_tau_cuts": [2, 3, 4],
+        "pt3_windows": [
+          // Each window uses the selected job's 3pt correlator_ids. Omitting tsep_ls
+          // means "all selected tseps"; set tsep_ls here only to scan tsep subsets.
+          { "tau_cut": 2 },
+          { "tau_cut": 3 },
+          { "tau_cut": 4 }
+        ],
         "nstate": [2],
         "fit_scope": ["ratio"], // "ratio", "FH", or "ratio+FH"; multiple entries let the agent scan scopes
         "fit_strategy": ["joint"], // "joint" or "chained"
         "seed": 1984,
         "svdcut": 1e-06,
         "posterior_prior_error_scale": 3.0,
+        "prior_width": [0.5, 1.0, 2.0],
         "fitting_form": "Breit", // "Breit" for forward and Breit non-forward 3pt/2pt; "NonBreit" for non-Breit non-forward 3pt/2pt
         "component": "both", // "both", "re", or "im"
         "q_min": 0.05, // minimum q value for a good fit
-        "model_average": false // false: use one tuned window; true: BMA over the full window grid
+        "model_average": false // false: one sample-average fit model; true: sample-by-sample BMA over nstate/prior_width
       },
       "jobs": [
         {
