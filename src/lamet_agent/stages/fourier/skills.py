@@ -29,12 +29,17 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     if set(job.inputs) != {"input"}:
         return ["A fourier_transform job requires exactly one input role."]
     params = {**manifest.stages["fourier_transform"].defaults, **job.params}
-    missing = [key for key in ("order", "part", "coord_unit", "y_grid", "pz_gev") if key not in params]
+    missing = [key for key in ("order", "coord_unit", "y_grid", "pz_gev") if key not in params]
+    if "sector" not in params and "part" not in params:
+        missing.append("sector")
     if missing:
         return [f"Fourier job {job.id!r} is missing parameters: {missing}"]
     orders = params["order"] if isinstance(params["order"], list) else [params["order"]]
     if any(order not in {"LA", "NLA"} for order in orders):
         return ["Fourier order must be 'LA' or 'NLA'."]
-    if params["part"] not in {"re", "im", "both"}:
+    sectors = {"pdf": {"valence", "total", "full", "sea"}, "da": {"full"}, "gpd": {"full"}}
+    if "sector" in params and str(params["sector"]).lower() not in sectors[manifest.metadata.target_observable]:
+        return [f"Fourier sector must be one of {sorted(sectors[manifest.metadata.target_observable])}."]
+    if "sector" not in params and params.get("part") not in {"re", "im", "both"}:
         return ["Fourier part must be 're', 'im', or 'both'."]
     return []

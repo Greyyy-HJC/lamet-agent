@@ -342,6 +342,7 @@ def run_agent(
                         "artifacts": {
                             "lightcone_artifact": store.get("matching_artifact"),
                             "matched_plot": store.get("matching_plot", {}).get("path"),
+                            "matched_plot_image": store.get("matching_plot", {}).get("plot_image"),
                         },
                     }
                 )

@@ -26,7 +26,7 @@
     "run_id": "workflow_cg_qpdf_partial_from_fourier",
     "root_directory": "~/lamet-agent",
     "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
-    "target_observable": "pdf", // "pdf" or "da"
+    "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs"
     // Only the stages to run, in execution order. correlator_analysis and
@@ -76,10 +76,8 @@
       "defaults": {
 		"order": ["LA", "NLA"],
         "fit_error_mode": "covariance",
-        "part": "re",
-        "output_scale": 2.0,
+		"sector": "valence", // "valence", "sea", "total", "full" for "pdf", "full" for "da" or "gpd"
         "coord_unit": "lattice",
-        "im_flip_for_ft": true,
 		"posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {
           "start": -2.0,
@@ -101,7 +99,7 @@
           ],
           "z_ext_max": 37.0,
           "smooth": "linear",
-          "model_average": false,
+          "model_average": true,
           "max_schemes": 200
         }
       },

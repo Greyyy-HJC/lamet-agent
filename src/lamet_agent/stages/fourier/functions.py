@@ -1323,9 +1323,12 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "method": str(result.get("method", "")),
         "order": str(result.get("order", "")),
         "observable": str(result.get("observable", "")),
+        "sector": str(result.get("sector", "")),
+        "target_observable": str(result.get("target_observable", "")),
         "coord_unit": str(result.get("coord_unit", "")),
         "fit_coord_unit": str(result.get("fit_coord_unit", "")),
         "part": str(result.get("part", "both")),
+        "im_flip_for_ft": str(result.get("im_flip_for_ft", "")),
         "resample_mode": str(result.get("resample_mode", "")),
     }
     for key in ("pz_gev", "pz_prime_gev", "a_fm"):
@@ -2140,6 +2143,8 @@ def run_fourier_transform(
     fit_error_mode: str = "diagonal",
     part: str = "both",
     output_scale: float = 1.0,
+    sector: str | None = None,
+    target_observable: str | None = None,
     save_path: str | None = None,
     plot_fourier: dict[str, Any] | None = None,
     plot_extension: dict[str, Any] | None = None,
@@ -2148,6 +2153,29 @@ def run_fourier_transform(
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
     out = "fourier_result"
+    sector = None if sector is None else str(sector).strip().lower()
+    target = str(target_observable or "").strip().lower()
+    if sector is not None:
+        if not target:
+            observable_name = str(observable).strip().lower()
+            target = "da" if observable_name == "meson_quasi_da" else "gpd" if "gpd" in observable_name else "pdf"
+        if target in {"da", "gpd"}:
+            sector = "full"
+        if target == "pdf":
+            if sector == "valence":
+                part, output_scale, im_flip_for_ft = "re", 2.0, False
+            elif sector == "total":
+                part, output_scale, im_flip_for_ft = "im", 2.0, True
+            elif sector == "full":
+                part, output_scale, im_flip_for_ft = "both", 1.0, False
+            elif sector == "sea":
+                part, output_scale, im_flip_for_ft = "re", 1.0, False
+        else:
+            part, output_scale, im_flip_for_ft = "both", 1.0, False
+    else:
+        sector = {"re": "valence", "im": "total", "both": "full"}.get(str(part).lower(), str(part).lower())
+        if not target:
+            target = str(target_observable or "")
     matrix_element_data = store.get("matrix_element_data")
     if matrix_element_data is None:
         matrix_element_data = store["input"]
@@ -2268,31 +2296,102 @@ def run_fourier_transform(
         model_scheme["order"] = spec["order"]
         model_scheme["posterior_prior_error_scale"] = spec["prior_width"]
         schemes.append(model_scheme)
-    result = run_fourier_workflow(
-        matrix_element["coord"],
-        matrix_element["re_samples"],
-        matrix_element["im_samples"],
-        y_values,
-        schemes=schemes,
-        method=method,
-        order=order,
-        observable=observable,
-        coord_unit=coord_unit,
-        pz_gev=pz_gev,
-        pz_prime_gev=pz_prime_gev,
-        a_fm=a_fm,
-        im_flip_for_ft=im_flip_for_ft,
-        resample_mode=resample_mode,
-        Lambda0=float(Lambda0),
-        posterior_prior_error_scale=range_prior_width,
-        fit_error_mode=fit_error_mode,
-        part=part,
-    )
+    if sector == "sea" and target == "pdf":
+        total_result = run_fourier_workflow(
+            matrix_element["coord"],
+            matrix_element["re_samples"],
+            matrix_element["im_samples"],
+            y_values,
+            schemes=schemes,
+            method=method,
+            order=order,
+            observable=observable,
+            coord_unit=coord_unit,
+            pz_gev=pz_gev,
+            pz_prime_gev=pz_prime_gev,
+            a_fm=a_fm,
+            im_flip_for_ft=True,
+            resample_mode=resample_mode,
+            Lambda0=float(Lambda0),
+            posterior_prior_error_scale=range_prior_width,
+            fit_error_mode=fit_error_mode,
+            part="im",
+        )
+        valence_result = run_fourier_workflow(
+            matrix_element["coord"],
+            matrix_element["re_samples"],
+            matrix_element["im_samples"],
+            y_values,
+            schemes=schemes,
+            method=method,
+            order=order,
+            observable=observable,
+            coord_unit=coord_unit,
+            pz_gev=pz_gev,
+            pz_prime_gev=pz_prime_gev,
+            a_fm=a_fm,
+            im_flip_for_ft=False,
+            resample_mode=resample_mode,
+            Lambda0=float(Lambda0),
+            posterior_prior_error_scale=range_prior_width,
+            fit_error_mode=fit_error_mode,
+            part="re",
+        )
+        for sector_result in (total_result, valence_result):
+            sector_result.update(candidate_diagnostics)
+            _apply_sample_fit_model_average(
+                sector_result,
+                resample_mode=resample_mode,
+                model_average=model_average,
+            )
+            _apply_fourier_output_scale(sector_result, 2.0)
+        result = total_result
+        for key in ("ft_re_samples", "ft_im_samples", "final_ft_re_samples", "final_ft_im_samples", "ft_re_mean", "ft_im_mean"):
+            result[key] = 0.5 * (np.asarray(total_result[key], dtype=float) - np.asarray(valence_result[key], dtype=float))
+        result["ft_re_stat_sdev"] = _sample_sdev(np.asarray(result["final_ft_re_samples"], dtype=float), resample_mode=resample_mode)
+        result["ft_im_stat_sdev"] = _sample_sdev(np.asarray(result["final_ft_im_samples"], dtype=float), resample_mode=resample_mode)
+        result["ft_re_sys_sdev"] = 0.5 * np.hypot(
+            np.asarray(total_result["ft_re_sys_sdev"], dtype=float),
+            np.asarray(valence_result["ft_re_sys_sdev"], dtype=float),
+        )
+        result["ft_im_sys_sdev"] = 0.5 * np.hypot(
+            np.asarray(total_result["ft_im_sys_sdev"], dtype=float),
+            np.asarray(valence_result["ft_im_sys_sdev"], dtype=float),
+        )
+        for total_scheme, valence_scheme in zip(result["scheme_results"], valence_result["scheme_results"]):
+            for key in ("extended_re_samples", "extended_im_samples"):
+                total_scheme[key] = np.asarray(total_scheme[key], dtype=float) - np.asarray(valence_scheme[key], dtype=float)
+            for key in ("ft_re_samples", "ft_im_samples"):
+                total_scheme[key] = 0.5 * (np.asarray(total_scheme[key], dtype=float) - np.asarray(valence_scheme[key], dtype=float))
+        part, output_scale, im_flip_for_ft = "sea", 1.0, False
+    else:
+        result = run_fourier_workflow(
+            matrix_element["coord"],
+            matrix_element["re_samples"],
+            matrix_element["im_samples"],
+            y_values,
+            schemes=schemes,
+            method=method,
+            order=order,
+            observable=observable,
+            coord_unit=coord_unit,
+            pz_gev=pz_gev,
+            pz_prime_gev=pz_prime_gev,
+            a_fm=a_fm,
+            im_flip_for_ft=im_flip_for_ft,
+            resample_mode=resample_mode,
+            Lambda0=float(Lambda0),
+            posterior_prior_error_scale=range_prior_width,
+            fit_error_mode=fit_error_mode,
+            part=part,
+        )
     result["resample_mode"] = resample_mode
     result["pz_gev"] = pz_gev
     result["pz_prime_gev"] = pz_prime_gev
     result["a_fm"] = a_fm
     result["im_flip_for_ft"] = bool(im_flip_for_ft)
+    result["sector"] = sector
+    result["target_observable"] = target
     result["Lambda0"] = float(Lambda0)
     result["posterior_prior_error_scale"] = (
         range_prior_width
@@ -2305,12 +2404,13 @@ def run_fourier_transform(
     result.update(candidate_diagnostics)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
-    _apply_sample_fit_model_average(
-        result,
-        resample_mode=resample_mode,
-        model_average=model_average,
-    )
-    _apply_fourier_output_scale(result, float(output_scale))
+    if not (sector == "sea" and target == "pdf"):
+        _apply_sample_fit_model_average(
+            result,
+            resample_mode=resample_mode,
+            model_average=model_average,
+        )
+        _apply_fourier_output_scale(result, float(output_scale))
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
     store[out] = result
     artifact = _artifact_path(save_path, default_name=f"{out}.nc", artifacts_dir=artifacts_dir).with_suffix(".nc")
@@ -2353,6 +2453,7 @@ def run_fourier_transform(
         "fit_failures": result["fit_failures"],
         "selected_range_label": result.get("selected_range_label"),
         "output_scale": result.get("output_scale", 1.0),
+        "sector": result.get("sector", sector),
         "auto_scheme_scan": auto_scheme_scan,
     }
 
@@ -2383,6 +2484,7 @@ def summarize_fourier_result(
         "selected_fit_range": data.get("selected_fit_range"),
         "fit_info_artifact": data.get("fit_info_artifact"),
         "output_scale": data.get("output_scale", 1.0),
+        "sector": data.get("sector", data.get("part", "full")),
     }
     store[out] = summary
     return {"out": out, **summary}

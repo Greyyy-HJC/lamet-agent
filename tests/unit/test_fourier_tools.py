@@ -251,6 +251,66 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     assert artifact_im.attrs["part"] == "im"
 
 
+def test_fourier_sector_valence_resolves_projection(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    _write_npz(data_path)
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+
+    run = run_fourier_transform(
+        store,
+        y_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
+        method="GI",
+        order="LA",
+        sector="valence",
+        target_observable="pdf",
+    )
+
+    result = store["fourier_result"]
+    artifact = EnsembleData.from_netcdf(run["artifact"])
+    assert result["sector"] == "valence"
+    assert result["part"] == "re"
+    assert result["output_scale"] == 2.0
+    assert result["im_flip_for_ft"] is False
+    assert artifact.attrs["sector"] == "valence"
+    assert artifact.attrs["part"] == "re"
+
+
+def test_fourier_sector_sea_combines_total_and_valence(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    _write_npz(data_path)
+    common = dict(
+        y_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
+        method="GI",
+        order="LA",
+        target_observable="pdf",
+    )
+
+    total_store = {}
+    load_renormalized_matrix_element_samples(total_store, path=str(data_path))
+    run_fourier_transform(total_store, sector="total", **common)
+
+    valence_store = {}
+    load_renormalized_matrix_element_samples(valence_store, path=str(data_path))
+    run_fourier_transform(valence_store, sector="valence", **common)
+
+    sea_store = {}
+    load_renormalized_matrix_element_samples(sea_store, path=str(data_path))
+    run_fourier_transform(sea_store, sector="sea", **common)
+
+    total = total_store["fourier_result"]
+    valence = valence_store["fourier_result"]
+    sea = sea_store["fourier_result"]
+    assert sea["sector"] == "sea"
+    assert sea["part"] == "sea"
+    assert np.allclose(sea["final_ft_re_samples"], 0.5 * (total["final_ft_re_samples"] - valence["final_ft_re_samples"]))
+    assert np.allclose(sea["final_ft_im_samples"], 0.5 * (total["final_ft_im_samples"] - valence["final_ft_im_samples"]))
+
+
 def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"

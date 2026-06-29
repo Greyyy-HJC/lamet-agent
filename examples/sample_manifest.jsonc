@@ -354,10 +354,8 @@
       "defaults": {
 		"order": ["LA", "NLA"],
         "fit_error_mode": "covariance",
-        "part": "re",
-        "output_scale": 2.0,
+		"sector": "valence", // "valence", "sea", "total", "full" for "pdf", "full" for "da" or "gpd"
         "coord_unit": "lattice",
-        "im_flip_for_ft": true,
 		"posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {
           "start": -2.0,
@@ -379,10 +377,6 @@
           ],
           "z_ext_max": 37.0,
           "smooth": "linear",
-          // Fourier scheme policy lives inside scheme_scan:
-          //   true  -> run all scanned schemes and combine them by model averaging.
-          //   false -> use the sample-average matrix element to select one best
-          //            zmin/zmax scheme, then apply only that scheme to all samples.
           "model_average": true,
           "max_schemes": 200
         }

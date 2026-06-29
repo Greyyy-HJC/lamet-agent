@@ -8,7 +8,7 @@ quasi-distribution while preserving every resampled sample.
    load_renormalized_matrix_element_samples when the input is already in memory.
    Call run_fourier_transform directly.
 2. Call run_fourier_transform once. Job defaults/params and source metadata supply
-   y_grid, scheme_scan, method, observable, order, part, coordinate units, lattice
+   y_grid, scheme_scan, method, observable, order, sector, coordinate units, lattice
    spacing, momentum, output paths, and fit controls. Do not override them.
 3. The run tool writes the primary NetCDF, fit-info NetCDF, plots, and registers
    store['output']. A single bilingual stage report is written after all Fourier

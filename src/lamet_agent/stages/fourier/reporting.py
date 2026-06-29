@@ -633,8 +633,9 @@ def _field_definitions(*, language: str) -> list[str]:
             "| 条目 | 含义 |",
             "|---|---|",
             "| Observable | 本阶段要变换的物理矩阵元类型；它决定长程外推公式中的相位结构和参数结构。 |",
+            "| Sector | 用户请求的物理投影；PDF 可取 `valence`、`total`、`full`、`sea`，DA/GPD 固定为 `full`。 |",
             "| Tail method/order | $\\mathrm{order}$ 选择 LA 或 NLA；$\\mathrm{method}=\\mathrm{CG}$ 表示在基础尾部上额外乘以 $z^{-n}$。 |",
-            "| Active fitted component | `both` 表示实部和虚部同时参与拟合；`re` 只拟合实部；`im` 只拟合虚部。 |",
+            "| Active fitted component | `sector` 展开后的执行通道；`both` 表示实部和虚部同时参与拟合，`re`/`im` 只拟合单个分量。 |",
             "| Coordinate unit | `lattice` 表示 $z/a$。代码先转为 $z_{\\rm GeV^{-1}}=(z/a)a_{\\rm fm}\\,5.067731237$，再计算 $\\lambda=P_z z_{\\rm GeV^{-1}}$。 |",
             "| Posterior-prior error scale | 样本平均拟合得到 $\\bar p_i\\pm\\sigma_{p_i}$ 后，重采样拟合使用弱先验 $p_i=\\bar p_i\\pm s\\sigma_{p_i}$。 |",
         ]
@@ -642,25 +643,30 @@ def _field_definitions(*, language: str) -> list[str]:
         "| Entry | Meaning |",
         "|---|---|",
         "| Observable | Physical matrix element transformed by this stage. |",
+        "| Sector | Requested physics projection; PDF accepts `valence`, `total`, `full`, and `sea`, while DA/GPD use `full`. |",
         "| Tail method/order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{method}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
-        "| Active fitted component | `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together; `re` or `im` fits only one component. |",
+        "| Active fitted component | Execution channel resolved from `sector`; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one component. |",
         "| Coordinate unit | `lattice` means $z/a$. The code converts it to $z_{\\rm GeV^{-1}}=(z/a)a_{\\rm fm}\\,5.067731237$ and then $\\lambda=P_z z_{\\rm GeV^{-1}}$. |",
         "| Posterior-prior error scale | The mean fit gives $\\bar p_i\\pm\\sigma_{p_i}$; resampled fits use $p_i=\\bar p_i\\pm s\\sigma_{p_i}$. |",
     ]
 
 
 def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
+    sector = str(result.get("sector", "full")).lower()
     part = str(result.get("part", "both")).lower()
     scale = float(result.get("output_scale", 1.0))
     if language == "zh":
         intro = (
-            f"本次设置为 `part={part}` 且 `output_scale={_fmt(scale)}`。"
+            f"本次设置为 `sector={sector}`，代码展开为 `part={part}`、"
+            f"`output_scale={_fmt(scale)}`、`im_flip_for_ft={result.get('im_flip_for_ft', False)}`。"
             "在常用的扩展分布约定"
             "$q_{\\rm ext}(x)=q(x)$（$x>0$）和 $q_{\\rm ext}(-x)=-\\bar q(x)$ 下，"
             "坐标空间矩阵元满足"
             "$h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$。"
         )
-        if part == "both":
+        if sector == "sea":
+            meaning = "因此 `sea` 由两次投影组合得到：先计算 `total=q(x)+\\bar q(x)` 和 `valence=q(x)-\\bar q(x)`，再取 $(\\mathrm{total}-\\mathrm{valence})/2=\\bar q(x)$。"
+        elif part == "both":
             meaning = (
                 "因此 `both` 使用完整复矩阵元，目标是重建完整的扩展 quasi 分布 "
                 "$q_{\\rm ext}(x)$。若 `output_scale=1`，这就是未额外归一化的完整 Fourier 结果；"
@@ -692,16 +698,19 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
                 meaning += f" 当前缩放因子 {_fmt(scale)} 给出按该因子归一化后的虚部投影。"
         else:
             meaning = "该 `part` 设置未识别，报告只记录数值缩放，不赋予额外物理投影解释。"
-        return ["## Part/Scale 物理解释", intro, "", meaning]
+        return ["## Sector 物理解释", intro, "", meaning]
 
     intro = (
-        f"This run uses `part={part}` and `output_scale={_fmt(scale)}`. "
+        f"This run uses `sector={sector}`, resolved internally to `part={part}`, "
+        f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`. "
         "With the common extended-distribution convention "
         "$q_{\\rm ext}(x)=q(x)$ for $x>0$ and $q_{\\rm ext}(-x)=-\\bar q(x)$, "
         "the coordinate-space matrix element obeys "
         "$h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$."
     )
-    if part == "both":
+    if sector == "sea":
+        meaning = "`sea` is a derived projection: the code computes `total=q(x)+\\bar q(x)` and `valence=q(x)-\\bar q(x)` and then returns $(\\mathrm{total}-\\mathrm{valence})/2=\\bar q(x)$."
+    elif part == "both":
         meaning = (
             "`both` uses the full complex matrix element and reconstructs the full extended quasi-distribution "
             "$q_{\\rm ext}(x)$. With `output_scale=1`, this is the unscaled full Fourier result; other scale values "
@@ -733,7 +742,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             meaning += f" The current scale {_fmt(scale)} returns this imaginary-part projection with that overall normalization."
     else:
         meaning = "This `part` setting is not recognized, so only the numerical output scale is reported."
-    return ["## Part/Scale Physical Interpretation", intro, "", meaning]
+    return ["## Sector Physical Interpretation", intro, "", meaning]
 
 
 def _range_selection_table(result: dict[str, Any], *, language: str) -> list[str]:
@@ -914,6 +923,7 @@ def _settings_table(
         z_ext_text = str(z_ext_max)
     rows = [
         ("Observable", f"`{observable}` ({observable_text})"),
+        ("Sector", f"`{result.get('sector', 'full')}`"),
         ("Tail method/order", f"`{method}` / `{order}`"),
         ("Active fitted component", f"`{result.get('part', 'both')}`"),
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
@@ -927,6 +937,7 @@ def _settings_table(
     if language == "zh":
         rows = [
             ("物理量", f"`{observable}`（{observable_text}）"),
+            ("Sector", f"`{result.get('sector', 'full')}`"),
             ("长程外推 method/order", f"`{method}` / `{order}`"),
             ("参与拟合的分量", f"`{result.get('part', 'both')}`"),
             ("重采样模式", f"`{result.get('resample_mode', 'not recorded')}`"),
@@ -958,7 +969,7 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging.", "进入模型平均前 sample-average 区间扫描的诊断。"),
             ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection.", "两阶段选择模式：先选区间，再做拟合模型平均或最优模型选择。"),
             ("attrs `pz_gev`, `pz_prime_gev`, `a_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
-            ("attrs `method`, `order`, `observable`, `part`, `output_scale`", "Physics/formula choices and final output normalization.", "物理公式选择和最终输出归一化。"),
+            ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`", "Physics projection, formula choices, execution channel, and final output normalization.", "物理投影、公式选择、执行通道和最终输出归一化。"),
         ]
     else:
         rows = [

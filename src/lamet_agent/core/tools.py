@@ -36,6 +36,8 @@ _FOURIER_RUN_KEYS = frozenset(
         "pz_prime_gev",
         "a_fm",
         "im_flip_for_ft",
+        "sector",
+        "target_observable",
         "Lambda0",
         "posterior_prior_error_scale",
         "fit_error_mode",
@@ -366,6 +368,7 @@ def prepare_tool_args(
                 fourier[key] = source_metadata[key]
         if "method" not in fourier and str(fourier.get("gfix", "")).upper() in {"CG", "GI"}:
             fourier["method"] = str(fourier["gfix"]).upper()
+        fourier.setdefault("target_observable", manifest.metadata.target_observable)
         if "observable" not in fourier:
             target = manifest.metadata.target_observable
             parton = manifest.metadata.parton
