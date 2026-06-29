@@ -700,11 +700,10 @@ def plot_fourier_artifact(
                     "ft_im_sys_sdev",
                     "scheme_labels",
                     "fit_failures",
-                    "scheme_weights",
-                    "scheme_fit_chi2_dof",
-                    "scheme_roughness",
-                    "scheme_scores",
-                    "best_scheme_index",
+                    "fit_model_labels",
+                    "fit_model_mean_weights",
+                    "fit_model_chi2_dof",
+                    "selected_range_label",
                 }
             }
         else:
@@ -861,7 +860,7 @@ def plot_fourier_extension_quality(
     resample_mode = str(result.get("resample_mode", "bootstrap"))
 
     lambda_ext = np.asarray(scheme["lambda_ext"], dtype=float)
-    model_key = "fit_re_samples" if component == "re" else "fit_im_samples"
+    model_key = "extended_re_samples" if component == "re" else "extended_im_samples"
     mode = resample_mode.strip().lower()
     band_stats = []
     for sample_values in (samples, scheme[model_key]):
@@ -975,7 +974,7 @@ def plot_fourier_extension_quality(
                 zmin_fm, zmax_fm = zmin / scale, zmax / scale
             title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin_fm:g}\,\mathrm{{fm}}$, $z_{{\max}}={zmax_fm:g}\,\mathrm{{fm}}$"
     ax.set_title(title, **FONT_SIZE)
-    chi2_values = result.get("scheme_fit_chi2_dof", [])
+    chi2_values = result.get("fit_model_chi2_dof", [])
     if chi2_values and scheme_index < len(chi2_values):
         ax.text(
             0.03,

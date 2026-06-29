@@ -8,8 +8,11 @@ from lamet_agent.manifest import AnalysisManifest, StageJob
 STAGE_SKILL = """
 Fourier transformation extends finite coordinate-space matrix elements with the
 configured asymptotic model, transforms every resampled sample, and preserves
-the sample axis in an EnsembleData(x) output. Fit-range schemes are scored using
-fit quality and roughness; scheme_scan.model_average controls their combination.
+the sample axis in an EnsembleData(x) output. Fit ranges are selected once from
+sample-average tail-fit diagnostics over the configured zmin/zmax grid. After
+that range is fixed, scheme_scan.model_average controls per-sample averaging
+over fit-model candidates defined by order and posterior_prior_error_scale;
+the method argument is a fixed theory choice and is not scanned.
 """.strip()
 
 TOOL_CATALOG = {
@@ -29,7 +32,8 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     missing = [key for key in ("order", "part", "coord_unit", "y_grid", "pz_gev") if key not in params]
     if missing:
         return [f"Fourier job {job.id!r} is missing parameters: {missing}"]
-    if params["order"] not in {"LA", "NLA"}:
+    orders = params["order"] if isinstance(params["order"], list) else [params["order"]]
+    if any(order not in {"LA", "NLA"} for order in orders):
         return ["Fourier order must be 'LA' or 'NLA'."]
     if params["part"] not in {"re", "im", "both"}:
         return ["Fourier part must be 're', 'im', or 'both'."]

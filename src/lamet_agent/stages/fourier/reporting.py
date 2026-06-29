@@ -35,11 +35,11 @@ FOURIER_ARTIFACT_DESCRIPTIONS = {
     "fourier_artifact": ("Fourier result samples and diagnostics", "傅立叶变换后的样本、均值、误差和 scheme 权重"),
     "fit_info_artifact": ("Tail-fit parameters and fit-quality diagnostics", "长程外推拟合参数和拟合质量诊断"),
     "fourier_plot": ("PDF plot of the Fourier-space result", "傅立叶变换结果 PDF 图"),
-    "fourier_plot_image": ("PNG companion for Markdown embedding", "供 Markdown 嵌入的傅立叶结果 PNG 图"),
+    "fourier_plot_image": ("SVG companion for Markdown embedding", "供 Markdown 嵌入的傅立叶结果 SVG 图"),
     "extension_plot_re": ("PDF plot of real-part extension quality", "实部长程外推质量 PDF 图"),
-    "extension_plot_re_image": ("PNG companion for real-part extension quality", "供 Markdown 嵌入的实部长程外推 PNG 图"),
+    "extension_plot_re_image": ("SVG companion for real-part extension quality", "供 Markdown 嵌入的实部长程外推 SVG 图"),
     "extension_plot_im": ("PDF plot of imaginary-part extension quality", "虚部长程外推质量 PDF 图"),
-    "extension_plot_im_image": ("PNG companion for imaginary-part extension quality", "供 Markdown 嵌入的虚部长程外推 PNG 图"),
+    "extension_plot_im_image": ("SVG companion for imaginary-part extension quality", "供 Markdown 嵌入的虚部长程外推 SVG 图"),
 }
 
 FOURIER_ARTIFACT_ORDER = (
@@ -144,6 +144,52 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     method = str(result.get("method", "")).upper()
     order = str(result.get("order", "")).upper()
     observable = str(result.get("observable", ""))
+    orders = [item.strip().upper() for item in order.split(",") if item.strip()]
+    if len(orders) > 1:
+        article_lines = []
+        implementation_lines = []
+        mapping_scope_text = ""
+        for item in orders:
+            one = dict(result)
+            one["order"] = item
+            text = _tail_formula_text(one, language=language)
+            if language == "zh":
+                article_part = text.split("### lamet-agent 实际拟合公式", 1)[0]
+                implementation_part = text.split("### lamet-agent 实际拟合公式", 1)[1].split("### 参数对应关系", 1)[0]
+                mapping_scope_text = text.split("### 参数对应关系", 1)[1]
+            else:
+                article_part = text.split("### lamet-agent Implementation", 1)[0]
+                implementation_part = text.split("### lamet-agent Implementation", 1)[1].split("### Parameter Correspondence", 1)[0]
+                mapping_scope_text = text.split("### Parameter Correspondence", 1)[1]
+            article_formula = article_part.split("$$", 2)[1]
+            implementation_formula = implementation_part.split("$$", 2)[1]
+            article_lines.append(f"$$\n{article_formula}\n$$")
+            implementation_lines.append(f"$$\n{implementation_formula}\n$$")
+        if language == "zh":
+            return "\n\n".join(
+                [
+                    "### 文献公式",
+                    FORMULA_REFERENCES.get(observable, "code-selected LA/NLA formula") + "。",
+                    *article_lines,
+                    "### lamet-agent 实际拟合公式",
+                    "本次分析中代码实际使用的拟合形式为",
+                    *implementation_lines,
+                    "### 参数对应关系",
+                    mapping_scope_text,
+                ]
+            )
+        return "\n\n".join(
+            [
+                "### Article Formula",
+                FORMULA_REFERENCES.get(observable, "code-selected LA/NLA formula") + ".",
+                *article_lines,
+                "### lamet-agent Implementation",
+                "The fit actually used by lamet-agent in this run is",
+                *implementation_lines,
+                "### Parameter Correspondence",
+                mapping_scope_text,
+            ]
+        )
     reference = FORMULA_REFERENCES.get(observable, "code-selected LA/NLA formula")
     article_tail = r"\exp(-\Lambda |z|)"
     implementation_tail = r"\exp(-\Lambda z)"
@@ -362,22 +408,28 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
                 r"+A_1 e^{i\phi_1\,{\rm sign}(z)} e^{-i z P^z}"
                 r"+A_3 e^{i\phi_3\,{\rm sign}(z)} e^{i z P^z}"
             )
+            article_nla_core = (
+                r"\frac{A'_2}{|z|} e^{i\phi'_2\,{\rm sign}(z)}"
+                r"+\frac{A'_1}{|z|} e^{i\phi'_1\,{\rm sign}(z)} e^{-i z P^z}"
+                r"+\frac{A'_3}{|z|} e^{i\phi'_3\,{\rm sign}(z)} e^{i z P^z}"
+            )
         elif observable == "meson_quasi_da":
             article_core = (
                 r"A_1 e^{i\phi_1\,{\rm sign}(z)} e^{-i z P^z}"
                 r"+A_2 e^{i\phi_2\,{\rm sign}(z)}"
             )
+            article_nla_core = (
+                r"\frac{A'_1}{|z|} e^{i\phi'_1\,{\rm sign}(z)} e^{-i z P^z}"
+                r"+\frac{A'_2}{|z|} e^{i\phi'_2\,{\rm sign}(z)}"
+            )
         else:
             article_core = r"A_2 e^{i\phi_2\,{\rm sign}(z)}"
+            article_nla_core = r"\frac{A'_2}{|z|} e^{i\phi'_2\,{\rm sign}(z)}"
         article_formula = (
             r"h^{\rm " + order + r"}_{\rm art}(z)="
             r"\left["
             + article_core
-            + (
-                r"+\sum_j \frac{A'_j}{|z|} e^{i\phi'_j\,{\rm sign}(z)} e^{i\omega_j z}"
-                if order == "NLA"
-                else ""
-            )
+            + (r"+" + article_nla_core if order == "NLA" else "")
             + r"\right]"
             + article_tail
             + r"."
@@ -684,185 +736,61 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     return ["## Part/Scale Physical Interpretation", intro, "", meaning]
 
 
-def _fit_assessment(result: dict[str, Any], *, language: str) -> list[str]:
-    failures = np.asarray(result.get("fit_failures", []), dtype=float)
-    chi2 = np.asarray(result.get("scheme_fit_chi2_dof", []), dtype=float)
-    weights = np.asarray(result.get("scheme_weights", []), dtype=float)
-    roughness = np.asarray(result.get("scheme_roughness", []), dtype=float)
-    labels = list(result.get("scheme_labels", []))
-    selection_mode = str(result.get("selection_mode", "model_average"))
-    scheme_scan = dict(result.get("scheme_scan", {}))
-    candidate_labels = list(result.get("candidate_scheme_labels", []))
-    shared_labels = list(result.get("shared_scheme_labels", []))
-    chi_cut = result.get("chi_cut")
-    best_candidate_chi2 = result.get("best_candidate_chi2_dof")
-    scheme_grid_size = int(result.get("scheme_grid_size", len(candidate_labels) or len(labels)))
-    shared_scheme_count = int(result.get("shared_scheme_count", len(shared_labels) or len(labels)))
-    required_points = result.get("required_points")
-    lines: list[str] = []
-
-    if failures.size:
-        lines.append(
-            f"- 拟合失败次数：共 {int(np.sum(failures))} 次，分布在 {failures.size} 个 scheme 中。"
-            if language == "zh"
-            else f"- Fit failures: {int(np.sum(failures))} total across {failures.size} scheme(s)."
-        )
-    if chi2.size and np.any(np.isfinite(chi2)):
-        finite = chi2[np.isfinite(chi2)]
-        lines.append(
-            f"- $\\chi^2/{{\\rm dof}}$ 范围：{_fmt(np.min(finite))} 到 {_fmt(np.max(finite))}。"
-            if language == "zh"
-            else f"- $\\chi^2/{{\\rm dof}}$ range: {_fmt(np.min(finite))} to {_fmt(np.max(finite))}."
-        )
-    if scheme_scan:
-        zmin_values = scheme_scan.get("zmin_values", [])
-        zmax_values = scheme_scan.get("zmax_values", [])
-        z_ext_max = scheme_scan.get("z_ext_max")
-        smooth = scheme_scan.get("smooth", "linear")
-        roughness_weight = scheme_scan.get("roughness_weight", 1.0)
-        model_average_flag = bool(scheme_scan.get("model_average", True))
-        lines.append(
-            f"- `scheme_scan` 是由 `zmin_values={_fmt_list(zmin_values)}`、`zmax_values={_fmt_list(zmax_values)}`、`z_ext_max={_fmt(z_ext_max)}`、`smooth={smooth}`、`roughness_weight={_fmt(roughness_weight)}`、`model_average={model_average_flag}` 组成的方案搜索设置。"
-            if language == "zh"
-            else f"- `scheme_scan` is the scheme-search configuration built from `zmin_values={_fmt_list(zmin_values)}`, `zmax_values={_fmt_list(zmax_values)}`, `z_ext_max={_fmt(z_ext_max)}`, `smooth={smooth}`, `roughness_weight={_fmt(roughness_weight)}`, and `model_average={model_average_flag}`."
-        )
-    lines.append(
-        f"- `scheme grid` 就是 `zmin_values × zmax_values` 的笛卡尔积：每个 `(zmin, zmax)` 组合都对应一个候选 tail-fit 窗口。"
-        f"本次共有 {scheme_grid_size} 个候选 scheme；任何候选只有在拟合窗口内包含不少于 {required_points} 个正坐标点时才会被保留。"
-        if language == "zh"
-        else f"- The `scheme grid` is the Cartesian product of `zmin_values × zmax_values`: every `(zmin, zmax)` pair defines one candidate tail-fit window. "
-        f"This run has {scheme_grid_size} candidate schemes, and a candidate is kept only if its fit window contains at least {required_points} positive-coordinate points."
-    )
-    if selection_mode == "sample_average_best_scheme":
-        candidate_weights = np.asarray(result.get("candidate_scheme_weights", []), dtype=float)
-        candidate_chi2 = np.asarray(result.get("candidate_scheme_fit_chi2_dof", []), dtype=float)
-        shared_chi2 = np.asarray(result.get("shared_scheme_fit_chi2_dof", []), dtype=float)
-        selected = int(result.get("selected_candidate_index", 0) or 0)
-        selected_label = str(result.get("selected_candidate_label", candidate_labels[selected] if selected < len(candidate_labels) else selected))
-        if language == "zh":
-            lines.append(
-                f"- `model_average=false` 时，先只用 sample-average 矩阵元扫描候选窗口，"
-                f"得到每个候选窗口的 mean tail-fit $\\chi^2/{{\\rm dof}}$；`best` 指其中最小且可用的值，"
-                f"本次为 {_fmt(best_candidate_chi2)}。"
-                f"随后只在入围集合中选择 $\\chi^2/{{\\rm dof}}$ 最小者，并只对该窗口跑全部重采样样本。"
-                f"本次选中 {selected_label}。"
-            )
-        else:
-            lines.append(
-                f"- With `model_average=false`, the code first evaluates every candidate window using the sample-average matrix element, "
-                f"and records the mean tail-fit $\\chi^2/{{\\rm dof}}$ for each window. "
-                f"`best` is the minimum admissible value, which is {_fmt(best_candidate_chi2)} in this run. "
-                f"The code then selects the minimum-$\\chi^2/{{\\rm dof}}$ window only within that admitted set, and finally runs all resampled Fourier transforms only for that window. "
-                f"The selected scheme is {selected_label}."
-            )
-        if shared_labels:
-            lines.append(
-                f"- 入围的 shared effective grid 包含：{', '.join(f'`{label}`' for label in shared_labels)}。"
-                if language == "zh"
-                else f"- The shared effective grid contains: {', '.join(f'`{label}`' for label in shared_labels)}."
-            )
-        if candidate_weights.size:
-            best = int(np.argmax(candidate_weights))
-            label = candidate_labels[best] if best < len(candidate_labels) else str(best)
-            lines.append(
-                f"- 候选 scheme 权重是一热选择；{label} 的权重为 {_fmt(candidate_weights[best])}，其它候选权重为 0。"
-                if language == "zh"
-                else f"- Candidate-scheme weights are one-hot; {label} has weight {_fmt(candidate_weights[best])}, and all other candidates have weight 0."
-            )
-        if candidate_chi2.size and np.any(np.isfinite(candidate_chi2)):
-            finite = candidate_chi2[np.isfinite(candidate_chi2)]
-            lines.append(
-                f"- 候选 scheme 的 $\\chi^2/{{\\rm dof}}$ 范围：{_fmt(np.min(finite))} 到 {_fmt(np.max(finite))}。"
-                if language == "zh"
-                else f"- Candidate $\\chi^2/{{\\rm dof}}$ range: {_fmt(np.min(finite))} to {_fmt(np.max(finite))}."
-            )
-        if shared_chi2.size and np.any(np.isfinite(shared_chi2)):
-            finite = shared_chi2[np.isfinite(shared_chi2)]
-            lines.append(
-                f"- 入围 shared effective grid 的 $\\chi^2/{{\\rm dof}}$ 范围：{_fmt(np.min(finite))} 到 {_fmt(np.max(finite))}。"
-                if language == "zh"
-                else f"- The admitted shared effective grid has $\\chi^2/{{\\rm dof}}$ in the range {_fmt(np.min(finite))} to {_fmt(np.max(finite))}."
-            )
-    elif weights.size:
-        best = int(np.argmax(weights))
-        label = labels[best] if best < len(labels) else str(best)
-        if language == "zh":
-            lines.append(
-                f"- `model_average=true` 时，先只用 sample-average 矩阵元扫描候选窗口，"
-                f"得到每个候选窗口的 mean tail-fit $\\chi^2/{{\\rm dof}}$；`best` 是其中最小且可用的值，本次为 {_fmt(best_candidate_chi2)}。"
-                f"然后只对这组入围 scheme 跑全部重采样样本。"
-            )
-            lines.append(
-                f"- 在入围的 scheme 内，model averaging 对每个 scheme $s$ 定义综合分数 "
-                f"$S_s=\\chi_s^2/{{\\rm dof}}+w_{{\\rm rough}}R_s+100N_s^{{\\rm fail}}$，其中 "
-                f"$\\chi_s^2/{{\\rm dof}}$ 衡量长程拟合质量，$R_s$ 惩罚傅立叶结果的振荡粗糙度，"
-                f"$w_{{\\rm rough}}$ 是粗糙度权重，$N_s^{{\\rm fail}}$ 是该 scheme 下重采样拟合失败次数。"
-                f"权重按 $W_s=\\exp[-(S_s-S_{{\\rm min}})/2]/\\sum_t\\exp[-(S_t-S_{{\\rm min}})/2]$ 归一化。"
-                f"因此分数越低的 scheme 越优先；拟合更好、曲线更平滑、失败次数更少会得到更大权重。"
-                f"本次最高权重 scheme 为 {label}，权重 {_fmt(weights[best])}。"
-            )
-            if shared_labels:
-                lines.append(f"- 入围的 shared effective grid 包含：{', '.join(f'`{item}`' for item in shared_labels)}。")
-        else:
-            lines.append(
-                f"- With `model_average=true`, the code first evaluates every candidate window using the sample-average matrix element, "
-                f"and records the mean tail-fit $\\chi^2/{{\\rm dof}}$ for each window. "
-                f"`best` is the minimum admissible value, which is {_fmt(best_candidate_chi2)} in this run. "
-                f"The code then runs all resampled Fourier transforms only inside that admitted set."
-            )
-            lines.append(
-                f"- Inside the admitted set, model averaging assigns each scheme $s$ the score "
-                f"$S_s=\\chi_s^2/{{\\rm dof}}+w_{{\\rm rough}}R_s+100N_s^{{\\rm fail}}$, where "
-                f"$\\chi_s^2/{{\\rm dof}}$ measures tail-fit quality, $R_s$ penalizes oscillatory Fourier roughness, "
-                f"$w_{{\\rm rough}}$ is the roughness weight, and $N_s^{{\\rm fail}}$ is the number of failed resampled fits. "
-                f"Weights are normalized as $W_s=\\exp[-(S_s-S_{{\\rm min}})/2]/\\sum_t\\exp[-(S_t-S_{{\\rm min}})/2]$. "
-                f"Lower scores are preferred: better fits, smoother Fourier curves, and fewer failures get larger weights. "
-                f"The highest-weight scheme is {label} with weight {_fmt(weights[best])}."
-            )
-            if shared_labels:
-                lines.append(f"- The shared effective grid contains: {', '.join(f'`{item}`' for item in shared_labels)}.")
-    if selection_mode != "sample_average_best_scheme" and roughness.size and np.any(np.isfinite(roughness)):
-        if language == "zh":
-            lines.append(
-                f"- 傅立叶结果粗糙度分数 $R_s$ 是对输出 $x$ 空间曲线局部二阶差分的归一化惩罚，"
-                f"用来压低由外推区间选择造成的高频抖动；$R_s$ 越小表示 Fourier 曲线越平滑。"
-                f"本次 $R_s$ 范围为 {_fmt(np.nanmin(roughness))} 到 {_fmt(np.nanmax(roughness))}。"
-            )
-        else:
-            lines.append(
-                f"- The Fourier roughness score $R_s$ is a normalized penalty on local second differences of the output curve in $x$ space. "
-                f"It suppresses high-frequency oscillations induced by the extrapolation-window choice; smaller $R_s$ means a smoother Fourier curve. "
-                f"In this run, $R_s$ ranges from {_fmt(np.nanmin(roughness))} to {_fmt(np.nanmax(roughness))}."
-            )
-    return lines or (["- 无可用拟合诊断。"] if language == "zh" else ["- Fit diagnostics were not available."])
-
-
-def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
-    schemes = list(result.get("scheme_results", []))
-    labels = list(result.get("scheme_labels", []))
-    weights = np.asarray(result.get("scheme_weights", []), dtype=float)
-    chi2 = np.asarray(result.get("scheme_fit_chi2_dof", []), dtype=float)
-    roughness = np.asarray(result.get("scheme_roughness", []), dtype=float)
-    failures = np.asarray(result.get("fit_failures", []), dtype=float)
-    if not schemes:
-        return ["没有可用的 scheme 诊断。" if language == "zh" else "Scheme diagnostics were not available."]
-
+def _range_selection_table(result: dict[str, Any], *, language: str) -> list[str]:
+    labels = list(result.get("candidate_scheme_labels", []))
+    if not labels:
+        return []
+    chi2 = np.asarray(result.get("candidate_scheme_fit_chi2_dof", []), dtype=float)
+    q_values = np.asarray(result.get("candidate_scheme_q", []), dtype=float)
+    log_gbf = np.asarray(result.get("candidate_scheme_logGBF", []), dtype=float)
+    selected = int(result.get("selected_candidate_index", -1))
+    title = "### Range Selection Candidates" if language == "en" else "### 区间选择候选"
     header = (
-        "| # | label | weight | $\\chi^2/{\\rm dof}$ | roughness | failures | fit range | $z_{\\rm ext}^{\\rm max}$ | smooth |"
+        "| # | range label | selected | $Q$ | logGBF | $\\chi^2/{\\rm dof}$ |"
         if language == "en"
-        else "| # | 标签 | 权重 | $\\chi^2/{\\rm dof}$ | 粗糙度 | 失败次数 | 拟合区间 | $z_{\\rm ext}^{\\rm max}$ | 平滑方式 |"
+        else "| # | 区间标签 | 选中 | $Q$ | logGBF | $\\chi^2/{\\rm dof}$ |"
     )
-    lines = [header, "|---:|---|---:|---:|---:|---:|---|---:|---|"]
-    for idx, scheme in enumerate(schemes):
-        label = labels[idx] if idx < len(labels) else scheme.get("label", str(idx))
+    lines = [title, "", header, "|---:|---|---:|---:|---:|---:|"]
+    for idx, label in enumerate(labels):
+        lines.append(
+            f"| {idx} | {label} | {'yes' if idx == selected else ''} | "
+            f"{_fmt(q_values[idx]) if idx < q_values.size else 'n/a'} | "
+            f"{_fmt(log_gbf[idx]) if idx < log_gbf.size else 'n/a'} | "
+            f"{_fmt(chi2[idx]) if idx < chi2.size else 'n/a'} |"
+        )
+    return lines
+
+
+def _fit_model_table(result: dict[str, Any], *, language: str) -> list[str]:
+    labels = list(result.get("fit_model_labels", []))
+    if not labels:
+        return []
+    schemes = list(result.get("scheme_results", []))
+    orders = list(result.get("fit_model_orders", []))
+    widths = np.asarray(result.get("fit_model_prior_widths", []), dtype=float)
+    weights = np.asarray(result.get("fit_model_mean_weights", []), dtype=float)
+    q_values = np.asarray(result.get("fit_model_q", []), dtype=float)
+    log_gbf = np.asarray(result.get("fit_model_logGBF", []), dtype=float)
+    chi2 = np.asarray(result.get("fit_model_chi2_dof", []), dtype=float)
+    failures = np.asarray(result.get("fit_failures", []), dtype=float)
+    title = "### Fit-Model Average Candidates" if language == "en" else "### 拟合模型平均候选"
+    header = (
+        "| # | model | order | prior width | mean sample weight | $Q$ | logGBF | $\\chi^2/{\\rm dof}$ | failures | selected range | $z_{\\rm ext}^{\\rm max}$ | smooth |"
+        if language == "en"
+        else "| # | 模型 | order | 先验宽度 | 样本平均权重 | $Q$ | logGBF | $\\chi^2/{\\rm dof}$ | 失败次数 | 选定区间 | $z_{\\rm ext}^{\\rm max}$ | 平滑方式 |"
+    )
+    lines = [title, "", header, "|---:|---|---|---:|---:|---:|---:|---:|---:|---|---:|---|"]
+    for idx, label in enumerate(labels):
+        scheme = schemes[idx] if idx < len(schemes) else {}
         fit_range = scheme.get("fit_range")
         fit_range_text = "n/a" if fit_range is None else _format_fit_range(fit_range, language=language)
         lines.append(
-            "| "
-            f"{idx} | {label} | "
+            f"| {idx} | {label} | `{orders[idx] if idx < len(orders) else 'n/a'}` | "
+            f"{_fmt(widths[idx]) if idx < widths.size else 'n/a'} | "
             f"{_fmt(weights[idx]) if idx < weights.size else 'n/a'} | "
+            f"{_fmt(q_values[idx]) if idx < q_values.size else 'n/a'} | "
+            f"{_fmt(log_gbf[idx]) if idx < log_gbf.size else 'n/a'} | "
             f"{_fmt(chi2[idx]) if idx < chi2.size else 'n/a'} | "
-            f"{_fmt(roughness[idx]) if idx < roughness.size else 'n/a'} | "
             f"{int(failures[idx]) if idx < failures.size else 'n/a'} | "
             f"{fit_range_text} | "
             f"{_fmt(scheme.get('z_ext_max'))} | "
@@ -884,16 +812,20 @@ def _format_fit_value(mean: float, sdev: float) -> str:
     return f"{mean_rounded:.{decimals}f}({err_digits:0d})"
 
 
-def _scheme_parameter_table(result: dict[str, Any], *, language: str) -> list[str]:
+def _fit_model_parameter_table(result: dict[str, Any], *, language: str) -> list[str]:
     schemes = list(result.get("scheme_results", []))
     if not schemes:
         return []
     labels = list(result.get("scheme_labels", []))
-    param_labels = list(schemes[0].get("fit_param_labels", []))
+    param_labels = []
+    for scheme in schemes:
+        for label in scheme.get("fit_param_labels", []):
+            if label not in param_labels:
+                param_labels.append(label)
     if not param_labels:
         return []
 
-    header_title = "### Scheme Fit Parameters" if language == "en" else "### Scheme 拟合参数"
+    header_title = "### Fit-Model Parameters" if language == "en" else "### 拟合模型参数"
     header = (
         "| # | label | " + " | ".join(f"`{label}`" for label in param_labels) + " |"
         if language == "en"
@@ -903,19 +835,24 @@ def _scheme_parameter_table(result: dict[str, Any], *, language: str) -> list[st
     for idx, scheme in enumerate(schemes):
         label = labels[idx] if idx < len(labels) else scheme.get("label", str(idx))
         fit_params = np.asarray(scheme.get("fit_params", []), dtype=float)
-        if fit_params.ndim != 2 or fit_params.shape[1] != len(param_labels):
-            values = ["n/a"] * len(param_labels)
-        else:
-            means = np.mean(fit_params, axis=0)
-            sdevs = np.std(fit_params, axis=0, ddof=1) if fit_params.shape[0] > 1 else np.zeros(len(param_labels), dtype=float)
-            values = [_format_fit_value(float(mean), float(sdev)) for mean, sdev in zip(means, sdevs)]
+        local_labels = list(scheme.get("fit_param_labels", []))
+        values = []
+        for param_label in param_labels:
+            if fit_params.ndim != 2 or param_label not in local_labels:
+                values.append("n/a")
+                continue
+            local_idx = local_labels.index(param_label)
+            samples = fit_params[:, local_idx]
+            mean = float(np.mean(samples))
+            sdev = float(np.std(samples, ddof=1)) if len(samples) > 1 else 0.0
+            values.append(_format_fit_value(mean, sdev))
         lines.append("| " + f"{idx} | {label} | " + " | ".join(values) + " |")
     return lines
 
 
 def _smooth_explanation(result: dict[str, Any], *, language: str) -> list[str]:
     schemes = list(result.get("scheme_results", []))
-    best_idx = int(result.get("best_scheme_index", 0) or 0)
+    best_idx = 0
     smooth = "linear"
     if schemes and 0 <= best_idx < len(schemes):
         smooth = str(schemes[best_idx].get("smooth", smooth)).lower()
@@ -982,7 +919,6 @@ def _settings_table(
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
         ("Coordinate unit", f"{_display_unit(result.get('coord_unit', 'not recorded'))}; fit unit {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
         ("Fit lower bound", f"$\\Lambda_0\\ge {_fmt(result.get('Lambda0'))}$"),
-        ("Weak-prior scale", f"$p_i=\\bar p_i\\pm s\\sigma_{{p_i}}$ with $s={_fmt(result.get('posterior_prior_error_scale'))}$"),
         ("Output scale", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
         ("Best fit range", fit_range_text),
         ("Extension endpoint", z_ext_text),
@@ -996,7 +932,6 @@ def _settings_table(
             ("重采样模式", f"`{result.get('resample_mode', 'not recorded')}`"),
             ("坐标单位", f"{_display_unit(result.get('coord_unit', 'not recorded'))}；拟合单位 {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
             ("拟合下界", f"$\\Lambda_0\\ge {_fmt(result.get('Lambda0'))}$"),
-            ("弱先验尺度", f"$p_i=\\bar p_i\\pm s\\sigma_{{p_i}}$，其中 $s={_fmt(result.get('posterior_prior_error_scale'))}$"),
             ("输出缩放", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
             ("最优拟合区间", fit_range_text),
             ("外推终点", z_ext_text),
@@ -1016,16 +951,12 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attr `resample`", "Resampling mode recorded by `EnsembleData`.", "`EnsembleData` 记录的重采样模式。"),
             ("attr `ft_re_mean` / `ft_im_mean`", "Model-averaged real/imaginary central values.", "模型平均后的实部/虚部中心值。"),
             ("attr `ft_re_stat_sdev` / `ft_im_stat_sdev`", "Statistical standard deviations from bootstrap/jackknife samples.", "由 bootstrap/jackknife 样本给出的统计误差。"),
-            ("attr `ft_re_sys_sdev` / `ft_im_sys_sdev`", "Systematic spread from scheme variation.", "由 scheme 变化估计的系统误差。"),
-            ("attr `scheme_labels`", "Text labels for scanned extrapolation schemes.", "所有外推 scheme 的文本标签。"),
-            ("attr `fit_failures`", "Number of failed resampled tail fits in each scheme.", "每个 scheme 中重采样长程拟合失败的次数。"),
-            ("attr `scheme_weights`", "Model-averaging weights $W_s$ for schemes.", "scheme 的模型平均权重 $W_s$。"),
-            ("attr `scheme_fit_chi2_dof`", "Scheme-level fit-quality diagnostic $\\chi_s^2/{\\rm dof}$.", "scheme 级别的拟合质量诊断 $\\chi_s^2/{\\rm dof}$。"),
-            ("attr `scheme_roughness`", "Fourier roughness score $R_s$ used in model averaging.", "模型平均中使用的 Fourier 粗糙度分数 $R_s$。"),
-            ("attr `scheme_scores`", "Total scheme score $S_s$ used to compute $W_s$.", "用于计算 $W_s$ 的总评分 $S_s$。"),
-            ("attr `best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
-            ("attrs `candidate_scheme_*`", "Full candidate-window diagnostics when `model_average=false` selects one scheme before fitting all samples.", "`model_average=false` 时先选一个 scheme 再跑所有样本；这些字段保存完整候选窗口诊断。"),
-            ("attr `selection_mode`", "Scheme-selection mode: model averaging or sample-average best-scheme selection.", "scheme 选择模式：模型平均或 sample-average 最优窗口选择。"),
+            ("attr `ft_re_sys_sdev` / `ft_im_sys_sdev`", "Weighted spread among fit-model candidates at fixed selected range.", "固定选定区间后，不同拟合模型候选的加权离散度。"),
+            ("attr `scheme_labels`", "Fit-model labels at the selected range.", "选定区间上的拟合模型标签。"),
+            ("attr `fit_failures`", "Number of failed resampled tail fits in each fit model.", "每个拟合模型中重采样长程拟合失败的次数。"),
+            ("attrs `fit_model_*`", "Per-sample fit-model weights and diagnostics for `(order, prior width)` candidates.", "`(order, prior width)` 候选的逐样本权重和诊断。"),
+            ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging.", "进入模型平均前 sample-average 区间扫描的诊断。"),
+            ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection.", "两阶段选择模式：先选区间，再做拟合模型平均或最优模型选择。"),
             ("attrs `pz_gev`, `pz_prime_gev`, `a_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
             ("attrs `method`, `order`, `observable`, `part`, `output_scale`", "Physics/formula choices and final output normalization.", "物理公式选择和最终输出归一化。"),
         ]
@@ -1037,10 +968,9 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attr `fit_param_center` / `fit_param_sdev`", "Sample mean and statistical standard deviation of fit parameters.", "拟合参数的样本平均值和统计误差。"),
             ("attrs `fit_chi2`, `fit_dof`, `fit_q`, `fit_chi2_dof`", "Per-resample fit quality diagnostics.", "每个重采样样本的拟合质量诊断。"),
             ("attrs `fit_chi2_center`, `fit_chi2_dof_center`, `fit_q_center`", "Sample-averaged fit quality diagnostics for each scheme.", "每个 scheme 的样本平均拟合质量诊断。"),
-            ("attrs `mean_fit_params`, `mean_fit_chi2`, `mean_fit_dof`, `mean_fit_q`", "Initial sample-average fit results used to seed resampled fits.", "用于初始化重采样拟合的样本平均拟合结果。"),
-            ("attrs `scheme_weights`, `scheme_fit_chi2_dof`, `scheme_roughness`, `scheme_scores`", "Scheme scoring diagnostics used in model averaging.", "模型平均中使用的 scheme 评分诊断。"),
-            ("attr `best_scheme_index`", "Index of the highest-weight scheme.", "最高权重 scheme 的编号。"),
-            ("attrs `candidate_scheme_*`, `selection_mode`", "Candidate diagnostics and selection mode when `model_average=false`.", "`model_average=false` 时的候选窗口诊断和选择模式。"),
+            ("attrs `mean_fit_params`, `mean_fit_chi2`, `mean_fit_dof`, `mean_fit_q`, `mean_fit_log_gbf`", "Initial sample-average fit results used to seed resampled fits.", "用于初始化重采样拟合的样本平均拟合结果。"),
+            ("attrs `fit_model_*`", "Per-sample weights and diagnostics for fixed-range fit-model averaging.", "固定区间后拟合模型平均的逐样本权重和诊断。"),
+            ("attrs `candidate_scheme_*`, `selection_mode`", "Range-scan diagnostics and the two-stage selection mode.", "区间扫描诊断和两阶段选择模式。"),
         ]
     header = "| Field | Meaning |" if language == "en" else "| 字段 | 含义 |"
     lines = [header, "|---|---|"]
@@ -1114,10 +1044,9 @@ def build_fourier_report_markdown(
     order = str(result.get("order", "not recorded"))
     y_grid = np.asarray(result.get("y_grid", []), dtype=float)
     schemes = list(result.get("scheme_results", []))
-    best_idx = int(result.get("best_scheme_index", 0) or 0)
-    best_scheme = schemes[best_idx] if schemes and 0 <= best_idx < len(schemes) else {}
-    fit_range_text = _format_fit_range(best_scheme.get("fit_range"), language=language)
-    z_ext_max = best_scheme.get("z_ext_max", "not available")
+    selected_model = schemes[0] if schemes else {}
+    fit_range_text = _format_fit_range(selected_model.get("fit_range"), language=language)
+    z_ext_max = selected_model.get("z_ext_max", "not available")
 
     if language == "zh":
         title = "# 傅立叶变换分析报告"
@@ -1143,12 +1072,14 @@ def build_fourier_report_markdown(
             "## 傅立叶变换方法",
             transform_text,
             "",
-            "## 拟合质量与 Scheme 诊断",
-            "本单 job 报告只保留最优 scheme 与对应数值结果；完整的 `scheme grid`、`shared effective grid` 和 `chi_cut` 口径见 stage 汇总报告。",
+            "## 拟合质量与模型诊断",
+            "本单 job 报告列出 sample-average 选出的区间和固定区间后的拟合模型候选；完整统计口径见 stage 汇总报告。",
             "",
-            *_scheme_table(result, language="zh"),
+            *_range_selection_table(result, language="zh"),
             "",
-            *_scheme_parameter_table(result, language="zh"),
+            *_fit_model_table(result, language="zh"),
+            "",
+            *_fit_model_parameter_table(result, language="zh"),
             "",
             *_figure_block(artifacts, language="zh"),
             "",
@@ -1181,12 +1112,14 @@ def build_fourier_report_markdown(
             "## Fourier Transform Method",
             transform_text,
             "",
-            "## Fit Quality and Scheme Diagnostics",
-            "This single-job report keeps only the best scheme and its numerical outputs; the full `scheme grid`, `shared effective grid`, and `chi_cut` explanation lives in the stage summary report.",
+            "## Fit Quality and Model Diagnostics",
+            "This single-job report lists the sample-average selected range and the fixed-range fit-model candidates; the full statistical prescription lives in the stage summary report.",
             "",
-            *_scheme_table(result, language="en"),
+            *_range_selection_table(result, language="en"),
             "",
-            *_scheme_parameter_table(result, language="en"),
+            *_fit_model_table(result, language="en"),
+            "",
+            *_fit_model_parameter_table(result, language="en"),
             "",
             *_figure_block(artifacts, language="en"),
             "",
@@ -1243,9 +1176,8 @@ def write_fourier_stage_report(
         for item in jobs:
             result = item["result"]
             schemes = list(result.get("scheme_results", []))
-            best_idx = int(result.get("best_scheme_index", 0) or 0)
-            if schemes and 0 <= best_idx < len(schemes):
-                z_ext_values.append(schemes[best_idx].get("z_ext_max"))
+            if schemes:
+                z_ext_values.append(schemes[0].get("z_ext_max"))
         finite_z_ext = [float(value) for value in z_ext_values if value is not None]
         same_z_ext = bool(finite_z_ext) and np.allclose(finite_z_ext, finite_z_ext[0])
         fit_range_text = "见下方各动量诊断表" if language == "zh" else "see the per-momentum diagnostics below"
@@ -1259,9 +1191,9 @@ def write_fourier_stage_report(
             else f"本报告汇总当前 Fourier transform 阶段中 `{observable}`（{observable_text}）的所有动量。",
             "",
             "## Job Summary" if language == "en" else "## Job 汇总",
-            "| job | $P_z$ | best scheme | output | plot |"
+            "| job | $P_z$ | selected range | output | plot |"
             if language == "en"
-            else "| job | $P_z$ | 最优 scheme | 输出 | 图像 |",
+            else "| job | $P_z$ | 选定区间 | 输出 | 图像 |",
             "|---|---:|---|---|---|",
         ]
         for item in jobs:
@@ -1269,7 +1201,7 @@ def write_fourier_stage_report(
             artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
             lines.append(
                 f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | "
-                f"{result.get('best_scheme_label', 'n/a')} | "
+                f"{result.get('selected_range_label', 'n/a')} | "
                 f"{artifacts.get('fourier_artifact', 'n/a')} | "
                 f"{artifacts.get('fourier_plot', 'n/a')} |"
             )
@@ -1300,45 +1232,42 @@ def write_fourier_stage_report(
                 "## Fourier Transform Method" if language == "en" else "## 傅立叶变换方法",
                 transform_text,
                 "",
-                "## Fit Quality and Scheme Diagnostics" if language == "en" else "## 拟合质量与 Scheme 诊断",
+                "## Fit Quality and Model Diagnostics" if language == "en" else "## 拟合质量与模型诊断",
                 ]
             )
-        if str(first.get("selection_mode", "model_average")) == "sample_average_best_scheme":
-            lines.append(
-                "`model_average=false` 时，代码先用 sample-average 矩阵元扫描完整 scheme grid，按 mean tail-fit 的 "
-                "$\\chi^2/{\\rm dof}$ 形成 shared effective grid，再只在这组入围 scheme 中选一个最优者并用于所有重采样样本。"
-                if language == "zh"
-                else "With `model_average=false`, the sample-average matrix element first scans the full scheme grid, builds a shared effective grid from the mean tail-fit $\\chi^2/{\\rm dof}$, and then applies only the best admitted scheme to all resampled samples."
-            )
-        else:
-            lines.append(
-                "`model_average=true` 时，代码先用 sample-average 矩阵元扫描完整 scheme grid，按 mean tail-fit 的 "
-                "$\\chi^2/{\\rm dof}$ 形成 shared effective grid，再只在入围 scheme 中使用 "
-                "$S_s=\\chi_s^2/{\\rm dof}+w_{\\rm rough}R_s+100N_s^{\\rm fail}$ 做模型平均。"
-                if language == "zh"
-                else "With `model_average=true`, the code first scans the full scheme grid on the sample-average matrix element, builds a shared effective grid from the mean tail-fit $\\chi^2/{\\rm dof}$, and then performs model averaging only inside that admitted set using $S_s=\\chi_s^2/{\\rm dof}+w_{\\rm rough}R_s+100N_s^{\\rm fail}$."
-            )
+        lines.append(
+            "本步骤先用 sample-average 矩阵元扫描 `zmin_values × zmax_values`，按 $Q\\ge0.05$ 过门后取 `logGBF` 最大的区间；"
+            "若没有区间过门，则回退到 $Q$ 最大的成功候选。选定的区间固定后才进入模型层，区间变化不参与 model average。"
+            if language == "zh"
+            else "This stage first scans `zmin_values × zmax_values` on the sample-average matrix element, selects the largest-`logGBF` range among candidates passing $Q\\ge0.05$, and falls back to the largest-$Q$ successful range if none passes. The selected range is then fixed; range variation is not part of model averaging."
+        )
+        lines.append(
+            "`model_average=true` 时，每个 resample sample 在固定区间和固定 method 下分别拟合 `(order, prior width)` 候选，并用该 sample 自己的 "
+            "$w_{s,m}=\\exp(\\log\\mathrm{GBF}_{s,m}-\\max_n\\log\\mathrm{GBF}_{s,n})/\\sum_k\\exp(\\log\\mathrm{GBF}_{s,k}-\\max_n\\log\\mathrm{GBF}_{s,n})$ 加权；"
+            "`model_average=false` 时，每个 sample 在过 $Q$ 门的候选中取 `logGBF` 最大者。"
+            if language == "zh"
+            else "With `model_average=true`, each resample sample refits the `(order, prior width)` candidates at fixed range and fixed method, then uses that sample's normalized evidence weight $w_{s,m}=\\exp(\\log\\mathrm{GBF}_{s,m}-\\max_n\\log\\mathrm{GBF}_{s,n})/\\sum_k\\exp(\\log\\mathrm{GBF}_{s,k}-\\max_n\\log\\mathrm{GBF}_{s,n})$. With `model_average=false`, each sample selects the largest-`logGBF` candidate after the $Q$ gate."
+        )
         lines.extend(
             [
                 "",
-                "| job | $P_z$ | best scheme | best fit range | $\\chi^2/{\\rm dof}$ range | fit failures |"
+                "| job | $P_z$ | selected range | selected fit range | $\\chi^2/{\\rm dof}$ range | fit failures |"
                 if language == "en"
-                else "| job | $P_z$ | 最优 scheme | 最优拟合区间 | $\\chi^2/{\\rm dof}$ 范围 | 拟合失败次数 |",
+                else "| job | $P_z$ | 选定区间 | 选定拟合区间 | $\\chi^2/{\\rm dof}$ 范围 | 拟合失败次数 |",
                 "|---|---:|---|---|---:|---:|",
             ]
         )
         for item in jobs:
             result = item["result"]
             schemes = list(result.get("scheme_results", []))
-            best_idx = int(result.get("best_scheme_index", 0) or 0)
-            best_scheme = schemes[best_idx] if schemes and 0 <= best_idx < len(schemes) else {}
-            chi2 = np.asarray(result.get("scheme_fit_chi2_dof", []), dtype=float)
+            selected_model = schemes[0] if schemes else {}
+            chi2 = np.asarray(result.get("fit_model_chi2_dof", []), dtype=float)
             finite = chi2[np.isfinite(chi2)]
             chi_text = "n/a" if finite.size == 0 else f"{_fmt(np.min(finite))} to {_fmt(np.max(finite))}"
             lines.append(
                 f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | "
-                f"{result.get('best_scheme_label', 'n/a')} | "
-                f"{_format_fit_range(best_scheme.get('fit_range'), language=language)} | "
+                f"{result.get('selected_range_label', 'n/a')} | "
+                f"{_format_fit_range(selected_model.get('fit_range'), language=language)} | "
                 f"{chi_text} | "
                 f"{int(np.sum(np.asarray(result.get('fit_failures', []), dtype=float)))} |"
             )
@@ -1347,24 +1276,16 @@ def write_fourier_stage_report(
             lines.extend(
                 [
                     "",
-                    "- `scheme grid` 不是单个窗口，而是由 `zmin_values × zmax_values` 组成的候选窗口笛卡尔积；"
-                    "每一对 $(z_{\min}, z_{\max})$ 都对应一个可试的尾部拟合区间。",
-                    "- `shared effective grid` 是先用 sample-average 矩阵元筛出来、再供所有重采样样本共同使用的候选子集；"
-                    "只有满足 `True` 且 $\\chi^2/{\\rm dof}\\le chi_{cut}$ 的窗口才会进入这个集合。",
-                    "- `chi_cut` 是入围阈值，定义为 `max(best*1.25, best+0.15, 1.0)`；"
-                    "它的作用是保留接近最优且稳定的窗口，同时挡掉明显不稳的候选。",
+                    "- `range grid` 表示区间候选，不是模型平均对象；模型平均对象是固定区间后的 `(order, prior width)`。",
+                    "- `method` 是理论输入，保持 manifest 给定值，不参与 model average。",
                 ]
             )
         else:
             lines.extend(
                 [
                     "",
-                    "- The `scheme grid` is not a single window but the Cartesian product of `zmin_values × zmax_values`; "
-                    "each $(z_{\\min}, z_{\\max})$ pair defines one candidate tail-fit interval.",
-                    "- The `shared effective grid` is the admitted candidate subset obtained from the sample-average matrix element and then reused for all resampled samples; "
-                    "only windows satisfying `True` and $\\chi^2/{\\rm dof}\\le chi_{cut}$ enter this set.",
-                    "- `chi_cut` is the admission threshold, defined as `max(best*1.25, best+0.15, 1.0)`; "
-                    "it keeps windows close to the best stable candidate while rejecting visibly unstable ones.",
+                    "- The `range grid` denotes range candidates, not the model-averaging space; the model candidates are `(order, prior width)` at fixed range.",
+                    "- `method` is a fixed theory input from the manifest and is not model averaged.",
                 ]
             )
         for item in jobs:
@@ -1374,9 +1295,11 @@ def write_fourier_stage_report(
                     "",
                     f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV",
                     "",
-                    *_scheme_table(result, language=language),
+                    *_range_selection_table(result, language=language),
                     "",
-                    *_scheme_parameter_table(result, language=language),
+                    *_fit_model_table(result, language=language),
+                    "",
+                    *_fit_model_parameter_table(result, language=language),
                 ]
             )
         lines.append("")

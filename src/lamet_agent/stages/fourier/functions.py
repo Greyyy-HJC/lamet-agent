@@ -700,7 +700,7 @@ def _fit_one_sample(
     p0: np.ndarray | None = None,
     prior: gv.BufferDict | None = None,
     Lambda0: float = 0.1,
-) -> tuple[np.ndarray, gv.BufferDict | None, gv.BufferDict | None, bool, float, int, float]:
+) -> tuple[np.ndarray, gv.BufferDict | None, gv.BufferDict | None, bool, float, int, float, float]:
     default_p0, bounds = _param_template(method, order, observable, Lambda0=Lambda0)
     start = default_p0 if p0 is None else np.asarray(p0, dtype=float)
 
@@ -733,9 +733,18 @@ def _fit_one_sample(
         physical = _physical_params(fit.pmean, bounds)
         params = np.asarray([float(item) for item in physical], dtype=float)
     except (FloatingPointError, RuntimeError, ValueError, OverflowError, AssertionError):
-        return default_p0, None, None, False, float("inf"), dof, 0.0
+        return default_p0, None, None, False, float("inf"), dof, 0.0, float("-inf")
 
-    return params, fit.pmean, fit.psdev, bool(np.isfinite(fit.chi2)), float(fit.chi2), int(fit.dof), float(fit.Q)
+    return (
+        params,
+        fit.pmean,
+        fit.psdev,
+        bool(np.isfinite(fit.chi2)),
+        float(fit.chi2),
+        int(fit.dof),
+        float(fit.Q),
+        float(fit.logGBF) if prior is not None else float("-inf"),
+    )
 
 
 def fit_tail_quality_for_mean(
@@ -754,6 +763,7 @@ def fit_tail_quality_for_mean(
     a_fm: float | None = None,
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
+    posterior_prior_error_scale: float = 3.0,
     fit_error_mode: str = "diagonal",
     part: str = "both",
 ) -> dict[str, Any]:
@@ -813,7 +823,7 @@ def fit_tail_quality_for_mean(
         sigma_im=sigma_im,
     )
 
-    _params, _pmean, _psdev, ok, chi2, dof, q_value = _fit_one_sample(
+    mean_params, mean_pmean, mean_psdev, ok, chi2, dof, q_value, log_gbf = _fit_one_sample(
         z_fit,
         y_data=y_data,
         method=method,
@@ -824,12 +834,27 @@ def fit_tail_quality_for_mean(
         phase_prime_scale=phase_prime_scale,
         Lambda0=Lambda0,
     )
+    if ok and mean_pmean is not None and mean_psdev is not None:
+        mean_params, _mean_pmean, _mean_psdev, ok, chi2, dof, q_value, log_gbf = _fit_one_sample(
+            z_fit,
+            y_data=y_data,
+            method=method,
+            order=order,
+            observable=observable,
+            part=part,
+            phase_scale=phase_scale,
+            phase_prime_scale=phase_prime_scale,
+            p0=mean_params,
+            prior=_scaled_internal_prior(mean_pmean, mean_psdev, posterior_prior_error_scale),
+            Lambda0=Lambda0,
+        )
     return {
         "ok": bool(ok),
         "chi2": float(chi2),
         "dof": int(dof),
         "chi2_dof": float(chi2 / max(dof, 1)),
         "q_value": float(q_value),
+        "logGBF": float(log_gbf),
         "n_points": n_points,
     }
 
@@ -927,7 +952,7 @@ def _run_one_scheme(
         sigma_re=sigma_re,
         sigma_im=sigma_im,
     )
-    mean_params, mean_pmean, mean_psdev, mean_ok, mean_chi2, mean_dof, mean_q = _fit_one_sample(
+    mean_params, mean_pmean, mean_psdev, mean_ok, mean_chi2, mean_dof, mean_q, mean_log_gbf = _fit_one_sample(
         z_fit,
         y_data=mean_y_data,
         method=method,
@@ -941,6 +966,19 @@ def _run_one_scheme(
     sample_prior = None
     if mean_ok and mean_pmean is not None and mean_psdev is not None:
         sample_prior = _scaled_internal_prior(mean_pmean, mean_psdev, posterior_prior_error_scale)
+        mean_params, _mean_pmean, _mean_psdev, mean_ok, mean_chi2, mean_dof, mean_q, mean_log_gbf = _fit_one_sample(
+            z_fit,
+            y_data=mean_y_data,
+            method=method,
+            order=order,
+            observable=observable,
+            part=part,
+            phase_scale=phase_scale,
+            phase_prime_scale=phase_prime_scale,
+            p0=mean_params,
+            prior=sample_prior,
+            Lambda0=Lambda0,
+        )
 
     dz = _uniform_step(fit_coord)
     z_ext = np.arange(0.0, z_ext_fit_max + 0.5 * dz, dz)
@@ -971,6 +1009,7 @@ def _run_one_scheme(
     fit_chi2 = np.empty(n_samples, dtype=float)
     fit_dof = np.empty(n_samples, dtype=int)
     fit_q = np.empty(n_samples, dtype=float)
+    fit_log_gbf = np.empty(n_samples, dtype=float)
     failures = 0
 
     positive = z_ext > 0
@@ -986,7 +1025,7 @@ def _run_one_scheme(
             sigma_re=sigma_re,
             sigma_im=sigma_im,
         )
-        params, _sample_pmean, _sample_psdev, ok, chi2, dof, q_value = _fit_one_sample(
+        params, _sample_pmean, _sample_psdev, ok, chi2, dof, q_value, log_gbf = _fit_one_sample(
             z_fit,
             y_data=sample_y_data,
             method=method,
@@ -1005,10 +1044,12 @@ def _run_one_scheme(
             chi2 = mean_chi2
             dof = mean_dof
             q_value = mean_q
+            log_gbf = mean_log_gbf
         fit_params[sample] = params
         fit_chi2[sample] = chi2
         fit_dof[sample] = dof
         fit_q[sample] = q_value
+        fit_log_gbf[sample] = log_gbf
 
         fit_re = np.zeros_like(z_ext)
         fit_im = np.zeros_like(z_ext)
@@ -1049,10 +1090,12 @@ def _run_one_scheme(
         "fit_chi2": fit_chi2,
         "fit_dof": fit_dof,
         "fit_q": fit_q,
+        "fit_log_gbf": fit_log_gbf,
         "mean_fit_params": mean_params,
         "mean_fit_chi2": mean_chi2,
         "mean_fit_dof": mean_dof,
         "mean_fit_q": mean_q,
+        "mean_fit_logGBF": mean_log_gbf,
         "extended_re_samples": ext_re,
         "extended_im_samples": ext_im,
         "ft_re_samples": ft_re,
@@ -1131,6 +1174,8 @@ def run_fourier_workflow(
 
     scheme_results = []
     for scheme in _progress(schemes, desc="fourier schemes"):
+        scheme_order = str(scheme.get("order", order)).upper()
+        scheme_prior_width = float(scheme.get("posterior_prior_error_scale", posterior_prior_error_scale))
         scheme_results.append(
             _run_one_scheme(
                 coord=coord_arr,
@@ -1141,7 +1186,7 @@ def run_fourier_workflow(
                 y_grid=y_arr,
                 scheme=scheme,
                 method=method,
-                order=order,
+                order=scheme_order,
                 observable=observable,
                 fit_scale=fit_scale,
                 im_flip_for_ft=im_flip_for_ft,
@@ -1149,11 +1194,13 @@ def run_fourier_workflow(
                 phase_prime_scale=phase_prime_scale,
                 resample_mode=resample_mode,
                 Lambda0=Lambda0,
-                posterior_prior_error_scale=posterior_prior_error_scale,
+                posterior_prior_error_scale=scheme_prior_width,
                 fit_error_mode=fit_error_mode,
                 part=part,
             )
         )
+        scheme_results[-1]["order"] = scheme_order
+        scheme_results[-1]["posterior_prior_error_scale"] = scheme_prior_width
 
     ft_re = np.asarray([item["ft_re_samples"] for item in scheme_results])
     ft_im = np.asarray([item["ft_im_samples"] for item in scheme_results])
@@ -1186,8 +1233,13 @@ def run_fourier_workflow(
         "scheme_results": scheme_results,
         "scheme_labels": [item["label"] for item in scheme_results],
         "fit_failures": [item["fit_failures"] for item in scheme_results],
+        "fit_model_q": [float(item.get("mean_fit_q", 0.0)) for item in scheme_results],
+        "fit_model_chi2_dof": [
+            float(item["mean_fit_chi2"]) / max(float(item["mean_fit_dof"]), 1.0) for item in scheme_results
+        ],
+        "fit_model_logGBF": [float(item.get("mean_fit_logGBF", float("-inf"))) for item in scheme_results],
         "method": method.upper(),
-        "order": order.upper(),
+        "order": order.upper() if isinstance(order, str) else ",".join(str(item).upper() for item in order),
         "observable": observable,
         "coord_unit": coord_unit,
         "fit_coord_unit": "lambda" if coord_unit.lower() == "lambda" else "gev_inv",
@@ -1258,13 +1310,12 @@ def ensemble_data_to_legacy_arrays(data: EnsembleData) -> dict[str, np.ndarray]:
 
 def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
     """Build a complex EnsembleData(x) from Fourier workflow samples."""
-    ft_re = np.asarray(result["ft_re_samples"], dtype=float)
-    ft_im = np.asarray(result["ft_im_samples"], dtype=float)
-    weights = np.asarray(result.get("scheme_weights", []), dtype=float)
-    if weights.shape == (ft_re.shape[0],):
-        re_samples = np.sum(weights[:, None, None] * ft_re, axis=0)
-        im_samples = np.sum(weights[:, None, None] * ft_im, axis=0)
+    if "final_ft_re_samples" in result and "final_ft_im_samples" in result:
+        re_samples = np.asarray(result["final_ft_re_samples"], dtype=float)
+        im_samples = np.asarray(result["final_ft_im_samples"], dtype=float)
     else:
+        ft_re = np.asarray(result["ft_re_samples"], dtype=float)
+        ft_im = np.asarray(result["ft_im_samples"], dtype=float)
         re_samples = np.mean(ft_re, axis=0)
         im_samples = np.mean(ft_im, axis=0)
     values = [re_samples[idx] + 1j * im_samples[idx] for idx in range(re_samples.shape[0])]
@@ -1290,16 +1341,22 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "ft_im_sys_sdev",
         "scheme_labels",
         "fit_failures",
-        "scheme_weights",
-        "scheme_fit_chi2_dof",
-        "scheme_roughness",
-        "scheme_scores",
-        "best_scheme_index",
         "output_scale",
+        "fit_model_labels",
+        "fit_model_orders",
+        "fit_model_prior_widths",
+        "fit_model_weights",
+        "fit_model_mean_weights",
+        "fit_model_q",
+        "fit_model_chi2_dof",
+        "fit_model_logGBF",
+        "best_fit_model_index_by_sample",
+        "selected_range_label",
+        "selected_fit_range",
         "candidate_scheme_labels",
-        "candidate_scheme_weights",
         "candidate_scheme_fit_chi2_dof",
-        "candidate_scheme_scores",
+        "candidate_scheme_q",
+        "candidate_scheme_logGBF",
         "selected_candidate_index",
         "selected_candidate_label",
         "selection_mode",
@@ -1492,18 +1549,31 @@ def _artifact_path(raw: str | None, *, default_name: str, artifacts_dir: str | P
     return out_dir / default_name
 
 
-def _png_companion_path(path: Path) -> Path:
-    """Return a PNG companion path for Markdown image embedding."""
-    return path.with_suffix(".png")
+def _svg_companion_path(path: Path) -> Path:
+    """Return an SVG companion path for Markdown image embedding."""
+    return path.with_suffix(".svg")
 
 
 def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
     schemes = result["scheme_results"]
-    fit_params = np.asarray([item["fit_params"] for item in schemes], dtype=float)
+    fit_param_labels = []
+    for item in schemes:
+        for label in item["fit_param_labels"]:
+            if label not in fit_param_labels:
+                fit_param_labels.append(label)
+    fit_params = np.full((len(schemes), schemes[0]["fit_params"].shape[0], len(fit_param_labels)), np.nan, dtype=float)
+    mean_fit_params = np.full((len(schemes), len(fit_param_labels)), np.nan, dtype=float)
+    for idx, item in enumerate(schemes):
+        item_params = np.asarray(item["fit_params"], dtype=float)
+        item_mean_params = np.asarray(item["mean_fit_params"], dtype=float)
+        for local_idx, label in enumerate(item["fit_param_labels"]):
+            global_idx = fit_param_labels.index(label)
+            fit_params[idx, :, global_idx] = item_params[:, local_idx]
+            mean_fit_params[idx, global_idx] = item_mean_params[local_idx]
     fit_chi2 = np.asarray([item["fit_chi2"] for item in schemes], dtype=float)
     fit_dof = np.asarray([item["fit_dof"] for item in schemes], dtype=int)
     fit_q = np.asarray([item["fit_q"] for item in schemes], dtype=float)
-    mean_fit_params = np.asarray([item["mean_fit_params"] for item in schemes], dtype=float)
+    fit_log_gbf = np.asarray([item["fit_log_gbf"] for item in schemes], dtype=float)
     mean_fit_chi2 = np.asarray([item["mean_fit_chi2"] for item in schemes], dtype=float)
     mean_fit_dof = np.asarray([item["mean_fit_dof"] for item in schemes], dtype=int)
     mean_fit_q = np.asarray([item["mean_fit_q"] for item in schemes], dtype=float)
@@ -1516,27 +1586,28 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
         fit_param_sdev = np.asarray([_sample_sdev(item, resample_mode=resample_mode) for item in fit_params])
 
     scheme_labels = np.asarray(result["scheme_labels"])
-    fit_param_labels = np.asarray(schemes[0]["fit_param_labels"])
     param_samples = np.moveaxis(fit_params, 1, 0)
     fit_info_data = EnsembleData(
         ensemble=result.get("ensemble"),
         resample=resample_mode,
         values=[param_samples[idx] for idx in range(param_samples.shape[0])],
         dims=("scheme", "parameter"),
-        coords={"scheme": scheme_labels.tolist(), "parameter": fit_param_labels.tolist()},
+        coords={"scheme": scheme_labels.tolist(), "parameter": fit_param_labels},
         attrs={
             "method": str(result.get("method", "")),
             "order": str(result.get("order", "")),
             "observable": str(result.get("observable", "")),
             "part": str(result.get("part", "both")),
             "scheme_labels": json.dumps(scheme_labels.tolist()),
-            "fit_param_labels": json.dumps(fit_param_labels.tolist()),
+            "fit_param_labels": json.dumps(fit_param_labels),
+            "fit_param_labels_by_model": json.dumps([item["fit_param_labels"] for item in schemes]),
             "fit_params": json.dumps(fit_params.tolist()),
             "fit_param_center": json.dumps(np.mean(fit_params, axis=1).tolist()),
             "fit_param_sdev": json.dumps(fit_param_sdev.tolist()),
             "fit_chi2": json.dumps(fit_chi2.tolist()),
             "fit_dof": json.dumps(fit_dof.tolist()),
             "fit_q": json.dumps(fit_q.tolist()),
+            "fit_log_gbf": json.dumps(fit_log_gbf.tolist()),
             "fit_chi2_dof": json.dumps(fit_chi2_dof.tolist()),
             "fit_chi2_center": json.dumps(np.mean(fit_chi2, axis=1).tolist()),
             "fit_chi2_dof_center": json.dumps(np.mean(fit_chi2_dof, axis=1).tolist()),
@@ -1545,22 +1616,33 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
             "mean_fit_chi2": json.dumps(mean_fit_chi2.tolist()),
             "mean_fit_dof": json.dumps(mean_fit_dof.tolist()),
             "mean_fit_q": json.dumps(mean_fit_q.tolist()),
-            "scheme_weights": json.dumps(np.asarray(result.get("scheme_weights", []), dtype=float).tolist()),
-            "scheme_fit_chi2_dof": json.dumps(
-                np.asarray(result.get("scheme_fit_chi2_dof", []), dtype=float).tolist()
+            "mean_fit_log_gbf": json.dumps(np.asarray(result.get("fit_model_logGBF", []), dtype=float).tolist()),
+            "fit_model_labels": json.dumps(np.asarray(result.get("fit_model_labels", [])).tolist()),
+            "fit_model_orders": json.dumps(np.asarray(result.get("fit_model_orders", [])).tolist()),
+            "fit_model_prior_widths": json.dumps(
+                np.asarray(result.get("fit_model_prior_widths", []), dtype=float).tolist()
             ),
-            "scheme_roughness": json.dumps(np.asarray(result.get("scheme_roughness", []), dtype=float).tolist()),
-            "scheme_scores": json.dumps(np.asarray(result.get("scheme_scores", []), dtype=float).tolist()),
-            "best_scheme_index": json.dumps(np.asarray(result.get("best_scheme_index", -1), dtype=int).tolist()),
+            "fit_model_weights": json.dumps(np.asarray(result.get("fit_model_weights", []), dtype=float).tolist()),
+            "fit_model_mean_weights": json.dumps(
+                np.asarray(result.get("fit_model_mean_weights", []), dtype=float).tolist()
+            ),
+            "fit_model_q": json.dumps(np.asarray(result.get("fit_model_q", []), dtype=float).tolist()),
+            "fit_model_chi2_dof": json.dumps(
+                np.asarray(result.get("fit_model_chi2_dof", []), dtype=float).tolist()
+            ),
+            "fit_model_log_gbf": json.dumps(np.asarray(result.get("fit_model_logGBF", []), dtype=float).tolist()),
+            "best_fit_model_index_by_sample": json.dumps(
+                np.asarray(result.get("best_fit_model_index_by_sample", []), dtype=int).tolist()
+            ),
             "candidate_scheme_labels": json.dumps(np.asarray(result.get("candidate_scheme_labels", [])).tolist()),
-            "candidate_scheme_weights": json.dumps(
-                np.asarray(result.get("candidate_scheme_weights", []), dtype=float).tolist()
-            ),
             "candidate_scheme_fit_chi2_dof": json.dumps(
                 np.asarray(result.get("candidate_scheme_fit_chi2_dof", []), dtype=float).tolist()
             ),
-            "candidate_scheme_scores": json.dumps(
-                np.asarray(result.get("candidate_scheme_scores", []), dtype=float).tolist()
+            "candidate_scheme_q": json.dumps(
+                np.asarray(result.get("candidate_scheme_q", []), dtype=float).tolist()
+            ),
+            "candidate_scheme_log_gbf": json.dumps(
+                np.asarray(result.get("candidate_scheme_logGBF", []), dtype=float).tolist()
             ),
             "selected_candidate_index": json.dumps(
                 np.asarray(result.get("selected_candidate_index", -1), dtype=int).tolist()
@@ -1857,7 +1939,6 @@ def _scan_has_all_range_keys(spec: dict[str, Any] | None) -> bool:
 
 
 def _fill_scheme_defaults(spec: dict[str, Any]) -> dict[str, Any]:
-    spec.setdefault("roughness_weight", 1.0)
     spec.setdefault("model_average", True)
     return spec
 
@@ -1950,72 +2031,67 @@ def _resolve_y_grid(y_grid: list[float] | dict[str, Any]) -> list[float]:
     return [float(item) for item in y_grid]
 
 
-def _roughness_score(y_grid: np.ndarray, ft_mean: np.ndarray) -> float:
-    y = y_grid
-    curve = ft_mean
-    if len(y) < 3:
-        return 0.0
-    order = np.argsort(y)
-    curve = curve[order]
-    second = np.diff(curve, n=2)
-    scale = max(float(np.sqrt(np.mean(curve**2))), float(np.max(np.abs(curve))), 1e-8)
-    return float(np.sqrt(np.mean(second**2)) / scale)
+def _fit_model_specs(order: str | Sequence[str], prior_width: float | Sequence[float]) -> list[dict[str, Any]]:
+    orders = [str(item).upper() for item in (order if isinstance(order, (list, tuple)) else [order])]
+    widths = [float(item) for item in (prior_width if isinstance(prior_width, (list, tuple)) else [prior_width])]
+    return [
+        {
+            "order": order_item,
+            "prior_width": width,
+            "label": f"{order_item}_prior_{width:g}".replace(".", "p"),
+        }
+        for order_item in orders
+        for width in widths
+    ]
 
 
-def _apply_scheme_model_average(
+def _apply_sample_fit_model_average(
     result: dict[str, Any],
     *,
-    roughness_weight: float,
     resample_mode: str,
+    model_average: bool,
 ) -> None:
     ft_re = np.asarray(result["ft_re_samples"], dtype=float)
     ft_im = np.asarray(result["ft_im_samples"], dtype=float)
-    y_grid = np.asarray(result["y_grid"], dtype=float)
-    re_mean_by_scheme = np.mean(ft_re, axis=1)
-    im_mean_by_scheme = np.mean(ft_im, axis=1)
-    re_stat_by_scheme = np.asarray([_sample_sdev(item, resample_mode=resample_mode) for item in ft_re])
-    im_stat_by_scheme = np.asarray([_sample_sdev(item, resample_mode=resample_mode) for item in ft_im])
-
-    fit_chi2 = []
-    roughness = []
-    for idx, scheme_result in enumerate(result["scheme_results"]):
-        fit_chi2.append(float(scheme_result["mean_fit_chi2"]) / max(float(scheme_result["mean_fit_dof"]), 1.0))
-        roughness.append(_roughness_score(y_grid, re_mean_by_scheme[idx]))
-
-    fit_arr = np.asarray(fit_chi2, dtype=float)
-    rough_arr = np.asarray(roughness, dtype=float)
-    failures = np.asarray(result["fit_failures"], dtype=float)
-    scores = fit_arr + float(roughness_weight) * rough_arr + 100.0 * failures
-    finite = np.isfinite(scores)
-    if not np.any(finite):
-        weights = np.full(len(scores), 1.0 / len(scores))
+    log_gbf = np.asarray([item["fit_log_gbf"] for item in result["scheme_results"]], dtype=float)
+    q_values = np.asarray([item["fit_q"] for item in result["scheme_results"]], dtype=float)
+    ok = np.isfinite(log_gbf)
+    weights = np.zeros_like(log_gbf, dtype=float)
+    if model_average:
+        for sample in range(log_gbf.shape[1]):
+            valid = ok[:, sample]
+            if not np.any(valid):
+                valid = np.isfinite(q_values[:, sample])
+            values = log_gbf[:, sample]
+            if np.any(valid):
+                shifted = np.exp(values[valid] - np.max(values[valid]))
+                weights[valid, sample] = shifted / np.sum(shifted)
     else:
-        shifted = np.where(finite, scores - np.nanmin(scores[finite]), np.inf)
-        weights = np.exp(-0.5 * shifted)
-        weights[~np.isfinite(weights)] = 0.0
-        total = float(np.sum(weights))
-        weights = weights / total if total > 0 else np.full(len(scores), 1.0 / len(scores))
+        for sample in range(log_gbf.shape[1]):
+            passing = np.flatnonzero(ok[:, sample] & (q_values[:, sample] >= 0.05))
+            if passing.size:
+                best = passing[int(np.argmax(log_gbf[passing, sample]))]
+            else:
+                candidates = np.flatnonzero(np.isfinite(q_values[:, sample]))
+                best = candidates[int(np.argmax(q_values[candidates, sample]))] if candidates.size else 0
+            weights[best, sample] = 1.0
 
-    best = int(np.argmax(weights))
-    re_mean = np.sum(weights[:, None] * re_mean_by_scheme, axis=0)
-    im_mean = np.sum(weights[:, None] * im_mean_by_scheme, axis=0)
-    re_stat = np.sqrt(np.sum(weights[:, None] * re_stat_by_scheme**2, axis=0))
-    im_stat = np.sqrt(np.sum(weights[:, None] * im_stat_by_scheme**2, axis=0))
-    re_sys = np.sqrt(np.sum(weights[:, None] * (re_mean_by_scheme - re_mean) ** 2, axis=0))
-    im_sys = np.sqrt(np.sum(weights[:, None] * (im_mean_by_scheme - im_mean) ** 2, axis=0))
+    final_re = np.sum(weights[:, :, None] * ft_re, axis=0)
+    final_im = np.sum(weights[:, :, None] * ft_im, axis=0)
+    re_sys_by_sample = np.sqrt(np.sum(weights[:, :, None] * (ft_re - final_re[None, :, :]) ** 2, axis=0))
+    im_sys_by_sample = np.sqrt(np.sum(weights[:, :, None] * (ft_im - final_im[None, :, :]) ** 2, axis=0))
 
-    result["ft_re_mean"] = re_mean
-    result["ft_im_mean"] = im_mean
-    result["ft_re_stat_sdev"] = re_stat
-    result["ft_im_stat_sdev"] = im_stat
-    result["ft_re_sys_sdev"] = re_sys
-    result["ft_im_sys_sdev"] = im_sys
-    result["scheme_weights"] = weights.tolist()
-    result["scheme_fit_chi2_dof"] = fit_arr.tolist()
-    result["scheme_roughness"] = rough_arr.tolist()
-    result["scheme_scores"] = scores.tolist()
-    result["best_scheme_index"] = best
-    result["best_scheme_label"] = result["scheme_labels"][best]
+    result["final_ft_re_samples"] = final_re
+    result["final_ft_im_samples"] = final_im
+    result["ft_re_mean"] = np.mean(final_re, axis=0)
+    result["ft_im_mean"] = np.mean(final_im, axis=0)
+    result["ft_re_stat_sdev"] = _sample_sdev(final_re, resample_mode=resample_mode)
+    result["ft_im_stat_sdev"] = _sample_sdev(final_im, resample_mode=resample_mode)
+    result["ft_re_sys_sdev"] = np.mean(re_sys_by_sample, axis=0)
+    result["ft_im_sys_sdev"] = np.mean(im_sys_by_sample, axis=0)
+    result["fit_model_weights"] = weights.tolist()
+    result["fit_model_mean_weights"] = np.mean(weights, axis=1).tolist()
+    result["best_fit_model_index_by_sample"] = np.argmax(weights, axis=0).astype(int).tolist()
 
 
 def _apply_fourier_output_scale(result: dict[str, Any], output_scale: float) -> None:
@@ -2027,6 +2103,8 @@ def _apply_fourier_output_scale(result: dict[str, Any], output_scale: float) -> 
     for key in (
         "ft_re_samples",
         "ft_im_samples",
+        "final_ft_re_samples",
+        "final_ft_im_samples",
         "ft_re_mean",
         "ft_im_mean",
     ):
@@ -2050,7 +2128,7 @@ def run_fourier_transform(
     y_grid: list[float] | dict[str, Any],
     scheme_scan: dict[str, Any] | None = None,
     method: str = "GI",
-    order: str = "NLA",
+    order: str | list[str] = "NLA",
     observable: str = "nucleon_quark_transversity_quasi_pdf",
     coord_unit: str = "lambda",
     pz_gev: float | None = None,
@@ -2058,7 +2136,7 @@ def run_fourier_transform(
     a_fm: float | None = None,
     im_flip_for_ft: bool = False,
     Lambda0: float = 0.1,
-    posterior_prior_error_scale: float = 3.0,
+    posterior_prior_error_scale: float | list[float] = 3.0,
     fit_error_mode: str = "diagonal",
     part: str = "both",
     output_scale: float = 1.0,
@@ -2078,6 +2156,10 @@ def run_fourier_transform(
     matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
     auto_scheme_scan = None
     coord_arr = np.asarray(matrix_element["coord"], dtype=float)
+    range_order = str(order[0] if isinstance(order, list) else order).upper()
+    range_prior_width = float(
+        posterior_prior_error_scale[0] if isinstance(posterior_prior_error_scale, list) else posterior_prior_error_scale
+    )
     scan_spec = _fill_scheme_defaults(dict(scheme_scan or {}))
     if not _scan_has_all_range_keys(scan_spec):
         scan_spec = _auto_scheme_scan(
@@ -2086,7 +2168,7 @@ def run_fourier_transform(
             im_samples=np.asarray(matrix_element["im_samples"], dtype=float),
             coord_unit=coord_unit,
             method=method,
-            order=order,
+            order=range_order,
             observable=observable,
             pz_gev=pz_gev,
             pz_prime_gev=pz_prime_gev,
@@ -2099,7 +2181,7 @@ def run_fourier_transform(
         auto_scheme_scan = scan_spec
     scheme_scan = scan_spec
     schemes = _generate_scan_schemes(scheme_scan)
-    required_points = _minimum_fit_points_for_parameters(len(_param_labels(method, order, observable)), part)
+    required_points = _minimum_fit_points_for_parameters(len(_param_labels(method, range_order, observable)), part)
     schemes = [
         scheme
         for scheme in schemes
@@ -2121,7 +2203,7 @@ def run_fourier_transform(
                 zmin=float(scheme["zmin"]),
                 zmax=float(scheme["zmax"]),
                 method=method,
-                order=order,
+                order=range_order,
                 observable=observable,
                 coord_unit=coord_unit,
                 pz_gev=pz_gev,
@@ -2129,53 +2211,63 @@ def run_fourier_transform(
                 a_fm=a_fm,
                 resample_mode=resample_mode,
                 Lambda0=float(Lambda0),
+                posterior_prior_error_scale=range_prior_width,
                 fit_error_mode=fit_error_mode,
                 part=part,
             )
         )
     candidate_chi2 = [float(item["chi2_dof"]) for item in candidate_qualities]
-    finite_candidate_chi2 = np.asarray(
-        [item["chi2_dof"] if item["ok"] and np.isfinite(item["chi2_dof"]) else np.inf for item in candidate_qualities],
-        dtype=float,
-    )
-    best_candidate = int(np.argmin(finite_candidate_chi2)) if len(finite_candidate_chi2) else 0
-    best_candidate_chi2 = finite_candidate_chi2[best_candidate]
-    chi_cut = max(float(best_candidate_chi2) * 1.25, float(best_candidate_chi2) + 0.15, 1.0)
-    effective_idx = [
+    candidate_q = [float(item["q_value"]) for item in candidate_qualities]
+    candidate_log_gbf = [float(item["logGBF"]) for item in candidate_qualities]
+    candidate_diagnostics = {
+        "scheme_scan": dict(scheme_scan),
+        "selection_mode": "sample_range_then_sample_fit_model_average" if model_average else "sample_range_then_sample_best_fit_model",
+    }
+    passing_idx = [
         idx
         for idx, item in enumerate(candidate_qualities)
-        if item["ok"] and np.isfinite(item["chi2_dof"]) and float(item["chi2_dof"]) <= chi_cut
+        if item["ok"] and np.isfinite(item["logGBF"]) and float(item["q_value"]) >= 0.05
     ]
-    if not effective_idx:
-        effective_idx = [best_candidate]
-    shared_labels = [candidate_labels[idx] for idx in effective_idx]
-    candidate_weights = np.zeros(len(schemes), dtype=float)
-    if model_average:
-        candidate_weights[effective_idx] = 1.0 / len(effective_idx)
+    if passing_idx:
+        best_candidate = max(passing_idx, key=lambda idx: candidate_qualities[idx]["logGBF"])
     else:
-        candidate_weights[best_candidate] = 1.0
-    candidate_scores = finite_candidate_chi2.tolist()
-    candidate_diagnostics = {
-        "candidate_scheme_labels": candidate_labels,
-        "candidate_scheme_weights": candidate_weights.tolist(),
-        "candidate_scheme_fit_chi2_dof": candidate_chi2,
-        "candidate_scheme_scores": candidate_scores,
-        "shared_scheme_labels": shared_labels,
-        "shared_scheme_fit_chi2_dof": [candidate_chi2[idx] for idx in effective_idx],
-        "chi_cut": float(chi_cut),
-        "best_candidate_chi2_dof": float(best_candidate_chi2),
-        "scheme_grid_size": int(len(schemes)),
-        "shared_scheme_count": int(len(effective_idx)),
-        "required_points": int(required_points),
-        "scheme_scan": dict(scheme_scan),
-        "selected_candidate_index": best_candidate,
-        "selected_candidate_label": candidate_labels[best_candidate],
-        "selection_mode": "sample_average_best_scheme" if not model_average else "model_average",
-    }
-    schemes = [schemes[idx] for idx in effective_idx]
-    if not model_average:
-        selected_idx = int(np.argmin([candidate_qualities[idx]["chi2_dof"] for idx in effective_idx]))
-        schemes = [schemes[selected_idx]]
+        best_candidate = max(
+            range(len(candidate_qualities)),
+            key=lambda idx: candidate_qualities[idx]["q_value"] if candidate_qualities[idx]["ok"] else float("-inf"),
+        )
+    selected_range = dict(schemes[best_candidate])
+    fit_model_specs = []
+    for spec in _fit_model_specs(order, posterior_prior_error_scale):
+        n_model_params = len(_param_labels(method, spec["order"], observable))
+        n_model_points = np.count_nonzero(
+            (coord_arr >= float(selected_range["zmin"])) & (coord_arr <= float(selected_range["zmax"])) & (coord_arr > 0)
+        )
+        if n_model_points >= _minimum_fit_points_for_parameters(n_model_params, part):
+            fit_model_specs.append(spec)
+    if not fit_model_specs:
+        fit_model_specs = [_fit_model_specs(range_order, range_prior_width)[0]]
+    candidate_diagnostics.update(
+        {
+            "candidate_scheme_labels": candidate_labels,
+            "candidate_scheme_fit_chi2_dof": candidate_chi2,
+            "candidate_scheme_q": candidate_q,
+            "candidate_scheme_logGBF": candidate_log_gbf,
+            "selected_candidate_index": best_candidate,
+            "selected_candidate_label": candidate_labels[best_candidate],
+            "selected_range_label": candidate_labels[best_candidate],
+            "selected_fit_range": [float(selected_range["zmin"]), float(selected_range["zmax"])],
+            "fit_model_labels": [spec["label"] for spec in fit_model_specs],
+            "fit_model_orders": [spec["order"] for spec in fit_model_specs],
+            "fit_model_prior_widths": [spec["prior_width"] for spec in fit_model_specs],
+        }
+    )
+    schemes = []
+    for spec in fit_model_specs:
+        model_scheme = dict(selected_range)
+        model_scheme["label"] = spec["label"]
+        model_scheme["order"] = spec["order"]
+        model_scheme["posterior_prior_error_scale"] = spec["prior_width"]
+        schemes.append(model_scheme)
     result = run_fourier_workflow(
         matrix_element["coord"],
         matrix_element["re_samples"],
@@ -2192,7 +2284,7 @@ def run_fourier_transform(
         im_flip_for_ft=im_flip_for_ft,
         resample_mode=resample_mode,
         Lambda0=float(Lambda0),
-        posterior_prior_error_scale=float(posterior_prior_error_scale),
+        posterior_prior_error_scale=range_prior_width,
         fit_error_mode=fit_error_mode,
         part=part,
     )
@@ -2202,31 +2294,22 @@ def run_fourier_transform(
     result["a_fm"] = a_fm
     result["im_flip_for_ft"] = bool(im_flip_for_ft)
     result["Lambda0"] = float(Lambda0)
-    result["posterior_prior_error_scale"] = float(posterior_prior_error_scale)
+    result["posterior_prior_error_scale"] = (
+        range_prior_width
+        if len(candidate_diagnostics["fit_model_prior_widths"]) == 1
+        else candidate_diagnostics["fit_model_prior_widths"]
+    )
     result["fit_error_mode"] = str(fit_error_mode)
     result["part"] = str(part)
     result["ensemble"] = matrix_element_data.ensemble
     result.update(candidate_diagnostics)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
-    if model_average:
-        _apply_scheme_model_average(
-            result,
-            roughness_weight=float(scheme_scan["roughness_weight"]),
-            resample_mode=resample_mode,
-        )
-        result["selection_mode"] = "model_average"
-    else:
-        fit_arr = [
-            float(item["mean_fit_chi2"]) / max(float(item["mean_fit_dof"]), 1.0)
-            for item in result["scheme_results"]
-        ]
-        result["scheme_weights"] = [1.0]
-        result["scheme_fit_chi2_dof"] = fit_arr
-        result["scheme_roughness"] = [0.0] * len(fit_arr)
-        result["scheme_scores"] = fit_arr
-        result["best_scheme_index"] = 0
-        result["best_scheme_label"] = result["scheme_labels"][0]
+    _apply_sample_fit_model_average(
+        result,
+        resample_mode=resample_mode,
+        model_average=model_average,
+    )
     _apply_fourier_output_scale(result, float(output_scale))
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
     store[out] = result
@@ -2262,12 +2345,13 @@ def run_fourier_transform(
         "report": report_result.get("report"),
         "report_cn": report_result.get("report_cn"),
         "n_schemes": int(result["ft_re_samples"].shape[0]),
-        "n_samples": int(result["ft_re_samples"].shape[1]),
-        "n_y": int(result["ft_re_samples"].shape[2]),
+        "n_samples": int(np.asarray(result["final_ft_re_samples"]).shape[0]),
+        "n_y": int(np.asarray(result["final_ft_re_samples"]).shape[1]),
         "scheme_labels": result["scheme_labels"],
+        "fit_model_labels": result.get("fit_model_labels", []),
+        "fit_model_mean_weights": result.get("fit_model_mean_weights", []),
         "fit_failures": result["fit_failures"],
-        "best_scheme_index": result.get("best_scheme_index"),
-        "best_scheme_label": result.get("best_scheme_label"),
+        "selected_range_label": result.get("selected_range_label"),
         "output_scale": result.get("output_scale", 1.0),
         "auto_scheme_scan": auto_scheme_scan,
     }
@@ -2289,12 +2373,14 @@ def summarize_fourier_result(
         "ft_im_sys_sdev": np.asarray(data["ft_im_sys_sdev"]).tolist(),
         "scheme_labels": list(data["scheme_labels"]),
         "fit_failures": list(data["fit_failures"]),
-        "scheme_weights": list(data.get("scheme_weights", [])),
-        "scheme_fit_chi2_dof": list(data.get("scheme_fit_chi2_dof", [])),
-        "scheme_roughness": list(data.get("scheme_roughness", [])),
-        "scheme_scores": list(data.get("scheme_scores", [])),
-        "best_scheme_index": data.get("best_scheme_index"),
-        "best_scheme_label": data.get("best_scheme_label"),
+        "fit_model_labels": list(data.get("fit_model_labels", [])),
+        "fit_model_mean_weights": list(data.get("fit_model_mean_weights", [])),
+        "fit_model_orders": list(data.get("fit_model_orders", [])),
+        "fit_model_prior_widths": list(data.get("fit_model_prior_widths", [])),
+        "fit_model_chi2_dof": list(data.get("fit_model_chi2_dof", [])),
+        "fit_model_logGBF": list(data.get("fit_model_logGBF", [])),
+        "selected_range_label": data.get("selected_range_label"),
+        "selected_fit_range": data.get("selected_fit_range"),
         "fit_info_artifact": data.get("fit_info_artifact"),
         "output_scale": data.get("output_scale", 1.0),
     }
@@ -2318,10 +2404,10 @@ def plot_fourier_result(
     if title is not None and title.strip().lower() in {"fourier result", "fourier transform"}:
         title = None
     fig, _ = plot_fourier_artifact(source, save_path=output, title=title)
-    png_output = _png_companion_path(output)
-    fig.savefig(png_output, bbox_inches="tight")
+    svg_output = _svg_companion_path(output)
+    fig.savefig(svg_output, bbox_inches="tight")
     plt.close(fig)
-    result = {"plot": str(output), "plot_image": str(png_output), "source": str(source)}
+    result = {"plot": str(output), "plot_image": str(svg_output), "source": str(source)}
     store["fourier_plot"] = result
     return result
 
@@ -2338,7 +2424,7 @@ def plot_fourier_extension_quality_result(
     matrix_element = ensemble_data_to_legacy_arrays(store["matrix_element_data"])
     data = store["fourier_result"]
     if scheme_index is None:
-        scheme_index = int(data.get("best_scheme_index", 0) or 0)
+        scheme_index = 0
     if title is not None and title.strip().lower() in {"fourier extension quality", "lambda extrapolation"}:
         title = None
     re_output = _artifact_path(save_path, default_name="fourier_extension_re.pdf", artifacts_dir=artifacts_dir)
@@ -2354,8 +2440,8 @@ def plot_fourier_extension_quality_result(
         save_path=re_output,
         title=title,
     )
-    re_png_output = _png_companion_path(re_output)
-    fig.savefig(re_png_output, bbox_inches="tight")
+    re_svg_output = _svg_companion_path(re_output)
+    fig.savefig(re_svg_output, bbox_inches="tight")
     plt.close(fig)
     fig, _ = plot_fourier_extension_quality(
         matrix_element["coord"],
@@ -2368,15 +2454,15 @@ def plot_fourier_extension_quality_result(
         save_path=im_output,
         title=title,
     )
-    im_png_output = _png_companion_path(im_output)
-    fig.savefig(im_png_output, bbox_inches="tight")
+    im_svg_output = _svg_companion_path(im_output)
+    fig.savefig(im_svg_output, bbox_inches="tight")
     plt.close(fig)
     scheme_label = data["scheme_labels"][scheme_index]
     result = {
         "plot_re": str(re_output),
         "plot_im": str(im_output),
-        "plot_re_image": str(re_png_output),
-        "plot_im_image": str(im_png_output),
+        "plot_re_image": str(re_svg_output),
+        "plot_im_image": str(im_svg_output),
         "scheme_label": scheme_label,
     }
     store["fourier_extension_plot"] = result

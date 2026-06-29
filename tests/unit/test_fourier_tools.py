@@ -104,11 +104,11 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "ft_re_mean" in ft_data.attrs
     assert Path(run["fit_info_artifact"]).is_file()
     assert Path(run["plot"]).is_file()
-    assert Path(run["plot"]).with_suffix(".png").is_file()
+    assert Path(run["plot"]).with_suffix(".svg").is_file()
     assert Path(run["plot_re"]).is_file()
-    assert Path(run["plot_re"]).with_suffix(".png").is_file()
+    assert Path(run["plot_re"]).with_suffix(".svg").is_file()
     assert Path(run["plot_im"]).is_file()
-    assert Path(run["plot_im"]).with_suffix(".png").is_file()
+    assert Path(run["plot_im"]).with_suffix(".svg").is_file()
     assert run["report"] is None
     assert run["report_cn"] is None
     fit_data = EnsembleData.from_netcdf(run["fit_info_artifact"])
@@ -121,8 +121,9 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     summary = summarize_fourier_result(store)
     assert summary["out"] == "fourier_summary"
     assert len(summary["ft_re_mean"]) == 3
-    assert summary["best_scheme_label"] == "zmin_1_zmax_4"
-    assert summary["scheme_weights"] == [1.0]
+    assert summary["selected_range_label"] == "zmin_1_zmax_4"
+    assert summary["fit_model_labels"] == ["LA_prior_3"]
+    assert summary["fit_model_mean_weights"] == [1.0]
     assert summary["fit_info_artifact"] == run["fit_info_artifact"]
 
     plot = plot_fourier_result(store)
@@ -145,10 +146,10 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "LA" in report_text
     assert "Active fitted component" in report_text
     assert "fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together" in report_text
-    assert "Scheme Diagnostics" in report_text
+    assert "Model Diagnostics" in report_text
     assert "q(x)=\\frac{\\Delta\\lambda}{2\\pi}" in report_text
     assert "![Fourier result]" in report_text
-    assert "fourier_result.png" in report_text
+    assert "fourier_result.svg" in report_text
     assert "Reading the NetCDF Outputs" in report_text
     assert "fourier_result.nc" in report_text
     assert "fourier_fit_info.nc" in report_text
@@ -162,7 +163,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "如何读取 NetCDF 输出" in report_cn_text
     assert "fourier_result.nc" in report_cn_text
     assert "fourier_fit_info.nc" in report_cn_text
-    assert "fourier_result.png" in report_cn_text
+    assert "fourier_result.svg" in report_cn_text
 
     data = store["fourier_result"]
     fig, ax = plot_fourier_extension_quality(
@@ -267,6 +268,7 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
         output_scale=1.0,
     )
     base = base_store["fourier_result"]
+    base_artifact_values = np.asarray(base_store["fourier_result_data"].values)
 
     scaled_store = {}
     load_renormalized_matrix_element_samples(scaled_store, path=str(data_path))
@@ -284,10 +286,12 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
     assert scaled["output_scale"] == 2.0
     assert scaled_run["output_scale"] == 2.0
     assert np.allclose(scaled["ft_re_samples"], 2.0 * base["ft_re_samples"])
+    assert np.allclose(scaled["final_ft_re_samples"], 2.0 * base["final_ft_re_samples"])
     assert np.allclose(scaled["ft_re_mean"], 2.0 * base["ft_re_mean"])
     assert np.allclose(scaled["ft_re_stat_sdev"], 2.0 * base["ft_re_stat_sdev"])
     assert np.allclose(scaled["ft_re_sys_sdev"], 2.0 * base["ft_re_sys_sdev"])
     artifact = EnsembleData.from_netcdf(scaled_run["artifact"])
+    assert np.allclose(np.real(artifact.values), 2.0 * np.real(base_artifact_values))
     assert float(json.loads(artifact.attrs["output_scale"])) == 2.0
 
 
@@ -545,19 +549,18 @@ def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypat
             "zmax_values": [3.0, 4.0],
             "z_ext_max": 5.0,
             "smooth": "linear",
-            "roughness_weight": 2.0,
         },
         method="GI",
         order="LA",
     )
     summary = summarize_fourier_result(store)
 
-    assert run["n_schemes"] == 4
-    assert summary["best_scheme_index"] in {0, 1, 2, 3}
-    assert len(summary["scheme_weights"]) == 4
-    assert np.isclose(sum(summary["scheme_weights"]), 1.0)
-    assert len(summary["scheme_fit_chi2_dof"]) == 4
-    assert len(summary["scheme_roughness"]) == 4
+    assert run["n_schemes"] == 1
+    assert summary["selected_range_label"] in store["fourier_result"]["candidate_scheme_labels"]
+    assert len(store["fourier_result"]["candidate_scheme_labels"]) == 4
+    assert len(summary["fit_model_chi2_dof"]) == 1
+    assert len(summary["fit_model_logGBF"]) == 1
+    assert np.asarray(store["fourier_result"]["fit_model_weights"]).shape == (1, 3)
 
 
 def test_fourier_model_average_false_selects_one_scheme_from_mean_scan(tmp_path: Path, monkeypatch) -> None:
@@ -583,14 +586,45 @@ def test_fourier_model_average_false_selects_one_scheme_from_mean_scan(tmp_path:
     result = store["fourier_result"]
 
     assert run["n_schemes"] == 1
-    assert result["selection_mode"] == "sample_average_best_scheme"
-    assert result["scheme_weights"] == [1.0]
+    assert result["selection_mode"] == "sample_range_then_sample_best_fit_model"
     assert len(result["candidate_scheme_labels"]) == 4
     assert len(result["candidate_scheme_fit_chi2_dof"]) == 4
-    assert np.isclose(sum(result["candidate_scheme_weights"]), 1.0)
-    assert result["candidate_scheme_weights"].count(1.0) == 1
     assert result["selected_candidate_label"] in result["candidate_scheme_labels"]
     assert store["fourier_result_data"].values.shape == (3, 5)
+
+
+def test_fourier_model_average_scans_order_and_prior_width_per_sample(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    coord = np.arange(0.0, 14.0)
+    base_re = np.exp(-0.22 * coord)
+    base_im = 0.08 * np.exp(-0.22 * coord)
+    re_samples = np.vstack([base_re, 1.01 * base_re, 0.99 * base_re])
+    im_samples = np.vstack([base_im, 0.98 * base_im, 1.02 * base_im])
+    data_path = tmp_path / "matrix_element.npz"
+    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+
+    run = run_fourier_transform(
+        store,
+        y_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0, 2.0], "zmax_values": [10.0, 11.0], "z_ext_max": 13.0},
+        method="GI",
+        order=["LA", "NLA"],
+        posterior_prior_error_scale=[2.0, 3.0],
+        observable="pion_quark_quasi_pdf",
+    )
+
+    result = store["fourier_result"]
+    weights = np.asarray(result["fit_model_weights"], dtype=float)
+    assert run["n_schemes"] >= 2
+    assert weights.shape == (len(result["fit_model_labels"]), 3)
+    assert np.allclose(np.sum(weights, axis=0), 1.0)
+    assert result["selected_range_label"] in result["candidate_scheme_labels"]
+    fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
+    labels = json.loads(fit_info.attrs["fit_param_labels"])
+    assert "A2" in labels
+    assert "Lambda" in labels
 
 
 def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None:
@@ -624,9 +658,9 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
     assert auto["z_ext_max"] == pytest.approx(1.2 + 8.0 / (5.067731237 * 2.0))
     assert auto["smooth"] == "linear"
     assert "y_range" not in auto
-    assert auto["roughness_weight"] == 1.0
     assert auto["model_average"] is True
-    assert run["n_schemes"] >= 4
+    assert run["n_schemes"] == 1
+    assert len(store["fourier_result"]["candidate_scheme_labels"]) >= 4
 
 
 def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch) -> None:
@@ -644,7 +678,7 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
     run = run_fourier_transform(
         store,
         y_grid={"start": -0.5, "stop": 0.5, "num": 5},
-        scheme_scan={"roughness_weight": 2.0},
+        scheme_scan={"model_average": False},
         method="GI",
         order="LA",
         observable="nucleon_quark_transversity_quasi_pdf",
@@ -654,7 +688,7 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
 
     auto = run["auto_scheme_scan"]
     assert "y_range" not in auto
-    assert auto["roughness_weight"] == 2.0
+    assert auto["model_average"] is False
     assert len(auto["zmin_values"]) == 4
     assert len(auto["zmax_values"]) == 4
     assert "z_ext_max" in auto
@@ -829,8 +863,7 @@ def test_fourier_defaults_scheme_scoring_options_for_complete_scan(tmp_path: Pat
         order="LA",
     )
 
-    assert store["fourier_result"]["scheme_weights"] == [1.0]
-    assert len(store["fourier_result"]["scheme_roughness"]) == 1
+    assert len(store["fourier_result"]["fit_model_logGBF"]) == 1
 
 
 def test_fourier_accepts_compact_y_grid_spec(tmp_path: Path, monkeypatch) -> None:
