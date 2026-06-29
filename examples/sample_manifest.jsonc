@@ -379,7 +379,6 @@
           ],
           "z_ext_max": 37.0,
           "smooth": "linear",
-          "roughness_weight": 1.0,
           // Fourier scheme policy lives inside scheme_scan:
           //   true  -> run all scanned schemes and combine them by model averaging.
           //   false -> use the sample-average matrix element to select one best

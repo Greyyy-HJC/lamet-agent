@@ -101,7 +101,6 @@
           ],
           "z_ext_max": 37.0,
           "smooth": "linear",
-          "roughness_weight": 1.0,
           "model_average": false,
           "max_schemes": 200
         }
