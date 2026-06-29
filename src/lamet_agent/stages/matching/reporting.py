@@ -17,7 +17,6 @@ import json
 import os
 import re
 import ssl
-import subprocess
 import tarfile
 import time
 import urllib.error
@@ -53,9 +52,10 @@ SCHEME_TEXT = {
 MATCHING_ARTIFACT_DESCRIPTIONS = {
     "lightcone_artifact": ("Matched light-cone PDF samples (EnsembleData NetCDF)", "匹配后的光锥 PDF 样本（EnsembleData NetCDF）"),
     "matched_plot": ("PDF plot comparing quasi and light-cone PDFs", "quasi 与光锥 PDF 对比 PDF 图"),
+    "matched_plot_image": ("SVG companion for Markdown embedding", "供 Markdown 嵌入的 SVG 对比图"),
 }
 
-MATCHING_ARTIFACT_ORDER = ("lightcone_artifact", "matched_plot")
+MATCHING_ARTIFACT_ORDER = ("lightcone_artifact", "matched_plot", "matched_plot_image")
 
 
 def _fmt(value: Any, digits: int = 4) -> str:
@@ -124,57 +124,11 @@ def _md_path(value: Any, *, base_dir: Path) -> str | None:
     return str(value)
 
 
-def _ensure_png(pdf_path: Path) -> Path | None:
-    """Rasterize a one-page plot PDF to a sibling PNG so Markdown can show it inline.
-
-    Markdown cannot embed a PDF, so the matched-PDF plot was only ever *linked*. To
-    display it directly we convert it to a PNG next to the PDF, best-effort, trying
-    ``pdftoppm`` -> ``gs`` -> ``sips`` (whichever the system has). The PNG is cached
-    by mtime so repeated reports do not re-render it. Returns the PNG path, or
-    ``None`` if the file is missing or no converter is available (the caller then
-    falls back to linking the PDF).
-    """
-    if pdf_path.suffix.lower() != ".pdf" or not pdf_path.is_file():
-        return None
-    png_path = pdf_path.with_suffix(".png")
-    try:
-        if png_path.is_file() and png_path.stat().st_mtime >= pdf_path.stat().st_mtime:
-            return png_path
-    except OSError:
-        pass
-    # 150 dpi keeps text crisp without bloating the PNG. pdftoppm wants the output
-    # *root* (it appends ".png"); gs/sips want the full output path.
-    commands = (
-        ["pdftoppm", "-png", "-r", "150", "-singlefile", str(pdf_path), str(png_path.with_suffix(""))],
-        ["gs", "-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=png16m", "-r150", "-dUseCropBox", "-o", str(png_path), str(pdf_path)],
-        ["sips", "-s", "format", "png", str(pdf_path), "--out", str(png_path)],
-    )
-    for cmd in commands:
-        try:
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
-        except (FileNotFoundError, subprocess.SubprocessError, OSError):
-            continue
-        if png_path.is_file():
-            return png_path
-    return None
-
-
 def _markdown_artifacts(artifacts: dict[str, Any] | None, *, base_dir: Path) -> dict[str, Any]:
     output = dict(artifacts or {})
-    for key in ("matched_plot", "lightcone_artifact"):
+    for key in ("matched_plot", "matched_plot_image", "lightcone_artifact"):
         if key in output:
             output[key] = _md_path(output[key], base_dir=base_dir)
-    # Render the comparison plot to an inline-displayable PNG (best-effort). The
-    # original (absolute) PDF path is rasterized next to itself; the report embeds
-    # the PNG and keeps the PDF as a high-res vector link.
-    plot = (artifacts or {}).get("matched_plot")
-    if plot:
-        abs_pdf = Path(str(plot))
-        if not abs_pdf.is_absolute():
-            abs_pdf = base_dir / abs_pdf
-        png = _ensure_png(abs_pdf)
-        if png is not None:
-            output["matched_plot_png"] = _md_path(png, base_dir=base_dir)
     return output
 
 
@@ -647,17 +601,15 @@ def _diagnostics(data: dict[str, Any], *, language: str) -> list[str]:
 def _figure_block(artifacts: dict[str, Any], *, language: str) -> list[str]:
     heading = "## 图像与可视化评估" if language == "zh" else "## Figures and Visual Assessment"
     label = "quasi 与光锥 PDF 对比图" if language == "zh" else "Quasi vs light-cone comparison"
-    png_value = artifacts.get("matched_plot_png")
+    image_value = artifacts.get("matched_plot_image")
     pdf_value = artifacts.get("matched_plot")
     lines = [heading, "", f"### {label}"]
-    if png_value:
-        # Embed the rasterized plot inline so it shows directly; link the PDF for the vector version.
-        lines.append(f"![{label}]({png_value})")
+    if image_value:
+        lines.append(f"![{label}]({image_value})")
         if pdf_value:
             lines.append("")
             lines.append(f"[{label}（PDF 矢量图）]({pdf_value})" if language == "zh" else f"[{label} (PDF, vector)]({pdf_value})")
     elif pdf_value:
-        # No PNG converter available; fall back to linking the PDF.
         lines.append(f"[{label} (PDF)]({pdf_value})" if language == "en" else f"[{label}（PDF）]({pdf_value})")
     else:
         lines.append("未生成。" if language == "zh" else "Not available.")
@@ -856,13 +808,12 @@ def write_matching_stage_report(
         for item in jobs:
             result = item["result"]
             artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
-            png = artifacts.get("matched_plot_png")
+            image = artifacts.get("matched_plot_image")
             plot = artifacts.get("matched_plot")
             label = "Quasi vs light-cone comparison" if language == "en" else "quasi 与光锥 PDF 对比图"
             lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV"])
-            if png:
-                # Embed the rasterized plot inline; keep the PDF as a vector link.
-                lines.append(f"![{label}]({png})")
+            if image:
+                lines.append(f"![{label}]({image})")
                 if plot:
                     lines.append("")
                     lines.append(

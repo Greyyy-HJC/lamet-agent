@@ -253,6 +253,18 @@ def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:
     assert args["zs_fm"] == 0.1722
 
 
+def test_prepare_matching_plot_limits(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["perturbative_matching"].jobs[0]
+    effective = {**effective_matching_params(manifest, job), "plot": {"xlim": [-1.0, 2.0], "ylim": [-0.2, 2.5]}}
+    args = prepare_tool_args(
+        "plot_matched_pdf", {}, manifest=manifest, stage="perturbative_matching", job=job,
+        effective_params=effective, artifacts_dir=tmp_path, store={"quasi": object()},
+    )
+    assert args["xlim"] == [-1.0, 2.0]
+    assert args["ylim"] == [-0.2, 2.5]
+
+
 def test_new_downstream_job_validators_accept_full_manifest() -> None:
     manifest = _manifest()
     for stage in ("fourier_transform", "perturbative_matching"):

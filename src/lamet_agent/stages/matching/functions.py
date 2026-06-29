@@ -483,10 +483,12 @@ def plot_matched_pdf(
     ax.set_xlim(*x_limits)
     ax.set_ylim(*y_limits)
     ax.legend(**LEGEND_SETS)
+    svg_save = resolved_save.with_suffix(".svg")
     fig.savefig(resolved_save, bbox_inches="tight", transparent=True)
+    fig.savefig(svg_save, bbox_inches="tight")
     plt.close(fig)
 
-    result = {"path": str(resolved_save), "n_points": int(x_ls.size)}
+    result = {"path": str(resolved_save), "plot_image": str(svg_save), "n_points": int(x_ls.size)}
     # Leave the plot path in the store so the report can link it.
     store["matching_plot"] = result
     return result
@@ -559,6 +561,7 @@ def report_matching_result(
         artifacts["lightcone_artifact"] = store["matching_artifact"]
     if isinstance(store.get("matching_plot"), dict):
         artifacts["matched_plot"] = store["matching_plot"].get("path")
+        artifacts["matched_plot_image"] = store["matching_plot"].get("plot_image")
 
     output = _report_path(save_path, default_name="report_matching.md", artifacts_dir=artifacts_dir)
     paths = write_matching_report(result=result, artifacts=artifacts, path=output)

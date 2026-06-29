@@ -9,7 +9,7 @@ Convert the current job's quasi-PDF into a light-cone PDF sample by sample.
    the framework resolves the logical kernel declaration and scheme.
 3. Call apply_matching once to produce the matched EnsembleData and primary job
    NetCDF under store['output'].
-4. Call plot_matched_pdf, then finish with the NetCDF and PDF paths. A single
+4. Call plot_matched_pdf, then finish with the NetCDF, PDF, and SVG paths. A single
    bilingual stage report is written after all matching jobs finish; do not call
    report_matching_result unless explicitly asked to regenerate a per-job report.
 """.strip()

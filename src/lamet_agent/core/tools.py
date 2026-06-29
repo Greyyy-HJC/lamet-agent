@@ -423,6 +423,10 @@ def prepare_tool_args(
             resolved.update({"save_path": str(artifacts_dir / job.id), "artifacts_dir": str(artifacts_dir)})
         elif tool_name == "plot_matched_pdf":
             resolved.update({"save_path": str(artifacts_dir / job.id), "artifacts_dir": str(artifacts_dir)})
+            plot = matching.get("plot", {})
+            if isinstance(plot, dict):
+                resolved.update({key: plot[key] for key in ("xlim", "ylim") if key in plot})
+            resolved.update({key: matching[key] for key in ("xlim", "ylim") if key in matching})
         elif tool_name == "report_matching_result":
             resolved.update({key: matching[key] for key in ("kernel_id", "pz_gev", "mu", "zs_fm", "component") if key in matching})
             resolved.update({"save_path": f"{job.id}_report.md", "artifacts_dir": str(artifacts_dir)})
