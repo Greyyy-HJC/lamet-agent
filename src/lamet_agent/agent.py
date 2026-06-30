@@ -205,6 +205,13 @@ def _correlator_sample0_plots(result: dict[str, Any]) -> list[str]:
     return plots
 
 
+def _normalize_report_language(report_language: str) -> str:
+    language = report_language.lower()
+    if language not in {"en", "ch"}:
+        raise ValueError("report_language must be 'en' or 'ch'")
+    return language
+
+
 def run_agent(
     manifest: AnalysisManifest,
     *,
@@ -215,8 +222,10 @@ def run_agent(
     base_url: str | None = None,
     max_tool_steps: int = 40,
     verbose: bool = False,
+    report_language: str = "en",
 ) -> dict[str, Any]:
     """Execute the manifest's ordered stages and per-stage jobs."""
+    report_language = _normalize_report_language(report_language)
     selected = list(manifest.metadata.stages)
     state = AgentState(run_id=manifest.run_id)
     session = make_llm_session(model, actions_path, api_key, llm_model, base_url)
@@ -354,32 +363,36 @@ def run_agent(
             paths = write_correlator_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "ca_report.md",
+                report_language=report_language,
             )
-            stage_reports[stage] = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
+            stage_reports[stage] = {"report": str(paths["report"])}
         if stage == "renormalization" and stage_job_records:
             from lamet_agent.stages.renorm.reporting import write_renorm_stage_report
 
             paths = write_renorm_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "renorm_report.md",
+                report_language=report_language,
             )
-            stage_reports[stage] = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
+            stage_reports[stage] = {"report": str(paths["report"])}
         if stage == "fourier_transform" and stage_job_records:
             from lamet_agent.stages.fourier.reporting import write_fourier_stage_report
 
             paths = write_fourier_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "ft_report.md",
+                report_language=report_language,
             )
-            stage_reports[stage] = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
+            stage_reports[stage] = {"report": str(paths["report"])}
         if stage == "perturbative_matching" and stage_job_records:
             from lamet_agent.stages.matching.reporting import write_matching_stage_report
 
             paths = write_matching_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "matching_report.md",
+                report_language=report_language,
             )
-            stage_reports[stage] = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
+            stage_reports[stage] = {"report": str(paths["report"])}
         state.completed_stages.append(stage)
 
     trace.run_end(action_count=len(state.actions))

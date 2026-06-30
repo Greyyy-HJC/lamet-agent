@@ -110,7 +110,6 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert Path(run["plot_im"]).is_file()
     assert Path(run["plot_im"]).with_suffix(".svg").is_file()
     assert run["report"] is None
-    assert run["report_cn"] is None
     fit_data = EnsembleData.from_netcdf(run["fit_info_artifact"])
     assert fit_data.dims == ["scheme", "parameter"]
     assert fit_data.resample == "bootstrap"
@@ -135,11 +134,10 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
 
     report = report_fourier_result(store)
     report_path = Path(report["report"])
-    report_cn_path = Path(report["report_cn"])
     assert report_path.is_file()
-    assert report_cn_path.is_file()
+    assert "report_cn" not in report
+    assert not report_path.with_name("report_fourier_CN.md").exists()
     report_text = report_path.read_text(encoding="utf-8")
-    report_cn_text = report_cn_path.read_text(encoding="utf-8")
     assert "# Fourier Transform Analysis Report" in report_text
     assert "nucleon_quark_transversity_quasi_pdf" in report_text
     assert "GI" in report_text
@@ -155,7 +153,16 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "fourier_fit_info.nc" in report_text
     assert Path(run["artifact"]).name in report_text
     assert Path(run["fit_info_artifact"]).name in report_text
-    assert report_cn_path.name == "report_fourier_CN.md"
+    report_cn = report_fourier_result(
+        store,
+        save_path=str(tmp_path / "report_fourier_ch.md"),
+        report_language="ch",
+    )
+    report_cn_path = Path(report_cn["report"])
+    assert report_cn_path.name == "report_fourier_ch_CN.md"
+    assert report_cn_path.is_file()
+    assert not (tmp_path / "report_fourier_ch.md").exists()
+    report_cn_text = report_cn_path.read_text(encoding="utf-8")
     assert "# 傅立叶变换分析报告" in report_cn_text
     assert "Active fitted component" in report_cn_text
     assert "实部和虚部同时参与拟合" in report_cn_text

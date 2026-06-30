@@ -2443,7 +2443,6 @@ def run_fourier_transform(
         "plot_im": extension_plot["plot_im"],
         "plot_im_image": extension_plot.get("plot_im_image"),
         "report": report_result.get("report"),
-        "report_cn": report_result.get("report_cn"),
         "n_schemes": int(result["ft_re_samples"].shape[0]),
         "n_samples": int(np.asarray(result["final_ft_re_samples"]).shape[0]),
         "n_y": int(np.asarray(result["final_ft_re_samples"]).shape[1]),
@@ -2576,6 +2575,7 @@ def report_fourier_result(
     *,
     save_path: str | None = None,
     artifacts_dir: str | None = None,
+    report_language: str = "en",
 ) -> dict[str, Any]:
     """Write a Markdown report explaining the Fourier-stage computation."""
     data = store["fourier_result"]
@@ -2599,10 +2599,10 @@ def report_fourier_result(
         summary=store.get("fourier_summary") or summarize_fourier_result(store),
         artifacts=artifacts,
         path=output,
+        report_language=report_language,
     )
     report = {
-        "report": str(paths["en"]),
-        "report_cn": str(paths["zh"]),
+        "report": str(paths["report"]),
         "source": artifacts.get("fourier_artifact"),
         "fit_info_artifact": artifacts.get("fit_info_artifact"),
     }

@@ -88,6 +88,11 @@ def run_workflow(
         "--max-tool-steps",
         help="Maximum LLM/tool cycles per stage (correlator 2pt+3pt often needs >30).",
     ),
+    report_language: str = typer.Option(
+        "en",
+        "--report_language",
+        help="Report language: en or ch.",
+    ),
 ) -> None:
     """Run the staged agent loop.
 
@@ -99,6 +104,9 @@ def run_workflow(
         parsed = validate_manifest_file(manifest)
     except Exception as exc:  # pragma: no cover - CLI surface
         raise typer.BadParameter(str(exc)) from exc
+    report_language = report_language.lower()
+    if report_language not in {"en", "ch"}:
+        raise typer.BadParameter("--report_language must be 'en' or 'ch'")
 
     api_key = None
     if api_key_file.exists():
@@ -130,6 +138,7 @@ def run_workflow(
             base_url=base_url,
             verbose=verbose,
             max_tool_steps=max_tool_steps,
+            report_language=report_language,
         )
     except ValueError as exc:  # pragma: no cover - CLI surface
         raise typer.BadParameter(str(exc)) from exc

@@ -424,3 +424,8 @@
 - Split correlator data-window selection from fit-model selection: data windows now gate on ``Q`` and ``n_data > n_params``, then prefer low ``chi2/dof`` with a bias toward more data when fits are comparable.
 - Exposed data-window size metadata in tuning candidates and updated correlator prompts so the agent chooses windows from ``Q``/``n_data``-passing candidates without ranking different data windows by raw ``logGBF``.
 - Hardened correlator terminal-tool argument preparation so ``model_average=true`` preserves manifest ``nstate``/``prior_width`` scan lists even if the LLM proposes a single fit model, and normalized bare ``tmin``/``tmax``/``tau_cut`` shorthand into explicit window arguments.
+
+## 2026-06-29 (Report language selection)
+
+- Added ``--report_language en|ch`` to ``lamet-agent run`` and threaded it through ``run_agent()``.
+- Changed stage and per-job report writers to emit only the selected single-language Markdown report instead of both English and Chinese files by default.
