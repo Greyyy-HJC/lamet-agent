@@ -429,3 +429,8 @@
 
 - Added ``--report_language en|ch`` to ``lamet-agent run`` and threaded it through ``run_agent()``.
 - Changed stage and per-job report writers to emit only the selected single-language Markdown report instead of both English and Chinese files by default.
+
+## 2026-06-29 (Correlator component-specific output)
+
+- Made correlator bare-matrix output honor ``component``/``part`` when exporting samples and summary plots, setting the excluded component to zero instead of propagating unconstrained prior means.
+- Added a unit test covering the ``re``-only path that should force the imaginary bare matrix element to zero downstream.

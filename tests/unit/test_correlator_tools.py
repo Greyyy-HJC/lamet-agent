@@ -32,6 +32,7 @@ from lamet_agent.stages.correlator.functions import (
     PT2_PRIOR_ERROR_SCALE,
     STAGE_TOOLS,
     _anchor_pt2_prior,
+    _bare_matrix_element_mean_for_part,
     _bare_samples,
     _candidate_specs,
     _check_mode,
@@ -421,6 +422,20 @@ def test_bare_samples_use_o00_over_two_e0() -> None:
     assert real[0] == pytest.approx(2.0)
     assert imag[0] == pytest.approx(-1.0)
     assert np.isnan(real[1])
+
+
+def test_bare_matrix_element_mean_zeros_unfit_component() -> None:
+    p = {
+        "E0": gv.gvar(0.5, 0.01),
+        "O00_re": gv.gvar(2.0, 0.1),
+        "O00_im": gv.gvar(3.0, 1.0),
+    }
+    assert _bare_matrix_element_mean_for_part(
+        p, output_part="re", fit_part="re", fitting_form="Breit"
+    ) == pytest.approx(2.0)
+    assert _bare_matrix_element_mean_for_part(
+        p, output_part="im", fit_part="re", fitting_form="Breit"
+    ) == pytest.approx(0.0)
 
 
 def test_fit_summary_reports_physical_overlaps() -> None:

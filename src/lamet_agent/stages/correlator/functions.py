@@ -1072,6 +1072,19 @@ def _bare_matrix_element_from_fit(p: dict, *, part: str, fitting_form: str) -> A
     return p[f"O00_{part}"] / (2 * p["E0"])
 
 
+def _bare_matrix_element_mean_for_part(
+    p: dict,
+    *,
+    output_part: str,
+    fit_part: str,
+    fitting_form: str,
+) -> float:
+    """Return zero for the component that was intentionally excluded from the fit."""
+    if output_part not in _parts(fit_part):
+        return 0.0
+    return float(gv.mean(_bare_matrix_element_from_fit(p, part=output_part, fitting_form=fitting_form)))
+
+
 def _ratio_prior_template(fitting_form: str, nstate: int) -> gv.BufferDict:
     if fitting_form == "NonBreit":
         return pt3_nonbreit_ratio_prior(nstate)
@@ -1292,11 +1305,21 @@ def _plot_sample0_ratio(
     z: int,
     fit_label: str,
     fitting_form: str = "Breit",
+    part: str = "both",
 ) -> dict[str, str]:
     stem = log_dir / f"{fit_label}_{momentum}_z{z}_sample0"
+    plotted_parts = _parts(part)
     p = rec["fit"].p
-    plateau_ref_re = _bare_matrix_element_from_fit(p, part="re", fitting_form=fitting_form)
-    plateau_ref_im = _bare_matrix_element_from_fit(p, part="im", fitting_form=fitting_form)
+    plateau_ref_re = (
+        _bare_matrix_element_from_fit(p, part="re", fitting_form=fitting_form)
+        if "re" in plotted_parts
+        else None
+    )
+    plateau_ref_im = (
+        _bare_matrix_element_from_fit(p, part="im", fitting_form=fitting_form)
+        if "im" in plotted_parts
+        else None
+    )
     denominator_energy = p["E0_f"] if fitting_form == "NonBreit" else p["E0"]
     figures = plot_pt3_ratio_fit_on_data(
         ratio_re,
@@ -1311,9 +1334,17 @@ def _plot_sample0_ratio(
     )
     for fig, _ax in figures:
         plt.close(fig)
+    paths = {
+        "re": stem.with_name(f"{stem.name}_pt3_ratio_re.pdf"),
+        "im": stem.with_name(f"{stem.name}_pt3_ratio_im.pdf"),
+    }
+    for component, path in paths.items():
+        if component not in plotted_parts:
+            path.unlink(missing_ok=True)
     return {
-        "ratio_re_pdf": str(stem.with_name(f"{stem.name}_pt3_ratio_re.pdf")),
-        "ratio_im_pdf": str(stem.with_name(f"{stem.name}_pt3_ratio_im.pdf")),
+        f"ratio_{component}_pdf": str(path)
+        for component, path in paths.items()
+        if component in plotted_parts
     }
 
 
@@ -1348,8 +1379,10 @@ def _plot_sample0_fh(
     momentum: str,
     z: int,
     fit_label: str,
+    part: str = "both",
 ) -> dict[str, str]:
     stem = log_dir / f"{fit_label}_{momentum}_z{z}_sample0"
+    plotted_parts = _parts(part)
     fh_re, fh_im = _fh_samples_from_ratios(ratio_re, ratio_im, rec["tsep_ls"], rec["tau_cut"])
     p = rec["fit"].p
     figures = plot_fh_fit_on_data(
@@ -1357,16 +1390,24 @@ def _plot_sample0_fh(
         fh_im,
         tsep_ls=rec["tsep_ls"],
         window_bands=_fh_bands(rec),
-        plateau_ref_re=p["O00_re"] / (2 * p["E0"]),
-        plateau_ref_im=p["O00_im"] / (2 * p["E0"]),
+        plateau_ref_re=p["O00_re"] / (2 * p["E0"]) if "re" in plotted_parts else None,
+        plateau_ref_im=p["O00_im"] / (2 * p["E0"]) if "im" in plotted_parts else None,
         plateau_label=r"Sample-0 fit bare matrix element",
         save_path=stem,
     )
     for fig, _ax in figures:
         plt.close(fig)
+    paths = {
+        "re": stem.with_name(f"{stem.name}_fh_re.pdf"),
+        "im": stem.with_name(f"{stem.name}_fh_im.pdf"),
+    }
+    for component, path in paths.items():
+        if component not in plotted_parts:
+            path.unlink(missing_ok=True)
     return {
-        "fh_re_pdf": str(stem.with_name(f"{stem.name}_fh_re.pdf")),
-        "fh_im_pdf": str(stem.with_name(f"{stem.name}_fh_im.pdf")),
+        f"fh_{component}_pdf": str(path)
+        for component, path in paths.items()
+        if component in plotted_parts
     }
 
 
@@ -1488,10 +1529,12 @@ def _write_outputs(
     resample_mode: str,
     matrix_element_label: str = r"Bare matrix element $O_{00}/(2E_0)$",
     ylim: tuple[float, float] = (-0.2, 1.2),
+    part: str = "both",
 ) -> dict[str, Any]:
     """Write the bare matrix-element NetCDF plus diagnostic plot."""
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     resolved_save = resolve_plot_save_path(save_path, artifacts_dir=artifacts_dir, default_stem="bare_matrix_elements")
+    plotted_parts = _parts(part)
 
     z_values: list[int] = []
     real_mean: list[float] = []
@@ -1534,8 +1577,10 @@ def _write_outputs(
         )
 
     fig, ax = default_plot()
-    ax.errorbar(z_values, real_mean, real_err, label="Re", color=COLOR_CYCLE[0], **ERRORBAR_STYLE)
-    ax.errorbar(z_values, imag_mean, imag_err, label="Im", color=COLOR_CYCLE[1], marker="s", **ERRORBAR_STYLE)
+    if "re" in plotted_parts:
+        ax.errorbar(z_values, real_mean, real_err, label="Re", color=COLOR_CYCLE[0], **ERRORBAR_STYLE)
+    if "im" in plotted_parts:
+        ax.errorbar(z_values, imag_mean, imag_err, label="Im", color=COLOR_CYCLE[1], marker="s", **ERRORBAR_STYLE)
     ax.set_xlabel(r"$z/a$", **FONT_SIZE)
     ax.set_ylabel(matrix_element_label, **FONT_SIZE)
     ax.set_title(f"{ensemble} {momentum} {direction} bare matrix elements", **FONT_SIZE)
@@ -1557,6 +1602,7 @@ def _write_outputs(
             "momentum": momentum,
             "b_label": b_label,
             "resample_mode": resample_mode,
+            "part": part,
         },
     )
     artifact = f"{resolved_save}.nc"
@@ -2303,6 +2349,7 @@ def fit_bare_matrix_grid(
     fit_mode = _fit_mode_label(strategy, scope_label)
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
+    fitted_parts = _parts(part)
     out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
     fit_log_dir = Path(log_dir) if log_dir is not None else out_dir / "fit_logs"
     fit_log_dir.mkdir(parents=True, exist_ok=True)
@@ -2565,17 +2612,41 @@ def fit_bare_matrix_grid(
         ]
         avg_weights = _loggbf_weights(avg_records)
         avg_re_vals = np.asarray(
-            [float(gv.mean(_bare_matrix_element_from_fit(rec["fit"].p, part="re", fitting_form=form))) for rec in avg_records],
+            [
+                _bare_matrix_element_mean_for_part(
+                    rec["fit"].p,
+                    output_part="re",
+                    fit_part=part,
+                    fitting_form=form,
+                )
+                for rec in avg_records
+            ],
             dtype=float,
         )
         avg_im_vals = np.asarray(
-            [float(gv.mean(_bare_matrix_element_from_fit(rec["fit"].p, part="im", fitting_form=form))) for rec in avg_records],
+            [
+                _bare_matrix_element_mean_for_part(
+                    rec["fit"].p,
+                    output_part="im",
+                    fit_part=part,
+                    fitting_form=form,
+                )
+                for rec in avg_records
+            ],
             dtype=float,
         )
         avg_re_mean = float(np.sum(avg_weights * avg_re_vals))
         avg_im_mean = float(np.sum(avg_weights * avg_im_vals))
-        real_sys_sdev = _weighted_model_sdev(avg_re_vals, avg_weights, center=avg_re_mean) if model_average else 0.0
-        imag_sys_sdev = _weighted_model_sdev(avg_im_vals, avg_weights, center=avg_im_mean) if model_average else 0.0
+        real_sys_sdev = (
+            _weighted_model_sdev(avg_re_vals, avg_weights, center=avg_re_mean)
+            if model_average and "re" in fitted_parts
+            else 0.0
+        )
+        imag_sys_sdev = (
+            _weighted_model_sdev(avg_im_vals, avg_weights, center=avg_im_mean)
+            if model_average and "im" in fitted_parts
+            else 0.0
+        )
         templates = [
             _scope_prior_with_width(form, int(rec["nstate"]), scope, strategy, float(rec["prior_width"]))
             for rec in avg_records
@@ -2657,8 +2728,22 @@ def fit_bare_matrix_grid(
                         ),
                         logger=sample_logger, q_min=q_min,
                     )
-                    re_vals.append(float(gv.mean(_bare_matrix_element_from_fit(fit.p, part="re", fitting_form=form))))
-                    im_vals.append(float(gv.mean(_bare_matrix_element_from_fit(fit.p, part="im", fitting_form=form))))
+                    re_vals.append(
+                        _bare_matrix_element_mean_for_part(
+                            fit.p,
+                            output_part="re",
+                            fit_part=part,
+                            fitting_form=form,
+                        )
+                    )
+                    im_vals.append(
+                        _bare_matrix_element_mean_for_part(
+                            fit.p,
+                            output_part="im",
+                            fit_part=part,
+                            fitting_form=form,
+                        )
+                    )
                     if first_fit is None:
                         first_fit, first_rre, first_rim = fit, rre, rim
                         first_meta = {**spec, "nstate": int(rec["nstate"]), "prior_width": float(rec["prior_width"])}
@@ -2676,11 +2761,12 @@ def fit_bare_matrix_grid(
                         sample0_paths.update(_plot_sample0_ratio(
                             ratio_re=first_rre, ratio_im=first_rim, rec=rec0, Lt=Lt, log_dir=fit_log_dir,
                             momentum=momentum, z=z, fit_label=f"{strategy}_{scope_label}_fit", fitting_form=form,
+                            part=part,
                         ))
                     if "FH" in scope:
                         sample0_paths.update(_plot_sample0_fh(
                             ratio_re=first_rre, ratio_im=first_rim, rec=rec0, log_dir=fit_log_dir,
-                            momentum=momentum, z=z, fit_label=f"{strategy}_{scope_label}_fit",
+                            momentum=momentum, z=z, fit_label=f"{strategy}_{scope_label}_fit", part=part,
                         ))
             except Exception as exc:
                 failures.append({"sample": sample_index, "error": str(exc)})
@@ -2732,6 +2818,7 @@ def fit_bare_matrix_grid(
             if form == "NonBreit"
             else r"Bare matrix element $O_{00}/(2E_0)$"
         ),
+        part=part,
     )
     bare_data = output.pop("data")
     bare_data.array.attrs.update(
@@ -2744,6 +2831,7 @@ def fit_bare_matrix_grid(
                 "pz_out_gev": pz_out_gev,
                 "fitting_form": form,
                 "fit_scope": scope,
+                "part": part,
                 "nstate_values": json.dumps(fit_nstates),
                 "prior_width": json.dumps(prior_widths),
                 "momentum_out": final_momentum,

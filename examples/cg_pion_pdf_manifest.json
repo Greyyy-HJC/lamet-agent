@@ -174,17 +174,17 @@
     "correlator_analysis": {
       "defaults": {
         "pt2_windows": [{"tmin": 2, "tmax": 12}, {"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}],
-        "pt3_tau_cuts": [2, 3, 4],
+        "pt3_tau_cuts": [3, 4],
         "nstate": [2],
         "fit_scope": ["ratio"],
-        "fit_strategy": ["joint"],
+        "fit_strategy": ["chained"],
         "seed": 1984,
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 3.0,
         "prior_width": [0.5, 1.0, 2.0],
-        "component": "both",
+        "component": "re",
         "q_min": 0.05,
-        "model_average": true
+        "model_average": false
       },
       "jobs": [
         {"id": "ca_p0", "correlator_ids": ["a060_x_p0_2pt", "a060_x_p0_3pt_ts8", "a060_x_p0_3pt_ts10", "a060_x_p0_3pt_ts12"]},
@@ -206,21 +206,22 @@
     },
     "fourier_transform": {
       "defaults": {
-		"order": ["LA", "NLA"],
+        "order": ["NLA"],
+        "Lambda0": 0.0,
         "fit_error_mode": "covariance",
-		"sector": "valence",
+        "sector": "valence",
         "coord_unit": "lattice",
-		"posterior_prior_error_scale": [2.0, 3.0, 5.0],
+        "posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
         "scheme_scan": {
           "zmin_values": [9.0, 10.0, 11.0, 12.0],
           "zmax_values": [21.0, 22.0, 23.0, 24.0],
-          "z_ext_max": 37.0,
+          "z_ext_max": 100.0,
           "smooth": "linear",
           "model_average": false,
           "max_schemes": 200
         }
-      },
+        },
       "jobs": [
         {"id": "ft_p5", "inputs": {"input": "rn_p5"}, "params": {"pz_gev": 2.15}}
       ]
