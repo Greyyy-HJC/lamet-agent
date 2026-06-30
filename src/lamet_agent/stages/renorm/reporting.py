@@ -43,6 +43,15 @@ def _cn_report_path(path: Path) -> Path:
     return path.with_name(f"{path.stem}_CN{path.suffix or '.md'}")
 
 
+def _report_target(path: Path, report_language: str) -> tuple[Path, str]:
+    language = report_language.lower()
+    if language == "en":
+        return path, "en"
+    if language == "ch":
+        return _cn_report_path(path), "zh"
+    raise ValueError("report_language must be 'en' or 'ch'")
+
+
 def _md_path(value: Any, *, base_dir: Path) -> str | None:
     if not value:
         return None
@@ -175,18 +184,14 @@ def write_renorm_stage_report(
     *,
     jobs: list[dict[str, Any]],
     path: str | Path,
+    report_language: str = "en",
 ) -> dict[str, Path]:
-    """Write one bilingual report summarizing all renormalization jobs."""
+    """Write one report summarizing all renormalization jobs."""
     output = Path(path)
-    cn_output = _cn_report_path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    cn_output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(
-        build_renorm_stage_report_markdown(jobs=jobs, base_dir=output.parent, language="en"),
+    target, language = _report_target(output, report_language)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        build_renorm_stage_report_markdown(jobs=jobs, base_dir=target.parent, language=language),
         encoding="utf-8",
     )
-    cn_output.write_text(
-        build_renorm_stage_report_markdown(jobs=jobs, base_dir=cn_output.parent, language="zh"),
-        encoding="utf-8",
-    )
-    return {"en": output, "zh": cn_output}
+    return {"report": target}

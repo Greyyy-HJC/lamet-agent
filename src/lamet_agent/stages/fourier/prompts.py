@@ -11,7 +11,7 @@ quasi-distribution while preserving every resampled sample.
    y_grid, scheme_scan, method, observable, order, sector, coordinate units, lattice
    spacing, momentum, output paths, and fit controls. Do not override them.
 3. The run tool writes the primary NetCDF, fit-info NetCDF, plots, and registers
-   store['output']. A single bilingual stage report is written after all Fourier
+   store['output']. A single language-selected stage report is written after all Fourier
    jobs finish. Finish by reporting the NetCDF/plot paths plus selected-range
    and fit-model diagnostics; do not call the individual plot/report tools again.
 """.strip()

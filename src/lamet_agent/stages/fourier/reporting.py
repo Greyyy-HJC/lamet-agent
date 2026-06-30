@@ -114,6 +114,15 @@ def _cn_report_path(path: Path) -> Path:
     return path.with_name(f"{path.stem}_CN{path.suffix or '.md'}")
 
 
+def _report_target(path: Path, report_language: str) -> tuple[Path, str]:
+    language = report_language.lower()
+    if language == "en":
+        return path, "en"
+    if language == "ch":
+        return _cn_report_path(path), "zh"
+    raise ValueError("report_language must be 'en' or 'ch'")
+
+
 def _md_path(value: Any, *, base_dir: Path) -> str | None:
     if not value:
         return None
@@ -1148,36 +1157,32 @@ def write_fourier_report(
     summary: dict[str, Any] | None,
     artifacts: dict[str, Any] | None,
     path: str | Path,
+    report_language: str = "en",
 ) -> dict[str, Path]:
-    """Write English and Chinese Fourier reports and return their paths."""
+    """Write one Fourier report and return its path."""
     output = Path(path)
-    cn_output = _cn_report_path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    cn_output.parent.mkdir(parents=True, exist_ok=True)
-    report_artifacts = _markdown_artifacts(artifacts, base_dir=output.parent)
-    output.write_text(
-        build_fourier_report_markdown(result=result, summary=summary, artifacts=report_artifacts, language="en"),
+    target, language = _report_target(output, report_language)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    report_artifacts = _markdown_artifacts(artifacts, base_dir=target.parent)
+    target.write_text(
+        build_fourier_report_markdown(result=result, summary=summary, artifacts=report_artifacts, language=language),
         encoding="utf-8",
     )
-    cn_output.write_text(
-        build_fourier_report_markdown(result=result, summary=summary, artifacts=report_artifacts, language="zh"),
-        encoding="utf-8",
-    )
-    return {"en": output, "zh": cn_output}
+    return {"report": target}
 
 
 def write_fourier_stage_report(
     *,
     jobs: list[dict[str, Any]],
     path: str | Path,
+    report_language: str = "en",
 ) -> dict[str, Path]:
-    """Write one bilingual report summarizing all Fourier jobs in a stage."""
+    """Write one report summarizing all Fourier jobs in a stage."""
     output = Path(path)
-    cn_output = _cn_report_path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    cn_output.parent.mkdir(parents=True, exist_ok=True)
+    target, language = _report_target(output, report_language)
+    target.parent.mkdir(parents=True, exist_ok=True)
     first = jobs[0]["result"]
-    for language, target in (("en", output), ("zh", cn_output)):
+    for language, target in ((language, target),):
         observable = str(first.get("observable", ""))
         observable_text = OBSERVABLE_TEXT.get(observable, observable or "not recorded")
         method = str(first.get("method", "not recorded"))
@@ -1350,4 +1355,4 @@ def write_fourier_stage_report(
                     lines.append(f"| [{Path(value).name}]({value}) | `{item['job_id']}`: {desc[1 if language == 'zh' else 0]} |")
         lines.extend(["", *_artifact_help(language=language)])
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return {"en": output, "zh": cn_output}
+    return {"report": target}

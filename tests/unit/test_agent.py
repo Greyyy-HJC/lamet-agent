@@ -502,9 +502,9 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
     result = run_agent(manifest, model="external", actions_path=transcript)
 
     report_path = Path(result["stage_reports"]["fourier_transform"]["report"])
-    report_cn_path = Path(result["stage_reports"]["fourier_transform"]["report_cn"])
     assert report_path.exists()
-    assert report_cn_path.exists()
+    assert "report_cn" not in result["stage_reports"]["fourier_transform"]
+    assert not report_path.with_name("ft_report_CN.md").exists()
     assert "`ft_p4`" in report_path.read_text(encoding="utf-8")
 
 
@@ -579,19 +579,17 @@ def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, mon
     monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", lambda stage: {"fit_bare_matrix_grid": fake_fit_bare_matrix_grid})
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
 
-    result = run_agent(manifest, model="external", actions_path=transcript)
+    result = run_agent(manifest, model="external", actions_path=transcript, report_language="ch")
 
     report_path = Path(result["stage_reports"]["correlator_analysis"]["report"])
-    report_cn_path = Path(result["stage_reports"]["correlator_analysis"]["report_cn"])
     assert report_path.exists()
-    assert report_cn_path.exists()
+    assert report_path.name == "ca_report_CN.md"
+    assert "report_cn" not in result["stage_reports"]["correlator_analysis"]
+    assert not report_path.with_name("ca_report.md").exists()
     report_text = report_path.read_text(encoding="utf-8")
-    assert "`ca_p4`" in report_text
-    assert "fit_logs" in report_text
-    assert "tuning log records window selection" in report_text
+    assert "# Correlator Analysis 阶段报告" in report_text
     assert "ca_p4.nc" in report_text
     assert ".png" not in report_text
-    assert "# Correlator Analysis 阶段报告" in report_cn_path.read_text(encoding="utf-8")
 
 
 def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeypatch) -> None:
@@ -672,13 +670,12 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
     result = run_agent(manifest, model="external", actions_path=transcript)
 
     report_path = Path(result["stage_reports"]["renormalization"]["report"])
-    report_cn_path = Path(result["stage_reports"]["renormalization"]["report_cn"])
     assert report_path.exists()
-    assert report_cn_path.exists()
+    assert "report_cn" not in result["stage_reports"]["renormalization"]
+    assert not report_path.with_name("renorm_report_CN.md").exists()
     report_text = report_path.read_text(encoding="utf-8")
     assert "`rn_p4`" in report_text
     assert "hybrid-ratio" in report_text
     assert "rn_p4.nc" in report_text
     assert "rn_p4.pdf" in report_text
     assert ".png" not in report_text
-    assert "# Renormalization 阶段报告" in report_cn_path.read_text(encoding="utf-8")

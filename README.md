@@ -287,7 +287,8 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
   - Exposes `validate` and `run` commands.
   - `run` accepts `--model` (`mock`/`external`/`deepseek`/`openai`), `--verbose` / `-v`
     (ReAct-style trace to stdout), `--actions-path` (for `external`), and
-    `--api-key-file`/`--llm-model`/`--base-url` (for `deepseek`/`openai`).
+    `--api-key-file`/`--llm-model`/`--base-url` (for `deepseek`/`openai`), plus
+    `--report_language en|ch` to select the single report language written for each stage.
 - `src/lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
 - `src/lamet_agent/stages/*`
@@ -332,8 +333,9 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
      JSON action per cycle; on `call_tool`, `core/tools.prepare_tool_args()` and
      `resolve_stage_tools()` run the tool and return an observation as the next
      user turn; terminal tools place the primary data in `store["output"]`.
-   - After the stage finishes, the stage's `reporting.py` emits a report so users
-     can track analysis progress and inspect that stage's intermediate results.
+  - After the stage finishes, the stage's `reporting.py` emits one report in the
+    selected language so users can track analysis progress and inspect that stage's
+    intermediate results.
 5. Session backends: `mock` (deterministic scaffold), `external` (JSONL
    transcript replay via `--actions-path`), or `deepseek` (chat-completions API
    in `core/llm.py`).

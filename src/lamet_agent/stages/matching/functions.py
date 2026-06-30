@@ -520,8 +520,9 @@ def report_matching_result(
     component: str | None = None,
     save_path: str | None = None,
     artifacts_dir: str | None = None,
+    report_language: str = "en",
 ) -> dict[str, Any]:
-    """Write English + Chinese Markdown reports for the matching stage.
+    """Write a Markdown report for the matching stage.
 
     Physics parameters come from the matching job and kernel declaration; the x
     grid, quasi-PDF, and matched PDF come from the current job store.
@@ -564,8 +565,8 @@ def report_matching_result(
         artifacts["matched_plot_image"] = store["matching_plot"].get("plot_image")
 
     output = _report_path(save_path, default_name="report_matching.md", artifacts_dir=artifacts_dir)
-    paths = write_matching_report(result=result, artifacts=artifacts, path=output)
-    report = {"report": str(paths["en"]), "report_cn": str(paths["zh"])}
+    paths = write_matching_report(result=result, artifacts=artifacts, path=output, report_language=report_language)
+    report = {"report": str(paths["report"])}
     store["matching_report"] = report
     return report
 
