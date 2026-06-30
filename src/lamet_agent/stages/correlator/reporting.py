@@ -12,11 +12,12 @@ import numpy as np
 CORRELATOR_ARTIFACT_DESCRIPTIONS = {
     "bare_artifact": ("Bare matrix element samples (EnsembleData NetCDF)", "裸矩阵元样本（EnsembleData NetCDF）"),
     "summary_plot": ("PDF plot of the bare matrix element versus Wilson-line length", "裸矩阵元随 Wilson 线长度变化的 PDF 图"),
+    "summary_plot_image": ("SVG companion for Markdown embedding", "供 Markdown 嵌入的裸矩阵元 SVG 图"),
     "tuning_log": ("Window tuning and sample-average fit-quality log", "窗口选择和样本平均拟合质量日志"),
     "sample_log": ("Per-sample and per-z fit-quality log", "逐样本、逐 z 拟合质量日志"),
 }
 
-CORRELATOR_ARTIFACT_ORDER = ("bare_artifact", "summary_plot", "tuning_log", "sample_log")
+CORRELATOR_ARTIFACT_ORDER = ("bare_artifact", "summary_plot", "summary_plot_image", "tuning_log", "sample_log")
 
 
 def _fmt(value: Any, digits: int = 4) -> str:
@@ -180,12 +181,18 @@ def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
 
 
 def _diagnostic_plots(artifacts: dict[str, Any], *, language: str) -> list[str]:
-    plots = list(artifacts.get("sample0_pt2_plots", [])) + list(artifacts.get("sample0_fit_plots", []))
-    plots = [plot for plot in plots if plot]
+    plots = list(artifacts.get("sample0_fit_plots", [])) + list(artifacts.get("sample0_pt2_plots", []))
+    plots = [plot for plot in plots if plot and str(plot).endswith(".svg")]
     if not plots:
-        return ["No sample-0 diagnostic PDFs were recorded." if language == "en" else "未记录 sample-0 诊断 PDF。"]
-    title = "Sample-0 diagnostic PDFs:" if language == "en" else "Sample-0 诊断 PDF："
-    return [title, *[f"- `{plot}`" for plot in plots[:24]]]
+        return ["No sample-0 diagnostic SVGs were recorded." if language == "en" else "未记录 sample-0 诊断 SVG。"]
+    lines = ["Sample-0 diagnostic SVGs:" if language == "en" else "Sample-0 诊断 SVG："]
+    for start in range(0, len(plots), 4):
+        row = plots[start : start + 4]
+        lines.append("<table><tr>")
+        for plot in row:
+            lines.append(f'<td><img src="{plot}" alt="{Path(str(plot)).stem}" width="230"><br><code>{Path(str(plot)).stem}</code></td>')
+        lines.append("</tr></table>")
+    return lines
 
 
 def build_correlator_stage_report_markdown(
@@ -245,8 +252,15 @@ def build_correlator_stage_report_markdown(
                 "",
                 *_outputs_table(artifacts, language=language),
                 "",
-                "### Diagnostic PDFs" if language == "en" else "### 诊断 PDF",
+                "### Diagnostic SVGs" if language == "en" else "### 诊断 SVG",
                 *_diagnostic_plots(artifacts, language=language),
+                "",
+                "### Summary Figure" if language == "en" else "### 总览图",
+                (
+                    f"![Bare matrix element summary]({artifacts.get('summary_plot_image')})"
+                    if artifacts.get("summary_plot_image")
+                    else ("Not available." if language == "en" else "未生成。")
+                ),
             ]
         )
     return "\n".join(lines) + "\n"

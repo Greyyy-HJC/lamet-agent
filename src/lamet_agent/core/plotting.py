@@ -257,6 +257,8 @@ def plot_pt2_fit_on_data(
         path.parent.mkdir(parents=True, exist_ok=True)
         fig_c2.savefig(path.with_name(f"{path.name}_c2pt.pdf"), bbox_inches="tight", transparent=True)
         fig_meff.savefig(path.with_name(f"{path.name}_meff.pdf"), bbox_inches="tight", transparent=True)
+        fig_c2.savefig(path.with_name(f"{path.name}_c2pt.svg"), bbox_inches="tight")
+        fig_meff.savefig(path.with_name(f"{path.name}_meff.svg"), bbox_inches="tight")
 
     return (fig_c2, ax_c2), (fig_meff, ax_meff)
 
@@ -345,6 +347,7 @@ def plot_pt2_meff_on_data(
         path = Path(save_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         fig_meff.savefig(path.with_name(f"{path.name}_meff.pdf"), bbox_inches="tight", transparent=True)
+        fig_meff.savefig(path.with_name(f"{path.name}_meff.svg"), bbox_inches="tight")
 
     return fig_meff, ax_meff
 
@@ -594,6 +597,8 @@ def plot_pt3_ratio_fit_on_data(
             bbox_inches="tight",
             transparent=True,
         )
+        fig_re.savefig(path.with_name(f"{path.name}_pt3_ratio_re.svg"), bbox_inches="tight")
+        fig_im.savefig(path.with_name(f"{path.name}_pt3_ratio_im.svg"), bbox_inches="tight")
 
     return (fig_re, ax_re), (fig_im, ax_im)
 
@@ -671,6 +676,8 @@ def plot_fh_fit_on_data(
         path.parent.mkdir(parents=True, exist_ok=True)
         fig_re.savefig(path.with_name(f"{path.name}_fh_re.pdf"), bbox_inches="tight", transparent=True)
         fig_im.savefig(path.with_name(f"{path.name}_fh_im.pdf"), bbox_inches="tight", transparent=True)
+        fig_re.savefig(path.with_name(f"{path.name}_fh_re.svg"), bbox_inches="tight")
+        fig_im.savefig(path.with_name(f"{path.name}_fh_im.svg"), bbox_inches="tight")
 
     return (fig_re, ax_re), (fig_im, ax_im)
 

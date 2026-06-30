@@ -67,6 +67,9 @@ class _TailParameter:
     p0: float
     lower: float = -np.inf
     upper: float = np.inf
+    fit_label: str | None = None
+    fit_sign: float = 1.0
+    fixed: float | None = None
 
 
 def _normalise_resample_mode(value: str | None) -> str:
@@ -346,6 +349,7 @@ QUARK_LIKE_TERMS = {
     "pion_quark_quasi_gpd": ("1", "3", "2", "t2"),
     "nucleon_quark_quasi_gpd": ("2", "t2"),
 }
+QUARK_LIKE_AMPLITUDE_BOUND = 20.0
 
 
 def _quark_like_term_names(observable: str) -> tuple[str, ...]:
@@ -413,13 +417,20 @@ def _with_method_tail_parameters(
     return parameters
 
 
-def _quark_like_parameters(order: str, observable: str) -> list[_TailParameter]:
+def _quark_like_parameters(
+    order: str,
+    observable: str,
+    *,
+    sector: str | None = None,
+    hadron: str | None = None,
+) -> list[_TailParameter]:
+    observable = _canonical_observable(observable)
     term_names = _quark_like_term_names(observable)
     parameters = []
     for idx, name in enumerate(term_names):
         parameters.extend(
             [
-                _TailParameter(f"A{name}", 1.0 if idx == 0 else 0.1),
+                _TailParameter(f"A{name}", 1.0 if idx == 0 else 0.1, -QUARK_LIKE_AMPLITUDE_BOUND, QUARK_LIKE_AMPLITUDE_BOUND),
                 _TailParameter(f"phi{name}", 0.0, -np.pi, np.pi),
             ]
         )
@@ -427,11 +438,31 @@ def _quark_like_parameters(order: str, observable: str) -> list[_TailParameter]:
         for name in term_names:
             parameters.extend(
                 [
-                    _TailParameter(f"A{name}p", 0.1),
+                    _TailParameter(f"A{name}p", 0.1, -QUARK_LIKE_AMPLITUDE_BOUND, QUARK_LIKE_AMPLITUDE_BOUND),
                     _TailParameter(f"phi{name}p", 0.0, -np.pi, np.pi),
                 ]
             )
-    return parameters
+    sector = str(sector or "").lower()
+    hadron = str(hadron or "").lower()
+    fixed = {}
+    aliases = {}
+    if observable == "pion_quark_quasi_pdf" and sector == "valence":
+        fixed.update({"phi2": 0.0, "phi2p": 0.0})
+        aliases.update({"A3": ("A1", 1.0), "phi3": ("phi1", -1.0), "A3p": ("A1p", 1.0), "phi3p": ("phi1p", -1.0)})
+    if observable == "pion_quark_quasi_pdf" and sector == "sea":
+        fixed.update({"A1": 0.0, "A3": 0.0, "A1p": 0.0, "A3p": 0.0})
+    if observable == "meson_quasi_da" and hadron == "pion":
+        aliases.update({"A2": ("A1", 1.0), "phi2": ("phi1", -1.0), "A2p": ("A1p", 1.0), "phi2p": ("phi1p", -1.0)})
+    if observable == "pion_quark_quasi_gpd" and sector == "sea":
+        fixed.update({"A1": 0.0, "A3": 0.0, "A1p": 0.0, "A3p": 0.0})
+    return [
+        _TailParameter(item.label, fixed[item.label], item.lower, item.upper, fixed=fixed[item.label])
+        if item.label in fixed
+        else _TailParameter(item.label, item.p0, item.lower, item.upper, aliases[item.label][0], aliases[item.label][1])
+        if item.label in aliases
+        else item
+        for item in parameters
+    ]
 
 
 def _nucleon_gluon_parameters(order: str) -> list[_TailParameter]:
@@ -454,13 +485,19 @@ def _pion_gluon_parameters(order: str) -> list[_TailParameter]:
     return parameters
 
 
-def _observable_parameters(order: str, observable: str) -> list[_TailParameter]:
+def _observable_parameters(
+    order: str,
+    observable: str,
+    *,
+    sector: str | None = None,
+    hadron: str | None = None,
+) -> list[_TailParameter]:
     observable = _canonical_observable(observable)
     if observable == "nucleon_gluon_quasi_pdf":
         return _nucleon_gluon_parameters(order)
     if observable == "pion_gluon_quasi_pdf":
         return _pion_gluon_parameters(order)
-    return _quark_like_parameters(order, observable)
+    return _quark_like_parameters(order, observable, sector=sector, hadron=hadron)
 
 
 def _param_template(
@@ -469,6 +506,9 @@ def _param_template(
     observable: str,
     *,
     Lambda0: float = 0.1,
+    sector: str | None = None,
+    hadron: str | None = None,
+    fit: bool = False,
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     method = method.upper()
     order = order.upper()
@@ -480,17 +520,41 @@ def _param_template(
 
     observable = _canonical_observable(observable)
     parameters = _with_method_tail_parameters(
-        _observable_parameters(order, observable),
+        _observable_parameters(order, observable, sector=sector, hadron=hadron),
         method=method,
         lambda_lower=lambda_lower,
     )
-    p0 = [item.p0 for item in parameters]
-    lower = [item.lower for item in parameters]
-    upper = [item.upper for item in parameters]
+    fit_labels: set[str] = set()
+    selected = []
+    for item in parameters:
+        if not fit:
+            selected.append(item)
+        elif item.fixed is None and item.fit_label is None and item.label not in fit_labels:
+            selected.append(item)
+            fit_labels.add(item.label)
+    p0_by_label = {item.label: item.p0 for item in parameters}
+    p0 = [
+        item.fixed
+        if item.fixed is not None
+        else item.fit_sign * p0_by_label[item.fit_label]
+        if item.fit_label is not None
+        else item.p0
+        for item in selected
+    ]
+    lower = [item.lower for item in selected]
+    upper = [item.upper for item in selected]
     return np.asarray(p0, dtype=float), (np.asarray(lower, dtype=float), np.asarray(upper, dtype=float))
 
 
-def _param_labels(method: str, order: str, observable: str) -> list[str]:
+def _param_labels(
+    method: str,
+    order: str,
+    observable: str,
+    *,
+    sector: str | None = None,
+    hadron: str | None = None,
+    fit: bool = False,
+) -> list[str]:
     method = method.upper()
     if method not in {"GI", "CG"}:
         raise ValueError("method must be 'GI' or 'CG'")
@@ -499,11 +563,17 @@ def _param_labels(method: str, order: str, observable: str) -> list[str]:
         raise ValueError("order must be 'LA' or 'NLA'")
     observable = _canonical_observable(observable)
     parameters = _with_method_tail_parameters(
-        _observable_parameters(order, observable),
+        _observable_parameters(order, observable, sector=sector, hadron=hadron),
         method=method,
         lambda_lower=0.1,
     )
-    return [item.label for item in parameters]
+    if not fit:
+        return [item.label for item in parameters]
+    labels = []
+    for item in parameters:
+        if item.fixed is None and item.fit_label is None and item.label not in labels:
+            labels.append(item.label)
+    return labels
 
 
 def _decay_tail(z: np.ndarray, params: Sequence[Any], *, lambda_index: int, method: str) -> Any:
@@ -697,15 +767,37 @@ def _fit_one_sample(
     part: str,
     phase_scale: float,
     phase_prime_scale: float | None = None,
+    sector: str | None = None,
+    hadron: str | None = None,
     p0: np.ndarray | None = None,
     prior: gv.BufferDict | None = None,
     Lambda0: float = 0.1,
 ) -> tuple[np.ndarray, gv.BufferDict | None, gv.BufferDict | None, bool, float, int, float, float]:
-    default_p0, bounds = _param_template(method, order, observable, Lambda0=Lambda0)
+    default_p0, _full_bounds = _param_template(method, order, observable, Lambda0=Lambda0, sector=sector, hadron=hadron)
+    fit_p0, bounds = _param_template(method, order, observable, Lambda0=Lambda0, sector=sector, hadron=hadron, fit=True)
     start = default_p0 if p0 is None else np.asarray(p0, dtype=float)
+    fit_labels = _param_labels(method, order, observable, sector=sector, hadron=hadron, fit=True)
+    full_items = _with_method_tail_parameters(
+        _observable_parameters(order.upper(), _canonical_observable(observable), sector=sector, hadron=hadron),
+        method=method.upper(),
+        lambda_lower=float(Lambda0),
+    )
+    full_labels = [item.label for item in full_items]
+    if p0 is not None and len(start) != len(fit_p0):
+        start = np.asarray([start[full_labels.index(label)] for label in fit_labels], dtype=float)
+    else:
+        start = fit_p0 if p0 is None else start
 
     def fcn(z: np.ndarray, p: gv.BufferDict) -> np.ndarray:
-        params = _physical_params(p, bounds)
+        free_values = dict(zip(fit_labels, _physical_params(p, bounds)))
+        params = [
+            item.fixed
+            if item.fixed is not None
+            else item.fit_sign * free_values[item.fit_label]
+            if item.fit_label is not None
+            else free_values[item.label]
+            for item in full_items
+        ]
         pred_re, pred_im = _asymptotic_values(
             z,
             params,
@@ -717,20 +809,32 @@ def _fit_one_sample(
         )
         return _select_fit_prediction(pred_re, pred_im, part)
 
-    dof = max(1, _n_fit_channels(part) * len(z_fit) - len(default_p0))
+    dof = max(1, _n_fit_channels(part) * len(z_fit) - len(fit_p0))
     try:
+        fit_prior = prior
+        if fit_prior is None:
+            fit_prior = gv.BufferDict()
+            for key, value in _internal_p0(start, bounds).items():
+                fit_prior[key] = gv.gvar(float(value), 3.0)
         fit_args = {
             "data": (z_fit, y_data),
             "fcn": fcn,
             "p0": _internal_p0(start, bounds),
+            "prior": fit_prior,
             "maxit": 2000,
             "svdcut": 1e-12,
             "fitter": "scipy_least_squares",
         }
-        if prior is not None:
-            fit_args["prior"] = prior
         fit = lsqfit.nonlinear_fit(**fit_args)
-        physical = _physical_params(fit.pmean, bounds)
+        free_values = dict(zip(fit_labels, _physical_params(fit.pmean, bounds)))
+        physical = [
+            item.fixed
+            if item.fixed is not None
+            else item.fit_sign * free_values[item.fit_label]
+            if item.fit_label is not None
+            else free_values[item.label]
+            for item in full_items
+        ]
         params = np.asarray([float(item) for item in physical], dtype=float)
     except (FloatingPointError, RuntimeError, ValueError, OverflowError, AssertionError):
         return default_p0, None, None, False, float("inf"), dof, 0.0, float("-inf")
@@ -743,7 +847,7 @@ def _fit_one_sample(
         float(fit.chi2),
         int(fit.dof),
         float(fit.Q),
-        float(fit.logGBF) if prior is not None else float("-inf"),
+        float(fit.logGBF),
     )
 
 
@@ -766,6 +870,8 @@ def fit_tail_quality_for_mean(
     posterior_prior_error_scale: float = 3.0,
     fit_error_mode: str = "diagonal",
     part: str = "both",
+    sector: str | None = None,
+    hadron: str | None = None,
 ) -> dict[str, Any]:
     """Fit the mean matrix element on one range and return quality diagnostics."""
     coord_arr = np.asarray(coord, dtype=float)
@@ -790,7 +896,7 @@ def fit_tail_quality_for_mean(
     zmax_fit = _convert_scheme_value(zmax, fit_scale)
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
     n_points = int(np.count_nonzero(fit_mask))
-    n_params = len(_param_labels(method, order, observable))
+    n_params = len(_param_labels(method, order, observable, sector=sector, hadron=hadron, fit=True))
     required_points = _minimum_fit_points_for_parameters(n_params, part)
     if n_points < required_points:
         dof = max(1, _n_fit_channels(part) * n_points - n_params)
@@ -832,6 +938,8 @@ def fit_tail_quality_for_mean(
         part=part,
         phase_scale=phase_scale,
         phase_prime_scale=phase_prime_scale,
+        sector=sector,
+        hadron=hadron,
         Lambda0=Lambda0,
     )
     if ok and mean_pmean is not None and mean_psdev is not None:
@@ -844,6 +952,8 @@ def fit_tail_quality_for_mean(
             part=part,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
+            sector=sector,
+            hadron=hadron,
             p0=mean_params,
             prior=_scaled_internal_prior(mean_pmean, mean_psdev, posterior_prior_error_scale),
             Lambda0=Lambda0,
@@ -913,6 +1023,8 @@ def _run_one_scheme(
     posterior_prior_error_scale: float,
     fit_error_mode: str,
     part: str,
+    sector: str | None,
+    hadron: str | None,
 ) -> dict[str, Any]:
     zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
     label = str(scheme.get("label", f"{method}_{order}_{zmin}_{zmax}"))
@@ -929,7 +1041,8 @@ def _run_one_scheme(
 
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
     n_params = len(_param_labels(method, order, observable))
-    required_points = _minimum_fit_points_for_parameters(n_params, part)
+    n_fit_params = len(_param_labels(method, order, observable, sector=sector, hadron=hadron, fit=True))
+    required_points = _minimum_fit_points_for_parameters(n_fit_params, part)
     if np.count_nonzero(fit_mask) < required_points:
         raise ValueError("fit range has too few points for the selected asymptotic form")
 
@@ -961,6 +1074,8 @@ def _run_one_scheme(
         part=part,
         phase_scale=phase_scale,
         phase_prime_scale=phase_prime_scale,
+        sector=sector,
+        hadron=hadron,
         Lambda0=Lambda0,
     )
     sample_prior = None
@@ -975,6 +1090,8 @@ def _run_one_scheme(
             part=part,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
+            sector=sector,
+            hadron=hadron,
             p0=mean_params,
             prior=sample_prior,
             Lambda0=Lambda0,
@@ -1034,6 +1151,8 @@ def _run_one_scheme(
             part=part,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
+            sector=sector,
+            hadron=hadron,
             p0=mean_params,
             prior=sample_prior,
             Lambda0=Lambda0,
@@ -1127,6 +1246,8 @@ def run_fourier_workflow(
     posterior_prior_error_scale: float = 3.0,
     fit_error_mode: str = "diagonal",
     part: str = "both",
+    sector: str | None = None,
+    hadron: str | None = None,
 ) -> dict[str, Any]:
     """Run asymptotic extension and Fourier transform for resampled data.
 
@@ -1197,6 +1318,8 @@ def run_fourier_workflow(
                 posterior_prior_error_scale=scheme_prior_width,
                 fit_error_mode=fit_error_mode,
                 part=part,
+                sector=sector,
+                hadron=hadron,
             )
         )
         scheme_results[-1]["order"] = scheme_order
@@ -1807,10 +1930,15 @@ def _pick_four_zmin_values_by_tail_fit(
     resample_mode: str,
     Lambda0: float,
     part: str,
+    sector: str | None,
+    hadron: str | None,
     preferred_zmin: float | None,
 ) -> list[float]:
     stable_starts = []
-    required_points = _minimum_fit_points_for_parameters(len(_param_labels(method, order, observable)), part)
+    required_points = _minimum_fit_points_for_parameters(
+        len(_param_labels(method, order, observable, sector=sector, hadron=hadron, fit=True)),
+        part,
+    )
     for zmax in zmax_values:
         candidates = positive[positive < float(zmax)]
         candidates = np.asarray(
@@ -1838,6 +1966,8 @@ def _pick_four_zmin_values_by_tail_fit(
                 resample_mode=resample_mode,
                 Lambda0=Lambda0,
                 part=part,
+                sector=sector,
+                hadron=hadron,
             )
             for candidate in candidates
         ]
@@ -1887,6 +2017,8 @@ def _auto_fill_scheme_scan(
     resample_mode: str,
     Lambda0: float,
     part: str,
+    sector: str | None,
+    hadron: str | None,
 ) -> dict[str, Any]:
     """Fill missing scan keys with stable zmax values and tail-fit zmin diagnostics."""
     if "zmax_values" not in spec and "zmax_start" not in spec:
@@ -1918,6 +2050,8 @@ def _auto_fill_scheme_scan(
             resample_mode=resample_mode,
             Lambda0=Lambda0,
             part=part,
+            sector=sector,
+            hadron=hadron,
             preferred_zmin=preferred_zmin,
         )
     if "z_ext_max" not in spec:
@@ -1961,6 +2095,8 @@ def _auto_scheme_scan(
     resample_mode: str,
     Lambda0: float,
     part: str,
+    sector: str | None,
+    hadron: str | None,
     existing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate a conservative scan from stable zmax and tail-fit zmin diagnostics."""
@@ -1986,6 +2122,8 @@ def _auto_scheme_scan(
         resample_mode=resample_mode,
         Lambda0=Lambda0,
         part=part,
+        sector=sector,
+        hadron=hadron,
     )
     spec["auto_generated"] = True
     return spec
@@ -2145,6 +2283,7 @@ def run_fourier_transform(
     output_scale: float = 1.0,
     sector: str | None = None,
     target_observable: str | None = None,
+    hadron: str | None = None,
     save_path: str | None = None,
     plot_fourier: dict[str, Any] | None = None,
     plot_extension: dict[str, Any] | None = None,
@@ -2159,7 +2298,7 @@ def run_fourier_transform(
         if not target:
             observable_name = str(observable).strip().lower()
             target = "da" if observable_name == "meson_quasi_da" else "gpd" if "gpd" in observable_name else "pdf"
-        if target in {"da", "gpd"}:
+        if target == "da" or (target == "gpd" and sector != "sea"):
             sector = "full"
         if target == "pdf":
             if sector == "valence":
@@ -2204,12 +2343,17 @@ def run_fourier_transform(
             resample_mode=resample_mode,
             Lambda0=float(Lambda0),
             part=part,
+            sector=sector,
+            hadron=hadron,
             existing=scan_spec,
         )
         auto_scheme_scan = scan_spec
     scheme_scan = scan_spec
     schemes = _generate_scan_schemes(scheme_scan)
-    required_points = _minimum_fit_points_for_parameters(len(_param_labels(method, range_order, observable)), part)
+    required_points = _minimum_fit_points_for_parameters(
+        len(_param_labels(method, range_order, observable, sector=sector, hadron=hadron, fit=True)),
+        part,
+    )
     schemes = [
         scheme
         for scheme in schemes
@@ -2242,6 +2386,8 @@ def run_fourier_transform(
                 posterior_prior_error_scale=range_prior_width,
                 fit_error_mode=fit_error_mode,
                 part=part,
+                sector=sector,
+                hadron=hadron,
             )
         )
     candidate_chi2 = [float(item["chi2_dof"]) for item in candidate_qualities]
@@ -2266,7 +2412,7 @@ def run_fourier_transform(
     selected_range = dict(schemes[best_candidate])
     fit_model_specs = []
     for spec in _fit_model_specs(order, posterior_prior_error_scale):
-        n_model_params = len(_param_labels(method, spec["order"], observable))
+        n_model_params = len(_param_labels(method, spec["order"], observable, sector=sector, hadron=hadron, fit=True))
         n_model_points = np.count_nonzero(
             (coord_arr >= float(selected_range["zmin"])) & (coord_arr <= float(selected_range["zmax"])) & (coord_arr > 0)
         )
@@ -2316,6 +2462,8 @@ def run_fourier_transform(
             posterior_prior_error_scale=range_prior_width,
             fit_error_mode=fit_error_mode,
             part="im",
+            sector=sector,
+            hadron=hadron,
         )
         valence_result = run_fourier_workflow(
             matrix_element["coord"],
@@ -2336,6 +2484,8 @@ def run_fourier_transform(
             posterior_prior_error_scale=range_prior_width,
             fit_error_mode=fit_error_mode,
             part="re",
+            sector=sector,
+            hadron=hadron,
         )
         for sector_result in (total_result, valence_result):
             sector_result.update(candidate_diagnostics)
@@ -2384,6 +2534,8 @@ def run_fourier_transform(
             posterior_prior_error_scale=range_prior_width,
             fit_error_mode=fit_error_mode,
             part=part,
+            sector=sector,
+            hadron=hadron,
         )
     result["resample_mode"] = resample_mode
     result["pz_gev"] = pz_gev

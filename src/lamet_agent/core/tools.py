@@ -38,6 +38,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "im_flip_for_ft",
         "sector",
         "target_observable",
+        "hadron",
         "Lambda0",
         "posterior_prior_error_scale",
         "fit_error_mode",

@@ -1341,11 +1341,13 @@ def _plot_sample0_ratio(
     for component, path in paths.items():
         if component not in plotted_parts:
             path.unlink(missing_ok=True)
-    return {
-        f"ratio_{component}_pdf": str(path)
-        for component, path in paths.items()
-        if component in plotted_parts
-    }
+            path.with_suffix(".svg").unlink(missing_ok=True)
+    output = {}
+    for component, path in paths.items():
+        if component in plotted_parts:
+            output[f"ratio_{component}_pdf"] = str(path)
+            output[f"ratio_{component}_svg"] = str(path.with_suffix(".svg"))
+    return output
 
 
 def _fh_bands(rec: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1404,11 +1406,13 @@ def _plot_sample0_fh(
     for component, path in paths.items():
         if component not in plotted_parts:
             path.unlink(missing_ok=True)
-    return {
-        f"fh_{component}_pdf": str(path)
-        for component, path in paths.items()
-        if component in plotted_parts
-    }
+            path.with_suffix(".svg").unlink(missing_ok=True)
+    output = {}
+    for component, path in paths.items():
+        if component in plotted_parts:
+            output[f"fh_{component}_pdf"] = str(path)
+            output[f"fh_{component}_svg"] = str(path.with_suffix(".svg"))
+    return output
 
 
 def _plot_sample0_pt2(
@@ -1432,7 +1436,10 @@ def _plot_sample0_pt2(
         save_path=stem,
     )
     plt.close(fig)
-    return {"meff_pdf": str(stem.with_name(f"{stem.name}_meff.pdf"))}
+    return {
+        "meff_pdf": str(stem.with_name(f"{stem.name}_meff.pdf")),
+        "meff_svg": str(stem.with_name(f"{stem.name}_meff.svg")),
+    }
 
 
 def _split_log_paths(
@@ -1588,7 +1595,9 @@ def _write_outputs(
     ax.legend(**LEGEND_SETS)
     fig.tight_layout()
     pdf_path = f"{resolved_save}.pdf"
+    svg_path = f"{resolved_save}.svg"
     fig.savefig(pdf_path, bbox_inches="tight", transparent=True)
+    fig.savefig(svg_path, bbox_inches="tight")
     plt.close(fig)
 
     data = _bare_records_to_ensemble(
@@ -1612,6 +1621,7 @@ def _write_outputs(
         "netcdf_path": artifact,
         "data": data,
         "plot_pdf": pdf_path,
+        "plot_svg": svg_path,
         "n_z": len(records),
         "n_sample": data.n_sample,
         "outputs": outputs,

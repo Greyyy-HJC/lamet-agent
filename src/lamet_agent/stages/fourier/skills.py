@@ -37,7 +37,7 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     orders = params["order"] if isinstance(params["order"], list) else [params["order"]]
     if any(order not in {"LA", "NLA"} for order in orders):
         return ["Fourier order must be 'LA' or 'NLA'."]
-    sectors = {"pdf": {"valence", "total", "full", "sea"}, "da": {"full"}, "gpd": {"full"}}
+    sectors = {"pdf": {"valence", "total", "full", "sea"}, "da": {"full"}, "gpd": {"full", "sea"}}
     if "sector" in params and str(params["sector"]).lower() not in sectors[manifest.metadata.target_observable]:
         return [f"Fourier sector must be one of {sorted(sectors[manifest.metadata.target_observable])}."]
     if "sector" not in params and params.get("part") not in {"re", "im", "both"}:

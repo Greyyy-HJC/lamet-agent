@@ -12,9 +12,10 @@ import numpy as np
 RENORM_ARTIFACT_DESCRIPTIONS = {
     "renormalized_artifact": ("Renormalized matrix element samples (EnsembleData NetCDF)", "重整化矩阵元样本（EnsembleData NetCDF）"),
     "renormalized_plot": ("PDF plot of the renormalized matrix element", "重整化矩阵元 PDF 图"),
+    "renormalized_plot_image": ("SVG companion for Markdown embedding", "供 Markdown 嵌入的重整化矩阵元 SVG 图"),
 }
 
-RENORM_ARTIFACT_ORDER = ("renormalized_artifact", "renormalized_plot")
+RENORM_ARTIFACT_ORDER = ("renormalized_artifact", "renormalized_plot", "renormalized_plot_image")
 
 
 def _fmt(value: Any, digits: int = 4) -> str:
@@ -172,6 +173,18 @@ def build_renorm_stage_report_markdown(
                 "",
                 "### Scheme Parameters" if language == "en" else "### 方案参数",
                 *_scheme_table(result, language=language),
+                "",
+                "### Renormalized Matrix Element" if language == "en" else "### 重整化矩阵元图",
+                (
+                    f"![Renormalized matrix element]({artifacts.get('renormalized_plot_image')})"
+                    if artifacts.get("renormalized_plot_image")
+                    else ("Not available." if language == "en" else "未生成。")
+                ),
+                (
+                    f"[PDF artifact]({artifacts.get('renormalized_plot')})"
+                    if artifacts.get("renormalized_plot")
+                    else ""
+                ),
                 "",
                 "### Output Artifacts" if language == "en" else "### 输出文件",
                 *_outputs_table(artifacts, language=language),

@@ -30,7 +30,7 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
     assert args["tsep_ls"] == [8, 10, 12]
     assert args["z_values"] == list(range(25))
     assert args["nstate_values"] == effective["nstate"]
-    assert args["fit_strategies"] == ["joint"]
+    assert args["fit_strategies"] == effective["fit_strategy"]
     assert args["fit_scope_values"] == ["ratio"]
     assert args["pt3_paths"]["8"].endswith("_3pt_ts8.h5")
 

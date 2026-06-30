@@ -518,6 +518,80 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
     assert np.asarray(json.loads(fit_info.attrs["fit_params"])).shape == (1, 3, 13)
 
 
+def test_fourier_pion_pdf_valence_tail_constraints(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    coord = np.arange(0.0, 16.0)
+    base_re = np.exp(-0.25 * coord)
+    base_im = 0.1 * np.exp(-0.25 * coord)
+    np.savez(
+        data_path,
+        coord=coord,
+        re_samples=np.vstack([base_re, 1.01 * base_re, 0.99 * base_re]),
+        im_samples=np.vstack([base_im, 0.98 * base_im, 1.02 * base_im]),
+    )
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+
+    run = run_fourier_transform(
+        store,
+        y_grid=[0.0],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [13.0], "z_ext_max": 15.0},
+        method="GI",
+        order="NLA",
+        observable="pion_quark_quasi_pdf",
+        sector="valence",
+        target_observable="pdf",
+    )
+
+    fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
+    labels = json.loads(fit_info.attrs["fit_param_labels"])
+    params = np.asarray(json.loads(fit_info.attrs["fit_params"]))[0]
+    idx = {label: labels.index(label) for label in labels}
+    assert np.allclose(params[:, idx["phi2"]], 0.0)
+    assert np.allclose(params[:, idx["phi2p"]], 0.0)
+    assert np.allclose(params[:, idx["A3"]], params[:, idx["A1"]])
+    assert np.allclose(params[:, idx["A3p"]], params[:, idx["A1p"]])
+    assert np.allclose(params[:, idx["phi3"]], -params[:, idx["phi1"]])
+    assert np.allclose(params[:, idx["phi3p"]], -params[:, idx["phi1p"]])
+
+
+def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    coord = np.arange(0.0, 12.0)
+    base_re = np.exp(-0.3 * coord)
+    base_im = 0.05 * np.exp(-0.3 * coord)
+    np.savez(
+        data_path,
+        coord=coord,
+        re_samples=np.vstack([base_re, 1.01 * base_re, 0.99 * base_re]),
+        im_samples=np.vstack([base_im, 0.98 * base_im, 1.02 * base_im]),
+    )
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+
+    run = run_fourier_transform(
+        store,
+        y_grid=[0.0],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [10.0], "z_ext_max": 11.0},
+        method="GI",
+        order="NLA",
+        observable="meson_quasi_da",
+        target_observable="da",
+        hadron="pion",
+    )
+
+    fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
+    labels = json.loads(fit_info.attrs["fit_param_labels"])
+    params = np.asarray(json.loads(fit_info.attrs["fit_params"]))[0]
+    idx = {label: labels.index(label) for label in labels}
+    assert np.allclose(params[:, idx["A2"]], params[:, idx["A1"]])
+    assert np.allclose(params[:, idx["A2p"]], params[:, idx["A1p"]])
+    assert np.allclose(params[:, idx["phi2"]], -params[:, idx["phi1"]])
+    assert np.allclose(params[:, idx["phi2p"]], -params[:, idx["phi1p"]])
+
+
 def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     coord = np.arange(0.0, 14.0)

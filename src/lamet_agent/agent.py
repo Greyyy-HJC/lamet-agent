@@ -281,6 +281,7 @@ def run_agent(
                             "artifacts": {
                                 "bare_artifact": fit_result.get("artifact") or fit_result.get("netcdf_path"),
                                 "summary_plot": fit_result.get("plot_pdf"),
+                                "summary_plot_image": fit_result.get("plot_svg"),
                                 "tuning_log": fit_result.get("tuning_log_path"),
                                 "sample_log": fit_result.get("sample_log_path"),
                                 "sample0_pt2_plots": _path_values(fit_result.get("sample0_pt2_plot_paths")),
@@ -308,6 +309,7 @@ def run_agent(
                                 "renormalized_artifact": renorm_result.get("artifact")
                                 or store.get("matrix_element_netcdf"),
                                 "renormalized_plot": plot_result.get("plot"),
+                                "renormalized_plot_image": plot_result.get("plot_image"),
                             },
                         }
                     )

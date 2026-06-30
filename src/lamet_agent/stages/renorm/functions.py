@@ -333,10 +333,13 @@ def plot_renormalized_matrix_element(
     fig.tight_layout()
     stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="renormalized_matrix_element")
     plot_path = stem.with_suffix(".pdf")
+    svg_path = stem.with_suffix(".svg")
     fig.savefig(plot_path, bbox_inches="tight", transparent=True)
+    fig.savefig(svg_path, bbox_inches="tight")
     plt.close(fig)
     return {
         "plot": str(plot_path),
+        "plot_image": str(svg_path),
         "data": data,
         "n_z": int(len(z_values)),
         "n_sample": int(values.shape[0]),
