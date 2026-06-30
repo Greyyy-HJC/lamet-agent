@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.stages.matching.functions import apply_matching, load_quasi_pdf, plot_matched_pdf, resolve_kernel_id
@@ -40,6 +41,7 @@ def test_plot_matched_pdf_writes_pdf_and_svg(tmp_path: Path) -> None:
         values=[np.array([1.0, 2.0]), np.array([1.1, 2.1])],
         dims=("x",),
         coords={"x": [0.0, 1.0]},
+        attrs={"sector": "valence"},
         name="quasi_pdf",
     )
     lightcone = EnsembleData(
@@ -58,4 +60,36 @@ def test_plot_matched_pdf_writes_pdf_and_svg(tmp_path: Path) -> None:
     assert Path(result["plot_image"]).is_file()
     assert Path(result["path"]).suffix == ".pdf"
     assert Path(result["plot_image"]).suffix == ".svg"
+    assert result["xlim"] == [-0.01, 1.01]
+    assert result["ylim"] == pytest.approx([0.6792893218813452, 3.1207106781186544])
     assert store["matching_plot"] == result
+
+
+def test_plot_matched_pdf_honors_explicit_limits(tmp_path: Path) -> None:
+    quasi = EnsembleData(
+        ensemble=None,
+        resample="bootstrap",
+        values=[np.array([1.0, 2.0]), np.array([1.1, 2.1])],
+        dims=("x",),
+        coords={"x": [-1.0, 1.0]},
+        attrs={"sector": "total"},
+        name="quasi_pdf",
+    )
+    lightcone = EnsembleData(
+        ensemble=None,
+        resample="bootstrap",
+        values=[np.array([0.9, 1.8]), np.array([1.0, 1.9])],
+        dims=("x",),
+        coords={"x": [-1.0, 1.0]},
+        name="lightcone_pdf",
+    )
+    store = {"x_ls": np.array([-1.0, 1.0]), "quasi_ed": quasi, "lightcone_ed": lightcone}
+
+    result = plot_matched_pdf(
+        store,
+        save_path=str(tmp_path / "matched_pdf"),
+        ylim=[-0.2, 2.5],
+    )
+
+    assert result["xlim"] == [-1.01, 1.01]
+    assert result["ylim"] == [-0.2, 2.5]

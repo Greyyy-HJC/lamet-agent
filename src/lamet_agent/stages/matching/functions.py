@@ -425,6 +425,7 @@ def plot_matched_pdf(
     artifacts_dir: str | None = None,
     xlim: list[float] | tuple[float, float] | None = None,
     ylim: list[float] | tuple[float, float] | None = None,
+    sector: str | None = None,
 ) -> dict[str, Any]:
     """Plot quasi vs matched (light-cone) PDF and save a PDF artifact.
 
@@ -465,11 +466,17 @@ def plot_matched_pdf(
     # discrete error points. Same style as the Fourier-stage plots.
     fig, ax = default_plot()
 
+    plot_min = np.inf
+    plot_max = -np.inf
+
     def _band(data: EnsembleData, *, label: str, color: str) -> None:
         # Center line is the sample mean; the band is the sample-built +/- error,
         # using the resampling-aware mean/sdev of EnsembleData.
+        nonlocal plot_min, plot_max
         mean = np.asarray(data.mean, dtype=float)
         sdev = np.asarray(data.sdev, dtype=float)
+        plot_min = min(plot_min, float(np.min(mean - sdev)))
+        plot_max = max(plot_max, float(np.max(mean + sdev)))
         ax.fill_between(x_ls, mean - sdev, mean + sdev, color=color, alpha=0.32, linewidth=0, label=label)
         ax.plot(x_ls, mean, color=color, linewidth=0.9, alpha=0.85)
 
@@ -478,8 +485,9 @@ def plot_matched_pdf(
     _band(lightcone_ed, label="light-cone", color=ORANGE)
     ax.set_xlabel(r"$x$", **FONT_SIZE)
     ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
-    x_limits = (0.0, 2.0) if xlim is None else (float(xlim[0]), float(xlim[1]))
-    y_limits = (-0.1, 2.51) if ylim is None else (float(ylim[0]), float(ylim[1]))
+    sector_name = str(sector or quasi_ed.attrs.get("sector", "")).lower()
+    x_limits = ((-0.01, 1.01) if sector_name == "valence" else (-1.01, 1.01)) if xlim is None else (float(xlim[0]), float(xlim[1]))
+    y_limits = (plot_min - 0.2, plot_max + 1.0) if ylim is None else (float(ylim[0]), float(ylim[1]))
     ax.set_xlim(*x_limits)
     ax.set_ylim(*y_limits)
     ax.legend(**LEGEND_SETS)
@@ -488,7 +496,13 @@ def plot_matched_pdf(
     fig.savefig(svg_save, bbox_inches="tight")
     plt.close(fig)
 
-    result = {"path": str(resolved_save), "plot_image": str(svg_save), "n_points": int(x_ls.size)}
+    result = {
+        "path": str(resolved_save),
+        "plot_image": str(svg_save),
+        "n_points": int(x_ls.size),
+        "xlim": [float(x_limits[0]), float(x_limits[1])],
+        "ylim": [float(y_limits[0]), float(y_limits[1])],
+    }
     # Leave the plot path in the store so the report can link it.
     store["matching_plot"] = result
     return result
