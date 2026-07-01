@@ -438,6 +438,24 @@ def test_bare_matrix_element_mean_zeros_unfit_component() -> None:
     ) == pytest.approx(0.0)
 
 
+def test_nonbreit_bare_matrix_element_uses_overlap_sign_convention() -> None:
+    p = {
+        "E0_i": gv.gvar(0.6, 0.01),
+        "E0_f": gv.gvar(0.4, 0.01),
+        "z0_i": gv.gvar(-2.0, 0.1),
+        "z0_f": gv.gvar(3.0, 0.1),
+        "O00_re": gv.gvar(1.5, 0.1),
+        "O00_im": gv.gvar(-0.5, 0.1),
+    }
+    assert _bare_matrix_element_mean_for_part(
+        p, output_part="re", fit_part="both", fitting_form="NonBreit"
+    ) == pytest.approx(-1.5)
+    p["z0_i"] = gv.gvar(2.0, 0.1)
+    assert _bare_matrix_element_mean_for_part(
+        p, output_part="re", fit_part="both", fitting_form="NonBreit"
+    ) == pytest.approx(1.5)
+
+
 def test_fit_summary_reports_physical_overlaps() -> None:
     class Fit:
         pass

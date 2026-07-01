@@ -1068,7 +1068,8 @@ def _bare_samples(records: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray
 
 def _bare_matrix_element_from_fit(p: dict, *, part: str, fitting_form: str) -> Any:
     if fitting_form == "NonBreit":
-        return p[f"O00_{part}"] / (p["E0_f"] + p["E0_i"])
+        overlap_sign = -1.0 if gv.mean(p["z0_f"] * p["z0_i"]) < 0.0 else 1.0
+        return overlap_sign * p[f"O00_{part}"] / (p["E0_f"] + p["E0_i"])
     return p[f"O00_{part}"] / (2 * p["E0"])
 
 
