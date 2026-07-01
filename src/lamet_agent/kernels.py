@@ -237,6 +237,24 @@ def C_hybrid(ksi: float, log_scale: float, y: float, zspz: float, eps: float = 1
 CoeffFn = Callable[[float, float, float], float]
 
 
+def _lo_interp_matrix(x_grid: np.ndarray, y_grid: np.ndarray) -> np.ndarray:
+    """LO delta(x - y) as the matrix form of the examples' ``np.interp`` grid move.
+
+    Built column by column straight from ``np.interp`` (each y basis vector), so
+    ``(matrix @ q)[i] == np.interp(x_grid[i], y_grid, q, left=0, right=0)`` by
+    construction. Equals the identity when the grids coincide, and keeps the LO term
+    alive (instead of dropping to all-NLO) when ``x_ls`` and ``y_ls`` are staggered.
+    """
+    order = np.argsort(y_grid)  # np.interp needs an increasing y grid
+    ys = y_grid[order]
+    lo_sorted = np.column_stack(
+        [np.interp(x_grid, ys, unit, left=0.0, right=0.0) for unit in np.eye(len(y_grid))]
+    )
+    lo = np.empty_like(lo_sorted)
+    lo[:, order] = lo_sorted  # undo the sort so columns line up with y_grid
+    return lo
+
+
 def build_matching_matrix(
     x_ls: np.ndarray,
     pz_gev: float,
@@ -251,7 +269,10 @@ def build_matching_matrix(
     """Discretize a coefficient function ``coeff(ksi, log_scale)`` into an (nx, ny) matrix.
 
     ``x_ls`` and ``y_ls`` are independent open grids (``y_ls`` defaults to ``x_ls``).
-    The loop fills the off-diagonal (ksi != 1) entries from ``coeff``; the
+    The loop fills the off-diagonal (ksi != 1) entries from ``coeff``; the LO
+    delta(x - y) is a linear-interpolation stencil from the y grid onto each x (the
+    same ``np.interp`` the examples use to move a curve between grids), so it survives
+    when the grids are staggered and collapses to the identity when they coincide; the
     plus-prescription makes every y column integrate to zero and restores the
     ksi = 1 singularity; ``diagonal_extra(log_scale)`` (MSbar only) adds the finite
     diagonal conversion term. Returns ``identity - alpha_s C_x/(2 pi) * matrix * dy``.
@@ -276,17 +297,17 @@ def build_matching_matrix(
     alpha_s = alphas_nloop(mu, order=1, Nf=3)
 
     nx, ny = len(x_grid), len(y_grid)
-    identity = np.zeros((nx, ny))
     nlo_matrix = np.zeros((nx, ny))
+    # LO delta(x - y): a linear-interpolation stencil from the y grid onto each x,
+    # the same np.interp(..., left=0, right=0) trick the examples use to move a curve
+    # between grids. Collapses to the identity when the grids coincide.
+    identity = _lo_interp_matrix(x_grid, y_grid)
     # For each y column, the x row closest to that y point carries the plus-function.
     diag_rows = np.abs(x_grid[:, None] - y_grid[None, :]).argmin(axis=0)
 
     # 1) Off-diagonal (ksi != 1) regular coefficients from the coeff function.
     for idx, x_val in enumerate(x_grid):
         for idy, y_val in enumerate(y_grid):
-            if np.isclose(x_val, y_val, atol=eps, rtol=0.0):
-                identity[idx, idy] = 1.0  # leading-order delta(x - y)
-
             ksi = x_val / y_val
             if np.abs(1.0 - ksi) <= eps:
                 continue  # the ksi = 1 singularity is restored by the plus prescription
@@ -294,8 +315,8 @@ def build_matching_matrix(
             log_scale = np.log(4.0 * y_val**2 * pz_gev**2 / mu**2)
             nlo_matrix[idx, idy] = coeff(ksi, log_scale, y_val) / np.abs(y_val)
 
-    # 2) Diagonal plus-prescription: make every y column integrate to zero, then
-    #    add the optional finite scheme-conversion term.
+    # 2) Plus-prescription: make every y column integrate to zero, then add the
+    #    optional finite scheme-conversion term on that column's nearest x row.
     for idy, diag_row in enumerate(diag_rows):
         nlo_matrix[int(diag_row), idy] -= np.sum(nlo_matrix[:, idy])
         if diagonal_extra is not None:
