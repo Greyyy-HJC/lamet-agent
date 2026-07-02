@@ -1536,6 +1536,7 @@ def _write_outputs(
     b_label: str,
     resample_mode: str,
     matrix_element_label: str = r"Bare matrix element $O_{00}/(2E_0)$",
+    plot_title: str | None = None,
     ylim: tuple[float, float] = (-0.2, 1.2),
     part: str = "both",
 ) -> dict[str, Any]:
@@ -1591,7 +1592,7 @@ def _write_outputs(
         ax.errorbar(z_values, imag_mean, imag_err, label="Im", color=COLOR_CYCLE[1], marker="s", **ERRORBAR_STYLE)
     ax.set_xlabel(r"$z/a$", **FONT_SIZE)
     ax.set_ylabel(matrix_element_label, **FONT_SIZE)
-    ax.set_title(f"{ensemble} {momentum} {direction} bare matrix elements", **FONT_SIZE)
+    ax.set_title(plot_title or f"{ensemble} {momentum} {direction} bare matrix elements", **FONT_SIZE)
     ax.set_ylim(*ylim)
     ax.legend(**LEGEND_SETS)
     fig.tight_layout()
@@ -2821,14 +2822,22 @@ def fit_bare_matrix_grid(
             }
         )
 
+    if form == "NonBreit":
+        q2 = None if pz_gev is None or pz_out_gev is None else (float(pz_out_gev) - float(pz_gev)) ** 2
+        xi = None if pz_gev is None or pz_out_gev is None else (float(pz_gev) - float(pz_out_gev)) / (float(pz_gev) + float(pz_out_gev))
+        plot_title = rf"{ensemble} $Q^2={q2:g}\,\mathrm{{GeV}}^2$, $\xi={xi:g}$ {direction} bare matrix elements"
+    else:
+        p_label = "n/a" if pz_gev is None else f"{float(pz_gev):g}"
+        plot_title = rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ {direction} bare matrix elements"
     output = _write_outputs(
         z_records, artifacts_dir=out_dir, save_path=save_path, ensemble=ensemble, tag=tag, variant=variant,
         direction=direction, momentum=momentum, b_label=b_label, resample_mode=mode,
         matrix_element_label=(
-            r"Bare matrix element $O_{00}/(E_0^f+E_0^i)$"
+            r"Bare matrix element $O_{00}/(E_{0}^{i}+E_{0}^{f})$"
             if form == "NonBreit"
             else r"Bare matrix element $O_{00}/(2E_0)$"
         ),
+        plot_title=plot_title,
         part=part,
     )
     bare_data = output.pop("data")
