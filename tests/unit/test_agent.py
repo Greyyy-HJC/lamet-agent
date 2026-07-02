@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 import urllib.error
 from pathlib import Path
 
@@ -164,6 +166,71 @@ def test_make_llm_session_openai_requires_key() -> None:
         llm.make_llm_session("openai", None, api_key=None)
     session = llm.make_llm_session("openai", None, api_key="sk-test")
     assert hasattr(session, "decide")
+
+
+def test_make_llm_session_codex_uses_codex_decide(monkeypatch) -> None:
+    captured: list[list[dict[str, str]]] = []
+
+    def fake_codex_decide(messages: list[dict[str, str]]) -> dict:
+        captured.append(messages)
+        return {"action": "finish", "reason": "done"}
+
+    monkeypatch.setattr(llm, "codex_decide", fake_codex_decide)
+
+    session = llm.make_llm_session("codex", None, api_key=None)
+    session.begin_stage("stage prompt")
+    action = session.decide(last_observation={"tool_name": "inspect", "result": {"ok": True}})
+
+    assert action == {"action": "finish", "reason": "done"}
+    assert captured[0][0]["role"] == "system"
+    assert "LaMET analysis agent" in captured[0][0]["content"]
+    assert captured[0][1] == {"role": "user", "content": "stage prompt"}
+    assert captured[0][2]["role"] == "user"
+    assert "Tool result" in captured[0][2]["content"]
+
+
+def test_codex_decide_does_not_pass_strict_output_schema(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _Sandbox:
+        read_only = "read-only"
+
+    class _Thread:
+        def run(self, task_input, **kwargs):
+            captured["task_input"] = task_input
+            captured["run_kwargs"] = kwargs
+            return types.SimpleNamespace(final_response='{"action":"finish","reason":"done"}')
+
+    class _Codex:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def thread_start(self, **kwargs):
+            captured["thread_start_kwargs"] = kwargs
+            return _Thread()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "openai_codex",
+        types.SimpleNamespace(Codex=_Codex, Sandbox=_Sandbox),
+    )
+
+    action = llm._codex_decide(
+        [
+            {"role": "system", "content": "system instructions"},
+            {"role": "user", "content": "stage prompt"},
+        ]
+    )
+
+    assert action == {"action": "finish", "reason": "done"}
+    assert captured["thread_start_kwargs"]["developer_instructions"] == "system instructions"
+    assert captured["thread_start_kwargs"]["sandbox"] == _Sandbox.read_only
+    assert captured["thread_start_kwargs"]["ephemeral"] is True
+    assert captured["run_kwargs"] == {"sandbox": _Sandbox.read_only}
+    assert "stage prompt" in captured["task_input"]
 
 
 def test_run_agent_registers_job_output_for_downstream_role(tmp_path: Path, monkeypatch) -> None:

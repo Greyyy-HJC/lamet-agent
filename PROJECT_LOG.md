@@ -434,3 +434,10 @@
 
 - Made correlator bare-matrix output honor ``component``/``part`` when exporting samples and summary plots, setting the excluded component to zero instead of propagating unconstrained prior means.
 - Added a unit test covering the ``re``-only path that should force the imaginary bare matrix element to zero downstream.
+
+## 2026-07-02 (Codex LLM session backend)
+
+- Added ``model=codex`` to ``core.llm.make_llm_session()` using the new ``codex_decide`` helper so the main agent loop can use the Codex Python SDK instead of an OpenAI-compatible HTTP API provider.
+- Kept ``openai-codex`` as an optional ``[codex]`` extra and delayed importing the SDK until the codex backend is used, so existing ``mock``/``external``/``deepseek``/``openai`` workflows remain importable without the SDK.
+- Updated CLI/README backend lists and added unit coverage for routing stage prompts and tool observations through ``codex_decide``.
+- Removed strict ``output_schema`` from the Codex SDK turn call after diagnosing the SDK failure as an ``invalid_json_schema`` rejection for flexible tool ``args``; Codex responses are now parsed with the same JSON repair helper used by API providers.

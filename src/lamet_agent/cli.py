@@ -62,7 +62,7 @@ def run_workflow(
     model: str = typer.Option(
         "mock",
         "--model",
-        help="LLM backend: mock, external, deepseek, or openai.",
+        help="LLM backend: mock, external, codex, deepseek, or openai.",
     ),
     actions_path: Path | None = None,
     api_key_file: Path = Path("api.key"),
@@ -96,9 +96,10 @@ def run_workflow(
 ) -> None:
     """Run the staged agent loop.
 
-    With ``--model deepseek`` or ``--model openai`` the loop is driven by that
-    provider's API. The key is read from ``--api-key-file`` (default ``api.key``)
-    or the provider environment variable (``DEEPSEEK_API_KEY`` / ``OPENAI_API_KEY``).
+    With ``--model codex`` the loop is driven by the Codex Python SDK. With
+    ``--model deepseek`` or ``--model openai`` the loop is driven by that provider's
+    API. The key is read from ``--api-key-file`` (default ``api.key``) or the provider
+    environment variable (``DEEPSEEK_API_KEY`` / ``OPENAI_API_KEY``).
     """
     try:
         parsed = validate_manifest_file(manifest)
@@ -120,7 +121,7 @@ def run_workflow(
     # env vars rather than receiving it as a parameter. Thread this run's resolved
     # config through so each user's --api-key-file (and chosen provider/model) is
     # what the report uses, instead of whatever happens to be set on the machine.
-    if api_key:
+    if api_key and config is not None:
         os.environ["LAMET_FORMULA_MODEL"] = model
         os.environ["LAMET_FORMULA_API_KEY"] = api_key
         if llm_model:

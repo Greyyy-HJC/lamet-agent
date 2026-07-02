@@ -32,6 +32,12 @@ _MOCK_TOOL_ACTION: dict[str, Any] = {
     "reason": "Scaffold mode: deterministic mock action.",
 }
 
+_SYSTEM_PROMPT = (
+    "You are the decision layer of a LaMET analysis agent. Decide the single "
+    "next action only. Do NOT run shell commands or edit files. Reply with "
+    "exactly one JSON object matching this shape: " + json.dumps(ACTION_SCHEMA)
+)
+
 # OpenAI-compatible chat-completions providers. DeepSeek and OpenAI share the same
 # request/response shape, so they only differ by base URL, default model, and the
 # environment variable used to read the API key.
@@ -52,6 +58,54 @@ PROVIDERS: dict[str, dict[str, str]] = {
 def provider_config(model: str) -> dict[str, str] | None:
     """Return the OpenAI-compatible provider config for a backend name, if any."""
     return PROVIDERS.get(model)
+
+
+def _codex_decide(messages: list[dict]) -> dict:
+    try:
+        from openai_codex import Codex, Sandbox
+    except ImportError as exc:
+        raise RuntimeError(
+            "model='codex' requires the openai-codex Python SDK. "
+            "Install the project's codex extra before using this backend."
+        ) from exc
+
+    system_parts = [m["content"] for m in messages if m.get("role") == "system"]
+    user_parts = [m["content"] for m in messages if m.get("role") == "user"]
+
+    developer_instructions = "\n\n".join(system_parts)
+
+    task_input = "\n\n".join(
+        [
+            "<TASK_INPUT>",
+            "\n\n".join(user_parts),
+            "</TASK_INPUT>",
+            "",
+            "<OUTPUT_CONSTRAINT>",
+            "Return exactly one JSON object only.",
+            "Do not use markdown.",
+            "Do not explain.",
+            "Do not run shell commands.",
+            "Do not edit files.",
+            "</OUTPUT_CONSTRAINT>",
+        ]
+    )
+
+    with Codex() as codex:
+        thread = codex.thread_start(
+            developer_instructions=developer_instructions,
+            sandbox=Sandbox.read_only,
+            ephemeral=True,
+        )
+
+        result = thread.run(
+            task_input,
+            sandbox=Sandbox.read_only,
+        )
+
+    if not result.final_response:
+        raise RuntimeError(f"Codex returned no final response: {result}")
+
+    return _parse_json_action(result.final_response, label="Codex")
 
 
 class LlmSession(Protocol):
@@ -88,12 +142,7 @@ def _post_chat_completion(
     provider: str = "deepseek",
 ) -> dict[str, Any]:
     url = base_url.rstrip("/") + "/chat/completions"
-    system = (
-        "You are the decision layer of a LaMET analysis agent. Decide the single "
-        "next action only. Do NOT run shell commands or edit files. Reply with "
-        "exactly one JSON object matching this shape: " + json.dumps(ACTION_SCHEMA)
-    )
-    request_messages = [{"role": "system", "content": system}, *messages]
+    request_messages = [{"role": "system", "content": _SYSTEM_PROMPT}, *messages]
     label = provider.capitalize()
     last_parse_error: ValueError | None = None
 
@@ -166,6 +215,8 @@ def _request_llm_action(
     """Return one structured agent action from the configured LLM backend."""
     if model == "mock":
         return dict(_MOCK_TOOL_ACTION)
+    if model == "codex":
+        return _codex_decide([{"role": "system", "content": _SYSTEM_PROMPT}, *messages])
     config = provider_config(model)
     if config is not None:
         if not api_key:
@@ -217,6 +268,33 @@ def _external_session(actions_path: str | Path) -> LlmSession:
     return _ExternalSession()
 
 
+def _codex_session() -> LlmSession:
+    """Return a multi-turn session backed by the Codex Python SDK."""
+
+    class _CodexSession:
+        def __init__(self) -> None:
+            self._messages: list[dict[str, str]] = []
+
+        def begin_stage(self, static_user: str) -> None:
+            self._messages = [{"role": "user", "content": static_user}]
+
+        def decide(self, *, last_observation: dict[str, Any] | None) -> dict[str, Any]:
+            if last_observation is not None:
+                self._messages.append(
+                    {
+                        "role": "user",
+                        "content": format_tool_observation(last_observation),
+                    }
+                )
+            action = _request_llm_action(model="codex", messages=self._messages)
+            self._messages.append(
+                {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
+            )
+            return action
+
+    return _CodexSession()
+
+
 def _openai_compatible_session(
     provider: str,
     api_key: str,
@@ -262,15 +340,17 @@ def make_llm_session(
     llm_model: str | None = None,
     base_url: str | None = None,
 ) -> LlmSession:
-    """Build an LLM session for mock, external, DeepSeek, or OpenAI backends.
+    """Build an LLM session for mock, external, Codex, DeepSeek, or OpenAI backends.
 
-    ``model`` selects the backend (``mock``/``external``/``deepseek``/``openai``);
-    ``llm_model`` and ``base_url`` override the provider defaults when given.
+    ``model`` selects the backend (``mock``/``external``/``codex``/``deepseek``/``openai``);
+    ``llm_model`` and ``base_url`` override OpenAI-compatible provider defaults when given.
     """
     if model == "external":
         if actions_path is None:
             raise ValueError("model='external' requires an actions_path transcript.")
         return _external_session(actions_path)
+    if model == "codex":
+        return _codex_session()
     config = provider_config(model)
     if config is not None:
         if not api_key:

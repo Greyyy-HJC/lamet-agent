@@ -230,11 +230,19 @@ executes:
 lamet-agent run examples/cg_pion_pdf_manifest.json --model deepseek --verbose
 ```
 
-Choose the LLM provider with `--model` (`deepseek` or `openai`). The API key is
-read from `--api-key-file` (default `api.key`) or the provider environment
-variable (`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`). Each provider defaults to a
-cost-effective model (`deepseek-chat` / `gpt-4o-mini`); override with
-`--llm-model` and, if needed, `--base-url`:
+Choose the LLM backend with `--model`. `codex` uses the Codex Python SDK and the
+current Codex login, so install the optional extra first:
+
+```bash
+python -m pip install -e ".[codex]"
+lamet-agent run examples/cg_pion_pdf_manifest.json --model codex --verbose
+```
+
+The OpenAI-compatible providers (`deepseek` or `openai`) read the API key from
+`--api-key-file` (default `api.key`) or the provider environment variable
+(`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`). Each provider defaults to a cost-effective
+model (`deepseek-chat` / `gpt-4o-mini`); override with `--llm-model` and, if
+needed, `--base-url`:
 
 ```bash
 lamet-agent run examples/cg_pion_pdf_manifest.json --model openai --verbose
@@ -264,10 +272,11 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
 - `src/lamet_agent/core/prompting.py`
   - Stores `SYSTEM_PROMPT` and shared output-format hint.
   - Builds static context once per job; incremental tool observations are
-    appended as separate user turns in the DeepSeek multi-turn session.
+    appended as separate user turns in multi-turn LLM sessions.
 - `src/lamet_agent/core/llm.py`
-  - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), and the
-    OpenAI-compatible providers `deepseek` and `openai` (multi-turn chat per stage).
+  - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), `codex`
+    (Codex Python SDK), and the OpenAI-compatible providers `deepseek` and `openai`
+    (multi-turn chat per stage).
   - `PROVIDERS` holds each provider's base URL, default model, and API-key env var;
     `make_llm_session()` selects a backend and shared HTTP lives in
     `_post_chat_completion` (add new OpenAI-compatible providers to `PROVIDERS`).
@@ -285,9 +294,10 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
     isolated store, and registers `store["output"]` under the job id.
 - `src/lamet_agent/cli.py`
   - Exposes `validate` and `run` commands.
-  - `run` accepts `--model` (`mock`/`external`/`deepseek`/`openai`), `--verbose` / `-v`
-    (ReAct-style trace to stdout), `--actions-path` (for `external`), and
-    `--api-key-file`/`--llm-model`/`--base-url` (for `deepseek`/`openai`), plus
+  - `run` accepts `--model` (`mock`/`external`/`codex`/`deepseek`/`openai`),
+    `--verbose` / `-v` (ReAct-style trace to stdout), `--actions-path` (for
+    `external`), and `--api-key-file`/`--llm-model`/`--base-url` (for
+    `deepseek`/`openai`), plus
     `--report_language en|ch` to select the single report language written for each stage.
 - `src/lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
@@ -337,8 +347,8 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
     selected language so users can track analysis progress and inspect that stage's
     intermediate results.
 5. Session backends: `mock` (deterministic scaffold), `external` (JSONL
-   transcript replay via `--actions-path`), or `deepseek` (chat-completions API
-   in `core/llm.py`).
+   transcript replay via `--actions-path`), `codex` (Codex Python SDK), or the
+   OpenAI-compatible chat-completions providers in `core/llm.py`.
 6. The run ends with a compact JSON summary on stdout (`run_id`, `status`,
    `summary`, manifest paths, etc.). Full action traces are not printed; use
    `--verbose` for per-cycle ReAct-style logging. Programmatic callers using

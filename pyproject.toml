@@ -27,6 +27,9 @@ analysis = [
   "xarray>=2024.1",
   "netCDF4>=1.7",
 ]
+codex = [
+  "openai-codex>=0.1.0b3",
+]
 
 [project.scripts]
 lamet-agent = "lamet_agent.cli:entrypoint"
