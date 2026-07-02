@@ -18,6 +18,10 @@ pytest.importorskip("lsqfit")
 
 import lamet_agent.stages.correlator.functions as correlator_functions
 from lamet_agent.core.plotting import (
+    FIT_LOG_YLIM_BOTTOM_FACTOR,
+    FIT_LOG_YLIM_DATA_HIGH_NUM,
+    FIT_LOG_YLIM_DATA_LOW_NUM,
+    FIT_LOG_YLIM_TOP_FACTOR,
     _pt3_ratio_data_tau_slice,
     _ratio_denominator_correction,
     _ylim_middle_third,
@@ -678,6 +682,20 @@ def test_ylim_middle_third_places_data_in_center_band() -> None:
     height = y_hi - y_lo
     assert np.isclose(y_lo + height / 3, 0.9, rtol=1e-9)
     assert np.isclose(y_lo + 2 * height / 3, 2.1, rtol=1e-9)
+
+
+def test_ylim_middle_third_fit_log_factors_place_data_at_three_to_seven_twelfths() -> None:
+    y_lo, y_hi = _ylim_middle_third(
+        [np.array([1.0, 2.0])],
+        [np.array([0.1, 0.1])],
+        bottom_margin_factor=FIT_LOG_YLIM_BOTTOM_FACTOR,
+        top_margin_factor=FIT_LOG_YLIM_TOP_FACTOR,
+    )
+    height = y_hi - y_lo
+    assert FIT_LOG_YLIM_BOTTOM_FACTOR == pytest.approx(0.75)
+    assert FIT_LOG_YLIM_TOP_FACTOR == pytest.approx(1.25)
+    assert np.isclose(y_lo + height * FIT_LOG_YLIM_DATA_LOW_NUM / 12, 0.9, rtol=1e-9)
+    assert np.isclose(y_lo + height * FIT_LOG_YLIM_DATA_HIGH_NUM / 12, 2.1, rtol=1e-9)
 
 
 def test_plot_pt2_meff_on_data_respects_t_max(tmp_path) -> None:

@@ -179,10 +179,10 @@
         "pt3_tau_cuts": [3, 4],
         "nstate": [2],
         "fit_scope": ["ratio"],
-        "fit_strategy": ["chained"],
+        "fit_strategy": ["joint"],
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 3.0,
-        "prior_width": [0.5, 1.0, 2.0],
+        "prior_width": [1.0],
         "component": "re",
         "q_min": 0.05,
         "model_average": false

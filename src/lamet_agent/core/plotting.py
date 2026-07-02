@@ -59,6 +59,20 @@ FONT_SIZE = {"fontsize": 18}
 LEGEND_SETS = {"fontsize": 14, "loc": "upper right"}
 LABEL_SIZE = {"labelsize": 18}
 
+# Fit-log panels: data±error occupies axis height 3/12 .. 7/12 (total height 3*span).
+FIT_LOG_YLIM_AXIS_DENOM = 12
+FIT_LOG_YLIM_DATA_LOW_NUM = 3
+FIT_LOG_YLIM_DATA_HIGH_NUM = 7
+FIT_LOG_YLIM_SPAN_FACTORS = 3
+FIT_LOG_YLIM_BOTTOM_FACTOR = (
+    FIT_LOG_YLIM_DATA_LOW_NUM / FIT_LOG_YLIM_AXIS_DENOM * FIT_LOG_YLIM_SPAN_FACTORS
+)
+FIT_LOG_YLIM_TOP_FACTOR = (
+    (FIT_LOG_YLIM_AXIS_DENOM - FIT_LOG_YLIM_DATA_HIGH_NUM)
+    / FIT_LOG_YLIM_AXIS_DENOM
+    * FIT_LOG_YLIM_SPAN_FACTORS
+)
+
 ERRORBAR_STYLE = {
     "markersize": 5,
     "mfc": "none",
@@ -372,8 +386,16 @@ def _tau_center_limits(ratio_dict: dict[int, np.ndarray]) -> tuple[float, float]
 def _ylim_middle_third(
     y_data: list[np.ndarray],
     yerr_data: list[np.ndarray],
+    *,
+    bottom_margin_factor: float = 1.0,
+    top_margin_factor: float = 1.0,
 ) -> tuple[float, float]:
-    """Y limits so data±error spans the middle third of the axis."""
+    """Y limits so data±error spans the middle third of the axis by default.
+
+    Asymmetric ``bottom_margin_factor`` / ``top_margin_factor`` shift the data
+    band vertically while keeping the total axis height at
+    ``(bottom_margin_factor + top_margin_factor + 1) * span``.
+    """
     lows: list[np.ndarray] = []
     highs: list[np.ndarray] = []
     for y, err in zip(y_data, yerr_data):
@@ -387,8 +409,10 @@ def _ylim_middle_third(
     if span <= 0.0:
         err_scale = float(np.max([np.max(np.asarray(e, dtype=float)) for e in yerr_data]))
         span = max(err_scale, 1e-6) * 2.0
-    margin = span
-    return data_min - margin, data_max + margin
+    return (
+        data_min - bottom_margin_factor * span,
+        data_max + top_margin_factor * span,
+    )
 
 
 def _ylim_mean_middle_third(y: np.ndarray) -> tuple[float, float]:
@@ -530,7 +554,14 @@ def plot_pt3_ratio_fit_on_data(
 
     ax_re.set_xlabel(TAU_CENTER_LABEL, **FONT_SIZE)
     ax_re.set_ylabel(RATIO_REAL_LABEL, **FONT_SIZE)
-    ax_re.set_ylim(_ylim_middle_third(y_re, yerr_re))
+    ax_re.set_ylim(
+        _ylim_middle_third(
+            y_re,
+            yerr_re,
+            bottom_margin_factor=FIT_LOG_YLIM_BOTTOM_FACTOR,
+            top_margin_factor=FIT_LOG_YLIM_TOP_FACTOR,
+        )
+    )
     ax_re.legend(**LEGEND_SETS)
 
     fig_im, ax_im = default_plot()
@@ -581,7 +612,14 @@ def plot_pt3_ratio_fit_on_data(
         _draw_O00_band(ax_im, plateau_ref_im, x_min, x_max, label=plateau_label)
     ax_im.set_xlabel(TAU_CENTER_LABEL, **FONT_SIZE)
     ax_im.set_ylabel(RATIO_IMAG_LABEL, **FONT_SIZE)
-    ax_im.set_ylim(_ylim_middle_third(y_im, yerr_im))
+    ax_im.set_ylim(
+        _ylim_middle_third(
+            y_im,
+            yerr_im,
+            bottom_margin_factor=FIT_LOG_YLIM_BOTTOM_FACTOR,
+            top_margin_factor=FIT_LOG_YLIM_TOP_FACTOR,
+        )
+    )
     ax_im.legend(**LEGEND_SETS)
 
     if save_path is not None:
@@ -642,7 +680,14 @@ def plot_fh_fit_on_data(
 
     ax_re.set_xlabel(TSEP_LABEL, **FONT_SIZE)
     ax_re.set_ylabel(FH_REAL_LABEL, **FONT_SIZE)
-    ax_re.set_ylim(_ylim_middle_third(y_re, yerr_re))
+    ax_re.set_ylim(
+        _ylim_middle_third(
+            y_re,
+            yerr_re,
+            bottom_margin_factor=FIT_LOG_YLIM_BOTTOM_FACTOR,
+            top_margin_factor=FIT_LOG_YLIM_TOP_FACTOR,
+        )
+    )
     ax_re.legend(**LEGEND_SETS)
 
     fig_im, ax_im = default_plot()
@@ -668,7 +713,14 @@ def plot_fh_fit_on_data(
 
     ax_im.set_xlabel(TSEP_LABEL, **FONT_SIZE)
     ax_im.set_ylabel(FH_IMAG_LABEL, **FONT_SIZE)
-    ax_im.set_ylim(_ylim_middle_third(y_im, yerr_im))
+    ax_im.set_ylim(
+        _ylim_middle_third(
+            y_im,
+            yerr_im,
+            bottom_margin_factor=FIT_LOG_YLIM_BOTTOM_FACTOR,
+            top_margin_factor=FIT_LOG_YLIM_TOP_FACTOR,
+        )
+    )
     ax_im.legend(**LEGEND_SETS)
 
     if save_path is not None:

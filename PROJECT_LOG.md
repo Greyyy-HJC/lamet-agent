@@ -462,3 +462,9 @@
 - Added ``core/banner.py`` with a GRID-style LaMET Agent ASCII banner and ``format_job_header()``.
 - Extended ``AgentTrace`` with ``quiet_ui`` mode: non-verbose runs print the banner, run summary, and one ``Stage: … | Job: …`` line before each job; ``--verbose`` behavior is unchanged.
 - Wired ``run_agent()`` to use ``run_banner()``/``job_begin()`` when ``verbose=False`` and added unit tests in ``tests/unit/test_banner.py``.
+
+## 2026-07-02 (Fit-log ylim: data band at 3/12–7/12)
+
+- Extended ``_ylim_middle_third()`` with optional asymmetric margin factors; default remains symmetric middle third.
+- Fit-log pt3 ratio and FH panels now place data±error at axis height ``3/12``–``7/12`` via ``FIT_LOG_YLIM_*`` constants (``bottom=0.75*span``, ``top=1.25*span``).
+- Added unit test ``test_ylim_middle_third_fit_log_factors_place_data_at_three_to_seven_twelfths``.
