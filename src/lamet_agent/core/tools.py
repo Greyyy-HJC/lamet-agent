@@ -41,7 +41,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "hadron",
         "Lambda0",
         "posterior_prior_error_scale",
-        "fit_error_mode",
+        "sample_error_mode",
         "part",
         "output_scale",
         "save_path",
@@ -289,6 +289,7 @@ def prepare_tool_args(
         if "component" in defaults:
             defaults["part"] = defaults.pop("component")
         defaults["resample_mode"] = manifest.metadata.resample_mode
+        defaults["sample_error_mode"] = manifest.metadata.sample_error_mode
         defaults["seed"] = manifest.metadata.random_seed
         if manifest.metadata.resample_mode == "bs":
             if manifest.metadata.bs_samples is None:
@@ -379,10 +380,17 @@ def prepare_tool_args(
                     "denominator": "denominator",
                     "save_path": str(artifacts_dir / job.id),
                     "job_id": job.id,
+                    "sample_error_mode": manifest.metadata.sample_error_mode,
                 }
             )
         elif tool_name == "plot_renormalized_matrix_element":
-            resolved.update({"data": "output", "save_path": str(artifacts_dir / job.id)})
+            resolved.update(
+                {
+                    "data": "output",
+                    "save_path": str(artifacts_dir / job.id),
+                    "sample_error_mode": manifest.metadata.sample_error_mode,
+                }
+            )
     if stage == "fourier_transform":
         fourier = dict(effective_params)
         if "component" in fourier and "part" not in fourier:
@@ -395,6 +403,7 @@ def prepare_tool_args(
         if "method" not in fourier and str(fourier.get("gfix", "")).upper() in {"CG", "GI"}:
             fourier["method"] = str(fourier["gfix"]).upper()
         fourier.setdefault("target_observable", manifest.metadata.target_observable)
+        fourier.setdefault("sample_error_mode", manifest.metadata.sample_error_mode)
         if "observable" not in fourier:
             target = manifest.metadata.target_observable
             parton = manifest.metadata.parton

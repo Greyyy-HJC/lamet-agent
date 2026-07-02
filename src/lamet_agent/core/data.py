@@ -8,6 +8,8 @@ import numpy
 from numpy.typing import NDArray
 import xarray
 
+from lamet_agent.core.resampling import samples_to_gvar
+
 DimType = str
 DimsType = Sequence[DimType]
 IndexType = Union[int, float, str]
@@ -336,10 +338,17 @@ class EnsembleData:
         else:
             values = numpy.ascontiguousarray(self.array.values)
             if self.resample == "jackknife":
-                avg_data = gvar.dataset.avg_data(values, unbias=False, stderr=False)
-                avg_data = gvar.gvar(gvar.mean(avg_data), gvar.evalcov(avg_data) * (self.n_sample - 1))
+                avg_data = samples_to_gvar(
+                    values,
+                    mode="jk",
+                    sample_error_mode=str(self.attrs.get("sample_error_mode", self.attrs.get("average_method", "covariance"))),
+                )
             elif self.resample == "bootstrap":
-                avg_data = gvar.dataset.avg_data(values, unbias=True, stderr=False)
+                avg_data = samples_to_gvar(
+                    values,
+                    mode="bs",
+                    sample_error_mode=str(self.attrs.get("sample_error_mode", self.attrs.get("average_method", "covariance"))),
+                )
             else:
                 avg_data = gvar.dataset.avg_data(values, unbias=True, stderr=True)
             return avg_data
@@ -349,19 +358,14 @@ class EnsembleData:
         if self.resample == "gvar":
             return gvar.mean(self.array.values[0])
         else:
-            return self.array.values.mean(0)
+            return gvar.mean(self.gvar)
 
     @property
     def sdev(self) -> Union[float, complex, NDArray]:
         if self.resample == "gvar":
             return gvar.sdev(self.array.values[0])
         else:
-            if self.resample == "jackknife":
-                return self.array.values.std(0, ddof=0) * (self.n_sample - 1) ** 0.5
-            elif self.resample == "bootstrap":
-                return self.array.values.std(0, ddof=1)
-            else:
-                return self.array.values.std(0, ddof=1) / (self.n_sample) ** 0.5
+            return gvar.sdev(self.gvar)
 
     def avg_data(self) -> "EnsembleData":
         return EnsembleData(

@@ -35,7 +35,7 @@ import numpy as np
 
 from lamet_agent.core.data import EnsembleData, EnsembleInfo
 from lamet_agent.core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FONT_SIZE, LEGEND_SETS, default_plot
-from lamet_agent.core.resampling import sample_mean_err
+from lamet_agent.core.resampling import sample_mean_and_sdev
 from lamet_agent.core.tools import resolve_plot_save_path
 
 GEV_FM = 0.1973269631
@@ -217,6 +217,7 @@ def apply_ratio_scheme_renormalization(
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     job_id: str | None = None,
+    sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
     """Apply hybrid-ratio renormalization and preserve all samples."""
     if scheme != "hybrid_ratio":
@@ -262,6 +263,8 @@ def apply_ratio_scheme_renormalization(
         "target": target,
         "denominator": denominator,
         "job_id": job_id,
+        "sample_error_mode": sample_error_mode,
+        "average_method": sample_error_mode,
     }
     result = _matrix_to_ensemble(
         z_values=z_target,
@@ -305,23 +308,17 @@ def plot_renormalized_matrix_element(
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     title: str | None = None,
+    sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
     """Plot sample-averaged renormalized matrix elements to PDF."""
     matrix = _require_matrix_data(store, data)
     z_values = np.asarray(matrix.coords["z"], dtype=float)
     values = np.asarray(matrix.values, dtype=complex)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("renormalized matrix-element samples contain non-finite values")
     mode = _resample_mode(matrix)
-    re_mean: list[float] = []
-    re_err: list[float] = []
-    im_mean: list[float] = []
-    im_err: list[float] = []
-    for iz in range(values.shape[1]):
-        r_mean, r_sdev = sample_mean_err(np.real(values[:, iz]), mode=mode)
-        i_mean, i_sdev = sample_mean_err(np.imag(values[:, iz]), mode=mode)
-        re_mean.append(r_mean)
-        re_err.append(r_sdev)
-        im_mean.append(i_mean)
-        im_err.append(i_sdev)
+    re_mean, re_err = sample_mean_and_sdev(np.real(values), mode=mode, sample_error_mode=sample_error_mode, axis=0)
+    im_mean, im_err = sample_mean_and_sdev(np.imag(values), mode=mode, sample_error_mode=sample_error_mode, axis=0)
 
     fig, ax = default_plot()
     ax.errorbar(z_values, re_mean, re_err, label="Re", color=COLOR_CYCLE[0], **ERRORBAR_STYLE)

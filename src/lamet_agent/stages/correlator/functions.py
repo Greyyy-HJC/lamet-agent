@@ -50,7 +50,7 @@ from lamet_agent.core.plotting import (
 )
 from lamet_agent.core.resampling import (
     resample_config_samples,
-    sample_mean_err,
+    sample_mean_and_sdev,
     samples_to_gvar,
 )
 from lamet_agent.core.tools import (
@@ -1545,6 +1545,7 @@ def _write_outputs(
     momentum: str,
     b_label: str,
     resample_mode: str,
+    sample_error_mode: str = "covariance",
     matrix_element_label: str = r"Bare matrix element $O_{00}/(2E_0)$",
     plot_title: str | None = None,
     ylim: tuple[float, float] = (-0.2, 1.2),
@@ -1566,8 +1567,12 @@ def _write_outputs(
         z = rec["z"]
         real = np.asarray(rec["real_samples"], dtype=float)
         imag = np.asarray(rec["imag_samples"], dtype=float)
-        r_mean, r_err = sample_mean_err(real, mode=resample_mode)
-        i_mean, i_err = sample_mean_err(imag, mode=resample_mode)
+        r_mean_arr, r_err_arr = sample_mean_and_sdev(real, mode=resample_mode, sample_error_mode=sample_error_mode)
+        i_mean_arr, i_err_arr = sample_mean_and_sdev(imag, mode=resample_mode, sample_error_mode=sample_error_mode)
+        r_mean = float(r_mean_arr)
+        r_err = float(r_err_arr)
+        i_mean = float(i_mean_arr)
+        i_err = float(i_err_arr)
         rec["real_mean"] = r_mean
         rec["imag_mean"] = i_mean
         rec["real_stat_sdev"] = r_err
@@ -1623,6 +1628,8 @@ def _write_outputs(
             "momentum": momentum,
             "b_label": b_label,
             "resample_mode": resample_mode,
+            "sample_error_mode": sample_error_mode,
+            "average_method": sample_error_mode,
             "part": part,
         },
     )
@@ -1713,6 +1720,7 @@ def tune_ground_state(
     svdcut: float = 1e-2,
     correlator_rescale: float = 1.0,
     resample_mode: str = "jk",
+    sample_error_mode: str = "covariance",
     n_boot: int = 200,
     seed: int | None = 1984,
     bin_size: int = 1,
@@ -1734,7 +1742,7 @@ def tune_ground_state(
     pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=gamma, momentum=momentum)
     n_cfg, Lt = pt2_complex.shape
     re_samples, _ = resample_config_samples(np.real(pt2_complex), mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size)
-    pt2_gv = samples_to_gvar(re_samples, mode=mode)
+    pt2_gv = samples_to_gvar(re_samples, mode=mode, sample_error_mode=sample_error_mode)
     store["Lt"] = int(Lt)
 
     windows = _normalise_pt2_windows(pt2_windows, Lt=Lt)
@@ -2007,6 +2015,7 @@ def tune_bare_matrix(
     svdcut: float = 1e-2,
     correlator_rescale: float = 1.0,
     resample_mode: str = "jk",
+    sample_error_mode: str = "covariance",
     n_boot: int = 200,
     seed: int | None = 1984,
     bin_size: int = 1,
@@ -2033,7 +2042,7 @@ def tune_bare_matrix(
     pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=momentum)
     n_cfg, Lt = pt2_complex.shape
     re_samples, pt2_complex_samples, indices = _resample_pt2(pt2_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size)
-    pt2_gv = samples_to_gvar(re_samples, mode=mode)
+    pt2_gv = samples_to_gvar(re_samples, mode=mode, sample_error_mode=sample_error_mode)
     pt2_f_gv = None
     pt2_f_complex_samples = pt2_complex_samples
     if form == "NonBreit":
@@ -2043,7 +2052,7 @@ def tune_bare_matrix(
         re_f_samples, pt2_f_complex_samples, _ = _resample_pt2(
             pt2_f_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices
         )
-        pt2_f_gv = samples_to_gvar(re_f_samples, mode=mode)
+        pt2_f_gv = samples_to_gvar(re_f_samples, mode=mode, sample_error_mode=sample_error_mode)
 
     ratio_re: dict[int, np.ndarray] = {}
     ratio_im: dict[int, np.ndarray] = {}
@@ -2057,8 +2066,8 @@ def tune_bare_matrix(
             re_s, im_s = _non_forward_ratio_samples(pt2_complex_samples, pt2_f_complex_samples, pt3_samples, tsep)
         else:
             re_s, im_s = _ratio_samples(pt2_complex_samples, pt3_samples, tsep)
-        ratio_re[tsep] = samples_to_gvar(re_s, mode=mode)
-        ratio_im[tsep] = samples_to_gvar(im_s, mode=mode)
+        ratio_re[tsep] = samples_to_gvar(re_s, mode=mode, sample_error_mode=sample_error_mode)
+        ratio_im[tsep] = samples_to_gvar(im_s, mode=mode, sample_error_mode=sample_error_mode)
 
     pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=Lt)
     pt3_window_specs = _normalise_pt3_windows(pt3_windows, tsep_ls=tseps, tau_cuts=pt3_tau_cuts)
@@ -2336,6 +2345,7 @@ def fit_bare_matrix_grid(
     nstate_values: list[int] | None = None,
     prior_width: float | list[float] | None = None,
     resample_mode: str = "bs",
+    sample_error_mode: str = "covariance",
     n_boot: int = 200,
     seed: int | None = 1984,
     bin_size: int = 1,
@@ -2404,7 +2414,7 @@ def fit_bare_matrix_grid(
     pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=momentum)
     n_cfg, Lt = pt2_complex.shape
     pt2_samples, pt2_complex_samples, indices = _resample_pt2(pt2_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size)
-    pt2_gv = samples_to_gvar(pt2_samples, mode=mode)
+    pt2_gv = samples_to_gvar(pt2_samples, mode=mode, sample_error_mode=sample_error_mode)
     pt2_f_samples = None
     pt2_f_gv = None
     pt2_f_complex_samples = pt2_complex_samples
@@ -2415,7 +2425,7 @@ def fit_bare_matrix_grid(
         pt2_f_samples, pt2_f_complex_samples, _ = _resample_pt2(
             pt2_f_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices
         )
-        pt2_f_gv = samples_to_gvar(pt2_f_samples, mode=mode)
+        pt2_f_gv = samples_to_gvar(pt2_f_samples, mode=mode, sample_error_mode=sample_error_mode)
     n_samples = int(pt2_samples.shape[0])
     pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=Lt)
     if pt2_window is not None:
@@ -2444,8 +2454,8 @@ def fit_bare_matrix_grid(
                 )
             else:
                 samples_re[tsep], samples_im[tsep] = _ratio_samples(pt2_complex_samples, pt3_samples, tsep)
-            gv_re[tsep] = samples_to_gvar(samples_re[tsep], mode=mode)
-            gv_im[tsep] = samples_to_gvar(samples_im[tsep], mode=mode)
+            gv_re[tsep] = samples_to_gvar(samples_re[tsep], mode=mode, sample_error_mode=sample_error_mode)
+            gv_im[tsep] = samples_to_gvar(samples_im[tsep], mode=mode, sample_error_mode=sample_error_mode)
         return samples_re, samples_im, gv_re, gv_im
 
     # chained mode: fit 2pt once and reuse the same 2pt posterior as a ratio anchor.
@@ -2803,8 +2813,12 @@ def fit_bare_matrix_grid(
 
         if not np.any(np.isfinite(real_samples)):
             raise ValueError(f"all resampled fits failed for z={z}")
-        real_mean, real_sdev = sample_mean_err(real_samples, mode=mode)
-        imag_mean, imag_sdev = sample_mean_err(imag_samples, mode=mode)
+        real_mean_arr, real_sdev_arr = sample_mean_and_sdev(real_samples, mode=mode, sample_error_mode=sample_error_mode)
+        imag_mean_arr, imag_sdev_arr = sample_mean_and_sdev(imag_samples, mode=mode, sample_error_mode=sample_error_mode)
+        real_mean = float(real_mean_arr)
+        real_sdev = float(real_sdev_arr)
+        imag_mean = float(imag_mean_arr)
+        imag_sdev = float(imag_sdev_arr)
         sample_logger.info("summary z=%s real=%s +/- %s imag=%s +/- %s failed=%s", z, real_mean, real_sdev, imag_mean, imag_sdev, len(failures))
 
         mean_weights = (weight_sums / weight_counts).tolist() if weight_counts else [float("nan")] * len(avg_records)
@@ -2848,7 +2862,7 @@ def fit_bare_matrix_grid(
         plot_title = rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ {direction} bare matrix elements"
     output = _write_outputs(
         z_records, artifacts_dir=out_dir, save_path=save_path, ensemble=ensemble, tag=tag, variant=variant,
-        direction=direction, momentum=momentum, b_label=b_label, resample_mode=mode,
+        direction=direction, momentum=momentum, b_label=b_label, resample_mode=mode, sample_error_mode=sample_error_mode,
         matrix_element_label=(
             r"Bare matrix element $O_{00}/(E_{0}^{i}+E_{0}^{f})$"
             if form == "NonBreit"
@@ -2869,6 +2883,8 @@ def fit_bare_matrix_grid(
                 "fitting_form": form,
                 "fit_scope": scope,
                 "part": part,
+                "sample_error_mode": sample_error_mode,
+                "average_method": sample_error_mode,
                 "nstate_values": json.dumps(fit_nstates),
                 "prior_width": json.dumps(prior_widths),
                 "momentum_out": final_momentum,

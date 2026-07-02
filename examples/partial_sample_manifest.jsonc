@@ -4,7 +4,7 @@
   //
   // PARTIAL / RESUME EXAMPLE: start the pipeline from fourier_transform.
   //
-  // This is the companion to examples/sample_manifest_modified.jsonc (the full
+  // This is the companion to examples/sample_manifest.jsonc (the full
   // p0+p4+p5 run). It shows how to begin mid-pipeline when the upstream
   // products already exist on disk.
   //
@@ -29,6 +29,7 @@
     "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs"
+    "sample_error_mode": "covariance", // "mean", "median", or "covariance"; "median" requires resample_mode "bs"
     "random_seed": 1984, // required; RNG seed for every resampling step in the run
     // Only the stages to run, in execution order. correlator_analysis and
     // renormalization are intentionally absent (their products come in as
@@ -62,12 +63,11 @@
     "kernels": [
       {
         "stage": "matching",
-        "kernel_id": "unpolarized_gT",
+        "kernel_id": "CG_gt_PDF_hybrid",
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
         "scheme": "hybrid_ratio",
         "kernel_parameters": {
-          "zs_fm": 0.18,
-          "pz_gev": 2.15
+          "zs_fm": 0.1722
         }
       }
     ]
@@ -75,32 +75,21 @@
   "stages": {
     "fourier_transform": {
       "defaults": {
-		"order": ["LA", "NLA"],
-        "fit_error_mode": "covariance",
-		"sector": "valence", // "valence", "sea", "total", "full" for "pdf", "full" for "da" or "gpd"
+        "order": ["LA", "NLA"],
+        "sector": "valence", // "valence", "sea", "total", "full" for "pdf", "full" for "da" or "gpd"
         "coord_unit": "lattice",
-		"posterior_prior_error_scale": [2.0, 3.0, 5.0],
+        "posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {
           "start": -2.0,
           "stop": 2.0,
           "num": 100
         },
-        "scheme_scan": { // optional, auto-filled if omitted
-          "zmin_values": [
-            9.0,
-            10.0,
-            11.0,
-            12.0
-          ],
-          "zmax_values": [
-            21.0,
-            22.0,
-            23.0,
-            24.0
-          ],
-          "z_ext_max": 37.0,
+        "scheme_scan": {
+          "zmin_values": [9.0, 10.0, 11.0, 12.0],
+          "zmax_values": [21.0, 22.0, 23.0, 24.0],
+          "z_ext_max": 100.0,
           "smooth": "linear",
-          "model_average": true,
+          "model_average": false,
           "max_schemes": 200
         }
       },

@@ -138,12 +138,15 @@ options inline (for example `target_observable` is `"pdf"` or `"da"`, and `gfix`
 `"CG"` or `"GI"`). It is organized into three top-level blocks:
 
 - `metadata`: run-level settings (`run_id`, `root_directory`, `artifacts_directory`,
-  `target_observable`, `resample_mode`, `random_seed`, ordered `stages` to run).
+  `target_observable`, `resample_mode`, `sample_error_mode`, `random_seed`,
+  ordered `stages` to run).
   `random_seed` is required and seeds every jackknife/bootstrap resampling step
   in the run (a job/stage no longer sets its own `seed`). When `resample_mode`
   is `"bs"`, `bs_samples` is required and must be set explicitly (there is no
-  default bootstrap sample count). `bin_size` is optional and bins
-  configurations before resampling when set (default: no binning).
+  default bootstrap sample count). `sample_error_mode` controls how samples are
+  averaged and how sample-by-sample fits receive errors; it defaults to
+  `"covariance"`. `bin_size` is optional and bins configurations before
+  resampling when set (default: no binning).
 - `inputs`: the `correlators` (each with its kinematics such as `a_fm`, `pz_gev`,
   gammas, and for `3pt` the `bt`/`bz` separation lists) and the `kernels`.
 - `stages`: `defaults` plus a `jobs` list. A job's `params` shallow-merge over
@@ -183,7 +186,7 @@ For example, two `nstate` values and three `prior_width` values produce up to si
 fit-function models inside the fixed data window. The manifest value is
 authoritative and cannot be overridden by an LLM tool call.
 
-### `metadata.random_seed`, `metadata.bs_samples`, `metadata.bin_size`
+### `metadata.random_seed`, `metadata.bs_samples`, `metadata.sample_error_mode`, `metadata.bin_size`
 
 These three fields are the single source of randomness/binning configuration
 for the whole run; the correlator stage no longer reads a per-job or
@@ -196,6 +199,13 @@ stage-level `seed`.
   `"jk"`, where resampling has no sample-count parameter): sets the bootstrap
   sample count (the tool-level `n_boot` argument). There is no default; the
   manifest must set this value explicitly for bootstrap runs.
+- `sample_error_mode` (optional, default: `"covariance"`): controls how
+  bootstrap/jackknife samples are converted to `gvar` averages and how the same
+  ensemble errors are attached to individual sample-by-sample fits. `"mean"`
+  uses mean centers with diagonal standard deviations, `"median"` uses
+  bootstrap medians with half the 16-84 percentile width and is invalid with
+  jackknife, and `"covariance"` uses mean centers with the full covariance
+  matrix.
 - `bin_size` (optional, default: no binning): when set, configurations are
   averaged into bins of this size before jackknife/bootstrap resampling.
 

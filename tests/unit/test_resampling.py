@@ -9,15 +9,10 @@ import pytest
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.resampling import (
     add_error_to_sample,
-    add_error_to_sample_percentile,
-    average_mode_from_ensemble,
     bs_ls_avg_percentile,
-    ensemble_average_method,
     recenter_sample_values,
     resample_config_samples,
-    resample_generation_mode,
     sample_mean_and_sdev,
-    sample_mean_err,
     samples_to_gvar,
 )
 
@@ -33,7 +28,7 @@ def test_bs_ls_avg_percentile_uses_median_and_16_84_width() -> None:
     assert np.allclose(np.asarray(gv.sdev(avg)), expected_sdev)
 
 
-def test_sample_mean_err_propagates_nan_without_filtering() -> None:
+def test_sample_mean_and_sdev_propagates_nan_without_filtering() -> None:
     samples = np.array(
         [
             [1.0, np.nan],
@@ -41,10 +36,10 @@ def test_sample_mean_err_propagates_nan_without_filtering() -> None:
             [3.0, 6.0],
         ]
     )
-    mean, err = sample_mean_err(samples[:, 0], mode="bs")
+    mean, err = sample_mean_and_sdev(samples[:, 0], mode="bs")
     assert mean == pytest.approx(2.0)
     assert err > 0.0
-    nan_mean, nan_err = sample_mean_err(samples[:, 1], mode="bs")
+    nan_mean, nan_err = sample_mean_and_sdev(samples[:, 1], mode="bs")
     assert np.isnan(nan_mean)
     assert np.isnan(nan_err)
 
@@ -57,12 +52,12 @@ def test_sample_mean_and_sdev_handles_matrix_input() -> None:
     assert mean[0] == pytest.approx(2.0)
 
 
-def test_bs_percentile_generation_mode_maps_to_bs() -> None:
-    assert resample_generation_mode("bs_percentile") == "bs"
+def test_removed_bs_percentile_mode_is_rejected() -> None:
     data = np.arange(12.0).reshape(4, 3)
-    bs_samples, _ = resample_config_samples(data, mode="bs", n_boot=5, seed=1)
-    pct_samples, _ = resample_config_samples(data, mode="bs_percentile", n_boot=5, seed=1)
-    assert np.array_equal(bs_samples, pct_samples)
+    with pytest.raises(ValueError, match="resample_mode"):
+        resample_config_samples(data, mode="bs_percentile", n_boot=5, seed=1)
+    with pytest.raises(ValueError, match="sample_error_mode"):
+        samples_to_gvar(data, mode="bs", sample_error_mode="bs_percentile")
 
 
 def test_add_error_to_sample_matches_recenter_on_toy_data() -> None:
@@ -75,32 +70,22 @@ def test_add_error_to_sample_matches_recenter_on_toy_data() -> None:
         assert np.allclose(np.asarray(gv.sdev(row)), np.asarray(gv.sdev(expected)))
 
 
-def test_add_error_to_sample_percentile_uses_diagonal_errors() -> None:
+def test_add_error_to_sample_median_uses_diagonal_errors() -> None:
     samples = np.array([[1.0, 10.0], [2.0, 20.0], [3.0, 30.0], [4.0, 40.0]])
-    with_errors = add_error_to_sample_percentile(samples, mode="bs", axis=0)
-    avg = bs_ls_avg_percentile(samples, axis=0)
+    with_errors = add_error_to_sample(samples, mode="bs", sample_error_mode="median", axis=0)
+    avg = samples_to_gvar(samples, mode="bs", sample_error_mode="median", axis=0)
     expected_sdev = np.asarray(gv.sdev(avg), dtype=float)
     for row in with_errors:
         assert np.allclose(np.asarray(gv.sdev(row)), expected_sdev)
 
 
-def test_average_mode_from_ensemble_round_trip() -> None:
+def test_ensemble_data_gvar_respects_sample_error_mode_attr() -> None:
     data = EnsembleData(
         ensemble=None,
         resample="bootstrap",
-        values=[np.array([1.0 + 1j]), np.array([2.0 + 2j])],
+        values=[np.array([1.0]), np.array([2.0]), np.array([100.0])],
         dims=("z",),
         coords={"z": [0.0]},
-        attrs={"average_method": ensemble_average_method("bs_percentile")},
+        attrs={"sample_error_mode": "median"},
     )
-    assert average_mode_from_ensemble(data) == "bs_percentile"
-
-    cov_data = EnsembleData(
-        ensemble=None,
-        resample="bootstrap",
-        values=[np.array([1.0 + 1j]), np.array([2.0 + 2j])],
-        dims=("z",),
-        coords={"z": [0.0]},
-        attrs={"average_method": "covariance"},
-    )
-    assert average_mode_from_ensemble(cov_data) == "bs"
+    assert np.asarray(gv.mean(data.gvar), dtype=float)[0] == pytest.approx(2.0)

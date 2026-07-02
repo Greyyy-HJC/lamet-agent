@@ -344,6 +344,7 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["fourier_transform"],
             },
@@ -366,7 +367,6 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
                 "fourier_transform": {
                     "defaults": {
                         "order": "NLA",
-                        "fit_error_mode": "covariance",
                         "part": "re",
                         "coord_unit": "lattice",
                         "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},
@@ -407,6 +407,7 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["fourier_transform"],
             },
@@ -429,7 +430,6 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
                 "fourier_transform": {
                     "defaults": {
                         "order": "NLA",
-                        "fit_error_mode": "covariance",
                         "part": "re",
                         "coord_unit": "lattice",
                         "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},

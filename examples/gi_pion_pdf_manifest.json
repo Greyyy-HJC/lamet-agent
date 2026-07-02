@@ -6,6 +6,7 @@
     "target_observable": "pdf",
     "parton": "quark",
     "resample_mode": "jk",
+    "sample_error_mode": "covariance",
     "random_seed": 1984,
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching"]
   },
@@ -206,19 +207,13 @@
     },
     "fourier_transform": {
       "defaults": {
-		"order": ["LA", "NLA"],
-        "fit_error_mode": "covariance",
-		"sector": "valence",
+        "order": ["LA", "NLA"],
+        "sector": "valence",
         "coord_unit": "lattice",
-		"posterior_prior_error_scale": [2.0, 3.0, 5.0],
+        "posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
         "scheme_scan": {
-          "zmin_values": [9.0, 10.0, 11.0, 12.0],
-          "zmax_values": [21.0, 22.0, 23.0, 24.0],
-          "z_ext_max": 37.0,
-          "smooth": "linear",
-          "model_average": false,
-          "max_schemes": 200
+          "model_average": false
         }
       },
       "jobs": [

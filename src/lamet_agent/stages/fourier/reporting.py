@@ -8,6 +8,8 @@ from typing import Any
 
 import numpy as np
 
+from lamet_agent.core.resampling import sample_mean_and_sdev
+
 
 OBSERVABLE_TEXT = {
     "pion_quark_quasi_pdf": "pion quark quasi-PDF",
@@ -850,6 +852,8 @@ def _fit_model_parameter_table(result: dict[str, Any], *, language: str) -> list
         else "| # | 标签 | " + " | ".join(f"`{label}`" for label in param_labels) + " |"
     )
     lines = [header_title, "", header, "|" + "---|" * (len(param_labels) + 2)]
+    resample_mode = str(result.get("resample_mode", "bootstrap"))
+    sample_error_mode = str(result.get("sample_error_mode", "covariance"))
     for idx, scheme in enumerate(schemes):
         label = labels[idx] if idx < len(labels) else scheme.get("label", str(idx))
         fit_params = np.asarray(scheme.get("fit_params", []), dtype=float)
@@ -861,8 +865,9 @@ def _fit_model_parameter_table(result: dict[str, Any], *, language: str) -> list
                 continue
             local_idx = local_labels.index(param_label)
             samples = fit_params[:, local_idx]
-            mean = float(np.mean(samples))
-            sdev = float(np.std(samples, ddof=1)) if len(samples) > 1 else 0.0
+            mean_arr, sdev_arr = sample_mean_and_sdev(samples, mode=resample_mode, sample_error_mode=sample_error_mode)
+            mean = float(mean_arr)
+            sdev = float(sdev_arr)
             values.append(_format_fit_value(mean, sdev))
         lines.append("| " + f"{idx} | {label} | " + " | ".join(values) + " |")
     return lines

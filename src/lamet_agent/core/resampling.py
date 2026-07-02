@@ -5,6 +5,49 @@ from __future__ import annotations
 import gvar as gv
 import numpy as np
 
+RESAMPLE_MODE_ALIASES = {
+    "bs": "bs",
+    "boot": "bs",
+    "bootstrap": "bs",
+    "jk": "jk",
+    "jackknife": "jk",
+}
+SAMPLE_ERROR_MODES = frozenset({"mean", "median", "covariance"})
+
+
+def normalize_resample_mode(value: str | None, *, allow_raw: bool = False) -> str:
+    """Return the canonical short resample mode, ``bs`` or ``jk``."""
+    mode = "bs" if value is None else str(value).strip().lower()
+    aliases = dict(RESAMPLE_MODE_ALIASES)
+    if allow_raw:
+        aliases["raw"] = "raw"
+    if mode not in aliases:
+        allowed = "'bs'/'bootstrap', 'jk'/'jackknife'" + (", or 'raw'" if allow_raw else "")
+        raise ValueError(f"resample_mode must be {allowed}")
+    return aliases[mode]
+
+
+def normalize_sample_error_mode(value: str | None, *, resample_mode: str | None = None) -> str:
+    """Return the canonical sample-error mode and validate mode combinations."""
+    mode = "covariance" if value is None else str(value).strip().lower()
+    if mode not in SAMPLE_ERROR_MODES:
+        allowed = "', '".join(sorted(SAMPLE_ERROR_MODES))
+        raise ValueError(f"sample_error_mode must be one of: '{allowed}'")
+    if resample_mode is not None and normalize_resample_mode(resample_mode, allow_raw=True) == "jk" and mode == "median":
+        raise ValueError("sample_error_mode='median' is not supported with resample_mode='jk'")
+    return mode
+
+
+def _move_sample_axis(samples: np.ndarray, axis: int) -> np.ndarray:
+    arr = np.asarray(samples)
+    if arr.ndim == 0:
+        raise ValueError("samples must have a sample axis")
+    return np.moveaxis(arr, axis, 0) if axis != 0 else arr
+
+
+def _reshape_gvar(values: object, shape: tuple[int, ...]) -> object:
+    return values if shape == () else np.asarray(values, dtype=object).reshape(shape)
+
 
 def bin_data(data: np.ndarray, bin_size: int, axis: int = 0) -> np.ndarray:
     """Average adjacent configurations into bins along ``axis``."""
@@ -38,23 +81,49 @@ def jackknife(data: np.ndarray, axis: int = 0, bin_size: int = 1) -> np.ndarray:
     return (total - data) / (n_conf - 1)
 
 
-def bs_ls_avg(bs_ls: np.ndarray) -> np.ndarray:
+def bs_ls_avg(bs_ls: np.ndarray, axis: int = 0) -> np.ndarray:
     """Average bootstrap samples (sample axis first) into a gvar array."""
-    bs_arr = np.asarray(bs_ls)
+    bs_arr = _move_sample_axis(np.asarray(bs_ls), axis)
+    if bs_arr.shape[0] < 2:
+        mean = np.mean(bs_arr, axis=0)
+        return gv.gvar(mean, np.zeros_like(mean, dtype=float))
     bs_flat = bs_arr.reshape(bs_arr.shape[0], -1)
     mean = np.mean(bs_flat, axis=0)
+    if bs_flat.shape[1] == 1:
+        out = gv.gvar(mean[0], np.std(bs_flat[:, 0], ddof=1))
+        return _reshape_gvar(out, bs_arr.shape[1:])
     cov = np.cov(bs_flat, rowvar=False)
     return gv.gvar(mean, cov).reshape(bs_arr.shape[1:])
 
 
-def jk_ls_avg(jk_ls: np.ndarray) -> np.ndarray:
+def jk_ls_avg(jk_ls: np.ndarray, axis: int = 0) -> np.ndarray:
     """Average jackknife samples (sample axis first) into a gvar array."""
-    jk_arr = np.asarray(jk_ls)
+    jk_arr = _move_sample_axis(np.asarray(jk_ls), axis)
+    if jk_arr.shape[0] < 2:
+        mean = np.mean(jk_arr, axis=0)
+        return gv.gvar(mean, np.zeros_like(mean, dtype=float))
     jk_flat = jk_arr.reshape(jk_arr.shape[0], -1)
     n_sample = jk_flat.shape[0]
     mean = np.mean(jk_flat, axis=0)
+    if jk_flat.shape[1] == 1:
+        out = gv.gvar(mean[0], np.std(jk_flat[:, 0], ddof=1) * np.sqrt(n_sample - 1))
+        return _reshape_gvar(out, jk_arr.shape[1:])
     cov = np.cov(jk_flat, rowvar=False) * (n_sample - 1)
     return gv.gvar(mean, cov).reshape(jk_arr.shape[1:])
+
+
+def bs_ls_avg_percentile(bs_ls: np.ndarray, axis: int = 0) -> np.ndarray:
+    """Average bootstrap samples with median centers and percentile widths."""
+    bs_arr = _move_sample_axis(np.asarray(bs_ls), axis)
+    if bs_arr.shape[0] < 2:
+        mid = np.median(bs_arr, axis=0)
+        return gv.gvar(mid, np.zeros_like(mid, dtype=float))
+    shape = bs_arr.shape
+    bs_flat = bs_arr.reshape(shape[0], -1)
+    mid = np.median(bs_flat, axis=0)
+    p16, p84 = np.percentile(bs_flat, [16, 84], axis=0)
+    sdev = 0.5 * (p84 - p16)
+    return gv.gvar(mid, sdev).reshape(shape[1:])
 
 
 def bootstrap_indices(n_cfg: int, n_samples: int, seed: int | None) -> np.ndarray:
@@ -85,6 +154,7 @@ def resample_config_samples(
     data_arr = np.asarray(data)
     if bin_size > 1:
         data_arr = bin_data(data_arr, bin_size, axis=0)
+    mode = normalize_resample_mode(mode)
     if mode == "jk":
         return jackknife(data_arr), None
     if mode == "bs":
@@ -95,27 +165,84 @@ def resample_config_samples(
     raise ValueError(f"unsupported resample_mode: {mode!r}")
 
 
-def samples_to_gvar(samples: np.ndarray, *, mode: str) -> np.ndarray:
+def samples_to_gvar(
+    samples: np.ndarray,
+    *,
+    mode: str,
+    sample_error_mode: str = "covariance",
+    axis: int = 0,
+) -> np.ndarray:
     """Convert bootstrap or jackknife samples into a gvar array."""
-    if mode == "jk":
-        return jk_ls_avg(samples)
-    if mode == "bs":
-        return bs_ls_avg(samples)
-    raise ValueError(f"unsupported resample_mode: {mode!r}")
+    resample_mode = normalize_resample_mode(mode)
+    error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
+    if error_mode == "median":
+        return bs_ls_avg_percentile(samples, axis=axis)
+    covariance_avg = jk_ls_avg(samples, axis=axis) if resample_mode == "jk" else bs_ls_avg(samples, axis=axis)
+    if error_mode == "covariance":
+        return covariance_avg
+    return gv.gvar(gv.mean(covariance_avg), gv.sdev(covariance_avg))
 
 
-def sample_mean_err(samples: np.ndarray, *, mode: str) -> tuple[float, float]:
-    """Return a sample mean and bootstrap/jackknife-scaled error."""
-    finite = np.asarray(samples, dtype=float)[np.isfinite(samples)]
-    if finite.size == 0:
-        return np.nan, np.nan
-    mean = float(np.mean(finite))
-    if finite.size == 1:
-        return mean, 0.0
-    if mode == "jk":
-        err = float(np.sqrt((finite.size - 1) * np.mean((finite - mean) ** 2)))
-    elif mode == "bs":
-        err = float(np.std(finite, ddof=1))
+def sample_mean_and_sdev(
+    samples: np.ndarray,
+    *,
+    mode: str,
+    sample_error_mode: str = "covariance",
+    axis: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return sample-average centers and standard deviations."""
+    avg = samples_to_gvar(samples, mode=mode, sample_error_mode=sample_error_mode, axis=axis)
+    return np.asarray(gv.mean(avg)), np.asarray(gv.sdev(avg), dtype=float)
+
+
+def sample_sdev(
+    samples: np.ndarray,
+    *,
+    mode: str,
+    sample_error_mode: str = "covariance",
+    axis: int = 0,
+) -> np.ndarray:
+    """Return standard deviations from the configured sample average."""
+    return sample_mean_and_sdev(samples, mode=mode, sample_error_mode=sample_error_mode, axis=axis)[1]
+
+
+def recenter_sample_values(sample_values: np.ndarray, template: object) -> object:
+    """Copy a gvar template's errors/covariance onto new central values."""
+    center = np.asarray(sample_values, dtype=float)
+    flat_center = center.reshape(-1)
+    template_arr = np.asarray(template, dtype=object)
+    flat_template = template_arr.reshape(-1)
+    if flat_center.shape[0] != flat_template.shape[0]:
+        raise ValueError("sample values and gvar template must have matching shape")
+    if flat_center.shape[0] == 1:
+        out = gv.gvar(float(flat_center[0]), float(gv.sdev(flat_template[0])))
     else:
-        raise ValueError(f"unsupported resample_mode: {mode!r}")
-    return mean, err
+        out = gv.gvar(flat_center, gv.evalcov(flat_template))
+    return _reshape_gvar(out, center.shape)
+
+
+def sample_value_with_error(
+    sample_values: np.ndarray,
+    samples: np.ndarray,
+    *,
+    mode: str,
+    sample_error_mode: str = "covariance",
+    axis: int = 0,
+) -> object:
+    """Attach the ensemble sample error to one sample or center vector."""
+    template = samples_to_gvar(samples, mode=mode, sample_error_mode=sample_error_mode, axis=axis)
+    return recenter_sample_values(sample_values, template)
+
+
+def add_error_to_sample(
+    samples: np.ndarray,
+    *,
+    mode: str,
+    sample_error_mode: str = "covariance",
+    axis: int = 0,
+) -> np.ndarray:
+    """Return each sample with the configured ensemble errors attached."""
+    arr = _move_sample_axis(np.asarray(samples, dtype=float), axis)
+    template = samples_to_gvar(arr, mode=mode, sample_error_mode=sample_error_mode, axis=0)
+    with_errors = [recenter_sample_values(arr[idx], template) for idx in range(arr.shape[0])]
+    return np.asarray(with_errors, dtype=object)

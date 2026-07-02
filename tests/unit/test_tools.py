@@ -3,6 +3,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from lamet_agent.core.tools import prepare_tool_args, resolve_plot_save_path, validate_stage_inputs
 from lamet_agent.manifest import validate_manifest_file
 from lamet_agent.manifest import AnalysisManifest
@@ -33,9 +35,10 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
     assert args["fit_strategies"] == effective["fit_strategy"]
     assert args["fit_scope_values"] == ["ratio"]
     assert args["pt3_paths"]["8"].endswith("_3pt_ts8.h5")
-    assert args["resample_mode"] == "bs"
+    assert args["resample_mode"] == "jk"
+    assert args["sample_error_mode"] == manifest.metadata.sample_error_mode
     assert args["seed"] == manifest.metadata.random_seed
-    assert args["n_boot"] == manifest.metadata.bs_samples
+    assert "n_boot" not in args
 
 
 def test_prepare_correlator_args_injects_bs_samples_for_bootstrap_mode(tmp_path: Path) -> None:
@@ -314,7 +317,7 @@ def test_prepare_partial_fourier_loader_uses_manifest_artifact_after_hydration(t
         store={"input": quasi, "matrix_element_data": quasi},
     )
     assert args["path"] == source.path
-    assert args["resample_mode"] == "jk"
+    assert args["resample_mode"] == "bs"
 
 
 def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:
@@ -347,3 +350,22 @@ def test_new_downstream_job_validators_accept_full_manifest() -> None:
     for stage in ("fourier_transform", "perturbative_matching"):
         job = manifest.stages[stage].jobs[0]
         assert validate_stage_inputs(stage, manifest, job) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        Path("examples/sample_manifest.jsonc"),
+        Path("examples/partial_sample_manifest.jsonc"),
+        Path("examples/cg_pion_pdf_manifest.json"),
+        Path("examples/gi_pion_pdf_manifest.json"),
+        Path("examples/partial_cg_pion_pdf_manifest.json"),
+    ],
+)
+def test_example_manifests_validate(path: Path) -> None:
+    manifest = validate_manifest_file(path)
+    for stage_id, stage_cfg in manifest.stages.items():
+        if stage_id == "extrapolation":
+            continue
+        for job in stage_cfg.jobs:
+            assert validate_stage_inputs(stage_id, manifest, job) == []

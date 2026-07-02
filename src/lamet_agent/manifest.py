@@ -24,8 +24,9 @@ class RunMetadata(BaseModel):
 
     Required: run_id, root_directory, target_observable, parton, resample_mode,
     random_seed, stages.
-    Optional: artifacts_directory (default "artifacts"), bin_size (default: no
-    binning applied before jackknife/bootstrap resampling).
+    Optional: artifacts_directory (default "artifacts"), sample_error_mode
+    (default "covariance"), bin_size (default: no binning applied before
+    jackknife/bootstrap resampling).
     Conditional: bs_samples is required when resample_mode == "bs" and has no
     default; it is ignored when resample_mode == "jk".
     """
@@ -38,6 +39,7 @@ class RunMetadata(BaseModel):
     target_observable: Literal["pdf", "da", "gpd"]
     parton: Literal["quark", "gluon"]
     resample_mode: Literal["jk", "bs"]
+    sample_error_mode: Literal["mean", "median", "covariance"] = "covariance"
     random_seed: int
     bs_samples: int | None = Field(default=None, gt=0)
     bin_size: int | None = Field(default=None, gt=0)
@@ -56,6 +58,8 @@ class RunMetadata(BaseModel):
     def validate_bootstrap_requirements(self) -> "RunMetadata":
         if self.resample_mode == "bs" and self.bs_samples is None:
             raise ValueError("metadata.bs_samples is required when metadata.resample_mode is 'bs'")
+        if self.resample_mode == "jk" and self.sample_error_mode == "median":
+            raise ValueError("metadata.sample_error_mode='median' is not supported with metadata.resample_mode='jk'")
         return self
 
 
