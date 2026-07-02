@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from .core.llm import LlmSession, make_llm_session
+from .core.llm import LlmSession, format_api_model_spec, make_llm_session
 from .core.prompting import build_stage_static_prompt
 from .core.tools import filter_tool_kwargs, prepare_tool_args, resolve_stage_tools, validate_stage_inputs
 from .core.trace import AgentTrace
@@ -85,7 +85,8 @@ def _run_job(
     *,
     input_issues: list[str],
     max_tool_steps: int,
-    model: str,
+    backend: str,
+    model_spec: str | None,
     trace: AgentTrace,
     store: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -138,7 +139,7 @@ def _run_job(
         trace.cycle_begin(cycle)
         if last_observation is not None:
             trace.prompt_delta(last_observation)
-        trace.llm_call_begin(model=model)
+        trace.llm_call_begin(backend=backend, model_spec=model_spec)
         action = session.decide(last_observation=last_observation)
         trace.llm_call_end()
         trace.model_output(action)
@@ -215,10 +216,11 @@ def _normalize_report_language(report_language: str) -> str:
 def run_agent(
     manifest: AnalysisManifest,
     *,
-    model: str = "mock",
+    backend: str,
     actions_path: str | Path | None = None,
+    provider: str | None = None,
+    model_name: str | None = None,
     api_key: str | None = None,
-    llm_model: str | None = None,
     base_url: str | None = None,
     max_tool_steps: int = 40,
     verbose: bool = False,
@@ -228,12 +230,37 @@ def run_agent(
     report_language = _normalize_report_language(report_language)
     selected = list(manifest.metadata.stages)
     state = AgentState(run_id=manifest.run_id)
-    session = make_llm_session(model, actions_path, api_key, llm_model, base_url)
-    trace = AgentTrace(enabled=verbose)
+    session = make_llm_session(
+        backend,
+        actions_path,
+        api_key=api_key,
+        provider=provider,
+        model_name=model_name,
+        base_url=base_url,
+    )
+    trace = AgentTrace(enabled=verbose, quiet_ui=not verbose)
     outputs: dict[str, Any] = {item.id: item for item in manifest.inputs.artifacts}
     stage_reports: dict[str, dict[str, str]] = {}
+    model_spec = (
+        format_api_model_spec(provider, model_name)
+        if backend == "api" and provider and model_name
+        else None
+    )
 
-    trace.run_begin(run_id=manifest.run_id, model=model, stages=selected)
+    if verbose:
+        trace.run_begin(
+            run_id=manifest.run_id,
+            backend=backend,
+            stages=selected,
+            model_spec=model_spec,
+        )
+    else:
+        trace.run_banner(
+            run_id=manifest.run_id,
+            backend=backend,
+            stages=selected,
+            model_spec=model_spec,
+        )
     for stage in selected:
         state.stage_results[stage] = {}
         stage_job_records: list[dict[str, Any]] = []
@@ -241,7 +268,10 @@ def run_agent(
             issues = validate_stage_inputs(stage, manifest, job)
             if issues:
                 state.input_issues.setdefault(stage, {})[job.id] = issues
-            trace.stage_begin(f"{stage}/{job.id}", input_issues=issues or None)
+            if verbose:
+                trace.stage_begin(f"{stage}/{job.id}", input_issues=issues or None)
+            else:
+                trace.job_begin(stage, job.id, input_issues=issues or None)
 
             store: dict[str, Any] = {}
             for role, value in job.inputs.items():
@@ -262,7 +292,8 @@ def run_agent(
                 session,
                 input_issues=issues,
                 max_tool_steps=max_tool_steps,
-                model=model,
+                backend=backend,
+                model_spec=model_spec,
                 trace=trace,
                 store=store,
             )
@@ -399,10 +430,10 @@ def run_agent(
 
     trace.run_end(action_count=len(state.actions))
     status = "waiting_for_user_input" if state.pending_user_input else "completed"
-    return {
+    result: dict[str, Any] = {
         "run_id": manifest.run_id,
         "status": status,
-        "model": model,
+        "backend": backend,
         "stages": selected,
         "completed_stages": state.completed_stages,
         "input_issues": state.input_issues,
@@ -415,3 +446,6 @@ def run_agent(
             {"run_id": manifest.run_id, "stage_count": len(state.completed_stages), "action_count": len(state.actions)}
         ),
     }
+    if model_spec is not None:
+        result["model"] = model_spec
+    return result

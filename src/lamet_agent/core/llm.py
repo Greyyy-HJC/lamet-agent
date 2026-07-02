@@ -55,9 +55,42 @@ PROVIDERS: dict[str, dict[str, str]] = {
 }
 
 
-def provider_config(model: str) -> dict[str, str] | None:
-    """Return the OpenAI-compatible provider config for a backend name, if any."""
-    return PROVIDERS.get(model)
+def provider_config(provider: str) -> dict[str, str] | None:
+    """Return the OpenAI-compatible provider config for a provider name, if any."""
+    return PROVIDERS.get(provider)
+
+
+def parse_api_model(spec: str) -> tuple[str, str]:
+    """Parse ``provider/model_id`` or shorthand ``provider`` into provider and model name."""
+    text = spec.strip()
+    if not text:
+        raise ValueError(
+            "API model spec must be non-empty, e.g. 'deepseek/deepseek-chat' or 'openai/gpt-4o-mini'."
+        )
+    if "/" in text:
+        provider, model_name = text.split("/", 1)
+        provider = provider.strip()
+        model_name = model_name.strip()
+        if not provider or not model_name:
+            raise ValueError(
+                f"Invalid API model spec {spec!r}; use 'provider/model_id', e.g. 'deepseek/deepseek-chat'."
+            )
+    else:
+        provider = text
+        model_name = ""
+    config = provider_config(provider)
+    if config is None:
+        raise ValueError(
+            f"Unknown API provider {provider!r}; use one of {sorted(PROVIDERS)}."
+        )
+    if not model_name:
+        model_name = config["default_model"]
+    return provider, model_name
+
+
+def format_api_model_spec(provider: str, model_name: str) -> str:
+    """Return the canonical provider/model_id string for trace and run summaries."""
+    return f"{provider}/{model_name}"
 
 
 def _codex_decide(messages: list[dict]) -> dict:
@@ -65,7 +98,7 @@ def _codex_decide(messages: list[dict]) -> dict:
         from openai_codex import Codex, Sandbox
     except ImportError as exc:
         raise RuntimeError(
-            "model='codex' requires the openai-codex Python SDK. "
+            "backend='codex' requires the openai-codex Python SDK. "
             "Install the project's codex extra before using this backend."
         ) from exc
 
@@ -206,30 +239,37 @@ def _post_chat_completion(
 
 def _request_llm_action(
     *,
-    model: str,
+    backend: str,
     messages: list[dict[str, str]],
     api_key: str | None = None,
+    provider: str | None = None,
     model_name: str | None = None,
     base_url: str | None = None,
 ) -> dict[str, Any]:
     """Return one structured agent action from the configured LLM backend."""
-    if model == "mock":
+    if backend == "mock":
         return dict(_MOCK_TOOL_ACTION)
-    if model == "codex":
+    if backend == "codex":
         return _codex_decide([{"role": "system", "content": _SYSTEM_PROMPT}, *messages])
-    config = provider_config(model)
-    if config is not None:
+    if backend == "api":
+        if not provider:
+            raise ValueError("backend='api' requires a provider.")
+        config = provider_config(provider)
+        if config is None:
+            raise ValueError(
+                f"Unknown API provider {provider!r}; use one of {sorted(PROVIDERS)}."
+            )
         if not api_key:
-            raise ValueError(f"model={model!r} requires an API key.")
+            raise ValueError(f"backend='api' provider={provider!r} requires an API key.")
         return _post_chat_completion(
             messages=messages,
             api_key=api_key,
             model_name=model_name or config["default_model"],
             base_url=base_url or config["base_url"],
-            provider=model,
+            provider=provider,
         )
-    raise NotImplementedError(
-        f"LLM backend {model!r} is not implemented. Add provider logic in `_request_llm_action`."
+    raise ValueError(
+        f"Unknown LLM backend {backend!r}; use one of mock, external, api, codex."
     )
 
 
@@ -286,7 +326,7 @@ def _codex_session() -> LlmSession:
                         "content": format_tool_observation(last_observation),
                     }
                 )
-            action = _request_llm_action(model="codex", messages=self._messages)
+            action = _request_llm_action(backend="codex", messages=self._messages)
             self._messages.append(
                 {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
             )
@@ -319,9 +359,10 @@ def _openai_compatible_session(
                     }
                 )
             action = _request_llm_action(
-                model=provider,
+                backend="api",
                 messages=self._messages,
                 api_key=api_key,
+                provider=provider,
                 model_name=model_name,
                 base_url=base_url,
             )
@@ -334,31 +375,44 @@ def _openai_compatible_session(
 
 
 def make_llm_session(
-    model: str,
-    actions_path: str | Path | None,
+    backend: str,
+    actions_path: str | Path | None = None,
+    *,
     api_key: str | None = None,
-    llm_model: str | None = None,
+    provider: str | None = None,
+    model_name: str | None = None,
     base_url: str | None = None,
 ) -> LlmSession:
-    """Build an LLM session for mock, external, Codex, DeepSeek, or OpenAI backends.
+    """Build an LLM session for mock, external, api, or codex backends.
 
-    ``model`` selects the backend (``mock``/``external``/``codex``/``deepseek``/``openai``);
-    ``llm_model`` and ``base_url`` override OpenAI-compatible provider defaults when given.
+    ``backend`` selects the integration (``mock``/``external``/``api``/``codex``).
+    For ``api``, pass ``provider`` and ``model_name``; ``base_url`` overrides the
+    provider default when given.
     """
-    if model == "external":
+    if backend == "mock":
+        return _mock_session()
+    if backend == "external":
         if actions_path is None:
-            raise ValueError("model='external' requires an actions_path transcript.")
+            raise ValueError("backend='external' requires an actions_path transcript.")
         return _external_session(actions_path)
-    if model == "codex":
+    if backend == "codex":
         return _codex_session()
-    config = provider_config(model)
-    if config is not None:
+    if backend == "api":
+        if not provider:
+            raise ValueError("backend='api' requires a provider.")
+        config = provider_config(provider)
+        if config is None:
+            raise ValueError(
+                f"Unknown API provider {provider!r}; use one of {sorted(PROVIDERS)}."
+            )
         if not api_key:
-            raise ValueError(f"model={model!r} requires an API key.")
+            raise ValueError(f"backend='api' provider={provider!r} requires an API key.")
         return _openai_compatible_session(
-            model,
+            provider,
             api_key,
-            llm_model or config["default_model"],
+            model_name or config["default_model"],
             base_url or config["base_url"],
         )
-    return _mock_session()
+    raise ValueError(
+        f"Unknown LLM backend {backend!r}; use one of mock, external, api, codex."
+    )

@@ -9,7 +9,7 @@ def test_cli_run_summary_omits_actions_and_stage_results() -> None:
     full = {
         "run_id": "demo",
         "status": "completed",
-        "model": "mock",
+        "backend": "mock",
         "stages": ["correlator_analysis"],
         "completed_stages": ["correlator_analysis"],
         "input_issues": {},

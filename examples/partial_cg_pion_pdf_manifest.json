@@ -6,6 +6,7 @@
     "target_observable": "pdf",
     "parton": "quark",
     "resample_mode": "jk",
+    "random_seed": 1984,
     "stages": ["fourier_transform", "perturbative_matching"]
   },
   "inputs": {

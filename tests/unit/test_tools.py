@@ -33,6 +33,39 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
     assert args["fit_strategies"] == effective["fit_strategy"]
     assert args["fit_scope_values"] == ["ratio"]
     assert args["pt3_paths"]["8"].endswith("_3pt_ts8.h5")
+    assert args["resample_mode"] == "bs"
+    assert args["seed"] == manifest.metadata.random_seed
+    assert args["n_boot"] == manifest.metadata.bs_samples
+
+
+def test_prepare_correlator_args_injects_bs_samples_for_bootstrap_mode(tmp_path: Path) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "bs",
+                "root_directory": ".",
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "bs",
+                "random_seed": 1984,
+                "bs_samples": 500,
+                "stages": ["correlator_analysis"],
+            },
+            "inputs": {"correlators": [], "artifacts": [], "kernels": []},
+            "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]}},
+        }
+    )
+    args = prepare_tool_args(
+        "tune_bare_matrix",
+        {},
+        manifest=manifest,
+        stage="correlator_analysis",
+        job=manifest.stages["correlator_analysis"].jobs[0],
+        effective_params={},
+        artifacts_dir=tmp_path,
+    )
+    assert args["n_boot"] == 500
+    assert args["seed"] == 1984
 
 
 def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) -> None:
@@ -117,6 +150,7 @@ def test_prepare_nonbreit_correlator_args_match_initial_final_momenta(tmp_path: 
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "random_seed": 1984,
                 "stages": ["correlator_analysis"],
             },
             "inputs": {

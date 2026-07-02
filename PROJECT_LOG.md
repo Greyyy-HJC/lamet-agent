@@ -441,3 +441,24 @@
 - Kept ``openai-codex`` as an optional ``[codex]`` extra and delayed importing the SDK until the codex backend is used, so existing ``mock``/``external``/``deepseek``/``openai`` workflows remain importable without the SDK.
 - Updated CLI/README backend lists and added unit coverage for routing stage prompts and tool observations through ``codex_decide``.
 - Removed strict ``output_schema`` from the Codex SDK turn call after diagnosing the SDK failure as an ``invalid_json_schema`` rejection for flexible tool ``args``; Codex responses are now parsed with the same JSON repair helper used by API providers.
+
+## 2026-07-01 (Global resampling metadata: random_seed, bs_samples, bin_size)
+
+- Moved correlator-stage resampling configuration out of ``correlator_analysis.defaults.seed`` and into required/optional top-level ``metadata`` fields: ``random_seed`` (required, seeds every jackknife/bootstrap call), ``bs_samples`` (required only when ``resample_mode`` is ``"bs"``; ignored for ``"jk"``, replaces the hardcoded ``n_boot=200``), and ``bin_size`` (optional, no default requirement).
+- Added a ``RunMetadata`` model validator that rejects manifests with ``resample_mode: "bs"`` and no ``bs_samples``; documented required vs optional fields directly in the ``RunMetadata`` docstring.
+- Added ``bin_data()`` plus ``bin_size`` support to ``jackknife``/``bootstrap``/``resample_config_samples`` in ``core/resampling.py``, and threaded ``bin_size`` through ``_resample_pt2``, ``tune_ground_state``, ``tune_bare_matrix``, and ``fit_bare_matrix_grid`` in the correlator stage.
+- ``prepare_tool_args`` now injects ``seed``/``n_boot``/``bin_size`` from ``metadata.random_seed``/``metadata.bs_samples``/``metadata.bin_size`` for every correlator tool call, the same way ``resample_mode`` is already injected; a job/stage no longer needs its own ``seed``.
+- Updated all tracked example manifests and ``sample_manifest.jsonc`` (with inline comments for the new fields) plus inline test manifests to include ``metadata.random_seed``.
+
+## 2026-07-01 (CLI backend/model flag refactor)
+
+- Replaced overloaded CLI ``--model`` backend selector with required ``--backend mock|external|api|codex`` and ``--model provider/model_id`` for the ``api`` backend only; removed ``--llm-model``.
+- Added ``parse_api_model()`` and ``format_api_model_spec()`` in ``core/llm.py``; refactored ``make_llm_session()`` / ``_request_llm_action()`` to take ``backend`` plus optional ``provider``/``model_name``; unknown backends now raise ``ValueError`` instead of silently falling back to mock.
+- Updated ``run_agent()`` return summary to emit ``backend`` and, for ``api``, ``model`` as ``provider/model_id``; trace output uses ``backend`` + optional ``model_spec``.
+- Updated unit tests, README, and AGENTS.md. Local run scripts under ``runs/`` must be updated manually (e.g. ``--backend api --model deepseek/deepseek-chat`` instead of ``--model deepseek``).
+
+## 2026-07-01 (Quiet CLI startup banner and job headers)
+
+- Added ``core/banner.py`` with a GRID-style LaMET Agent ASCII banner and ``format_job_header()``.
+- Extended ``AgentTrace`` with ``quiet_ui`` mode: non-verbose runs print the banner, run summary, and one ``Stage: … | Job: …`` line before each job; ``--verbose`` behavior is unchanged.
+- Wired ``run_agent()`` to use ``run_banner()``/``job_begin()`` when ``verbose=False`` and added unit tests in ``tests/unit/test_banner.py``.

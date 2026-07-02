@@ -29,6 +29,7 @@
     "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs"
+    "random_seed": 1984, // required; RNG seed for every resampling step in the run
     // Only the stages to run, in execution order. correlator_analysis and
     // renormalization are intentionally absent (their products come in as
     // external source nodes below).

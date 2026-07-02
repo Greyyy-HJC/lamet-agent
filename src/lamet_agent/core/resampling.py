@@ -6,18 +6,33 @@ import gvar as gv
 import numpy as np
 
 
-def bootstrap(data: np.ndarray, n_samples: int, axis: int = 0, seed: int | None = 1984) -> np.ndarray:
+def bin_data(data: np.ndarray, bin_size: int, axis: int = 0) -> np.ndarray:
+    """Average adjacent configurations into bins along ``axis``."""
+    if bin_size < 1:
+        raise ValueError("bin_size must be a positive integer")
+    data = np.moveaxis(np.asarray(data), axis, 0)
+    n_bins = data.shape[0] // bin_size
+    data = data[: n_bins * bin_size]
+    data = data.reshape(n_bins, bin_size, *data.shape[1:]).mean(axis=1)
+    return np.moveaxis(data, 0, axis)
+
+
+def bootstrap(data: np.ndarray, n_samples: int, axis: int = 0, seed: int | None = 1984, bin_size: int = 1) -> np.ndarray:
     """Generate bootstrap sample averages from ensemble data."""
     data = np.asarray(data)
+    if bin_size > 1:
+        data = bin_data(data, bin_size, axis=axis)
     n_conf = data.shape[axis]
     rng = np.random.default_rng(seed)
     indices = rng.choice(n_conf, (n_samples, n_conf), replace=True)
     return np.take(data, indices, axis=axis).mean(axis=axis + 1)
 
 
-def jackknife(data: np.ndarray, axis: int = 0) -> np.ndarray:
-    """Generate leave-one-out jackknife sample averages from ensemble data."""
+def jackknife(data: np.ndarray, axis: int = 0, bin_size: int = 1) -> np.ndarray:
+    """Generate leave-one-bin-out jackknife sample averages from ensemble data."""
     data = np.asarray(data)
+    if bin_size > 1:
+        data = bin_data(data, bin_size, axis=axis)
     n_conf = data.shape[axis]
     total = data.sum(axis=axis, keepdims=True)
     return (total - data) / (n_conf - 1)
@@ -59,10 +74,17 @@ def resample_config_samples(
     mode: str,
     n_boot: int,
     seed: int | None,
+    bin_size: int = 1,
     indices: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    """Return resampled configuration averages and optional bootstrap indices."""
+    """Return resampled configuration averages and optional bootstrap indices.
+
+    ``bin_size`` bins the configuration axis before resampling; ``indices``
+    (when provided) are assumed to already be in the binned index space.
+    """
     data_arr = np.asarray(data)
+    if bin_size > 1:
+        data_arr = bin_data(data_arr, bin_size, axis=0)
     if mode == "jk":
         return jackknife(data_arr), None
     if mode == "bs":

@@ -12,11 +12,11 @@ from lamet_agent.manifest import AnalysisManifest
 def test_agent_trace_emits_cycle_sections() -> None:
     buffer = io.StringIO()
     trace = AgentTrace(enabled=True, emit=buffer.write)
-    trace.run_begin(run_id="demo", model="mock", stages=["correlator_analysis"])
+    trace.run_begin(run_id="demo", backend="mock", stages=["correlator_analysis"])
     trace.stage_begin("correlator_analysis")
     trace.stage_context("static stage context")
     trace.cycle_begin(1)
-    trace.llm_call_begin(model="mock")
+    trace.llm_call_begin(backend="mock")
     trace.llm_call_end()
     trace.model_output(
         {
@@ -61,7 +61,7 @@ def test_run_agent_verbose_prints_trace(capsys) -> None:
         {
             "metadata": {
                 "run_id": "demo", "root_directory": ".", "target_observable": "pdf",
-                "parton": "quark", "resample_mode": "jk", "stages": ["correlator_analysis"],
+                "parton": "quark", "resample_mode": "jk", "random_seed": 1984, "stages": ["correlator_analysis"],
             },
             "inputs": {"correlators": [
                 {"correlator_id": "c2", "kind": "2pt", "data_path": "c2.h5", "ensemble": "E",
@@ -75,7 +75,7 @@ def test_run_agent_verbose_prints_trace(capsys) -> None:
             "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}]}},
         }
     )
-    run_agent(manifest, model="mock", verbose=True)
+    run_agent(manifest, backend="mock", verbose=True)
     out = capsys.readouterr().out
     assert "Agent run: demo" in out
     assert "Cycle 1" in out

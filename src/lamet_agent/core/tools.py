@@ -289,6 +289,13 @@ def prepare_tool_args(
         if "component" in defaults:
             defaults["part"] = defaults.pop("component")
         defaults["resample_mode"] = manifest.metadata.resample_mode
+        defaults["seed"] = manifest.metadata.random_seed
+        if manifest.metadata.resample_mode == "bs":
+            if manifest.metadata.bs_samples is None:
+                raise ValueError("metadata.bs_samples is required when metadata.resample_mode is 'bs'")
+            defaults["n_boot"] = manifest.metadata.bs_samples
+        if manifest.metadata.bin_size is not None:
+            defaults["bin_size"] = manifest.metadata.bin_size
         if pt2 is not None:
             defaults.update(
                 {
