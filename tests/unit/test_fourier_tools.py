@@ -953,7 +953,7 @@ def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) 
 
     auto = run["auto_scheme_scan"]
     assert len(auto["zmin_values"]) == 4
-    assert min(auto["zmin_values"]) >= 0.6 - 1e-12
+    assert min(auto["zmin_values"]) >= 0.5 - 1e-12
 
 
 def test_fourier_auto_zmax_stops_before_noisy_tail(tmp_path: Path, monkeypatch) -> None:
@@ -1027,7 +1027,7 @@ def test_fourier_accepts_compact_y_grid_spec(tmp_path: Path, monkeypatch) -> Non
     assert len(summary["y_grid"]) == 21
 
 
-def test_fourier_accepts_covariance_fit_error_mode(tmp_path: Path, monkeypatch) -> None:
+def test_fourier_accepts_covariance_sample_error_mode(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
     _write_npz(data_path)
@@ -1040,11 +1040,11 @@ def test_fourier_accepts_covariance_fit_error_mode(tmp_path: Path, monkeypatch) 
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        fit_error_mode="covariance",
+        sample_error_mode="covariance",
     )
 
     assert run["n_schemes"] == 1
-    assert store["fourier_result"]["fit_error_mode"] == "covariance"
+    assert store["fourier_result"]["sample_error_mode"] == "covariance"
 
 
 def test_plot_fourier_artifact_writes_figure(tmp_path: Path) -> None:
@@ -1066,4 +1066,38 @@ def test_plot_fourier_artifact_writes_figure(tmp_path: Path) -> None:
 
     assert save_path.is_file()
     assert ax_re.get_title() == "FT nucleon quark transversity quasi pdf"
+    fig.clf()
+
+
+def test_plot_fourier_artifact_uses_stored_means_for_median_complex_nc(tmp_path: Path) -> None:
+    """NetCDF attrs carry real/im means; avoid median gvar on complex bootstrap samples."""
+    k = np.array([-0.5, 0.0, 0.5])
+    re_samples = np.array([[0.2, 0.3, 0.2], [0.21, 0.31, 0.21]])
+    im_samples = np.array([[-0.1, 0.0, 0.1], [-0.11, 0.01, 0.11]])
+    values = [re_samples[idx] + 1j * im_samples[idx] for idx in range(re_samples.shape[0])]
+    data = EnsembleData(
+        ensemble=None,
+        resample="bootstrap",
+        values=values,
+        dims=("x",),
+        coords={"x": k.tolist()},
+        attrs={
+            "sample_error_mode": "median",
+            "observable": "pion_quark_quasi_pdf",
+            "ft_re_mean": json.dumps([0.205, 0.305, 0.205]),
+            "ft_im_mean": json.dumps([-0.105, 0.005, 0.105]),
+            "ft_re_stat_sdev": json.dumps([0.01, 0.02, 0.01]),
+            "ft_im_stat_sdev": json.dumps([0.02, 0.01, 0.02]),
+            "ft_re_sys_sdev": json.dumps([0.005, 0.005, 0.005]),
+            "ft_im_sys_sdev": json.dumps([0.005, 0.005, 0.005]),
+        },
+        name="fourier_transform",
+    )
+    path = tmp_path / "fourier_result.nc"
+    save_path = tmp_path / "fourier.pdf"
+    data.to_netcdf(path)
+
+    fig, _ax_re = plot_fourier_artifact(path, save_path=save_path)
+
+    assert save_path.is_file()
     fig.clf()

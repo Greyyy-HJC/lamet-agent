@@ -5,8 +5,10 @@
     "artifacts_directory": "runs/ds_pdf_complete/artifacts",
     "target_observable": "pdf",
     "parton": "quark",
-    "resample_mode": "jk",
-    "bs_samples": 500,
+    "resample_mode": "bs",
+    "sample_error_mode": "median",
+    "bs_samples": 400,
+    "bin_size": 5,
     "random_seed": 1984,
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching"]
   },
@@ -207,22 +209,21 @@
     },
     "fourier_transform": {
       "defaults": {
-        "order": ["NLA"],
+        "order": ["LA"],
         "Lambda0": 0.0,
-        "fit_error_mode": "covariance",
         "sector": "valence",
         "coord_unit": "lattice",
-        "posterior_prior_error_scale": [2.0, 3.0, 5.0],
+        "posterior_prior_error_scale": [3.0, 4.0, 5.0],
         "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
         "scheme_scan": {
-          "zmin_values": [9.0, 10.0, 11.0, 12.0],
+          "zmin_values": [12.0, 13.0, 14.0, 15.0],
           "zmax_values": [21.0, 22.0, 23.0, 24.0],
           "z_ext_max": 100.0,
           "smooth": "linear",
           "model_average": false,
           "max_schemes": 200
         }
-        },
+      },
       "jobs": [
         {"id": "ft_p5", "inputs": {"input": "rn_p5"}, "params": {"pz_gev": 2.15}}
       ]

@@ -468,3 +468,19 @@
 - Extended ``_ylim_middle_third()`` with optional asymmetric margin factors; default remains symmetric middle third.
 - Fit-log pt3 ratio and FH panels now place data±error at axis height ``3/12``–``7/12`` via ``FIT_LOG_YLIM_*`` constants (``bottom=0.75*span``, ``top=1.25*span``).
 - Added unit test ``test_ylim_middle_third_fit_log_factors_place_data_at_three_to_seven_twelfths``.
+
+## 2026-07-02 (Central sample-error mode)
+
+- Added top-level ``metadata.sample_error_mode`` with ``mean``/``median``/``covariance`` options and rejected the invalid jackknife-plus-median combination during manifest validation.
+- Centralized bootstrap/jackknife sample averages, mean/sdev extraction, and sample-by-sample error attachment in ``core/resampling.py``.
+- Threaded ``sample_error_mode`` through correlator, renormalization, and Fourier tools; Fourier no longer reads per-stage ``fit_error_mode``.
+- Updated tracked example manifests and README metadata guidance for the new sample-error contract.
+- Kept ``sample_error_mode`` strict to the three public values only: ``mean``, ``median``, and ``covariance``.
+
+### 2026-07-02 — Example manifest cleanup
+
+- Normalized 2-space indentation across all ``examples/*manifest*`` files; removed tab characters from Fourier defaults.
+- Replaced obsolete ``unpolarized_gT`` kernel ids with ``CG_gt_PDF_hybrid`` and aligned ``zs_fm`` to ``0.1722`` in sample/partial_sample manifests.
+- Simplified Fourier ``scheme_scan`` to auto-fill style (``model_average`` only) in all example manifests; ``sample_manifest.jsonc`` documents optional override keys in comments.
+- Updated ``sample_manifest.jsonc`` correlator defaults to ``pt3_tau_cuts`` and ``HISQa060_X`` ensemble metadata.
+- Added ``test_example_manifests_validate`` to guard example manifest schema and stage-input validation.

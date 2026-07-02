@@ -34,7 +34,15 @@ import numpy as np
 
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.plotting import plot_fourier_artifact, plot_fourier_extension_quality
-from lamet_agent.core.resampling import bs_ls_avg, jk_ls_avg
+from lamet_agent.core.resampling import (
+    normalize_resample_mode,
+    normalize_sample_error_mode,
+    recenter_sample_values,
+    sample_mean_and_sdev,
+    sample_sdev,
+    sample_value_with_error,
+    samples_to_gvar,
+)
 from lamet_agent.stages.fourier.reporting import write_fourier_report
 
 FM_TO_GEV_INV = 5.067731237
@@ -73,68 +81,27 @@ class _TailParameter:
 
 
 def _normalise_resample_mode(value: str | None) -> str:
-    mode = "bootstrap" if value is None else str(value).strip().lower()
-    aliases = {
-        "bs": "bootstrap",
-        "boot": "bootstrap",
-        "bootstrap": "bootstrap",
-        "jk": "jackknife",
-        "jackknife": "jackknife",
-        "raw": "raw",
-    }
-    if mode not in aliases:
-        raise ValueError("resample_mode must be 'bs'/'bootstrap', 'jk'/'jackknife', or 'raw'")
-    return aliases[mode]
+    mode = normalize_resample_mode(value, allow_raw=True)
+    return {"bs": "bootstrap", "jk": "jackknife", "raw": "raw"}[mode]
 
 
-def _sample_gvar(samples, *, resample_mode: str = "bootstrap") -> np.ndarray:
+def _sample_gvar(samples, *, resample_mode: str = "bootstrap", sample_error_mode: str = "covariance") -> np.ndarray:
     arr = np.asarray(samples, dtype=float)
     if arr.ndim == 0:
         return gv.gvar(arr, np.zeros_like(arr, dtype=float))
-    if arr.shape[0] < 2:
-        mean = np.mean(arr, axis=0)
-        return gv.gvar(mean, np.zeros_like(mean, dtype=float))
-
     mode = _normalise_resample_mode(resample_mode)
-    trailing_shape = arr.shape[1:]
-    if mode in {"bootstrap", "jackknife"} and int(np.prod(trailing_shape or (1,))) == 1:
-        flat = arr.reshape(arr.shape[0], 1)
-        duplicated = np.repeat(flat, 2, axis=1)
-        values = jk_ls_avg(duplicated) if mode == "jackknife" else bs_ls_avg(duplicated)
-        value = values.reshape(-1)[0]
-        mean = float(gv.mean(value))
-        sdev = float(gv.sdev(value))
-        if trailing_shape == ():
-            return gv.gvar(mean, sdev)
-        return gv.gvar(np.full(trailing_shape, mean), np.full(trailing_shape, sdev))
-    if mode == "jackknife":
-        return jk_ls_avg(arr)
-    if mode == "bootstrap":
-        return bs_ls_avg(arr)
-
+    if mode in {"bootstrap", "jackknife"}:
+        return samples_to_gvar(arr, mode=mode, sample_error_mode=sample_error_mode)
     mean = np.mean(arr, axis=0)
-    sdev = np.std(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])
+    sdev = np.std(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0]) if arr.shape[0] > 1 else np.zeros_like(mean, dtype=float)
     return gv.gvar(mean, sdev)
 
 
-def _sample_sdev(samples, *, resample_mode: str = "bootstrap") -> np.ndarray:
+def _sample_sdev(samples, *, resample_mode: str = "bootstrap", sample_error_mode: str = "covariance") -> np.ndarray:
+    mode = _normalise_resample_mode(resample_mode)
+    if mode in {"bootstrap", "jackknife"}:
+        return sample_sdev(samples, mode=mode, sample_error_mode=sample_error_mode)
     return np.asarray(gv.sdev(_sample_gvar(samples, resample_mode=resample_mode)), dtype=float)
-
-
-def _normalise_fit_error_mode(value: str | None) -> str:
-    mode = "diagonal" if value is None else str(value).strip().lower()
-    aliases = {
-        "diag": "diagonal",
-        "diagonal": "diagonal",
-        "sdev": "diagonal",
-        "std": "diagonal",
-        "cov": "covariance",
-        "covariance": "covariance",
-        "full": "covariance",
-    }
-    if mode not in aliases:
-        raise ValueError("fit_error_mode must be 'diagonal' or 'covariance'")
-    return aliases[mode]
 
 
 def _normalise_part(value: str | None) -> str:
@@ -175,7 +142,7 @@ def _fit_y_data(
     re_fit: np.ndarray,
     im_fit: np.ndarray,
     *,
-    fit_error_mode: str,
+    sample_error_mode: str,
     resample_mode: str,
     part: str = "both",
     re_fit_samples: np.ndarray | None = None,
@@ -183,38 +150,34 @@ def _fit_y_data(
     sigma_re: np.ndarray | None = None,
     sigma_im: np.ndarray | None = None,
 ) -> np.ndarray:
-    mode = _normalise_fit_error_mode(fit_error_mode)
+    error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
     part = _normalise_part(part)
-    if mode == "covariance":
-        blocks = []
-        centers = []
-        if _uses_re(part):
-            if re_fit_samples is None:
-                raise ValueError("fit_error_mode='covariance' requires re_fit_samples for part='re' or 'both'")
-            blocks.append(np.asarray(re_fit_samples, dtype=float))
-            centers.append(np.asarray(re_fit, dtype=float))
-        if _uses_im(part):
-            if im_fit_samples is None:
-                raise ValueError("fit_error_mode='covariance' requires im_fit_samples for part='im' or 'both'")
-            blocks.append(np.asarray(im_fit_samples, dtype=float))
-            centers.append(np.asarray(im_fit, dtype=float))
-        sample_matrix = np.concatenate(blocks, axis=1)
-        covariance_data = _sample_gvar(sample_matrix, resample_mode=resample_mode)
-        center = np.concatenate(centers)
-        return gv.gvar(center, gv.evalcov(covariance_data))
-
-    re_scale = np.ones_like(re_fit, dtype=float) if sigma_re is None else np.asarray(sigma_re, dtype=float)
-    im_scale = np.ones_like(im_fit, dtype=float) if sigma_im is None else np.asarray(sigma_im, dtype=float)
-    values = []
-    errors = []
+    blocks = []
+    centers = []
+    floor_errors = []
     if _uses_re(part):
-        values.append(np.asarray(re_fit, dtype=float))
-        errors.append(re_scale)
+        if re_fit_samples is None:
+            raise ValueError("sample error construction requires re_fit_samples for part='re' or 'both'")
+        blocks.append(np.asarray(re_fit_samples, dtype=float))
+        centers.append(np.asarray(re_fit, dtype=float))
+        if sigma_re is not None:
+            floor_errors.append(np.asarray(sigma_re, dtype=float))
     if _uses_im(part):
-        values.append(np.asarray(im_fit, dtype=float))
-        errors.append(im_scale)
-    sigma = np.maximum(np.concatenate(errors), 1e-12)
-    return gv.gvar(np.concatenate(values), sigma)
+        if im_fit_samples is None:
+            raise ValueError("sample error construction requires im_fit_samples for part='im' or 'both'")
+        blocks.append(np.asarray(im_fit_samples, dtype=float))
+        centers.append(np.asarray(im_fit, dtype=float))
+        if sigma_im is not None:
+            floor_errors.append(np.asarray(sigma_im, dtype=float))
+    sample_matrix = np.concatenate(blocks, axis=1)
+    center = np.concatenate(centers)
+    if error_mode == "covariance":
+        return sample_value_with_error(center, sample_matrix, mode=resample_mode, sample_error_mode=error_mode)
+    template = samples_to_gvar(sample_matrix, mode=resample_mode, sample_error_mode=error_mode)
+    if floor_errors:
+        sigma = np.maximum(np.asarray(gv.sdev(template), dtype=float), np.concatenate(floor_errors))
+        return gv.gvar(center, sigma)
+    return recenter_sample_values(center, template)
 
 
 def _select_fit_prediction(pred_re: np.ndarray, pred_im: np.ndarray, part: str) -> np.ndarray:
@@ -868,7 +831,7 @@ def fit_tail_quality_for_mean(
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
     posterior_prior_error_scale: float = 3.0,
-    fit_error_mode: str = "diagonal",
+    sample_error_mode: str = "covariance",
     part: str = "both",
     sector: str | None = None,
     hadron: str | None = None,
@@ -910,17 +873,17 @@ def fit_tail_quality_for_mean(
         }
 
     z_fit = fit_coord[fit_mask]
-    mean_re = np.mean(re_mat[:, fit_mask], axis=0)
-    mean_im = np.mean(im_mat[:, fit_mask], axis=0)
-    sigma_re = _sample_sdev(re_mat[:, fit_mask], resample_mode=resample_mode)
-    sigma_im = _sample_sdev(im_mat[:, fit_mask], resample_mode=resample_mode)
+    mean_re, _ = sample_mean_and_sdev(re_mat[:, fit_mask], mode=resample_mode, sample_error_mode=sample_error_mode)
+    mean_im, _ = sample_mean_and_sdev(im_mat[:, fit_mask], mode=resample_mode, sample_error_mode=sample_error_mode)
+    sigma_re = _sample_sdev(re_mat[:, fit_mask], resample_mode=resample_mode, sample_error_mode=sample_error_mode)
+    sigma_im = _sample_sdev(im_mat[:, fit_mask], resample_mode=resample_mode, sample_error_mode=sample_error_mode)
     sigma_floor = max(1e-8, 0.02 * max(float(np.max(np.abs(mean_re))), float(np.max(np.abs(mean_im))), 1.0))
     sigma_re = np.maximum(sigma_re, sigma_floor)
     sigma_im = np.maximum(sigma_im, sigma_floor)
     y_data = _fit_y_data(
         mean_re,
         mean_im,
-        fit_error_mode=fit_error_mode,
+        sample_error_mode=sample_error_mode,
         resample_mode=resample_mode,
         part=part,
         re_fit_samples=re_mat[:, fit_mask],
@@ -1021,7 +984,7 @@ def _run_one_scheme(
     resample_mode: str,
     Lambda0: float,
     posterior_prior_error_scale: float,
-    fit_error_mode: str,
+    sample_error_mode: str,
     part: str,
     sector: str | None,
     hadron: str | None,
@@ -1047,17 +1010,17 @@ def _run_one_scheme(
         raise ValueError("fit range has too few points for the selected asymptotic form")
 
     z_fit = fit_coord[fit_mask]
-    mean_re = np.mean(re_samples, axis=0)[fit_mask]
-    mean_im = np.mean(im_samples, axis=0)[fit_mask]
-    sigma_re = _sample_sdev(re_samples[:, fit_mask], resample_mode=resample_mode)
-    sigma_im = _sample_sdev(im_samples[:, fit_mask], resample_mode=resample_mode)
+    mean_re, _ = sample_mean_and_sdev(re_samples[:, fit_mask], mode=resample_mode, sample_error_mode=sample_error_mode)
+    mean_im, _ = sample_mean_and_sdev(im_samples[:, fit_mask], mode=resample_mode, sample_error_mode=sample_error_mode)
+    sigma_re = _sample_sdev(re_samples[:, fit_mask], resample_mode=resample_mode, sample_error_mode=sample_error_mode)
+    sigma_im = _sample_sdev(im_samples[:, fit_mask], resample_mode=resample_mode, sample_error_mode=sample_error_mode)
     sigma_floor = max(1e-8, 0.02 * max(float(np.max(np.abs(mean_re))), float(np.max(np.abs(mean_im))), 1.0))
     sigma_re = np.maximum(sigma_re, sigma_floor)
     sigma_im = np.maximum(sigma_im, sigma_floor)
     mean_y_data = _fit_y_data(
         mean_re,
         mean_im,
-        fit_error_mode=fit_error_mode,
+        sample_error_mode=sample_error_mode,
         resample_mode=resample_mode,
         part=part,
         re_fit_samples=re_samples[:, fit_mask],
@@ -1134,7 +1097,7 @@ def _run_one_scheme(
         sample_y_data = _fit_y_data(
             re_samples[sample, fit_mask],
             im_samples[sample, fit_mask],
-            fit_error_mode=fit_error_mode,
+            sample_error_mode=sample_error_mode,
             resample_mode=resample_mode,
             part=part,
             re_fit_samples=re_samples[:, fit_mask],
@@ -1244,7 +1207,7 @@ def run_fourier_workflow(
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
     posterior_prior_error_scale: float = 3.0,
-    fit_error_mode: str = "diagonal",
+    sample_error_mode: str = "covariance",
     part: str = "both",
     sector: str | None = None,
     hadron: str | None = None,
@@ -1256,7 +1219,7 @@ def run_fourier_workflow(
     """
     coord_arr = np.asarray(coord, dtype=float)
     resample_mode = _normalise_resample_mode(resample_mode)
-    fit_error_mode = _normalise_fit_error_mode(fit_error_mode)
+    sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
     part = _normalise_part(part)
     _uniform_step(coord_arr)
     if not np.isclose(coord_arr[0], 0.0):
@@ -1316,7 +1279,7 @@ def run_fourier_workflow(
                 resample_mode=resample_mode,
                 Lambda0=Lambda0,
                 posterior_prior_error_scale=scheme_prior_width,
-                fit_error_mode=fit_error_mode,
+                sample_error_mode=sample_error_mode,
                 part=part,
                 sector=sector,
                 hadron=hadron,
@@ -1327,14 +1290,12 @@ def run_fourier_workflow(
 
     ft_re = np.asarray([item["ft_re_samples"] for item in scheme_results])
     ft_im = np.asarray([item["ft_im_samples"] for item in scheme_results])
-    re_mean_by_scheme = np.mean(ft_re, axis=1)
-    im_mean_by_scheme = np.mean(ft_im, axis=1)
-    re_stat_by_scheme = np.asarray(
-        [_sample_sdev(item["ft_re_samples"], resample_mode=resample_mode) for item in scheme_results]
-    )
-    im_stat_by_scheme = np.asarray(
-        [_sample_sdev(item["ft_im_samples"], resample_mode=resample_mode) for item in scheme_results]
-    )
+    re_stats = [sample_mean_and_sdev(item["ft_re_samples"], mode=resample_mode, sample_error_mode=sample_error_mode) for item in scheme_results]
+    im_stats = [sample_mean_and_sdev(item["ft_im_samples"], mode=resample_mode, sample_error_mode=sample_error_mode) for item in scheme_results]
+    re_mean_by_scheme = np.asarray([item[0] for item in re_stats], dtype=float)
+    im_mean_by_scheme = np.asarray([item[0] for item in im_stats], dtype=float)
+    re_stat_by_scheme = np.asarray([item[1] for item in re_stats], dtype=float)
+    im_stat_by_scheme = np.asarray([item[1] for item in im_stats], dtype=float)
 
     re_mean = np.mean(re_mean_by_scheme, axis=0)
     im_mean = np.mean(im_mean_by_scheme, axis=0)
@@ -1367,9 +1328,9 @@ def run_fourier_workflow(
         "coord_unit": coord_unit,
         "fit_coord_unit": "lambda" if coord_unit.lower() == "lambda" else "gev_inv",
         "resample_mode": resample_mode,
+        "sample_error_mode": sample_error_mode,
         "Lambda0": float(Lambda0),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
-        "fit_error_mode": fit_error_mode,
         "part": part,
     }
 
@@ -1453,6 +1414,8 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "part": str(result.get("part", "both")),
         "im_flip_for_ft": str(result.get("im_flip_for_ft", "")),
         "resample_mode": str(result.get("resample_mode", "")),
+        "sample_error_mode": str(result.get("sample_error_mode", "")),
+        "average_method": str(result.get("sample_error_mode", "")),
     }
     for key in ("pz_gev", "pz_prime_gev", "a_fm"):
         value = result.get(key)
@@ -1705,11 +1668,14 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
     mean_fit_q = np.asarray([item["mean_fit_q"] for item in schemes], dtype=float)
 
     resample_mode = _normalise_resample_mode(str(result.get("resample_mode", "bootstrap")))
+    sample_error_mode = normalize_sample_error_mode(str(result.get("sample_error_mode", "covariance")), resample_mode=resample_mode)
     fit_chi2_dof = fit_chi2 / np.maximum(fit_dof, 1)
     if fit_params.shape[1] < 2:
         fit_param_sdev = np.zeros((fit_params.shape[0], fit_params.shape[2]), dtype=float)
     else:
-        fit_param_sdev = np.asarray([_sample_sdev(item, resample_mode=resample_mode) for item in fit_params])
+        fit_param_sdev = np.asarray(
+            [_sample_sdev(item, resample_mode=resample_mode, sample_error_mode=sample_error_mode) for item in fit_params]
+        )
 
     scheme_labels = np.asarray(result["scheme_labels"])
     param_samples = np.moveaxis(fit_params, 1, 0)
@@ -1724,6 +1690,8 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
             "order": str(result.get("order", "")),
             "observable": str(result.get("observable", "")),
             "part": str(result.get("part", "both")),
+            "sample_error_mode": str(result.get("sample_error_mode", "")),
+            "average_method": str(result.get("sample_error_mode", "")),
             "scheme_labels": json.dumps(scheme_labels.tolist()),
             "fit_param_labels": json.dumps(fit_param_labels),
             "fit_param_labels_by_model": json.dumps([item["fit_param_labels"] for item in schemes]),
@@ -1812,15 +1780,14 @@ def _last_stable_z_index(
     im_samples: np.ndarray,
     *,
     resample_mode: str,
+    sample_error_mode: str,
 ) -> int:
     """Return the last positive-grid index before large-z data become unreliable."""
     positive_mask = np.asarray(coord, dtype=float) > 0
     re = np.asarray(re_samples, dtype=float)[:, positive_mask]
     im = np.asarray(im_samples, dtype=float)[:, positive_mask]
-    re_mean = np.mean(re, axis=0)
-    im_mean = np.mean(im, axis=0)
-    re_sdev = _sample_sdev(re, resample_mode=resample_mode)
-    im_sdev = _sample_sdev(im, resample_mode=resample_mode)
+    re_mean, re_sdev = sample_mean_and_sdev(re, mode=resample_mode, sample_error_mode=sample_error_mode)
+    im_mean, im_sdev = sample_mean_and_sdev(im, mode=resample_mode, sample_error_mode=sample_error_mode)
 
     magnitude = np.hypot(re_mean, im_mean)
     uncertainty = np.hypot(re_sdev, im_sdev)
@@ -1928,6 +1895,7 @@ def _pick_four_zmin_values_by_tail_fit(
     pz_prime_gev: float | None,
     a_fm: float | None,
     resample_mode: str,
+    sample_error_mode: str,
     Lambda0: float,
     part: str,
     sector: str | None,
@@ -1964,6 +1932,7 @@ def _pick_four_zmin_values_by_tail_fit(
                 pz_prime_gev=pz_prime_gev,
                 a_fm=a_fm,
                 resample_mode=resample_mode,
+                sample_error_mode=sample_error_mode,
                 Lambda0=Lambda0,
                 part=part,
                 sector=sector,
@@ -2015,6 +1984,7 @@ def _auto_fill_scheme_scan(
     pz_prime_gev: float | None,
     a_fm: float | None,
     resample_mode: str,
+    sample_error_mode: str,
     Lambda0: float,
     part: str,
     sector: str | None,
@@ -2048,6 +2018,7 @@ def _auto_fill_scheme_scan(
             pz_prime_gev=pz_prime_gev,
             a_fm=a_fm,
             resample_mode=resample_mode,
+            sample_error_mode=sample_error_mode,
             Lambda0=Lambda0,
             part=part,
             sector=sector,
@@ -2093,6 +2064,7 @@ def _auto_scheme_scan(
     pz_prime_gev: float | None,
     a_fm: float | None,
     resample_mode: str,
+    sample_error_mode: str,
     Lambda0: float,
     part: str,
     sector: str | None,
@@ -2104,7 +2076,13 @@ def _auto_scheme_scan(
     positive = _positive_grid(coord)
     re_axis0 = np.asarray(re_samples, dtype=float)
     im_axis0 = np.asarray(im_samples, dtype=float)
-    stable_idx = _last_stable_z_index(coord, re_axis0, im_axis0, resample_mode=resample_mode)
+    stable_idx = _last_stable_z_index(
+        coord,
+        re_axis0,
+        im_axis0,
+        resample_mode=resample_mode,
+        sample_error_mode=sample_error_mode,
+    )
     spec = _auto_fill_scheme_scan(
         spec,
         coord=np.asarray(coord, dtype=float),
@@ -2120,6 +2098,7 @@ def _auto_scheme_scan(
         pz_prime_gev=pz_prime_gev,
         a_fm=a_fm,
         resample_mode=resample_mode,
+        sample_error_mode=sample_error_mode,
         Lambda0=Lambda0,
         part=part,
         sector=sector,
@@ -2190,6 +2169,7 @@ def _apply_sample_fit_model_average(
     result: dict[str, Any],
     *,
     resample_mode: str,
+    sample_error_mode: str,
     model_average: bool,
 ) -> None:
     ft_re = np.asarray(result["ft_re_samples"], dtype=float)
@@ -2224,10 +2204,16 @@ def _apply_sample_fit_model_average(
 
     result["final_ft_re_samples"] = final_re
     result["final_ft_im_samples"] = final_im
-    result["ft_re_mean"] = np.mean(final_re, axis=0)
-    result["ft_im_mean"] = np.mean(final_im, axis=0)
-    result["ft_re_stat_sdev"] = _sample_sdev(final_re, resample_mode=resample_mode)
-    result["ft_im_stat_sdev"] = _sample_sdev(final_im, resample_mode=resample_mode)
+    result["ft_re_mean"], result["ft_re_stat_sdev"] = sample_mean_and_sdev(
+        final_re,
+        mode=resample_mode,
+        sample_error_mode=sample_error_mode,
+    )
+    result["ft_im_mean"], result["ft_im_stat_sdev"] = sample_mean_and_sdev(
+        final_im,
+        mode=resample_mode,
+        sample_error_mode=sample_error_mode,
+    )
     result["ft_re_sys_sdev"] = np.mean(re_sys_by_sample, axis=0)
     result["ft_im_sys_sdev"] = np.mean(im_sys_by_sample, axis=0)
     result["fit_model_weights"] = weights.tolist()
@@ -2278,7 +2264,7 @@ def run_fourier_transform(
     im_flip_for_ft: bool = False,
     Lambda0: float = 0.1,
     posterior_prior_error_scale: float | list[float] = 3.0,
-    fit_error_mode: str = "diagonal",
+    sample_error_mode: str = "covariance",
     part: str = "both",
     output_scale: float = 1.0,
     sector: str | None = None,
@@ -2320,6 +2306,7 @@ def run_fourier_transform(
         matrix_element_data = store["input"]
         store["matrix_element_data"] = matrix_element_data
     resample_mode = _normalise_resample_mode(getattr(matrix_element_data, "resample", "bootstrap"))
+    sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
     matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
     auto_scheme_scan = None
     coord_arr = np.asarray(matrix_element["coord"], dtype=float)
@@ -2341,6 +2328,7 @@ def run_fourier_transform(
             pz_prime_gev=pz_prime_gev,
             a_fm=a_fm,
             resample_mode=resample_mode,
+            sample_error_mode=sample_error_mode,
             Lambda0=float(Lambda0),
             part=part,
             sector=sector,
@@ -2384,7 +2372,7 @@ def run_fourier_transform(
                 resample_mode=resample_mode,
                 Lambda0=float(Lambda0),
                 posterior_prior_error_scale=range_prior_width,
-                fit_error_mode=fit_error_mode,
+                sample_error_mode=sample_error_mode,
                 part=part,
                 sector=sector,
                 hadron=hadron,
@@ -2460,7 +2448,7 @@ def run_fourier_transform(
             resample_mode=resample_mode,
             Lambda0=float(Lambda0),
             posterior_prior_error_scale=range_prior_width,
-            fit_error_mode=fit_error_mode,
+            sample_error_mode=sample_error_mode,
             part="im",
             sector=sector,
             hadron=hadron,
@@ -2482,7 +2470,7 @@ def run_fourier_transform(
             resample_mode=resample_mode,
             Lambda0=float(Lambda0),
             posterior_prior_error_scale=range_prior_width,
-            fit_error_mode=fit_error_mode,
+            sample_error_mode=sample_error_mode,
             part="re",
             sector=sector,
             hadron=hadron,
@@ -2492,14 +2480,23 @@ def run_fourier_transform(
             _apply_sample_fit_model_average(
                 sector_result,
                 resample_mode=resample_mode,
+                sample_error_mode=sample_error_mode,
                 model_average=model_average,
             )
             _apply_fourier_output_scale(sector_result, 2.0)
         result = total_result
         for key in ("ft_re_samples", "ft_im_samples", "final_ft_re_samples", "final_ft_im_samples", "ft_re_mean", "ft_im_mean"):
             result[key] = 0.5 * (np.asarray(total_result[key], dtype=float) - np.asarray(valence_result[key], dtype=float))
-        result["ft_re_stat_sdev"] = _sample_sdev(np.asarray(result["final_ft_re_samples"], dtype=float), resample_mode=resample_mode)
-        result["ft_im_stat_sdev"] = _sample_sdev(np.asarray(result["final_ft_im_samples"], dtype=float), resample_mode=resample_mode)
+        result["ft_re_mean"], result["ft_re_stat_sdev"] = sample_mean_and_sdev(
+            np.asarray(result["final_ft_re_samples"], dtype=float),
+            mode=resample_mode,
+            sample_error_mode=sample_error_mode,
+        )
+        result["ft_im_mean"], result["ft_im_stat_sdev"] = sample_mean_and_sdev(
+            np.asarray(result["final_ft_im_samples"], dtype=float),
+            mode=resample_mode,
+            sample_error_mode=sample_error_mode,
+        )
         result["ft_re_sys_sdev"] = 0.5 * np.hypot(
             np.asarray(total_result["ft_re_sys_sdev"], dtype=float),
             np.asarray(valence_result["ft_re_sys_sdev"], dtype=float),
@@ -2532,12 +2529,13 @@ def run_fourier_transform(
             resample_mode=resample_mode,
             Lambda0=float(Lambda0),
             posterior_prior_error_scale=range_prior_width,
-            fit_error_mode=fit_error_mode,
+            sample_error_mode=sample_error_mode,
             part=part,
             sector=sector,
             hadron=hadron,
         )
     result["resample_mode"] = resample_mode
+    result["sample_error_mode"] = sample_error_mode
     result["pz_gev"] = pz_gev
     result["pz_prime_gev"] = pz_prime_gev
     result["a_fm"] = a_fm
@@ -2550,7 +2548,6 @@ def run_fourier_transform(
         if len(candidate_diagnostics["fit_model_prior_widths"]) == 1
         else candidate_diagnostics["fit_model_prior_widths"]
     )
-    result["fit_error_mode"] = str(fit_error_mode)
     result["part"] = str(part)
     result["ensemble"] = matrix_element_data.ensemble
     result.update(candidate_diagnostics)
@@ -2560,6 +2557,7 @@ def run_fourier_transform(
         _apply_sample_fit_model_average(
             result,
             resample_mode=resample_mode,
+            sample_error_mode=sample_error_mode,
             model_average=model_average,
         )
         _apply_fourier_output_scale(result, float(output_scale))

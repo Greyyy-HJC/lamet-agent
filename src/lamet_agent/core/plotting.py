@@ -33,7 +33,7 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
 from lamet_agent.core.data import EnsembleData
-from lamet_agent.core.resampling import bs_ls_avg, jk_ls_avg
+from lamet_agent.core.resampling import normalize_sample_error_mode, samples_to_gvar
 
 # Publication-oriented palette and styles copied from LaMETLat plot_settings.
 BLUE = "#4E79A7"
@@ -770,9 +770,13 @@ def plot_fourier_artifact(
         if ft_data.dims != ["x"]:
             raise ValueError("Fourier EnsembleData artifact must have dimension ['x']")
         k = np.asarray(ft_data.coords["x"], dtype=float)
-        mean = np.asarray(ft_data.mean)
-        re = np.real(mean)
-        im = np.imag(mean)
+        if "ft_re_mean" in extra and "ft_im_mean" in extra:
+            re = np.asarray(extra["ft_re_mean"], dtype=float)
+            im = np.asarray(extra["ft_im_mean"], dtype=float)
+        else:
+            mean = np.asarray(ft_data.mean)
+            re = np.real(mean)
+            im = np.imag(mean)
         re_stat = np.asarray(extra.get("ft_re_stat_sdev", np.std(np.real(ft_data.values), axis=0, ddof=1)), dtype=float)
         im_stat = np.asarray(extra.get("ft_im_stat_sdev", np.std(np.imag(ft_data.values), axis=0, ddof=1)), dtype=float)
         re_sys = np.asarray(extra.get("ft_re_sys_sdev", 0.0), dtype=float)
@@ -917,6 +921,7 @@ def plot_fourier_extension_quality(
     coord_arr = np.asarray(coord, dtype=float)
     lambda_data = _coord_to_lambda(coord_arr, coord_unit=coord_unit, pz_gev=pz_gev, a_fm=a_fm)
     resample_mode = str(result.get("resample_mode", "bootstrap"))
+    sample_error_mode = normalize_sample_error_mode(str(result.get("sample_error_mode", "covariance")), resample_mode=resample_mode)
 
     lambda_ext = np.asarray(scheme["lambda_ext"], dtype=float)
     model_key = "extended_re_samples" if component == "re" else "extended_im_samples"
@@ -928,11 +933,11 @@ def plot_fourier_extension_quality(
             mean = np.mean(arr, axis=0)
             sdev = np.zeros_like(mean, dtype=float)
         elif mode in {"jk", "jackknife"}:
-            values = jk_ls_avg(arr)
+            values = samples_to_gvar(arr, mode="jk", sample_error_mode=sample_error_mode)
             mean = np.asarray(gv.mean(values), dtype=float)
             sdev = np.asarray(gv.sdev(values), dtype=float)
         elif mode in {"bs", "boot", "bootstrap"}:
-            values = bs_ls_avg(arr)
+            values = samples_to_gvar(arr, mode="bs", sample_error_mode=sample_error_mode)
             mean = np.asarray(gv.mean(values), dtype=float)
             sdev = np.asarray(gv.sdev(values), dtype=float)
         elif mode == "raw":

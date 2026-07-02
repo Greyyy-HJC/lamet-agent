@@ -30,7 +30,7 @@ from lamet_agent.core.plotting import (
     plot_pt2_meff_on_data,
 )
 from lamet_agent.core.resampling import jackknife
-from lamet_agent.core.resampling import sample_mean_err as core_sample_mean_err
+from lamet_agent.core.resampling import sample_mean_and_sdev
 from lamet_agent.core.tools import log_nonlinear_fit_quality, setup_logger
 from lamet_agent.stages.correlator.functions import (
     PT2_PRIOR_ERROR_SCALE,
@@ -574,9 +574,9 @@ def test_resample_config_samples_jackknife_matches_helper() -> None:
     assert np.allclose(np.real(complex_samples), jackknife(data))
 
 
-def test_sample_mean_err_matches_core_helper() -> None:
+def test_sample_mean_and_sdev_matches_core_helper() -> None:
     values = np.array([1.0, 2.0, 3.0])
-    assert core_sample_mean_err(values, mode="jk")[0] == pytest.approx(2.0)
+    assert sample_mean_and_sdev(values, mode="jk")[0] == pytest.approx(2.0)
 
 
 # --- inspect tool ------------------------------------------------------------

@@ -30,6 +30,7 @@
     "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs" — shared by correlator and fourier stages
+    "sample_error_mode": "covariance", // "mean", "median", or "covariance"; "median" requires resample_mode "bs"
     "random_seed": 1984, // required; RNG seed for every resampling step in the run
     // "bs_samples": 500, // REQUIRED when resample_mode is "bs"; no default — must be set explicitly
     // "bin_size": 1, // optional; bins configurations before jackknife/bootstrap resampling (default: no binning)
@@ -46,7 +47,7 @@
         "correlator_id": "a060_x_p0_2pt",
         "kind": "2pt", // "2pt" or "3pt"
         "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp00_CG52bxp00_2pt.h5", // relative to the root directory
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion", // "pion" or "proton"
         "gfix": "CG", // "CG" or "GI"
         "source_sink": "SS",
@@ -60,7 +61,7 @@
         "correlator_id": "a060_x_p0_3pt_ts8",
         "kind": "3pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -80,7 +81,7 @@
         "correlator_id": "a060_x_p0_3pt_ts10",
         "kind": "3pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -100,7 +101,7 @@
         "correlator_id": "a060_x_p0_3pt_ts12",
         "kind": "3pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -122,7 +123,7 @@
         "correlator_id": "a060_x_p4_2pt",
         "kind": "2pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp30_CG52bxp30_2pt.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -136,7 +137,7 @@
         "correlator_id": "a060_x_p4_3pt_ts8",
         "kind": "3pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX4PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -156,7 +157,7 @@
         "correlator_id": "a060_x_p4_3pt_ts10",
         "kind": "3pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX4PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -176,7 +177,7 @@
         "correlator_id": "a060_x_p4_3pt_ts12",
         "kind": "3pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX4PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -198,7 +199,7 @@
         "correlator_id": "a060_x_p5_2pt",
         "kind": "2pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp30_CG52bxp30_2pt.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -212,7 +213,7 @@
         "correlator_id": "a060_x_p5_3pt_ts8",
         "kind": "3pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX5PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -232,7 +233,7 @@
         "correlator_id": "a060_x_p5_3pt_ts10",
         "kind": "3pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX5PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -252,7 +253,7 @@
         "correlator_id": "a060_x_p5_3pt_ts12",
         "kind": "3pt",
         "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX5PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
-        "ensemble": "HISQa060",
+        "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
         "source_sink": "SS",
@@ -277,12 +278,11 @@
     "kernels": [
       {
         "stage": "matching",
-        "kernel_id": "unpolarized_gT",
+        "kernel_id": "CG_gt_PDF_hybrid",
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
         "scheme": "hybrid_ratio",
         "kernel_parameters": {
-          "zs_fm": 0.1772,
-          "pz_gev": 2.15
+          "zs_fm": 0.1722
         }
       }
     ]
@@ -297,13 +297,7 @@
           { "tmin": 4, "tmax": 12 },
           { "tmin": 5, "tmax": 12 }
         ],
-        "pt3_windows": [
-          // Each window uses the selected job's 3pt correlator_ids. Omitting tsep_ls
-          // means "all selected tseps"; set tsep_ls here only to scan tsep subsets.
-          { "tau_cut": 2 },
-          { "tau_cut": 3 },
-          { "tau_cut": 4 }
-        ],
+        "pt3_tau_cuts": [2, 3, 4], // tau cuts scanned on every selected 3pt tsep; use pt3_windows for tsep subsets
         "nstate": [2],
         "fit_scope": ["ratio"], // "ratio", "FH", or "ratio+FH"; multiple entries let the agent scan scopes
         "fit_strategy": ["joint"], // "joint" or "chained"
@@ -341,7 +335,7 @@
       "defaults": {
         "scheme": "hybrid_ratio", // long-range exponential correction
         "scheme_parameters": {
-          "zs_fm": 0.1772, // hybrid switch length (fm); short vs long branch
+          "zs_fm": 0.1722, // hybrid switch length (fm); short vs long branch
           "m0_gev": 0.0, // linear renormalon slope (GeV); long-range exponent only
           "delta_m_gev": 0.0 // target–denominator mass gap (GeV); GI example ~0.545 (= 0.1586*ℏc/a_fm at a=0.0574 fm)
         }
@@ -361,32 +355,24 @@
     },
     "fourier_transform": {
       "defaults": {
-		"order": ["LA", "NLA"],
-        "fit_error_mode": "covariance",
-		"sector": "valence", // "valence", "sea", "total", "full" for "pdf", "full" for "da" or "gpd"
+        "order": ["LA", "NLA"],
+        "sector": "valence", // "valence", "sea", "total", "full" for "pdf", "full" for "da" or "gpd"
         "coord_unit": "lattice",
-		"posterior_prior_error_scale": [2.0, 3.0, 5.0],
+        "posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {
           "start": -2.0,
           "stop": 2.0,
           "num": 100
         },
-        "scheme_scan": { // optional, auto-filled if omitted
-          "zmin_values": [
-            9.0,
-            10.0,
-            11.0,
-            12.0
-          ],
-          "zmax_values": [
-            21.0,
-            22.0,
-            23.0,
-            24.0
-          ],
-          "z_ext_max": 37.0,
+        // scheme_scan is optional; run_fourier_transform auto-fills missing keys from
+        // tail-fit diagnostics (zmin_values, zmax_values, z_ext_max, smooth).
+        // Optional overrides: zmin_values, zmax_values, z_ext_max, smooth, max_schemes.
+        "scheme_scan": {
+          "zmin_values": [9.0, 10.0, 11.0, 12.0],
+          "zmax_values": [21.0, 22.0, 23.0, 24.0],
+          "z_ext_max": 100.0,
           "smooth": "linear",
-          "model_average": true,
+          "model_average": false,
           "max_schemes": 200
         }
       },
