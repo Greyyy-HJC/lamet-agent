@@ -30,6 +30,9 @@
     "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs" — shared by correlator and fourier stages
+    "random_seed": 1984, // required; RNG seed for every resampling step in the run
+    // "bs_samples": 500, // REQUIRED when resample_mode is "bs"; no default — must be set explicitly
+    // "bin_size": 1, // optional; bins configurations before jackknife/bootstrap resampling (default: no binning)
     // Global stage ORDER only. Which data sets flow through each stage is
     // decided by the jobs declared under "stages", not here.
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation"]
@@ -304,7 +307,6 @@
         "nstate": [2],
         "fit_scope": ["ratio"], // "ratio", "FH", or "ratio+FH"; multiple entries let the agent scan scopes
         "fit_strategy": ["joint"], // "joint" or "chained"
-        "seed": 1984,
         "svdcut": 1e-06,
         "posterior_prior_error_scale": 3.0,
         "prior_width": [0.5, 1.0, 2.0],

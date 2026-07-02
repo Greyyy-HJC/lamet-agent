@@ -3,12 +3,13 @@
 Purpose:
 - print ReAct-style cycle logs (prompt, model action, tool observation)
 - used when ``run_agent(..., verbose=True)`` or CLI ``--verbose``
+- print a startup banner and stage/job headers in quiet (non-verbose) mode
 
 Example usage:
 - from lamet_agent.core.trace import AgentTrace
-- trace = AgentTrace()
-- trace.stage_begin("correlator_analysis")
-- trace.cycle_begin(1)
+- trace = AgentTrace(quiet_ui=True)
+- trace.run_banner(run_id="demo", backend="mock", stages=["correlator_analysis"])
+- trace.job_begin("correlator_analysis", "ca")
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from __future__ import annotations
 import json
 import sys
 from typing import Any, Callable, TextIO
+
+from .banner import BANNER, format_job_header
 
 Emit = Callable[[str], None]
 
@@ -32,10 +35,12 @@ class AgentTrace:
         self,
         *,
         enabled: bool = True,
+        quiet_ui: bool = False,
         emit: Emit | None = None,
         prompt_max_chars: int = 12_000,
     ) -> None:
         self.enabled = enabled
+        self.quiet_ui = quiet_ui
         self._emit = emit or _default_emit
         self.prompt_max_chars = prompt_max_chars
 
@@ -43,10 +48,58 @@ class AgentTrace:
         if self.enabled:
             self._emit(text)
 
-    def run_begin(self, *, run_id: str, model: str, stages: list[str]) -> None:
+    def _write_quiet(self, text: str) -> None:
+        if self.quiet_ui:
+            self._emit(text)
+
+    def run_banner(
+        self,
+        *,
+        run_id: str,
+        backend: str,
+        stages: list[str],
+        model_spec: str | None = None,
+    ) -> None:
+        """Print the LaMET Agent banner and a compact run summary."""
+        if not self.quiet_ui:
+            return
+        self._write_quiet(BANNER)
+        self._write_quiet("")
+        if model_spec:
+            self._write_quiet(f"Run: {run_id}  backend={backend}  model={model_spec}")
+        else:
+            self._write_quiet(f"Run: {run_id}  backend={backend}")
+        self._write_quiet(f"Stages: {', '.join(stages)}")
+        self._write_quiet("")
+
+    def job_begin(
+        self,
+        stage: str,
+        job_id: str,
+        *,
+        input_issues: list[str] | None = None,
+    ) -> None:
+        """Print a one-line stage/job header before tool execution."""
+        if not self.quiet_ui:
+            return
+        self._write_quiet(format_job_header(stage, job_id))
+        if input_issues:
+            self._write_quiet(f"Input issues: {input_issues}")
+
+    def run_begin(
+        self,
+        *,
+        run_id: str,
+        backend: str,
+        stages: list[str],
+        model_spec: str | None = None,
+    ) -> None:
         self._write("")
         self._write("=" * 60)
-        self._write(f"Agent run: {run_id}  (model={model})")
+        if model_spec:
+            self._write(f"Agent run: {run_id}  (backend={backend} model={model_spec})")
+        else:
+            self._write(f"Agent run: {run_id}  (backend={backend})")
         self._write(f"Stages: {', '.join(stages)}")
         self._write("=" * 60)
 
@@ -78,13 +131,15 @@ class AgentTrace:
         self._write(f"Cycle {cycle}")
         self._write("-" * 40)
 
-    def llm_call_begin(self, *, model: str) -> None:
-        if model == "external":
+    def llm_call_begin(self, *, backend: str, model_spec: str | None = None) -> None:
+        if backend == "external":
             self._write("Loading next action from transcript...")
-        elif model == "mock":
+        elif backend == "mock":
             self._write("Resolving mock action...")
+        elif model_spec:
+            self._write(f"Calling LLM ({model_spec})...")
         else:
-            self._write(f"Calling LLM ({model})...")
+            self._write(f"Calling LLM ({backend})...")
 
     def llm_call_end(self) -> None:
         self._write("LLM response received.")

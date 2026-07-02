@@ -8,7 +8,7 @@ def _payload() -> dict:
     return {
         "metadata": {
             "run_id": "demo", "root_directory": ".", "target_observable": "pdf",
-            "parton": "quark", "resample_mode": "jk", "stages": ["correlator_analysis"],
+            "parton": "quark", "resample_mode": "jk", "random_seed": 1984, "stages": ["correlator_analysis"],
         },
         "inputs": {"correlators": [], "artifacts": [], "kernels": []},
         "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]}},
@@ -26,3 +26,18 @@ def test_manifest_rejects_forward_job_reference() -> None:
     payload["stages"]["correlator_analysis"]["jobs"][0]["inputs"] = {"input": "later"}
     with pytest.raises(ValidationError, match="unavailable upstream"):
         AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_rejects_bs_mode_without_bs_samples() -> None:
+    payload = _payload()
+    payload["metadata"]["resample_mode"] = "bs"
+    with pytest.raises(ValidationError, match="bs_samples"):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_accepts_bs_mode_with_bs_samples() -> None:
+    payload = _payload()
+    payload["metadata"]["resample_mode"] = "bs"
+    payload["metadata"]["bs_samples"] = 500
+    manifest = AnalysisManifest.model_validate(payload)
+    assert manifest.metadata.bs_samples == 500

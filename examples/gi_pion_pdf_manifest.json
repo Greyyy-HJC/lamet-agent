@@ -6,6 +6,7 @@
     "target_observable": "pdf",
     "parton": "quark",
     "resample_mode": "jk",
+    "random_seed": 1984,
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching"]
   },
   "inputs": {
@@ -178,7 +179,6 @@
         "nstate": [2],
         "fit_scope": ["ratio"],
         "fit_strategy": ["joint"],
-        "seed": 1984,
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 3.0,
         "prior_width": [0.5, 1.0, 2.0],

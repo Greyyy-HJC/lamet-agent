@@ -1171,11 +1171,21 @@ def _read_3pt(
 
 
 def _resample_pt2(
-    pt2_complex: np.ndarray, *, mode: str, n_boot: int, seed: int | None, indices: np.ndarray | None = None
+    pt2_complex: np.ndarray,
+    *,
+    mode: str,
+    n_boot: int,
+    seed: int | None,
+    bin_size: int = 1,
+    indices: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Return real 2pt samples, complex 2pt samples, and shared bootstrap indices."""
-    re_samples, indices = resample_config_samples(np.real(pt2_complex), mode=mode, n_boot=n_boot, seed=seed, indices=indices)
-    im_samples, _ = resample_config_samples(np.imag(pt2_complex), mode=mode, n_boot=n_boot, seed=seed, indices=indices)
+    re_samples, indices = resample_config_samples(
+        np.real(pt2_complex), mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices
+    )
+    im_samples, _ = resample_config_samples(
+        np.imag(pt2_complex), mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices
+    )
     return re_samples, re_samples + 1j * im_samples, indices
 
 
@@ -1704,6 +1714,7 @@ def tune_ground_state(
     resample_mode: str = "jk",
     n_boot: int = 200,
     seed: int | None = 1984,
+    bin_size: int = 1,
     window_indices: list[int] | None = None,
     model_average: bool = True,
     save_path: str | None = None,
@@ -1721,7 +1732,7 @@ def tune_ground_state(
 
     pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=gamma, momentum=momentum)
     n_cfg, Lt = pt2_complex.shape
-    re_samples, _ = resample_config_samples(np.real(pt2_complex), mode=mode, n_boot=n_boot, seed=seed)
+    re_samples, _ = resample_config_samples(np.real(pt2_complex), mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size)
     pt2_gv = samples_to_gvar(re_samples, mode=mode)
     store["Lt"] = int(Lt)
 
@@ -1997,6 +2008,7 @@ def tune_bare_matrix(
     resample_mode: str = "jk",
     n_boot: int = 200,
     seed: int | None = 1984,
+    bin_size: int = 1,
     part: str = "both",
     q_min: float = 0.05,
     save_path: str | None = None,
@@ -2019,7 +2031,7 @@ def tune_bare_matrix(
 
     pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=momentum)
     n_cfg, Lt = pt2_complex.shape
-    re_samples, pt2_complex_samples, indices = _resample_pt2(pt2_complex, mode=mode, n_boot=n_boot, seed=seed)
+    re_samples, pt2_complex_samples, indices = _resample_pt2(pt2_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size)
     pt2_gv = samples_to_gvar(re_samples, mode=mode)
     pt2_f_gv = None
     pt2_f_complex_samples = pt2_complex_samples
@@ -2027,7 +2039,9 @@ def tune_bare_matrix(
         pt2_f_complex = _read_2pt(pt2_out_path or pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=final_momentum)
         if pt2_f_complex.shape != pt2_complex.shape:
             raise ValueError(f"initial/final 2pt shape mismatch: {pt2_complex.shape} != {pt2_f_complex.shape}")
-        re_f_samples, pt2_f_complex_samples, _ = _resample_pt2(pt2_f_complex, mode=mode, n_boot=n_boot, seed=seed, indices=indices)
+        re_f_samples, pt2_f_complex_samples, _ = _resample_pt2(
+            pt2_f_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices
+        )
         pt2_f_gv = samples_to_gvar(re_f_samples, mode=mode)
 
     ratio_re: dict[int, np.ndarray] = {}
@@ -2037,7 +2051,7 @@ def tune_bare_matrix(
             paths_by_tsep[tsep], source_sink=source_sink, gamma=pt3_gamma, momentum=three_point_momentum,
             b_dir=b_dir, eta=eta, bt=bt, bz=f"bz{int(tune_z)}", tsep=tsep,
         )
-        pt3_samples, _ = resample_config_samples(pt3, mode=mode, n_boot=n_boot, seed=seed, indices=indices)
+        pt3_samples, _ = resample_config_samples(pt3, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices)
         if form == "NonBreit":
             re_s, im_s = _non_forward_ratio_samples(pt2_complex_samples, pt2_f_complex_samples, pt3_samples, tsep)
         else:
@@ -2323,6 +2337,7 @@ def fit_bare_matrix_grid(
     resample_mode: str = "bs",
     n_boot: int = 200,
     seed: int | None = 1984,
+    bin_size: int = 1,
     svdcut: float = 1e-2,
     part: str = "both",
     q_min: float = 0.05,
@@ -2387,7 +2402,7 @@ def fit_bare_matrix_grid(
 
     pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=momentum)
     n_cfg, Lt = pt2_complex.shape
-    pt2_samples, pt2_complex_samples, indices = _resample_pt2(pt2_complex, mode=mode, n_boot=n_boot, seed=seed)
+    pt2_samples, pt2_complex_samples, indices = _resample_pt2(pt2_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size)
     pt2_gv = samples_to_gvar(pt2_samples, mode=mode)
     pt2_f_samples = None
     pt2_f_gv = None
@@ -2396,7 +2411,9 @@ def fit_bare_matrix_grid(
         pt2_f_complex = _read_2pt(pt2_out_path or pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=final_momentum)
         if pt2_f_complex.shape != pt2_complex.shape:
             raise ValueError(f"initial/final 2pt shape mismatch: {pt2_complex.shape} != {pt2_f_complex.shape}")
-        pt2_f_samples, pt2_f_complex_samples, _ = _resample_pt2(pt2_f_complex, mode=mode, n_boot=n_boot, seed=seed, indices=indices)
+        pt2_f_samples, pt2_f_complex_samples, _ = _resample_pt2(
+            pt2_f_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices
+        )
         pt2_f_gv = samples_to_gvar(pt2_f_samples, mode=mode)
     n_samples = int(pt2_samples.shape[0])
     pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=Lt)
@@ -2419,7 +2436,7 @@ def fit_bare_matrix_grid(
             )
             if pt3.shape[0] != n_cfg:
                 raise ValueError(f"3pt n_cfg mismatch for z={z}, tsep={tsep}: {pt3.shape[0]} != {n_cfg}")
-            pt3_samples, _ = resample_config_samples(pt3, mode=mode, n_boot=n_boot, seed=seed, indices=indices)
+            pt3_samples, _ = resample_config_samples(pt3, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices)
             if form == "NonBreit":
                 samples_re[tsep], samples_im[tsep] = _non_forward_ratio_samples(
                     pt2_complex_samples, pt2_f_complex_samples, pt3_samples, tsep

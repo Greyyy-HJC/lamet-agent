@@ -20,7 +20,7 @@ def _demo_manifest() -> AnalysisManifest:
         {
             "metadata": {
                 "run_id": "demo", "root_directory": ".", "target_observable": "pdf",
-                "parton": "quark", "resample_mode": "jk", "stages": ["correlator_analysis"],
+                "parton": "quark", "resample_mode": "jk", "random_seed": 1984, "stages": ["correlator_analysis"],
             },
             "inputs": {"correlators": [], "artifacts": [], "kernels": []},
             "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]}},
@@ -36,7 +36,7 @@ def test_run_agent_uses_manifest_stage_order(tmp_path: Path, monkeypatch) -> Non
     )
 
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
-    result = run_agent(_demo_manifest(), model="external", actions_path=transcript)
+    result = run_agent(_demo_manifest(), backend="external", actions_path=transcript)
 
     assert result["status"] == "completed"
     assert result["completed_stages"] == ["correlator_analysis"]
@@ -148,9 +148,10 @@ def test_openai_request_targets_openai_endpoint_and_model(monkeypatch) -> None:
     monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
 
     action = llm._request_llm_action(
-        model="openai",
+        backend="api",
         messages=[{"role": "user", "content": "go"}],
         api_key="sk-test",
+        provider="openai",
     )
 
     assert captured["url"] == "https://api.openai.com/v1/chat/completions"
@@ -159,12 +160,36 @@ def test_openai_request_targets_openai_endpoint_and_model(monkeypatch) -> None:
     assert action["action"] == "finish"
 
 
-def test_make_llm_session_openai_requires_key() -> None:
+def test_parse_api_model_accepts_provider_and_model_id() -> None:
+    assert llm.parse_api_model("deepseek/deepseek-chat") == ("deepseek", "deepseek-chat")
+    assert llm.parse_api_model("openai/gpt-4o-mini") == ("openai", "gpt-4o-mini")
+
+
+def test_parse_api_model_provider_shorthand_uses_default_model() -> None:
+    assert llm.parse_api_model("openai") == ("openai", "gpt-4o-mini")
+    assert llm.parse_api_model("deepseek") == ("deepseek", "deepseek-chat")
+
+
+def test_parse_api_model_rejects_unknown_provider() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown API provider"):
+        llm.parse_api_model("unknown/foo")
+
+
+def test_make_llm_session_unknown_backend_raises() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown LLM backend"):
+        llm.make_llm_session("deeepseek", None)
+
+
+def test_make_llm_session_api_requires_key() -> None:
     import pytest
 
     with pytest.raises(ValueError, match="openai"):
-        llm.make_llm_session("openai", None, api_key=None)
-    session = llm.make_llm_session("openai", None, api_key="sk-test")
+        llm.make_llm_session("api", None, api_key=None, provider="openai")
+    session = llm.make_llm_session("api", None, api_key="sk-test", provider="openai")
     assert hasattr(session, "decide")
 
 
@@ -175,9 +200,9 @@ def test_make_llm_session_codex_uses_codex_decide(monkeypatch) -> None:
         captured.append(messages)
         return {"action": "finish", "reason": "done"}
 
-    monkeypatch.setattr(llm, "codex_decide", fake_codex_decide)
+    monkeypatch.setattr(llm, "_codex_decide", fake_codex_decide)
 
-    session = llm.make_llm_session("codex", None, api_key=None)
+    session = llm.make_llm_session("codex")
     session.begin_stage("stage prompt")
     action = session.decide(last_observation={"tool_name": "inspect", "result": {"ok": True}})
 
@@ -269,7 +294,7 @@ def test_run_agent_registers_job_output_for_downstream_role(tmp_path: Path, monk
     manifest = AnalysisManifest.model_validate({
         "metadata": {
             "run_id": "dag", "root_directory": ".", "target_observable": "pdf",
-            "parton": "quark", "resample_mode": "jk",
+            "parton": "quark", "resample_mode": "jk", "random_seed": 1984,
             "stages": ["correlator_analysis", "renormalization"],
         },
         "inputs": {"correlators": [], "artifacts": [], "kernels": []},
@@ -281,7 +306,7 @@ def test_run_agent_registers_job_output_for_downstream_role(tmp_path: Path, monk
 
     result = run_agent(
         manifest,
-        model="external",
+        backend="external",
         actions_path=transcript,
     )
 
@@ -319,6 +344,7 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "random_seed": 1984,
                 "stages": ["fourier_transform"],
             },
             "inputs": {
@@ -381,6 +407,7 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "random_seed": 1984,
                 "stages": ["fourier_transform"],
             },
             "inputs": {
@@ -447,7 +474,7 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
     monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", fake_resolve)
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
 
-    result = run_agent(manifest, model="external", actions_path=transcript)
+    result = run_agent(manifest, backend="external", actions_path=transcript)
 
     assert result["status"] == "completed"
     assert observed["input_type"] == "EnsembleData"
@@ -467,6 +494,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "random_seed": 1984,
                 "stages": ["fourier_transform"],
             },
             "inputs": {
@@ -566,7 +594,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
     monkeypatch.setattr("lamet_agent.agent._hydrate_external_artifact_inputs", lambda *args, **kwargs: None)
 
-    result = run_agent(manifest, model="external", actions_path=transcript)
+    result = run_agent(manifest, backend="external", actions_path=transcript)
 
     report_path = Path(result["stage_reports"]["fourier_transform"]["report"])
     assert report_path.exists()
@@ -584,6 +612,7 @@ def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, mon
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "random_seed": 1984,
                 "stages": ["correlator_analysis"],
             },
             "inputs": {"correlators": [], "artifacts": [], "kernels": []},
@@ -646,7 +675,7 @@ def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, mon
     monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", lambda stage: {"fit_bare_matrix_grid": fake_fit_bare_matrix_grid})
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
 
-    result = run_agent(manifest, model="external", actions_path=transcript, report_language="ch")
+    result = run_agent(manifest, backend="external", actions_path=transcript, report_language="ch")
 
     report_path = Path(result["stage_reports"]["correlator_analysis"]["report"])
     assert report_path.exists()
@@ -668,6 +697,7 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "random_seed": 1984,
                 "stages": ["renormalization"],
             },
             "inputs": {
@@ -734,7 +764,7 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
     )
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
 
-    result = run_agent(manifest, model="external", actions_path=transcript)
+    result = run_agent(manifest, backend="external", actions_path=transcript)
 
     report_path = Path(result["stage_reports"]["renormalization"]["report"])
     assert report_path.exists()

@@ -20,7 +20,15 @@ StageId = Literal[
 
 
 class RunMetadata(BaseModel):
-    """Settings shared by every job in one run."""
+    """Settings shared by every job in one run.
+
+    Required: run_id, root_directory, target_observable, parton, resample_mode,
+    random_seed, stages.
+    Optional: artifacts_directory (default "artifacts"), bin_size (default: no
+    binning applied before jackknife/bootstrap resampling).
+    Conditional: bs_samples is required when resample_mode == "bs" and has no
+    default; it is ignored when resample_mode == "jk".
+    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -30,6 +38,9 @@ class RunMetadata(BaseModel):
     target_observable: Literal["pdf", "da", "gpd"]
     parton: Literal["quark", "gluon"]
     resample_mode: Literal["jk", "bs"]
+    random_seed: int
+    bs_samples: int | None = Field(default=None, gt=0)
+    bin_size: int | None = Field(default=None, gt=0)
     stages: list[StageId]
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -40,6 +51,12 @@ class RunMetadata(BaseModel):
 
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
+
+    @model_validator(mode="after")
+    def validate_bootstrap_requirements(self) -> "RunMetadata":
+        if self.resample_mode == "bs" and self.bs_samples is None:
+            raise ValueError("metadata.bs_samples is required when metadata.resample_mode is 'bs'")
+        return self
 
 
 class CorrelatorInput(BaseModel):

@@ -6,6 +6,8 @@
     "target_observable": "pdf",
     "parton": "quark",
     "resample_mode": "jk",
+    "bs_samples": 500,
+    "random_seed": 1984,
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching"]
   },
   "inputs": {
@@ -173,12 +175,11 @@
   "stages": {
     "correlator_analysis": {
       "defaults": {
-        "pt2_windows": [{"tmin": 2, "tmax": 12}, {"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}],
+        "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}],
         "pt3_tau_cuts": [3, 4],
         "nstate": [2],
         "fit_scope": ["ratio"],
         "fit_strategy": ["chained"],
-        "seed": 1984,
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 3.0,
         "prior_width": [0.5, 1.0, 2.0],

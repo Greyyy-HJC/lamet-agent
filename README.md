@@ -138,7 +138,12 @@ options inline (for example `target_observable` is `"pdf"` or `"da"`, and `gfix`
 `"CG"` or `"GI"`). It is organized into three top-level blocks:
 
 - `metadata`: run-level settings (`run_id`, `root_directory`, `artifacts_directory`,
-  `target_observable`, ordered `stages` to run).
+  `target_observable`, `resample_mode`, `random_seed`, ordered `stages` to run).
+  `random_seed` is required and seeds every jackknife/bootstrap resampling step
+  in the run (a job/stage no longer sets its own `seed`). When `resample_mode`
+  is `"bs"`, `bs_samples` is required and must be set explicitly (there is no
+  default bootstrap sample count). `bin_size` is optional and bins
+  configurations before resampling when set (default: no binning).
 - `inputs`: the `correlators` (each with its kinematics such as `a_fm`, `pz_gev`,
   gammas, and for `3pt` the `bt`/`bz` separation lists) and the `kernels`.
 - `stages`: `defaults` plus a `jobs` list. A job's `params` shallow-merge over
@@ -177,6 +182,22 @@ systematic arrays are zero for the single-model `model_average: false` path.
 For example, two `nstate` values and three `prior_width` values produce up to six
 fit-function models inside the fixed data window. The manifest value is
 authoritative and cannot be overridden by an LLM tool call.
+
+### `metadata.random_seed`, `metadata.bs_samples`, `metadata.bin_size`
+
+These three fields are the single source of randomness/binning configuration
+for the whole run; the correlator stage no longer reads a per-job or
+stage-level `seed`.
+
+- `random_seed` (required): seeds every jackknife/bootstrap resampling call in
+  `core/resampling.py`. `prepare_tool_args` injects it as the `seed` argument
+  for every correlator tool call.
+- `bs_samples` (required when `resample_mode` is `"bs"`; ignored for
+  `"jk"`, where resampling has no sample-count parameter): sets the bootstrap
+  sample count (the tool-level `n_boot` argument). There is no default; the
+  manifest must set this value explicitly for bootstrap runs.
+- `bin_size` (optional, default: no binning): when set, configurations are
+  averaged into bins of this size before jackknife/bootstrap resampling.
 
 ## Quick Start
 
@@ -227,32 +248,38 @@ Print each agent cycle (prompt, model action, tool observation) while the run
 executes:
 
 ```bash
-lamet-agent run examples/cg_pion_pdf_manifest.json --model deepseek --verbose
+lamet-agent run examples/cg_pion_pdf_manifest.json --backend api --model deepseek/deepseek-chat --verbose
 ```
 
-Choose the LLM backend with `--model`. `codex` uses the Codex Python SDK and the
-current Codex login, so install the optional extra first:
+Choose the LLM integration with `--backend` (`mock`, `external`, `api`, or `codex`).
+`codex` uses the Codex Python SDK and the current Codex login, so install the optional
+extra first:
 
 ```bash
 python -m pip install -e ".[codex]"
-lamet-agent run examples/cg_pion_pdf_manifest.json --model codex --verbose
+lamet-agent run examples/cg_pion_pdf_manifest.json --backend codex --verbose
 ```
 
-The OpenAI-compatible providers (`deepseek` or `openai`) read the API key from
-`--api-key-file` (default `api.key`) or the provider environment variable
-(`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`). Each provider defaults to a cost-effective
-model (`deepseek-chat` / `gpt-4o-mini`); override with `--llm-model` and, if
-needed, `--base-url`:
+The `api` backend reads the API key from `--api-key-file` (default `api.key`) or the
+provider environment variable (`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`). Pass
+`--model provider/model_id` (shorthand `provider` uses that provider's default model).
+Override the HTTP endpoint with `--base-url` when needed:
 
 ```bash
-lamet-agent run examples/cg_pion_pdf_manifest.json --model openai --verbose
-lamet-agent run examples/cg_pion_pdf_manifest.json --model openai --llm-model gpt-4o
+lamet-agent run examples/cg_pion_pdf_manifest.json --backend api --model openai/gpt-4o-mini --verbose
+lamet-agent run examples/cg_pion_pdf_manifest.json --backend api --model openai/gpt-4o
 ```
 
-Run with a real-model placeholder switch:
+Replay a deterministic JSONL action transcript (tests and regression):
 
 ```bash
-lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
+lamet-agent run examples/cg_pion_pdf_manifest.json --backend external --actions-path actions.jsonl
+```
+
+Run the agent loop without a real LLM (dev/test smoke only):
+
+```bash
+lamet-agent run examples/cg_pion_pdf_manifest.json --backend mock
 ```
 
 ## File Responsibilities
@@ -275,10 +302,9 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
     appended as separate user turns in multi-turn LLM sessions.
 - `src/lamet_agent/core/llm.py`
   - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), `codex`
-    (Codex Python SDK), and the OpenAI-compatible providers `deepseek` and `openai`
-    (multi-turn chat per stage).
-  - `PROVIDERS` holds each provider's base URL, default model, and API-key env var;
-    `make_llm_session()` selects a backend and shared HTTP lives in
+    (Codex Python SDK), and `api` (OpenAI-compatible HTTP via `PROVIDERS`).
+  - `parse_api_model()` splits `provider/model_id` CLI specs; `PROVIDERS` holds each
+    provider's base URL, default model, and API-key env var; shared HTTP lives in
     `_post_chat_completion` (add new OpenAI-compatible providers to `PROVIDERS`).
 - `src/lamet_agent/core/tools.py`
   - Resolves a stage's `STAGE_TOOLS` registry for the agent loop.
@@ -287,6 +313,10 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
   - `resolve_plot_save_path()` keeps plots under the manifest's stage artifact directory.
 - `src/lamet_agent/core/trace.py`
   - Optional ReAct-style stdout trace (`--verbose`).
+  - Default (non-verbose) runs print a LaMET Agent ASCII banner and one line per
+    job (`Stage: … | Job: …`) before stage tool progress output.
+- `src/lamet_agent/core/banner.py`
+  - GRID-style startup banner and job header formatting for quiet CLI runs.
 - `src/lamet_agent/core/plotting.py`
   - Self-contained publication-style plotting (default plot, 2pt fit-on-data).
 - `src/lamet_agent/agent.py`
@@ -294,11 +324,11 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
     isolated store, and registers `store["output"]` under the job id.
 - `src/lamet_agent/cli.py`
   - Exposes `validate` and `run` commands.
-  - `run` accepts `--model` (`mock`/`external`/`codex`/`deepseek`/`openai`),
-    `--verbose` / `-v` (ReAct-style trace to stdout), `--actions-path` (for
-    `external`), and `--api-key-file`/`--llm-model`/`--base-url` (for
-    `deepseek`/`openai`), plus
-    `--report_language en|ch` to select the single report language written for each stage.
+  - `run` requires `--backend` (`mock`/`external`/`api`/`codex`), accepts
+    `--model provider/model_id` (for `api`), `--verbose` / `-v` (ReAct-style trace
+    to stdout), `--actions-path` (for `external`), and `--api-key-file`/`--base-url`
+    (for `api`), plus `--report_language en|ch` to select the single report language
+    written for each stage.
 - `src/lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
 - `src/lamet_agent/stages/*`
@@ -330,7 +360,7 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
 
 ## Agent Workflow
 
-1. CLI receives a manifest path and runtime options (`--model`, `--verbose`).
+1. CLI receives a manifest path and runtime options (`--backend`, `--verbose`).
 2. `manifest.py` validates source ids, job ids, ordered dependencies, and paths.
 3. `agent.py` executes the ordered `metadata.stages` list.
 4. For each stage job:
@@ -347,12 +377,15 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --model mock
     selected language so users can track analysis progress and inspect that stage's
     intermediate results.
 5. Session backends: `mock` (deterministic scaffold), `external` (JSONL
-   transcript replay via `--actions-path`), `codex` (Codex Python SDK), or the
-   OpenAI-compatible chat-completions providers in `core/llm.py`.
+   transcript replay via `--actions-path`), `codex` (Codex Python SDK), or `api`
+   (OpenAI-compatible chat-completions providers in `core/llm.py` via
+   `--model provider/model_id`).
 6. The run ends with a compact JSON summary on stdout (`run_id`, `status`,
-   `summary`, manifest paths, etc.). Full action traces are not printed; use
-   `--verbose` for per-cycle ReAct-style logging. Programmatic callers using
-   `run_agent()` still receive `actions` and `stage_results` in the return dict.
+   `summary`, manifest paths, etc.). By default, stdout first shows a LaMET Agent
+   banner and one line per job (`Stage: … | Job: …`) before stage tool progress
+   bars; use `--verbose` for per-cycle ReAct-style logging instead. Programmatic
+   callers using `run_agent()` still receive `actions` and `stage_results` in the
+   return dict.
 
 ## Current Status
 

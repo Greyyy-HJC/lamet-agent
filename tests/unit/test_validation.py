@@ -12,6 +12,7 @@ def test_validate_manifest_resolves_root_relative_source_paths(tmp_path: Path) -
         "metadata": {
             "run_id": "demo", "root_directory": "..", "artifacts_directory": "runs/artifacts",
             "target_observable": "pdf", "parton": "quark", "resample_mode": "jk",
+            "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
         "inputs": {
