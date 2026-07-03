@@ -864,7 +864,7 @@ def fit_tail_quality_for_mean(
     if n_points < required_points:
         dof = max(1, _n_fit_channels(part) * n_points - n_params)
         return {
-            "ok": False,
+            "tail_fit_success": False,
             "chi2": float("inf"),
             "dof": int(dof),
             "chi2_dof": float("inf"),
@@ -892,7 +892,7 @@ def fit_tail_quality_for_mean(
         sigma_im=sigma_im,
     )
 
-    mean_params, mean_pmean, mean_psdev, ok, chi2, dof, q_value, log_gbf = _fit_one_sample(
+    mean_params, mean_pmean, mean_psdev, tail_fit_success, chi2, dof, q_value, log_gbf = _fit_one_sample(
         z_fit,
         y_data=y_data,
         method=method,
@@ -905,8 +905,8 @@ def fit_tail_quality_for_mean(
         hadron=hadron,
         Lambda0=Lambda0,
     )
-    if ok and mean_pmean is not None and mean_psdev is not None:
-        mean_params, _mean_pmean, _mean_psdev, ok, chi2, dof, q_value, log_gbf = _fit_one_sample(
+    if tail_fit_success and mean_pmean is not None and mean_psdev is not None:
+        mean_params, _mean_pmean, _mean_psdev, tail_fit_success, chi2, dof, q_value, log_gbf = _fit_one_sample(
             z_fit,
             y_data=y_data,
             method=method,
@@ -922,7 +922,7 @@ def fit_tail_quality_for_mean(
             Lambda0=Lambda0,
         )
     return {
-        "ok": bool(ok),
+        "tail_fit_success": bool(tail_fit_success),
         "chi2": float(chi2),
         "dof": int(dof),
         "chi2_dof": float(chi2 / max(dof, 1)),
@@ -1090,7 +1090,7 @@ def _run_one_scheme(
     fit_dof = np.empty(n_samples, dtype=int)
     fit_q = np.empty(n_samples, dtype=float)
     fit_log_gbf = np.empty(n_samples, dtype=float)
-    fit_ok = np.empty(n_samples, dtype=bool)
+    tail_fit_success_samples = np.empty(n_samples, dtype=bool)
     failures = 0
 
     positive = z_ext > 0
@@ -1106,7 +1106,7 @@ def _run_one_scheme(
             sigma_re=sigma_re,
             sigma_im=sigma_im,
         )
-        params, _sample_pmean, _sample_psdev, ok, chi2, dof, q_value, log_gbf = _fit_one_sample(
+        params, _sample_pmean, _sample_psdev, tail_fit_success, chi2, dof, q_value, log_gbf = _fit_one_sample(
             z_fit,
             y_data=sample_y_data,
             method=method,
@@ -1121,8 +1121,8 @@ def _run_one_scheme(
             prior=sample_prior,
             Lambda0=Lambda0,
         )
-        fit_ok[sample] = bool(ok)
-        if not ok:
+        tail_fit_success_samples[sample] = bool(tail_fit_success)
+        if not tail_fit_success:
             failures += 1
             params = mean_params
             chi2 = mean_chi2
@@ -1175,7 +1175,7 @@ def _run_one_scheme(
         "fit_dof": fit_dof,
         "fit_q": fit_q,
         "fit_log_gbf": fit_log_gbf,
-        "fit_ok": fit_ok,
+        "tail_fit_success_samples": tail_fit_success_samples,
         "mean_fit_params": mean_params,
         "mean_fit_chi2": mean_chi2,
         "mean_fit_dof": mean_dof,
@@ -1823,7 +1823,7 @@ def _tail_quality_stable_start(qualities: list[dict[str, Any]]) -> int:
     finite = [
         item
         for item in qualities
-        if item["ok"] and np.isfinite(item["chi2_dof"]) and item["n_points"] >= 2
+        if item["tail_fit_success"] and np.isfinite(item["chi2_dof"]) and item["n_points"] >= 2
     ]
     if not finite:
         return 0
@@ -1833,7 +1833,7 @@ def _tail_quality_stable_start(qualities: list[dict[str, Any]]) -> int:
     best = float(np.min(chi))
     chi_limit = max(best * 1.25, best + 0.15, 1.0)
     for idx, item in enumerate(qualities):
-        if not item["ok"] or not np.isfinite(item["chi2_dof"]):
+        if not item["tail_fit_success"] or not np.isfinite(item["chi2_dof"]):
             continue
         if item["chi2_dof"] > chi_limit:
             continue
@@ -1842,11 +1842,11 @@ def _tail_quality_stable_start(qualities: list[dict[str, Any]]) -> int:
         later = [
             later_item["chi2_dof"]
             for later_item in qualities[idx : min(len(qualities), idx + 3)]
-            if later_item["ok"] and np.isfinite(later_item["chi2_dof"])
+            if later_item["tail_fit_success"] and np.isfinite(later_item["chi2_dof"])
         ]
         if later and max(later) <= max(chi_limit * 1.1, chi_limit + 0.1):
             return idx
-    return int(np.nanargmin([item["chi2_dof"] if item["ok"] else np.inf for item in qualities]))
+    return int(np.nanargmin([item["chi2_dof"] if item["tail_fit_success"] else np.inf for item in qualities]))
 
 
 def _pick_four_zmin_values_by_tail_fit(
@@ -2147,12 +2147,15 @@ def _apply_sample_fit_model_average(
     ft_im = np.asarray(result["ft_im_samples"], dtype=float)
     log_gbf = np.asarray([item["fit_log_gbf"] for item in result["scheme_results"]], dtype=float)
     q_values = np.asarray([item["fit_q"] for item in result["scheme_results"]], dtype=float)
-    ok = np.asarray([item.get("fit_ok", np.isfinite(item["fit_log_gbf"])) for item in result["scheme_results"]], dtype=bool)
-    ok &= np.isfinite(log_gbf)
+    tail_fit_success_mask = np.asarray(
+        [item.get("tail_fit_success_samples", np.isfinite(item["fit_log_gbf"])) for item in result["scheme_results"]],
+        dtype=bool,
+    )
+    tail_fit_success_mask &= np.isfinite(log_gbf)
     weights = np.zeros_like(log_gbf, dtype=float)
     if model_average:
         for sample in range(log_gbf.shape[1]):
-            valid = ok[:, sample]
+            valid = tail_fit_success_mask[:, sample]
             if not np.any(valid):
                 candidates = np.flatnonzero(np.isfinite(q_values[:, sample]))
                 if candidates.size:
@@ -2163,7 +2166,7 @@ def _apply_sample_fit_model_average(
             weights[valid, sample] = shifted / np.sum(shifted)
     else:
         for sample in range(log_gbf.shape[1]):
-            passing = np.flatnonzero(ok[:, sample] & (q_values[:, sample] >= 0.05))
+            passing = np.flatnonzero(tail_fit_success_mask[:, sample] & (q_values[:, sample] >= 0.05))
             if passing.size:
                 best = passing[int(np.argmax(log_gbf[passing, sample]))]
             else:
@@ -2361,14 +2364,14 @@ def run_fourier_transform(
     passing_idx = [
         idx
         for idx, item in enumerate(candidate_qualities)
-        if item["ok"] and np.isfinite(item["logGBF"]) and float(item["q_value"]) >= 0.05
+        if item["tail_fit_success"] and np.isfinite(item["logGBF"]) and float(item["q_value"]) >= 0.05
     ]
     if passing_idx:
         best_candidate = max(passing_idx, key=lambda idx: candidate_qualities[idx]["logGBF"])
     else:
         best_candidate = max(
             range(len(candidate_qualities)),
-            key=lambda idx: candidate_qualities[idx]["q_value"] if candidate_qualities[idx]["ok"] else float("-inf"),
+            key=lambda idx: candidate_qualities[idx]["q_value"] if candidate_qualities[idx]["tail_fit_success"] else float("-inf"),
         )
     selected_range = dict(schemes[best_candidate])
     fit_model_specs = []
