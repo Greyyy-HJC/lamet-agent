@@ -8,6 +8,7 @@ STAGE_TO_PACKAGE = {
     "fourier_transform": "fourier",
     "perturbative_matching": "matching",
     "extrapolation": "extrapolation",
+    "review": "review",
 }
 
 

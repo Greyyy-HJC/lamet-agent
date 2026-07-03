@@ -237,6 +237,94 @@ def _post_chat_completion(
     raise RuntimeError(f"{label} failed to return a parseable JSON action.") from last_parse_error
 
 
+def _post_chat_text_completion(
+    *,
+    messages: list[dict[str, str]],
+    api_key: str,
+    model_name: str,
+    base_url: str,
+    provider: str = "deepseek",
+) -> str:
+    url = base_url.rstrip("/") + "/chat/completions"
+    label = provider.capitalize()
+    body = {
+        "model": model_name,
+        "messages": messages,
+        "temperature": 0.0,
+        "stream": False,
+    }
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    last_error: BaseException | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            return str(payload["choices"][0]["message"]["content"]).strip()
+        except (TimeoutError, urllib.error.URLError, ssl.SSLError) as exc:
+            last_error = exc
+            if attempt == 2:
+                raise RuntimeError(
+                    f"{label} API text request failed after 3 attempts. "
+                    "Retry the command or check network/proxy settings."
+                ) from exc
+            time.sleep(2**attempt)
+    raise RuntimeError(f"{label} API text request failed before returning a response.") from last_error
+
+
+def request_llm_text(
+    *,
+    backend: str,
+    messages: list[dict[str, str]],
+    api_key: str | None = None,
+    provider: str | None = None,
+    model_name: str | None = None,
+    base_url: str | None = None,
+) -> str:
+    """Return free-form text from the configured LLM backend."""
+    if backend == "api":
+        if not provider:
+            raise ValueError("backend='api' requires a provider.")
+        config = provider_config(provider)
+        if config is None:
+            raise ValueError(f"Unknown API provider {provider!r}; use one of {sorted(PROVIDERS)}.")
+        if not api_key:
+            raise ValueError(f"backend='api' provider={provider!r} requires an API key.")
+        return _post_chat_text_completion(
+            messages=messages,
+            api_key=api_key,
+            model_name=model_name or config["default_model"],
+            base_url=base_url or config["base_url"],
+            provider=provider,
+        )
+    if backend == "codex":
+        try:
+            from openai_codex import Codex, Sandbox
+        except ImportError as exc:
+            raise RuntimeError(
+                "backend='codex' requires the openai-codex Python SDK. "
+                "Install the project's codex extra before using this backend."
+            ) from exc
+        with Codex() as codex:
+            thread = codex.thread_start(
+                developer_instructions=messages[0]["content"] if messages else "",
+                sandbox=Sandbox.read_only,
+                ephemeral=True,
+            )
+            result = thread.run("\n\n".join(item["content"] for item in messages[1:]), sandbox=Sandbox.read_only)
+        if not result.final_response:
+            raise RuntimeError(f"Codex returned no final response: {result}")
+        return result.final_response.strip()
+    raise ValueError(f"backend={backend!r} cannot generate free-form LLM text.")
+
+
 def _request_llm_action(
     *,
     backend: str,
