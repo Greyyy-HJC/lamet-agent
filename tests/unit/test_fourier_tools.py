@@ -793,9 +793,9 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
     auto = run["auto_scheme_scan"]
     assert auto["auto_generated"] is True
     assert len(auto["zmin_values"]) == 4
-    assert len(auto["zmax_values"]) == 4
+    assert len(auto["zmax_values"]) == 5
     assert auto["zmin_values"][0] > 0.0
-    assert auto["zmax_values"] == pytest.approx([0.9, 1.0, 1.1, 1.2])
+    assert auto["zmax_values"] == pytest.approx([0.8, 0.9, 1.0, 1.1, 1.2])
     assert auto["z_ext_max"] == pytest.approx(1.2 + 8.0 / (5.067731237 * 2.0))
     assert auto["smooth"] == "linear"
     assert "y_range" not in auto
@@ -831,7 +831,7 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
     assert "y_range" not in auto
     assert auto["model_average"] is False
     assert len(auto["zmin_values"]) == 4
-    assert len(auto["zmax_values"]) == 4
+    assert len(auto["zmax_values"]) == 5
     assert "z_ext_max" in auto
     assert auto["smooth"] == "linear"
 
@@ -856,7 +856,7 @@ def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path
         observable="pion_quark_quasi_gpd",
         coord_unit="lattice",
         pz_gev=0.0,
-        pz_prime_gev=0.49,
+        pz_out_gev=0.49,
         a_fm=0.105,
     )
 
@@ -917,7 +917,7 @@ def test_fourier_auto_scan_prefers_tail_region_for_lattice_units(tmp_path: Path,
     )
 
     auto = run["auto_scheme_scan"]
-    assert auto["zmax_values"] == [21.0, 22.0, 23.0, 24.0]
+    assert auto["zmax_values"] == [20.0, 21.0, 22.0, 23.0, 24.0]
     assert auto["zmin_values"] == [9.0, 10.0, 11.0, 12.0]
     assert min(auto["zmin_values"]) > 8.0
 
@@ -956,17 +956,19 @@ def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) 
     assert min(auto["zmin_values"]) >= 0.5 - 1e-12
 
 
-def test_fourier_auto_zmax_stops_before_noisy_tail(tmp_path: Path, monkeypatch) -> None:
+def test_fourier_auto_zmax_keeps_nearby_zero_compatible_tail(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
     coord = np.linspace(0.0, 1.2, 13)
     base_re = np.exp(-1.5 * coord)
     base_im = 0.15 * np.exp(-1.2 * coord)
+    base_re[7:] = 0.0
+    base_im[7:] = 0.0
     scales = np.array([0.98, 1.0, 1.02, 1.01])
     re_samples = scales[:, None] * base_re[None, :]
     im_samples = scales[:, None] * base_im[None, :]
-    re_samples[:, -2:] += np.array([[-0.8, 0.9], [0.8, -0.9], [-0.7, 0.85], [0.7, -0.85]])
-    im_samples[:, -2:] += np.array([[0.6, -0.7], [-0.6, 0.7], [0.5, -0.65], [-0.5, 0.65]])
+    re_samples[:, 7:] += np.array([[-0.02], [0.02], [-0.015], [0.015]])
+    im_samples[:, 7:] += np.array([[0.015], [-0.015], [0.012], [-0.012]])
     np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
     store = {}
     load_renormalized_matrix_element_samples(store, path=str(data_path))
@@ -981,7 +983,7 @@ def test_fourier_auto_zmax_stops_before_noisy_tail(tmp_path: Path, monkeypatch) 
         pz_gev=2.0,
     )
 
-    assert max(run["auto_scheme_scan"]["zmax_values"]) < coord[-1]
+    assert run["auto_scheme_scan"]["zmax_values"] == pytest.approx([0.7, 0.8, 0.9, 1.0, 1.1])
 
 
 def test_fourier_defaults_scheme_scoring_options_for_complete_scan(tmp_path: Path, monkeypatch) -> None:

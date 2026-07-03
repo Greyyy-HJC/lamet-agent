@@ -982,7 +982,7 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attrs `fit_model_*`", "Per-sample fit-model weights and diagnostics for `(order, prior width)` candidates.", "`(order, prior width)` 候选的逐样本权重和诊断。"),
             ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging.", "进入模型平均前 sample-average 区间扫描的诊断。"),
             ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection.", "两阶段选择模式：先选区间，再做拟合模型平均或最优模型选择。"),
-            ("attrs `pz_gev`, `pz_prime_gev`, `a_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
+            ("attrs `pz_gev`, `pz_out_gev`, `a_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
             ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`", "Physics projection, formula choices, execution channel, and final output normalization.", "物理投影、公式选择、执行通道和最终输出归一化。"),
         ]
     else:

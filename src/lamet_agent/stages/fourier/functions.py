@@ -260,9 +260,9 @@ def _uniform_step(coord: np.ndarray) -> float:
     return float(diffs[0])
 
 
-def _ft_scale_momentum(pz_gev: float | None, pz_prime_gev: float | None = None) -> float:
+def _ft_scale_momentum(pz_gev: float | None, pz_out_gev: float | None = None) -> float:
     """Return the momentum used only for coord->lambda scaling."""
-    return max(abs(float(pz_gev or 0.0)), abs(float(pz_prime_gev or 0.0)))
+    return max(abs(float(pz_gev or 0.0)), abs(float(pz_out_gev or 0.0)))
 
 
 def _coord_scale(
@@ -270,24 +270,24 @@ def _coord_scale(
     *,
     pz_gev: float | None,
     a_fm: float | None,
-    pz_prime_gev: float | None = None,
+    pz_out_gev: float | None = None,
 ) -> tuple[float, float]:
     """Return ``(fit_scale, ft_scale)`` from input coordinates."""
     unit = coord_unit.lower()
-    ft_momentum = _ft_scale_momentum(pz_gev, pz_prime_gev)
+    ft_momentum = _ft_scale_momentum(pz_gev, pz_out_gev)
     if unit == "lambda":
         return 1.0, 1.0
     if unit == "gev_inv":
         if ft_momentum == 0.0:
-            raise ValueError("pz_gev or pz_prime_gev is required when coord_unit='gev_inv'")
+            raise ValueError("pz_gev or pz_out_gev is required when coord_unit='gev_inv'")
         return 1.0, ft_momentum
     if unit == "fm":
         if ft_momentum == 0.0:
-            raise ValueError("pz_gev or pz_prime_gev is required when coord_unit='fm'")
+            raise ValueError("pz_gev or pz_out_gev is required when coord_unit='fm'")
         return FM_TO_GEV_INV, FM_TO_GEV_INV * ft_momentum
     if unit == "lattice":
         if a_fm is None or ft_momentum == 0.0:
-            raise ValueError("a_fm and pz_gev or pz_prime_gev are required when coord_unit='lattice'")
+            raise ValueError("a_fm and pz_gev or pz_out_gev are required when coord_unit='lattice'")
         return float(a_fm) * FM_TO_GEV_INV, float(a_fm) * FM_TO_GEV_INV * ft_momentum
     raise ValueError("coord_unit must be 'lambda', 'gev_inv', 'fm', or 'lattice'")
 
@@ -326,17 +326,17 @@ def _phase_scales(
     *,
     coord_unit: str,
     pz_gev: float | None,
-    pz_prime_gev: float | None,
+    pz_out_gev: float | None,
     ft_scale_over_fit_scale: float,
 ) -> tuple[float, float | None]:
     if coord_unit.lower() == "lambda":
         phase_scale = ft_scale_over_fit_scale
-        if pz_prime_gev is None:
+        if pz_out_gev is None:
             return phase_scale, None
         if pz_gev is None:
-            raise ValueError("pz_gev is required with pz_prime_gev when coord_unit='lambda'")
-        return phase_scale, float(pz_prime_gev) / float(pz_gev)
-    return float(pz_gev or 0.0), None if pz_prime_gev is None else float(pz_prime_gev)
+            raise ValueError("pz_gev is required with pz_out_gev when coord_unit='lambda'")
+        return phase_scale, float(pz_out_gev) / float(pz_gev)
+    return float(pz_gev or 0.0), None if pz_out_gev is None else float(pz_out_gev)
 
 
 def _quark_like_phase_scales(
@@ -826,7 +826,7 @@ def fit_tail_quality_for_mean(
     observable: str,
     coord_unit: str,
     pz_gev: float | None = None,
-    pz_prime_gev: float | None = None,
+    pz_out_gev: float | None = None,
     a_fm: float | None = None,
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
@@ -846,13 +846,13 @@ def fit_tail_quality_for_mean(
         raise ValueError("sample arrays must have one value per coordinate point")
 
     observable = _canonical_observable(observable)
-    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_prime_gev=pz_prime_gev, a_fm=a_fm)
+    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_out_gev=pz_out_gev, a_fm=a_fm)
     fit_coord = coord_arr * fit_scale
     ft_scale_over_fit_scale = ft_scale / fit_scale
     phase_scale, phase_prime_scale = _phase_scales(
         coord_unit=coord_unit,
         pz_gev=pz_gev,
-        pz_prime_gev=pz_prime_gev,
+        pz_out_gev=pz_out_gev,
         ft_scale_over_fit_scale=ft_scale_over_fit_scale,
     )
     zmin_fit = _convert_scheme_value(zmin, fit_scale)
@@ -1201,7 +1201,7 @@ def run_fourier_workflow(
     observable: str = "nucleon_quark_transversity_quasi_pdf",
     coord_unit: str = "lambda",
     pz_gev: float | None = None,
-    pz_prime_gev: float | None = None,
+    pz_out_gev: float | None = None,
     a_fm: float | None = None,
     im_flip_for_ft: bool = False,
     resample_mode: str = "bootstrap",
@@ -1233,13 +1233,13 @@ def run_fourier_workflow(
         raise ValueError("sample arrays must have one value per coordinate point")
 
     observable = _canonical_observable(observable)
-    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_prime_gev=pz_prime_gev, a_fm=a_fm)
+    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_out_gev=pz_out_gev, a_fm=a_fm)
     fit_coord = coord_arr * fit_scale
     ft_scale_over_fit_scale = ft_scale / fit_scale
     phase_scale, phase_prime_scale = _phase_scales(
         coord_unit=coord_unit,
         pz_gev=pz_gev,
-        pz_prime_gev=pz_prime_gev,
+        pz_out_gev=pz_out_gev,
         ft_scale_over_fit_scale=ft_scale_over_fit_scale,
     )
     y_arr = np.asarray(y_grid, dtype=float)
@@ -1417,7 +1417,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "sample_error_mode": str(result.get("sample_error_mode", "")),
         "average_method": str(result.get("sample_error_mode", "")),
     }
-    for key in ("pz_gev", "pz_prime_gev", "a_fm"):
+    for key in ("pz_gev", "pz_out_gev", "a_fm"):
         value = result.get(key)
         if value is not None:
             attrs[key] = str(value)
@@ -1782,7 +1782,7 @@ def _last_stable_z_index(
     resample_mode: str,
     sample_error_mode: str,
 ) -> int:
-    """Return the last positive-grid index before large-z data become unreliable."""
+    """Return the last nonzero-signal point plus nearby zero-compatible tail points."""
     positive_mask = np.asarray(coord, dtype=float) > 0
     re = np.asarray(re_samples, dtype=float)[:, positive_mask]
     im = np.asarray(im_samples, dtype=float)[:, positive_mask]
@@ -1791,44 +1791,10 @@ def _last_stable_z_index(
 
     magnitude = np.hypot(re_mean, im_mean)
     uncertainty = np.hypot(re_sdev, im_sdev)
-    scale = max(float(np.max(magnitude)), 1e-12)
-    rel_uncertainty = uncertainty / np.maximum(magnitude, 0.05 * scale)
-    baseline = float(np.median(rel_uncertainty[: min(4, len(rel_uncertainty))]))
-    uncertainty_limit = min(1.0, max(0.35, 3.0 * baseline + 0.05))
-
-    signal = re_mean + 1j * im_mean
-    signal_scale = max(float(np.max(np.abs(signal))), 1e-12)
-    jitter_unstable = np.zeros_like(rel_uncertainty, dtype=bool)
-    if len(signal) >= 5:
-        curvature = np.abs(signal[2:] - 2.0 * signal[1:-1] + signal[:-2])
-        curvature = curvature / np.maximum(np.abs(signal[1:-1]), 0.05 * signal_scale)
-        curvature_baseline = float(np.median(curvature[: min(4, len(curvature))]))
-        curvature_limit = min(2.0, max(0.5, 4.0 * curvature_baseline + 0.05))
-        jitter_unstable[1:-1] = curvature > curvature_limit
-
-    rel_growth = np.ones_like(rel_uncertainty, dtype=float)
-    if len(rel_uncertainty) > 1:
-        previous = np.maximum(rel_uncertainty[:-1], max(baseline, 1e-12))
-        rel_growth[1:] = rel_uncertainty[1:] / previous
-    sharp_uncertainty = (
-        (rel_uncertainty > max(1.0, uncertainty_limit))
-        | ((rel_uncertainty > max(0.7, 2.0 * uncertainty_limit)) & (rel_growth > 1.5))
-    )
-    unstable = sharp_uncertainty | jitter_unstable
-    min_points = min(5, len(rel_uncertainty))
-    for idx in range(min_points, len(rel_uncertainty) - 1):
-        if unstable[idx] and unstable[idx + 1]:
-            return max(min_points - 1, idx - 1)
-    return len(rel_uncertainty) - 1
-
-
-def _pick_four_tail_values(grid: np.ndarray, *, end_index: int) -> list[float]:
-    end_index = int(np.clip(end_index, 0, len(grid) - 1))
-    start_index = max(0, end_index - 3)
-    values = grid[start_index : end_index + 1]
-    if len(values) < 4:
-        values = grid[: min(len(grid), 4)]
-    return [float(item) for item in values[-4:]]
+    nonzero = magnitude > uncertainty
+    if np.any(nonzero):
+        return min(len(magnitude) - 1, int(np.flatnonzero(nonzero)[-1]) + 5)
+    return min(4, len(magnitude) - 1)
 
 
 def _preferred_tail_start(
@@ -1892,7 +1858,7 @@ def _pick_four_zmin_values_by_tail_fit(
     observable: str,
     coord_unit: str,
     pz_gev: float | None,
-    pz_prime_gev: float | None,
+    pz_out_gev: float | None,
     a_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
@@ -1929,7 +1895,7 @@ def _pick_four_zmin_values_by_tail_fit(
                 observable=observable,
                 coord_unit=coord_unit,
                 pz_gev=pz_gev,
-                pz_prime_gev=pz_prime_gev,
+                pz_out_gev=pz_out_gev,
                 a_fm=a_fm,
                 resample_mode=resample_mode,
                 sample_error_mode=sample_error_mode,
@@ -1960,11 +1926,11 @@ def _default_z_ext_max(
     *,
     coord_unit: str,
     pz_gev: float | None,
-    pz_prime_gev: float | None,
+    pz_out_gev: float | None,
     a_fm: float | None,
 ) -> float:
     """Return the coordinate value whose lambda is eight units past the data."""
-    _fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_prime_gev=pz_prime_gev, a_fm=a_fm)
+    _fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_out_gev=pz_out_gev, a_fm=a_fm)
     return float(np.max(coord) + 8.0 / ft_scale)
 
 
@@ -1981,7 +1947,7 @@ def _auto_fill_scheme_scan(
     order: str,
     observable: str,
     pz_gev: float | None,
-    pz_prime_gev: float | None,
+    pz_out_gev: float | None,
     a_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
@@ -1992,7 +1958,9 @@ def _auto_fill_scheme_scan(
 ) -> dict[str, Any]:
     """Fill missing scan keys with stable zmax values and tail-fit zmin diagnostics."""
     if "zmax_values" not in spec and "zmax_start" not in spec:
-        spec["zmax_values"] = _pick_four_tail_values(positive, end_index=stable_idx)
+        end_index = int(np.clip(stable_idx, 0, len(positive) - 1))
+        start_index = max(0, end_index - 4)
+        spec["zmax_values"] = [float(item) for item in positive[start_index : end_index + 1]]
     if "zmax_values" in spec:
         zmax_values = [float(item) for item in spec["zmax_values"]]
     else:
@@ -2015,7 +1983,7 @@ def _auto_fill_scheme_scan(
             observable=observable,
             coord_unit=coord_unit,
             pz_gev=pz_gev,
-            pz_prime_gev=pz_prime_gev,
+            pz_out_gev=pz_out_gev,
             a_fm=a_fm,
             resample_mode=resample_mode,
             sample_error_mode=sample_error_mode,
@@ -2030,7 +1998,7 @@ def _auto_fill_scheme_scan(
             coord,
             coord_unit=coord_unit,
             pz_gev=pz_gev,
-            pz_prime_gev=pz_prime_gev,
+            pz_out_gev=pz_out_gev,
             a_fm=a_fm,
         )
     if "smooth" not in spec:
@@ -2061,7 +2029,7 @@ def _auto_scheme_scan(
     order: str,
     observable: str,
     pz_gev: float | None,
-    pz_prime_gev: float | None,
+    pz_out_gev: float | None,
     a_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
@@ -2095,7 +2063,7 @@ def _auto_scheme_scan(
         order=order,
         observable=observable,
         pz_gev=pz_gev,
-        pz_prime_gev=pz_prime_gev,
+        pz_out_gev=pz_out_gev,
         a_fm=a_fm,
         resample_mode=resample_mode,
         sample_error_mode=sample_error_mode,
@@ -2259,7 +2227,7 @@ def run_fourier_transform(
     observable: str = "nucleon_quark_transversity_quasi_pdf",
     coord_unit: str = "lambda",
     pz_gev: float | None = None,
-    pz_prime_gev: float | None = None,
+    pz_out_gev: float | None = None,
     a_fm: float | None = None,
     im_flip_for_ft: bool = False,
     Lambda0: float = 0.1,
@@ -2325,7 +2293,7 @@ def run_fourier_transform(
             order=range_order,
             observable=observable,
             pz_gev=pz_gev,
-            pz_prime_gev=pz_prime_gev,
+            pz_out_gev=pz_out_gev,
             a_fm=a_fm,
             resample_mode=resample_mode,
             sample_error_mode=sample_error_mode,
@@ -2367,7 +2335,7 @@ def run_fourier_transform(
                 observable=observable,
                 coord_unit=coord_unit,
                 pz_gev=pz_gev,
-                pz_prime_gev=pz_prime_gev,
+                pz_out_gev=pz_out_gev,
                 a_fm=a_fm,
                 resample_mode=resample_mode,
                 Lambda0=float(Lambda0),
@@ -2442,7 +2410,7 @@ def run_fourier_transform(
             observable=observable,
             coord_unit=coord_unit,
             pz_gev=pz_gev,
-            pz_prime_gev=pz_prime_gev,
+            pz_out_gev=pz_out_gev,
             a_fm=a_fm,
             im_flip_for_ft=True,
             resample_mode=resample_mode,
@@ -2464,7 +2432,7 @@ def run_fourier_transform(
             observable=observable,
             coord_unit=coord_unit,
             pz_gev=pz_gev,
-            pz_prime_gev=pz_prime_gev,
+            pz_out_gev=pz_out_gev,
             a_fm=a_fm,
             im_flip_for_ft=False,
             resample_mode=resample_mode,
@@ -2523,7 +2491,7 @@ def run_fourier_transform(
             observable=observable,
             coord_unit=coord_unit,
             pz_gev=pz_gev,
-            pz_prime_gev=pz_prime_gev,
+            pz_out_gev=pz_out_gev,
             a_fm=a_fm,
             im_flip_for_ft=im_flip_for_ft,
             resample_mode=resample_mode,
@@ -2537,7 +2505,7 @@ def run_fourier_transform(
     result["resample_mode"] = resample_mode
     result["sample_error_mode"] = sample_error_mode
     result["pz_gev"] = pz_gev
-    result["pz_prime_gev"] = pz_prime_gev
+    result["pz_out_gev"] = pz_out_gev
     result["a_fm"] = a_fm
     result["im_flip_for_ft"] = bool(im_flip_for_ft)
     result["sector"] = sector

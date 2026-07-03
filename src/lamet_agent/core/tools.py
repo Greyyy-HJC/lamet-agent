@@ -33,7 +33,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "observable",
         "coord_unit",
         "pz_gev",
-        "pz_prime_gev",
+        "pz_out_gev",
         "a_fm",
         "im_flip_for_ft",
         "sector",
