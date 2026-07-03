@@ -971,10 +971,10 @@ def _settings_table(
 def _artifact_field_table(kind: str, *, language: str) -> list[str]:
     if kind == "result":
         rows = [
-            ("`values`", "Complex model-averaged Fourier samples with dimensions `(resample, x)`.", "复数模型平均 Fourier 样本，维度为 `(resample, x)`。"),
+            ("`values`", "Complex final Fourier samples after fit-model averaging or best-model selection, with dimensions `(resample, x)`.", "经过拟合模型平均或最优模型选择后的最终复数 Fourier 样本，维度为 `(resample, x)`。"),
             ("coordinate `x`", "Fourier momentum-fraction grid.", "傅立叶变换后的动量分数网格。"),
             ("attr `resample`", "Resampling mode recorded by `EnsembleData`.", "`EnsembleData` 记录的重采样模式。"),
-            ("attr `ft_re_mean` / `ft_im_mean`", "Model-averaged real/imaginary central values.", "模型平均后的实部/虚部中心值。"),
+            ("attr `ft_re_mean` / `ft_im_mean`", "Final real/imaginary central values after fit-model averaging or best-model selection.", "经过拟合模型平均或最优模型选择后的实部/虚部中心值。"),
             ("attr `ft_re_stat_sdev` / `ft_im_stat_sdev`", "Statistical standard deviations from bootstrap/jackknife samples.", "由 bootstrap/jackknife 样本给出的统计误差。"),
             ("attr `ft_re_sys_sdev` / `ft_im_sys_sdev`", "Weighted spread among fit-model candidates at fixed selected range.", "固定选定区间后，不同拟合模型候选的加权离散度。"),
             ("attr `scheme_labels`", "Fit-model labels at the selected range.", "选定区间上的拟合模型标签。"),

@@ -44,7 +44,6 @@ _FOURIER_RUN_KEYS = frozenset(
         "sample_error_mode",
         "part",
         "output_scale",
-        "save_path",
         "plot_fourier",
         "plot_extension",
         "report",
@@ -397,7 +396,7 @@ def prepare_tool_args(
             fourier["part"] = fourier.pop("component")
         source = store.get("input")
         source_metadata = source.model_dump() if isinstance(source, ArtifactInput) else getattr(source, "attrs", {})
-        for key in ("a_fm", "pz_gev", "hadron", "gfix"):
+        for key in ("a_fm", "pz_gev", "pz_out_gev", "hadron", "gfix"):
             if key not in fourier and key in source_metadata:
                 fourier[key] = source_metadata[key]
         if "method" not in fourier and str(fourier.get("gfix", "")).upper() in {"CG", "GI"}:
@@ -431,7 +430,6 @@ def prepare_tool_args(
             resolved["save_path"] = str(artifacts_dir / job.id)
             resolved.setdefault("plot_fourier", {"save_path": f"{job.id}.pdf"})
             resolved.setdefault("plot_extension", {"save_path": f"{job.id}_extension.pdf"})
-            resolved.setdefault("report", {"save_path": f"{job.id}_report.md"})
         if tool_name in _FOURIER_ARTIFACT_TOOLS:
             resolved["artifacts_dir"] = str(artifacts_dir)
 

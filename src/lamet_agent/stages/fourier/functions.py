@@ -1090,6 +1090,7 @@ def _run_one_scheme(
     fit_dof = np.empty(n_samples, dtype=int)
     fit_q = np.empty(n_samples, dtype=float)
     fit_log_gbf = np.empty(n_samples, dtype=float)
+    fit_ok = np.empty(n_samples, dtype=bool)
     failures = 0
 
     positive = z_ext > 0
@@ -1120,6 +1121,7 @@ def _run_one_scheme(
             prior=sample_prior,
             Lambda0=Lambda0,
         )
+        fit_ok[sample] = bool(ok)
         if not ok:
             failures += 1
             params = mean_params
@@ -1173,6 +1175,7 @@ def _run_one_scheme(
         "fit_dof": fit_dof,
         "fit_q": fit_q,
         "fit_log_gbf": fit_log_gbf,
+        "fit_ok": fit_ok,
         "mean_fit_params": mean_params,
         "mean_fit_chi2": mean_chi2,
         "mean_fit_dof": mean_dof,
@@ -2144,17 +2147,20 @@ def _apply_sample_fit_model_average(
     ft_im = np.asarray(result["ft_im_samples"], dtype=float)
     log_gbf = np.asarray([item["fit_log_gbf"] for item in result["scheme_results"]], dtype=float)
     q_values = np.asarray([item["fit_q"] for item in result["scheme_results"]], dtype=float)
-    ok = np.isfinite(log_gbf)
+    ok = np.asarray([item.get("fit_ok", np.isfinite(item["fit_log_gbf"])) for item in result["scheme_results"]], dtype=bool)
+    ok &= np.isfinite(log_gbf)
     weights = np.zeros_like(log_gbf, dtype=float)
     if model_average:
         for sample in range(log_gbf.shape[1]):
             valid = ok[:, sample]
             if not np.any(valid):
-                valid = np.isfinite(q_values[:, sample])
+                candidates = np.flatnonzero(np.isfinite(q_values[:, sample]))
+                if candidates.size:
+                    weights[candidates[int(np.argmax(q_values[candidates, sample]))], sample] = 1.0
+                continue
             values = log_gbf[:, sample]
-            if np.any(valid):
-                shifted = np.exp(values[valid] - np.max(values[valid]))
-                weights[valid, sample] = shifted / np.sum(shifted)
+            shifted = np.exp(values[valid] - np.max(values[valid]))
+            weights[valid, sample] = shifted / np.sum(shifted)
     else:
         for sample in range(log_gbf.shape[1]):
             passing = np.flatnonzero(ok[:, sample] & (q_values[:, sample] >= 0.05))
@@ -2350,7 +2356,6 @@ def run_fourier_transform(
     candidate_q = [float(item["q_value"]) for item in candidate_qualities]
     candidate_log_gbf = [float(item["logGBF"]) for item in candidate_qualities]
     candidate_diagnostics = {
-        "scheme_scan": dict(scheme_scan),
         "selection_mode": "sample_range_then_sample_fit_model_average" if model_average else "sample_range_then_sample_best_fit_model",
     }
     passing_idx = [
