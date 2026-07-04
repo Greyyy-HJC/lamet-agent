@@ -86,7 +86,7 @@ def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
             ("选择规则", f"`{result.get('selection_rule', 'not recorded')}`"),
             ("重采样", f"`{result.get('resample_mode', 'not recorded')}`，共 {result.get('n_samples', 'n/a')} 个样本"),
             ("z 网格", _fmt_list(result.get("z_values", []))),
-            ("调参 z", _fmt(result.get("tune_z"))),
+            ("调参 z", _fmt_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
             ("correlator_rescale", _fmt(result.get("correlator_rescale"))),
         ]
         header = "| 条目 | 数值或设置 |"
@@ -100,7 +100,7 @@ def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
             ("Selection rule", f"`{result.get('selection_rule', 'not recorded')}`"),
             ("Resampling", f"`{result.get('resample_mode', 'not recorded')}` with {result.get('n_samples', 'n/a')} samples"),
             ("z grid", _fmt_list(result.get("z_values", []))),
-            ("Tuning z", _fmt(result.get("tune_z"))),
+            ("Tuning z values", _fmt_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
             ("correlator_rescale", _fmt(result.get("correlator_rescale"))),
         ]
         header = "| Quantity | Value |"

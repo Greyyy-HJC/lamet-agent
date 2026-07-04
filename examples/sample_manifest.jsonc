@@ -333,6 +333,7 @@
     },
     "renormalization": {
       "defaults": {
+        "normalization": true, // divide bare matrix elements by z=0 before scheme; default true
         "scheme": "hybrid_ratio", // long-range exponential correction
         "scheme_parameters": {
           "zs_fm": 0.1722, // hybrid switch length (fm); short vs long branch

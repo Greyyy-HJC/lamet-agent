@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from .core.llm import LlmSession, format_api_model_spec, make_llm_session, request_llm_text
+from .core.data import EnsembleData
 from .core.prompting import build_stage_static_prompt
 from .core.tools import filter_tool_kwargs, prepare_tool_args, resolve_stage_tools, validate_stage_inputs
 from .core.trace import AgentTrace
@@ -111,6 +112,13 @@ def _run_job(
         effective_params=effective_params,
         artifacts_dir=stage_dir,
     )
+
+    if stage == "renormalization" and effective_params.get("normalization", True):
+        from lamet_agent.stages.renorm.functions import normalize_bare_matrix_element_at_z0
+
+        for role, value in list(store.items()):
+            if isinstance(value, EnsembleData):
+                store[role] = normalize_bare_matrix_element_at_z0(value)
 
     static_prompt = build_stage_static_prompt(
         stage,

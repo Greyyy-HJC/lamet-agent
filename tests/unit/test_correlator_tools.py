@@ -70,6 +70,10 @@ from lamet_agent.stages.correlator.functions import (
     pt3_ratio_prior,
     select_data_window,
     select_best,
+    _normalise_tune_z_values,
+    _select_robust_tune_index,
+    _summarise_cross_z_feasibility,
+    _window_candidate_key,
     tune_bare_matrix,
     tune_ground_state,
 )
@@ -630,7 +634,8 @@ def test_tune_bare_matrix_returns_ranked_candidates(tmp_path) -> None:
         pt3_paths=pt3_paths,
         tsep_ls=[6, 8],
         momentum="PX0PY0PZ0",
-        tune_z=0,
+        tune_z_values=[0],
+        z_values=[0],
         pt2_windows=[{"tmin": 2, "tmax": 10}],
         pt3_tau_cuts=[1, 2],
         fit_strategy="joint",
@@ -643,12 +648,90 @@ def test_tune_bare_matrix_returns_ranked_candidates(tmp_path) -> None:
     assert "O00_re_over_2E0" in result["candidates"][0]
     assert result["candidates"][0]["prior_width"] == pytest.approx(1.0)
     assert "recommended_index" in result
+    assert "recommended_robust_index" in result
+    assert "feasible_at_all_tune_z" in result["candidates"][0]
+    assert "tune_z_diagnostics" in result["candidates"][0]
+    assert result["tune_z_values"] == [0]
     assert result["tuning_diagnostic_pdfs"] == {}
     assert not list((tmp_path / "artifacts").glob("tune_*_sample0_pt3_ratio_*.pdf"))
     assert result["candidates"][0]["fit_scope"] == "ratio"
     assert result["candidates"][0]["n_data"] > result["candidates"][0]["n_params"]
     assert result["candidates"][0]["dof_is_positive"] is True
     assert result["recommended_window"]["n_data"] > result["recommended_window"]["n_params"]
+
+
+def test_tune_bare_matrix_requires_tune_z_values(tmp_path) -> None:
+    pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0,))
+    with pytest.raises(ValueError, match="tune_z_values is required"):
+        tune_bare_matrix(
+            {},
+            pt2_path=pt2_path,
+            pt3_paths=pt3_paths,
+            tsep_ls=[6, 8],
+            momentum="PX0PY0PZ0",
+            z_values=[0],
+            pt2_windows=[{"tmin": 2, "tmax": 10}],
+            pt3_tau_cuts=[1],
+            resample_mode="jk",
+        )
+
+
+def test_tune_bare_matrix_rejects_invalid_tune_z(tmp_path) -> None:
+    pt2_path, pt3_paths = _write_fake_correlators(tmp_path, tsep_ls=(6, 8), z_values=(0, 1))
+    with pytest.raises(ValueError, match="not in the job z grid"):
+        tune_bare_matrix(
+            {},
+            pt2_path=pt2_path,
+            pt3_paths=pt3_paths,
+            tsep_ls=[6, 8],
+            momentum="PX0PY0PZ0",
+            tune_z_values=[99],
+            z_values=[0, 1],
+            pt2_windows=[{"tmin": 2, "tmax": 10}],
+            pt3_tau_cuts=[1],
+            resample_mode="jk",
+        )
+
+
+def test_normalise_tune_z_values_dedupes_and_sorts() -> None:
+    assert _normalise_tune_z_values([8, 0, 8, 16], allowed_z=[0, 8, 16, 24]) == [0, 8, 16]
+
+
+def test_summarise_cross_z_feasibility_tracks_failures() -> None:
+    per_z = {
+        0: {"usable": True, "Q": 0.99, "chi2_dof": 0.5},
+        9: {"usable": False, "reason": "non-physical E0"},
+    }
+    summary = _summarise_cross_z_feasibility(per_z, [0, 9])
+    assert summary["feasible_at_all_tune_z"] is False
+    assert summary["failure_reasons"] == {"9": "non-physical E0"}
+    assert summary["bottleneck_z"] == 9
+
+
+def test_select_robust_tune_index_skips_infeasible_windows() -> None:
+    candidates = [
+        {"feasible_at_all_tune_z": False},
+        {"feasible_at_all_tune_z": True},
+    ]
+    primary_fit_records = [
+        {"Q": 0.99, "chi2_dof": 0.40, "n_data": 24, "n_params": 10},
+        {"Q": 0.95, "chi2_dof": 0.48, "n_data": 23, "n_params": 10},
+    ]
+    assert _select_robust_tune_index(candidates, primary_fit_records, q_min=0.05) == 1
+
+
+def test_window_candidate_key_is_stable() -> None:
+    meta = {
+        "fit_strategy": "joint",
+        "fit_scope": "ratio",
+        "nstate": 2,
+        "prior_width": 1.0,
+        "tmin": 3,
+        "tmax": 12,
+        "tsep_ls": [8, 10, 12],
+        "tau_cut": 3,
+    }
+    assert _window_candidate_key(meta) == _window_candidate_key(dict(meta))
 
 
 # --- plotting helpers retained ----------------------------------------------

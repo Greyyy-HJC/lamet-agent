@@ -194,6 +194,7 @@
     },
     "renormalization": {
       "defaults": {
+        "normalization": true,
         "scheme": "hybrid_ratio",
         "scheme_parameters": {
           "zs_fm": 0.1722,

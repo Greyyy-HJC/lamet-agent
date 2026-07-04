@@ -31,6 +31,7 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
     assert args["momentum"] == "PX5PY0PZ0"
     assert args["tsep_ls"] == [8, 10, 12]
     assert args["z_values"] == list(range(25))
+    assert "tune_z_values" not in args
     assert args["nstate_values"] == effective["nstate"]
     assert args["fit_strategies"] == effective["fit_strategy"]
     assert args["fit_scope_values"] == ["ratio"]
@@ -69,6 +70,7 @@ def test_prepare_correlator_args_injects_bs_samples_for_bootstrap_mode(tmp_path:
     )
     assert args["n_boot"] == 500
     assert args["seed"] == 1984
+    assert "tune_z_values" not in args
 
 
 def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) -> None:
@@ -261,6 +263,23 @@ def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> N
     assert args["scheme_parameters"]["m0_gev"] == manifest.stages["renormalization"].defaults["scheme_parameters"]["m0_gev"]
     assert args["scheme_parameters"]["delta_m_gev"] == manifest.stages["renormalization"].defaults["scheme_parameters"]["delta_m_gev"]
     assert args["save_path"] == str(tmp_path / "rn_p5")
+    assert "normalization" not in args
+
+
+def test_prepare_renormalization_args_filters_normalization_manifest_flag(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["renormalization"].jobs[0]
+    effective = {**manifest.stages["renormalization"].defaults, "normalization": True}
+    args = prepare_tool_args(
+        "apply_ratio_scheme_renormalization",
+        {},
+        manifest=manifest,
+        stage="renormalization",
+        job=job,
+        effective_params=effective,
+        artifacts_dir=tmp_path,
+    )
+    assert "normalization" not in args
 
 
 def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> None:

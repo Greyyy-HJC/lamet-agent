@@ -976,6 +976,119 @@ def select_data_window(
     ), fallback
 
 
+def _normalise_tune_z_values(values: list[int] | None, *, allowed_z: list[int]) -> list[int]:
+    """Validate LLM-supplied tune z values against the job 3pt bz grid."""
+    if not values:
+        raise ValueError("tune_z_values is required and must be non-empty")
+    allowed = {int(z) for z in allowed_z}
+    if not allowed:
+        raise ValueError("no allowed z values are available from the 3pt correlators")
+    normalised: list[int] = []
+    seen: set[int] = set()
+    for raw in values:
+        z = int(raw)
+        if z not in allowed:
+            raise ValueError(f"tune_z value {z} is not in the job z grid {sorted(allowed)}")
+        if z not in seen:
+            seen.add(z)
+            normalised.append(z)
+    return sorted(normalised)
+
+
+def _window_candidate_key(meta: dict[str, Any]) -> tuple[Any, ...]:
+    """Stable identity for one bare-matrix window candidate."""
+    tsep_ls = meta.get("tsep_ls")
+    return (
+        str(meta.get("fit_strategy", "")),
+        str(meta.get("fit_scope", "")),
+        int(meta.get("nstate", 0)),
+        float(meta.get("prior_width", 0.0)),
+        int(meta.get("tmin", -1)),
+        int(meta.get("tmax", -1)),
+        tuple(int(t) for t in tsep_ls) if tsep_ls is not None else (),
+        int(meta.get("tau_cut", -1)),
+    )
+
+
+def _tune_z_diagnostic_from_record(rec: dict[str, Any]) -> dict[str, Any]:
+    """Compact per-z diagnostics for a successful sample-average fit."""
+    return {
+        "Q": float(rec["Q"]),
+        "chi2_dof": float(rec["chi2_dof"]),
+        "logGBF": float(rec["logGBF"]),
+        "n_data": int(rec["n_data"]),
+        "n_params": int(rec["n_params"]),
+        "dof_is_positive": bool(rec["dof_is_positive"]),
+        "usable": True,
+    }
+
+
+def _tune_z_diagnostic_from_rejected(item: dict[str, Any]) -> dict[str, Any]:
+    """Compact per-z diagnostics for a rejected sample-average fit."""
+    return {
+        "Q": float(item["Q"]) if "Q" in item and np.isfinite(float(item["Q"])) else None,
+        "chi2_dof": float(item["chi2_dof"]) if "chi2_dof" in item and np.isfinite(float(item["chi2_dof"])) else None,
+        "logGBF": float(item["logGBF"]) if "logGBF" in item and np.isfinite(float(item["logGBF"])) else None,
+        "n_data": int(item.get("n_data", 0)),
+        "n_params": int(item.get("n_params", 0)),
+        "dof_is_positive": bool(item.get("dof_is_positive", False)),
+        "usable": False,
+        "reason": str(item.get("reason", "unknown")),
+    }
+
+
+def _summarise_cross_z_feasibility(
+    per_z: dict[int, dict[str, Any]],
+    tune_z_values: list[int],
+) -> dict[str, Any]:
+    """Aggregate cross-z feasibility metrics for one window candidate."""
+    failure_reasons: dict[str, str] = {}
+    for z in tune_z_values:
+        diag = per_z.get(z)
+        if diag is None or not diag.get("usable"):
+            reason = "missing" if diag is None else str(diag.get("reason", "unknown"))
+            failure_reasons[str(z)] = reason
+    usable_diags = [per_z[z] for z in tune_z_values if per_z.get(z, {}).get("usable")]
+    feasible = not failure_reasons
+    min_q = min(float(diag["Q"]) for diag in usable_diags) if usable_diags else None
+    worst_chi2 = max(float(diag["chi2_dof"]) for diag in usable_diags) if usable_diags else None
+    if not feasible and failure_reasons:
+        bottleneck_z = min(int(z) for z in failure_reasons)
+    elif usable_diags:
+        usable_z = [z for z in tune_z_values if per_z.get(z, {}).get("usable")]
+        bottleneck_z = min(usable_z, key=lambda z: float(per_z[z]["Q"]))
+    else:
+        bottleneck_z = None
+    tune_z_diagnostics = {str(z): per_z[z] for z in tune_z_values if z in per_z}
+    return {
+        "tune_z_diagnostics": tune_z_diagnostics,
+        "feasible_at_all_tune_z": feasible,
+        "bottleneck_z": bottleneck_z,
+        "min_Q": min_q,
+        "worst_chi2_dof": worst_chi2,
+        "failure_reasons": failure_reasons,
+    }
+
+
+def _select_robust_tune_index(
+    candidates: list[dict[str, Any]],
+    primary_fit_records: list[dict[str, Any] | None],
+    *,
+    q_min: float,
+) -> int | None:
+    """Pick the best primary-z window among candidates feasible at every tune z."""
+    feasible_indices = [
+        index
+        for index, candidate in enumerate(candidates)
+        if candidate.get("feasible_at_all_tune_z") and primary_fit_records[index] is not None
+    ]
+    if not feasible_indices:
+        return None
+    feasible_records = [primary_fit_records[index] for index in feasible_indices]
+    local_index, _ = select_data_window(feasible_records, q_min=q_min)
+    return feasible_indices[local_index]
+
+
 def _fit_usable(
     fit: lsf.nonlinear_fit,
     template: gv.BufferDict,
@@ -1981,6 +2094,302 @@ def _candidate_specs(
     return [{"tmin": tmin, "tmax": tmax, "tsep_ls": p["tsep_ls"], "tau_cut": p["tau_cut"]} for p in pt3_window_specs]
 
 
+def _load_tune_ratios_for_z(
+    z: int,
+    *,
+    tseps: list[int],
+    paths_by_tsep: dict[int, str],
+    pt2_complex_samples: np.ndarray,
+    pt2_f_complex_samples: np.ndarray,
+    form: str,
+    source_sink: str,
+    pt3_gamma: str,
+    three_point_momentum: str,
+    b_dir: str,
+    eta: str,
+    bt: str,
+    mode: str,
+    n_boot: int,
+    seed: int | None,
+    bin_size: int,
+    indices: np.ndarray | None,
+    sample_error_mode: str,
+) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
+    """Load sample-average ratio data for one z across all tsep values."""
+    ratio_re: dict[int, np.ndarray] = {}
+    ratio_im: dict[int, np.ndarray] = {}
+    for tsep in tseps:
+        pt3 = _read_3pt(
+            paths_by_tsep[tsep],
+            source_sink=source_sink,
+            gamma=pt3_gamma,
+            momentum=three_point_momentum,
+            b_dir=b_dir,
+            eta=eta,
+            bt=bt,
+            bz=f"bz{int(z)}",
+            tsep=tsep,
+        )
+        pt3_samples, _ = resample_config_samples(
+            pt3, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices
+        )
+        if form == "NonBreit":
+            re_s, im_s = _non_forward_ratio_samples(pt2_complex_samples, pt2_f_complex_samples, pt3_samples, tsep)
+        else:
+            re_s, im_s = _ratio_samples(pt2_complex_samples, pt3_samples, tsep)
+        ratio_re[tsep] = samples_to_gvar(re_s, mode=mode, sample_error_mode=sample_error_mode)
+        ratio_im[tsep] = samples_to_gvar(im_s, mode=mode, sample_error_mode=sample_error_mode)
+    return ratio_re, ratio_im
+
+
+def _run_tune_window_scan(
+    *,
+    ratio_re: dict[int, np.ndarray],
+    ratio_im: dict[int, np.ndarray],
+    strategies: list[str],
+    scopes: list[str],
+    states: list[int],
+    prior_widths: list[float],
+    form: str,
+    pt2_gv: np.ndarray,
+    pt2_f_gv: np.ndarray | None,
+    pt2_window_specs: list[dict[str, int]],
+    pt3_window_specs: list[dict[str, Any]],
+    Lt: int,
+    part: str,
+    svdcut: float,
+    scale: float,
+    q_min: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Scan all configured windows on sample-average data for one tune z."""
+    records: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for strategy_value in strategies:
+        strategy, _ = _normalise_strategy(strategy_value)
+        for scope_value in scopes:
+            scope, _ = _normalise_fit_scope(scope_value)
+            _validate_scope_form(scope, form)
+            for nstate_value in states:
+                nstate_int = int(nstate_value)
+                if "FH" in scope and nstate_int > 2:
+                    rejected.append(
+                        {
+                            "fit_strategy": strategy,
+                            "fit_scope": scope,
+                            "nstate": nstate_int,
+                            "reason": "FH fits currently support nstate <= 2",
+                        }
+                    )
+                    continue
+                for prior_width_value in prior_widths:
+                    pt2_best = None
+                    pt2_f_best = None
+                    if strategy == "chained":
+                        pt2_records: list[dict[str, Any]] = []
+                        pt2_f_records: list[dict[str, Any]] = []
+                        pt2_prior_template = _vary_prior_width(pt2_prior(nstate_int), prior_width_value)
+                        for window in pt2_window_specs:
+                            try:
+                                fit = fit_two_point(
+                                    pt2_gv,
+                                    window["tmin"],
+                                    window["tmax"],
+                                    Lt,
+                                    nstate=nstate_int,
+                                    svdcut=svdcut,
+                                    rescale=scale,
+                                    prior=pt2_prior_template,
+                                )
+                                pt2_records.append(
+                                    _record(
+                                        fit,
+                                        tmin=window["tmin"],
+                                        tmax=window["tmax"],
+                                        nstate=nstate_int,
+                                        prior_width=prior_width_value,
+                                        correlator_rescale=scale,
+                                    )
+                                )
+                            except Exception as exc:
+                                rejected.append(
+                                    {
+                                        **window,
+                                        "fit_strategy": strategy,
+                                        "fit_scope": scope,
+                                        "nstate": nstate_int,
+                                        "prior_width": prior_width_value,
+                                        "reason": str(exc),
+                                    }
+                                )
+                            if form == "NonBreit" and pt2_f_gv is not None:
+                                try:
+                                    fit_f = fit_two_point(
+                                        pt2_f_gv,
+                                        window["tmin"],
+                                        window["tmax"],
+                                        Lt,
+                                        nstate=nstate_int,
+                                        svdcut=svdcut,
+                                        rescale=scale,
+                                        prior=pt2_prior_template,
+                                    )
+                                    pt2_f_records.append(
+                                        _record(
+                                            fit_f,
+                                            tmin=window["tmin"],
+                                            tmax=window["tmax"],
+                                            nstate=nstate_int,
+                                            prior_width=prior_width_value,
+                                            correlator_rescale=scale,
+                                        )
+                                    )
+                                except Exception as exc:
+                                    rejected.append(
+                                        {
+                                            **window,
+                                            "fit_strategy": strategy,
+                                            "fit_scope": scope,
+                                            "nstate": nstate_int,
+                                            "prior_width": prior_width_value,
+                                            "reason": str(exc),
+                                        }
+                                    )
+                        if not pt2_records:
+                            continue
+                        pt2_best = pt2_records[select_best(pt2_records, q_min=q_min)[0]]
+                        if form == "NonBreit":
+                            if not pt2_f_records:
+                                continue
+                            pt2_f_best = pt2_f_records[select_best(pt2_f_records, q_min=q_min)[0]]
+
+                    specs = _candidate_specs(
+                        strategy=strategy,
+                        pt2_window_specs=pt2_window_specs,
+                        pt3_window_specs=pt3_window_specs,
+                        pt2_best=pt2_best,
+                    )
+                    found, failed = _scan_average(
+                        specs,
+                        strategy=strategy,
+                        fit_scope=scope,
+                        pt2_gv=pt2_gv,
+                        pt2_f_gv=pt2_f_gv,
+                        ratio_re=ratio_re,
+                        ratio_im=ratio_im,
+                        pt2_best=pt2_best,
+                        pt2_f_best=pt2_f_best,
+                        Lt=Lt,
+                        nstate=nstate_int,
+                        part=part,
+                        svdcut=svdcut,
+                        scale=scale,
+                        fitting_form=form,
+                        prior_width=prior_width_value,
+                    )
+                    for rec in found:
+                        rec["fit_strategy"] = strategy
+                        rec["fit_scope"] = scope
+                    records.extend(found)
+                    rejected.extend(
+                        {**item, "fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int}
+                        for item in failed
+                    )
+    return records, rejected
+
+
+def _merge_tune_scan_by_window_key(
+    by_key: dict[tuple[Any, ...], dict[str, Any]],
+    *,
+    records: list[dict[str, Any]],
+    rejected: list[dict[str, Any]],
+    tune_z: int,
+    primary_tune_z: int,
+) -> None:
+    """Merge one tune-z scan into the cross-z candidate map."""
+    for rec in records:
+        key = _window_candidate_key(rec)
+        entry = by_key.setdefault(key, {"per_z": {}, "meta": rec, "primary_record": None})
+        entry["per_z"][tune_z] = _tune_z_diagnostic_from_record(rec)
+        if tune_z == primary_tune_z:
+            entry["primary_record"] = rec
+            entry["meta"] = rec
+    for item in rejected:
+        if "tmin" not in item or "tsep_ls" not in item or "tau_cut" not in item:
+            continue
+        key = _window_candidate_key(item)
+        entry = by_key.setdefault(key, {"per_z": {}, "meta": item, "primary_record": None})
+        entry["per_z"][tune_z] = _tune_z_diagnostic_from_rejected(item)
+
+
+def _candidate_dict_from_record(
+    rec: dict[str, Any],
+    *,
+    form: str,
+    index: int,
+    cross_z_summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Build one JSON-safe tune candidate from a primary-z fit record."""
+    p = rec["fit"].p
+    candidate = {
+        "index": index,
+        "fit_strategy": rec["fit_strategy"],
+        "fit_scope": rec["fit_scope"],
+        "nstate": rec["nstate"],
+        "prior_width": rec["prior_width"],
+        "tmin": rec["tmin"],
+        "tmax": rec["tmax"],
+        "tsep_ls": rec["tsep_ls"],
+        "tau_cut": rec["tau_cut"],
+        "Q": rec["Q"],
+        "chi2_dof": rec["chi2_dof"],
+        "logGBF": rec["logGBF"],
+        "n_data": rec["n_data"],
+        "n_params": rec["n_params"],
+        "dof_is_positive": rec["dof_is_positive"],
+        "bare_re": str(_bare_matrix_element_from_fit(p, part="re", fitting_form=form)),
+        "bare_im": str(_bare_matrix_element_from_fit(p, part="im", fitting_form=form)),
+        **cross_z_summary,
+    }
+    if form == "Breit":
+        candidate["O00_re_over_2E0"] = candidate["bare_re"]
+        candidate["O00_im_over_2E0"] = candidate["bare_im"]
+    return candidate
+
+
+def _candidate_dict_from_meta(
+    meta: dict[str, Any],
+    *,
+    form: str,
+    index: int,
+    cross_z_summary: dict[str, Any],
+    primary_tune_z: int,
+) -> dict[str, Any]:
+    """Build one JSON-safe tune candidate when the primary tune z fit failed."""
+    primary_diag = cross_z_summary["tune_z_diagnostics"].get(str(primary_tune_z), {})
+    candidate = {
+        "index": index,
+        "fit_strategy": meta.get("fit_strategy"),
+        "fit_scope": meta.get("fit_scope"),
+        "nstate": meta.get("nstate"),
+        "prior_width": meta.get("prior_width"),
+        "tmin": meta.get("tmin"),
+        "tmax": meta.get("tmax"),
+        "tsep_ls": meta.get("tsep_ls"),
+        "tau_cut": meta.get("tau_cut"),
+        "Q": primary_diag.get("Q"),
+        "chi2_dof": primary_diag.get("chi2_dof"),
+        "logGBF": primary_diag.get("logGBF"),
+        "n_data": primary_diag.get("n_data", meta.get("n_data", 0)),
+        "n_params": primary_diag.get("n_params", meta.get("n_params", 0)),
+        "dof_is_positive": primary_diag.get("dof_is_positive", meta.get("dof_is_positive", False)),
+        **cross_z_summary,
+    }
+    if form == "Breit":
+        candidate["O00_re_over_2E0"] = "n/a"
+        candidate["O00_im_over_2E0"] = "n/a"
+    return candidate
+
+
 # --- tool 3: tune the bare matrix on sample-average data ---------------------
 
 
@@ -1995,7 +2404,8 @@ def tune_bare_matrix(
     momentum_out: str | None = None,
     pt3_momentum: str | None = None,
     fitting_form: str = "Breit",
-    tune_z: int = 0,
+    tune_z_values: list[int] | None = None,
+    z_values: list[int] | None = None,
     source_sink: str = "SS",
     pt2_gamma: str = "5",
     pt3_gamma: str = "T",
@@ -2025,23 +2435,29 @@ def tune_bare_matrix(
     artifacts_dir: str | Path | None = None,
     out: str = "bare_tune",
 ) -> dict[str, Any]:
-    """Scan bare-matrix fit windows on sample-average data for one representative z.
+    """Scan bare-matrix fit windows on sample-average data at multiple tune z values.
 
-    Returns ranked candidate diagnostics and writes a tuning ratio
-    plot so the agent can choose one shared window to pass to ``fit_bare_matrix_grid``.
+    Returns ranked candidate diagnostics with cross-z feasibility summaries so
+    the agent can choose one shared window to pass to ``fit_bare_matrix_grid``.
     """
     form = _normalise_fitting_form(fitting_form)
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
     tseps = [int(t) for t in tsep_ls]
     paths_by_tsep = _normalise_pt3_paths(pt3_paths, tsep_ls=tseps)
     final_momentum = momentum if momentum_out is None else momentum_out
     three_point_momentum = momentum if pt3_momentum is None else pt3_momentum
+    if not z_values:
+        raise ValueError("z_values must be provided for tune_bare_matrix validation")
+    allowed_z = [int(z) for z in z_values]
+    tune_z_list = _normalise_tune_z_values(tune_z_values, allowed_z=allowed_z)
+    primary_tune_z = tune_z_list[0]
 
     pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=momentum)
     n_cfg, Lt = pt2_complex.shape
-    re_samples, pt2_complex_samples, indices = _resample_pt2(pt2_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size)
+    re_samples, pt2_complex_samples, indices = _resample_pt2(
+        pt2_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size
+    )
     pt2_gv = samples_to_gvar(re_samples, mode=mode, sample_error_mode=sample_error_mode)
     pt2_f_gv = None
     pt2_f_complex_samples = pt2_complex_samples
@@ -2054,171 +2470,132 @@ def tune_bare_matrix(
         )
         pt2_f_gv = samples_to_gvar(re_f_samples, mode=mode, sample_error_mode=sample_error_mode)
 
-    ratio_re: dict[int, np.ndarray] = {}
-    ratio_im: dict[int, np.ndarray] = {}
-    for tsep in tseps:
-        pt3 = _read_3pt(
-            paths_by_tsep[tsep], source_sink=source_sink, gamma=pt3_gamma, momentum=three_point_momentum,
-            b_dir=b_dir, eta=eta, bt=bt, bz=f"bz{int(tune_z)}", tsep=tsep,
-        )
-        pt3_samples, _ = resample_config_samples(pt3, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices)
-        if form == "NonBreit":
-            re_s, im_s = _non_forward_ratio_samples(pt2_complex_samples, pt2_f_complex_samples, pt3_samples, tsep)
-        else:
-            re_s, im_s = _ratio_samples(pt2_complex_samples, pt3_samples, tsep)
-        ratio_re[tsep] = samples_to_gvar(re_s, mode=mode, sample_error_mode=sample_error_mode)
-        ratio_im[tsep] = samples_to_gvar(im_s, mode=mode, sample_error_mode=sample_error_mode)
-
     pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=Lt)
     pt3_window_specs = _normalise_pt3_windows(pt3_windows, tsep_ls=tseps, tau_cuts=pt3_tau_cuts)
-
-    records: list[dict[str, Any]] = []
-    rejected: list[dict[str, Any]] = []
     strategies = fit_strategies or ([fit_strategy] if fit_strategy is not None else ["joint"])
     scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["ratio"])
     states = nstate_values or ([nstate] if nstate is not None else [2])
     prior_widths = _normalise_prior_width(prior_width)
-    for strategy_value in strategies:
-        strategy, _ = _normalise_strategy(strategy_value)
-        for scope_value in scopes:
-            scope, _ = _normalise_fit_scope(scope_value)
-            _validate_scope_form(scope, form)
-            for nstate_value in states:
-                nstate_int = int(nstate_value)
-                if "FH" in scope and nstate_int > 2:
-                    rejected.append({"fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int, "reason": "FH fits currently support nstate <= 2"})
-                    continue
-                for prior_width_value in prior_widths:
-                    pt2_best = None
-                    pt2_f_best = None
-                    if strategy == "chained":
-                        pt2_records: list[dict[str, Any]] = []
-                        pt2_f_records: list[dict[str, Any]] = []
-                        pt2_prior_template = _vary_prior_width(pt2_prior(nstate_int), prior_width_value)
-                        for window in pt2_window_specs:
-                            try:
-                                fit = fit_two_point(
-                                    pt2_gv, window["tmin"], window["tmax"], Lt,
-                                    nstate=nstate_int, svdcut=svdcut, rescale=scale, prior=pt2_prior_template,
-                                )
-                                pt2_records.append(
-                                    _record(
-                                        fit,
-                                        tmin=window["tmin"],
-                                        tmax=window["tmax"],
-                                        nstate=nstate_int,
-                                        prior_width=prior_width_value,
-                                        correlator_rescale=scale,
-                                    )
-                                )
-                            except Exception as exc:
-                                rejected.append({
-                                    **window,
-                                    "fit_strategy": strategy,
-                                    "fit_scope": scope,
-                                    "nstate": nstate_int,
-                                    "prior_width": prior_width_value,
-                                    "reason": str(exc),
-                                })
-                            if form == "NonBreit" and pt2_f_gv is not None:
-                                try:
-                                    fit_f = fit_two_point(
-                                        pt2_f_gv, window["tmin"], window["tmax"], Lt,
-                                        nstate=nstate_int, svdcut=svdcut, rescale=scale, prior=pt2_prior_template,
-                                    )
-                                    pt2_f_records.append(
-                                        _record(
-                                            fit_f,
-                                            tmin=window["tmin"],
-                                            tmax=window["tmax"],
-                                            nstate=nstate_int,
-                                            prior_width=prior_width_value,
-                                            correlator_rescale=scale,
-                                        )
-                                    )
-                                except Exception as exc:
-                                    rejected.append({
-                                        **window,
-                                        "fit_strategy": strategy,
-                                        "fit_scope": scope,
-                                        "nstate": nstate_int,
-                                        "prior_width": prior_width_value,
-                                        "reason": str(exc),
-                                    })
-                        if not pt2_records:
-                            continue
-                        pt2_best = pt2_records[select_best(pt2_records, q_min=q_min)[0]]
-                        if form == "NonBreit":
-                            if not pt2_f_records:
-                                continue
-                            pt2_f_best = pt2_f_records[select_best(pt2_f_records, q_min=q_min)[0]]
 
-                    specs = _candidate_specs(
-                        strategy=strategy,
-                        pt2_window_specs=pt2_window_specs,
-                        pt3_window_specs=pt3_window_specs,
-                        pt2_best=pt2_best,
-                    )
-                    found, failed = _scan_average(
-                        specs, strategy=strategy, fit_scope=scope, pt2_gv=pt2_gv, pt2_f_gv=pt2_f_gv,
-                        ratio_re=ratio_re, ratio_im=ratio_im, pt2_best=pt2_best, pt2_f_best=pt2_f_best,
-                        Lt=Lt, nstate=nstate_int, part=part, svdcut=svdcut, scale=scale, fitting_form=form,
-                        prior_width=prior_width_value,
-                    )
-                    for rec in found:
-                        rec["fit_strategy"] = strategy
-                        rec["fit_scope"] = scope
-                    records.extend(found)
-                    rejected.extend({**item, "fit_strategy": strategy, "fit_scope": scope, "nstate": nstate_int} for item in failed)
-    if not records:
-        raise ValueError("all bare-matrix tuning windows failed: " + "; ".join(str(item) for item in rejected[:5]))
-    store[out] = records
+    by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
+    all_rejected: list[dict[str, Any]] = []
+    for tune_z in tune_z_list:
+        ratio_re, ratio_im = _load_tune_ratios_for_z(
+            tune_z,
+            tseps=tseps,
+            paths_by_tsep=paths_by_tsep,
+            pt2_complex_samples=pt2_complex_samples,
+            pt2_f_complex_samples=pt2_f_complex_samples,
+            form=form,
+            source_sink=source_sink,
+            pt3_gamma=pt3_gamma,
+            three_point_momentum=three_point_momentum,
+            b_dir=b_dir,
+            eta=eta,
+            bt=bt,
+            mode=mode,
+            n_boot=n_boot,
+            seed=seed,
+            bin_size=bin_size,
+            indices=indices,
+            sample_error_mode=sample_error_mode,
+        )
+        records, rejected = _run_tune_window_scan(
+            ratio_re=ratio_re,
+            ratio_im=ratio_im,
+            strategies=strategies,
+            scopes=scopes,
+            states=states,
+            prior_widths=prior_widths,
+            form=form,
+            pt2_gv=pt2_gv,
+            pt2_f_gv=pt2_f_gv,
+            pt2_window_specs=pt2_window_specs,
+            pt3_window_specs=pt3_window_specs,
+            Lt=Lt,
+            part=part,
+            svdcut=svdcut,
+            scale=scale,
+            q_min=q_min,
+        )
+        _merge_tune_scan_by_window_key(
+            by_key,
+            records=records,
+            rejected=rejected,
+            tune_z=tune_z,
+            primary_tune_z=primary_tune_z,
+        )
+        all_rejected.extend(rejected)
 
-    best_index, fallback = select_data_window(records, q_min=q_min)
-    best = records[best_index]
+    primary_fit_records: list[dict[str, Any] | None] = []
+    candidates: list[dict[str, Any]] = []
+    for index, key in enumerate(sorted(by_key.keys())):
+        entry = by_key[key]
+        cross_z_summary = _summarise_cross_z_feasibility(entry["per_z"], tune_z_list)
+        primary_record = entry.get("primary_record")
+        if primary_record is not None:
+            candidates.append(
+                _candidate_dict_from_record(
+                    primary_record,
+                    form=form,
+                    index=index,
+                    cross_z_summary=cross_z_summary,
+                )
+            )
+        else:
+            candidates.append(
+                _candidate_dict_from_meta(
+                    entry["meta"],
+                    form=form,
+                    index=index,
+                    cross_z_summary=cross_z_summary,
+                    primary_tune_z=primary_tune_z,
+                )
+            )
+        primary_fit_records.append(primary_record)
 
-    candidates = []
-    for i, rec in enumerate(records):
-        p = rec["fit"].p
-        candidate = {
-            "index": i,
-            "fit_strategy": rec["fit_strategy"],
-            "fit_scope": rec["fit_scope"],
-            "nstate": rec["nstate"],
-            "prior_width": rec["prior_width"],
-            "tmin": rec["tmin"],
-            "tmax": rec["tmax"],
-            "tsep_ls": rec["tsep_ls"],
-            "tau_cut": rec["tau_cut"],
-            "Q": rec["Q"],
-            "chi2_dof": rec["chi2_dof"],
-            "logGBF": rec["logGBF"],
-            "n_data": rec["n_data"],
-            "n_params": rec["n_params"],
-            "dof_is_positive": rec["dof_is_positive"],
-            "bare_re": str(_bare_matrix_element_from_fit(p, part="re", fitting_form=form)),
-            "bare_im": str(_bare_matrix_element_from_fit(p, part="im", fitting_form=form)),
-        }
-        if form == "Breit":
-            candidate["O00_re_over_2E0"] = candidate["bare_re"]
-            candidate["O00_im_over_2E0"] = candidate["bare_im"]
-        candidates.append(candidate)
+    selectable = [(index, record) for index, record in enumerate(primary_fit_records) if record is not None]
+    if not selectable:
+        raise ValueError("all bare-matrix tuning windows failed: " + "; ".join(str(item) for item in all_rejected[:5]))
+
+    selectable_indices, selectable_records = zip(*selectable)
+    local_best_index, fallback = select_data_window(list(selectable_records), q_min=q_min)
+    best_index = selectable_indices[local_best_index]
+    best = primary_fit_records[best_index]
+    assert best is not None
+
+    for index, candidate in enumerate(candidates):
+        candidate["index"] = index
+
+    store[out] = [record for record in primary_fit_records if record is not None]
+    robust_index = _select_robust_tune_index(candidates, primary_fit_records, q_min=q_min)
+    robust_window = None
+    if robust_index is not None:
+        robust_record = primary_fit_records[robust_index]
+        assert robust_record is not None
+        robust_window = _fit_summary(robust_record, fallback=False, index=robust_index)
+
     return {
         "out": out,
         "fit_strategies": strategies,
         "fit_scopes": scopes,
         "nstate_values": states,
         "prior_width": prior_widths,
-        "tune_z": int(tune_z),
+        "tune_z_values": tune_z_list,
+        "primary_tune_z": primary_tune_z,
+        "tune_z": primary_tune_z,
+        "allowed_z_values": sorted(allowed_z),
         "Lt": int(Lt),
         "n_cfg": int(n_cfg),
         "correlator_rescale": scale,
         "fitting_form": form,
         "candidates": candidates,
-        "rejected": rejected,
+        "rejected": all_rejected,
         "recommended_index": best_index,
         "recommended_fallback_no_q_passing": fallback,
         "recommended_window": _fit_summary(best, fallback=fallback, index=best_index),
+        "recommended_robust_index": robust_index,
+        "recommended_robust_window": robust_window,
         "tuning_diagnostic_pdfs": {},
     }
 

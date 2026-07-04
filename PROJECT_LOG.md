@@ -484,3 +484,17 @@
 - Simplified Fourier ``scheme_scan`` to auto-fill style (``model_average`` only) in all example manifests; ``sample_manifest.jsonc`` documents optional override keys in comments.
 - Updated ``sample_manifest.jsonc`` correlator defaults to ``pt3_tau_cuts`` and ``HISQa060_X`` ensemble metadata.
 - Added ``test_example_manifests_validate`` to guard example manifest schema and stage-input validation.
+
+## 2026-07-03 (Renormalization stage normalization switch)
+
+- Added ``renormalization.defaults.normalization`` (default ``true``) to control z=0 division of bare matrix elements at renormalization job entry.
+- Extracted ``normalize_bare_matrix_element_at_z0`` from hybrid-ratio scheme logic; ``apply_ratio_scheme_renormalization`` now applies the pure ratio/hybrid map only.
+- Removed ``normalize_z0`` from ``fit_self_renormalization_factor``; pre-normalized inputs are detected via ``normalized_at_z0`` attrs.
+- Updated example manifests, renorm prompts/skills, README semantics, and unit tests for the new contract.
+
+## 2026-07-04 — Multi-z correlator window tuning
+
+- Extended ``tune_bare_matrix`` to require LLM-supplied ``tune_z_values`` and scan each configured window at every tune z using the same ``_scan_average`` / ``_fit_usable`` gates as ``fit_bare_matrix_grid``.
+- Added cross-z candidate summaries (`feasible_at_all_tune_z`, `tune_z_diagnostics`, `min_Q`, `worst_chi2_dof`, `failure_reasons`) plus ``recommended_robust_index`` / ``recommended_robust_window``.
+- Updated correlator prompts/skills so the agent picks representative tune z values from the job ``bz`` list and selects only cross-z-feasible shared windows before calling ``fit_bare_matrix_grid``.
+- Added unit tests for validation, helper aggregation, and tool-arg wiring; updated README correlator tuning notes.

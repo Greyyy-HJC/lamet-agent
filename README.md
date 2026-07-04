@@ -166,12 +166,16 @@ name alone.
 This boolean controls how `fit_bare_matrix_grid` uses fit-function candidates.
 It does not control whether tuning scans the candidates: `tune_bare_matrix` always
 tests the configured `pt2_windows`, `pt3_tau_cuts`, `nstate`, `prior_width`, and
-`fit_strategy` candidates on sample-average data first.
+`fit_strategy` candidates on sample-average data at LLM-supplied `tune_z_values`
+first. The tool returns cross-z feasibility summaries and
+`recommended_robust_index`; the agent must pass explicit `tune_z_values` when
+calling `tune_bare_matrix`.
 
 - `false` (recommended production default): use one tuned data window and one
   sample-average-selected fit-function setting for every `z` and every resampled
-  sample. The agent may provide the selected `pt2_window` and `pt3_window`; if it
-  does not, the tool selects the best usable window on `tune_z`.
+  sample. The agent should provide the selected `pt2_window` and `pt3_window` from
+  a candidate with `feasible_at_all_tune_z=true`; if it does not, the grid tool
+  selects the best usable window on a single representative `tune_z`.
 - `true`: still use one tuned data window, but scan `nstate` and `prior_width`
   fit-function candidates for each resampled sample and combine successful fits
   with `logGBF` weights. The default prior-width scan is `[0.5, 1.0, 2.0]`.
@@ -181,6 +185,14 @@ samples as usual and records per-`z` uncertainty summaries in attrs:
 `bare_re_stat_sdev` / `bare_im_stat_sdev` from the resampling spread and
 `bare_re_sys_sdev` / `bare_im_sys_sdev` from the fit-function model spread. The
 systematic arrays are zero for the single-model `model_average: false` path.
+
+### `renormalization.defaults.normalization`
+
+When `true` (default), the runner divides every bare `EnsembleData` input in the
+job store by its lattice `z=0` value before any renormalization tool runs. Scheme
+tools such as `apply_ratio_scheme_renormalization` then apply only the declared
+ratio/hybrid prescription. Set `false` to skip this preprocessing and pass raw
+bare matrix elements directly into the scheme.
 
 For example, two `nstate` values and three `prior_width` values produce up to six
 fit-function models inside the fixed data window. The manifest value is

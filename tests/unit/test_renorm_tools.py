@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from lamet_agent.core.data import EnsembleData, EnsembleInfo
 from lamet_agent.stages.renorm.functions import (
     apply_ratio_scheme_renormalization,
     load_bare_matrix_element_grid,
+    normalize_bare_matrix_element_at_z0,
     plot_renormalized_matrix_element,
 )
 
@@ -25,6 +27,28 @@ def _write_bare_netcdf(base: Path, stem: str, values: np.ndarray, *, resample: s
     path = base / f"{stem}.nc"
     data.to_netcdf(path)
     return path
+
+
+def _prepare_renorm_inputs(store: dict[str, object], *, normalize: bool = True) -> None:
+    for role in ("target", "denominator", "target_bare_matrix_element", "denominator_bare_matrix_element"):
+        value = store.get(role)
+        if isinstance(value, EnsembleData) and normalize:
+            store[role] = normalize_bare_matrix_element_at_z0(value)
+
+
+def test_normalize_bare_matrix_element_at_z0_scales_by_z0() -> None:
+    samples = np.asarray([[2 + 0j, 4 + 0j, 8 + 0j], [4 + 0j, 8 + 0j, 16 + 0j]], dtype=complex)
+    data = EnsembleData(
+        EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+        values=[samples[0], samples[1]], dims=("z",), coords={"z": [0, 1, 2]}, name="bare",
+    )
+
+    normalized = normalize_bare_matrix_element_at_z0(data)
+
+    assert normalized.attrs.get("normalized_at_z0") == "true"
+    assert np.allclose(normalized.values[:, 0], 1.0)
+    assert np.allclose(normalized.values[:, 1], 2.0)
+    assert np.allclose(normalized.values[:, 2], 4.0)
 
 
 def test_load_bare_matrix_element_grid_reads_correlator_netcdf(tmp_path: Path) -> None:
@@ -52,6 +76,7 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
     store = {}
     load_bare_matrix_element_grid(store, netcdf_path=str(target_artifact), out="target_bare_matrix_element")
     load_bare_matrix_element_grid(store, netcdf_path=str(denom_artifact), out="denominator_bare_matrix_element")
+    _prepare_renorm_inputs(store)
 
     result = apply_ratio_scheme_renormalization(
         store,
@@ -76,6 +101,33 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
     assert Path(plot["plot"]).is_file()
 
 
+def test_ratio_scheme_without_normalization_uses_pure_ratio(tmp_path: Path) -> None:
+    target = np.asarray([[2, 4], [4, 8]], dtype=complex)
+    denom = np.asarray([[1, 2], [2, 4]], dtype=complex)
+    store = {
+        "target": EnsembleData(
+            EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+            values=[target[0], target[1]], dims=("z",), coords={"z": [0, 1]},
+            attrs={"a_fm": "0.1"}, name="target",
+        ),
+        "denominator": EnsembleData(
+            EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+            values=[denom[0], denom[1]], dims=("z",), coords={"z": [0, 1]},
+            attrs={"a_fm": "0.1"}, name="denominator",
+        ),
+    }
+
+    apply_ratio_scheme_renormalization(
+        store,
+        target="target",
+        denominator="denominator",
+        scheme_parameters={"zs_fm": 10.0},
+        save_path=str(tmp_path / "pure"),
+    )
+
+    assert np.allclose(store["output"].values, 2.0)
+
+
 def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path) -> None:
     z = list(range(6))
     target = EnsembleData(
@@ -89,6 +141,7 @@ def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path
         values=list(denominator_values), dims=("z",), coords={"z": z}, name="denominator",
     )
     store = {"target": target, "denominator": denominator}
+    _prepare_renorm_inputs(store)
 
     result = apply_ratio_scheme_renormalization(
         store, target="target", denominator="denominator",
@@ -122,6 +175,7 @@ def test_hybrid_ratio_long_range_exponent_uses_physical_distance(tmp_path: Path)
         dims=("z",), coords={"z": z}, attrs={"a_fm": str(a_fm)}, name="denominator",
     )
     store = {"target": target, "denominator": denominator}
+    _prepare_renorm_inputs(store)
 
     apply_ratio_scheme_renormalization(
         store,
@@ -134,3 +188,48 @@ def test_hybrid_ratio_long_range_exponent_uses_physical_distance(tmp_path: Path)
     z4_fm = 4 * a_fm
     expected_exp = np.exp((m0_gev + delta_m_gev) * (z4_fm - zs_fm) / GEV_FM)
     assert np.allclose(store["output"].values[:, 4], expected_exp)
+
+
+@pytest.mark.parametrize("normalized", [True, False])
+def test_fit_self_renormalization_respects_normalized_at_z0_attr(normalized: bool) -> None:
+    gv = pytest.importorskip("gvar")
+    from lamet_agent.stages.renorm.functions import fit_self_renormalization_factor
+
+    z = [0.0, 1.0, 2.0]
+    samples = np.asarray([[2.0, 4.0, 8.0], [3.0, 6.0, 12.0]], dtype=complex)
+    attrs = {"normalized_at_z0": "true"} if normalized else {}
+    reference = EnsembleData(
+        EnsembleInfo("", "E", 0.1, 0.1, 1, 1, 0), "jackknife",
+        values=[samples[0], samples[1]], dims=("z",), coords={"z": z}, attrs=attrs, name="reference",
+    )
+    store = {"reference": reference}
+
+    captured: dict[str, list[float]] = {"z": []}
+    call_count = {"n": 0}
+
+    def fake_nonlinear_fit(*, data, prior, fcn, **kwargs):
+        z_x, _lnm = data
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            assert isinstance(z_x, dict)
+            captured["z"] = list(z_x["z"])
+        fit = gv.BufferDict()
+        for key in prior:
+            fit[key] = gv.gvar(0.0, 0.1)
+        fit.p = fit
+        return fit
+
+    pytest.importorskip("lsqfit")
+    import lsqfit as lsf
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(lsf, "nonlinear_fit", fake_nonlinear_fit)
+        fit_self_renormalization_factor(store, n_m0=1)
+    finally:
+        monkeypatch.undo()
+
+    if normalized:
+        assert captured["z"] == [1.0, 2.0]
+    else:
+        assert captured["z"] == [0.0, 1.0, 2.0]

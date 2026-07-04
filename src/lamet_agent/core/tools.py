@@ -371,6 +371,8 @@ def prepare_tool_args(
     if stage == "renormalization":
         if tool_name == "apply_ratio_scheme_renormalization":
             for key, value in effective_params.items():
+                if key == "normalization":
+                    continue
                 if key not in resolved or resolved[key] is None:
                     resolved[key] = value
             resolved.update(

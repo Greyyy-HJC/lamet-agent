@@ -147,6 +147,39 @@ def _artifact_stem(raw: str | None, *, artifacts_dir: str | Path | None, default
     return Path(resolve_plot_save_path(raw, artifacts_dir=out_dir, default_stem=default_stem))
 
 
+def normalize_bare_matrix_element_at_z0(data: EnsembleData) -> EnsembleData:
+    """Divide each resampled matrix element by its lattice ``z=0`` value."""
+    z_values = np.asarray(data.coords["z"], dtype=float)
+    z0_idx = _z_index(z_values, 0.0, label="normalization")
+    samples = np.asarray(data.values, dtype=complex)
+    if data.dims == ["z"]:
+        normalized = samples / samples[:, z0_idx : z0_idx + 1]
+    elif data.dims == ["a", "z"]:
+        normalized = samples / samples[:, :, z0_idx : z0_idx + 1]
+    else:
+        raise ValueError(f"unsupported dims for z=0 normalization: {data.dims}")
+    attrs = {**data.attrs, "normalized_at_z0": "true"}
+    if data.dims == ["z"]:
+        resample = data.resample if data.resample in {"bootstrap", "jackknife", "raw"} else "bootstrap"
+        return _matrix_to_ensemble(
+            z_values=z_values,
+            samples=normalized,
+            resample=resample,
+            attrs=attrs,
+            name=data.name or "bare_matrix_element",
+        )
+    values = [np.asarray(normalized[idx], dtype=complex) for idx in range(normalized.shape[0])]
+    return EnsembleData(
+        data.ensemble,
+        data.resample,
+        values,
+        dims=data.dims,
+        coords=data.coords,
+        attrs={key: str(value) for key, value in attrs.items() if value is not None},
+        name=data.name,
+    )
+
+
 def load_bare_matrix_element_grid(
     store: dict[str, Any],
     *,
@@ -242,14 +275,12 @@ def apply_ratio_scheme_renormalization(
     delta_m_gev = float(params.get("delta_m_gev", 0.0))
     a_fm = float(target_data.attrs["a_fm"])
     zs_lattice = zs_fm / a_fm
-    z0_idx = _z_index(z_target, 0.0, label="normalization")
     zs_idx = int(np.argmin(np.abs(np.abs(z_denom) - zs_lattice)))
-    norm = denom_values[:, z0_idx] / target_values[:, z0_idx]
     z_fm = np.abs(z_target) * a_fm
     mass_scale = (delta_m_gev + m0_gev) / GEV_FM
     exponent = np.exp(mass_scale * (z_fm - zs_fm))
-    short = norm[:, None] * target_values / denom_values
-    long = norm[:, None] * exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
+    short = target_values / denom_values
+    long = exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
     renorm_values = np.where((np.abs(z_target) * a_fm)[None, :] <= zs_fm, short, long)
 
     attrs = {
@@ -392,7 +423,6 @@ def fit_self_renormalization_factor(
     *,
     reference: str = "reference",
     out: str = "zR",
-    normalize_z0: bool = True,
     n_m0: int = 3,
     zms_kind: Literal["pdf", "da"] = "da",
     k: float = 3.320,
@@ -411,13 +441,8 @@ def fit_self_renormalization_factor(
         a_coords = [ref.ensemble.a_s]
 
     samples = ref.array.values
-    z0_idx = int(np.argmin(z_coords))
-    if normalize_z0:
-        if "a" in ref.dims:
-            norm = samples[:, :, z0_idx : z0_idx + 1]
-        else:
-            norm = samples[:, z0_idx : z0_idx + 1]
-        samples = samples / norm
+    z0_idx = _z_index(np.asarray(z_coords, dtype=float), 0.0, label="self-renormalization fit")
+    skip_z0 = ref.attrs.get("normalized_at_z0") == "true"
     ln_values = [np.log(np.abs(s)) for s in samples]
     ln_m = EnsembleData(
         ref.ensemble,
@@ -437,7 +462,7 @@ def fit_self_renormalization_factor(
     for ia, a_val in enumerate(a_coords):
         x = GEV_FM / a_val
         for iz, z_val in enumerate(z_coords):
-            if normalize_z0 and iz == z0_idx:
+            if skip_z0 and iz == z0_idx:
                 continue
             z_x["z"].append(z_val)
             z_x["x"].append(x)

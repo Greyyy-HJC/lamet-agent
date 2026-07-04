@@ -5,10 +5,10 @@
     "artifacts_directory": "runs/ds_pdf_complete/artifacts",
     "target_observable": "pdf",
     "parton": "quark",
-    "resample_mode": "bs",
-    "sample_error_mode": "median",
+    "resample_mode": "jk",
+    "sample_error_mode": "covariance",
     "bs_samples": 400,
-    "bin_size": 5,
+    "bin_size": 1,
     "random_seed": 1984,
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching"]
   },
@@ -196,6 +196,7 @@
     },
     "renormalization": {
       "defaults": {
+        "normalization": false,
         "scheme": "hybrid_ratio",
         "scheme_parameters": {
           "zs_fm": 0.1722,

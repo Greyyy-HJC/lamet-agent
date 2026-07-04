@@ -776,3 +776,80 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
     assert "rn_p4.nc" in report_text
     assert "rn_p4.pdf" in report_text
     assert ".png" not in report_text
+
+
+def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) -> None:
+    from lamet_agent.agent import AgentState, _run_job
+    from lamet_agent.core.llm import LlmSession
+    from lamet_agent.core.trace import AgentTrace
+    from lamet_agent.manifest import StageJob
+
+    samples = np.asarray([[2 + 0j, 4 + 0j], [3 + 0j, 6 + 0j]], dtype=complex)
+    target = EnsembleData(
+        ensemble=None,
+        resample="jackknife",
+        values=[samples[0], samples[1]],
+        dims=("z",),
+        coords={"z": [0.0, 1.0]},
+        attrs={"a_fm": "0.1"},
+        name="target",
+    )
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "demo",
+                "root_directory": ".",
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "random_seed": 1984,
+                "stages": ["renormalization"],
+            },
+            "inputs": {
+                "correlators": [],
+                "artifacts": [
+                    {"id": "ca", "stage": "correlator_analysis", "path": str(tmp_path / "ca.nc")},
+                ],
+                "kernels": [],
+            },
+            "stages": {
+                "renormalization": {
+                    "defaults": {
+                        "normalization": True,
+                        "scheme": "hybrid_ratio",
+                        "scheme_parameters": {"zs_fm": 0.3},
+                    },
+                    "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
+                },
+            },
+        }
+    )
+    manifest._root_directory = tmp_path.resolve()
+    manifest._artifacts_directory = (tmp_path / "artifacts").resolve()
+    job = manifest.stages["renormalization"].jobs[0]
+    store = {"target": target, "denominator": target}
+
+    class _FinishSession(LlmSession):
+        def begin_stage(self, prompt: str) -> None:
+            return None
+
+        def decide(self, *, last_observation=None):
+            return {"action": "finish", "reason": "done"}
+
+    _run_job(
+        "renormalization",
+        job,
+        manifest,
+        AgentState(run_id="demo"),
+        _FinishSession(),
+        input_issues=[],
+        max_tool_steps=1,
+        backend="external",
+        model_spec=None,
+        trace=AgentTrace(enabled=False),
+        store=store,
+        report_language="en",
+    )
+
+    assert store["target"].attrs.get("normalized_at_z0") == "true"
+    assert np.allclose(store["target"].values[:, 0], 1.0)

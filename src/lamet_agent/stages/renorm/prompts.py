@@ -2,7 +2,9 @@
 
 STAGE_PROMPT = """
 The current job store already contains EnsembleData under the roles 'target' and
-'denominator'. Do not load either input again.
+'denominator'. Do not load either input again. When manifest defaults set
+normalization=true, the runner has already divided each bare matrix element by
+its lattice z=0 value before this job starts.
 
 1. Call apply_ratio_scheme_renormalization without overriding target,
    denominator, scheme, scheme_parameters, or save_path. It applies the declared

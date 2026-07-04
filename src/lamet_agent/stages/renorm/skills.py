@@ -7,8 +7,10 @@ from lamet_agent.manifest import AnalysisManifest, StageJob
 
 STAGE_SKILL = """
 Hybrid-ratio renormalization consumes target and denominator EnsembleData from
-the current job store. The physical switch length zs_fm is converted with the
-target artifact's a_fm, and the nearest available denominator z is used.
+the current job store. When manifest defaults set normalization=true, the runner
+already divides each bare matrix element by its lattice z=0 value before any tool
+calls. The physical switch length zs_fm is converted with the target artifact's
+a_fm, and the nearest available denominator z is used.
 """.strip()
 
 TOOL_CATALOG = {
@@ -30,4 +32,7 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     scheme_parameters = params.get("scheme_parameters")
     if not isinstance(scheme_parameters, dict) or "zs_fm" not in scheme_parameters:
         return ["hybrid_ratio requires scheme_parameters.zs_fm."]
+    normalization = params.get("normalization", True)
+    if not isinstance(normalization, bool):
+        return ["renormalization.defaults.normalization must be a boolean when provided."]
     return []

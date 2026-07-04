@@ -14,19 +14,26 @@ Correlator-analysis physics:
   differencing neighboring tsep values.
 - The optional fitting_form selects the default Breit ratio or a NonBreit ratio
   with separate initial/final 2pt correlators matched by pz_gev/pz_out_gev.
-- Tune data windows on sample-average data. fit_bare_matrix_grid then keeps one
-  shared window and either selects one fit function on sample-average data or,
-  when model_average is enabled, averages nstate/prior_width fit functions
-  sample by sample.
+- Tune data windows on sample-average data at multiple representative z values
+  chosen by the agent. fit_bare_matrix_grid then keeps one shared window and
+  either selects one fit function on sample-average data or, when model_average
+  is enabled, averages nstate/prior_width fit functions sample by sample.
+- A shared data window must pass sample-average joint fits at every tune z the
+  agent selects; a good chi2/dof at only the smallest tune z is not sufficient.
 - Data-window candidates with different pt2/pt3 points should not be ranked by
   raw logGBF. Choose windows after the Q and n_data > n_params gates, favoring
-  good chi2/dof and more data points when chi2/dof values are comparable.
+  cross-z feasibility, good chi2/dof, and more data points when chi2/dof values
+  are comparable.
 - The bare matrix element is O00/(2*E0) and is invariant under 2pt rescaling.
 """.strip()
 
 TOOL_CATALOG = {
     "inspect_correlator_scale": "Inspect the selected job's 2pt magnitude.",
-    "tune_bare_matrix": "Scan every configured nstate, prior_width, fit strategy, and fit window.",
+    "tune_bare_matrix": (
+        "Scan every configured nstate, prior_width, fit strategy, and fit window "
+        "at LLM-supplied tune_z_values; return cross-z feasibility and "
+        "recommended_robust_index."
+    ),
     "fit_bare_matrix_grid": "Apply one shared data window, optionally model-average fit functions per sample, and write store['output']; the runner writes one stage report with fit_logs links.",
 }
 
