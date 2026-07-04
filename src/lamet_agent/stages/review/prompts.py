@@ -1,10 +1,9 @@
-"""Prompt text for future review-stage integration."""
+"""Prompt text for the review stage."""
 
 STAGE_INSTRUCTION = """
-Summarize existing stage reports into one scientific review. Use only report
-content, explicit formula templates, and NetCDF numerical summaries. Do not
-invent missing numerical values. Call write_review once; it writes the
-no-LLM-summary review.md or review_CN.md under the artifact directory. The
-runner will then pass that completed review to the current backend/model and
-append the final LLM Summary section.
+Generate one LLM-written scientific review from the completed stage reports,
+NetCDF summaries, and SVG artifact paths. Call write_review once; it collects
+the evidence package, asks the configured backend/model to write the full
+review.md or review_CN.md, and stores that file as store['output']. Do not call
+stage-specific report tools again.
 """.strip()

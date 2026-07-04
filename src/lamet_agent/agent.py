@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from .core.llm import LlmSession, format_api_model_spec, make_llm_session, request_llm_text
+from .core.llm import LlmSession, format_api_model_spec, make_llm_session
 from .core.data import EnsembleData
 from .core.prompting import build_stage_static_prompt
 from .core.tools import filter_tool_kwargs, prepare_tool_args, resolve_stage_tools, validate_stage_inputs
@@ -87,6 +87,10 @@ def _run_job(
     input_issues: list[str],
     max_tool_steps: int,
     backend: str,
+    provider: str | None,
+    model_name: str | None,
+    api_key: str | None,
+    base_url: str | None,
     model_spec: str | None,
     trace: AgentTrace,
     store: dict[str, Any],
@@ -174,6 +178,11 @@ def _run_job(
             )
             if stage == "review" and tool_name == "write_review":
                 args["report_language"] = report_language
+                args["backend"] = backend
+                args["provider"] = provider
+                args["model_name"] = model_name
+                args["api_key"] = api_key
+                args["base_url"] = base_url
             call_args, dropped_args = filter_tool_kwargs(tool, args)
             try:
                 result = tool(store, **call_args)
@@ -222,66 +231,6 @@ def _normalize_report_language(report_language: str) -> str:
     if language not in {"en", "ch"}:
         raise ValueError("report_language must be 'en' or 'ch'")
     return language
-
-
-def _append_review_llm_summary(
-    review_path: str | Path,
-    *,
-    backend: str,
-    provider: str | None,
-    model_name: str | None,
-    api_key: str | None,
-    base_url: str | None,
-    report_language: str,
-) -> None:
-    if backend not in {"api", "codex"}:
-        from lamet_agent.stages.review.reporting import append_llm_summary
-
-        note = (
-            "当前 backend 不支持自由文本 LLM 总结；请使用 `--backend api --model provider/model` 或 `--backend codex` 重新运行 review stage。"
-            if report_language == "ch"
-            else "The current backend does not support free-form LLM summaries; rerun the review stage with `--backend api --model provider/model` or `--backend codex`."
-        )
-        append_llm_summary(review_path, note, report_language=report_language)
-        return
-    path = Path(review_path)
-    review_text = path.read_text(encoding="utf-8")
-    llm_input = "\n".join(line for line in review_text.splitlines() if not line.lstrip().startswith("!["))
-    if report_language == "ch":
-        system = "你是一个 lattice QCD 和 LaMET 专家。只根据用户提供的 review 内容写科学、克制、可追溯的中文总结，不要编造未给出的数值。"
-        user = (
-            "请阅读下面完整 review.md 文本，并写一个可以追加到文末的“LLM总结”。"
-            "输出必须按 review 中出现的每个 stage 各写一段，每段以 stage 名称开头；不要另写总览段。"
-            "每段都要尽量引用并解释 review 中已给出的阶段报告证据、图注/说明文字和 NetCDF 数值摘要，"
-            "包括维度、坐标范围、均值范围、max|mean| 或归一化诊断。"
-            "你不能查看 SVG 图像本身；不得分析 SVG 像素、SVG 路径几何或从图片文件名臆测数值。"
-            "若要解释图像，只能回到 review 中该图的文字说明和对应 NetCDF 数值摘要。"
-            "不要编造未报告的数值；指出主要稳定性检查和潜在风险；不要重复公式全文；不要使用一级标题，也不要写“## LLM总结”标题。\n\n"
-            f"{llm_input}"
-        )
-    else:
-        system = "You are a lattice-QCD and LaMET expert. Summarize only the supplied review content in a scientific, traceable style. Do not invent unreported numbers."
-        user = (
-            "Read the complete review.md text below and write the final LLM Summary section body. "
-            "Write exactly one paragraph for each stage, in the order used by the review, and start each paragraph with the stage name; do not add a separate overview paragraph. "
-            "In each paragraph, cite and interpret the stage-report evidence, figure notes/captions, and NetCDF numerical summaries already present in the review, "
-            "including dimensions, coordinate ranges, mean ranges, max|mean|, or normalization diagnostics where available. "
-            "You cannot inspect the SVG images themselves; do not reason from SVG pixels, SVG path geometry, or infer numerical values from image filenames. "
-            "When discussing a figure, use only its textual note and the corresponding NetCDF numerical summary. "
-            "Do not invent unreported numbers, state the main stability checks and potential risks, do not repeat full formulae, and do not include the '## LLM Summary' heading.\n\n"
-            f"{llm_input}"
-        )
-    summary = request_llm_text(
-        backend=backend,
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        api_key=api_key,
-        provider=provider,
-        model_name=model_name,
-        base_url=base_url,
-    )
-    from lamet_agent.stages.review.reporting import append_llm_summary
-
-    append_llm_summary(path, summary, report_language=report_language)
 
 
 def run_agent(
@@ -366,6 +315,10 @@ def run_agent(
                 input_issues=issues,
                 max_tool_steps=max_tool_steps,
                 backend=backend,
+                provider=provider,
+                model_name=model_name,
+                api_key=api_key,
+                base_url=base_url,
                 model_spec=model_spec,
                 trace=trace,
                 store=store,
@@ -377,15 +330,6 @@ def run_agent(
             if "output" in store:
                 outputs[job.id] = store["output"]
             if stage == "review" and "output" in store:
-                _append_review_llm_summary(
-                    store["output"],
-                    backend=backend,
-                    provider=provider,
-                    model_name=model_name,
-                    api_key=api_key,
-                    base_url=base_url,
-                    report_language=report_language,
-                )
                 stage_reports[stage] = {"report": str(store["output"])}
             if stage == "correlator_analysis" and "output" in store:
                 fit_result = _last_tool_result(observations, "fit_bare_matrix_grid")

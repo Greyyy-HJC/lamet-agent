@@ -180,6 +180,114 @@ def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
     return lines
 
 
+def _fit_form_text(*, language: str) -> str:
+    if language == "zh":
+        return r"""
+lamet-agent 在该阶段以同一批重采样样本构造 2pt/3pt 数据，并在选定时间窗口内提取裸矩阵元。2pt 输入为给定动量与 interpolator 的 $C_2(t)$；3pt 输入为各 $t_{\rm sep}$、插入时间 $\tau$ 和 Wilson 线长度 $z$ 的 $C_3(t_{\rm sep},\tau,z)$。对每个 job，调参步骤先在样本平均数据上确定窗口、态数、`fit_scope` 与 `fit_strategy`；随后固定这些选择，对所有 $z$ 和所有重采样样本执行拟合。
+
+2pt 谱分解写为
+
+$$
+C_2^\alpha(t)=\sum_{n=0}^{N_{\rm st}-1}
+\frac{z_{n,\alpha}^2}{2E_{n,\alpha}}
+\left(e^{-E_{n,\alpha}t}+e^{-E_{n,\alpha}(L_t-t)}\right),
+\qquad
+E_{n,\alpha}=E_{0,\alpha}+\sum_{k=1}^{n}e^{\log\Delta E_{k,\alpha}} .
+$$
+
+这里 $\alpha$ 标记初态或末态动量通道；Breit/forward 情形只有一套 $\{E_n,z_n\}$，NonBreit 情形有初态 $i$ 与末态 $f$ 两套 $\{E_{n,i},z_{n,i}\}$、$\{E_{n,f},z_{n,f}\}$。2pt 拟合参数包括 $E_0$、各激发能隙 $\log\Delta E_k$ 和重叠因子 $z_n$；NonBreit 中这些参数分别属于 initial/final 两个 2pt。
+
+Breit ratio 的 3pt 模型为
+
+$$
+R_{\rm B}(t,\tau,z)=\frac{C_3(t,\tau,z)}{C_2(t)}
+=\frac{1}{C_2(t)}
+\sum_{m,n}\frac{O^\Gamma_{mn}(z)z_mz_n}{(2E_m)(2E_n)}
+e^{-E_m(t-\tau)}e^{-E_n\tau},
+\qquad h_{\rm B}(z)=\frac{O_{00}(z)}{2E_0}.
+$$
+
+该形式输入同一动量下的 2pt 与 3pt ratio，拟合参数除 2pt 谱参数外，还包括每个 $z$ 的矩阵元 $O_{mn}(z)$。报告和 NetCDF 中输出的 Breit 裸矩阵元是基态归一化组合 $h_{\rm B}(z)$。
+
+NonBreit ratio 使用初末态不同动量的对称化 ratio：
+
+$$
+R_{\rm NB}(t,\tau,z)=
+\frac{C_3^{f\leftarrow i}(t,\tau,z)}{C_2^f(t)}
+\left[
+\frac{C_2^i(t-\tau)C_2^f(\tau)C_2^f(t)}
+{C_2^f(t-\tau)C_2^i(\tau)C_2^i(t)}
+\right]^{1/2},
+\qquad
+h_{\rm NB}(z)={\rm sign}(z_{0,i}z_{0,f})\frac{O_{00}(z)}{E_{0,i}+E_{0,f}} .
+$$
+
+该形式输入 initial 2pt、final 2pt 以及 non-forward 3pt；拟合参数包括两套 2pt 谱参数和每个 $z$ 的 transition matrix elements $O_{mn}(z)$。报告中 NonBreit 总览图的裸矩阵元对应 $O_{00}/(E_{0,i}+E_{0,f})$，并带有基态重叠符号约定。
+
+若 `fit_scope` 包含 `FH` 或 `ratio+FH`，还会从 ratio 构造 summed-ratio/Feynman-Hellmann 约束：
+
+$$
+S(t)=\sum_{\tau=\tau_c}^{t-\tau_c}R(t,\tau),
+\qquad
+R_{\rm FH}(t)=\frac{S(t+\Delta t)-S(t)}{\Delta t}.
+$$
+
+`fit_strategy="joint"` 表示 2pt 与 3pt/FH 在同一个非线性拟合中共同约束，相关参数同时浮动。`fit_strategy="chained"` 表示先拟合 2pt 并把得到的能量与重叠因子作为后续 3pt/FH 拟合的锚定先验；Breit chained 主要锚定单套 $E_0,z_0$，NonBreit chained 锚定 initial/final 两套基态和激发态相关参数。`fit_scope="ratio"` 只用 ratio 数据，`fit_scope="FH"` 只用 summed-ratio/FH 数据，`fit_scope="ratio+FH"` 同时使用两类约束。
+""".strip()
+    return r"""
+lamet-agent builds 2pt/3pt data from the same resampled ensemble and extracts bare matrix elements in the selected time windows. The 2pt input is $C_2(t)$ for the chosen momentum and interpolator; the 3pt input is $C_3(t_{\rm sep},\tau,z)$ for each source-sink separation, insertion time, and Wilson-line length. For each job, tuning first fixes the window, state count, `fit_scope`, and `fit_strategy` on sample-average data; those choices are then held fixed for all $z$ and all resampled samples.
+
+The 2pt spectral form is
+
+$$
+C_2^\alpha(t)=\sum_{n=0}^{N_{\rm st}-1}
+\frac{z_{n,\alpha}^2}{2E_{n,\alpha}}
+\left(e^{-E_{n,\alpha}t}+e^{-E_{n,\alpha}(L_t-t)}\right),
+\qquad
+E_{n,\alpha}=E_{0,\alpha}+\sum_{k=1}^{n}e^{\log\Delta E_{k,\alpha}} .
+$$
+
+Here $\alpha$ labels the initial or final momentum channel. Breit/forward fits use one set of $\{E_n,z_n\}$, while NonBreit fits use separate initial and final sets. The 2pt parameters are $E_0$, the gaps $\log\Delta E_k$, and overlaps $z_n$.
+
+For Breit kinematics the ratio model is
+
+$$
+R_{\rm B}(t,\tau,z)=\frac{C_3(t,\tau,z)}{C_2(t)}
+=\frac{1}{C_2(t)}
+\sum_{m,n}\frac{O^\Gamma_{mn}(z)z_mz_n}{(2E_m)(2E_n)}
+e^{-E_m(t-\tau)}e^{-E_n\tau},
+\qquad h_{\rm B}(z)=\frac{O_{00}(z)}{2E_0}.
+$$
+
+The inputs are the same-momentum 2pt and 3pt ratio. In addition to the 2pt spectral parameters, the fit determines the matrix elements $O_{mn}(z)$ for each Wilson-line length. The reported Breit bare matrix element is the ground-state normalized combination $h_{\rm B}(z)$.
+
+For NonBreit kinematics the symmetrized non-forward ratio is
+
+$$
+R_{\rm NB}(t,\tau,z)=
+\frac{C_3^{f\leftarrow i}(t,\tau,z)}{C_2^f(t)}
+\left[
+\frac{C_2^i(t-\tau)C_2^f(\tau)C_2^f(t)}
+{C_2^f(t-\tau)C_2^i(\tau)C_2^i(t)}
+\right]^{1/2},
+\qquad
+h_{\rm NB}(z)={\rm sign}(z_{0,i}z_{0,f})\frac{O_{00}(z)}{E_{0,i}+E_{0,f}} .
+$$
+
+The inputs are initial 2pt, final 2pt, and non-forward 3pt data. The fit parameters include both 2pt spectra and the transition matrix elements $O_{mn}(z)$. The reported NonBreit summary uses $O_{00}/(E_{0,i}+E_{0,f})$ with the ground-state overlap sign convention.
+
+When `fit_scope` contains `FH` or `ratio+FH`, a summed-ratio/Feynman-Hellmann constraint is also formed:
+
+$$
+S(t)=\sum_{\tau=\tau_c}^{t-\tau_c}R(t,\tau),
+\qquad
+R_{\rm FH}(t)=\frac{S(t+\Delta t)-S(t)}{\Delta t}.
+$$
+
+`fit_strategy="joint"` fits 2pt and 3pt/FH constraints in one nonlinear fit with shared floating parameters. `fit_strategy="chained"` fits the 2pt data first and uses the resulting energies and overlaps as anchored priors for the following 3pt/FH fit. `fit_scope="ratio"` uses only ratio data, `fit_scope="FH"` uses only summed-ratio/FH data, and `fit_scope="ratio+FH"` uses both.
+""".strip()
+
+
 def _diagnostic_plots(artifacts: dict[str, Any], *, language: str) -> list[str]:
     plots = list(artifacts.get("sample0_fit_plots", [])) + list(artifacts.get("sample0_pt2_plots", []))
     plots = [plot for plot in plots if plot and str(plot).endswith(".svg")]
@@ -212,6 +320,9 @@ def build_correlator_stage_report_markdown(
         title,
         "",
         intro,
+        "",
+        "## Fitting Form" if language == "en" else "## 拟合形式",
+        _fit_form_text(language=language),
         "",
         "## Job Summary" if language == "en" else "## Job 汇总",
         "| job | fit scope | strategy | output | plot |" if language == "en" else "| job | 拟合对象 | 策略 | 输出 | 图像 |",

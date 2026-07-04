@@ -101,19 +101,47 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
 
 
 def _formula_text(*, language: str) -> str:
-    formula = (
-        r"h^R(z)=N\,h(z)/h_{\rm den}(z)\quad (|z|_{\rm fm}\le z_s),\qquad "
-        r"h^R(z)=N\,e^{(\delta m+m_0)(|z|_{\rm fm}-z_s)}h(z)/h_{\rm den}(z_s)\quad (|z|_{\rm fm}>z_s)."
-    )
     if language == "zh":
-        return (
-            "Hybrid-ratio 方案在短距离使用逐点 ratio，在长距离固定 denominator 的 $z_s$ 点并乘以指数修正：\n\n"
-            f"$$\n{formula}\n$$"
-        )
-    return (
-        "The hybrid-ratio scheme uses a pointwise ratio at short distances and switches to the denominator at $z_s$ with an exponential correction at long distances:\n\n"
-        f"$$\n{formula}\n$$"
-    )
+        return r"""
+Hybrid-ratio 方案对每个重采样样本 $s$ 单独作用在目标矩阵元和 denominator 矩阵元上。逐样本归一化因子为
+
+$$
+N_s=\frac{h^{\rm den}_s(0)}{h^{\rm tar}_s(0)} .
+$$
+
+重整化矩阵元定义为
+
+$$
+h^R_s(z)=
+\begin{cases}
+N_s h^{\rm tar}_s(z)/h^{\rm den}_s(z), & |z|_{\rm fm}\le z_s,\\
+N_s e^{(\delta m+m_0)(|z|_{\rm fm}-z_s)/(\hbar c)}
+h^{\rm tar}_s(z)/h^{\rm den}_s(z_s^{\rm grid}), & |z|_{\rm fm}>z_s .
+\end{cases}
+$$
+
+这里 $h^{\rm tar}_s(z)$ 是待重整化的裸矩阵元，$h^{\rm den}_s(z)$ 是 reference/denominator 裸矩阵元，$z_s$ 是 hybrid-ratio 的切换距离，$z_s^{\rm grid}$ 是实际数据网格上最接近 $z_s$ 的 denominator 点。短距离区域使用逐点 ratio；长距离区域固定 denominator 到 $z_s^{\rm grid}$，并用 $\delta m+m_0$ 的指数因子延拓 Wilson 线线性发散修正。当 `normalization=true` 时，$N_s$ 不在 renormalization tool 内再次显式相乘，而是在进入 renormalization job 前通过 target/denominator 的 $z=0$ 逐样本归一化等价实现；当 `normalization=false` 时不施加这个 $N_s$ 因子。该步骤不重新拟合矩阵元，而是对所有样本施加同一个重整化 map。
+""".strip()
+    return r"""
+The hybrid-ratio scheme acts sample by sample on the target and denominator matrix elements. The normalization factor for resampled sample $s$ is
+
+$$
+N_s=\frac{h^{\rm den}_s(0)}{h^{\rm tar}_s(0)} .
+$$
+
+The renormalized matrix element is
+
+$$
+h^R_s(z)=
+\begin{cases}
+N_s h^{\rm tar}_s(z)/h^{\rm den}_s(z), & |z|_{\rm fm}\le z_s,\\
+N_s e^{(\delta m+m_0)(|z|_{\rm fm}-z_s)/(\hbar c)}
+h^{\rm tar}_s(z)/h^{\rm den}_s(z_s^{\rm grid}), & |z|_{\rm fm}>z_s .
+\end{cases}
+$$
+
+Here $h^{\rm tar}_s(z)$ is the bare target matrix element, $h^{\rm den}_s(z)$ is the reference denominator matrix element, $z_s$ is the hybrid-ratio switching distance, and $z_s^{\rm grid}$ is the denominator point on the available coordinate grid nearest to $z_s$. The short-distance region uses a pointwise ratio; the long-distance region freezes the denominator at $z_s^{\rm grid}$ and applies the exponential correction governed by $\delta m+m_0$. When `normalization=true`, $N_s$ is not multiplied again inside the renormalization tool; it is implemented equivalently by the per-sample $z=0$ normalization of target and denominator before the renormalization job starts. When `normalization=false`, this $N_s$ factor is not applied. This stage does not refit matrix elements; it applies one renormalization map to all resampled samples.
+""".strip()
 
 
 def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:

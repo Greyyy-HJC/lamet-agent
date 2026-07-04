@@ -6,13 +6,14 @@ from lamet_agent.manifest import AnalysisManifest, StageJob
 
 
 STAGE_SKILL = """
-The review stage is a report-level synthesis pass. It reads existing stage
-reports, preserves their provenance, includes the formulas used by the pipeline,
-and marks missing stages explicitly instead of inferring unreported results.
+The review stage is an LLM-written synthesis pass. It asks the configured
+backend/model to write the full review from stage reports, NetCDF summaries, and
+SVG artifact paths. SVG paths are provenance only, and figure statements must be
+grounded in report text and NetCDF summaries.
 """.strip()
 
 TOOL_CATALOG = {
-    "write_review": "Read stage reports from the manifest artifact directory and write review.md or review_CN.md.",
+    "write_review": "Collect stage reports, NetCDF summaries, and SVG paths, then ask the configured LLM to write review.md or review_CN.md.",
 }
 
 
