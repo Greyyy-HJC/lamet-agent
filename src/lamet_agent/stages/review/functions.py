@@ -110,6 +110,7 @@ def write_review_from_manifest(
         system = "You are a lattice-QCD and LaMET expert. Write a detailed scientific review using only the supplied stage reports, NetCDF summaries, SVG file lists, and manifest. Do not invent unreported numbers; when settings or outputs do not match a realistic LaMET analysis scenario, give executable manifest-level recommendations."
         user = (
             "Generate the complete `review.md` body directly. Follow the order in Stage materials; these stages come from stage subdirectories under `root_directory/artifacts_directory/<stage>` plus stages declared in the manifest. For example, correlator diagnostics are also collected from the `correlator_analysis/fit_logs` subdirectory. "
+            "Return normal Markdown only; do not wrap the whole answer in a fenced code block. "
             "Write one level-2 section for each stage with available material, and include `Summary`, `Key figure`, and `Diagnostics and manifest changes` subsections. "
             "`Summary` must describe the stage inputs, outputs, NetCDF numerical ranges, physical meaning, and relationship to upstream and downstream stages in detail. "
             "`Key figure` must choose one SVG from that stage's `svg` list and embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths, do not use only the basename, and do not use `absolute_path` as the Markdown link. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
@@ -130,7 +131,12 @@ def write_review_from_manifest(
         model_name=model_name,
         base_url=base_url,
     )
-    target.write_text(review.strip() + "\n", encoding="utf-8")
+    review = review.strip()
+    if review.startswith("```"):
+        lines = review.splitlines()
+        if lines and lines[0].strip().startswith("```") and lines[-1].strip() == "```":
+            review = "\n".join(lines[1:-1]).strip()
+    target.write_text(review + "\n", encoding="utf-8")
     return {"review": str(target), "artifact": str(target), "n_stages": len(materials)}
 
 
