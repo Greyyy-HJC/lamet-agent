@@ -47,7 +47,14 @@ def write_review_from_manifest(
         report_path = stage_dir / (zh_name if language == "zh" else en_name)
         if not report_path.exists() and language == "zh":
             report_path = stage_dir / en_name
-        item: dict[str, Any] = {"stage": stage, "report": str(report_path), "report_text": "", "netcdf": [], "svg": []}
+        item: dict[str, Any] = {
+            "stage": stage,
+            "artifact_stage_dir": str(stage_dir),
+            "report": str(report_path),
+            "report_text": "",
+            "netcdf": [],
+            "svg": [],
+        }
         if report_path.exists():
             item["report_text"] = report_path.read_text(encoding="utf-8")
         for path in sorted(stage_dir.glob("*.nc")):
@@ -74,15 +81,22 @@ def write_review_from_manifest(
                 if np.iscomplexobj(mean):
                     summary["imag_mean_range"] = [float(np.nanmin(np.imag(mean))), float(np.nanmax(np.imag(mean)))]
             item["netcdf"].append(summary)
-        item["svg"] = [os.path.relpath(path, review_dir) for path in sorted(stage_dir.rglob("*.svg"))[:80]]
+        item["svg"] = [
+            {
+                "markdown_path": os.path.relpath(path, review_dir),
+                "stage_subpath": os.path.relpath(path, stage_dir),
+                "absolute_path": str(path),
+            }
+            for path in sorted(stage_dir.rglob("*.svg"))[:80]
+        ]
         materials.append(item)
     if language == "zh":
         system = "你是 lattice QCD 和 LaMET 专家。只根据用户提供的 stage reports、NetCDF 摘要、SVG 文件清单和 manifest 写详细科学综述，不编造未给出的数值；当设置或输出不符合真实 LaMET 场景时，必须给出可执行的 manifest 修改建议。"
         user = (
-            "请直接生成完整的 `review_CN.md` 正文。请按 Stage materials 给出的顺序写；这些 stage 来自 artifacts_directory 中实际存在的 stage 子目录以及 manifest 中声明的 stage。"
+            "请直接生成完整的 `review_CN.md` 正文。请按 Stage materials 给出的顺序写；这些 stage 来自 `root_directory/artifacts_directory/<stage>` 中实际存在的 stage 子目录以及 manifest 中声明的 stage；例如 correlator_analysis 的诊断图也会从 `correlator_analysis/fit_logs` 子目录收集。"
             "每个有材料的 stage 写一个二级标题章节，并包含 `Summary`、`Key figure`、`Diagnostics and manifest changes` 三个小节。"
             "`Summary` 要详细总结该 stage 的输入、输出、NetCDF 数值范围、物理含义、与上下游 stage 的关系。"
-            "`Key figure` 中请你从该 stage 的 `svg` 列表里选择一张最能代表该 stage 质量或物理结果的 SVG，用 Markdown 图片语法嵌入，并在图下用一段详细文字解释为什么选这张图、它应如何辅助判断该 stage；如果没有 SVG，明确说明未生成可嵌入 SVG。"
+            "`Key figure` 中请你从该 stage 的 `svg` 列表里选择一张最能代表该 stage 质量或物理结果的 SVG，用 Markdown 图片语法嵌入；必须原样复制该图条目里的 `markdown_path`，写成 `![说明](markdown_path)`，不要自己拼路径、不要只写文件名、不要使用 `absolute_path` 作为 Markdown 链接。图下用一段详细文字解释为什么选这张图、它应如何辅助判断该 stage；如果没有 SVG，明确说明未生成可嵌入 SVG。"
             "`Diagnostics and manifest changes` 要判断该 stage 是否自洽，尤其检查是否符合真实 LaMET 分析场景；如果不理想，给出具体、可执行的 `.json` manifest 修改建议。"
             "修改建议必须引用真实 manifest 路径和值，例如 `stages.<stage>.defaults.<key>`、`stages.<stage>.jobs[].params.<key>`、`inputs.kernels[].kernel_parameters.<key>`，并说明建议值或取值范围以及理由。"
             "优先讨论这些可调参数：correlator 的 `pt2_windows`、`pt3_tau_cuts`、`nstate`、`fit_scope`、`fit_strategy`、`prior_width`、`svdcut`；renormalization 的 `scheme_parameters.zs_fm`、`m0_gev`、`delta_m_gev`；fourier 的 `scheme_scan.zmin_values`、`zmax_values`、`z_ext_max`、`smooth`、`order`、`posterior_prior_error_scale`、`y_grid`；matching 的 `kernel_id`、`mu`、`pz_gev`、`zs_fm`。"
@@ -95,10 +109,10 @@ def write_review_from_manifest(
     else:
         system = "You are a lattice-QCD and LaMET expert. Write a detailed scientific review using only the supplied stage reports, NetCDF summaries, SVG file lists, and manifest. Do not invent unreported numbers; when settings or outputs do not match a realistic LaMET analysis scenario, give executable manifest-level recommendations."
         user = (
-            "Generate the complete `review.md` body directly. Follow the order in Stage materials; these stages come from stage subdirectories that exist under artifacts_directory plus stages declared in the manifest. "
+            "Generate the complete `review.md` body directly. Follow the order in Stage materials; these stages come from stage subdirectories under `root_directory/artifacts_directory/<stage>` plus stages declared in the manifest. For example, correlator diagnostics are also collected from the `correlator_analysis/fit_logs` subdirectory. "
             "Write one level-2 section for each stage with available material, and include `Summary`, `Key figure`, and `Diagnostics and manifest changes` subsections. "
             "`Summary` must describe the stage inputs, outputs, NetCDF numerical ranges, physical meaning, and relationship to upstream and downstream stages in detail. "
-            "`Key figure` must choose one SVG from that stage's `svg` list, embed it with Markdown image syntax, and give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
+            "`Key figure` must choose one SVG from that stage's `svg` list and embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths, do not use only the basename, and do not use `absolute_path` as the Markdown link. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
             "`Diagnostics and manifest changes` must judge whether the stage is self-consistent and whether it matches a realistic LaMET analysis scenario; if it is not ideal, give concrete, executable `.json` manifest changes. "
             "Recommendations must cite real manifest paths and values such as `stages.<stage>.defaults.<key>`, `stages.<stage>.jobs[].params.<key>`, or `inputs.kernels[].kernel_parameters.<key>`, and state suggested values or ranges with reasons. "
             "Prioritize these tunable parameters: for correlator, `pt2_windows`, `pt3_tau_cuts`, `nstate`, `fit_scope`, `fit_strategy`, `prior_width`, `svdcut`; for renormalization, `scheme_parameters.zs_fm`, `m0_gev`, `delta_m_gev`; for Fourier, `scheme_scan.zmin_values`, `zmax_values`, `z_ext_max`, `smooth`, `order`, `posterior_prior_error_scale`, `y_grid`; for matching, `kernel_id`, `mu`, `pz_gev`, `zs_fm`. "
