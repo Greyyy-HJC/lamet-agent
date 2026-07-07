@@ -364,16 +364,11 @@ def _with_method_tail_parameters(
     parameters: list[_TailParameter],
     *,
     method: str,
-    lambda_lower: float,
+    Lambda0: float,
 ) -> list[_TailParameter]:
     parameters = [
         *parameters,
-        _TailParameter(
-            "Lambda",
-            max(0.5, lambda_lower + 0.05),
-            lambda_lower,
-            max(3.0, lambda_lower + 1.0),
-        ),
+        _TailParameter("m", max(0.5 - float(Lambda0), 0.05), 0.0),
     ]
     if method.upper() == "CG":
         parameters.append(_TailParameter("n", 0.5, -2.0, 4.0))
@@ -475,7 +470,6 @@ def _param_template(
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     method = method.upper()
     order = order.upper()
-    lambda_lower = float(Lambda0)
     if method not in {"GI", "CG"}:
         raise ValueError("method must be 'GI' or 'CG'")
     if order not in {"LA", "NLA"}:
@@ -485,7 +479,7 @@ def _param_template(
     parameters = _with_method_tail_parameters(
         _observable_parameters(order, observable, sector=sector, hadron=hadron),
         method=method,
-        lambda_lower=lambda_lower,
+        Lambda0=float(Lambda0),
     )
     fit_labels: set[str] = set()
     selected = []
@@ -528,7 +522,7 @@ def _param_labels(
     parameters = _with_method_tail_parameters(
         _observable_parameters(order, observable, sector=sector, hadron=hadron),
         method=method,
-        lambda_lower=0.1,
+        Lambda0=0.1,
     )
     if not fit:
         return [item.label for item in parameters]
@@ -539,8 +533,8 @@ def _param_labels(
     return labels
 
 
-def _decay_tail(z: np.ndarray, params: Sequence[Any], *, lambda_index: int, method: str) -> Any:
-    tail = gv.exp(-params[lambda_index] * z)
+def _decay_tail(z: np.ndarray, params: Sequence[Any], *, lambda_index: int, method: str, Lambda0: float) -> Any:
+    tail = gv.exp(-(params[lambda_index] + float(Lambda0)) * z)
     if method.upper() == "CG":
         tail = tail * gv.exp(-params[lambda_index + 1] * np.log(z))
     return tail
@@ -555,6 +549,7 @@ def _quark_like_asymptotic_values(
     observable: str,
     phase_scale: float,
     phase_prime_scale: float | None,
+    Lambda0: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Quark-like LA/NLA forms: oscillatory terms times a GI or CG decay tail."""
     phase_scales = _quark_like_phase_scales(
@@ -581,7 +576,7 @@ def _quark_like_asymptotic_values(
             im = im + params[cursor] * gv.sin(arg) / z
             cursor += 2
 
-    tail = _decay_tail(z, params, lambda_index=cursor, method=method)
+    tail = _decay_tail(z, params, lambda_index=cursor, method=method, Lambda0=Lambda0)
     return re * tail, im * tail
 
 
@@ -591,6 +586,7 @@ def _nucleon_gluon_asymptotic_values(
     *,
     method: str,
     order: str,
+    Lambda0: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Appendix-F nucleon gluon form: (A z [+ A']) exp(-Lambda z) with zero Im."""
     # LA:  A z exp(-Lambda z)
@@ -600,7 +596,7 @@ def _nucleon_gluon_asymptotic_values(
     if order.upper() == "NLA":
         re = re + params[1]
         lambda_index = 2
-    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method)
+    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method, Lambda0=Lambda0)
     im = np.zeros_like(z, dtype=object)
     return re * tail, im * tail
 
@@ -612,6 +608,7 @@ def _pion_gluon_asymptotic_values(
     method: str,
     order: str,
     phase_scale: float,
+    Lambda0: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Appendix-F pion gluon form: A2 z plus optional constant and cosine term."""
     # LA:  A2 z exp(-Lambda z)
@@ -621,7 +618,7 @@ def _pion_gluon_asymptotic_values(
     if order.upper() == "NLA":
         re = re + params[1] + 2.0 * params[2] * gv.cos(params[3] - phase_scale * z)
         lambda_index = 4
-    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method)
+    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method, Lambda0=Lambda0)
     im = np.zeros_like(z, dtype=object)
     return re * tail, im * tail
 
@@ -635,6 +632,7 @@ def _asymptotic_values(
     observable: str,
     phase_scale: float,
     phase_prime_scale: float | None = None,
+    Lambda0: float = 0.1,
 ) -> tuple[np.ndarray, np.ndarray]:
     z = np.asarray(z, dtype=float)
     if np.any(z <= 0):
@@ -647,6 +645,7 @@ def _asymptotic_values(
             params,
             method=method,
             order=order,
+            Lambda0=Lambda0,
         )
 
     if observable == "pion_gluon_quasi_pdf":
@@ -656,6 +655,7 @@ def _asymptotic_values(
             method=method,
             order=order,
             phase_scale=phase_scale,
+            Lambda0=Lambda0,
         )
 
     return _quark_like_asymptotic_values(
@@ -666,6 +666,7 @@ def _asymptotic_values(
         observable=observable,
         phase_scale=phase_scale,
         phase_prime_scale=phase_prime_scale,
+        Lambda0=Lambda0,
     )
 
 
@@ -736,14 +737,14 @@ def _fit_one_sample(
     prior: gv.BufferDict | None = None,
     Lambda0: float = 0.1,
 ) -> tuple[np.ndarray, gv.BufferDict | None, gv.BufferDict | None, bool, float, int, float, float]:
-    default_p0, _full_bounds = _param_template(method, order, observable, Lambda0=Lambda0, sector=sector, hadron=hadron)
+    default_p0, _ = _param_template(method, order, observable, Lambda0=Lambda0, sector=sector, hadron=hadron)
     fit_p0, bounds = _param_template(method, order, observable, Lambda0=Lambda0, sector=sector, hadron=hadron, fit=True)
     start = default_p0 if p0 is None else np.asarray(p0, dtype=float)
     fit_labels = _param_labels(method, order, observable, sector=sector, hadron=hadron, fit=True)
     full_items = _with_method_tail_parameters(
         _observable_parameters(order.upper(), _canonical_observable(observable), sector=sector, hadron=hadron),
         method=method.upper(),
-        lambda_lower=float(Lambda0),
+        Lambda0=float(Lambda0),
     )
     full_labels = [item.label for item in full_items]
     if p0 is not None and len(start) != len(fit_p0):
@@ -769,6 +770,7 @@ def _fit_one_sample(
             observable=observable,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
+            Lambda0=Lambda0,
         )
         return _select_fit_prediction(pred_re, pred_im, part)
 
@@ -1145,6 +1147,7 @@ def _run_one_scheme(
             observable=observable,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
+            Lambda0=Lambda0,
         )
 
         fit_re, fit_im = _zero_inactive_channel(fit_re, fit_im, part)

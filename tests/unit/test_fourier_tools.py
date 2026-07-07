@@ -115,7 +115,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert fit_data.resample == "bootstrap"
     assert fit_data.values.shape == (3, 1, 3)
     assert "fit_chi2" in fit_data.attrs
-    assert fit_data.coords["parameter"] == ["A2", "phi2", "Lambda"]
+    assert fit_data.coords["parameter"] == ["A2", "phi2", "m"]
 
     summary = summarize_fourier_result(store)
     assert summary["out"] == "fourier_summary"
@@ -513,7 +513,7 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
         "phi1p",
         "A3p",
         "phi3p",
-        "Lambda",
+        "m",
     ]
     assert np.asarray(json.loads(fit_info.attrs["fit_params"])).shape == (1, 3, 13)
 
@@ -601,10 +601,10 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
     im_samples = np.zeros_like(re_samples)
 
     cases = [
-        ("nucleon_gluon_quasi_pdf", "LA", ["A", "Lambda"]),
-        ("nucleon_gluon_quasi_pdf", "NLA", ["A", "Ap", "Lambda"]),
-        ("pion_gluon_quasi_pdf", "LA", ["A2", "Lambda"]),
-        ("pion_gluon_quasi_pdf", "NLA", ["A2", "A2p", "A1", "phi", "Lambda"]),
+        ("nucleon_gluon_quasi_pdf", "LA", ["A", "m"]),
+        ("nucleon_gluon_quasi_pdf", "NLA", ["A", "Ap", "m"]),
+        ("pion_gluon_quasi_pdf", "LA", ["A2", "m"]),
+        ("pion_gluon_quasi_pdf", "NLA", ["A2", "A2p", "A1", "phi", "m"]),
     ]
     for observable, order, expected_labels in cases:
         data_path = tmp_path / f"{observable}_{order}.npz"
@@ -636,6 +636,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
         order="LA",
         observable="nucleon_gluon_quasi_pdf",
         phase_scale=2.0,
+        Lambda0=0.0,
     )
     assert np.asarray(re, dtype=float).tolist() == pytest.approx((1.5 * z * np.exp(-0.4 * z)).tolist())
     assert np.asarray(im, dtype=float).tolist() == pytest.approx([0.0, 0.0])
@@ -647,6 +648,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
         order="NLA",
         observable="nucleon_gluon_quasi_pdf",
         phase_scale=2.0,
+        Lambda0=0.0,
     )
     assert np.asarray(re, dtype=float).tolist() == pytest.approx(((1.5 * z + 0.2) * np.exp(-0.4 * z)).tolist())
 
@@ -657,6 +659,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
         order="NLA",
         observable="pion_gluon_quasi_pdf",
         phase_scale=2.0,
+        Lambda0=0.0,
     )
     expected = (1.5 * z + 0.2 + 0.6 * np.cos(0.1 - 2.0 * z)) * np.exp(-0.4 * z)
     assert np.asarray(re, dtype=float).tolist() == pytest.approx(expected.tolist())
@@ -666,11 +669,12 @@ def test_fourier_cg_parameter_order_keeps_lambda_before_power() -> None:
     labels = _param_labels("CG", "NLA", "pion_gluon_quasi_pdf")
     p0, bounds = _param_template("CG", "NLA", "pion_gluon_quasi_pdf", Lambda0=0.3)
 
-    assert labels == ["A2", "A2p", "A1", "phi", "Lambda", "n"]
+    assert labels == ["A2", "A2p", "A1", "phi", "m", "n"]
     assert p0.shape == (6,)
     assert bounds[0].shape == (6,)
     assert bounds[1].shape == (6,)
-    assert bounds[0][4] == pytest.approx(0.3)
+    assert bounds[0][4] == pytest.approx(0.0)
+    assert np.isinf(bounds[1][4])
     assert bounds[0][5] == pytest.approx(-2.0)
     assert bounds[1][5] == pytest.approx(4.0)
 
@@ -765,7 +769,7 @@ def test_fourier_model_average_scans_order_and_prior_width_per_sample(tmp_path: 
     fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
     labels = json.loads(fit_info.attrs["fit_param_labels"])
     assert "A2" in labels
-    assert "Lambda" in labels
+    assert "m" in labels
 
 
 def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None:

@@ -202,8 +202,8 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             ]
         )
     reference = FORMULA_REFERENCES.get(observable, "code-selected LA/NLA formula")
-    article_tail = r"\exp(-\Lambda |z|)"
-    implementation_tail = r"\exp(-\Lambda z)"
+    article_tail = r"\exp[-(m+\Lambda_0)|z|]"
+    implementation_tail = r"\exp[-(m+\Lambda_0)z]"
     if method == "CG":
         implementation_tail += r"\,z^{-n}"
 
@@ -244,12 +244,12 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
                 "- $\\tilde A_2,\\tilde\\phi_2$ correspond to the momentum-transfer term $e^{-i(P^z-P'^z)z}$."
                 if language == "en"
                 else "- $\\tilde A_2,\\tilde\\phi_2$ 对应动量转移项 $e^{-i(P^z-P'^z)z}$。",
-                "- $\\Lambda$ is the common exponential decay parameter."
+                "- $m$ is the fitted non-negative offset, so the effective decay rate is $m+\\Lambda_0$."
                 if language == "en"
-                else "- $\\Lambda$ 是共同的指数衰减参数。",
-                "- `Lambda0` is not an extra analytic term; it enforces the fit constraint $\\Lambda\\ge\\Lambda_0$."
+                else "- $m$ 是非负拟合偏移量，因此有效衰减率为 $m+\\Lambda_0$。",
+                "- `Lambda0` is the fixed offset $\\Lambda_0$ in the reparameterized decay rate, not a hard bound on a fitted $\\Lambda$."
                 if language == "en"
-                else "- `Lambda0` 不是解析公式中的额外项，而是拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+                else "- `Lambda0` 是重参数化衰减率中的固定偏移 $\\Lambda_0$，不是对拟合参数 $\\Lambda$ 的硬边界。",
             ]
         else:
             article_formula = (
@@ -295,12 +295,12 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
                 "- $\\tilde A_2,\\tilde\\phi_2$ and $\\tilde A'_2,\\tilde\\phi'_2$ correspond to the momentum-transfer terms proportional to $e^{-i(P^z-P'^z)z}$."
                 if language == "en"
                 else "- $\\tilde A_2,\\tilde\\phi_2$ 以及 $\\tilde A'_2,\\tilde\\phi'_2$ 对应与 $e^{-i(P^z-P'^z)z}$ 相乘的动量转移项。",
-                "- $\\Lambda$ is the common exponential decay parameter, while the primed amplitudes are the $1/|z|$ NLA corrections."
+                "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$, while the primed amplitudes are the $1/|z|$ NLA corrections."
                 if language == "en"
-                else "- $\\Lambda$ 是共同衰减参数，所有带撇振幅对应 $1/|z|$ 的 NLA 修正。",
-                "- `Lambda0` is not an extra analytic term; it enforces the fit constraint $\\Lambda\\ge\\Lambda_0$."
+                else "- $m$ 是共同衰减率 $m+\\Lambda_0$ 中的非负拟合偏移量，所有带撇振幅对应 $1/|z|$ 的 NLA 修正。",
+                "- `Lambda0` is the fixed offset $\\Lambda_0$ in the reparameterized decay rate, not a hard bound on a fitted $\\Lambda$."
                 if language == "en"
-                else "- `Lambda0` 不是解析公式中的额外项，而是拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+                else "- `Lambda0` 是重参数化衰减率中的固定偏移 $\\Lambda_0$，不是对拟合参数 $\\Lambda$ 的硬边界。",
             ]
         scope_lines = [
             "The article formula is the full $\\pm z$ expression. The lamet-agent fit uses the explicit positive-$z$ branch, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval."
@@ -337,12 +337,12 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
                 "- $\\tilde A_2,\\tilde\\phi_2$ correspond to the momentum-transfer term $e^{-i(P^z-P'^z)z}$."
                 if language == "en"
                 else "- $\\tilde A_2,\\tilde\\phi_2$ 对应动量转移项 $e^{-i(P^z-P'^z)z}$。",
-                "- $\\Lambda$ is the common exponential decay parameter."
+                "- $m$ is the fitted non-negative offset, so the effective decay rate is $m+\\Lambda_0$."
                 if language == "en"
-                else "- $\\Lambda$ 是共同的指数衰减参数。",
-                "- `Lambda0` is not an extra analytic term; it enforces the fit constraint $\\Lambda\\ge\\Lambda_0$."
+                else "- $m$ 是非负拟合偏移量，因此有效衰减率为 $m+\\Lambda_0$。",
+                "- `Lambda0` is the fixed offset $\\Lambda_0$ in the reparameterized decay rate, not a hard bound on a fitted $\\Lambda$."
                 if language == "en"
-                else "- `Lambda0` 不是解析公式中的额外项，而是拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+                else "- `Lambda0` 是重参数化衰减率中的固定偏移 $\\Lambda_0$，不是对拟合参数 $\\Lambda$ 的硬边界。",
             ]
         else:
             article_formula = (
@@ -374,12 +374,12 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
                 "- $\\tilde A_2,\\tilde\\phi_2$ and $\\tilde A'_2,\\tilde\\phi'_2$ correspond to the momentum-transfer terms proportional to $e^{-i(P^z-P'^z)z}$."
                 if language == "en"
                 else "- $\\tilde A_2,\\tilde\\phi_2$ 以及 $\\tilde A'_2,\\tilde\\phi'_2$ 对应与 $e^{-i(P^z-P'^z)z}$ 相乘的动量转移项。",
-                "- $\\Lambda$ is the common exponential decay parameter, while the primed amplitudes are the $1/|z|$ NLA corrections."
+                "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$, while the primed amplitudes are the $1/|z|$ NLA corrections."
                 if language == "en"
-                else "- $\\Lambda$ 是共同衰减参数，所有带撇振幅对应 $1/|z|$ 的 NLA 修正。",
-                "- `Lambda0` is not an extra analytic term; it enforces the fit constraint $\\Lambda\\ge\\Lambda_0$."
+                else "- $m$ 是共同衰减率 $m+\\Lambda_0$ 中的非负拟合偏移量，所有带撇振幅对应 $1/|z|$ 的 NLA 修正。",
+                "- `Lambda0` is the fixed offset $\\Lambda_0$ in the reparameterized decay rate, not a hard bound on a fitted $\\Lambda$."
                 if language == "en"
-                else "- `Lambda0` 不是解析公式中的额外项，而是拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+                else "- `Lambda0` 是重参数化衰减率中的固定偏移 $\\Lambda_0$，不是对拟合参数 $\\Lambda$ 的硬边界。",
             ]
         scope_lines = [
             "The article formula is the full $\\pm z$ expression. The lamet-agent fit uses the explicit positive-$z$ branch, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval."
@@ -461,9 +461,9 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "- The amplitudes $A_j,\\phi_j$ map one-to-one between the two formulas, and the primed amplitudes give the NLA $1/|z|$ corrections when present."
             if language == "en"
             else "- 两种写法中的 $A_j,\\phi_j$ 一一对应；若存在带撇项，它们对应 NLA 的 $1/|z|$ 修正。",
-            "- $\\Lambda$ is the common decay parameter, and `Lambda0` imposes the fit constraint $\\Lambda\\ge\\Lambda_0$."
+            "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$; `Lambda0` is the fixed offset, not a hard bound on a fitted $\\Lambda$."
             if language == "en"
-            else "- $\\Lambda$ 是共同衰减参数，`Lambda0` 对其施加拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+            else "- $m$ 是共同衰减率 $m+\\Lambda_0$ 中的非负拟合偏移量；`Lambda0` 是固定偏移，不是对拟合参数 $\\Lambda$ 的硬边界。",
         ]
         scope_lines = [
             "For these forward-like quark observables, the report distinguishes the article formula from the lamet-agent parameterized equivalent rewrite."
@@ -499,9 +499,9 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "- $A$ controls the linear large-distance growth before exponential damping; $A'$ is the NLA constant correction when present."
             if language == "en"
             else "- $A$ 控制指数衰减前的线性长程增长；若存在，$A'$ 是 NLA 常数修正。",
-            "- $\\Lambda$ is the common decay parameter, and `Lambda0` imposes the fit constraint $\\Lambda\\ge\\Lambda_0$."
+            "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$; `Lambda0` is the fixed offset, not a hard bound on a fitted $\\Lambda$."
             if language == "en"
-            else "- $\\Lambda$ 是共同衰减参数，`Lambda0` 对其施加拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+            else "- $m$ 是共同衰减率 $m+\\Lambda_0$ 中的非负拟合偏移量；`Lambda0` 是固定偏移，不是对拟合参数 $\\Lambda$ 的硬边界。",
         ]
         scope_lines = [
             "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `method=CG` adds the explicit factor $z^{-n}$ shown above."
@@ -534,9 +534,9 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "- $A_2$ controls the linear large-distance part, while $A_2'$, $A_1$, and $\\phi$ parameterize the NLA constant and oscillatory corrections."
             if language == "en"
             else "- $A_2$ 控制线性的长程部分，$A_2'$、$A_1$ 和 $\\phi$ 则参数化 NLA 的常数与振荡修正。",
-            "- $\\Lambda$ is the common decay parameter, and `Lambda0` imposes the fit constraint $\\Lambda\\ge\\Lambda_0$."
+            "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$; `Lambda0` is the fixed offset, not a hard bound on a fitted $\\Lambda$."
             if language == "en"
-            else "- $\\Lambda$ 是共同衰减参数，`Lambda0` 对其施加拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+            else "- $m$ 是共同衰减率 $m+\\Lambda_0$ 中的非负拟合偏移量；`Lambda0` 是固定偏移，不是对拟合参数 $\\Lambda$ 的硬边界。",
         ]
         scope_lines = [
             "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `method=CG` adds the explicit factor $z^{-n}$ shown above."
@@ -554,9 +554,9 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "- The implementation is the positive-$z$ rewrite of the article-style oscillatory tail."
             if language == "en"
             else "- 实现公式是文献风格振荡尾项在正 $z$ 分支上的重写。",
-            "- $\\Lambda$ is the common decay parameter, and `Lambda0` imposes the fit constraint $\\Lambda\\ge\\Lambda_0$."
+            "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$; `Lambda0` is the fixed offset, not a hard bound on a fitted $\\Lambda$."
             if language == "en"
-            else "- $\\Lambda$ 是共同衰减参数，`Lambda0` 对其施加拟合约束 $\\Lambda\\ge\\Lambda_0$。",
+            else "- $m$ 是共同衰减率 $m+\\Lambda_0$ 中的非负拟合偏移量；`Lambda0` 是固定偏移，不是对拟合参数 $\\Lambda$ 的硬边界。",
         ]
         scope_lines = [
             "The implementation fits only positive coordinates."
@@ -942,7 +942,7 @@ def _settings_table(
         ("Active fitted component", f"`{result.get('part', 'both')}`"),
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
         ("Coordinate unit", f"{_display_unit(result.get('coord_unit', 'not recorded'))}; fit unit {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
-        ("Fit lower bound", f"$\\Lambda_0\\ge {_fmt(result.get('Lambda0'))}$"),
+        ("Decay offset", f"$\\Lambda_0={_fmt(result.get('Lambda0'))}$"),
         ("Output scale", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
         ("Best fit range", fit_range_text),
         ("Extension endpoint", z_ext_text),
@@ -956,7 +956,7 @@ def _settings_table(
             ("参与拟合的分量", f"`{result.get('part', 'both')}`"),
             ("重采样模式", f"`{result.get('resample_mode', 'not recorded')}`"),
             ("坐标单位", f"{_display_unit(result.get('coord_unit', 'not recorded'))}；拟合单位 {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
-            ("拟合下界", f"$\\Lambda_0\\ge {_fmt(result.get('Lambda0'))}$"),
+            ("衰减偏移", f"$\\Lambda_0={_fmt(result.get('Lambda0'))}$"),
             ("输出缩放", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
             ("最优拟合区间", fit_range_text),
             ("外推终点", z_ext_text),
