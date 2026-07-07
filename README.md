@@ -236,6 +236,39 @@ lamet-agent validate examples/cg_pion_pdf_manifest.json
 lamet-agent run examples/cg_pion_pdf_manifest.json
 ```
 
+Interactively plan a draft manifest before running it:
+
+```bash
+lamet-agent plan draft_manifest.jsonc --backend api --model deepseek/deepseek-chat
+lamet-agent plan draft_manifest.jsonc --backend codex
+```
+
+`plan` accepts incomplete JSON/JSONC manifests and runs an LLM-controlled
+planning loop. The configured backend chooses planning actions such as checking
+the manifest, inspecting HDF5 inputs, asking terminal questions, applying
+validated JSON Patch edits to the in-memory candidate, and proposing the next
+writable plan. Python guardrails apply every manifest mutation to a candidate
+copy first, then validate schema, DAG, stage-local contracts, and quick/full
+manifest generation before the proposal is shown. On accept it writes
+`<artifacts_directory>/plan_manifests/<stem>.quick.json` and
+`<artifacts_directory>/plan_manifests/<stem>.full.json`; the original draft is
+never overwritten.
+
+The terminal summary is organized as Missing parameters, Inconsistent settings,
+Suggested modifications, and Data conversions. The quick manifest uses jackknife
+plus mean errors, sets `model_average: false`, and conservatively shrinks
+configured scan lists for a low-cost smoke run. The full manifest uses covariance
+errors, sets `model_average: true`, and can add recommended search expansions.
+If you choose revise, the revision text is routed back through the planning LLM
+instead of a fixed phrase matcher, so natural-language requests such as adding a
+`renormalization` stage are handled as validated manifest patches.
+
+The first planning release only prepares files listed in
+`inputs.correlators[*].data_path`. If a correlator HDF5 file does not already use
+the standard reader layout, plan mode can write converted files under
+`<artifacts_directory>/plan_data/` and update the generated manifests to point at
+those files. `inputs.artifacts` are not converted by plan mode.
+
 Artifact placement and stage order come from the manifest. The complete first-phase
 CG pion PDF check is available in `runs/ds_pdf_complete/run.sh`:
 
@@ -255,6 +288,16 @@ perturbative matching. `examples/partial_cg_pion_pdf_manifest.json` starts from
 the saved `rn_p5` renormalization artifact and runs only Fourier and matching.
 External renormalization sources include `a_fm`, `pz_gev`, `hadron`, and `gfix`
 because those values normally propagate in memory from the correlator jobs.
+
+Standard correlator HDF5 datasets are:
+
+- 2pt: `<source_sink>/<src_gamma>/<momentum>` with stored shape `(Lt, n_cfg)`.
+- 3pt: `<source_sink>/<current_gamma>/<momentum>/b_<z_direction>/<eta>/bT<bt>/bz<z>`
+  with stored shape `(tsep + 1, n_cfg)`.
+
+If a source dataset is an unambiguous transpose of the expected shape, plan mode
+may transpose it during conversion and records provenance attributes on the output
+dataset.
 
 Valid stage IDs:
 

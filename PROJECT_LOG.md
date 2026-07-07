@@ -498,3 +498,27 @@
 - Added cross-z candidate summaries (`feasible_at_all_tune_z`, `tune_z_diagnostics`, `min_Q`, `worst_chi2_dof`, `failure_reasons`) plus ``recommended_robust_index`` / ``recommended_robust_window``.
 - Updated correlator prompts/skills so the agent picks representative tune z values from the job ``bz`` list and selects only cross-z-feasible shared windows before calling ``fit_bare_matrix_grid``.
 - Added unit tests for validation, helper aggregation, and tool-arg wiring; updated README correlator tuning notes.
+
+## 2026-07-07 (Interactive manifest planning)
+
+- Added ``lamet-agent plan`` as an interactive draft-manifest review mode using the existing ``api``/``codex`` LLM configuration, with ``mock`` retained for tests.
+- Added relaxed JSONC loading, deterministic manifest issue checks, scheme-alignment proposals, and quick/full manifest generation while keeping ``validate``/``run`` strict.
+- Added correlator-only HDF5 inspection and conversion into the standard reader layout under ``<artifacts_directory>/plan_data/``.
+- Refined the terminal flow to print the LaMET Agent banner, ask deterministic questions one at a time before acceptance, and render a concise categorized summary instead of model-generated unresolved-question lists.
+- Added deterministic handling for revision requests that broaden correlator fit-window searches, so revised summaries and generated manifests reflect the user's request.
+- Added path-aware revision rollback so later user instructions such as reverting ``pt3_tau_cuts`` remove stale deterministic edits instead of accumulating contradictory changes.
+- Moved generated quick/full manifests under ``<artifacts_directory>/plan_manifests/`` and print separate post-write summaries of the quick/full changes.
+- Documented plan mode and added unit coverage for relaxed loading, issue detection, HDF5 conversion, and the mock CLI accept path.
+
+## 2026-07-07 (LLM-controlled planning loop)
+
+- Reworked ``lamet-agent plan`` so ``api``/``codex`` backends drive an iterative planning action loop instead of only generating a summary after deterministic checks.
+- Added guarded planning tools for manifest checks, HDF5 inspection/conversion planning, JSON Patch candidate edits, candidate validation, and quick/full manifest generation.
+- Kept final file writes behind explicit user acceptance; revision text now routes back through the planning agent and validated patches rather than fixed phrase matching.
+- Added unit coverage for patch application/rejection, invalid candidate validation, and Chinese natural-language renormalization-stage revision through the mock planning action path.
+
+## 2026-07-07 (Planning user-answer guardrails)
+
+- Rejected malformed planning-agent ``request_user_input`` actions that omit a concrete prompt instead of showing an empty terminal question.
+- Applied answers to manifest-path questions such as ``metadata.random_seed`` directly through the guarded JSON Patch tool path, so the LLM does not need to re-patch required scalar fields after the user answers.
+- Added API-style regression tests for malformed input actions and direct random-seed answer application.

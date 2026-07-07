@@ -12,10 +12,12 @@ import typer
 from .agent import run_agent
 from .core.llm import parse_api_model, provider_config
 from .manifest import validate_manifest_file
+from .planning import run_interactive_plan
 
 app = typer.Typer(help="CLI-first scaffold for LaMET analysis workflows.")
 
 _VALID_BACKENDS = frozenset({"mock", "external", "api", "codex"})
+_VALID_PLAN_BACKENDS = frozenset({"api", "codex", "mock"})
 
 _CLI_SUMMARY_KEYS = (
     "run_id",
@@ -58,6 +60,86 @@ def validate_manifest(path: Path) -> None:
             indent=2,
         )
     )
+
+
+def _resolve_api_config(
+    *,
+    backend: str,
+    model: str | None,
+    api_key_file: Path,
+    base_url: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Resolve optional OpenAI-compatible API configuration for CLI commands."""
+    provider: str | None = None
+    model_name: str | None = None
+    api_key: str | None = None
+    resolved_base_url: str | None = base_url
+    if api_key_file.exists():
+        api_key = api_key_file.read_text(encoding="utf-8").strip()
+
+    if backend == "api":
+        try:
+            provider, model_name = parse_api_model(model or "")
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        config = provider_config(provider)
+        assert config is not None
+        if not api_key:
+            api_key = os.environ.get(config["key_env"])
+    return provider, model_name, api_key, resolved_base_url
+
+
+@app.command("plan")
+def plan_workflow(
+    manifest: Path,
+    backend: str = typer.Option(
+        ...,
+        "--backend",
+        help="Planning LLM backend: api or codex. mock is available for tests.",
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="API model as provider/model_id, e.g. deepseek/deepseek-chat (api backend only).",
+    ),
+    api_key_file: Path = Path("api.key"),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        help="Override the provider API base URL (api backend only).",
+    ),
+) -> None:
+    """Interactively review and repair a draft manifest before running it."""
+    if backend not in _VALID_PLAN_BACKENDS:
+        raise typer.BadParameter(
+            f"--backend must be one of {sorted(_VALID_PLAN_BACKENDS)} for plan; external transcripts are not supported."
+        )
+    if backend == "api" and not model:
+        raise typer.BadParameter("backend='api' requires --model provider/model_id.")
+    if backend in {"mock", "codex"} and model:
+        print(
+            f"warning: --model is ignored for backend={backend!r}.",
+            file=sys.stderr,
+        )
+
+    provider, model_name, api_key, resolved_base_url = _resolve_api_config(
+        backend=backend,
+        model=model,
+        api_key_file=api_key_file,
+        base_url=base_url,
+    )
+    try:
+        run_interactive_plan(
+            manifest,
+            backend=backend,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=resolved_base_url,
+            output_func=typer.echo,
+        )
+    except ValueError as exc:  # pragma: no cover - CLI surface
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @app.command("run")
@@ -126,22 +208,14 @@ def run_workflow(
             file=sys.stderr,
         )
 
-    provider: str | None = None
-    model_name: str | None = None
-    api_key: str | None = None
-    if api_key_file.exists():
-        api_key = api_key_file.read_text(encoding="utf-8").strip()
+    provider, model_name, api_key, resolved_base_url = _resolve_api_config(
+        backend=backend,
+        model=model,
+        api_key_file=api_key_file,
+        base_url=base_url,
+    )
 
     if backend == "api":
-        try:
-            provider, model_name = parse_api_model(model or "")
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-        config = provider_config(provider)
-        assert config is not None
-        if not api_key:
-            api_key = os.environ.get(config["key_env"])
-
         # The matching report's formula generation lives in a self-contained module
         # (stages/matching/reporting.py) that reads its LLM config from LAMET_FORMULA_*
         # env vars rather than receiving it as a parameter. Thread this run's resolved
@@ -151,8 +225,8 @@ def run_workflow(
             os.environ["LAMET_FORMULA_MODEL"] = provider
             os.environ["LAMET_FORMULA_API_KEY"] = api_key
             os.environ["LAMET_FORMULA_LLM_MODEL"] = model_name
-            if base_url:
-                os.environ["LAMET_FORMULA_BASE_URL"] = base_url
+            if resolved_base_url:
+                os.environ["LAMET_FORMULA_BASE_URL"] = resolved_base_url
 
     try:
         result = run_agent(
@@ -162,7 +236,7 @@ def run_workflow(
             provider=provider,
             model_name=model_name,
             api_key=api_key,
-            base_url=base_url,
+            base_url=resolved_base_url,
             verbose=verbose,
             max_tool_steps=max_tool_steps,
             report_language=report_language,

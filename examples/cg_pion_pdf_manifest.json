@@ -10,7 +10,7 @@
     "bs_samples": 400,
     "bin_size": 1,
     "random_seed": 1984,
-    "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching"]
+    "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "review"]
   },
   "inputs": {
     "correlators": [
@@ -233,6 +233,12 @@
       "defaults": {"mu": 2.0, "component": "re"},
       "jobs": [
         {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"pz_gev": 2.15}}
+      ]
+    },
+    "review": {                                                                                                                      
+      "defaults": {},
+      "jobs": [
+        {"id": "review"}
       ]
     }
   }
