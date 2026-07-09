@@ -221,6 +221,134 @@ stage-level `seed`.
 - `bin_size` (optional, default: no binning): when set, configurations are
   averaged into bins of this size before jackknife/bootstrap resampling.
 
+## Self-Renormalization
+
+Self-renormalization (`scheme: "self_renormalization"`) fits a coordinate-space
+factor $z_R(z,a)$ from a zero-momentum **reference**, then applies
+
+$$
+H_{\mathrm{ren}}(z) = \frac{H_{\mathrm{bare}}(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z)}
+$$
+
+to each target sample. The stage always splits into **one fit job** plus one or
+more **apply jobs**. See `examples/temp_self_renorm_manifest.json` and
+`runs/ds_self_renorm/` for a runnable PDF→DA smoke test.
+
+### Workflow
+
+```text
+inputs.artifacts (bare reference + bare targets)
+        │
+        ▼
+┌───────────────────────┐
+│ fit job {reference}   │  fit_self_renormalization_factor
+│ params.d required     │  → store['zR'] / <job_id>.nc
+│ params.m0_gev optional│  → fit diagnostics (ln|M|, mR, f1, …)
+└───────────┬───────────┘
+            │ zR job id
+            ▼
+┌───────────────────────┐
+│ apply job {target,zR} │  optional params.d / m0_gev remap zR
+│ per lattice / momentum│  → H/(zR ZMSbar) NetCDF + ME plot
+└───────────────────────┘  → zmsbar_compare; last apply may emit
+                             stage-level discrete_effect_re/im
+```
+
+Typical agent tool order:
+
+1. **Fit job** (`inputs` exactly `{ "reference": "<bare_ref_id>" }`):
+   `fit_self_renormalization_factor` → `plot_self_renormalization_diagnostics` → finish.
+2. **Apply job** (`inputs` exactly `{ "target": "<bare_id>", "zR": "<fit_job_id>" }`):
+   `apply_self_renormalization` → `plot_self_renormalization_diagnostics` →
+   `plot_renormalized_matrix_element` → finish.
+
+Same-operator use (zero-momentum PDF → finite-$P_z$ PDF): fit with the PDF `d`,
+omit `m0_gev` so $m_0$ is fitted, and leave apply jobs without `d`/`m0_gev`
+overrides. Cross-operator use (PDF reference → DA targets): fit with PDF `d`
+(and usually omit `m0_gev`); on each apply job set DA `d` and `m0_gev` so
+upstream $z_R$ is remapped before division.
+
+### Manifest shape
+
+Declare a renormalization kernel with `scheme: "self_renormalization"` and
+`kernel_id` `ZMSbar_pdf` or `ZMSbar_da`. Bare inputs are either upstream
+correlator job ids or `inputs.artifacts` with `stage: "correlator_analysis"`.
+Self-renorm knobs are **flat job `params`** (and stage `defaults`), not nested
+under `scheme_parameters` (that nesting is for hybrid-ratio `zs_fm` / etc.).
+
+```json
+{
+  "inputs": {
+    "artifacts": [
+      { "id": "bare_pdf_reference", "stage": "correlator_analysis", "path": "…", "a_fm": 0.0574, "pz_gev": 0.0, "hadron": "pion", "gfix": "CG" },
+      { "id": "bare_da_a06", "stage": "correlator_analysis", "path": "…", "a_fm": 0.0574, "pz_gev": 1.29, "hadron": "pion", "gfix": "CG" }
+    ],
+    "kernels": [
+      {
+        "stage": "renormalization",
+        "kernel_id": "ZMSbar_da",
+        "kernel_path": "src/lamet_agent/kernels.py",
+        "scheme": "self_renormalization",
+        "kernel_parameters": { "mu": 2.0 }
+      }
+    ]
+  },
+  "stages": {
+    "renormalization": {
+      "defaults": {
+        "normalization": false,
+        "scheme": "self_renormalization",
+        "mu": 2.0,
+        "svdcut": 1e-12
+      },
+      "jobs": [
+        {
+          "id": "rn_zR_fit",
+          "inputs": { "reference": "bare_pdf_reference" },
+          "params": { "d": -0.08183 }
+        },
+        {
+          "id": "rn_da_a06",
+          "inputs": { "target": "bare_da_a06", "zR": "rn_zR_fit" },
+          "params": { "d": 0.19, "m0_gev": -0.094 }
+        }
+      ]
+    }
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Where | Required? | Meaning |
+|-----------|--------|-----------|---------|
+| `scheme` | stage defaults / job | yes (`"self_renormalization"`) | Selects the self-renorm tool path instead of hybrid ratio. |
+| `normalization` | stage defaults / job | no (default `true`) | If `true`, divide bare inputs by lattice $z=0$ before tools. Set `false` when inputs are already $z=0$-normalized (`normalized_at_z0` attr). |
+| `d` | **fit** job `params` | **yes** | Fixed continuum/discretization coefficient in the $g(z)$ fit and in the initial $z_R$ construction. Never fitted. Use the reference-operator value (e.g. PDF $d_{\mathrm{pdf}}$). |
+| `m0_gev` | **fit** job `params` | no | If set, freeze $m_0$ (GeV) when building $z_R$. If omitted, fit $m_0$ from the first three $g(z)$ points against $\log Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z)$. |
+| `d` | **apply** job `params` | no | If set (alone or with `m0_gev`), remap upstream $z_R$ from the fit-job $(d,m_0)$ onto this operator’s $d$ before $H/(z_R Z_{\overline{\mathrm{MS}}})$. Typical DA value: $0.19$. |
+| `m0_gev` | **apply** job `params` | no | Target-operator $m_0$ for the same remap. If only one of `d` / `m0_gev` is set, the other is taken from upstream $z_R$ attrs. |
+| `mu` | defaults, job, or `kernel_parameters` | no (tool default `2.0`) | Renormalization scale (GeV) for $Z_{\overline{\mathrm{MS}}}$ and related logs. |
+| `svdcut` | defaults / fit job | no (default `1e-12`) | SVD cut for the correlated $g(z)$ (and optional $m_0$) fits. |
+| `kernel_id` | job or unique `inputs.kernels` entry | yes if multiple kernels | `ZMSbar_pdf` or `ZMSbar_da`; choose the conversion factor for the **apply** target. Fit diagnostics compare $m_R$ to `ZMSbar_pdf` regardless. |
+| `lqcd`, `k`, `cf`, `b0` | rarely overridden | no | Advanced fit constants (defaults match the usual self-renorm ansatz). |
+
+Job roles:
+
+| Role | Job type | Points to |
+|------|----------|-----------|
+| `reference` | fit | Bare zero-momentum `EnsembleData` (often multi-$a$ on `(a,z)`). |
+| `target` | apply | Bare matrix element to renormalize. |
+| `zR` | apply | Fit job id whose NetCDF / store output holds $z_R$. |
+
+### Outputs
+
+- Fit job: `<artifacts>/renormalization/<fit_job_id>.nc` ($z_R$), plus fit panels
+  (`*_fit_lnM_vs_inv_a`, `*_fit_mR_zmsbar`, `*_fit_m_over_zR`, `*_fit_f1`).
+- Apply job: `<artifacts>/renormalization/<apply_job_id>.nc` (renormalized ME),
+  ME plot, `*_zmsbar_compare`; the last apply job with sibling NetCDFs present
+  can also write stage-level `discrete_effect_re` / `discrete_effect_im`.
+
 ## Quick Start
 
 ```bash
@@ -422,6 +550,10 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --backend mock
     as `.json` to author a real run.
 - `examples/cg_pion_pdf_manifest.json`
   - Runnable P0/P5 correlator and hybrid-ratio renormalization manifest.
+- `examples/temp_self_renorm_manifest.json`
+  - Renorm-only self-renormalization smoke (PDF reference → DA mom=6 targets);
+    see [Self-Renormalization](#self-renormalization). Prepare/run helpers live
+    under `runs/ds_self_renorm/`.
 
 ## Agent Workflow
 

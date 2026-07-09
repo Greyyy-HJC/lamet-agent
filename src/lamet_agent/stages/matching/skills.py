@@ -33,7 +33,7 @@ def effective_matching_params(manifest: AnalysisManifest, job: StageJob) -> dict
     params = {**manifest.stages["perturbative_matching"].defaults, **job.params}
     if "kernel_id" in params:
         return params
-    matching_kernels = [item for item in manifest.kernels if item.stage == "matching"]
+    matching_kernels = [item for item in manifest.kernels if item.stage == "perturbative_matching"]
     if len(matching_kernels) == 1:
         params["kernel_id"] = matching_kernels[0].kernel_id
     return params

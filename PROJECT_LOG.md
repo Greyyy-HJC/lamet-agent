@@ -522,3 +522,57 @@
 - Rejected malformed planning-agent ``request_user_input`` actions that omit a concrete prompt instead of showing an empty terminal question.
 - Applied answers to manifest-path questions such as ``metadata.random_seed`` directly through the guarded JSON Patch tool path, so the LLM does not need to re-patch required scalar fields after the user answers.
 - Added API-style regression tests for malformed input actions and direct random-seed answer application.
+
+## 2026-07-08 (Self-renormalization scheme)
+
+- Added coordinate-space ``ZMSbar_pdf`` / ``ZMSbar_da`` kernels in ``kernels.py`` for the renormalization stage.
+- Wired ``self_renormalization`` beside ``hybrid_ratio``: fit ``zR`` from a multi-``a`` reference, then apply ``H/(zR*ZMSbar)`` via ``apply_self_renormalization``.
+- Extended renorm skills/prompts/tool-arg binding, artifact hydration, and reporting for scheme branching on roles ``target``+``reference``.
+- Added ``examples/temp_self_renorm_manifest.json`` and ``runs/ds_self_renorm/`` prepare/run helpers that convert ``temp/lamet_da_self_renorm`` dumps into NetCDF smoke inputs.
+
+## 2026-07-08 (Self-renormalization diagnostic plots)
+
+- Extended ``fit_self_renormalization_factor`` to stash ``store['self_renorm_fit']`` arrays for diagnostic plotting.
+- Added ``plot_self_renormalization_diagnostics`` covering zR-fit checks, ``H/zR`` vs ``ZMSbar``, and multi-a discrete-effect overlays (no continuum band).
+- Expanded the self-renorm smoke manifest/actions to a06/a09/a12 jobs and wired diagnostics into prompts, tool-arg binding, and renorm reports.
+
+## 2026-07-08 (Self-renorm svdcut and plot labels)
+
+- Made ``fit_self_renormalization_factor`` accept ``svdcut`` (default ``1e-12``) instead of hard-coded ``1e-100``, and bind it from ``scheme_parameters.svdcut``.
+- Fixed ``plot_renormalized_matrix_element`` default title/x-axis so self-renorm plots are not labeled as ratio-scheme ``z/a``.
+
+## 2026-07-09 (Self-renorm fidelity and fit/apply split)
+
+- Split self-renormalization into one ``{reference}`` fit job and three ``{target, zR}`` apply jobs; zR is fit once on sample-averaged MILC reference and stored as a one-sample mean EnsembleData.
+- Separated ``d_fit`` (PDF gz fit) from ``d`` (DA zR construction); m0 fitting uses ``ZMSbar_pdf`` while apply uses declared ``ZMSbar_da``.
+- Regenerated MILC-only bootstrap reference on the full DA z grid; dropped ``fit_vs_data``; emit fit diagnostics once and ``discrete_effect`` once on the last apply job.
+
+## 2026-07-09 (Simplify self-renorm fixed m0/d)
+
+- Required fixed ``m0_gev`` (no m0 fit / no ``fit_m0`` panel); removed ``n_m0`` and ``d_fit`` so a single ``d`` enters both gz fit and zR construction.
+- Write multi-a discrete-effect overlays as stage-level ``discrete_effect_re`` / ``discrete_effect_im`` (no job-id prefix).
+- Simplified ``examples/temp_self_renorm_manifest.json`` ``scheme_parameters`` to ``m0_gev``, ``d``, ``mu``, ``svdcut``.
+
+## 2026-07-09 (Optional m0_gev for self-renorm fit)
+
+- ``scheme_parameters.d`` is required on the self-renormalization fit job (fixed; never fitted).
+- ``scheme_parameters.m0_gev`` is optional: omit to fit ``m0`` from the first three ``g(z)`` points vs ``ZMSbar_pdf``; set it to freeze ``m0`` (e.g. PDF reference applied to DA).
+- Record ``m0_source`` (``fixed``|``fit``) and ``d`` on ``zR`` attrs / ``self_renorm_fit`` / tool return.
+- Moved fit-job ``d``/``m0_gev`` onto ``rn_zR_fit`` params in ``examples/temp_self_renorm_manifest.json``.
+
+## 2026-07-09 (Flat job params + apply-job d/m0 remap)
+
+- Self-renorm ``d`` / ``m0_gev`` / ``mu`` / ``svdcut`` are flat job ``params`` (not nested ``scheme_parameters``).
+- Fit job requires ``params.d``; ``params.m0_gev`` optional (omit → fit).
+- Apply jobs may set ``params.d`` / ``params.m0_gev`` to remap upstream zR (PDF→DA); ``apply_self_renormalization`` rewrites store ``zR`` for diagnostics.
+- ``examples/temp_self_renorm_manifest.json``: fit uses ``d=-0.08183``; apply jobs use ``d=0.19``, ``m0_gev=-0.094``.
+
+## 2026-07-09 (README self-renormalization section)
+
+- Added a dedicated README section covering self-renorm workflow, manifest shape, parameter table (required vs optional), and outputs.
+
+## 2026-07-09 (Kernel stage id: perturbative_matching)
+
+- Renamed ``inputs.kernels[].stage`` from shorthand ``matching`` to full stage id ``perturbative_matching`` in all example manifests and planning tests.
+- Updated ``effective_matching_params`` to filter kernels by ``stage == "perturbative_matching"``.
+- Tightened ``KernelInput.stage`` to ``StageId`` so invalid shorthand fails schema validation.

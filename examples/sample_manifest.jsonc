@@ -277,7 +277,7 @@
     "artifacts": [],
     "kernels": [
       {
-        "stage": "matching",
+        "stage": "perturbative_matching",
         "kernel_id": "CG_gt_PDF_hybrid",
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
         "scheme": "hybrid_ratio",
@@ -338,7 +338,8 @@
         "scheme_parameters": {
           "zs_fm": 0.1722, // hybrid switch length (fm); short vs long branch
           "m0_gev": 0.0, // linear renormalon slope (GeV); long-range exponent only
-          "delta_m_gev": 0.0 // target–denominator mass gap (GeV); GI example ~0.545 (= 0.1586*ℏc/a_fm at a=0.0574 fm)
+          "delta_m_gev": 0.0, // target–denominator mass gap (GeV); GI example ~0.545 (= 0.1586*ℏc/a_fm at a=0.0574 fm)
+          "svdcut": 1e-12 // self_renormalization correlated-fit SVD cut; unused by hybrid_ratio
         }
       },
       "jobs": [

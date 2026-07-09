@@ -14,7 +14,20 @@ from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob
 from .stages import resolve_stage_package
 
 _PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid", "plot_matched_pdf"})
-_RENORM_ARTIFACT_TOOLS = frozenset({"apply_ratio_scheme_renormalization", "plot_renormalized_matrix_element"})
+_RENORM_ARTIFACT_TOOLS = frozenset(
+    {
+        "apply_ratio_scheme_renormalization",
+        "apply_self_renormalization",
+        "fit_self_renormalization_factor",
+        "plot_renormalized_matrix_element",
+        "plot_self_renormalization_diagnostics",
+        "load_bare_matrix_element_grid",
+        "load_bare_matrix_element",
+    }
+)
+_RENORM_SELF_PARAM_KEYS = frozenset(
+    {"kernel_id", "zms_kind", "m0_gev", "k", "lqcd", "mu", "d", "cf", "b0", "svdcut"}
+)
 _FOURIER_ARTIFACT_TOOLS = frozenset(
     {
         "run_fourier_transform",
@@ -369,6 +382,18 @@ def prepare_tool_args(
             resolved["model_average"] = defaults["model_average"]
 
     if stage == "renormalization":
+        scheme_parameters = effective_params.get("scheme_parameters")
+        if not isinstance(scheme_parameters, dict):
+            scheme_parameters = {}
+        renorm_kernels = [item for item in manifest.kernels if item.stage == "renormalization"]
+        kernel_id = effective_params.get("kernel_id")
+        kernel_parameters: dict[str, Any] = {}
+        if kernel_id is None and len(renorm_kernels) == 1:
+            kernel_id = renorm_kernels[0].kernel_id
+        declaration = next((item for item in renorm_kernels if item.kernel_id == kernel_id), None)
+        if declaration is not None:
+            kernel_parameters = dict(declaration.kernel_parameters)
+
         if tool_name == "apply_ratio_scheme_renormalization":
             for key, value in effective_params.items():
                 if key == "normalization":
@@ -384,6 +409,111 @@ def prepare_tool_args(
                     "sample_error_mode": manifest.metadata.sample_error_mode,
                 }
             )
+        elif tool_name == "fit_self_renormalization_factor":
+            resolved["reference"] = "reference"
+            resolved["save_path"] = str(artifacts_dir / job.id)
+            if kernel_id is not None and "kernel_id" not in resolved:
+                resolved["kernel_id"] = kernel_id
+            for key, value in {**kernel_parameters, **scheme_parameters}.items():
+                if key in _RENORM_SELF_PARAM_KEYS and key not in resolved:
+                    resolved[key] = value
+            for key in _RENORM_SELF_PARAM_KEYS:
+                if key in effective_params and key not in resolved:
+                    resolved[key] = effective_params[key]
+        elif tool_name == "apply_self_renormalization":
+            resolved.update(
+                {
+                    "target": "target",
+                    "zR": "zR",
+                    "save_path": str(artifacts_dir / job.id),
+                    "job_id": job.id,
+                    "sample_error_mode": manifest.metadata.sample_error_mode,
+                }
+            )
+            if kernel_id is not None and "kernel_id" not in resolved:
+                resolved["kernel_id"] = kernel_id
+            for key, value in {**kernel_parameters, **scheme_parameters}.items():
+                if key in {"mu", "zms_kind", "d", "m0_gev", "lqcd"} and key not in resolved:
+                    resolved[key] = value
+            for key in ("mu", "d", "m0_gev", "lqcd"):
+                if key in effective_params and key not in resolved:
+                    resolved[key] = effective_params[key]
+        elif tool_name == "plot_self_renormalization_diagnostics":
+            is_fit_job = set(job.inputs) == {"reference"}
+            resolved.update(
+                {
+                    "zR": "zR",
+                    "fit": "self_renorm_fit",
+                    "mode": "fit" if is_fit_job else "apply",
+                    "save_path": str(artifacts_dir / job.id),
+                    "sample_error_mode": manifest.metadata.sample_error_mode,
+                }
+            )
+            if not is_fit_job:
+                resolved["target"] = "target"
+            if kernel_id is not None and "kernel_id" not in resolved:
+                resolved["kernel_id"] = kernel_id
+            for key, value in {**kernel_parameters, **scheme_parameters}.items():
+                if key == "mu" and key not in resolved:
+                    resolved[key] = value
+            if "mu" in effective_params and "mu" not in resolved:
+                resolved["mu"] = effective_params["mu"]
+            if not is_fit_job:
+                apply_jobs = [
+                    other
+                    for other in manifest.stages["renormalization"].jobs
+                    if set(other.inputs) == {"target", "zR"}
+                ]
+                siblings = []
+                for other in apply_jobs:
+                    if other.id == job.id:
+                        continue
+                    path = artifacts_dir / f"{other.id}.nc"
+                    if path.is_file():
+                        siblings.append(str(path))
+                # After the current apply NetCDF exists, include it so the last
+                # job can overlay all lattice spacings in one discrete_effect plot.
+                current_path = artifacts_dir / f"{job.id}.nc"
+                if current_path.is_file():
+                    siblings.append(str(current_path))
+                if "sibling_artifacts" not in resolved:
+                    resolved["sibling_artifacts"] = siblings
+                if "include_discrete_effect" not in resolved:
+                    # Emit discrete_effect once on the last apply job when all
+                    # sibling apply NetCDFs (including self) are present.
+                    resolved["include_discrete_effect"] = (
+                        bool(apply_jobs)
+                        and job.id == apply_jobs[-1].id
+                        and len(siblings) >= len(apply_jobs)
+                    )
+        elif tool_name == "load_bare_matrix_element_grid":
+            role = None
+            for candidate in ("target", "denominator"):
+                if isinstance(store.get(candidate), ArtifactInput):
+                    role = candidate
+                    break
+            if role is None:
+                role = "target" if "target" in job.inputs else next(iter(job.inputs), None)
+            if role is not None:
+                source = store.get(role)
+                if isinstance(source, ArtifactInput):
+                    resolved.setdefault("netcdf_path", source.path)
+                else:
+                    artifact_path = _declared_artifact_path(manifest, job, role)
+                    if artifact_path is not None:
+                        resolved.setdefault("netcdf_path", artifact_path)
+                resolved.setdefault("out", role)
+        elif tool_name == "load_bare_matrix_element":
+            source = store.get("reference")
+            if isinstance(source, ArtifactInput):
+                resolved.setdefault("path", source.path)
+                resolved.setdefault("netcdf_path", source.path)
+            else:
+                artifact_path = _declared_artifact_path(manifest, job, "reference")
+                if artifact_path is not None:
+                    resolved.setdefault("path", artifact_path)
+                    resolved.setdefault("netcdf_path", artifact_path)
+            resolved.setdefault("out", "reference")
         elif tool_name == "plot_renormalized_matrix_element":
             resolved.update(
                 {
@@ -392,6 +522,8 @@ def prepare_tool_args(
                     "sample_error_mode": manifest.metadata.sample_error_mode,
                 }
             )
+        if tool_name in _RENORM_ARTIFACT_TOOLS:
+            resolved["artifacts_dir"] = str(artifacts_dir)
     if stage == "fourier_transform":
         fourier = dict(effective_params)
         if "component" in fourier and "part" not in fourier:

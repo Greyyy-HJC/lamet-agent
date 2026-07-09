@@ -18,6 +18,11 @@ from .manifest import AnalysisManifest, ArtifactInput, StageJob
 
 # Partial runs reference external artifacts by id; hydrate them before the LLM loop.
 _STAGE_ARTIFACT_LOADERS: dict[str, dict[str, tuple[str, str]]] = {
+    "renormalization": {
+        "target": ("load_bare_matrix_element_grid", "target"),
+        "denominator": ("load_bare_matrix_element_grid", "denominator"),
+        "reference": ("load_bare_matrix_element", "reference"),
+    },
     "fourier_transform": {
         "input": ("load_renormalized_matrix_element_samples", "matrix_element_data"),
     },
@@ -350,27 +355,53 @@ def run_agent(
                         }
                     )
             if stage == "renormalization" and "output" in store:
-                renorm_result = _last_tool_result(observations, "apply_ratio_scheme_renormalization")
-                if renorm_result is not None:
-                    plot_result = _last_tool_result(observations, "plot_renormalized_matrix_element") or {}
+                apply_result = _last_tool_result(observations, "apply_self_renormalization")
+                if apply_result is None:
+                    apply_result = _last_tool_result(observations, "apply_ratio_scheme_renormalization")
+                fit_result = _last_tool_result(observations, "fit_self_renormalization_factor")
+                plot_result = _last_tool_result(observations, "plot_renormalized_matrix_element") or {}
+                diag_result = _last_tool_result(observations, "plot_self_renormalization_diagnostics") or {}
+                if apply_result is not None:
                     z_grid = []
                     matrix = store.get("matrix_element_data") or store.get("output")
                     if hasattr(matrix, "coords") and "z" in matrix.coords:
                         z_grid = np.asarray(matrix.coords["z"], dtype=float).tolist()
+                    artifacts = {
+                        "renormalized_artifact": apply_result.get("artifact")
+                        or store.get("matrix_element_netcdf"),
+                        "renormalized_plot": plot_result.get("plot"),
+                        "renormalized_plot_image": plot_result.get("plot_image"),
+                    }
+                    for key, value in (diag_result.get("plots") or {}).items():
+                        artifacts[f"diag_{key}"] = value
                     stage_job_records.append(
                         {
                             "job_id": job.id,
                             "result": {
-                                **renorm_result,
-                                "scheme": renorm_result.get("scheme", "hybrid_ratio"),
+                                **apply_result,
+                                "scheme": apply_result.get("scheme", "hybrid_ratio"),
                                 "z_grid": z_grid,
+                                "diagnostic_plots": list((diag_result.get("plots") or {}).keys()),
                             },
-                            "artifacts": {
-                                "renormalized_artifact": renorm_result.get("artifact")
-                                or store.get("matrix_element_netcdf"),
-                                "renormalized_plot": plot_result.get("plot"),
-                                "renormalized_plot_image": plot_result.get("plot_image"),
+                            "artifacts": artifacts,
+                        }
+                    )
+                elif fit_result is not None:
+                    artifacts = {
+                        "zR_artifact": fit_result.get("artifact") or store.get("zR_netcdf"),
+                    }
+                    for key, value in (diag_result.get("plots") or {}).items():
+                        artifacts[f"diag_{key}"] = value
+                    stage_job_records.append(
+                        {
+                            "job_id": job.id,
+                            "result": {
+                                **fit_result,
+                                "scheme": "self_renormalization",
+                                "job_kind": "fit",
+                                "diagnostic_plots": list((diag_result.get("plots") or {}).keys()),
                             },
+                            "artifacts": artifacts,
                         }
                     )
             if stage == "fourier_transform" and "fourier_result" in store:
