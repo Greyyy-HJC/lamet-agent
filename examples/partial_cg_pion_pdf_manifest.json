@@ -27,7 +27,7 @@
     ],
     "kernels": [
       {
-        "stage": "matching",
+        "stage": "perturbative_matching",
         "kernel_id": "CG_gt_PDF_hybrid",
         "kernel_path": "src/lamet_agent/kernels.py",
         "scheme": "hybrid_ratio",

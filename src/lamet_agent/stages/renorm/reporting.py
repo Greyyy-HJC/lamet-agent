@@ -11,11 +11,45 @@ import numpy as np
 
 RENORM_ARTIFACT_DESCRIPTIONS = {
     "renormalized_artifact": ("Renormalized matrix element samples (EnsembleData NetCDF)", "重整化矩阵元样本（EnsembleData NetCDF）"),
+    "zR_artifact": ("Fitted self-renormalization factor zR (EnsembleData NetCDF)", "拟合得到的 self-renorm 因子 zR（EnsembleData NetCDF）"),
     "renormalized_plot": ("PDF plot of the renormalized matrix element", "重整化矩阵元 PDF 图"),
     "renormalized_plot_image": ("SVG companion for Markdown embedding", "供 Markdown 嵌入的重整化矩阵元 SVG 图"),
+    "diag_fit_lnM_vs_inv_a": ("Self-renorm fit: ln|M| vs 1/a", "Self-renorm 拟合：ln|M| vs 1/a"),
+    "diag_fit_lnM_vs_inv_a_image": ("SVG for ln|M| vs 1/a", "ln|M| vs 1/a 的 SVG"),
+    "diag_fit_mR_zmsbar": ("mR vs ZMSbar", "mR 与 ZMSbar 对比"),
+    "diag_fit_mR_zmsbar_image": ("SVG for mR vs ZMSbar", "mR 与 ZMSbar 对比的 SVG"),
+    "diag_fit_m_over_zR": ("M_bare/zR by a", "各 a 的 M_bare/zR"),
+    "diag_fit_m_over_zR_image": ("SVG for M_bare/zR", "M_bare/zR 的 SVG"),
+    "diag_fit_f1": ("Discretization coefficient f1(z)", "离散化系数 f1(z)"),
+    "diag_fit_f1_image": ("SVG for f1(z)", "f1(z) 的 SVG"),
+    "diag_zmsbar_compare": ("H/zR compared with ZMSbar", "H/zR 与 ZMSbar 对比"),
+    "diag_zmsbar_compare_image": ("SVG for ZMSbar compare", "ZMSbar 对比的 SVG"),
+    "diag_discrete_effect_re": ("Multi-a discrete-effect overlay (Re)", "多 a 离散效应叠图（实部）"),
+    "diag_discrete_effect_re_image": ("SVG for discrete-effect Re", "离散效应实部 SVG"),
+    "diag_discrete_effect_im": ("Multi-a discrete-effect overlay (Im)", "多 a 离散效应叠图（虚部）"),
+    "diag_discrete_effect_im_image": ("SVG for discrete-effect Im", "离散效应虚部 SVG"),
 }
 
-RENORM_ARTIFACT_ORDER = ("renormalized_artifact", "renormalized_plot", "renormalized_plot_image")
+RENORM_ARTIFACT_ORDER = (
+    "zR_artifact",
+    "renormalized_artifact",
+    "renormalized_plot",
+    "renormalized_plot_image",
+    "diag_fit_lnM_vs_inv_a",
+    "diag_fit_lnM_vs_inv_a_image",
+    "diag_fit_mR_zmsbar",
+    "diag_fit_mR_zmsbar_image",
+    "diag_fit_m_over_zR",
+    "diag_fit_m_over_zR_image",
+    "diag_fit_f1",
+    "diag_fit_f1_image",
+    "diag_zmsbar_compare",
+    "diag_zmsbar_compare_image",
+    "diag_discrete_effect_re",
+    "diag_discrete_effect_re_image",
+    "diag_discrete_effect_im",
+    "diag_discrete_effect_im_image",
+)
 
 
 def _fmt(value: Any, digits: int = 4) -> str:
@@ -64,16 +98,72 @@ def _md_path(value: Any, *, base_dir: Path) -> str | None:
 
 def _markdown_artifacts(artifacts: dict[str, Any] | None, *, base_dir: Path) -> dict[str, Any]:
     output = dict(artifacts or {})
-    for key in RENORM_ARTIFACT_ORDER:
-        if key in output:
+    for key in list(output):
+        if key in RENORM_ARTIFACT_ORDER or key.startswith("diag_"):
             output[key] = _md_path(output[key], base_dir=base_dir)
     return output
 
 
+def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
+    header = "| Artifact | Description |" if language == "en" else "| 文件 | 说明 |"
+    lines = [header, "|---|---|"]
+    keys = [key for key in RENORM_ARTIFACT_ORDER if artifacts.get(key)]
+    for key in artifacts:
+        if key.startswith("diag_") and key not in keys:
+            keys.append(key)
+    for key in keys:
+        value = artifacts.get(key)
+        if not value:
+            continue
+        desc_pair = RENORM_ARTIFACT_DESCRIPTIONS.get(key)
+        if desc_pair is None:
+            desc = key
+        else:
+            desc = desc_pair[0 if language == "en" else 1]
+        lines.append(f"| `{value}` | {desc} |")
+    if len(lines) == 2:
+        lines.append("| not available | not available |")
+    return lines
+
+
 def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
-    if language == "zh":
+    scheme = str(result.get("scheme", "hybrid_ratio"))
+    if scheme == "self_renormalization":
+        job_kind = str(
+            result.get("job_kind")
+            or ("fit" if result.get("d") is not None and "a_fm" not in result else "apply")
+        )
+        if language == "zh":
+            rows = [
+                ("方案", f"`{scheme}`"),
+                ("job 类型", f"`{job_kind}`"),
+                ("kernel_id", f"`{result.get('kernel_id', 'n/a')}`"),
+                ("$\\mu$ [GeV]", _fmt(result.get("mu"))),
+                ("$m_0$ [GeV]", _fmt(result.get("m0", result.get("m0_gev")))),
+                ("$d$", _fmt(result.get("d"))),
+                ("svdcut", _fmt(result.get("svdcut"))),
+                ("$a$ [fm]", _fmt(result.get("a_fm"))),
+                ("z 网格", _fmt_list(result.get("z_grid", result.get("z_values", [])))),
+                ("重采样", f"{result.get('n_sample', 'n/a')} 个样本"),
+            ]
+            header = "| 条目 | 数值或设置 |"
+        else:
+            rows = [
+                ("Scheme", f"`{scheme}`"),
+                ("Job kind", f"`{job_kind}`"),
+                ("kernel_id", f"`{result.get('kernel_id', 'n/a')}`"),
+                ("$\\mu$ [GeV]", _fmt(result.get("mu"))),
+                ("$m_0$ [GeV]", _fmt(result.get("m0", result.get("m0_gev")))),
+                ("$d$", _fmt(result.get("d"))),
+                ("svdcut", _fmt(result.get("svdcut"))),
+                ("$a$ [fm]", _fmt(result.get("a_fm"))),
+                ("z grid", _fmt_list(result.get("z_grid", result.get("z_values", [])))),
+                ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
+            ]
+            header = "| Quantity | Value |"
+    elif language == "zh":
         rows = [
-            ("方案", f"`{result.get('scheme', 'hybrid_ratio')}`"),
+            ("方案", f"`{scheme}`"),
             ("$z_s$ [fm]", _fmt(result.get("zs_fm"))),
             ("$z_s/a$", _fmt(result.get("zs_lattice"))),
             ("选中的 denominator z grid", _fmt(result.get("zs_grid"))),
@@ -85,7 +175,7 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
         header = "| 条目 | 数值或设置 |"
     else:
         rows = [
-            ("Scheme", f"`{result.get('scheme', 'hybrid_ratio')}`"),
+            ("Scheme", f"`{scheme}`"),
             ("$z_s$ [fm]", _fmt(result.get("zs_fm"))),
             ("$z_s/a$", _fmt(result.get("zs_lattice"))),
             ("Selected denominator z grid", _fmt(result.get("zs_grid"))),
@@ -100,7 +190,27 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
     return lines
 
 
-def _formula_text(*, language: str) -> str:
+def _formula_text(*, language: str, scheme: str = "hybrid_ratio") -> str:
+    if scheme == "self_renormalization":
+        if language == "zh":
+            return r"""
+Self-renormalization 先从零动量 reference 拟合 $z_R(z,a)$，再对每个重采样样本作用
+
+$$
+h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z;\mu)}.
+$$
+
+$Z_{\overline{\mathrm{MS}}}$ 由 `inputs.kernels` 中 `stage='renormalization'` 的 kernel（`ZMSbar_pdf` 或 `ZMSbar_da`）给出。该步骤不重新拟合矩阵元，而是对所有样本施加同一个重整化 map。
+""".strip()
+        return r"""
+Self-renormalization first fits $z_R(z,a)$ from a zero-momentum reference, then acts sample by sample as
+
+$$
+h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z;\mu)}.
+$$
+
+$Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). This stage does not refit matrix elements; it applies one renormalization map to all resampled samples.
+""".strip()
     if language == "zh":
         return r"""
 Hybrid-ratio 方案对每个重采样样本 $s$ 单独作用在目标矩阵元和 denominator 矩阵元上。逐样本归一化因子为
@@ -144,20 +254,6 @@ Here $h^{\rm tar}_s(z)$ is the bare target matrix element, $h^{\rm den}_s(z)$ is
 """.strip()
 
 
-def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
-    header = "| Artifact | Description |" if language == "en" else "| 文件 | 说明 |"
-    lines = [header, "|---|---|"]
-    for key in RENORM_ARTIFACT_ORDER:
-        value = artifacts.get(key)
-        if not value:
-            continue
-        desc = RENORM_ARTIFACT_DESCRIPTIONS[key][0 if language == "en" else 1]
-        lines.append(f"| `{value}` | {desc} |")
-    if len(lines) == 2:
-        lines.append("| not available | not available |")
-    return lines
-
-
 def build_renorm_stage_report_markdown(
     *,
     jobs: list[dict[str, Any]],
@@ -165,19 +261,30 @@ def build_renorm_stage_report_markdown(
     language: str = "en",
 ) -> str:
     """Build one Markdown report for all renormalization jobs."""
+    schemes = {str(item.get("result", {}).get("scheme", "hybrid_ratio")) for item in jobs}
+    primary_scheme = next(iter(schemes)) if len(schemes) == 1 else "mixed"
     title = "# Renormalization Stage Report" if language == "en" else "# Renormalization 阶段报告"
-    intro = (
-        "This report summarizes hybrid-ratio renormalization jobs that convert bare matrix elements into renormalized coordinate-space matrix elements."
-        if language == "en"
-        else "本报告汇总 hybrid-ratio 重整化 job，将裸矩阵元转换为坐标空间重整化矩阵元。"
-    )
+    if language == "en":
+        intro = (
+            "This report summarizes self-renormalization jobs that convert bare matrix elements into renormalized coordinate-space matrix elements."
+            if primary_scheme == "self_renormalization"
+            else "This report summarizes hybrid-ratio renormalization jobs that convert bare matrix elements into renormalized coordinate-space matrix elements."
+        )
+        summary_header = "| job | scheme | key | output | plot |"
+    else:
+        intro = (
+            "本报告汇总 self-renormalization job，将裸矩阵元转换为坐标空间重整化矩阵元。"
+            if primary_scheme == "self_renormalization"
+            else "本报告汇总 hybrid-ratio 重整化 job，将裸矩阵元转换为坐标空间重整化矩阵元。"
+        )
+        summary_header = "| job | 方案 | 关键参数 | 输出 | 图像 |"
     lines = [
         title,
         "",
         intro,
         "",
         "## Job Summary" if language == "en" else "## Job 汇总",
-        "| job | scheme | $z_s$ [fm] | output | plot |" if language == "en" else "| job | 方案 | $z_s$ [fm] | 输出 | 图像 |",
+        summary_header,
         "|---|---|---:|---|---|",
     ]
     markdown_jobs = []
@@ -185,15 +292,27 @@ def build_renorm_stage_report_markdown(
         result = item.get("result", {})
         artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=base_dir)
         markdown_jobs.append((item, result, artifacts))
+        key = result.get("kernel_id") if result.get("scheme") == "self_renormalization" else result.get("zs_fm")
+        output_path = artifacts.get("renormalized_artifact") or artifacts.get("zR_artifact") or "n/a"
+        plot_path = artifacts.get("renormalized_plot") or "n/a"
         lines.append(
             f"| `{item['job_id']}` | `{result.get('scheme', 'hybrid_ratio')}` | "
-            f"{_fmt(result.get('zs_fm'))} | "
-            f"{artifacts.get('renormalized_artifact', 'n/a')} | "
-            f"{artifacts.get('renormalized_plot', 'n/a')} |"
+            f"{key if key is not None else _fmt(result.get('zs_fm'))} | "
+            f"{output_path} | "
+            f"{plot_path} |"
         )
 
-    lines.extend(["", "## Method" if language == "en" else "## 方法", _formula_text(language=language)])
+    lines.extend(
+        [
+            "",
+            "## Method" if language == "en" else "## 方法",
+            _formula_text(language=language, scheme=primary_scheme if primary_scheme != "mixed" else "hybrid_ratio"),
+        ]
+    )
     for item, result, artifacts in markdown_jobs:
+        is_fit_job = result.get("job_kind") == "fit" or (
+            result.get("scheme") == "self_renormalization" and artifacts.get("zR_artifact") and not artifacts.get("renormalized_artifact")
+        )
         lines.extend(
             [
                 "",
@@ -201,18 +320,46 @@ def build_renorm_stage_report_markdown(
                 "",
                 "### Scheme Parameters" if language == "en" else "### 方案参数",
                 *_scheme_table(result, language=language),
+            ]
+        )
+        if not is_fit_job:
+            lines.extend(
+                [
+                    "",
+                    "### Renormalized Matrix Element" if language == "en" else "### 重整化矩阵元图",
+                    (
+                        f"![Renormalized matrix element]({artifacts.get('renormalized_plot_image')})"
+                        if artifacts.get("renormalized_plot_image")
+                        else ("Not available." if language == "en" else "未生成。")
+                    ),
+                    (
+                        f"[PDF artifact]({artifacts.get('renormalized_plot')})"
+                        if artifacts.get("renormalized_plot")
+                        else ""
+                    ),
+                ]
+            )
+        lines.extend(
+            [
                 "",
-                "### Renormalized Matrix Element" if language == "en" else "### 重整化矩阵元图",
-                (
-                    f"![Renormalized matrix element]({artifacts.get('renormalized_plot_image')})"
-                    if artifacts.get("renormalized_plot_image")
-                    else ("Not available." if language == "en" else "未生成。")
-                ),
-                (
-                    f"[PDF artifact]({artifacts.get('renormalized_plot')})"
-                    if artifacts.get("renormalized_plot")
-                    else ""
-                ),
+                "### Diagnostic Plots" if language == "en" else "### 诊断图",
+            ]
+        )
+        diag_images = [
+            key for key in artifacts
+            if key.startswith("diag_") and key.endswith("_image") and artifacts.get(key)
+        ]
+        if not diag_images:
+            lines.append("Not available." if language == "en" else "未生成。")
+        else:
+            for key in diag_images:
+                label = key.removeprefix("diag_").removesuffix("_image")
+                lines.append(f"![{label}]({artifacts[key]})")
+                pdf_key = key.removesuffix("_image")
+                if artifacts.get(pdf_key):
+                    lines.append(f"[PDF]({artifacts[pdf_key]})")
+        lines.extend(
+            [
                 "",
                 "### Output Artifacts" if language == "en" else "### 输出文件",
                 *_outputs_table(artifacts, language=language),

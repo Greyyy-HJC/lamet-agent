@@ -59,7 +59,7 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
             "artifacts": [],
             "kernels": [
                 {
-                    "stage": "matching",
+                    "stage": "perturbative_matching",
                     "kernel_id": "CG_gt_PDF_hybrid",
                     "kernel_path": "src/lamet_agent/kernels.py",
                     "scheme": "ratio",

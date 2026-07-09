@@ -140,10 +140,54 @@ class EnsembleData:
         array = self.array.copy(deep=False)
         array.attrs["ensemble"] = json.dumps(None if self.ensemble is None else self.ensemble._asdict())
         array.attrs["resample"] = self.resample
+        if self.resample == "gvar":
+            # NetCDF cannot store Python gvar objects; persist mean/sdev floats and rebuild on load.
+            mean = numpy.asarray(gvar.mean(self.array.values), dtype=float)
+            sdev = numpy.asarray(gvar.sdev(self.array.values), dtype=float)
+            mean_da = xarray.DataArray(
+                mean,
+                coords=self.array.coords,
+                dims=self.array.dims,
+                name=self.array.name,
+                attrs=dict(array.attrs),
+            )
+            mean_da.attrs["gvar_encoding"] = "mean_sdev"
+            dataset = mean_da.to_dataset(name=mean_da.name or "data")
+            dataset["sdev"] = (self.array.dims, sdev)
+            dataset.to_netcdf(path, format="NETCDF4")
+            return
         array.to_netcdf(path, format="NETCDF4", auto_complex=True)
 
     @classmethod
     def from_netcdf(cls, path: Union[str, Path]) -> "EnsembleData":
+        try:
+            dataset = xarray.open_dataset(path)
+            if "gvar_encoding" in dataset.attrs or (
+                len(dataset.data_vars) and "gvar_encoding" in next(iter(dataset.data_vars.values())).attrs
+            ):
+                data_name = next(name for name in dataset.data_vars if name != "sdev")
+                mean_da = dataset[data_name]
+                sdev = numpy.asarray(dataset["sdev"].values, dtype=float)
+                mean = numpy.asarray(mean_da.values, dtype=float)
+                gvar_values = gvar.gvar(mean, sdev)
+                attrs = dict(mean_da.attrs)
+                attrs.pop("gvar_encoding", None)
+                ensemble_payload = json.loads(attrs.pop("ensemble"))
+                ensemble = None if ensemble_payload is None else EnsembleInfo(**ensemble_payload)
+                resample = attrs.pop("resample")
+                rebuilt = xarray.DataArray(
+                    gvar_values,
+                    coords=mean_da.coords,
+                    dims=mean_da.dims,
+                    name=mean_da.name if mean_da.name != "data" else None,
+                    attrs=attrs,
+                )
+                dataset.close()
+                return cls._from_xarray(ensemble, resample, rebuilt)
+            dataset.close()
+        except (OSError, ValueError, KeyError, StopIteration):
+            pass
+
         array = xarray.load_dataarray(path, auto_complex=True)
         ensemble_payload = json.loads(array.attrs.pop("ensemble"))
         ensemble = None if ensemble_payload is None else EnsembleInfo(**ensemble_payload)

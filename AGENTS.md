@@ -142,6 +142,7 @@ Package modules:
 - Paths resolve from `metadata.root_directory`; default job artifacts are `<artifacts_directory>/<stage>/<job_id>.nc`.
 - Terminal stage tools must place their primary in-memory result in `store["output"]`.
 - Fourier jobs consume role `input`; matching jobs consume role `quasi`. Partial Fourier runs declare the renormalized NetCDF and its `a_fm`, `pz_gev`, `hadron`, and `gfix` metadata under `inputs.artifacts`.
+- `inputs.kernels[].stage` must be a full `StageId` (`renormalization` or `perturbative_matching`), not a package shorthand such as `matching`.
 
 ## Plotting Conventions
 

@@ -282,6 +282,104 @@ def test_prepare_renormalization_args_filters_normalization_manifest_flag(tmp_pa
     assert "normalization" not in args
 
 
+def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(Path("examples/temp_self_renorm_manifest.json"))
+    fit_job = manifest.stages["renormalization"].jobs[0]
+    apply_job = manifest.stages["renormalization"].jobs[1]
+    fit_effective = {**manifest.stages["renormalization"].defaults, **fit_job.params}
+    apply_effective = {**manifest.stages["renormalization"].defaults, **apply_job.params}
+
+    assert set(fit_job.inputs) == {"reference"}
+    assert set(apply_job.inputs) == {"target", "zR"}
+    assert validate_stage_inputs("renormalization", manifest, fit_job) == []
+    assert validate_stage_inputs("renormalization", manifest, apply_job) == []
+
+    fit_args = prepare_tool_args(
+        "fit_self_renormalization_factor",
+        {},
+        manifest=manifest,
+        stage="renormalization",
+        job=fit_job,
+        effective_params=fit_effective,
+        artifacts_dir=tmp_path,
+    )
+    assert fit_args["reference"] == "reference"
+    assert fit_args["kernel_id"] == "ZMSbar_da"
+    assert fit_args["d"] == -0.08183
+    assert "m0_gev" not in fit_args
+    assert "d_fit" not in fit_args
+    assert "n_m0" not in fit_args
+    assert fit_args["mu"] == 2.0
+    assert fit_args["svdcut"] == 1e-12
+    assert fit_args["save_path"] == str(tmp_path / "rn_zR_fit")
+    # Fit-job params carry required d (PDF); m0_gev omitted → fit.
+    assert fit_effective["d"] == -0.08183
+    assert "m0_gev" not in fit_effective
+
+    apply_args = prepare_tool_args(
+        "apply_self_renormalization",
+        {},
+        manifest=manifest,
+        stage="renormalization",
+        job=apply_job,
+        effective_params=apply_effective,
+        artifacts_dir=tmp_path,
+    )
+    assert apply_args["target"] == "target"
+    assert apply_args["zR"] == "zR"
+    assert apply_args["kernel_id"] == "ZMSbar_da"
+    assert apply_args["mu"] == 2.0
+    assert apply_args["d"] == 0.19
+    assert apply_args["m0_gev"] == -0.094
+    assert apply_args["save_path"] == str(tmp_path / "rn_mom6_a06")
+
+    fit_diag = prepare_tool_args(
+        "plot_self_renormalization_diagnostics",
+        {},
+        manifest=manifest,
+        stage="renormalization",
+        job=fit_job,
+        effective_params=fit_effective,
+        artifacts_dir=tmp_path,
+    )
+    assert fit_diag["mode"] == "fit"
+    assert fit_diag["zR"] == "zR"
+    assert fit_diag["fit"] == "self_renorm_fit"
+    assert "target" not in fit_diag
+    assert "include_discrete_effect" not in fit_diag
+
+    apply_diag = prepare_tool_args(
+        "plot_self_renormalization_diagnostics",
+        {},
+        manifest=manifest,
+        stage="renormalization",
+        job=apply_job,
+        effective_params=apply_effective,
+        artifacts_dir=tmp_path,
+    )
+    assert apply_diag["mode"] == "apply"
+    assert apply_diag["target"] == "target"
+    assert apply_diag["include_discrete_effect"] is False
+    assert apply_diag["sibling_artifacts"] == []
+
+    last_apply = manifest.stages["renormalization"].jobs[-1]
+    last_effective = {**manifest.stages["renormalization"].defaults, **last_apply.params}
+    for job_id in ("rn_mom6_a06", "rn_mom6_a09", "rn_mom6_a12"):
+        (tmp_path / f"{job_id}.nc").write_text("placeholder", encoding="utf-8")
+    last_diag = prepare_tool_args(
+        "plot_self_renormalization_diagnostics",
+        {},
+        manifest=manifest,
+        stage="renormalization",
+        job=last_apply,
+        effective_params=last_effective,
+        artifacts_dir=tmp_path,
+    )
+    assert last_diag["mode"] == "apply"
+    assert last_diag["include_discrete_effect"] is True
+    assert len(last_diag["sibling_artifacts"]) == 3
+
+
 def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["fourier_transform"].jobs[0]

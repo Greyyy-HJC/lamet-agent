@@ -101,11 +101,11 @@ class ArtifactInput(BaseModel):
 
 
 class KernelInput(BaseModel):
-    """Matching-kernel declaration."""
+    """Stage kernel declaration (renormalization or perturbative matching)."""
 
     model_config = ConfigDict(extra="allow")
 
-    stage: str
+    stage: StageId
     kernel_id: str
     kernel_path: str
     scheme: str
