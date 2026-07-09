@@ -61,7 +61,7 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
             "artifacts": [],
             "kernels": [
                 {
-                    "stage": "perturbative_matching",
+                    "stage": "matching",
                     "kernel_id": "CG_gt_PDF_hybrid",
                     "kernel_path": "src/lamet_agent/kernels.py",
                     "scheme": "ratio",
@@ -186,6 +186,16 @@ def test_plan_reports_correlator_metadata_question_before_ambiguous_paths(tmp_pa
     loaded = _run_planning_tool(state, "load_manifest", {})
 
     assert loaded["next_questions"][0]["question_id"] == "inputs.correlators.0.momentum"
+
+
+def test_plan_does_not_write_conversion_control_answers_to_manifest(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, payload)
+
+    applied = _apply_user_answer_to_candidate(state, "inputs.correlators.0.axis_mapping", "yes")
+
+    assert applied["event"] == "user_answer_not_applied"
+    assert "axis_mapping" not in state.candidate_payload["inputs"]["correlators"][0]
 
 
 def test_plan_requires_patch_after_yes_to_stage_parameter_completion(tmp_path: Path) -> None:

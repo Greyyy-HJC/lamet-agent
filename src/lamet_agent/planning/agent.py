@@ -394,6 +394,29 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
         state.parameter_completion_checked = True
         state.parameter_completion_requested = str(value).strip().lower() in {"yes", "y", "true", "1"}
         return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "stage parameter completion preference recorded for the planning agent."}
+    match = re.fullmatch(r"inputs\.correlators\.\d+\.([A-Za-z_][A-Za-z0-9_]*)", question_id)
+    if match and match.group(1) not in {
+        "correlator_id",
+        "kind",
+        "data_path",
+        "ensemble",
+        "hadron",
+        "gfix",
+        "source_sink",
+        "momentum",
+        "a_fm",
+        "pz_gev",
+        "pz_out_gev",
+        "src_gamma",
+        "sink_gamma",
+        "current_gamma",
+        "z_direction",
+        "eta",
+        "bt",
+        "bz",
+        "tsep",
+    }:
+        return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "question_id is not a manifest correlator field."}
     pointer = _json_pointer_from_question_id(question_id)
     if pointer is None:
         return {"event": "user_answer_not_applied", "question_id": question_id, "reason": "question_id is not a manifest path."}
