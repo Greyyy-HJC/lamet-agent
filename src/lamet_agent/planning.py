@@ -59,6 +59,7 @@ class CorrelatorH5Mapping:
     source_file: str
     output_file: str
     datasets: list[dict[str, Any]]
+    script_file: str | None = None
     ambiguous: bool = False
     reason: str | None = None
 
@@ -73,25 +74,6 @@ class PlanProposal:
     full_manifest_path: str
     data_conversions: list[CorrelatorH5Mapping]
     unresolved_questions: list[str] = field(default_factory=list)
-
-
-@dataclass
-class PlanQuestionChoice:
-    """One terminal-selectable answer for a planning question."""
-
-    label: str
-    value: Any
-    description: str
-
-
-@dataclass
-class PlanQuestion:
-    """One deterministic planning question that must be answered before accept."""
-
-    question_id: str
-    prompt: str
-    choices: list[PlanQuestionChoice]
-    custom_hint: str | None = None
 
 
 @dataclass
@@ -123,13 +105,49 @@ class PlanAgentState:
     quick_path: Path | None = None
     full_path: Path | None = None
     suppressed_full_expansions: set[str] = field(default_factory=set)
+    stage_completion_checked: bool = False
+    stage_completion_requested: bool = False
+    parameter_completion_checked: bool = False
+    parameter_completion_requested: bool = False
 
 
 def _strip_jsonc(text: str) -> str:
     """Remove JSONC comments and trailing commas."""
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
-    text = re.sub(r"//.*", "", text)
-    return re.sub(r",(\s*[}\]])", r"\1", text)
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        nxt = text[index + 1] if index + 1 < len(text) else ""
+        if in_string:
+            out.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            out.append(char)
+            index += 1
+            continue
+        if char == "/" and nxt == "/":
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+        if char == "/" and nxt == "*":
+            index += 2
+            while index + 1 < len(text) and not (text[index] == "*" and text[index + 1] == "/"):
+                index += 1
+            index += 2
+            continue
+        out.append(char)
+        index += 1
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
 
 
 def load_relaxed_manifest(path: Path) -> tuple[dict[str, Any], str]:
@@ -349,6 +367,9 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
                 except Exception as exc:
                     issues.append(PlanIssue("warning", f"stages.{stage}.jobs.{job.id}", f"Stage input check failed: {exc}"))
 
+    for gap in _stage_parameter_gaps(payload):
+        issues.append(PlanIssue("warning", str(gap["path"]), str(gap["message"]), str(gap["suggested_fix"])))
+
     return issues
 
 
@@ -362,20 +383,11 @@ def _dataset_attrs(obj: Any) -> dict[str, str]:
 
 
 def inspect_correlator_h5_files(manifest_path: Path, payload: dict[str, Any]) -> list[H5Inspection]:
-    """Inspect HDF5 files referenced by inputs.correlators only."""
+    """Inspect HDF5/NumPy files referenced by inputs.correlators only."""
     try:
         import h5py
     except ImportError:
-        return [
-            H5Inspection(
-                correlator_id=str(item.get("correlator_id", "")),
-                path=str(item.get("data_path", "")),
-                exists=False,
-                error="h5py is not installed; install the analysis extra to inspect correlator HDF5 files.",
-            )
-            for item in payload.get("inputs", {}).get("correlators", [])
-            if isinstance(item, dict)
-        ]
+        h5py = None
 
     inspections: list[H5Inspection] = []
     correlators = payload.get("inputs", {}).get("correlators", [])
@@ -390,20 +402,38 @@ def inspect_correlator_h5_files(manifest_path: Path, payload: dict[str, Any]) ->
             inspections.append(H5Inspection(correlator_id=correlator_id, path=str(item.get("data_path", "")), exists=False))
             continue
         datasets: list[H5DatasetSummary] = []
+        suffix = resolved.suffix.lower()
         try:
-            with h5py.File(resolved, "r") as h5f:
-                def visit(name: str, obj: Any) -> None:
-                    if isinstance(obj, h5py.Dataset):
-                        datasets.append(
-                            H5DatasetSummary(
-                                path=name,
-                                shape=[int(dim) for dim in obj.shape],
-                                dtype=str(obj.dtype),
-                                attrs=_dataset_attrs(obj),
+            if suffix in {".h5", ".hdf5"}:
+                if h5py is None:
+                    raise ValueError("h5py is not installed; install the analysis extra to inspect correlator HDF5 files.")
+                with h5py.File(resolved, "r") as h5f:
+                    def visit(name: str, obj: Any) -> None:
+                        if isinstance(obj, h5py.Dataset):
+                            datasets.append(
+                                H5DatasetSummary(
+                                    path=name,
+                                    shape=[int(dim) for dim in obj.shape],
+                                    dtype=str(obj.dtype),
+                                    attrs=_dataset_attrs(obj),
+                                )
                             )
-                        )
 
-                h5f.visititems(visit)
+                    h5f.visititems(visit)
+            elif suffix == ".npy":
+                import numpy as np
+
+                arr = np.load(resolved, mmap_mode="r")
+                datasets.append(H5DatasetSummary(path="array", shape=[int(dim) for dim in arr.shape], dtype=str(arr.dtype)))
+            elif suffix == ".npz":
+                import numpy as np
+
+                with np.load(resolved) as npz:
+                    for key in sorted(npz.files):
+                        arr = npz[key]
+                        datasets.append(H5DatasetSummary(path=str(key), shape=[int(dim) for dim in arr.shape], dtype=str(arr.dtype)))
+            else:
+                raise ValueError("Unsupported correlator data format; convert to .npy, .npz, or preferably standard .h5.")
         except Exception as exc:
             inspections.append(H5Inspection(correlator_id=correlator_id, path=str(resolved), exists=True, error=str(exc)))
             continue
@@ -433,15 +463,28 @@ def _standard_dataset_paths(correlator: dict[str, Any]) -> list[str]:
 
 
 def _dataset_names(path: Path) -> dict[str, list[int]]:
-    import h5py
-
     out: dict[str, list[int]] = {}
-    with h5py.File(path, "r") as h5f:
-        def visit(name: str, obj: Any) -> None:
-            if isinstance(obj, h5py.Dataset):
-                out[name] = [int(dim) for dim in obj.shape]
+    suffix = path.suffix.lower()
+    if suffix in {".h5", ".hdf5"}:
+        import h5py
 
-        h5f.visititems(visit)
+        with h5py.File(path, "r") as h5f:
+            def visit(name: str, obj: Any) -> None:
+                if isinstance(obj, h5py.Dataset):
+                    out[name] = [int(dim) for dim in obj.shape]
+
+            h5f.visititems(visit)
+    elif suffix == ".npy":
+        import numpy as np
+
+        arr = np.load(path, mmap_mode="r")
+        out["array"] = [int(dim) for dim in arr.shape]
+    elif suffix == ".npz":
+        import numpy as np
+
+        with np.load(path) as npz:
+            for key in sorted(npz.files):
+                out[str(key)] = [int(dim) for dim in npz[key].shape]
     return out
 
 
@@ -456,32 +499,27 @@ def _choose_source_datasets(correlator: dict[str, Any], source: Path) -> tuple[l
     if correlator.get("kind") == "2pt":
         if len(available) != 1:
             return [], True, f"Expected one 2pt dataset or the standard path; found {len(available)} datasets."
-        shape = names[available[0]]
-        transpose = len(shape) == 2 and shape[0] > shape[1]
-        return [{"source": available[0], "target": targets[0], "transpose": transpose}], False, None
+        return [{"source": available[0], "target": targets[0], "transpose": False}], True, (
+            "Non-standard HDF5 2pt input requires explicit confirmation of time/cfg axes and transpose. "
+            f"Available dataset: {_source_summary(names)}. Expected standard target: {targets[0]}."
+        )
     if correlator.get("kind") == "3pt":
         bz_values = _as_list(correlator.get("bz"))
         if len(available) != len(targets):
             return [], True, f"Expected {len(targets)} 3pt datasets for bz values {bz_values}; found {len(available)}."
-        tsep = correlator.get("tsep")
-        items: list[dict[str, Any]] = []
-        for source_name, target in zip(available, targets):
-            shape = names[source_name]
-            transpose = False
-            if isinstance(tsep, int) and len(shape) >= 2:
-                if shape[0] == tsep + 1:
-                    transpose = False
-                elif shape[1] == tsep + 1:
-                    transpose = True
-                else:
-                    return [], True, f"Dataset {source_name!r} shape {shape} does not match tsep={tsep}."
-            items.append({"source": source_name, "target": target, "transpose": transpose})
-        return items, False, None
+        return [], True, (
+            "Non-standard HDF5 3pt input requires explicit source-to-bz mapping and tau/cfg axis confirmation. "
+            f"Available datasets: {_source_summary(names)}. Expected standard targets: {targets}."
+        )
     return [], True, f"Unsupported correlator kind {correlator.get('kind')!r}."
 
 
+def _source_summary(names: dict[str, list[int]]) -> str:
+    return ", ".join(f"{key}: shape={shape}" for key, shape in sorted(names.items()))
+
+
 def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any]) -> list[CorrelatorH5Mapping]:
-    """Return required non-ambiguous and ambiguous correlator HDF5 conversions."""
+    """Return required non-ambiguous and ambiguous correlator data conversions."""
     data_dir = _artifacts_dir(manifest_path, payload) / "plan_data"
     conversions: list[CorrelatorH5Mapping] = []
     correlators = payload.get("inputs", {}).get("correlators", [])
@@ -491,21 +529,72 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
         if not isinstance(item, dict):
             continue
         source = _resolve_manifest_path(manifest_path, payload, item.get("data_path"))
-        if source is None or not source.exists() or source.suffix.lower() not in {".h5", ".hdf5"}:
+        if source is None or not source.exists():
+            continue
+        suffix = source.suffix.lower()
+        correlator_id = str(item.get("correlator_id", source.stem))
+        output = data_dir / f"{correlator_id}.h5"
+        script = data_dir / f"convert_{correlator_id}.py"
+        if suffix not in {".h5", ".hdf5", ".npy", ".npz"}:
+            conversions.append(
+                CorrelatorH5Mapping(
+                    correlator_id=correlator_id,
+                    source_file=str(source),
+                    output_file=str(output),
+                    script_file=str(script),
+                    datasets=[],
+                    ambiguous=True,
+                    reason="Unsupported correlator data format. Convert the data to .npy, .npz, or preferably standard .h5.",
+                )
+            )
             continue
         try:
-            datasets, ambiguous, reason = _choose_source_datasets(item, source)
+            names = _dataset_names(source)
+            targets = _standard_dataset_paths(item)
+            if suffix in {".h5", ".hdf5"}:
+                datasets, ambiguous, reason = _choose_source_datasets(item, source)
+            elif suffix == ".npy":
+                if len(targets) == 1 and names.get("array"):
+                    if item.get("kind") == "2pt":
+                        datasets, ambiguous, reason = [{"source": "array", "target": targets[0], "transpose": False}], True, (
+                            "NumPy 2pt input requires explicit confirmation of cfg and time axes, momentum selection, and whether transpose is needed. "
+                            f"Available array: {_source_summary(names)}. Expected standard target: {targets[0]}."
+                        )
+                    else:
+                        datasets, ambiguous, reason = [{"source": "array", "target": targets[0], "transpose": False}], True, (
+                            "NumPy 3pt input requires explicit confirmation of cfg, tau, z/bz ordering, momentum selection, and whether transpose is needed. "
+                            f"Available array: {_source_summary(names)}. Expected standard targets: {targets}."
+                        )
+                else:
+                    datasets, ambiguous, reason = [], True, (
+                        "NumPy input cannot be mapped without an explicit source/target mapping. "
+                        f"Available array: {_source_summary(names)}. Expected standard targets: {targets}."
+                    )
+            else:
+                available = set(names)
+                if targets and all(target in available for target in targets):
+                    datasets, ambiguous, reason = [{"source": target, "target": target, "transpose": False} for target in targets], False, None
+                elif len(targets) == 1 and len(names) == 1:
+                    source_name = next(iter(names))
+                    datasets, ambiguous, reason = [{"source": source_name, "target": targets[0], "transpose": False}], True, (
+                        "NPZ input has one candidate array, but cfg/time or cfg/tau axes and momentum selection must be confirmed explicitly. "
+                        f"Available arrays: {_source_summary(names)}. Expected standard target: {targets[0]}."
+                    )
+                else:
+                    datasets, ambiguous, reason = [], True, (
+                        "NPZ input requires explicit key-to-target and axis mapping. "
+                        f"Available arrays: {_source_summary(names)}. Expected standard targets: {targets}."
+                    )
         except Exception as exc:
             datasets, ambiguous, reason = [], True, str(exc)
         if not datasets and not ambiguous:
             continue
-        correlator_id = str(item.get("correlator_id", source.stem))
-        output = data_dir / f"{correlator_id}.h5"
         conversions.append(
             CorrelatorH5Mapping(
                 correlator_id=correlator_id,
                 source_file=str(source),
                 output_file=str(output),
+                script_file=str(script),
                 datasets=datasets,
                 ambiguous=ambiguous,
                 reason=reason,
@@ -528,20 +617,62 @@ def convert_correlator_h5(mapping: CorrelatorH5Mapping) -> None:
 
     output = Path(mapping.output_file)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with h5py.File(mapping.source_file, "r") as src, h5py.File(output, "w") as dst:
-        for item in mapping.datasets:
-            source_name = str(item["source"])
-            target_name = str(item["target"])
-            data = np.asarray(src[source_name])
-            original_shape = list(data.shape)
-            if item.get("transpose"):
-                data = data.T
-            dataset = dst.create_dataset(target_name, data=data)
-            _copy_h5_attrs(src[source_name], dataset)
-            dataset.attrs["lamet_agent_original_file"] = mapping.source_file
-            dataset.attrs["lamet_agent_original_dataset"] = source_name
-            dataset.attrs["lamet_agent_original_shape"] = json.dumps(original_shape)
-            dataset.attrs["lamet_agent_transposed"] = bool(item.get("transpose"))
+    if mapping.script_file:
+        script = Path(mapping.script_file)
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(
+            "from lamet_agent.planning import CorrelatorH5Mapping, convert_correlator_h5\n\n"
+            "mapping = CorrelatorH5Mapping(**"
+            + repr(_dataclass_json(mapping))
+            + ")\n"
+            "convert_correlator_h5(mapping)\n",
+            encoding="utf-8",
+        )
+    suffix = Path(mapping.source_file).suffix.lower()
+    npy_data = np.load(mapping.source_file, mmap_mode="r") if suffix == ".npy" else None
+    npz_data = np.load(mapping.source_file) if suffix == ".npz" else None
+    h5_source = h5py.File(mapping.source_file, "r") if suffix in {".h5", ".hdf5"} else None
+    try:
+        with h5py.File(output, "w") as dst:
+            for item in mapping.datasets:
+                source_name = str(item.get("source") or "array")
+                target_name = str(item["target"])
+                if h5_source is not None:
+                    data = np.asarray(h5_source[source_name])
+                elif npz_data is not None:
+                    data = np.asarray(npz_data[source_name])
+                else:
+                    data = np.asarray(npy_data)
+                original_shape = list(data.shape)
+                fixed_axes = {int(axis) for axis in (item.get("index") or {})}
+                for axis, index in sorted((item.get("index") or {}).items(), key=lambda pair: int(pair[0]), reverse=True):
+                    data = np.take(data, int(index), axis=int(axis))
+                if item.get("axis_order") is not None:
+                    axes = [int(axis) for axis in item["axis_order"]]
+                    if sorted(axes) == list(range(1, data.ndim + 1)):
+                        axes = [axis - 1 for axis in axes]
+                    elif axes and max(axes) >= data.ndim:
+                        remaining_axes = [axis for axis in range(len(original_shape)) if axis not in fixed_axes]
+                        axes = [remaining_axes.index(axis) for axis in axes if axis in remaining_axes]
+                    data = np.transpose(data, axes)
+                if item.get("transpose"):
+                    data = data.T
+                dataset = dst.create_dataset(target_name, data=data)
+                if h5_source is not None:
+                    _copy_h5_attrs(h5_source[source_name], dataset)
+                dataset.attrs["lamet_agent_original_file"] = mapping.source_file
+                dataset.attrs["lamet_agent_original_dataset"] = source_name
+                dataset.attrs["lamet_agent_original_shape"] = json.dumps(original_shape)
+                dataset.attrs["lamet_agent_transposed"] = bool(item.get("transpose"))
+                if item.get("axis_order") is not None:
+                    dataset.attrs["lamet_agent_axis_order"] = json.dumps(item["axis_order"])
+                if item.get("index"):
+                    dataset.attrs["lamet_agent_index"] = json.dumps(item["index"])
+    finally:
+        if h5_source is not None:
+            h5_source.close()
+        if npz_data is not None:
+            npz_data.close()
 
 
 def _set_kernel_scheme_from_renorm(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -644,194 +775,6 @@ def _merge_revision_edits(existing: list[dict[str, Any]], new_edits: list[dict[s
         if isinstance(path, str):
             _remove_edit_for_path(existing, path)
         existing.append(edit)
-
-
-def apply_revision_instruction(
-    payload: dict[str, Any],
-    original_payload: dict[str, Any],
-    note: str,
-    revision_edits: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Apply deterministic edits for common revision requests."""
-    text = note.lower()
-    wants_revert = (
-        "改回" in note
-        or "恢复" in note
-        or "撤回" in note
-        or "undo" in text
-        or "revert" in text
-        or "restore" in text
-    )
-    mentions_tau = "tau" in text or "pt3_tau_cuts" in text or "tau cuts" in text
-    if wants_revert and mentions_tau:
-        path = "stages.correlator_analysis.defaults.pt3_tau_cuts"
-        old = _get_path_value(payload, path)
-        original = _get_path_value(original_payload, path)
-        _set_path_value(payload, path, original)
-        _remove_edit_for_path(revision_edits, path)
-        return [
-            {
-                "path": path,
-                "old": old,
-                "new": original,
-                "note": "User reverted the tau-cut search.",
-            }
-        ]
-
-    mentions_pt2_window = "pt2_window" in text or "pt2 window" in text
-    mentions_window = "fit window" in text or "fit-window" in text or "window" in text or "窗口" in note
-    if wants_revert and mentions_window:
-        paths = ["stages.correlator_analysis.defaults.pt2_windows"]
-        if not mentions_pt2_window:
-            paths.append("stages.correlator_analysis.defaults.pt3_tau_cuts")
-        edits: list[dict[str, Any]] = []
-        for path in paths:
-            old = _get_path_value(payload, path)
-            original = _get_path_value(original_payload, path)
-            _set_path_value(payload, path, original)
-            _remove_edit_for_path(revision_edits, path)
-            edits.append({"path": path, "old": old, "new": original, "note": "User reverted the fit-window search."})
-        return edits
-
-    wants_windows = (
-        "fit window" in text
-        or "fit-window" in text
-        or "window" in text
-        or "窗口" in note
-    ) and ("search" in text or "scan" in text or "多" in note or "加" in note or "搜索" in note)
-    if not wants_windows:
-        return []
-    stages = payload.get("stages")
-    if not isinstance(stages, dict):
-        return []
-    correlator = stages.get("correlator_analysis")
-    if not isinstance(correlator, dict):
-        return []
-    defaults = correlator.setdefault("defaults", {})
-    if not isinstance(defaults, dict):
-        defaults = {}
-        correlator["defaults"] = defaults
-    edits: list[dict[str, Any]] = []
-    old_windows = copy.deepcopy(defaults.get("pt2_windows"))
-    new_windows = _expand_pt2_windows(defaults.get("pt2_windows"))
-    if new_windows != old_windows:
-        defaults["pt2_windows"] = new_windows
-        edits.append(
-            {
-                "path": "stages.correlator_analysis.defaults.pt2_windows",
-                "old": old_windows,
-                "new": new_windows,
-                "note": "User requested a broader fit-window search.",
-            }
-        )
-    old_cuts = copy.deepcopy(defaults.get("pt3_tau_cuts"))
-    new_cuts = _expand_tau_cuts(defaults.get("pt3_tau_cuts"))
-    if new_cuts != old_cuts:
-        defaults["pt3_tau_cuts"] = new_cuts
-        edits.append(
-            {
-                "path": "stages.correlator_analysis.defaults.pt3_tau_cuts",
-                "old": old_cuts,
-                "new": new_cuts,
-                "note": "User requested a broader fit-window search.",
-            }
-        )
-    return edits
-
-
-def plan_questions(payload: dict[str, Any], conversions: list[CorrelatorH5Mapping]) -> list[PlanQuestion]:
-    """Build deterministic questions for decisions the code cannot choose silently."""
-    questions: list[PlanQuestion] = []
-    metadata = payload.get("metadata")
-    if not isinstance(metadata, dict) or "random_seed" not in metadata:
-        questions.append(
-            PlanQuestion(
-                question_id="metadata.random_seed",
-                prompt="metadata.random_seed is required. Which seed should be used?",
-                choices=[
-                    PlanQuestionChoice("1", 1984, "Use 1984, matching the repository examples."),
-                    PlanQuestionChoice("2", 20260707, "Use a date-based seed for this planning run."),
-                    PlanQuestionChoice("3", "__custom_int__", "Enter a custom positive integer seed."),
-                ],
-                custom_hint="Enter random_seed as an integer: ",
-            )
-        )
-    for conversion in conversions:
-        if conversion.ambiguous:
-            questions.append(
-                PlanQuestion(
-                    question_id=f"conversion.{conversion.correlator_id}",
-                    prompt=(
-                        f"Correlator {conversion.correlator_id!r} has ambiguous HDF5 conversion: "
-                        f"{conversion.reason or 'no mapping could be inferred'}."
-                    ),
-                    choices=[
-                        PlanQuestionChoice("1", "skip", "Do not convert this file; keep the manifest path unchanged."),
-                        PlanQuestionChoice("2", "quit", "Stop planning so the source HDF5 or manifest metadata can be fixed."),
-                    ],
-                )
-            )
-    return questions
-
-
-def apply_plan_answer(
-    payload: dict[str, Any],
-    conversions: list[CorrelatorH5Mapping],
-    question: PlanQuestion,
-    answer: Any,
-) -> list[dict[str, Any]]:
-    """Apply one collected answer to the draft payload or conversion list."""
-    if question.question_id == "metadata.random_seed":
-        return [_set_path_value(payload, "metadata.random_seed", int(answer))]
-    if question.question_id.startswith("conversion.") and answer == "skip":
-        correlator_id = question.question_id.removeprefix("conversion.")
-        for conversion in conversions:
-            if conversion.correlator_id == correlator_id:
-                conversion.datasets = []
-                conversion.ambiguous = False
-                conversion.reason = "Skipped by user during plan mode."
-                return [
-                    {
-                        "path": f"inputs.correlators[{correlator_id}].data_path",
-                        "old": conversion.source_file,
-                        "new": conversion.source_file,
-                        "note": "Skipped ambiguous conversion.",
-                    }
-                ]
-    return []
-
-
-def _ask_plan_question(question: PlanQuestion, input_func: Callable[[str], str], output_func: Callable[[str], None]) -> Any:
-    output_func("")
-    output_func(question.prompt)
-    for index, choice in enumerate(question.choices, start=1):
-        output_func(f"  {index}. {choice.description}")
-    output_func("  q. Quit without writing files.")
-    while True:
-        raw = input_func("Select an option: ").strip()
-        if raw.lower() in {"q", "quit"}:
-            return "quit"
-        selected: PlanQuestionChoice | None = None
-        for index, choice in enumerate(question.choices, start=1):
-            if raw == str(index) or raw == choice.label:
-                selected = choice
-                break
-        if selected is None:
-            output_func("Please choose one of the listed options.")
-            continue
-        if selected.value == "__custom_int__":
-            while True:
-                custom = input_func(question.custom_hint or "Enter value: ").strip()
-                try:
-                    value = int(custom)
-                except ValueError:
-                    output_func("Please enter an integer.")
-                    continue
-                if value <= 0:
-                    output_func("Please enter a positive integer.")
-                    continue
-                return value
-        return selected.value
 
 
 def _update_conversion_paths(payload: dict[str, Any], conversions: list[CorrelatorH5Mapping], manifest_path: Path) -> list[dict[str, Any]]:
@@ -1131,85 +1074,70 @@ def _strict_manifest_issues(payload: dict[str, Any]) -> list[PlanIssue]:
     return issues
 
 
+def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metadata = payload.get("metadata", {})
+    stages = payload.get("stages", {})
+    inputs = payload.get("inputs", {})
+    order = metadata.get("stages", []) if isinstance(metadata, dict) else []
+    stage_order = [stage for stage in order if isinstance(stage, str)] if isinstance(order, list) else []
+    kernels = inputs.get("kernels", []) if isinstance(inputs, dict) else []
+    matching_kernel_ids = [item.get("kernel_id") for item in kernels if isinstance(item, dict) and item.get("stage") == "matching" and item.get("kernel_id")]
+    gaps: list[dict[str, Any]] = []
+    if not isinstance(stages, dict):
+        return gaps
+    for stage in stage_order:
+        config = stages.get(stage)
+        if not isinstance(config, dict):
+            continue
+        defaults = config.get("defaults", {})
+        defaults = defaults if isinstance(defaults, dict) else {}
+        jobs = config.get("jobs", [])
+        if not isinstance(jobs, list):
+            continue
+        for index, job in enumerate(jobs):
+            if not isinstance(job, dict):
+                continue
+            job_id = str(job.get("id", index))
+            params = {**defaults, **(job.get("params") if isinstance(job.get("params"), dict) else {})}
+            roles = set(job.get("inputs", {}).keys()) if isinstance(job.get("inputs"), dict) else set()
+            def add_gap(parameter: str, path: str, message: str, suggested_fix: str) -> None:
+                gaps.append({"stage": stage, "job_id": job_id, "parameter": parameter, "path": path, "message": message, "suggested_fix": suggested_fix, "question_id": f"stage_params.{stage}.{job_id}"})
+            if stage == "renormalization":
+                if roles != {"target", "denominator"}:
+                    add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "renormalization requires target and denominator input roles.", 'Example: {"target": "ca_pz", "denominator": "ca_p0"}.')
+                if params.get("scheme") != "hybrid_ratio":
+                    add_gap("scheme", f"stages.{stage}.defaults.scheme", "renormalization requires scheme='hybrid_ratio'.", 'Set scheme to "hybrid_ratio".')
+                scheme_parameters = params.get("scheme_parameters")
+                if not isinstance(scheme_parameters, dict) or "zs_fm" not in scheme_parameters:
+                    add_gap("scheme_parameters.zs_fm", f"stages.{stage}.defaults.scheme_parameters.zs_fm", "hybrid_ratio requires scheme_parameters.zs_fm.", 'Example: {"scheme_parameters": {"zs_fm": 0.2}}.')
+            elif stage == "fourier_transform":
+                if roles != {"input"}:
+                    add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "fourier_transform requires exactly one input role named input.", 'Example: {"input": "rn_pz"}.')
+                for key, example in (("order", 'Choose "LA", "NLA", or ["LA", "NLA"].'), ("coord_unit", 'Choose "lattice", "fm", "gev_inv", or "lambda".'), ("y_grid", 'Example: {"start": -2.0, "stop": 2.0, "num": 100}.'), ("pz_gev", "Example: 2.15.")):
+                    if key not in params:
+                        add_gap(key, f"stages.{stage}.defaults.{key}", f"fourier_transform job {job_id!r} is missing parameter {key}.", example)
+                if "sector" not in params and "part" not in params:
+                    add_gap("sector", f"stages.{stage}.defaults.sector", f"fourier_transform job {job_id!r} is missing sector or part.", 'For PDF choose one of "valence", "total", "full", "sea"; alternatively set part to "re", "im", or "both".')
+            elif stage == "perturbative_matching":
+                if roles != {"quasi"}:
+                    add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "perturbative_matching requires exactly one input role named quasi.", 'Example: {"quasi": "ft_pz"}.')
+                if "kernel_id" not in params and len(matching_kernel_ids) != 1:
+                    add_gap("kernel_id", f"stages.{stage}.defaults.kernel_id", f"perturbative_matching job {job_id!r} is missing kernel_id.", "Use one declared inputs.kernels[].kernel_id.")
+                for key, example in (("pz_gev", "Example: 2.15."), ("mu", "Example: 2.0."), ("component", 'Choose "re" or "im".')):
+                    if key not in params:
+                        add_gap(key, f"stages.{stage}.defaults.{key}", f"perturbative_matching job {job_id!r} is missing parameter {key}.", example)
+            elif stage == "extrapolation":
+                if "momenta" not in roles:
+                    add_gap("inputs.momenta", f"stages.{stage}.jobs[{index}].inputs", "extrapolation requires a momenta input role, but the stage is currently a placeholder.", 'Example: {"momenta": ["mt_pz1", "mt_pz2"]}.')
+    return gaps
+
+
 def validate_candidate_payload(manifest_path: Path, payload: dict[str, Any]) -> tuple[bool, list[PlanIssue]]:
     """Validate a candidate manifest payload before it can become writable state."""
     issues = check_manifest_draft(manifest_path, payload)
     issues.extend(_strict_manifest_issues(payload))
     blocking = [issue for issue in issues if issue.severity == "error"]
     return not blocking, issues
-
-
-def request_plan_proposal(
-    *,
-    backend: str,
-    manifest_text: str,
-    issues: list[PlanIssue],
-    inspections: list[H5Inspection],
-    edits: list[dict[str, Any]],
-    conversions: list[CorrelatorH5Mapping],
-    quick_path: Path,
-    full_path: Path,
-    user_notes: list[str],
-    api_key: str | None = None,
-    provider: str | None = None,
-    model_name: str | None = None,
-    base_url: str | None = None,
-) -> PlanProposal:
-    """Ask the planning LLM for a structured report, with mock fallback for tests."""
-    if backend == "mock":
-        error_count = sum(1 for issue in issues if issue.severity == "error")
-        report = (
-            f"Mock planning summary: {len(issues)} deterministic issue(s), {error_count} error(s), "
-            f"and {len([item for item in conversions if not item.ambiguous and item.datasets])} data conversion(s)."
-        )
-        return PlanProposal(
-            report=report,
-            manifest_edits=edits,
-            quick_manifest_path=str(quick_path),
-            full_manifest_path=str(full_path),
-            data_conversions=conversions,
-            unresolved_questions=[],
-        )
-    if backend not in {"api", "codex"}:
-        raise ValueError("plan backend must be 'api', 'codex', or 'mock' for tests.")
-
-    system = (
-        "You are helping prepare a LaMET analysis manifest before execution. "
-        "Use only the supplied manifest text, deterministic issues, and HDF5 summaries. "
-        "Return one JSON object with key summary (string). Keep summary to one short paragraph. "
-        "Do not ask questions, invent files, or claim that edits were applied."
-    )
-    user = json.dumps(
-        {
-            "manifest_text": manifest_text,
-            "deterministic_issues": _dataclass_json(issues),
-            "h5_inspections": _dataclass_json(inspections),
-            "deterministic_manifest_edits": edits,
-            "planned_data_conversions": _dataclass_json(conversions),
-            "quick_manifest_path": str(quick_path),
-            "full_manifest_path": str(full_path),
-            "user_revision_notes": user_notes,
-        },
-        indent=2,
-    )
-    text = request_llm_text(
-        backend=backend,
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        api_key=api_key,
-        provider=provider,
-        model_name=model_name,
-        base_url=base_url,
-    )
-    parsed = _parse_json_object(text)
-    report = str(parsed.get("summary") or parsed.get("report") or text).strip()
-    return PlanProposal(
-        report=report,
-        manifest_edits=edits,
-        quick_manifest_path=str(quick_path),
-        full_manifest_path=str(full_path),
-        data_conversions=conversions,
-        unresolved_questions=[],
-    )
 
 
 PLAN_ACTION_SCHEMA = {
@@ -1221,15 +1149,17 @@ PLAN_ACTION_SCHEMA = {
         "args": {"type": "object"},
     },
     "required": ["action", "reason"],
-    "additionalProperties": True,
+    "additionalProperties": False,
 }
 
 
 PLAN_TOOL_CATALOG = {
     "load_manifest": "Return the current in-memory manifest candidate and planned output paths.",
     "check_manifest_draft": "Run deterministic manifest checks that tolerate incomplete drafts.",
-    "inspect_correlator_h5_files": "Summarize HDF5 datasets referenced by inputs.correlators.",
-    "plan_correlator_h5_conversions": "Detect source HDF5 files that need conversion to the standard correlator layout.",
+    "list_stage_parameter_gaps": "Return structured missing parameters and missing input roles for configured stages, including allowed options or example values.",
+    "inspect_correlator_h5_files": "Summarize HDF5, NPY, and NPZ datasets/arrays referenced by inputs.correlators.",
+    "plan_correlator_h5_conversions": "Detect source HDF5/NPY/NPZ files that need conversion to the standard correlator HDF5 layout.",
+    "apply_correlator_conversion_mapping": "Apply one user-confirmed correlator conversion. Args must be {correlator_id, datasets:[{source,target,axis_order?,index?,transpose?}, ...]}; never pass source/target at top level.",
     "validate_candidate_manifest": "Run strict schema, DAG, and stage-local validation on the current candidate.",
     "apply_manifest_patch_to_candidate": "Apply guarded JSON Patch edits to the in-memory candidate after validation.",
     "build_quick_full_candidates": "Build quick/full manifest candidates and validate their strict schema.",
@@ -1251,8 +1181,33 @@ def _planning_system_prompt() -> str:
         + "\n".join(f"- {name}: {description}" for name, description in PLAN_TOOL_CATALOG.items())
         + "\nJSON Patch rules: edits may only target /metadata, /inputs, or /stages; use op add, replace, or remove. "
         "For request_user_input, args.prompt must be a concrete user-facing question and args.question_id must identify the decision. "
+        "Ask exactly one question per request_user_input action; never combine stage choices, metadata values, parameter values, and data-axis mappings in one prompt. "
+        "For ordinary manifest scalar fields, ask for exactly one manifest field at a time and set question_id to the exact dotted manifest path, for example metadata.random_seed, inputs.correlators.0.momentum, inputs.correlators.0.src_gamma, or inputs.correlators.1.current_gamma. "
+        "Do not ask for several ordinary manifest fields in one answer; after the user answers one field, let the automatic patch observation update the candidate before asking the next field. "
+        "When multiple items are missing, ask and resolve them one at a time, starting with deterministic manifest fields such as metadata.random_seed before broader workflow choices. "
+        "Prefer Yes/No or multiple-choice questions only when the answer is genuinely binary or enumerable; use free-form questions when the user may need to name a subset, axis meaning, or concrete parameter values. "
+        "Keep request_user_input prompts concise: state the file shape, uncertain axes or indices, and exact answer format only. "
+        "If metadata.stages is not the full canonical flow, ask whether the user wants to add extra downstream stages. "
+        "Use question_id 'stage.add_remaining'. This question may be free-form when the user may want only a subset, for example: 'only add renormalization and fourier_transform'. "
+        "Add only stages whose inputs can be wired unambiguously; otherwise ask another concise question. "
+        "If a configured stage has missing parameters or missing required input roles, explain which stage/job is incomplete and ask a Yes/No question before patching. "
+        "Use list_stage_parameter_gaps for structured missing-parameter details when available. "
+        "For that question, use question_id 'stage_params.<stage>.<job_id>' when possible. "
+        "If the user says yes, ask for a concrete value when it is not inferable; list allowed options for enum-like fields and give one valid example for list/dict fields. "
+        "If the value is inferable from existing manifest examples or upstream metadata, patch it only after the Yes answer and state the exact manifest path/value. "
         "For missing required fields, prefer request_user_input unless the user's instruction or examples clearly establish the value. "
-        "For stage additions, preserve existing ids and wire jobs through existing upstream job ids."
+        "For stage additions, preserve existing ids and wire jobs through existing upstream job ids. "
+        "For correlator data conversion, inspect HDF5/NPY/NPZ inputs and never guess ambiguous axes or source keys. "
+        "Use multiple-choice questions for simple axis/index choices, but use free-form questions for high-dimensional mappings where the user must describe source, target, cfg/time or cfg/tau axes, z/bz ordering, momentum selection, optional axis_order, optional index selections, and transpose. "
+        "When the user gives an unambiguous mapping, call apply_correlator_conversion_mapping with args.correlator_id and args.datasets as a non-empty list of dataset mappings. "
+        "Each dataset mapping must include source and target, with optional axis_order, index, and transpose. "
+        "axis_order is zero-based and may name either the remaining array axes after index selection, such as [0,1], or the original source axes, such as [3,4] after fixing axes 0,1,2. "
+        "Do not use one-based axis_order such as [1,2] for a two-dimensional post-index dataset. "
+        "Do not pass source, target, axis_order, index, or transpose directly in top-level args. "
+        "For multi-bz 3pt data, include one datasets item per standard bz target in a single tool call when practical. "
+        "Do not create a custom conversion section in the manifest and do not encode conversion mappings as JSON Patch manifest edits. "
+        "Only use JSON Patch for ordinary manifest fields such as metadata, inputs, and stages. "
+        "If a correlator data file is not .npy, .npz, .h5, or .hdf5, tell the user the format is unsupported and strongly recommend converting to standard .h5."
     )
 
 
@@ -1263,6 +1218,42 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
             "manifest_path": str(manifest_path),
             "manifest_text": manifest_text,
             "stage_ids": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"],
+            "stage_completion_policy": (
+                "The canonical full flow is correlator_analysis -> renormalization -> fourier_transform -> perturbative_matching -> extrapolation -> review. "
+                "If the manifest contains only a prefix or subset, ask whether to add extra stages before proposing a plan; allow a free-form subset such as only renormalization and fourier_transform."
+            ),
+            "stage_parameter_guidance": {
+                "correlator_analysis": {
+                    "common_defaults": {
+                        "pt2_windows": [{"tmin": 2, "tmax": 12}, {"tmin": 3, "tmax": 12}],
+                        "pt3_tau_cuts": [2, 3],
+                        "nstate": [2],
+                        "fit_scope": ["ratio"],
+                        "fit_strategy": ["joint"],
+                        "fitting_form": "Breit",
+                    },
+                    "options": {
+                        "fit_scope": ["ratio", "FH", "ratio+FH"],
+                        "fit_strategy": ["joint", "chained"],
+                        "fitting_form": ["Breit", "NonBreit"],
+                        "component": ["re", "im", "both"],
+                    },
+                },
+                "renormalization": {
+                    "required": {"scheme": "hybrid_ratio", "scheme_parameters": {"zs_fm": 0.2}},
+                    "optional": {"normalization": True, "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0}},
+                },
+                "fourier_transform": {
+                    "required": {"order": ["LA", "NLA"], "coord_unit": "lattice", "sector": "valence", "y_grid": {"start": -2.0, "stop": 2.0, "num": 100}, "pz_gev": 2.15},
+                    "options": {"order": ["LA", "NLA"], "sector_pdf": ["valence", "total", "full", "sea"], "part": ["re", "im", "both"]},
+                },
+                "perturbative_matching": {
+                    "required": {"kernel_id": "declared inputs.kernels kernel_id", "pz_gev": 2.15, "mu": 2.0, "component": "re"},
+                    "options": {"component": ["re", "im"]},
+                },
+                "extrapolation": {"status": "placeholder; requires momenta input role but is not implemented yet"},
+                "review": {"required": "none"},
+            },
             "common_stage_contracts": {
                 "renormalization": {
                     "inputs": {"target": "upstream bare matrix-element job", "denominator": "zero-momentum/reference bare matrix-element job"},
@@ -1270,6 +1261,31 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                 },
                 "fourier_transform": {"inputs": {"input": "renormalized matrix-element job or artifact"}},
                 "perturbative_matching": {"inputs": {"quasi": "Fourier transform job or artifact"}},
+            },
+            "correlator_conversion_contract": {
+                "standard_2pt_h5": "source_sink/src_gamma/momentum with dataset shape (Lt, n_cfg)",
+                "standard_3pt_h5": "source_sink/current_gamma/momentum/b_<z_direction>/<eta>/bT<bt>/bz<bz> with dataset shape (tsep+1, n_cfg)",
+                "npy_source": "single array; source may be 'array'; user must identify cfg/time or cfg/tau axes and any selected momentum/z indices",
+                "npz_source": "source must be an NPZ key; user must map each key to one standard target",
+                "apply_conversion_tool_args": {
+                    "correlator_id": "correlator_id from inputs.correlators",
+                    "datasets": [
+                        {
+                            "source": "HDF5 dataset path, NPZ key, or 'array' for NPY",
+                            "target": "one standard target path",
+                            "axis_order": "optional zero-based list producing standard (time_or_tau, cfg) order; may use remaining axes after index selection or original source axes",
+                            "index": "optional object mapping source axis number to selected index before axis_order/transpose",
+                            "transpose": "optional final transpose boolean",
+                        }
+                    ],
+                },
+                "mapping_item": {
+                    "source": "HDF5 dataset path, NPZ key, or 'array' for NPY",
+                    "target": "one standard target path",
+                    "axis_order": "optional zero-based list producing standard (time_or_tau, cfg) order; may use remaining axes after index selection or original source axes",
+                    "index": "optional object mapping source axis number to selected index before transpose",
+                    "transpose": "optional final transpose boolean",
+                },
             },
         },
         indent=2,
@@ -1298,7 +1314,6 @@ class _PlanAgentSession:
             {"role": "user", "content": _initial_planning_user_prompt(manifest_path, manifest_text)},
         ]
         self.mock_phase = "load"
-        self.pending_question: str | None = None
         self.last_revision: str | None = None
 
     def observe(self, observation: dict[str, Any]) -> None:
@@ -1307,9 +1322,21 @@ class _PlanAgentSession:
             self.last_revision = str(observation.get("text", ""))
             self.mock_phase = "mock_revision"
         elif observation.get("event") == "user_answer":
-            self.mock_phase = "mock_answer"
+            if observation.get("question_id") == "stage.add_remaining":
+                self.mock_phase = "build"
+            elif str(observation.get("question_id", "")).startswith("stage_params."):
+                value = str(observation.get("value", "")).strip().lower()
+                self.mock_phase = "blocked" if value in {"no", "n", "false", "0"} else "build"
+            else:
+                self.mock_phase = "mock_answer"
         elif observation.get("event") == "question_skipped":
             self.mock_phase = "conversions"
+        elif "not the full canonical stage flow" in str(observation.get("error", "")):
+            self.mock_phase = "stage_completion"
+        elif "still have missing parameters or input roles" in str(observation.get("error", "")):
+            self.mock_phase = "blocked"
+        elif "missing parameters or input roles" in str(observation.get("error", "")):
+            self.mock_phase = "parameter_completion"
 
     def decide(self) -> dict[str, Any]:
         if self.backend == "mock":
@@ -1362,13 +1389,39 @@ class _PlanAgentSession:
             }
         if phase == "conversions":
             self.mock_phase = "inspect"
-            return {"action": "call_tool", "tool_name": "plan_correlator_h5_conversions", "args": {}, "reason": "Plan any HDF5 conversions."}
+            return {"action": "call_tool", "tool_name": "plan_correlator_h5_conversions", "args": {}, "reason": "Plan any correlator data conversions."}
         if phase == "inspect":
             self.mock_phase = "build"
-            return {"action": "call_tool", "tool_name": "inspect_correlator_h5_files", "args": {}, "reason": "Inspect correlator HDF5 inputs."}
+            return {"action": "call_tool", "tool_name": "inspect_correlator_h5_files", "args": {}, "reason": "Inspect correlator data inputs."}
         if phase == "build":
             self.mock_phase = "propose"
             return {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build quick and full manifest candidates."}
+        if phase == "stage_completion":
+            return {
+                "action": "request_user_input",
+                "reason": "The manifest is not the full canonical stage flow.",
+                "args": {
+                    "question_id": "stage.add_remaining",
+                    "prompt": "This manifest is not a full canonical flow. Add extra downstream stages?",
+                    "choices": [
+                        {"label": "1", "value": "yes", "description": "Yes, add downstream stages when inputs can be wired unambiguously."},
+                        {"label": "2", "value": "no", "description": "No, keep the manifest as a partial workflow."},
+                    ],
+                },
+            }
+        if phase == "parameter_completion":
+            return {
+                "action": "request_user_input",
+                "reason": "A configured stage is missing required parameters or input roles.",
+                "args": {
+                    "question_id": "stage_params.missing",
+                    "prompt": "A configured stage is missing required parameters. Add them before building manifests?",
+                    "choices": [
+                        {"label": "1", "value": "yes", "description": "Yes, add the missing parameters using explicit values or examples."},
+                        {"label": "2", "value": "no", "description": "No, keep the manifest unchanged."},
+                    ],
+                },
+            }
         if phase == "mock_revision":
             self.mock_phase = "build"
             note = self.last_revision or ""
@@ -1387,6 +1440,13 @@ class _PlanAgentSession:
                     "suppress_full_expansions": suppressions,
                 },
                 "reason": "Apply the user's revision as candidate manifest patches.",
+            }
+        if phase == "blocked":
+            self.mock_phase = "done"
+            return {
+                "action": "finish",
+                "reason": "Configured stages still have missing parameters or input roles. No manifest files were written.",
+                "args": {"error": True},
             }
         self.mock_phase = "done"
         return {"action": "propose_plan", "reason": "Present the latest validated candidate.", "args": {"summary": "Mock planning summary."}}
@@ -1415,10 +1475,13 @@ def _ask_plan_agent_question(args: dict[str, Any], input_func: Callable[[str], s
     output_func("")
     output_func(str(args["prompt"]))
     choices = args.get("choices")
+    question_id = str(args.get("question_id") or "")
     if isinstance(choices, list) and choices:
         for index, choice in enumerate(choices, start=1):
             if isinstance(choice, dict):
                 output_func(f"  {index}. {choice.get('description', choice.get('label', ''))}")
+            else:
+                output_func(f"  {index}. {choice}")
         output_func("  q. Quit without writing files.")
         while True:
             raw = input_func("Select an option: ").strip()
@@ -1426,10 +1489,17 @@ def _ask_plan_agent_question(args: dict[str, Any], input_func: Callable[[str], s
                 return "quit"
             selected: dict[str, Any] | None = None
             for index, choice in enumerate(choices, start=1):
-                if isinstance(choice, dict) and (raw == str(index) or raw == str(choice.get("label"))):
-                    selected = choice
+                if isinstance(choice, dict):
+                    labels = {str(index), str(choice.get("label")), str(choice.get("value"))}
+                    if raw.lower() in {item.lower() for item in labels}:
+                        selected = choice
+                        break
+                elif raw.lower() in {str(index), str(choice).lower()}:
+                    selected = {"value": choice}
                     break
             if selected is None:
+                if question_id == "stage.add_remaining" and raw:
+                    return raw
                 output_func("Please choose one of the listed options.")
                 continue
             value = selected.get("value")
@@ -1458,6 +1528,7 @@ def _valid_plan_agent_question(args: dict[str, Any]) -> bool:
 def _json_pointer_from_question_id(question_id: str) -> str | None:
     if question_id == "random_seed":
         question_id = "metadata.random_seed"
+    question_id = re.sub(r"\[(\d+)\]", r".\1", question_id)
     parts = question_id.split(".")
     if not parts or parts[0] not in {"metadata", "inputs", "stages"}:
         return None
@@ -1490,11 +1561,50 @@ def _coerce_user_answer_for_manifest_path(question_id: str, value: Any) -> Any:
     }
     if question_id in integer_fields:
         return int(value)
+    if question_id.endswith(".tsep"):
+        return int(value)
+    if question_id.endswith(".a_fm") or question_id.endswith(".pz_gev") or question_id.endswith(".pz_out_gev"):
+        return float(value)
+    if question_id.endswith(".bt") or question_id.endswith(".bz"):
+        if isinstance(value, list):
+            return [int(item) for item in value]
+        text = str(value).strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = [part.strip() for part in re.split(r"[,，\s]+", text) if part.strip()]
+        if not isinstance(parsed, list):
+            parsed = [parsed]
+        return [int(item) for item in parsed]
+    if question_id.startswith("stages.") and isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    if question_id.endswith(".kernel_parameters") or question_id.endswith(".scheme_parameters"):
+        if isinstance(value, dict):
+            return value
+        text = str(value).strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"zs_fm": float(text)}
+        return parsed if isinstance(parsed, dict) else {"zs_fm": float(parsed)}
     return value
 
 
 def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, value: Any) -> dict[str, Any]:
     """Apply direct answers to manifest-path questions through the same patch guardrails."""
+    if question_id == "stage.add_remaining":
+        state.stage_completion_checked = True
+        text = str(value).strip().lower()
+        negative = text in {"no", "n", "false", "0"} or "keep" in text and "partial" in text or "不" in text and ("加" in text or "添加" in text)
+        state.stage_completion_requested = not negative and text in {"yes", "y", "true", "1"}
+        return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "stage completion preference recorded for the planning agent."}
+    if question_id.startswith("stage_params."):
+        state.parameter_completion_checked = True
+        state.parameter_completion_requested = str(value).strip().lower() in {"yes", "y", "true", "1"}
+        return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "stage parameter completion preference recorded for the planning agent."}
     pointer = _json_pointer_from_question_id(question_id)
     if pointer is None:
         return {"event": "user_answer_not_applied", "question_id": question_id, "reason": "question_id is not a manifest path."}
@@ -1604,21 +1714,112 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
         quick_path, full_path = _planned_manifest_paths(state.manifest_path, state.candidate_payload)
         state.quick_path = quick_path
         state.full_path = full_path
+        canonical_stages = ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"]
+        metadata = state.candidate_payload.get("metadata", {})
+        configured_stages = metadata.get("stages", []) if isinstance(metadata, dict) else []
+        configured_stage_list = [stage for stage in configured_stages if isinstance(stage, str)] if isinstance(configured_stages, list) else []
+        stage_parameter_gaps = _stage_parameter_gaps(state.candidate_payload)
         return {
             "tool_name": tool_name,
             "manifest": state.candidate_payload,
             "quick_manifest_path": str(quick_path),
             "full_manifest_path": str(full_path),
+            "canonical_stage_flow": canonical_stages,
+            "configured_stages": configured_stage_list,
+            "missing_canonical_stages": [stage for stage in canonical_stages if stage not in configured_stage_list],
+            "stage_completion_question_required": configured_stage_list != canonical_stages,
+            "stage_parameter_gaps": stage_parameter_gaps,
+            "stage_parameter_question_required": bool(stage_parameter_gaps),
         }
     if tool_name == "check_manifest_draft":
         state.issues = check_manifest_draft(state.manifest_path, state.candidate_payload)
         return {"tool_name": tool_name, "issues": _dataclass_json(state.issues)}
+    if tool_name == "list_stage_parameter_gaps":
+        return {"tool_name": tool_name, "stage_parameter_gaps": _stage_parameter_gaps(state.candidate_payload)}
     if tool_name == "inspect_correlator_h5_files":
         state.inspections = inspect_correlator_h5_files(state.manifest_path, state.candidate_payload)
         return {"tool_name": tool_name, "h5_inspections": _dataclass_json(state.inspections)}
     if tool_name == "plan_correlator_h5_conversions":
         state.conversions = plan_correlator_h5_conversions(state.manifest_path, state.candidate_payload)
         return {"tool_name": tool_name, "planned_data_conversions": _dataclass_json(state.conversions)}
+    if tool_name == "apply_correlator_conversion_mapping":
+        correlator_id = str(args.get("correlator_id") or "")
+        datasets = args.get("datasets")
+        if not correlator_id or not isinstance(datasets, list) or not datasets:
+            return {
+                "tool_name": tool_name,
+                "ok": False,
+                "error": "Expected args format: {'correlator_id': '...', 'datasets': [{'source': 'array', 'target': '...', 'axis_order': [..], 'index': {'0': 0}, 'transpose': false}, ...]}. Do not pass source/target at top level.",
+            }
+        correlators = state.candidate_payload.get("inputs", {}).get("correlators", [])
+        correlator = next((item for item in correlators if isinstance(item, dict) and str(item.get("correlator_id")) == correlator_id), None)
+        mapping = next((item for item in state.conversions if item.correlator_id == correlator_id), None)
+        if correlator is None or mapping is None:
+            return {"tool_name": tool_name, "ok": False, "error": f"Unknown correlator conversion {correlator_id!r}."}
+        source = Path(mapping.source_file)
+        names = _dataset_names(source)
+        targets = set(_standard_dataset_paths(correlator))
+        cleaned = []
+        seen_targets: set[str] = set()
+        for item in datasets:
+            if not isinstance(item, dict):
+                return {"tool_name": tool_name, "ok": False, "error": "Each dataset mapping must be an object."}
+            source_name = str(item.get("source") or "array")
+            target = str(item.get("target") or "")
+            if target not in targets:
+                return {"tool_name": tool_name, "ok": False, "error": f"Target {target!r} is not one of the standard targets {sorted(targets)}."}
+            if source_name not in names:
+                return {"tool_name": tool_name, "ok": False, "error": f"Source {source_name!r} is not in {sorted(names)}."}
+            if target in seen_targets:
+                return {"tool_name": tool_name, "ok": False, "error": f"Target {target!r} is mapped more than once."}
+            seen_targets.add(target)
+            shape = list(names[source_name])
+            original_shape = list(shape)
+            fixed_axes = {int(axis) for axis in (item.get("index") or {})}
+            for axis, index in sorted((item.get("index") or {}).items(), key=lambda pair: int(pair[0]), reverse=True):
+                axis_i = int(axis)
+                index_i = int(index)
+                if axis_i < 0 or axis_i >= len(shape):
+                    return {"tool_name": tool_name, "ok": False, "error": f"Index axis {axis_i} is out of bounds for source {source_name!r} shape {original_shape}."}
+                if index_i < 0 or index_i >= shape[axis_i]:
+                    return {"tool_name": tool_name, "ok": False, "error": f"Index {index_i} is out of bounds for axis {axis_i} of source {source_name!r} shape {original_shape}."}
+                shape.pop(axis_i)
+            if item.get("axis_order") is not None:
+                axes = [int(axis) for axis in item["axis_order"]]
+                if len(set(axes)) != len(axes):
+                    return {"tool_name": tool_name, "ok": False, "error": f"axis_order {axes} has duplicate axes."}
+                if sorted(axes) == list(range(1, len(shape) + 1)):
+                    axes = [axis - 1 for axis in axes]
+                elif axes and max(axes) >= len(shape):
+                    remaining_axes = [axis for axis in range(len(original_shape)) if axis not in fixed_axes]
+                    if any(axis not in remaining_axes for axis in axes):
+                        return {"tool_name": tool_name, "ok": False, "error": f"axis_order {axes} is not compatible with index-fixed axes {sorted(fixed_axes)} and source shape {original_shape}."}
+                    axes = [remaining_axes.index(axis) for axis in axes]
+                if sorted(axes) != list(range(len(shape))):
+                    return {"tool_name": tool_name, "ok": False, "error": f"axis_order {axes} is not a permutation of remaining axes for shape {shape}."}
+                shape = [shape[axis] for axis in axes]
+            if item.get("transpose"):
+                shape = list(reversed(shape))
+            if len(shape) != 2:
+                return {"tool_name": tool_name, "ok": False, "error": f"Mapped dataset {target!r} has final shape {shape}; expected a 2D standard correlator dataset."}
+            if correlator.get("kind") == "3pt" and isinstance(correlator.get("tsep"), int) and shape[0] != int(correlator["tsep"]) + 1:
+                return {"tool_name": tool_name, "ok": False, "error": f"Mapped 3pt dataset {target!r} has tau length {shape[0]}; expected tsep+1={int(correlator['tsep']) + 1}."}
+            out = {"source": source_name, "target": target, "transpose": bool(item.get("transpose", False))}
+            if item.get("axis_order") is not None:
+                out["axis_order"] = [int(axis) for axis in item["axis_order"]]
+            if item.get("index") is not None:
+                out["index"] = {str(axis): int(index) for axis, index in item["index"].items()}
+            cleaned.append(out)
+        if seen_targets != targets:
+            missing = sorted(targets - seen_targets)
+            extra = sorted(seen_targets - targets)
+            return {"tool_name": tool_name, "ok": False, "error": f"Dataset mappings must cover every standard target exactly once. Missing={missing}; extra={extra}."}
+        mapping.datasets = cleaned
+        mapping.ambiguous = False
+        mapping.reason = None
+        state.quick = None
+        state.full = None
+        return {"tool_name": tool_name, "ok": True, "conversion": _dataclass_json(mapping)}
     if tool_name == "validate_candidate_manifest":
         ok, issues = validate_candidate_payload(state.manifest_path, state.candidate_payload)
         state.issues = issues
@@ -1634,7 +1835,14 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
         except ValueError as exc:
             return {"tool_name": tool_name, "ok": False, "error": str(exc)}
         ok, issues = validate_candidate_payload(state.manifest_path, candidate)
-        if not ok:
+        correlators = candidate.get("inputs", {}).get("correlators", [])
+        incomplete_correlator = isinstance(correlators, list) and any(isinstance(item, dict) and not _standard_dataset_paths(item) for item in correlators)
+        incomplete_stage_params = bool(_stage_parameter_gaps(candidate))
+        incomplete_kernel = any(
+            issue.severity == "error" and ("kernel_id" in issue.message or "kernel_parameters" in issue.message or "zs_fm" in issue.message)
+            for issue in issues
+        )
+        if not ok and not incomplete_correlator and not incomplete_stage_params and not incomplete_kernel and any(issue.severity == "error" and "Field required" not in issue.message for issue in issues):
             return {"tool_name": tool_name, "ok": False, "issues": _dataclass_json(issues), "edits": edits}
         state.candidate_payload = candidate
         state.manifest_edits.extend(edits)
@@ -1644,8 +1852,55 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
         state.issues = issues
         state.quick = None
         state.full = None
-        return {"tool_name": tool_name, "ok": True, "edits": edits, "issues": _dataclass_json(issues)}
+        return {"tool_name": tool_name, "ok": True, "candidate_complete": ok, "edits": edits, "issues": _dataclass_json(issues)}
     if tool_name == "build_quick_full_candidates":
+        canonical_stages = ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"]
+        metadata = state.candidate_payload.get("metadata", {})
+        configured_stages = metadata.get("stages", []) if isinstance(metadata, dict) else []
+        configured_stage_list = [stage for stage in configured_stages if isinstance(stage, str)] if isinstance(configured_stages, list) else []
+        original_metadata = state.original_payload.get("metadata", {})
+        original_stages = original_metadata.get("stages", []) if isinstance(original_metadata, dict) else []
+        original_stage_list = [stage for stage in original_stages if isinstance(stage, str)] if isinstance(original_stages, list) else []
+        if configured_stage_list != canonical_stages and not state.stage_completion_checked:
+            return {
+                "tool_name": tool_name,
+                "ok": False,
+                "error": "This manifest is not the full canonical stage flow. Ask the user first with question_id='stage.add_remaining' whether to add extra downstream stages; allow a free-form subset such as renormalization and fourier_transform.",
+                "canonical_stage_flow": canonical_stages,
+                "configured_stages": configured_stage_list,
+                "missing_canonical_stages": [stage for stage in canonical_stages if stage not in configured_stage_list],
+            }
+        if state.stage_completion_requested and configured_stage_list == original_stage_list:
+            return {
+                "tool_name": tool_name,
+                "ok": False,
+                "error": "The user answered yes to adding stages, but metadata.stages has not changed. Patch the requested stages first or ask a follow-up question.",
+                "configured_stages": configured_stage_list,
+                "missing_canonical_stages": [stage for stage in canonical_stages if stage not in configured_stage_list],
+            }
+        parameter_gaps = _stage_parameter_gaps(state.candidate_payload)
+        if parameter_gaps and not state.parameter_completion_checked:
+            return {
+                "tool_name": tool_name,
+                "ok": False,
+                "error": "Configured stages have missing parameters or input roles. Explain the gaps and ask a Yes/No question first with question_id like 'stage_params.<stage>.<job_id>'.",
+                "stage_parameter_gaps": parameter_gaps,
+            }
+        if parameter_gaps:
+            return {
+                "tool_name": tool_name,
+                "ok": False,
+                "error": "Configured stages still have missing parameters or input roles. Patch the missing manifest paths first, ask for concrete values, or quit without writing files.",
+                "stage_parameter_gaps": parameter_gaps,
+            }
+        ambiguous = [item for item in state.conversions if item.ambiguous]
+        if ambiguous:
+            return {
+                "tool_name": tool_name,
+                "ok": False,
+                "error": "Ambiguous correlator conversions must be resolved before building quick/full manifests.",
+                "ambiguous_conversions": _dataclass_json(ambiguous),
+            }
         quick, full, edits = build_repaired_manifests(
             state.manifest_path,
             state.candidate_payload,
@@ -1688,8 +1943,7 @@ def _inconsistent_settings(issues: list[PlanIssue]) -> list[str]:
     return [
         f"{issue.manifest_path}: {issue.message}"
         for issue in issues
-        if issue not in []
-        and (
+        if (
             "differs from" in issue.message
             or "Duplicate" in issue.message
             or "Unavailable upstream" in issue.message
@@ -1840,6 +2094,9 @@ def run_interactive_plan(
 
         if action_type == "call_tool":
             tool_name = str(action.get("tool_name") or "")
+            if not tool_name:
+                session.observe({"event": "invalid_action", "action": action, "error": "call_tool requires tool_name."})
+                continue
             observation = _run_planning_tool(state, tool_name, args)
             session.observe(observation)
             continue
@@ -1863,6 +2120,39 @@ def run_interactive_plan(
                 output_func("Plan cancelled; no files were written.")
                 return None
             question_id = _manifest_question_id_from_user_input_action(args, reason) or str(args.get("question_id"))
+            normalized_question_id = re.sub(r"\[(\d+)\]", r".\1", question_id)
+            if normalized_question_id.endswith(".kernel_parameters.zs_fm") or normalized_question_id.endswith(".scheme_parameters.zs_fm"):
+                question_id = normalized_question_id.rsplit(".", 1)[0]
+            if _json_pointer_from_question_id(question_id) is None:
+                text = f"{args.get('prompt', '')}\n{reason}"
+                match = re.search(
+                    r"correlator\s+['\"]([^'\"]+)['\"].*?['\"](momentum|src_gamma|sink_gamma|current_gamma|z_direction|eta|bt|bz|tsep|a_fm|pz_gev|pz_out_gev)['\"]",
+                    text,
+                    flags=re.I | re.S,
+                )
+                correlators = state.candidate_payload.get("inputs", {}).get("correlators", [])
+                if match and isinstance(correlators, list):
+                    for index, item in enumerate(correlators):
+                        if isinstance(item, dict) and str(item.get("correlator_id")) == match.group(1):
+                            question_id = f"inputs.correlators.{index}.{match.group(2)}"
+                            break
+                if _json_pointer_from_question_id(question_id) is None:
+                    text_lower = text.lower()
+                    for gap in _stage_parameter_gaps(state.candidate_payload):
+                        stage = str(gap.get("stage", ""))
+                        job_id = str(gap.get("job_id", ""))
+                        parameter = str(gap.get("parameter", ""))
+                        if stage.lower() in text_lower and job_id.lower() in text_lower and parameter.lower() in text_lower:
+                            question_id = str(gap.get("path"))
+                            break
+                if _json_pointer_from_question_id(question_id) is None:
+                    kernels = state.candidate_payload.get("inputs", {}).get("kernels", [])
+                    text_lower = text.lower()
+                    if isinstance(kernels, list) and len(kernels) == 1:
+                        if "zs_fm" in text_lower:
+                            question_id = "inputs.kernels.0.kernel_parameters"
+                        elif "kernel_id" in text_lower:
+                            question_id = "inputs.kernels.0.kernel_id"
             session.observe({"event": "user_answer", "question_id": question_id, "value": answer})
             applied = _apply_user_answer_to_candidate(state, question_id, answer)
             session.observe(applied)
@@ -1900,6 +2190,8 @@ def run_interactive_plan(
             if answer in {"r", "revise"}:
                 note = input_func("Revision instruction: ").strip()
                 if note:
+                    if "stage" in note.lower() or "阶段" in note:
+                        state.stage_completion_checked = True
                     session.observe({"event": "user_revision", "text": note})
                 output_func("")
                 output_func("")
@@ -1912,6 +2204,8 @@ def run_interactive_plan(
             continue
 
         if action_type == "finish":
+            if args.get("error"):
+                raise ValueError(str(reason or "Plan finished with a blocking error."))
             output_func(str(reason or "Plan finished without writing files."))
             return None
 

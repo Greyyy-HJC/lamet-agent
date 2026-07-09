@@ -10,6 +10,8 @@ from typer.testing import CliRunner
 from lamet_agent.cli import app
 from lamet_agent.planning import (
     PlanAgentState,
+    _ask_plan_agent_question,
+    _apply_user_answer_to_candidate,
     _run_planning_tool,
     apply_manifest_json_patches,
     check_manifest_draft,
@@ -97,6 +99,27 @@ def test_load_relaxed_manifest_accepts_jsonc(tmp_path: Path) -> None:
     assert "// comments" in raw
 
 
+def test_load_relaxed_manifest_preserves_url_like_strings(tmp_path: Path) -> None:
+    path = tmp_path / "draft.jsonc"
+    path.write_text(
+        """
+        {
+          "metadata": {
+            "run_id": "demo",
+            "root_directory": "https://example.invalid/project",
+          },
+          "inputs": {},
+          "stages": {}
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    payload, _raw = load_relaxed_manifest(path)
+
+    assert payload["metadata"]["root_directory"] == "https://example.invalid/project"
+
+
 def test_check_manifest_draft_reports_scheme_mismatch_and_missing_path(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -110,6 +133,113 @@ def test_check_manifest_draft_reports_scheme_mismatch_and_missing_path(tmp_path:
     messages = [issue.message for issue in issues]
     assert any("Correlator data file does not exist" in message for message in messages)
     assert any("differs from renormalization scheme" in message for message in messages)
+
+
+def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    payload = {
+        "metadata": {
+            "run_id": "demo",
+            "root_directory": str(root),
+            "artifacts_directory": "artifacts",
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "random_seed": 1984,
+            "stages": ["fourier_transform"],
+        },
+        "inputs": {"correlators": [], "artifacts": [{"id": "rn", "path": "rn.nc", "stage": "renormalization"}], "kernels": []},
+        "stages": {"fourier_transform": {"defaults": {}, "jobs": [{"id": "ft", "inputs": {"input": "rn"}}]}},
+    }
+    path = tmp_path / "draft.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    state = PlanAgentState(path, "", payload, payload)
+    state.stage_completion_checked = True
+
+    listed = _run_planning_tool(state, "list_stage_parameter_gaps", {})
+    gaps = listed["stage_parameter_gaps"]
+    assert any(gap["parameter"] == "order" and '"LA"' in gap["suggested_fix"] for gap in gaps)
+    assert any(gap["parameter"] == "y_grid" and "start" in gap["suggested_fix"] for gap in gaps)
+
+    blocked = _run_planning_tool(state, "build_quick_full_candidates", {})
+    assert blocked["ok"] is False
+    assert "missing parameters" in blocked["error"]
+
+
+def test_plan_requires_patch_after_yes_to_stage_parameter_completion(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    payload = {
+        "metadata": {
+            "run_id": "demo",
+            "root_directory": str(root),
+            "artifacts_directory": "artifacts",
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "random_seed": 1984,
+            "stages": ["fourier_transform"],
+        },
+        "inputs": {"correlators": [], "artifacts": [{"id": "rn", "path": "rn.nc", "stage": "renormalization"}], "kernels": []},
+        "stages": {"fourier_transform": {"defaults": {}, "jobs": [{"id": "ft", "inputs": {"input": "rn"}}]}},
+    }
+    path = tmp_path / "draft.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    state = PlanAgentState(path, "", payload, payload)
+    state.stage_completion_checked = True
+
+    answered = _run_planning_tool(
+        state,
+        "apply_manifest_patch_to_candidate",
+        {"patches": [{"op": "add", "path": "/stages/fourier_transform/defaults/order", "value": ["LA"]}]},
+    )
+    assert answered["ok"] is True
+    assert answered["candidate_complete"] is False
+    state.parameter_completion_checked = True
+    state.parameter_completion_requested = True
+    blocked = _run_planning_tool(state, "build_quick_full_candidates", {})
+    assert blocked["ok"] is False
+    assert "still have missing parameters" in blocked["error"]
+
+
+def test_plan_stage_question_accepts_free_form_subset() -> None:
+    outputs: list[str] = []
+    answer = _ask_plan_agent_question(
+        {"question_id": "stage.add_remaining", "prompt": "Add missing stages?", "choices": ["yes", "no"]},
+        input_func=lambda prompt: "I only want renormalization and fourier_transform",
+        output_func=outputs.append,
+    )
+
+    assert answer == "I only want renormalization and fourier_transform"
+
+
+def test_plan_stage_subset_answer_does_not_trigger_full_stage_gate(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, payload)
+
+    result = state.stage_completion_checked
+    answer = _run_planning_tool(
+        state,
+        "load_manifest",
+        {},
+    )
+    assert answer["stage_completion_question_required"] is True
+    applied = _apply_user_answer_to_candidate(state, "stage.add_remaining", "I only want renormalization and fourier_transform")
+    assert applied["event"] == "user_answer_not_applied"
+    assert state.stage_completion_checked is True
+    assert state.stage_completion_requested is False
+    assert result is False
+
+
+def test_plan_stage_params_question_without_choices_accepts_free_text() -> None:
+    answer = _ask_plan_agent_question(
+        {"question_id": "stage_params.fourier_transform.ft", "prompt": "Choose Fourier order."},
+        input_func=lambda prompt: "LA",
+        output_func=lambda text: None,
+    )
+
+    assert answer == "LA"
 
 
 def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path) -> None:
@@ -184,7 +314,29 @@ def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path)
 
     conversions = plan_correlator_h5_conversions(path, payload)
     assert len(conversions) == 2
-    assert all(not item.ambiguous for item in conversions)
+    assert all(item.ambiguous for item in conversions)
+    state = PlanAgentState(path, "", payload, payload, conversions=conversions)
+    result = _run_planning_tool(
+        state,
+        "apply_correlator_conversion_mapping",
+        {
+            "correlator_id": "c2",
+            "datasets": [{"source": "raw_pt2", "target": "SS/5/PX0PY0PZ0", "transpose": True}],
+        },
+    )
+    assert result["ok"] is True
+    result = _run_planning_tool(
+        state,
+        "apply_correlator_conversion_mapping",
+        {
+            "correlator_id": "c3",
+            "datasets": [
+                {"source": "raw_z0", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "transpose": True},
+                {"source": "raw_z1", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz1", "transpose": True},
+            ],
+        },
+    )
+    assert result["ok"] is True
     for conversion in conversions:
         convert_correlator_h5(conversion)
 
@@ -205,6 +357,181 @@ def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path)
         ),
         pt3_cfg_tau_z1,
     )
+
+
+def test_correlator_numpy_conversion_outputs_standard_h5_and_script(tmp_path: Path) -> None:
+    pytest.importorskip("h5py")
+    root = tmp_path / "repo"
+    data_dir = root / "data"
+    data_dir.mkdir(parents=True)
+    pt2_cfg_time = np.arange(15, dtype=float).reshape(5, 3)
+    np.save(data_dir / "raw_2pt.npy", pt2_cfg_time)
+    payload = _minimal_payload(root, data_path="data/raw_2pt.npy")
+    path = tmp_path / "draft.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    conversions = plan_correlator_h5_conversions(path, payload)
+    assert len(conversions) == 1
+    assert conversions[0].ambiguous
+    state = PlanAgentState(path, "", payload, payload, conversions=conversions)
+    result = _run_planning_tool(
+        state,
+        "apply_correlator_conversion_mapping",
+        {
+            "correlator_id": "c2",
+            "datasets": [{"source": "array", "target": "SS/5/PX0PY0PZ0", "transpose": True}],
+        },
+    )
+    assert result["ok"] is True
+    convert_correlator_h5(state.conversions[0])
+
+    assert Path(state.conversions[0].script_file).is_file()
+    assert np.array_equal(_read_2pt(state.conversions[0].output_file, source_sink="SS", gamma="5", momentum="PX0PY0PZ0"), pt2_cfg_time)
+
+
+def test_correlator_npz_conversion_with_axis_order_and_index(tmp_path: Path) -> None:
+    pytest.importorskip("h5py")
+    root = tmp_path / "repo"
+    data_dir = root / "data"
+    data_dir.mkdir(parents=True)
+    data = np.arange(2 * 3 * 4, dtype=float).reshape(2, 3, 4)
+    np.savez(data_dir / "raw_3pt.npz", all_z=data)
+    payload = _minimal_payload(root)
+    payload["inputs"]["correlators"] = [
+        {
+            "correlator_id": "c3",
+            "kind": "3pt",
+            "data_path": "data/raw_3pt.npz",
+            "ensemble": "E",
+            "hadron": "pion",
+            "gfix": "CG",
+            "source_sink": "SS",
+            "momentum": "PX0PY0PZ0",
+            "a_fm": 0.1,
+            "pz_gev": 0.0,
+            "src_gamma": "5",
+            "sink_gamma": "5",
+            "current_gamma": "T",
+            "z_direction": "X",
+            "eta": "eta0",
+            "bt": [0],
+            "bz": [0, 1],
+            "tsep": 3,
+        }
+    ]
+    path = tmp_path / "draft.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    conversions = plan_correlator_h5_conversions(path, payload)
+    assert conversions[0].ambiguous
+    state = PlanAgentState(path, "", payload, payload, conversions=conversions)
+    targets = [
+        "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0",
+        "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz1",
+    ]
+    result = _run_planning_tool(
+        state,
+        "apply_correlator_conversion_mapping",
+        {
+            "correlator_id": "c3",
+            "datasets": [
+                {"source": "all_z", "target": targets[0], "index": {"0": 0}, "transpose": True},
+                {"source": "all_z", "target": targets[1], "index": {"0": 1}, "transpose": True},
+            ],
+        },
+    )
+    assert result["ok"] is True
+    convert_correlator_h5(state.conversions[0])
+
+    assert np.array_equal(
+        _read_3pt(
+            state.conversions[0].output_file,
+            source_sink="SS",
+            gamma="T",
+            momentum="PX0PY0PZ0",
+            b_dir="b_X",
+            eta="eta0",
+            bt="bT0",
+            bz="bz1",
+            tsep=3,
+        ),
+        data[1],
+    )
+
+
+def test_correlator_conversion_mapping_rejects_bad_shapes_and_targets(tmp_path: Path) -> None:
+    pytest.importorskip("h5py")
+    root = tmp_path / "repo"
+    data_dir = root / "data"
+    data_dir.mkdir(parents=True)
+    data = np.zeros((2, 3, 4), dtype=float)
+    np.savez(data_dir / "raw_3pt.npz", all_z=data)
+    payload = _minimal_payload(root)
+    payload["inputs"]["correlators"] = [
+        {
+            "correlator_id": "c3",
+            "kind": "3pt",
+            "data_path": "data/raw_3pt.npz",
+            "ensemble": "E",
+            "hadron": "pion",
+            "gfix": "CG",
+            "source_sink": "SS",
+            "momentum": "PX0PY0PZ0",
+            "a_fm": 0.1,
+            "pz_gev": 0.0,
+            "src_gamma": "5",
+            "sink_gamma": "5",
+            "current_gamma": "T",
+            "z_direction": "X",
+            "eta": "eta0",
+            "bt": [0],
+            "bz": [0, 1],
+            "tsep": 3,
+        }
+    ]
+    path = tmp_path / "draft.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    conversions = plan_correlator_h5_conversions(path, payload)
+    state = PlanAgentState(path, "", payload, payload, conversions=conversions)
+
+    duplicate = _run_planning_tool(
+        state,
+        "apply_correlator_conversion_mapping",
+        {
+            "correlator_id": "c3",
+            "datasets": [
+                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "index": {"0": 0}, "transpose": True},
+                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "index": {"0": 1}, "transpose": True},
+            ],
+        },
+    )
+    assert duplicate["ok"] is False
+
+    bad_axis = _run_planning_tool(
+        state,
+        "apply_correlator_conversion_mapping",
+        {
+            "correlator_id": "c3",
+            "datasets": [
+                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "index": {"0": 0}, "axis_order": [0, 0]},
+                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz1", "index": {"0": 1}, "transpose": True},
+            ],
+        },
+    )
+    assert bad_axis["ok"] is False
+
+    bad_tau = _run_planning_tool(
+        state,
+        "apply_correlator_conversion_mapping",
+        {
+            "correlator_id": "c3",
+            "datasets": [
+                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "index": {"0": 0}},
+                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz1", "index": {"0": 1}},
+            ],
+        },
+    )
+    assert bad_tau["ok"] is False
 
 
 def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) -> None:
@@ -273,7 +600,7 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="a\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\na\n")
 
     assert result.exit_code == 0, result.output
     quick_path = root / "artifacts" / "plan_manifests" / "draft.quick.json"
@@ -359,7 +686,7 @@ def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Pat
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="1\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="1\n2\na\n")
 
     assert result.exit_code == 0, result.output
     assert "metadata.random_seed is required" in result.output
@@ -445,6 +772,12 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
             {"action": "call_tool", "tool_name": "plan_correlator_h5_conversions", "args": {}, "reason": "Plan conversions."},
             {"action": "call_tool", "tool_name": "inspect_correlator_h5_files", "args": {}, "reason": "Inspect HDF5."},
             {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates."},
+            {
+                "action": "request_user_input",
+                "reason": "Confirm whether to add downstream stages.",
+                "args": {"question_id": "stage.add_remaining", "prompt": "Add extra downstream stages?"},
+            },
+            {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates after stage preference."},
             {"action": "propose_plan", "reason": "Ready.", "args": {"summary": "Ready after rejecting malformed question."}},
         ]
     )
@@ -544,6 +877,12 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
             {"action": "call_tool", "tool_name": "plan_correlator_h5_conversions", "args": {}, "reason": "Plan conversions."},
             {"action": "call_tool", "tool_name": "inspect_correlator_h5_files", "args": {}, "reason": "Inspect HDF5."},
             {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates."},
+            {
+                "action": "request_user_input",
+                "reason": "Confirm whether to add downstream stages.",
+                "args": {"question_id": "stage.add_remaining", "prompt": "Add extra downstream stages?"},
+            },
+            {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates after stage preference."},
             {"action": "propose_plan", "reason": "Ready.", "args": {"summary": "Ready after user seed answer."}},
         ]
     )
@@ -552,7 +891,7 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
         del kwargs
         return json.dumps(next(actions))
 
-    answers = iter(["1999", "a"])
+    answers = iter(["1999", "no", "a"])
     monkeypatch.setattr("lamet_agent.planning.request_llm_text", fake_request_llm_text)
 
     result = run_interactive_plan(
@@ -644,7 +983,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="r\n帮我多加几个 fit window 的搜索吧\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nr\n帮我多加几个 fit window 的搜索吧\n2\na\n")
 
     assert result.exit_code == 0, result.output
     assert "LLM expanded the fit-window search" in result.output
@@ -738,7 +1077,7 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
     result = runner.invoke(
         app,
         ["plan", str(manifest), "--backend", "mock"],
-        input="r\n帮我多加几个 fit window 的搜索吧\nr\ntau cuts 改回去吧\na\n",
+        input="2\nr\n帮我多加几个 fit window 的搜索吧\nr\ntau cuts 改回去吧\na\n",
     )
 
     assert result.exit_code == 0, result.output
@@ -952,7 +1291,7 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_chinese_instruct
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="r\n加上 renormalization 的 stage 吧\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nr\n加上 renormalization 的 stage 吧\na\n")
 
     assert result.exit_code == 0, result.output
     full = json.loads((root / "artifacts" / "plan_manifests" / "draft.full.json").read_text(encoding="utf-8"))
