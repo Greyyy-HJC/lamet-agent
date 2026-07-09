@@ -165,6 +165,27 @@ def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> No
     blocked = _run_planning_tool(state, "build_quick_full_candidates", {})
     assert blocked["ok"] is False
     assert "missing parameters" in blocked["error"]
+    assert blocked["next_questions"][0]["question_id"] == "stage_params.fourier_transform.ft"
+
+
+def test_plan_load_manifest_reports_deterministic_random_seed_question(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"].pop("random_seed", None)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, payload)
+
+    loaded = _run_planning_tool(state, "load_manifest", {})
+
+    assert loaded["next_questions"][0]["question_id"] == "metadata.random_seed"
+
+
+def test_plan_reports_correlator_metadata_question_before_ambiguous_paths(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["inputs"]["correlators"][0].pop("momentum", None)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, payload)
+
+    loaded = _run_planning_tool(state, "load_manifest", {})
+
+    assert loaded["next_questions"][0]["question_id"] == "inputs.correlators.0.momentum"
 
 
 def test_plan_requires_patch_after_yes_to_stage_parameter_completion(tmp_path: Path) -> None:
