@@ -86,6 +86,30 @@ def alphas_nloop(mu: float, order: int = 0, Nf: int = 3) -> float:
     raise NotImplementedError(f"alpha_s at order={order} is not implemented.")
 
 
+# --- coordinate-space MSbar conversion for self-renormalization -------------
+
+
+def ZMSbar(z_fm: np.ndarray | float, *, mu: float = 2.0, offset: float, order: int = 0, Nf: int = 3) -> np.ndarray:
+    """1-loop coordinate-space conversion to MSbar at scale ``mu`` (GeV).
+
+    ``offset`` is the finite constant: ``5/2`` for PDF and ``7/2`` for DA.
+    """
+    z_arr = np.asarray(z_fm, dtype=float)
+    alphas = alphas_nloop(mu, order=order, Nf=Nf)
+    log_term = np.log(mu**2 * (z_arr / GEV_FM) ** 2 * np.exp(2.0 * np.euler_gamma) / 4.0)
+    return 1.0 + alphas * CF / (2.0 * np.pi) * (1.5 * log_term + offset)
+
+
+def ZMSbar_pdf(z_fm: np.ndarray | float, mu: float = 2.0, order: int = 0, Nf: int = 3) -> np.ndarray:
+    """1-loop MSbar conversion factor for PDF self-renormalization."""
+    return ZMSbar(z_fm, mu=mu, offset=2.5, order=order, Nf=Nf)
+
+
+def ZMSbar_da(z_fm: np.ndarray | float, mu: float = 2.0, order: int = 0, Nf: int = 3) -> np.ndarray:
+    """1-loop MSbar conversion factor for DA self-renormalization."""
+    return ZMSbar(z_fm, mu=mu, offset=3.5, order=order, Nf=Nf)
+
+
 def _sine_integral(value: float) -> float:
     """Return Si(value), using scipy when available and a local fallback otherwise."""
     try:
