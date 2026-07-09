@@ -13,12 +13,10 @@ import gzip
 import html
 import inspect
 import io
-import json
 import os
 import re
 import ssl
 import tarfile
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -27,6 +25,7 @@ from typing import Any
 import numpy as np
 
 from lamet_agent import kernels
+from lamet_agent.core.llm import PROVIDERS, provider_config, request_llm_text
 
 
 # Logical operator -> human text, keyed by the ``<operator>`` field of a
@@ -242,12 +241,8 @@ def _field_definitions(*, language: str) -> list[str]:
 # config is read from the environment because the report cannot receive it from
 # the agent.
 
-# OpenAI-compatible providers (same shape as core.llm.PROVIDERS), kept here so
-# this module stays self-contained.
-_FORMULA_PROVIDERS = {
-    "deepseek": {"base_url": "https://api.deepseek.com", "default_model": "deepseek-chat", "key_env": "DEEPSEEK_API_KEY"},
-    "openai": {"base_url": "https://api.openai.com/v1", "default_model": "gpt-4o-mini", "key_env": "OPENAI_API_KEY"},
-}
+# Provider configs (base_url / default_model / key_env) are reused from
+# ``core.llm.PROVIDERS`` so this module stays in sync with the rest of the agent.
 
 # The paper the kernels come from; can be overridden via env for a local copy.
 DEFAULT_ARXIV_ID = "2602.11283"
@@ -261,13 +256,14 @@ _FORMULA_CACHE: dict[tuple[str, str, str], tuple[str, bool]] = {}
 _PAPER_CACHE: dict[str, str | None] = {}
 
 
-def _resolve_formula_llm() -> tuple[str, str, str]:
-    """Return ``(api_key, model_name, base_url)`` for formula generation, from env.
+def _resolve_formula_llm() -> tuple[str, str, str, str]:
+    """Return ``(provider, api_key, model_name, base_url)`` for formula generation.
 
     Only ``reporting.py`` changes, so the LLM config cannot be threaded in from
     the agent and is read from the environment instead. ``LAMET_FORMULA_*`` take
     precedence, else whichever provider key (``DEEPSEEK_API_KEY`` /
-    ``OPENAI_API_KEY``) is set decides the provider.
+    ``OPENAI_API_KEY``) is set decides the provider. The provider configs
+    themselves come from ``core.llm.PROVIDERS``.
     """
     provider = os.environ.get("LAMET_FORMULA_MODEL")
     if provider is None:
@@ -280,10 +276,10 @@ def _resolve_formula_llm() -> tuple[str, str, str]:
                 "Matching report formula generation needs an LLM: set DEEPSEEK_API_KEY or "
                 "OPENAI_API_KEY (or LAMET_FORMULA_MODEL + LAMET_FORMULA_API_KEY)."
             )
-    config = _FORMULA_PROVIDERS.get(provider)
+    config = provider_config(provider)
     if config is None:
         raise RuntimeError(
-            f"Unknown LAMET_FORMULA_MODEL={provider!r}; use one of {sorted(_FORMULA_PROVIDERS)}."
+            f"Unknown LAMET_FORMULA_MODEL={provider!r}; use one of {sorted(PROVIDERS)}."
         )
     api_key = os.environ.get("LAMET_FORMULA_API_KEY") or os.environ.get(config["key_env"])
     if not api_key:
@@ -292,7 +288,7 @@ def _resolve_formula_llm() -> tuple[str, str, str]:
         )
     model_name = os.environ.get("LAMET_FORMULA_LLM_MODEL") or config["default_model"]
     base_url = os.environ.get("LAMET_FORMULA_BASE_URL") or config["base_url"]
-    return api_key, model_name, base_url
+    return provider, api_key, model_name, base_url
 
 
 def _kernel_source(operator: str, scheme: str) -> str:
@@ -469,45 +465,25 @@ def _llm_kernel_formula(operator: str, scheme: str, *, language: str) -> tuple[s
     if cache_key in _FORMULA_CACHE:
         return _FORMULA_CACHE[cache_key]
 
-    api_key, model_name, base_url = _resolve_formula_llm()
+    provider, api_key, model_name, base_url = _resolve_formula_llm()
     source = _kernel_source(operator, scheme)
     paper_text = _fetch_paper_text()
     prompt = _formula_prompt(operator, scheme, language, source=source, paper_text=paper_text)
-    body = json.dumps(
-        {
-            "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.0,
-            "stream": False,
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        base_url.rstrip("/") + "/chat/completions",
-        data=body,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        method="POST",
-    )
-
-    last_error: BaseException | None = None
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(request, timeout=180) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            text = str(payload["choices"][0]["message"]["content"]).strip()
-            if not text:
-                raise RuntimeError("LLM returned an empty matching formula.")
-            result = (text, paper_text is not None)
-            _FORMULA_CACHE[cache_key] = result
-            return result
-        except (TimeoutError, urllib.error.URLError, ssl.SSLError) as exc:
-            last_error = exc
-            if attempt == 2:
-                raise RuntimeError(
-                    "Matching report formula LLM request failed after 3 attempts "
-                    "(transient HTTPS/network/proxy issue)."
-                ) from exc
-            time.sleep(2**attempt)
-    raise RuntimeError("Matching report formula LLM request failed.") from last_error
+    # Reuse the shared OpenAI-compatible client (retries + error handling live in
+    # core.llm) instead of a second hand-rolled HTTP call.
+    text = request_llm_text(
+        backend="api",
+        provider=provider,
+        api_key=api_key,
+        model_name=model_name,
+        base_url=base_url,
+        messages=[{"role": "user", "content": prompt}],
+    ).strip()
+    if not text:
+        raise RuntimeError("LLM returned an empty matching formula.")
+    result = (text, paper_text is not None)
+    _FORMULA_CACHE[cache_key] = result
+    return result
 
 
 def _matching_formula_text(data: dict[str, Any], *, language: str) -> str:
