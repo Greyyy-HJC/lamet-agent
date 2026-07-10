@@ -13,7 +13,9 @@ from lamet_agent.planning import (
     _ask_plan_agent_question,
     _apply_user_answer_to_candidate,
     _run_planning_tool,
+    _stage_parameter_gaps,
     apply_manifest_json_patches,
+    build_repaired_manifests,
     check_manifest_draft,
     convert_correlator_h5,
     load_relaxed_manifest,
@@ -196,6 +198,28 @@ def test_plan_does_not_write_conversion_control_answers_to_manifest(tmp_path: Pa
 
     assert applied["event"] == "user_answer_not_applied"
     assert "axis_mapping" not in state.candidate_payload["inputs"]["correlators"][0]
+
+
+def test_plan_normalizes_legacy_matching_kernel_stage(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"]["stages"] = ["perturbative_matching"]
+    payload["inputs"]["correlators"] = []
+    payload["inputs"]["artifacts"] = [{"id": "ft", "stage": "fourier_transform", "path": "ft.nc"}]
+    payload["inputs"]["kernels"][0]["stage"] = "matching"
+    payload["stages"] = {
+        "perturbative_matching": {
+            "defaults": {"pz_gev": 2.15, "mu": 2.0, "component": "re"},
+            "jobs": [{"id": "mt", "inputs": {"quasi": "ft"}}],
+        }
+    }
+
+    gaps = _stage_parameter_gaps(payload)
+    quick, full, edits = build_repaired_manifests(tmp_path / "draft.json", payload, [])
+
+    assert not any(gap["parameter"] == "kernel_id" for gap in gaps)
+    assert quick["inputs"]["kernels"][0]["stage"] == "perturbative_matching"
+    assert full["inputs"]["kernels"][0]["stage"] == "perturbative_matching"
+    assert any(edit["path"] == "inputs.kernels[0].stage" for edit in edits)
 
 
 def test_plan_requires_patch_after_yes_to_stage_parameter_completion(tmp_path: Path) -> None:

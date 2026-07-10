@@ -350,8 +350,12 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
                     )
                 )
 
+    strict_payload = copy.deepcopy(payload)
+    for kernel in strict_payload.get("inputs", {}).get("kernels", []) if isinstance(strict_payload.get("inputs"), dict) else []:
+        if isinstance(kernel, dict) and kernel.get("stage") == "matching":
+            kernel["stage"] = "perturbative_matching"
     try:
-        strict = AnalysisManifest.model_validate(copy.deepcopy(payload))
+        strict = AnalysisManifest.model_validate(strict_payload)
     except (ValidationError, ValueError) as exc:
         issues.append(PlanIssue("info", "manifest", f"Strict manifest validation is not yet clean: {exc}"))
     else:
@@ -391,6 +395,19 @@ def _set_kernel_scheme_from_renorm(payload: dict[str, Any]) -> list[dict[str, An
             old = kernel.get("scheme")
             kernel["scheme"] = scheme
             edits.append({"path": f"inputs.kernels[{index}].scheme", "old": old, "new": scheme})
+    return edits
+
+
+def _set_kernel_stage_aliases(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    edits: list[dict[str, Any]] = []
+    inputs = payload.get("inputs")
+    kernels = inputs.get("kernels") if isinstance(inputs, dict) else None
+    if not isinstance(kernels, list):
+        return edits
+    for index, kernel in enumerate(kernels):
+        if isinstance(kernel, dict) and kernel.get("stage") == "matching":
+            kernel["stage"] = "perturbative_matching"
+            edits.append({"path": f"inputs.kernels[{index}].stage", "old": "matching", "new": "perturbative_matching"})
     return edits
 
 
@@ -623,7 +640,8 @@ def build_repaired_manifests(
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     """Return quick/full manifests plus deterministic edits."""
     base = copy.deepcopy(payload)
-    edits = _set_kernel_scheme_from_renorm(base)
+    edits = _set_kernel_stage_aliases(base)
+    edits.extend(_set_kernel_scheme_from_renorm(base))
     edits.extend(_update_conversion_paths(base, conversions, manifest_path))
     quick = _make_quick_variant(base)
     full = _make_full_variant(base, suppressed_paths=suppressed_full_expansions)
@@ -763,7 +781,11 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
     order = metadata.get("stages", []) if isinstance(metadata, dict) else []
     stage_order = [stage for stage in order if isinstance(stage, str)] if isinstance(order, list) else []
     kernels = inputs.get("kernels", []) if isinstance(inputs, dict) else []
-    matching_kernel_ids = [item.get("kernel_id") for item in kernels if isinstance(item, dict) and item.get("stage") == "matching" and item.get("kernel_id")]
+    matching_kernel_ids = [
+        item.get("kernel_id")
+        for item in kernels
+        if isinstance(item, dict) and item.get("stage") in {"matching", "perturbative_matching"} and item.get("kernel_id")
+    ]
     gaps: list[dict[str, Any]] = []
     if not isinstance(stages, dict):
         return gaps

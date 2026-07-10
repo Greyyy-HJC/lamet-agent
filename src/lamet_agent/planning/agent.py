@@ -101,6 +101,8 @@ def _planning_system_prompt() -> str:
         "If the value is inferable from existing manifest examples or upstream metadata, patch it only after the Yes answer and state the exact manifest path/value. "
         "For missing required fields, prefer request_user_input unless the user's instruction or examples clearly establish the value. "
         "For stage additions, preserve existing ids and wire jobs through existing upstream job ids. "
+        "For inputs.kernels[].stage, treat legacy value 'matching' as an alias of 'perturbative_matching'; do not ask the user to rename it. "
+        "The written quick/full manifests normalize that alias to 'perturbative_matching'. "
         "For correlator data conversion, inspect HDF5/NPY/NPZ inputs and never guess ambiguous axes or source keys. "
         "Use multiple-choice questions for simple axis/index choices, but use free-form questions for high-dimensional mappings where the user must describe source, target, cfg/time or cfg/tau axes, z/bz ordering, momentum selection, optional axis_order, optional index selections, and transpose. "
         "When the user gives an unambiguous mapping, call apply_correlator_conversion_mapping with args.correlator_id and args.datasets as a non-empty list of dataset mappings. "
