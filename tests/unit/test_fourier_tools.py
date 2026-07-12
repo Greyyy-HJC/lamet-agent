@@ -13,10 +13,12 @@ from lamet_agent.stages.fourier.functions import (
     _asymptotic_values,
     _param_labels,
     _param_template,
+    complete_z_negative,
     load_renormalized_matrix_element_samples,
     plot_fourier_extension_quality_result,
     plot_fourier_result,
     report_fourier_result,
+    run_fourier_workflow,
     run_fourier_transform,
     summarize_fourier_result,
 )
@@ -58,6 +60,43 @@ def test_fourier_band_segment_inserts_exact_range_edges() -> None:
     assert np.isclose(x[-1], 2.75)
     assert np.isclose(mean[0], 12.5)
     assert np.isclose(mean[-1], 27.5)
+
+
+def test_complete_z_negative_preserves_shortest_negative_point_without_zero() -> None:
+    lam, _, _ = complete_z_negative([1.0, 2.0], [10.0, 20.0], [1.0, 2.0])
+
+    assert lam.tolist() == [-2.0, -1.0, 1.0, 2.0]
+
+
+def test_fourier_workflow_omits_missing_short_distance_grid() -> None:
+    coord = np.arange(2.0, 8.0)
+    base = np.exp(-0.2 * coord) * np.cos(0.3 * coord)
+    re_samples = np.vstack([base * (1.0 + 0.001 * idx) for idx in range(8)])
+    im_samples = np.zeros_like(re_samples)
+
+    result = run_fourier_workflow(
+        coord,
+        re_samples,
+        im_samples,
+        [-0.5, 0.0, 0.5],
+        schemes=[{"label": "manual", "zmin": 2.0, "zmax": 4.0, "z_ext_max": 7.0, "smooth": "linear"}],
+        method="GI",
+        order="LA",
+        observable="meson_quasi_da",
+        coord_unit="lattice",
+        pz_gev=2.4,
+        a_fm=0.04,
+        resample_mode="jackknife",
+        sample_error_mode="mean",
+        part="re",
+        sector="valence",
+        hadron="pion",
+    )
+
+    assert result["short_distance_policy"] == "truncate_missing"
+    assert result["missing_short_distance_coord"] == [0.0, 1.0]
+    assert result["fourier_positive_coord_start"] == 2.0
+    assert np.isclose(result["scheme_results"][0]["z_ext"][0], 2.0 * 0.04 / 0.197327)
 
 
 def test_fourier_stage_tools_are_registered() -> None:

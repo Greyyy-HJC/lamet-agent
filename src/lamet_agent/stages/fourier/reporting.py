@@ -666,6 +666,8 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     sector = str(result.get("sector", "full")).lower()
     part = str(result.get("part", "both")).lower()
     scale = float(result.get("output_scale", 1.0))
+    truncated = str(result.get("short_distance_policy", "full_from_zero")) == "truncate_missing"
+    missing = result.get("missing_short_distance_coord", [])
     if language == "zh":
         intro = (
             f"本次设置为 `sector={sector}`，代码展开为 `part={part}`、"
@@ -675,6 +677,8 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             "坐标空间矩阵元满足"
             "$h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$。"
         )
+        if truncated:
+            intro += f" 本次输入缺少短距离坐标 {missing}，这些点未参与 Fourier 求和，因此输出是缺短距离截断投影。"
         if sector == "sea":
             meaning = "因此 `sea` 由两次投影组合得到：先计算 `total=q(x)+\\bar q(x)` 和 `valence=q(x)-\\bar q(x)`，再取 $(\\mathrm{total}-\\mathrm{valence})/2=\\bar q(x)$。"
         elif part == "both":
@@ -709,6 +713,8 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
                 meaning += f" 当前缩放因子 {_fmt(scale)} 给出按该因子归一化后的虚部投影。"
         else:
             meaning = "该 `part` 设置未识别，报告只记录数值缩放，不赋予额外物理投影解释。"
+        if truncated:
+            meaning += " 由于近零坐标缺失，上述投影解释只适用于当前截断求和结果，不能按完整从零开始的 Fourier 结果解释其归一化或矩。"
         return ["## Sector 物理解释", intro, "", meaning]
 
     intro = (
@@ -719,6 +725,8 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
         "the coordinate-space matrix element obeys "
         "$h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$."
     )
+    if truncated:
+        intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
     if sector == "sea":
         meaning = "`sea` is a derived projection: the code computes `total=q(x)+\\bar q(x)` and `valence=q(x)-\\bar q(x)` and then returns $(\\mathrm{total}-\\mathrm{valence})/2=\\bar q(x)$."
     elif part == "both":
@@ -753,6 +761,8 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             meaning += f" The current scale {_fmt(scale)} returns this imaginary-part projection with that overall normalization."
     else:
         meaning = "This `part` setting is not recognized, so only the numerical output scale is reported."
+    if truncated:
+        meaning += " Because near-zero coordinates are missing, this projection statement applies only to the truncated sum and should not be interpreted as a fully normalized Fourier result or moment."
     return ["## Sector Physical Interpretation", intro, "", meaning]
 
 
@@ -935,6 +945,13 @@ def _settings_table(
         z_ext_text = f"$z_{{\\rm ext}}^{{\\rm max}}={_fmt(float(z_ext_max))}$"
     except (TypeError, ValueError):
         z_ext_text = str(z_ext_max)
+    missing = list(result.get("missing_short_distance_coord", []))
+    if missing:
+        short_distance_text = (
+            f"`truncate_missing`; omitted short-distance coordinates {missing}; Fourier starts at {_fmt(result.get('fourier_positive_coord_start'))}"
+        )
+    else:
+        short_distance_text = "`full_from_zero`; no omitted short-distance coordinate"
     rows = [
         ("Observable", f"`{observable}` ({observable_text})"),
         ("Sector", f"`{result.get('sector', 'full')}`"),
@@ -944,11 +961,17 @@ def _settings_table(
         ("Coordinate unit", f"{_display_unit(result.get('coord_unit', 'not recorded'))}; fit unit {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
         ("Decay offset", f"$\\Lambda_0={_fmt(result.get('Lambda0'))}$"),
         ("Output scale", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
+        ("Short-distance treatment", short_distance_text),
         ("Best fit range", fit_range_text),
         ("Extension endpoint", z_ext_text),
         ("Fourier grid", _format_grid(y_grid, language=language)),
     ]
     if language == "zh":
+        short_distance_text = (
+            f"`truncate_missing`；短距离坐标 {missing} 未参与；Fourier 从 {_fmt(result.get('fourier_positive_coord_start'))} 开始"
+            if missing
+            else "`full_from_zero`；没有省略短距离坐标"
+        )
         rows = [
             ("物理量", f"`{observable}`（{observable_text}）"),
             ("Sector", f"`{result.get('sector', 'full')}`"),
@@ -958,6 +981,7 @@ def _settings_table(
             ("坐标单位", f"{_display_unit(result.get('coord_unit', 'not recorded'))}；拟合单位 {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
             ("衰减偏移", f"$\\Lambda_0={_fmt(result.get('Lambda0'))}$"),
             ("输出缩放", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
+            ("短距离处理", short_distance_text),
             ("最优拟合区间", fit_range_text),
             ("外推终点", z_ext_text),
             ("傅立叶网格", _format_grid(y_grid, language=language)),
@@ -1272,10 +1296,10 @@ def write_fourier_stage_report(
         lines.extend(
             [
                 "",
-                "| job | $P_z$ | selected range | selected fit range | $\\chi^2/{\\rm dof}$ range | fit failures |"
+                "| job | $P_z$ | selected range | selected fit range | omitted short z | $\\chi^2/{\\rm dof}$ range | fit failures |"
                 if language == "en"
-                else "| job | $P_z$ | 选定区间 | 选定拟合区间 | $\\chi^2/{\\rm dof}$ 范围 | 拟合失败次数 |",
-                "|---|---:|---|---|---:|---:|",
+                else "| job | $P_z$ | 选定区间 | 选定拟合区间 | 省略的短距离 z | $\\chi^2/{\\rm dof}$ 范围 | 拟合失败次数 |",
+                "|---|---:|---|---|---|---:|---:|",
             ]
         )
         for item in jobs:
@@ -1285,10 +1309,12 @@ def write_fourier_stage_report(
             chi2 = np.asarray(result.get("fit_model_chi2_dof", []), dtype=float)
             finite = chi2[np.isfinite(chi2)]
             chi_text = "n/a" if finite.size == 0 else f"{_fmt(np.min(finite))} to {_fmt(np.max(finite))}"
+            missing = result.get("missing_short_distance_coord", [])
             lines.append(
                 f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | "
                 f"{result.get('selected_range_label', 'n/a')} | "
                 f"{_format_fit_range(selected_model.get('fit_range'), language=language)} | "
+                f"{missing if missing else 'none'} | "
                 f"{chi_text} | "
                 f"{int(np.sum(np.asarray(result.get('fit_failures', []), dtype=float)))} |"
             )

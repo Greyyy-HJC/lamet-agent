@@ -236,9 +236,14 @@ def complete_z_negative(lam_ls, re_ls, im_ls, *, im_flip_for_ft=False):
     if im_flip_for_ft:
         im = -im
 
-    lam_full = np.concatenate([-lam[::-1][:-1], lam])
-    re_full = np.concatenate([re[::-1][:-1], re])
-    im_full = np.concatenate([-im[::-1][:-1], im])
+    if np.isclose(lam[0], 0.0):
+        lam_full = np.concatenate([-lam[::-1][:-1], lam])
+        re_full = np.concatenate([re[::-1][:-1], re])
+        im_full = np.concatenate([-im[::-1][:-1], im])
+    else:
+        lam_full = np.concatenate([-lam[::-1], lam])
+        re_full = np.concatenate([re[::-1], re])
+        im_full = np.concatenate([-im[::-1], im])
     return lam_full, re_full, im_full
 
 
@@ -961,7 +966,8 @@ def _progress(iterable, *, desc: str, leave: bool = True):
 
 
 def _scheme_ranges(scheme: dict[str, Any], coord: np.ndarray) -> tuple[float, float, float]:
-    zmin = float(scheme.get("zmin", coord[1]))
+    positive = coord[coord > 0]
+    zmin = float(scheme.get("zmin", positive[0]))
     zmax = float(scheme.get("zmax", coord[-1]))
     z_ext_max = float(scheme.get("z_ext_max", zmax))
     return zmin, zmax, z_ext_max
@@ -1063,7 +1069,7 @@ def _run_one_scheme(
         )
 
     dz = _uniform_step(fit_coord)
-    z_ext = np.arange(0.0, z_ext_fit_max + 0.5 * dz, dz)
+    z_ext = np.arange(fit_coord[0], z_ext_fit_max + 0.5 * dz, dz)
     lambda_ext = z_ext * ft_scale_over_fit_scale
 
     data_re = _interp_samples(fit_coord, re_samples, z_ext)
@@ -1227,9 +1233,8 @@ def run_fourier_workflow(
     resample_mode = _normalise_resample_mode(resample_mode)
     sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
     part = _normalise_part(part)
-    _uniform_step(coord_arr)
-    if not np.isclose(coord_arr[0], 0.0):
-        raise ValueError("coordinate grid must start at zero")
+    coord_step = _uniform_step(coord_arr)
+    missing_short_distance_coord = np.arange(0.0, coord_arr[0], coord_step).tolist()
 
     re_mat = _as_sample_matrix("re_samples", re_samples)
     im_mat = _as_sample_matrix("im_samples", im_samples)
@@ -1338,6 +1343,12 @@ def run_fourier_workflow(
         "Lambda0": float(Lambda0),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
         "part": part,
+        "short_distance_policy": "full_from_zero" if not missing_short_distance_coord else "truncate_missing",
+        "input_coord_start": float(coord_arr[0]),
+        "input_coord_step": float(coord_step),
+        "missing_short_distance_coord": [float(item) for item in missing_short_distance_coord],
+        "missing_short_distance_count": int(len(missing_short_distance_coord)),
+        "fourier_positive_coord_start": float(coord_arr[0]),
     }
 
 
@@ -1455,6 +1466,12 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "selected_candidate_index",
         "selected_candidate_label",
         "selection_mode",
+        "short_distance_policy",
+        "input_coord_start",
+        "input_coord_step",
+        "missing_short_distance_coord",
+        "missing_short_distance_count",
+        "fourier_positive_coord_start",
     ):
         if key in result:
             attrs[key] = json.dumps(np.asarray(result[key]).tolist())
