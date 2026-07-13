@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
-from lamet_agent.stages.matching.functions import resolve_kernel_id
+from lamet_agent.stages.matching.functions import is_hybrid_kernel, resolve_kernel_id
 
 
 STAGE_SKILL = """
@@ -53,6 +53,6 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
         resolved = resolve_kernel_id(declaration.kernel_id, declaration.scheme)
     except ValueError as exc:
         return [str(exc)]
-    if resolved.endswith("_hybrid") and "zs_fm" not in declaration.kernel_parameters:
+    if is_hybrid_kernel(resolved) and "zs_fm" not in declaration.kernel_parameters:
         return ["A hybrid matching kernel requires kernel_parameters.zs_fm."]
     return []

@@ -19,6 +19,7 @@ import ssl
 import tarfile
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +30,7 @@ from lamet_agent.core.llm import PROVIDERS, provider_config, request_llm_text
 
 
 # Logical operator -> human text, keyed by the ``<operator>`` field of a
-# ``CG_<operator>_PDF_<scheme>`` kernel_id.
+# ``CG_<operator>_qPDF_<scheme>_NLO`` kernel_id.
 OPERATOR_TEXT = {
     "gt": ("unpolarized $\\gamma^t$ quark PDF", "非极化 $\\gamma^t$ 夸克 PDF"),
     "gtg5": ("helicity $\\gamma^t\\gamma_5$ quark PDF", "螺旋度 $\\gamma^t\\gamma_5$ 夸克 PDF"),
@@ -41,11 +42,13 @@ OPERATOR_TEXT = {
     ),
 }
 
-# Scheme -> (human text, reference equation in arXiv:2602.11283).
+# Scheme -> human text. The paper and equation numbers are NOT listed here: they are
+# tagged on each kernel in kernels.py (@kernel_reference) and read back by
+# _kernel_reference below, so kernels from different papers each cite their own.
 SCHEME_TEXT = {
-    "msbar": ("MSbar", "arXiv:2602.11283 Eq. (2.14)"),
-    "ratio": ("ratio", "arXiv:2602.11283 Eq. (2.16)"),
-    "hybrid": ("hybrid", "arXiv:2602.11283 Eqs. (2.19)/(2.20)"),
+    "msbar": "MSbar",
+    "ratio": "ratio",
+    "hybrid": "hybrid",
 }
 
 MATCHING_ARTIFACT_DESCRIPTIONS = {
@@ -79,20 +82,40 @@ def _fmt_list(values: Any, *, max_items: int = 8, digits: int = 4) -> str:
     return "[" + ", ".join(items) + suffix + "]"
 
 
-def _parse_kernel_id(kernel_id: str) -> tuple[str, str]:
-    """Split a ``CG_<operator>_PDF_<scheme>`` id into (operator, scheme).
+DISTRIBUTION_TOKENS = ("qPDF", "gPDF", "DA", "qDA", "gDA")
 
-    Falls back to ('', '') for any id that does not follow the convention so the
-    report degrades gracefully instead of raising.
+
+def _parse_kernel_id(kernel_id: str) -> tuple[str, str]:
+    """Split a ``<gauge>_<operator>_<distribution>_<scheme>_<order>`` id into (operator, scheme).
+
+    The distribution token (qPDF/gPDF for the quark/gluon PDF, DA for the meson
+    distribution amplitude) separates the operator from the scheme, and the order (NLO)
+    trails it. The leading token is the gauge construction (CG or GI) and is not returned
+    -- ``_settings_table`` reads it off the id directly. Falls back to ('', '') for any id
+    that does not follow the convention so the report degrades gracefully instead of raising.
     """
     parts = str(kernel_id).split("_")
-    # CG, <op...>, PDF, <scheme>
-    if len(parts) >= 4 and parts[0] == "CG" and "PDF" in parts:
-        pdf_idx = parts.index("PDF")
-        operator = "_".join(parts[1:pdf_idx])
-        scheme = "_".join(parts[pdf_idx + 1 :])
+    # <gauge>, <op...>, qPDF|DA, <scheme>, <order>
+    parton_idx = next((i for i, part in enumerate(parts) if part in DISTRIBUTION_TOKENS), -1)
+    if len(parts) >= 4 and parton_idx >= 2 and parton_idx + 1 < len(parts):
+        operator = "_".join(parts[1:parton_idx])
+        scheme = parts[parton_idx + 1]
         return operator, scheme
     return "", ""
+
+
+def _kernel_reference(kernel_id: str) -> tuple[str, str]:
+    """Return the ``(arxiv_id, equations)`` tagged on the kernel the manifest selected.
+
+    The manifest names the kernel, the registry name is the function name in kernels.py,
+    and the function carries its own provenance (``@kernel_reference``) -- so the paper
+    follows the kernel, with no table here to keep in sync and no default paper baked in.
+    An unknown or untagged kernel_id yields ``("", "")``: the report then cites nothing
+    and the formula is derived from the code alone, rather than pointing at some other
+    paper's equations. Every registered kernel is tagged (a test enforces it).
+    """
+    fn = getattr(kernels, str(kernel_id), None)
+    return getattr(fn, "arxiv_id", "") or "", getattr(fn, "equations", "") or ""
 
 
 def _format_grid(x_grid: np.ndarray, *, language: str) -> str:
@@ -154,12 +177,17 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     kernel_id = str(data.get("kernel_id", "not recorded"))
     operator, scheme = _parse_kernel_id(kernel_id)
     op_en, op_zh = OPERATOR_TEXT.get(operator, (operator or "not recorded",) * 2)
-    scheme_en, _scheme_ref = SCHEME_TEXT.get(scheme, (scheme or "not recorded", ""))
+    scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
     # The `CG` prefix of the kernel_id marks the Coulomb-gauge (no Wilson line)
     # construction; anything else is the conventional gauge-invariant one.
     is_coulomb = kernel_id.upper().startswith("CG")
     gauge_en = "Coulomb gauge ($\\partial_i A_i=0$, no Wilson line)" if is_coulomb else "gauge-invariant (straight Wilson line)"
     gauge_zh = "库伦规范（Coulomb gauge，$\\partial_i A_i=0$，无 Wilson 线）" if is_coulomb else "规范不变（gauge-invariant，含直 Wilson 线）"
+    # The paper is whatever the selected kernel declares in kernels.py -- the manifest
+    # picks the kernel_id, and the citation follows it.
+    arxiv_id, equations = _kernel_reference(kernel_id)
+    reference_en = f"arXiv:{arxiv_id} {equations}".strip() if arxiv_id else "not declared by the kernel"
+    reference_zh = f"arXiv:{arxiv_id} {equations}".strip() if arxiv_id else "该匹配核未标注出处"
     x_grid = np.asarray(data.get("x_grid", []), dtype=float)
     zspz = data.get("zspz")
     pz_value = data.get("pz_gev")
@@ -171,6 +199,7 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     if language == "zh":
         rows = [
             ("矩阵元/算符", f"`{kernel_id}`（{op_zh}）"),
+            ("匹配核出处", reference_zh),
             ("规范约定", gauge_zh),
             ("匹配方案", f"`{scheme}`（{scheme_en}）"),
             ("夸克/胶子分量", f"`{data.get('component', 'not recorded')}`"),
@@ -190,6 +219,7 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     else:
         rows = [
             ("Operator / kernel", f"`{kernel_id}` ({op_en})"),
+            ("Kernel reference", reference_en),
             ("Gauge convention", gauge_en),
             ("Matching scheme", f"`{scheme}` ({scheme_en})"),
             ("Quark/gluon component", f"`{data.get('component', 'not recorded')}`"),
@@ -225,7 +255,7 @@ def _field_definitions(*, language: str) -> list[str]:
     return [
         "| Entry | Meaning |",
         "|---|---|",
-        "| Operator / kernel | The selected matching kernel `CG_<operator>_PDF_<scheme>`; the operator sets the Dirac structure (gt, gtg5) and the scheme sets the finite terms. |",
+        "| Operator / kernel | The selected matching kernel `CG_<operator>_qPDF_<scheme>_NLO`; the operator sets the Dirac structure (gt, gtg5), `qPDF` marks it as a quark kernel, the scheme sets the finite terms, and NLO is the perturbative order. |",
         "| Matching scheme | `msbar` / `ratio` / `hybrid`, chosen by the kernel_id suffix; hybrid also needs the Wilson-line length $z_s$. |",
         "| Hadron momentum | $P_z$, which must match the Fourier stage and enters the kernel's $\\log(4y^2P_z^2/\\mu^2)$ terms. |",
         "| Renormalization scale | MSbar renormalization scale $\\mu$ in GeV (default 2.0). |",
@@ -244,8 +274,9 @@ def _field_definitions(*, language: str) -> list[str]:
 # Provider configs (base_url / default_model / key_env) are reused from
 # ``core.llm.PROVIDERS`` so this module stays in sync with the rest of the agent.
 
-# The paper the kernels come from; can be overridden via env for a local copy.
-DEFAULT_ARXIV_ID = "2602.11283"
+# No paper is named in this module. The manifest picks a kernel_id, the kernel carries
+# its own @kernel_reference (arXiv id + equations), and _kernel_reference reads it back
+# -- so adding a kernel from a new paper needs no change here. See kernels.py.
 
 # Generating a formula is a network round-trip; memoize so the per-job and the
 # stage-level report reuse one call per (operator, scheme, language). The value
@@ -256,48 +287,68 @@ _FORMULA_CACHE: dict[tuple[str, str, str], tuple[str, bool]] = {}
 _PAPER_CACHE: dict[str, str | None] = {}
 
 
-def _resolve_formula_llm() -> tuple[str, str, str, str]:
-    """Return ``(provider, api_key, model_name, base_url)`` for formula generation.
+@dataclass(frozen=True)
+class FormulaLlm:
+    """The LLM the report uses to write the kernel's closed form.
 
-    Only ``reporting.py`` changes, so the LLM config cannot be threaded in from
-    the agent and is read from the environment instead. ``LAMET_FORMULA_*`` take
-    precedence, else whichever provider key (``DEEPSEEK_API_KEY`` /
-    ``OPENAI_API_KEY``) is set decides the provider. The provider configs
-    themselves come from ``core.llm.PROVIDERS``.
+    Passed in explicitly, exactly like the review stage's tool arguments: the run's
+    ``--backend`` and (for ``api``) the provider/key/model the CLI already resolved are
+    handed down as parameters. Reading them back out of the environment would mean the
+    report could silently use a different model, or a different key, from the run itself.
     """
-    provider = os.environ.get("LAMET_FORMULA_MODEL")
-    if provider is None:
-        if os.environ.get("DEEPSEEK_API_KEY"):
-            provider = "deepseek"
-        elif os.environ.get("OPENAI_API_KEY"):
-            provider = "openai"
-        else:
+
+    backend: str = "api"
+    provider: str | None = None
+    api_key: str | None = None
+    model_name: str | None = None
+    base_url: str | None = None
+
+    def resolved(self) -> tuple[str, str | None, str | None, str | None, str | None]:
+        """Validate and fill provider defaults, returning what request_llm_text needs."""
+        if self.backend == "codex":
+            return "codex", None, None, None, None
+        if self.backend != "api":
             raise RuntimeError(
-                "Matching report formula generation needs an LLM: set DEEPSEEK_API_KEY or "
-                "OPENAI_API_KEY (or LAMET_FORMULA_MODEL + LAMET_FORMULA_API_KEY)."
+                f"The matching report's formula section needs an LLM, but this run used "
+                f"backend={self.backend!r}. Run with --backend api (plus --model "
+                f"provider/model_id) or --backend codex."
             )
-    config = provider_config(provider)
-    if config is None:
-        raise RuntimeError(
-            f"Unknown LAMET_FORMULA_MODEL={provider!r}; use one of {sorted(PROVIDERS)}."
+        if not self.provider:
+            raise RuntimeError(
+                "The matching report's formula section needs --model provider/model_id "
+                f"(one of {sorted(PROVIDERS)})."
+            )
+        config = provider_config(self.provider)
+        if config is None:
+            raise RuntimeError(
+                f"Unknown provider {self.provider!r}; use one of {sorted(PROVIDERS)}."
+            )
+        if not self.api_key:
+            raise RuntimeError(
+                f"The matching report's formula section needs an API key for "
+                f"provider={self.provider!r} (--api-key-file, or {config['key_env']})."
+            )
+        return (
+            "api",
+            self.provider,
+            self.api_key,
+            self.model_name or config["default_model"],
+            self.base_url or config["base_url"],
         )
-    api_key = os.environ.get("LAMET_FORMULA_API_KEY") or os.environ.get(config["key_env"])
-    if not api_key:
-        raise RuntimeError(
-            f"Matching report formula generation needs {config['key_env']} (or LAMET_FORMULA_API_KEY)."
-        )
-    model_name = os.environ.get("LAMET_FORMULA_LLM_MODEL") or config["default_model"]
-    base_url = os.environ.get("LAMET_FORMULA_BASE_URL") or config["base_url"]
-    return provider, api_key, model_name, base_url
 
 
-def _kernel_source(operator: str, scheme: str) -> str:
+def _kernel_source(kernel_id: str) -> str:
     """Return the implemented kernel + coefficient functions as LLM ground truth."""
     pieces: list[str] = []
-    builder = getattr(kernels, f"CG_{operator}_PDF_{scheme}", None)
+    # The registry name is the function name in kernels.py, so resolve it directly
+    # instead of rebuilding it from the parsed operator/scheme.
+    builder = getattr(kernels, str(kernel_id), None)
     if builder is not None:
         pieces.append(inspect.getsource(builder))
-    for name in ("C_ratio", "C_ratio_perp", "C_msbar", "C_msbar_gz", "C_hybrid", "_atan_piece", "build_matching_matrix"):
+    for name in (
+        "C_ratio", "C_ratio_perp", "C_msbar", "C_msbar_gz", "C_hybrid",
+        "C_ratio_gi", "C_hybrid_gi", "_atan_piece", "build_matching_matrix",
+    ):
         fn = getattr(kernels, name, None)
         if fn is not None:
             pieces.append(inspect.getsource(fn))
@@ -358,18 +409,33 @@ def _fetch_arxiv_source(arxiv_id: str) -> str | None:
     return "\n\n".join(texts)
 
 
-def _fetch_paper_text(*, max_chars: int = 80_000) -> str | None:
+def _local_paper_path(arxiv_id: str) -> str | None:
+    """Path to a local copy of *this* paper, from ``LAMET_FORMULA_PAPER_PATH_<arxiv_id>``.
+
+    The variable is per paper (dots in the id become underscores, e.g.
+    ``LAMET_FORMULA_PAPER_PATH_2412_20461``) precisely because one run can match several
+    jobs with kernels from different papers -- a single global path would silently feed
+    the wrong paper to every one of them.
+    """
+    return os.environ.get(f"LAMET_FORMULA_PAPER_PATH_{arxiv_id.replace('.', '_')}")
+
+
+def _fetch_paper_text(paper_arxiv_id: str, *, max_chars: int = 80_000) -> str | None:
     """Return the paper text (local copy preferred, else arXiv LaTeX source), or None.
 
-    A local copy is the most robust source: set ``LAMET_FORMULA_PAPER_PATH`` to a
-    ``.txt``/``.md``/``.tex``/HTML file. Otherwise the arXiv LaTeX e-print source for
-    ``LAMET_FORMULA_ARXIV_ID`` (default :data:`DEFAULT_ARXIV_ID`) is fetched so the
-    LLM reads the real equations; the HTML mirrors are only a last-resort fallback
-    (their math is mangled). The fetch is best-effort: any failure returns ``None``
-    and the formula is then generated from the kernel code alone.
+    ``paper_arxiv_id`` comes from the kernel the manifest selected (its
+    ``@kernel_reference`` tag), so each kernel fetches its own paper -- nothing here
+    knows or assumes a particular one. A local copy wins when
+    ``LAMET_FORMULA_PAPER_PATH_<arxiv_id>`` points at a ``.txt``/``.md``/``.tex``/HTML
+    file; otherwise the arXiv LaTeX e-print source is fetched so the LLM reads the real
+    equations (the HTML mirrors are a last-resort fallback -- their math is mangled).
+    The fetch is best-effort: any failure, or an untagged kernel, returns ``None`` and
+    the formula is then generated from the kernel code alone.
     """
-    local = os.environ.get("LAMET_FORMULA_PAPER_PATH")
-    arxiv_id = os.environ.get("LAMET_FORMULA_ARXIV_ID") or DEFAULT_ARXIV_ID
+    if not paper_arxiv_id:
+        return None  # untagged kernel: no paper to fetch, and none to invent
+    arxiv_id = paper_arxiv_id
+    local = _local_paper_path(arxiv_id)
     cache_key = local or f"arxiv:{arxiv_id}"
     if cache_key in _PAPER_CACHE:
         return _PAPER_CACHE[cache_key]
@@ -405,13 +471,20 @@ def _fetch_paper_text(*, max_chars: int = 80_000) -> str | None:
 
 
 def _formula_prompt(
-    operator: str, scheme: str, language: str, *, source: str, paper_text: str | None
+    operator: str,
+    scheme: str,
+    language: str,
+    *,
+    source: str,
+    paper_text: str | None,
+    paper_arxiv_id: str,
+    equations: str,
 ) -> str:
     lang_line = (
         "Write the prose in Simplified Chinese." if language == "zh" else "Write the prose in English."
     )
     paper_block = (
-        f"LaTeX source of the paper (arXiv:{DEFAULT_ARXIV_ID}). It is the authority for the "
+        f"LaTeX source of the paper (arXiv:{paper_arxiv_id}). It is the authority for the "
         "NOTATION: copy its symbols and, in particular, its exact plus-prescription convention "
         "for the matching coefficient verbatim.\n\"\"\"\n" + paper_text + "\n\"\"\"\n\n"
         if paper_text
@@ -419,10 +492,18 @@ def _formula_prompt(
         "the paper's $[\\,g(\\xi)\\,]^{D}_{+(1)}$ plus-prescription convention (subtraction point "
         "$\\xi=1$, domain $D$ in the superscript).\n\n"
     )
+    # The kernel is tagged with the exact equations it transcribes, so point the model
+    # at them instead of making it search the paper for the right coefficient.
+    equation_line = (
+        f"The kernel implements {equations} of that paper -- document that coefficient.\n\n"
+        if equations
+        else ""
+    )
     return (
         "You are documenting one stage of a LaMET lattice-QCD analysis. Produce a Markdown "
-        f"fragment giving the explicit NLO matching coefficient for the `{operator}` operator "
+        f"fragment giving the explicit matching coefficient for the `{operator}` operator "
         f"in the `{scheme}` scheme, exactly as the paper presents it.\n\n"
+        f"{equation_line}"
         f"{paper_block}"
         "The number in the report was produced by this exact Python code -- it is the single "
         "source of truth for WHICH terms are present. Read it together with the paper and write "
@@ -450,10 +531,10 @@ def _formula_prompt(
     )
 
 
-def _llm_kernel_formula(operator: str, scheme: str, *, language: str) -> tuple[str, bool]:
+def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tuple[str, bool]:
     """Generate the explicit kernel coefficient with an LLM, returning ``(md, paper_used)``.
 
-    The model reads the source paper's LaTeX (arXiv:2602.11283, when reachable)
+    The model reads the LaTeX of the paper the kernel is tagged with (when reachable)
     together with the exact ``kernels.py`` code that produced the number, and writes
     the closed form using the paper's own plus-prescription notation. The code is
     authoritative for which terms are present; the paper is authoritative for the
@@ -461,18 +542,29 @@ def _llm_kernel_formula(operator: str, scheme: str, *, language: str) -> tuple[s
     failure (formula generation is required, no offline fallback). The boolean
     reports whether the paper text actually reached the prompt.
     """
-    cache_key = (operator, scheme, language)
+    operator, scheme = _parse_kernel_id(kernel_id)
+    paper_arxiv_id, equations = _kernel_reference(kernel_id)
+    cache_key = (kernel_id, scheme, language)
     if cache_key in _FORMULA_CACHE:
         return _FORMULA_CACHE[cache_key]
 
-    provider, api_key, model_name, base_url = _resolve_formula_llm()
-    source = _kernel_source(operator, scheme)
-    paper_text = _fetch_paper_text()
-    prompt = _formula_prompt(operator, scheme, language, source=source, paper_text=paper_text)
-    # Reuse the shared OpenAI-compatible client (retries + error handling live in
-    # core.llm) instead of a second hand-rolled HTTP call.
+    backend, provider, api_key, model_name, base_url = llm.resolved()
+    source = _kernel_source(kernel_id)
+    paper_text = _fetch_paper_text(paper_arxiv_id)
+    prompt = _formula_prompt(
+        operator,
+        scheme,
+        language,
+        source=source,
+        paper_text=paper_text,
+        paper_arxiv_id=paper_arxiv_id,
+        equations=equations,
+    )
+    # Reuse the shared LLM client (retries + error handling live in core.llm) instead
+    # of a second hand-rolled HTTP call. The backend follows the run's --backend; the
+    # api-only fields are empty strings under codex and ignored by that backend.
     text = request_llm_text(
-        backend="api",
+        backend=backend,
         provider=provider,
         api_key=api_key,
         model_name=model_name,
@@ -486,26 +578,31 @@ def _llm_kernel_formula(operator: str, scheme: str, *, language: str) -> tuple[s
     return result
 
 
-def _matching_formula_text(data: dict[str, Any], *, language: str) -> str:
+def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaLlm) -> str:
     kernel_id = str(data.get("kernel_id", ""))
-    operator, scheme = _parse_kernel_id(kernel_id)
-    _scheme_en, reference = SCHEME_TEXT.get(scheme, ("", "arXiv:2602.11283"))
+    # Provenance follows the manifest's kernel: whichever kernel_id was selected, its
+    # @kernel_reference in kernels.py names the paper and equations cited here.
+    paper_arxiv_id, equations = _kernel_reference(kernel_id)
+    if paper_arxiv_id:
+        reference = f"arXiv:{paper_arxiv_id} {equations}".strip()
+    else:
+        reference = "匹配核未标注出处" if language == "zh" else "The kernel declares no paper reference"
     formula = (
         r"f(x,\mu)=\int\frac{dy}{|y|}\,C^{-1}\!\left(\frac{x}{y},\frac{\mu}{yP_z}\right)"
         r"\tilde f\!\left(y,P_z\right),"
     )
-    discrete = r"f_i=\sum_j K_{ij}\,\tilde f_j,\qquad K=\text{(nx, ny) NLO matrix}."
+    discrete = r"f_i=\sum_j K_{ij}\,\tilde f_j,\qquad K=\text{(nx, ny) matching matrix}."
     # The explicit coefficient is generated at report time by an LLM that reads
     # the source paper together with the kernels.py code which produced the number
     # (no formula is hardcoded). A short note records the provenance so a reader
     # knows it was machine-derived and from which sources.
-    generated, paper_used = _llm_kernel_formula(operator, scheme, language=language)
+    generated, paper_used = _llm_kernel_formula(kernel_id, language=language, llm=llm)
     if language == "zh":
-        source_zh = f"文章 arXiv:{DEFAULT_ARXIV_ID} 与 `kernels.py` 实现" if paper_used else "`kernels.py` 实现"
+        source_zh = f"文章 arXiv:{paper_arxiv_id} 与 `kernels.py` 实现" if paper_used else "`kernels.py` 实现"
         note = f"（以下解析形式由模型阅读{source_zh}后生成）\n\n"
     else:
         source_en = (
-            f"arXiv:{DEFAULT_ARXIV_ID} together with the `kernels.py` implementation"
+            f"arXiv:{paper_arxiv_id} together with the `kernels.py` implementation"
             if paper_used
             else "the `kernels.py` implementation"
         )
@@ -513,23 +610,19 @@ def _matching_formula_text(data: dict[str, Any], *, language: str) -> str:
     explicit = note + generated
     if language == "zh":
         return (
-            f"{reference}。光锥 PDF 由 quasi-PDF 经 NLO 匹配核反卷积得到：\n\n"
+            f"{reference}。光锥 PDF 由 quasi-PDF 经匹配核反卷积得到：\n\n"
             f"$$\n{formula}\n$$\n\n"
             "离散化后即矩阵乘法（本阶段对每个重采样样本独立施加，再重建统计量）：\n\n"
             f"$$\n{discrete}\n$$\n\n"
-            "其中 LO 为单位阵，NLO 修正为 "
-            "$K=\\mathbb{1}-\\dfrac{\\alpha_s\\,C_{F/A}}{2\\pi}\\,C^{(1)}(\\xi)\\,\\dfrac{dy}{|y|}$，"
-            "解析形式为：\n\n"
+            "其中 LO 部分为单位阵，匹配修正的解析形式为：\n\n"
             f"{explicit}"
         )
     return (
-        f"{reference}. The light-cone PDF is obtained from the quasi-PDF by inverting the NLO matching kernel:\n\n"
+        f"{reference}. The light-cone PDF is obtained from the quasi-PDF by inverting the matching kernel:\n\n"
         f"$$\n{formula}\n$$\n\n"
         "After discretization this is a matrix product (applied to every resampling sample independently, then the statistics are rebuilt):\n\n"
         f"$$\n{discrete}\n$$\n\n"
-        "Here the LO part is the identity and the NLO correction is "
-        "$K=\\mathbb{1}-\\dfrac{\\alpha_s\\,C_{F/A}}{2\\pi}\\,C^{(1)}(\\xi)\\,\\dfrac{dy}{|y|}$, "
-        "with the explicit coefficient:\n\n"
+        "Here the LO part is the identity, and the explicit matching correction is:\n\n"
         f"{explicit}"
     )
 
@@ -620,12 +713,13 @@ def build_matching_report_markdown(
     result: dict[str, Any],
     artifacts: dict[str, Any] | None = None,
     language: str = "en",
+    llm: FormulaLlm,
 ) -> str:
     artifacts = artifacts or {}
     kernel_id = str(result.get("kernel_id", "not recorded"))
     operator, scheme = _parse_kernel_id(kernel_id)
     op_en, op_zh = OPERATOR_TEXT.get(operator, (operator or "not recorded",) * 2)
-    scheme_en, _ref = SCHEME_TEXT.get(scheme, (scheme or "not recorded", ""))
+    scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
 
     if language == "zh":
         lines = [
@@ -641,7 +735,7 @@ def build_matching_report_markdown(
             *_field_definitions(language="zh"),
             "",
             "## 匹配公式",
-            _matching_formula_text(result, language="zh"),
+            _matching_formula_text(result, language="zh", llm=llm),
             "",
             *_scheme_explanation(result, language="zh"),
             "",
@@ -667,7 +761,7 @@ def build_matching_report_markdown(
             *_field_definitions(language="en"),
             "",
             "## Matching Formula",
-            _matching_formula_text(result, language="en"),
+            _matching_formula_text(result, language="en", llm=llm),
             "",
             *_scheme_explanation(result, language="en"),
             "",
@@ -688,6 +782,7 @@ def write_matching_report(
     artifacts: dict[str, Any] | None,
     path: str | Path,
     report_language: str = "en",
+    llm: FormulaLlm,
 ) -> dict[str, Path]:
     """Write one matching report and return its path."""
     output = Path(path)
@@ -695,7 +790,7 @@ def write_matching_report(
     target.parent.mkdir(parents=True, exist_ok=True)
     report_artifacts = _markdown_artifacts(artifacts, base_dir=target.parent)
     target.write_text(
-        build_matching_report_markdown(result=result, artifacts=report_artifacts, language=language),
+        build_matching_report_markdown(result=result, artifacts=report_artifacts, language=language, llm=llm),
         encoding="utf-8",
     )
     return {"report": target}
@@ -706,6 +801,7 @@ def write_matching_stage_report(
     jobs: list[dict[str, Any]],
     path: str | Path,
     report_language: str = "en",
+    llm: FormulaLlm,
 ) -> dict[str, Path]:
     """Write one report summarizing all matching jobs in a stage."""
     output = Path(path)
@@ -716,7 +812,7 @@ def write_matching_stage_report(
         kernel_id = str(first.get("kernel_id", "not recorded"))
         operator, scheme = _parse_kernel_id(kernel_id)
         op_en, op_zh = OPERATOR_TEXT.get(operator, (operator or "not recorded",) * 2)
-        scheme_en, _ref = SCHEME_TEXT.get(scheme, (scheme or "not recorded", ""))
+        scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
         lines = [
             "# Perturbative Matching Stage Report" if language == "en" else "# 微扰匹配阶段报告",
             "",
@@ -750,7 +846,7 @@ def write_matching_stage_report(
                 *_field_definitions(language=language),
                 "",
                 "## Matching Formula" if language == "en" else "## 匹配公式",
-                _matching_formula_text(first, language=language),
+                _matching_formula_text(first, language=language, llm=llm),
                 "",
                 *_scheme_explanation(first, language=language),
                 "",

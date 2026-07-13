@@ -181,7 +181,11 @@ def _run_job(
                 artifacts_dir=stage_dir,
                 store=store,
             )
-            if stage == "review" and tool_name == "write_review":
+            if (stage == "review" and tool_name == "write_review") or (
+                stage == "perturbative_matching" and tool_name == "report_matching_result"
+            ):
+                # Both tools call an LLM. Hand them this run's resolved config rather than
+                # letting them rediscover it from the environment.
                 args["report_language"] = report_language
                 args["backend"] = backend
                 args["provider"] = provider
@@ -478,12 +482,16 @@ def run_agent(
             )
             stage_reports[stage] = {"report": str(paths["report"])}
         if stage == "perturbative_matching" and stage_job_records:
-            from lamet_agent.stages.matching.reporting import write_matching_stage_report
+            from lamet_agent.stages.matching.reporting import FormulaLlm, write_matching_stage_report
 
             paths = write_matching_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "matching_report.md",
                 report_language=report_language,
+                llm=FormulaLlm(
+                    backend=backend, provider=provider, api_key=api_key,
+                    model_name=model_name, base_url=base_url,
+                ),
             )
             stage_reports[stage] = {"report": str(paths["report"])}
         state.completed_stages.append(stage)
