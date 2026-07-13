@@ -215,19 +215,6 @@ def run_workflow(
         base_url=base_url,
     )
 
-    if backend == "api":
-        # The matching report's formula generation lives in a self-contained module
-        # (stages/matching/reporting.py) that reads its LLM config from LAMET_FORMULA_*
-        # env vars rather than receiving it as a parameter. Thread this run's resolved
-        # config through so each user's --api-key-file (and chosen provider/model) is
-        # what the report uses, instead of whatever happens to be set on the machine.
-        if api_key:
-            os.environ["LAMET_FORMULA_MODEL"] = provider
-            os.environ["LAMET_FORMULA_API_KEY"] = api_key
-            os.environ["LAMET_FORMULA_LLM_MODEL"] = model_name
-            if resolved_base_url:
-                os.environ["LAMET_FORMULA_BASE_URL"] = resolved_base_url
-
     try:
         result = run_agent(
             parsed,

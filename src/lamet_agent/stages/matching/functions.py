@@ -34,7 +34,7 @@ Example usage:
 - from lamet_agent.stages.matching.functions import STAGE_TOOLS
 - store = {}
 - STAGE_TOOLS["load_quasi_pdf"](store, path="artifacts/fourier_result.nc")
-- STAGE_TOOLS["build_matching_kernel"](store, kernel_id="CG_gt_PDF_msbar", pz_gev=1.5)
+- STAGE_TOOLS["build_matching_kernel"](store, kernel_id="CG_gt_qPDF_msbar_NLO", pz_gev=1.5)
 - STAGE_TOOLS["apply_matching"](store)
 """
 
@@ -46,25 +46,37 @@ from typing import Any, Callable
 import numpy as np
 
 from lamet_agent.core.data import EnsembleData
-from lamet_agent.stages.matching.reporting import write_matching_report
+from lamet_agent.stages.matching.reporting import FormulaLlm, write_matching_report
 
 # All matching kernels live in the self-contained kernels.py.
 from lamet_agent.kernels import (
-    CG_gt_PDF_hybrid,
-    CG_gt_PDF_msbar,
-    CG_gt_PDF_ratio,
-    CG_gtg5_PDF_hybrid,
-    CG_gtg5_PDF_msbar,
-    CG_gtg5_PDF_ratio,
-    CG_gtgpg5_PDF_hybrid,
-    CG_gtgpg5_PDF_msbar,
-    CG_gtgpg5_PDF_ratio,
-    CG_gz_PDF_hybrid,
-    CG_gz_PDF_msbar,
-    CG_gz_PDF_ratio,
-    CG_gzg5_PDF_hybrid,
-    CG_gzg5_PDF_msbar,
-    CG_gzg5_PDF_ratio,
+    CG_gt_qPDF_hybrid_NLO,
+    CG_gt_qPDF_msbar_NLO,
+    CG_gt_qPDF_ratio_NLO,
+    CG_gtg5_qPDF_hybrid_NLO,
+    CG_gtg5_qPDF_msbar_NLO,
+    CG_gtg5_qPDF_ratio_NLO,
+    CG_gtgpg5_qPDF_hybrid_NLO,
+    CG_gtgpg5_qPDF_msbar_NLO,
+    CG_gtgpg5_qPDF_ratio_NLO,
+    CG_gz_qPDF_hybrid_NLO,
+    CG_gz_qPDF_msbar_NLO,
+    CG_gz_qPDF_ratio_NLO,
+    CG_gzg5_qPDF_hybrid_NLO,
+    CG_gzg5_qPDF_msbar_NLO,
+    CG_gzg5_qPDF_ratio_NLO,
+    GI_gt_qPDF_hybrid_NLO,
+    GI_gt_qPDF_ratio_NLO,
+    GI_gtgpg5_qPDF_hybrid_NLO,
+    GI_gtgpg5_qPDF_ratio_NLO,
+    GI_gtg5_qPDF_hybrid_NLO,
+    GI_gtg5_qPDF_ratio_NLO,
+    GI_gz_qPDF_hybrid_NLO,
+    GI_gz_qPDF_ratio_NLO,
+    GI_gzg5_DA_hybrid_NLO,
+    GI_gzg5_DA_ratio_NLO,
+    GI_gzg5_qPDF_hybrid_NLO,
+    GI_gzg5_qPDF_ratio_NLO,
 )
 
 
@@ -82,41 +94,73 @@ from lamet_agent.kernels import (
 #
 # Every registered kernel obeys the same signature (so build_matching_kernel can
 # call them uniformly):
-#   builder(x_ls, pz_gev, mu=2.0, y_ls=None, eps=1e-12, zspz=None) -> (nx, ny) matrix
+#   builder(lightcone_x_ls, pz_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None) -> (nx, ny) matrix
 #
-# Naming convention: CG_<operator>_PDF_<scheme>. "CG" is the Coulomb-gauge PDF
-# setup (arXiv:2602.11283); <operator> is the Dirac structure (gt = gamma^t,
-# gtg5 = gamma^t gamma5); <scheme> is the matching scheme and is always
-# written out explicitly (msbar / ratio / hybrid). Only the "_hybrid" kernels use
-# the Wilson-line scale zspz (built from the zs_fm input below); the others ignore it.
+# Naming convention: <gauge>_<operator>_qPDF_<scheme>_<order>. <gauge> is the
+# operator's gauge construction -- CG for Coulomb gauge (arXiv:2602.11283, no Wilson
+# line), GI for gauge-invariant (straight Wilson line); <operator> is the Dirac
+# structure (gt = gamma^t, gtg5 = gamma^t gamma5); "qPDF" is the parton species -- q for
+# quark, so a gluon kernel would be gPDF; <scheme> is the matching scheme, always
+# written out explicitly (msbar / ratio / hybrid); <order> is the perturbative order
+# (NLO throughout). Only the hybrid kernels use the Wilson-line scale zspz (built
+# from the zs_fm input below); the others ignore it.
 KERNEL_REGISTRY: dict[str, Callable[..., np.ndarray]] = {
     # unpolarized gamma^t
-    "CG_gt_PDF_msbar": CG_gt_PDF_msbar,
-    "CG_gt_PDF_ratio": CG_gt_PDF_ratio,
-    "CG_gt_PDF_hybrid": CG_gt_PDF_hybrid,
+    "CG_gt_qPDF_msbar_NLO": CG_gt_qPDF_msbar_NLO,
+    "CG_gt_qPDF_ratio_NLO": CG_gt_qPDF_ratio_NLO,
+    "CG_gt_qPDF_hybrid_NLO": CG_gt_qPDF_hybrid_NLO,
     # helicity gamma^t gamma5
-    "CG_gtg5_PDF_msbar": CG_gtg5_PDF_msbar,
-    "CG_gtg5_PDF_ratio": CG_gtg5_PDF_ratio,
-    "CG_gtg5_PDF_hybrid": CG_gtg5_PDF_hybrid,
+    "CG_gtg5_qPDF_msbar_NLO": CG_gtg5_qPDF_msbar_NLO,
+    "CG_gtg5_qPDF_ratio_NLO": CG_gtg5_qPDF_ratio_NLO,
+    "CG_gtg5_qPDF_hybrid_NLO": CG_gtg5_qPDF_hybrid_NLO,
     # unpolarized / helicity gamma^z
-    "CG_gz_PDF_msbar": CG_gz_PDF_msbar,
-    "CG_gz_PDF_ratio": CG_gz_PDF_ratio,
-    "CG_gz_PDF_hybrid": CG_gz_PDF_hybrid,
-    "CG_gzg5_PDF_msbar": CG_gzg5_PDF_msbar,
-    "CG_gzg5_PDF_ratio": CG_gzg5_PDF_ratio,
-    "CG_gzg5_PDF_hybrid": CG_gzg5_PDF_hybrid,
+    "CG_gz_qPDF_msbar_NLO": CG_gz_qPDF_msbar_NLO,
+    "CG_gz_qPDF_ratio_NLO": CG_gz_qPDF_ratio_NLO,
+    "CG_gz_qPDF_hybrid_NLO": CG_gz_qPDF_hybrid_NLO,
+    "CG_gzg5_qPDF_msbar_NLO": CG_gzg5_qPDF_msbar_NLO,
+    "CG_gzg5_qPDF_ratio_NLO": CG_gzg5_qPDF_ratio_NLO,
+    "CG_gzg5_qPDF_hybrid_NLO": CG_gzg5_qPDF_hybrid_NLO,
     # transversity gamma^t gamma_perp gamma5
-    "CG_gtgpg5_PDF_msbar": CG_gtgpg5_PDF_msbar,
-    "CG_gtgpg5_PDF_ratio": CG_gtgpg5_PDF_ratio,
-    "CG_gtgpg5_PDF_hybrid": CG_gtgpg5_PDF_hybrid,
+    "CG_gtgpg5_qPDF_msbar_NLO": CG_gtgpg5_qPDF_msbar_NLO,
+    "CG_gtgpg5_qPDF_ratio_NLO": CG_gtgpg5_qPDF_ratio_NLO,
+    "CG_gtgpg5_qPDF_hybrid_NLO": CG_gtgpg5_qPDF_hybrid_NLO,
+    # gauge-invariant (straight Wilson line) gamma^t and gamma^t gamma5. Both operators
+    # share one NLO coefficient, so unpolarized and helicity map to the same math.
+    "GI_gt_qPDF_ratio_NLO": GI_gt_qPDF_ratio_NLO,
+    "GI_gt_qPDF_hybrid_NLO": GI_gt_qPDF_hybrid_NLO,
+    "GI_gtg5_qPDF_ratio_NLO": GI_gtg5_qPDF_ratio_NLO,
+    "GI_gtg5_qPDF_hybrid_NLO": GI_gtg5_qPDF_hybrid_NLO,
+    # gauge-invariant gamma^z and gamma^z gamma5 (arXiv:2604.00143). Same coefficient
+    # as the GI gamma^t pair plus the 2(1-ksi) of Eq. (C7).
+    "GI_gz_qPDF_ratio_NLO": GI_gz_qPDF_ratio_NLO,
+    "GI_gz_qPDF_hybrid_NLO": GI_gz_qPDF_hybrid_NLO,
+    "GI_gzg5_qPDF_ratio_NLO": GI_gzg5_qPDF_ratio_NLO,
+    "GI_gzg5_qPDF_hybrid_NLO": GI_gzg5_qPDF_hybrid_NLO,
+    # gauge-invariant transversity (arXiv:2208.08008). Unlike the Coulomb-gauge
+    # transversity, the hybrid scheme here does differ from the ratio one.
+    "GI_gtgpg5_qPDF_ratio_NLO": GI_gtgpg5_qPDF_ratio_NLO,
+    "GI_gtgpg5_qPDF_hybrid_NLO": GI_gtgpg5_qPDF_hybrid_NLO,
+    # meson distribution amplitude (arXiv:2212.14415 Eq. 4.15, V_qq,p). Its kernel is a
+    # genuine V(x, y), not a function of x/y -- see the DA section of kernels.py.
+    "GI_gzg5_DA_ratio_NLO": GI_gzg5_DA_ratio_NLO,
+    "GI_gzg5_DA_hybrid_NLO": GI_gzg5_DA_hybrid_NLO,
 }
+
+
+def is_hybrid_kernel(kernel_id: str) -> bool:
+    """True when ``kernel_id`` names a hybrid-scheme kernel (the only ones needing zspz).
+
+    The scheme is a segment of the id (CG_<operator>_qPDF_<scheme>_<order>), not its
+    tail, so match on the segment rather than on a suffix.
+    """
+    return "hybrid" in str(kernel_id).split("_")
 
 
 def resolve_kernel_id(kernel_id: str, scheme: str) -> str:
     """Validate that ``kernel_id`` is a registered kernel and return it.
 
-    Kernels are selected by their own registry name -- e.g. ``CG_gt_PDF_ratio``,
-    ``CG_gz_PDF_msbar``, ``CG_gtgpg5_PDF_hybrid`` -- so the manifest names the exact
+    Kernels are selected by their own registry name -- e.g. ``CG_gt_qPDF_ratio_NLO``,
+    ``CG_gz_qPDF_msbar_NLO``, ``CG_gtgpg5_qPDF_hybrid_NLO`` -- so the manifest names the exact
     operator+scheme it wants; there is no logical alias to translate. ``scheme`` is
     still part of the manifest declaration (it also drives the renormalization stage)
     and is only used here to make the error message clearer.
@@ -299,10 +343,10 @@ def build_matching_kernel(
     # Hybrid kernels need the Wilson-line scale zspz = z_s * P_z, built from the
     # manifest inputs zs_fm (fm) and pz_gev (GeV). Only the hybrid builders accept a
     # zspz keyword (msbar/ratio do not), so it is computed and passed only for
-    # the "_hybrid" ids.
+    # the hybrid ids.
     zspz: float | None = None
-    builder_kwargs: dict[str, Any] = {"pz_gev": pz_gev, "mu": mu, "y_ls": y_ls}
-    if kernel_id.endswith("_hybrid"):
+    builder_kwargs: dict[str, Any] = {"pz_gev": pz_gev, "mu": mu, "quasi_y_ls": y_ls}
+    if is_hybrid_kernel(kernel_id):
         if zs_fm is None:
             raise ValueError(
                 f"Kernel '{kernel_id}' is a hybrid kernel and needs zs_fm (z_s in fm) "
@@ -535,6 +579,11 @@ def report_matching_result(
     save_path: str | None = None,
     artifacts_dir: str | None = None,
     report_language: str = "en",
+    backend: str = "",
+    provider: str | None = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     """Write a Markdown report for the matching stage.
 
@@ -553,7 +602,7 @@ def report_matching_result(
     # Hybrid kernels carry the dimensionless Wilson-line scale; recompute it here
     # from the manifest inputs (same formula as build_matching_kernel).
     zspz = None
-    if kernel_id is not None and str(kernel_id).endswith("_hybrid") and zs_fm is not None and pz_gev is not None:
+    if kernel_id is not None and is_hybrid_kernel(kernel_id) and zs_fm is not None and pz_gev is not None:
         zspz = float(zs_fm) * float(pz_gev) / GEV_FM
 
     result = {
@@ -579,7 +628,13 @@ def report_matching_result(
         artifacts["matched_plot_image"] = store["matching_plot"].get("plot_image")
 
     output = _report_path(save_path, default_name="report_matching.md", artifacts_dir=artifacts_dir)
-    paths = write_matching_report(result=result, artifacts=artifacts, path=output, report_language=report_language)
+    # The LLM that writes the formula section is the run's own -- the agent injects the
+    # resolved backend/provider/key here, exactly as it does for the review stage's tool.
+    llm = FormulaLlm(backend=backend or "api", provider=provider, api_key=api_key,
+                     model_name=model_name, base_url=base_url)
+    paths = write_matching_report(
+        result=result, artifacts=artifacts, path=output, report_language=report_language, llm=llm
+    )
     report = {"report": str(paths["report"])}
     store["matching_report"] = report
     return report
