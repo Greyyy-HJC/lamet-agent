@@ -49,6 +49,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "pz_out_gev",
         "a_fm",
         "im_flip_for_ft",
+        "phase_shift",
         "sector",
         "target_observable",
         "hadron",

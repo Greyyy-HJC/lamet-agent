@@ -531,54 +531,69 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
 
 def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
     part = str(result.get("part", "both")).lower()
+    shift = float(result.get("phase_shift", 0.0) or 0.0)
+    phase = f"(x-{_fmt(shift)})\\lambda" if shift else "x\\lambda"
+    note = (
+        f"\n\n这里使用 `phase_shift={_fmt(shift)}`，即 Fourier 相位为 ${phase}$。"
+        if language == "zh" and shift
+        else f"\n\nThis run uses `phase_shift={_fmt(shift)}`, i.e. the Fourier phase is ${phase}$."
+        if shift
+        else ""
+    )
     if language == "zh":
         if part == "re":
             return (
                 "$$\n"
                 "q_{\\rm re}(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
-                "\\cos(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda).\n"
+                f"\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda).\n"
                 "$$"
+                f"{note}"
             )
         if part == "im":
             return (
                 "$$\n"
                 "q_{\\rm im}(x)=-\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
-                "\\sin(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda).\n"
+                f"\\sin({phase})\\,\\mathrm{{Im}}\\,h(\\lambda).\n"
                 "$$"
+                f"{note}"
             )
         return (
             "$$\n"
             "\\mathrm{Re}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
-            "\\left[\\cos(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda)-\\sin(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda)\\right],\n"
+            f"\\left[\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda)-\\sin({phase})\\,\\mathrm{{Im}}\\,h(\\lambda)\\right],\n"
             "$$\n"
             "$$\n"
             "\\mathrm{Im}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
-            "\\left[\\sin(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda)+\\cos(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda)\\right].\n"
+            f"\\left[\\sin({phase})\\,\\mathrm{{Re}}\\,h(\\lambda)+\\cos({phase})\\,\\mathrm{{Im}}\\,h(\\lambda)\\right].\n"
             "$$"
+            f"{note}"
         )
     if part == "re":
         return (
             "$$\n"
             "q_{\\rm re}(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
-            "\\cos(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda).\n"
+            f"\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda).\n"
             "$$"
+            f"{note}"
         )
     if part == "im":
         return (
             "$$\n"
             "q_{\\rm im}(x)=-\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
-            "\\sin(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda).\n"
+            f"\\sin({phase})\\,\\mathrm{{Im}}\\,h(\\lambda).\n"
             "$$"
+            f"{note}"
         )
     return (
         "$$\n"
         "\\mathrm{Re}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
-        "\\left[\\cos(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda)-\\sin(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda)\\right],\n"
+        f"\\left[\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda)-\\sin({phase})\\,\\mathrm{{Im}}\\,h(\\lambda)\\right],\n"
         "$$\n"
         "$$\n"
         "\\mathrm{Im}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
-        "\\left[\\sin(x\\lambda)\\,\\mathrm{Re}\\,h(\\lambda)+\\cos(x\\lambda)\\,\\mathrm{Im}\\,h(\\lambda)\\right].\n"
+        f"\\left[\\sin({phase})\\,\\mathrm{{Re}}\\,h(\\lambda)+\\cos({phase})\\,\\mathrm{{Im}}\\,h(\\lambda)\\right].\n"
         "$$"
+        f"{note}"
     )
 
 
@@ -890,6 +905,8 @@ def _settings_table(
     except (TypeError, ValueError):
         z_ext_text = str(z_ext_max)
     missing = list(result.get("missing_short_distance_coord", []))
+    shift = float(result.get("phase_shift", 0.0) or 0.0)
+    phase_text = "x\\lambda" if shift == 0.0 else f"(x-{_fmt(shift)})\\lambda"
     if missing:
         short_distance_text = (
             f"`truncate_missing`; omitted short-distance coordinates {missing}; Fourier starts at {_fmt(result.get('fourier_positive_coord_start'))}"
@@ -904,6 +921,7 @@ def _settings_table(
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
         ("Coordinate unit", f"{_display_unit(result.get('coord_unit', 'not recorded'))}; fit unit {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
         ("Decay offset", f"$\\Lambda_0={_fmt(result.get('Lambda0'))}$"),
+        ("Phase shift", f"`phase_shift={_fmt(shift)}`; phase ${phase_text}$"),
         ("Output scale", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
         ("Short-distance treatment", short_distance_text),
         ("Best fit range", fit_range_text),
@@ -924,6 +942,7 @@ def _settings_table(
             ("重采样模式", f"`{result.get('resample_mode', 'not recorded')}`"),
             ("坐标单位", f"{_display_unit(result.get('coord_unit', 'not recorded'))}；拟合单位 {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
             ("衰减偏移", f"$\\Lambda_0={_fmt(result.get('Lambda0'))}$"),
+            ("相位平移", f"`phase_shift={_fmt(shift)}`；相位 ${phase_text}$"),
             ("输出缩放", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
             ("短距离处理", short_distance_text),
             ("最优拟合区间", fit_range_text),
@@ -951,7 +970,7 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging.", "进入模型平均前 sample-average 区间扫描的诊断。"),
             ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection.", "两阶段选择模式：先选区间，再做拟合模型平均或最优模型选择。"),
             ("attrs `pz_gev`, `pz_out_gev`, `a_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
-            ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`", "Physics projection, formula choices, execution channel, and final output normalization.", "物理投影、公式选择、执行通道和最终输出归一化。"),
+            ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`, `phase_shift`", "Physics projection, formula choices, execution channel, final output normalization, and Fourier phase convention.", "物理投影、公式选择、执行通道、最终输出归一化和 Fourier 相位约定。"),
         ]
     else:
         rows = [

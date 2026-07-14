@@ -205,24 +205,25 @@ def _zero_inactive_channel(re_values: np.ndarray, im_values: np.ndarray, part: s
     return re_values, im_values
 
 
-def sum_ft_re_im(x_ls, fx_re_ls, fx_im_ls, output_k):
+def sum_ft_re_im(x_ls, fx_re_ls, fx_im_ls, output_k, *, phase_shift: float = 0.0):
     """Forward transform with separated real and imaginary input parts."""
     x = np.asarray(x_ls)
     fx_re = np.asarray(fx_re_ls)
     fx_im = np.asarray(fx_im_ls)
     delta_x = abs(x[1] - x[0])
     k = np.asarray(output_k)
+    shifted_k = k - float(phase_shift)
     pref = delta_x / (2 * np.pi)
 
     if k.ndim == 0:
-        phase = x * k
+        phase = x * shifted_k
         cos_phase = np.cos(phase)
         sin_phase = np.sin(phase)
         val_re = pref * np.sum(cos_phase * fx_re) - pref * np.sum(sin_phase * fx_im)
         val_im = pref * np.sum(sin_phase * fx_re) + pref * np.sum(cos_phase * fx_im)
         return val_re, val_im
 
-    phase = np.multiply.outer(x, k)
+    phase = np.multiply.outer(x, shifted_k)
     cos_phase = np.cos(phase)
     sin_phase = np.sin(phase)
     val_re = pref * np.sum(cos_phase * fx_re[:, None], axis=0) - pref * np.sum(
@@ -1066,6 +1067,7 @@ def _run_one_scheme(
     observable: str,
     fit_scale: float,
     im_flip_for_ft: bool,
+    phase_shift: float,
     phase_scale: float,
     phase_prime_scale: float | None,
     resample_mode: str,
@@ -1293,7 +1295,7 @@ def _run_one_scheme(
             ext_im[sample],
             im_flip_for_ft=im_flip_for_ft,
         )
-        ft_re[sample], ft_im[sample] = sum_ft_re_im(lam_full, re_full, im_full, y_grid)
+        ft_re[sample], ft_im[sample] = sum_ft_re_im(lam_full, re_full, im_full, y_grid, phase_shift=phase_shift)
 
     return {
         "label": label,
@@ -1340,6 +1342,7 @@ def run_fourier_workflow(
     pz_out_gev: float | None = None,
     a_fm: float | None = None,
     im_flip_for_ft: bool = False,
+    phase_shift: float = 0.0,
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
     posterior_prior_error_scale: float = 3.0,
@@ -1421,6 +1424,7 @@ def run_fourier_workflow(
                     observable=observable,
                     fit_scale=fit_scale,
                     im_flip_for_ft=im_flip_for_ft,
+                    phase_shift=float(phase_shift),
                     phase_scale=phase_scale,
                     phase_prime_scale=phase_prime_scale,
                     resample_mode=resample_mode,
@@ -1482,6 +1486,7 @@ def run_fourier_workflow(
         "resample_mode": resample_mode,
         "sample_error_mode": sample_error_mode,
         "Lambda0": float(Lambda0),
+        "phase_shift": float(phase_shift),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
         "part": part,
         "workers": int(workers),
@@ -1572,6 +1577,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "fit_coord_unit": str(result.get("fit_coord_unit", "")),
         "part": str(result.get("part", "both")),
         "im_flip_for_ft": str(result.get("im_flip_for_ft", "")),
+        "phase_shift": str(result.get("phase_shift", 0.0)),
         "resample_mode": str(result.get("resample_mode", "")),
         "sample_error_mode": str(result.get("sample_error_mode", "")),
         "average_method": str(result.get("sample_error_mode", "")),
@@ -2403,6 +2409,7 @@ def run_fourier_transform(
     pz_out_gev: float | None = None,
     a_fm: float | None = None,
     im_flip_for_ft: bool = False,
+    phase_shift: float = 0.0,
     Lambda0: float = 0.1,
     posterior_prior_error_scale: float | list[float] = 3.0,
     sample_error_mode: str = "covariance",
@@ -2589,6 +2596,7 @@ def run_fourier_transform(
             pz_out_gev=pz_out_gev,
             a_fm=a_fm,
             im_flip_for_ft=True,
+            phase_shift=float(phase_shift),
             resample_mode=resample_mode,
             Lambda0=float(Lambda0),
             posterior_prior_error_scale=range_prior_width,
@@ -2612,6 +2620,7 @@ def run_fourier_transform(
             pz_out_gev=pz_out_gev,
             a_fm=a_fm,
             im_flip_for_ft=False,
+            phase_shift=float(phase_shift),
             resample_mode=resample_mode,
             Lambda0=float(Lambda0),
             posterior_prior_error_scale=range_prior_width,
@@ -2672,6 +2681,7 @@ def run_fourier_transform(
             pz_out_gev=pz_out_gev,
             a_fm=a_fm,
             im_flip_for_ft=im_flip_for_ft,
+            phase_shift=float(phase_shift),
             resample_mode=resample_mode,
             Lambda0=float(Lambda0),
             posterior_prior_error_scale=range_prior_width,
@@ -2687,6 +2697,7 @@ def run_fourier_transform(
     result["pz_out_gev"] = pz_out_gev
     result["a_fm"] = a_fm
     result["im_flip_for_ft"] = bool(im_flip_for_ft)
+    result["phase_shift"] = float(phase_shift)
     result["sector"] = sector
     result["target_observable"] = target
     result["Lambda0"] = float(Lambda0)
@@ -2782,6 +2793,7 @@ def summarize_fourier_result(
         "selected_fit_range": data.get("selected_fit_range"),
         "fit_info_artifact": data.get("fit_info_artifact"),
         "output_scale": data.get("output_scale", 1.0),
+        "phase_shift": data.get("phase_shift", 0.0),
         "sector": data.get("sector", data.get("part", "full")),
     }
     store[out] = summary

@@ -21,6 +21,7 @@ from lamet_agent.stages.fourier.functions import (
     run_fourier_workflow,
     run_fourier_transform,
     summarize_fourier_result,
+    sum_ft_re_im,
 )
 
 
@@ -66,6 +67,27 @@ def test_complete_z_negative_preserves_shortest_negative_point_without_zero() ->
     lam, _, _ = complete_z_negative([1.0, 2.0], [10.0, 20.0], [1.0, 2.0])
 
     assert lam.tolist() == [-2.0, -1.0, 1.0, 2.0]
+
+
+def test_sum_ft_re_im_applies_phase_shift() -> None:
+    lam = np.array([0.0, 1.0, 2.0])
+    re = np.array([1.0, 2.0, 3.0])
+    im = np.array([0.2, 0.3, 0.4])
+    x_grid = np.array([0.0, 0.5, 1.0])
+    phase_shift = 0.5
+    pref = (lam[1] - lam[0]) / (2 * np.pi)
+    phase = np.multiply.outer(lam, x_grid - phase_shift)
+
+    got_re, got_im = sum_ft_re_im(lam, re, im, x_grid, phase_shift=phase_shift)
+
+    expected_re = pref * np.sum(np.cos(phase) * re[:, None], axis=0) - pref * np.sum(
+        np.sin(phase) * im[:, None], axis=0
+    )
+    expected_im = pref * np.sum(np.sin(phase) * re[:, None], axis=0) + pref * np.sum(
+        np.cos(phase) * im[:, None], axis=0
+    )
+    assert np.allclose(got_re, expected_re)
+    assert np.allclose(got_im, expected_im)
 
 
 def test_fourier_workflow_omits_missing_short_distance_grid() -> None:
@@ -157,12 +179,14 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         method="GI",
         order="LA",
         Lambda0=0.3,
+        phase_shift=0.5,
         artifacts_dir=str(tmp_path / "artifacts"),
         workers=2,
     )
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
     assert run["workers"] == 2
+    assert store["fourier_result"]["phase_shift"] == 0.5
     assert Path(run["artifact"]).is_file()
     assert Path(run["artifact"]).parent == tmp_path / "artifacts"
     assert Path(run["artifact"]).suffix == ".nc"
@@ -171,6 +195,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert ft_data.dims == ["x"]
     assert ft_data.resample == "bootstrap"
     assert ft_data.attrs["workers"] == "2"
+    assert ft_data.attrs["phase_shift"] == "0.5"
     assert ft_data.values.shape == (3, 3)
     assert "ft_re_mean" in ft_data.attrs
     assert Path(run["fit_info_artifact"]).is_file()
