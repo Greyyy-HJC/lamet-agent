@@ -17,6 +17,7 @@ from matplotlib.legend import Legend
 pytest.importorskip("lsqfit")
 
 import lamet_agent.stages.correlator.functions as correlator_functions
+from lamet_agent.stages.correlator.skills import TOOL_CATALOG
 from lamet_agent.core.plotting import (
     FIT_LOG_YLIM_BOTTOM_FACTOR,
     FIT_LOG_YLIM_DATA_HIGH_NUM,
@@ -37,7 +38,6 @@ from lamet_agent.stages.correlator.functions import (
     STAGE_TOOLS,
     _anchor_pt2_prior,
     _bare_matrix_element_mean_for_part,
-    _bare_samples,
     _candidate_specs,
     _check_mode,
     _check_rescale,
@@ -55,24 +55,20 @@ from lamet_agent.stages.correlator.functions import (
     _resample_pt2,
     _scaled_prior,
     _vary_prior_width,
-    asymptotic_ratio,
     bayesian_average,
-    fit_fh,
     fit_bare_matrix_grid,
-    fit_joint,
-    fit_ratio,
+    fit_matrix_element,
     fit_two_point,
     fh_prior,
     inspect_correlator_scale,
     pt2_prior,
     pt2_re_fcn,
     pt3_nonbreit_ratio_fcn,
+    pt3_nonbreit_ratio_prior,
     pt3_ratio_fcn,
     pt3_ratio_prior,
     select_data_window,
     select_best,
-    _normalise_tune_z_values,
-    _select_robust_tune_index,
     _summarise_cross_z_feasibility,
     _window_candidate_key,
     tune_bare_matrix,
@@ -171,6 +167,7 @@ def test_stage_tools_expose_the_four_agentic_tools() -> None:
         "tune_bare_matrix",
         "fit_bare_matrix_grid",
     }
+    assert set(TOOL_CATALOG) == set(STAGE_TOOLS)
 
 
 # --- physics models and fits -------------------------------------------------
@@ -243,7 +240,17 @@ def test_fit_two_point_rescale_recovers_tiny_pt2() -> None:
 def test_fit_ratio_recovers_parameters() -> None:
     tsep_ls = [6, 8, 10]
     ratio_re, ratio_im, p_true = _toy_ratio_gv(tsep_ls=tsep_ls)
-    fit = fit_ratio(ratio_re, ratio_im, tsep_ls, 1, 32, prior=pt3_ratio_prior(2))
+    fit = fit_matrix_element(
+        ratio_re,
+        ratio_im,
+        tsep_ls,
+        1,
+        32,
+        strategy="chained",
+        fit_scope="ratio",
+        fitting_form="Breit",
+        prior=pt3_ratio_prior(2),
+    )
     assert abs(gv.mean(fit.p["E0"]) - gv.mean(p_true["E0"])) < 0.05
     assert abs(gv.mean(fit.p["O00_re"]) - gv.mean(p_true["O00_re"])) < 0.05
 
@@ -262,9 +269,28 @@ def test_fh_samples_from_ratios_finite_differences_summed_ratio() -> None:
 
 
 def test_fit_fh_one_state_recovers_plateau() -> None:
-    fh_re = np.array([gv.gvar(0.30, 0.01), gv.gvar(0.30, 0.01)], dtype=object)
-    fh_im = np.array([gv.gvar(0.05, 0.01), gv.gvar(0.05, 0.01)], dtype=object)
-    fit = fit_fh(fh_re, fh_im, [4, 6, 8], 1, nstate=1, prior=fh_prior(1), svdcut=1e-8)
+    tsep_ls = [4, 6, 8]
+    ratio_re = {
+        tsep: np.asarray([gv.gvar(0.30, 0.01) for _ in range(tsep + 1)], dtype=object)
+        for tsep in tsep_ls
+    }
+    ratio_im = {
+        tsep: np.asarray([gv.gvar(0.05, 0.01) for _ in range(tsep + 1)], dtype=object)
+        for tsep in tsep_ls
+    }
+    fit = fit_matrix_element(
+        ratio_re,
+        ratio_im,
+        tsep_ls,
+        1,
+        32,
+        strategy="chained",
+        fit_scope="FH",
+        fitting_form="Breit",
+        nstate=1,
+        prior=fh_prior(1),
+        svdcut=1e-8,
+    )
     assert gv.mean(fit.p["O00_re"] / (2 * fit.p["E0"])) == pytest.approx(0.30, abs=0.03)
     assert gv.mean(fit.p["O00_im"] / (2 * fit.p["E0"])) == pytest.approx(0.05, abs=0.03)
 
@@ -273,13 +299,36 @@ def test_fit_joint_recovers_parameters_and_is_rescale_invariant() -> None:
     tsep_ls = [6, 8, 10]
     ratio_re, ratio_im, p_true = _toy_ratio_gv(tsep_ls=tsep_ls, Lt=32)
     scale = 1.0e18
-    scaled = fit_joint(
-        _toy_pt2_gv(Lt=32) / scale, 2, 12, ratio_re, ratio_im, tsep_ls, 1, 32,
-        prior=pt3_ratio_prior(2), svdcut=1e-8, rescale=scale,
+    scaled = fit_matrix_element(
+        ratio_re,
+        ratio_im,
+        tsep_ls,
+        1,
+        32,
+        strategy="joint",
+        fit_scope="ratio",
+        fitting_form="Breit",
+        pt2_gv=_toy_pt2_gv(Lt=32) / scale,
+        tmin=2,
+        tmax=12,
+        prior=pt3_ratio_prior(2),
+        svdcut=1e-8,
+        rescale=scale,
     )
-    unscaled = fit_joint(
-        _toy_pt2_gv(Lt=32), 2, 12, ratio_re, ratio_im, tsep_ls, 1, 32,
-        prior=pt3_ratio_prior(2), svdcut=1e-8,
+    unscaled = fit_matrix_element(
+        ratio_re,
+        ratio_im,
+        tsep_ls,
+        1,
+        32,
+        strategy="joint",
+        fit_scope="ratio",
+        fitting_form="Breit",
+        pt2_gv=_toy_pt2_gv(Lt=32),
+        tmin=2,
+        tmax=12,
+        prior=pt3_ratio_prior(2),
+        svdcut=1e-8,
     )
     scaled_plateau = gv.mean(scaled.p["O00_re"] / (2 * scaled.p["E0"]))
     unscaled_plateau = gv.mean(unscaled.p["O00_re"] / (2 * unscaled.p["E0"]))
@@ -288,10 +337,91 @@ def test_fit_joint_recovers_parameters_and_is_rescale_invariant() -> None:
     assert scaled_plateau == pytest.approx(true_plateau, rel=0.05)
 
 
+def test_fit_matrix_element_supports_nonbreit_joint_data() -> None:
+    Lt = 32
+    tsep_ls = [6, 8, 10]
+    parameters = {
+        "E0_i": 0.40,
+        "z0_i": 1.00,
+        "E0_f": 0.50,
+        "z0_f": 0.90,
+        "O00_re": 0.30,
+        "O00_im": 0.05,
+    }
+    time = np.arange(Lt, dtype=float)
+    pt2_i = parameters["z0_i"] ** 2 / (2 * parameters["E0_i"]) * (
+        np.exp(-parameters["E0_i"] * time)
+        + np.exp(-parameters["E0_i"] * (Lt - time))
+    )
+    pt2_f = parameters["z0_f"] ** 2 / (2 * parameters["E0_f"]) * (
+        np.exp(-parameters["E0_f"] * time)
+        + np.exp(-parameters["E0_f"] * (Lt - time))
+    )
+    pt2_i_gv = np.asarray([gv.gvar(value, max(abs(value) * 1e-3, 1e-8)) for value in pt2_i])
+    pt2_f_gv = np.asarray([gv.gvar(value, max(abs(value) * 1e-3, 1e-8)) for value in pt2_f])
+    ratio_re: dict[int, np.ndarray] = {}
+    ratio_im: dict[int, np.ndarray] = {}
+    for tsep in tsep_ls:
+        tau = np.arange(tsep + 1, dtype=float)
+        tsep_array = np.full_like(tau, float(tsep))
+        re_mean = pt3_nonbreit_ratio_fcn(
+            tsep_array,
+            tau,
+            parameters,
+            Lt,
+            nstate=1,
+            part="re",
+        )
+        im_mean = pt3_nonbreit_ratio_fcn(
+            tsep_array,
+            tau,
+            parameters,
+            Lt,
+            nstate=1,
+            part="im",
+        )
+        ratio_re[tsep] = np.asarray([gv.gvar(value, 1e-3) for value in re_mean])
+        ratio_im[tsep] = np.asarray([gv.gvar(value, 1e-3) for value in im_mean])
+
+    prior = pt3_nonbreit_ratio_prior(1)
+    for key in ("E0_i", "z0_i", "E0_f", "z0_f", "O00_re", "O00_im"):
+        prior[key] = gv.gvar(parameters[key], 0.2)
+    fit = fit_matrix_element(
+        ratio_re,
+        ratio_im,
+        tsep_ls,
+        1,
+        Lt,
+        strategy="joint",
+        fit_scope="ratio",
+        fitting_form="NonBreit",
+        pt2_gv=pt2_i_gv,
+        pt2_f_gv=pt2_f_gv,
+        tmin=2,
+        tmax=12,
+        nstate=1,
+        prior=prior,
+        svdcut=1e-8,
+    )
+    fitted = gv.mean(fit.p["O00_re"] / (fit.p["E0_i"] + fit.p["E0_f"]))
+    expected = parameters["O00_re"] / (parameters["E0_i"] + parameters["E0_f"])
+    assert fitted == pytest.approx(expected, rel=0.05)
+
+
 def test_fit_ratio_rejects_empty_tau_window() -> None:
     ratio_re, ratio_im, _ = _toy_ratio_gv(tsep_ls=[4])
     with pytest.raises(ValueError, match="empty tau"):
-        fit_ratio(ratio_re, ratio_im, [4], 3, 32, prior=pt3_ratio_prior(2))
+        fit_matrix_element(
+            ratio_re,
+            ratio_im,
+            [4],
+            3,
+            32,
+            strategy="chained",
+            fit_scope="ratio",
+            fitting_form="Breit",
+            prior=pt3_ratio_prior(2),
+        )
 
 
 # --- selection and averaging helpers ----------------------------------------
@@ -419,18 +549,6 @@ def test_fit_usable_rejects_non_physical_e0() -> None:
     usable, reason = _fit_usable(fit, template)
     assert usable is False
     assert "E0" in str(reason)
-
-
-def test_bare_samples_use_o00_over_two_e0() -> None:
-    class Fit:
-        pass
-
-    fit = Fit()
-    fit.p = {"E0": gv.gvar(0.5, 0.01), "O00_re": gv.gvar(2.0, 0.1), "O00_im": gv.gvar(-1.0, 0.1)}
-    real, imag = _bare_samples([{"fit": fit}, {"fit": None}])
-    assert real[0] == pytest.approx(2.0)
-    assert imag[0] == pytest.approx(-1.0)
-    assert np.isnan(real[1])
 
 
 def test_bare_matrix_element_mean_zeros_unfit_component() -> None:
@@ -751,10 +869,6 @@ def test_tune_bare_matrix_rejects_invalid_tune_z(tmp_path) -> None:
         )
 
 
-def test_normalise_tune_z_values_dedupes_and_sorts() -> None:
-    assert _normalise_tune_z_values([8, 0, 8, 16], allowed_z=[0, 8, 16, 24]) == [0, 8, 16]
-
-
 def test_summarise_cross_z_feasibility_tracks_failures() -> None:
     per_z = {
         0: {"usable": True, "Q": 0.99, "chi2_dof": 0.5},
@@ -764,18 +878,6 @@ def test_summarise_cross_z_feasibility_tracks_failures() -> None:
     assert summary["feasible_at_all_tune_z"] is False
     assert summary["failure_reasons"] == {"9": "non-physical E0"}
     assert summary["bottleneck_z"] == 9
-
-
-def test_select_robust_tune_index_skips_infeasible_windows() -> None:
-    candidates = [
-        {"feasible_at_all_tune_z": False},
-        {"feasible_at_all_tune_z": True},
-    ]
-    primary_fit_records = [
-        {"Q": 0.99, "chi2_dof": 0.40, "n_data": 24, "n_params": 10},
-        {"Q": 0.95, "chi2_dof": 0.48, "n_data": 23, "n_params": 10},
-    ]
-    assert _select_robust_tune_index(candidates, primary_fit_records, q_min=0.05) == 1
 
 
 def test_window_candidate_key_is_stable() -> None:
@@ -793,11 +895,6 @@ def test_window_candidate_key_is_stable() -> None:
 
 
 # --- plotting helpers retained ----------------------------------------------
-
-
-def test_asymptotic_ratio_differs_from_o00_by_two_e0() -> None:
-    plat = asymptotic_ratio(gv.gvar(0.30, 0.01), gv.gvar(0.45, 0.01), tsep=10, Lt=32)
-    assert abs(gv.mean(plat) - 0.30 / (2 * 0.45)) < 0.002
 
 
 def test_ratio_denominator_correction_converts_periodic_to_forward() -> None:

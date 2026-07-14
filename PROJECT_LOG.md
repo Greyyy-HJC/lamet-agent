@@ -594,3 +594,10 @@
 - Moved hybrid ``zs_fm`` out of matching ``kernel_parameters`` and renormalization ``scheme_parameters`` into flat stage defaults or job params, with job-level overrides.
 - Rejected both legacy manifest locations and updated stage validation, tool argument preparation, planning guidance, and workflow examples to use the new canonical paths.
 - Added a non-blocking review check that follows matching → Fourier → renormalization DAG chains and reports consistent, mismatched, non-applicable, or externally unverifiable ``zs_fm`` settings.
+
+## 2026-07-14 (Correlator readability cleanup)
+
+- Consolidated Breit, NonBreit, ratio, FH, and ratio+FH nonlinear fits behind one parameterized ``fit_matrix_element`` core while preserving the four registered correlator tool contracts.
+- Inlined single-use tuning, logging, progress, and output orchestration; unified serial/parallel sample fitting through one batch path; narrowed numerical soft-fail handling; and reduced the terminal NetCDF write to one final write.
+- Removed production-dead correlator helpers, reconciled the correlator tool catalog with ``STAGE_TOOLS``, and added focused fit/catalog coverage.
+- Moved shared report formatting, language-target, and Markdown artifact-path handling into ``core/reporting.py`` for correlator, renormalization, Fourier, and matching reports.

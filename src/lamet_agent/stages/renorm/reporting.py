@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+from lamet_agent.core.reporting import (
+    format_report_list,
+    format_report_value,
+    markdown_artifact_paths,
+    resolve_report_target,
+)
 
 
 RENORM_ARTIFACT_DESCRIPTIONS = {
@@ -52,58 +56,6 @@ RENORM_ARTIFACT_ORDER = (
 )
 
 
-def _fmt(value: Any, digits: int = 4) -> str:
-    if value is None:
-        return "not set"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return str(value)
-    if not np.isfinite(number):
-        return str(number)
-    return f"{number:.{digits}g}"
-
-
-def _fmt_list(values: Any, *, max_items: int = 8, digits: int = 4) -> str:
-    arr = np.asarray(values)
-    if arr.size == 0:
-        return "[]"
-    flat = arr.reshape(-1)
-    items = [_fmt(item, digits=digits) for item in flat[:max_items]]
-    suffix = ", ..." if flat.size > max_items else ""
-    return "[" + ", ".join(items) + suffix + "]"
-
-
-def _cn_report_path(path: Path) -> Path:
-    return path.with_name(f"{path.stem}_CN{path.suffix or '.md'}")
-
-
-def _report_target(path: Path, report_language: str) -> tuple[Path, str]:
-    language = report_language.lower()
-    if language == "en":
-        return path, "en"
-    if language == "ch":
-        return _cn_report_path(path), "zh"
-    raise ValueError("report_language must be 'en' or 'ch'")
-
-
-def _md_path(value: Any, *, base_dir: Path) -> str | None:
-    if not value:
-        return None
-    path = Path(str(value))
-    if path.is_absolute():
-        return os.path.relpath(path, base_dir)
-    return str(value)
-
-
-def _markdown_artifacts(artifacts: dict[str, Any] | None, *, base_dir: Path) -> dict[str, Any]:
-    output = dict(artifacts or {})
-    for key in list(output):
-        if key in RENORM_ARTIFACT_ORDER or key.startswith("diag_"):
-            output[key] = _md_path(output[key], base_dir=base_dir)
-    return output
-
-
 def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
     header = "| Artifact | Description |" if language == "en" else "| 文件 | 说明 |"
     lines = [header, "|---|---|"]
@@ -138,12 +90,12 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
                 ("方案", f"`{scheme}`"),
                 ("job 类型", f"`{job_kind}`"),
                 ("kernel_id", f"`{result.get('kernel_id', 'n/a')}`"),
-                ("$\\mu$ [GeV]", _fmt(result.get("mu"))),
-                ("$m_0$ [GeV]", _fmt(result.get("m0", result.get("m0_gev")))),
-                ("$d$", _fmt(result.get("d"))),
-                ("svdcut", _fmt(result.get("svdcut"))),
-                ("$a$ [fm]", _fmt(result.get("a_fm"))),
-                ("z 网格", _fmt_list(result.get("z_grid", result.get("z_values", [])))),
+                ("$\\mu$ [GeV]", format_report_value(result.get("mu"))),
+                ("$m_0$ [GeV]", format_report_value(result.get("m0", result.get("m0_gev")))),
+                ("$d$", format_report_value(result.get("d"))),
+                ("svdcut", format_report_value(result.get("svdcut"))),
+                ("$a$ [fm]", format_report_value(result.get("a_fm"))),
+                ("z 网格", format_report_list(result.get("z_grid", result.get("z_values", [])))),
                 ("重采样", f"{result.get('n_sample', 'n/a')} 个样本"),
             ]
             header = "| 条目 | 数值或设置 |"
@@ -152,36 +104,36 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
                 ("Scheme", f"`{scheme}`"),
                 ("Job kind", f"`{job_kind}`"),
                 ("kernel_id", f"`{result.get('kernel_id', 'n/a')}`"),
-                ("$\\mu$ [GeV]", _fmt(result.get("mu"))),
-                ("$m_0$ [GeV]", _fmt(result.get("m0", result.get("m0_gev")))),
-                ("$d$", _fmt(result.get("d"))),
-                ("svdcut", _fmt(result.get("svdcut"))),
-                ("$a$ [fm]", _fmt(result.get("a_fm"))),
-                ("z grid", _fmt_list(result.get("z_grid", result.get("z_values", [])))),
+                ("$\\mu$ [GeV]", format_report_value(result.get("mu"))),
+                ("$m_0$ [GeV]", format_report_value(result.get("m0", result.get("m0_gev")))),
+                ("$d$", format_report_value(result.get("d"))),
+                ("svdcut", format_report_value(result.get("svdcut"))),
+                ("$a$ [fm]", format_report_value(result.get("a_fm"))),
+                ("z grid", format_report_list(result.get("z_grid", result.get("z_values", [])))),
                 ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
             ]
             header = "| Quantity | Value |"
     elif language == "zh":
         rows = [
             ("方案", f"`{scheme}`"),
-            ("$z_s$ [fm]", _fmt(result.get("zs_fm"))),
-            ("$z_s/a$", _fmt(result.get("zs_lattice"))),
-            ("选中的 denominator z grid", _fmt(result.get("zs_grid"))),
-            ("$\\delta m$ [GeV]", _fmt(result.get("delta_m_gev"))),
-            ("$m_0$ [GeV]", _fmt(result.get("m0_gev"))),
-            ("z 网格", _fmt_list(result.get("z_grid", []))),
+            ("$z_s$ [fm]", format_report_value(result.get("zs_fm"))),
+            ("$z_s/a$", format_report_value(result.get("zs_lattice"))),
+            ("选中的 denominator z grid", format_report_value(result.get("zs_grid"))),
+            ("$\\delta m$ [GeV]", format_report_value(result.get("delta_m_gev"))),
+            ("$m_0$ [GeV]", format_report_value(result.get("m0_gev"))),
+            ("z 网格", format_report_list(result.get("z_grid", []))),
             ("重采样", f"{result.get('n_sample', 'n/a')} 个样本"),
         ]
         header = "| 条目 | 数值或设置 |"
     else:
         rows = [
             ("Scheme", f"`{scheme}`"),
-            ("$z_s$ [fm]", _fmt(result.get("zs_fm"))),
-            ("$z_s/a$", _fmt(result.get("zs_lattice"))),
-            ("Selected denominator z grid", _fmt(result.get("zs_grid"))),
-            ("$\\delta m$ [GeV]", _fmt(result.get("delta_m_gev"))),
-            ("$m_0$ [GeV]", _fmt(result.get("m0_gev"))),
-            ("z grid", _fmt_list(result.get("z_grid", []))),
+            ("$z_s$ [fm]", format_report_value(result.get("zs_fm"))),
+            ("$z_s/a$", format_report_value(result.get("zs_lattice"))),
+            ("Selected denominator z grid", format_report_value(result.get("zs_grid"))),
+            ("$\\delta m$ [GeV]", format_report_value(result.get("delta_m_gev"))),
+            ("$m_0$ [GeV]", format_report_value(result.get("m0_gev"))),
+            ("z grid", format_report_list(result.get("z_grid", []))),
             ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
         ]
         header = "| Quantity | Value |"
@@ -290,14 +242,23 @@ def build_renorm_stage_report_markdown(
     markdown_jobs = []
     for item in jobs:
         result = item.get("result", {})
-        artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=base_dir)
+        raw_artifacts = item.get("artifacts", {})
+        artifacts = markdown_artifact_paths(
+            raw_artifacts,
+            base_dir=base_dir,
+            path_keys=(
+                key
+                for key in raw_artifacts
+                if key in RENORM_ARTIFACT_ORDER or key.startswith("diag_")
+            ),
+        )
         markdown_jobs.append((item, result, artifacts))
         key = result.get("kernel_id") if result.get("scheme") == "self_renormalization" else result.get("zs_fm")
         output_path = artifacts.get("renormalized_artifact") or artifacts.get("zR_artifact") or "n/a"
         plot_path = artifacts.get("renormalized_plot") or "n/a"
         lines.append(
             f"| `{item['job_id']}` | `{result.get('scheme', 'hybrid_ratio')}` | "
-            f"{key if key is not None else _fmt(result.get('zs_fm'))} | "
+            f"{key if key is not None else format_report_value(result.get('zs_fm'))} | "
             f"{output_path} | "
             f"{plot_path} |"
         )
@@ -376,7 +337,7 @@ def write_renorm_stage_report(
 ) -> dict[str, Path]:
     """Write one report summarizing all renormalization jobs."""
     output = Path(path)
-    target, language = _report_target(output, report_language)
+    target, language = resolve_report_target(output, report_language)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         build_renorm_stage_report_markdown(jobs=jobs, base_dir=target.parent, language=language),

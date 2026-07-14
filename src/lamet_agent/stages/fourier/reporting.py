@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from lamet_agent.core.reporting import (
+    format_report_list as _fmt_list,
+    format_report_value as _fmt,
+    markdown_artifact_paths,
+    resolve_report_target as _report_target,
+)
 from lamet_agent.core.resampling import sample_mean_and_sdev
 
 
@@ -56,28 +61,6 @@ FOURIER_ARTIFACT_ORDER = (
 )
 
 
-def _fmt(value: Any, digits: int = 4) -> str:
-    if value is None:
-        return "not set"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return str(value)
-    if not np.isfinite(number):
-        return str(number)
-    return f"{number:.{digits}g}"
-
-
-def _fmt_list(values: Any, *, max_items: int = 8, digits: int = 4) -> str:
-    arr = np.asarray(values)
-    if arr.size == 0:
-        return "[]"
-    flat = arr.reshape(-1)
-    items = [_fmt(item, digits=digits) for item in flat[:max_items]]
-    suffix = ", ..." if flat.size > max_items else ""
-    return "[" + ", ".join(items) + suffix + "]"
-
-
 def _display_unit(unit: Any) -> str:
     text = str(unit or "not recorded").lower()
     if text == "gev_inv":
@@ -110,45 +93,6 @@ def _format_grid(y_grid: np.ndarray, *, language: str) -> str:
     if language == "zh":
         return f"非均匀网格，共 {y_grid.size} 个点；预览 `{_fmt_list(y_grid)}`"
     return f"nonuniform grid with {y_grid.size} points; preview `{_fmt_list(y_grid)}`"
-
-
-def _cn_report_path(path: Path) -> Path:
-    return path.with_name(f"{path.stem}_CN{path.suffix or '.md'}")
-
-
-def _report_target(path: Path, report_language: str) -> tuple[Path, str]:
-    language = report_language.lower()
-    if language == "en":
-        return path, "en"
-    if language == "ch":
-        return _cn_report_path(path), "zh"
-    raise ValueError("report_language must be 'en' or 'ch'")
-
-
-def _md_path(value: Any, *, base_dir: Path) -> str | None:
-    if not value:
-        return None
-    path = Path(str(value))
-    if path.is_absolute():
-        return os.path.relpath(path, base_dir)
-    return str(value)
-
-
-def _markdown_artifacts(artifacts: dict[str, Any] | None, *, base_dir: Path) -> dict[str, Any]:
-    output = dict(artifacts or {})
-    for key in (
-        "fourier_artifact",
-        "fit_info_artifact",
-        "fourier_plot",
-        "fourier_plot_image",
-        "extension_plot_re",
-        "extension_plot_re_image",
-        "extension_plot_im",
-        "extension_plot_im_image",
-    ):
-        if key in output:
-            output[key] = _md_path(output[key], base_dir=base_dir)
-    return output
 
 
 def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
@@ -1192,7 +1136,11 @@ def write_fourier_report(
     output = Path(path)
     target, language = _report_target(output, report_language)
     target.parent.mkdir(parents=True, exist_ok=True)
-    report_artifacts = _markdown_artifacts(artifacts, base_dir=target.parent)
+    report_artifacts = markdown_artifact_paths(
+        artifacts,
+        base_dir=target.parent,
+        path_keys=FOURIER_ARTIFACT_ORDER,
+    )
     target.write_text(
         build_fourier_report_markdown(result=result, summary=summary, artifacts=report_artifacts, language=language),
         encoding="utf-8",
@@ -1243,7 +1191,11 @@ def write_fourier_stage_report(
         ]
         for item in jobs:
             result = item["result"]
-            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            artifacts = markdown_artifact_paths(
+                item.get("artifacts", {}),
+                base_dir=target.parent,
+                path_keys=FOURIER_ARTIFACT_ORDER,
+            )
             lines.append(
                 f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | "
                 f"{result.get('selected_range_label', 'n/a')} | "
@@ -1353,7 +1305,11 @@ def write_fourier_stage_report(
         lines.append("## Figures and Visual Assessment" if language == "en" else "## 图像与可视化评估")
         for item in jobs:
             result = item["result"]
-            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            artifacts = markdown_artifact_paths(
+                item.get("artifacts", {}),
+                base_dir=target.parent,
+                path_keys=FOURIER_ARTIFACT_ORDER,
+            )
             lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV"])
             for key, title in (
                 ("fourier_plot", "Fourier result" if language == "en" else "傅立叶变换结果图"),
@@ -1378,7 +1334,11 @@ def write_fourier_stage_report(
             ]
         )
         for item in jobs:
-            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            artifacts = markdown_artifact_paths(
+                item.get("artifacts", {}),
+                base_dir=target.parent,
+                path_keys=FOURIER_ARTIFACT_ORDER,
+            )
             for key in FOURIER_ARTIFACT_ORDER:
                 value = artifacts.get(key)
                 if value:

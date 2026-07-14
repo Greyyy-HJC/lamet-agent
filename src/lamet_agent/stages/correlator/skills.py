@@ -29,6 +29,10 @@ Correlator-analysis physics:
 
 TOOL_CATALOG = {
     "inspect_correlator_scale": "Inspect the selected job's 2pt magnitude.",
+    "tune_ground_state": (
+        "Optionally scan 2pt-only windows and model-average the selected "
+        "ground-state fits."
+    ),
     "tune_bare_matrix": (
         "Scan every configured nstate, prior_width, fit strategy, and fit window "
         "at LLM-supplied tune_z_values; return cross-z feasibility and "

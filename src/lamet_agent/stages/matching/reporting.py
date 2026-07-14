@@ -27,6 +27,12 @@ import numpy as np
 
 from lamet_agent import kernels
 from lamet_agent.core.llm import PROVIDERS, provider_config, request_llm_text
+from lamet_agent.core.reporting import (
+    format_report_list as _fmt_list,
+    format_report_value as _fmt,
+    markdown_artifact_paths,
+    resolve_report_target as _report_target,
+)
 
 
 # Logical operator -> human text, keyed by the ``<operator>`` field of a
@@ -58,28 +64,6 @@ MATCHING_ARTIFACT_DESCRIPTIONS = {
 }
 
 MATCHING_ARTIFACT_ORDER = ("lightcone_artifact", "matched_plot", "matched_plot_image")
-
-
-def _fmt(value: Any, digits: int = 4) -> str:
-    if value is None:
-        return "not set"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return str(value)
-    if not np.isfinite(number):
-        return str(number)
-    return f"{number:.{digits}g}"
-
-
-def _fmt_list(values: Any, *, max_items: int = 8, digits: int = 4) -> str:
-    arr = np.asarray(values)
-    if arr.size == 0:
-        return "[]"
-    flat = arr.reshape(-1)
-    items = [_fmt(item, digits=digits) for item in flat[:max_items]]
-    suffix = ", ..." if flat.size > max_items else ""
-    return "[" + ", ".join(items) + suffix + "]"
 
 
 DISTRIBUTION_TOKENS = ("qPDF", "gPDF", "DA", "qDA", "gDA")
@@ -131,36 +115,6 @@ def _format_grid(x_grid: np.ndarray, *, language: str) -> str:
     if language == "zh":
         return f"非均匀网格，共 {x_grid.size} 个点；预览 `{_fmt_list(x_grid)}`"
     return f"nonuniform grid with {x_grid.size} points; preview `{_fmt_list(x_grid)}`"
-
-
-def _cn_report_path(path: Path) -> Path:
-    return path.with_name(f"{path.stem}_CN{path.suffix or '.md'}")
-
-
-def _report_target(path: Path, report_language: str) -> tuple[Path, str]:
-    language = report_language.lower()
-    if language == "en":
-        return path, "en"
-    if language == "ch":
-        return _cn_report_path(path), "zh"
-    raise ValueError("report_language must be 'en' or 'ch'")
-
-
-def _md_path(value: Any, *, base_dir: Path) -> str | None:
-    if not value:
-        return None
-    path = Path(str(value))
-    if path.is_absolute():
-        return os.path.relpath(path, base_dir)
-    return str(value)
-
-
-def _markdown_artifacts(artifacts: dict[str, Any] | None, *, base_dir: Path) -> dict[str, Any]:
-    output = dict(artifacts or {})
-    for key in ("matched_plot", "matched_plot_image", "lightcone_artifact"):
-        if key in output:
-            output[key] = _md_path(output[key], base_dir=base_dir)
-    return output
 
 
 def _trapz_norm(x_grid: np.ndarray, values: np.ndarray) -> float:
@@ -788,7 +742,11 @@ def write_matching_report(
     output = Path(path)
     target, language = _report_target(output, report_language)
     target.parent.mkdir(parents=True, exist_ok=True)
-    report_artifacts = _markdown_artifacts(artifacts, base_dir=target.parent)
+    report_artifacts = markdown_artifact_paths(
+        artifacts,
+        base_dir=target.parent,
+        path_keys=MATCHING_ARTIFACT_ORDER,
+    )
     target.write_text(
         build_matching_report_markdown(result=result, artifacts=report_artifacts, language=language, llm=llm),
         encoding="utf-8",
@@ -828,7 +786,11 @@ def write_matching_stage_report(
         ]
         for item in jobs:
             result = item["result"]
-            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            artifacts = markdown_artifact_paths(
+                item.get("artifacts", {}),
+                base_dir=target.parent,
+                path_keys=MATCHING_ARTIFACT_ORDER,
+            )
             lines.append(
                 f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
                 f"{_fmt(result.get('pz_gev'))} | "
@@ -884,7 +846,11 @@ def write_matching_stage_report(
         )
         for item in jobs:
             result = item["result"]
-            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            artifacts = markdown_artifact_paths(
+                item.get("artifacts", {}),
+                base_dir=target.parent,
+                path_keys=MATCHING_ARTIFACT_ORDER,
+            )
             image = artifacts.get("matched_plot_image")
             plot = artifacts.get("matched_plot")
             label = "Quasi vs light-cone comparison" if language == "en" else "quasi 与光锥 PDF 对比图"
@@ -915,7 +881,11 @@ def write_matching_stage_report(
             ]
         )
         for item in jobs:
-            artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=target.parent)
+            artifacts = markdown_artifact_paths(
+                item.get("artifacts", {}),
+                base_dir=target.parent,
+                path_keys=MATCHING_ARTIFACT_ORDER,
+            )
             for key in MATCHING_ARTIFACT_ORDER:
                 value = artifacts.get(key)
                 if value:

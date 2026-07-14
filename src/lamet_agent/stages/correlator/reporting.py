@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+from lamet_agent.core.reporting import (
+    format_report_list,
+    format_report_value,
+    markdown_artifact_paths,
+    resolve_report_target,
+)
 
 
 CORRELATOR_ARTIFACT_DESCRIPTIONS = {
@@ -20,61 +24,6 @@ CORRELATOR_ARTIFACT_DESCRIPTIONS = {
 CORRELATOR_ARTIFACT_ORDER = ("bare_artifact", "summary_plot", "summary_plot_image", "tuning_log", "sample_log")
 
 
-def _fmt(value: Any, digits: int = 4) -> str:
-    if value is None:
-        return "not set"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return str(value)
-    if not np.isfinite(number):
-        return str(number)
-    return f"{number:.{digits}g}"
-
-
-def _fmt_list(values: Any, *, max_items: int = 8, digits: int = 4) -> str:
-    arr = np.asarray(values)
-    if arr.size == 0:
-        return "[]"
-    flat = arr.reshape(-1)
-    items = [_fmt(item, digits=digits) for item in flat[:max_items]]
-    suffix = ", ..." if flat.size > max_items else ""
-    return "[" + ", ".join(items) + suffix + "]"
-
-
-def _cn_report_path(path: Path) -> Path:
-    return path.with_name(f"{path.stem}_CN{path.suffix or '.md'}")
-
-
-def _report_target(path: Path, report_language: str) -> tuple[Path, str]:
-    language = report_language.lower()
-    if language == "en":
-        return path, "en"
-    if language == "ch":
-        return _cn_report_path(path), "zh"
-    raise ValueError("report_language must be 'en' or 'ch'")
-
-
-def _md_path(value: Any, *, base_dir: Path) -> str | None:
-    if not value:
-        return None
-    path = Path(str(value))
-    if path.is_absolute():
-        return os.path.relpath(path, base_dir)
-    return str(value)
-
-
-def _markdown_artifacts(artifacts: dict[str, Any] | None, *, base_dir: Path) -> dict[str, Any]:
-    output = dict(artifacts or {})
-    for key in CORRELATOR_ARTIFACT_ORDER:
-        if key in output:
-            output[key] = _md_path(output[key], base_dir=base_dir)
-    for key in ("sample0_pt2_plots", "sample0_fit_plots"):
-        if key in output:
-            output[key] = [_md_path(path, base_dir=base_dir) for path in (output.get(key) or []) if path]
-    return output
-
-
 def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
     if language == "zh":
         rows = [
@@ -85,9 +34,9 @@ def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
             ("Model average", f"`{result.get('model_average', 'not recorded')}`"),
             ("选择规则", f"`{result.get('selection_rule', 'not recorded')}`"),
             ("重采样", f"`{result.get('resample_mode', 'not recorded')}`，共 {result.get('n_samples', 'n/a')} 个样本"),
-            ("z 网格", _fmt_list(result.get("z_values", []))),
-            ("调参 z", _fmt_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
-            ("correlator_rescale", _fmt(result.get("correlator_rescale"))),
+            ("z 网格", format_report_list(result.get("z_values", []))),
+            ("调参 z", format_report_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
+            ("correlator_rescale", format_report_value(result.get("correlator_rescale"))),
         ]
         header = "| 条目 | 数值或设置 |"
     else:
@@ -99,9 +48,9 @@ def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
             ("Model average", f"`{result.get('model_average', 'not recorded')}`"),
             ("Selection rule", f"`{result.get('selection_rule', 'not recorded')}`"),
             ("Resampling", f"`{result.get('resample_mode', 'not recorded')}` with {result.get('n_samples', 'n/a')} samples"),
-            ("z grid", _fmt_list(result.get("z_values", []))),
-            ("Tuning z values", _fmt_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
-            ("correlator_rescale", _fmt(result.get("correlator_rescale"))),
+            ("z grid", format_report_list(result.get("z_values", []))),
+            ("Tuning z values", format_report_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
+            ("correlator_rescale", format_report_value(result.get("correlator_rescale"))),
         ]
         header = "| Quantity | Value |"
     lines = [header, "|---|---|"]
@@ -127,7 +76,7 @@ def _window_text(result: dict[str, Any], *, language: str) -> list[str]:
         pt2_window = spec.get("pt2_window", f"[{spec.get('tmin', 'n/a')},{spec.get('tmax', 'n/a')})")
         pt3_window = spec.get(
             "pt3_window",
-            f"tsep={_fmt_list(spec.get('tsep_ls', []))}, tau_cut={spec.get('tau_cut', 'n/a')}",
+            f"tsep={format_report_list(spec.get('tsep_ls', []))}, tau_cut={spec.get('tau_cut', 'n/a')}",
         )
         lines.append(
             f"| `{spec.get('fit_scope', spec.get('scope', 'n/a'))}` | "
@@ -156,10 +105,10 @@ def _z_fit_table(result: dict[str, Any], *, language: str) -> list[str]:
             continue
         window = fit.get("window") if isinstance(fit.get("window"), dict) else {}
         lines.append(
-            f"| {_fmt(fit.get('z'))} | {_fmt(fit.get('Q', window.get('Q')))} | "
-            f"{_fmt(fit.get('chi2_dof', fit.get('chi2/DOF', window.get('chi2_dof'))))} | "
-            f"{_fmt(fit.get('logGBF', window.get('logGBF')))} | {fit.get('n_failed_samples', 0)} | "
-            f"{_fmt(fit.get('real_sys_sdev'))} | {_fmt(fit.get('imag_sys_sdev'))} |"
+            f"| {format_report_value(fit.get('z'))} | {format_report_value(fit.get('Q', window.get('Q')))} | "
+            f"{format_report_value(fit.get('chi2_dof', fit.get('chi2/DOF', window.get('chi2_dof'))))} | "
+            f"{format_report_value(fit.get('logGBF', window.get('logGBF')))} | {fit.get('n_failed_samples', 0)} | "
+            f"{format_report_value(fit.get('real_sys_sdev'))} | {format_report_value(fit.get('imag_sys_sdev'))} |"
         )
     if len(lines) == 2:
         lines.append("| n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
@@ -331,7 +280,12 @@ def build_correlator_stage_report_markdown(
     markdown_jobs = []
     for item in jobs:
         result = item.get("result", {})
-        artifacts = _markdown_artifacts(item.get("artifacts", {}), base_dir=base_dir)
+        artifacts = markdown_artifact_paths(
+            item.get("artifacts", {}),
+            base_dir=base_dir,
+            path_keys=CORRELATOR_ARTIFACT_ORDER,
+            list_path_keys=("sample0_pt2_plots", "sample0_fit_plots"),
+        )
         markdown_jobs.append((item, result, artifacts))
         lines.append(
             f"| `{item['job_id']}` | `{result.get('fit_scope', 'n/a')}` | "
@@ -385,7 +339,7 @@ def write_correlator_stage_report(
 ) -> dict[str, Path]:
     """Write one report summarizing all correlator-analysis jobs."""
     output = Path(path)
-    target, language = _report_target(output, report_language)
+    target, language = resolve_report_target(output, report_language)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         build_correlator_stage_report_markdown(jobs=jobs, base_dir=target.parent, language=language),
