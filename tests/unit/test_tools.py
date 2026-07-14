@@ -39,6 +39,7 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
     assert args["resample_mode"] == "jk"
     assert args["sample_error_mode"] == manifest.metadata.sample_error_mode
     assert args["seed"] == manifest.metadata.random_seed
+    assert "workers" not in args
     assert "n_boot" not in args
 
 
@@ -92,6 +93,36 @@ def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) 
         assert args["nstate"] == 2
     assert "fit_scope" not in args
     assert args["model_average"] == manifest.stages["correlator_analysis"].defaults["model_average"]
+    assert args["workers"] == 1
+
+
+def test_metadata_workers_override_stage_params_for_sample_fit_tools(tmp_path: Path) -> None:
+    manifest = _manifest()
+    manifest.metadata.workers = 3
+    correlator_job = manifest.stages["correlator_analysis"].jobs[0]
+    correlator_args = prepare_tool_args(
+        "fit_bare_matrix_grid",
+        {},
+        manifest=manifest,
+        stage="correlator_analysis",
+        job=correlator_job,
+        effective_params={**manifest.stages["correlator_analysis"].defaults, "workers": 99},
+        artifacts_dir=tmp_path,
+    )
+    fourier_job = manifest.stages["fourier_transform"].jobs[0]
+    fourier_args = prepare_tool_args(
+        "run_fourier_transform",
+        {},
+        manifest=manifest,
+        stage="fourier_transform",
+        job=fourier_job,
+        effective_params={**manifest.stages["fourier_transform"].defaults, "workers": 99},
+        artifacts_dir=tmp_path,
+        store={"input": SimpleNamespace(attrs={})},
+    )
+
+    assert correlator_args["workers"] == 3
+    assert fourier_args["workers"] == 3
 
 
 def test_prepare_correlator_terminal_args_pass_nstate_values_when_not_selected(tmp_path: Path) -> None:
@@ -253,13 +284,13 @@ def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> N
     job = manifest.stages["renormalization"].jobs[0]
     args = prepare_tool_args(
         "apply_ratio_scheme_renormalization", {}, manifest=manifest, stage="renormalization", job=job,
-        effective_params=manifest.stages["renormalization"].defaults,
+        effective_params={**manifest.stages["renormalization"].defaults, **job.params},
         artifacts_dir=tmp_path,
     )
     assert args["target"] == "target"
     assert args["denominator"] == "denominator"
     assert args["scheme"] == "hybrid_ratio"
-    assert args["scheme_parameters"] == manifest.stages["renormalization"].defaults["scheme_parameters"]
+    assert args["scheme_parameters"]["zs_fm"] == job.params["zs_fm"]
     assert args["scheme_parameters"]["m0_gev"] == manifest.stages["renormalization"].defaults["scheme_parameters"]["m0_gev"]
     assert args["scheme_parameters"]["delta_m_gev"] == manifest.stages["renormalization"].defaults["scheme_parameters"]["delta_m_gev"]
     assert args["save_path"] == str(tmp_path / "rn_p5")
@@ -269,7 +300,7 @@ def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> N
 def test_prepare_renormalization_args_filters_normalization_manifest_flag(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["renormalization"].jobs[0]
-    effective = {**manifest.stages["renormalization"].defaults, "normalization": True}
+    effective = {**manifest.stages["renormalization"].defaults, **job.params, "normalization": True}
     args = prepare_tool_args(
         "apply_ratio_scheme_renormalization",
         {},
@@ -393,6 +424,7 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     assert args["observable"] == "pion_quark_quasi_pdf"
     assert args["a_fm"] == "0.0574"
     assert args["pz_gev"] == 2.15
+    assert args["workers"] == 1
     assert args["save_path"] == str(tmp_path / "ft_p5")
 
 
@@ -445,9 +477,42 @@ def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:
         effective_params=effective_matching_params(manifest, job),
         artifacts_dir=tmp_path, store={"quasi": object()},
     )
-    assert args["kernel_id"] == "CG_gt_PDF_hybrid"
+    assert args["kernel_id"] == "CG_gt_qPDF_hybrid_NLO"
     assert args["pz_gev"] == 2.15
     assert args["zs_fm"] == 0.1722
+
+
+def test_job_zs_fm_overrides_stage_defaults_for_both_hybrid_stages(tmp_path: Path) -> None:
+    manifest = _manifest()
+    manifest.stages["renormalization"].defaults["zs_fm"] = 0.1
+    renorm_job = manifest.stages["renormalization"].jobs[0]
+    renorm_job.params["zs_fm"] = 0.2
+    renorm_args = prepare_tool_args(
+        "apply_ratio_scheme_renormalization",
+        {},
+        manifest=manifest,
+        stage="renormalization",
+        job=renorm_job,
+        effective_params={**manifest.stages["renormalization"].defaults, **renorm_job.params},
+        artifacts_dir=tmp_path,
+    )
+
+    manifest.stages["perturbative_matching"].defaults["zs_fm"] = 0.3
+    matching_job = manifest.stages["perturbative_matching"].jobs[0]
+    matching_job.params["zs_fm"] = 0.4
+    matching_args = prepare_tool_args(
+        "build_matching_kernel",
+        {},
+        manifest=manifest,
+        stage="perturbative_matching",
+        job=matching_job,
+        effective_params=effective_matching_params(manifest, matching_job),
+        artifacts_dir=tmp_path,
+        store={"quasi": object()},
+    )
+
+    assert renorm_args["scheme_parameters"]["zs_fm"] == 0.2
+    assert matching_args["zs_fm"] == 0.4
 
 
 def test_prepare_matching_plot_limits(tmp_path: Path) -> None:
@@ -467,6 +532,24 @@ def test_new_downstream_job_validators_accept_full_manifest() -> None:
     for stage in ("fourier_transform", "perturbative_matching"):
         job = manifest.stages[stage].jobs[0]
         assert validate_stage_inputs(stage, manifest, job) == []
+
+
+def test_hybrid_stage_validators_use_flat_effective_zs_fm() -> None:
+    manifest = _manifest()
+    renorm_job = manifest.stages["renormalization"].jobs[0]
+    matching_job = manifest.stages["perturbative_matching"].jobs[0]
+    renorm_job.params.pop("zs_fm")
+    matching_job.params.pop("zs_fm")
+    manifest.stages["renormalization"].defaults["zs_fm"] = 0.2
+    manifest.stages["perturbative_matching"].defaults["zs_fm"] = 0.2
+
+    assert validate_stage_inputs("renormalization", manifest, renorm_job) == []
+    assert validate_stage_inputs("perturbative_matching", manifest, matching_job) == []
+
+    manifest.stages["renormalization"].defaults.pop("zs_fm")
+    manifest.stages["perturbative_matching"].defaults.pop("zs_fm")
+    assert "flat parameter zs_fm" in validate_stage_inputs("renormalization", manifest, renorm_job)[0]
+    assert "flat parameter zs_fm" in validate_stage_inputs("perturbative_matching", manifest, matching_job)[0]
 
 
 @pytest.mark.parametrize(

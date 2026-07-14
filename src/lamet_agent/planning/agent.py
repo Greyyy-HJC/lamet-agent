@@ -146,7 +146,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     },
                 },
                 "renormalization": {
-                    "required": {"scheme": "hybrid_ratio", "scheme_parameters": {"zs_fm": 0.2}},
+                    "required": {"scheme": "hybrid_ratio", "zs_fm": 0.2},
                     "optional": {"normalization": True, "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0}},
                 },
                 "fourier_transform": {
@@ -154,7 +154,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     "options": {"order": ["LA", "NLA"], "sector_pdf": ["valence", "total", "full", "sea"], "part": ["re", "im", "both"]},
                 },
                 "perturbative_matching": {
-                    "required": {"kernel_id": "declared inputs.kernels kernel_id", "pz_gev": 2.15, "mu": 2.0, "component": "re"},
+                    "required": {"kernel_id": "declared inputs.kernels kernel_id", "pz_gev": 2.15, "mu": 2.0, "component": "re", "zs_fm": "required for hybrid kernels"},
                     "options": {"component": ["re", "im"]},
                 },
                 "extrapolation": {"status": "placeholder; requires momenta input role but is not implemented yet"},
@@ -163,7 +163,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
             "common_stage_contracts": {
                 "renormalization": {
                     "inputs": {"target": "upstream bare matrix-element job", "denominator": "zero-momentum/reference bare matrix-element job"},
-                    "defaults": {"scheme": "hybrid_ratio", "scheme_parameters": {"zs_fm": "required"}},
+                    "defaults": {"scheme": "hybrid_ratio", "zs_fm": "required", "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0}},
                 },
                 "fourier_transform": {"inputs": {"input": "renormalized matrix-element job or artifact"}},
                 "perturbative_matching": {"inputs": {"quasi": "Fourier transform job or artifact"}},
@@ -488,7 +488,8 @@ def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, A
                     "defaults": {
                         "normalization": False,
                         "scheme": "hybrid_ratio",
-                        "scheme_parameters": {"zs_fm": 0.1722, "m0_gev": 0.0, "delta_m_gev": 0.0},
+                        "zs_fm": 0.1722,
+                        "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
                     },
                     "jobs": renorm_jobs,
                 },
@@ -837,8 +838,6 @@ def run_interactive_plan(
                 return None
             question_id = _manifest_question_id_from_user_input_action(args, reason) or str(args.get("question_id"))
             normalized_question_id = re.sub(r"\[(\d+)\]", r".\1", question_id)
-            if normalized_question_id.endswith(".kernel_parameters.zs_fm") or normalized_question_id.endswith(".scheme_parameters.zs_fm"):
-                question_id = normalized_question_id.rsplit(".", 1)[0]
             if _json_pointer_from_question_id(question_id) is None:
                 text = f"{args.get('prompt', '')}\n{reason}"
                 match = re.search(
@@ -866,7 +865,10 @@ def run_interactive_plan(
                     text_lower = text.lower()
                     if isinstance(kernels, list) and len(kernels) == 1:
                         if "zs_fm" in text_lower:
-                            question_id = "inputs.kernels.0.kernel_parameters"
+                            if "renormalization" in text_lower:
+                                question_id = "stages.renormalization.defaults.zs_fm"
+                            else:
+                                question_id = "stages.perturbative_matching.defaults.zs_fm"
                         elif "kernel_id" in text_lower:
                             question_id = "inputs.kernels.0.kernel_id"
             session.observe({"event": "user_answer", "question_id": question_id, "value": answer})

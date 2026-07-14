@@ -372,6 +372,7 @@ def prepare_tool_args(
                 }
             defaults["save_path"] = str(artifacts_dir / job.id)
             defaults["job_id"] = job.id
+            defaults["workers"] = manifest.metadata.workers
             defaults["a_fm"] = pt2.a_fm if pt2 is not None else None
             defaults["pz_gev"] = pt2.pz_gev if pt2 is not None else None
             defaults["pz_out_gev"] = pt2_out.pz_gev if pt2_out is not None else defaults.get("pz_out_gev")
@@ -396,10 +397,14 @@ def prepare_tool_args(
 
         if tool_name == "apply_ratio_scheme_renormalization":
             for key, value in effective_params.items():
-                if key == "normalization":
+                if key in {"normalization", "zs_fm", "scheme_parameters"}:
                     continue
                 if key not in resolved or resolved[key] is None:
                     resolved[key] = value
+            resolved["scheme_parameters"] = {
+                **scheme_parameters,
+                "zs_fm": effective_params["zs_fm"],
+            }
             resolved.update(
                 {
                     "target": "target",
@@ -561,6 +566,7 @@ def prepare_tool_args(
                 resolved["resample_mode"] = manifest.metadata.resample_mode
         elif tool_name == "run_fourier_transform":
             resolved.update({key: fourier[key] for key in _FOURIER_RUN_KEYS if key in fourier})
+            resolved["workers"] = manifest.metadata.workers
             resolved["save_path"] = str(artifacts_dir / job.id)
             resolved.setdefault("plot_fourier", {"save_path": f"{job.id}.pdf"})
             resolved.setdefault("plot_extension", {"save_path": f"{job.id}_extension.pdf"})
@@ -574,7 +580,7 @@ def prepare_tool_args(
         declared_id = str(matching.get("kernel_id", ""))
         declaration = next((item for item in manifest.kernels if item.kernel_id == declared_id), None)
         if declaration is not None:
-            parameters = dict(declaration.kernel_parameters)
+            parameters = {key: value for key, value in declaration.kernel_parameters.items() if key != "zs_fm"}
             parameters.update(matching)
             matching = parameters
             matching["kernel_id"] = resolve_kernel_id(declared_id, declaration.scheme)

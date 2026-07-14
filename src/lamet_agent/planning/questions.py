@@ -187,7 +187,12 @@ def _coerce_user_answer_for_manifest_path(question_id: str, value: Any) -> Any:
         return int(value)
     if question_id.endswith(".tsep"):
         return int(value)
-    if question_id.endswith(".a_fm") or question_id.endswith(".pz_gev") or question_id.endswith(".pz_out_gev"):
+    if (
+        question_id.endswith(".a_fm")
+        or question_id.endswith(".pz_gev")
+        or question_id.endswith(".pz_out_gev")
+        or question_id.endswith(".zs_fm")
+    ):
         return float(value)
     if question_id.endswith(".bt") or question_id.endswith(".bz"):
         if isinstance(value, list):
@@ -205,7 +210,7 @@ def _coerce_user_answer_for_manifest_path(question_id: str, value: Any) -> Any:
             return json.loads(value)
         except json.JSONDecodeError:
             return value
-    if question_id.endswith(".kernel_parameters") or question_id.endswith(".scheme_parameters"):
+    if question_id.endswith(".scheme_parameters"):
         if isinstance(value, dict):
             return value
         text = str(value).strip()

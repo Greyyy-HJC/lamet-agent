@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,185 @@ STAGE_REPORTS = {
 }
 
 
+def _effective_params(manifest: AnalysisManifest, stage: str, job: Any) -> dict[str, Any]:
+    return {**manifest.stages[stage].defaults, **job.params}
+
+
+def _zs_path(manifest: AnalysisManifest, stage: str, job: Any) -> str:
+    jobs = manifest.stages[stage].jobs
+    index = next(index for index, candidate in enumerate(jobs) if candidate.id == job.id)
+    if "zs_fm" in job.params:
+        return f"stages.{stage}.jobs[{index}].params.zs_fm"
+    return f"stages.{stage}.defaults.zs_fm"
+
+
+def hybrid_zs_consistency_checks(manifest: AnalysisManifest) -> list[dict[str, Any]]:
+    """Compare hybrid matching and renormalization ``zs_fm`` along manifest DAG chains."""
+    matching_stage = manifest.stages.get("perturbative_matching")
+    if matching_stage is None:
+        return []
+
+    from lamet_agent.stages.matching.functions import is_hybrid_kernel, resolve_kernel_id
+
+    jobs_by_id = {
+        job.id: (stage, job)
+        for stage, config in manifest.stages.items()
+        for job in config.jobs
+    }
+    checks: list[dict[str, Any]] = []
+    for matching_index, matching_job in enumerate(matching_stage.jobs):
+        matching_params = _effective_params(manifest, "perturbative_matching", matching_job)
+        kernel_id = matching_params.get("kernel_id")
+        if kernel_id is None:
+            matching_kernels = [
+                item for item in manifest.kernels if item.stage == "perturbative_matching"
+            ]
+            if len(matching_kernels) == 1:
+                kernel_id = matching_kernels[0].kernel_id
+        declaration = next((item for item in manifest.kernels if item.kernel_id == kernel_id), None)
+        is_hybrid = False
+        if declaration is not None:
+            try:
+                is_hybrid = is_hybrid_kernel(resolve_kernel_id(declaration.kernel_id, declaration.scheme))
+            except ValueError:
+                is_hybrid = declaration.scheme == "hybrid_ratio" and "hybrid" in declaration.kernel_id.lower()
+
+        base: dict[str, Any] = {
+            "matching_job": matching_job.id,
+            "matching_job_path": f"stages.perturbative_matching.jobs[{matching_index}]",
+            "renormalization_job": None,
+            "matching_zs_fm": matching_params.get("zs_fm"),
+            "renormalization_zs_fm": None,
+            "matching_zs_path": (
+                _zs_path(manifest, "perturbative_matching", matching_job)
+                if "zs_fm" in matching_params
+                else None
+            ),
+            "renormalization_zs_path": None,
+        }
+        if not is_hybrid:
+            checks.append({**base, "status": "not_applicable", "reason": "matching kernel is not hybrid"})
+            continue
+
+        quasi_ref = matching_job.inputs.get("quasi")
+        fourier_entry = jobs_by_id.get(quasi_ref) if isinstance(quasi_ref, str) else None
+        if fourier_entry is None or fourier_entry[0] != "fourier_transform":
+            checks.append(
+                {
+                    **base,
+                    "status": "unverifiable",
+                    "reason": "matching quasi input does not resolve to an in-manifest Fourier job",
+                }
+            )
+            continue
+        fourier_job = fourier_entry[1]
+        renorm_ref = fourier_job.inputs.get("input")
+        renorm_entry = jobs_by_id.get(renorm_ref) if isinstance(renorm_ref, str) else None
+        if renorm_entry is None or renorm_entry[0] != "renormalization":
+            checks.append(
+                {
+                    **base,
+                    "status": "unverifiable",
+                    "reason": "Fourier input does not resolve to an in-manifest renormalization job",
+                }
+            )
+            continue
+
+        renorm_job = renorm_entry[1]
+        renorm_params = _effective_params(manifest, "renormalization", renorm_job)
+        compared = {
+            **base,
+            "renormalization_job": renorm_job.id,
+            "renormalization_zs_fm": renorm_params.get("zs_fm"),
+            "renormalization_zs_path": (
+                _zs_path(manifest, "renormalization", renorm_job)
+                if "zs_fm" in renorm_params
+                else None
+            ),
+        }
+        if renorm_params.get("scheme") != "hybrid_ratio":
+            checks.append(
+                {**compared, "status": "not_applicable", "reason": "upstream renormalization is not hybrid_ratio"}
+            )
+            continue
+        try:
+            matching_zs = float(matching_params["zs_fm"])
+            renorm_zs = float(renorm_params["zs_fm"])
+        except (KeyError, TypeError, ValueError):
+            checks.append(
+                {**compared, "status": "unverifiable", "reason": "one or both jobs lack a numeric zs_fm"}
+            )
+            continue
+        status = "consistent" if math.isclose(matching_zs, renorm_zs, rel_tol=0.0, abs_tol=1e-12) else "mismatch"
+        checks.append(
+            {
+                **compared,
+                "status": status,
+                "reason": "zs_fm values agree" if status == "consistent" else "zs_fm values differ",
+                "recommended_path": f"stages.perturbative_matching.jobs[{matching_index}].params.zs_fm",
+            }
+        )
+    return checks
+
+
+def _format_manifest_consistency(checks: list[dict[str, Any]], *, language: str) -> str:
+    if language == "zh":
+        lines = [
+            "## Manifest 参数一致性",
+            "",
+            "该检查沿 `matching.quasi → fourier.input → renormalization job` 追踪数据链；结果仅用于 review，不阻断运行。",
+            "",
+            "| Matching job | Renormalization job | Matching `zs_fm` | Renormalization `zs_fm` | 状态 |",
+            "| --- | --- | ---: | ---: | --- |",
+        ]
+    else:
+        lines = [
+            "## Manifest Parameter Consistency",
+            "",
+            "This check follows `matching.quasi → fourier.input → renormalization job`; findings are review-only and do not block execution.",
+            "",
+            "| Matching job | Renormalization job | Matching `zs_fm` | Renormalization `zs_fm` | Status |",
+            "| --- | --- | ---: | ---: | --- |",
+        ]
+    if not checks:
+        lines.append("| — | — | — | — | not applicable |")
+    for check in checks:
+        renorm_job = f"`{check['renormalization_job']}`" if check.get("renormalization_job") else "—"
+        matching_zs = check.get("matching_zs_fm")
+        renorm_zs = check.get("renormalization_zs_fm")
+        lines.append(
+            f"| `{check['matching_job']}` | "
+            f"{renorm_job} | "
+            f"{matching_zs if matching_zs is not None else '—'} | "
+            f"{renorm_zs if renorm_zs is not None else '—'} | "
+            f"`{check['status']}` |"
+        )
+    mismatches = [check for check in checks if check["status"] == "mismatch"]
+    unverifiable = [check for check in checks if check["status"] == "unverifiable"]
+    if mismatches:
+        lines.extend(["", "### " + ("需要修改" if language == "zh" else "Required changes")])
+        for check in mismatches:
+            if language == "zh":
+                lines.append(
+                    f"- `{check['matching_job']}` 与上游 `{check['renormalization_job']}` 不一致：将 "
+                    f"`{check['recommended_path']}` 设置为 `{check['renormalization_zs_fm']}`。"
+                )
+            else:
+                lines.append(
+                    f"- `{check['matching_job']}` differs from upstream `{check['renormalization_job']}`: set "
+                    f"`{check['recommended_path']}` to `{check['renormalization_zs_fm']}`."
+                )
+    if unverifiable:
+        lines.extend(["", "### " + ("无法核对" if language == "zh" else "Not verifiable")])
+        for check in unverifiable:
+            reason = check["reason"]
+            if language == "zh":
+                lines.append(f"- `{check['matching_job']}`：当前 manifest 内没有完整上游 job 链，无法核对 `zs_fm`。")
+            else:
+                lines.append(f"- `{check['matching_job']}`: {reason}.")
+    return "\n".join(lines)
+
+
 def write_review_from_manifest(
     manifest: AnalysisManifest,
     *,
@@ -39,6 +219,7 @@ def write_review_from_manifest(
     review_dir.mkdir(parents=True, exist_ok=True)
     language = "zh" if report_language.lower() == "ch" else "en"
     target = review_dir / ("review_CN.md" if language == "zh" else "review.md")
+    consistency_checks = hybrid_zs_consistency_checks(manifest)
     materials = []
     stages = [stage for stage in STAGE_REPORTS if (artifacts_dir / stage).is_dir() or stage in manifest.metadata.stages]
     for stage in stages:
@@ -115,12 +296,13 @@ def write_review_from_manifest(
             "`Key figure` 中请你从该 stage 的 `svg` 列表里选择一张最能代表该 stage 质量或物理结果的 SVG，用 Markdown 图片语法嵌入；必须原样复制该图条目里的 `markdown_path`，写成 `![说明](markdown_path)`，不要自己拼路径、不要只写文件名、不要使用 `absolute_path` 作为 Markdown 链接。图下必须用中文详细解释为什么选这张图、它应如何辅助判断该 stage；如果没有 SVG，用中文明确说明未生成可嵌入 SVG。"
             "`Diagnostics` 要用中文判断该 stage 是否自洽，尤其检查是否符合真实 LaMET 分析场景。`Recommended Manifest Changes` 必须按上述字段格式给出；如果没有触发条件，写“当前设置合理，无需修改”。"
             "修改建议必须引用真实 manifest 路径和值，例如 `stages.<stage>.defaults.<key>`、`stages.<stage>.jobs[].params.<key>`、`inputs.kernels[].kernel_parameters.<key>`，并说明建议值或取值范围以及理由。"
-            "优先讨论这些可调参数：correlator 的 `pt2_windows`、`pt3_tau_cuts`、`nstate`、`fit_scope`、`fit_strategy`、`prior_width`、`svdcut`；renormalization 的 `scheme_parameters.zs_fm`、`m0_gev`、`delta_m_gev`；fourier 的 `scheme_scan.zmin_values`、`zmax_values`、`z_ext_max`、`smooth`、`order`、`posterior_prior_error_scale`、`y_grid`；matching 的 `kernel_id`、`mu`、`pz_gev`、`zs_fm`。"
+            "优先讨论这些可调参数：correlator 的 `pt2_windows`、`pt3_tau_cuts`、`nstate`、`fit_scope`、`fit_strategy`、`prior_width`、`svdcut`；renormalization 的 `zs_fm`、`scheme_parameters.m0_gev`、`scheme_parameters.delta_m_gev`；fourier 的 `scheme_scan.zmin_values`、`zmax_values`、`z_ext_max`、`smooth`、`order`、`posterior_prior_error_scale`、`y_grid`；matching 的 `kernel_id`、`mu`、`pz_gev`、`zs_fm`。"
             "不要建议改 lamet-agent 代码。你不能查看 SVG 图像本身；SVG 清单只代表已生成图像的路径和 provenance，"
             "不得从 SVG 像素、path 几何、文件名臆测数值或曲线形状。图像相关判断只能来自 report 文本和 NetCDF 摘要。"
             "缺失 report、NetCDF 或 SVG 时要明确说明缺失，不能补数值。输出必须是 Markdown；除 `Physical Summary` 中额外给出的英文论文段落外，其余内容必须使用中文。\n\n"
             f"Manifest JSON:\n```json\n{json.dumps(manifest.model_dump(mode='json'), ensure_ascii=False, indent=2)}\n```\n\n"
-            f"Stage materials:\n```json\n{json.dumps(materials, ensure_ascii=False, indent=2)}\n```"
+            f"Stage materials:\n```json\n{json.dumps(materials, ensure_ascii=False, indent=2)}\n```\n\n"
+            f"Deterministic manifest consistency checks:\n```json\n{json.dumps(consistency_checks, ensure_ascii=False, indent=2)}\n```"
         )
     else:
         system = lamet_review_rules_en + "Write a detailed scientific review using only the supplied stage reports, NetCDF summaries, SVG file lists, and manifest. Do not invent unreported numbers; when settings or outputs do not match a realistic LaMET analysis scenario, give executable manifest-level recommendations."
@@ -132,12 +314,13 @@ def write_review_from_manifest(
             "`Key figure` must choose one SVG from that stage's `svg` list and embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths, do not use only the basename, and do not use `absolute_path` as the Markdown link. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
             "`Diagnostics` must judge whether the stage is self-consistent and whether it matches a realistic LaMET analysis scenario. `Recommended Manifest Changes` must use the required field format above; if no trigger is met, state that the current setting is reasonable and no change is justified. "
             "Recommendations must cite real manifest paths and values such as `stages.<stage>.defaults.<key>`, `stages.<stage>.jobs[].params.<key>`, or `inputs.kernels[].kernel_parameters.<key>`, and state suggested values or ranges with reasons. "
-            "Prioritize these tunable parameters: for correlator, `pt2_windows`, `pt3_tau_cuts`, `nstate`, `fit_scope`, `fit_strategy`, `prior_width`, `svdcut`; for renormalization, `scheme_parameters.zs_fm`, `m0_gev`, `delta_m_gev`; for Fourier, `scheme_scan.zmin_values`, `zmax_values`, `z_ext_max`, `smooth`, `order`, `posterior_prior_error_scale`, `y_grid`; for matching, `kernel_id`, `mu`, `pz_gev`, `zs_fm`. "
+            "Prioritize these tunable parameters: for correlator, `pt2_windows`, `pt3_tau_cuts`, `nstate`, `fit_scope`, `fit_strategy`, `prior_width`, `svdcut`; for renormalization, `zs_fm`, `scheme_parameters.m0_gev`, `scheme_parameters.delta_m_gev`; for Fourier, `scheme_scan.zmin_values`, `zmax_values`, `z_ext_max`, `smooth`, `order`, `posterior_prior_error_scale`, `y_grid`; for matching, `kernel_id`, `mu`, `pz_gev`, `zs_fm`. "
             "Do not recommend changing lamet-agent source code. You cannot inspect SVG images; the SVG list only records figure paths and provenance. "
             "Do not infer numerical values or curve shapes from SVG pixels, path geometry, or filenames. Figure-related statements must come from report text and NetCDF summaries. "
             "State missing reports, NetCDF files, or SVG figures explicitly and do not fill in missing numbers. Output Markdown in English.\n\n"
             f"Manifest JSON:\n```json\n{json.dumps(manifest.model_dump(mode='json'), indent=2)}\n```\n\n"
-            f"Stage materials:\n```json\n{json.dumps(materials, indent=2)}\n```"
+            f"Stage materials:\n```json\n{json.dumps(materials, indent=2)}\n```\n\n"
+            f"Deterministic manifest consistency checks:\n```json\n{json.dumps(consistency_checks, indent=2)}\n```"
         )
     review = request_llm_text(
         backend=backend,
@@ -152,7 +335,8 @@ def write_review_from_manifest(
         lines = review.splitlines()
         if lines and lines[0].strip().startswith("```") and lines[-1].strip() == "```":
             review = "\n".join(lines[1:-1]).strip()
-    target.write_text(review + "\n", encoding="utf-8")
+    consistency_section = _format_manifest_consistency(consistency_checks, language=language)
+    target.write_text(review + "\n\n" + consistency_section + "\n", encoding="utf-8")
     return {"review": str(target), "artifact": str(target), "n_stages": len(materials)}
 
 

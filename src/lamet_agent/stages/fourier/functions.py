@@ -18,7 +18,10 @@ Expected outputs:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import ProcessPoolExecutor
+from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import wraps
 import json
 from pathlib import Path
 import re
@@ -46,6 +49,10 @@ from lamet_agent.core.resampling import (
 from lamet_agent.stages.fourier.reporting import write_fourier_report
 
 FM_TO_GEV_INV = 5.067731237
+_FOURIER_SAMPLE_EXECUTOR: ContextVar[ProcessPoolExecutor | None] = ContextVar(
+    "fourier_sample_executor",
+    default=None,
+)
 
 OBSERVABLE_ALIASES = {
     "pion_quark_quasi_pdf": "pion_quark_quasi_pdf",
@@ -965,6 +972,78 @@ def _progress(iterable, *, desc: str, leave: bool = True):
     return tqdm(iterable, desc=desc, leave=leave)
 
 
+def _sample_batches(n_samples: int, workers: int) -> list[list[int]]:
+    """Split sample indices into at most ``workers`` non-empty batches."""
+    n_batches = min(int(workers), int(n_samples))
+    return [batch.tolist() for batch in np.array_split(np.arange(n_samples), n_batches) if batch.size]
+
+
+def _fit_fourier_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[str, Any]]:
+    """Fit one batch of Fourier samples in a worker process."""
+    context = gv.loads(payload)
+    results: list[dict[str, Any]] = []
+    for sample in sample_indices:
+        sample_y_data = _fit_y_data(
+            context["re_fit_samples"][sample],
+            context["im_fit_samples"][sample],
+            sample_error_mode=context["sample_error_mode"],
+            resample_mode=context["resample_mode"],
+            part=context["part"],
+            re_fit_samples=context["re_fit_samples"],
+            im_fit_samples=context["im_fit_samples"],
+            sigma_re=context["sigma_re"],
+            sigma_im=context["sigma_im"],
+        )
+        params, _pmean, _psdev, success, chi2, dof, q_value, log_gbf = _fit_one_sample(
+            context["z_fit"],
+            y_data=sample_y_data,
+            method=context["method"],
+            order=context["order"],
+            observable=context["observable"],
+            part=context["part"],
+            phase_scale=context["phase_scale"],
+            phase_prime_scale=context["phase_prime_scale"],
+            sector=context["sector"],
+            hadron=context["hadron"],
+            p0=context["mean_params"],
+            prior=context["sample_prior"],
+            Lambda0=context["Lambda0"],
+        )
+        results.append(
+            {
+                "sample": sample,
+                "params": params,
+                "success": bool(success),
+                "chi2": float(chi2),
+                "dof": int(dof),
+                "q_value": float(q_value),
+                "log_gbf": float(log_gbf),
+            }
+        )
+    return results
+
+
+def _with_fourier_sample_executor(func):
+    """Own one process pool for the full Fourier tool invocation."""
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        value = kwargs.get("workers", 1)
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or int(value) < 1:
+            raise ValueError("workers must be a positive integer")
+        workers = int(value)
+        kwargs["workers"] = workers
+        if workers == 1:
+            return func(*args, **kwargs)
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            token = _FOURIER_SAMPLE_EXECUTOR.set(executor)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                _FOURIER_SAMPLE_EXECUTOR.reset(token)
+
+    return wrapped
+
+
 def _scheme_ranges(scheme: dict[str, Any], coord: np.ndarray) -> tuple[float, float, float]:
     positive = coord[coord > 0]
     zmin = float(scheme.get("zmin", positive[0]))
@@ -996,6 +1075,8 @@ def _run_one_scheme(
     part: str,
     sector: str | None,
     hadron: str | None,
+    executor: ProcessPoolExecutor | None = None,
+    workers: int = 1,
 ) -> dict[str, Any]:
     zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
     label = str(scheme.get("label", f"{method}_{order}_{zmin}_{zmax}"))
@@ -1101,34 +1182,77 @@ def _run_one_scheme(
     tail_fit_success_samples = np.empty(n_samples, dtype=bool)
     failures = 0
 
+    parallel_fit_results: dict[int, dict[str, Any]] | None = None
+    if executor is not None:
+        payload = gv.dumps(
+            {
+                "z_fit": z_fit,
+                "re_fit_samples": re_samples[:, fit_mask],
+                "im_fit_samples": im_samples[:, fit_mask],
+                "sigma_re": sigma_re,
+                "sigma_im": sigma_im,
+                "sample_error_mode": sample_error_mode,
+                "resample_mode": resample_mode,
+                "part": part,
+                "method": method,
+                "order": order,
+                "observable": observable,
+                "phase_scale": phase_scale,
+                "phase_prime_scale": phase_prime_scale,
+                "sector": sector,
+                "hadron": hadron,
+                "mean_params": mean_params,
+                "sample_prior": sample_prior,
+                "Lambda0": Lambda0,
+            }
+        )
+        futures = [
+            executor.submit(_fit_fourier_sample_batch, payload, batch)
+            for batch in _sample_batches(n_samples, workers)
+        ]
+        parallel_fit_results = {
+            item["sample"]: item
+            for future in futures
+            for item in future.result()
+        }
+
     positive = z_ext > 0
     for sample in _progress(range(n_samples), desc=f"fourier {label}", leave=False):
-        sample_y_data = _fit_y_data(
-            re_samples[sample, fit_mask],
-            im_samples[sample, fit_mask],
-            sample_error_mode=sample_error_mode,
-            resample_mode=resample_mode,
-            part=part,
-            re_fit_samples=re_samples[:, fit_mask],
-            im_fit_samples=im_samples[:, fit_mask],
-            sigma_re=sigma_re,
-            sigma_im=sigma_im,
-        )
-        params, _sample_pmean, _sample_psdev, tail_fit_success, chi2, dof, q_value, log_gbf = _fit_one_sample(
-            z_fit,
-            y_data=sample_y_data,
-            method=method,
-            order=order,
-            observable=observable,
-            part=part,
-            phase_scale=phase_scale,
-            phase_prime_scale=phase_prime_scale,
-            sector=sector,
-            hadron=hadron,
-            p0=mean_params,
-            prior=sample_prior,
-            Lambda0=Lambda0,
-        )
+        if parallel_fit_results is None:
+            sample_y_data = _fit_y_data(
+                re_samples[sample, fit_mask],
+                im_samples[sample, fit_mask],
+                sample_error_mode=sample_error_mode,
+                resample_mode=resample_mode,
+                part=part,
+                re_fit_samples=re_samples[:, fit_mask],
+                im_fit_samples=im_samples[:, fit_mask],
+                sigma_re=sigma_re,
+                sigma_im=sigma_im,
+            )
+            params, _sample_pmean, _sample_psdev, tail_fit_success, chi2, dof, q_value, log_gbf = _fit_one_sample(
+                z_fit,
+                y_data=sample_y_data,
+                method=method,
+                order=order,
+                observable=observable,
+                part=part,
+                phase_scale=phase_scale,
+                phase_prime_scale=phase_prime_scale,
+                sector=sector,
+                hadron=hadron,
+                p0=mean_params,
+                prior=sample_prior,
+                Lambda0=Lambda0,
+            )
+        else:
+            fit_result = parallel_fit_results[sample]
+            params = np.asarray(fit_result["params"], dtype=float)
+            tail_fit_success = bool(fit_result["success"])
+            chi2 = float(fit_result["chi2"])
+            dof = int(fit_result["dof"])
+            q_value = float(fit_result["q_value"])
+            log_gbf = float(fit_result["log_gbf"])
         tail_fit_success_samples[sample] = bool(tail_fit_success)
         if not tail_fit_success:
             failures += 1
@@ -1223,12 +1347,16 @@ def run_fourier_workflow(
     part: str = "both",
     sector: str | None = None,
     hadron: str | None = None,
+    workers: int = 1,
 ) -> dict[str, Any]:
     """Run asymptotic extension and Fourier transform for resampled data.
 
     ``schemes`` values are in the same unit as ``coord``. The output keeps
     sample information as arrays shaped ``(scheme, sample, y)``.
     """
+    if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or int(workers) < 1:
+        raise ValueError("workers must be a positive integer")
+    workers = int(workers)
     coord_arr = np.asarray(coord, dtype=float)
     resample_mode = _normalise_resample_mode(resample_mode)
     sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
@@ -1267,37 +1395,50 @@ def run_fourier_workflow(
             }
         ]
 
+    shared_executor = _FOURIER_SAMPLE_EXECUTOR.get()
+    owned_executor = (
+        ProcessPoolExecutor(max_workers=min(workers, re_mat.shape[0]))
+        if workers > 1 and shared_executor is None
+        else None
+    )
+    sample_executor = shared_executor or owned_executor
     scheme_results = []
-    for scheme in _progress(schemes, desc="fourier schemes"):
-        scheme_order = str(scheme.get("order", order)).upper()
-        scheme_prior_width = float(scheme.get("posterior_prior_error_scale", posterior_prior_error_scale))
-        scheme_results.append(
-            _run_one_scheme(
-                coord=coord_arr,
-                fit_coord=fit_coord,
-                ft_scale_over_fit_scale=ft_scale_over_fit_scale,
-                re_samples=re_mat,
-                im_samples=im_mat,
-                y_grid=y_arr,
-                scheme=scheme,
-                method=method,
-                order=scheme_order,
-                observable=observable,
-                fit_scale=fit_scale,
-                im_flip_for_ft=im_flip_for_ft,
-                phase_scale=phase_scale,
-                phase_prime_scale=phase_prime_scale,
-                resample_mode=resample_mode,
-                Lambda0=Lambda0,
-                posterior_prior_error_scale=scheme_prior_width,
-                sample_error_mode=sample_error_mode,
-                part=part,
-                sector=sector,
-                hadron=hadron,
+    try:
+        for scheme in _progress(schemes, desc="fourier schemes"):
+            scheme_order = str(scheme.get("order", order)).upper()
+            scheme_prior_width = float(scheme.get("posterior_prior_error_scale", posterior_prior_error_scale))
+            scheme_results.append(
+                _run_one_scheme(
+                    coord=coord_arr,
+                    fit_coord=fit_coord,
+                    ft_scale_over_fit_scale=ft_scale_over_fit_scale,
+                    re_samples=re_mat,
+                    im_samples=im_mat,
+                    y_grid=y_arr,
+                    scheme=scheme,
+                    method=method,
+                    order=scheme_order,
+                    observable=observable,
+                    fit_scale=fit_scale,
+                    im_flip_for_ft=im_flip_for_ft,
+                    phase_scale=phase_scale,
+                    phase_prime_scale=phase_prime_scale,
+                    resample_mode=resample_mode,
+                    Lambda0=Lambda0,
+                    posterior_prior_error_scale=scheme_prior_width,
+                    sample_error_mode=sample_error_mode,
+                    part=part,
+                    sector=sector,
+                    hadron=hadron,
+                    executor=sample_executor,
+                    workers=workers,
+                )
             )
-        )
-        scheme_results[-1]["order"] = scheme_order
-        scheme_results[-1]["posterior_prior_error_scale"] = scheme_prior_width
+            scheme_results[-1]["order"] = scheme_order
+            scheme_results[-1]["posterior_prior_error_scale"] = scheme_prior_width
+    finally:
+        if owned_executor is not None:
+            owned_executor.shutdown()
 
     ft_re = np.asarray([item["ft_re_samples"] for item in scheme_results])
     ft_im = np.asarray([item["ft_im_samples"] for item in scheme_results])
@@ -1343,6 +1484,7 @@ def run_fourier_workflow(
         "Lambda0": float(Lambda0),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
         "part": part,
+        "workers": int(workers),
         "short_distance_policy": "full_from_zero" if not missing_short_distance_coord else "truncate_missing",
         "input_coord_start": float(coord_arr[0]),
         "input_coord_step": float(coord_step),
@@ -1433,6 +1575,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "resample_mode": str(result.get("resample_mode", "")),
         "sample_error_mode": str(result.get("sample_error_mode", "")),
         "average_method": str(result.get("sample_error_mode", "")),
+        "workers": str(result.get("workers", 1)),
     }
     for key in ("pz_gev", "pz_out_gev", "a_fm"):
         value = result.get(key)
@@ -2246,6 +2389,7 @@ def _apply_fourier_output_scale(result: dict[str, Any], output_scale: float) -> 
     result["output_scale"] = scale
 
 
+@_with_fourier_sample_executor
 def run_fourier_transform(
     store: dict[str, Any],
     *,
@@ -2272,8 +2416,12 @@ def run_fourier_transform(
     plot_extension: dict[str, Any] | None = None,
     report: dict[str, Any] | None = None,
     artifacts_dir: str | None = None,
+    workers: int = 1,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
+    if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or int(workers) < 1:
+        raise ValueError("workers must be a positive integer")
+    workers = int(workers)
     out = "fourier_result"
     sector = None if sector is None else str(sector).strip().lower()
     target = str(target_observable or "").strip().lower()
@@ -2448,6 +2596,7 @@ def run_fourier_transform(
             part="im",
             sector=sector,
             hadron=hadron,
+            workers=workers,
         )
         valence_result = run_fourier_workflow(
             matrix_element["coord"],
@@ -2470,6 +2619,7 @@ def run_fourier_transform(
             part="re",
             sector=sector,
             hadron=hadron,
+            workers=workers,
         )
         for sector_result in (total_result, valence_result):
             sector_result.update(candidate_diagnostics)
@@ -2529,6 +2679,7 @@ def run_fourier_transform(
             part=part,
             sector=sector,
             hadron=hadron,
+            workers=workers,
         )
     result["resample_mode"] = resample_mode
     result["sample_error_mode"] = sample_error_mode
@@ -2545,6 +2696,7 @@ def run_fourier_transform(
         else candidate_diagnostics["fit_model_prior_widths"]
     )
     result["part"] = str(part)
+    result["workers"] = int(workers)
     result["ensemble"] = matrix_element_data.ensemble
     result.update(candidate_diagnostics)
     if auto_scheme_scan is not None:
@@ -2600,6 +2752,7 @@ def run_fourier_transform(
         "output_scale": result.get("output_scale", 1.0),
         "sector": result.get("sector", sector),
         "auto_scheme_scan": auto_scheme_scan,
+        "workers": int(workers),
     }
 
 

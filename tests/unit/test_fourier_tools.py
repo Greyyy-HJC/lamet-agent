@@ -99,6 +99,35 @@ def test_fourier_workflow_omits_missing_short_distance_grid() -> None:
     assert np.isclose(result["scheme_results"][0]["z_ext"][0], 2.0 * 0.04 / 0.197327)
 
 
+def test_fourier_parallel_sample_fits_match_serial() -> None:
+    coord = np.arange(2.0, 8.0)
+    base = np.exp(-0.2 * coord) * np.cos(0.3 * coord)
+    re_samples = np.vstack([base * (1.0 + 0.001 * idx) for idx in range(4)])
+    im_samples = np.zeros_like(re_samples)
+    kwargs = {
+        "schemes": [{"label": "manual", "zmin": 2.0, "zmax": 4.0, "z_ext_max": 7.0, "smooth": "linear"}],
+        "method": "GI",
+        "order": "LA",
+        "observable": "meson_quasi_da",
+        "coord_unit": "lattice",
+        "pz_gev": 2.4,
+        "a_fm": 0.04,
+        "resample_mode": "jackknife",
+        "sample_error_mode": "mean",
+        "part": "re",
+        "sector": "valence",
+        "hadron": "pion",
+    }
+
+    serial = run_fourier_workflow(coord, re_samples, im_samples, [-0.5, 0.0, 0.5], workers=1, **kwargs)
+    parallel = run_fourier_workflow(coord, re_samples, im_samples, [-0.5, 0.0, 0.5], workers=2, **kwargs)
+
+    assert serial["workers"] == 1
+    assert parallel["workers"] == 2
+    for key in ("fit_params", "fit_chi2", "fit_q", "fit_log_gbf", "ft_re_samples", "ft_im_samples"):
+        assert np.allclose(serial["scheme_results"][0][key], parallel["scheme_results"][0][key])
+
+
 def test_fourier_stage_tools_are_registered() -> None:
     tools = resolve_stage_tools("fourier_transform")
     assert "load_renormalized_matrix_element_samples" in tools
@@ -129,9 +158,11 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         order="LA",
         Lambda0=0.3,
         artifacts_dir=str(tmp_path / "artifacts"),
+        workers=2,
     )
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
+    assert run["workers"] == 2
     assert Path(run["artifact"]).is_file()
     assert Path(run["artifact"]).parent == tmp_path / "artifacts"
     assert Path(run["artifact"]).suffix == ".nc"
@@ -139,6 +170,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     ft_data = EnsembleData.from_netcdf(run["artifact"])
     assert ft_data.dims == ["x"]
     assert ft_data.resample == "bootstrap"
+    assert ft_data.attrs["workers"] == "2"
     assert ft_data.values.shape == (3, 3)
     assert "ft_re_mean" in ft_data.attrs
     assert Path(run["fit_info_artifact"]).is_file()

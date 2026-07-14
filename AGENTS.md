@@ -143,6 +143,7 @@ Package modules:
 - Terminal stage tools must place their primary in-memory result in `store["output"]`.
 - Fourier jobs consume role `input`; matching jobs consume role `quasi`. Partial Fourier runs declare the renormalized NetCDF and its `a_fm`, `pz_gev`, `hadron`, and `gfix` metadata under `inputs.artifacts`.
 - `inputs.kernels[].stage` must be a full `StageId` (`renormalization` or `perturbative_matching`), not a package shorthand such as `matching`.
+- Hybrid `zs_fm` is a flat stage/job parameter under `renormalization` and `perturbative_matching`; do not place it in `inputs.kernels[].kernel_parameters` or renormalization `scheme_parameters`.
 
 ## Plotting Conventions
 

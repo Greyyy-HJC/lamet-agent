@@ -165,10 +165,10 @@
     "kernels": [
       {
         "stage": "perturbative_matching",
-        "kernel_id": "CG_gt_PDF_hybrid",
+        "kernel_id": "GI_gt_qPDF_hybrid_NLO",
         "kernel_path": "src/lamet_agent/kernels.py",
         "scheme": "hybrid_ratio",
-        "kernel_parameters": {"zs_fm": 0.1722}
+        "kernel_parameters": {}
       }
     ]
   },
@@ -197,13 +197,12 @@
         "normalization": true,
         "scheme": "hybrid_ratio",
         "scheme_parameters": {
-          "zs_fm": 0.1722,
           "m0_gev": 0.1232,
           "delta_m_gev": 0.545227463
         }
       },
       "jobs": [
-        {"id": "rn_p4", "inputs": {"target": "ca_p4", "denominator": "ca_p0"}}
+        {"id": "rn_p4", "inputs": {"target": "ca_p4", "denominator": "ca_p0"}, "params": {"zs_fm": 0.1722}}
       ]
     },
     "fourier_transform": {
@@ -224,7 +223,7 @@
     "perturbative_matching": {
       "defaults": {"mu": 2.0, "component": "re"},
       "jobs": [
-        {"id": "mt_p4", "inputs": {"quasi": "ft_p4"}, "params": {"pz_gev": 1.72}}
+        {"id": "mt_p4", "inputs": {"quasi": "ft_p4"}, "params": {"pz_gev": 1.72, "zs_fm": 0.1722}}
       ]
     }
   }

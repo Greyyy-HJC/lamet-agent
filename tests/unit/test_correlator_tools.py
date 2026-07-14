@@ -58,6 +58,7 @@ from lamet_agent.stages.correlator.functions import (
     asymptotic_ratio,
     bayesian_average,
     fit_fh,
+    fit_bare_matrix_grid,
     fit_joint,
     fit_ratio,
     fit_two_point,
@@ -658,6 +659,63 @@ def test_tune_bare_matrix_returns_ranked_candidates(tmp_path) -> None:
     assert result["candidates"][0]["n_data"] > result["candidates"][0]["n_params"]
     assert result["candidates"][0]["dof_is_positive"] is True
     assert result["recommended_window"]["n_data"] > result["recommended_window"]["n_params"]
+
+
+def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
+    pt2_path, pt3_paths = _write_fake_correlators(
+        tmp_path,
+        n_cfg=8,
+        tsep_ls=(6, 8),
+        z_values=(0,),
+    )
+    common = {
+        "pt2_path": pt2_path,
+        "pt3_paths": pt3_paths,
+        "tsep_ls": [6, 8],
+        "z_values": [0],
+        "ensemble": "toy",
+        "momentum": "PX0PY0PZ0",
+        "pt2_window": {"tmin": 2, "tmax": 10},
+        "pt3_window": {"tsep_ls": [6, 8], "tau_cut": 1},
+        "fit_strategy": "joint",
+        "fit_scope": "ratio",
+        "nstate": 2,
+        "prior_width": 1.0,
+        "resample_mode": "jk",
+        "sample_error_mode": "mean",
+        "svdcut": 1e-6,
+    }
+    serial_store: dict = {}
+    parallel_store: dict = {}
+    serial = fit_bare_matrix_grid(
+        serial_store,
+        tag="serial",
+        artifacts_dir=tmp_path / "serial",
+        save_path=str(tmp_path / "serial" / "bare"),
+        workers=1,
+        **common,
+    )
+    parallel = fit_bare_matrix_grid(
+        parallel_store,
+        tag="parallel",
+        artifacts_dir=tmp_path / "parallel",
+        save_path=str(tmp_path / "parallel" / "bare"),
+        workers=2,
+        **common,
+    )
+
+    assert serial["workers"] == 1
+    assert parallel["workers"] == 2
+    assert parallel_store["bare_matrix_element_data"].attrs["workers"] == "2"
+    assert np.allclose(
+        serial_store["bare_matrix_element_data"].values,
+        parallel_store["bare_matrix_element_data"].values,
+        equal_nan=True,
+    )
+    assert serial["z_fits"][0]["n_failed_samples"] == parallel["z_fits"][0]["n_failed_samples"]
+    assert np.allclose(serial["z_fits"][0]["fit_model_weights"], parallel["z_fits"][0]["fit_model_weights"])
+    assert parallel["z_fits"][0]["sample0_plot_paths"]
+    assert all(Path(path).is_file() for path in parallel["z_fits"][0]["sample0_plot_paths"].values())
 
 
 def test_tune_bare_matrix_requires_tune_z_values(tmp_path) -> None:

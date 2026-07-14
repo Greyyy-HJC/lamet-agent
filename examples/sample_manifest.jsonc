@@ -32,6 +32,7 @@
     "resample_mode": "jk", // "jk" or "bs" — shared by correlator and fourier stages
     "sample_error_mode": "covariance", // "mean", "median", or "covariance"; "median" requires resample_mode "bs"
     "random_seed": 1984, // required; RNG seed for every resampling step in the run
+    "workers": 1, // optional positive integer; sample-fit worker processes (default: 1, serial)
     // "bs_samples": 500, // REQUIRED when resample_mode is "bs"; no default — must be set explicitly
     // "bin_size": 1, // optional; bins configurations before jackknife/bootstrap resampling (default: no binning)
     // Global stage ORDER only. Which data sets flow through each stage is
@@ -278,12 +279,10 @@
     "kernels": [
       {
         "stage": "perturbative_matching",
-        "kernel_id": "CG_gt_PDF_hybrid",
+        "kernel_id": "CG_gt_qPDF_hybrid_NLO",
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
         "scheme": "hybrid_ratio",
-        "kernel_parameters": {
-          "zs_fm": 0.1722
-        }
+        "kernel_parameters": {}
       }
     ]
   },
@@ -336,7 +335,6 @@
         "normalization": true, // divide bare matrix elements by z=0 before scheme; default true
         "scheme": "hybrid_ratio", // long-range exponential correction
         "scheme_parameters": {
-          "zs_fm": 0.1722, // hybrid switch length (fm); short vs long branch
           "m0_gev": 0.0, // linear renormalon slope (GeV); long-range exponent only
           "delta_m_gev": 0.0, // target–denominator mass gap (GeV); GI example ~0.545 (= 0.1586*ℏc/a_fm at a=0.0574 fm)
           "svdcut": 1e-12 // self_renormalization correlated-fit SVD cut; unused by hybrid_ratio
@@ -346,11 +344,13 @@
         // MERGE POINT 1: p0 (ca_p0) is the shared denominator for p4 and p5.
         {
           "id": "rn_p4",
-          "inputs": { "target": "ca_p4", "denominator": "ca_p0" }
+          "inputs": { "target": "ca_p4", "denominator": "ca_p0" },
+          "params": { "zs_fm": 0.1722 } // per-data hybrid switch length (fm); may differ by job
         },
         {
           "id": "rn_p5",
-          "inputs": { "target": "ca_p5", "denominator": "ca_p0" }
+          "inputs": { "target": "ca_p5", "denominator": "ca_p0" },
+          "params": { "zs_fm": 0.1722 }
         }
         // No job for p0 -> p0 stops after correlator_analysis.
       ]
@@ -400,12 +400,12 @@
         {
           "id": "mt_p4",
           "inputs": { "quasi": "ft_p4" },
-          "params": { "pz_gev": 1.72 }
+          "params": { "pz_gev": 1.72, "zs_fm": 0.1722 }
         },
         {
           "id": "mt_p5",
           "inputs": { "quasi": "ft_p5" },
-          "params": { "pz_gev": 2.15 }
+          "params": { "pz_gev": 2.15, "zs_fm": 0.1722 }
         }
       ]
     },

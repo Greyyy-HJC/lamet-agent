@@ -576,3 +576,21 @@
 - Renamed ``inputs.kernels[].stage`` from shorthand ``matching`` to full stage id ``perturbative_matching`` in all example manifests and planning tests.
 - Updated ``effective_matching_params`` to filter kernels by ``stage == "perturbative_matching"``.
 - Tightened ``KernelInput.stage`` to ``StageId`` so invalid shorthand fails schema validation.
+
+## 2026-07-14 (Sample-fit process parallelism)
+
+- Added optional positive ``metadata.workers`` (default ``1``) and injected it into correlator-grid and Fourier terminal tools.
+- Parallelized independent correlator and Fourier sample fits with reusable ``ProcessPoolExecutor`` pools while keeping tuning, logging, plotting, extrapolation, and Fourier summation in the main process.
+- Used ``gvar.dumps`` / ``gvar.loads`` for multiprocessing payloads so correlated priors and covariance templates retain their correlations.
+- Added serial/parallel equivalence tests and documented BLAS thread limits for avoiding process/thread oversubscription.
+
+## 2026-07-14 (Canonical matching kernel ids)
+
+- Replaced stale matching example id ``CG_gt_PDF_hybrid`` with the exact ``kernels.py`` function names: ``CG_gt_qPDF_hybrid_NLO`` for CG workflows and ``GI_gt_qPDF_hybrid_NLO`` for the GI workflow.
+- Updated matching/tool/planning tests and added a registry invariant requiring every ``KERNEL_REGISTRY`` key to equal its kernel builder's public function name.
+
+## 2026-07-14 (Per-job hybrid switch distance)
+
+- Moved hybrid ``zs_fm`` out of matching ``kernel_parameters`` and renormalization ``scheme_parameters`` into flat stage defaults or job params, with job-level overrides.
+- Rejected both legacy manifest locations and updated stage validation, tool argument preparation, planning guidance, and workflow examples to use the new canonical paths.
+- Added a non-blocking review check that follows matching → Fourier → renormalization DAG chains and reports consistent, mismatched, non-applicable, or externally unverifiable ``zs_fm`` settings.
