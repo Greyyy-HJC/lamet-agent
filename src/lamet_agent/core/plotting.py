@@ -974,8 +974,8 @@ def plot_fourier_extension_quality(
 
     apply_plot_style()
     fig, ax = default_plot()
-    data_color = "#9ecae1"
-    ext_color = "#a1d99b"
+    data_color = "#08306b"
+    ext_color = "#5c3317"
 
     method = str(result.get("method", "")).upper()
     order = str(result.get("order", "")).upper()
@@ -988,20 +988,23 @@ def plot_fourier_extension_quality(
         data_mean - data_sdev,
         data_mean + data_sdev,
         color=data_color,
-        alpha=0.7,
+        alpha=0.68,
         linewidth=0,
         label="Lattice Data",
+        zorder=1,
     )
+    ax.plot(lambda_data, data_mean, color=data_color, linewidth=1.35, alpha=0.98, zorder=3)
     ax.fill_between(
         lambda_ext_plot,
         ext_mean_plot - ext_sdev_plot,
         ext_mean_plot + ext_sdev_plot,
         color=ext_color,
-        alpha=0.5,
+        alpha=0.62,
         linewidth=0,
         label=model_label,
-        zorder=1,
+        zorder=2,
     )
+    ax.plot(lambda_ext_plot, ext_mean_plot, color=ext_color, linewidth=1.45, alpha=0.98, zorder=4)
 
     for idx, value in enumerate(fit_lambda):
         ax.axvline(

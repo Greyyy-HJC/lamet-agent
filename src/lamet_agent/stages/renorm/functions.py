@@ -953,21 +953,23 @@ def plot_self_renormalization_diagnostics(
         mR = np.asarray(fit_data["mR"], dtype=float)
 
         fig, ax = default_plot()
-        highlight = {round(float(z), 2) for z in z_fit[:: max(1, len(z_fit) // 4)]}
+        highlight_indices = list(range(0, len(z_fit), max(1, len(z_fit) // 6)))
+        if len(z_fit) - 1 not in highlight_indices:
+            highlight_indices.append(len(z_fit) - 1)
         for iz, z_val in enumerate(z_fit):
-            label = f"z={z_val:.2f}" if round(float(z_val), 2) in highlight else None
+            label = rf"$z={z_val:.2f}\,\mathrm{{fm}}$" if iz in highlight_indices else None
             ax.errorbar(
                 x_fit,
                 lnm_mean[:, iz],
                 lnm_sdev[:, iz],
                 label=label,
-                color=COLOR_CYCLE[iz % len(COLOR_CYCLE)],
+                color=plt.cm.viridis(iz / max(1, len(z_fit) - 1)),
                 **ERRORBAR_STYLE,
             )
         ax.set_xlabel(r"$1/a$ [GeV]", **FONT_SIZE)
         ax.set_ylabel(r"$\ln|M|$", **FONT_SIZE)
         ax.set_title("Reference matrix element after interpolation", **FONT_SIZE)
-        ax.legend(**LEGEND_SETS)
+        ax.legend(fontsize=12, loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0)
         fig.tight_layout()
         pdf, svg = _save_plot_pair(fig, stem.with_name(stem.name + "_fit_lnM_vs_inv_a"))
         plots["fit_lnM_vs_inv_a"] = pdf
@@ -976,7 +978,7 @@ def plot_self_renormalization_diagnostics(
         zms = np.asarray(zms_fit_fn(z_fit, mu=mu_val), dtype=float)
         fig, ax = default_plot()
         ax.plot(z_fit, zms, color="k", label=r"$Z_{\overline{\mathrm{MS}}}$")
-        ax.errorbar(z_fit, mR, np.zeros_like(mR), color=COLOR_CYCLE[0], label=r"$m_R=\exp(g-m_0 z)$", **ERRORBAR_STYLE)
+        ax.errorbar(z_fit, mR, np.zeros_like(mR), color=COLOR_CYCLE[0], label=r"$m_R=\exp(g(z)-m_0 z)$", **ERRORBAR_STYLE)
         ax.errorbar(z_fit, mR / zms, np.zeros_like(mR), color=COLOR_CYCLE[1], label="ratio", marker="s", **ERRORBAR_STYLE)
         ax.set_xlabel(r"$z$ [fm]", **FONT_SIZE)
         ax.set_ylabel("factor", **FONT_SIZE)
@@ -994,11 +996,11 @@ def plot_self_renormalization_diagnostics(
                 z_fit,
                 ratio,
                 np.zeros_like(ratio),
-                label=f"a={a_val:.4f}",
+                label=rf"$a={a_val:.4f}\,\mathrm{{fm}}$",
                 color=COLOR_CYCLE[ia % len(COLOR_CYCLE)],
                 **ERRORBAR_STYLE,
             )
-        ax.errorbar(z_fit, mR, np.zeros_like(mR), color=COLOR_CYCLE[0], label=r"$\exp(g-m_0 z)$", marker="x", **ERRORBAR_STYLE)
+        ax.errorbar(z_fit, mR, np.zeros_like(mR), color=COLOR_CYCLE[len(a_fit) % len(COLOR_CYCLE)], label=r"$m_R=\exp(g(z)-m_0 z)$", marker="x", **ERRORBAR_STYLE)
         ax.set_xlabel(r"$z$ [fm]", **FONT_SIZE)
         ax.set_ylabel(r"$M_{\mathrm{bare}}/z_R$", **FONT_SIZE)
         ax.set_title("PDF self-renormalization check", **FONT_SIZE)
@@ -1049,7 +1051,7 @@ def plot_self_renormalization_diagnostics(
     re_hzr, re_hzr_err = sample_mean_and_sdev(np.real(h_over_zr), mode=mode_rs, sample_error_mode=sample_error_mode, axis=0)
 
     fig, ax = default_plot()
-    ax.errorbar(z_target, re_hzr, re_hzr_err, color=COLOR_CYCLE[0], label=rf"$H/z_R$ (a={a_fm:.4f})", **ERRORBAR_STYLE)
+    ax.errorbar(z_target, re_hzr, re_hzr_err, color=COLOR_CYCLE[0], label=rf"$H/z_R$ ($a={a_fm:.4f}\,\mathrm{{fm}}$)", **ERRORBAR_STYLE)
     ax.plot(z_target, zms_target, color=COLOR_CYCLE[1], label=r"$Z_{\overline{\mathrm{MS}}}$")
     ax.axhline(0.0, color="k", linestyle="--", linewidth=0.8)
     ax.set_xlabel(r"$z$ [fm]", **FONT_SIZE)
@@ -1083,8 +1085,8 @@ def plot_self_renormalization_diagnostics(
                 im_m, im_e = sample_mean_and_sdev(np.imag(values), mode="bs", sample_error_mode=sample_error_mode, axis=0)
                 z_axis = z_target if values.shape[1] == len(z_target) else np.arange(values.shape[1], dtype=float)
                 color = COLOR_CYCLE[idx % len(COLOR_CYCLE)]
-                ax_re.errorbar(z_axis, re_m, re_e, color=color, label=f"a={a_val:.4f}", **ERRORBAR_STYLE)
-                ax_im.errorbar(z_axis, im_m, im_e, color=color, label=f"a={a_val:.4f}", **ERRORBAR_STYLE)
+                ax_re.errorbar(z_axis, re_m, re_e, color=color, label=rf"$a={a_val:.4f}\,\mathrm{{fm}}$", **ERRORBAR_STYLE)
+                ax_im.errorbar(z_axis, im_m, im_e, color=color, label=rf"$a={a_val:.4f}\,\mathrm{{fm}}$", **ERRORBAR_STYLE)
             for ax, ylabel, title, key in (
                 (ax_re, r"Re$[H/(z_R Z_{\overline{\mathrm{MS}}})]$", "Discrete-effect overlay (Re)", "discrete_effect_re"),
                 (ax_im, r"Im$[H/(z_R Z_{\overline{\mathrm{MS}}})]$", "Discrete-effect overlay (Im)", "discrete_effect_im"),
