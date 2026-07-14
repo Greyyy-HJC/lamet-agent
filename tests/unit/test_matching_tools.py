@@ -4,11 +4,22 @@ import numpy as np
 import pytest
 
 from lamet_agent.core.data import EnsembleData
-from lamet_agent.stages.matching.functions import apply_matching, load_quasi_pdf, plot_matched_pdf, resolve_kernel_id
+from lamet_agent.stages.matching.functions import (
+    KERNEL_REGISTRY,
+    apply_matching,
+    load_quasi_pdf,
+    plot_matched_pdf,
+    resolve_kernel_id,
+)
 
 
 def test_resolve_registered_hybrid_kernel() -> None:
-    assert resolve_kernel_id("CG_gt_PDF_hybrid", "hybrid_ratio") == "CG_gt_PDF_hybrid"
+    kernel_id = "CG_gt_qPDF_hybrid_NLO"
+    assert resolve_kernel_id(kernel_id, "hybrid_ratio") == kernel_id
+
+
+def test_kernel_registry_ids_match_kernels_module_function_names() -> None:
+    assert all(kernel_id == builder.__name__ for kernel_id, builder in KERNEL_REGISTRY.items())
 
 
 def test_matching_consumes_in_memory_fourier_output_and_writes_primary_netcdf(tmp_path: Path) -> None:

@@ -305,6 +305,16 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
     for index, item in enumerate(kernels):
         if not isinstance(item, dict):
             continue
+        kernel_parameters = item.get("kernel_parameters")
+        if isinstance(kernel_parameters, dict) and "zs_fm" in kernel_parameters:
+            issues.append(
+                PlanIssue(
+                    "error",
+                    f"inputs.kernels[{index}].kernel_parameters.zs_fm",
+                    "Matching zs_fm must be a flat perturbative_matching stage parameter.",
+                    "Move it to stages.perturbative_matching.defaults.zs_fm or the relevant jobs[].params.zs_fm.",
+                )
+            )
         kernel_path = _resolve_manifest_path(manifest_path, payload, item.get("kernel_path"))
         display_path = f"inputs.kernels[{index}].kernel_path"
         if kernel_path is None:
@@ -338,6 +348,29 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
     renorm_scheme = None
     if isinstance(renorm, dict) and isinstance(renorm.get("defaults"), dict):
         renorm_scheme = renorm["defaults"].get("scheme")
+        nested = renorm["defaults"].get("scheme_parameters")
+        if isinstance(nested, dict) and "zs_fm" in nested:
+            issues.append(
+                PlanIssue(
+                    "error",
+                    "stages.renormalization.defaults.scheme_parameters.zs_fm",
+                    "Renormalization zs_fm must be a flat stage parameter.",
+                    "Move it to stages.renormalization.defaults.zs_fm.",
+                )
+            )
+        jobs = renorm.get("jobs", [])
+        for index, job in enumerate(jobs if isinstance(jobs, list) else []):
+            params = job.get("params") if isinstance(job, dict) else None
+            nested = params.get("scheme_parameters") if isinstance(params, dict) else None
+            if isinstance(nested, dict) and "zs_fm" in nested:
+                issues.append(
+                    PlanIssue(
+                        "error",
+                        f"stages.renormalization.jobs[{index}].params.scheme_parameters.zs_fm",
+                        "Renormalization zs_fm must be a flat job parameter.",
+                        f"Move it to stages.renormalization.jobs[{index}].params.zs_fm.",
+                    )
+                )
     if isinstance(renorm_scheme, str):
         for index, kernel in enumerate(kernels):
             if isinstance(kernel, dict) and isinstance(kernel.get("scheme"), str) and kernel["scheme"] != renorm_scheme:
@@ -781,11 +814,12 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
     order = metadata.get("stages", []) if isinstance(metadata, dict) else []
     stage_order = [stage for stage in order if isinstance(stage, str)] if isinstance(order, list) else []
     kernels = inputs.get("kernels", []) if isinstance(inputs, dict) else []
-    matching_kernel_ids = [
-        item.get("kernel_id")
+    matching_kernels = [
+        item
         for item in kernels
         if isinstance(item, dict) and item.get("stage") in {"matching", "perturbative_matching"} and item.get("kernel_id")
     ]
+    matching_kernel_ids = [item.get("kernel_id") for item in matching_kernels]
     gaps: list[dict[str, Any]] = []
     if not isinstance(stages, dict):
         return gaps
@@ -811,9 +845,8 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "renormalization requires target and denominator input roles.", 'Example: {"target": "ca_pz", "denominator": "ca_p0"}.')
                 if params.get("scheme") != "hybrid_ratio":
                     add_gap("scheme", f"stages.{stage}.defaults.scheme", "renormalization requires scheme='hybrid_ratio'.", 'Set scheme to "hybrid_ratio".')
-                scheme_parameters = params.get("scheme_parameters")
-                if not isinstance(scheme_parameters, dict) or "zs_fm" not in scheme_parameters:
-                    add_gap("scheme_parameters.zs_fm", f"stages.{stage}.defaults.scheme_parameters.zs_fm", "hybrid_ratio requires scheme_parameters.zs_fm.", 'Example: {"scheme_parameters": {"zs_fm": 0.2}}.')
+                if params.get("scheme") == "hybrid_ratio" and "zs_fm" not in params:
+                    add_gap("zs_fm", f"stages.{stage}.defaults.zs_fm", "hybrid_ratio requires flat parameter zs_fm.", 'Example: {"zs_fm": 0.2}.')
             elif stage == "fourier_transform":
                 if roles != {"input"}:
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "fourier_transform requires exactly one input role named input.", 'Example: {"input": "rn_pz"}.')
@@ -830,6 +863,17 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 for key, example in (("pz_gev", "Example: 2.15."), ("mu", "Example: 2.0."), ("component", 'Choose "re" or "im".')):
                     if key not in params:
                         add_gap(key, f"stages.{stage}.defaults.{key}", f"perturbative_matching job {job_id!r} is missing parameter {key}.", example)
+                selected_kernel_id = params.get("kernel_id") or (matching_kernel_ids[0] if len(matching_kernel_ids) == 1 else None)
+                selected_kernel = next(
+                    (item for item in matching_kernels if item.get("kernel_id") == selected_kernel_id),
+                    None,
+                )
+                if (
+                    isinstance(selected_kernel, dict)
+                    and "hybrid" in str(selected_kernel.get("kernel_id", "")).lower()
+                    and "zs_fm" not in params
+                ):
+                    add_gap("zs_fm", f"stages.{stage}.defaults.zs_fm", f"hybrid matching job {job_id!r} is missing flat parameter zs_fm.", 'Example: {"zs_fm": 0.2}.')
             elif stage == "extrapolation":
                 if "momenta" not in roles:
                     add_gap("inputs.momenta", f"stages.{stage}.jobs[{index}].inputs", "extrapolation requires a momenta input role, but the stage is currently a placeholder.", 'Example: {"momenta": ["mt_pz1", "mt_pz2"]}.')

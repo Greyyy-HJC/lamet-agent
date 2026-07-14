@@ -710,7 +710,7 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
             },
             "stages": {
                 "renormalization": {
-                    "defaults": {"scheme": "hybrid_ratio", "scheme_parameters": {"zs_fm": 0.3}},
+                    "defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.3},
                     "jobs": [{"id": "rn_p4", "inputs": {"target": "target", "denominator": "denom"}}],
                 },
             },
@@ -755,9 +755,20 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
     def fake_plot_renormalized_matrix_element(store, **kwargs):
         return {"plot": str(tmp_path / "rn_p4.pdf")}
 
+    def fake_load_bare_matrix_element_grid(store, **kwargs):
+        store["matrix_element_data"] = EnsembleData(
+            ensemble=None,
+            resample="jackknife",
+            values=[np.array([1.0 + 0.0j, 0.9 + 0.1j])],
+            dims=("z",),
+            coords={"z": [0, 1]},
+        )
+        return {"data": "matrix_element_data"}
+
     monkeypatch.setattr(
         "lamet_agent.agent.resolve_stage_tools",
         lambda stage: {
+            "load_bare_matrix_element_grid": fake_load_bare_matrix_element_grid,
             "apply_ratio_scheme_renormalization": fake_apply_ratio_scheme_renormalization,
             "plot_renormalized_matrix_element": fake_plot_renormalized_matrix_element,
         },
@@ -817,7 +828,7 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
                     "defaults": {
                         "normalization": True,
                         "scheme": "hybrid_ratio",
-                        "scheme_parameters": {"zs_fm": 0.3},
+                        "zs_fm": 0.3,
                     },
                     "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
                 },

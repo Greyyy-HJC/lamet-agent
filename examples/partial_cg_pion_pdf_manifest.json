@@ -28,10 +28,10 @@
     "kernels": [
       {
         "stage": "perturbative_matching",
-        "kernel_id": "CG_gt_PDF_hybrid",
+        "kernel_id": "CG_gt_qPDF_hybrid_NLO",
         "kernel_path": "src/lamet_agent/kernels.py",
         "scheme": "hybrid_ratio",
-        "kernel_parameters": {"zs_fm": 0.1722}
+        "kernel_parameters": {}
       }
     ]
   },
@@ -60,7 +60,7 @@
     "perturbative_matching": {
       "defaults": {"mu": 2.0, "component": "re"},
       "jobs": [
-        {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"pz_gev": 2.15}}
+        {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"pz_gev": 2.15, "zs_fm": 0.1722}}
       ]
     }
   }

@@ -23,9 +23,13 @@ Example usage:
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
+from contextvars import ContextVar
+from functools import wraps
 from itertools import product
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import gvar as gv
@@ -61,6 +65,10 @@ from lamet_agent.core.tools import (
 
 # 2pt ground-state posteriors anchor the chained 3pt prior with widened errors.
 PT2_PRIOR_ERROR_SCALE = 3.0
+_CORRELATOR_SAMPLE_EXECUTOR: ContextVar[ProcessPoolExecutor | None] = ContextVar(
+    "correlator_sample_executor",
+    default=None,
+)
 
 
 # --- physics models and priors ----------------------------------------------
@@ -2683,6 +2691,148 @@ def _fit_one_sample(
     return fit, rre, rim
 
 
+def _sample_batches(n_samples: int, workers: int) -> list[list[int]]:
+    """Split sample indices into at most ``workers`` non-empty batches."""
+    n_batches = min(int(workers), int(n_samples))
+    return [batch.tolist() for batch in np.array_split(np.arange(n_samples), n_batches) if batch.size]
+
+
+def _fit_correlator_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[str, Any]]:
+    """Fit one batch of correlator samples without logging or plotting."""
+    context = gv.loads(payload)
+    results: list[dict[str, Any]] = []
+    for sample_index in sample_indices:
+        logs: list[dict[str, Any]] = []
+        try:
+            re_vals: list[float] = []
+            im_vals: list[float] = []
+            sample_records: list[dict[str, Any]] = []
+            first_fit = None
+            first_rre = first_rim = None
+            first_meta = None
+            for candidate_index, candidate in enumerate(context["candidates"]):
+                fit, rre, rim = _fit_one_sample(
+                    candidate["spec"],
+                    sample_index,
+                    candidate["prior"],
+                    candidate["p0"],
+                    nstate=candidate["nstate"],
+                    **context["common"],
+                )
+                usable, reason = _fit_usable(fit, candidate["template"])
+                if not usable:
+                    if not context["model_average"]:
+                        raise ValueError(str(reason))
+                    logs.append(
+                        {
+                            "kind": "rejected",
+                            "nstate": candidate["nstate"],
+                            "prior_width": candidate["prior_width"],
+                            "reason": str(reason),
+                        }
+                    )
+                    continue
+                sample_record = _record(
+                    fit,
+                    candidate_index=candidate_index,
+                    nstate=candidate["nstate"],
+                    prior_width=candidate["prior_width"],
+                    part=context["part"],
+                    fit_scope=context["scope"],
+                    correlator_rescale=context["scale"],
+                    **candidate["spec"],
+                )
+                sample_records.append(sample_record)
+                logs.append(
+                    {
+                        "kind": "quality",
+                        "spec": candidate["spec"],
+                        "nstate": candidate["nstate"],
+                        "prior_width": candidate["prior_width"],
+                        "Q": float(fit.Q),
+                        "chi2": float(fit.chi2),
+                        "dof": int(fit.dof),
+                        "logGBF": float(fit.logGBF),
+                    }
+                )
+                re_vals.append(
+                    _bare_matrix_element_mean_for_part(
+                        fit.p,
+                        output_part="re",
+                        fit_part=context["part"],
+                        fitting_form=context["form"],
+                    )
+                )
+                im_vals.append(
+                    _bare_matrix_element_mean_for_part(
+                        fit.p,
+                        output_part="im",
+                        fit_part=context["part"],
+                        fitting_form=context["form"],
+                    )
+                )
+                if first_fit is None:
+                    first_fit, first_rre, first_rim = fit, rre, rim
+                    first_meta = {
+                        **candidate["spec"],
+                        "nstate": candidate["nstate"],
+                        "prior_width": candidate["prior_width"],
+                    }
+            if not sample_records:
+                raise ValueError("all fit-function candidates failed")
+            sample_weights = _loggbf_weights(sample_records) if context["model_average"] else np.ones(1, dtype=float)
+            candidate_weights = np.zeros(len(context["candidates"]), dtype=float)
+            for weight, sample_record in zip(sample_weights, sample_records):
+                candidate_weights[int(sample_record["candidate_index"])] += float(weight)
+            plot_payload = None
+            if sample_index == 0:
+                plot_payload = gv.dumps(
+                    {"fit": first_fit, "rre": first_rre, "rim": first_rim, "meta": first_meta}
+                )
+            results.append(
+                {
+                    "sample": sample_index,
+                    "real": float(np.sum(sample_weights * np.asarray(re_vals))),
+                    "imag": float(np.sum(sample_weights * np.asarray(im_vals))),
+                    "candidate_weights": candidate_weights,
+                    "logs": logs,
+                    "plot_payload": plot_payload,
+                    "error": None,
+                }
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "sample": sample_index,
+                    "logs": logs,
+                    "error": str(exc),
+                }
+            )
+    return results
+
+
+def _with_correlator_sample_executor(func):
+    """Own one process pool for the full correlator tool invocation."""
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        value = kwargs.get("workers", 1)
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or int(value) < 1:
+            raise ValueError("workers must be a positive integer")
+        workers = int(value)
+        kwargs["workers"] = workers
+        if workers == 1:
+            return func(*args, **kwargs)
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            token = _CORRELATOR_SAMPLE_EXECUTOR.set(executor)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                _CORRELATOR_SAMPLE_EXECUTOR.reset(token)
+
+    return wrapped
+
+
+@_with_correlator_sample_executor
 def fit_bare_matrix_grid(
     store: dict[str, Any],
     *,
@@ -2740,6 +2890,7 @@ def fit_bare_matrix_grid(
     log_path: str | Path | None = None,
     artifacts_dir: str | Path | None = None,
     out: str = "bare_matrix_grid",
+    workers: int = 1,
 ) -> dict[str, Any]:
     """Apply one shared window to all samples and z, then export bare matrix elements.
 
@@ -2748,6 +2899,7 @@ def fit_bare_matrix_grid(
     fit-function choices (nstate and prior_width) within that fixed data window.
     """
     del out
+    sample_executor = _CORRELATOR_SAMPLE_EXECUTOR.get()
     form = _normalise_fitting_form(fitting_form)
     strategy, _ = _normalise_strategy(fit_strategy)
     scope, scope_label = _normalise_fit_scope(fit_scope)
@@ -3102,7 +3254,122 @@ def fit_bare_matrix_grid(
         )
         weight_sums = np.zeros(len(avg_records), dtype=float)
         weight_counts = 0
-        for sample_index in range(n_samples):
+        sample_indices = range(n_samples)
+        if sample_executor is not None:
+            candidates = [
+                {
+                    "spec": {
+                        "tmin": rec["tmin"],
+                        "tmax": rec["tmax"],
+                        "tsep_ls": rec["tsep_ls"],
+                        "tau_cut": rec["tau_cut"],
+                    },
+                    "nstate": int(rec["nstate"]),
+                    "prior_width": float(rec["prior_width"]),
+                    "template": template,
+                    "prior": prior,
+                    "p0": p0,
+                }
+                for rec, template, (prior, p0) in zip(avg_records, templates, priors)
+            ]
+            payload = gv.dumps(
+                {
+                    "common": common,
+                    "candidates": candidates,
+                    "model_average": model_average,
+                    "part": part,
+                    "form": form,
+                    "scope": scope,
+                    "scale": scale,
+                }
+            )
+            futures = [
+                sample_executor.submit(_fit_correlator_sample_batch, payload, batch)
+                for batch in _sample_batches(n_samples, workers)
+            ]
+            parallel_results = sorted(
+                (item for future in futures for item in future.result()),
+                key=lambda item: item["sample"],
+            )
+            for result in parallel_results:
+                sample_index = int(result["sample"])
+                for log_item in result["logs"]:
+                    if log_item["kind"] == "rejected":
+                        sample_logger.info(
+                            "Rejected %s z=%s sample=%s nstate=%s prior_width=%s: %s",
+                            fit_mode,
+                            z,
+                            sample_index,
+                            log_item["nstate"],
+                            log_item["prior_width"],
+                            log_item["reason"],
+                        )
+                        continue
+                    spec = log_item["spec"]
+                    log_nonlinear_fit_quality(
+                        SimpleNamespace(
+                            Q=log_item["Q"],
+                            chi2=log_item["chi2"],
+                            dof=log_item["dof"],
+                            logGBF=log_item["logGBF"],
+                        ),
+                        kind=f"sample ground-state {fit_mode}",
+                        label=(
+                            f"z={z} sample={sample_index} t=[{spec['tmin']},{spec['tmax']}) "
+                            f"tseps={spec['tsep_ls']} tau_cut={spec['tau_cut']} "
+                            f"nstate={log_item['nstate']} prior_width={log_item['prior_width']}"
+                        ),
+                        logger=sample_logger,
+                        q_min=q_min,
+                    )
+                if result["error"] is not None:
+                    failures.append({"sample": sample_index, "error": result["error"]})
+                    sample_logger.info("Bad %s z=%s sample=%s: %s", fit_mode, z, sample_index, result["error"])
+                    continue
+                real_samples[sample_index] = float(result["real"])
+                imag_samples[sample_index] = float(result["imag"])
+                weight_sums += np.asarray(result["candidate_weights"], dtype=float)
+                weight_counts += 1
+                if result["plot_payload"] is not None:
+                    plot_data = gv.loads(result["plot_payload"])
+                    rec0 = _record(
+                        plot_data["fit"],
+                        **plot_data["meta"],
+                        part=part,
+                        fit_scope=scope,
+                        correlator_rescale=scale,
+                    )
+                    if scope != "FH":
+                        sample0_paths.update(
+                            _plot_sample0_ratio(
+                                ratio_re=plot_data["rre"],
+                                ratio_im=plot_data["rim"],
+                                rec=rec0,
+                                Lt=Lt,
+                                log_dir=fit_log_dir,
+                                momentum=momentum,
+                                z=z,
+                                fit_label=f"{strategy}_{scope_label}_fit",
+                                fitting_form=form,
+                                part=part,
+                            )
+                        )
+                    if "FH" in scope:
+                        sample0_paths.update(
+                            _plot_sample0_fh(
+                                ratio_re=plot_data["rre"],
+                                ratio_im=plot_data["rim"],
+                                rec=rec0,
+                                log_dir=fit_log_dir,
+                                momentum=momentum,
+                                z=z,
+                                fit_label=f"{strategy}_{scope_label}_fit",
+                                part=part,
+                            )
+                        )
+            sample_indices = ()
+
+        for sample_index in sample_indices:
             try:
                 re_vals: list[float] = []
                 im_vals: list[float] = []
@@ -3268,6 +3535,7 @@ def fit_bare_matrix_grid(
                 "pt3_momentum": three_point_momentum,
                 "hadron": hadron,
                 "gfix": gfix,
+                "workers": workers,
             }.items()
             if value is not None
         }
@@ -3292,6 +3560,7 @@ def fit_bare_matrix_grid(
         "correlator_rescale": scale,
         "resample_mode": mode,
         "n_samples": n_samples,
+        "workers": int(workers),
         "z_values": z_list,
         "tune_z": tune_z_value,
         "z_fits": z_report,

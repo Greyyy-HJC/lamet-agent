@@ -64,17 +64,17 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
             "kernels": [
                 {
                     "stage": "matching",
-                    "kernel_id": "CG_gt_PDF_hybrid",
+                    "kernel_id": "CG_gt_qPDF_hybrid_NLO",
                     "kernel_path": "src/lamet_agent/kernels.py",
                     "scheme": "ratio",
-                    "kernel_parameters": {"zs_fm": 0.2},
+                    "kernel_parameters": {},
                 }
             ],
         },
         "stages": {
             "correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2"]}]},
             "renormalization": {
-                "defaults": {"scheme": "hybrid_ratio", "scheme_parameters": {"zs_fm": 0.2}},
+                "defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.2},
                 "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
             },
         },
@@ -168,6 +168,24 @@ def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> No
     assert blocked["ok"] is False
     assert "missing parameters" in blocked["error"]
     assert blocked["next_questions"][0]["question_id"] == "stage_params.fourier_transform.ft"
+
+
+def test_planning_reports_legacy_zs_locations_and_flat_parameter_gaps(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    _write_kernel(root)
+    payload = _minimal_payload(root)
+    payload["inputs"]["kernels"][0]["kernel_parameters"] = {"zs_fm": 0.2}
+    payload["stages"]["renormalization"]["defaults"].pop("zs_fm")
+    payload["stages"]["renormalization"]["defaults"]["scheme_parameters"] = {"zs_fm": 0.2}
+
+    issues = check_manifest_draft(tmp_path / "draft.json", payload)
+    gaps = _stage_parameter_gaps(payload)
+
+    issue_paths = {issue.manifest_path for issue in issues}
+    assert "inputs.kernels[0].kernel_parameters.zs_fm" in issue_paths
+    assert "stages.renormalization.defaults.scheme_parameters.zs_fm" in issue_paths
+    assert any(gap["path"] == "stages.renormalization.defaults.zs_fm" for gap in gaps)
 
 
 def test_plan_load_manifest_reports_deterministic_random_seed_question(tmp_path: Path) -> None:

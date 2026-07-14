@@ -10,7 +10,7 @@ from lamet_agent.stages.matching.functions import is_hybrid_kernel, resolve_kern
 
 STAGE_SKILL = """
 Perturbative matching applies the selected NLO kernel matrix independently to
-every quasi-PDF sample. The job's logical kernel_id resolves through the matching
+every quasi-PDF sample. The job's exact kernel_id resolves through the matching
 kernel declaration and its scheme; hybrid kernels use zs_fm and pz_gev to form
 z_s P_z. The x grid must not contain zero.
 """.strip()
@@ -53,6 +53,6 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
         resolved = resolve_kernel_id(declaration.kernel_id, declaration.scheme)
     except ValueError as exc:
         return [str(exc)]
-    if is_hybrid_kernel(resolved) and "zs_fm" not in declaration.kernel_parameters:
-        return ["A hybrid matching kernel requires kernel_parameters.zs_fm."]
+    if is_hybrid_kernel(resolved) and "zs_fm" not in params:
+        return ["A hybrid matching job requires flat parameter zs_fm in stage defaults or job params."]
     return []

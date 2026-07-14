@@ -13,8 +13,8 @@ e.g. correlations between x bins and across analysis stages -- which a
 gvar-only convolution would discard.
 
 Design:
-- ``KERNEL_REGISTRY`` maps a logical ``kernel_id`` (e.g. an operator label) to a
-  builder callable from ``lamet_agent.kernels``. To add a new operator, drop its
+- ``KERNEL_REGISTRY`` maps each exact public function name from ``lamet_agent.kernels``
+  to that builder callable. To add a new operator, drop its
   kernel function in ``kernels.py`` and register it here -- nothing else changes.
 - Each tool takes the shared per-stage ``store`` plus JSON-friendly kwargs, writes
   its result under ``store[out]``, and returns a small summary dict.
@@ -176,7 +176,7 @@ def resolve_kernel_id(kernel_id: str, scheme: str) -> str:
 # --- hybrid-scheme scale -----------------------------------------------------
 # The hybrid kernel needs the dimensionless Wilson-line scale zspz = z_s * P_z.
 # Both z_s (the Wilson-line length, in fm) and P_z (the hadron momentum, in GeV)
-# come from the manifest JSON as build_matching_kernel inputs (zs_fm and pz_gev);
+# come from the matching job's effective stage parameters (zs_fm and pz_gev);
 # nothing ensemble-specific is hardcoded here. GEV_FM is the only constant -- the
 # physical hbar*c used to make zspz dimensionless:
 #     zspz = zs_fm * pz_gev / GEV_FM
@@ -319,8 +319,8 @@ def build_matching_kernel(
 
     Hybrid kernels also need the Wilson-line length ``zs_fm`` (z_s in fm); together
     with ``pz_gev`` it sets the dimensionless scale ``zspz = zs_fm * pz_gev / GEV_FM``.
-    Both ``zs_fm`` and ``pz_gev`` come from the matching job and its declared
-    kernel parameters. MSbar and ratio kernels ignore ``zs_fm``.
+    Both ``zs_fm`` and ``pz_gev`` come from the matching job's effective stage
+    parameters. MSbar and ratio kernels ignore ``zs_fm``.
     """
     if kernel_id not in KERNEL_REGISTRY:
         raise ValueError(
@@ -341,7 +341,7 @@ def build_matching_kernel(
     y_ls = None if y_grid is None else np.asarray(store[y_grid], dtype=float)
 
     # Hybrid kernels need the Wilson-line scale zspz = z_s * P_z, built from the
-    # manifest inputs zs_fm (fm) and pz_gev (GeV). Only the hybrid builders accept a
+    # matching job parameters zs_fm (fm) and pz_gev (GeV). Only the hybrid builders accept a
     # zspz keyword (msbar/ratio do not), so it is computed and passed only for
     # the hybrid ids.
     zspz: float | None = None
@@ -350,7 +350,8 @@ def build_matching_kernel(
         if zs_fm is None:
             raise ValueError(
                 f"Kernel '{kernel_id}' is a hybrid kernel and needs zs_fm (z_s in fm) "
-                "from inputs.kernels[].kernel_parameters to build zspz = zs_fm * pz_gev / GEV_FM."
+                "from perturbative_matching defaults or job params to build "
+                "zspz = zs_fm * pz_gev / GEV_FM."
             )
         zspz = float(zs_fm) * pz_gev / GEV_FM
         builder_kwargs["zspz"] = zspz

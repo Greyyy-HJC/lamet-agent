@@ -26,8 +26,8 @@ class RunMetadata(BaseModel):
     Required: run_id, root_directory, target_observable, parton, resample_mode,
     random_seed, stages.
     Optional: artifacts_directory (default "artifacts"), sample_error_mode
-    (default "covariance"), bin_size (default: no binning applied before
-    jackknife/bootstrap resampling).
+    (default "covariance"), workers (default 1), bin_size (default: no
+    binning applied before jackknife/bootstrap resampling).
     Conditional: bs_samples is required when resample_mode == "bs" and has no
     default; it is ignored when resample_mode == "jk".
     """
@@ -42,6 +42,7 @@ class RunMetadata(BaseModel):
     resample_mode: Literal["jk", "bs"]
     sample_error_mode: Literal["mean", "median", "covariance"] = "covariance"
     random_seed: int
+    workers: int = Field(default=1, ge=1, strict=True)
     bs_samples: int | None = Field(default=None, gt=0)
     bin_size: int | None = Field(default=None, gt=0)
     stages: list[StageId]
@@ -187,6 +188,30 @@ class AnalysisManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_dag(self) -> "AnalysisManifest":
+        for index, kernel in enumerate(self.inputs.kernels):
+            if "zs_fm" in kernel.kernel_parameters:
+                raise ValueError(
+                    f"inputs.kernels[{index}].kernel_parameters.zs_fm is no longer supported; "
+                    "use stages.perturbative_matching.defaults.zs_fm or "
+                    "stages.perturbative_matching.jobs[].params.zs_fm"
+                )
+
+        renormalization = self.stages.get("renormalization")
+        if renormalization is not None:
+            nested_defaults = renormalization.defaults.get("scheme_parameters")
+            if isinstance(nested_defaults, dict) and "zs_fm" in nested_defaults:
+                raise ValueError(
+                    "stages.renormalization.defaults.scheme_parameters.zs_fm is no longer supported; "
+                    "use stages.renormalization.defaults.zs_fm"
+                )
+            for index, job in enumerate(renormalization.jobs):
+                nested_params = job.params.get("scheme_parameters")
+                if isinstance(nested_params, dict) and "zs_fm" in nested_params:
+                    raise ValueError(
+                        f"stages.renormalization.jobs[{index}].params.scheme_parameters.zs_fm is no longer "
+                        f"supported; use stages.renormalization.jobs[{index}].params.zs_fm"
+                    )
+
         if len(set(self.metadata.stages)) != len(self.metadata.stages):
             raise ValueError("metadata.stages contains duplicate stage ids")
         missing = [stage for stage in self.metadata.stages if stage not in self.stages]

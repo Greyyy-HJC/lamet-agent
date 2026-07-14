@@ -10,7 +10,8 @@ Renormalization consumes bare EnsembleData from the current job store.
 When normalization=true, the runner already divides each bare matrix element by
 its lattice z=0 value before any tool calls.
 
-hybrid_ratio uses roles target and denominator with scheme_parameters.zs_fm.
+hybrid_ratio uses roles target and denominator with flat job/defaults parameter
+zs_fm; m0_gev and delta_m_gev remain in scheme_parameters.
 self_renormalization splits into:
 - fit job inputs {reference}: require job params.d; optional params.m0_gev
   (omit to fit m0 from short-distance g(z); set to freeze). Writes store['output']/store['zR'].
@@ -41,9 +42,8 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     if scheme == "hybrid_ratio":
         if set(job.inputs) != {"target", "denominator"}:
             return ["A hybrid_ratio renormalization job requires target and denominator inputs."]
-        scheme_parameters = params.get("scheme_parameters")
-        if not isinstance(scheme_parameters, dict) or "zs_fm" not in scheme_parameters:
-            return ["hybrid_ratio requires scheme_parameters.zs_fm."]
+        if "zs_fm" not in params:
+            return ["hybrid_ratio requires flat parameter zs_fm in stage defaults or job params."]
         return []
 
     if scheme == "self_renormalization":

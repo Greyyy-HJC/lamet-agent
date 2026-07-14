@@ -139,14 +139,16 @@ options inline (for example `target_observable` is `"pdf"` or `"da"`, and `gfix`
 
 - `metadata`: run-level settings (`run_id`, `root_directory`, `artifacts_directory`,
   `target_observable`, `resample_mode`, `sample_error_mode`, `random_seed`,
-  ordered `stages` to run).
+  optional `workers`, ordered `stages` to run).
   `random_seed` is required and seeds every jackknife/bootstrap resampling step
   in the run (a job/stage no longer sets its own `seed`). When `resample_mode`
   is `"bs"`, `bs_samples` is required and must be set explicitly (there is no
   default bootstrap sample count). `sample_error_mode` controls how samples are
   averaged and how sample-by-sample fits receive errors; it defaults to
   `"covariance"`. `bin_size` is optional and bins configurations before
-  resampling when set (default: no binning).
+  resampling when set (default: no binning). `workers` is an optional positive
+  integer controlling sample-fit processes in the correlator and Fourier
+  stages; it defaults to `1`, which keeps execution serial.
 - `inputs`: the `correlators` (each with its kinematics such as `a_fm`, `pz_gev`,
   gammas, and for `3pt` the `bt`/`bz` separation lists) and the `kernels`.
 - `stages`: `defaults` plus a `jobs` list. A job's `params` shallow-merge over
@@ -198,11 +200,27 @@ For example, two `nstate` values and three `prior_width` values produce up to si
 fit-function models inside the fixed data window. The manifest value is
 authoritative and cannot be overridden by an LLM tool call.
 
-### `metadata.random_seed`, `metadata.bs_samples`, `metadata.sample_error_mode`, `metadata.bin_size`
+### Per-job hybrid-ratio `zs_fm`
 
-These three fields are the single source of randomness/binning configuration
-for the whole run; the correlator stage no longer reads a per-job or
-stage-level `seed`.
+The hybrid switch distance belongs to the data-processing job, not to a global
+kernel declaration. Set it as `stages.renormalization.defaults.zs_fm` or
+`stages.renormalization.jobs[].params.zs_fm`, and independently as
+`stages.perturbative_matching.defaults.zs_fm` or
+`stages.perturbative_matching.jobs[].params.zs_fm`. Job values override stage
+defaults, so different data chains may use different switch distances.
+
+Do not place `zs_fm` under `inputs.kernels[].kernel_parameters` or under
+renormalization `scheme_parameters`; manifest validation rejects both legacy
+locations. For a complete in-manifest chain, the review stage follows
+`matching.quasi -> fourier.input -> renormalization job` and reports whether the
+hybrid matching and hybrid-ratio renormalization values agree. Partial runs that
+start from an external artifact are reported as not verifiable rather than as a
+match or mismatch.
+
+### `metadata.random_seed`, `metadata.bs_samples`, `metadata.sample_error_mode`, `metadata.bin_size`, `metadata.workers`
+
+These fields are the single source of resampling and sample-parallelism
+configuration for the whole run; stage/job params cannot override them.
 
 - `random_seed` (required): seeds every jackknife/bootstrap resampling call in
   `core/resampling.py`. `prepare_tool_args` injects it as the `seed` argument
@@ -220,6 +238,20 @@ stage-level `seed`.
   matrix.
 - `bin_size` (optional, default: no binning): when set, configurations are
   averaged into bins of this size before jackknife/bootstrap resampling.
+- `workers` (optional, default: `1`): maximum number of worker processes used
+  for independent sample fits in `correlator_analysis` and `fourier_transform`.
+  Sample-average tuning, stage/job execution, correlator `z` scans, Fourier
+  extrapolation, and Fourier summation remain serial. Active sample batches are
+  capped by the number of samples.
+
+Each worker process may otherwise inherit native BLAS threading. For multi-core
+runs, avoid oversubscription by setting the relevant library thread counts when
+launching the CLI, for example:
+
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  lamet-agent run manifest.json
+```
 
 ## Self-Renormalization
 
@@ -273,8 +305,9 @@ upstream $z_R$ is remapped before division.
 Declare a renormalization kernel with `scheme: "self_renormalization"` and
 `kernel_id` `ZMSbar_pdf` or `ZMSbar_da`. Bare inputs are either upstream
 correlator job ids or `inputs.artifacts` with `stage: "correlator_analysis"`.
-Self-renorm knobs are **flat job `params`** (and stage `defaults`), not nested
-under `scheme_parameters` (that nesting is for hybrid-ratio `zs_fm` / etc.).
+Self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybrid-ratio
+`zs_fm` is also a flat stage/job parameter; only supporting values such as
+`m0_gev` and `delta_m_gev` remain under `scheme_parameters`.
 
 ```json
 {
