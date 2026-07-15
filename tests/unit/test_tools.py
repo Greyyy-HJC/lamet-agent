@@ -314,7 +314,7 @@ def test_prepare_renormalization_args_filters_normalization_manifest_flag(tmp_pa
 
 
 def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path) -> None:
-    manifest = validate_manifest_file(Path("examples/temp_self_renorm_manifest.json"))
+    manifest = validate_manifest_file(Path("examples/self_renorm_manifest.json"))
     fit_job = manifest.stages["renormalization"].jobs[0]
     apply_job = manifest.stages["renormalization"].jobs[1]
     fit_effective = {**manifest.stages["renormalization"].defaults, **fit_job.params}

@@ -569,8 +569,8 @@ def prepare_tool_args(
             resolved.update({key: fourier[key] for key in _FOURIER_RUN_KEYS if key in fourier})
             resolved["workers"] = manifest.metadata.workers
             resolved["save_path"] = str(artifacts_dir / job.id)
-            resolved.setdefault("plot_fourier", {"save_path": f"{job.id}.pdf"})
-            resolved.setdefault("plot_extension", {"save_path": f"{job.id}_extension.pdf"})
+            resolved.setdefault("plot_fourier", {"save_path": f"{job.id}_xdep.pdf"})
+            resolved.setdefault("plot_extension", {"save_path": f"{job.id}_re.pdf"})
         if tool_name in _FOURIER_ARTIFACT_TOOLS:
             resolved["artifacts_dir"] = str(artifacts_dir)
 

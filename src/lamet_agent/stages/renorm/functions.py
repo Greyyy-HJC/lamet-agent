@@ -371,7 +371,15 @@ def plot_renormalized_matrix_element(
     ax.errorbar(z_values, im_mean, im_err, label="Im", color=COLOR_CYCLE[1], marker="s", **ERRORBAR_STYLE)
     ax.set_xlabel(r"$z$ [fm]", **FONT_SIZE)
     ax.set_ylabel(r"Renormalized matrix element", **FONT_SIZE)
-    ax.set_title(title or "Renormalized matrix elements", **FONT_SIZE)
+    if title is None:
+        ensemble = matrix.ensemble.id if matrix.ensemble is not None and matrix.ensemble.id else ""
+        pz = matrix.attrs.get("pz_gev")
+        direction = matrix.attrs.get("z_direction", matrix.attrs.get("direction", ""))
+        if pz is not None:
+            title = rf"{ensemble} $p={float(pz):.2f}\,\mathrm{{GeV}}$ {direction} renormalized matrix elements"
+        else:
+            title = "Renormalized matrix elements"
+    ax.set_title(title, **FONT_SIZE)
     ax.legend(**LEGEND_SETS)
     fig.tight_layout()
     stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="renormalized_matrix_element")

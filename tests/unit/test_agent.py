@@ -567,10 +567,10 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
             "fit_info_artifact": str(tmp_path / "fourier_fit_info.nc"),
         }
         store["fourier_summary"] = {"out": "fourier_summary"}
-        store["fourier_plot"] = {"plot": str(tmp_path / "fourier_result.pdf")}
+        store["fourier_plot"] = {"plot": str(tmp_path / "fourier_xdep.pdf")}
         store["fourier_extension_plot"] = {
-            "plot_re": str(tmp_path / "fourier_extension_re.pdf"),
-            "plot_im": str(tmp_path / "fourier_extension_im.pdf"),
+            "plot_re": str(tmp_path / "fourier_re.pdf"),
+            "plot_im": str(tmp_path / "fourier_im.pdf"),
         }
         store["output"] = EnsembleData(
             ensemble=None,

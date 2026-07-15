@@ -243,7 +243,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "Model Diagnostics" in report_text
     assert "q(x)=\\frac{\\Delta\\lambda}{2\\pi}" in report_text
     assert "![Fourier result]" in report_text
-    assert "fourier_result.svg" in report_text
+    assert "fourier_xdep.svg" in report_text
     assert "Reading the NetCDF Outputs" in report_text
     assert "fourier_result.nc" in report_text
     assert "fourier_fit_info.nc" in report_text
@@ -266,7 +266,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "如何读取 NetCDF 输出" in report_cn_text
     assert "fourier_result.nc" in report_cn_text
     assert "fourier_fit_info.nc" in report_cn_text
-    assert "fourier_result.svg" in report_cn_text
+    assert "fourier_xdep.svg" in report_cn_text
 
     data = store["fourier_result"]
     fig, ax = plot_fourier_extension_quality(
@@ -333,6 +333,14 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     assert np.allclose(result_re["scheme_results"][0]["extended_im_samples"], 0.0)
     artifact_re = EnsembleData.from_netcdf(run_re["artifact"])
     assert artifact_re.attrs["part"] == "re"
+    fig_re, ax_re = plot_fourier_extension_quality(coord, re_samples, result_re, component="re")
+    assert len(ax_re.collections) == 2
+    assert len(ax_re.lines) == 4
+    fig_re.clf()
+    fig_im_inactive, ax_im_inactive = plot_fourier_extension_quality(coord, im_samples, result_re, component="im")
+    assert len(ax_im_inactive.collections) == 1
+    assert len(ax_im_inactive.lines) == 3
+    fig_im_inactive.clf()
 
     store = {}
     load_renormalized_matrix_element_samples(store, path=str(data_path))
@@ -352,6 +360,14 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     assert np.all(np.isfinite(result_im["ft_im_samples"]))
     artifact_im = EnsembleData.from_netcdf(run_im["artifact"])
     assert artifact_im.attrs["part"] == "im"
+    fig_re_inactive, ax_re_inactive = plot_fourier_extension_quality(coord, re_samples, result_im, component="re")
+    assert len(ax_re_inactive.collections) == 1
+    assert len(ax_re_inactive.lines) == 3
+    fig_re_inactive.clf()
+    fig_im, ax_im = plot_fourier_extension_quality(coord, im_samples, result_im, component="im")
+    assert len(ax_im.collections) == 2
+    assert len(ax_im.lines) == 4
+    fig_im.clf()
 
 
 def test_fourier_sector_valence_resolves_projection(tmp_path: Path, monkeypatch) -> None:

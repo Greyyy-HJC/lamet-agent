@@ -99,6 +99,8 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     method = str(result.get("method", "")).upper()
     order = str(result.get("order", "")).upper()
     observable = str(result.get("observable", ""))
+    sector = str(result.get("sector", "")).lower()
+    hadron = str(result.get("hadron", "")).lower()
     orders = [item.strip().upper() for item in order.split(",") if item.strip()]
     if len(orders) > 1:
         article_lines = []
@@ -508,6 +510,33 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             else "实现时只拟合正坐标。",
         ]
 
+    constraint_lines = []
+    if observable == "pion_quark_quasi_pdf" and sector == "valence":
+        constraint_lines.append(
+            "- 由 arXiv:2601.12189 可知，`pion_quark_quasi_pdf` 的 `valence` sector 应在拟合输入中施加约束 $\\phi_2=\\phi'_2=0$、$A_3=A_1$、$\\phi_3=-\\phi_1$、$A'_3=A'_1$、$\\phi'_3=-\\phi'_1$。"
+            if language == "zh"
+            else "- Following arXiv:2601.12189, the fit input for the `valence` sector of `pion_quark_quasi_pdf` imposes $\\phi_2=\\phi'_2=0$, $A_3=A_1$, $\\phi_3=-\\phi_1$, $A'_3=A'_1$, and $\\phi'_3=-\\phi'_1$."
+        )
+    if observable == "pion_quark_quasi_pdf" and sector == "sea":
+        constraint_lines.append(
+            "- 由 arXiv:2601.12189 可知，`pion_quark_quasi_pdf` 的 `sea` sector 应在拟合输入中施加约束 $A_1=A_3=0$；NLA 项同时满足 $A'_1=A'_3=0$。"
+            if language == "zh"
+            else "- Following arXiv:2601.12189, the fit input for the `sea` sector of `pion_quark_quasi_pdf` imposes $A_1=A_3=0$; for NLA terms it also imposes $A'_1=A'_3=0$."
+        )
+    if observable == "meson_quasi_da" and hadron == "pion":
+        constraint_lines.append(
+            "- 由 arXiv:2601.12189 可知，pion `meson_quasi_da` 应在拟合输入中施加对称关系 $A_2=A_1$、$\\phi_2=-\\phi_1$、$A'_2=A'_1$、$\\phi'_2=-\\phi'_1$。"
+            if language == "zh"
+            else "- Following arXiv:2601.12189, the fit input for the pion `meson_quasi_da` imposes the symmetry relations $A_2=A_1$, $\\phi_2=-\\phi_1$, $A'_2=A'_1$, and $\\phi'_2=-\\phi'_1$."
+        )
+    if observable == "pion_quark_quasi_gpd" and sector == "sea":
+        constraint_lines.append(
+            "- 由 arXiv:2601.12189 可知，`pion_quark_quasi_gpd` 的 `sea` sector 应在拟合输入中施加约束 $A_1=A_3=0$；NLA 项同时满足 $A'_1=A'_3=0$。"
+            if language == "zh"
+            else "- Following arXiv:2601.12189, the fit input for the `sea` sector of `pion_quark_quasi_gpd` imposes $A_1=A_3=0$; for NLA terms it also imposes $A'_1=A'_3=0$."
+        )
+    mapping_lines.extend(constraint_lines)
+
     if language == "zh":
         lines = [
             f"### 文献公式\n{reference}。\n\n$$\n{article_formula}\n$$",
@@ -533,6 +562,11 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
     part = str(result.get("part", "both")).lower()
     shift = float(result.get("phase_shift", 0.0) or 0.0)
     phase = f"(x-{_fmt(shift)})\\lambda" if shift else "x\\lambda"
+    convention = (
+        f"本阶段采用 $e^{{+i{phase}}}$ 的 Fourier convention，即 $q(x)=\\frac{{\\Delta\\lambda}}{{2\\pi}}\\sum_\\lambda e^{{+i{phase}}}h(\\lambda)$；下面给出该 convention 对应的实部/虚部分解。"
+        if language == "zh"
+        else f"This stage uses the $e^{{+i{phase}}}$ Fourier convention, i.e. $q(x)=\\frac{{\\Delta\\lambda}}{{2\\pi}}\\sum_\\lambda e^{{+i{phase}}}h(\\lambda)$; the corresponding real/imaginary decomposition is shown below."
+    )
     note = (
         f"\n\n这里使用 `phase_shift={_fmt(shift)}`，即 Fourier 相位为 ${phase}$。"
         if language == "zh" and shift
@@ -543,6 +577,7 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
     if language == "zh":
         if part == "re":
             return (
+                f"{convention}\n\n"
                 "$$\n"
                 "q_{\\rm re}(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
                 f"\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda).\n"
@@ -551,6 +586,7 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
             )
         if part == "im":
             return (
+                f"{convention}\n\n"
                 "$$\n"
                 "q_{\\rm im}(x)=-\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
                 f"\\sin({phase})\\,\\mathrm{{Im}}\\,h(\\lambda).\n"
@@ -558,6 +594,7 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
                 f"{note}"
             )
         return (
+            f"{convention}\n\n"
             "$$\n"
             "\\mathrm{Re}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
             f"\\left[\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda)-\\sin({phase})\\,\\mathrm{{Im}}\\,h(\\lambda)\\right],\n"
@@ -570,6 +607,7 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
         )
     if part == "re":
         return (
+            f"{convention}\n\n"
             "$$\n"
             "q_{\\rm re}(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
             f"\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda).\n"
@@ -578,6 +616,7 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
         )
     if part == "im":
         return (
+            f"{convention}\n\n"
             "$$\n"
             "q_{\\rm im}(x)=-\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
             f"\\sin({phase})\\,\\mathrm{{Im}}\\,h(\\lambda).\n"
@@ -585,6 +624,7 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
             f"{note}"
         )
     return (
+        f"{convention}\n\n"
         "$$\n"
         "\\mathrm{Re}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
         f"\\left[\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda)-\\sin({phase})\\,\\mathrm{{Im}}\\,h(\\lambda)\\right],\n"
@@ -1210,13 +1250,15 @@ def write_fourier_stage_report(
         ]
         for item in jobs:
             result = item["result"]
+            pz_value = result.get("pz_gev")
+            pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
             artifacts = markdown_artifact_paths(
                 item.get("artifacts", {}),
                 base_dir=target.parent,
                 path_keys=FOURIER_ARTIFACT_ORDER,
             )
             lines.append(
-                f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | "
+                f"| `{item['job_id']}` | {pz_text} | "
                 f"{result.get('selected_range_label', 'n/a')} | "
                 f"{artifacts.get('fourier_artifact', 'n/a')} | "
                 f"{artifacts.get('fourier_plot', 'n/a')} |"
@@ -1275,6 +1317,8 @@ def write_fourier_stage_report(
         )
         for item in jobs:
             result = item["result"]
+            pz_value = result.get("pz_gev")
+            pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
             schemes = list(result.get("scheme_results", []))
             selected_model = schemes[0] if schemes else {}
             chi2 = np.asarray(result.get("fit_model_chi2_dof", []), dtype=float)
@@ -1282,7 +1326,7 @@ def write_fourier_stage_report(
             chi_text = "n/a" if finite.size == 0 else f"{_fmt(np.min(finite))} to {_fmt(np.max(finite))}"
             missing = result.get("missing_short_distance_coord", [])
             lines.append(
-                f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | "
+                f"| `{item['job_id']}` | {pz_text} | "
                 f"{result.get('selected_range_label', 'n/a')} | "
                 f"{_format_fit_range(selected_model.get('fit_range'), language=language)} | "
                 f"{missing if missing else 'none'} | "
@@ -1308,10 +1352,12 @@ def write_fourier_stage_report(
             )
         for item in jobs:
             result = item["result"]
+            pz_value = result.get("pz_gev")
+            pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
             lines.extend(
                 [
                     "",
-                    f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV",
+                    f"### `{item['job_id']}`: $P_z={pz_text}$ GeV",
                     "",
                     *_range_selection_table(result, language=language),
                     "",
@@ -1324,12 +1370,14 @@ def write_fourier_stage_report(
         lines.append("## Figures and Visual Assessment" if language == "en" else "## 图像与可视化评估")
         for item in jobs:
             result = item["result"]
+            pz_value = result.get("pz_gev")
+            pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
             artifacts = markdown_artifact_paths(
                 item.get("artifacts", {}),
                 base_dir=target.parent,
                 path_keys=FOURIER_ARTIFACT_ORDER,
             )
-            lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV"])
+            lines.extend(["", f"### `{item['job_id']}`: $P_z={pz_text}$ GeV"])
             for key, title in (
                 ("fourier_plot", "Fourier result" if language == "en" else "傅立叶变换结果图"),
                 ("extension_plot_re", "Real-part extension" if language == "en" else "实部长程外推图"),

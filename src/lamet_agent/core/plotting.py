@@ -803,7 +803,7 @@ def plot_fourier_artifact(
     re_total = np.where(re_total < roundoff_floor, 0.0, re_total)
     im_total = np.where(im_total < roundoff_floor, 0.0, im_total)
     default_title = "FT" if not observable else "FT " + observable.replace("_", " ")
-    legend_label = rf"$P_z={pz_gev:g}\,\mathrm{{GeV}}$" if pz_gev is not None else r"$P_z$"
+    legend_label = rf"$P_z={float(pz_gev):.2f}\,\mathrm{{GeV}}$" if pz_gev is not None else r"$P_z$"
 
     apply_plot_style()
     fig, (ax_re, ax_im) = plt.subplots(
@@ -982,6 +982,8 @@ def plot_fourier_extension_quality(
     model_label = "Extrapolation"
     if method or order:
         model_label = f"Extrapolation ({'+'.join(item for item in (method, order) if item)})"
+    part = str(result.get("part", "both")).strip().lower()
+    draw_model = part in {"both", component} or part not in {"re", "im"}
 
     ax.fill_between(
         lambda_data,
@@ -994,17 +996,18 @@ def plot_fourier_extension_quality(
         zorder=1,
     )
     ax.plot(lambda_data, data_mean, color=data_color, linewidth=1.35, alpha=0.98, zorder=3)
-    ax.fill_between(
-        lambda_ext_plot,
-        ext_mean_plot - ext_sdev_plot,
-        ext_mean_plot + ext_sdev_plot,
-        color=ext_color,
-        alpha=0.62,
-        linewidth=0,
-        label=model_label,
-        zorder=2,
-    )
-    ax.plot(lambda_ext_plot, ext_mean_plot, color=ext_color, linewidth=1.45, alpha=0.98, zorder=4)
+    if draw_model:
+        ax.fill_between(
+            lambda_ext_plot,
+            ext_mean_plot - ext_sdev_plot,
+            ext_mean_plot + ext_sdev_plot,
+            color=ext_color,
+            alpha=0.62,
+            linewidth=0,
+            label=model_label,
+            zorder=2,
+        )
+        ax.plot(lambda_ext_plot, ext_mean_plot, color=ext_color, linewidth=1.45, alpha=0.98, zorder=4)
 
     for idx, value in enumerate(fit_lambda):
         ax.axvline(
@@ -1022,12 +1025,12 @@ def plot_fourier_extension_quality(
         ax.set_ylabel(rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)
     else:
         ax.set_ylabel(
-            rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z={float(pz_gev):g}\,\mathrm{{GeV}})$",
+            rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z={float(pz_gev):.2f}\,\mathrm{{GeV}})$",
             **FONT_SIZE,
         )
     if title is None:
         if coord_unit.lower() == "lambda" and pz_gev is None:
-            title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:g}\,\lambda$, $z_{{\max}}={zmax:g}\,\lambda$"
+            title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:.2f}\,\lambda$, $z_{{\max}}={zmax:.2f}\,\lambda$"
         else:
             unit = coord_unit.lower()
             if unit == "fm":
@@ -1039,7 +1042,7 @@ def plot_fourier_extension_quality(
             else:
                 scale = 5.067731237 * float(pz_gev)
                 zmin_fm, zmax_fm = zmin / scale, zmax / scale
-            title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin_fm:g}\,\mathrm{{fm}}$, $z_{{\max}}={zmax_fm:g}\,\mathrm{{fm}}$"
+            title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin_fm:.2f}\,\mathrm{{fm}}$, $z_{{\max}}={zmax_fm:.2f}\,\mathrm{{fm}}$"
     ax.set_title(title, **FONT_SIZE)
     chi2_values = result.get("fit_model_chi2_dof", [])
     if chi2_values and scheme_index < len(chi2_values):

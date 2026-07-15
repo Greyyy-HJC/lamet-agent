@@ -2812,7 +2812,7 @@ def plot_fourier_result(
     source = artifact_path
     if source is None:
         source = str(_artifact_path(None, default_name="fourier_result.nc", artifacts_dir=artifacts_dir))
-    output = _artifact_path(save_path, default_name="fourier_result.pdf", artifacts_dir=artifacts_dir)
+    output = _artifact_path(save_path, default_name="fourier_xdep.pdf", artifacts_dir=artifacts_dir)
     if title is not None and title.strip().lower() in {"fourier result", "fourier transform"}:
         title = None
     fig, _ = plot_fourier_artifact(source, save_path=output, title=title)
@@ -2839,8 +2839,9 @@ def plot_fourier_extension_quality_result(
         scheme_index = 0
     if title is not None and title.strip().lower() in {"fourier extension quality", "lambda extrapolation"}:
         title = None
-    re_output = _artifact_path(save_path, default_name="fourier_extension_re.pdf", artifacts_dir=artifacts_dir)
-    im_output = re_output.with_name(f"{re_output.stem}_im.pdf")
+    re_output = _artifact_path(save_path, default_name="fourier_re.pdf", artifacts_dir=artifacts_dir)
+    im_stem = f"{re_output.stem[:-3]}_im" if re_output.stem.endswith("_re") else f"{re_output.stem}_im"
+    im_output = re_output.with_name(f"{im_stem}.pdf")
     fig, _ = plot_fourier_extension_quality(
         matrix_element["coord"],
         matrix_element["re_samples"],

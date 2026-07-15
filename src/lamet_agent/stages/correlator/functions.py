@@ -2824,9 +2824,11 @@ def fit_bare_matrix_grid(
     if form == "NonBreit":
         q2 = None if pz_gev is None or pz_out_gev is None else (float(pz_out_gev) - float(pz_gev)) ** 2
         xi = None if pz_gev is None or pz_out_gev is None else (float(pz_gev) - float(pz_out_gev)) / (float(pz_gev) + float(pz_out_gev))
-        plot_title = rf"{ensemble} $Q^2={q2:g}\,\mathrm{{GeV}}^2$, $\xi={xi:g}$ {direction} bare matrix elements"
+        q2_label = "n/a" if q2 is None else f"{q2:.2f}"
+        xi_label = "n/a" if xi is None else f"{xi:.2f}"
+        plot_title = rf"{ensemble} $Q^2={q2_label}\,\mathrm{{GeV}}^2$, $\xi={xi_label}$ {direction} bare matrix elements"
     else:
-        p_label = "n/a" if pz_gev is None else f"{float(pz_gev):g}"
+        p_label = "n/a" if pz_gev is None else f"{float(pz_gev):.2f}"
         plot_title = rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ {direction} bare matrix elements"
     # assemble the terminal artifact, summary plot, and JSON-safe observation
     out_dir.mkdir(parents=True, exist_ok=True)

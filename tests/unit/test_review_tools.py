@@ -120,3 +120,19 @@ def test_review_appends_deterministic_consistency_sections(tmp_path: Path, monke
     assert "stages.perturbative_matching.jobs[0].params.zs_fm" in english_text
     assert "## Manifest 参数一致性" in chinese_text
     assert "`mismatch`" in chinese_text
+
+
+def test_review_prompt_avoids_repeating_matching_zs_fm(tmp_path: Path, monkeypatch) -> None:
+    prompts = []
+
+    def fake_request_llm_text(**kwargs):
+        prompts.append("\n".join(message["content"] for message in kwargs["messages"]))
+        return "# LLM Review"
+
+    monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
+
+    write_review_from_manifest(_manifest(), output_dir=tmp_path / "en")
+    write_review_from_manifest(_manifest(), report_language="ch", output_dir=tmp_path / "zh")
+
+    assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[0]
+    assert "matching 章节不要重复描述同一个 `zs_fm`" in prompts[1]
