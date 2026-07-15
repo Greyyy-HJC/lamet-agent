@@ -64,13 +64,13 @@ def test_run_agent_verbose_prints_trace(capsys) -> None:
                 "parton": "quark", "resample_mode": "jk", "random_seed": 1984, "stages": ["correlator_analysis"],
             },
             "inputs": {"correlators": [
-                {"correlator_id": "c2", "kind": "2pt", "data_path": "c2.h5", "ensemble": "E",
-                 "hadron": "pion", "gfix": "CG", "source_sink": "SS", "momentum": "P",
-                 "a_fm": 0.1, "pz_gev": 0, "src_gamma": "5", "sink_gamma": "5"},
-                {"correlator_id": "c3", "kind": "3pt", "data_path": "c3.h5", "ensemble": "E",
-                 "hadron": "pion", "gfix": "CG", "source_sink": "SS", "momentum": "P",
-                 "a_fm": 0.1, "pz_gev": 0, "src_gamma": "5", "sink_gamma": "5",
-                 "current_gamma": "T", "z_direction": "X", "eta": "eta0", "bt": [0], "bz": [0], "tsep": 8}
+                {"correlator_id": "c2", "correlator_type": "2pt", "data_path": "c2.h5", "ensemble": "E",
+                 "hadron": "pion", "gfix": "CG", "source_operator": "g5", "sink_operator": "g5", "volume": "S16T32", "momentum": ["PX0PY0PZ0"],
+                 "lattice_spacing_fm": 0.1,  },
+                {"correlator_id": "c3", "correlator_type": "3pt", "data_path": "c3.h5", "ensemble": "E",
+                 "hadron": "pion", "gfix": "CG", "source_operator": "g5", "sink_operator": "g5", "volume": "S16T32", "momentum": ["PX0PY0PZ0"],
+                 "lattice_spacing_fm": 0.1,
+                 "current_operator": "gT_nonlocal", "bz_direction": "Z",   "bT": [0], "bz": [0], "tsep": [8]}
             ], "artifacts": [], "kernels": []},
             "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}]}},
         }

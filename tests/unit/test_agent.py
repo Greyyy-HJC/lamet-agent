@@ -353,11 +353,12 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
                 "artifacts": [
                     {
                         "id": "rn_p5",
-                        "stage": "renormalization",
-                        "path": str(nc_path),
-                        "a_fm": 0.0574,
-                        "pz_gev": 2.15,
-                        "hadron": "pion",
+                            "stage": "renormalization",
+                            "path": str(nc_path),
+                            "momentum": "PX5PY0PZ0",
+                            "volume": "S48T64",
+                            "lattice_spacing_fm": 0.0574,
+                            "hadron": "pion",
                         "gfix": "CG",
                     }
                 ],
@@ -371,7 +372,7 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
                         "coord_unit": "lattice",
                         "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},
                     },
-                    "jobs": [{"id": "ft_p5", "inputs": {"input": "rn_p5"}, "params": {"pz_gev": 2.15}}],
+                        "jobs": [{"id": "ft_p5", "inputs": {"input": "rn_p5"}}],
                 },
             },
         }
@@ -416,11 +417,12 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
                 "artifacts": [
                     {
                         "id": "rn_p5",
-                        "stage": "renormalization",
-                        "path": str(nc_path),
-                        "a_fm": 0.0574,
-                        "pz_gev": 2.15,
-                        "hadron": "pion",
+                            "stage": "renormalization",
+                            "path": str(nc_path),
+                            "momentum": "PX5PY0PZ0",
+                            "volume": "S48T64",
+                            "lattice_spacing_fm": 0.0574,
+                            "hadron": "pion",
                         "gfix": "CG",
                     }
                 ],
@@ -434,7 +436,7 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
                         "coord_unit": "lattice",
                         "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},
                     },
-                    "jobs": [{"id": "ft_p5", "inputs": {"input": "rn_p5"}, "params": {"pz_gev": 2.15}}],
+                        "jobs": [{"id": "ft_p5", "inputs": {"input": "rn_p5"}}],
                 },
             },
         }
@@ -541,7 +543,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
             "resample_mode": "jackknife",
             "coord_unit": "fm",
             "fit_coord_unit": "fm",
-            "pz_gev": 1.72,
+            "momentum_gev": 1.72,
             "Lambda0": 0.1,
             "posterior_prior_error_scale": 3.0,
             "output_scale": 2.0,
@@ -802,7 +804,7 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
         values=[samples[0], samples[1]],
         dims=("z",),
         coords={"z": [0.0, 1.0]},
-        attrs={"a_fm": "0.1"},
+        attrs={"lattice_spacing_fm": "0.1"},
         name="target",
     )
     manifest = AnalysisManifest.model_validate(

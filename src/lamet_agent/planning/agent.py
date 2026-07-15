@@ -9,6 +9,7 @@ import re
 from typing import Any, Callable
 
 from lamet_agent.core.banner import BANNER
+from lamet_agent.manifest import parse_volume
 
 from .conversion import _dataset_names, _standard_dataset_paths, inspect_correlator_h5_files, plan_correlator_h5_conversions
 from .core import (
@@ -86,7 +87,7 @@ def _planning_system_prompt() -> str:
         + "\nJSON Patch rules: edits may only target /metadata, /inputs, or /stages; use op add, replace, or remove. "
         "For request_user_input, args.prompt must be a concrete user-facing question and args.question_id must identify the decision. "
         "Ask exactly one question per request_user_input action; never combine stage choices, metadata values, parameter values, and data-axis mappings in one prompt. "
-        "For ordinary manifest scalar fields, ask for exactly one manifest field at a time and set question_id to the exact dotted manifest path, for example metadata.random_seed, inputs.correlators.0.momentum, inputs.correlators.0.src_gamma, or inputs.correlators.1.current_gamma. "
+        "For ordinary manifest fields, ask for exactly one manifest field at a time and set question_id to the exact dotted manifest path, for example metadata.random_seed, inputs.correlators.0.momentum, inputs.correlators.0.source_operator, or inputs.correlators.1.current_operator. "
         "Do not ask for several ordinary manifest fields in one answer; after the user answers one field, let the automatic patch observation update the candidate before asking the next field. "
         "When multiple items are missing, ask and resolve them one at a time, starting with deterministic manifest fields such as metadata.random_seed before broader workflow choices. "
         "Prefer Yes/No or multiple-choice questions only when the answer is genuinely binary or enumerable; use free-form questions when the user may need to name a subset, axis meaning, or concrete parameter values. "
@@ -150,11 +151,11 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     "optional": {"normalization": True, "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0}},
                 },
                 "fourier_transform": {
-                    "required": {"order": ["LA", "NLA"], "coord_unit": "lattice", "sector": "valence", "y_grid": {"start": -2.0, "stop": 2.0, "num": 100}, "pz_gev": 2.15},
+                    "required": {"order": ["LA", "NLA"], "coord_unit": "lattice", "sector": "valence", "y_grid": {"start": -2.0, "stop": 2.0, "num": 100}, "momentum_gev": 2.15},
                     "options": {"order": ["LA", "NLA"], "sector_pdf": ["valence", "total", "full", "sea"], "part": ["re", "im", "both"]},
                 },
                 "perturbative_matching": {
-                    "required": {"kernel_id": "declared inputs.kernels kernel_id", "pz_gev": 2.15, "mu": 2.0, "component": "re", "zs_fm": "required for hybrid kernels"},
+                    "required": {"kernel_id": "declared inputs.kernels kernel_id", "momentum_gev": 2.15, "mu": 2.0, "component": "re", "zs_fm": "required for hybrid kernels"},
                     "options": {"component": ["re", "im"]},
                 },
                 "extrapolation": {"status": "placeholder; requires momenta input role but is not implemented yet"},
@@ -169,8 +170,9 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                 "perturbative_matching": {"inputs": {"quasi": "Fourier transform job or artifact"}},
             },
             "correlator_conversion_contract": {
-                "standard_2pt_h5": "source_sink/src_gamma/momentum with dataset shape (Lt, n_cfg)",
-                "standard_3pt_h5": "source_sink/current_gamma/momentum/b_<z_direction>/<eta>/bT<bt>/bz<bz> with dataset shape (tsep+1, n_cfg)",
+                "standard_2pt_h5": "source_operator/sink_operator/momentum with dataset shape (Lt, n_cfg)",
+                "standard_3pt_h5": "source_operator/sink_operator/current_operator/momentum/tsep<tsep>/bT<bT>/bz<bz> with dataset shape (tsep+1, n_cfg)",
+                "bz_direction": "required 3pt manifest provenance: X, Y, Z, XY, XZ, YZ, or XYZ; it is not an HDF5 path layer",
                 "npy_source": "single array; source may be 'array'; user must identify cfg/time or cfg/tau axes and any selected momentum/z indices",
                 "npz_source": "source must be an NPZ key; user must map each key to one standard target",
                 "apply_conversion_tool_args": {
@@ -399,22 +401,19 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
     match = re.fullmatch(r"inputs\.correlators\.\d+\.([A-Za-z_][A-Za-z0-9_]*)", question_id)
     if match and match.group(1) not in {
         "correlator_id",
-        "kind",
+        "correlator_type",
         "data_path",
         "ensemble",
         "hadron",
         "gfix",
-        "source_sink",
+        "source_operator",
+        "sink_operator",
         "momentum",
-        "a_fm",
-        "pz_gev",
-        "pz_out_gev",
-        "src_gamma",
-        "sink_gamma",
-        "current_gamma",
-        "z_direction",
-        "eta",
-        "bt",
+        "lattice_spacing_fm",
+        "volume",
+        "current_operator",
+        "bz_direction",
+        "bT",
         "bz",
         "tsep",
     }:
@@ -618,8 +617,24 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
                 shape = list(reversed(shape))
             if len(shape) != 2:
                 return {"tool_name": tool_name, "ok": False, "error": f"Mapped dataset {target!r} has final shape {shape}; expected a 2D standard correlator dataset."}
-            if correlator.get("kind") == "3pt" and isinstance(correlator.get("tsep"), int) and shape[0] != int(correlator["tsep"]) + 1:
-                return {"tool_name": tool_name, "ok": False, "error": f"Mapped 3pt dataset {target!r} has tau length {shape[0]}; expected tsep+1={int(correlator['tsep']) + 1}."}
+            if correlator.get("correlator_type") == "3pt":
+                match = re.search(r"/tsep(\d+)/", f"/{target}/")
+                if match and shape[0] != int(match.group(1)) + 1:
+                    return {"tool_name": tool_name, "ok": False, "error": f"Mapped 3pt dataset {target!r} has tau length {shape[0]}; expected tsep+1={int(match.group(1)) + 1}."}
+            else:
+                try:
+                    temporal_extent = parse_volume(str(correlator.get("volume", "")))[1]
+                except ValueError as exc:
+                    return {"tool_name": tool_name, "ok": False, "error": str(exc)}
+                if shape[0] != temporal_extent:
+                    return {
+                        "tool_name": tool_name,
+                        "ok": False,
+                        "error": (
+                            f"Mapped 2pt dataset {target!r} has Lt={shape[0]}; "
+                            f"expected {temporal_extent} from manifest volume."
+                        ),
+                    }
             out = {"source": source_name, "target": target, "transpose": bool(item.get("transpose", False))}
             if item.get("axis_order") is not None:
                 out["axis_order"] = [int(axis) for axis in item["axis_order"]]
@@ -841,7 +856,7 @@ def run_interactive_plan(
             if _json_pointer_from_question_id(question_id) is None:
                 text = f"{args.get('prompt', '')}\n{reason}"
                 match = re.search(
-                    r"correlator\s+['\"]([^'\"]+)['\"].*?['\"](momentum|src_gamma|sink_gamma|current_gamma|z_direction|eta|bt|bz|tsep|a_fm|pz_gev|pz_out_gev)['\"]",
+                    r"correlator\s+['\"]([^'\"]+)['\"].*?['\"](momentum|source_operator|sink_operator|current_operator|bz_direction|volume|bT|bz|tsep|lattice_spacing_fm)['\"]",
                     text,
                     flags=re.I | re.S,
                 )

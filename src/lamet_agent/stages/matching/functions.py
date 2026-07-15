@@ -23,7 +23,7 @@ Expected inputs:
 - a quasi-PDF produced by the Fourier stage, passed in memory by job id or loaded
   from an external NetCDF source. It carries the full per-sample quasi-PDF (an
   ``EnsembleData`` with a leading resampling axis).
-- a momentum grid ``x_ls`` and the nucleon momentum ``pz_gev``
+- a momentum grid ``x_ls`` and the nucleon momentum ``momentum_gev``
 
 Expected outputs:
 - the matching kernel matrix and the matched (light-cone) PDF, both kept as
@@ -34,7 +34,7 @@ Example usage:
 - from lamet_agent.stages.matching.functions import STAGE_TOOLS
 - store = {}
 - STAGE_TOOLS["load_quasi_pdf"](store, path="artifacts/fourier_result.nc")
-- STAGE_TOOLS["build_matching_kernel"](store, kernel_id="CG_gt_qPDF_msbar_NLO", pz_gev=1.5)
+- STAGE_TOOLS["build_matching_kernel"](store, kernel_id="CG_gt_qPDF_msbar_NLO", momentum_gev=1.5)
 - STAGE_TOOLS["apply_matching"](store)
 """
 
@@ -94,7 +94,7 @@ from lamet_agent.kernels import (
 #
 # Every registered kernel obeys the same signature (so build_matching_kernel can
 # call them uniformly):
-#   builder(lightcone_x_ls, pz_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None) -> (nx, ny) matrix
+#   builder(lightcone_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None) -> (nx, ny) matrix
 #
 # Naming convention: <gauge>_<operator>_qPDF_<scheme>_<order>. <gauge> is the
 # operator's gauge construction -- CG for Coulomb gauge (arXiv:2602.11283, no Wilson
@@ -176,10 +176,10 @@ def resolve_kernel_id(kernel_id: str, scheme: str) -> str:
 # --- hybrid-scheme scale -----------------------------------------------------
 # The hybrid kernel needs the dimensionless Wilson-line scale zspz = z_s * P_z.
 # Both z_s (the Wilson-line length, in fm) and P_z (the hadron momentum, in GeV)
-# come from the matching job's effective stage parameters (zs_fm and pz_gev);
+# come from the matching job's effective stage parameters (zs_fm and momentum_gev);
 # nothing ensemble-specific is hardcoded here. GEV_FM is the only constant -- the
 # physical hbar*c used to make zspz dimensionless:
-#     zspz = zs_fm * pz_gev / GEV_FM
+#     zspz = zs_fm * momentum_gev / GEV_FM
 GEV_FM = 0.1973269631  # hbar*c in GeV*fm
 
 
@@ -308,7 +308,7 @@ def build_matching_kernel(
     store: dict[str, Any],
     *,
     kernel_id: str,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     zs_fm: float | None = None,
     grid: str = "x_ls",
@@ -318,8 +318,8 @@ def build_matching_kernel(
     """Build the (nx, ny) matching kernel for the chosen operator/kernel_id.
 
     Hybrid kernels also need the Wilson-line length ``zs_fm`` (z_s in fm); together
-    with ``pz_gev`` it sets the dimensionless scale ``zspz = zs_fm * pz_gev / GEV_FM``.
-    Both ``zs_fm`` and ``pz_gev`` come from the matching job's effective stage
+    with ``momentum_gev`` it sets the dimensionless scale ``zspz = zs_fm * momentum_gev / GEV_FM``.
+    Both ``zs_fm`` and ``momentum_gev`` come from the matching job's effective stage
     parameters. MSbar and ratio kernels ignore ``zs_fm``.
     """
     if kernel_id not in KERNEL_REGISTRY:
@@ -341,19 +341,19 @@ def build_matching_kernel(
     y_ls = None if y_grid is None else np.asarray(store[y_grid], dtype=float)
 
     # Hybrid kernels need the Wilson-line scale zspz = z_s * P_z, built from the
-    # matching job parameters zs_fm (fm) and pz_gev (GeV). Only the hybrid builders accept a
+    # matching job parameters zs_fm (fm) and momentum_gev (GeV). Only the hybrid builders accept a
     # zspz keyword (msbar/ratio do not), so it is computed and passed only for
     # the hybrid ids.
     zspz: float | None = None
-    builder_kwargs: dict[str, Any] = {"pz_gev": pz_gev, "mu": mu, "quasi_y_ls": y_ls}
+    builder_kwargs: dict[str, Any] = {"momentum_gev": momentum_gev, "mu": mu, "quasi_y_ls": y_ls}
     if is_hybrid_kernel(kernel_id):
         if zs_fm is None:
             raise ValueError(
                 f"Kernel '{kernel_id}' is a hybrid kernel and needs zs_fm (z_s in fm) "
                 "from perturbative_matching defaults or job params to build "
-                "zspz = zs_fm * pz_gev / GEV_FM."
+                "zspz = zs_fm * momentum_gev / GEV_FM."
             )
-        zspz = float(zs_fm) * pz_gev / GEV_FM
+        zspz = float(zs_fm) * momentum_gev / GEV_FM
         builder_kwargs["zspz"] = zspz
 
     # Build the already-discretized kernel matrix, typically shaped (len(x_ls), len(y_ls)).
@@ -366,14 +366,14 @@ def build_matching_kernel(
         )
 
     store[out] = matrix  # apply_matching reads it back under this name
-    store["matching_kernel_info"] = {"kernel_id": kernel_id, "pz_gev": pz_gev, "mu": mu, "zspz": zspz}
+    store["matching_kernel_info"] = {"kernel_id": kernel_id, "momentum_gev": momentum_gev, "mu": mu, "zspz": zspz}
     return {
         "out": out,
         "kernel_id": kernel_id,
         "shape": list(matrix.shape),
-        "pz_gev": pz_gev,
+        "momentum_gev": momentum_gev,
         "mu": mu,
-        "zspz": zspz,  # None for MSbar/ratio; zs_fm * pz_gev / GEV_FM for hybrid
+        "zspz": zspz,  # None for MSbar/ratio; zs_fm * momentum_gev / GEV_FM for hybrid
     }
 
 
@@ -435,6 +435,7 @@ def apply_matching(
         values=[lightcone_samples[idx] for idx in range(lightcone_samples.shape[0])],
         dims=("x",),
         coords={"x": x_out.tolist()},
+        attrs=quasi_ed.attrs,
         name="lightcone_pdf",
     )
     store[out] = lightcone_ed
@@ -573,7 +574,7 @@ def report_matching_result(
     store: dict[str, Any],
     *,
     kernel_id: str | None = None,
-    pz_gev: float | None = None,
+    momentum_gev: float | None = None,
     mu: float = 2.0,
     zs_fm: float | None = None,
     component: str | None = None,
@@ -603,12 +604,12 @@ def report_matching_result(
     # Hybrid kernels carry the dimensionless Wilson-line scale; recompute it here
     # from the manifest inputs (same formula as build_matching_kernel).
     zspz = None
-    if kernel_id is not None and is_hybrid_kernel(kernel_id) and zs_fm is not None and pz_gev is not None:
-        zspz = float(zs_fm) * float(pz_gev) / GEV_FM
+    if kernel_id is not None and is_hybrid_kernel(kernel_id) and zs_fm is not None and momentum_gev is not None:
+        zspz = float(zs_fm) * float(momentum_gev) / GEV_FM
 
     result = {
         "kernel_id": kernel_id,
-        "pz_gev": pz_gev,
+        "momentum_gev": momentum_gev,
         "mu": mu,
         "zspz": zspz,
         "component": component,

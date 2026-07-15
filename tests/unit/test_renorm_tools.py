@@ -23,7 +23,7 @@ def _write_bare_netcdf(base: Path, stem: str, values: np.ndarray, *, resample: s
         values=[values[idx] for idx in range(values.shape[0])],
         dims=("z",),
         coords={"z": [0, 1, 4, 5]},
-        attrs={"ensemble": "E", "momentum": "PX0PY0PZ0", "a_fm": "0.1"},
+        attrs={"ensemble": "E", "momentum": "PX0PY0PZ0", "lattice_spacing_fm": "0.1"},
         name="bare_matrix_element",
     )
     path = base / f"{stem}.nc"
@@ -110,12 +110,12 @@ def test_ratio_scheme_without_normalization_uses_pure_ratio(tmp_path: Path) -> N
         "target": EnsembleData(
             EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
             values=[target[0], target[1]], dims=("z",), coords={"z": [0, 1]},
-            attrs={"a_fm": "0.1"}, name="target",
+            attrs={"lattice_spacing_fm": "0.1"}, name="target",
         ),
         "denominator": EnsembleData(
             EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
             values=[denom[0], denom[1]], dims=("z",), coords={"z": [0, 1]},
-            attrs={"a_fm": "0.1"}, name="denominator",
+            attrs={"lattice_spacing_fm": "0.1"}, name="denominator",
         ),
     }
 
@@ -135,7 +135,7 @@ def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path
     target = EnsembleData(
         EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
         values=[np.full(6, 2.0), np.full(6, 4.0)], dims=("z",), coords={"z": z},
-        attrs={"a_fm": "0.0574"}, name="target",
+        attrs={"lattice_spacing_fm": "0.0574"}, name="target",
     )
     denominator_values = np.asarray([[1, 2, 3, 4, 5, 6], [2, 4, 6, 8, 10, 12]], dtype=complex)
     denominator = EnsembleData(
@@ -162,19 +162,19 @@ def test_hybrid_ratio_long_range_exponent_uses_physical_distance(tmp_path: Path)
     from lamet_agent.stages.renorm.functions import GEV_FM
 
     z = [0, 1, 2, 3, 4, 5]
-    a_fm = 0.1
+    lattice_spacing_fm = 0.1
     zs_fm = 0.3
     m0_gev = 0.2
     delta_m_gev = 0.1
     target = EnsembleData(
         EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
         values=[np.ones(6, dtype=complex), np.full(6, 2.0, dtype=complex)],
-        dims=("z",), coords={"z": z}, attrs={"a_fm": str(a_fm)}, name="target",
+        dims=("z",), coords={"z": z}, attrs={"lattice_spacing_fm": str(lattice_spacing_fm)}, name="target",
     )
     denominator = EnsembleData(
         EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
         values=[np.ones(6, dtype=complex), np.full(6, 2.0, dtype=complex)],
-        dims=("z",), coords={"z": z}, attrs={"a_fm": str(a_fm)}, name="denominator",
+        dims=("z",), coords={"z": z}, attrs={"lattice_spacing_fm": str(lattice_spacing_fm)}, name="denominator",
     )
     store = {"target": target, "denominator": denominator}
     _prepare_renorm_inputs(store)
@@ -187,7 +187,7 @@ def test_hybrid_ratio_long_range_exponent_uses_physical_distance(tmp_path: Path)
         save_path=str(tmp_path / "exponent"),
     )
 
-    z4_fm = 4 * a_fm
+    z4_fm = 4 * lattice_spacing_fm
     expected_exp = np.exp((m0_gev + delta_m_gev) * (z4_fm - zs_fm) / GEV_FM)
     assert np.allclose(store["output"].values[:, 4], expected_exp)
 
@@ -480,14 +480,14 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
     from lamet_agent import kernels
 
     z = np.asarray([0.06, 0.12, 0.18], dtype=float)
-    a_fm = 0.0574
+    lattice_spacing_fm = 0.0574
     zr_vals = np.asarray([0.5, 0.4, 0.3], dtype=float)
     zR = EnsembleData(
-        EnsembleInfo("", "E", a_fm, a_fm, 1, 1, 0),
+        EnsembleInfo("", "E", lattice_spacing_fm, lattice_spacing_fm, 1, 1, 0),
         "bootstrap",
         [np.asarray(zr_vals[None, :], dtype=complex)],
         dims=("a", "z"),
-        coords={"a": [a_fm], "z": z.tolist()},
+        coords={"a": [lattice_spacing_fm], "z": z.tolist()},
         attrs={
             "kernel_id": "ZMSbar_da",
             "m0_gev": "-0.094",
@@ -498,12 +498,12 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
     )
     target_values = np.asarray([[1.0 + 0.0j, 2.0 + 0.0j, 3.0 + 0.0j], [2.0 + 0.0j, 4.0 + 0.0j, 6.0 + 0.0j]])
     target = EnsembleData(
-        EnsembleInfo("", "E", a_fm, a_fm, 1, 1, 0),
+        EnsembleInfo("", "E", lattice_spacing_fm, lattice_spacing_fm, 1, 1, 0),
         "jackknife",
         values=[target_values[0], target_values[1]],
         dims=("z",),
         coords={"z": z.tolist()},
-        attrs={"a_fm": str(a_fm)},
+        attrs={"lattice_spacing_fm": str(lattice_spacing_fm)},
         name="target",
     )
     store = {"target": target, "zR": zR}
@@ -530,18 +530,18 @@ def test_apply_self_renormalization_remaps_d_and_m0(tmp_path: Path) -> None:
     from lamet_agent.stages.renorm.functions import _remap_zr_values
 
     z = np.asarray([0.06, 0.12, 0.18], dtype=float)
-    a_fm = 0.0574
+    lattice_spacing_fm = 0.0574
     d_pdf = -0.08183
     d_da = 0.19
     m0_pdf = -0.05
     m0_da = -0.094
     zr_vals = np.asarray([0.5, 0.4, 0.3], dtype=float)
     zR = EnsembleData(
-        EnsembleInfo("", "E", a_fm, a_fm, 1, 1, 0),
+        EnsembleInfo("", "E", lattice_spacing_fm, lattice_spacing_fm, 1, 1, 0),
         "bootstrap",
         [np.asarray(zr_vals[None, :], dtype=complex)],
         dims=("a", "z"),
-        coords={"a": [a_fm], "z": z.tolist()},
+        coords={"a": [lattice_spacing_fm], "z": z.tolist()},
         attrs={
             "kernel_id": "ZMSbar_da",
             "m0_gev": str(m0_pdf),
@@ -552,12 +552,12 @@ def test_apply_self_renormalization_remaps_d_and_m0(tmp_path: Path) -> None:
     )
     target_values = np.asarray([[1.0 + 0.0j, 2.0 + 0.0j, 3.0 + 0.0j], [2.0 + 0.0j, 4.0 + 0.0j, 6.0 + 0.0j]])
     target = EnsembleData(
-        EnsembleInfo("", "E", a_fm, a_fm, 1, 1, 0),
+        EnsembleInfo("", "E", lattice_spacing_fm, lattice_spacing_fm, 1, 1, 0),
         "jackknife",
         values=[target_values[0], target_values[1]],
         dims=("z",),
         coords={"z": z.tolist()},
-        attrs={"a_fm": str(a_fm)},
+        attrs={"lattice_spacing_fm": str(lattice_spacing_fm)},
         name="target",
     )
     store = {"target": target, "zR": zR}
@@ -572,7 +572,7 @@ def test_apply_self_renormalization_remaps_d_and_m0(tmp_path: Path) -> None:
     )
 
     zr_remapped = _remap_zr_values(
-        zr_vals, z_vals=z, a_fm=a_fm, d_from=d_pdf, d_to=d_da, m0_from=m0_pdf, m0_to=m0_da
+        zr_vals, z_vals=z, lattice_spacing_fm=lattice_spacing_fm, d_from=d_pdf, d_to=d_da, m0_from=m0_pdf, m0_to=m0_da
     )
     zms = kernels.ZMSbar_da(z, mu=2.0)
     expected = target_values / (zr_remapped[None, :] * zms[None, :])
@@ -604,7 +604,7 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
         values=[target_values[0], target_values[1]],
         dims=("z",),
         coords={"z": z.tolist()},
-        attrs={"a_fm": str(a_vals[0])},
+        attrs={"lattice_spacing_fm": str(a_vals[0])},
         name="target",
     )
     sibling_values = target_values * 0.9
@@ -614,7 +614,7 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
         values=[sibling_values[0], sibling_values[1]],
         dims=("z",),
         coords={"z": z.tolist()},
-        attrs={"a_fm": str(a_vals[1])},
+        attrs={"lattice_spacing_fm": str(a_vals[1])},
         name="renormalized_matrix_element",
     )
     sibling_a = tmp_path / "rn_mom6_a06.nc"
@@ -625,7 +625,7 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
         values=[target_values[0], target_values[1]],
         dims=("z",),
         coords={"z": z.tolist()},
-        attrs={"a_fm": str(a_vals[0])},
+        attrs={"lattice_spacing_fm": str(a_vals[0])},
         name="renormalized_matrix_element",
     )
     target_renorm.to_netcdf(sibling_a)

@@ -106,8 +106,8 @@ def test_fourier_workflow_omits_missing_short_distance_grid() -> None:
         order="LA",
         observable="meson_quasi_da",
         coord_unit="lattice",
-        pz_gev=2.4,
-        a_fm=0.04,
+        momentum_gev=2.4,
+        lattice_spacing_fm=0.04,
         resample_mode="jackknife",
         sample_error_mode="mean",
         part="re",
@@ -134,8 +134,8 @@ def test_fourier_parallel_sample_fits_match_serial() -> None:
         "order": "LA",
         "observable": "meson_quasi_da",
         "coord_unit": "lattice",
-        "pz_gev": 2.4,
-        "a_fm": 0.04,
+        "momentum_gev": 2.4,
+        "lattice_spacing_fm": 0.04,
         "resample_mode": "jackknife",
         "sample_error_mode": "mean",
         "part": "re",
@@ -183,6 +183,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         method="GI",
         order="LA",
         Lambda0=0.3,
+        bz_direction="X",
         phase_shift=0.5,
         artifacts_dir=str(tmp_path / "artifacts"),
         workers=2,
@@ -200,6 +201,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert ft_data.resample == "bootstrap"
     assert ft_data.attrs["workers"] == "2"
     assert ft_data.attrs["phase_shift"] == "0.5"
+    assert ft_data.attrs["bz_direction"] == "X"
     assert ft_data.values.shape == (3, 3)
     assert "ft_re_mean" in ft_data.attrs
     assert Path(run["fit_info_artifact"]).is_file()
@@ -948,7 +950,7 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
         order="LA",
         observable="nucleon_quark_transversity_quasi_pdf",
         coord_unit="fm",
-        pz_gev=2.0,
+        momentum_gev=2.0,
     )
 
     auto = run["auto_scheme_scan"]
@@ -985,7 +987,7 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
         order="LA",
         observable="nucleon_quark_transversity_quasi_pdf",
         coord_unit="fm",
-        pz_gev=2.0,
+        momentum_gev=2.0,
     )
 
     auto = run["auto_scheme_scan"]
@@ -1016,9 +1018,9 @@ def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path
         order="LA",
         observable="pion_quark_quasi_gpd",
         coord_unit="lattice",
-        pz_gev=0.0,
-        pz_out_gev=0.49,
-        a_fm=0.105,
+        momentum_gev=0.0,
+        final_momentum_gev=0.49,
+        lattice_spacing_fm=0.105,
     )
 
     auto = run["auto_scheme_scan"]
@@ -1072,8 +1074,8 @@ def test_fourier_auto_scan_prefers_tail_region_for_lattice_units(tmp_path: Path,
         order="NLA",
         observable="pion_quark_quasi_pdf",
         coord_unit="lattice",
-        pz_gev=2.15,
-        a_fm=0.0574,
+        momentum_gev=2.15,
+        lattice_spacing_fm=0.0574,
         part="both",
     )
 
@@ -1109,7 +1111,7 @@ def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) 
         order="LA",
         observable="nucleon_quark_transversity_quasi_pdf",
         coord_unit="fm",
-        pz_gev=2.0,
+        momentum_gev=2.0,
     )
 
     auto = run["auto_scheme_scan"]
@@ -1141,7 +1143,7 @@ def test_fourier_auto_zmax_keeps_nearby_zero_compatible_tail(tmp_path: Path, mon
         order="LA",
         observable="nucleon_quark_transversity_quasi_pdf",
         coord_unit="fm",
-        pz_gev=2.0,
+        momentum_gev=2.0,
     )
 
     assert run["auto_scheme_scan"]["zmax_values"] == pytest.approx([0.7, 0.8, 0.9, 1.0, 1.1])

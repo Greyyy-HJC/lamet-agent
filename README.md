@@ -149,8 +149,9 @@ options inline (for example `target_observable` is `"pdf"` or `"da"`, and `gfix`
   resampling when set (default: no binning). `workers` is an optional positive
   integer controlling sample-fit processes in the correlator and Fourier
   stages; it defaults to `1`, which keeps execution serial.
-- `inputs`: the `correlators` (each with its kinematics such as `a_fm`, `pz_gev`,
-  gammas, and for `3pt` the `bt`/`bz` separation lists) and the `kernels`.
+- `inputs`: the `correlators` (each with its operator labels, `volume`,
+  `lattice_spacing_fm`, momentum list, and for `3pt` the `bz_direction`, `tsep`, `bT`, and `bz`
+  lists), external `artifacts`, and `kernels`.
 - `stages`: `defaults` plus a `jobs` list. A job's `params` shallow-merge over
   defaults, and later jobs reference earlier job ids through role-named `inputs`.
 
@@ -313,8 +314,8 @@ Self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybrid-ratio
 {
   "inputs": {
     "artifacts": [
-      { "id": "bare_pdf_reference", "stage": "correlator_analysis", "path": "…", "a_fm": 0.0574, "pz_gev": 0.0, "hadron": "pion", "gfix": "CG" },
-      { "id": "bare_da_a06", "stage": "correlator_analysis", "path": "…", "a_fm": 0.0574, "pz_gev": 1.29, "hadron": "pion", "gfix": "CG" }
+      { "id": "bare_pdf_reference", "stage": "correlator_analysis", "path": "…", "momentum": "PX0PY0PZ0", "volume": "S96T192", "lattice_spacing_fm": 0.0574, "hadron": "pion", "gfix": "CG" },
+      { "id": "bare_da_a06", "stage": "correlator_analysis", "path": "…", "momentum": "PX0PY0PZ6", "volume": "S96T192", "lattice_spacing_fm": 0.0574, "hadron": "pion", "gfix": "CG" }
     ],
     "kernels": [
       {
@@ -447,14 +448,110 @@ manifest with a shorter list and source nodes under `inputs.artifacts`.
 correlator analysis, hybrid-ratio renormalization, Fourier transformation, and
 perturbative matching. `examples/partial_cg_pion_pdf_manifest.json` starts from
 the saved `rn_p5` renormalization artifact and runs only Fourier and matching.
-External renormalization sources include `a_fm`, `pz_gev`, `hadron`, and `gfix`
-because those values normally propagate in memory from the correlator jobs.
+External partial-run sources declare the discrete kinematic triple `momentum`,
+`volume`, and `lattice_spacing_fm`; the framework derives `momentum_gev` from
+those values just as it does for correlator inputs. `hadron` and `gfix` may also
+be supplied as provenance.
 
-Standard correlator HDF5 datasets are:
+## Standard Correlator HDF5 Format
 
-- 2pt: `<source_sink>/<src_gamma>/<momentum>` with stored shape `(Lt, n_cfg)`.
-- 3pt: `<source_sink>/<current_gamma>/<momentum>/b_<z_direction>/<eta>/bT<bt>/bz<z>`
-  with stored shape `(tsep + 1, n_cfg)`.
+Each standard correlator file contains one ensemble and one correlator type. A
+file may combine any number of compatible momentum settings, and a 3pt file may
+also combine multiple source-sink separations. The corresponding manifest entry
+uses `correlator_type: "2pt"` or `"3pt"`; the name reserves room for future
+correlator types, but 4pt data are not currently accepted.
+
+The operator fields are free strings:
+
+- `source_operator` and `sink_operator` are required for both types.
+- `current_operator` is required for 3pt data.
+- `bz_direction` is required for 3pt data and must be one of `X`, `Y`, `Z`,
+  `XY`, `XZ`, `YZ`, or `XYZ`. It records the spatial direction or canonical
+  direction set represented by the `bz` separation grid.
+- Gamma structures use labels such as `g5`. Append `_nonlocal` when locality is
+  part of the distinction, for example `gT_nonlocal`. This also allows a local
+  PDF 2pt input and a nonlocal DA 2pt input to remain distinguishable.
+
+Datasets use these paths and axis orders:
+
+- 2pt: `<source_operator>/<sink_operator>/<momentum>`, shape `(Lt, n_cfg)`.
+- 3pt: `<source_operator>/<sink_operator>/<current_operator>/<momentum>/tsep<tsep>/bT<bT>/bz<bz>`,
+  shape `(tsep + 1, n_cfg)`.
+
+There is no `source_sink`, `bz_direction`, or `eta` path layer. The manifest is
+authoritative for `bz_direction`; an HDF5 root attr with the same name is
+optional provenance. Files with different `bz_direction` settings remain
+separate because their standard dataset paths would otherwise collide. `Lt`
+must equal the temporal extent encoded in the manifest `volume`. For example,
+`volume: "S48T64"` means 48 sites in each spatial direction and 64 time slices.
+
+`bz` lists nonlocal-current separations along `bz_direction`, conventionally
+the longitudinal direction relative to momentum. `bT` lists separations in
+the transverse directions. Both are integer lattice-site separations; the
+current correlator fitter supports exactly one `bT` value per 3pt entry.
+
+A minimal shared-input declaration is:
+
+```json
+{
+  "inputs": {
+    "correlators": [
+      {
+        "correlator_id": "ensemble_2pt",
+        "correlator_type": "2pt",
+        "data_path": "data/ensemble_2pt.h5",
+        "ensemble": "HISQa060_X",
+        "hadron": "pion",
+        "gfix": "CG",
+        "source_operator": "g5",
+        "sink_operator": "g5",
+        "volume": "S48T64",
+        "lattice_spacing_fm": 0.0574,
+        "momentum": ["PX0PY0PZ0", "PX5PY0PZ0"]
+      },
+      {
+        "correlator_id": "ensemble_3pt",
+        "correlator_type": "3pt",
+        "data_path": "data/ensemble_free_3pt.h5",
+        "ensemble": "HISQa060_X",
+        "hadron": "pion",
+        "gfix": "CG",
+        "source_operator": "g5",
+        "sink_operator": "g5",
+        "current_operator": "gT_nonlocal",
+        "bz_direction": "X",
+        "volume": "S48T64",
+        "lattice_spacing_fm": 0.0574,
+        "momentum": ["PX0PY0PZ0", "PX5PY0PZ0"],
+        "tsep": [8, 10, 12],
+        "bT": [0],
+        "bz": [0, 1, 2]
+      }
+    ]
+  }
+}
+```
+
+The matching HDF5 tree includes, for example,
+`g5/g5/PX5PY0PZ0` and
+`g5/g5/gT_nonlocal/PX5PY0PZ0/tsep10/bT0/bz2`. A file containing only one
+momentum or one `tsep` uses the same layout and a one-element manifest list.
+Each correlator-analysis job still selects exactly one momentum through scalar
+`job.params.momentum`; NonBreit jobs instead select scalar
+`initial_momentum` and `final_momentum`.
+
+Momentum labels have the exact form `PXnPYnPZn`, where every component is a
+signed integer. Their physical magnitude is derived without an intermediate
+rounding step:
+
+\[
+p\,[\mathrm{GeV}] =
+\frac{2\pi\hbar c}{L_s\,a\,[\mathrm{fm}]}
+\sqrt{n_x^2+n_y^2+n_z^2},
+\qquad \hbar c = 0.1973269804\ \mathrm{GeV\,fm}.
+\]
+
+Here `L_s` comes from `volume`, and `a` is `lattice_spacing_fm`.
 
 If a source dataset is an unambiguous transpose of the expected shape, plan mode
 may transpose it during conversion and records provenance attributes on the output

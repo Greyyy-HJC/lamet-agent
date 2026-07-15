@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any, Literal
@@ -18,6 +19,36 @@ StageId = Literal[
     "extrapolation",
     "review",
 ]
+BzDirection = Literal["X", "Y", "Z", "XY", "XZ", "YZ", "XYZ"]
+
+
+HBAR_C_GEV_FM = 0.1973269804
+_VOLUME_RE = re.compile(r"^S(?P<spatial>[1-9]\d*)T(?P<temporal>[1-9]\d*)$")
+_MOMENTUM_RE = re.compile(r"^PX(?P<px>-?\d+)PY(?P<py>-?\d+)PZ(?P<pz>-?\d+)$")
+
+
+def parse_volume(value: str) -> tuple[int, int]:
+    """Return ``(L_s, L_t)`` from a canonical ``S<number>T<number>`` label."""
+    match = _VOLUME_RE.fullmatch(value)
+    if match is None:
+        raise ValueError(f"volume must use the form 'S48T64', got {value!r}")
+    return int(match.group("spatial")), int(match.group("temporal"))
+
+
+def parse_momentum(value: str) -> tuple[int, int, int]:
+    """Return integer momentum components from ``PXnPYnPZn``."""
+    match = _MOMENTUM_RE.fullmatch(value)
+    if match is None:
+        raise ValueError(f"momentum must use the form 'PX0PY0PZ0', got {value!r}")
+    return int(match.group("px")), int(match.group("py")), int(match.group("pz"))
+
+
+def physical_momentum_gev(momentum: str, volume: str, lattice_spacing_fm: float) -> float:
+    """Return the magnitude of a lattice momentum in GeV."""
+    spatial, _temporal = parse_volume(volume)
+    components = parse_momentum(momentum)
+    norm = math.sqrt(sum(component * component for component in components))
+    return 2.0 * math.pi * HBAR_C_GEV_FM * norm / (spatial * float(lattice_spacing_fm))
 
 
 class RunMetadata(BaseModel):
@@ -68,27 +99,65 @@ class RunMetadata(BaseModel):
 class CorrelatorInput(BaseModel):
     """One raw 2pt or 3pt correlator dataset."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     correlator_id: str
-    kind: Literal["2pt", "3pt"]
+    correlator_type: Literal["2pt", "3pt"]
     data_path: str
     ensemble: str
     hadron: str
     gfix: str
-    source_sink: str
-    momentum: str
-    a_fm: float
-    pz_gev: float
-    pz_out_gev: float | None = None
-    src_gamma: str
-    sink_gamma: str
-    current_gamma: str | None = None
-    z_direction: str | None = None
-    eta: str | None = None
-    bt: list[int] | None = None
-    bz: list[int] | None = None
-    tsep: int | None = None
+    source_operator: str = Field(min_length=1)
+    sink_operator: str = Field(min_length=1)
+    current_operator: str | None = Field(default=None, min_length=1)
+    bz_direction: BzDirection | None = None
+    volume: str
+    lattice_spacing_fm: float = Field(gt=0)
+    momentum: list[str] = Field(min_length=1, strict=True)
+    bT: list[int] | None = Field(default=None, strict=True)
+    bz: list[int] | None = Field(default=None, strict=True)
+    tsep: list[int] | None = Field(default=None, strict=True)
+
+    @model_validator(mode="after")
+    def validate_correlator_contract(self) -> "CorrelatorInput":
+        parse_volume(self.volume)
+        for value in self.momentum:
+            parse_momentum(value)
+        if len(set(self.momentum)) != len(self.momentum):
+            raise ValueError("momentum must not contain duplicates")
+        if self.correlator_type == "3pt":
+            if not self.current_operator:
+                raise ValueError("current_operator is required for 3pt correlators")
+            if self.bz_direction is None:
+                raise ValueError("bz_direction is required for 3pt correlators")
+            if not self.tsep:
+                raise ValueError("tsep must be a non-empty list for 3pt correlators")
+            if len(set(self.tsep)) != len(self.tsep) or any(value <= 0 for value in self.tsep):
+                raise ValueError("tsep must contain unique positive integers")
+            if not self.bT:
+                raise ValueError("bT must be a non-empty list for 3pt correlators")
+            if not self.bz:
+                raise ValueError("bz must be a non-empty list for 3pt correlators")
+            if len(set(self.bT)) != len(self.bT):
+                raise ValueError("bT must not contain duplicates")
+            if len(set(self.bz)) != len(self.bz):
+                raise ValueError("bz must not contain duplicates")
+        elif any(value is not None for value in (self.current_operator, self.bz_direction, self.tsep, self.bT, self.bz)):
+            raise ValueError("current_operator, bz_direction, tsep, bT, and bz are only valid for 3pt correlators")
+        return self
+
+    @property
+    def spatial_extent(self) -> int:
+        return parse_volume(self.volume)[0]
+
+    @property
+    def temporal_extent(self) -> int:
+        return parse_volume(self.volume)[1]
+
+    def momentum_gev(self, momentum: str) -> float:
+        if momentum not in self.momentum:
+            raise ValueError(f"momentum {momentum!r} is not declared by correlator {self.correlator_id!r}")
+        return physical_momentum_gev(momentum, self.volume, self.lattice_spacing_fm)
 
 
 class ArtifactInput(BaseModel):
@@ -99,6 +168,43 @@ class ArtifactInput(BaseModel):
     id: str
     stage: StageId
     path: str
+    momentum: str | None = None
+    volume: str | None = None
+    lattice_spacing_fm: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_kinematics(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            removed = sorted(
+                {
+                    "a_fm",
+                    "pz_gev",
+                    "pz_out_gev",
+                    "momentum_gev",
+                    "initial_momentum_gev",
+                    "final_momentum_gev",
+                }.intersection(value)
+            )
+            if removed:
+                raise ValueError(f"removed or derived artifact kinematics fields are not supported: {removed}")
+        return value
+
+    @model_validator(mode="after")
+    def validate_kinematics(self) -> "ArtifactInput":
+        supplied = (self.momentum, self.volume, self.lattice_spacing_fm)
+        if any(value is not None for value in supplied) and not all(value is not None for value in supplied):
+            raise ValueError("artifact momentum, volume, and lattice_spacing_fm must be declared together")
+        if self.momentum is not None and self.volume is not None:
+            parse_momentum(self.momentum)
+            parse_volume(self.volume)
+        return self
+
+    @property
+    def momentum_gev(self) -> float | None:
+        if self.momentum is None or self.volume is None or self.lattice_spacing_fm is None:
+            return None
+        return physical_momentum_gev(self.momentum, self.volume, self.lattice_spacing_fm)
 
 
 class KernelInput(BaseModel):
@@ -240,6 +346,98 @@ class AnalysisManifest(BaseModel):
                         raise ValueError(f"job {job.id!r} references unavailable upstream ids: {unknown}")
                 known.add(job.id)
         return self
+
+
+def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str, Any]:
+    """Resolve manifest-authoritative discrete and physical kinematics for a job."""
+
+    jobs = {
+        candidate.id: (stage_id, candidate)
+        for stage_id, config in manifest.stages.items()
+        for candidate in config.jobs
+    }
+    artifacts = {artifact.id: artifact for artifact in manifest.inputs.artifacts}
+
+    def from_reference(reference: str, seen: set[str]) -> dict[str, Any]:
+        artifact = artifacts.get(reference)
+        if artifact is not None:
+            if artifact.momentum is None:
+                return {}
+            return {
+                "momentum": artifact.momentum,
+                "volume": artifact.volume,
+                "lattice_spacing_fm": artifact.lattice_spacing_fm,
+                "momentum_gev": artifact.momentum_gev,
+            }
+        found = jobs.get(reference)
+        if found is None or reference in seen:
+            return {}
+        return from_job(*found, seen | {reference})
+
+    def from_job(stage_id: str, candidate: StageJob, seen: set[str]) -> dict[str, Any]:
+        if stage_id == "correlator_analysis":
+            params = {**manifest.stages[stage_id].defaults, **candidate.params}
+            momentum = (
+                params.get("final_momentum")
+                if str(params.get("fitting_form", "Breit")) == "NonBreit"
+                else params.get("momentum")
+            )
+            selected = [
+                item
+                for item in manifest.correlators
+                if item.correlator_id in candidate.correlator_ids
+                and item.correlator_type == "2pt"
+                and momentum in item.momentum
+            ]
+            if not selected or momentum is None:
+                return {}
+            correlator = selected[0]
+            result = {
+                "momentum": momentum,
+                "volume": correlator.volume,
+                "lattice_spacing_fm": correlator.lattice_spacing_fm,
+                "momentum_gev": correlator.momentum_gev(momentum),
+                "hadron": correlator.hadron,
+                "gfix": correlator.gfix,
+            }
+            if str(params.get("fitting_form", "Breit")) == "NonBreit":
+                initial = params.get("initial_momentum")
+                initial_source = next(
+                    (
+                        item
+                        for item in manifest.correlators
+                        if item.correlator_id in candidate.correlator_ids
+                        and item.correlator_type == "2pt"
+                        and initial in item.momentum
+                    ),
+                    None,
+                )
+                result.update(
+                    {
+                        "initial_momentum": initial,
+                        "final_momentum": momentum,
+                        "initial_momentum_gev": (
+                            initial_source.momentum_gev(initial)
+                            if initial_source is not None and initial is not None
+                            else None
+                        ),
+                        "final_momentum_gev": correlator.momentum_gev(momentum),
+                    }
+                )
+                result["momentum_gev"] = result["initial_momentum_gev"]
+            return result
+
+        for role in ("input", "quasi", "target", "reference", "denominator", "zR"):
+            value = candidate.inputs.get(role)
+            references = value if isinstance(value, list) else [value] if value is not None else []
+            for reference in references:
+                resolved = from_reference(reference, seen)
+                if resolved:
+                    return resolved
+        return {}
+
+    stage = next((stage_id for stage_id, config in manifest.stages.items() if job in config.jobs), None)
+    return {} if stage is None else from_job(stage, job, {job.id})
 
 
 def _resolve_from_root(root: Path, value: str) -> str:

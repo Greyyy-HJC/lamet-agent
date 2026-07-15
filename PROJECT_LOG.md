@@ -601,3 +601,30 @@
 - Inlined single-use tuning, logging, progress, and output orchestration; unified serial/parallel sample fitting through one batch path; narrowed numerical soft-fail handling; and reduced the terminal NetCDF write to one final write.
 - Removed production-dead correlator helpers, reconciled the correlator tool catalog with ``STAGE_TOOLS``, and added focused fit/catalog coverage.
 - Moved shared report formatting, language-target, and Markdown artifact-path handling into ``core/reporting.py`` for correlator, renormalization, Fourier, and matching reports.
+
+## 2026-07-15 (Manifest and standard correlator HDF5 v2)
+
+- Replaced correlator gamma/source-sink selectors with free-form source, sink, and current operator labels; added canonical volume labels, list-valued momentum/``tsep`` settings, and ``bT`` naming.
+- Standardized 2pt and 3pt HDF5 paths, including explicit ``tsep`` groups, and updated readers, planner conversion, HDF5 inspection, and fake-data generation to the v2 layout.
+- Made discrete momentum, volume, and lattice spacing the manifest-authoritative kinematics and derived physical momentum consistently across correlator, Fourier, matching, reports, and artifact attributes.
+- Consolidated the tracked CG/GI/sample manifests around shared multi-setting correlator files and updated partial-run artifacts to declare discrete kinematics.
+- Migrated the ignored CG/GI data catalogs into per-ensemble 2pt and per-ensemble/channel 3pt files, verified every dataset byte-for-byte at the array level, and rewrote both catalogs as version-2 metadata.
+- Documented the standard correlator HDF5 contract in ``README.md`` and expanded schema, reader, planner, tool-preparation, and momentum-derivation tests.
+
+## 2026-07-15 (Annotated sample manifest reference)
+
+- Expanded ``examples/sample_manifest.jsonc`` as a commented reference template for optional metadata, correlator, stage, plotting, reporting, and partial-run fields while retaining shared multi-setting HDF5 entries.
+- Documented mutually exclusive branches in place, including Breit ``momentum`` versus NonBreit ``initial_momentum``/``final_momentum``, hybrid-ratio versus self-renormalization, and Fourier ``sector`` versus low-level ``part`` selection.
+
+## 2026-07-15 (Temporary manifests and local data migration)
+
+- Migrated all four ignored ``examples/temp*manifest.json`` workflows to the v2 manifest contract, including shared multi-momentum/multi-``tsep`` correlator inputs and discrete partial-run kinematics.
+- Consolidated the local C-CLQCD gluon catalog from 51 legacy HDF5 files into one 2pt and one 3pt file, preserving the real/imaginary current channels as distinct nonlocal operators and verifying all 483 mapped datasets exactly.
+- Updated the associated C-CLQCD data builder to emit the shared v2 files, metadata catalog, and manifest entries directly.
+- Updated local GI DA and self-renormalization NetCDF provenance to ``volume``, ``lattice_spacing_fm``, and formula-derived ``momentum_gev`` while verifying that variable values and dimensions were unchanged.
+
+## 2026-07-15 (Correlator separation-direction provenance)
+
+- Added required 3pt ``bz_direction`` provenance with canonical axis-set labels ``X``, ``Y``, ``Z``, ``XY``, ``XZ``, ``YZ``, and ``XYZ`` while keeping the standard HDF5 dataset path unchanged.
+- Propagated ``bz_direction`` through correlator tool preparation and bare matrix-element attrs, taught the planner to request and inspect it, and documented ``bz`` as longitudinal/nonlocal separation and ``bT`` as transverse/nonlocal separation.
+- Removed the unused correlator ``variant`` parameter from manifests, tool signatures, log names, and new artifacts; migrated existing local HDF5 catalogs/root attrs and removed historical NetCDF ``variant`` attrs with exact data-equivalence checks.

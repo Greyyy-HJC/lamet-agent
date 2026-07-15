@@ -29,27 +29,27 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
     correlators = payload.get("inputs", {}).get("correlators", []) if isinstance(payload.get("inputs"), dict) else []
     if isinstance(correlators, list):
         required_by_kind = {
-            "2pt": ["source_sink", "momentum", "src_gamma", "sink_gamma"],
-            "3pt": ["source_sink", "momentum", "src_gamma", "sink_gamma", "current_gamma", "z_direction", "eta", "bt", "bz", "tsep"],
+            "2pt": ["source_operator", "sink_operator", "volume", "lattice_spacing_fm", "momentum"],
+            "3pt": ["source_operator", "sink_operator", "current_operator", "bz_direction", "volume", "lattice_spacing_fm", "momentum", "bT", "bz", "tsep"],
         }
         for index, item in enumerate(correlators):
             if not isinstance(item, dict):
                 continue
-            kind = str(item.get("kind", ""))
+            kind = str(item.get("correlator_type", ""))
             for field_name in required_by_kind.get(kind, []):
                 if field_name not in item:
                     label = str(item.get("correlator_id", index))
                     examples = {
-                        "source_sink": "SS",
-                        "momentum": "PX0PY0PZ0",
-                        "src_gamma": "5",
-                        "sink_gamma": "5",
-                        "current_gamma": "T",
-                        "z_direction": "Z",
-                        "eta": "eta0",
-                        "bt": "0",
-                        "bz": "0",
-                        "tsep": "8",
+                        "source_operator": "g5",
+                        "sink_operator": "g5",
+                        "current_operator": "gT_nonlocal",
+                        "bz_direction": "Z",
+                        "volume": "S48T64",
+                        "lattice_spacing_fm": "0.0574",
+                        "momentum": '["PX0PY0PZ0"]',
+                        "bT": "[0]",
+                        "bz": "[0]",
+                        "tsep": "[8]",
                     }
                     return [
                         {
@@ -185,16 +185,23 @@ def _coerce_user_answer_for_manifest_path(question_id: str, value: Any) -> Any:
     }
     if question_id in integer_fields:
         return int(value)
-    if question_id.endswith(".tsep"):
-        return int(value)
     if (
-        question_id.endswith(".a_fm")
-        or question_id.endswith(".pz_gev")
-        or question_id.endswith(".pz_out_gev")
+        question_id.endswith(".lattice_spacing_fm")
         or question_id.endswith(".zs_fm")
     ):
         return float(value)
-    if question_id.endswith(".bt") or question_id.endswith(".bz"):
+    if question_id.endswith(".momentum"):
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        text = str(value).strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = [part.strip() for part in re.split(r"[,，\s]+", text) if part.strip()]
+        if not isinstance(parsed, list):
+            parsed = [parsed]
+        return [str(item) for item in parsed]
+    if question_id.endswith(".bT") or question_id.endswith(".bz") or question_id.endswith(".tsep"):
         if isinstance(value, list):
             return [int(item) for item in value]
         text = str(value).strip()

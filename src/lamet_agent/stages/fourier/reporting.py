@@ -1026,7 +1026,7 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attrs `fit_model_*`", "Per-sample fit-model weights and diagnostics for `(order, prior width)` candidates.", "`(order, prior width)` 候选的逐样本权重和诊断。"),
             ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging.", "进入模型平均前 sample-average 区间扫描的诊断。"),
             ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection.", "两阶段选择模式：先选区间，再做拟合模型平均或最优模型选择。"),
-            ("attrs `pz_gev`, `pz_out_gev`, `a_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
+            ("attrs `momentum_gev`, `final_momentum_gev`, `lattice_spacing_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
             ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`, `phase_shift`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, formula choices, execution channel, final output normalization, Fourier phase convention, and DA flavor-class metadata.", "物理投影、公式选择、执行通道、最终输出归一化、Fourier 相位约定和 DA flavor-class 元数据。"),
         ]
     else:
@@ -1267,7 +1267,7 @@ def write_fourier_stage_report(
         ]
         for item in jobs:
             result = item["result"]
-            pz_value = result.get("pz_gev")
+            pz_value = result.get("momentum_gev")
             pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
             artifacts = markdown_artifact_paths(
                 item.get("artifacts", {}),
@@ -1334,7 +1334,7 @@ def write_fourier_stage_report(
         )
         for item in jobs:
             result = item["result"]
-            pz_value = result.get("pz_gev")
+            pz_value = result.get("momentum_gev")
             pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
             schemes = list(result.get("scheme_results", []))
             selected_model = schemes[0] if schemes else {}
@@ -1369,7 +1369,7 @@ def write_fourier_stage_report(
             )
         for item in jobs:
             result = item["result"]
-            pz_value = result.get("pz_gev")
+            pz_value = result.get("momentum_gev")
             pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
             lines.extend(
                 [
@@ -1387,7 +1387,7 @@ def write_fourier_stage_report(
         lines.append("## Figures and Visual Assessment" if language == "en" else "## 图像与可视化评估")
         for item in jobs:
             result = item["result"]
-            pz_value = result.get("pz_gev")
+            pz_value = result.get("momentum_gev")
             pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
             artifacts = markdown_artifact_paths(
                 item.get("artifacts", {}),

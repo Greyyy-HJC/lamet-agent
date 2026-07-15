@@ -144,7 +144,7 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     reference_zh = f"arXiv:{arxiv_id} {equations}".strip() if arxiv_id else "该匹配核未标注出处"
     x_grid = np.asarray(data.get("x_grid", []), dtype=float)
     zspz = data.get("zspz")
-    pz_value = data.get("pz_gev")
+    pz_value = data.get("momentum_gev")
     try:
         pz_text = f"$P_z={_fmt(float(pz_value))}$ GeV"
     except (TypeError, ValueError):
@@ -793,11 +793,11 @@ def write_matching_stage_report(
             )
             lines.append(
                 f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
-                f"{_fmt(result.get('pz_gev'))} | "
+                f"{_fmt(result.get('momentum_gev'))} | "
                 f"{artifacts.get('lightcone_artifact', 'n/a')} | "
                 f"{artifacts.get('matched_plot', 'n/a')} |"
             )
-        setting_data = {**first, "pz_gev": "see per-momentum table" if language == "en" else "见下方动量表"}
+        setting_data = {**first, "momentum_gev": "see per-momentum table" if language == "en" else "见下方动量表"}
         lines.extend(
             [
                 "",
@@ -829,11 +829,11 @@ def write_matching_stage_report(
                 lc_norm = _trapz_norm(x_grid, lc_mean)
                 rel = abs(lc_norm - quasi_norm) / abs(quasi_norm) if quasi_norm != 0.0 else float("nan")
                 lines.append(
-                    f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | {_fmt(quasi_norm)} | "
+                    f"| `{item['job_id']}` | {_fmt(result.get('momentum_gev'))} | {_fmt(quasi_norm)} | "
                     f"{_fmt(lc_norm)} | {_fmt(100 * rel)}% |"
                 )
             else:
-                lines.append(f"| `{item['job_id']}` | {_fmt(result.get('pz_gev'))} | n/a | n/a | n/a |")
+                lines.append(f"| `{item['job_id']}` | {_fmt(result.get('momentum_gev'))} | n/a | n/a | n/a |")
         lines.extend(
             [
                 "",
@@ -854,7 +854,7 @@ def write_matching_stage_report(
             image = artifacts.get("matched_plot_image")
             plot = artifacts.get("matched_plot")
             label = "Quasi vs light-cone comparison" if language == "en" else "quasi 与光锥 PDF 对比图"
-            lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('pz_gev'))}$ GeV"])
+            lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('momentum_gev'))}$ GeV"])
             if image:
                 lines.append(f"![{label}]({image})")
                 if plot:

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from lamet_agent.manifest import AnalysisManifest, StageJob
+from lamet_agent.manifest import AnalysisManifest, StageJob, derive_job_kinematics
 from lamet_agent.stages.matching.functions import is_hybrid_kernel, resolve_kernel_id
 
 
 STAGE_SKILL = """
 Perturbative matching applies the selected NLO kernel matrix independently to
 every quasi-PDF sample. The job's exact kernel_id resolves through the matching
-kernel declaration and its scheme; hybrid kernels use zs_fm and pz_gev to form
+kernel declaration and its scheme; hybrid kernels use zs_fm and momentum_gev to form
 z_s P_z. The x grid must not contain zero.
 """.strip()
 
@@ -43,7 +43,8 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     if set(job.inputs) != {"quasi"}:
         return ["A perturbative_matching job requires exactly one quasi input role."]
     params = effective_matching_params(manifest, job)
-    missing = [key for key in ("kernel_id", "pz_gev", "mu", "component") if key not in params]
+    params = {**derive_job_kinematics(manifest, job), **params}
+    missing = [key for key in ("kernel_id", "momentum_gev", "mu", "component") if key not in params]
     if missing:
         return [f"Matching job {job.id!r} is missing parameters: {missing}"]
     declaration = next((item for item in manifest.kernels if item.kernel_id == params["kernel_id"]), None)

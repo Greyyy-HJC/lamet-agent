@@ -19,8 +19,9 @@
         "id": "rn_p5",
         "stage": "renormalization",
         "path": "runs/ds_pdf_complete/artifacts/renormalization/rn_p5.nc",
-        "a_fm": 0.0574,
-        "pz_gev": 2.15,
+        "momentum": "PX5PY0PZ0",
+        "volume": "S48T64",
+        "lattice_spacing_fm": 0.0574,
         "hadron": "pion",
         "gfix": "CG"
       }
@@ -54,13 +55,13 @@
         }
       },
       "jobs": [
-        {"id": "ft_p5", "inputs": {"input": "rn_p5"}, "params": {"pz_gev": 2.15}}
+        {"id": "ft_p5", "inputs": {"input": "rn_p5"}}
       ]
     },
     "perturbative_matching": {
       "defaults": {"mu": 2.0, "component": "re"},
       "jobs": [
-        {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"pz_gev": 2.15, "zs_fm": 0.1722}}
+        {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"zs_fm": 0.1722}}
       ]
     }
   }

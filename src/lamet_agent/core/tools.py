@@ -9,7 +9,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable
 
-from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob
+from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob, derive_job_kinematics
 
 from .stages import resolve_stage_package
 
@@ -45,9 +45,12 @@ _FOURIER_RUN_KEYS = frozenset(
         "order",
         "observable",
         "coord_unit",
-        "pz_gev",
-        "pz_out_gev",
-        "a_fm",
+        "momentum",
+        "volume",
+        "bz_direction",
+        "momentum_gev",
+        "final_momentum_gev",
+        "lattice_spacing_fm",
         "im_flip_for_ft",
         "phase_shift",
         "sector",
@@ -65,7 +68,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "report",
     }
 )
-_MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "pz_gev", "mu", "zs_fm"})
+_MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "momentum_gev", "mu", "zs_fm"})
 
 
 def setup_logger(
@@ -280,27 +283,22 @@ def prepare_tool_args(
 
     if stage == "correlator_analysis":
         selected = [item for item in manifest.correlators if item.correlator_id in job.correlator_ids]
-        defaults = dict(effective_params)
+        defaults = {**effective_params, **job.params}
         fitting_form = str(defaults.get("fitting_form", "Breit"))
-        pt2_all = [item for item in selected if item.kind == "2pt"]
-        pt3 = sorted((item for item in selected if item.kind == "3pt"), key=lambda item: item.tsep or 0)
-        first_pt3 = pt3[0] if pt3 else None
-        pz_in = defaults.get("pz_gev")
-        if pz_in is None and first_pt3 is not None:
-            pz_in = first_pt3.pz_gev
-        pz_out = defaults.get("pz_out_gev")
-        if pz_out is None and first_pt3 is not None:
-            pz_out = first_pt3.pz_out_gev if first_pt3.pz_out_gev is not None else first_pt3.pz_gev
-        pt2 = next((item for item in pt2_all if pz_in is not None and float(item.pz_gev) == float(pz_in)), None)
-        if pt2 is None:
-            pt2 = pt2_all[0] if pt2_all else None
-        pt2_out = None
+        pt2_all = [item for item in selected if item.correlator_type == "2pt"]
+        pt3_all = [item for item in selected if item.correlator_type == "3pt"]
         if fitting_form == "NonBreit":
-            pt2_out = next((item for item in pt2_all if pz_out is not None and float(item.pz_gev) == float(pz_out)), None)
-            if pt2_out is None and len(pt2_all) > 1:
-                pt2_out = pt2_all[1] if pt2_all[0] is pt2 else pt2_all[0]
+            initial_momentum = defaults.get("initial_momentum")
+            final_momentum = defaults.get("final_momentum")
+            selected_momentum = final_momentum
         else:
-            pt2_out = pt2
+            selected_momentum = defaults.get("momentum")
+            initial_momentum = final_momentum = selected_momentum
+
+        pt2 = next((item for item in pt2_all if initial_momentum in item.momentum), None)
+        pt2_out = next((item for item in pt2_all if final_momentum in item.momentum), None)
+        pt3 = [item for item in pt3_all if selected_momentum in item.momentum]
+        first_pt3 = pt3[0] if pt3 else None
         if "component" in defaults:
             defaults["part"] = defaults.pop("component")
         defaults["resample_mode"] = manifest.metadata.resample_mode
@@ -317,31 +315,38 @@ def prepare_tool_args(
                 {
                     "pt2_path": pt2.data_path,
                     "pt2_out_path": pt2_out.data_path if pt2_out is not None else pt2.data_path,
-                    "source_sink": pt2.source_sink,
-                    "momentum": pt2.momentum,
-                    "momentum_out": pt2_out.momentum if pt2_out is not None else pt2.momentum,
-                    "gamma": pt2.src_gamma,
-                    "pt2_gamma": pt2.src_gamma,
+                    "source_operator": pt2.source_operator,
+                    "sink_operator": pt2.sink_operator,
+                    "temporal_extent": pt2.temporal_extent,
+                    "volume": pt2.volume,
                     "ensemble": pt2.ensemble,
                     "tag": job.id,
                     "hadron": pt2.hadron,
                     "gfix": pt2.gfix,
                 }
             )
+            if fitting_form == "NonBreit":
+                defaults["initial_momentum"] = initial_momentum
+                defaults["final_momentum"] = final_momentum
+            else:
+                defaults["momentum"] = selected_momentum
         if pt3:
             first = pt3[0]
+            paths_by_tsep: dict[str, str] = {}
+            for item in pt3:
+                for tsep in item.tsep or []:
+                    key = str(tsep)
+                    if key in paths_by_tsep and paths_by_tsep[key] != item.data_path:
+                        raise ValueError(f"multiple 3pt files declare tsep={tsep} for momentum {selected_momentum}")
+                    paths_by_tsep[key] = item.data_path
             defaults.update(
                 {
-                    "pt3_paths": {str(item.tsep): item.data_path for item in pt3},
-                    "tsep_ls": [item.tsep for item in pt3],
+                    "pt3_paths": paths_by_tsep,
+                    "tsep_ls": sorted(int(value) for value in paths_by_tsep),
                     "z_values": first.bz,
-                    "pt3_momentum": first.momentum,
-                    "direction": first.z_direction,
-                    "pt3_gamma": first.current_gamma,
-                    "b_dir": f"b_{first.z_direction}",
-                    "eta": first.eta,
-                    "bt": f"bT{first.bt[0]}",
-                    "b_label": f"b{first.bt[0]}",
+                    "current_operator": first.current_operator,
+                    "bz_direction": first.bz_direction,
+                    "bT": first.bT[0],
                 }
             )
         if tool_name == "tune_bare_matrix":
@@ -376,9 +381,23 @@ def prepare_tool_args(
             defaults["save_path"] = str(artifacts_dir / job.id)
             defaults["job_id"] = job.id
             defaults["workers"] = manifest.metadata.workers
-            defaults["a_fm"] = pt2.a_fm if pt2 is not None else None
-            defaults["pz_gev"] = pt2.pz_gev if pt2 is not None else None
-            defaults["pz_out_gev"] = pt2_out.pz_gev if pt2_out is not None else defaults.get("pz_out_gev")
+            defaults["lattice_spacing_fm"] = pt2.lattice_spacing_fm if pt2 is not None else None
+            if fitting_form == "NonBreit":
+                defaults["initial_momentum_gev"] = (
+                    pt2.momentum_gev(initial_momentum) if pt2 is not None and initial_momentum is not None else None
+                )
+                defaults["momentum_gev"] = defaults["initial_momentum_gev"]
+                defaults["final_momentum_gev"] = (
+                    pt2_out.momentum_gev(final_momentum)
+                    if pt2_out is not None and final_momentum is not None
+                    else None
+                )
+            else:
+                defaults["momentum_gev"] = (
+                    pt2.momentum_gev(selected_momentum)
+                    if pt2 is not None and selected_momentum is not None
+                    else None
+                )
         for key, value in defaults.items():
             if key not in resolved or resolved[key] is None:
                 resolved[key] = value
@@ -537,8 +556,21 @@ def prepare_tool_args(
         if "component" in fourier and "part" not in fourier:
             fourier["part"] = fourier.pop("component")
         source = store.get("input")
-        source_metadata = source.model_dump() if isinstance(source, ArtifactInput) else getattr(source, "attrs", {})
-        for key in ("a_fm", "pz_gev", "pz_out_gev", "hadron", "gfix"):
+        source_metadata = dict(source.model_dump() if isinstance(source, ArtifactInput) else getattr(source, "attrs", {}))
+        if isinstance(source, ArtifactInput) and source.momentum_gev is not None:
+            source_metadata["momentum_gev"] = source.momentum_gev
+        source_metadata.update(derive_job_kinematics(manifest, job))
+        for key in (
+            "momentum",
+            "volume",
+            "bz_direction",
+            "lattice_spacing_fm",
+            "momentum_gev",
+            "final_momentum_gev",
+        ):
+            if key in source_metadata:
+                fourier[key] = source_metadata[key]
+        for key in ("hadron", "gfix"):
             if key not in fourier and key in source_metadata:
                 fourier[key] = source_metadata[key]
         if "method" not in fourier and str(fourier.get("gfix", "")).upper() in {"CG", "GI"}:
@@ -580,6 +612,16 @@ def prepare_tool_args(
         from lamet_agent.stages.matching.functions import resolve_kernel_id
 
         matching = dict(effective_params)
+        quasi = store.get("quasi")
+        quasi_metadata = dict(
+            quasi.model_dump() if isinstance(quasi, ArtifactInput) else getattr(quasi, "attrs", {})
+        )
+        if isinstance(quasi, ArtifactInput) and quasi.momentum_gev is not None:
+            quasi_metadata["momentum_gev"] = quasi.momentum_gev
+        quasi_metadata.update(derive_job_kinematics(manifest, job))
+        for key in ("momentum", "volume", "bz_direction", "lattice_spacing_fm", "momentum_gev"):
+            if key in quasi_metadata:
+                matching[key] = quasi_metadata[key]
         declared_id = str(matching.get("kernel_id", ""))
         declaration = next((item for item in manifest.kernels if item.kernel_id == declared_id), None)
         if declaration is not None:
@@ -589,7 +631,6 @@ def prepare_tool_args(
             matching["kernel_id"] = resolve_kernel_id(declared_id, declaration.scheme)
         if tool_name == "load_quasi_pdf":
             resolved["component"] = matching.get("component", "re")
-            quasi = store.get("quasi")
             if isinstance(quasi, ArtifactInput):
                 resolved["path"] = quasi.path
             elif "path" not in resolved:
@@ -609,7 +650,7 @@ def prepare_tool_args(
             if "sector" in matching:
                 resolved["sector"] = matching["sector"]
         elif tool_name == "report_matching_result":
-            resolved.update({key: matching[key] for key in ("kernel_id", "pz_gev", "mu", "zs_fm", "component") if key in matching})
+            resolved.update({key: matching[key] for key in ("kernel_id", "momentum_gev", "mu", "zs_fm", "component") if key in matching})
             resolved.update({"save_path": f"{job.id}_report.md", "artifacts_dir": str(artifacts_dir)})
     if tool_name in _RENORM_ARTIFACT_TOOLS:
         raw_save = resolved.get("save_path")
