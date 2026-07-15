@@ -1078,10 +1078,138 @@ def V_qq_p(x: float, y: float, pz_gev: float, mu: float, eps: float = 1e-12) -> 
     return float(V_qq_h(x, y, pz_gev, mu, eps) + 2.0 * extra)
 
 
+def V_qq_rto(x: float, y: float) -> float:
+    """The Wilson-line term ``3/(2 |x - y|)`` that rides along with V_qq in the ratio scheme.
+
+    Not an optional scheme flourish -- it is what makes the DA kernel integrable. The
+    density ``V_qq,p / 2`` falls off as ``-3/(2 |x|)``, an *even* tail, so ``int dx V`` --
+    exactly the integral the plus prescription subtracts on each y column -- diverges
+    logarithmically on its own and the subtraction would depend on how wide an x grid one
+    happened to pick. This term carries the equal and opposite ``+3/(2 |x|)`` tail, so the
+    sum is integrable and the plus prescription is well defined and grid independent.
+
+    It is the ``z_s -> infinity`` limit of the hybrid scheme's Si term: as its argument
+    grows, ``Si -> (pi/2) sgn(y - x)`` and ``3 Si(z_s P_z (y-x)) / (pi (y-x))`` collapses
+    to exactly this. Ratio and hybrid differ only in that one term.
+    """
+    return float(1.5 / np.abs(x - y))
+
+
+def _da_matrix(
+    lightcone_x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float,
+    quasi_y_ls: np.ndarray | None,
+    eps: float,
+    *,
+    coefficient: Callable[[float, float, float, float, float], float],
+    wilson_line: Callable[[float, float], float],
+) -> np.ndarray:
+    """Discretize a meson-DA kernel: ``coefficient / 2`` plus the scheme's Wilson-line term.
+
+    ``coefficient`` selects the operator, and the two DA operators differ by exactly the
+    ``Delta C`` the papers quote for gamma^z gamma_5:
+
+        V_qq,h / 2 = C^{gt g5},   V_qq,p / 2 = C^{gz g5} = C^{gt g5} + Delta C.
+
+    ``0.5 (V_qq_p - V_qq_h) == Delta C`` holds identically (a test pins it), so gamma^z gamma_5
+    needs no separate correction term -- adding one would count it twice. The two agree outside
+    0 < x < 1, where Delta C vanishes, so both carry the same ``-3/(2|x|)`` tail and the same
+    ``wilson_line`` cancels it. Ratio and hybrid differ only in ``wilson_line``.
+    """
+    def density(x: float, y: float) -> float:
+        if not (eps < y < 1.0 - eps):
+            return 0.0
+        return 0.5 * coefficient(x, y, pz_gev, mu, eps) + wilson_line(x, y)
+
+    return build_matching_matrix(lightcone_x_ls, mu, quasi_y_ls, eps, density=density)
+
+
+def _da_wilson_line(scheme: str, zspz: float | None, eps: float) -> Callable[[float, float], float]:
+    """The Wilson-line term that turns the bare coefficient into a ratio or hybrid kernel.
+
+    Ratio takes ``3/(2|x-y|)``; hybrid takes ``3 Si(z_s P_z (y-x)) / (pi (y-x))``, of which
+    the ratio term is the ``z_s -> infinity`` limit. ``_hybrid_gi_delta`` supplies the Si term
+    already carrying ``-3/(2|x-y|)`` -- it is written to convert a density that *has* the ratio
+    term into the hybrid one -- so hybrid adds both and the ratio term cancels out of it.
+    """
+    if scheme == "ratio":
+        return V_qq_rto
+    if zspz is None:
+        raise ValueError("`zspz` is required for the hybrid matching kernel.")
+    z = float(zspz)
+
+    def hybrid(x: float, y: float) -> float:
+        return V_qq_rto(x, y) + _hybrid_gi_delta(x / y, y, z, eps, strength=1.5) / np.abs(y)
+
+    return hybrid
+
+
 # --- public quark kernel: GI_<operator>_DA_<scheme>_NLO ----------------------
 
 
-@kernel_reference("2212.14415", "Eq. (4.15)")
+# The two DA operators share every piece of machinery and differ only in which coefficient
+# of Eq. (4.15) they use: gamma^t gamma_5 takes V_qq,h, gamma^z gamma_5 takes V_qq,p (which
+# is V_qq,h plus that operator's Delta C). The scheme picks the Wilson-line term on top.
+#
+# Unlike the PDF kernels the density is the two-variable V(x, y) itself: it carries its own
+# 1/y and 1/(1-y) poles, so it is integrated with a plain dy rather than the PDF's dy/|y|.
+# The 1/2 converts the paper's ``a_s = alpha_s/(4 pi)`` to the ``alpha_s C_F/(2 pi)`` this
+# discretization factors out. The density is zero outside 0 < y < 1: in the factorization
+# formula the y integral runs over the DA's support, so V is only ever defined there.
+
+
+@kernel_reference(
+    "2212.14415",
+    "Eq. (4.15) V_qq,h (the gamma^t gamma_5 coefficient), with the ratio-scheme Wilson-line "
+    "term 3/(2|x-y|) (the z_s -> infinity limit of the hybrid Si term; see V_qq_rto)",
+)
+def GI_gtg5_DA_ratio_NLO(
+    lightcone_x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    quasi_y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO ratio-scheme kernel for the meson DA measured with the gamma^t gamma_5 operator."""
+    del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
+    return _da_matrix(
+        lightcone_x_ls, pz_gev, mu, quasi_y_ls, eps,
+        coefficient=V_qq_h,
+        wilson_line=_da_wilson_line("ratio", None, eps),
+    )
+
+
+@kernel_reference(
+    "2212.14415",
+    "Eq. (4.15) V_qq,h (the gamma^t gamma_5 coefficient), with the hybrid-scheme Wilson-line "
+    "term 3 Si(z_s P_z (y-x))/(pi (y-x))",
+)
+def GI_gtg5_DA_hybrid_NLO(
+    lightcone_x_ls: np.ndarray,
+    pz_gev: float,
+    mu: float = 2.0,
+    quasi_y_ls: np.ndarray | None = None,
+    eps: float = 1e-12,
+    zspz: float | None = None,
+) -> np.ndarray:
+    """NLO hybrid kernel for the meson DA measured with the gamma^t gamma_5 operator.
+
+    ``zspz = z_s * P_z``.
+    """
+    return _da_matrix(
+        lightcone_x_ls, pz_gev, mu, quasi_y_ls, eps,
+        coefficient=V_qq_h,
+        wilson_line=_da_wilson_line("hybrid", zspz, eps),
+    )
+
+
+@kernel_reference(
+    "2212.14415",
+    "Eq. (4.15) V_qq,p (the gamma^z gamma_5 coefficient), with the ratio-scheme Wilson-line "
+    "term 3/(2|x-y|) (the z_s -> infinity limit of the hybrid Si term; see V_qq_rto)",
+)
 def GI_gzg5_DA_ratio_NLO(
     lightcone_x_ls: np.ndarray,
     pz_gev: float,
@@ -1090,29 +1218,20 @@ def GI_gzg5_DA_ratio_NLO(
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
-    """NLO ratio-scheme kernel for the meson distribution amplitude, V_qq,p (Eq. 4.15).
-
-    Unlike the PDF kernels, the density is the two-variable V(x, y) itself: it carries
-    its own 1/y and 1/(1-y) poles, so it is integrated with a plain dy rather than the
-    PDF's dy/|y|. The 1/2 converts the paper's ``a_s = alpha_s/(4 pi)`` normalization to
-    the ``alpha_s C_F/(2 pi)`` this discretization factors out.
-
-    The density is zero outside 0 < y < 1. In the factorization formula the y integral
-    runs over the DA's support, so V is only ever defined for a light-cone y in (0, 1) --
-    the columns outside it stay pure LO instead of evaluating V where the paper gives no
-    formula. (V also has poles at y = 0 and y = 1.)
-    """
+    """NLO ratio-scheme kernel for the meson DA measured with the gamma^z gamma_5 operator."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-
-    def density(x: float, y: float) -> float:
-        if not (eps < y < 1.0 - eps):
-            return 0.0
-        return 0.5 * V_qq_p(x, y, pz_gev, mu, eps)
-
-    return build_matching_matrix(lightcone_x_ls, mu, quasi_y_ls, eps, density=density)
+    return _da_matrix(
+        lightcone_x_ls, pz_gev, mu, quasi_y_ls, eps,
+        coefficient=V_qq_p,
+        wilson_line=_da_wilson_line("ratio", None, eps),
+    )
 
 
-@kernel_reference("2212.14415", "Eq. (4.15) + the hybrid term of arXiv:2604.00143 Eq. (C8)")
+@kernel_reference(
+    "2212.14415",
+    "Eq. (4.15) V_qq,p (the gamma^z gamma_5 coefficient), with the hybrid-scheme Wilson-line "
+    "term 3 Si(z_s P_z (y-x))/(pi (y-x))",
+)
 def GI_gzg5_DA_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
     pz_gev: float,
@@ -1121,25 +1240,12 @@ def GI_gzg5_DA_hybrid_NLO(
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
-    """NLO hybrid kernel for the meson DA: the ratio kernel plus the shared Wilson-line term.
+    """NLO hybrid kernel for the meson DA measured with the gamma^z gamma_5 operator.
 
-    The ratio -> hybrid switch is the *same* correction the GI gamma^z gamma5 PDF hybrid
-    uses -- ``_hybrid_gi_delta`` is called here, not re-derived. Written as a density in
-    (x, y) it is a pure function of x - y, since the 1/|y| of the PDF measure cancels:
-
-        -3/(2|x-y|) + 3 Si((y-x) z_s P_z) / (pi (y-x))
-
-    which is why one term can serve both the PDF and the DA. ``zspz = z_s * P_z``.
+    ``zspz = z_s * P_z``.
     """
-    if zspz is None:
-        raise ValueError("`zspz` is required for the hybrid matching kernel.")
-    z = float(zspz)
-
-    def density(x: float, y: float) -> float:
-        if not (eps < y < 1.0 - eps):
-            return 0.0
-        # V_qq,p carries the paper's a_s = alpha_s/(4 pi) (hence the 1/2); the shared
-        # hybrid term is already in the alpha_s C_F/(2 pi) units this builder factors out.
-        return 0.5 * V_qq_p(x, y, pz_gev, mu, eps) + _hybrid_gi_delta(x / y, y, z, eps, strength=1.5) / np.abs(y)
-
-    return build_matching_matrix(lightcone_x_ls, mu, quasi_y_ls, eps, density=density)
+    return _da_matrix(
+        lightcone_x_ls, pz_gev, mu, quasi_y_ls, eps,
+        coefficient=V_qq_p,
+        wilson_line=_da_wilson_line("hybrid", zspz, eps),
+    )
