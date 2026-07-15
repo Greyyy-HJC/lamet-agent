@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
+
+from lamet_agent.manifest import parse_volume
 
 from .core import (
     CorrelatorH5Mapping,
@@ -46,12 +49,16 @@ def inspect_correlator_h5_files(manifest_path: Path, payload: dict[str, Any]) ->
             inspections.append(H5Inspection(correlator_id=correlator_id, path=str(item.get("data_path", "")), exists=False))
             continue
         datasets: list[H5DatasetSummary] = []
+        file_attrs: dict[str, str] = {}
         suffix = resolved.suffix.lower()
         try:
             if suffix in {".h5", ".hdf5"}:
                 if h5py is None:
                     raise ValueError("h5py is not installed; install the analysis extra to inspect correlator HDF5 files.")
                 with h5py.File(resolved, "r") as h5f:
+                    file_attrs = _dataset_attrs(h5f)
+                    if "bz_direction" in h5f.attrs:
+                        file_attrs["bz_direction"] = str(h5f.attrs["bz_direction"])
                     def visit(name: str, obj: Any) -> None:
                         if isinstance(obj, h5py.Dataset):
                             datasets.append(
@@ -81,26 +88,36 @@ def inspect_correlator_h5_files(manifest_path: Path, payload: dict[str, Any]) ->
         except Exception as exc:
             inspections.append(H5Inspection(correlator_id=correlator_id, path=str(resolved), exists=True, error=str(exc)))
             continue
-        inspections.append(H5Inspection(correlator_id=correlator_id, path=str(resolved), exists=True, datasets=datasets))
+        inspections.append(
+            H5Inspection(
+                correlator_id=correlator_id,
+                path=str(resolved),
+                exists=True,
+                attrs=file_attrs,
+                datasets=datasets,
+            )
+        )
     return inspections
 
 
 def _standard_dataset_paths(correlator: dict[str, Any]) -> list[str]:
-    kind = correlator.get("kind")
-    source_sink = str(correlator.get("source_sink", ""))
-    momentum = str(correlator.get("momentum", ""))
-    if kind == "2pt":
-        return [f"{source_sink}/{correlator.get('src_gamma', '')}/{momentum}"]
-    if kind == "3pt":
-        gamma = str(correlator.get("current_gamma", ""))
-        direction = str(correlator.get("z_direction", ""))
-        eta = str(correlator.get("eta", ""))
-        bt_values = _as_list(correlator.get("bt"))
-        bt = bt_values[0] if bt_values else None
-        if bt is None:
+    correlator_type = correlator.get("correlator_type")
+    source_operator = str(correlator.get("source_operator", ""))
+    sink_operator = str(correlator.get("sink_operator", ""))
+    momenta = _as_list(correlator.get("momentum"))
+    if correlator_type == "2pt":
+        return [f"{source_operator}/{sink_operator}/{momentum}" for momentum in momenta]
+    if correlator_type == "3pt":
+        current_operator = str(correlator.get("current_operator", ""))
+        bT_values = _as_list(correlator.get("bT"))
+        tseps = _as_list(correlator.get("tsep"))
+        if not bT_values or not tseps:
             return []
         return [
-            f"{source_sink}/{gamma}/{momentum}/b_{direction}/{eta}/bT{bt}/bz{z}"
+            f"{source_operator}/{sink_operator}/{current_operator}/{momentum}/tsep{tsep}/bT{bT}/bz{z}"
+            for momentum in momenta
+            for tsep in tseps
+            for bT in bT_values
             for z in _as_list(correlator.get("bz"))
         ]
     return []
@@ -138,16 +155,37 @@ def _choose_source_datasets(correlator: dict[str, Any], source: Path) -> tuple[l
     if not targets:
         return [], True, "Cannot build standard target paths from correlator metadata."
     if all(target in names for target in targets):
+        for target in targets:
+            shape = names[target]
+            if len(shape) != 2:
+                return [], True, f"Standard dataset {target!r} has shape {shape}; expected two dimensions."
+            if correlator.get("correlator_type") == "2pt":
+                try:
+                    temporal_extent = parse_volume(str(correlator.get("volume", "")))[1]
+                except ValueError as exc:
+                    return [], True, str(exc)
+                if shape[0] != temporal_extent:
+                    return [], True, (
+                        f"Standard 2pt dataset {target!r} has Lt={shape[0]}; "
+                        f"expected {temporal_extent} from manifest volume."
+                    )
+            else:
+                match = re.search(r"/tsep(\d+)/", f"/{target}/")
+                if match is not None and shape[0] != int(match.group(1)) + 1:
+                    return [], True, (
+                        f"Standard 3pt dataset {target!r} has tau length {shape[0]}; "
+                        f"expected {int(match.group(1)) + 1}."
+                    )
         return [], False, None
     available = sorted(names)
-    if correlator.get("kind") == "2pt":
+    if correlator.get("correlator_type") == "2pt":
         if len(available) != 1:
             return [], True, f"Expected one 2pt dataset or the standard path; found {len(available)} datasets."
         return [{"source": available[0], "target": targets[0], "transpose": False}], True, (
             "Non-standard HDF5 2pt input requires explicit confirmation of time/cfg axes and transpose. "
             f"Available dataset: {_source_summary(names)}. Expected standard target: {targets[0]}."
         )
-    if correlator.get("kind") == "3pt":
+    if correlator.get("correlator_type") == "3pt":
         bz_values = _as_list(correlator.get("bz"))
         if len(available) != len(targets):
             return [], True, f"Expected {len(targets)} 3pt datasets for bz values {bz_values}; found {len(available)}."
@@ -155,7 +193,7 @@ def _choose_source_datasets(correlator: dict[str, Any], source: Path) -> tuple[l
             "Non-standard HDF5 3pt input requires explicit source-to-bz mapping and tau/cfg axis confirmation. "
             f"Available datasets: {_source_summary(names)}. Expected standard targets: {targets}."
         )
-    return [], True, f"Unsupported correlator kind {correlator.get('kind')!r}."
+    return [], True, f"Unsupported correlator type {correlator.get('correlator_type')!r}."
 
 
 def _source_summary(names: dict[str, list[int]]) -> str:
@@ -199,7 +237,7 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
                 datasets, ambiguous, reason = _choose_source_datasets(item, source)
             elif suffix == ".npy":
                 if len(targets) == 1 and names.get("array"):
-                    if item.get("kind") == "2pt":
+                    if item.get("correlator_type") == "2pt":
                         datasets, ambiguous, reason = [{"source": "array", "target": targets[0], "transpose": False}], True, (
                             "NumPy 2pt input requires explicit confirmation of cfg and time axes, momentum selection, and whether transpose is needed. "
                             f"Available array: {_source_summary(names)}. Expected standard target: {targets[0]}."
@@ -240,6 +278,11 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
                 output_file=str(output),
                 script_file=str(script),
                 datasets=datasets,
+                attrs=(
+                    {"standard_correlator_hdf5_version": 2, "bz_direction": item["bz_direction"]}
+                    if item.get("correlator_type") == "3pt"
+                    else {"standard_correlator_hdf5_version": 2}
+                ),
                 ambiguous=ambiguous,
                 reason=reason,
             )
@@ -278,6 +321,8 @@ def convert_correlator_h5(mapping: CorrelatorH5Mapping) -> None:
     h5_source = h5py.File(mapping.source_file, "r") if suffix in {".h5", ".hdf5"} else None
     try:
         with h5py.File(output, "w") as dst:
+            for key, value in mapping.attrs.items():
+                dst.attrs[key] = value
             for item in mapping.datasets:
                 source_name = str(item.get("source") or "array")
                 target_name = str(item["target"])

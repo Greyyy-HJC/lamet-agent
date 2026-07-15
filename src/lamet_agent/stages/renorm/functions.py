@@ -288,15 +288,15 @@ def apply_ratio_scheme_renormalization(
     zs_fm = float(params["zs_fm"])
     m0_gev = float(params.get("m0_gev", 0.0))
     delta_m_gev = float(params.get("delta_m_gev", 0.0))
-    a_fm = float(target_data.attrs["a_fm"])
-    zs_lattice = zs_fm / a_fm
+    lattice_spacing_fm = float(target_data.attrs["lattice_spacing_fm"])
+    zs_lattice = zs_fm / lattice_spacing_fm
     zs_idx = int(np.argmin(np.abs(np.abs(z_denom) - zs_lattice)))
-    z_fm = np.abs(z_target) * a_fm
+    z_fm = np.abs(z_target) * lattice_spacing_fm
     mass_scale = (delta_m_gev + m0_gev) / GEV_FM
     exponent = np.exp(mass_scale * (z_fm - zs_fm))
     short = target_values / denom_values
     long = exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
-    renorm_values = np.where((np.abs(z_target) * a_fm)[None, :] <= zs_fm, short, long)
+    renorm_values = np.where((np.abs(z_target) * lattice_spacing_fm)[None, :] <= zs_fm, short, long)
 
     attrs = {
         **target_data.attrs,
@@ -373,10 +373,9 @@ def plot_renormalized_matrix_element(
     ax.set_ylabel(r"Renormalized matrix element", **FONT_SIZE)
     if title is None:
         ensemble = matrix.ensemble.id if matrix.ensemble is not None and matrix.ensemble.id else ""
-        pz = matrix.attrs.get("pz_gev")
-        direction = matrix.attrs.get("z_direction", matrix.attrs.get("direction", ""))
-        if pz is not None:
-            title = rf"{ensemble} $p={float(pz):.2f}\,\mathrm{{GeV}}$ {direction} renormalized matrix elements"
+        momentum = matrix.attrs.get("momentum_gev")
+        if momentum is not None:
+            title = rf"{ensemble} $p={float(momentum):.2f}\,\mathrm{{GeV}}$ renormalized matrix elements"
         else:
             title = "Renormalized matrix elements"
     ax.set_title(title, **FONT_SIZE)
@@ -707,7 +706,7 @@ def _remap_zr_values(
     zr_vals: np.ndarray,
     *,
     z_vals: np.ndarray,
-    a_fm: float,
+    lattice_spacing_fm: float,
     d_from: float,
     d_to: float,
     m0_from: float,
@@ -719,10 +718,10 @@ def _remap_zr_values(
     Continuum/discretization pieces cancel; only the ``d`` log term and
     ``m0*z`` slope differ between operators (legacy PDF→DA replacement).
     """
-    x = GEV_FM / float(a_fm)
+    x = GEV_FM / float(lattice_spacing_fm)
     log_term = float(np.log(lqcd / x))
     if abs(log_term) < 1e-30:
-        raise ValueError(f"invalid log(lqcd/x) for a_fm={a_fm}")
+        raise ValueError(f"invalid log(lqcd/x) for lattice_spacing_fm={lattice_spacing_fm}")
     scale = (1.0 + d_to / log_term) / (1.0 + d_from / log_term)
     return np.asarray(zr_vals, dtype=float) * scale * np.exp((m0_to - m0_from) * np.asarray(z_vals, dtype=float))
 
@@ -758,8 +757,8 @@ def apply_self_renormalization(
     z_target = np.asarray(target_data.coords["z"], dtype=float)
     z_zr = np.asarray(zR_data.coords["z"], dtype=float)
     a_coords = list(zR_data.coords.get("a", [zR_data.ensemble.a_s]))
-    a_fm = float(target_data.attrs.get("a_fm", a_coords[0]))
-    ia = int(np.argmin([abs(float(a) - a_fm) for a in a_coords]))
+    lattice_spacing_fm = float(target_data.attrs.get("lattice_spacing_fm", a_coords[0]))
+    ia = int(np.argmin([abs(float(a) - lattice_spacing_fm) for a in a_coords]))
     a_used = float(a_coords[ia])
 
     # Mean zR on the fit grid (zR is bootstrap EnsembleData on (a,z) or (z)).
@@ -790,7 +789,7 @@ def apply_self_renormalization(
                 remapped[ia_all] = _remap_zr_values(
                     zr_grid[ia_all],
                     z_vals=z_zr,
-                    a_fm=float(a_val),
+                    lattice_spacing_fm=float(a_val),
                     d_from=d_from,
                     d_to=d_to,
                     m0_from=m0_from,
@@ -802,7 +801,7 @@ def apply_self_renormalization(
             zr_grid = _remap_zr_values(
                 zr_grid,
                 z_vals=z_zr,
-                a_fm=a_used,
+                lattice_spacing_fm=a_used,
                 d_from=d_from,
                 d_to=d_to,
                 m0_from=m0_from,
@@ -852,7 +851,7 @@ def apply_self_renormalization(
         "mu": str(mu),
         "m0_gev": "" if m0_to is None else str(m0_to),
         "d": "" if d_to is None else str(d_to),
-        "a_fm_used": str(a_used),
+        "lattice_spacing_fm_used": str(a_used),
         "target": target,
         "job_id": job_id,
         "sample_error_mode": sample_error_mode,
@@ -894,7 +893,7 @@ def apply_self_renormalization(
         "remapped": bool(remap),
         "n_z": int(len(z_target)),
         "n_sample": int(renorm_values.shape[0]),
-        "a_fm": a_fm,
+        "lattice_spacing_fm": lattice_spacing_fm,
     }
 
 
@@ -1041,8 +1040,8 @@ def plot_self_renormalization_diagnostics(
     target_data = _require_matrix_data(store, target)
     z_target = np.asarray(target_data.coords["z"], dtype=float)
     a_coords = list(zR_data.coords.get("a", [zR_data.ensemble.a_s]))
-    a_fm = float(target_data.attrs.get("a_fm", a_coords[0]))
-    ia = int(np.argmin([abs(float(a) - a_fm) for a in a_coords]))
+    lattice_spacing_fm = float(target_data.attrs.get("lattice_spacing_fm", a_coords[0]))
+    ia = int(np.argmin([abs(float(a) - lattice_spacing_fm) for a in a_coords]))
     zr_arr = np.asarray(zR_data.values)
     if zr_arr.ndim == 3:
         zr_vals = np.mean(np.real(zr_arr[:, ia, :]), axis=0)
@@ -1059,7 +1058,7 @@ def plot_self_renormalization_diagnostics(
     re_hzr, re_hzr_err = sample_mean_and_sdev(np.real(h_over_zr), mode=mode_rs, sample_error_mode=sample_error_mode, axis=0)
 
     fig, ax = default_plot()
-    ax.errorbar(z_target, re_hzr, re_hzr_err, color=COLOR_CYCLE[0], label=rf"$H/z_R$ ($a={a_fm:.4f}\,\mathrm{{fm}}$)", **ERRORBAR_STYLE)
+    ax.errorbar(z_target, re_hzr, re_hzr_err, color=COLOR_CYCLE[0], label=rf"$H/z_R$ ($a={lattice_spacing_fm:.4f}\,\mathrm{{fm}}$)", **ERRORBAR_STYLE)
     ax.plot(z_target, zms_target, color=COLOR_CYCLE[1], label=r"$Z_{\overline{\mathrm{MS}}}$")
     ax.axhline(0.0, color="k", linestyle="--", linewidth=0.8)
     ax.set_xlabel(r"$z$ [fm]", **FONT_SIZE)
@@ -1080,7 +1079,7 @@ def plot_self_renormalization_diagnostics(
             sibling = EnsembleData.from_netcdf(sibling_path)
             series.append(
                 (
-                    float(sibling.attrs.get("a_fm", sibling.ensemble.a_s)),
+                    float(sibling.attrs.get("lattice_spacing_fm", sibling.ensemble.a_s)),
                     np.asarray(sibling.values, dtype=complex),
                 )
             )
@@ -1123,7 +1122,7 @@ def plot_self_renormalization_diagnostics(
         "kernel_id": resolved_kernel_id,
         "mu": mu_val,
         "n_sibling": len(sibling_artifacts or []),
-        "a_fm": a_fm,
+        "lattice_spacing_fm": lattice_spacing_fm,
         "include_discrete_effect": bool(include_discrete_effect),
     }
 

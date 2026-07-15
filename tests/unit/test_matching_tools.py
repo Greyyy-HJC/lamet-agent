@@ -29,6 +29,7 @@ def test_matching_consumes_in_memory_fourier_output_and_writes_primary_netcdf(tm
         values=[np.array([1 + 0.1j, 2 + 0.2j]), np.array([1.2 + 0.1j, 2.2 + 0.2j])],
         dims=("x",),
         coords={"x": [-0.5, 0.5]},
+        attrs={"bz_direction": "X"},
         name="fourier_transform",
     )
     store = {"quasi": data}
@@ -39,6 +40,7 @@ def test_matching_consumes_in_memory_fourier_output_and_writes_primary_netcdf(tm
 
     assert loaded["n_sample"] == 2
     assert store["output"] is store["lightcone_ed"]
+    assert store["output"].attrs["bz_direction"] == "X"
     assert Path(result["artifact"]).is_file()
     saved = EnsembleData.from_netcdf(result["artifact"])
     assert saved.dims == ["x"]

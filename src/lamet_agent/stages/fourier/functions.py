@@ -273,35 +273,35 @@ def _uniform_step(coord: np.ndarray) -> float:
     return float(diffs[0])
 
 
-def _ft_scale_momentum(pz_gev: float | None, pz_out_gev: float | None = None) -> float:
+def _ft_scale_momentum(momentum_gev: float | None, final_momentum_gev: float | None = None) -> float:
     """Return the momentum used only for coord->lambda scaling."""
-    return max(abs(float(pz_gev or 0.0)), abs(float(pz_out_gev or 0.0)))
+    return max(abs(float(momentum_gev or 0.0)), abs(float(final_momentum_gev or 0.0)))
 
 
 def _coord_scale(
     coord_unit: str,
     *,
-    pz_gev: float | None,
-    a_fm: float | None,
-    pz_out_gev: float | None = None,
+    momentum_gev: float | None,
+    lattice_spacing_fm: float | None,
+    final_momentum_gev: float | None = None,
 ) -> tuple[float, float]:
     """Return ``(fit_scale, ft_scale)`` from input coordinates."""
     unit = coord_unit.lower()
-    ft_momentum = _ft_scale_momentum(pz_gev, pz_out_gev)
+    ft_momentum = _ft_scale_momentum(momentum_gev, final_momentum_gev)
     if unit == "lambda":
         return 1.0, 1.0
     if unit == "gev_inv":
         if ft_momentum == 0.0:
-            raise ValueError("pz_gev or pz_out_gev is required when coord_unit='gev_inv'")
+            raise ValueError("momentum_gev or final_momentum_gev is required when coord_unit='gev_inv'")
         return 1.0, ft_momentum
     if unit == "fm":
         if ft_momentum == 0.0:
-            raise ValueError("pz_gev or pz_out_gev is required when coord_unit='fm'")
+            raise ValueError("momentum_gev or final_momentum_gev is required when coord_unit='fm'")
         return FM_TO_GEV_INV, FM_TO_GEV_INV * ft_momentum
     if unit == "lattice":
-        if a_fm is None or ft_momentum == 0.0:
-            raise ValueError("a_fm and pz_gev or pz_out_gev are required when coord_unit='lattice'")
-        return float(a_fm) * FM_TO_GEV_INV, float(a_fm) * FM_TO_GEV_INV * ft_momentum
+        if lattice_spacing_fm is None or ft_momentum == 0.0:
+            raise ValueError("lattice_spacing_fm and momentum_gev or final_momentum_gev are required when coord_unit='lattice'")
+        return float(lattice_spacing_fm) * FM_TO_GEV_INV, float(lattice_spacing_fm) * FM_TO_GEV_INV * ft_momentum
     raise ValueError("coord_unit must be 'lambda', 'gev_inv', 'fm', or 'lattice'")
 
 
@@ -338,18 +338,18 @@ def _quark_like_term_names(observable: str) -> tuple[str, ...]:
 def _phase_scales(
     *,
     coord_unit: str,
-    pz_gev: float | None,
-    pz_out_gev: float | None,
+    momentum_gev: float | None,
+    final_momentum_gev: float | None,
     ft_scale_over_fit_scale: float,
 ) -> tuple[float, float | None]:
     if coord_unit.lower() == "lambda":
         phase_scale = ft_scale_over_fit_scale
-        if pz_out_gev is None:
+        if final_momentum_gev is None:
             return phase_scale, None
-        if pz_gev is None:
-            raise ValueError("pz_gev is required with pz_out_gev when coord_unit='lambda'")
-        return phase_scale, float(pz_out_gev) / float(pz_gev)
-    return float(pz_gev or 0.0), None if pz_out_gev is None else float(pz_out_gev)
+        if momentum_gev is None:
+            raise ValueError("momentum_gev is required with final_momentum_gev when coord_unit='lambda'")
+        return phase_scale, float(final_momentum_gev) / float(momentum_gev)
+    return float(momentum_gev or 0.0), None if final_momentum_gev is None else float(final_momentum_gev)
 
 
 def _quark_like_phase_scales(
@@ -912,9 +912,9 @@ def fit_tail_quality_for_mean(
     order: str,
     observable: str,
     coord_unit: str,
-    pz_gev: float | None = None,
-    pz_out_gev: float | None = None,
-    a_fm: float | None = None,
+    momentum_gev: float | None = None,
+    final_momentum_gev: float | None = None,
+    lattice_spacing_fm: float | None = None,
     resample_mode: str = "bootstrap",
     Lambda0: float = 0.1,
     posterior_prior_error_scale: float = 3.0,
@@ -935,13 +935,13 @@ def fit_tail_quality_for_mean(
         raise ValueError("sample arrays must have one value per coordinate point")
 
     observable = _canonical_observable(observable)
-    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_out_gev=pz_out_gev, a_fm=a_fm)
+    fit_scale, ft_scale = _coord_scale(coord_unit, momentum_gev=momentum_gev, final_momentum_gev=final_momentum_gev, lattice_spacing_fm=lattice_spacing_fm)
     fit_coord = coord_arr * fit_scale
     ft_scale_over_fit_scale = ft_scale / fit_scale
     phase_scale, phase_prime_scale = _phase_scales(
         coord_unit=coord_unit,
-        pz_gev=pz_gev,
-        pz_out_gev=pz_out_gev,
+        momentum_gev=momentum_gev,
+        final_momentum_gev=final_momentum_gev,
         ft_scale_over_fit_scale=ft_scale_over_fit_scale,
     )
     zmin_fit = _convert_scheme_value(zmin, fit_scale)
@@ -1468,9 +1468,9 @@ def run_fourier_workflow(
     order: str = "NLA",
     observable: str = "nucleon_quark_transversity_quasi_pdf",
     coord_unit: str = "lambda",
-    pz_gev: float | None = None,
-    pz_out_gev: float | None = None,
-    a_fm: float | None = None,
+    momentum_gev: float | None = None,
+    final_momentum_gev: float | None = None,
+    lattice_spacing_fm: float | None = None,
     im_flip_for_ft: bool = False,
     phase_shift: float = 0.0,
     resample_mode: str = "bootstrap",
@@ -1507,13 +1507,13 @@ def run_fourier_workflow(
         raise ValueError("sample arrays must have one value per coordinate point")
 
     observable = _canonical_observable(observable)
-    fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_out_gev=pz_out_gev, a_fm=a_fm)
+    fit_scale, ft_scale = _coord_scale(coord_unit, momentum_gev=momentum_gev, final_momentum_gev=final_momentum_gev, lattice_spacing_fm=lattice_spacing_fm)
     fit_coord = coord_arr * fit_scale
     ft_scale_over_fit_scale = ft_scale / fit_scale
     phase_scale, phase_prime_scale = _phase_scales(
         coord_unit=coord_unit,
-        pz_gev=pz_gev,
-        pz_out_gev=pz_out_gev,
+        momentum_gev=momentum_gev,
+        final_momentum_gev=final_momentum_gev,
         ft_scale_over_fit_scale=ft_scale_over_fit_scale,
     )
     y_arr = np.asarray(y_grid, dtype=float)
@@ -1723,7 +1723,14 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "average_method": str(result.get("sample_error_mode", "")),
         "workers": str(result.get("workers", 1)),
     }
-    for key in ("pz_gev", "pz_out_gev", "a_fm"):
+    for key in (
+        "momentum",
+        "volume",
+        "bz_direction",
+        "momentum_gev",
+        "final_momentum_gev",
+        "lattice_spacing_fm",
+    ):
         value = result.get(key)
         if value is not None:
             attrs[key] = str(value)
@@ -2115,19 +2122,19 @@ def _last_stable_z_index(
 def _preferred_tail_start(
     *,
     coord_unit: str,
-    pz_gev: float | None,
-    a_fm: float | None,
+    momentum_gev: float | None,
+    lattice_spacing_fm: float | None,
 ) -> float | None:
     """Return the coordinate closest to z ~= 0.5 fm when unit metadata allows it."""
     unit = coord_unit.lower()
     if unit == "fm":
         return 0.5
-    if unit == "lattice" and a_fm is not None and float(a_fm) > 0:
-        return 0.5 / float(a_fm)
+    if unit == "lattice" and lattice_spacing_fm is not None and float(lattice_spacing_fm) > 0:
+        return 0.5 / float(lattice_spacing_fm)
     if unit == "gev_inv":
         return 0.5 * FM_TO_GEV_INV
-    if unit == "lambda" and pz_gev is not None:
-        return 0.5 * FM_TO_GEV_INV * float(pz_gev)
+    if unit == "lambda" and momentum_gev is not None:
+        return 0.5 * FM_TO_GEV_INV * float(momentum_gev)
     return None
 
 
@@ -2172,9 +2179,9 @@ def _pick_four_zmin_values_by_tail_fit(
     order: str,
     observable: str,
     coord_unit: str,
-    pz_gev: float | None,
-    pz_out_gev: float | None,
-    a_fm: float | None,
+    momentum_gev: float | None,
+    final_momentum_gev: float | None,
+    lattice_spacing_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
     Lambda0: float,
@@ -2222,9 +2229,9 @@ def _pick_four_zmin_values_by_tail_fit(
                 order=order,
                 observable=observable,
                 coord_unit=coord_unit,
-                pz_gev=pz_gev,
-                pz_out_gev=pz_out_gev,
-                a_fm=a_fm,
+                momentum_gev=momentum_gev,
+                final_momentum_gev=final_momentum_gev,
+                lattice_spacing_fm=lattice_spacing_fm,
                 resample_mode=resample_mode,
                 sample_error_mode=sample_error_mode,
                 Lambda0=Lambda0,
@@ -2255,12 +2262,12 @@ def _default_z_ext_max(
     coord: np.ndarray,
     *,
     coord_unit: str,
-    pz_gev: float | None,
-    pz_out_gev: float | None,
-    a_fm: float | None,
+    momentum_gev: float | None,
+    final_momentum_gev: float | None,
+    lattice_spacing_fm: float | None,
 ) -> float:
     """Return the coordinate value whose lambda is eight units past the data."""
-    _fit_scale, ft_scale = _coord_scale(coord_unit, pz_gev=pz_gev, pz_out_gev=pz_out_gev, a_fm=a_fm)
+    _fit_scale, ft_scale = _coord_scale(coord_unit, momentum_gev=momentum_gev, final_momentum_gev=final_momentum_gev, lattice_spacing_fm=lattice_spacing_fm)
     return float(np.max(coord) + 8.0 / ft_scale)
 
 
@@ -2276,9 +2283,9 @@ def _auto_fill_scheme_scan(
     method: str,
     order: str,
     observable: str,
-    pz_gev: float | None,
-    pz_out_gev: float | None,
-    a_fm: float | None,
+    momentum_gev: float | None,
+    final_momentum_gev: float | None,
+    lattice_spacing_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
     Lambda0: float,
@@ -2301,8 +2308,8 @@ def _auto_fill_scheme_scan(
     if "zmin_values" not in spec and "zmin_start" not in spec:
         preferred_zmin = _preferred_tail_start(
             coord_unit=coord_unit,
-            pz_gev=pz_gev,
-            a_fm=a_fm,
+            momentum_gev=momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
         )
         spec["zmin_values"] = _pick_four_zmin_values_by_tail_fit(
             positive,
@@ -2314,9 +2321,9 @@ def _auto_fill_scheme_scan(
             order=order,
             observable=observable,
             coord_unit=coord_unit,
-            pz_gev=pz_gev,
-            pz_out_gev=pz_out_gev,
-            a_fm=a_fm,
+            momentum_gev=momentum_gev,
+            final_momentum_gev=final_momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
             resample_mode=resample_mode,
             sample_error_mode=sample_error_mode,
             Lambda0=Lambda0,
@@ -2331,9 +2338,9 @@ def _auto_fill_scheme_scan(
         spec["z_ext_max"] = _default_z_ext_max(
             coord,
             coord_unit=coord_unit,
-            pz_gev=pz_gev,
-            pz_out_gev=pz_out_gev,
-            a_fm=a_fm,
+            momentum_gev=momentum_gev,
+            final_momentum_gev=final_momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
         )
     if "smooth" not in spec:
         spec["smooth"] = "linear"
@@ -2362,9 +2369,9 @@ def _auto_scheme_scan(
     method: str,
     order: str,
     observable: str,
-    pz_gev: float | None,
-    pz_out_gev: float | None,
-    a_fm: float | None,
+    momentum_gev: float | None,
+    final_momentum_gev: float | None,
+    lattice_spacing_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
     Lambda0: float,
@@ -2398,9 +2405,9 @@ def _auto_scheme_scan(
         method=method,
         order=order,
         observable=observable,
-        pz_gev=pz_gev,
-        pz_out_gev=pz_out_gev,
-        a_fm=a_fm,
+        momentum_gev=momentum_gev,
+        final_momentum_gev=final_momentum_gev,
+        lattice_spacing_fm=lattice_spacing_fm,
         resample_mode=resample_mode,
         sample_error_mode=sample_error_mode,
         Lambda0=Lambda0,
@@ -2571,9 +2578,12 @@ def run_fourier_transform(
     order: str | list[str] = "NLA",
     observable: str = "nucleon_quark_transversity_quasi_pdf",
     coord_unit: str = "lambda",
-    pz_gev: float | None = None,
-    pz_out_gev: float | None = None,
-    a_fm: float | None = None,
+    momentum: str | None = None,
+    volume: str | None = None,
+    bz_direction: str | None = None,
+    momentum_gev: float | None = None,
+    final_momentum_gev: float | None = None,
+    lattice_spacing_fm: float | None = None,
     im_flip_for_ft: bool = False,
     phase_shift: float = 0.0,
     Lambda0: float = 0.1,
@@ -2646,9 +2656,9 @@ def run_fourier_transform(
             method=method,
             order=range_order,
             observable=observable,
-            pz_gev=pz_gev,
-            pz_out_gev=pz_out_gev,
-            a_fm=a_fm,
+            momentum_gev=momentum_gev,
+            final_momentum_gev=final_momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
             resample_mode=resample_mode,
             sample_error_mode=sample_error_mode,
             Lambda0=float(Lambda0),
@@ -2701,9 +2711,9 @@ def run_fourier_transform(
                 order=range_order,
                 observable=observable,
                 coord_unit=coord_unit,
-                pz_gev=pz_gev,
-                pz_out_gev=pz_out_gev,
-                a_fm=a_fm,
+                momentum_gev=momentum_gev,
+                final_momentum_gev=final_momentum_gev,
+                lattice_spacing_fm=lattice_spacing_fm,
                 resample_mode=resample_mode,
                 Lambda0=float(Lambda0),
                 posterior_prior_error_scale=range_prior_width,
@@ -2788,9 +2798,9 @@ def run_fourier_transform(
             order=order,
             observable=observable,
             coord_unit=coord_unit,
-            pz_gev=pz_gev,
-            pz_out_gev=pz_out_gev,
-            a_fm=a_fm,
+            momentum_gev=momentum_gev,
+            final_momentum_gev=final_momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
             im_flip_for_ft=True,
             phase_shift=float(phase_shift),
             resample_mode=resample_mode,
@@ -2814,9 +2824,9 @@ def run_fourier_transform(
             order=order,
             observable=observable,
             coord_unit=coord_unit,
-            pz_gev=pz_gev,
-            pz_out_gev=pz_out_gev,
-            a_fm=a_fm,
+            momentum_gev=momentum_gev,
+            final_momentum_gev=final_momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
             im_flip_for_ft=False,
             phase_shift=float(phase_shift),
             resample_mode=resample_mode,
@@ -2877,9 +2887,9 @@ def run_fourier_transform(
             order=order,
             observable=observable,
             coord_unit=coord_unit,
-            pz_gev=pz_gev,
-            pz_out_gev=pz_out_gev,
-            a_fm=a_fm,
+            momentum_gev=momentum_gev,
+            final_momentum_gev=final_momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
             im_flip_for_ft=im_flip_for_ft,
             phase_shift=float(phase_shift),
             resample_mode=resample_mode,
@@ -2895,9 +2905,12 @@ def run_fourier_transform(
         )
     result["resample_mode"] = resample_mode
     result["sample_error_mode"] = sample_error_mode
-    result["pz_gev"] = pz_gev
-    result["pz_out_gev"] = pz_out_gev
-    result["a_fm"] = a_fm
+    result["momentum"] = momentum
+    result["volume"] = volume
+    result["bz_direction"] = bz_direction
+    result["momentum_gev"] = momentum_gev
+    result["final_momentum_gev"] = final_momentum_gev
+    result["lattice_spacing_fm"] = lattice_spacing_fm
     result["im_flip_for_ft"] = bool(im_flip_for_ft)
     result["phase_shift"] = float(phase_shift)
     result["sector"] = sector
@@ -3053,8 +3066,8 @@ def plot_fourier_extension_quality_result(
         data,
         scheme_index=scheme_index,
         component="re",
-        pz_gev=data.get("pz_gev"),
-        a_fm=data.get("a_fm"),
+        momentum_gev=data.get("momentum_gev"),
+        lattice_spacing_fm=data.get("lattice_spacing_fm"),
         save_path=re_output,
         title=title,
     )
@@ -3067,8 +3080,8 @@ def plot_fourier_extension_quality_result(
         data,
         scheme_index=scheme_index,
         component="im",
-        pz_gev=data.get("pz_gev"),
-        a_fm=data.get("a_fm"),
+        momentum_gev=data.get("momentum_gev"),
+        lattice_spacing_fm=data.get("lattice_spacing_fm"),
         save_path=im_output,
         title=title,
     )

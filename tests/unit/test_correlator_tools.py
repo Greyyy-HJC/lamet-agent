@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import matplotlib
@@ -52,6 +53,8 @@ from lamet_agent.stages.correlator.functions import (
     _non_forward_ratio_samples,
     _overlaps,
     _ratio_samples,
+    _read_2pt,
+    _read_3pt,
     _resample_pt2,
     _scaled_prior,
     _vary_prior_width,
@@ -131,7 +134,7 @@ def _write_fake_correlators(
         pt2_cfg[c] = base * (1 + rng.normal(0, 2e-3, Lt))
     pt2_path = tmp_path / "pt2.h5"
     with h5py.File(pt2_path, "w") as h5f:
-        h5f.create_dataset(f"SS/5/{momentum}", data=pt2_cfg.T)
+        h5f.create_dataset(f"g5/g5/{momentum}", data=pt2_cfg.T)
 
     pt3_paths: dict[str, str] = {}
     for tsep in tsep_ls:
@@ -152,7 +155,9 @@ def _write_fake_correlators(
                 for c in range(n_cfg):
                     eps = rng.normal(0, 2e-3, tsep + 1)
                     pt3_cfg[c] = ratio * (1 + eps) * pt2_cfg[c, tsep]
-                h5f.create_dataset(f"SS/T/{momentum}/b_X/eta0/bT0/bz{z}", data=pt3_cfg.T)
+                h5f.create_dataset(
+                    f"g5/g5/gT_nonlocal/{momentum}/tsep{tsep}/bT0/bz{z}", data=pt3_cfg.T
+                )
         pt3_paths[str(tsep)] = str(path)
     return str(pt2_path), pt3_paths
 
@@ -168,6 +173,12 @@ def test_stage_tools_expose_the_four_agentic_tools() -> None:
         "fit_bare_matrix_grid",
     }
     assert set(TOOL_CATALOG) == set(STAGE_TOOLS)
+
+
+def test_terminal_tool_uses_bz_direction_and_removes_variant() -> None:
+    parameters = inspect.signature(fit_bare_matrix_grid).parameters
+    assert "bz_direction" in parameters
+    assert "variant" not in parameters
 
 
 # --- physics models and fits -------------------------------------------------
@@ -705,19 +716,65 @@ def test_sample_mean_and_sdev_matches_core_helper() -> None:
 # --- inspect tool ------------------------------------------------------------
 
 
+def test_standard_hdf5_reader_selects_shared_momenta_operators_and_tseps(tmp_path: Path) -> None:
+    path = tmp_path / "shared.h5"
+    with h5py.File(path, "w") as h5f:
+        h5f.create_dataset("g5/g5/PX0PY0PZ0", data=np.full((8, 3), 1.0))
+        h5f.create_dataset("g5/g5/PX2PY0PZ0", data=np.full((8, 3), 2.0))
+        h5f.create_dataset("g5/g5_nonlocal/PX0PY0PZ0", data=np.full((8, 3), 3.0))
+        h5f.create_dataset("g5/g5/gT_nonlocal/PX2PY0PZ0/tsep4/bT0/bz1", data=np.full((5, 3), 4.0))
+        h5f.create_dataset("g5/g5/gT_nonlocal/PX2PY0PZ0/tsep6/bT0/bz1", data=np.full((7, 3), 6.0))
+
+    pt2 = _read_2pt(
+        str(path), source_operator="g5", sink_operator="g5", momentum="PX2PY0PZ0", temporal_extent=8
+    )
+    pt3_t4 = _read_3pt(
+        str(path), source_operator="g5", sink_operator="g5", current_operator="gT_nonlocal",
+        momentum="PX2PY0PZ0", tsep=4, bT=0, bz=1,
+    )
+    pt3_t6 = _read_3pt(
+        str(path), source_operator="g5", sink_operator="g5", current_operator="gT_nonlocal",
+        momentum="PX2PY0PZ0", tsep=6, bT=0, bz=1,
+    )
+
+    assert pt2.shape == (3, 8) and np.all(pt2 == 2.0)
+    assert pt3_t4.shape == (3, 5) and np.all(pt3_t4 == 4.0)
+    assert pt3_t6.shape == (3, 7) and np.all(pt3_t6 == 6.0)
+    with pytest.raises(ValueError, match="expected 9"):
+        _read_2pt(
+            str(path), source_operator="g5", sink_operator="g5", momentum="PX0PY0PZ0", temporal_extent=9
+        )
+    with pytest.raises(KeyError):
+        _read_3pt(
+            str(path), source_operator="g5", sink_operator="g5", current_operator="gT_nonlocal",
+            momentum="PX2PY0PZ0", tsep=8, bT=0, bz=1,
+        )
+
+
+def test_standard_hdf5_reader_rejects_wrong_three_point_tau_extent(tmp_path: Path) -> None:
+    path = tmp_path / "bad_3pt.h5"
+    with h5py.File(path, "w") as h5f:
+        h5f.create_dataset("g5/g5/gT_nonlocal/PX0PY0PZ0/tsep4/bT0/bz0", data=np.ones((4, 3)))
+    with pytest.raises(ValueError, match="expected 5"):
+        _read_3pt(
+            str(path), source_operator="g5", sink_operator="g5", current_operator="gT_nonlocal",
+            momentum="PX0PY0PZ0", tsep=4, bT=0, bz=0,
+        )
+
+
 def test_inspect_correlator_scale_accepts_selector_momentum(tmp_path) -> None:
     path = tmp_path / "pt2_px5.h5"
     px5_data = np.full((12, 4), 3.0e-18, dtype=np.complex128)
     px0_data = np.full((12, 4), 9.0e-18, dtype=np.complex128)
     with h5py.File(path, "w") as h5f:
-        h5f.create_dataset("SS/5/PX0PY0PZ0", data=px0_data)
-        h5f.create_dataset("SS/5/PX5PY0PZ0", data=px5_data)
+        h5f.create_dataset("g5/g5/PX0PY0PZ0", data=px0_data)
+        h5f.create_dataset("g5/g5/PX5PY0PZ0", data=px5_data)
 
     result = inspect_correlator_scale(
         {},
         pt2_path=str(path),
         pt2_windows=[{"tmin": 2, "tmax": 5}],
-        selectors={"source_sink": "SS", "gamma": "5", "momentum": "PX5PY0PZ0"},
+        selectors={"source_operator": "g5", "sink_operator": "g5", "momentum": "PX5PY0PZ0"},
     )
     assert result["momentum"] == "PX5PY0PZ0"
     assert result["windows"][0]["median_abs"] == pytest.approx(3.0e-18)
@@ -793,6 +850,7 @@ def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
         "z_values": [0],
         "ensemble": "toy",
         "momentum": "PX0PY0PZ0",
+        "bz_direction": "Z",
         "pt2_window": {"tmin": 2, "tmax": 10},
         "pt3_window": {"tsep_ls": [6, 8], "tau_cut": 1},
         "fit_strategy": "joint",
@@ -825,6 +883,8 @@ def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
     assert serial["workers"] == 1
     assert parallel["workers"] == 2
     assert parallel_store["bare_matrix_element_data"].attrs["workers"] == "2"
+    assert parallel_store["bare_matrix_element_data"].attrs["bz_direction"] == "Z"
+    assert "variant" not in parallel_store["bare_matrix_element_data"].attrs
     assert np.allclose(
         serial_store["bare_matrix_element_data"].values,
         parallel_store["bare_matrix_element_data"].values,

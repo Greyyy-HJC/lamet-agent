@@ -67,7 +67,7 @@ def alphas_nloop(mu: float, order: int = 0, Nf: int = 3) -> float:
 
 def unpolarized_matching_kernel_nlo_gT(
     x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -112,7 +112,7 @@ def unpolarized_matching_kernel_nlo_gT(
                 continue
 
             y_norm = np.abs(y_val)
-            log_scale = np.log(4.0 * y_val**2 * pz_gev**2 / mu**2)
+            log_scale = np.log(4.0 * y_val**2 * momentum_gev**2 / mu**2)
             entry = 0.0
 
             if eps < xi < 1.0 - eps:
@@ -143,7 +143,7 @@ def unpolarized_matching_kernel_nlo_gT(
     for idy, diag_row in enumerate(diag_rows):
         nlo_matrix[int(diag_row), idy] -= np.sum(nlo_matrix[:, idy]) #! plus function: sum over row gives zero
         nlo_matrix[int(diag_row), idy] += 0.5 * (
-            1.0 + np.log(4.0 * y_grid[idy] ** 2 * pz_gev**2 / mu**2)
+            1.0 + np.log(4.0 * y_grid[idy] ** 2 * momentum_gev**2 / mu**2)
         ) / dy
 
     return identity - alpha_s * CF / (2.0 * np.pi) * nlo_matrix * dy
@@ -151,10 +151,10 @@ def unpolarized_matching_kernel_nlo_gT(
 
 def helicity_matching_kernel_nlo_gTg5(
     x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
 ) -> np.ndarray:
     """NLO helicity kernel for ``gamma^t gamma5`` in MSbar."""
-    return unpolarized_matching_kernel_nlo_gT(x_ls=x_ls, pz_gev=pz_gev, mu=mu, y_ls=y_ls, eps=eps)
+    return unpolarized_matching_kernel_nlo_gT(x_ls=x_ls, momentum_gev=momentum_gev, mu=mu, y_ls=y_ls, eps=eps)

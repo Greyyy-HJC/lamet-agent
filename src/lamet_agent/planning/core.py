@@ -45,6 +45,7 @@ class H5Inspection:
     correlator_id: str
     path: str
     exists: bool
+    attrs: dict[str, str] = field(default_factory=dict)
     datasets: list[H5DatasetSummary] = field(default_factory=list)
     error: str | None = None
 
@@ -57,6 +58,7 @@ class CorrelatorH5Mapping:
     source_file: str
     output_file: str
     datasets: list[dict[str, Any]]
+    attrs: dict[str, Any] = field(default_factory=dict)
     script_file: str | None = None
     ambiguous: bool = False
     reason: str | None = None
@@ -820,6 +822,58 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(item, dict) and item.get("stage") in {"matching", "perturbative_matching"} and item.get("kernel_id")
     ]
     matching_kernel_ids = [item.get("kernel_id") for item in matching_kernels]
+    correlators = inputs.get("correlators", []) if isinstance(inputs, dict) else []
+    artifacts = {
+        str(item.get("id")): item
+        for item in (inputs.get("artifacts", []) if isinstance(inputs, dict) else [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    jobs_by_id: dict[str, tuple[str, dict[str, Any]]] = {}
+    if isinstance(stages, dict):
+        for stage_id, stage_config in stages.items():
+            if not isinstance(stage_config, dict):
+                continue
+            for candidate in stage_config.get("jobs", []):
+                if isinstance(candidate, dict) and candidate.get("id"):
+                    jobs_by_id[str(candidate["id"])] = (str(stage_id), candidate)
+
+    def has_discrete_kinematics(stage_id: str, candidate: dict[str, Any], seen: set[str]) -> bool:
+        if stage_id == "correlator_analysis":
+            config = stages.get(stage_id, {}) if isinstance(stages, dict) else {}
+            stage_defaults = config.get("defaults", {}) if isinstance(config, dict) else {}
+            params = {
+                **(stage_defaults if isinstance(stage_defaults, dict) else {}),
+                **(candidate.get("params") if isinstance(candidate.get("params"), dict) else {}),
+            }
+            momentum = (
+                params.get("final_momentum")
+                if str(params.get("fitting_form", "Breit")) == "NonBreit"
+                else params.get("momentum")
+            )
+            ids = set(candidate.get("correlator_ids", []))
+            return any(
+                isinstance(item, dict)
+                and item.get("correlator_id") in ids
+                and item.get("correlator_type") == "2pt"
+                and momentum in _as_list(item.get("momentum"))
+                and item.get("volume") is not None
+                and item.get("lattice_spacing_fm") is not None
+                for item in correlators
+            )
+        for value in (candidate.get("inputs") or {}).values():
+            for reference in _as_list(value):
+                reference = str(reference)
+                artifact = artifacts.get(reference)
+                if artifact is not None and all(
+                    artifact.get(key) is not None for key in ("momentum", "volume", "lattice_spacing_fm")
+                ):
+                    return True
+                upstream = jobs_by_id.get(reference)
+                if upstream is not None and reference not in seen:
+                    if has_discrete_kinematics(upstream[0], upstream[1], seen | {reference}):
+                        return True
+        return False
+
     gaps: list[dict[str, Any]] = []
     if not isinstance(stages, dict):
         return gaps
@@ -837,6 +891,7 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             job_id = str(job.get("id", index))
             params = {**defaults, **(job.get("params") if isinstance(job.get("params"), dict) else {})}
+            derived_momentum_available = has_discrete_kinematics(stage, job, {job_id})
             roles = set(job.get("inputs", {}).keys()) if isinstance(job.get("inputs"), dict) else set()
             def add_gap(parameter: str, path: str, message: str, suggested_fix: str) -> None:
                 gaps.append({"stage": stage, "job_id": job_id, "parameter": parameter, "path": path, "message": message, "suggested_fix": suggested_fix, "question_id": f"stage_params.{stage}.{job_id}"})
@@ -850,8 +905,8 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             elif stage == "fourier_transform":
                 if roles != {"input"}:
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "fourier_transform requires exactly one input role named input.", 'Example: {"input": "rn_pz"}.')
-                for key, example in (("order", 'Choose "LA", "NLA", or ["LA", "NLA"].'), ("coord_unit", 'Choose "lattice", "fm", "gev_inv", or "lambda".'), ("y_grid", 'Example: {"start": -2.0, "stop": 2.0, "num": 100}.'), ("pz_gev", "Example: 2.15.")):
-                    if key not in params:
+                for key, example in (("order", 'Choose "LA", "NLA", or ["LA", "NLA"].'), ("coord_unit", 'Choose "lattice", "fm", "gev_inv", or "lambda".'), ("y_grid", 'Example: {"start": -2.0, "stop": 2.0, "num": 100}.'), ("momentum_gev", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact.")):
+                    if key not in params and not (key == "momentum_gev" and derived_momentum_available):
                         add_gap(key, f"stages.{stage}.defaults.{key}", f"fourier_transform job {job_id!r} is missing parameter {key}.", example)
                 if "sector" not in params and "part" not in params:
                     add_gap("sector", f"stages.{stage}.defaults.sector", f"fourier_transform job {job_id!r} is missing sector or part.", 'For PDF choose one of "valence", "total", "full", "sea"; alternatively set part to "re", "im", or "both".')
@@ -860,8 +915,8 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "perturbative_matching requires exactly one input role named quasi.", 'Example: {"quasi": "ft_pz"}.')
                 if "kernel_id" not in params and len(matching_kernel_ids) != 1:
                     add_gap("kernel_id", f"stages.{stage}.defaults.kernel_id", f"perturbative_matching job {job_id!r} is missing kernel_id.", "Use one declared inputs.kernels[].kernel_id.")
-                for key, example in (("pz_gev", "Example: 2.15."), ("mu", "Example: 2.0."), ("component", 'Choose "re" or "im".')):
-                    if key not in params:
+                for key, example in (("momentum_gev", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact."), ("mu", "Example: 2.0."), ("component", 'Choose "re" or "im".')):
+                    if key not in params and not (key == "momentum_gev" and derived_momentum_available):
                         add_gap(key, f"stages.{stage}.defaults.{key}", f"perturbative_matching job {job_id!r} is missing parameter {key}.", example)
                 selected_kernel_id = params.get("kernel_id") or (matching_kernel_ids[0] if len(matching_kernel_ids) == 1 else None)
                 selected_kernel = next(

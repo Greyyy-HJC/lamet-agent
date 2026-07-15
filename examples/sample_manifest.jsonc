@@ -9,23 +9,24 @@
   // - Later stages reference UPSTREAM job ids via role-named `inputs`
   //   (e.g. `target` / `denominator` / `input` / `quasi` / `momenta`).
   // - A job's `params` shallow-merge over the stage `defaults`.
+  // - Commented fields below are optional examples. Uncomment only the choices
+  //   that apply to a workflow; comments also identify mutually exclusive forms.
   // - References resolve by job id to that stage's primary output.
   // - The default save path is <artifacts_directory>/<stage>/<job_id>.nc.
-  // - correlator_analysis defaults to `fitting_form: "Breit"` for forward
-  //   matrix elements. For non-forward data use `fitting_form: "NonBreit"`,
-  //   include two 2pt inputs identified by their `pz_gev`, and set each 3pt
-  //   transition with `pz_gev` as P_i and optional `pz_out_gev` as P_f.
-  //   If `pz_out_gev` is omitted, the 3pt is treated as forward.
+  // - A Breit job uses scalar `params.momentum`. A NonBreit job instead uses
+  //   scalar `params.initial_momentum` + `params.final_momentum`; do not set all
+  //   three selectors on the same job. Every selected label must occur in the
+  //   list-valued `inputs.correlators[*].momentum` declaration.
   //
   // This example wires up p0 + p4 + p5:
   //   - p0 runs ONLY correlator_analysis, then serves as the renormalization
   //     denominator for p4 and p5 (MERGE POINT 1).
   //   - p4 and p5 run the full chain and reconverge at extrapolation for the
   //     large-momentum extrapolation (MERGE POINT 2).
-  
+
   "metadata": {
     "run_id": "sample_run_id",
-    "root_directory": "~/lamet-agent",
+    "root_directory": "~/lamet-agent", // paths below resolve from this directory
     "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
     "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"
@@ -36,253 +37,64 @@
     // "bs_samples": 500, // REQUIRED when resample_mode is "bs"; no default — must be set explicitly
     // "bin_size": 1, // optional; bins configurations before jackknife/bootstrap resampling (default: no binning)
     // Global stage ORDER only. Which data sets flow through each stage is
-    // decided by the jobs declared under "stages", not here.
+    // decided by the jobs declared under "stages", not here. Optional terminal
+    // review can be appended as "review" when a review job is also declared.
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation"]
   },
   "inputs": {
-    // Flat pool of raw datasets. Grouping into data sets happens in
-    // correlator_analysis jobs via `correlator_ids`.
+    // Flat pool of raw files. One entry may expose several momenta and, for
+    // 3pt, several tsep values from one standard HDF5 file. Jobs select slices
+    // through scalar momentum parameters rather than duplicating these entries.
     "correlators": [
-      // ----- p0 (rest frame): only used to produce the renorm denominator -----
       {
-        "correlator_id": "a060_x_p0_2pt",
-        "kind": "2pt", // "2pt" or "3pt"
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp00_CG52bxp00_2pt.h5", // relative to the root directory
-        "ensemble": "HISQa060_X",
-        "hadron": "pion", // "pion" or "proton"
-        "gfix": "CG", // "CG" or "GI"
-        "source_sink": "SS",
-        "momentum": "PX0PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 0.0,
-        "src_gamma": "5",
-        "sink_gamma": "5"
+        "correlator_id": "a060_x_2pt",
+        "correlator_type": "2pt", // currently "2pt" or "3pt"; 4pt is reserved but unsupported
+        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5", // relative to root_directory; standard path is source/sink/momentum
+        "ensemble": "HISQa060_X", // ensemble identifier propagated to artifacts
+        "hadron": "pion", // e.g. "pion", "proton", or another stage-supported label
+        "gfix": "CG", // normally "CG" or "GI"; Fourier method is inferred from this
+        "source_operator": "g5", // free non-empty string; gamma labels conventionally start with g
+        "sink_operator": "g5", // use a distinct label such as gT5_nonlocal when needed
+        "volume": "S48T64", // exact S<Ls>T<Lt> form; Lt must match the HDF5 time axis
+        "lattice_spacing_fm": 0.0574, // positive lattice spacing in fm
+        "momentum": ["PX0PY0PZ0", "PX4PY0PZ0", "PX5PY0PZ0"] // non-empty unique list of PXnPYnPZn labels
       },
       {
-        "correlator_id": "a060_x_p0_3pt_ts8",
-        "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
+        "correlator_id": "a060_x_3pt",
+        "correlator_type": "3pt",
+        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_free_3pt.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX0PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 0.0,
-        "src_gamma": "5",
-        "sink_gamma": "5",
-        "current_gamma": "T",
-        "z_direction": "X", // momentum direction: "X", "Y", "Z" or "XY" or "XYZ" (off-axis directions)
-        "eta": "eta0",
-        "bt": [0], // transverse separations (int list)
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24], // z separations (int list)
-        "tsep": 8
-      },
-      {
-        "correlator_id": "a060_x_p0_3pt_ts10",
-        "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX0PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 0.0, // pz_out_gev and pz_gev default to be same with no momentum transfer case
-        "src_gamma": "5",
-        "sink_gamma": "5",
-        "current_gamma": "T",
-        "z_direction": "X",
-        "eta": "eta0",
-        "bt": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": 10
-      },
-      {
-        "correlator_id": "a060_x_p0_3pt_ts12",
-        "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp00_CG52bxp00_free_PX0PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX0PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 0.0,
-        "src_gamma": "5",
-        "sink_gamma": "5",
-        "current_gamma": "T",
-        "z_direction": "X",
-        "eta": "eta0",
-        "bt": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": 12
-      },
-
-      // ----- p4: full chain, merges at extrapolation -----
-      {
-        "correlator_id": "a060_x_p4_2pt",
-        "kind": "2pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp30_CG52bxp30_2pt.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX4PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 1.72,
-        "src_gamma": "5",
-        "sink_gamma": "5"
-      },
-      {
-        "correlator_id": "a060_x_p4_3pt_ts8",
-        "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX4PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX4PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 1.72,
-        "src_gamma": "5",
-        "sink_gamma": "5",
-        "current_gamma": "T",
-        "z_direction": "X",
-        "eta": "eta0",
-        "bt": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": 8
-      },
-      {
-        "correlator_id": "a060_x_p4_3pt_ts10",
-        "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX4PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX4PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 1.72,
-        "src_gamma": "5",
-        "sink_gamma": "5",
-        "current_gamma": "T",
-        "z_direction": "X",
-        "eta": "eta0",
-        "bt": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": 10
-      },
-      {
-        "correlator_id": "a060_x_p4_3pt_ts12",
-        "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX4PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX4PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 1.72,
-        "src_gamma": "5",
-        "sink_gamma": "5",
-        "current_gamma": "T",
-        "z_direction": "X",
-        "eta": "eta0",
-        "bt": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": 12
-      },
-
-      // ----- p5: full chain, merges at extrapolation -----
-      {
-        "correlator_id": "a060_x_p5_2pt",
-        "kind": "2pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_CG52bxp30_CG52bxp30_2pt.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX5PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 2.15,
-        "src_gamma": "5",
-        "sink_gamma": "5"
-      },
-      {
-        "correlator_id": "a060_x_p5_3pt_ts8",
-        "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX5PY0PZ0_X_qtmdpdf_3pt_ts8.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX5PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 2.15,
-        "src_gamma": "5",
-        "sink_gamma": "5",
-        "current_gamma": "T",
-        "z_direction": "X",
-        "eta": "eta0",
-        "bt": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": 8
-      },
-      {
-        "correlator_id": "a060_x_p5_3pt_ts10",
-        "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX5PY0PZ0_X_qtmdpdf_3pt_ts10.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX5PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 2.15,
-        "src_gamma": "5",
-        "sink_gamma": "5",
-        "current_gamma": "T",
-        "z_direction": "X",
-        "eta": "eta0",
-        "bt": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": 10
-      },
-      {
-        "correlator_id": "a060_x_p5_3pt_ts12",
-        "kind": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_CG52bxp30_CG52bxp30_free_PX5PY0PZ0_X_qtmdpdf_3pt_ts12.h5",
-        "ensemble": "HISQa060_X",
-        "hadron": "pion",
-        "gfix": "CG",
-        "source_sink": "SS",
-        "momentum": "PX5PY0PZ0",
-        "a_fm": 0.0574,
-        "pz_gev": 2.15,
-        "src_gamma": "5",
-        "sink_gamma": "5",
-        "current_gamma": "T",
-        "z_direction": "X",
-        "eta": "eta0",
-        "bt": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": 12
+        "source_operator": "g5",
+        "sink_operator": "g5",
+        "current_operator": "gT_nonlocal", // required only for 3pt; `_nonlocal` records operator locality
+        "bz_direction": "X", // required for 3pt; X/Y/Z or canonical combinations XY/XZ/YZ/XYZ
+        "volume": "S48T64",
+        "lattice_spacing_fm": 0.0574,
+        "momentum": ["PX0PY0PZ0", "PX4PY0PZ0", "PX5PY0PZ0"], // all momentum groups present in this file
+        "bT": [0], // nonlocal-current separations in transverse directions, in lattice sites; fitting currently supports exactly one value
+        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24], // nonlocal-current separations along bz_direction, normally longitudinal to momentum, in lattice sites
+        "tsep": [8, 10, 12] // required non-empty unique positive list; each dataset has shape (tsep+1, n_cfg)
       }
     ],
     // External pre-computed products as SOURCE NODES with their own ids, so a job
     // can resume mid-pipeline by referencing one instead of an upstream job id.
     // Empty here (this example runs the full chain). See partial_sample_manifest.jsonc.
-    // Each entry: { "id", "stage" (implies kind), "path", plus consuming-stage metadata }.
+    // Each partial-run entry declares {id, stage, path} plus the discrete
+    // kinematic triple {momentum, volume, lattice_spacing_fm}; momentum_gev is
+    // derived and must not be supplied. Example (leave commented in a full run):
+    // { "id": "rn_external", "stage": "renormalization", "path": "runs/rn.nc",
+    //   "momentum": "PX5PY0PZ0", "volume": "S48T64",
+    //   "lattice_spacing_fm": 0.0574, "hadron": "pion", "gfix": "CG" }
     "artifacts": [],
     "kernels": [
       {
-        "stage": "perturbative_matching",
-        "kernel_id": "CG_gt_qPDF_hybrid_NLO",
+        "stage": "perturbative_matching", // full consuming StageId, not package shorthand
+        "kernel_id": "CG_gt_qPDF_hybrid_NLO", // exact callable/registry id
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
-        "scheme": "hybrid_ratio",
-        "kernel_parameters": {}
+        "scheme": "hybrid_ratio", // choose a scheme compatible with kernel_id
+        "kernel_parameters": {} // fixed kernel-specific values; do not put zs_fm here
       }
     ]
   },
@@ -290,38 +102,60 @@
     // Each stage: `defaults` shared by its jobs + a `jobs` list (one per data set).
     "correlator_analysis": {
       "defaults": {
+        // Candidate 2pt windows use [tmin, tmax); every candidate is scanned
+        // during tuning, then one shared window is used for all z and samples.
         "pt2_windows": [
           { "tmin": 2, "tmax": 12 },
           { "tmin": 3, "tmax": 12 },
           { "tmin": 4, "tmax": 12 },
           { "tmin": 5, "tmax": 12 }
         ],
-        "pt3_tau_cuts": [2, 3, 4], // tau cuts scanned on every selected 3pt tsep; use pt3_windows for tsep subsets
-        "nstate": [2],
-        "fit_scope": ["ratio"], // "ratio", "FH", or "ratio+FH"; multiple entries let the agent scan scopes
-        "fit_strategy": ["joint"], // "joint" or "chained"
-        "svdcut": 1e-06,
-        "posterior_prior_error_scale": 3.0,
-        "prior_width": [0.5, 1.0, 2.0],
-        "fitting_form": "Breit", // "Breit" for forward and Breit non-forward 3pt/2pt; "NonBreit" for non-Breit non-forward 3pt/2pt
+        "pt3_tau_cuts": [2, 3, 4], // symmetric endpoint cuts scanned for every selected tsep
+        // More explicit alternative/addition when different candidates use
+        // different tsep subsets:
+        // "pt3_windows": [
+        //   { "tsep_ls": [8, 10, 12], "tau_cut": 2 },
+        //   { "tsep_ls": [10, 12], "tau_cut": 3 }
+        // ],
+        "nstate": [2], // positive state counts to scan; FH currently supports nstate <= 2
+        "fit_scope": ["ratio"], // any of "ratio", "FH", "ratio+FH"; FH needs >=2 tsep and Breit form
+        "fit_strategy": ["joint"], // "joint" fits 2pt+3pt together; "chained" fits 2pt first
+        "svdcut": 1e-06, // covariance SVD cutoff used by nonlinear fits
+        "posterior_prior_error_scale": 3.0, // posterior/prior tension gate
+        "prior_width": [0.5, 1.0, 2.0], // multiplicative prior-width candidates
+        "fitting_form": "Breit", // "Breit" uses job momentum; "NonBreit" uses initial+final momentum
         "component": "both", // "both", "re", or "im"
         "q_min": 0.05, // minimum q value for a good fit
-        "model_average": false // false: one sample-average fit model; true: sample-by-sample BMA over nstate/prior_width
+        "model_average": false, // false: select one model; true: sample-by-sample BMA over nstate/prior_width
+        "correlator_rescale": 1.0 // optional positive scale for numerically tiny correlators; physics output is invariant
       },
       "jobs": [
         {
           "id": "ca_p0", // output handle: p0 bare matrix elements (used as renorm denominator)
-          "correlator_ids": ["a060_x_p0_2pt", "a060_x_p0_3pt_ts8", "a060_x_p0_3pt_ts10", "a060_x_p0_3pt_ts12"]
+          "correlator_ids": ["a060_x_2pt", "a060_x_3pt"],
+          "params": {
+            "momentum": "PX0PY0PZ0" // required scalar selector for fitting_form="Breit"
+          }
         },
         {
           "id": "ca_p4",
-          "correlator_ids": ["a060_x_p4_2pt", "a060_x_p4_3pt_ts8", "a060_x_p4_3pt_ts10", "a060_x_p4_3pt_ts12"]
+          "correlator_ids": ["a060_x_2pt", "a060_x_3pt"],
+          "params": {
+            "momentum": "PX4PY0PZ0"
+            // NonBreit alternative (replace momentum; do not use both forms):
+            // "fitting_form": "NonBreit",
+            // "initial_momentum": "PX0PY0PZ0",
+            // "final_momentum": "PX4PY0PZ0"
+          }
         },
         {
           "id": "ca_p5",
-          "correlator_ids": ["a060_x_p5_2pt", "a060_x_p5_3pt_ts8", "a060_x_p5_3pt_ts10", "a060_x_p5_3pt_ts12"],
+          "correlator_ids": ["a060_x_2pt", "a060_x_3pt"],
           // per-job override example: tighter pt2 window set for the highest momentum
           "params": {
+            "momentum": "PX5PY0PZ0",
+            // Any defaults field can be overridden per job. This override
+            // narrows only the highest-momentum 2pt window scan.
             "pt2_windows": [
               { "tmin": 3, "tmax": 12 },
               { "tmin": 4, "tmax": 12 }
@@ -332,20 +166,24 @@
     },
     "renormalization": {
       "defaults": {
-        "normalization": true, // divide bare matrix elements by z=0 before scheme; default true
-        "scheme": "hybrid_ratio", // long-range exponential correction
+        "normalization": true, // optional; divide each bare input by its z=0 value before the scheme
+        "scheme": "hybrid_ratio", // active branch; requires job roles target+denominator and flat zs_fm
         "scheme_parameters": {
-          "m0_gev": 0.0, // linear renormalon slope (GeV); long-range exponent only
-          "delta_m_gev": 0.0, // target–denominator mass gap (GeV); GI example ~0.545 (= 0.1586*ℏc/a_fm at a=0.0574 fm)
-          "svdcut": 1e-12 // self_renormalization correlated-fit SVD cut; unused by hybrid_ratio
+          "m0_gev": 0.0, // optional hybrid long-range renormalon slope in GeV
+          "delta_m_gev": 0.0 // optional target-denominator mass gap in GeV
         }
+        // Incompatible alternative branch (replace scheme + scheme_parameters above):
+        // "scheme": "self_renormalization",
+        // "kernel_id": "ZMSbar_da", // needed when multiple renorm kernels are declared
+        // "mu": 2.0,                // renormalization scale in GeV
+        // "svdcut": 1e-12           // correlated short-distance fit cutoff
       },
       "jobs": [
         // MERGE POINT 1: p0 (ca_p0) is the shared denominator for p4 and p5.
         {
           "id": "rn_p4",
           "inputs": { "target": "ca_p4", "denominator": "ca_p0" },
-          "params": { "zs_fm": 0.1722 } // per-data hybrid switch length (fm); may differ by job
+          "params": { "zs_fm": 0.1722 } // required flat hybrid switch length in fm; may differ by job
         },
         {
           "id": "rn_p5",
@@ -353,73 +191,101 @@
           "params": { "zs_fm": 0.1722 }
         }
         // No job for p0 -> p0 stops after correlator_analysis.
+        // Self-renormalization uses a different DAG and must replace, not mix
+        // with, the hybrid jobs above:
+        // { "id": "rn_zR_fit", "inputs": { "reference": "bare_reference" },
+        //   "params": { "d": -0.08183 } }, // optional m0_gev freezes rather than fits m0
+        // { "id": "rn_apply", "inputs": { "target": "bare_target", "zR": "rn_zR_fit" },
+        //   "params": { "d": 0.19, "m0_gev": -0.094 } } // optional PDF->DA remap
       ]
     },
     "fourier_transform": {
       "defaults": {
-        "order": ["LA", "NLA"],
-        "sector": "valence", // "valence", "sea", "total", "full" for "pdf", "full" for "da" or "gpd"
-        "coord_unit": "lattice",
-        "posterior_prior_error_scale": [2.0, 3.0, 5.0],
+        "order": ["LA", "NLA"], // tail ansatz candidates: "LA" and/or "NLA"
+        "sector": "valence", // PDF: valence/sea/total/full; DA and most GPD flows use full
+        // Lower-level incompatible alternative: omit sector and set
+        // "part": "re" // "re", "im", or "both"; sector is preferred when available
+        "coord_unit": "lattice", // "lattice", "fm", "gev_inv", or "lambda"
+        "Lambda0": 0.0, // optional fixed extra exponential scale in GeV
+        "posterior_prior_error_scale": [2.0, 3.0, 5.0], // tail-fit model candidates
         "y_grid": {
-          "start": -2.0,
+          "start": -2.0, // inclusive quasi/light-cone momentum-fraction range
           "stop": 2.0,
-          "num": 100
+          "num": 100 // alternatively y_grid may be an explicit numeric list
         },
         // scheme_scan is optional; run_fourier_transform auto-fills missing keys from
         // tail-fit diagnostics (zmin_values, zmax_values, z_ext_max, smooth).
         // Optional overrides: zmin_values, zmax_values, z_ext_max, smooth, max_schemes.
         "scheme_scan": {
-          "zmin_values": [9.0, 10.0, 11.0, 12.0],
-          "zmax_values": [21.0, 22.0, 23.0, 24.0],
-          "z_ext_max": 100.0,
-          "smooth": "linear",
-          "model_average": false,
-          "max_schemes": 200
-        }
+          "zmin_values": [9.0, 10.0, 11.0, 12.0], // candidate fit starts in coord_unit
+          "zmax_values": [21.0, 22.0, 23.0, 24.0], // candidate fit ends in coord_unit
+          "z_ext_max": 100.0, // extrapolated endpoint in coord_unit
+          "smooth": "linear", // interpolation/smoothing choice
+          "model_average": false, // average accepted range schemes when true
+          "max_schemes": 200 // cap accepted range combinations
+        },
+        // Usually inferred from manifest metadata or upstream attrs:
+        // "method": "CG", // explicit "CG" or "GI" override
+        // "observable": "pion_quark_quasi_pdf",
+        // "target_observable": "pdf",
+        // "hadron": "pion",
+        // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class
+        // "psi2_flavor_class": "heavy",
+        // "im_flip_for_ft": false, // manual imaginary-part sign override
+        // "phase_shift": 0.0,       // optional Fourier phase shift
+        // "output_scale": 1.0,      // optional final multiplicative scale
+        // "plot_fourier": { "save_path": "custom_xdep.pdf" },
+        // "plot_extension": { "save_path": "custom_extension_re.pdf", "scheme_index": 0 },
+        // "report": { "enabled": true, "report_language": "en" }
+        // Do not set momentum_gev/lattice_spacing_fm here for normal workflows;
+        // they are derived from upstream momentum+volume+lattice_spacing_fm.
       },
       "jobs": [
         {
           "id": "ft_p4",
           "inputs": { "input": "rn_p4" },
-          "params": { "pz_gev": 1.72 }
+          "params": {} // any defaults above may be overridden per momentum
         },
         {
           "id": "ft_p5",
           "inputs": { "input": "rn_p5" },
-          "params": { "pz_gev": 2.15 }
+          "params": {}
         }
       ]
     },
     "perturbative_matching": {
       "defaults": {
-        "mu": 2.0,
-        "component": "re" // "re" or "im" or "re+im"
+        "mu": 2.0, // factorization/renormalization scale in GeV
+        "component": "re", // select "re" or "im" from the quasi distribution
+        // "kernel_id": "CG_gt_qPDF_hybrid_NLO" // optional explicit selector; inferred when exactly one matching kernel is declared
+        // momentum_gev is derived from the upstream discrete kinematics and
+        // should not be hand-written in normal full or partial workflows.
       },
       "jobs": [
         {
           "id": "mt_p4",
           "inputs": { "quasi": "ft_p4" },
-          "params": { "pz_gev": 1.72, "zs_fm": 0.1722 }
+          "params": { "zs_fm": 0.1722 } // required for hybrid kernels; ignored by ratio/MSbar kernels
         },
         {
           "id": "mt_p5",
           "inputs": { "quasi": "ft_p5" },
-          "params": { "pz_gev": 2.15, "zs_fm": 0.1722 }
+          "params": { "zs_fm": 0.1722 }
         }
       ]
     },
     "extrapolation": {
       // PLACEHOLDER: this stage is not implemented yet. The structure below only
       // illustrates MERGE POINT 2 (combine multiple momenta for the
-      // large-momentum extrapolation). Params are intentionally minimal.
+      // large-momentum extrapolation). Physical values here are illustrative
+      // reporting inputs until the stage derives them directly from artifacts.
       "defaults": {},
       "jobs": [
         {
           "id": "ex_pdf",
           "inputs": { "momenta": ["mt_p4", "mt_p5"] },
           "params": {
-            "pz_list_gev": [1.72, 2.15] // momenta entering the large-pz extrapolation
+            "momentum_list_gev": [1.80, 2.25] // derived P4/P5 magnitudes, rounded only for this placeholder
           }
         }
       ]

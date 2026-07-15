@@ -31,11 +31,12 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
     assert args["momentum"] == "PX5PY0PZ0"
     assert args["tsep_ls"] == [8, 10, 12]
     assert args["z_values"] == list(range(25))
+    assert args["bz_direction"] == "X"
     assert "tune_z_values" not in args
     assert args["nstate_values"] == effective["nstate"]
     assert args["fit_strategies"] == effective["fit_strategy"]
     assert args["fit_scope_values"] == ["ratio"]
-    assert args["pt3_paths"]["8"].endswith("_3pt_ts8.h5")
+    assert args["pt3_paths"]["8"].endswith("_free_3pt.h5")
     assert args["resample_mode"] == "jk"
     assert args["sample_error_mode"] == manifest.metadata.sample_error_mode
     assert args["seed"] == manifest.metadata.random_seed
@@ -85,7 +86,7 @@ def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) 
     )
     assert args["save_path"] == str(tmp_path / "ca_p0")
     assert args["job_id"] == "ca_p0"
-    assert args["a_fm"] == 0.0574
+    assert args["lattice_spacing_fm"] == 0.0574
     if manifest.stages["correlator_analysis"].defaults["model_average"]:
         assert args["nstate_values"] == manifest.stages["correlator_analysis"].defaults["nstate"]
         assert "nstate" not in args
@@ -93,7 +94,17 @@ def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) 
         assert args["nstate"] == 2
     assert "fit_scope" not in args
     assert args["model_average"] == manifest.stages["correlator_analysis"].defaults["model_average"]
-    assert args["workers"] == 1
+    assert args["workers"] == manifest.metadata.workers
+    assert args["bz_direction"] == "X"
+
+
+def test_correlator_stage_rejects_removed_variant_parameter() -> None:
+    manifest = _manifest()
+    manifest.stages["correlator_analysis"].defaults["variant"] = "free"
+    job = manifest.stages["correlator_analysis"].jobs[0]
+    assert validate_stage_inputs("correlator_analysis", manifest, job) == [
+        "variant is not a supported correlator_analysis parameter."
+    ]
 
 
 def test_metadata_workers_override_stage_params_for_sample_fit_tools(tmp_path: Path) -> None:
@@ -193,59 +204,44 @@ def test_prepare_nonbreit_correlator_args_match_initial_final_momenta(tmp_path: 
                 "correlators": [
                     {
                         "correlator_id": "pt2_i",
-                        "kind": "2pt",
-                        "data_path": "pt2_i.h5",
+                        "correlator_type": "2pt",
+                        "data_path": "pt2.h5",
                         "ensemble": "E",
                         "hadron": "pion",
                         "gfix": "GI",
-                        "source_sink": "SS",
-                        "momentum": "PX0PY0PZ0",
-                        "a_fm": 0.1,
-                        "pz_gev": 0.0,
-                        "src_gamma": "5",
-                        "sink_gamma": "5",
-                    },
-                    {
-                        "correlator_id": "pt2_f",
-                        "kind": "2pt",
-                        "data_path": "pt2_f.h5",
-                        "ensemble": "E",
-                        "hadron": "pion",
-                        "gfix": "GI",
-                        "source_sink": "SS",
-                        "momentum": "PX0PY0PZ1",
-                        "a_fm": 0.1,
-                        "pz_gev": 0.5,
-                        "src_gamma": "5",
-                        "sink_gamma": "5",
+                        "source_operator": "g5",
+                        "sink_operator": "g5",
+                        "volume": "S16T32",
+                        "momentum": ["PX0PY0PZ0", "PX0PY0PZ1"],
+                        "lattice_spacing_fm": 0.1,
                     },
                     {
                         "correlator_id": "pt3_fi",
-                        "kind": "3pt",
+                        "correlator_type": "3pt",
                         "data_path": "pt3.h5",
                         "ensemble": "E",
                         "hadron": "pion",
                         "gfix": "GI",
-                        "source_sink": "SS",
-                        "momentum": "PX0PY0PZ1",
-                        "a_fm": 0.1,
-                        "pz_gev": 0.0,
-                        "pz_out_gev": 0.5,
-                        "src_gamma": "5",
-                        "sink_gamma": "5",
-                        "current_gamma": "T",
-                        "z_direction": "Z",
-                        "eta": "eta0",
-                        "bt": [0],
+                        "source_operator": "g5",
+                        "sink_operator": "g5",
+                        "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                        "volume": "S16T32",
+                        "momentum": ["PX0PY0PZ1"],
+                        "lattice_spacing_fm": 0.1,
+                        "bT": [0],
                         "bz": [0],
-                        "tsep": 8,
+                        "tsep": [8],
                     },
                 ]
             },
             "stages": {
                 "correlator_analysis": {
-                    "defaults": {"fitting_form": "NonBreit"},
-                    "jobs": [{"id": "ca", "correlator_ids": ["pt2_i", "pt2_f", "pt3_fi"]}],
+                    "defaults": {
+                        "fitting_form": "NonBreit",
+                        "initial_momentum": "PX0PY0PZ0",
+                        "final_momentum": "PX0PY0PZ1",
+                    },
+                    "jobs": [{"id": "ca", "correlator_ids": ["pt2_i", "pt3_fi"]}],
                 }
             },
         }
@@ -262,20 +258,19 @@ def test_prepare_nonbreit_correlator_args_match_initial_final_momenta(tmp_path: 
         effective_params=manifest.stages["correlator_analysis"].defaults,
         artifacts_dir=tmp_path,
     )
-    assert args["pt2_path"].endswith("pt2_i.h5")
-    assert args["pt2_out_path"].endswith("pt2_f.h5")
-    assert args["momentum"] == "PX0PY0PZ0"
-    assert args["momentum_out"] == "PX0PY0PZ1"
-    assert args["pt3_momentum"] == "PX0PY0PZ1"
-    assert args["pz_gev"] == 0.0
-    assert args["pz_out_gev"] == 0.5
+    assert args["pt2_path"].endswith("pt2.h5")
+    assert args["pt2_out_path"].endswith("pt2.h5")
+    assert args["initial_momentum"] == "PX0PY0PZ0"
+    assert args["final_momentum"] == "PX0PY0PZ1"
+    assert args["initial_momentum_gev"] == 0.0
+    assert args["final_momentum_gev"] == pytest.approx(manifest.correlators[0].momentum_gev("PX0PY0PZ1"))
 
 
-def test_nonbreit_requires_two_two_point_correlators(tmp_path: Path) -> None:
+def test_nonbreit_requires_initial_and_final_momentum(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["correlator_analysis"].jobs[0].model_copy(update={"params": {"fitting_form": "NonBreit"}})
     assert validate_stage_inputs("correlator_analysis", manifest, job) == [
-        "A NonBreit correlator_analysis job requires exactly two 2pt correlators."
+        "A NonBreit correlator_analysis job requires params.initial_momentum and params.final_momentum."
     ]
 
 
@@ -314,7 +309,75 @@ def test_prepare_renormalization_args_filters_normalization_manifest_flag(tmp_pa
 
 
 def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path) -> None:
-    manifest = validate_manifest_file(Path("examples/self_renorm_manifest.json"))
+    artifacts = [
+        {
+            "id": artifact_id,
+            "stage": "correlator_analysis",
+            "path": f"{artifact_id}.nc",
+            "momentum": momentum,
+            "volume": "S96T192",
+            "lattice_spacing_fm": spacing,
+        }
+        for artifact_id, momentum, spacing in (
+            ("bare_pdf_reference", "PX0PY0PZ0", 0.0574),
+            ("bare_da_mom6_a06", "PX0PY0PZ6", 0.0574),
+            ("bare_da_mom6_a09", "PX0PY0PZ6", 0.0882),
+            ("bare_da_mom6_a12", "PX0PY0PZ6", 0.1213),
+        )
+    ]
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "self-renorm",
+                "root_directory": str(tmp_path),
+                "target_observable": "da",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "random_seed": 1984,
+                "stages": ["renormalization"],
+            },
+            "inputs": {
+                "correlators": [],
+                "artifacts": artifacts,
+                "kernels": [
+                    {
+                        "stage": "renormalization",
+                        "kernel_id": "ZMSbar_da",
+                        "kernel_path": "src/lamet_agent/kernels.py",
+                        "scheme": "self_renormalization",
+                        "kernel_parameters": {"mu": 2.0},
+                    }
+                ],
+            },
+            "stages": {
+                "renormalization": {
+                    "defaults": {"scheme": "self_renormalization", "mu": 2.0, "svdcut": 1e-12},
+                    "jobs": [
+                        {
+                            "id": "rn_zR_fit",
+                            "inputs": {"reference": "bare_pdf_reference"},
+                            "params": {"d": -0.08183},
+                        },
+                        {
+                            "id": "rn_mom6_a06",
+                            "inputs": {"target": "bare_da_mom6_a06", "zR": "rn_zR_fit"},
+                            "params": {"d": 0.19, "m0_gev": -0.094},
+                        },
+                        {
+                            "id": "rn_mom6_a09",
+                            "inputs": {"target": "bare_da_mom6_a09", "zR": "rn_zR_fit"},
+                            "params": {"d": 0.19, "m0_gev": -0.094},
+                        },
+                        {
+                            "id": "rn_mom6_a12",
+                            "inputs": {"target": "bare_da_mom6_a12", "zR": "rn_zR_fit"},
+                            "params": {"d": 0.19, "m0_gev": -0.094},
+                        },
+                    ],
+                }
+            },
+        }
+    )
     fit_job = manifest.stages["renormalization"].jobs[0]
     apply_job = manifest.stages["renormalization"].jobs[1]
     fit_effective = {**manifest.stages["renormalization"].defaults, **fit_job.params}
@@ -414,7 +477,15 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
 def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["fourier_transform"].jobs[0]
-    source = SimpleNamespace(attrs={"a_fm": "0.0574", "pz_gev": "2.15", "hadron": "pion", "gfix": "CG"})
+    source = SimpleNamespace(
+        attrs={
+            "lattice_spacing_fm": "0.0574",
+            "momentum_gev": "2.15",
+            "bz_direction": "X",
+            "hadron": "pion",
+            "gfix": "CG",
+        }
+    )
     effective = {
         **manifest.stages["fourier_transform"].defaults,
         **job.params,
@@ -427,11 +498,12 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     )
     assert args["method"] == "CG"
     assert args["observable"] == "pion_quark_quasi_pdf"
-    assert args["a_fm"] == "0.0574"
-    assert args["pz_gev"] == 2.15
+    assert args["lattice_spacing_fm"] == 0.0574
+    assert args["momentum_gev"] == pytest.approx(manifest.correlators[0].momentum_gev("PX5PY0PZ0"))
+    assert args["bz_direction"] == "X"
     assert args["psi1_flavor_class"] == "light"
     assert args["psi2_flavor_class"] == "heavy"
-    assert args["workers"] == 1
+    assert args["workers"] == manifest.metadata.workers
     assert args["save_path"] == str(tmp_path / "ft_p5")
 
 
@@ -485,7 +557,7 @@ def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:
         artifacts_dir=tmp_path, store={"quasi": object()},
     )
     assert args["kernel_id"] == "CG_gt_qPDF_hybrid_NLO"
-    assert args["pz_gev"] == 2.15
+    assert args["momentum_gev"] == pytest.approx(manifest.correlators[0].momentum_gev("PX5PY0PZ0"))
     assert args["zs_fm"] == 0.1722
 
 

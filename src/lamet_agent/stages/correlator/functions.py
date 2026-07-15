@@ -6,8 +6,9 @@ Purpose:
   sample-average data, then apply that setting to every bootstrap/jackknife sample
 
 Expected inputs:
-- 2pt HDF5: ``source_sink/gamma/momentum`` with shape (Lt, n_cfg)
-- 3pt HDF5: ``source_sink/gamma/momentum/b_dir/eta/bT*/bz*`` with shape (tsep+1, n_cfg)
+- 2pt HDF5: ``source_operator/sink_operator/momentum`` with shape (Lt, n_cfg)
+- 3pt HDF5: ``source_operator/sink_operator/current_operator/momentum/tsep*/bT*/bz*``
+  with shape (tsep+1, n_cfg)
 - tool arguments supplied by the agent as JSON-compatible values
 
 Expected outputs:
@@ -927,26 +928,39 @@ def _fit_summary(rec: dict[str, Any], *, fallback: bool, index: int) -> dict[str
 # --- data IO and resampling --------------------------------------------------
 
 
-def _read_2pt(path: str, *, source_sink: str, gamma: str, momentum: str) -> np.ndarray:
+def _read_2pt(
+    path: str,
+    *,
+    source_operator: str,
+    sink_operator: str,
+    momentum: str,
+    temporal_extent: int | None = None,
+) -> np.ndarray:
     """Read one 2pt dataset as a complex (n_cfg, Lt) array."""
+    dset = f"{source_operator}/{sink_operator}/{momentum}"
     with h5py.File(path, "r") as h5f:
-        return np.swapaxes(np.asarray(h5f[source_sink][gamma][momentum]), 0, 1)
+        data = np.swapaxes(np.asarray(h5f[dset]), 0, 1)
+    if temporal_extent is not None and data.shape[1] != int(temporal_extent):
+        raise ValueError(f"{path}:{dset} has Lt={data.shape[1]}, expected {temporal_extent} from manifest volume")
+    return data
 
 
 def _read_3pt(
     path: str,
     *,
-    source_sink: str,
-    gamma: str,
+    source_operator: str,
+    sink_operator: str,
+    current_operator: str,
     momentum: str,
-    b_dir: str,
-    eta: str,
-    bt: str,
-    bz: str,
+    bT: int,
+    bz: int,
     tsep: int,
 ) -> np.ndarray:
     """Read one 3pt slice as a complex (n_cfg, tsep+1) array."""
-    dset = f"{source_sink}/{gamma}/{momentum}/{b_dir}/{eta}/{bt}/{bz}"
+    dset = (
+        f"{source_operator}/{sink_operator}/{current_operator}/{momentum}/"
+        f"tsep{tsep}/bT{bT}/bz{bz}"
+    )
     with h5py.File(path, "r") as h5f:
         data = np.swapaxes(np.asarray(h5f[dset]), 0, 1)
     if data.shape[1] != tsep + 1:
@@ -1301,18 +1315,27 @@ def inspect_correlator_scale(
     *,
     pt2_path: str,
     pt2_windows: list[dict[str, int]] | None = None,
-    source_sink: str = "SS",
-    gamma: str = "5",
+    source_operator: str = "g5",
+    sink_operator: str = "g5",
     momentum: str = "PX0PY0PZ0",
+    temporal_extent: int | None = None,
     selectors: dict[str, Any] | None = None,
     out: str = "correlator_scale_inspection",
 ) -> dict[str, Any]:
     """Report 2pt magnitudes so the agent can choose a power-of-ten correlator_rescale."""
     if selectors is not None:
-        source_sink = str(selectors.get("source_sink") or source_sink)
-        gamma = str(selectors.get("gamma") or selectors.get("pt2_gamma") or gamma)
+        source_operator = str(selectors.get("source_operator") or source_operator)
+        sink_operator = str(selectors.get("sink_operator") or sink_operator)
         momentum = str(selectors.get("momentum") or momentum)
-    pt2_real = np.real(_read_2pt(pt2_path, source_sink=source_sink, gamma=gamma, momentum=momentum))
+    pt2_real = np.real(
+        _read_2pt(
+            pt2_path,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            momentum=momentum,
+            temporal_extent=temporal_extent,
+        )
+    )
     n_cfg, Lt = pt2_real.shape
     windows = _normalise_pt2_windows(pt2_windows, Lt=Lt)
     window_stats = []
@@ -1331,8 +1354,8 @@ def inspect_correlator_scale(
     result = {
         "out": out,
         "pt2_path": pt2_path,
-        "source_sink": source_sink,
-        "gamma": gamma,
+        "source_operator": source_operator,
+        "sink_operator": sink_operator,
         "momentum": momentum,
         "n_cfg": int(n_cfg),
         "Lt": int(Lt),
@@ -1350,9 +1373,10 @@ def tune_ground_state(
     store: dict[str, Any],
     *,
     pt2_path: str,
-    source_sink: str = "SS",
-    gamma: str = "5",
+    source_operator: str = "g5",
+    sink_operator: str = "g5",
     momentum: str = "PX0PY0PZ0",
+    temporal_extent: int | None = None,
     pt2_windows: list[dict[str, int]] | None = None,
     nstate: int = 2,
     svdcut: float = 1e-2,
@@ -1378,7 +1402,13 @@ def tune_ground_state(
     scale = _check_rescale(correlator_rescale)
     out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
 
-    pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=gamma, momentum=momentum)
+    pt2_complex = _read_2pt(
+        pt2_path,
+        source_operator=source_operator,
+        sink_operator=sink_operator,
+        momentum=momentum,
+        temporal_extent=temporal_extent,
+    )
     n_cfg, Lt = pt2_complex.shape
     re_samples, _ = resample_config_samples(np.real(pt2_complex), mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size)
     pt2_gv = samples_to_gvar(re_samples, mode=mode, sample_error_mode=sample_error_mode)
@@ -1586,18 +1616,17 @@ def tune_bare_matrix(
     pt2_out_path: str | None = None,
     pt3_paths: dict[str, str] | list[str],
     tsep_ls: list[int],
-    momentum: str,
-    momentum_out: str | None = None,
-    pt3_momentum: str | None = None,
+    momentum: str | None = None,
+    initial_momentum: str | None = None,
+    final_momentum: str | None = None,
     fitting_form: str = "Breit",
     tune_z_values: list[int] | None = None,
     z_values: list[int] | None = None,
-    source_sink: str = "SS",
-    pt2_gamma: str = "5",
-    pt3_gamma: str = "T",
-    b_dir: str = "b_X",
-    eta: str = "eta0",
-    bt: str = "bT0",
+    source_operator: str = "g5",
+    sink_operator: str = "g5",
+    current_operator: str = "gT_nonlocal",
+    bT: int = 0,
+    temporal_extent: int | None = None,
     pt2_windows: list[dict[str, int]] | None = None,
     pt3_windows: list[dict[str, Any]] | None = None,
     pt3_tau_cuts: list[int] | None = None,
@@ -1632,8 +1661,14 @@ def tune_bare_matrix(
     mode = _check_mode(resample_mode)
     tseps = [int(t) for t in tsep_ls]
     paths_by_tsep = _normalise_pt3_paths(pt3_paths, tsep_ls=tseps)
-    final_momentum = momentum if momentum_out is None else momentum_out
-    three_point_momentum = momentum if pt3_momentum is None else pt3_momentum
+    if form == "Breit":
+        if momentum is None:
+            raise ValueError("momentum is required for Breit correlator fits")
+        initial_momentum = final_momentum = three_point_momentum = momentum
+    else:
+        if initial_momentum is None or final_momentum is None:
+            raise ValueError("initial_momentum and final_momentum are required for NonBreit correlator fits")
+        three_point_momentum = final_momentum
     if not z_values:
         raise ValueError("z_values must be provided for tune_bare_matrix validation")
     allowed_z = [int(z) for z in z_values]
@@ -1655,7 +1690,13 @@ def tune_bare_matrix(
     primary_tune_z = tune_z_list[0]
 
     # load and resample the initial/final 2pt correlators with shared indices
-    pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=momentum)
+    pt2_complex = _read_2pt(
+        pt2_path,
+        source_operator=source_operator,
+        sink_operator=sink_operator,
+        momentum=initial_momentum,
+        temporal_extent=temporal_extent,
+    )
     n_cfg, Lt = pt2_complex.shape
     re_samples, pt2_complex_samples, indices = _resample_pt2(
         pt2_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size
@@ -1664,7 +1705,13 @@ def tune_bare_matrix(
     pt2_f_gv = None
     pt2_f_complex_samples = pt2_complex_samples
     if form == "NonBreit":
-        pt2_f_complex = _read_2pt(pt2_out_path or pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=final_momentum)
+        pt2_f_complex = _read_2pt(
+            pt2_out_path or pt2_path,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            momentum=final_momentum,
+            temporal_extent=temporal_extent,
+        )
         if pt2_f_complex.shape != pt2_complex.shape:
             raise ValueError(f"initial/final 2pt shape mismatch: {pt2_complex.shape} != {pt2_f_complex.shape}")
         re_f_samples, pt2_f_complex_samples, _ = _resample_pt2(
@@ -1689,13 +1736,12 @@ def tune_bare_matrix(
         for tsep in tseps:
             pt3 = _read_3pt(
                 paths_by_tsep[tsep],
-                source_sink=source_sink,
-                gamma=pt3_gamma,
+                source_operator=source_operator,
+                sink_operator=sink_operator,
+                current_operator=current_operator,
                 momentum=three_point_momentum,
-                b_dir=b_dir,
-                eta=eta,
-                bt=bt,
-                bz=f"bz{tune_z}",
+                bT=bT,
+                bz=tune_z,
                 tsep=tsep,
             )
             pt3_samples, _ = resample_config_samples(
@@ -2222,21 +2268,17 @@ def fit_bare_matrix_grid(
     z_values: list[int],
     ensemble: str,
     tag: str,
-    momentum: str,
-    momentum_out: str | None = None,
-    pt3_momentum: str | None = None,
+    momentum: str | None = None,
+    initial_momentum: str | None = None,
+    final_momentum: str | None = None,
     fitting_form: str = "Breit",
     hadron: str | None = None,
     gfix: str | None = None,
-    direction: str = "X",
-    variant: str = "free",
-    source_sink: str = "SS",
-    pt2_gamma: str = "5",
-    pt3_gamma: str = "T",
-    b_dir: str = "b_X",
-    eta: str = "eta0",
-    bt: str = "bT0",
-    b_label: str = "b0",
+    source_operator: str = "g5",
+    sink_operator: str = "g5",
+    current_operator: str = "gT_nonlocal",
+    bz_direction: str,
+    bT: int = 0,
     pt2_window: dict[str, int] | None = None,
     pt3_window: dict[str, Any] | None = None,
     pt3_tau_cut: int | None = None,
@@ -2261,9 +2303,12 @@ def fit_bare_matrix_grid(
     posterior_prior_error_scale: float = 3.0,
     correlator_rescale: float = 1.0,
     job_id: str | None = None,
-    a_fm: float | None = None,
-    pz_gev: float | None = None,
-    pz_out_gev: float | None = None,
+    volume: str | None = None,
+    lattice_spacing_fm: float | None = None,
+    momentum_gev: float | None = None,
+    initial_momentum_gev: float | None = None,
+    final_momentum_gev: float | None = None,
+    temporal_extent: int | None = None,
     save_path: str | None = None,
     log_dir: str | Path | None = None,
     log_path: str | Path | None = None,
@@ -2283,6 +2328,16 @@ def fit_bare_matrix_grid(
         raise ValueError("workers must be a positive integer")
     workers = int(workers)
     form = _normalise_fitting_form(fitting_form)
+    if form == "Breit":
+        if momentum is None:
+            raise ValueError("momentum is required for Breit correlator fits")
+        initial_momentum = final_momentum = three_point_momentum = momentum
+        initial_momentum_gev = final_momentum_gev = momentum_gev
+    else:
+        if initial_momentum is None or final_momentum is None:
+            raise ValueError("initial_momentum and final_momentum are required for NonBreit correlator fits")
+        three_point_momentum = final_momentum
+        momentum_gev = initial_momentum_gev
     strategy, _ = _normalise_strategy(fit_strategy)
     scope, scope_label = _normalise_fit_scope(fit_scope)
     _validate_scope_form(scope, form)
@@ -2307,13 +2362,13 @@ def fit_bare_matrix_grid(
         tuning_log_path = base_log_path.with_name(f"{base_log_path.stem}_tuning{log_suffix}")
         sample_log_path = base_log_path.with_name(f"{base_log_path.stem}_samples{log_suffix}")
     else:
-        log_stem = f"{ensemble}_{tag}_{variant}_{direction}_{momentum}_{b_label}_{fit_mode}"
+        log_stem = f"{ensemble}_{tag}_{three_point_momentum}_bT{bT}_{fit_mode}"
         tuning_log_path = fit_log_dir / f"{log_stem}_tuning.log"
         sample_log_path = fit_log_dir / f"{log_stem}_samples.log"
     tuning_logger = setup_logger(tuning_log_path, logger_name="correlator_tuning_logger")
     sample_logger = setup_logger(sample_log_path, logger_name="correlator_sample_logger")
     tuning_logger.info("Starting %s bare matrix grid fit (model_average=%s)", fit_mode, model_average)
-    tuning_logger.info("ensemble=%s tag=%s momentum=%s direction=%s rescale=%s", ensemble, tag, momentum, direction, scale)
+    tuning_logger.info("ensemble=%s tag=%s momentum=%s rescale=%s", ensemble, tag, three_point_momentum, scale)
 
     # resolve input grids, selectors, and shared output/log locations
     tseps = [int(t) for t in tsep_ls]
@@ -2325,11 +2380,14 @@ def fit_bare_matrix_grid(
     if missing:
         raise ValueError(f"pt3_paths missing tsep entries: {missing}")
     tune_z_value = z_list[0] if tune_z is None else int(tune_z)
-    final_momentum = momentum if momentum_out is None else momentum_out
-    three_point_momentum = momentum if pt3_momentum is None else pt3_momentum
-
     # load and resample the initial/final 2pt ensembles with identical indices
-    pt2_complex = _read_2pt(pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=momentum)
+    pt2_complex = _read_2pt(
+        pt2_path,
+        source_operator=source_operator,
+        sink_operator=sink_operator,
+        momentum=initial_momentum,
+        temporal_extent=temporal_extent,
+    )
     n_cfg, Lt = pt2_complex.shape
     pt2_samples, pt2_complex_samples, indices = _resample_pt2(pt2_complex, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size)
     pt2_gv = samples_to_gvar(pt2_samples, mode=mode, sample_error_mode=sample_error_mode)
@@ -2337,7 +2395,13 @@ def fit_bare_matrix_grid(
     pt2_f_gv = None
     pt2_f_complex_samples = pt2_complex_samples
     if form == "NonBreit":
-        pt2_f_complex = _read_2pt(pt2_out_path or pt2_path, source_sink=source_sink, gamma=pt2_gamma, momentum=final_momentum)
+        pt2_f_complex = _read_2pt(
+            pt2_out_path or pt2_path,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            momentum=final_momentum,
+            temporal_extent=temporal_extent,
+        )
         if pt2_f_complex.shape != pt2_complex.shape:
             raise ValueError(f"initial/final 2pt shape mismatch: {pt2_complex.shape} != {pt2_f_complex.shape}")
         pt2_f_samples, pt2_f_complex_samples, _ = _resample_pt2(
@@ -2361,8 +2425,14 @@ def fit_bare_matrix_grid(
         gv_im: dict[int, np.ndarray] = {}
         for tsep in tseps:
             pt3 = _read_3pt(
-                paths_by_tsep[tsep], source_sink=source_sink, gamma=pt3_gamma, momentum=three_point_momentum,
-                b_dir=b_dir, eta=eta, bt=bt, bz=f"bz{z}", tsep=tsep,
+                paths_by_tsep[tsep],
+                source_operator=source_operator,
+                sink_operator=sink_operator,
+                current_operator=current_operator,
+                momentum=three_point_momentum,
+                bT=bT,
+                bz=z,
+                tsep=tsep,
             )
             if pt3.shape[0] != n_cfg:
                 raise ValueError(f"3pt n_cfg mismatch for z={z}, tsep={tsep}: {pt3.shape[0]} != {n_cfg}")
@@ -2536,7 +2606,7 @@ def fit_bare_matrix_grid(
     else:
         z_iterator = tqdm(
             z_list,
-            desc=f"fit bare matrix {ensemble} {momentum} {direction}",
+            desc=f"fit bare matrix {ensemble} {three_point_momentum}",
         )
 
     # reuse one process pool across all z values; serial mode follows the same batch path
@@ -2822,14 +2892,23 @@ def fit_bare_matrix_grid(
             sample_executor.shutdown()
 
     if form == "NonBreit":
-        q2 = None if pz_gev is None or pz_out_gev is None else (float(pz_out_gev) - float(pz_gev)) ** 2
-        xi = None if pz_gev is None or pz_out_gev is None else (float(pz_gev) - float(pz_out_gev)) / (float(pz_gev) + float(pz_out_gev))
+        q2 = (
+            None
+            if initial_momentum_gev is None or final_momentum_gev is None
+            else (float(final_momentum_gev) - float(initial_momentum_gev)) ** 2
+        )
+        denominator = (
+            None
+            if initial_momentum_gev is None or final_momentum_gev is None
+            else float(initial_momentum_gev) + float(final_momentum_gev)
+        )
+        xi = None if denominator in (None, 0.0) else (float(initial_momentum_gev) - float(final_momentum_gev)) / denominator
         q2_label = "n/a" if q2 is None else f"{q2:.2f}"
         xi_label = "n/a" if xi is None else f"{xi:.2f}"
-        plot_title = rf"{ensemble} $Q^2={q2_label}\,\mathrm{{GeV}}^2$, $\xi={xi_label}$ {direction} bare matrix elements"
+        plot_title = rf"{ensemble} $Q^2={q2_label}\,\mathrm{{GeV}}^2$, $\xi={xi_label}$ bare matrix elements"
     else:
-        p_label = "n/a" if pz_gev is None else f"{float(pz_gev):.2f}"
-        plot_title = rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ {direction} bare matrix elements"
+        p_label = "n/a" if momentum_gev is None else f"{float(momentum_gev):.2f}"
+        plot_title = rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ bare matrix elements"
     # assemble the terminal artifact, summary plot, and JSON-safe observation
     out_dir.mkdir(parents=True, exist_ok=True)
     resolved_save = resolve_plot_save_path(
@@ -2935,24 +3014,25 @@ def fit_bare_matrix_grid(
         attrs={
             "ensemble": ensemble,
             "tag": tag,
-            "variant": variant,
-            "direction": direction,
-            "momentum": momentum,
-            "b_label": b_label,
+            "bz_direction": bz_direction,
+            "momentum": three_point_momentum,
+            "bT": bT,
             "resample_mode": mode,
             "sample_error_mode": sample_error_mode,
             "average_method": sample_error_mode,
             "part": part,
             "job_id": job_id,
-            "a_fm": a_fm,
-            "pz_gev": pz_gev,
-            "pz_out_gev": pz_out_gev,
+            "volume": volume,
+            "lattice_spacing_fm": lattice_spacing_fm,
+            "momentum_gev": momentum_gev,
+            "initial_momentum_gev": initial_momentum_gev,
+            "final_momentum_gev": final_momentum_gev,
             "fitting_form": form,
             "fit_scope": scope,
             "nstate_values": json.dumps(fit_nstates),
             "prior_width": json.dumps(prior_widths),
-            "momentum_out": final_momentum,
-            "pt3_momentum": three_point_momentum,
+            "initial_momentum": initial_momentum,
+            "final_momentum": final_momentum,
             "hadron": hadron,
             "gfix": gfix,
             "workers": workers,

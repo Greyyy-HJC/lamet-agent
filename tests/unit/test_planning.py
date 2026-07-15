@@ -14,10 +14,12 @@ from lamet_agent.planning import (
     _apply_user_answer_to_candidate,
     _run_planning_tool,
     _stage_parameter_gaps,
+    _next_questions_for_state,
     apply_manifest_json_patches,
     build_repaired_manifests,
     check_manifest_draft,
     convert_correlator_h5,
+    inspect_correlator_h5_files,
     load_relaxed_manifest,
     plan_correlator_h5_conversions,
     run_interactive_plan,
@@ -47,17 +49,16 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
             "correlators": [
                 {
                     "correlator_id": "c2",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": data_path,
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T3",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 }
             ],
             "artifacts": [],
@@ -72,7 +73,7 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
             ],
         },
         "stages": {
-            "correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2"]}]},
+            "correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2"], "params": {"momentum": "PX0PY0PZ0"}}]},
             "renormalization": {
                 "defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.2},
                 "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
@@ -226,7 +227,7 @@ def test_plan_normalizes_legacy_matching_kernel_stage(tmp_path: Path) -> None:
     payload["inputs"]["kernels"][0]["stage"] = "matching"
     payload["stages"] = {
         "perturbative_matching": {
-            "defaults": {"pz_gev": 2.15, "mu": 2.0, "component": "re"},
+            "defaults": {"momentum_gev": 2.15, "mu": 2.0, "component": "re"},
             "jobs": [{"id": "mt", "inputs": {"quasi": "ft"}}],
         }
     }
@@ -315,6 +316,32 @@ def test_plan_stage_params_question_without_choices_accepts_free_text() -> None:
     assert answer == "LA"
 
 
+def test_planner_requests_missing_bz_direction_for_3pt() -> None:
+    payload = {
+        "metadata": {"random_seed": 1984, "stages": []},
+        "inputs": {
+            "correlators": [
+                {
+                    "correlator_id": "c3",
+                    "correlator_type": "3pt",
+                    "source_operator": "g5",
+                    "sink_operator": "g5",
+                    "current_operator": "gT_nonlocal",
+                    "volume": "S16T32",
+                    "lattice_spacing_fm": 0.1,
+                    "momentum": ["PX0PY0PZ0"],
+                    "bT": [0],
+                    "bz": [0],
+                    "tsep": [8],
+                }
+            ]
+        },
+    }
+    state = PlanAgentState(Path("draft.json"), "", payload, payload)
+    questions = _next_questions_for_state(state)
+    assert questions[0]["question_id"] == "inputs.correlators.0.bz_direction"
+
+
 def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path) -> None:
     h5py = pytest.importorskip("h5py")
     root = tmp_path / "repo"
@@ -339,51 +366,54 @@ def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path)
             "correlators": [
                 {
                     "correlator_id": "c2",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": "data/raw_2pt.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T3",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 },
                 {
                     "correlator_id": "c3",
-                    "kind": "3pt",
+                    "correlator_type": "3pt",
                     "data_path": "data/raw_3pt.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
-                    "current_gamma": "T",
-                    "z_direction": "X",
-                    "eta": "eta0",
-                    "bt": [0],
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
+                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+                    "bT": [0],
                     "bz": [0, 1],
-                    "tsep": 3,
+                    "tsep": [3],
                 },
             ],
             "artifacts": [],
             "kernels": [],
         },
-        "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}]}},
+        "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
     }
     with h5py.File(data_dir / "raw_2pt.h5", "w") as h5f:
         h5f.create_dataset("raw_pt2", data=pt2_cfg_time)
     with h5py.File(data_dir / "raw_3pt.h5", "w") as h5f:
+        h5f.attrs["bz_direction"] = "Z"
         h5f.create_dataset("raw_z0", data=pt3_cfg_tau_z0)
         h5f.create_dataset("raw_z1", data=pt3_cfg_tau_z1)
     path = tmp_path / "draft.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+    inspections = inspect_correlator_h5_files(path, payload)
+    c3_inspection = next(item for item in inspections if item.correlator_id == "c3")
+    assert c3_inspection.attrs["bz_direction"] == "Z"
 
     conversions = plan_correlator_h5_conversions(path, payload)
     assert len(conversions) == 2
@@ -394,7 +424,7 @@ def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path)
         "apply_correlator_conversion_mapping",
         {
             "correlator_id": "c2",
-            "datasets": [{"source": "raw_pt2", "target": "SS/5/PX0PY0PZ0", "transpose": True}],
+            "datasets": [{"source": "raw_pt2", "target": "g5/g5/PX0PY0PZ0", "transpose": True}],
         },
     )
     assert result["ok"] is True
@@ -404,8 +434,8 @@ def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path)
         {
             "correlator_id": "c3",
             "datasets": [
-                {"source": "raw_z0", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "transpose": True},
-                {"source": "raw_z1", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz1", "transpose": True},
+                {"source": "raw_z0", "target": "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", "transpose": True},
+                {"source": "raw_z1", "target": "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz1", "transpose": True},
             ],
         },
     )
@@ -415,17 +445,22 @@ def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path)
 
     c2_output = next(item for item in conversions if item.correlator_id == "c2").output_file
     c3_output = next(item for item in conversions if item.correlator_id == "c3").output_file
-    assert np.array_equal(_read_2pt(c2_output, source_sink="SS", gamma="5", momentum="PX0PY0PZ0"), pt2_cfg_time)
+    with h5py.File(c3_output) as h5f:
+        assert h5f.attrs["bz_direction"] == "Z"
+        assert h5f.attrs["standard_correlator_hdf5_version"] == 2
+    assert np.array_equal(
+        _read_2pt(c2_output, source_operator="g5", sink_operator="g5", momentum="PX0PY0PZ0"),
+        pt2_cfg_time,
+    )
     assert np.array_equal(
         _read_3pt(
             c3_output,
-            source_sink="SS",
-            gamma="T",
+            source_operator="g5",
+            sink_operator="g5",
+            current_operator="gT_nonlocal",
             momentum="PX0PY0PZ0",
-            b_dir="b_X",
-            eta="eta0",
-            bt="bT0",
-            bz="bz1",
+            bT=0,
+            bz=1,
             tsep=3,
         ),
         pt3_cfg_tau_z1,
@@ -452,14 +487,22 @@ def test_correlator_numpy_conversion_outputs_standard_h5_and_script(tmp_path: Pa
         "apply_correlator_conversion_mapping",
         {
             "correlator_id": "c2",
-            "datasets": [{"source": "array", "target": "SS/5/PX0PY0PZ0", "transpose": True}],
+            "datasets": [{"source": "array", "target": "g5/g5/PX0PY0PZ0", "transpose": True}],
         },
     )
     assert result["ok"] is True
     convert_correlator_h5(state.conversions[0])
 
     assert Path(state.conversions[0].script_file).is_file()
-    assert np.array_equal(_read_2pt(state.conversions[0].output_file, source_sink="SS", gamma="5", momentum="PX0PY0PZ0"), pt2_cfg_time)
+    assert np.array_equal(
+        _read_2pt(
+            state.conversions[0].output_file,
+            source_operator="g5",
+            sink_operator="g5",
+            momentum="PX0PY0PZ0",
+        ),
+        pt2_cfg_time,
+    )
 
 
 def test_correlator_npz_conversion_with_axis_order_and_index(tmp_path: Path) -> None:
@@ -473,23 +516,22 @@ def test_correlator_npz_conversion_with_axis_order_and_index(tmp_path: Path) -> 
     payload["inputs"]["correlators"] = [
         {
             "correlator_id": "c3",
-            "kind": "3pt",
+            "correlator_type": "3pt",
             "data_path": "data/raw_3pt.npz",
             "ensemble": "E",
             "hadron": "pion",
             "gfix": "CG",
-            "source_sink": "SS",
-            "momentum": "PX0PY0PZ0",
-            "a_fm": 0.1,
-            "pz_gev": 0.0,
-            "src_gamma": "5",
-            "sink_gamma": "5",
-            "current_gamma": "T",
-            "z_direction": "X",
-            "eta": "eta0",
-            "bt": [0],
+            "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+            "momentum": ["PX0PY0PZ0"],
+            "lattice_spacing_fm": 0.1,
+
+
+            "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+            "bT": [0],
             "bz": [0, 1],
-            "tsep": 3,
+            "tsep": [3],
         }
     ]
     path = tmp_path / "draft.json"
@@ -499,8 +541,8 @@ def test_correlator_npz_conversion_with_axis_order_and_index(tmp_path: Path) -> 
     assert conversions[0].ambiguous
     state = PlanAgentState(path, "", payload, payload, conversions=conversions)
     targets = [
-        "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0",
-        "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz1",
+        "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0",
+        "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz1",
     ]
     result = _run_planning_tool(
         state,
@@ -519,13 +561,12 @@ def test_correlator_npz_conversion_with_axis_order_and_index(tmp_path: Path) -> 
     assert np.array_equal(
         _read_3pt(
             state.conversions[0].output_file,
-            source_sink="SS",
-            gamma="T",
+            source_operator="g5",
+            sink_operator="g5",
+            current_operator="gT_nonlocal",
             momentum="PX0PY0PZ0",
-            b_dir="b_X",
-            eta="eta0",
-            bt="bT0",
-            bz="bz1",
+            bT=0,
+            bz=1,
             tsep=3,
         ),
         data[1],
@@ -543,23 +584,22 @@ def test_correlator_conversion_mapping_rejects_bad_shapes_and_targets(tmp_path: 
     payload["inputs"]["correlators"] = [
         {
             "correlator_id": "c3",
-            "kind": "3pt",
+            "correlator_type": "3pt",
             "data_path": "data/raw_3pt.npz",
             "ensemble": "E",
             "hadron": "pion",
             "gfix": "CG",
-            "source_sink": "SS",
-            "momentum": "PX0PY0PZ0",
-            "a_fm": 0.1,
-            "pz_gev": 0.0,
-            "src_gamma": "5",
-            "sink_gamma": "5",
-            "current_gamma": "T",
-            "z_direction": "X",
-            "eta": "eta0",
-            "bt": [0],
+            "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+            "momentum": ["PX0PY0PZ0"],
+            "lattice_spacing_fm": 0.1,
+
+
+            "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+            "bT": [0],
             "bz": [0, 1],
-            "tsep": 3,
+            "tsep": [3],
         }
     ]
     path = tmp_path / "draft.json"
@@ -573,8 +613,8 @@ def test_correlator_conversion_mapping_rejects_bad_shapes_and_targets(tmp_path: 
         {
             "correlator_id": "c3",
             "datasets": [
-                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "index": {"0": 0}, "transpose": True},
-                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "index": {"0": 1}, "transpose": True},
+                {"source": "all_z", "target": "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", "index": {"0": 0}, "transpose": True},
+                {"source": "all_z", "target": "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", "index": {"0": 1}, "transpose": True},
             ],
         },
     )
@@ -586,8 +626,8 @@ def test_correlator_conversion_mapping_rejects_bad_shapes_and_targets(tmp_path: 
         {
             "correlator_id": "c3",
             "datasets": [
-                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "index": {"0": 0}, "axis_order": [0, 0]},
-                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz1", "index": {"0": 1}, "transpose": True},
+                {"source": "all_z", "target": "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", "index": {"0": 0}, "axis_order": [0, 0]},
+                {"source": "all_z", "target": "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz1", "index": {"0": 1}, "transpose": True},
             ],
         },
     )
@@ -599,8 +639,8 @@ def test_correlator_conversion_mapping_rejects_bad_shapes_and_targets(tmp_path: 
         {
             "correlator_id": "c3",
             "datasets": [
-                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", "index": {"0": 0}},
-                {"source": "all_z", "target": "SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz1", "index": {"0": 1}},
+                {"source": "all_z", "target": "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", "index": {"0": 0}},
+                {"source": "all_z", "target": "g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz1", "index": {"0": 1}},
             ],
         },
     )
@@ -613,9 +653,9 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
     data_dir = root / "data"
     data_dir.mkdir(parents=True)
     with h5py.File(data_dir / "c2.h5", "w") as h5f:
-        h5f.create_dataset("SS/5/PX0PY0PZ0", data=np.ones((5, 3)))
+        h5f.create_dataset("g5/g5/PX0PY0PZ0", data=np.ones((5, 3)))
     with h5py.File(data_dir / "c3.h5", "w") as h5f:
-        h5f.create_dataset("SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", data=np.ones((4, 3)))
+        h5f.create_dataset("g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", data=np.ones((4, 3)))
     payload = {
         "metadata": {
             "run_id": "demo",
@@ -631,43 +671,41 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
             "correlators": [
                 {
                     "correlator_id": "c2",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": "data/c2.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 },
                 {
                     "correlator_id": "c3",
-                    "kind": "3pt",
+                    "correlator_type": "3pt",
                     "data_path": "data/c3.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
-                    "current_gamma": "T",
-                    "z_direction": "X",
-                    "eta": "eta0",
-                    "bt": [0],
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
+                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+                    "bT": [0],
                     "bz": [0],
-                    "tsep": 3,
+                    "tsep": [3],
                 },
             ],
             "artifacts": [],
             "kernels": [],
         },
-        "stages": {"correlator_analysis": {"defaults": {"nstate": [2, 3]}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}]}},
+        "stages": {"correlator_analysis": {"defaults": {"nstate": [2, 3]}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
     }
     manifest = tmp_path / "draft.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
@@ -693,9 +731,9 @@ def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Pat
     data_dir = root / "data"
     data_dir.mkdir(parents=True)
     with h5py.File(data_dir / "c2.h5", "w") as h5f:
-        h5f.create_dataset("SS/5/PX0PY0PZ0", data=np.ones((5, 3)))
+        h5f.create_dataset("g5/g5/PX0PY0PZ0", data=np.ones((5, 3)))
     with h5py.File(data_dir / "c3.h5", "w") as h5f:
-        h5f.create_dataset("SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", data=np.ones((4, 3)))
+        h5f.create_dataset("g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", data=np.ones((4, 3)))
     payload = {
         "metadata": {
             "run_id": "demo",
@@ -712,37 +750,35 @@ def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Pat
             "correlators": [
                 {
                     "correlator_id": "c2",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": "data/c2.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 },
                 {
                     "correlator_id": "c3",
-                    "kind": "3pt",
+                    "correlator_type": "3pt",
                     "data_path": "data/c3.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
-                    "current_gamma": "T",
-                    "z_direction": "X",
-                    "eta": "eta0",
-                    "bt": [0],
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
+                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+                    "bT": [0],
                     "bz": [0],
-                    "tsep": 3,
+                    "tsep": [3],
                 },
             ],
             "artifacts": [],
@@ -751,7 +787,7 @@ def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Pat
         "stages": {
             "correlator_analysis": {
                 "defaults": {"nstate": [2, 3], "model_average": True},
-                "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}],
+                "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}],
             }
         },
     }
@@ -779,9 +815,9 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
     data_dir = root / "data"
     data_dir.mkdir(parents=True)
     with h5py.File(data_dir / "c2.h5", "w") as h5f:
-        h5f.create_dataset("SS/5/PX0PY0PZ0", data=np.ones((5, 3)))
+        h5f.create_dataset("g5/g5/PX0PY0PZ0", data=np.ones((5, 3)))
     with h5py.File(data_dir / "c3.h5", "w") as h5f:
-        h5f.create_dataset("SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", data=np.ones((4, 3)))
+        h5f.create_dataset("g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", data=np.ones((4, 3)))
     payload = {
         "metadata": {
             "run_id": "demo",
@@ -797,43 +833,41 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
             "correlators": [
                 {
                     "correlator_id": "c2",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": "data/c2.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 },
                 {
                     "correlator_id": "c3",
-                    "kind": "3pt",
+                    "correlator_type": "3pt",
                     "data_path": "data/c3.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
-                    "current_gamma": "T",
-                    "z_direction": "X",
-                    "eta": "eta0",
-                    "bt": [0],
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
+                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+                    "bT": [0],
                     "bz": [0],
-                    "tsep": 3,
+                    "tsep": [3],
                 },
             ],
             "artifacts": [],
             "kernels": [],
         },
-        "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}]}},
+        "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
     }
     manifest = tmp_path / "draft.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
@@ -883,9 +917,9 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
     data_dir = root / "data"
     data_dir.mkdir(parents=True)
     with h5py.File(data_dir / "c2.h5", "w") as h5f:
-        h5f.create_dataset("SS/5/PX0PY0PZ0", data=np.ones((5, 3)))
+        h5f.create_dataset("g5/g5/PX0PY0PZ0", data=np.ones((5, 3)))
     with h5py.File(data_dir / "c3.h5", "w") as h5f:
-        h5f.create_dataset("SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", data=np.ones((4, 3)))
+        h5f.create_dataset("g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", data=np.ones((4, 3)))
     payload = {
         "metadata": {
             "run_id": "demo",
@@ -900,43 +934,41 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
             "correlators": [
                 {
                     "correlator_id": "c2",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": "data/c2.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 },
                 {
                     "correlator_id": "c3",
-                    "kind": "3pt",
+                    "correlator_type": "3pt",
                     "data_path": "data/c3.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
-                    "current_gamma": "T",
-                    "z_direction": "X",
-                    "eta": "eta0",
-                    "bt": [0],
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
+                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+                    "bT": [0],
                     "bz": [0],
-                    "tsep": 3,
+                    "tsep": [3],
                 },
             ],
             "artifacts": [],
             "kernels": [],
         },
-        "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}]}},
+        "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
     }
     manifest = tmp_path / "draft.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
@@ -988,9 +1020,9 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     data_dir = root / "data"
     data_dir.mkdir(parents=True)
     with h5py.File(data_dir / "c2.h5", "w") as h5f:
-        h5f.create_dataset("SS/5/PX0PY0PZ0", data=np.ones((5, 3)))
+        h5f.create_dataset("g5/g5/PX0PY0PZ0", data=np.ones((5, 3)))
     with h5py.File(data_dir / "c3.h5", "w") as h5f:
-        h5f.create_dataset("SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", data=np.ones((4, 3)))
+        h5f.create_dataset("g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", data=np.ones((4, 3)))
     payload = {
         "metadata": {
             "run_id": "demo",
@@ -1006,37 +1038,35 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
             "correlators": [
                 {
                     "correlator_id": "c2",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": "data/c2.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 },
                 {
                     "correlator_id": "c3",
-                    "kind": "3pt",
+                    "correlator_type": "3pt",
                     "data_path": "data/c3.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
-                    "current_gamma": "T",
-                    "z_direction": "X",
-                    "eta": "eta0",
-                    "bt": [0],
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
+                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+                    "bT": [0],
                     "bz": [0],
-                    "tsep": 3,
+                    "tsep": [3],
                 },
             ],
             "artifacts": [],
@@ -1048,7 +1078,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
                     "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}],
                     "pt3_tau_cuts": [2, 3],
                 },
-                "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}],
+                "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}],
             }
         },
     }
@@ -1079,9 +1109,9 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
     data_dir = root / "data"
     data_dir.mkdir(parents=True)
     with h5py.File(data_dir / "c2.h5", "w") as h5f:
-        h5f.create_dataset("SS/5/PX0PY0PZ0", data=np.ones((5, 3)))
+        h5f.create_dataset("g5/g5/PX0PY0PZ0", data=np.ones((5, 3)))
     with h5py.File(data_dir / "c3.h5", "w") as h5f:
-        h5f.create_dataset("SS/T/PX0PY0PZ0/b_X/eta0/bT0/bz0", data=np.ones((4, 3)))
+        h5f.create_dataset("g5/g5/gT_nonlocal/PX0PY0PZ0/tsep3/bT0/bz0", data=np.ones((4, 3)))
     payload = {
         "metadata": {
             "run_id": "demo",
@@ -1097,37 +1127,35 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
             "correlators": [
                 {
                     "correlator_id": "c2",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": "data/c2.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 },
                 {
                     "correlator_id": "c3",
-                    "kind": "3pt",
+                    "correlator_type": "3pt",
                     "data_path": "data/c3.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
-                    "current_gamma": "T",
-                    "z_direction": "X",
-                    "eta": "eta0",
-                    "bt": [0],
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
+                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+                    "bT": [0],
                     "bz": [0],
-                    "tsep": 3,
+                    "tsep": [3],
                 },
             ],
             "artifacts": [],
@@ -1139,7 +1167,7 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
                     "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}],
                     "pt3_tau_cuts": [2, 3],
                 },
-                "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}],
+                "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}],
             }
         },
     }
@@ -1261,10 +1289,10 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_chinese_instruct
         with h5py.File(data_dir / name, "w") as h5f:
             if "2pt" in name:
                 momentum = "PX0PY0PZ0" if name.startswith("p0") else "PX5PY0PZ0"
-                h5f.create_dataset(f"SS/5/{momentum}", data=np.ones((5, 3)))
+                h5f.create_dataset(f"g5/g5/{momentum}", data=np.ones((5, 3)))
             else:
                 momentum = "PX0PY0PZ0" if name.startswith("p0") else "PX5PY0PZ0"
-                h5f.create_dataset(f"SS/T/{momentum}/b_X/eta0/bT0/bz0", data=np.ones((4, 3)))
+                h5f.create_dataset(f"g5/g5/gT_nonlocal/{momentum}/tsep3/bT0/bz0", data=np.ones((4, 3)))
     payload = {
         "metadata": {
             "run_id": "demo",
@@ -1280,71 +1308,67 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_chinese_instruct
             "correlators": [
                 {
                     "correlator_id": "p0_2pt",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": "data/p0_2pt.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 },
                 {
                     "correlator_id": "p0_3pt",
-                    "kind": "3pt",
+                    "correlator_type": "3pt",
                     "data_path": "data/p0_3pt.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX0PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 0.0,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
-                    "current_gamma": "T",
-                    "z_direction": "X",
-                    "eta": "eta0",
-                    "bt": [0],
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX0PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
+                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+                    "bT": [0],
                     "bz": [0],
-                    "tsep": 3,
+                    "tsep": [3],
                 },
                 {
                     "correlator_id": "p5_2pt",
-                    "kind": "2pt",
+                    "correlator_type": "2pt",
                     "data_path": "data/p5_2pt.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX5PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 2.15,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX5PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
                 },
                 {
                     "correlator_id": "p5_3pt",
-                    "kind": "3pt",
+                    "correlator_type": "3pt",
                     "data_path": "data/p5_3pt.h5",
                     "ensemble": "E",
                     "hadron": "pion",
                     "gfix": "CG",
-                    "source_sink": "SS",
-                    "momentum": "PX5PY0PZ0",
-                    "a_fm": 0.1,
-                    "pz_gev": 2.15,
-                    "src_gamma": "5",
-                    "sink_gamma": "5",
-                    "current_gamma": "T",
-                    "z_direction": "X",
-                    "eta": "eta0",
-                    "bt": [0],
+                    "source_operator": "g5", "sink_operator": "g5", "volume": "S16T5",
+                    "momentum": ["PX5PY0PZ0"],
+                    "lattice_spacing_fm": 0.1,
+
+
+                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+
+
+                    "bT": [0],
                     "bz": [0],
-                    "tsep": 3,
+                    "tsep": [3],
                 },
             ],
             "artifacts": [],
@@ -1354,8 +1378,8 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_chinese_instruct
             "correlator_analysis": {
                 "defaults": {"fit_scope": ["ratio"]},
                 "jobs": [
-                    {"id": "ca_p0_fh", "correlator_ids": ["p0_2pt", "p0_3pt"]},
-                    {"id": "ca_p5_fh", "correlator_ids": ["p5_2pt", "p5_3pt"]},
+                    {"id": "ca_p0_fh", "correlator_ids": ["p0_2pt", "p0_3pt"], "params": {"momentum": "PX0PY0PZ0"}},
+                    {"id": "ca_p5_fh", "correlator_ids": ["p5_2pt", "p5_3pt"], "params": {"momentum": "PX5PY0PZ0"}},
                 ],
             }
         },

@@ -44,14 +44,10 @@ ERROR_SCALE = 5.0
 PT3_ERROR_SCALE = 3.0
 A_FM = 0.0836
 
-SOURCE_SINK_PT2 = "SS"
-SOURCE_SINK_QTMDWF = "SP"
-SOURCE_SINK_PT3 = "SS"
-GAMMA_PT2 = "5"
-GAMMA_QTMDWF = "T5"
-GAMMA_PT3 = "T"
-B_DIR = "b_X"
-ETA = "eta0"
+SOURCE_OPERATOR = "g5"
+SINK_OPERATOR_PT2 = "g5"
+SINK_OPERATOR_QTMDWF = "gT5_nonlocal"
+CURRENT_OPERATOR_PT3 = "gT_nonlocal"
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 BARE_TXT_DIR = DATA_DIR / "fake_bare_txt"
@@ -61,11 +57,19 @@ def _momentum_key(pz: int) -> str:
     return f"PX0PY0PZ{pz}"
 
 
-def _qtmd_path(source_sink: str, gamma: str, pz: int, b: int, z: int) -> str:
+def _two_point_path(sink_operator: str, pz: int) -> str:
+    return f"{SOURCE_OPERATOR}/{sink_operator}/{_momentum_key(pz)}"
+
+
+def _three_point_path(tsep: int, pz: int, b: int, z: int) -> str:
     return (
-        f"{source_sink}/{gamma}/{_momentum_key(pz)}/{B_DIR}/{ETA}/"
-        f"bT{b}/bz{z}"
+        f"{SOURCE_OPERATOR}/{SINK_OPERATOR_PT2}/{CURRENT_OPERATOR_PT3}/"
+        f"{_momentum_key(pz)}/tsep{tsep}/bT{b}/bz{z}"
     )
+
+
+def _qtmdwf_path(pz: int, b: int, z: int) -> str:
+    return _two_point_path(f"{SINK_OPERATOR_QTMDWF}_bT{b}_bz{z}", pz)
 
 
 def _pt2_model(
@@ -310,9 +314,17 @@ def _make_bare_qtmdpdf(pz: int, b: int, z: int, rng: np.random.Generator) -> np.
     return _complex_samples(re_mean, im_mean, re_sigma, im_sigma, rng, rho=0.25)
 
 
-def _write_h5_datasets(path: Path, datasets: dict[str, np.ndarray]) -> None:
+def _write_h5_datasets(
+    path: Path,
+    datasets: dict[str, np.ndarray],
+    *,
+    attrs: dict[str, object] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with h5py.File(path, "w") as h5f:
+        h5f.attrs["standard_correlator_hdf5_version"] = 2
+        for key, value in (attrs or {}).items():
+            h5f.attrs[key] = value
         for dataset_path, data in datasets.items():
             h5f.create_dataset(
                 dataset_path,
@@ -367,11 +379,7 @@ def _expected_h5_qtmdwf_paths() -> list[str]:
     for pz in H5_PZ_LIST:
         for b in H5_B_ARR:
             for z in H5_Z_ARR:
-                paths.append(
-                    _qtmd_path(
-                        SOURCE_SINK_QTMDWF, GAMMA_QTMDWF, int(pz), int(b), int(z)
-                    )
-                )
+                paths.append(_qtmdwf_path(int(pz), int(b), int(z)))
     return paths
 
 
@@ -379,7 +387,7 @@ def _expected_h5_pt3_paths(tsep: int) -> list[str]:
     paths = []
     for b in H5_B_ARR:
         for z in H5_Z_ARR:
-            paths.append(_qtmd_path(SOURCE_SINK_PT3, GAMMA_PT3, H5_PT3_PZ, int(b), int(z)))
+            paths.append(_three_point_path(tsep, H5_PT3_PZ, int(b), int(z)))
     return paths
 
 
@@ -401,21 +409,21 @@ def _run_shape_checks() -> None:
     fixed_z = int(H5_Z_ARR[0])
     raw_qtmdwf_shape = _dataset_shape(
         qtmdwf_path,
-        _qtmd_path(SOURCE_SINK_QTMDWF, GAMMA_QTMDWF, pz, fixed_b, fixed_z),
+        _qtmdwf_path(pz, fixed_b, fixed_z),
     )
     _assert_shape(raw_qtmdwf_shape, (LT, N_CFG), "qTMDWF raw")
 
     with h5py.File(qtmdwf_path, "r") as h5f:
         qtmdwf_zdep = np.stack(
             [
-                h5f[_qtmd_path(SOURCE_SINK_QTMDWF, GAMMA_QTMDWF, pz, fixed_b, z)][:]
+                h5f[_qtmdwf_path(pz, fixed_b, z)][:]
                 for z in H5_Z_ARR
             ],
             axis=0,
         )
         qtmdwf_bdep = np.stack(
             [
-                h5f[_qtmd_path(SOURCE_SINK_QTMDWF, GAMMA_QTMDWF, pz, b, fixed_z)][:]
+                h5f[_qtmdwf_path(pz, b, fixed_z)][:]
                 for b in H5_B_ARR
             ],
             axis=0,
@@ -425,24 +433,22 @@ def _run_shape_checks() -> None:
 
     pt3_shapes: dict[int, tuple[int, ...]] = {}
     for tsep in TSEP_LIST:
-        pt3_path = DATA_DIR / f"fake_qtmdpdf_3pt_ts{tsep}.h5"
-        pt3_dataset = _qtmd_path(
-            SOURCE_SINK_PT3, GAMMA_PT3, H5_PT3_PZ, fixed_b, fixed_z
-        )
+        pt3_path = DATA_DIR / "fake_qtmdpdf_3pt.h5"
+        pt3_dataset = _three_point_path(tsep, H5_PT3_PZ, fixed_b, fixed_z)
         pt3_shapes[tsep] = _dataset_shape(pt3_path, pt3_dataset)
         _assert_shape(pt3_shapes[tsep], (tsep + 1, N_CFG), f"qTMDPDF 3pt ts{tsep}")
 
         with h5py.File(pt3_path, "r") as h5f:
             pt3_zdep = np.stack(
                 [
-                    h5f[_qtmd_path(SOURCE_SINK_PT3, GAMMA_PT3, H5_PT3_PZ, fixed_b, z)][:]
+                    h5f[_three_point_path(tsep, H5_PT3_PZ, fixed_b, z)][:]
                     for z in H5_Z_ARR
                 ],
                 axis=0,
             )
             pt3_bdep = np.stack(
                 [
-                    h5f[_qtmd_path(SOURCE_SINK_PT3, GAMMA_PT3, H5_PT3_PZ, b, fixed_z)][:]
+                    h5f[_three_point_path(tsep, H5_PT3_PZ, b, fixed_z)][:]
                     for b in H5_B_ARR
                 ],
                 axis=0,
@@ -463,22 +469,20 @@ def _run_shape_checks() -> None:
     if _h5_dataset_paths(qtmdwf_path) != set(_expected_h5_qtmdwf_paths()):
         raise AssertionError("qTMDWF H5 datasets do not match expected p/b/z grid")
 
-    pt3_counts = {}
-    expected_pt3_count = len(H5_B_ARR) * len(H5_Z_ARR)
-    for tsep in TSEP_LIST:
-        pt3_path = DATA_DIR / f"fake_qtmdpdf_3pt_ts{tsep}.h5"
-        count = _count_datasets(pt3_path)
-        if count != expected_pt3_count:
-            raise AssertionError(
-                f"qTMDPDF ts{tsep} dataset count: expected {expected_pt3_count}, got {count}"
-            )
-        pt3_counts[tsep] = count
-        if _h5_dataset_paths(pt3_path) != set(_expected_h5_pt3_paths(tsep)):
-            raise AssertionError(f"qTMDPDF ts{tsep} H5 datasets do not match expected grid")
+    pt3_path = DATA_DIR / "fake_qtmdpdf_3pt.h5"
+    count = _count_datasets(pt3_path)
+    expected_pt3_count = len(TSEP_LIST) * len(H5_B_ARR) * len(H5_Z_ARR)
+    if count != expected_pt3_count:
+        raise AssertionError(f"qTMDPDF dataset count: expected {expected_pt3_count}, got {count}")
+    expected_pt3_paths = {
+        dataset_path for tsep in TSEP_LIST for dataset_path in _expected_h5_pt3_paths(tsep)
+    }
+    if _h5_dataset_paths(pt3_path) != expected_pt3_paths:
+        raise AssertionError("qTMDPDF H5 datasets do not match expected tsep/b/z grid")
 
     two_pt_path = DATA_DIR / "fake_2pt.h5"
     two_pt_expected = {
-        f"{SOURCE_SINK_PT2}/{GAMMA_PT2}/{_momentum_key(pz)}" for pz in H5_PZ_LIST
+        _two_point_path(SINK_OPERATOR_PT2, pz) for pz in H5_PZ_LIST
     }
     if _h5_dataset_paths(two_pt_path) != two_pt_expected:
         raise AssertionError("2pt H5 datasets do not match expected momentum set")
@@ -488,7 +492,7 @@ def _run_shape_checks() -> None:
     print(f"  qTMDWF zdep stack: {qtmdwf_zdep.shape}")
     print(f"  qTMDWF bdep stack: {qtmdwf_bdep.shape}")
     print(f"  qTMDPDF 3pt raw by tsep: {pt3_shapes}")
-    print(f"  qTMDPDF dataset counts by tsep: {pt3_counts}")
+    print(f"  qTMDPDF dataset count: {count}")
 
 
 def _run_txt_checks() -> None:
@@ -545,7 +549,7 @@ def generate_h5_ground_state_subset(rng: np.random.Generator) -> tuple[dict[int,
     _write_h5_datasets(
         DATA_DIR / "fake_2pt.h5",
         {
-            f"{SOURCE_SINK_PT2}/{GAMMA_PT2}/{_momentum_key(pz)}": pt2
+            _two_point_path(SINK_OPERATOR_PT2, pz): pt2
             for pz, pt2 in pt2_by_pz.items()
         },
     )
@@ -555,20 +559,24 @@ def generate_h5_ground_state_subset(rng: np.random.Generator) -> tuple[dict[int,
         for b in H5_B_ARR:
             for z in H5_Z_ARR:
                 qtmdwf_datasets[
-                    _qtmd_path(SOURCE_SINK_QTMDWF, GAMMA_QTMDWF, int(pz), int(b), int(z))
+                    _qtmdwf_path(int(pz), int(b), int(z))
                 ] = _make_qtmdwf(pt2_by_pz[pz], pz=pz, b=int(b), z=int(z), rng=rng)
     _write_h5_datasets(DATA_DIR / "fake_qtmdwf.h5", qtmdwf_datasets)
 
+    pt3_datasets = {}
     for tsep in TSEP_LIST:
-        pt3_datasets = {}
         for b in H5_B_ARR:
             for z in H5_Z_ARR:
                 pt3_datasets[
-                    _qtmd_path(SOURCE_SINK_PT3, GAMMA_PT3, H5_PT3_PZ, int(b), int(z))
+                    _three_point_path(tsep, H5_PT3_PZ, int(b), int(z))
                 ] = _make_qtmdpdf_3pt(
                     pt2_by_pz[H5_PT3_PZ], tsep=tsep, b=int(b), z=int(z), rng=rng
                 )
-        _write_h5_datasets(DATA_DIR / f"fake_qtmdpdf_3pt_ts{tsep}.h5", pt3_datasets)
+    _write_h5_datasets(
+        DATA_DIR / "fake_qtmdpdf_3pt.h5",
+        pt3_datasets,
+        attrs={"bz_direction": "Z"},
+    )
 
     return pt2_by_pz, qtmdwf_datasets
 

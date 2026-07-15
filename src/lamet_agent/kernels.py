@@ -384,18 +384,18 @@ def build_matching_matrix(
 CoeffFn = Callable[[float, float, float], float]
 
 
-def _pdf_log_scale(y: float, pz_gev: float, mu: float) -> float:
+def _pdf_log_scale(y: float, momentum_gev: float, mu: float) -> float:
     """The lamet log ``L = ln(4 y^2 P_z^2 / mu^2)`` that the PDF coefficients expect."""
-    return float(np.log(4.0 * y**2 * pz_gev**2 / mu**2))
+    return float(np.log(4.0 * y**2 * momentum_gev**2 / mu**2))
 
 
-def _pdf_density(coeff: CoeffFn, pz_gev: float, mu: float) -> DensityFn:
+def _pdf_density(coeff: CoeffFn, momentum_gev: float, mu: float) -> DensityFn:
     """Wrap a PDF coefficient ``coeff(ksi, L, y)`` into the ``density(x, y)`` the
     discretization consumes: evaluate it at ksi = x/y and divide by |y| (the dy/|y|
     measure of the PDF factorization formula)."""
 
     def density(x: float, y: float) -> float:
-        return coeff(x / y, _pdf_log_scale(y, pz_gev, mu), y) / np.abs(y)
+        return coeff(x / y, _pdf_log_scale(y, momentum_gev, mu), y) / np.abs(y)
 
     return density
 
@@ -432,7 +432,7 @@ def kernel_reference(arxiv_id: str, equations: str) -> Callable[[Any], Any]:
 @kernel_reference("2602.11283", "Eq. (2.16)")
 def CG_gt_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -442,14 +442,14 @@ def CG_gt_qPDF_ratio_NLO(
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio(ksi, log_scale, eps), pz_gev, mu),
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
 @kernel_reference("2602.11283", "Eq. (2.14)")
 def CG_gt_qPDF_msbar_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -459,15 +459,15 @@ def CG_gt_qPDF_msbar_NLO(
     del zspz  # MSbar has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_msbar(ksi, log_scale, eps), pz_gev, mu),
-        diagonal_extra=lambda y: 0.5 * (1.0 + _pdf_log_scale(y, pz_gev, mu)),
+        density=_pdf_density(lambda ksi, log_scale, y: C_msbar(ksi, log_scale, eps), momentum_gev, mu),
+        diagonal_extra=lambda y: 0.5 * (1.0 + _pdf_log_scale(y, momentum_gev, mu)),
     )
 
 
 @kernel_reference("2602.11283", "Eqs. (2.19)-(2.20)")
 def CG_gt_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -482,7 +482,7 @@ def CG_gt_qPDF_hybrid_NLO(
     z = float(zspz)
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid(ksi, log_scale, y, z, eps), pz_gev, mu),
+        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid(ksi, log_scale, y, z, eps), momentum_gev, mu),
     )
 
 
@@ -494,40 +494,40 @@ def CG_gt_qPDF_hybrid_NLO(
 @kernel_reference("2602.11283", "Eq. (2.16)")
 def CG_gtg5_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme helicity kernel for the Coulomb-gauge ``gamma^t gamma5`` PDF."""
-    return CG_gt_qPDF_ratio_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gt_qPDF_ratio_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 @kernel_reference("2602.11283", "Eq. (2.14)")
 def CG_gtg5_qPDF_msbar_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO MSbar helicity kernel for the Coulomb-gauge ``gamma^t gamma5`` PDF."""
-    return CG_gt_qPDF_msbar_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gt_qPDF_msbar_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 @kernel_reference("2602.11283", "Eqs. (2.19)-(2.20)")
 def CG_gtg5_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO hybrid-scheme helicity kernel for the Coulomb-gauge ``gamma^t gamma5`` PDF."""
-    return CG_gt_qPDF_hybrid_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gt_qPDF_hybrid_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 # --- gamma^z / gamma^z gamma5 PDF -------------------------------------------
@@ -540,20 +540,20 @@ def CG_gtg5_qPDF_hybrid_NLO(
 @kernel_reference("2602.11283", "Eq. (2.16)")
 def CG_gz_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.16; = gamma^t)."""
-    return CG_gt_qPDF_ratio_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gt_qPDF_ratio_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 @kernel_reference("2602.11283", "Eq. (2.15)")
 def CG_gz_qPDF_msbar_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -567,61 +567,61 @@ def CG_gz_qPDF_msbar_NLO(
     del zspz  # MSbar has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_msbar_gz(ksi, log_scale, eps), pz_gev, mu),
-        diagonal_extra=lambda y: 0.5 * (1.0 + _pdf_log_scale(y, pz_gev, mu)) + 1.0,
+        density=_pdf_density(lambda ksi, log_scale, y: C_msbar_gz(ksi, log_scale, eps), momentum_gev, mu),
+        diagonal_extra=lambda y: 0.5 * (1.0 + _pdf_log_scale(y, momentum_gev, mu)) + 1.0,
     )
 
 
 @kernel_reference("2602.11283", "Eqs. (2.19)-(2.20)")
 def CG_gz_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO hybrid-scheme kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.19-2.20; = gamma^t)."""
-    return CG_gt_qPDF_hybrid_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gt_qPDF_hybrid_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 @kernel_reference("2602.11283", "Eq. (2.16)")
 def CG_gzg5_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme helicity kernel for the Coulomb-gauge ``gamma^z gamma5`` PDF."""
-    return CG_gz_qPDF_ratio_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gz_qPDF_ratio_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 @kernel_reference("2602.11283", "Eq. (2.15)")
 def CG_gzg5_qPDF_msbar_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO MSbar helicity kernel for the Coulomb-gauge ``gamma^z gamma5`` PDF."""
-    return CG_gz_qPDF_msbar_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gz_qPDF_msbar_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 @kernel_reference("2602.11283", "Eqs. (2.19)-(2.20)")
 def CG_gzg5_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO hybrid-scheme helicity kernel for the Coulomb-gauge ``gamma^z gamma5`` PDF."""
-    return CG_gz_qPDF_hybrid_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gz_qPDF_hybrid_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 # --- transversity gamma^t gamma_perp gamma5 PDF -----------------------------
@@ -633,7 +633,7 @@ def CG_gzg5_qPDF_hybrid_NLO(
 @kernel_reference("2602.11283", "Eq. (2.18)")
 def CG_gtgpg5_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -643,34 +643,34 @@ def CG_gtgpg5_qPDF_ratio_NLO(
     del zspz  # transversity has no Wilson-line scale at NLO (Eq. 2.21).
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_perp(ksi, log_scale, eps), pz_gev, mu),
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_perp(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
 @kernel_reference("2602.11283", "Eq. (2.17)")
 def CG_gtgpg5_qPDF_msbar_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO MSbar transversity kernel (Eq. 2.17: equals the ratio coefficient C_r^perp)."""
-    return CG_gtgpg5_qPDF_ratio_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gtgpg5_qPDF_ratio_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 @kernel_reference("2602.11283", "Eq. (2.21)")
 def CG_gtgpg5_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO hybrid transversity kernel (Eq. 2.21: delta C_hyb = 0, so equals C_r^perp)."""
-    return CG_gtgpg5_qPDF_ratio_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gtgpg5_qPDF_ratio_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 # --- gauge-invariant (straight Wilson line) coefficients, Eqs. (23)-(24) -----
@@ -821,7 +821,7 @@ def C_hybrid_gi_perp(ksi: float, log_scale: float, y: float, zspz: float, eps: f
 @kernel_reference("2412.20461", "Eq. (23)")
 def GI_gt_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -831,14 +831,14 @@ def GI_gt_qPDF_ratio_NLO(
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi(ksi, log_scale, eps), pz_gev, mu),
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
 @kernel_reference("2412.20461", "Eq. (24)")
 def GI_gt_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -853,34 +853,34 @@ def GI_gt_qPDF_hybrid_NLO(
     z = float(zspz)
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi(ksi, log_scale, y, z, eps), pz_gev, mu),
+        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi(ksi, log_scale, y, z, eps), momentum_gev, mu),
     )
 
 
 @kernel_reference("2412.20461", "Eq. (23)")
 def GI_gtg5_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme helicity kernel: same coefficient as GI_gt_qPDF_ratio_NLO (Eq. 23)."""
-    return GI_gt_qPDF_ratio_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return GI_gt_qPDF_ratio_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 @kernel_reference("2412.20461", "Eq. (24)")
 def GI_gtg5_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO hybrid helicity kernel: same coefficient as GI_gt_qPDF_hybrid_NLO (Eq. 24)."""
-    return GI_gt_qPDF_hybrid_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return GI_gt_qPDF_hybrid_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 # --- gauge-invariant gamma^z / gamma^z gamma5, arXiv:2604.00143 Eqs. (C6)-(C8) ---
@@ -892,7 +892,7 @@ def GI_gtg5_qPDF_hybrid_NLO(
 @kernel_reference("2604.00143", "Eq. (C7)")
 def GI_gz_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -902,14 +902,14 @@ def GI_gz_qPDF_ratio_NLO(
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_gz(ksi, log_scale, eps), pz_gev, mu),
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_gz(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
 @kernel_reference("2604.00143", "Eqs. (C6)-(C8)")
 def GI_gz_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -925,34 +925,34 @@ def GI_gz_qPDF_hybrid_NLO(
     z = float(zspz)
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi_gz(ksi, log_scale, y, z, eps), pz_gev, mu),
+        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi_gz(ksi, log_scale, y, z, eps), momentum_gev, mu),
     )
 
 
 @kernel_reference("2604.00143", "Eq. (C7)")
 def GI_gzg5_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme helicity kernel: same coefficient as GI_gz_qPDF_ratio_NLO (Eq. C7)."""
-    return GI_gz_qPDF_ratio_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return GI_gz_qPDF_ratio_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 @kernel_reference("2604.00143", "Eqs. (C6)-(C8)")
 def GI_gzg5_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO hybrid helicity kernel: same coefficient as GI_gz_qPDF_hybrid_NLO (Eqs. C6-C8)."""
-    return GI_gz_qPDF_hybrid_NLO(lightcone_x_ls, pz_gev=pz_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return GI_gz_qPDF_hybrid_NLO(lightcone_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
 # --- gauge-invariant transversity, arXiv:2208.08008 Eqs. (22)-(23) -----------
@@ -964,7 +964,7 @@ def GI_gzg5_qPDF_hybrid_NLO(
 @kernel_reference("2208.08008", "Eq. (22)")
 def GI_gtgpg5_qPDF_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -974,14 +974,14 @@ def GI_gtgpg5_qPDF_ratio_NLO(
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_perp(ksi, log_scale, eps), pz_gev, mu),
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_perp(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
 @kernel_reference("2208.08008", "Eq. (23)")
 def GI_gtgpg5_qPDF_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -996,7 +996,7 @@ def GI_gtgpg5_qPDF_hybrid_NLO(
     z = float(zspz)
     return build_matching_matrix(
         lightcone_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi_perp(ksi, log_scale, y, z, eps), pz_gev, mu),
+        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi_perp(ksi, log_scale, y, z, eps), momentum_gev, mu),
     )
 
 
@@ -1012,24 +1012,24 @@ def GI_gtgpg5_qPDF_hybrid_NLO(
 # as printed, and the factor 1/2 is applied where the density is built.
 
 
-def _da_log(value: float, pz_gev: float, mu: float, eps: float) -> float:
+def _da_log(value: float, momentum_gev: float, mu: float, eps: float) -> float:
     """The DA logs of Eq. (4.16): ``l = ln(4 P_z^2 v^2 / mu^2)``.
 
     Eq. (4.16) spells out ``l_xbar = ln(4 P_z^2 (1-x)^2 / mu^2)``; ``l_x`` and ``l_xy``
     are the same form with ``v = x`` and ``v = x - y``. The square makes each log
     well defined for either sign of ``v``.
     """
-    return float(np.log(4.0 * pz_gev**2 * value**2 / mu**2 + eps))
+    return float(np.log(4.0 * momentum_gev**2 * value**2 / mu**2 + eps))
 
 
-def V_qq_t(x: float, y: float, pz_gev: float, mu: float, eps: float = 1e-12) -> float:
+def V_qq_t(x: float, y: float, momentum_gev: float, mu: float, eps: float = 1e-12) -> float:
     """DA matching kernel ``V_qq,t^(1)``, arXiv:2212.14415 Eq. (4.15), third line.
 
     Returns the brace as printed (the ``a_s C_F`` prefactor is applied by the caller).
     """
-    l_x = _da_log(x, pz_gev, mu, eps)
-    l_xbar = _da_log(1.0 - x, pz_gev, mu, eps)
-    l_xy = _da_log(x - y, pz_gev, mu, eps)
+    l_x = _da_log(x, momentum_gev, mu, eps)
+    l_xbar = _da_log(1.0 - x, momentum_gev, mu, eps)
+    l_xy = _da_log(x - y, momentum_gev, mu, eps)
     return (
         np.abs(x) / (y * (y - x)) * (l_x - 1.0)
         + np.abs(1.0 - x) / ((1.0 - y) * (x - y)) * (l_xbar - 1.0)
@@ -1037,7 +1037,7 @@ def V_qq_t(x: float, y: float, pz_gev: float, mu: float, eps: float = 1e-12) -> 
     )
 
 
-def V_qq_h(x: float, y: float, pz_gev: float, mu: float, eps: float = 1e-12) -> float:
+def V_qq_h(x: float, y: float, momentum_gev: float, mu: float, eps: float = 1e-12) -> float:
     """DA matching kernel ``V_qq,h^(1)``, arXiv:2212.14415 Eq. (4.15), first line.
 
     ``V_qq,h = a_s C_F {...} + V_qq,t``; the brace is transcribed as printed and the
@@ -1049,18 +1049,18 @@ def V_qq_h(x: float, y: float, pz_gev: float, mu: float, eps: float = 1e-12) -> 
     common denominator y(1-y) the numerator cancels), so h and p differ only inside the
     physical window.
     """
-    l_x = _da_log(x, pz_gev, mu, eps)
-    l_xbar = _da_log(1.0 - x, pz_gev, mu, eps)
-    l_xy = _da_log(x - y, pz_gev, mu, eps)
+    l_x = _da_log(x, momentum_gev, mu, eps)
+    l_xbar = _da_log(1.0 - x, momentum_gev, mu, eps)
+    l_xy = _da_log(x - y, momentum_gev, mu, eps)
     brace = (
         np.abs(x) / y * (l_x - 1.0)
         + np.abs(1.0 - x) / (1.0 - y) * (l_xbar - 1.0)
         + np.abs(x - y) / (y * (y - 1.0)) * (l_xy - 1.0)
     )
-    return float(brace + V_qq_t(x, y, pz_gev, mu, eps))
+    return float(brace + V_qq_t(x, y, momentum_gev, mu, eps))
 
 
-def V_qq_p(x: float, y: float, pz_gev: float, mu: float, eps: float = 1e-12) -> float:
+def V_qq_p(x: float, y: float, momentum_gev: float, mu: float, eps: float = 1e-12) -> float:
     """DA matching kernel ``V_qq,p^(1)``, arXiv:2212.14415 Eq. (4.15), second line.
 
     ``V_qq,p = V_qq,h + 2 a_s C_F {|x|/y + |1-x|/(1-y) + |x-y|/((y-1)y)}``, transcribed
@@ -1075,7 +1075,7 @@ def V_qq_p(x: float, y: float, pz_gev: float, mu: float, eps: float = 1e-12) -> 
         + np.abs(1.0 - x) / (1.0 - y)
         + np.abs(x - y) / ((y - 1.0) * y)
     )
-    return float(V_qq_h(x, y, pz_gev, mu, eps) + 2.0 * extra)
+    return float(V_qq_h(x, y, momentum_gev, mu, eps) + 2.0 * extra)
 
 
 def V_qq_rto(x: float, y: float) -> float:
@@ -1097,7 +1097,7 @@ def V_qq_rto(x: float, y: float) -> float:
 
 def _da_matrix(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float,
     quasi_y_ls: np.ndarray | None,
     eps: float,
@@ -1120,7 +1120,7 @@ def _da_matrix(
     def density(x: float, y: float) -> float:
         if not (eps < y < 1.0 - eps):
             return 0.0
-        return 0.5 * coefficient(x, y, pz_gev, mu, eps) + wilson_line(x, y)
+        return 0.5 * coefficient(x, y, momentum_gev, mu, eps) + wilson_line(x, y)
 
     return build_matching_matrix(lightcone_x_ls, mu, quasi_y_ls, eps, density=density)
 
@@ -1166,7 +1166,7 @@ def _da_wilson_line(scheme: str, zspz: float | None, eps: float) -> Callable[[fl
 )
 def GI_gtg5_DA_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -1175,7 +1175,7 @@ def GI_gtg5_DA_ratio_NLO(
     """NLO ratio-scheme kernel for the meson DA measured with the gamma^t gamma_5 operator."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return _da_matrix(
-        lightcone_x_ls, pz_gev, mu, quasi_y_ls, eps,
+        lightcone_x_ls, momentum_gev, mu, quasi_y_ls, eps,
         coefficient=V_qq_h,
         wilson_line=_da_wilson_line("ratio", None, eps),
     )
@@ -1188,7 +1188,7 @@ def GI_gtg5_DA_ratio_NLO(
 )
 def GI_gtg5_DA_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -1199,7 +1199,7 @@ def GI_gtg5_DA_hybrid_NLO(
     ``zspz = z_s * P_z``.
     """
     return _da_matrix(
-        lightcone_x_ls, pz_gev, mu, quasi_y_ls, eps,
+        lightcone_x_ls, momentum_gev, mu, quasi_y_ls, eps,
         coefficient=V_qq_h,
         wilson_line=_da_wilson_line("hybrid", zspz, eps),
     )
@@ -1212,7 +1212,7 @@ def GI_gtg5_DA_hybrid_NLO(
 )
 def GI_gzg5_DA_ratio_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -1221,7 +1221,7 @@ def GI_gzg5_DA_ratio_NLO(
     """NLO ratio-scheme kernel for the meson DA measured with the gamma^z gamma_5 operator."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return _da_matrix(
-        lightcone_x_ls, pz_gev, mu, quasi_y_ls, eps,
+        lightcone_x_ls, momentum_gev, mu, quasi_y_ls, eps,
         coefficient=V_qq_p,
         wilson_line=_da_wilson_line("ratio", None, eps),
     )
@@ -1234,7 +1234,7 @@ def GI_gzg5_DA_ratio_NLO(
 )
 def GI_gzg5_DA_hybrid_NLO(
     lightcone_x_ls: np.ndarray,
-    pz_gev: float,
+    momentum_gev: float,
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
@@ -1245,7 +1245,7 @@ def GI_gzg5_DA_hybrid_NLO(
     ``zspz = z_s * P_z``.
     """
     return _da_matrix(
-        lightcone_x_ls, pz_gev, mu, quasi_y_ls, eps,
+        lightcone_x_ls, momentum_gev, mu, quasi_y_ls, eps,
         coefficient=V_qq_p,
         wilson_line=_da_wilson_line("hybrid", zspz, eps),
     )

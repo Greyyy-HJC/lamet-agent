@@ -83,7 +83,7 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
     if scheme == "self_renormalization":
         job_kind = str(
             result.get("job_kind")
-            or ("fit" if result.get("d") is not None and "a_fm" not in result else "apply")
+            or ("fit" if result.get("d") is not None and "lattice_spacing_fm" not in result else "apply")
         )
         if language == "zh":
             rows = [
@@ -94,7 +94,7 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
                 ("$m_0$ [GeV]", format_report_value(result.get("m0", result.get("m0_gev")))),
                 ("$d$", format_report_value(result.get("d"))),
                 ("svdcut", format_report_value(result.get("svdcut"))),
-                ("$a$ [fm]", format_report_value(result.get("a_fm"))),
+                ("$a$ [fm]", format_report_value(result.get("lattice_spacing_fm"))),
                 ("z 网格", format_report_list(result.get("z_grid", result.get("z_values", [])))),
                 ("重采样", f"{result.get('n_sample', 'n/a')} 个样本"),
             ]
@@ -108,7 +108,7 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
                 ("$m_0$ [GeV]", format_report_value(result.get("m0", result.get("m0_gev")))),
                 ("$d$", format_report_value(result.get("d"))),
                 ("svdcut", format_report_value(result.get("svdcut"))),
-                ("$a$ [fm]", format_report_value(result.get("a_fm"))),
+                ("$a$ [fm]", format_report_value(result.get("lattice_spacing_fm"))),
                 ("z grid", format_report_list(result.get("z_grid", result.get("z_values", [])))),
                 ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
             ]
