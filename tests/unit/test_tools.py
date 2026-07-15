@@ -415,7 +415,12 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     manifest = _manifest()
     job = manifest.stages["fourier_transform"].jobs[0]
     source = SimpleNamespace(attrs={"a_fm": "0.0574", "pz_gev": "2.15", "hadron": "pion", "gfix": "CG"})
-    effective = {**manifest.stages["fourier_transform"].defaults, **job.params}
+    effective = {
+        **manifest.stages["fourier_transform"].defaults,
+        **job.params,
+        "psi1_flavor_class": "light",
+        "psi2_flavor_class": "heavy",
+    }
     args = prepare_tool_args(
         "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
         effective_params=effective, artifacts_dir=tmp_path, store={"input": source},
@@ -424,6 +429,8 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     assert args["observable"] == "pion_quark_quasi_pdf"
     assert args["a_fm"] == "0.0574"
     assert args["pz_gev"] == 2.15
+    assert args["psi1_flavor_class"] == "light"
+    assert args["psi2_flavor_class"] == "heavy"
     assert args["workers"] == 1
     assert args["save_path"] == str(tmp_path / "ft_p5")
 

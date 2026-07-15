@@ -100,7 +100,8 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     order = str(result.get("order", "")).upper()
     observable = str(result.get("observable", ""))
     sector = str(result.get("sector", "")).lower()
-    hadron = str(result.get("hadron", "")).lower()
+    psi1_class = str(result.get("psi1_flavor_class", "heavy") or "heavy").lower()
+    psi2_class = str(result.get("psi2_flavor_class", "heavy") or "heavy").lower()
     orders = [item.strip().upper() for item in order.split(",") if item.strip()]
     if len(orders) > 1:
         article_lines = []
@@ -523,11 +524,23 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             if language == "zh"
             else "- Following arXiv:2601.12189, the fit input for the `sea` sector of `pion_quark_quasi_pdf` imposes $A_1=A_3=0$; for NLA terms it also imposes $A'_1=A'_3=0$."
         )
-    if observable == "meson_quasi_da" and hadron == "pion":
+    if observable == "meson_quasi_da" and psi1_class == "light" and psi2_class == "light":
         constraint_lines.append(
-            "- 由 arXiv:2601.12189 可知，pion `meson_quasi_da` 应在拟合输入中施加对称关系 $A_2=A_1$、$\\phi_2=-\\phi_1$、$A'_2=A'_1$、$\\phi'_2=-\\phi'_1$。"
+            "- 由 arXiv:2601.12189 可知，`psi1_flavor_class=light, psi2_flavor_class=light` 情形下的 `meson_quasi_da` 应在拟合输入中施加约束 $A_2=A_1$、$\\phi_2=-\\phi_1$、$A'_2=A'_1$、$\\phi'_2=-\\phi'_1$。"
             if language == "zh"
-            else "- Following arXiv:2601.12189, the fit input for the pion `meson_quasi_da` imposes the symmetry relations $A_2=A_1$, $\\phi_2=-\\phi_1$, $A'_2=A'_1$, and $\\phi'_2=-\\phi'_1$."
+            else "- Following arXiv:2601.12189, the fit input for `meson_quasi_da` with `psi1_flavor_class=light, psi2_flavor_class=light` imposes $A_2=A_1$, $\\phi_2=-\\phi_1$, $A'_2=A'_1$, and $\\phi'_2=-\\phi'_1$."
+        )
+    if observable == "meson_quasi_da" and psi1_class == "light" and psi2_class == "heavy":
+        constraint_lines.append(
+            "- 由 arXiv:2601.12189 可知，`psi1_flavor_class=light, psi2_flavor_class=heavy` 情形下的 `meson_quasi_da` 应在拟合输入中施加约束 $A_1=A'_1=0$。"
+            if language == "zh"
+            else "- Following arXiv:2601.12189, the fit input for `meson_quasi_da` with `psi1_flavor_class=light, psi2_flavor_class=heavy` imposes $A_1=A'_1=0$."
+        )
+    if observable == "meson_quasi_da" and psi1_class == "heavy" and psi2_class == "light":
+        constraint_lines.append(
+            "- 由 arXiv:2601.12189 可知，`psi1_flavor_class=heavy, psi2_flavor_class=light` 情形下的 `meson_quasi_da` 应在拟合输入中施加约束 $A_2=A'_2=0$。"
+            if language == "zh"
+            else "- Following arXiv:2601.12189, the fit input for `meson_quasi_da` with `psi1_flavor_class=heavy, psi2_flavor_class=light` imposes $A_2=A'_2=0$."
         )
     if observable == "pion_quark_quasi_gpd" and sector == "sea":
         constraint_lines.append(
@@ -968,6 +981,8 @@ def _settings_table(
         ("Extension endpoint", z_ext_text),
         ("Fourier grid", _format_grid(y_grid, language=language)),
     ]
+    if observable == "meson_quasi_da":
+        rows.insert(2, ("DA flavor classes", f"`psi1={result.get('psi1_flavor_class', 'heavy')}`, `psi2={result.get('psi2_flavor_class', 'heavy')}`"))
     if language == "zh":
         short_distance_text = (
             f"`truncate_missing`；短距离坐标 {missing} 未参与；Fourier 从 {_fmt(result.get('fourier_positive_coord_start'))} 开始"
@@ -989,6 +1004,8 @@ def _settings_table(
             ("外推终点", z_ext_text),
             ("傅立叶网格", _format_grid(y_grid, language=language)),
         ]
+        if observable == "meson_quasi_da":
+            rows.insert(2, ("DA flavor class", f"`psi1={result.get('psi1_flavor_class', 'heavy')}`，`psi2={result.get('psi2_flavor_class', 'heavy')}`"))
     header = "| Quantity | Value |" if language == "en" else "| 条目 | 数值或设置 |"
     lines = [header, "|---|---|"]
     lines.extend(f"| {name} | {value} |" for name, value in rows)
@@ -1010,7 +1027,7 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging.", "进入模型平均前 sample-average 区间扫描的诊断。"),
             ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection.", "两阶段选择模式：先选区间，再做拟合模型平均或最优模型选择。"),
             ("attrs `pz_gev`, `pz_out_gev`, `a_fm`", "Momentum and lattice-spacing metadata.", "动量和格距元数据。"),
-            ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`, `phase_shift`", "Physics projection, formula choices, execution channel, final output normalization, and Fourier phase convention.", "物理投影、公式选择、执行通道、最终输出归一化和 Fourier 相位约定。"),
+            ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`, `phase_shift`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, formula choices, execution channel, final output normalization, Fourier phase convention, and DA flavor-class metadata.", "物理投影、公式选择、执行通道、最终输出归一化、Fourier 相位约定和 DA flavor-class 元数据。"),
         ]
     else:
         rows = [

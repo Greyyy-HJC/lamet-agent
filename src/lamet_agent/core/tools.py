@@ -53,6 +53,8 @@ _FOURIER_RUN_KEYS = frozenset(
         "sector",
         "target_observable",
         "hadron",
+        "psi1_flavor_class",
+        "psi2_flavor_class",
         "Lambda0",
         "posterior_prior_error_scale",
         "sample_error_mode",

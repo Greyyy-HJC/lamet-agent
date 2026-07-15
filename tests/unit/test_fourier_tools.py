@@ -113,6 +113,8 @@ def test_fourier_workflow_omits_missing_short_distance_grid() -> None:
         part="re",
         sector="valence",
         hadron="pion",
+        psi1_flavor_class="light",
+        psi2_flavor_class="light",
     )
 
     assert result["short_distance_policy"] == "truncate_missing"
@@ -139,6 +141,8 @@ def test_fourier_parallel_sample_fits_match_serial() -> None:
         "part": "re",
         "sector": "valence",
         "hadron": "pion",
+        "psi1_flavor_class": "light",
+        "psi2_flavor_class": "light",
     }
 
     serial = run_fourier_workflow(coord, re_samples, im_samples, [-0.5, 0.0, 0.5], workers=1, **kwargs)
@@ -691,7 +695,8 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
         order="NLA",
         observable="meson_quasi_da",
         target_observable="da",
-        hadron="pion",
+        psi1_flavor_class="light",
+        psi2_flavor_class="light",
     )
 
     fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
@@ -702,6 +707,46 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     assert np.allclose(params[:, idx["A2p"]], params[:, idx["A1p"]])
     assert np.allclose(params[:, idx["phi2"]], -params[:, idx["phi1"]])
     assert np.allclose(params[:, idx["phi2p"]], -params[:, idx["phi1p"]])
+    result_data = EnsembleData.from_netcdf(run["artifact"])
+    assert result_data.attrs["psi1_flavor_class"] == "light"
+    assert result_data.attrs["psi2_flavor_class"] == "light"
+    assert fit_info.attrs["psi1_flavor_class"] == "light"
+    assert fit_info.attrs["psi2_flavor_class"] == "light"
+
+
+def test_fourier_meson_da_flavor_classes_control_fit_labels() -> None:
+    full = _param_labels("GI", "NLA", "meson_quasi_da")
+    default_fit = _param_labels("GI", "NLA", "meson_quasi_da", fit=True)
+    light_light_fit = _param_labels(
+        "GI",
+        "NLA",
+        "meson_quasi_da",
+        psi1_flavor_class="light",
+        psi2_flavor_class="light",
+        fit=True,
+    )
+    light_heavy_fit = _param_labels(
+        "GI",
+        "NLA",
+        "meson_quasi_da",
+        psi1_flavor_class="light",
+        psi2_flavor_class="heavy",
+        fit=True,
+    )
+    heavy_light_fit = _param_labels(
+        "GI",
+        "NLA",
+        "meson_quasi_da",
+        psi1_flavor_class="heavy",
+        psi2_flavor_class="light",
+        fit=True,
+    )
+
+    assert full == ["A1", "phi1", "A2", "phi2", "A1p", "phi1p", "A2p", "phi2p", "m"]
+    assert default_fit == full
+    assert light_light_fit == ["A1", "phi1", "A1p", "phi1p", "m"]
+    assert light_heavy_fit == ["A2", "phi2", "A2p", "phi2p", "m"]
+    assert heavy_light_fit == ["A1", "phi1", "A1p", "phi1p", "m"]
 
 
 def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatch) -> None:

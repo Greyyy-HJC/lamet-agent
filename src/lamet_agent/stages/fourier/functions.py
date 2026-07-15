@@ -394,6 +394,8 @@ def _quark_like_parameters(
     *,
     sector: str | None = None,
     hadron: str | None = None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
 ) -> list[_TailParameter]:
     observable = _canonical_observable(observable)
     term_names = _quark_like_term_names(observable)
@@ -415,6 +417,8 @@ def _quark_like_parameters(
             )
     sector = str(sector or "").lower()
     hadron = str(hadron or "").lower()
+    psi1_class = str(psi1_flavor_class or "heavy").lower()
+    psi2_class = str(psi2_flavor_class or "heavy").lower()
     fixed = {}
     aliases = {}
     if observable == "pion_quark_quasi_pdf" and sector == "valence":
@@ -422,8 +426,12 @@ def _quark_like_parameters(
         aliases.update({"A3": ("A1", 1.0), "phi3": ("phi1", -1.0), "A3p": ("A1p", 1.0), "phi3p": ("phi1p", -1.0)})
     if observable == "pion_quark_quasi_pdf" and sector == "sea":
         fixed.update({"A1": 0.0, "A3": 0.0, "A1p": 0.0, "A3p": 0.0})
-    if observable == "meson_quasi_da" and hadron == "pion":
+    if observable == "meson_quasi_da" and psi1_class == "light" and psi2_class == "light":
         aliases.update({"A2": ("A1", 1.0), "phi2": ("phi1", -1.0), "A2p": ("A1p", 1.0), "phi2p": ("phi1p", -1.0)})
+    if observable == "meson_quasi_da" and psi1_class == "light" and psi2_class == "heavy":
+        fixed.update({"A1": 0.0, "phi1": 0.0, "A1p": 0.0, "phi1p": 0.0})
+    if observable == "meson_quasi_da" and psi1_class == "heavy" and psi2_class == "light":
+        fixed.update({"A2": 0.0, "phi2": 0.0, "A2p": 0.0, "phi2p": 0.0})
     if observable == "pion_quark_quasi_gpd" and sector == "sea":
         fixed.update({"A1": 0.0, "A3": 0.0, "A1p": 0.0, "A3p": 0.0})
     return [
@@ -462,13 +470,22 @@ def _observable_parameters(
     *,
     sector: str | None = None,
     hadron: str | None = None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
 ) -> list[_TailParameter]:
     observable = _canonical_observable(observable)
     if observable == "nucleon_gluon_quasi_pdf":
         return _nucleon_gluon_parameters(order)
     if observable == "pion_gluon_quasi_pdf":
         return _pion_gluon_parameters(order)
-    return _quark_like_parameters(order, observable, sector=sector, hadron=hadron)
+    return _quark_like_parameters(
+        order,
+        observable,
+        sector=sector,
+        hadron=hadron,
+        psi1_flavor_class=psi1_flavor_class,
+        psi2_flavor_class=psi2_flavor_class,
+    )
 
 
 def _param_template(
@@ -479,6 +496,8 @@ def _param_template(
     Lambda0: float = 0.1,
     sector: str | None = None,
     hadron: str | None = None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
     fit: bool = False,
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     method = method.upper()
@@ -490,7 +509,14 @@ def _param_template(
 
     observable = _canonical_observable(observable)
     parameters = _with_method_tail_parameters(
-        _observable_parameters(order, observable, sector=sector, hadron=hadron),
+        _observable_parameters(
+            order,
+            observable,
+            sector=sector,
+            hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
+        ),
         method=method,
         Lambda0=float(Lambda0),
     )
@@ -523,6 +549,8 @@ def _param_labels(
     *,
     sector: str | None = None,
     hadron: str | None = None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
     fit: bool = False,
 ) -> list[str]:
     method = method.upper()
@@ -533,7 +561,14 @@ def _param_labels(
         raise ValueError("order must be 'LA' or 'NLA'")
     observable = _canonical_observable(observable)
     parameters = _with_method_tail_parameters(
-        _observable_parameters(order, observable, sector=sector, hadron=hadron),
+        _observable_parameters(
+            order,
+            observable,
+            sector=sector,
+            hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
+        ),
         method=method,
         Lambda0=0.1,
     )
@@ -746,16 +781,53 @@ def _fit_one_sample(
     phase_prime_scale: float | None = None,
     sector: str | None = None,
     hadron: str | None = None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
     p0: np.ndarray | None = None,
     prior: gv.BufferDict | None = None,
     Lambda0: float = 0.1,
 ) -> tuple[np.ndarray, gv.BufferDict | None, gv.BufferDict | None, bool, float, int, float, float]:
-    default_p0, _ = _param_template(method, order, observable, Lambda0=Lambda0, sector=sector, hadron=hadron)
-    fit_p0, bounds = _param_template(method, order, observable, Lambda0=Lambda0, sector=sector, hadron=hadron, fit=True)
+    default_p0, _ = _param_template(
+        method,
+        order,
+        observable,
+        Lambda0=Lambda0,
+        sector=sector,
+        hadron=hadron,
+        psi1_flavor_class=psi1_flavor_class,
+        psi2_flavor_class=psi2_flavor_class,
+    )
+    fit_p0, bounds = _param_template(
+        method,
+        order,
+        observable,
+        Lambda0=Lambda0,
+        sector=sector,
+        hadron=hadron,
+        psi1_flavor_class=psi1_flavor_class,
+        psi2_flavor_class=psi2_flavor_class,
+        fit=True,
+    )
     start = default_p0 if p0 is None else np.asarray(p0, dtype=float)
-    fit_labels = _param_labels(method, order, observable, sector=sector, hadron=hadron, fit=True)
+    fit_labels = _param_labels(
+        method,
+        order,
+        observable,
+        sector=sector,
+        hadron=hadron,
+        psi1_flavor_class=psi1_flavor_class,
+        psi2_flavor_class=psi2_flavor_class,
+        fit=True,
+    )
     full_items = _with_method_tail_parameters(
-        _observable_parameters(order.upper(), _canonical_observable(observable), sector=sector, hadron=hadron),
+        _observable_parameters(
+            order.upper(),
+            _canonical_observable(observable),
+            sector=sector,
+            hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
+        ),
         method=method.upper(),
         Lambda0=float(Lambda0),
     )
@@ -850,6 +922,8 @@ def fit_tail_quality_for_mean(
     part: str = "both",
     sector: str | None = None,
     hadron: str | None = None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
 ) -> dict[str, Any]:
     """Fit the mean matrix element on one range and return quality diagnostics."""
     coord_arr = np.asarray(coord, dtype=float)
@@ -874,7 +948,18 @@ def fit_tail_quality_for_mean(
     zmax_fit = _convert_scheme_value(zmax, fit_scale)
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
     n_points = int(np.count_nonzero(fit_mask))
-    n_params = len(_param_labels(method, order, observable, sector=sector, hadron=hadron, fit=True))
+    n_params = len(
+        _param_labels(
+            method,
+            order,
+            observable,
+            sector=sector,
+            hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
+            fit=True,
+        )
+    )
     required_points = _minimum_fit_points_for_parameters(n_params, part)
     if n_points < required_points:
         dof = max(1, _n_fit_channels(part) * n_points - n_params)
@@ -918,6 +1003,8 @@ def fit_tail_quality_for_mean(
         phase_prime_scale=phase_prime_scale,
         sector=sector,
         hadron=hadron,
+        psi1_flavor_class=psi1_flavor_class,
+        psi2_flavor_class=psi2_flavor_class,
         Lambda0=Lambda0,
     )
     if tail_fit_success and mean_pmean is not None and mean_psdev is not None:
@@ -932,6 +1019,8 @@ def fit_tail_quality_for_mean(
             phase_prime_scale=phase_prime_scale,
             sector=sector,
             hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
             p0=mean_params,
             prior=_scaled_internal_prior(mean_pmean, mean_psdev, posterior_prior_error_scale),
             Lambda0=Lambda0,
@@ -1006,6 +1095,8 @@ def _fit_fourier_sample_batch(payload: bytes, sample_indices: list[int]) -> list
             phase_prime_scale=context["phase_prime_scale"],
             sector=context["sector"],
             hadron=context["hadron"],
+            psi1_flavor_class=context["psi1_flavor_class"],
+            psi2_flavor_class=context["psi2_flavor_class"],
             p0=context["mean_params"],
             prior=context["sample_prior"],
             Lambda0=context["Lambda0"],
@@ -1077,6 +1168,8 @@ def _run_one_scheme(
     part: str,
     sector: str | None,
     hadron: str | None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
     executor: ProcessPoolExecutor | None = None,
     workers: int = 1,
 ) -> dict[str, Any]:
@@ -1094,8 +1187,29 @@ def _run_one_scheme(
         raise ValueError("z_ext_max must be >= zmax")
 
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
-    n_params = len(_param_labels(method, order, observable))
-    n_fit_params = len(_param_labels(method, order, observable, sector=sector, hadron=hadron, fit=True))
+    n_params = len(
+        _param_labels(
+            method,
+            order,
+            observable,
+            sector=sector,
+            hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
+        )
+    )
+    n_fit_params = len(
+        _param_labels(
+            method,
+            order,
+            observable,
+            sector=sector,
+            hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
+            fit=True,
+        )
+    )
     required_points = _minimum_fit_points_for_parameters(n_fit_params, part)
     if np.count_nonzero(fit_mask) < required_points:
         raise ValueError("fit range has too few points for the selected asymptotic form")
@@ -1130,6 +1244,8 @@ def _run_one_scheme(
         phase_prime_scale=phase_prime_scale,
         sector=sector,
         hadron=hadron,
+        psi1_flavor_class=psi1_flavor_class,
+        psi2_flavor_class=psi2_flavor_class,
         Lambda0=Lambda0,
     )
     sample_prior = None
@@ -1146,6 +1262,8 @@ def _run_one_scheme(
             phase_prime_scale=phase_prime_scale,
             sector=sector,
             hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
             p0=mean_params,
             prior=sample_prior,
             Lambda0=Lambda0,
@@ -1203,6 +1321,8 @@ def _run_one_scheme(
                 "phase_prime_scale": phase_prime_scale,
                 "sector": sector,
                 "hadron": hadron,
+                "psi1_flavor_class": psi1_flavor_class,
+                "psi2_flavor_class": psi2_flavor_class,
                 "mean_params": mean_params,
                 "sample_prior": sample_prior,
                 "Lambda0": Lambda0,
@@ -1243,6 +1363,8 @@ def _run_one_scheme(
                 phase_prime_scale=phase_prime_scale,
                 sector=sector,
                 hadron=hadron,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
                 p0=mean_params,
                 prior=sample_prior,
                 Lambda0=Lambda0,
@@ -1305,7 +1427,15 @@ def _run_one_scheme(
         "fit_re_samples": fit_re_samples,
         "fit_im_samples": fit_im_samples,
         "fit_params": fit_params,
-        "fit_param_labels": _param_labels(method, order, observable),
+        "fit_param_labels": _param_labels(
+            method,
+            order,
+            observable,
+            sector=sector,
+            hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
+        ),
         "fit_chi2": fit_chi2,
         "fit_dof": fit_dof,
         "fit_q": fit_q,
@@ -1350,6 +1480,8 @@ def run_fourier_workflow(
     part: str = "both",
     sector: str | None = None,
     hadron: str | None = None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
     workers: int = 1,
 ) -> dict[str, Any]:
     """Run asymptotic extension and Fourier transform for resampled data.
@@ -1434,6 +1566,8 @@ def run_fourier_workflow(
                     part=part,
                     sector=sector,
                     hadron=hadron,
+                    psi1_flavor_class=psi1_flavor_class,
+                    psi2_flavor_class=psi2_flavor_class,
                     executor=sample_executor,
                     workers=workers,
                 )
@@ -1489,6 +1623,9 @@ def run_fourier_workflow(
         "phase_shift": float(phase_shift),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
         "part": part,
+        "hadron": hadron,
+        "psi1_flavor_class": str(psi1_flavor_class or "heavy").lower(),
+        "psi2_flavor_class": str(psi2_flavor_class or "heavy").lower(),
         "workers": int(workers),
         "short_distance_policy": "full_from_zero" if not missing_short_distance_coord else "truncate_missing",
         "input_coord_start": float(coord_arr[0]),
@@ -1573,6 +1710,9 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "observable": str(result.get("observable", "")),
         "sector": str(result.get("sector", "")),
         "target_observable": str(result.get("target_observable", "")),
+        "hadron": str(result.get("hadron", "")),
+        "psi1_flavor_class": str(result.get("psi1_flavor_class", "heavy")),
+        "psi2_flavor_class": str(result.get("psi2_flavor_class", "heavy")),
         "coord_unit": str(result.get("coord_unit", "")),
         "fit_coord_unit": str(result.get("fit_coord_unit", "")),
         "part": str(result.get("part", "both")),
@@ -1862,6 +2002,9 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
             "order": str(result.get("order", "")),
             "observable": str(result.get("observable", "")),
             "part": str(result.get("part", "both")),
+            "hadron": str(result.get("hadron", "")),
+            "psi1_flavor_class": str(result.get("psi1_flavor_class", "heavy")),
+            "psi2_flavor_class": str(result.get("psi2_flavor_class", "heavy")),
             "sample_error_mode": str(result.get("sample_error_mode", "")),
             "average_method": str(result.get("sample_error_mode", "")),
             "scheme_labels": json.dumps(scheme_labels.tolist()),
@@ -2039,10 +2182,23 @@ def _pick_four_zmin_values_by_tail_fit(
     sector: str | None,
     hadron: str | None,
     preferred_zmin: float | None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
 ) -> list[float]:
     stable_starts = []
     required_points = _minimum_fit_points_for_parameters(
-        len(_param_labels(method, order, observable, sector=sector, hadron=hadron, fit=True)),
+        len(
+            _param_labels(
+                method,
+                order,
+                observable,
+                sector=sector,
+                hadron=hadron,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
+                fit=True,
+            )
+        ),
         part,
     )
     for zmax in zmax_values:
@@ -2075,6 +2231,8 @@ def _pick_four_zmin_values_by_tail_fit(
                 part=part,
                 sector=sector,
                 hadron=hadron,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
             )
             for candidate in candidates
         ]
@@ -2127,6 +2285,8 @@ def _auto_fill_scheme_scan(
     part: str,
     sector: str | None,
     hadron: str | None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
 ) -> dict[str, Any]:
     """Fill missing scan keys with stable zmax values and tail-fit zmin diagnostics."""
     if "zmax_values" not in spec and "zmax_start" not in spec:
@@ -2163,6 +2323,8 @@ def _auto_fill_scheme_scan(
             part=part,
             sector=sector,
             hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
             preferred_zmin=preferred_zmin,
         )
     if "z_ext_max" not in spec:
@@ -2209,6 +2371,8 @@ def _auto_scheme_scan(
     part: str,
     sector: str | None,
     hadron: str | None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
     existing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate a conservative scan from stable zmax and tail-fit zmin diagnostics."""
@@ -2243,6 +2407,8 @@ def _auto_scheme_scan(
         part=part,
         sector=sector,
         hadron=hadron,
+        psi1_flavor_class=psi1_flavor_class,
+        psi2_flavor_class=psi2_flavor_class,
     )
     spec["auto_generated"] = True
     return spec
@@ -2418,6 +2584,8 @@ def run_fourier_transform(
     sector: str | None = None,
     target_observable: str | None = None,
     hadron: str | None = None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
     save_path: str | None = None,
     plot_fourier: dict[str, Any] | None = None,
     plot_extension: dict[str, Any] | None = None,
@@ -2431,6 +2599,8 @@ def run_fourier_transform(
     workers = int(workers)
     out = "fourier_result"
     sector = None if sector is None else str(sector).strip().lower()
+    psi1_flavor_class = str(psi1_flavor_class or "heavy").strip().lower()
+    psi2_flavor_class = str(psi2_flavor_class or "heavy").strip().lower()
     target = str(target_observable or "").strip().lower()
     if sector is not None:
         if not target:
@@ -2485,13 +2655,26 @@ def run_fourier_transform(
             part=part,
             sector=sector,
             hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
             existing=scan_spec,
         )
         auto_scheme_scan = scan_spec
     scheme_scan = scan_spec
     schemes = _generate_scan_schemes(scheme_scan)
     required_points = _minimum_fit_points_for_parameters(
-        len(_param_labels(method, range_order, observable, sector=sector, hadron=hadron, fit=True)),
+        len(
+            _param_labels(
+                method,
+                range_order,
+                observable,
+                sector=sector,
+                hadron=hadron,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
+                fit=True,
+            )
+        ),
         part,
     )
     schemes = [
@@ -2528,6 +2711,8 @@ def run_fourier_transform(
                 part=part,
                 sector=sector,
                 hadron=hadron,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
             )
         )
     candidate_chi2 = [float(item["chi2_dof"]) for item in candidate_qualities]
@@ -2551,7 +2736,18 @@ def run_fourier_transform(
     selected_range = dict(schemes[best_candidate])
     fit_model_specs = []
     for spec in _fit_model_specs(order, posterior_prior_error_scale):
-        n_model_params = len(_param_labels(method, spec["order"], observable, sector=sector, hadron=hadron, fit=True))
+        n_model_params = len(
+            _param_labels(
+                method,
+                spec["order"],
+                observable,
+                sector=sector,
+                hadron=hadron,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
+                fit=True,
+            )
+        )
         n_model_points = np.count_nonzero(
             (coord_arr >= float(selected_range["zmin"])) & (coord_arr <= float(selected_range["zmax"])) & (coord_arr > 0)
         )
@@ -2604,6 +2800,8 @@ def run_fourier_transform(
             part="im",
             sector=sector,
             hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
             workers=workers,
         )
         valence_result = run_fourier_workflow(
@@ -2628,6 +2826,8 @@ def run_fourier_transform(
             part="re",
             sector=sector,
             hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
             workers=workers,
         )
         for sector_result in (total_result, valence_result):
@@ -2689,6 +2889,8 @@ def run_fourier_transform(
             part=part,
             sector=sector,
             hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
             workers=workers,
         )
     result["resample_mode"] = resample_mode
@@ -2707,6 +2909,9 @@ def run_fourier_transform(
         else candidate_diagnostics["fit_model_prior_widths"]
     )
     result["part"] = str(part)
+    result["hadron"] = hadron
+    result["psi1_flavor_class"] = psi1_flavor_class
+    result["psi2_flavor_class"] = psi2_flavor_class
     result["workers"] = int(workers)
     result["ensemble"] = matrix_element_data.ensemble
     result.update(candidate_diagnostics)
