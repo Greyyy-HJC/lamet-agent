@@ -646,3 +646,8 @@
 - Added lightweight per-stage ``params.py`` contracts and recursive validation for unknown keys in stage ``defaults`` and job ``params``, including nested grids, scans, plot settings, and correlator windows.
 - Added path-specific typo, legacy-field, derived-kinematics, and run-metadata guidance; ``validate``, ``run``, and interactive planning now reject ignored stage parameters consistently.
 - Removed unused extrapolation momentum placeholders and fixed the planning quick variant so correlator-only ``model_average`` is no longer written into unrelated stages.
+
+## 2026-07-16 (Centralized stage parameter contracts)
+
+- Consolidated the stage parameter schemas and removed-field guidance into the central ``STAGE_PARAM_CONTRACTS`` registry in ``manifest_params.py``.
+- Removed per-stage ``params.py`` modules and the temporary top-level stage registry while preserving strict validation behavior and lightweight manifest imports.

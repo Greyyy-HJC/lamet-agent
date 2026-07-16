@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from lamet_agent.manifest import AnalysisManifest
-from lamet_agent.manifest_params import validate_stage_parameter_mapping
+from lamet_agent.manifest_params import STAGE_PARAM_CONTRACTS, validate_stage_parameter_mapping
 
 
 def _payload() -> dict:
@@ -181,13 +181,10 @@ def test_manifest_rejects_parameters_for_parameterless_stage() -> None:
         AnalysisManifest.model_validate(payload)
 
 
-def test_stage_parameter_contract_fails_closed_when_module_is_missing(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "lamet_agent.manifest_params.resolve_stage_package",
-        lambda _stage: "missing_package",
-    )
+def test_stage_parameter_contract_fails_closed_when_registry_entry_is_missing(monkeypatch) -> None:
+    monkeypatch.delitem(STAGE_PARAM_CONTRACTS, "review")
 
-    with pytest.raises(ValueError, match="must provide parameter contract module"):
+    with pytest.raises(ValueError, match="must be registered in STAGE_PARAM_CONTRACTS"):
         validate_stage_parameter_mapping("review", {}, path="stages.review.defaults")
 
 

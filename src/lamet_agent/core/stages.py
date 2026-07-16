@@ -1,5 +1,17 @@
 """Stage sequencing and stage-package routing helpers."""
 
-from lamet_agent.stage_registry import STAGE_TO_PACKAGE, resolve_stage_package
+from __future__ import annotations
 
-__all__ = ["STAGE_TO_PACKAGE", "resolve_stage_package"]
+STAGE_TO_PACKAGE = {
+    "correlator_analysis": "correlator",
+    "renormalization": "renorm",
+    "fourier_transform": "fourier",
+    "perturbative_matching": "matching",
+    "extrapolation": "extrapolation",
+    "review": "review",
+}
+
+
+def resolve_stage_package(stage: str) -> str:
+    """Map a stage id to its stage package name."""
+    return STAGE_TO_PACKAGE.get(stage, "")

@@ -4,11 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from difflib import get_close_matches
-from importlib import import_module
 from typing import Any
-
-from .stage_registry import resolve_stage_package
-
 
 ParamSchema = dict[str, Any]
 
@@ -18,6 +14,144 @@ class ListItems:
     """Apply a nested parameter schema to mapping items in a list."""
 
     schema: ParamSchema
+
+
+@dataclass(frozen=True)
+class StageParamContract:
+    """Allowed parameter shape and path-specific migration messages for a stage."""
+
+    schema: ParamSchema
+    removed: dict[str, str]
+
+
+_GRID_SCHEMA = {"num": None, "start": None, "step": None, "stop": None}
+
+STAGE_PARAM_CONTRACTS = {
+    "correlator_analysis": StageParamContract(
+        schema={
+            "component": None,
+            "correlator_rescale": None,
+            "final_momentum": None,
+            "fit_scope": None,
+            "fit_strategy": None,
+            "fitting_form": None,
+            "initial_momentum": None,
+            "model_average": None,
+            "momentum": None,
+            "nstate": None,
+            "posterior_prior_error_scale": None,
+            "prior_width": None,
+            "pt2_windows": ListItems({"tmin": None, "tmax": None}),
+            "pt3_tau_cuts": None,
+            "pt3_windows": ListItems({"tau_cut": None, "tsep_ls": None}),
+            "q_min": None,
+            "svdcut": None,
+        },
+        removed={},
+    ),
+    "renormalization": StageParamContract(
+        schema={
+            "b0": None,
+            "cf": None,
+            "d": None,
+            "k": None,
+            "kernel_id": None,
+            "lqcd": None,
+            "m0_gev": None,
+            "mu": None,
+            "normalization": None,
+            "scheme": None,
+            "scheme_parameters": {
+                "delta_m_gev": None,
+                "m0_gev": None,
+            },
+            "svdcut": None,
+            "zms_kind": None,
+            "zs_fm": None,
+        },
+        removed={
+            "scheme_parameters.zs_fm": (
+                "is no longer supported; use flat stages.renormalization.defaults.zs_fm "
+                "or the corresponding jobs[].params.zs_fm."
+            ),
+        },
+    ),
+    "fourier_transform": StageParamContract(
+        schema={
+            "Lambda0_gev": None,
+            "component": None,
+            "coord_key": None,
+            "coord_unit": None,
+            "gfix": None,
+            "h5_group": None,
+            "hadron": None,
+            "im_flip_for_ft": None,
+            "im_key": None,
+            "input_format": None,
+            "method": None,
+            "observable": None,
+            "order": None,
+            "output_scale": None,
+            "part": None,
+            "phase_shift": None,
+            "plot_extension": {
+                "save_path": None,
+                "scheme_index": None,
+                "title": None,
+            },
+            "plot_fourier": {
+                "save_path": None,
+                "title": None,
+            },
+            "posterior_prior_error_scale": None,
+            "psi1_flavor_class": None,
+            "psi2_flavor_class": None,
+            "re_key": None,
+            "report": {
+                "enabled": None,
+                "report_language": None,
+                "save_path": None,
+            },
+            "scheme_scan": {
+                "max_schemes": None,
+                "model_average": None,
+                "smooth": None,
+                "step": None,
+                "z_ext_max": None,
+                "zmax_start": None,
+                "zmax_step": None,
+                "zmax_stop": None,
+                "zmax_values": None,
+                "zmin_start": None,
+                "zmin_step": None,
+                "zmin_stop": None,
+                "zmin_values": None,
+            },
+            "sector": None,
+            "target_observable": None,
+            "y_grid": _GRID_SCHEMA,
+        },
+        removed={"Lambda0": "is no longer supported; use Lambda0_gev."},
+    ),
+    "perturbative_matching": StageParamContract(
+        schema={
+            "component": None,
+            "endpoint_cut": None,
+            "kernel_id": None,
+            "lc_x_ls": _GRID_SCHEMA,
+            "mu": None,
+            "plot": {"xlim": None, "ylim": None},
+            "quasi_y_ls": _GRID_SCHEMA,
+            "sector": None,
+            "xlim": None,
+            "ylim": None,
+            "zs_fm": None,
+        },
+        removed={},
+    ),
+    "extrapolation": StageParamContract(schema={}, removed={}),
+    "review": StageParamContract(schema={}, removed={}),
+}
 
 
 _DERIVED_KINEMATICS_MESSAGE = (
@@ -57,28 +191,10 @@ _COMMON_PARAMETER_MESSAGES.update(
 
 
 def _contract_for_stage(stage: str) -> tuple[ParamSchema, dict[str, str]]:
-    package = resolve_stage_package(stage)
-    if not package:
-        raise ValueError(f"Registered stage {stage!r} has no package route.")
-    module_name = f"lamet_agent.stages.{package}.params"
-    try:
-        module = import_module(module_name)
-    except ModuleNotFoundError as exc:
-        if exc.name != module_name and not module_name.startswith(f"{exc.name}."):
-            raise
-        raise ValueError(f"Stage {stage!r} must provide parameter contract module {module_name}.") from exc
-    schema = getattr(module, "MANIFEST_PARAM_SCHEMA", None)
-    if not isinstance(schema, dict):
-        raise ValueError(
-            f"Stage {stage!r} must export a dict MANIFEST_PARAM_SCHEMA from "
-            f"lamet_agent.stages.{package}.params."
-        )
-    removed = getattr(module, "REMOVED_MANIFEST_PARAMS", {})
-    if not isinstance(removed, dict) or not all(
-        isinstance(key, str) and isinstance(message, str) for key, message in removed.items()
-    ):
-        raise ValueError(f"Stage {stage!r} REMOVED_MANIFEST_PARAMS must map strings to strings.")
-    return schema, removed
+    contract = STAGE_PARAM_CONTRACTS.get(stage)
+    if contract is None:
+        raise ValueError(f"Stage {stage!r} must be registered in STAGE_PARAM_CONTRACTS.")
+    return contract.schema, contract.removed
 
 
 def _unknown_parameter_message(

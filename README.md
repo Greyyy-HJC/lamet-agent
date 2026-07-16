@@ -645,10 +645,8 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --backend mock
     (manifest paths, plot `save_path` under `artifacts/`).
   - `resolve_plot_save_path()` keeps plots under the manifest's stage artifact directory.
 - `src/lamet_agent/manifest_params.py`
-  - Loads each stage's lightweight `MANIFEST_PARAM_SCHEMA` and recursively
-    rejects unknown `defaults` / `params` keys before DAG execution.
-- `src/lamet_agent/stage_registry.py`
-  - Owns the stage-id to package mapping re-exported by `core/stages.py`.
+  - Owns the central `STAGE_PARAM_CONTRACTS` registry and recursively rejects
+    unknown `defaults` / `params` keys before DAG execution.
 - `src/lamet_agent/core/trace.py`
   - Optional ReAct-style stdout trace (`--verbose`).
   - Default (non-verbose) runs print a LaMET Agent ASCII banner and one line per
@@ -670,10 +668,8 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --backend mock
 - `src/lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
 - `src/lamet_agent/stages/*`
-  - Each stage owns `params.py`, `prompts.py`, `skills.py`, `functions.py`, and,
-    when it writes a report, `reporting.py`.
-  - `params.py` declares the user-authored manifest keys, including allowed
-    nested keys; tool-only and runner-derived arguments do not belong there.
+  - Each stage owns `prompts.py`, `skills.py`, `functions.py`, and, when it
+    writes a report, `reporting.py`.
   - `prompts.py` contains the stage instruction text and action protocol.
   - `skills.py` performs stage-local checks plus `STAGE_SKILL` strategy text and
     a `tool_catalog()`.
