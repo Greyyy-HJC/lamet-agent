@@ -14,6 +14,7 @@ from lamet_agent.stages.renorm.functions import (
     plot_renormalized_matrix_element,
     plot_self_renormalization_diagnostics,
 )
+from lamet_agent.stages.renorm.reporting import build_renorm_stage_report_markdown
 
 
 def _write_bare_netcdf(base: Path, stem: str, values: np.ndarray, *, resample: str = "jackknife") -> Path:
@@ -104,30 +105,84 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
 
 
 def test_ratio_scheme_without_normalization_uses_pure_ratio(tmp_path: Path) -> None:
-    target = np.asarray([[2, 4], [4, 8]], dtype=complex)
-    denom = np.asarray([[1, 2], [2, 4]], dtype=complex)
+    target = np.asarray([[2, 6, 20], [4, 8, 12]], dtype=complex)
+    denom = np.asarray([[1, 2, 10], [2, 8, 3]], dtype=complex)
     store = {
         "target": EnsembleData(
             EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
-            values=[target[0], target[1]], dims=("z",), coords={"z": [0, 1]},
-            attrs={"lattice_spacing_fm": "0.1"}, name="target",
+            values=[target[0], target[1]], dims=("z",), coords={"z": [0, 1, 5]}, name="target",
         ),
         "denominator": EnsembleData(
             EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
-            values=[denom[0], denom[1]], dims=("z",), coords={"z": [0, 1]},
-            attrs={"lattice_spacing_fm": "0.1"}, name="denominator",
+            values=[denom[0], denom[1]], dims=("z",), coords={"z": [0, 1, 5]}, name="denominator",
         ),
     }
+
+    result = apply_ratio_scheme_renormalization(
+        store,
+        target="target",
+        denominator="denominator",
+        scheme="ratio",
+        scheme_parameters={"zs_fm": 0.1, "m0_gev": 9.0, "delta_m_gev": 8.0},
+        save_path=str(tmp_path / "pure"),
+    )
+
+    assert np.allclose(store["output"].values, target / denom)
+    assert result["scheme"] == "ratio"
+    assert not {"zs_fm", "zs_lattice", "zs_grid", "m0_gev", "delta_m_gev"} & result.keys()
+    assert not {"zs_fm", "zs_lattice", "zs_grid", "m0_gev", "delta_m_gev"} & store["output"].attrs.keys()
+
+
+def test_ratio_scheme_uses_preprocessed_z0_normalization(tmp_path: Path) -> None:
+    target = np.asarray([[2, 6, 20], [4, 8, 12]], dtype=complex)
+    denom = np.asarray([[1, 2, 10], [2, 8, 3]], dtype=complex)
+    store = {
+        "target": EnsembleData(
+            EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+            values=list(target), dims=("z",), coords={"z": [0, 1, 5]}, name="target",
+        ),
+        "denominator": EnsembleData(
+            EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+            values=list(denom), dims=("z",), coords={"z": [0, 1, 5]}, name="denominator",
+        ),
+    }
+    _prepare_renorm_inputs(store)
 
     apply_ratio_scheme_renormalization(
         store,
         target="target",
         denominator="denominator",
-        scheme_parameters={"zs_fm": 10.0},
-        save_path=str(tmp_path / "pure"),
+        scheme="ratio",
+        save_path=str(tmp_path / "normalized"),
     )
 
-    assert np.allclose(store["output"].values, 2.0)
+    expected = (target / target[:, :1]) / (denom / denom[:, :1])
+    assert np.allclose(store["output"].values, expected)
+
+
+@pytest.mark.parametrize("language", ["en", "zh"])
+def test_ratio_report_omits_hybrid_parameters(language: str, tmp_path: Path) -> None:
+    report = build_renorm_stage_report_markdown(
+        jobs=[{
+            "job_id": "rn_ratio",
+            "result": {
+                "scheme": "ratio",
+                "n_sample": 2,
+                "z_grid": [0, 1, 5],
+                "zs_fm": 0.2,
+                "m0_gev": 1.0,
+                "delta_m_gev": 2.0,
+            },
+            "artifacts": {},
+        }],
+        base_dir=tmp_path,
+        language=language,
+    )
+
+    assert "h^{\\rm tar}_s(z)" in report
+    assert "h^{\\rm den}_s(z)" in report
+    assert "$z_s$" not in report
+    assert "delta m" not in report
 
 
 def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path) -> None:
@@ -690,4 +745,3 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
     assert Path(apply_result["plots"]["discrete_effect_re"]).name == "discrete_effect_re.pdf"
     assert Path(apply_result["plots"]["discrete_effect_im"]).name == "discrete_effect_im.pdf"
     assert "rn_mom6_a12" not in Path(apply_result["plots"]["discrete_effect_re"]).name
-

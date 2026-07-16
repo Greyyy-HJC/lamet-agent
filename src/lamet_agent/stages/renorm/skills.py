@@ -10,8 +10,9 @@ Renormalization consumes bare EnsembleData from the current job store.
 When normalization=true, the runner already divides each bare matrix element by
 its lattice z=0 value before any tool calls.
 
-hybrid_ratio uses roles target and denominator with flat job/defaults parameter
-zs_fm; m0_gev and delta_m_gev remain in scheme_parameters.
+ratio and hybrid_ratio use roles target and denominator. ratio divides them
+pointwise on the complete z grid. hybrid_ratio additionally requires flat
+job/defaults parameter zs_fm; m0_gev and delta_m_gev remain in scheme_parameters.
 self_renormalization splits into:
 - fit job inputs {reference}: require job params.d; optional params.m0_gev
   (omit to fit m0 from short-distance g(z); set to freeze). Writes store['output']/store['zR'].
@@ -20,7 +21,7 @@ self_renormalization splits into:
 """.strip()
 
 TOOL_CATALOG = {
-    "apply_ratio_scheme_renormalization": "hybrid_ratio: consume target/denominator and write store['output'] plus the job NetCDF.",
+    "apply_ratio_scheme_renormalization": "ratio/hybrid_ratio: consume target/denominator and write store['output'] plus the job NetCDF.",
     "fit_self_renormalization_factor": "self_renormalization fit job: fit zR from store['reference'] with required d and optional m0_gev; write store['zR']/store['output'].",
     "apply_self_renormalization": "self_renormalization apply job: apply H/(zR*ZMSbar); optional d/m0_gev remap upstream zR.",
     "plot_self_renormalization_diagnostics": "self_renormalization: fit-job panels, or apply-job zmsbar_compare (+ stage-level discrete_effect once).",
@@ -39,10 +40,10 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     if not isinstance(normalization, bool):
         return ["renormalization.defaults.normalization must be a boolean when provided."]
 
-    if scheme == "hybrid_ratio":
+    if scheme in {"ratio", "hybrid_ratio"}:
         if set(job.inputs) != {"target", "denominator"}:
-            return ["A hybrid_ratio renormalization job requires target and denominator inputs."]
-        if "zs_fm" not in params:
+            return [f"A {scheme} renormalization job requires target and denominator inputs."]
+        if scheme == "hybrid_ratio" and "zs_fm" not in params:
             return ["hybrid_ratio requires flat parameter zs_fm in stage defaults or job params."]
         return []
 

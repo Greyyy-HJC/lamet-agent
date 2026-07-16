@@ -322,6 +322,42 @@ def test_prepare_renormalization_args_filters_normalization_manifest_flag(tmp_pa
     assert "normalization" not in args
 
 
+def test_prepare_ratio_renormalization_args_do_not_require_hybrid_parameters(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["renormalization"].jobs[0]
+    effective = {
+        **manifest.stages["renormalization"].defaults,
+        **job.params,
+        "scheme": "ratio",
+        "scheme_parameters": {"m0_gev": 9.0, "delta_m_gev": 8.0},
+    }
+    effective.pop("zs_fm", None)
+
+    args = prepare_tool_args(
+        "apply_ratio_scheme_renormalization",
+        {},
+        manifest=manifest,
+        stage="renormalization",
+        job=job,
+        effective_params=effective,
+        artifacts_dir=tmp_path,
+    )
+
+    assert args["scheme"] == "ratio"
+    assert args["scheme_parameters"] == {}
+    assert args["target"] == "target"
+    assert args["denominator"] == "denominator"
+
+
+def test_ratio_renormalization_stage_accepts_target_and_denominator_without_zs() -> None:
+    manifest = _manifest()
+    manifest.stages["renormalization"].defaults["scheme"] = "ratio"
+    manifest.stages["renormalization"].defaults.pop("zs_fm", None)
+    job = manifest.stages["renormalization"].jobs[0]
+
+    assert validate_stage_inputs("renormalization", manifest, job) == []
+
+
 def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path) -> None:
     artifacts = [
         {

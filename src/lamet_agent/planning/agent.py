@@ -147,8 +147,16 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     },
                 },
                 "renormalization": {
-                    "required": {"scheme": "hybrid_ratio", "zs_fm": 0.2},
-                    "optional": {"normalization": True, "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0}},
+                    "required": {"scheme": "ratio | hybrid_ratio | self_renormalization"},
+                    "branches": {
+                        "ratio": {"inputs": ["target", "denominator"]},
+                        "hybrid_ratio": {"inputs": ["target", "denominator"], "zs_fm": 0.2},
+                        "self_renormalization": {"fit_inputs": ["reference"], "apply_inputs": ["target", "zR"]},
+                    },
+                    "optional": {
+                        "normalization": True,
+                        "hybrid_scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
+                    },
                 },
                 "fourier_transform": {
                     "required": {"order": ["LA", "NLA"], "coord_unit": "lattice", "sector": "valence", "y_grid": {"start": -2.0, "stop": 2.0, "num": 100}, "momentum_gev": 2.15},
@@ -163,8 +171,17 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
             },
             "common_stage_contracts": {
                 "renormalization": {
-                    "inputs": {"target": "upstream bare matrix-element job", "denominator": "zero-momentum/reference bare matrix-element job"},
-                    "defaults": {"scheme": "hybrid_ratio", "zs_fm": "required", "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0}},
+                    "ratio_inputs": {
+                        "target": "upstream bare matrix-element job",
+                        "denominator": "zero-momentum/reference bare matrix-element job",
+                    },
+                    "ratio_defaults": {"scheme": "ratio"},
+                    "hybrid_ratio_defaults": {
+                        "scheme": "hybrid_ratio",
+                        "zs_fm": "required",
+                        "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
+                    },
+                    "self_renormalization_inputs": {"fit": ["reference"], "apply": ["target", "zR"]},
                 },
                 "fourier_transform": {"inputs": {"input": "renormalized matrix-element job or artifact"}},
                 "perturbative_matching": {"inputs": {"quasi": "Fourier transform job or artifact"}},

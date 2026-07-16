@@ -168,6 +168,9 @@
       "defaults": {
         "normalization": true, // optional; divide each bare input by its z=0 value before the scheme
         "scheme": "hybrid_ratio", // active branch; requires job roles target+denominator and flat zs_fm
+        // Pointwise alternative: set scheme to "ratio" with the same jobs;
+        // zs_fm and scheme_parameters below are then optional and ignored.
+        // A full chain must also select a ratio-compatible matching kernel.
         "scheme_parameters": {
           "m0_gev": 0.0, // optional hybrid long-range renormalon slope in GeV
           "delta_m_gev": 0.0 // optional target-denominator mass gap in GeV

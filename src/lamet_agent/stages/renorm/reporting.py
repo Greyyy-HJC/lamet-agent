@@ -113,6 +113,20 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
                 ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
             ]
             header = "| Quantity | Value |"
+    elif scheme == "ratio" and language == "zh":
+        rows = [
+            ("方案", f"`{scheme}`"),
+            ("z 网格", format_report_list(result.get("z_grid", []))),
+            ("重采样", f"{result.get('n_sample', 'n/a')} 个样本"),
+        ]
+        header = "| 条目 | 数值或设置 |"
+    elif scheme == "ratio":
+        rows = [
+            ("Scheme", f"`{scheme}`"),
+            ("z grid", format_report_list(result.get("z_grid", []))),
+            ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
+        ]
+        header = "| Quantity | Value |"
     elif language == "zh":
         rows = [
             ("方案", f"`{scheme}`"),
@@ -162,6 +176,26 @@ h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z;\mu)}.
 $$
 
 $Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). This stage does not refit matrix elements; it applies one renormalization map to all resampled samples.
+""".strip()
+    if scheme == "ratio":
+        if language == "zh":
+            return r"""
+Ratio 方案对每个重采样样本 $s$ 在完整坐标网格上逐点计算
+
+$$
+h^R_s(z)=\frac{h^{\rm tar}_s(z)}{h^{\rm den}_s(z)}.
+$$
+
+这里 $h^{\rm tar}_s(z)$ 是待重整化的裸矩阵元，$h^{\rm den}_s(z)$ 是 reference/denominator 裸矩阵元。该方案不使用切换距离、固定 denominator 或长距离指数修正。当 `normalization=true` 时，target 和 denominator 在进入工具前分别按各自的 $z=0$ 值逐样本归一化；当 `normalization=false` 时直接使用原始输入。
+""".strip()
+        return r"""
+The ratio scheme acts pointwise on every resampled sample $s$ across the complete coordinate grid:
+
+$$
+h^R_s(z)=\frac{h^{\rm tar}_s(z)}{h^{\rm den}_s(z)}.
+$$
+
+Here $h^{\rm tar}_s(z)$ is the bare target matrix element and $h^{\rm den}_s(z)$ is the reference/denominator matrix element. This scheme has no switching distance, frozen denominator, or long-distance exponential correction. With `normalization=true`, target and denominator are normalized sample by sample by their own $z=0$ values before the tool runs; with `normalization=false`, the raw inputs are divided directly.
 """.strip()
     if language == "zh":
         return r"""
@@ -217,18 +251,31 @@ def build_renorm_stage_report_markdown(
     primary_scheme = next(iter(schemes)) if len(schemes) == 1 else "mixed"
     title = "# Renormalization Stage Report" if language == "en" else "# Renormalization 阶段报告"
     if language == "en":
-        intro = (
-            "This report summarizes self-renormalization jobs that convert bare matrix elements into renormalized coordinate-space matrix elements."
-            if primary_scheme == "self_renormalization"
-            else "This report summarizes hybrid-ratio renormalization jobs that convert bare matrix elements into renormalized coordinate-space matrix elements."
+        intro = {
+            "self_renormalization": (
+                "This report summarizes self-renormalization jobs that convert bare matrix elements into "
+                "renormalized coordinate-space matrix elements."
+            ),
+            "ratio": (
+                "This report summarizes ratio-scheme jobs that convert bare matrix elements into "
+                "renormalized coordinate-space matrix elements."
+            ),
+            "hybrid_ratio": (
+                "This report summarizes hybrid-ratio renormalization jobs that convert bare matrix elements into "
+                "renormalized coordinate-space matrix elements."
+            ),
+        }.get(
+            primary_scheme,
+            "This report summarizes renormalization jobs that convert bare matrix elements into "
+            "renormalized coordinate-space matrix elements.",
         )
         summary_header = "| job | scheme | key | output | plot |"
     else:
-        intro = (
-            "本报告汇总 self-renormalization job，将裸矩阵元转换为坐标空间重整化矩阵元。"
-            if primary_scheme == "self_renormalization"
-            else "本报告汇总 hybrid-ratio 重整化 job，将裸矩阵元转换为坐标空间重整化矩阵元。"
-        )
+        intro = {
+            "self_renormalization": "本报告汇总 self-renormalization job，将裸矩阵元转换为坐标空间重整化矩阵元。",
+            "ratio": "本报告汇总 ratio scheme job，将裸矩阵元转换为坐标空间重整化矩阵元。",
+            "hybrid_ratio": "本报告汇总 hybrid-ratio 重整化 job，将裸矩阵元转换为坐标空间重整化矩阵元。",
+        }.get(primary_scheme, "本报告汇总重整化 job，将裸矩阵元转换为坐标空间重整化矩阵元。")
         summary_header = "| job | 方案 | 关键参数 | 输出 | 图像 |"
     lines = [
         title,
@@ -253,7 +300,12 @@ def build_renorm_stage_report_markdown(
             ),
         )
         markdown_jobs.append((item, result, artifacts))
-        key = result.get("kernel_id") if result.get("scheme") == "self_renormalization" else result.get("zs_fm")
+        if result.get("scheme") == "self_renormalization":
+            key = result.get("kernel_id")
+        elif result.get("scheme") == "ratio":
+            key = "pointwise"
+        else:
+            key = result.get("zs_fm")
         output_path = artifacts.get("renormalized_artifact") or artifacts.get("zR_artifact") or "n/a"
         plot_path = artifacts.get("renormalized_plot") or "n/a"
         lines.append(
@@ -263,11 +315,16 @@ def build_renorm_stage_report_markdown(
             f"{plot_path} |"
         )
 
+    method_text = (
+        "\n\n".join(_formula_text(language=language, scheme=scheme) for scheme in sorted(schemes))
+        if primary_scheme == "mixed"
+        else _formula_text(language=language, scheme=primary_scheme)
+    )
     lines.extend(
         [
             "",
             "## Method" if language == "en" else "## 方法",
-            _formula_text(language=language, scheme=primary_scheme if primary_scheme != "mixed" else "hybrid_ratio"),
+            method_text,
         ]
     )
     for item, result, artifacts in markdown_jobs:

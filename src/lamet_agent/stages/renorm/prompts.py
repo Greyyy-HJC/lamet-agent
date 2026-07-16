@@ -7,9 +7,11 @@ runner has already divided each bare matrix element by its lattice z=0 value.
 
 Follow the scheme declared in the job parameters:
 
-hybrid_ratio:
+ratio or hybrid_ratio:
 1. Call apply_ratio_scheme_renormalization without overriding target,
    denominator, scheme, scheme_parameters, or save_path.
+   ratio divides target(z) by denominator(z) on the complete grid and ignores
+   hybrid-only parameters. hybrid_ratio uses the declared zs_fm switch.
 2. Call plot_renormalized_matrix_element; it plots store['output'] to the job PDF.
 3. Finish with the NetCDF and PDF paths.
 

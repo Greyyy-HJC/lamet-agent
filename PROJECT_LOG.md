@@ -657,3 +657,9 @@
 - Made standard ``EnsembleData`` NetCDF sources self-describing for partial workflows by reading data-variable attrs before stage validation without loading array values.
 - Kept the complete manifest kinematic triple as a legacy fallback, derived physical momentum from resolved discrete kinematics, and rejected conflicting manifest/NetCDF metadata before execution.
 - Simplified the tracked partial PDF manifest to ``id``/``stage``/``path`` and added attrs-only, fallback, conflict, missing-metadata, and no-write coverage.
+
+## 2026-07-16 (Pointwise ratio renormalization)
+
+- Added ``scheme: "ratio"`` beside hybrid-ratio and self-renormalization, applying sample-preserving ``target(z) / denominator(z)`` on the complete coordinate grid without hybrid switch or mass parameters.
+- Extended renormalization validation, tool preparation, prompts, planning guidance, and bilingual reports while preserving the existing optional z=0 normalization preprocessing.
+- Added numerical, metadata, planning, argument-binding, validation, and report coverage for the new scheme.

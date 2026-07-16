@@ -2,7 +2,7 @@
 
 Purpose:
 - load bare coordinate-space matrix-element bootstrap samples as EnsembleData
-- apply sample-preserving hybrid-ratio or self-renormalization
+- apply sample-preserving ratio, hybrid-ratio, or self-renormalization
 - fit a self-renormalization factor zR from zero-momentum reference data
 
 Expected inputs:
@@ -267,8 +267,8 @@ def apply_ratio_scheme_renormalization(
     job_id: str | None = None,
     sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
-    """Apply hybrid-ratio renormalization and preserve all samples."""
-    if scheme != "hybrid_ratio":
+    """Apply ratio or hybrid-ratio renormalization and preserve all samples."""
+    if scheme not in {"ratio", "hybrid_ratio"}:
         raise ValueError(f"unsupported renormalization scheme: {scheme!r}")
     target_data = _require_matrix_data(store, target)
     denom_data = _require_matrix_data(store, denominator)
@@ -284,34 +284,39 @@ def apply_ratio_scheme_renormalization(
     if target_values.shape != denom_values.shape:
         raise ValueError("target and denominator sample arrays must have matching shape")
 
-    params = scheme_parameters or {}
-    zs_fm = float(params["zs_fm"])
-    m0_gev = float(params.get("m0_gev", 0.0))
-    delta_m_gev = float(params.get("delta_m_gev", 0.0))
-    lattice_spacing_fm = float(target_data.attrs["lattice_spacing_fm"])
-    zs_lattice = zs_fm / lattice_spacing_fm
-    zs_idx = int(np.argmin(np.abs(np.abs(z_denom) - zs_lattice)))
-    z_fm = np.abs(z_target) * lattice_spacing_fm
-    mass_scale = (delta_m_gev + m0_gev) / GEV_FM
-    exponent = np.exp(mass_scale * (z_fm - zs_fm))
-    short = target_values / denom_values
-    long = exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
-    renorm_values = np.where((np.abs(z_target) * lattice_spacing_fm)[None, :] <= zs_fm, short, long)
+    renorm_values = target_values / denom_values
+    hybrid_metadata: dict[str, float] = {}
+    if scheme == "hybrid_ratio":
+        params = scheme_parameters or {}
+        zs_fm = float(params["zs_fm"])
+        m0_gev = float(params.get("m0_gev", 0.0))
+        delta_m_gev = float(params.get("delta_m_gev", 0.0))
+        lattice_spacing_fm = float(target_data.attrs["lattice_spacing_fm"])
+        zs_lattice = zs_fm / lattice_spacing_fm
+        zs_idx = int(np.argmin(np.abs(np.abs(z_denom) - zs_lattice)))
+        z_fm = np.abs(z_target) * lattice_spacing_fm
+        mass_scale = (delta_m_gev + m0_gev) / GEV_FM
+        exponent = np.exp(mass_scale * (z_fm - zs_fm))
+        long = exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
+        renorm_values = np.where(z_fm[None, :] <= zs_fm, renorm_values, long)
+        hybrid_metadata = {
+            "zs_fm": zs_fm,
+            "zs_lattice": zs_lattice,
+            "zs_grid": float(z_denom[zs_idx]),
+            "delta_m_gev": delta_m_gev,
+            "m0_gev": m0_gev,
+        }
 
     attrs = {
         **target_data.attrs,
         "scheme": scheme,
-        "zs_fm": str(zs_fm),
-        "zs_lattice": str(zs_lattice),
-        "zs_grid": str(float(z_denom[zs_idx])),
-        "delta_m_gev": str(delta_m_gev),
-        "m0_gev": str(m0_gev),
         "target": target,
         "denominator": denominator,
         "job_id": job_id,
         "sample_error_mode": sample_error_mode,
         "average_method": sample_error_mode,
     }
+    attrs.update({key: str(value) for key, value in hybrid_metadata.items()})
     result = _matrix_to_ensemble(
         z_values=z_target,
         samples=renorm_values,
@@ -339,11 +344,8 @@ def apply_ratio_scheme_renormalization(
         "artifact": str(artifact),
         "n_z": int(len(z_target)),
         "n_sample": int(renorm_values.shape[0]),
-        "zs_fm": zs_fm,
-        "zs_lattice": zs_lattice,
-        "zs_grid": float(z_denom[zs_idx]),
-        "delta_m_gev": float(delta_m_gev),
-        "m0_gev": float(m0_gev),
+        "scheme": scheme,
+        **hybrid_metadata,
     }
 
 

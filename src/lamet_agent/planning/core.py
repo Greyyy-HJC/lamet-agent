@@ -825,6 +825,12 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(item, dict) and item.get("stage") in {"matching", "perturbative_matching"} and item.get("kernel_id")
     ]
     matching_kernel_ids = [item.get("kernel_id") for item in matching_kernels]
+    renorm_kernels = [
+        item
+        for item in kernels
+        if isinstance(item, dict) and item.get("stage") == "renormalization" and item.get("kernel_id")
+    ]
+    renorm_kernel_ids = [item.get("kernel_id") for item in renorm_kernels]
     correlators = inputs.get("correlators", []) if isinstance(inputs, dict) else []
     artifacts = {
         str(item.get("id")): item
@@ -899,12 +905,55 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             def add_gap(parameter: str, path: str, message: str, suggested_fix: str) -> None:
                 gaps.append({"stage": stage, "job_id": job_id, "parameter": parameter, "path": path, "message": message, "suggested_fix": suggested_fix, "question_id": f"stage_params.{stage}.{job_id}"})
             if stage == "renormalization":
-                if roles != {"target", "denominator"}:
-                    add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "renormalization requires target and denominator input roles.", 'Example: {"target": "ca_pz", "denominator": "ca_p0"}.')
-                if params.get("scheme") != "hybrid_ratio":
-                    add_gap("scheme", f"stages.{stage}.defaults.scheme", "renormalization requires scheme='hybrid_ratio'.", 'Set scheme to "hybrid_ratio".')
-                if params.get("scheme") == "hybrid_ratio" and "zs_fm" not in params:
-                    add_gap("zs_fm", f"stages.{stage}.defaults.zs_fm", "hybrid_ratio requires flat parameter zs_fm.", 'Example: {"zs_fm": 0.2}.')
+                scheme = params.get("scheme")
+                if scheme in {"ratio", "hybrid_ratio"}:
+                    if roles != {"target", "denominator"}:
+                        add_gap(
+                            "inputs",
+                            f"stages.{stage}.jobs[{index}].inputs",
+                            f"{scheme} requires target and denominator input roles.",
+                            'Example: {"target": "ca_pz", "denominator": "ca_p0"}.',
+                        )
+                    if scheme == "hybrid_ratio" and "zs_fm" not in params:
+                        add_gap(
+                            "zs_fm",
+                            f"stages.{stage}.defaults.zs_fm",
+                            "hybrid_ratio requires flat parameter zs_fm.",
+                            'Example: {"zs_fm": 0.2}.',
+                        )
+                elif scheme == "self_renormalization":
+                    if roles == {"reference"}:
+                        if "d" not in params:
+                            add_gap(
+                                "d",
+                                f"stages.{stage}.jobs[{index}].params.d",
+                                "self_renormalization fit jobs require fixed parameter d.",
+                                'Example: {"d": -0.08183}.',
+                            )
+                    elif roles != {"target", "zR"}:
+                        add_gap(
+                            "inputs",
+                            f"stages.{stage}.jobs[{index}].inputs",
+                            "self_renormalization requires either reference or target plus zR input roles.",
+                            'Use {"reference": "bare_ref"} for a fit job or '
+                            '{"target": "bare", "zR": "rn_fit"} for an apply job.',
+                        )
+                    if not renorm_kernel_ids:
+                        add_gap(
+                            "kernel_id",
+                            "inputs.kernels",
+                            "self_renormalization requires a declared renormalization kernel.",
+                            'Declare ZMSbar_pdf or ZMSbar_da with stage "renormalization".',
+                        )
+                    elif len(renorm_kernel_ids) > 1 and "kernel_id" not in params:
+                        add_gap(
+                            "kernel_id",
+                            f"stages.{stage}.defaults.kernel_id",
+                            f"self_renormalization job {job_id!r} must select a renormalization kernel.",
+                            "Use one declared inputs.kernels[].kernel_id.",
+                        )
+                else:
+                    add_gap("scheme", f"stages.{stage}.defaults.scheme", "renormalization requires a supported scheme.", 'Choose "ratio", "hybrid_ratio", or "self_renormalization".')
             elif stage == "fourier_transform":
                 if roles != {"input"}:
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "fourier_transform requires exactly one input role named input.", 'Example: {"input": "rn_pz"}.')

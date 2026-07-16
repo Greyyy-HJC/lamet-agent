@@ -425,10 +425,13 @@ def prepare_tool_args(
                     continue
                 if key not in resolved or resolved[key] is None:
                     resolved[key] = value
-            resolved["scheme_parameters"] = {
-                **scheme_parameters,
-                "zs_fm": effective_params["zs_fm"],
-            }
+            if effective_params.get("scheme") == "hybrid_ratio":
+                resolved["scheme_parameters"] = {
+                    **scheme_parameters,
+                    "zs_fm": effective_params["zs_fm"],
+                }
+            else:
+                resolved["scheme_parameters"] = {}
             resolved.update(
                 {
                     "target": "target",

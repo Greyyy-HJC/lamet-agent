@@ -24,8 +24,8 @@ Ordered five-stage workflow:
 4. `perturbative_matching` -> `stages/matching/`
 5. `extrapolation` -> `stages/extrapolation/`
 
-The current job-DAG migration covers correlator analysis and hybrid-ratio
-renormalization. Fourier, matching, and extrapolation remain the next migration step.
+The renormalization stage supports pointwise ratio, hybrid-ratio, and
+self-renormalization workflows within the job DAG.
 
 ## Minimal Structure
 
@@ -211,6 +211,23 @@ bare matrix elements directly into the scheme.
 For example, two `nstate` values and three `prior_width` values produce up to six
 fit-function models inside the fixed data window. The manifest value is
 authoritative and cannot be overridden by an LLM tool call.
+
+### Ratio renormalization
+
+Set `scheme: "ratio"` on a renormalization stage or job to divide the target and
+denominator pointwise on the complete coordinate grid for every resampled
+sample:
+
+$$
+h_s^R(z) = \frac{h_s^{\mathrm{target}}(z)}{h_s^{\mathrm{denominator}}(z)}.
+$$
+
+Ratio jobs use the same `{target, denominator}` input roles as hybrid-ratio
+jobs, but do not require `zs_fm` and do not apply a fixed denominator or a
+long-distance exponential correction. Hybrid-only settings (`zs_fm`,
+`scheme_parameters.m0_gev`, and `scheme_parameters.delta_m_gev`) are ignored if
+they remain in shared defaults. The `normalization` preprocessing described
+above still applies; set it to `false` for a direct ratio of raw bare inputs.
 
 ### Per-job hybrid-ratio `zs_fm`
 
