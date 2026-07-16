@@ -58,6 +58,41 @@ def test_manifest_accepts_bs_mode_with_bs_samples() -> None:
     assert manifest.metadata.bs_samples == 500
 
 
+def _fourier_payload() -> dict:
+    payload = _payload()
+    payload["metadata"]["stages"] = ["fourier_transform"]
+    payload["inputs"]["artifacts"] = [
+        {"id": "rn", "stage": "renormalization", "path": "rn.nc"}
+    ]
+    payload["stages"] = {
+        "fourier_transform": {
+            "defaults": {"Lambda0_gev": 0.0},
+            "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
+        }
+    }
+    return payload
+
+
+def test_manifest_rejects_legacy_fourier_lambda0_in_defaults() -> None:
+    payload = _fourier_payload()
+    payload["stages"]["fourier_transform"]["defaults"] = {"Lambda0": 0.1}
+
+    with pytest.raises(ValidationError, match=r"fourier_transform\.defaults\.Lambda0"):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_rejects_legacy_fourier_lambda0_in_job_params() -> None:
+    payload = _fourier_payload()
+    payload["stages"]["fourier_transform"]["jobs"][0]["params"] = {"Lambda0": 0.1}
+
+    with pytest.raises(ValidationError, match=r"fourier_transform\.jobs\[0\]\.params\.Lambda0"):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_accepts_fourier_lambda0_gev() -> None:
+    AnalysisManifest.model_validate(_fourier_payload())
+
+
 def test_manifest_rejects_zs_fm_in_kernel_parameters() -> None:
     payload = _payload()
     payload["inputs"]["kernels"] = [

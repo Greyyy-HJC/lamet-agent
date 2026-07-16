@@ -628,3 +628,15 @@
 - Added required 3pt ``bz_direction`` provenance with canonical axis-set labels ``X``, ``Y``, ``Z``, ``XY``, ``XZ``, ``YZ``, and ``XYZ`` while keeping the standard HDF5 dataset path unchanged.
 - Propagated ``bz_direction`` through correlator tool preparation and bare matrix-element attrs, taught the planner to request and inspect it, and documented ``bz`` as longitudinal/nonlocal separation and ``bT`` as transverse/nonlocal separation.
 - Removed the unused correlator ``variant`` parameter from manifests, tool signatures, log names, and new artifacts; migrated existing local HDF5 catalogs/root attrs and removed historical NetCDF ``variant`` attrs with exact data-equivalence checks.
+
+## 2026-07-16 (Fourier decay-offset units)
+
+- Renamed the Fourier-stage ``Lambda0`` parameter to ``Lambda0_gev`` across manifests, Python APIs, results, NetCDF attributes, and reports, and changed its default from ``0.1`` to ``0.0``.
+- Rejected the legacy manifest key with path-specific validation errors and migrated all tracked example manifests to the new name.
+- Added schema, argument-preparation, numerical, artifact, and report coverage for the renamed parameter and its new default.
+- Decoupled tool-preparation tests from mutable example-manifest parameter values by deriving expectations from the loaded manifest or using test-local sentinels.
+
+## 2026-07-16 (Upstream matching grid integration)
+
+- Integrated the upstream matching-grid update with the local Fourier decay-offset work, adopting the ``*_quark_PDF_*`` kernel ids and the ``quasi_y_ls``, ``lc_x_ls``, and ``endpoint_cut`` tool parameters.
+- Preserved manifest-driven tool tests across the kernel rename so editable example parameter values are not hard-coded in assertions.

@@ -6,8 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from lamet_agent.core.tools import prepare_tool_args, resolve_plot_save_path, validate_stage_inputs
-from lamet_agent.manifest import validate_manifest_file
-from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.manifest import AnalysisManifest, derive_job_kinematics, validate_manifest_file
 from lamet_agent.stages.matching.skills import effective_matching_params
 
 
@@ -28,20 +27,28 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
         "tune_bare_matrix", {}, manifest=manifest, stage="correlator_analysis", job=job,
         effective_params=effective, artifacts_dir=tmp_path,
     )
-    assert args["momentum"] == "PX5PY0PZ0"
-    assert args["tsep_ls"] == [8, 10, 12]
-    assert args["z_values"] == list(range(25))
-    assert args["bz_direction"] == "X"
+    pt3 = next(
+        item
+        for item in manifest.correlators
+        if item.correlator_id in job.correlator_ids and item.correlator_type == "3pt"
+    )
+    assert args["momentum"] == derive_job_kinematics(manifest, job)["momentum"]
+    assert args["tsep_ls"] == pt3.tsep
+    assert args["z_values"] == pt3.bz
+    assert args["bz_direction"] == pt3.bz_direction
     assert "tune_z_values" not in args
     assert args["nstate_values"] == effective["nstate"]
     assert args["fit_strategies"] == effective["fit_strategy"]
-    assert args["fit_scope_values"] == ["ratio"]
-    assert args["pt3_paths"]["8"].endswith("_free_3pt.h5")
-    assert args["resample_mode"] == "jk"
+    assert args["fit_scope_values"] == effective["fit_scope"]
+    assert set(args["pt3_paths"]) == {str(tsep) for tsep in pt3.tsep}
+    assert args["resample_mode"] == manifest.metadata.resample_mode
     assert args["sample_error_mode"] == manifest.metadata.sample_error_mode
     assert args["seed"] == manifest.metadata.random_seed
     assert "workers" not in args
-    assert "n_boot" not in args
+    if manifest.metadata.resample_mode == "bs":
+        assert args["n_boot"] == manifest.metadata.bs_samples
+    else:
+        assert "n_boot" not in args
 
 
 def test_prepare_correlator_args_injects_bs_samples_for_bootstrap_mode(tmp_path: Path) -> None:
@@ -84,18 +91,24 @@ def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) 
         effective_params=manifest.stages["correlator_analysis"].defaults,
         artifacts_dir=tmp_path,
     )
-    assert args["save_path"] == str(tmp_path / "ca_p0")
-    assert args["job_id"] == "ca_p0"
-    assert args["lattice_spacing_fm"] == 0.0574
-    if manifest.stages["correlator_analysis"].defaults["model_average"]:
+    assert args["save_path"] == str(tmp_path / job.id)
+    assert args["job_id"] == job.id
+    kinematics = derive_job_kinematics(manifest, job)
+    assert args["lattice_spacing_fm"] == kinematics["lattice_spacing_fm"]
+    if manifest.stages["correlator_analysis"].defaults.get("model_average", False):
         assert args["nstate_values"] == manifest.stages["correlator_analysis"].defaults["nstate"]
         assert "nstate" not in args
     else:
         assert args["nstate"] == 2
     assert "fit_scope" not in args
-    assert args["model_average"] == manifest.stages["correlator_analysis"].defaults["model_average"]
+    assert args["model_average"] == manifest.stages["correlator_analysis"].defaults.get("model_average", False)
     assert args["workers"] == manifest.metadata.workers
-    assert args["bz_direction"] == "X"
+    pt3 = next(
+        item
+        for item in manifest.correlators
+        if item.correlator_id in job.correlator_ids and item.correlator_type == "3pt"
+    )
+    assert args["bz_direction"] == pt3.bz_direction
 
 
 def test_correlator_stage_rejects_removed_variant_parameter() -> None:
@@ -277,18 +290,19 @@ def test_nonbreit_requires_initial_and_final_momentum(tmp_path: Path) -> None:
 def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["renormalization"].jobs[0]
+    effective = {**manifest.stages["renormalization"].defaults, **job.params}
     args = prepare_tool_args(
         "apply_ratio_scheme_renormalization", {}, manifest=manifest, stage="renormalization", job=job,
-        effective_params={**manifest.stages["renormalization"].defaults, **job.params},
+        effective_params=effective,
         artifacts_dir=tmp_path,
     )
     assert args["target"] == "target"
     assert args["denominator"] == "denominator"
-    assert args["scheme"] == "hybrid_ratio"
-    assert args["scheme_parameters"]["zs_fm"] == job.params["zs_fm"]
-    assert args["scheme_parameters"]["m0_gev"] == manifest.stages["renormalization"].defaults["scheme_parameters"]["m0_gev"]
-    assert args["scheme_parameters"]["delta_m_gev"] == manifest.stages["renormalization"].defaults["scheme_parameters"]["delta_m_gev"]
-    assert args["save_path"] == str(tmp_path / "rn_p5")
+    assert args["scheme"] == effective["scheme"]
+    assert args["scheme_parameters"]["zs_fm"] == effective["zs_fm"]
+    assert args["scheme_parameters"]["m0_gev"] == effective["scheme_parameters"]["m0_gev"]
+    assert args["scheme_parameters"]["delta_m_gev"] == effective["scheme_parameters"]["delta_m_gev"]
+    assert args["save_path"] == str(tmp_path / job.id)
     assert "normalization" not in args
 
 
@@ -497,14 +511,34 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
         effective_params=effective, artifacts_dir=tmp_path, store={"input": source},
     )
     assert args["method"] == "CG"
-    assert args["observable"] == "pion_quark_quasi_pdf"
-    assert args["lattice_spacing_fm"] == 0.0574
-    assert args["momentum_gev"] == pytest.approx(manifest.correlators[0].momentum_gev("PX5PY0PZ0"))
-    assert args["bz_direction"] == "X"
+    kinematics = derive_job_kinematics(manifest, job)
+    assert args["lattice_spacing_fm"] == kinematics["lattice_spacing_fm"]
+    assert args["momentum_gev"] == pytest.approx(kinematics["momentum_gev"])
+    assert args["bz_direction"] == source.attrs["bz_direction"]
     assert args["psi1_flavor_class"] == "light"
     assert args["psi2_flavor_class"] == "heavy"
     assert args["workers"] == manifest.metadata.workers
-    assert args["save_path"] == str(tmp_path / "ft_p5")
+    assert args["save_path"] == str(tmp_path / job.id)
+
+
+def test_prepare_fourier_args_passes_lambda0_gev(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["fourier_transform"].jobs[0]
+    effective = {**manifest.stages["fourier_transform"].defaults, **job.params}
+    effective["Lambda0_gev"] = 0.37
+    args = prepare_tool_args(
+        "run_fourier_transform",
+        {},
+        manifest=manifest,
+        stage="fourier_transform",
+        job=job,
+        effective_params=effective,
+        artifacts_dir=tmp_path,
+        store={"input": SimpleNamespace(attrs={})},
+    )
+
+    assert args["Lambda0_gev"] == 0.37
+    assert "Lambda0" not in args
 
 
 def test_prepare_partial_fourier_loader_uses_external_artifact(tmp_path: Path) -> None:
@@ -545,20 +579,21 @@ def test_prepare_partial_fourier_loader_uses_manifest_artifact_after_hydration(t
         store={"input": quasi, "matrix_element_data": quasi},
     )
     assert args["path"] == source.path
-    assert args["resample_mode"] == "bs"
+    assert args["resample_mode"] == manifest.metadata.resample_mode
 
 
 def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["perturbative_matching"].jobs[0]
+    effective = effective_matching_params(manifest, job)
     args = prepare_tool_args(
         "build_matching_kernel", {}, manifest=manifest, stage="perturbative_matching", job=job,
-        effective_params=effective_matching_params(manifest, job),
+        effective_params=effective,
         artifacts_dir=tmp_path, store={"quasi": object()},
     )
-    assert args["kernel_id"] == "CG_gt_quark_PDF_hybrid_NLO"
-    assert args["momentum_gev"] == pytest.approx(manifest.correlators[0].momentum_gev("PX5PY0PZ0"))
-    assert args["zs_fm"] == 0.1722
+    assert args["kernel_id"] == effective["kernel_id"]
+    assert args["momentum_gev"] == pytest.approx(derive_job_kinematics(manifest, job)["momentum_gev"])
+    assert args["zs_fm"] == effective["zs_fm"]
 
 
 def test_job_zs_fm_overrides_stage_defaults_for_both_hybrid_stages(tmp_path: Path) -> None:

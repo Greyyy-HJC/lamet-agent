@@ -182,7 +182,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        Lambda0=0.3,
+        Lambda0_gev=0.3,
         bz_direction="X",
         phase_shift=0.5,
         artifacts_dir=str(tmp_path / "artifacts"),
@@ -192,6 +192,8 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert run["n_samples"] == 3
     assert run["workers"] == 2
     assert store["fourier_result"]["phase_shift"] == 0.5
+    assert store["fourier_result"]["Lambda0_gev"] == pytest.approx(0.3)
+    assert run["Lambda0_gev"] == pytest.approx(0.3)
     assert Path(run["artifact"]).is_file()
     assert Path(run["artifact"]).parent == tmp_path / "artifacts"
     assert Path(run["artifact"]).suffix == ".nc"
@@ -201,6 +203,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert ft_data.resample == "bootstrap"
     assert ft_data.attrs["workers"] == "2"
     assert ft_data.attrs["phase_shift"] == "0.5"
+    assert ft_data.attrs["Lambda0_gev"] == "0.3"
     assert ft_data.attrs["bz_direction"] == "X"
     assert ft_data.values.shape == (3, 3)
     assert "ft_re_mean" in ft_data.attrs
@@ -215,6 +218,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     fit_data = EnsembleData.from_netcdf(run["fit_info_artifact"])
     assert fit_data.dims == ["scheme", "parameter"]
     assert fit_data.resample == "bootstrap"
+    assert fit_data.attrs["Lambda0_gev"] == "0.3"
     assert fit_data.values.shape == (3, 1, 3)
     assert "fit_chi2" in fit_data.attrs
     assert fit_data.coords["parameter"] == ["A2", "phi2", "m"]
@@ -226,6 +230,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert summary["fit_model_labels"] == ["LA_prior_3"]
     assert summary["fit_model_mean_weights"] == [1.0]
     assert summary["fit_info_artifact"] == run["fit_info_artifact"]
+    assert summary["Lambda0_gev"] == pytest.approx(0.3)
 
     plot = plot_fourier_result(store)
     assert Path(plot["plot"]).is_file()
@@ -244,6 +249,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "nucleon_quark_transversity_quasi_pdf" in report_text
     assert "GI" in report_text
     assert "LA" in report_text
+    assert "Lambda0_gev" in report_text
     assert "Active fitted component" in report_text
     assert "fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together" in report_text
     assert "Model Diagnostics" in report_text
@@ -269,6 +275,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "Active fitted component" in report_cn_text
     assert "实部和虚部同时参与拟合" in report_cn_text
     assert "图像与可视化评估" in report_cn_text
+    assert "Lambda0_gev" in report_cn_text
     assert "如何读取 NetCDF 输出" in report_cn_text
     assert "fourier_result.nc" in report_cn_text
     assert "fourier_fit_info.nc" in report_cn_text
@@ -308,8 +315,11 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
 
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
+    assert store["fourier_result"]["Lambda0_gev"] == 0.0
     assert Path(run["artifact"]).is_file()
     assert Path(run["fit_info_artifact"]).is_file()
+    assert EnsembleData.from_netcdf(run["artifact"]).attrs["Lambda0_gev"] == "0.0"
+    assert EnsembleData.from_netcdf(run["fit_info_artifact"]).attrs["Lambda0_gev"] == "0.0"
 
 
 def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) -> None:
@@ -876,6 +886,19 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
 def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
     z = np.array([2.0, 3.0])
 
+    shifted_re, _shifted_im = _asymptotic_values(
+        z,
+        np.array([1.5, 0.4]),
+        method="GI",
+        order="LA",
+        observable="nucleon_gluon_quasi_pdf",
+        phase_scale=2.0,
+        Lambda0_gev=0.3,
+    )
+    assert np.asarray(shifted_re, dtype=float).tolist() == pytest.approx(
+        (1.5 * z * np.exp(-0.7 * z)).tolist()
+    )
+
     re, im = _asymptotic_values(
         z,
         np.array([1.5, 0.4]),
@@ -883,7 +906,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
         order="LA",
         observable="nucleon_gluon_quasi_pdf",
         phase_scale=2.0,
-        Lambda0=0.0,
+        Lambda0_gev=0.0,
     )
     assert np.asarray(re, dtype=float).tolist() == pytest.approx((1.5 * z * np.exp(-0.4 * z)).tolist())
     assert np.asarray(im, dtype=float).tolist() == pytest.approx([0.0, 0.0])
@@ -895,7 +918,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
         order="NLA",
         observable="nucleon_gluon_quasi_pdf",
         phase_scale=2.0,
-        Lambda0=0.0,
+        Lambda0_gev=0.0,
     )
     assert np.asarray(re, dtype=float).tolist() == pytest.approx(((1.5 * z + 0.2) * np.exp(-0.4 * z)).tolist())
 
@@ -906,7 +929,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
         order="NLA",
         observable="pion_gluon_quasi_pdf",
         phase_scale=2.0,
-        Lambda0=0.0,
+        Lambda0_gev=0.0,
     )
     expected = (1.5 * z + 0.2 + 0.6 * np.cos(0.1 - 2.0 * z)) * np.exp(-0.4 * z)
     assert np.asarray(re, dtype=float).tolist() == pytest.approx(expected.tolist())
@@ -914,7 +937,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
 
 def test_fourier_cg_parameter_order_keeps_lambda_before_power() -> None:
     labels = _param_labels("CG", "NLA", "pion_gluon_quasi_pdf")
-    p0, bounds = _param_template("CG", "NLA", "pion_gluon_quasi_pdf", Lambda0=0.3)
+    p0, bounds = _param_template("CG", "NLA", "pion_gluon_quasi_pdf", Lambda0_gev=0.3)
 
     assert labels == ["A2", "A2p", "A1", "phi", "m", "n"]
     assert p0.shape == (6,)

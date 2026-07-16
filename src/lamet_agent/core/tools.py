@@ -58,7 +58,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "hadron",
         "psi1_flavor_class",
         "psi2_flavor_class",
-        "Lambda0",
+        "Lambda0_gev",
         "posterior_prior_error_scale",
         "sample_error_mode",
         "part",

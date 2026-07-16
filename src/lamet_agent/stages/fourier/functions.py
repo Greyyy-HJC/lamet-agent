@@ -377,11 +377,11 @@ def _with_method_tail_parameters(
     parameters: list[_TailParameter],
     *,
     method: str,
-    Lambda0: float,
+    Lambda0_gev: float,
 ) -> list[_TailParameter]:
     parameters = [
         *parameters,
-        _TailParameter("m", max(0.5 - float(Lambda0), 0.05), 0.0),
+        _TailParameter("m", max(0.5 - float(Lambda0_gev), 0.05), 0.0),
     ]
     if method.upper() == "CG":
         parameters.append(_TailParameter("n", 0.5, -2.0, 4.0))
@@ -493,7 +493,7 @@ def _param_template(
     order: str,
     observable: str,
     *,
-    Lambda0: float = 0.1,
+    Lambda0_gev: float = 0.0,
     sector: str | None = None,
     hadron: str | None = None,
     psi1_flavor_class: str = "heavy",
@@ -518,7 +518,7 @@ def _param_template(
             psi2_flavor_class=psi2_flavor_class,
         ),
         method=method,
-        Lambda0=float(Lambda0),
+        Lambda0_gev=float(Lambda0_gev),
     )
     fit_labels: set[str] = set()
     selected = []
@@ -570,7 +570,7 @@ def _param_labels(
             psi2_flavor_class=psi2_flavor_class,
         ),
         method=method,
-        Lambda0=0.1,
+        Lambda0_gev=0.0,
     )
     if not fit:
         return [item.label for item in parameters]
@@ -581,8 +581,15 @@ def _param_labels(
     return labels
 
 
-def _decay_tail(z: np.ndarray, params: Sequence[Any], *, lambda_index: int, method: str, Lambda0: float) -> Any:
-    tail = gv.exp(-(params[lambda_index] + float(Lambda0)) * z)
+def _decay_tail(
+    z: np.ndarray,
+    params: Sequence[Any],
+    *,
+    lambda_index: int,
+    method: str,
+    Lambda0_gev: float,
+) -> Any:
+    tail = gv.exp(-(params[lambda_index] + float(Lambda0_gev)) * z)
     if method.upper() == "CG":
         tail = tail * gv.exp(-params[lambda_index + 1] * np.log(z))
     return tail
@@ -597,7 +604,7 @@ def _quark_like_asymptotic_values(
     observable: str,
     phase_scale: float,
     phase_prime_scale: float | None,
-    Lambda0: float,
+    Lambda0_gev: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Quark-like LA/NLA forms: oscillatory terms times a GI or CG decay tail."""
     phase_scales = _quark_like_phase_scales(
@@ -624,7 +631,7 @@ def _quark_like_asymptotic_values(
             im = im + params[cursor] * gv.sin(arg) / z
             cursor += 2
 
-    tail = _decay_tail(z, params, lambda_index=cursor, method=method, Lambda0=Lambda0)
+    tail = _decay_tail(z, params, lambda_index=cursor, method=method, Lambda0_gev=Lambda0_gev)
     return re * tail, im * tail
 
 
@@ -634,7 +641,7 @@ def _nucleon_gluon_asymptotic_values(
     *,
     method: str,
     order: str,
-    Lambda0: float,
+    Lambda0_gev: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Appendix-F nucleon gluon form: (A z [+ A']) exp(-Lambda z) with zero Im."""
     # LA:  A z exp(-Lambda z)
@@ -644,7 +651,7 @@ def _nucleon_gluon_asymptotic_values(
     if order.upper() == "NLA":
         re = re + params[1]
         lambda_index = 2
-    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method, Lambda0=Lambda0)
+    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method, Lambda0_gev=Lambda0_gev)
     im = np.zeros_like(z, dtype=object)
     return re * tail, im * tail
 
@@ -656,7 +663,7 @@ def _pion_gluon_asymptotic_values(
     method: str,
     order: str,
     phase_scale: float,
-    Lambda0: float,
+    Lambda0_gev: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Appendix-F pion gluon form: A2 z plus optional constant and cosine term."""
     # LA:  A2 z exp(-Lambda z)
@@ -666,7 +673,7 @@ def _pion_gluon_asymptotic_values(
     if order.upper() == "NLA":
         re = re + params[1] + 2.0 * params[2] * gv.cos(params[3] - phase_scale * z)
         lambda_index = 4
-    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method, Lambda0=Lambda0)
+    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method, Lambda0_gev=Lambda0_gev)
     im = np.zeros_like(z, dtype=object)
     return re * tail, im * tail
 
@@ -680,7 +687,7 @@ def _asymptotic_values(
     observable: str,
     phase_scale: float,
     phase_prime_scale: float | None = None,
-    Lambda0: float = 0.1,
+    Lambda0_gev: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     z = np.asarray(z, dtype=float)
     if np.any(z <= 0):
@@ -693,7 +700,7 @@ def _asymptotic_values(
             params,
             method=method,
             order=order,
-            Lambda0=Lambda0,
+            Lambda0_gev=Lambda0_gev,
         )
 
     if observable == "pion_gluon_quasi_pdf":
@@ -703,7 +710,7 @@ def _asymptotic_values(
             method=method,
             order=order,
             phase_scale=phase_scale,
-            Lambda0=Lambda0,
+            Lambda0_gev=Lambda0_gev,
         )
 
     return _quark_like_asymptotic_values(
@@ -714,7 +721,7 @@ def _asymptotic_values(
         observable=observable,
         phase_scale=phase_scale,
         phase_prime_scale=phase_prime_scale,
-        Lambda0=Lambda0,
+        Lambda0_gev=Lambda0_gev,
     )
 
 
@@ -785,13 +792,13 @@ def _fit_one_sample(
     psi2_flavor_class: str = "heavy",
     p0: np.ndarray | None = None,
     prior: gv.BufferDict | None = None,
-    Lambda0: float = 0.1,
+    Lambda0_gev: float = 0.0,
 ) -> tuple[np.ndarray, gv.BufferDict | None, gv.BufferDict | None, bool, float, int, float, float]:
     default_p0, _ = _param_template(
         method,
         order,
         observable,
-        Lambda0=Lambda0,
+        Lambda0_gev=Lambda0_gev,
         sector=sector,
         hadron=hadron,
         psi1_flavor_class=psi1_flavor_class,
@@ -801,7 +808,7 @@ def _fit_one_sample(
         method,
         order,
         observable,
-        Lambda0=Lambda0,
+        Lambda0_gev=Lambda0_gev,
         sector=sector,
         hadron=hadron,
         psi1_flavor_class=psi1_flavor_class,
@@ -829,7 +836,7 @@ def _fit_one_sample(
             psi2_flavor_class=psi2_flavor_class,
         ),
         method=method.upper(),
-        Lambda0=float(Lambda0),
+        Lambda0_gev=float(Lambda0_gev),
     )
     full_labels = [item.label for item in full_items]
     if p0 is not None and len(start) != len(fit_p0):
@@ -855,7 +862,7 @@ def _fit_one_sample(
             observable=observable,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
-            Lambda0=Lambda0,
+            Lambda0_gev=Lambda0_gev,
         )
         return _select_fit_prediction(pred_re, pred_im, part)
 
@@ -916,7 +923,7 @@ def fit_tail_quality_for_mean(
     final_momentum_gev: float | None = None,
     lattice_spacing_fm: float | None = None,
     resample_mode: str = "bootstrap",
-    Lambda0: float = 0.1,
+    Lambda0_gev: float = 0.0,
     posterior_prior_error_scale: float = 3.0,
     sample_error_mode: str = "covariance",
     part: str = "both",
@@ -1005,7 +1012,7 @@ def fit_tail_quality_for_mean(
         hadron=hadron,
         psi1_flavor_class=psi1_flavor_class,
         psi2_flavor_class=psi2_flavor_class,
-        Lambda0=Lambda0,
+        Lambda0_gev=Lambda0_gev,
     )
     if tail_fit_success and mean_pmean is not None and mean_psdev is not None:
         mean_params, _mean_pmean, _mean_psdev, tail_fit_success, chi2, dof, q_value, log_gbf = _fit_one_sample(
@@ -1023,7 +1030,7 @@ def fit_tail_quality_for_mean(
             psi2_flavor_class=psi2_flavor_class,
             p0=mean_params,
             prior=_scaled_internal_prior(mean_pmean, mean_psdev, posterior_prior_error_scale),
-            Lambda0=Lambda0,
+            Lambda0_gev=Lambda0_gev,
         )
     return {
         "tail_fit_success": bool(tail_fit_success),
@@ -1099,7 +1106,7 @@ def _fit_fourier_sample_batch(payload: bytes, sample_indices: list[int]) -> list
             psi2_flavor_class=context["psi2_flavor_class"],
             p0=context["mean_params"],
             prior=context["sample_prior"],
-            Lambda0=context["Lambda0"],
+            Lambda0_gev=context["Lambda0_gev"],
         )
         results.append(
             {
@@ -1162,7 +1169,7 @@ def _run_one_scheme(
     phase_scale: float,
     phase_prime_scale: float | None,
     resample_mode: str,
-    Lambda0: float,
+    Lambda0_gev: float,
     posterior_prior_error_scale: float,
     sample_error_mode: str,
     part: str,
@@ -1246,7 +1253,7 @@ def _run_one_scheme(
         hadron=hadron,
         psi1_flavor_class=psi1_flavor_class,
         psi2_flavor_class=psi2_flavor_class,
-        Lambda0=Lambda0,
+        Lambda0_gev=Lambda0_gev,
     )
     sample_prior = None
     if mean_ok and mean_pmean is not None and mean_psdev is not None:
@@ -1266,7 +1273,7 @@ def _run_one_scheme(
             psi2_flavor_class=psi2_flavor_class,
             p0=mean_params,
             prior=sample_prior,
-            Lambda0=Lambda0,
+            Lambda0_gev=Lambda0_gev,
         )
 
     dz = _uniform_step(fit_coord)
@@ -1325,7 +1332,7 @@ def _run_one_scheme(
                 "psi2_flavor_class": psi2_flavor_class,
                 "mean_params": mean_params,
                 "sample_prior": sample_prior,
-                "Lambda0": Lambda0,
+                "Lambda0_gev": Lambda0_gev,
             }
         )
         futures = [
@@ -1367,7 +1374,7 @@ def _run_one_scheme(
                 psi2_flavor_class=psi2_flavor_class,
                 p0=mean_params,
                 prior=sample_prior,
-                Lambda0=Lambda0,
+                Lambda0_gev=Lambda0_gev,
             )
         else:
             fit_result = parallel_fit_results[sample]
@@ -1401,7 +1408,7 @@ def _run_one_scheme(
             observable=observable,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
-            Lambda0=Lambda0,
+            Lambda0_gev=Lambda0_gev,
         )
 
         fit_re, fit_im = _zero_inactive_channel(fit_re, fit_im, part)
@@ -1474,7 +1481,7 @@ def run_fourier_workflow(
     im_flip_for_ft: bool = False,
     phase_shift: float = 0.0,
     resample_mode: str = "bootstrap",
-    Lambda0: float = 0.1,
+    Lambda0_gev: float = 0.0,
     posterior_prior_error_scale: float = 3.0,
     sample_error_mode: str = "covariance",
     part: str = "both",
@@ -1560,7 +1567,7 @@ def run_fourier_workflow(
                     phase_scale=phase_scale,
                     phase_prime_scale=phase_prime_scale,
                     resample_mode=resample_mode,
-                    Lambda0=Lambda0,
+                    Lambda0_gev=Lambda0_gev,
                     posterior_prior_error_scale=scheme_prior_width,
                     sample_error_mode=sample_error_mode,
                     part=part,
@@ -1619,7 +1626,7 @@ def run_fourier_workflow(
         "fit_coord_unit": "lambda" if coord_unit.lower() == "lambda" else "gev_inv",
         "resample_mode": resample_mode,
         "sample_error_mode": sample_error_mode,
-        "Lambda0": float(Lambda0),
+        "Lambda0_gev": float(Lambda0_gev),
         "phase_shift": float(phase_shift),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
         "part": part,
@@ -1718,6 +1725,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "part": str(result.get("part", "both")),
         "im_flip_for_ft": str(result.get("im_flip_for_ft", "")),
         "phase_shift": str(result.get("phase_shift", 0.0)),
+        "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
         "resample_mode": str(result.get("resample_mode", "")),
         "sample_error_mode": str(result.get("sample_error_mode", "")),
         "average_method": str(result.get("sample_error_mode", "")),
@@ -2012,6 +2020,7 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
             "hadron": str(result.get("hadron", "")),
             "psi1_flavor_class": str(result.get("psi1_flavor_class", "heavy")),
             "psi2_flavor_class": str(result.get("psi2_flavor_class", "heavy")),
+            "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
             "sample_error_mode": str(result.get("sample_error_mode", "")),
             "average_method": str(result.get("sample_error_mode", "")),
             "scheme_labels": json.dumps(scheme_labels.tolist()),
@@ -2184,7 +2193,7 @@ def _pick_four_zmin_values_by_tail_fit(
     lattice_spacing_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
-    Lambda0: float,
+    Lambda0_gev: float,
     part: str,
     sector: str | None,
     hadron: str | None,
@@ -2234,7 +2243,7 @@ def _pick_four_zmin_values_by_tail_fit(
                 lattice_spacing_fm=lattice_spacing_fm,
                 resample_mode=resample_mode,
                 sample_error_mode=sample_error_mode,
-                Lambda0=Lambda0,
+                Lambda0_gev=Lambda0_gev,
                 part=part,
                 sector=sector,
                 hadron=hadron,
@@ -2288,7 +2297,7 @@ def _auto_fill_scheme_scan(
     lattice_spacing_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
-    Lambda0: float,
+    Lambda0_gev: float,
     part: str,
     sector: str | None,
     hadron: str | None,
@@ -2326,7 +2335,7 @@ def _auto_fill_scheme_scan(
             lattice_spacing_fm=lattice_spacing_fm,
             resample_mode=resample_mode,
             sample_error_mode=sample_error_mode,
-            Lambda0=Lambda0,
+            Lambda0_gev=Lambda0_gev,
             part=part,
             sector=sector,
             hadron=hadron,
@@ -2374,7 +2383,7 @@ def _auto_scheme_scan(
     lattice_spacing_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
-    Lambda0: float,
+    Lambda0_gev: float,
     part: str,
     sector: str | None,
     hadron: str | None,
@@ -2410,7 +2419,7 @@ def _auto_scheme_scan(
         lattice_spacing_fm=lattice_spacing_fm,
         resample_mode=resample_mode,
         sample_error_mode=sample_error_mode,
-        Lambda0=Lambda0,
+        Lambda0_gev=Lambda0_gev,
         part=part,
         sector=sector,
         hadron=hadron,
@@ -2586,7 +2595,7 @@ def run_fourier_transform(
     lattice_spacing_fm: float | None = None,
     im_flip_for_ft: bool = False,
     phase_shift: float = 0.0,
-    Lambda0: float = 0.1,
+    Lambda0_gev: float = 0.0,
     posterior_prior_error_scale: float | list[float] = 3.0,
     sample_error_mode: str = "covariance",
     part: str = "both",
@@ -2661,7 +2670,7 @@ def run_fourier_transform(
             lattice_spacing_fm=lattice_spacing_fm,
             resample_mode=resample_mode,
             sample_error_mode=sample_error_mode,
-            Lambda0=float(Lambda0),
+            Lambda0_gev=float(Lambda0_gev),
             part=part,
             sector=sector,
             hadron=hadron,
@@ -2715,7 +2724,7 @@ def run_fourier_transform(
                 final_momentum_gev=final_momentum_gev,
                 lattice_spacing_fm=lattice_spacing_fm,
                 resample_mode=resample_mode,
-                Lambda0=float(Lambda0),
+                Lambda0_gev=float(Lambda0_gev),
                 posterior_prior_error_scale=range_prior_width,
                 sample_error_mode=sample_error_mode,
                 part=part,
@@ -2804,7 +2813,7 @@ def run_fourier_transform(
             im_flip_for_ft=True,
             phase_shift=float(phase_shift),
             resample_mode=resample_mode,
-            Lambda0=float(Lambda0),
+            Lambda0_gev=float(Lambda0_gev),
             posterior_prior_error_scale=range_prior_width,
             sample_error_mode=sample_error_mode,
             part="im",
@@ -2830,7 +2839,7 @@ def run_fourier_transform(
             im_flip_for_ft=False,
             phase_shift=float(phase_shift),
             resample_mode=resample_mode,
-            Lambda0=float(Lambda0),
+            Lambda0_gev=float(Lambda0_gev),
             posterior_prior_error_scale=range_prior_width,
             sample_error_mode=sample_error_mode,
             part="re",
@@ -2894,7 +2903,7 @@ def run_fourier_transform(
             im_flip_for_ft=im_flip_for_ft,
             phase_shift=float(phase_shift),
             resample_mode=resample_mode,
-            Lambda0=float(Lambda0),
+            Lambda0_gev=float(Lambda0_gev),
             posterior_prior_error_scale=range_prior_width,
             sample_error_mode=sample_error_mode,
             part=part,
@@ -2916,7 +2925,7 @@ def run_fourier_transform(
     result["phase_shift"] = float(phase_shift)
     result["sector"] = sector
     result["target_observable"] = target
-    result["Lambda0"] = float(Lambda0)
+    result["Lambda0_gev"] = float(Lambda0_gev)
     result["posterior_prior_error_scale"] = (
         range_prior_width
         if len(candidate_diagnostics["fit_model_prior_widths"]) == 1
@@ -2982,6 +2991,7 @@ def run_fourier_transform(
         "output_scale": result.get("output_scale", 1.0),
         "sector": result.get("sector", sector),
         "auto_scheme_scan": auto_scheme_scan,
+        "Lambda0_gev": result.get("Lambda0_gev", 0.0),
         "workers": int(workers),
     }
 
@@ -3013,6 +3023,7 @@ def summarize_fourier_result(
         "fit_info_artifact": data.get("fit_info_artifact"),
         "output_scale": data.get("output_scale", 1.0),
         "phase_shift": data.get("phase_shift", 0.0),
+        "Lambda0_gev": data.get("Lambda0_gev", 0.0),
         "sector": data.get("sector", data.get("part", "full")),
     }
     store[out] = summary

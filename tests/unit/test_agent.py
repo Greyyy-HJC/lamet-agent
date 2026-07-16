@@ -544,7 +544,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
             "coord_unit": "fm",
             "fit_coord_unit": "fm",
             "momentum_gev": 1.72,
-            "Lambda0": 0.1,
+            "Lambda0_gev": 0.0,
             "posterior_prior_error_scale": 3.0,
             "output_scale": 2.0,
             "y_grid": [-0.5, 0.0, 0.5],
@@ -602,7 +602,9 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
     assert report_path.exists()
     assert "report_cn" not in result["stage_reports"]["fourier_transform"]
     assert not report_path.with_name("ft_report_CN.md").exists()
-    assert "`ft_p4`" in report_path.read_text(encoding="utf-8")
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "`ft_p4`" in report_text
+    assert "Lambda0_gev" in report_text
 
 
 def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, monkeypatch) -> None:

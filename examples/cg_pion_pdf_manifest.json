@@ -5,10 +5,10 @@
     "artifacts_directory": "runs/ds_pdf_complete/artifacts",
     "target_observable": "pdf",
     "parton": "quark",
-    "resample_mode": "bs",
-    "sample_error_mode": "median",
+    "resample_mode": "jk",
+    "sample_error_mode": "covariance",
     "bs_samples": 400,
-    "bin_size": 5,
+    "bin_size": 1,
     "workers": 8,
     "random_seed": 1984,
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "review"]
@@ -25,7 +25,7 @@
         "source_operator": "g5",
         "sink_operator": "g5",
         "volume": "S48T64",
-        "lattice_spacing_fm": 0.0574,
+        "lattice_spacing_fm": 0.06,
         "momentum": ["PX0PY0PZ0", "PX5PY0PZ0"]
       },
       {
@@ -40,7 +40,7 @@
         "current_operator": "gT_nonlocal",
         "bz_direction": "X",
         "volume": "S48T64",
-        "lattice_spacing_fm": 0.0574,
+        "lattice_spacing_fm": 0.06,
         "momentum": ["PX0PY0PZ0", "PX5PY0PZ0"],
         "bT": [0],
         "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
@@ -93,8 +93,8 @@
     },
     "fourier_transform": {
       "defaults": {
-        "order": ["LA"],
-        "Lambda0": 0.0,
+        "order": ["LA", "NLA"],
+        "Lambda0_gev": 0.1,
         "sector": "valence",
         "coord_unit": "lattice",
         "posterior_prior_error_scale": [3.0, 4.0, 5.0],

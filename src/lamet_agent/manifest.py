@@ -294,6 +294,20 @@ class AnalysisManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_dag(self) -> "AnalysisManifest":
+        fourier = self.stages.get("fourier_transform")
+        if fourier is not None:
+            if "Lambda0" in fourier.defaults:
+                raise ValueError(
+                    "stages.fourier_transform.defaults.Lambda0 is no longer supported; "
+                    "use stages.fourier_transform.defaults.Lambda0_gev"
+                )
+            for index, job in enumerate(fourier.jobs):
+                if "Lambda0" in job.params:
+                    raise ValueError(
+                        f"stages.fourier_transform.jobs[{index}].params.Lambda0 is no longer supported; "
+                        f"use stages.fourier_transform.jobs[{index}].params.Lambda0_gev"
+                    )
+
         for index, kernel in enumerate(self.inputs.kernels):
             if "zs_fm" in kernel.kernel_parameters:
                 raise ValueError(

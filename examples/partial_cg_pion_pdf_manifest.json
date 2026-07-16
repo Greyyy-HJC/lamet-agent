@@ -2,15 +2,16 @@
   "metadata": {
     "run_id": "partial_cg_pion_pdf",
     "root_directory": "..",
-    "artifacts_directory": "runs/ds_pdf_complete/artifacts",
+    "artifacts_directory": "runs/ds_pdf_partial/artifacts",
     "target_observable": "pdf",
     "parton": "quark",
-    "resample_mode": "bs",
-    "sample_error_mode": "median",
+    "resample_mode": "jk",
+    "sample_error_mode": "covariance",
     "bs_samples": 400,
-    "bin_size": 5,
+    "bin_size": 1,
+    "workers": 8,
     "random_seed": 1984,
-    "stages": ["fourier_transform", "perturbative_matching"]
+    "stages": ["fourier_transform", "perturbative_matching", "review"]
   },
   "inputs": {
     "correlators": [],
@@ -21,7 +22,7 @@
         "path": "runs/ds_pdf_complete/artifacts/renormalization/rn_p5.nc",
         "momentum": "PX5PY0PZ0",
         "volume": "S48T64",
-        "lattice_spacing_fm": 0.0574,
+        "lattice_spacing_fm": 0.06,
         "hadron": "pion",
         "gfix": "CG"
       }
@@ -39,8 +40,8 @@
   "stages": {
     "fourier_transform": {
       "defaults": {
-        "order": ["LA"],
-        "Lambda0": 0.0,
+        "order": ["LA", "NLA"],
+        "Lambda0_gev": 0.1,
         "sector": "valence",
         "coord_unit": "lattice",
         "posterior_prior_error_scale": [3.0, 4.0, 5.0],
@@ -67,6 +68,12 @@
       },
       "jobs": [
         {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"zs_fm": 0.1722}}
+      ]
+    },
+    "review": {
+      "defaults": {},
+      "jobs": [
+        {"id": "review"}
       ]
     }
   }
