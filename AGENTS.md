@@ -144,7 +144,7 @@ Package modules:
 - All ids are globally unique. External partial-run sources are declared in `inputs.artifacts`.
 - Paths resolve from `metadata.root_directory`; default job artifacts are `<artifacts_directory>/<stage>/<job_id>.nc`.
 - Terminal stage tools must place their primary in-memory result in `store["output"]`.
-- Fourier jobs consume role `input`; matching jobs consume role `quasi`. Partial runs declare discrete `momentum`, `volume`, and `lattice_spacing_fm` under `inputs.artifacts`; physical `momentum_gev` is derived.
+- Fourier jobs consume role `input`; matching jobs consume role `quasi`. Standard partial-run NetCDF artifacts read discrete `momentum`, `volume`, and `lattice_spacing_fm` from attrs; legacy files may declare the complete triple under `inputs.artifacts`, and physical `momentum_gev` is derived.
 - `inputs.kernels[].stage` must be a full `StageId` (`renormalization` or `perturbative_matching`), not a package shorthand such as `matching`.
 - Hybrid `zs_fm` is a flat stage/job parameter under `renormalization` and `perturbative_matching`; do not place it in `inputs.kernels[].kernel_parameters` or renormalization `scheme_parameters`.
 

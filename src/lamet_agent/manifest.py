@@ -167,12 +167,18 @@ class ArtifactInput(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
+    _resolved_metadata: dict[str, Any] = PrivateAttr(default_factory=dict)
+    _metadata_resolved: bool = PrivateAttr(default=False)
+
     id: str
     stage: StageId
     path: str
     momentum: str | None = None
     volume: str | None = None
     lattice_spacing_fm: float | None = Field(default=None, gt=0)
+    hadron: str | None = None
+    gfix: str | None = None
+    bz_direction: BzDirection | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -204,9 +210,111 @@ class ArtifactInput(BaseModel):
 
     @property
     def momentum_gev(self) -> float | None:
-        if self.momentum is None or self.volume is None or self.lattice_spacing_fm is None:
+        metadata = self.resolved_metadata
+        momentum = metadata.get("momentum")
+        volume = metadata.get("volume")
+        lattice_spacing_fm = metadata.get("lattice_spacing_fm")
+        if momentum is None or volume is None or lattice_spacing_fm is None:
             return None
-        return physical_momentum_gev(self.momentum, self.volume, self.lattice_spacing_fm)
+        return physical_momentum_gev(str(momentum), str(volume), float(lattice_spacing_fm))
+
+    @property
+    def declared_metadata(self) -> dict[str, Any]:
+        """Return user-declared artifact metadata, excluding graph identity fields."""
+        return self.model_dump(exclude={"id", "stage", "path"}, exclude_none=True)
+
+    @property
+    def resolved_metadata(self) -> dict[str, Any]:
+        """Return cached file/manifest metadata, or manifest metadata before resolution."""
+        if self._metadata_resolved:
+            return dict(self._resolved_metadata)
+        return self.declared_metadata
+
+
+_ARTIFACT_METADATA_FIELDS = (
+    "momentum",
+    "volume",
+    "lattice_spacing_fm",
+    "hadron",
+    "gfix",
+    "bz_direction",
+)
+_NETCDF_STORAGE_ATTRS = frozenset({"ensemble", "resample", "gvar_encoding"})
+
+
+def _normalize_artifact_metadata_value(artifact: ArtifactInput, key: str, value: Any) -> Any:
+    if value is None or value == "":
+        return None
+    try:
+        if key == "lattice_spacing_fm":
+            normalized = float(value)
+            if not math.isfinite(normalized) or normalized <= 0:
+                raise ValueError("must be a finite positive number")
+            return normalized
+        normalized = str(value)
+        if key == "momentum":
+            parse_momentum(normalized)
+        elif key == "volume":
+            parse_volume(normalized)
+        elif key == "bz_direction" and normalized not in {"X", "Y", "Z", "XY", "XZ", "YZ", "XYZ"}:
+            raise ValueError("must be a canonical axis-set label")
+        return normalized
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"artifact {artifact.id!r} has invalid {key!r} metadata in {artifact.path!r}: {value!r}"
+        ) from exc
+
+
+def resolve_artifact_metadata(artifact: ArtifactInput) -> dict[str, Any]:
+    """Merge one artifact's NetCDF attrs with optional manifest fallback metadata."""
+    if artifact._metadata_resolved:
+        return artifact.resolved_metadata
+
+    declared = artifact.declared_metadata
+    file_metadata: dict[str, Any] = {}
+    path = Path(artifact.path)
+    if path.suffix.lower() == ".nc" and path.is_file():
+        from lamet_agent.core.data import read_netcdf_attrs
+
+        file_metadata = {
+            key: value
+            for key, value in read_netcdf_attrs(path).items()
+            if key not in _NETCDF_STORAGE_ATTRS
+        }
+
+    resolved = dict(file_metadata)
+    for key, value in declared.items():
+        resolved.setdefault(key, value)
+
+    for key in _ARTIFACT_METADATA_FIELDS:
+        file_value = _normalize_artifact_metadata_value(artifact, key, file_metadata.get(key))
+        declared_value = _normalize_artifact_metadata_value(artifact, key, declared.get(key))
+        if file_value is not None and declared_value is not None:
+            matches = (
+                math.isclose(file_value, declared_value, rel_tol=1e-12, abs_tol=1e-12)
+                if key == "lattice_spacing_fm"
+                else file_value == declared_value
+            )
+            if not matches:
+                raise ValueError(
+                    f"artifact {artifact.id!r} metadata conflict for {key!r}: "
+                    f"NetCDF attrs={file_value!r}, manifest={declared_value!r} ({artifact.path})"
+                )
+        selected = file_value if file_value is not None else declared_value
+        if selected is not None:
+            resolved[key] = selected
+        else:
+            resolved.pop(key, None)
+
+    artifact._resolved_metadata = resolved
+    artifact._metadata_resolved = True
+    return artifact.resolved_metadata
+
+
+def resolve_manifest_artifact_metadata(manifest: "AnalysisManifest") -> None:
+    """Resolve and cache metadata for every external artifact in a manifest."""
+    for artifact in manifest.inputs.artifacts:
+        resolve_artifact_metadata(artifact)
 
 
 class KernelInput(BaseModel):
@@ -368,14 +476,26 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
     def from_reference(reference: str, seen: set[str]) -> dict[str, Any]:
         artifact = artifacts.get(reference)
         if artifact is not None:
-            if artifact.momentum is None:
+            metadata = artifact.resolved_metadata
+            momentum = metadata.get("momentum")
+            volume = metadata.get("volume")
+            lattice_spacing_fm = metadata.get("lattice_spacing_fm")
+            if momentum is None or volume is None or lattice_spacing_fm is None:
                 return {}
-            return {
-                "momentum": artifact.momentum,
-                "volume": artifact.volume,
-                "lattice_spacing_fm": artifact.lattice_spacing_fm,
+            result = {
+                "momentum": str(momentum),
+                "volume": str(volume),
+                "lattice_spacing_fm": float(lattice_spacing_fm),
                 "momentum_gev": artifact.momentum_gev,
             }
+            result.update(
+                {
+                    key: metadata[key]
+                    for key in ("hadron", "gfix", "bz_direction")
+                    if metadata.get(key) is not None
+                }
+            )
+            return result
         found = jobs.get(reference)
         if found is None or reference in seen:
             return {}
@@ -478,4 +598,5 @@ def validate_manifest_file(path: Path) -> AnalysisManifest:
         artifact.path = _resolve_from_root(manifest.root_directory, artifact.path)
     for kernel in manifest.inputs.kernels:
         kernel.kernel_path = _resolve_from_root(manifest.root_directory, kernel.kernel_path)
+    resolve_manifest_artifact_metadata(manifest)
     return manifest

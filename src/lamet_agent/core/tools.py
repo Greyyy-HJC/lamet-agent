@@ -558,7 +558,9 @@ def prepare_tool_args(
         if "component" in fourier and "part" not in fourier:
             fourier["part"] = fourier.pop("component")
         source = store.get("input")
-        source_metadata = dict(source.model_dump() if isinstance(source, ArtifactInput) else getattr(source, "attrs", {}))
+        source_metadata = dict(
+            source.resolved_metadata if isinstance(source, ArtifactInput) else getattr(source, "attrs", {})
+        )
         if isinstance(source, ArtifactInput) and source.momentum_gev is not None:
             source_metadata["momentum_gev"] = source.momentum_gev
         source_metadata.update(derive_job_kinematics(manifest, job))
@@ -616,7 +618,7 @@ def prepare_tool_args(
         matching = dict(effective_params)
         quasi = store.get("quasi")
         quasi_metadata = dict(
-            quasi.model_dump() if isinstance(quasi, ArtifactInput) else getattr(quasi, "attrs", {})
+            quasi.resolved_metadata if isinstance(quasi, ArtifactInput) else getattr(quasi, "attrs", {})
         )
         if isinstance(quasi, ArtifactInput) and quasi.momentum_gev is not None:
             quasi_metadata["momentum_gev"] = quasi.momentum_gev

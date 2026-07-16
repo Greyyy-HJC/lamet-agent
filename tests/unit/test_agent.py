@@ -328,6 +328,14 @@ def _write_renorm_nc(path: Path) -> None:
         ],
         dims=("z",),
         coords={"z": coord.tolist()},
+        attrs={
+            "momentum": "PX5PY0PZ0",
+            "volume": "S48T64",
+            "lattice_spacing_fm": "0.0574",
+            "hadron": "pion",
+            "gfix": "CG",
+            "bz_direction": "X",
+        },
         name="renormalized_matrix_element",
     )
     data.to_netcdf(path)
@@ -353,13 +361,8 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
                 "artifacts": [
                     {
                         "id": "rn_p5",
-                            "stage": "renormalization",
-                            "path": str(nc_path),
-                            "momentum": "PX5PY0PZ0",
-                            "volume": "S48T64",
-                            "lattice_spacing_fm": 0.0574,
-                            "hadron": "pion",
-                        "gfix": "CG",
+                        "stage": "renormalization",
+                        "path": str(nc_path),
                     }
                 ],
                 "kernels": [],
@@ -394,6 +397,8 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
     assert isinstance(store["input"], EnsembleData)
     assert "matrix_element_data" in store
     assert store["matrix_element_data"].dims == ["z"]
+    assert store["input"].attrs["momentum"] == "PX5PY0PZ0"
+    assert store["input"].attrs["hadron"] == "pion"
 
 
 def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path, monkeypatch) -> None:
@@ -417,13 +422,8 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
                 "artifacts": [
                     {
                         "id": "rn_p5",
-                            "stage": "renormalization",
-                            "path": str(nc_path),
-                            "momentum": "PX5PY0PZ0",
-                            "volume": "S48T64",
-                            "lattice_spacing_fm": 0.0574,
-                            "hadron": "pion",
-                        "gfix": "CG",
+                        "stage": "renormalization",
+                        "path": str(nc_path),
                     }
                 ],
                 "kernels": [],

@@ -81,12 +81,12 @@
     // External pre-computed products as SOURCE NODES with their own ids, so a job
     // can resume mid-pipeline by referencing one instead of an upstream job id.
     // Empty here (this example runs the full chain). See partial_sample_manifest.jsonc.
-    // Each partial-run entry declares {id, stage, path} plus the discrete
-    // kinematic triple {momentum, volume, lattice_spacing_fm}; momentum_gev is
-    // derived and must not be supplied. Example (leave commented in a full run):
-    // { "id": "rn_external", "stage": "renormalization", "path": "runs/rn.nc",
-    //   "momentum": "PX5PY0PZ0", "volume": "S48T64",
-    //   "lattice_spacing_fm": 0.0574, "hadron": "pion", "gfix": "CG" }
+    // Standard EnsembleData .nc sources are self-describing, so {id, stage, path}
+    // is sufficient when attrs contain momentum, volume, and lattice_spacing_fm.
+    // For legacy files missing those attrs, declare the complete discrete triple
+    // here as a fallback; momentum_gev remains derived and must not be supplied.
+    // Duplicate manifest/NetCDF metadata must agree. Example:
+    // { "id": "rn_external", "stage": "renormalization", "path": "runs/rn.nc" }
     "artifacts": [],
     "kernels": [
       {

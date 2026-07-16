@@ -651,3 +651,9 @@
 
 - Consolidated the stage parameter schemas and removed-field guidance into the central ``STAGE_PARAM_CONTRACTS`` registry in ``manifest_params.py``.
 - Removed per-stage ``params.py`` modules and the temporary top-level stage registry while preserving strict validation behavior and lightweight manifest imports.
+
+## 2026-07-16 (Self-describing partial-run artifacts)
+
+- Made standard ``EnsembleData`` NetCDF sources self-describing for partial workflows by reading data-variable attrs before stage validation without loading array values.
+- Kept the complete manifest kinematic triple as a legacy fallback, derived physical momentum from resolved discrete kinematics, and rejected conflicting manifest/NetCDF metadata before execution.
+- Simplified the tracked partial PDF manifest to ``id``/``stage``/``path`` and added attrs-only, fallback, conflict, missing-metadata, and no-write coverage.

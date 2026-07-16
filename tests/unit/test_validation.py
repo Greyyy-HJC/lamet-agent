@@ -6,12 +6,18 @@ import pytest
 
 from lamet_agent.manifest import (
     HBAR_C_GEV_FM,
+    AnalysisManifest,
     ArtifactInput,
     CorrelatorInput,
+    derive_job_kinematics,
     parse_momentum,
     physical_momentum_gev,
+    resolve_artifact_metadata,
+    resolve_manifest_artifact_metadata,
     validate_manifest_file,
 )
+from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.tools import validate_stage_inputs
 
 
 def _correlator_payload(correlator_type: str = "2pt") -> dict:
@@ -154,7 +160,7 @@ def test_momentum_helpers_cover_zero_negative_axes_and_xyz_norm() -> None:
     assert physical_momentum_gev("PX5PY0PZ0", "S48T64", 0.0574) == pytest.approx(2.250003600391, rel=1e-12)
 
 
-def test_partial_artifact_requires_discrete_kinematics_and_rejects_physical_override() -> None:
+def test_partial_artifact_manifest_fallback_requires_complete_discrete_kinematics() -> None:
     valid = {
         "id": "rn",
         "stage": "renormalization",
@@ -169,3 +175,159 @@ def test_partial_artifact_requires_discrete_kinematics_and_rejects_physical_over
         ArtifactInput.model_validate({**valid, "volume": None})
     with pytest.raises(ValueError, match="derived"):
         ArtifactInput.model_validate({**valid, "momentum_gev": 2.15})
+
+
+def _write_partial_artifact(path: Path, attrs: dict[str, str] | None = None) -> None:
+    data = EnsembleData(
+        ensemble=None,
+        resample="jackknife",
+        values=[[1.0 + 0.1j], [0.9 + 0.2j]],
+        dims=("z",),
+        coords={"z": [0.0]},
+        attrs=attrs,
+        name="renormalized_matrix_element",
+    )
+    data.to_netcdf(path)
+
+
+def _partial_fourier_payload(artifact: dict) -> dict:
+    return {
+        "metadata": {
+            "run_id": "partial",
+            "root_directory": ".",
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "random_seed": 1984,
+            "stages": ["fourier_transform"],
+        },
+        "inputs": {"correlators": [], "artifacts": [artifact], "kernels": []},
+        "stages": {
+            "fourier_transform": {
+                "defaults": {
+                    "order": "NLA",
+                    "part": "re",
+                    "coord_unit": "lattice",
+                    "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},
+                },
+                "jobs": [{"id": "ft", "inputs": {"input": artifact["id"]}}],
+            }
+        },
+    }
+
+
+def test_partial_artifact_uses_netcdf_attrs_without_materializing_manifest_fields(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "rn.nc"
+    _write_partial_artifact(
+        artifact_path,
+        attrs={
+            "momentum": "PX5PY0PZ0",
+            "volume": "S48T64",
+            "lattice_spacing_fm": "0.0574",
+            "hadron": "pion",
+            "gfix": "CG",
+            "bz_direction": "X",
+        },
+    )
+    original_bytes = artifact_path.read_bytes()
+    payload = _partial_fourier_payload(
+        {"id": "rn", "stage": "renormalization", "path": artifact_path.name}
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    manifest = validate_manifest_file(manifest_path)
+    artifact = manifest.inputs.artifacts[0]
+    job = manifest.stages["fourier_transform"].jobs[0]
+    kinematics = derive_job_kinematics(manifest, job)
+
+    assert artifact.momentum is None
+    assert artifact.volume is None
+    assert artifact.lattice_spacing_fm is None
+    assert artifact.model_dump(exclude_none=True) == {
+        "id": "rn",
+        "stage": "renormalization",
+        "path": str(artifact_path),
+    }
+    assert artifact.resolved_metadata["hadron"] == "pion"
+    assert kinematics["momentum"] == "PX5PY0PZ0"
+    assert kinematics["momentum_gev"] == pytest.approx(2.250003600391, rel=1e-12)
+    assert validate_stage_inputs("fourier_transform", manifest, job) == []
+    assert artifact_path.read_bytes() == original_bytes
+
+
+def test_partial_artifact_uses_complete_manifest_fallback_for_legacy_netcdf(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "legacy.nc"
+    _write_partial_artifact(artifact_path)
+    artifact = ArtifactInput.model_validate(
+        {
+            "id": "legacy",
+            "stage": "renormalization",
+            "path": str(artifact_path),
+            "momentum": "PX5PY0PZ0",
+            "volume": "S48T64",
+            "lattice_spacing_fm": 0.0574,
+            "hadron": "pion",
+        }
+    )
+
+    metadata = resolve_artifact_metadata(artifact)
+
+    assert metadata["momentum"] == "PX5PY0PZ0"
+    assert metadata["hadron"] == "pion"
+    assert artifact.momentum_gev == pytest.approx(2.250003600391, rel=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("field", "conflicting_value"),
+    [
+        ("momentum", "PX4PY0PZ0"),
+        ("volume", "S64T96"),
+        ("lattice_spacing_fm", 0.06),
+        ("hadron", "proton"),
+        ("gfix", "GI"),
+        ("bz_direction", "Z"),
+    ],
+)
+def test_partial_artifact_rejects_manifest_netcdf_metadata_conflicts(
+    tmp_path: Path,
+    field: str,
+    conflicting_value: object,
+) -> None:
+    artifact_path = tmp_path / f"conflict_{field}.nc"
+    file_metadata = {
+        "momentum": "PX5PY0PZ0",
+        "volume": "S48T64",
+        "lattice_spacing_fm": "0.0574",
+        "hadron": "pion",
+        "gfix": "CG",
+        "bz_direction": "X",
+    }
+    _write_partial_artifact(artifact_path, attrs=file_metadata)
+    declared = {
+        "id": "rn",
+        "stage": "renormalization",
+        "path": str(artifact_path),
+        **file_metadata,
+        field: conflicting_value,
+    }
+    artifact = ArtifactInput.model_validate(declared)
+
+    with pytest.raises(ValueError, match=rf"artifact 'rn' metadata conflict for '{field}'"):
+        resolve_artifact_metadata(artifact)
+
+
+def test_partial_artifact_missing_kinematics_remains_a_stage_input_issue(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "incomplete.nc"
+    _write_partial_artifact(artifact_path, attrs={"hadron": "pion"})
+    manifest = AnalysisManifest.model_validate(
+        _partial_fourier_payload(
+            {"id": "rn", "stage": "renormalization", "path": str(artifact_path)}
+        )
+    )
+    resolve_manifest_artifact_metadata(manifest)
+    job = manifest.stages["fourier_transform"].jobs[0]
+
+    assert validate_stage_inputs("fourier_transform", manifest, job) == [
+        "Fourier job 'ft' is missing parameters: ['momentum_gev']"
+    ]

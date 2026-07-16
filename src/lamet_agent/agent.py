@@ -14,7 +14,7 @@ from .core.data import EnsembleData
 from .core.prompting import build_stage_static_prompt
 from .core.tools import filter_tool_kwargs, prepare_tool_args, resolve_stage_tools, validate_stage_inputs
 from .core.trace import AgentTrace
-from .manifest import AnalysisManifest, ArtifactInput, StageJob
+from .manifest import AnalysisManifest, ArtifactInput, StageJob, resolve_manifest_artifact_metadata
 
 # Partial runs reference external artifacts by id; hydrate them before the LLM loop.
 _STAGE_ARTIFACT_LOADERS: dict[str, dict[str, tuple[str, str]]] = {
@@ -67,6 +67,8 @@ def _hydrate_external_artifact_inputs(
         tool(store, **call_args)
         loaded = store.get(data_key)
         if loaded is not None:
+            if isinstance(loaded, EnsembleData):
+                loaded.array.attrs.update(value.resolved_metadata)
             store[role] = loaded
 
 
@@ -257,6 +259,7 @@ def run_agent(
 ) -> dict[str, Any]:
     """Execute the manifest's ordered stages and per-stage jobs."""
     report_language = _normalize_report_language(report_language)
+    resolve_manifest_artifact_metadata(manifest)
     selected = list(manifest.metadata.stages)
     state = AgentState(run_id=manifest.run_id)
     session = make_llm_session(

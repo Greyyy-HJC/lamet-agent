@@ -19,12 +19,7 @@
       {
         "id": "rn_p5",
         "stage": "renormalization",
-        "path": "runs/ds_pdf_complete/artifacts/renormalization/rn_p5.nc",
-        "momentum": "PX5PY0PZ0",
-        "volume": "S48T64",
-        "lattice_spacing_fm": 0.06,
-        "hadron": "pion",
-        "gfix": "CG"
+        "path": "runs/ds_pdf_complete/artifacts/renormalization/rn_p5.nc"
       }
     ],
     "kernels": [

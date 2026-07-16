@@ -165,8 +165,9 @@ include the closest supported key when one is available. Runner-owned settings
 such as `workers`, `random_seed`, and `sample_error_mode` belong under
 `metadata`; derived quantities such as `momentum_gev` must not be written as
 stage parameters. Full workflows derive them from their upstream correlators,
-while partial workflows declare `momentum`, `volume`, and
-`lattice_spacing_fm` on `inputs.artifacts[]`.
+while partial workflows read `momentum`, `volume`, and `lattice_spacing_fm`
+from standard `EnsembleData` NetCDF attrs. Legacy artifacts missing those attrs
+may declare the complete triple on `inputs.artifacts[]` as a fallback.
 
 ## Manifest Parameter Semantics
 
@@ -458,10 +459,14 @@ manifest with a shorter list and source nodes under `inputs.artifacts`.
 correlator analysis, hybrid-ratio renormalization, Fourier transformation, and
 perturbative matching. `examples/partial_cg_pion_pdf_manifest.json` starts from
 the saved `rn_p5` renormalization artifact and runs only Fourier and matching.
-External partial-run sources declare the discrete kinematic triple `momentum`,
-`volume`, and `lattice_spacing_fm`; the framework derives `momentum_gev` from
-those values just as it does for correlator inputs. `hadron` and `gfix` may also
-be supplied as provenance.
+For a standard `EnsembleData` NetCDF source, an `inputs.artifacts[]` entry only
+needs `id`, `stage`, and `path`: the runner reads the discrete kinematic triple
+`momentum`, `volume`, and `lattice_spacing_fm`, plus provenance such as `hadron`,
+`gfix`, and `bz_direction`, from the data-variable attrs without loading the
+array. The framework derives `momentum_gev` from the resolved discrete values.
+Legacy files may use a complete manifest kinematic triple as a fallback. When a
+supported field is present in both places, the values must agree or validation
+fails before stage execution.
 
 ## Standard Correlator HDF5 Format
 

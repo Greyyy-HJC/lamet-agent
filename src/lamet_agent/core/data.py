@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, NamedTuple, Optional, Sequence, Union, get_args
+from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Sequence, Union, get_args
 import json
 import warnings
 
@@ -21,6 +21,15 @@ RESAMPLE_TYPE_VALUES = get_args(ResampleType)
 RESAMPLE_DIM = "resample"
 
 HBAR_C_GEV_FM = 0.197327  # hbar * c in GeV fm
+
+
+def read_netcdf_attrs(path: Union[str, Path]) -> Dict[str, Any]:
+    """Read the primary EnsembleData variable attrs without loading its array."""
+    with xarray.open_dataset(path, decode_cf=False) as dataset:
+        data_names = [name for name in dataset.data_vars if name != "sdev"]
+        if not data_names:
+            raise ValueError(f"NetCDF artifact has no EnsembleData variable: {path}")
+        return dict(dataset[data_names[0]].attrs)
 
 
 class EnsembleInfo(NamedTuple):
