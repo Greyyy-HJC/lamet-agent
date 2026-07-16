@@ -12,7 +12,15 @@ STAGE_SKILL = """
 Perturbative matching applies the selected NLO kernel matrix independently to
 every quasi-PDF sample. The job's exact kernel_id resolves through the matching
 kernel declaration and its scheme; hybrid kernels use zs_fm and momentum_gev to form
-z_s P_z. The x grid must not contain zero.
+z_s P_z.
+
+Two grids, both optional and both taken from the manifest. quasi_y_ls is the grid
+the kernel integrates over (its columns); it defaults to the grid the Fourier stage
+produced, must stay inside that grid's range, must not contain zero (the kernels
+carry a 1/y measure), and must be uniformly spaced. Setting it to anything else
+linearly interpolates every quasi sample onto it. lc_x_ls is the grid the matched
+PDF comes out on (the kernel's rows); it defaults to the quasi grid and is
+otherwise unconstrained -- it may contain zero and need not be uniform.
 """.strip()
 
 TOOL_CATALOG = {

@@ -65,7 +65,7 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
             "kernels": [
                 {
                     "stage": "matching",
-                    "kernel_id": "CG_gt_qPDF_hybrid_NLO",
+                    "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
                     "kernel_path": "src/lamet_agent/kernels.py",
                     "scheme": "ratio",
                     "kernel_parameters": {},

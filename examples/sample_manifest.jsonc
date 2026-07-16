@@ -91,7 +91,7 @@
     "kernels": [
       {
         "stage": "perturbative_matching", // full consuming StageId, not package shorthand
-        "kernel_id": "CG_gt_qPDF_hybrid_NLO", // exact callable/registry id
+        "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", // exact callable/registry id
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
         "scheme": "hybrid_ratio", // choose a scheme compatible with kernel_id
         "kernel_parameters": {} // fixed kernel-specific values; do not put zs_fm here
@@ -257,7 +257,37 @@
       "defaults": {
         "mu": 2.0, // factorization/renormalization scale in GeV
         "component": "re", // select "re" or "im" from the quasi distribution
-        // "kernel_id": "CG_gt_qPDF_hybrid_NLO" // optional explicit selector; inferred when exactly one matching kernel is declared
+        // Both grids are optional and default to the grid the quasi input carries
+        // (the Fourier y_grid); omit them both and matching runs exactly as it did
+        // before these keys existed. Each accepts {start, stop, num},
+        // {start, stop, step}, or an explicit numeric list.
+        //
+        // "quasi_y_ls" is the grid the kernel integrates over (its columns). It is
+        // written out here to match the Fourier y_grid above, which leaves the
+        // numbers unchanged -- interpolating onto points the samples already sit on
+        // returns them exactly. The cost of spelling it out is that the grid now
+        // lives in two places: move y_grid and leave this behind, and matching will
+        // quietly interpolate onto the stale grid rather than follow the new one.
+        // Delete this key to always follow y_grid instead.
+        //
+        // A quasi_y_ls that departs from the upstream grid must stay inside its range
+        // (there is no data outside it, so it is rejected rather than zero-padded),
+        // must avoid x = 0 (the kernels carry a 1/y measure, so an even num keeps the
+        // midpoint out: num=100 is fine, num=101 is not), and must be uniform.
+        "quasi_y_ls": {
+          "start": -2.0,
+          "stop": 2.0,
+          "num": 100
+        },
+        // "lc_x_ls" is the grid the matched PDF comes out on (the kernel's
+        // rows). Defaults to the quasi grid; unconstrained otherwise -- it may
+        // contain 0, need not be uniform, and may be coarser or denser.
+        "lc_x_ls": {
+          "start": -2.0,
+          "stop": 2.0,
+          "num": 100
+        }
+        // "kernel_id": "CG_gt_quark_PDF_hybrid_NLO" // optional explicit selector; inferred when exactly one matching kernel is declared
         // momentum_gev is derived from the upstream discrete kinematics and
         // should not be hand-written in normal full or partial workflows.
       },

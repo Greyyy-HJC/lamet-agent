@@ -65,7 +65,7 @@
     "kernels": [
       {
         "stage": "perturbative_matching",
-        "kernel_id": "CG_gt_qPDF_hybrid_NLO",
+        "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
         "scheme": "hybrid_ratio",
         "kernel_parameters": {}
@@ -109,7 +109,15 @@
     "perturbative_matching": {
       "defaults": {
         "mu": 2.0,
-        "component": "re" // "re" or "im" or "re+im"
+        "component": "re", // "re" or "im" or "re+im"
+        // Both optional. quasi_y_ls is what the kernel integrates over; it must stay
+        // inside the grid the quasi input actually carries, avoid 0, and be uniform.
+        // Spelled out here to match the upstream Fourier y_grid -- keep the two in
+        // step, since a quasi_y_ls left behind after y_grid moves silently
+        // interpolates onto the stale grid instead of following it.
+        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
+        // lc_x_ls is what the matched PDF comes out on (unconstrained).
+        "lc_x_ls": {"start": -2.0, "stop": 2.0, "num": 100}
       },
       "jobs": [
         {
