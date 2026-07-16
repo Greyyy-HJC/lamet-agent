@@ -403,6 +403,42 @@ def test_fourier_sector_valence_resolves_projection(tmp_path: Path, monkeypatch)
     assert artifact.attrs["part"] == "re"
 
 
+def test_fourier_gpd_sector_valence_resolves_projection(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    coord = np.arange(0.0, 12.0)
+    base_re = np.exp(-0.35 * coord)
+    base_im = 0.1 * np.exp(-0.35 * coord)
+    np.savez(
+        data_path,
+        coord=coord,
+        re_samples=np.vstack([base_re, 1.01 * base_re, 0.99 * base_re]),
+        im_samples=np.vstack([base_im, 0.98 * base_im, 1.02 * base_im]),
+    )
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+
+    run = run_fourier_transform(
+        store,
+        y_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [7.0], "z_ext_max": 8.0},
+        method="GI",
+        order="LA",
+        sector="valence",
+        target_observable="gpd",
+        observable="nucleon_quark_quasi_gpd",
+    )
+
+    result = store["fourier_result"]
+    artifact = EnsembleData.from_netcdf(run["artifact"])
+    assert result["sector"] == "valence"
+    assert result["part"] == "re"
+    assert result["output_scale"] == 2.0
+    assert result["im_flip_for_ft"] is False
+    assert artifact.attrs["sector"] == "valence"
+    assert artifact.attrs["part"] == "re"
+
+
 def test_fourier_sector_sea_combines_total_and_valence(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
@@ -432,6 +468,49 @@ def test_fourier_sector_sea_combines_total_and_valence(tmp_path: Path, monkeypat
     sea = sea_store["fourier_result"]
     assert sea["sector"] == "sea"
     assert sea["part"] == "sea"
+    assert np.allclose(sea["final_ft_re_samples"], 0.5 * (total["final_ft_re_samples"] - valence["final_ft_re_samples"]))
+    assert np.allclose(sea["final_ft_im_samples"], 0.5 * (total["final_ft_im_samples"] - valence["final_ft_im_samples"]))
+
+
+def test_fourier_gpd_sector_sea_combines_total_and_valence(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    coord = np.arange(0.0, 12.0)
+    base_re = np.exp(-0.35 * coord)
+    base_im = 0.1 * np.exp(-0.35 * coord)
+    np.savez(
+        data_path,
+        coord=coord,
+        re_samples=np.vstack([base_re, 1.01 * base_re, 0.99 * base_re]),
+        im_samples=np.vstack([base_im, 0.98 * base_im, 1.02 * base_im]),
+    )
+    common = dict(
+        y_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [7.0], "z_ext_max": 8.0},
+        method="GI",
+        order="LA",
+        target_observable="gpd",
+        observable="nucleon_quark_quasi_gpd",
+    )
+
+    total_store = {}
+    load_renormalized_matrix_element_samples(total_store, path=str(data_path))
+    run_fourier_transform(total_store, sector="total", **common)
+
+    valence_store = {}
+    load_renormalized_matrix_element_samples(valence_store, path=str(data_path))
+    run_fourier_transform(valence_store, sector="valence", **common)
+
+    sea_store = {}
+    load_renormalized_matrix_element_samples(sea_store, path=str(data_path))
+    run_fourier_transform(sea_store, sector="sea", **common)
+
+    total = total_store["fourier_result"]
+    valence = valence_store["fourier_result"]
+    sea = sea_store["fourier_result"]
+    assert sea["sector"] == "sea"
+    assert sea["part"] == "sea"
+    assert sea["output_scale"] == 1.0
     assert np.allclose(sea["final_ft_re_samples"], 0.5 * (total["final_ft_re_samples"] - valence["final_ft_re_samples"]))
     assert np.allclose(sea["final_ft_im_samples"], 0.5 * (total["final_ft_im_samples"] - valence["final_ft_im_samples"]))
 
@@ -672,6 +751,15 @@ def test_fourier_pion_pdf_valence_tail_constraints(tmp_path: Path, monkeypatch) 
     assert np.allclose(params[:, idx["A3p"]], params[:, idx["A1p"]])
     assert np.allclose(params[:, idx["phi3"]], -params[:, idx["phi1"]])
     assert np.allclose(params[:, idx["phi3p"]], -params[:, idx["phi1p"]])
+
+
+def test_fourier_pion_gpd_valence_has_no_pdf_valence_tail_constraints() -> None:
+    labels = _param_labels("GI", "NLA", "pion_quark_quasi_gpd", sector="valence")
+    fit_labels = _param_labels("GI", "NLA", "pion_quark_quasi_gpd", sector="valence", fit=True)
+
+    assert fit_labels == labels
+    for label in ("A1", "A3", "A1p", "A3p", "phi2", "phi2p"):
+        assert label in fit_labels
 
 
 def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> None:

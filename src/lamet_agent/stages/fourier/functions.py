@@ -2616,9 +2616,9 @@ def run_fourier_transform(
         if not target:
             observable_name = str(observable).strip().lower()
             target = "da" if observable_name == "meson_quasi_da" else "gpd" if "gpd" in observable_name else "pdf"
-        if target == "da" or (target == "gpd" and sector != "sea"):
+        if target == "da":
             sector = "full"
-        if target == "pdf":
+        if target in {"pdf", "gpd"}:
             if sector == "valence":
                 part, output_scale, im_flip_for_ft = "re", 2.0, False
             elif sector == "total":
@@ -2787,7 +2787,7 @@ def run_fourier_transform(
         model_scheme["order"] = spec["order"]
         model_scheme["posterior_prior_error_scale"] = spec["prior_width"]
         schemes.append(model_scheme)
-    if sector == "sea" and target == "pdf":
+    if sector == "sea" and target in {"pdf", "gpd"}:
         total_result = run_fourier_workflow(
             matrix_element["coord"],
             matrix_element["re_samples"],
@@ -2876,6 +2876,7 @@ def run_fourier_transform(
             for key in ("ft_re_samples", "ft_im_samples"):
                 total_scheme[key] = 0.5 * (np.asarray(total_scheme[key], dtype=float) - np.asarray(valence_scheme[key], dtype=float))
         part, output_scale, im_flip_for_ft = "sea", 1.0, False
+        result["output_scale"] = 1.0
     else:
         result = run_fourier_workflow(
             matrix_element["coord"],
@@ -2930,7 +2931,7 @@ def run_fourier_transform(
     result.update(candidate_diagnostics)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
-    if not (sector == "sea" and target == "pdf"):
+    if not (sector == "sea" and target in {"pdf", "gpd"}):
         _apply_sample_fit_model_average(
             result,
             resample_mode=resample_mode,
