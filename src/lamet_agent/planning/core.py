@@ -611,12 +611,14 @@ def _make_quick_variant(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         defaults = config.get("defaults")
         if isinstance(defaults, dict):
-            defaults["model_average"] = False
+            if stage_name == "correlator_analysis":
+                defaults["model_average"] = False
             for key in ("pt2_windows", "pt3_tau_cuts", "nstate", "fit_scope", "fit_strategy", "prior_width", "order"):
                 if key in defaults:
                     defaults[key] = _shrink_list(defaults[key])
             scheme_scan = defaults.get("scheme_scan")
             if isinstance(scheme_scan, dict):
+                scheme_scan["model_average"] = False
                 for key in ("zmin_values", "zmax_values", "order", "posterior_prior_error_scale"):
                     if key in scheme_scan:
                         scheme_scan[key] = _shrink_list(scheme_scan[key])
@@ -627,7 +629,8 @@ def _make_quick_variant(payload: dict[str, Any]) -> dict[str, Any]:
             for job in jobs:
                 if not isinstance(job, dict) or not isinstance(job.get("params"), dict):
                     continue
-                job["params"]["model_average"] = False
+                if stage_name == "correlator_analysis":
+                    job["params"]["model_average"] = False
                 for key in ("pt2_windows", "pt3_tau_cuts", "nstate", "fit_scope", "fit_strategy", "prior_width", "order"):
                     if key in job["params"]:
                         job["params"][key] = _shrink_list(job["params"][key])

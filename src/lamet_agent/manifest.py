@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
+from lamet_agent.manifest_params import validate_stage_parameter_mapping
+
 
 StageId = Literal[
     "correlator_analysis",
@@ -294,19 +296,26 @@ class AnalysisManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_dag(self) -> "AnalysisManifest":
-        fourier = self.stages.get("fourier_transform")
-        if fourier is not None:
-            if "Lambda0" in fourier.defaults:
-                raise ValueError(
-                    "stages.fourier_transform.defaults.Lambda0 is no longer supported; "
-                    "use stages.fourier_transform.defaults.Lambda0_gev"
+        parameter_issues: list[str] = []
+        for stage, config in self.stages.items():
+            parameter_issues.extend(
+                validate_stage_parameter_mapping(
+                    stage,
+                    config.defaults,
+                    path=f"stages.{stage}.defaults",
                 )
-            for index, job in enumerate(fourier.jobs):
-                if "Lambda0" in job.params:
-                    raise ValueError(
-                        f"stages.fourier_transform.jobs[{index}].params.Lambda0 is no longer supported; "
-                        f"use stages.fourier_transform.jobs[{index}].params.Lambda0_gev"
+            )
+            for index, job in enumerate(config.jobs):
+                parameter_issues.extend(
+                    validate_stage_parameter_mapping(
+                        stage,
+                        job.params,
+                        path=f"stages.{stage}.jobs[{index}].params",
                     )
+                )
+        if parameter_issues:
+            details = "\n".join(f"- {issue}" for issue in parameter_issues)
+            raise ValueError(f"Unsupported stage manifest parameters:\n{details}")
 
         for index, kernel in enumerate(self.inputs.kernels):
             if "zs_fm" in kernel.kernel_parameters:
@@ -315,22 +324,6 @@ class AnalysisManifest(BaseModel):
                     "use stages.perturbative_matching.defaults.zs_fm or "
                     "stages.perturbative_matching.jobs[].params.zs_fm"
                 )
-
-        renormalization = self.stages.get("renormalization")
-        if renormalization is not None:
-            nested_defaults = renormalization.defaults.get("scheme_parameters")
-            if isinstance(nested_defaults, dict) and "zs_fm" in nested_defaults:
-                raise ValueError(
-                    "stages.renormalization.defaults.scheme_parameters.zs_fm is no longer supported; "
-                    "use stages.renormalization.defaults.zs_fm"
-                )
-            for index, job in enumerate(renormalization.jobs):
-                nested_params = job.params.get("scheme_parameters")
-                if isinstance(nested_params, dict) and "zs_fm" in nested_params:
-                    raise ValueError(
-                        f"stages.renormalization.jobs[{index}].params.scheme_parameters.zs_fm is no longer "
-                        f"supported; use stages.renormalization.jobs[{index}].params.zs_fm"
-                    )
 
         if len(set(self.metadata.stages)) != len(self.metadata.stages):
             raise ValueError("metadata.stages contains duplicate stage ids")

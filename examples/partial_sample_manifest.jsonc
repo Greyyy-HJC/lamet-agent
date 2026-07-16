@@ -135,15 +135,13 @@
     "extrapolation": {
       // PLACEHOLDER: this stage is not implemented yet. Shown only to illustrate
       // MERGE POINT (combine multiple momenta for the large-momentum
-      // extrapolation). Params are intentionally minimal.
+      // extrapolation). It accepts no params until it is implemented.
       "defaults": {},
       "jobs": [
         {
           "id": "ex_pdf",
           "inputs": { "momenta": ["mt_p4", "mt_p5"] },
-          "params": {
-            "momentum_list_gev": [1.80, 2.25] // display values; exact momenta propagate from artifacts
-          }
+          "params": {}
         }
       ]
     }

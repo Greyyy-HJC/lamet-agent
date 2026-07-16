@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.manifest_params import validate_stage_parameter_mapping
 
 
 def _payload() -> dict:
@@ -93,6 +94,103 @@ def test_manifest_accepts_fourier_lambda0_gev() -> None:
     AnalysisManifest.model_validate(_fourier_payload())
 
 
+def test_manifest_rejects_unknown_defaults_and_job_params_together() -> None:
+    payload = _fourier_payload()
+    payload["stages"]["fourier_transform"]["defaults"]["posterior_prior_eror_scale"] = 3.0
+    payload["stages"]["fourier_transform"]["jobs"][0]["params"] = {"unused_knob": True}
+
+    with pytest.raises(ValidationError) as exc_info:
+        AnalysisManifest.model_validate(payload)
+
+    message = str(exc_info.value)
+    assert "stages.fourier_transform.defaults.posterior_prior_eror_scale" in message
+    assert "did you mean 'posterior_prior_error_scale'?" in message
+    assert "stages.fourier_transform.jobs[0].params.unused_knob" in message
+
+
+def test_manifest_rejects_runner_derived_stage_kinematics() -> None:
+    payload = _fourier_payload()
+    payload["stages"]["fourier_transform"]["defaults"].update(
+        {"pz_gev": 2.1, "momentum_gev": 2.2}
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        AnalysisManifest.model_validate(payload)
+
+    message = str(exc_info.value)
+    assert "stages.fourier_transform.defaults.pz_gev" in message
+    assert "stages.fourier_transform.defaults.momentum_gev" in message
+    assert "runner-derived from upstream discrete momentum, volume, and lattice_spacing_fm" in message
+    assert "inputs.artifacts[]" in message
+
+
+def test_manifest_rejects_run_wide_stage_parameter() -> None:
+    payload = _payload()
+    payload["stages"]["correlator_analysis"]["defaults"]["workers"] = 4
+
+    with pytest.raises(ValidationError, match=r"metadata\.workers"):
+        AnalysisManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("stage", "defaults", "expected_path"),
+    [
+        (
+            "correlator_analysis",
+            {"pt2_windows": [{"tmin": 2, "tmax": 8, "tmiin": 3}]},
+            r"stages\.correlator_analysis\.defaults\.pt2_windows\[0\]\.tmiin",
+        ),
+        (
+            "fourier_transform",
+            {"y_grid": {"start": -1.0, "stop": 1.0, "numm": 10}},
+            r"stages\.fourier_transform\.defaults\.y_grid\.numm",
+        ),
+        (
+            "fourier_transform",
+            {"scheme_scan": {"zmin_values": [1.0], "smoth": "linear"}},
+            r"stages\.fourier_transform\.defaults\.scheme_scan\.smoth",
+        ),
+        (
+            "perturbative_matching",
+            {"plot": {"xlim": [-1.0, 1.0], "ylimm": [-0.2, 1.0]}},
+            r"stages\.perturbative_matching\.defaults\.plot\.ylimm",
+        ),
+    ],
+)
+def test_manifest_recursively_rejects_unknown_nested_stage_parameters(
+    stage: str,
+    defaults: dict,
+    expected_path: str,
+) -> None:
+    payload = _payload()
+    payload["metadata"]["stages"] = [stage]
+    payload["stages"] = {stage: {"defaults": defaults, "jobs": [{"id": "job"}]}}
+
+    with pytest.raises(ValidationError, match=expected_path):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_rejects_parameters_for_parameterless_stage() -> None:
+    payload = _payload()
+    payload["metadata"]["stages"] = ["review"]
+    payload["stages"] = {
+        "review": {"defaults": {"freeform": True}, "jobs": [{"id": "review"}]}
+    }
+
+    with pytest.raises(ValidationError, match=r"stages\.review\.defaults\.freeform"):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_stage_parameter_contract_fails_closed_when_module_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "lamet_agent.manifest_params.resolve_stage_package",
+        lambda _stage: "missing_package",
+    )
+
+    with pytest.raises(ValueError, match="must provide parameter contract module"):
+        validate_stage_parameter_mapping("review", {}, path="stages.review.defaults")
+
+
 def test_manifest_rejects_zs_fm_in_kernel_parameters() -> None:
     payload = _payload()
     payload["inputs"]["kernels"] = [
@@ -122,6 +220,33 @@ def test_manifest_rejects_zs_fm_in_renormalization_scheme_parameters() -> None:
         }
     }
     with pytest.raises(ValidationError, match=r"renormalization\.defaults\.scheme_parameters\.zs_fm"):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_rejects_zs_fm_in_renormalization_job_scheme_parameters() -> None:
+    payload = _payload()
+    payload["metadata"]["stages"] = ["renormalization"]
+    payload["inputs"]["artifacts"] = [
+        {"id": "target", "stage": "correlator_analysis", "path": "target.nc"},
+        {"id": "denominator", "stage": "correlator_analysis", "path": "denominator.nc"},
+    ]
+    payload["stages"] = {
+        "renormalization": {
+            "defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.2},
+            "jobs": [
+                {
+                    "id": "rn",
+                    "inputs": {"target": "target", "denominator": "denominator"},
+                    "params": {"scheme_parameters": {"zs_fm": 0.3}},
+                }
+            ],
+        }
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match=r"renormalization\.jobs\[0\]\.params\.scheme_parameters\.zs_fm",
+    ):
         AnalysisManifest.model_validate(payload)
 
 

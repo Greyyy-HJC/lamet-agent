@@ -88,6 +88,8 @@ Package modules:
 - `src/lamet_agent/cli.py`: CLI for `validate` and `run`.
 - `src/lamet_agent/agent.py`: stage/job DAG runner and per-job LLM tool loop.
 - `src/lamet_agent/manifest.py`: `metadata`/`inputs`/`stages` schema, path resolution, and DAG validation.
+- `src/lamet_agent/manifest_params.py`: recursive stage `defaults`/job `params` contract validation.
+- `src/lamet_agent/stage_registry.py`: lightweight stage-id → package routing; re-exported by `core/stages.py`.
 - `src/lamet_agent/kernels.py`: built-in matching kernels.
 - `src/lamet_agent/core/stages.py`: stage-id → package routing.
 - `src/lamet_agent/core/tools.py`: resolves `STAGE_TOOLS`, prepares tool args, plot paths under `artifacts/`.
@@ -96,20 +98,22 @@ Package modules:
 - `src/lamet_agent/core/trace.py`: optional ReAct-style stdout trace (`--verbose`).
 - `src/lamet_agent/core/data.py`: typed ensemble containers and cross-stage data helpers.
 - `src/lamet_agent/core/plotting.py`: shared plotting conventions and helpers.
-- `src/lamet_agent/stages/`: five stage packages, each with `functions.py`, `prompts.py`, and `skills.py`:
+- `src/lamet_agent/stages/`: stage packages, each with `params.py`, `functions.py`, `prompts.py`, and `skills.py`:
   - `correlator` (`correlator_analysis`)
   - `renorm` (`renormalization`)
   - `fourier` (`fourier_transform`)
   - `matching` (`perturbative_matching`)
   - `extrapolation` (`extrapolation`)
+  - `review` (`review`)
 - `examples/`: smoke manifests, fake data generator, and local workflow examples.
 - `tests/unit/`: schema, CLI, agent loop, tools, trace, and stage tests.
 - `runs/`: typical output location for logged runs (gitignored); artifact placement comes from the manifest.
 
 ## How To Add A New Stage
 
-1. Add the stage id to `StageId` in `manifest.py` and `STAGE_TO_PACKAGE` in `core/stages.py`.
+1. Add the stage id to `StageId` in `manifest.py` and `STAGE_TO_PACKAGE` in `stage_registry.py`.
 2. Create `src/lamet_agent/stages/<package>/` with:
+   - `params.py`: `MANIFEST_PARAM_SCHEMA` for every supported user-authored stage/default parameter, including nested keys; use an empty contract when the stage accepts none.
    - `functions.py`: stage tools and a `STAGE_TOOLS` dict mapping tool names to callables `(store, **kwargs) -> dict`.
    - `prompts.py`: stage instruction text and action protocol for the LLM.
    - `skills.py`: `STAGE_SKILL` strategy text, `tool_catalog()`, and `validate_stage_inputs(manifest, job)`.
@@ -137,11 +141,12 @@ Package modules:
 - Required top-level fields are `metadata`, `inputs`, and `stages`.
 - `metadata.stages` is the sole execution order; stage selection is not a CLI override.
 - Stage entries contain `defaults` and `jobs`; job `params` shallow-merge over defaults.
+- Stage `defaults` and job `params` reject keys not declared by that stage's `MANIFEST_PARAM_SCHEMA`; never add a manifest parameter without adding its consumption path and contract entry together.
 - Correlator jobs group `inputs.correlators` by `correlator_ids`; downstream jobs reference earlier job ids through role-named `inputs`.
 - All ids are globally unique. External partial-run sources are declared in `inputs.artifacts`.
 - Paths resolve from `metadata.root_directory`; default job artifacts are `<artifacts_directory>/<stage>/<job_id>.nc`.
 - Terminal stage tools must place their primary in-memory result in `store["output"]`.
-- Fourier jobs consume role `input`; matching jobs consume role `quasi`. Partial Fourier runs declare the renormalized NetCDF and its `a_fm`, `pz_gev`, `hadron`, and `gfix` metadata under `inputs.artifacts`.
+- Fourier jobs consume role `input`; matching jobs consume role `quasi`. Partial runs declare discrete `momentum`, `volume`, and `lattice_spacing_fm` under `inputs.artifacts`; physical `momentum_gev` is derived.
 - `inputs.kernels[].stage` must be a full `StageId` (`renormalization` or `perturbative_matching`), not a package shorthand such as `matching`.
 - Hybrid `zs_fm` is a flat stage/job parameter under `renormalization` and `perturbative_matching`; do not place it in `inputs.kernels[].kernel_parameters` or renormalization `scheme_parameters`.
 

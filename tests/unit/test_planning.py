@@ -223,11 +223,20 @@ def test_plan_normalizes_legacy_matching_kernel_stage(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     payload["metadata"]["stages"] = ["perturbative_matching"]
     payload["inputs"]["correlators"] = []
-    payload["inputs"]["artifacts"] = [{"id": "ft", "stage": "fourier_transform", "path": "ft.nc"}]
+    payload["inputs"]["artifacts"] = [
+        {
+            "id": "ft",
+            "stage": "fourier_transform",
+            "path": "ft.nc",
+            "momentum": "PX2PY0PZ0",
+            "volume": "S16T3",
+            "lattice_spacing_fm": 0.1,
+        }
+    ]
     payload["inputs"]["kernels"][0]["stage"] = "matching"
     payload["stages"] = {
         "perturbative_matching": {
-            "defaults": {"momentum_gev": 2.15, "mu": 2.0, "component": "re"},
+            "defaults": {"mu": 2.0, "component": "re"},
             "jobs": [{"id": "mt", "inputs": {"quasi": "ft"}}],
         }
     }
@@ -239,6 +248,34 @@ def test_plan_normalizes_legacy_matching_kernel_stage(tmp_path: Path) -> None:
     assert quick["inputs"]["kernels"][0]["stage"] == "perturbative_matching"
     assert full["inputs"]["kernels"][0]["stage"] == "perturbative_matching"
     assert any(edit["path"] == "inputs.kernels[0].stage" for edit in edits)
+
+
+def test_plan_strict_validation_rejects_handwritten_matching_momentum_gev(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"]["stages"] = ["perturbative_matching"]
+    payload["inputs"]["correlators"] = []
+    payload["inputs"]["artifacts"] = [
+        {
+            "id": "ft",
+            "stage": "fourier_transform",
+            "path": "ft.nc",
+            "momentum": "PX2PY0PZ0",
+            "volume": "S16T3",
+            "lattice_spacing_fm": 0.1,
+        }
+    ]
+    payload["inputs"]["kernels"][0]["stage"] = "perturbative_matching"
+    payload["stages"] = {
+        "perturbative_matching": {
+            "defaults": {"momentum_gev": 2.15, "mu": 2.0, "component": "re"},
+            "jobs": [{"id": "mt", "inputs": {"quasi": "ft"}}],
+        }
+    }
+
+    valid, issues = validate_candidate_payload(tmp_path / "draft.json", payload)
+
+    assert valid is False
+    assert any("stages.perturbative_matching.defaults.momentum_gev" in issue.message for issue in issues)
 
 
 def test_plan_requires_patch_after_yes_to_stage_parameter_completion(tmp_path: Path) -> None:

@@ -640,3 +640,9 @@
 
 - Integrated the upstream matching-grid update with the local Fourier decay-offset work, adopting the ``*_quark_PDF_*`` kernel ids and the ``quasi_y_ls``, ``lc_x_ls``, and ``endpoint_cut`` tool parameters.
 - Preserved manifest-driven tool tests across the kernel rename so editable example parameter values are not hard-coded in assertions.
+
+## 2026-07-16 (Strict stage manifest parameter contracts)
+
+- Added lightweight per-stage ``params.py`` contracts and recursive validation for unknown keys in stage ``defaults`` and job ``params``, including nested grids, scans, plot settings, and correlator windows.
+- Added path-specific typo, legacy-field, derived-kinematics, and run-metadata guidance; ``validate``, ``run``, and interactive planning now reject ignored stage parameters consistently.
+- Removed unused extrapolation momentum placeholders and fixed the planning quick variant so correlator-only ``model_average`` is no longer written into unrelated stages.

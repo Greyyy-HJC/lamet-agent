@@ -307,16 +307,14 @@
     "extrapolation": {
       // PLACEHOLDER: this stage is not implemented yet. The structure below only
       // illustrates MERGE POINT 2 (combine multiple momenta for the
-      // large-momentum extrapolation). Physical values here are illustrative
-      // reporting inputs until the stage derives them directly from artifacts.
+      // large-momentum extrapolation). It accepts no params until an implementation
+      // derives exact momenta directly from the upstream artifacts.
       "defaults": {},
       "jobs": [
         {
           "id": "ex_pdf",
           "inputs": { "momenta": ["mt_p4", "mt_p5"] },
-          "params": {
-            "momentum_list_gev": [1.80, 2.25] // derived P4/P5 magnitudes, rounded only for this placeholder
-          }
+          "params": {}
         }
       ]
     }
