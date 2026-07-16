@@ -27,7 +27,7 @@ def _manifest(*, matching_zs: float = 0.2, renorm_zs: float = 0.2) -> AnalysisMa
                 "kernels": [
                     {
                         "stage": "perturbative_matching",
-                        "kernel_id": "CG_gt_qPDF_hybrid_NLO",
+                        "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
                         "kernel_path": "kernels.py",
                         "scheme": "hybrid_ratio",
                         "kernel_parameters": {},
@@ -44,7 +44,7 @@ def _manifest(*, matching_zs: float = 0.2, renorm_zs: float = 0.2) -> AnalysisMa
                     "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
                 },
                 "perturbative_matching": {
-                    "defaults": {"kernel_id": "CG_gt_qPDF_hybrid_NLO", "zs_fm": 9.9},
+                    "defaults": {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "zs_fm": 9.9},
                     "jobs": [{"id": "mt", "inputs": {"quasi": "ft"}, "params": {"zs_fm": matching_zs}}],
                 },
                 "review": {"defaults": {}, "jobs": [{"id": "review_job"}]},
@@ -96,9 +96,9 @@ def test_hybrid_zs_consistency_handles_independent_chains_and_nonhybrid_matching
     checks = hybrid_zs_consistency_checks(manifest)
 
     assert [check["status"] for check in checks] == ["consistent", "consistent"]
-    manifest.inputs.kernels[0].kernel_id = "CG_gt_qPDF_ratio_NLO"
+    manifest.inputs.kernels[0].kernel_id = "CG_gt_quark_PDF_ratio_NLO"
     manifest.inputs.kernels[0].scheme = "ratio"
-    manifest.stages["perturbative_matching"].defaults["kernel_id"] = "CG_gt_qPDF_ratio_NLO"
+    manifest.stages["perturbative_matching"].defaults["kernel_id"] = "CG_gt_quark_PDF_ratio_NLO"
     assert all(check["status"] == "not_applicable" for check in hybrid_zs_consistency_checks(manifest))
 
 

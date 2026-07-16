@@ -556,7 +556,7 @@ def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:
         effective_params=effective_matching_params(manifest, job),
         artifacts_dir=tmp_path, store={"quasi": object()},
     )
-    assert args["kernel_id"] == "CG_gt_qPDF_hybrid_NLO"
+    assert args["kernel_id"] == "CG_gt_quark_PDF_hybrid_NLO"
     assert args["momentum_gev"] == pytest.approx(manifest.correlators[0].momentum_gev("PX5PY0PZ0"))
     assert args["zs_fm"] == 0.1722
 

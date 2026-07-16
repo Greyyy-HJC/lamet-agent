@@ -68,7 +68,9 @@ _FOURIER_RUN_KEYS = frozenset(
         "report",
     }
 )
-_MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "momentum_gev", "mu", "zs_fm"})
+_MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "momentum_gev", "mu", "zs_fm", "lc_x_ls"})
+_MATCHING_LOAD_KEYS = frozenset({"quasi_y_ls"})
+_MATCHING_APPLY_KEYS = frozenset({"endpoint_cut"})
 
 
 def setup_logger(
@@ -631,6 +633,7 @@ def prepare_tool_args(
             matching["kernel_id"] = resolve_kernel_id(declared_id, declaration.scheme)
         if tool_name == "load_quasi_pdf":
             resolved["component"] = matching.get("component", "re")
+            resolved.update({key: matching[key] for key in _MATCHING_LOAD_KEYS if key in matching})
             if isinstance(quasi, ArtifactInput):
                 resolved["path"] = quasi.path
             elif "path" not in resolved:
@@ -641,6 +644,7 @@ def prepare_tool_args(
             resolved.update({key: matching[key] for key in _MATCHING_KERNEL_KEYS if key in matching})
         elif tool_name == "apply_matching":
             resolved.update({"save_path": str(artifacts_dir / job.id), "artifacts_dir": str(artifacts_dir)})
+            resolved.update({key: matching[key] for key in _MATCHING_APPLY_KEYS if key in matching})
         elif tool_name == "plot_matched_pdf":
             resolved.update({"save_path": str(artifacts_dir / job.id), "artifacts_dir": str(artifacts_dir)})
             plot = matching.get("plot", {})

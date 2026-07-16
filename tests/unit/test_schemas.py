@@ -63,7 +63,7 @@ def test_manifest_rejects_zs_fm_in_kernel_parameters() -> None:
     payload["inputs"]["kernels"] = [
         {
             "stage": "perturbative_matching",
-            "kernel_id": "CG_gt_qPDF_hybrid_NLO",
+            "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
             "kernel_path": "kernels.py",
             "scheme": "hybrid_ratio",
             "kernel_parameters": {"zs_fm": 0.2},

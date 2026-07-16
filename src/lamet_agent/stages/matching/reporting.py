@@ -36,7 +36,7 @@ from lamet_agent.core.reporting import (
 
 
 # Logical operator -> human text, keyed by the ``<operator>`` field of a
-# ``CG_<operator>_qPDF_<scheme>_NLO`` kernel_id.
+# ``CG_<operator>_quark_PDF_<scheme>_NLO`` kernel_id.
 OPERATOR_TEXT = {
     "gt": ("unpolarized $\\gamma^t$ quark PDF", "非极化 $\\gamma^t$ 夸克 PDF"),
     "gtg5": ("helicity $\\gamma^t\\gamma_5$ quark PDF", "螺旋度 $\\gamma^t\\gamma_5$ 夸克 PDF"),
@@ -66,25 +66,40 @@ MATCHING_ARTIFACT_DESCRIPTIONS = {
 MATCHING_ARTIFACT_ORDER = ("lightcone_artifact", "matched_plot", "matched_plot_image")
 
 
-DISTRIBUTION_TOKENS = ("qPDF", "gPDF", "DA", "qDA", "gDA")
+DISTRIBUTION_TOKENS = ("quark_PDF", "gluon_PDF", "DA", "qDA", "gDA")
+
+DA_TOKENS = frozenset({"DA", "qDA", "gDA"})
+
+
+def is_da_kernel(kernel_id: str) -> bool:
+    """True for a distribution-amplitude kernel, whose factorization has a different shape.
+
+    A DA kernel's density is a genuine two-variable ``V(x, y)`` carrying its own poles and
+    integrated with a plain ``dy``; a PDF kernel's is a coefficient of ``ksi = x/y`` alone,
+    integrated with ``dy/|y|``. The two therefore diverge differently at the endpoints, so
+    callers that treat them alike would misstate whichever kernel they were not written for.
+    """
+    return any(part in DA_TOKENS for part in str(kernel_id).split("_"))
 
 
 def _parse_kernel_id(kernel_id: str) -> tuple[str, str]:
     """Split a ``<gauge>_<operator>_<distribution>_<scheme>_<order>`` id into (operator, scheme).
 
-    The distribution token (qPDF/gPDF for the quark/gluon PDF, DA for the meson
+    The distribution token (quark_PDF/gluon_PDF for the quark/gluon PDF, DA for the meson
     distribution amplitude) separates the operator from the scheme, and the order (NLO)
-    trails it. The leading token is the gauge construction (CG or GI) and is not returned
-    -- ``_settings_table`` reads it off the id directly. Falls back to ('', '') for any id
-    that does not follow the convention so the report degrades gracefully instead of raising.
+    trails it. A token may itself span several ``_`` segments, so match on joined segments
+    rather than on a single one. The leading token is the gauge construction (CG or GI) and
+    is not returned -- ``_settings_table`` reads it off the id directly. Falls back to
+    ('', '') for any id that does not follow the convention so the report degrades
+    gracefully instead of raising.
     """
     parts = str(kernel_id).split("_")
-    # <gauge>, <op...>, qPDF|DA, <scheme>, <order>
-    parton_idx = next((i for i, part in enumerate(parts) if part in DISTRIBUTION_TOKENS), -1)
-    if len(parts) >= 4 and parton_idx >= 2 and parton_idx + 1 < len(parts):
-        operator = "_".join(parts[1:parton_idx])
-        scheme = parts[parton_idx + 1]
-        return operator, scheme
+    # <gauge>, <op...>, quark_PDF|DA, <scheme>, <order>
+    for idx in range(2, len(parts)):
+        for token in DISTRIBUTION_TOKENS:
+            width = len(token.split("_"))
+            if idx + width < len(parts) and "_".join(parts[idx : idx + width]) == token:
+                return "_".join(parts[1:idx]), parts[idx + width]
     return "", ""
 
 
@@ -143,6 +158,12 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     reference_en = f"arXiv:{arxiv_id} {equations}".strip() if arxiv_id else "not declared by the kernel"
     reference_zh = f"arXiv:{arxiv_id} {equations}".strip() if arxiv_id else "该匹配核未标注出处"
     x_grid = np.asarray(data.get("x_grid", []), dtype=float)
+    # The quasi grid is only worth its own row when matching did not simply keep it:
+    # normally it is the light-cone grid, and repeating it would be noise.
+    quasi_x_grid = np.asarray(data.get("quasi_x_grid", []), dtype=float)
+    separate_quasi_grid = quasi_x_grid.size > 0 and (
+        quasi_x_grid.size != x_grid.size or not np.allclose(quasi_x_grid, x_grid)
+    )
     zspz = data.get("zspz")
     pz_value = data.get("momentum_gev")
     try:
@@ -165,10 +186,12 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
         rows.extend(
             [
                 ("重采样模式", f"`{data.get('resample', 'not recorded')}`，共 {data.get('n_sample', 'n/a')} 个样本"),
-                ("x 网格", _format_grid(x_grid, language="zh")),
-                ("quasi-PDF 来源", f"`{data.get('source', 'not recorded')}`"),
+                ("x 网格（光锥输出）", _format_grid(x_grid, language="zh")),
             ]
         )
+        if separate_quasi_grid:
+            rows.append(("x 网格（quasi 输入）", _format_grid(quasi_x_grid, language="zh") + "；与输出网格不同，quasi 数据经线性插值"))
+        rows.append(("quasi-PDF 来源", f"`{data.get('source', 'not recorded')}`"))
         header = "| 条目 | 数值或设置 |"
     else:
         rows = [
@@ -185,10 +208,12 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
         rows.extend(
             [
                 ("Resampling mode", f"`{data.get('resample', 'not recorded')}` with {data.get('n_sample', 'n/a')} samples"),
-                ("x grid", _format_grid(x_grid, language="en")),
-                ("Quasi-PDF source", f"`{data.get('source', 'not recorded')}`"),
+                ("x grid (light-cone output)", _format_grid(x_grid, language="en")),
             ]
         )
+        if separate_quasi_grid:
+            rows.append(("x grid (quasi input)", _format_grid(quasi_x_grid, language="en") + "; differs from the output grid, so the quasi data was linearly interpolated"))
+        rows.append(("Quasi-PDF source", f"`{data.get('source', 'not recorded')}`"))
         header = "| Quantity | Value |"
     lines = [header, "|---|---|"]
     lines.extend(f"| {name} | {value} |" for name, value in rows)
@@ -209,7 +234,7 @@ def _field_definitions(*, language: str) -> list[str]:
     return [
         "| Entry | Meaning |",
         "|---|---|",
-        "| Operator / kernel | The selected matching kernel `CG_<operator>_qPDF_<scheme>_NLO`; the operator sets the Dirac structure (gt, gtg5), `qPDF` marks it as a quark kernel, the scheme sets the finite terms, and NLO is the perturbative order. |",
+        "| Operator / kernel | The selected matching kernel `CG_<operator>_quark_PDF_<scheme>_NLO`; the operator sets the Dirac structure (gt, gtg5), `quark_PDF` marks it as a quark kernel, the scheme sets the finite terms, and NLO is the perturbative order. |",
         "| Matching scheme | `msbar` / `ratio` / `hybrid`, chosen by the kernel_id suffix; hybrid also needs the Wilson-line length $z_s$. |",
         "| Hadron momentum | $P_z$, which must match the Fourier stage and enters the kernel's $\\log(4y^2P_z^2/\\mu^2)$ terms. |",
         "| Renormalization scale | MSbar renormalization scale $\\mu$ in GeV (default 2.0). |",
