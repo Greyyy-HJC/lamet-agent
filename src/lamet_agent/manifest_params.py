@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from difflib import get_close_matches
 from typing import Any
@@ -25,6 +26,22 @@ class StageParamContract:
 
 
 _GRID_SCHEMA = {"num": None, "start": None, "step": None, "stop": None}
+
+
+def merge_stage_params(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge job parameter overrides onto stage defaults.
+
+    Nested mappings merge recursively; all other values, including lists, are
+    replaced as complete values by the job override.
+    """
+    merged = deepcopy(defaults)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_stage_params(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
 
 STAGE_PARAM_CONTRACTS = {
     "correlator_analysis": StageParamContract(
@@ -51,22 +68,36 @@ STAGE_PARAM_CONTRACTS = {
     ),
     "renormalization": StageParamContract(
         schema={
-            "d": None,
             "ensemble": None,
             "kernel_id": None,
-            "m0_gev": None,
             "mu": None,
             "normalization": None,
             "scheme": None,
             "scheme_parameters": {
+                "LambdaQCD_gev": None,
+                "d": None,
                 "delta_m_gev": None,
                 "m0_gev": None,
+                "svdcut": None,
+                "z_coverage_policy": None,
             },
-            "svdcut": None,
-            "z_coverage_policy": None,
             "zs_fm": None,
         },
         removed={
+            "LambdaQCD": (
+                "was renamed; use scheme_parameters.LambdaQCD_gev and specify the value explicitly."
+            ),
+            "d": "belongs to hybrid_self_renormalization; use scheme_parameters.d.",
+            "m0_gev": (
+                "is scheme-specific; use scheme_parameters.m0_gev for hybrid_ratio or "
+                "hybrid_self_renormalization."
+            ),
+            "svdcut": (
+                "belongs to hybrid_self_renormalization; use scheme_parameters.svdcut."
+            ),
+            "z_coverage_policy": (
+                "belongs to hybrid_self_renormalization; use scheme_parameters.z_coverage_policy."
+            ),
             "alpha_s": "is derived from mu by alphas_nloop and cannot be specified.",
             "Nf": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu).",
             "order": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu).",
@@ -77,7 +108,7 @@ STAGE_PARAM_CONTRACTS = {
                 "z_coverage_policy='extrapolate'."
             ),
             "k": "is an internal hybrid-self-renormalization ansatz constant and cannot be overridden.",
-            "lqcd": "is an internal hybrid-self-renormalization ansatz constant and cannot be overridden.",
+            "lqcd": "was renamed; use scheme_parameters.LambdaQCD_gev and specify the value explicitly.",
             "scheme_parameters.zs_fm": (
                 "is no longer supported; use flat stages.renormalization.defaults.zs_fm "
                 "or the corresponding jobs[].params.zs_fm."

@@ -719,3 +719,21 @@
 - Removed ``order`` and ``Nf`` from the self-renormalization manifest, tools, MSbar conversion interfaces, provenance, reports, and examples; self-renormalization now derives its coupling through ``alphas_nloop(mu)`` while the general running helper remains available to matching.
 - Rebuilt renormalization tool arguments exclusively from runner-owned manifest and store state so model-supplied role names, paths, and explicit null values cannot override job contracts.
 - Enforced the scheme-specific renormalization tool sequence, rejected premature finish/input requests as recoverable observations, and made exhausted incomplete jobs fail instead of reporting a partial stage as completed.
+
+## 2026-07-17 (Configurable hybrid-self LambdaQCD)
+
+- Added ``scheme_parameters.LambdaQCD`` (GeV, default ``0.1``) to the hybrid-self-renormalization fit, apply, extension, remap, diagnostic, reporting, and artifact-provenance paths.
+- Grouped the other hybrid-self-only manifest settings under ``scheme_parameters`` (``d``, ``svdcut``, and ``z_coverage_policy``), while keeping the scheme-shared ``m0_gev`` nested and leaving ``mu``/``kernel_id`` at the kernel-selection layer.
+- Reject flat legacy placements and hybrid-self-only keys on ratio schemes, require apply jobs to agree with upstream ``zR`` LambdaQCD provenance, and migrated the pion/kaon examples plus schema, runner, planning, and numerical regression tests.
+
+## 2026-07-17 (Required unit-explicit LambdaQCD)
+
+- Renamed the hybrid-self parameter and artifact provenance field to ``scheme_parameters.LambdaQCD_gev`` so the GeV unit is explicit.
+- Removed the internal ``0.1`` fallback: every hybrid-self fit and apply job must now declare ``LambdaQCD_gev``, and missing values fail stage validation before tool execution.
+- Kept ``0.1`` explicitly in every pion/kaon DA fit and apply job, and added migration errors for the old ``LambdaQCD`` and lowercase ``lqcd`` names.
+
+## 2026-07-17 (Recursive stage parameter inheritance)
+
+- Replaced shallow defaults/job parameter composition with one shared recursive merge used by the runner, stage validation, planning, kinematics derivation, and review checks.
+- Nested mappings now inherit and override by key, while job-level lists, scalars, and type changes still replace the complete default value.
+- Moved the required pion/kaon DA ``scheme_parameters.LambdaQCD_gev: 0.1`` to renormalization defaults; fit/apply jobs now declare only their operator-specific ``d``, ``m0_gev``, ``svdcut``, or coverage overrides.

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from lamet_agent.manifest import AnalysisManifest, StageJob, derive_job_kinematics
+from lamet_agent.manifest_params import merge_stage_params
 from lamet_agent.stages.matching.functions import is_hybrid_kernel, resolve_kernel_id
 
 
@@ -38,7 +39,7 @@ def tool_catalog() -> str:
 
 def effective_matching_params(manifest: AnalysisManifest, job: StageJob) -> dict[str, Any]:
     """Merge matching defaults and job params, inferring kernel_id from inputs.kernels."""
-    params = {**manifest.stages["perturbative_matching"].defaults, **job.params}
+    params = merge_stage_params(manifest.stages["perturbative_matching"].defaults, job.params)
     if "kernel_id" in params:
         return params
     matching_kernels = [item for item in manifest.kernels if item.stage == "perturbative_matching"]

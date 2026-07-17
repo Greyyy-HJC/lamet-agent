@@ -138,7 +138,7 @@ Package modules:
 
 - Required top-level fields are `metadata`, `inputs`, and `stages`.
 - `metadata.stages` is the sole execution order; stage selection is not a CLI override.
-- Stage entries contain `defaults` and `jobs`; job `params` shallow-merge over defaults.
+- Stage entries contain `defaults` and `jobs`; job `params` recursively merge over defaults. Nested mappings merge by key, while lists and scalar values are replaced by the job value.
 - Stage `defaults` and job `params` reject keys not declared for that stage in `STAGE_PARAM_CONTRACTS`; never add a manifest parameter without adding its consumption path and contract entry together.
 - Correlator jobs group `inputs.correlators` by `correlator_ids`; downstream jobs reference earlier job ids through role-named `inputs`.
 - All ids are globally unique. External partial-run sources are declared in `inputs.artifacts`.

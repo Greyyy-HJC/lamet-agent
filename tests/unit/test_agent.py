@@ -16,6 +16,7 @@ from lamet_agent.core.data import EnsembleData, EnsembleInfo
 from lamet_agent.core.tools import resolve_stage_tools
 from lamet_agent.core.trace import AgentTrace
 from lamet_agent.manifest import AnalysisManifest, validate_manifest_file
+from lamet_agent.manifest_params import merge_stage_params
 
 
 def _demo_manifest() -> AnalysisManifest:
@@ -751,7 +752,7 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
     artifact = manifest.inputs.artifacts[0]
     store = {"input": artifact}
     job = manifest.stages["fourier_transform"].jobs[0]
-    effective_params = {**manifest.stages["fourier_transform"].defaults, **job.params}
+    effective_params = merge_stage_params(manifest.stages["fourier_transform"].defaults, job.params)
 
     _hydrate_external_artifact_inputs(
         "fourier_transform",

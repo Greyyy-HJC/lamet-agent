@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import math
+
 from lamet_agent.manifest import AnalysisManifest, StageJob
+from lamet_agent.manifest_params import merge_stage_params
 
 
 STAGE_SKILL = """
@@ -15,19 +18,22 @@ pointwise on the complete z grid. hybrid_ratio additionally requires flat
 job/defaults parameter zs_fm; m0_gev and delta_m_gev remain in scheme_parameters.
 hybrid_self_renormalization combines a full-z self-renormalization fit with
 short-distance MSbar matching to fix the finite renormalization. It splits into:
-- fit job inputs {reference}: require job params.d; fit the reference-operator m0 from
+- scheme_parameters.LambdaQCD_gev is required and is used by the
+  self-renormalization ansatz; use one value throughout the fit/apply chain.
+- fit job inputs {reference}: require scheme_parameters.d; fit the reference-operator m0 from
   short-distance g(z), use one discretization family, and never extrapolate
   beyond the reference grid. Writes store['output']/store['zR'].
-- apply job inputs {target, zR}: apply H/(zR*ZMSbar). Optional params.d / params.m0_gev
-  remap upstream zR (e.g. PDF-fit factor → DA d/m0). z_coverage_policy is
-  extrapolates the single-family long-distance f1 by default when the target
+- apply job inputs {target, zR}: apply H/(zR*ZMSbar). Optional scheme_parameters.d / m0_gev
+  remap upstream zR (e.g. PDF-fit factor → DA d/m0).
+  scheme_parameters.z_coverage_policy extrapolates the single-family
+  long-distance f1 by default when the target
   extends past zR; strict and intersection remain explicit alternatives.
 """.strip()
 
 TOOL_CATALOG = {
     "apply_ratio_scheme_renormalization": "ratio/hybrid_ratio: consume target/denominator and write store['output'] plus the job NetCDF.",
-    "fit_self_renormalization_factor": "hybrid_self_renormalization fit job: fit zR on store['reference'] without extrapolation; short-distance MSbar matching fixes m0.",
-    "apply_self_renormalization": "hybrid_self_renormalization apply job: apply H/(zR*ZMSbar); optional d/m0_gev remap upstream zR.",
+    "fit_self_renormalization_factor": "hybrid_self_renormalization fit job: fit zR using scheme_parameters (including required LambdaQCD_gev and d); short-distance MSbar matching fixes m0.",
+    "apply_self_renormalization": "hybrid_self_renormalization apply job: apply H/(zR*ZMSbar) with the declared LambdaQCD_gev; optional scheme_parameters d/m0_gev remap zR.",
     "plot_self_renormalization_diagnostics": "hybrid_self_renormalization: fit-job panels, or apply-job zmsbar_compare (+ stage-level discrete_effect once).",
     "plot_renormalized_matrix_element": "Plot store['output'] to PDF (apply jobs).",
 }
@@ -38,13 +44,24 @@ def tool_catalog() -> str:
 
 
 def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str]:
-    params = {**manifest.stages["renormalization"].defaults, **job.params}
+    params = merge_stage_params(manifest.stages["renormalization"].defaults, job.params)
     scheme = params.get("scheme")
     normalization = params.get("normalization", True)
     if not isinstance(normalization, bool):
         return ["renormalization.defaults.normalization must be a boolean when provided."]
 
     if scheme in {"ratio", "hybrid_ratio"}:
+        scheme_parameters = params.get("scheme_parameters", {})
+        if isinstance(scheme_parameters, dict):
+            self_only = sorted(
+                {"LambdaQCD_gev", "d", "svdcut", "z_coverage_policy"}.intersection(scheme_parameters)
+            )
+            if self_only:
+                return [
+                    f"{scheme} does not accept hybrid-self-only scheme_parameters: "
+                    + ", ".join(self_only)
+                    + "."
+                ]
         if set(job.inputs) != {"target", "denominator"}:
             return [f"A {scheme} renormalization job requires target and denominator inputs."]
         if scheme == "hybrid_ratio" and "zs_fm" not in params:
@@ -58,7 +75,21 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
         ]
 
     if scheme == "hybrid_self_renormalization":
-        coverage_policy = params.get("z_coverage_policy", "extrapolate")
+        scheme_parameters = params.get("scheme_parameters", {})
+        if not isinstance(scheme_parameters, dict):
+            return ["hybrid_self_renormalization scheme_parameters must be an object."]
+        if "LambdaQCD_gev" not in scheme_parameters:
+            return [
+                "hybrid_self_renormalization requires scheme_parameters.LambdaQCD_gev "
+                "on every fit and apply job."
+            ]
+        try:
+            lambdaqcd_gev = float(scheme_parameters["LambdaQCD_gev"])
+        except (TypeError, ValueError):
+            return ["hybrid_self_renormalization LambdaQCD_gev must be a finite positive value."]
+        if not math.isfinite(lambdaqcd_gev) or lambdaqcd_gev <= 0.0:
+            return ["hybrid_self_renormalization LambdaQCD_gev must be a finite positive value."]
+        coverage_policy = scheme_parameters.get("z_coverage_policy", "extrapolate")
         if coverage_policy not in {"strict", "intersection", "extrapolate"}:
             return [
                 "hybrid_self_renormalization z_coverage_policy must be "
@@ -66,12 +97,12 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
             ]
         roles = set(job.inputs)
         if roles == {"reference"}:
-            if "d" not in params:
-                return ["hybrid_self_renormalization fit job requires params.d."]
-            if "m0_gev" in params:
+            if "d" not in scheme_parameters:
+                return ["hybrid_self_renormalization fit job requires scheme_parameters.d."]
+            if "m0_gev" in scheme_parameters:
                 return [
                     "hybrid_self_renormalization fit jobs determine the reference m0; "
-                    "remove params.m0_gev here (apply jobs may override target m0_gev)."
+                    "remove scheme_parameters.m0_gev here (apply jobs may override target m0_gev)."
                 ]
         elif roles == {"target", "zR"}:
             pass

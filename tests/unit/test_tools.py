@@ -13,6 +13,7 @@ from lamet_agent.core.tools import (
     validate_stage_inputs,
 )
 from lamet_agent.manifest import AnalysisManifest, derive_job_kinematics, validate_manifest_file
+from lamet_agent.manifest_params import merge_stage_params
 from lamet_agent.stages.matching.skills import effective_matching_params
 
 
@@ -34,7 +35,7 @@ def test_resolve_renormalization_job_tools_by_scheme_and_roles() -> None:
     }
     pdf_manifest = _manifest()
     ratio_job = pdf_manifest.stages["renormalization"].jobs[0]
-    ratio_params = {**pdf_manifest.stages["renormalization"].defaults, **ratio_job.params}
+    ratio_params = merge_stage_params(pdf_manifest.stages["renormalization"].defaults, ratio_job.params)
     assert set(resolve_job_tools(
         "renormalization", ratio_job, ratio_params, stage_tools=stage_tools,
     )) == {"apply_ratio_scheme_renormalization", "plot_renormalized_matrix_element"}
@@ -47,20 +48,20 @@ def test_resolve_renormalization_job_tools_by_scheme_and_roles() -> None:
     fit_job, apply_job = da_manifest.stages["renormalization"].jobs[:2]
     defaults = da_manifest.stages["renormalization"].defaults
     assert set(resolve_job_tools(
-        "renormalization", fit_job, {**defaults, **fit_job.params}, stage_tools=stage_tools,
+        "renormalization", fit_job, merge_stage_params(defaults, fit_job.params), stage_tools=stage_tools,
     )) == {"fit_self_renormalization_factor", "plot_self_renormalization_diagnostics"}
     assert set(resolve_job_tools(
-        "renormalization", apply_job, {**defaults, **apply_job.params}, stage_tools=stage_tools,
+        "renormalization", apply_job, merge_stage_params(defaults, apply_job.params), stage_tools=stage_tools,
     )) == {
         "apply_self_renormalization",
         "plot_self_renormalization_diagnostics",
         "plot_renormalized_matrix_element",
     }
     assert required_job_tool_sequence(
-        "renormalization", fit_job, {**defaults, **fit_job.params}
+        "renormalization", fit_job, merge_stage_params(defaults, fit_job.params)
     ) == ("fit_self_renormalization_factor", "plot_self_renormalization_diagnostics")
     assert required_job_tool_sequence(
-        "renormalization", apply_job, {**defaults, **apply_job.params}
+        "renormalization", apply_job, merge_stage_params(defaults, apply_job.params)
     ) == (
         "apply_self_renormalization",
         "plot_self_renormalization_diagnostics",
@@ -82,22 +83,33 @@ def test_legacy_self_renormalization_scheme_returns_migration_error() -> None:
 def test_hybrid_self_fit_rejects_fixed_m0() -> None:
     manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
     job = manifest.stages["renormalization"].jobs[0]
-    job.params["m0_gev"] = -0.094
+    job.params["scheme_parameters"]["m0_gev"] = -0.094
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
         "hybrid_self_renormalization fit jobs determine the reference m0; "
-        "remove params.m0_gev here (apply jobs may override target m0_gev)."
+        "remove scheme_parameters.m0_gev here (apply jobs may override target m0_gev)."
     ]
 
 
 def test_hybrid_self_rejects_unknown_z_coverage_policy() -> None:
     manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
     job = manifest.stages["renormalization"].jobs[1]
-    manifest.stages["renormalization"].defaults["z_coverage_policy"] = "freeze"
+    job.params["scheme_parameters"]["z_coverage_policy"] = "freeze"
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
         "hybrid_self_renormalization z_coverage_policy must be "
         "'strict', 'intersection', or 'extrapolate'."
+    ]
+
+
+def test_hybrid_self_requires_explicit_lambdaqcd_gev() -> None:
+    manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
+    job = manifest.stages["renormalization"].jobs[1]
+    manifest.stages["renormalization"].defaults["scheme_parameters"].pop("LambdaQCD_gev")
+
+    assert validate_stage_inputs("renormalization", manifest, job) == [
+        "hybrid_self_renormalization requires scheme_parameters.LambdaQCD_gev "
+        "on every fit and apply job."
     ]
 
 
@@ -377,7 +389,7 @@ def test_nonbreit_requires_initial_and_final_momentum(tmp_path: Path) -> None:
 def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["renormalization"].jobs[0]
-    effective = {**manifest.stages["renormalization"].defaults, **job.params}
+    effective = merge_stage_params(manifest.stages["renormalization"].defaults, job.params)
     args = prepare_tool_args(
         "apply_ratio_scheme_renormalization", {}, manifest=manifest, stage="renormalization", job=job,
         effective_params=effective,
@@ -396,7 +408,10 @@ def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> N
 def test_prepare_renormalization_args_filters_normalization_manifest_flag(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["renormalization"].jobs[0]
-    effective = {**manifest.stages["renormalization"].defaults, **job.params, "normalization": True}
+    effective = merge_stage_params(
+        manifest.stages["renormalization"].defaults,
+        {**job.params, "normalization": True},
+    )
     args = prepare_tool_args(
         "apply_ratio_scheme_renormalization",
         {},
@@ -412,12 +427,14 @@ def test_prepare_renormalization_args_filters_normalization_manifest_flag(tmp_pa
 def test_prepare_ratio_renormalization_args_do_not_require_hybrid_parameters(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["renormalization"].jobs[0]
-    effective = {
-        **manifest.stages["renormalization"].defaults,
-        **job.params,
-        "scheme": "ratio",
-        "scheme_parameters": {"m0_gev": 9.0, "delta_m_gev": 8.0},
-    }
+    effective = merge_stage_params(
+        manifest.stages["renormalization"].defaults,
+        {
+            **job.params,
+            "scheme": "ratio",
+            "scheme_parameters": {"m0_gev": 9.0, "delta_m_gev": 8.0},
+        },
+    )
     effective.pop("zs_fm", None)
 
     args = prepare_tool_args(
@@ -434,6 +451,17 @@ def test_prepare_ratio_renormalization_args_do_not_require_hybrid_parameters(tmp
     assert args["scheme_parameters"] == {}
     assert args["target"] == "target"
     assert args["denominator"] == "denominator"
+
+
+@pytest.mark.parametrize("key", ["LambdaQCD_gev", "d", "svdcut", "z_coverage_policy"])
+def test_ratio_schemes_reject_hybrid_self_only_scheme_parameters(key: str) -> None:
+    manifest = _manifest()
+    job = manifest.stages["renormalization"].jobs[0]
+    manifest.stages["renormalization"].defaults["scheme_parameters"][key] = 0.1
+
+    assert validate_stage_inputs("renormalization", manifest, job) == [
+        f"hybrid_ratio does not accept hybrid-self-only scheme_parameters: {key}."
+    ]
 
 
 def test_ratio_renormalization_stage_accepts_target_and_denominator_without_zs() -> None:
@@ -491,29 +519,51 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
                     "defaults": {
                         "scheme": "hybrid_self_renormalization",
                         "mu": 2.0,
-                        "svdcut": 1e-12,
-                        "z_coverage_policy": "intersection",
+                        "scheme_parameters": {"LambdaQCD_gev": 0.12},
                     },
                     "jobs": [
                         {
                             "id": "rn_zR_fit",
                             "inputs": {"reference": "bare_pdf_reference"},
-                            "params": {"d": -0.08183},
+                            "params": {
+                                "scheme_parameters": {
+                                    "d": -0.08183,
+                                    "svdcut": 1e-12,
+                                }
+                            },
                         },
                         {
                             "id": "rn_mom6_a06",
                             "inputs": {"target": "bare_da_mom6_a06", "zR": "rn_zR_fit"},
-                            "params": {"d": 0.19, "m0_gev": -0.094},
+                            "params": {
+                                "scheme_parameters": {
+                                    "d": 0.19,
+                                    "m0_gev": -0.094,
+                                    "z_coverage_policy": "intersection",
+                                }
+                            },
                         },
                         {
                             "id": "rn_mom6_a09",
                             "inputs": {"target": "bare_da_mom6_a09", "zR": "rn_zR_fit"},
-                            "params": {"d": 0.19, "m0_gev": -0.094},
+                            "params": {
+                                "scheme_parameters": {
+                                    "d": 0.19,
+                                    "m0_gev": -0.094,
+                                    "z_coverage_policy": "intersection",
+                                }
+                            },
                         },
                         {
                             "id": "rn_mom6_a12",
                             "inputs": {"target": "bare_da_mom6_a12", "zR": "rn_zR_fit"},
-                            "params": {"d": 0.19, "m0_gev": -0.094},
+                            "params": {
+                                "scheme_parameters": {
+                                    "d": 0.19,
+                                    "m0_gev": -0.094,
+                                    "z_coverage_policy": "intersection",
+                                }
+                            },
                         },
                     ],
                 }
@@ -522,8 +572,8 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     )
     fit_job = manifest.stages["renormalization"].jobs[0]
     apply_job = manifest.stages["renormalization"].jobs[1]
-    fit_effective = {**manifest.stages["renormalization"].defaults, **fit_job.params}
-    apply_effective = {**manifest.stages["renormalization"].defaults, **apply_job.params}
+    fit_effective = merge_stage_params(manifest.stages["renormalization"].defaults, fit_job.params)
+    apply_effective = merge_stage_params(manifest.stages["renormalization"].defaults, apply_job.params)
 
     assert set(fit_job.inputs) == {"reference"}
     assert set(apply_job.inputs) == {"target", "zR"}
@@ -546,14 +596,15 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert "d_fit" not in fit_args
     assert "n_m0" not in fit_args
     assert fit_args["mu"] == 2.0
+    assert fit_args["LambdaQCD_gev"] == 0.12
     assert "order" not in fit_args
     assert "Nf" not in fit_args
     assert fit_args["svdcut"] == 1e-12
     assert "z_coverage_policy" not in fit_args
     assert fit_args["save_path"] == str(tmp_path / "rn_zR_fit")
     # Fit-job params carry required d (PDF); m0_gev omitted → fit.
-    assert fit_effective["d"] == -0.08183
-    assert "m0_gev" not in fit_effective
+    assert fit_effective["scheme_parameters"]["d"] == -0.08183
+    assert "m0_gev" not in fit_effective["scheme_parameters"]
 
     apply_args = prepare_tool_args(
         "apply_self_renormalization",
@@ -575,6 +626,7 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert apply_args["zR"] == "zR"
     assert apply_args["kernel_id"] == "ZMSbar_da"
     assert apply_args["mu"] == 2.0
+    assert apply_args["LambdaQCD_gev"] == 0.12
     assert "order" not in apply_args
     assert "Nf" not in apply_args
     assert apply_args["z_coverage_policy"] == "intersection"
@@ -617,7 +669,7 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert apply_diag["sibling_artifacts"] == []
 
     last_apply = manifest.stages["renormalization"].jobs[-1]
-    last_effective = {**manifest.stages["renormalization"].defaults, **last_apply.params}
+    last_effective = merge_stage_params(manifest.stages["renormalization"].defaults, last_apply.params)
     for job_id in ("rn_mom6_a06", "rn_mom6_a09", "rn_mom6_a12"):
         (tmp_path / f"{job_id}.nc").write_text("placeholder", encoding="utf-8")
     last_diag = prepare_tool_args(
@@ -646,12 +698,14 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
             "gfix": "CG",
         }
     )
-    effective = {
-        **manifest.stages["fourier_transform"].defaults,
-        **job.params,
-        "psi1_flavor_class": "light",
-        "psi2_flavor_class": "heavy",
-    }
+    effective = merge_stage_params(
+        manifest.stages["fourier_transform"].defaults,
+        {
+            **job.params,
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
+        },
+    )
     args = prepare_tool_args(
         "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
         effective_params=effective, artifacts_dir=tmp_path, store={"input": source},
@@ -670,7 +724,7 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
 def test_prepare_fourier_args_passes_lambda0_gev(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["fourier_transform"].jobs[0]
-    effective = {**manifest.stages["fourier_transform"].defaults, **job.params}
+    effective = merge_stage_params(manifest.stages["fourier_transform"].defaults, job.params)
     effective["Lambda0_gev"] = 0.37
     args = prepare_tool_args(
         "run_fourier_transform",
@@ -712,7 +766,9 @@ def test_job_zs_fm_overrides_stage_defaults_for_both_hybrid_stages(tmp_path: Pat
         manifest=manifest,
         stage="renormalization",
         job=renorm_job,
-        effective_params={**manifest.stages["renormalization"].defaults, **renorm_job.params},
+        effective_params=merge_stage_params(
+            manifest.stages["renormalization"].defaults, renorm_job.params
+        ),
         artifacts_dir=tmp_path,
     )
 

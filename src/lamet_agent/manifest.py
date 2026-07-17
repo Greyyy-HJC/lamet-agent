@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
-from lamet_agent.manifest_params import validate_stage_parameter_mapping
+from lamet_agent.manifest_params import merge_stage_params, validate_stage_parameter_mapping
 
 
 StageId = Literal[
@@ -434,12 +434,24 @@ class AnalysisManifest(BaseModel):
                 )
             if kernel.stage == "renormalization":
                 removed_kernel_parameters = {
+                    "LambdaQCD": (
+                        "was renamed; declare stages.renormalization.defaults.scheme_parameters."
+                        "LambdaQCD_gev or jobs[].params.scheme_parameters.LambdaQCD_gev explicitly"
+                    ),
+                    "LambdaQCD_gev": (
+                        "is a hybrid-self-renormalization ansatz parameter; declare it under "
+                        "stages.renormalization.defaults.scheme_parameters or "
+                        "jobs[].params.scheme_parameters"
+                    ),
                     "alpha_s": "is derived from mu by alphas_nloop and cannot be specified",
                     "b0": "is an internal hybrid-self-renormalization ansatz constant",
                     "cf": "is an internal hybrid-self-renormalization ansatz constant",
                     "f1_extension_zmin_fm": "is no longer supported",
                     "k": "is an internal hybrid-self-renormalization ansatz constant",
-                    "lqcd": "is an internal hybrid-self-renormalization ansatz constant",
+                    "lqcd": (
+                        "was renamed; use stages.renormalization.defaults.scheme_parameters.LambdaQCD_gev "
+                        "or jobs[].params.scheme_parameters.LambdaQCD_gev"
+                    ),
                     "Nf": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu)",
                     "order": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu)",
                     "zms_kind": "is no longer supported; select the kernel_id instead",
@@ -521,7 +533,7 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
 
     def from_job(stage_id: str, candidate: StageJob, seen: set[str]) -> dict[str, Any]:
         if stage_id == "correlator_analysis":
-            params = {**manifest.stages[stage_id].defaults, **candidate.params}
+            params = merge_stage_params(manifest.stages[stage_id].defaults, candidate.params)
             momentum = (
                 params.get("final_momentum")
                 if str(params.get("fitting_form", "Breit")) == "NonBreit"

@@ -8,7 +8,8 @@
   // - The first stage references raw data via `correlator_ids`.
   // - Later stages reference UPSTREAM job ids via role-named `inputs`
   //   (e.g. `target` / `denominator` / `input` / `quasi` / `momenta`).
-  // - A job's `params` shallow-merge over the stage `defaults`.
+  // - A job's `params` recursively merge over stage `defaults`: nested objects
+  //   merge by key, while lists and scalar values are replaced by the job value.
   // - Commented fields below are optional examples. Uncomment only the choices
   //   that apply to a workflow; comments also identify mutually exclusive forms.
   // - References resolve by job id to that stage's primary output.
@@ -192,8 +193,9 @@
         // when hybrid-self inputs are already normalized at z=0.
         // "kernel_id": "ZMSbar_pdf", // optional with one renorm kernel; required to disambiguate multiple kernels
         // "mu": 2.0,              // default 2 GeV; may instead come from kernel_parameters
-        // "svdcut": 1e-12,        // default 1e-12; fit-job correlated g(z) and reference-m0 fits only
-        // "z_coverage_policy": "extrapolate" // default; alternatives: "strict" or "intersection"
+        // Hybrid-self-only values belong under scheme_parameters. Shared values
+        // can live in defaults because job params recursively merge nested objects.
+        // "scheme_parameters": { "LambdaQCD_gev": 0.1 }, // required for every hybrid-self job
       },
       "jobs": [
         // MERGE POINT 1: p0 (ca_p0) is the shared denominator for p4 and p5.
@@ -211,13 +213,15 @@
         // Hybrid self-renormalization uses a different DAG and must replace, not mix
         // with, the hybrid jobs above:
         // { "id": "rn_zR_fit", "inputs": { "reference": "bare_reference" },
-        //   "params": { "d": -0.08183 } }, // d is required; reference m0 is fitted, not user-set
+        //   "params": { "scheme_parameters": {
+        //     "d": -0.08183, "svdcut": 1e-12
+        //   } } }, // d is required; reference m0 is fitted, not user-set
         // { "id": "rn_apply", "inputs": { "target": "bare_target", "zR": "rn_zR_fit" },
-        //   "params": {
+        //   "params": { "scheme_parameters": {
         //     "d": 0.19,          // optional target-operator d; omit to inherit fitted zR value
         //     "m0_gev": -0.094,   // optional target-operator m0; apply jobs may override reference m0
-        //     "z_coverage_policy": "strict" // optional per-job override of the default coverage policy
-        //   } }
+        //     "z_coverage_policy": "strict" // optional; default "extrapolate"
+        //   } } }
       ]
     },
     "fourier_transform": {

@@ -209,7 +209,13 @@ def test_planning_distinguishes_hybrid_self_renormalization_fit_jobs(tmp_path: P
     }]
     payload["stages"]["renormalization"] = {
         "defaults": {"scheme": "hybrid_self_renormalization"},
-        "jobs": [{"id": "rn_fit", "inputs": {"reference": "ca"}, "params": {"d": -0.08183}}],
+        "jobs": [
+            {
+                "id": "rn_fit",
+                "inputs": {"reference": "ca"},
+                "params": {"scheme_parameters": {"LambdaQCD_gev": 0.1, "d": -0.08183}},
+            }
+        ],
     }
 
     gaps = _stage_parameter_gaps(payload)

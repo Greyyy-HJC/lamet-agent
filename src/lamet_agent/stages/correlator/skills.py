@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
+from lamet_agent.manifest_params import merge_stage_params
 
 
 STAGE_SKILL = """
@@ -48,7 +49,7 @@ def tool_catalog() -> str:
 
 def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str]:
     selected = [item for item in manifest.correlators if item.correlator_id in job.correlator_ids]
-    params = {**manifest.stages["correlator_analysis"].defaults, **job.params}
+    params = merge_stage_params(manifest.stages["correlator_analysis"].defaults, job.params)
     if "variant" in manifest.stages["correlator_analysis"].defaults or "variant" in job.params:
         return ["variant is not a supported correlator_analysis parameter."]
     fitting_form = str(params.get("fitting_form", "Breit"))

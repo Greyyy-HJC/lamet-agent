@@ -282,7 +282,9 @@ def test_fit_self_renormalization_respects_normalized_at_z0_attr(normalized: boo
     monkeypatch = pytest.MonkeyPatch()
     try:
         monkeypatch.setattr(lsf, "nonlinear_fit", fake_nonlinear_fit)
-        fit_self_renormalization_factor(store, d=0.19, save_path=str(tmp_path / "zR"))
+        fit_self_renormalization_factor(
+            store, LambdaQCD_gev=0.1, d=0.19, save_path=str(tmp_path / "zR")
+        )
     finally:
         monkeypatch.undo()
 
@@ -307,7 +309,9 @@ def test_fit_self_renormalization_requires_d(tmp_path: Path) -> None:
         name="reference",
     )
     with pytest.raises(ValueError, match="requires d"):
-        fit_self_renormalization_factor({"reference": reference}, save_path=str(tmp_path / "zR"))
+        fit_self_renormalization_factor(
+            {"reference": reference}, LambdaQCD_gev=0.1, save_path=str(tmp_path / "zR")
+        )
 
 
 def test_fit_self_renormalization_fits_m0_when_omitted(tmp_path: Path) -> None:
@@ -347,6 +351,7 @@ def test_fit_self_renormalization_fits_m0_when_omitted(tmp_path: Path) -> None:
         result = fit_self_renormalization_factor(
             store,
             kernel_id="ZMSbar_da",
+            LambdaQCD_gev=0.1,
             d=0.19,
             save_path=str(tmp_path / "rn_zR_fit"),
         )
@@ -380,6 +385,7 @@ def test_fit_self_renormalization_rejects_fixed_m0(tmp_path: Path) -> None:
         fit_self_renormalization_factor(
             {"reference": reference},
             kernel_id="ZMSbar_da",
+            LambdaQCD_gev=0.1,
             m0_gev=-0.094,
             d=0.19,
             save_path=str(tmp_path / "rn_zR_fit"),
@@ -425,6 +431,7 @@ def test_fit_self_renormalization_uses_d_in_gz_fit(tmp_path: Path) -> None:
         fit_self_renormalization_factor(
             store,
             kernel_id="ZMSbar_da",
+            LambdaQCD_gev=0.1,
             d=0.19,
             save_path=str(tmp_path / "rn_zR_fit"),
         )
@@ -473,6 +480,7 @@ def test_fit_self_renormalization_forwards_svdcut_override(tmp_path: Path) -> No
         result = fit_self_renormalization_factor(
             store,
             kernel_id="ZMSbar_da",
+            LambdaQCD_gev=0.12,
             d=0.19,
             svdcut=1e-8,
             save_path=str(tmp_path / "rn_zR_fit"),
@@ -482,7 +490,10 @@ def test_fit_self_renormalization_forwards_svdcut_override(tmp_path: Path) -> No
 
     assert captured_svdcut == [1e-8, 1e-8]
     assert result["svdcut"] == pytest.approx(1e-8)
+    assert result["LambdaQCD_gev"] == pytest.approx(0.12)
     assert store["self_renorm_fit"]["svdcut"] == pytest.approx(1e-8)
+    assert store["self_renorm_fit"]["LambdaQCD_gev"] == pytest.approx(0.12)
+    assert store["zR"].attrs["LambdaQCD_gev"] == "0.12"
 
 
 def test_fit_hybrid_self_renormalization_uses_single_f1_without_extension(tmp_path: Path, monkeypatch) -> None:
@@ -521,6 +532,7 @@ def test_fit_hybrid_self_renormalization_uses_single_f1_without_extension(tmp_pa
     result = fit_self_renormalization_factor(
         store,
         kernel_id="ZMSbar_da",
+        LambdaQCD_gev=0.1,
         d=-0.08183,
         save_path=str(tmp_path / "zr"),
     )
@@ -549,7 +561,10 @@ def test_fit_hybrid_self_renormalization_rejects_discretization_groups(tmp_path:
     )
     with pytest.raises(ValueError, match="discretization_groups metadata is no longer supported"):
         fit_self_renormalization_factor(
-            {"reference": reference}, d=-0.08183, save_path=str(tmp_path / "zr")
+            {"reference": reference},
+            LambdaQCD_gev=0.1,
+            d=-0.08183,
+            save_path=str(tmp_path / "zr"),
         )
 
 
@@ -567,6 +582,7 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
         coords={"a": [lattice_spacing_fm], "z": z.tolist()},
         attrs={
             "kernel_id": "ZMSbar_da",
+            "LambdaQCD_gev": "0.12",
             "m0_gev": "-0.094",
             "d": "-0.08183",
             "sample_construction": "mean_from_averaged_fit",
@@ -585,10 +601,19 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
     )
     store = {"target": target, "zR": zR}
 
+    with pytest.raises(ValueError, match="does not match upstream zR LambdaQCD_gev"):
+        apply_self_renormalization(
+            store,
+            kernel_id="ZMSbar_da",
+            LambdaQCD_gev=0.11,
+            save_path=str(tmp_path / "self_mismatch"),
+        )
+
     result = apply_self_renormalization(
         store,
         kernel_id="ZMSbar_da",
         mu=2.0,
+        LambdaQCD_gev=0.12,
         save_path=str(tmp_path / "self"),
     )
 
@@ -596,11 +621,13 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
     expected = target_values / (zr_vals[None, :] * zms[None, :])
     assert result["scheme"] == "hybrid_self_renormalization"
     assert result["kernel_id"] == "ZMSbar_da"
+    assert result["LambdaQCD_gev"] == pytest.approx(0.12)
     assert result["alpha_s_derived"] == pytest.approx(0.293)
     assert result["alpha_s_source"] == "alphas_nloop"
     assert result["remapped"] is False
     assert Path(result["artifact"]).is_file()
     assert store["output"].attrs["scheme"] == "hybrid_self_renormalization"
+    assert float(store["output"].attrs["LambdaQCD_gev"]) == pytest.approx(0.12)
     assert float(store["output"].attrs["alpha_s_derived"]) == pytest.approx(0.293)
     assert np.allclose(store["output"].values, expected)
     assert store["output"] is store["matrix_element_data"]
@@ -622,6 +649,42 @@ def test_zmsbar_uses_running_coupling_without_manual_override() -> None:
     for call in removed_calls:
         with pytest.raises(TypeError, match="alpha_s"):
             call()
+
+
+def test_hybrid_self_lambdaqcd_changes_ansatz() -> None:
+    from lamet_agent.stages.renorm.functions import _self_renorm_zr_from_f1
+
+    kwargs = {
+        "lattice_spacing_fm": 0.0574,
+        "d": 0.19,
+        "m0_gev": -0.094,
+        "mu": 2.0,
+    }
+    z = np.asarray([0.06, 0.12, 0.18])
+    f1 = np.asarray([0.1, 0.2, 0.3])
+
+    baseline = _self_renorm_zr_from_f1(z, f1, LambdaQCD_gev=0.1, **kwargs)
+    changed = _self_renorm_zr_from_f1(z, f1, LambdaQCD_gev=0.12, **kwargs)
+
+    assert not np.allclose(baseline, changed)
+
+
+def test_hybrid_self_lambdaqcd_gev_has_no_tool_default() -> None:
+    import inspect
+
+    from lamet_agent.stages.renorm.functions import (
+        apply_self_renormalization,
+        fit_self_renormalization_factor,
+        plot_self_renormalization_diagnostics,
+    )
+
+    for tool in (
+        fit_self_renormalization_factor,
+        apply_self_renormalization,
+        plot_self_renormalization_diagnostics,
+    ):
+        parameter = inspect.signature(tool).parameters["LambdaQCD_gev"]
+        assert parameter.default is inspect.Parameter.empty
 
 
 def test_apply_self_renormalization_remaps_d_and_m0(tmp_path: Path) -> None:
@@ -665,13 +728,21 @@ def test_apply_self_renormalization_remaps_d_and_m0(tmp_path: Path) -> None:
         store,
         kernel_id="ZMSbar_da",
         mu=2.0,
+        LambdaQCD_gev=0.1,
         d=d_da,
         m0_gev=m0_da,
         save_path=str(tmp_path / "self_remap"),
     )
 
     zr_remapped = _remap_zr_values(
-        zr_vals, z_vals=z, lattice_spacing_fm=lattice_spacing_fm, d_from=d_pdf, d_to=d_da, m0_from=m0_pdf, m0_to=m0_da
+        zr_vals,
+        z_vals=z,
+        lattice_spacing_fm=lattice_spacing_fm,
+        d_from=d_pdf,
+        d_to=d_da,
+        m0_from=m0_pdf,
+        m0_to=m0_da,
+        LambdaQCD_gev=0.1,
     )
     zms = kernels.ZMSbar_da(z, mu=2.0)
     expected = target_values / (zr_remapped[None, :] * zms[None, :])
@@ -719,6 +790,7 @@ def test_apply_hybrid_self_renormalization_rejects_uncovered_target(
         apply_self_renormalization(
             {"target": target, "zR": zR},
             kernel_id="ZMSbar_da",
+            LambdaQCD_gev=0.1,
             z_coverage_policy="strict",
             save_path=str(tmp_path / "uncovered"),
         )
@@ -750,6 +822,7 @@ def test_apply_hybrid_self_renormalization_intersects_target_z_grid(tmp_path: Pa
     result = apply_self_renormalization(
         store,
         kernel_id="ZMSbar_da",
+        LambdaQCD_gev=0.1,
         z_coverage_policy="intersection",
         save_path=str(tmp_path / "intersection"),
     )
@@ -766,6 +839,7 @@ def test_apply_hybrid_self_renormalization_intersects_target_z_grid(tmp_path: Pa
     diagnostic = plot_self_renormalization_diagnostics(
         store,
         mode="apply",
+        LambdaQCD_gev=0.1,
         z_coverage_policy="intersection",
         save_path=str(tmp_path / "intersection_diag"),
         artifacts_dir=tmp_path,
@@ -792,6 +866,7 @@ def test_apply_hybrid_self_renormalization_extrapolates_long_distance_f1(tmp_pat
         d=d,
         m0_gev=m0_gev,
         mu=2.0,
+        LambdaQCD_gev=0.1,
     )
     zR = EnsembleData(
         EnsembleInfo("", "E", lattice_spacing_fm, lattice_spacing_fm, 1, 1, 0),
@@ -818,6 +893,7 @@ def test_apply_hybrid_self_renormalization_extrapolates_long_distance_f1(tmp_pat
     result = apply_self_renormalization(
         store,
         kernel_id="ZMSbar_da",
+        LambdaQCD_gev=0.1,
         save_path=str(tmp_path / "extrapolate"),
     )
 
@@ -828,6 +904,7 @@ def test_apply_hybrid_self_renormalization_extrapolates_long_distance_f1(tmp_pat
         d=d,
         m0_gev=m0_gev,
         mu=2.0,
+        LambdaQCD_gev=0.1,
     )
     expected = target_values / (zr_expected[None, :] * kernels.ZMSbar_da(z_target)[None, :])
     assert store["output"].coords["z"] == z_target.tolist()
@@ -842,6 +919,7 @@ def test_apply_hybrid_self_renormalization_extrapolates_long_distance_f1(tmp_pat
     diagnostic = plot_self_renormalization_diagnostics(
         store,
         mode="apply",
+        LambdaQCD_gev=0.1,
         save_path=str(tmp_path / "extrapolate_diag"),
         artifacts_dir=tmp_path,
     )
@@ -940,6 +1018,7 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
         artifacts_dir=tmp_path,
         kernel_id="ZMSbar_da",
         mu=2.0,
+        LambdaQCD_gev=0.1,
     )
     for key in ("fit_lnM_vs_inv_a", "fit_mR_zmsbar", "fit_m_over_zR", "fit_f1"):
         assert key in fit_result["plots"]
@@ -958,6 +1037,7 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
         artifacts_dir=tmp_path,
         kernel_id="ZMSbar_da",
         mu=2.0,
+        LambdaQCD_gev=0.1,
     )
     assert "zmsbar_compare" in apply_result["plots"]
     assert "discrete_effect_px0py0pz6_re" in apply_result["plots"]

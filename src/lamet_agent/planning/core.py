@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from lamet_agent.core.tools import validate_stage_inputs
 from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.manifest_params import merge_stage_params
 
 
 IssueSeverity = Literal["error", "warning", "info"]
@@ -899,7 +900,10 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             if not isinstance(job, dict):
                 continue
             job_id = str(job.get("id", index))
-            params = {**defaults, **(job.get("params") if isinstance(job.get("params"), dict) else {})}
+            params = merge_stage_params(
+                defaults,
+                job.get("params") if isinstance(job.get("params"), dict) else {},
+            )
             derived_momentum_available = has_discrete_kinematics(stage, job, {job_id})
             roles = set(job.get("inputs", {}).keys()) if isinstance(job.get("inputs"), dict) else set()
             def add_gap(parameter: str, path: str, message: str, suggested_fix: str) -> None:
@@ -922,13 +926,23 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
                             'Example: {"zs_fm": 0.2}.',
                         )
                 elif scheme == "hybrid_self_renormalization":
+                    scheme_parameters = params.get("scheme_parameters", {})
+                    if not isinstance(scheme_parameters, dict):
+                        scheme_parameters = {}
+                    if "LambdaQCD_gev" not in scheme_parameters:
+                        add_gap(
+                            "LambdaQCD_gev",
+                            f"stages.{stage}.jobs[{index}].params.scheme_parameters.LambdaQCD_gev",
+                            "hybrid_self_renormalization requires an explicit LambdaQCD_gev value.",
+                            'Example: {"scheme_parameters": {"LambdaQCD_gev": 0.1}}.',
+                        )
                     if roles == {"reference"}:
-                        if "d" not in params:
+                        if "d" not in scheme_parameters:
                             add_gap(
                                 "d",
-                                f"stages.{stage}.jobs[{index}].params.d",
+                                f"stages.{stage}.jobs[{index}].params.scheme_parameters.d",
                                 "hybrid_self_renormalization fit jobs require fixed parameter d.",
-                                'Example: {"d": -0.08183}.',
+                                'Example: {"scheme_parameters": {"d": -0.08183}}.',
                             )
                     elif roles != {"target", "zR"}:
                         add_gap(

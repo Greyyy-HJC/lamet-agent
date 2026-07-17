@@ -17,7 +17,8 @@ ratio or hybrid_ratio:
 
 hybrid_self_renormalization fit job (inputs exactly {reference}):
 1. Call fit_self_renormalization_factor with no arguments. The runner binds
-   reference, kernel_id, d, mu, svdcut, and save_path. Job params.d is required and fixed
+   reference, kernel_id, d, mu, LambdaQCD_gev, svdcut, and save_path.
+   scheme_parameters.d is required and fixed
    for the gz fit and zR. The reference-operator m0 is fitted from short-distance g(z), and the
    fit never extrapolates outside the reference grid. It writes store['zR'],
    store['output'], and store['self_renorm_fit'], plus the zR NetCDF.
@@ -28,9 +29,9 @@ hybrid_self_renormalization fit job (inputs exactly {reference}):
 
 hybrid_self_renormalization apply job (inputs exactly {target, zR}):
 1. Call apply_self_renormalization with no arguments. The runner binds target,
-   zR, kernel_id, d, m0_gev, mu, z_coverage_policy, and save_path. Upstream zR is
+   zR, kernel_id, d, m0_gev, mu, LambdaQCD_gev, z_coverage_policy, and save_path. Upstream zR is
    already in the store; do not re-fit.
-   Optional params.d / params.m0_gev remap that zR onto this operator (e.g.
+   Optional scheme_parameters.d / scheme_parameters.m0_gev remap that zR onto this operator (e.g.
    PDF-fit zR → DA d/m0) before H/(zR*ZMSbar). It writes store['output'] plus
    the job NetCDF. With z_coverage_policy=extrapolate, the tool automatically
    extends the inferred long-distance f1 and rebuilds zR only where the target

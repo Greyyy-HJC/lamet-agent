@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob, derive_job_kinematics
+from lamet_agent.manifest_params import merge_stage_params
 
 from .stages import resolve_stage_package
 
@@ -25,7 +26,7 @@ _RENORM_ARTIFACT_TOOLS = frozenset(
         "load_bare_matrix_element",
     }
 )
-_RENORM_SELF_FIT_PARAM_KEYS = frozenset({"d", "kernel_id", "mu", "svdcut"})
+_RENORM_SELF_FIT_PARAM_KEYS = frozenset({"LambdaQCD_gev", "d", "kernel_id", "mu", "svdcut"})
 _FOURIER_ARTIFACT_TOOLS = frozenset(
     {
         "run_fourier_transform",
@@ -349,7 +350,7 @@ def prepare_tool_args(
 
     if stage == "correlator_analysis":
         selected = [item for item in manifest.correlators if item.correlator_id in job.correlator_ids]
-        defaults = {**effective_params, **job.params}
+        defaults = merge_stage_params(effective_params, job.params)
         fitting_form = str(defaults.get("fitting_form", "Breit"))
         pt2_all = [item for item in selected if item.correlator_type == "2pt"]
         pt3_all = [item for item in selected if item.correlator_type == "3pt"]
@@ -539,9 +540,9 @@ def prepare_tool_args(
             if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
             for key, value in {**kernel_parameters, **scheme_parameters}.items():
-                if key in {"mu", "d", "m0_gev", "z_coverage_policy"}:
+                if key in {"mu", "LambdaQCD_gev", "d", "m0_gev", "z_coverage_policy"}:
                     resolved[key] = value
-            for key in ("mu", "d", "m0_gev", "z_coverage_policy"):
+            for key in ("mu", "d", "m0_gev", "z_coverage_policy", "LambdaQCD_gev"):
                 if key in effective_params:
                     resolved[key] = effective_params[key]
         elif tool_name == "plot_self_renormalization_diagnostics":
@@ -560,9 +561,9 @@ def prepare_tool_args(
             if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
             for key, value in {**kernel_parameters, **scheme_parameters}.items():
-                if key == "mu":
+                if key in {"mu", "LambdaQCD_gev", "z_coverage_policy"}:
                     resolved[key] = value
-            for key in ("mu", "z_coverage_policy"):
+            for key in ("LambdaQCD_gev", "mu", "z_coverage_policy"):
                 if key in effective_params:
                     resolved[key] = effective_params[key]
             if not is_fit_job:

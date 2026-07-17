@@ -152,8 +152,10 @@ options inline (for example `target_observable` is `"pdf"` or `"da"`, and `gfix`
 - `inputs`: the `correlators` (each with its operator labels, `volume`,
   `lattice_spacing_fm`, momentum list, and for `3pt` the `bz_direction`, `tsep`, `bT`, and `bz`
   lists), external `artifacts`, and `kernels`.
-- `stages`: `defaults` plus a `jobs` list. A job's `params` shallow-merge over
-  defaults, and later jobs reference earlier job ids through role-named `inputs`.
+- `stages`: `defaults` plus a `jobs` list. A job's `params` recursively merge
+  over defaults; nested mappings merge by key, while lists and scalars are
+  replaced by the job value. Later jobs reference earlier job ids through
+  role-named `inputs`.
 
 Use it as a template and save runnable manifests as plain `.json`. The loader also
 accepts JSONC for annotated authoring templates.
@@ -304,7 +306,7 @@ for every retained target sample. By default, apply detects missing
 long-distance points, infers $f_1(z)$ from the
 available $z_R$, fits its long-distance tail quadratically, and rebuilds only
 the missing $z_R$ points. No endpoint is frozen, and no explicit extension
-length or fit boundary is required. `z_coverage_policy: "strict"` can require
+length or fit boundary is required. `scheme_parameters.z_coverage_policy: "strict"` can require
 complete coverage instead, while `intersection` explicitly keeps only the
 target/$z_R$ overlap.
 
@@ -322,13 +324,13 @@ inputs.artifacts (bare reference + bare targets)
         ▼
 ┌───────────────────────┐
 │ fit job {reference}   │  fit_self_renormalization_factor
-│ params.d required     │  → store['zR'] / <job_id>.nc
+│ scheme params d req.  │  → store['zR'] / <job_id>.nc
 │ reference m0 fitted   │  → fit diagnostics (ln|M|, mR, f1, …)
 └───────────┬───────────┘
             │ zR job id
             ▼
 ┌───────────────────────┐
-│ apply job {target,zR} │  optional params.d / m0_gev remap zR
+│ apply job {target,zR} │  optional scheme d / m0 remap zR
 │ per lattice / momentum│  → H/(zR ZMSbar) NetCDF + ME plot
 └───────────────────────┘  → zmsbar_compare; last apply may emit
                              stage-level momentum-resolved discrete-effect plots
@@ -342,11 +344,12 @@ Typical agent tool order:
    `apply_self_renormalization` → `plot_self_renormalization_diagnostics` →
    `plot_renormalized_matrix_element` → finish.
 
-Same-operator use (zero-momentum PDF → finite-$P_z$ PDF): fit with the PDF `d`
-($m_0$ of the reference operator is fitted), and leave apply jobs without `d`/`m0_gev`
+Same-operator use (zero-momentum PDF → finite-$P_z$ PDF): fit with the PDF
+`scheme_parameters.d` ($m_0$ of the reference operator is fitted), and leave
+apply jobs without `d`/`m0_gev`
 overrides. Cross-operator use (PDF reference → DA targets): fit with PDF `d`
 (and do not set `m0_gev` on the fit job); on each apply job set DA `d` and
-`m0_gev` so the target operator can use a different finite renormalization and
+`scheme_parameters.m0_gev` so the target operator can use a different finite renormalization and
 upstream $z_R$ is remapped before division.
 
 ### Manifest shape
@@ -354,9 +357,10 @@ upstream $z_R$ is remapped before division.
 Declare a renormalization kernel with `scheme: "hybrid_self_renormalization"` and
 `kernel_id` `ZMSbar_pdf` or `ZMSbar_da`. Bare inputs are either upstream
 correlator job ids or `inputs.artifacts` with `stage: "correlator_analysis"`.
-Hybrid-self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybrid-ratio
-`zs_fm` is also a flat stage/job parameter; only supporting values such as
-`m0_gev` and `delta_m_gev` remain under `scheme_parameters`.
+Hybrid-self-renormalization-specific knobs are grouped under
+`scheme_parameters`; `kernel_id`, `mu`, and the cross-scheme `normalization`
+setting remain outside that object. Hybrid-ratio `zs_fm` remains a flat
+stage/job parameter.
 
 ```json
 {
@@ -380,18 +384,26 @@ Hybrid-self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybri
       "defaults": {
         "normalization": false,
         "scheme": "hybrid_self_renormalization",
-        "mu": 2.0
+        "mu": 2.0,
+        "scheme_parameters": { "LambdaQCD_gev": 0.1 }
       },
       "jobs": [
         {
           "id": "rn_zR_fit",
           "inputs": { "reference": "bare_pdf_reference" },
-          "params": { "d": -0.08183 }
+          "params": {
+            "scheme_parameters": { "d": -0.08183 }
+          }
         },
         {
           "id": "rn_da_a06",
           "inputs": { "target": "bare_da_a06", "zR": "rn_zR_fit" },
-          "params": { "d": 0.19, "m0_gev": -0.094 }
+          "params": {
+            "scheme_parameters": {
+              "d": 0.19,
+              "m0_gev": -0.094
+            }
+          }
         }
       ]
     }
@@ -405,21 +417,26 @@ Hybrid-self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybri
 |-----------|--------|-----------|---------|
 | `scheme` | stage defaults / job | yes (`"hybrid_self_renormalization"`) | Selects full-range self-renormalization with short-distance MSbar finite matching. The removed `self_renormalization` name produces a migration error. |
 | `normalization` | stage defaults / job | no (default `true`) | If `true`, divide bare inputs by lattice $z=0$ before tools. Set `false` when inputs are already $z=0$-normalized (`normalized_at_z0` attr). |
-| `d` | **fit** job `params` | **yes** | Fixed continuum/discretization coefficient in the $g(z)$ fit and in the initial $z_R$ construction. Never fitted. Use the reference-operator value (e.g. PDF $d_{\mathrm{pdf}}$). |
-| `m0_gev` | **fit** job `params` | not allowed | The fit determines the **reference-operator** $m_0$ from the first three $g(z)$ points against $\log Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z)$. This does not restrict the apply-job override below. |
-| `d` | **apply** job `params` | no | If set (alone or with `m0_gev`), remap upstream $z_R$ from the fit-job $(d,m_0)$ onto this operator’s $d$ before $H/(z_R Z_{\overline{\mathrm{MS}}})$. Typical DA value: $0.19$. |
-| `m0_gev` | **apply** job `params` | no | Target-operator $m_0$ for the same remap. If only one of `d` / `m0_gev` is set, the other is taken from upstream $z_R$ attrs. |
+| `scheme_parameters.LambdaQCD_gev` | fit/apply job | **yes** | $\Lambda_{\mathrm{QCD}}$ in GeV for the hybrid-self-renormalization ansatz. It has no default, is stored in $z_R$ provenance, and must be explicitly identical on every fit/apply job in the chain. |
+| `scheme_parameters.d` | **fit** job | **yes** | Fixed continuum/discretization coefficient in the $g(z)$ fit and in the initial $z_R$ construction. Never fitted. Use the reference-operator value (e.g. PDF $d_{\mathrm{pdf}}$). |
+| `scheme_parameters.m0_gev` | **fit** job | not allowed | The fit determines the **reference-operator** $m_0$ from the first three $g(z)$ points against $\log Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z)$. This does not restrict the apply-job override below. |
+| `scheme_parameters.d` | **apply** job | no | If set (alone or with `m0_gev`), remap upstream $z_R$ from the fit-job $(d,m_0)$ onto this operator’s $d$ before $H/(z_R Z_{\overline{\mathrm{MS}}})$. Typical DA value: $0.19$. |
+| `scheme_parameters.m0_gev` | **apply** job | no | Target-operator $m_0$ for the same remap. If only one of `d` / `m0_gev` is set, the other is taken from upstream $z_R$ attrs. |
 | `mu` | defaults, job, or `kernel_parameters` | no (tool default `2.0`) | Renormalization scale (GeV) for $Z_{\overline{\mathrm{MS}}}$ and related logs. |
-| `svdcut` | defaults / fit job | no (default `1e-12`) | SVD cut for the correlated $g(z)$ and short-distance $m_0$ fits. |
-| `z_coverage_policy` | defaults / apply job | no (default `extrapolate`) | `extrapolate` automatically extends the inferred long-distance $f_1(z)$ quadratically and rebuilds missing upper-end $z_R$ points. `strict` rejects uncovered target points; `intersection` explicitly drops them. Reports record input/output ranges and dropped/extrapolated point counts. |
+| `scheme_parameters.svdcut` | defaults / fit job | no (default `1e-12`) | SVD cut for the correlated $g(z)$ and short-distance $m_0$ fits. |
+| `scheme_parameters.z_coverage_policy` | defaults / apply job | no (default `extrapolate`) | `extrapolate` automatically extends the inferred long-distance $f_1(z)$ quadratically and rebuilds missing upper-end $z_R$ points. `strict` rejects uncovered target points; `intersection` explicitly drops them. Reports record input/output ranges and dropped/extrapolated point counts. |
 | `kernel_id` | job or unique `inputs.kernels` entry | yes if multiple kernels | `ZMSbar_pdf` or `ZMSbar_da`; choose the conversion factor for the **apply** target. Fit diagnostics compare $m_R$ to `ZMSbar_pdf` regardless. |
 
 The removed parameters `alpha_s`, `order`, `Nf`, `zr_zmax_fm`,
-`f1_extension_zmin_fm`, `zms_kind`, `k`, `lqcd`, `cf`, and `b0` produce
+`f1_extension_zmin_fm`, `zms_kind`, `k`, lowercase `lqcd`, `cf`, and `b0` produce
 explicit migration errors rather than being ignored. Long-distance extension
-is selected by `z_coverage_policy: "extrapolate"` and has no numerical knobs.
+is selected by `scheme_parameters.z_coverage_policy: "extrapolate"` and has no numerical knobs.
 Self-renormalization derives the coupling with `alphas_nloop(mu)`; the general
 running helper remains configurable for matching code paths.
+
+Stage defaults and job params recursively merge. Put shared values such as the
+required `LambdaQCD_gev` in defaults; job-level `scheme_parameters` can then
+override only operator-specific values such as `d` or `m0_gev`.
 
 Job roles:
 

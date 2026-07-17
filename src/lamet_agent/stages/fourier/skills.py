@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from lamet_agent.manifest import AnalysisManifest, StageJob, derive_job_kinematics
+from lamet_agent.manifest_params import merge_stage_params
 
 
 STAGE_SKILL = """
@@ -28,7 +29,7 @@ def tool_catalog() -> str:
 def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str]:
     if set(job.inputs) != {"input"}:
         return ["A fourier_transform job requires exactly one input role."]
-    params = {**manifest.stages["fourier_transform"].defaults, **job.params}
+    params = merge_stage_params(manifest.stages["fourier_transform"].defaults, job.params)
     params = {**derive_job_kinematics(manifest, job), **params}
     missing = [key for key in ("order", "coord_unit", "y_grid", "momentum_gev") if key not in params]
     if "sector" not in params and "part" not in params:

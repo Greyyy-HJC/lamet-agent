@@ -19,8 +19,10 @@ Example usage:
 - from lamet_agent.stages.renorm.functions import STAGE_TOOLS
 - store = {}
 - STAGE_TOOLS["load_bare_matrix_element"](store, path="reference.nc")
-- STAGE_TOOLS["fit_self_renormalization_factor"](store, kernel_id="ZMSbar_da", d=-0.08183)
-- STAGE_TOOLS["apply_self_renormalization"](store, kernel_id="ZMSbar_da")
+- STAGE_TOOLS["fit_self_renormalization_factor"](
+      store, kernel_id="ZMSbar_da", LambdaQCD_gev=0.1, d=-0.08183)
+- STAGE_TOOLS["apply_self_renormalization"](
+      store, kernel_id="ZMSbar_da", LambdaQCD_gev=0.1)
 """
 
 from __future__ import annotations
@@ -42,7 +44,6 @@ from lamet_agent.core.tools import resolve_plot_save_path
 
 GEV_FM = 0.1973269631
 SELF_RENORM_K = 3.320
-SELF_RENORM_LQCD_GEV = 0.1
 SELF_RENORM_CF = 4.0 / 3.0
 SELF_RENORM_B0 = 11.0 - 2.0 / 3.0 * 3.0
 _ZMSBAR_KERNELS = {
@@ -164,6 +165,26 @@ def _resolve_zmsbar(kernel_id: str | None = None):
     return key, _ZMSBAR_KERNELS[key]
 
 
+def _resolve_lambdaqcd(
+    LambdaQCD_gev: float,
+    *,
+    upstream: str | float | None = None,
+) -> float:
+    """Validate the required LambdaQCD ansatz scale in GeV."""
+    upstream_value = None if upstream in {None, ""} else float(upstream)
+    value = float(LambdaQCD_gev)
+    if not np.isfinite(value) or value <= 0.0:
+        raise ValueError("LambdaQCD_gev must be a finite positive value in GeV")
+    if upstream_value is not None and not np.isclose(
+        value, upstream_value, rtol=0.0, atol=1e-12
+    ):
+        raise ValueError(
+            f"LambdaQCD_gev={value} does not match upstream zR LambdaQCD_gev={upstream_value}; "
+            "use one value throughout a hybrid-self-renormalization chain"
+        )
+    return value
+
+
 def _target_z_mask(
     z_target: np.ndarray,
     z_zr: np.ndarray,
@@ -221,12 +242,14 @@ def _self_renorm_zr_from_f1(
     d: float,
     m0_gev: float,
     mu: float,
+    LambdaQCD_gev: float,
 ) -> np.ndarray:
     """Construct zR from the single-family self-renormalization ansatz."""
     z_arr = np.asarray(z_values, dtype=float)
     f1_arr = np.asarray(f1_values, dtype=float)
     x = GEV_FM / float(lattice_spacing_fm)
-    log_lqcd_over_x = float(np.log(SELF_RENORM_LQCD_GEV / x))
+    lambdaqcd_gev = _resolve_lambdaqcd(LambdaQCD_gev)
+    log_lqcd_over_x = float(np.log(lambdaqcd_gev / x))
     scale_term = 1.0 + float(d) / log_lqcd_over_x
     if scale_term <= 0.0:
         raise ValueError("self-renormalization d term must remain positive")
@@ -235,8 +258,8 @@ def _self_renorm_zr_from_f1(
         * SELF_RENORM_CF
         / SELF_RENORM_B0
         * np.log(
-            np.log(x / SELF_RENORM_LQCD_GEV)
-            / np.log(float(mu) / SELF_RENORM_LQCD_GEV)
+            np.log(x / lambdaqcd_gev)
+            / np.log(float(mu) / lambdaqcd_gev)
         )
         + np.log(scale_term)
     )
@@ -258,6 +281,7 @@ def _extrapolate_zr_long_distance(
     d: float | None,
     m0_gev: float | None,
     mu: float,
+    LambdaQCD_gev: float,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Extend zR through a quadratic fit to the inferred long-distance f1."""
     z_target_arr = np.asarray(z_target, dtype=float)
@@ -285,6 +309,7 @@ def _extrapolate_zr_long_distance(
         d=float(d),
         m0_gev=float(m0_gev),
         mu=float(mu),
+        LambdaQCD_gev=float(LambdaQCD_gev),
     )
     f1_values = x * (np.log(zr_arr) - np.log(baseline))
     tail_zmin = 0.4 * zmax
@@ -305,6 +330,7 @@ def _extrapolate_zr_long_distance(
         d=float(d),
         m0_gev=float(m0_gev),
         mu=float(mu),
+        LambdaQCD_gev=float(LambdaQCD_gev),
     )
     return result, {
         "n_z_extrapolated": int(np.count_nonzero(extrapolated)),
@@ -622,6 +648,7 @@ def fit_self_renormalization_factor(
     out: str = "zR",
     kernel_id: str | None = None,
     mu: float = 2.0,
+    LambdaQCD_gev: float,
     d: float | None = None,
     svdcut: float = 1e-12,
     save_path: str | None = None,
@@ -638,6 +665,7 @@ def fit_self_renormalization_factor(
     if d is None:
         raise ValueError("fit_self_renormalization_factor requires d (fixed; never fitted)")
     d_val = float(d)
+    lambdaqcd_gev = _resolve_lambdaqcd(LambdaQCD_gev)
     ref = store.get(reference)
     if not isinstance(ref, EnsembleData):
         raise ValueError(f"store[{reference!r}] does not contain EnsembleData")
@@ -703,15 +731,15 @@ def fit_self_renormalization_factor(
         out_vals = []
         for zm, xm in zip(z_x_in["z"], z_x_in["x"]):
             out_vals.append(
-                SELF_RENORM_K * zm * xm / gv.log(SELF_RENORM_LQCD_GEV / xm)
+                SELF_RENORM_K * zm * xm / gv.log(lambdaqcd_gev / xm)
                 + p[f"g{zm}"]
                 + p[f"f1{zm}"] / xm
                 + 3 * SELF_RENORM_CF / SELF_RENORM_B0
                 * gv.log(
-                    gv.log(xm / SELF_RENORM_LQCD_GEV)
-                    / gv.log(mu / SELF_RENORM_LQCD_GEV)
+                    gv.log(xm / lambdaqcd_gev)
+                    / gv.log(mu / lambdaqcd_gev)
                 )
-                + gv.log(1 + d_val / gv.log(SELF_RENORM_LQCD_GEV / xm))
+                + gv.log(1 + d_val / gv.log(lambdaqcd_gev / xm))
             )
         return out_vals
 
@@ -763,27 +791,27 @@ def fit_self_renormalization_factor(
         xm = GEV_FM / float(a_val)
         for iz, z_val in enumerate(z_coords):
             fit_ln = (
-                SELF_RENORM_K * z_val * xm / gv.log(SELF_RENORM_LQCD_GEV / xm)
+                SELF_RENORM_K * z_val * xm / gv.log(lambdaqcd_gev / xm)
                 + p[f"g{z_val}"]
                 + p[f"f1{z_val}"] / xm
                 + 3 * SELF_RENORM_CF / SELF_RENORM_B0
                 * gv.log(
-                    gv.log(xm / SELF_RENORM_LQCD_GEV)
-                    / gv.log(mu / SELF_RENORM_LQCD_GEV)
+                    gv.log(xm / lambdaqcd_gev)
+                    / gv.log(mu / lambdaqcd_gev)
                 )
-                + gv.log(1 + d_val / gv.log(SELF_RENORM_LQCD_GEV / xm))
+                + gv.log(1 + d_val / gv.log(lambdaqcd_gev / xm))
             )
             fit_lnm_mean[ia, iz] = float(gv.mean(fit_ln))
             fit_lnm_sdev[ia, iz] = float(gv.sdev(fit_ln))
             temp = (
-                SELF_RENORM_K * z_val * xm / gv.log(SELF_RENORM_LQCD_GEV / xm)
+                SELF_RENORM_K * z_val * xm / gv.log(lambdaqcd_gev / xm)
                 + p[f"f1{z_val}"] / xm
                 + 3 * SELF_RENORM_CF / SELF_RENORM_B0
                 * gv.log(
-                    gv.log(xm / SELF_RENORM_LQCD_GEV)
-                    / gv.log(mu / SELF_RENORM_LQCD_GEV)
+                    gv.log(xm / lambdaqcd_gev)
+                    / gv.log(mu / lambdaqcd_gev)
                 )
-                + gv.log(1 + d_val / gv.log(SELF_RENORM_LQCD_GEV / xm))
+                + gv.log(1 + d_val / gv.log(lambdaqcd_gev / xm))
                 + m0 * z_val
             )
             zr_mean[ia, iz] = float(gv.mean(np.exp(temp)))
@@ -812,6 +840,7 @@ def fit_self_renormalization_factor(
             "scheme": "hybrid_self_renormalization",
             "kernel_id": resolved_kernel_id,
             "mu": str(mu),
+            "LambdaQCD_gev": str(lambdaqcd_gev),
             "alpha_s_derived": str(alpha_s_derived),
             "alpha_s_source": "alphas_nloop",
             "m0_gev": str(m0_mean),
@@ -849,6 +878,7 @@ def fit_self_renormalization_factor(
         "m0_source": m0_source,
         "kernel_id": resolved_kernel_id,
         "mu": float(mu),
+        "LambdaQCD_gev": lambdaqcd_gev,
         "alpha_s_derived": alpha_s_derived,
         "alpha_s_source": "alphas_nloop",
         "d": d_val,
@@ -865,6 +895,7 @@ def fit_self_renormalization_factor(
         "m0_sdev": m0_sdev,
         "m0_source": m0_source,
         "mu": float(mu),
+        "LambdaQCD_gev": lambdaqcd_gev,
         "alpha_s_derived": alpha_s_derived,
         "alpha_s_source": "alphas_nloop",
         "d": d_val,
@@ -886,6 +917,7 @@ def _remap_zr_values(
     d_to: float,
     m0_from: float,
     m0_to: float,
+    LambdaQCD_gev: float,
 ) -> np.ndarray:
     """Remap mean zR from (d_from, m0_from) to (d_to, m0_to).
 
@@ -893,7 +925,8 @@ def _remap_zr_values(
     ``m0*z`` slope differ between reference and target operators.
     """
     x = GEV_FM / float(lattice_spacing_fm)
-    log_term = float(np.log(SELF_RENORM_LQCD_GEV / x))
+    lambdaqcd_gev = _resolve_lambdaqcd(LambdaQCD_gev)
+    log_term = float(np.log(lambdaqcd_gev / x))
     if abs(log_term) < 1e-30:
         raise ValueError(f"invalid self-renormalization log term for lattice_spacing_fm={lattice_spacing_fm}")
     scale = (1.0 + d_to / log_term) / (1.0 + d_from / log_term)
@@ -907,6 +940,7 @@ def apply_self_renormalization(
     zR: str = "zR",
     kernel_id: str | None = None,
     mu: float = 2.0,
+    LambdaQCD_gev: float,
     d: float | None = None,
     m0_gev: float | None = None,
     z_coverage_policy: Literal["strict", "intersection", "extrapolate"] = "extrapolate",
@@ -926,6 +960,10 @@ def apply_self_renormalization(
     zR_data = store[zR]
     if not isinstance(zR_data, EnsembleData):
         raise ValueError(f"store[{zR!r}] does not contain EnsembleData")
+    lambdaqcd_gev = _resolve_lambdaqcd(
+        LambdaQCD_gev,
+        upstream=zR_data.attrs.get("LambdaQCD_gev"),
+    )
     resolved_kernel_id, zms_fn = _resolve_zmsbar(kernel_id or zR_data.attrs.get("kernel_id"))
     alpha_s_derived = float(kernels.alphas_nloop(mu))
 
@@ -972,6 +1010,7 @@ def apply_self_renormalization(
                     d_to=d_to,
                     m0_from=m0_from,
                     m0_to=m0_to,
+                    LambdaQCD_gev=lambdaqcd_gev,
                 )
             zr_grid = remapped
         else:
@@ -983,6 +1022,7 @@ def apply_self_renormalization(
                 d_to=d_to,
                 m0_from=m0_from,
                 m0_to=m0_to,
+                LambdaQCD_gev=lambdaqcd_gev,
             )
         # Keep diagnostics on the remapped factor for this apply job.
         remapped_zR = EnsembleData(
@@ -998,6 +1038,7 @@ def apply_self_renormalization(
                 "m0_gev": str(m0_to),
                 "d_from": str(d_from),
                 "m0_from": str(m0_from),
+                "LambdaQCD_gev": str(lambdaqcd_gev),
                 "sample_construction": "remapped_from_upstream_zR",
                 "alpha_s_derived": str(alpha_s_derived),
                 "alpha_s_source": "alphas_nloop",
@@ -1023,6 +1064,7 @@ def apply_self_renormalization(
             d=d_to,
             m0_gev=m0_to,
             mu=float(zR_data.attrs.get("mu", mu)),
+            LambdaQCD_gev=lambdaqcd_gev,
         )
     else:
         zr_on_target = _interpolate_zr(z_target, z_zr, np.asarray(zr_vals, dtype=float))
@@ -1040,6 +1082,7 @@ def apply_self_renormalization(
         "scheme": "hybrid_self_renormalization",
         "kernel_id": resolved_kernel_id,
         "mu": str(mu),
+        "LambdaQCD_gev": str(lambdaqcd_gev),
         "alpha_s_derived": str(alpha_s_derived),
         "alpha_s_source": "alphas_nloop",
         "m0_gev": "" if m0_to is None else str(m0_to),
@@ -1096,6 +1139,7 @@ def apply_self_renormalization(
         "scheme": "hybrid_self_renormalization",
         "kernel_id": resolved_kernel_id,
         "mu": float(mu),
+        "LambdaQCD_gev": lambdaqcd_gev,
         "alpha_s_derived": alpha_s_derived,
         "alpha_s_source": "alphas_nloop",
         "m0_gev": m0_to,
@@ -1137,6 +1181,7 @@ def plot_self_renormalization_diagnostics(
     sample_error_mode: str = "covariance",
     kernel_id: str | None = None,
     mu: float | None = None,
+    LambdaQCD_gev: float,
     z_coverage_policy: Literal["strict", "intersection", "extrapolate"] = "extrapolate",
 ) -> dict[str, Any]:
     """Plot hybrid-self-renormalization diagnostics.
@@ -1162,6 +1207,10 @@ def plot_self_renormalization_diagnostics(
     # Fit-check panels compare mR against ZMSbar_pdf.
     zms_fit_fn = kernels.ZMSbar_pdf
     mu_val = float(mu if mu is not None else fit_data.get("mu", zR_data.attrs.get("mu", 2.0)))
+    lambdaqcd_gev = _resolve_lambdaqcd(
+        LambdaQCD_gev,
+        upstream=fit_data.get("LambdaQCD_gev", zR_data.attrs.get("LambdaQCD_gev")),
+    )
     alpha_s_derived = float(kernels.alphas_nloop(mu_val))
     stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="self_renorm")
     plots: dict[str, str] = {}
@@ -1257,6 +1306,7 @@ def plot_self_renormalization_diagnostics(
             "mode": mode,
             "kernel_id": resolved_kernel_id,
             "mu": mu_val,
+            "LambdaQCD_gev": lambdaqcd_gev,
             "alpha_s_derived": alpha_s_derived,
             "alpha_s_source": "alphas_nloop",
             "n_sibling": 0,
@@ -1291,6 +1341,7 @@ def plot_self_renormalization_diagnostics(
                 else None
             ),
             mu=float(zR_data.attrs.get("mu", mu_val)),
+            LambdaQCD_gev=lambdaqcd_gev,
         )
     else:
         zr_on_target = _interpolate_zr(z_target, z_zr, np.asarray(zr_vals, dtype=float))
@@ -1377,6 +1428,7 @@ def plot_self_renormalization_diagnostics(
         "mode": mode,
         "kernel_id": resolved_kernel_id,
         "mu": mu_val,
+        "LambdaQCD_gev": lambdaqcd_gev,
         "alpha_s_derived": alpha_s_derived,
         "alpha_s_source": "alphas_nloop",
         "n_sibling": len(sibling_artifacts or []),

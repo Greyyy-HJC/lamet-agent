@@ -2,7 +2,34 @@ import pytest
 from pydantic import ValidationError
 
 from lamet_agent.manifest import AnalysisManifest
-from lamet_agent.manifest_params import STAGE_PARAM_CONTRACTS, validate_stage_parameter_mapping
+from lamet_agent.manifest_params import (
+    STAGE_PARAM_CONTRACTS,
+    merge_stage_params,
+    validate_stage_parameter_mapping,
+)
+
+
+def test_stage_params_merge_recursively_without_mutating_inputs() -> None:
+    defaults = {
+        "scheme_parameters": {"LambdaQCD_gev": 0.1, "d": -0.08},
+        "order": ["LA", "NLA"],
+    }
+    overrides = {
+        "scheme_parameters": {"d": 0.19, "m0_gev": -0.094},
+        "order": ["NLA"],
+    }
+
+    merged = merge_stage_params(defaults, overrides)
+
+    assert merged == {
+        "scheme_parameters": {
+            "LambdaQCD_gev": 0.1,
+            "d": 0.19,
+            "m0_gev": -0.094,
+        },
+        "order": ["NLA"],
+    }
+    assert defaults["scheme_parameters"] == {"LambdaQCD_gev": 0.1, "d": -0.08}
 
 
 def _payload() -> dict:
@@ -222,7 +249,11 @@ def _hybrid_self_payload() -> dict:
         "renormalization": {
             "defaults": {"scheme": "hybrid_self_renormalization"},
             "jobs": [
-                {"id": "fit", "inputs": {"reference": "reference"}, "params": {"d": -0.08183}}
+                {
+                    "id": "fit",
+                    "inputs": {"reference": "reference"},
+                    "params": {"scheme_parameters": {"LambdaQCD_gev": 0.12, "d": -0.08183}},
+                }
             ],
         }
     }
@@ -241,7 +272,33 @@ def test_manifest_rejects_removed_hybrid_self_parameters(key: str) -> None:
         AnalysisManifest.model_validate(payload)
 
 
-@pytest.mark.parametrize("key", ["alpha_s", "Nf", "order"])
+@pytest.mark.parametrize("key", ["LambdaQCD_gev", "d", "m0_gev", "svdcut", "z_coverage_policy"])
+def test_manifest_rejects_flat_hybrid_self_parameters(key: str) -> None:
+    payload = _hybrid_self_payload()
+    payload["stages"]["renormalization"]["defaults"][key] = 0.1
+
+    with pytest.raises(ValidationError, match=rf"renormalization\.defaults\.{key}"):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_accepts_hybrid_self_scheme_parameters() -> None:
+    manifest = AnalysisManifest.model_validate(_hybrid_self_payload())
+
+    params = manifest.stages["renormalization"].jobs[0].params["scheme_parameters"]
+    assert params["LambdaQCD_gev"] == pytest.approx(0.12)
+    assert params["d"] == pytest.approx(-0.08183)
+
+
+def test_manifest_rejects_legacy_lambdaqcd_name() -> None:
+    payload = _hybrid_self_payload()
+    params = payload["stages"]["renormalization"]["jobs"][0]["params"]["scheme_parameters"]
+    params["LambdaQCD"] = params.pop("LambdaQCD_gev")
+
+    with pytest.raises(ValidationError, match="LambdaQCD_gev"):
+        AnalysisManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize("key", ["alpha_s", "LambdaQCD", "LambdaQCD_gev", "Nf", "order"])
 def test_manifest_rejects_running_parameters_in_renormalization_kernel_parameters(key: str) -> None:
     payload = _hybrid_self_payload()
     payload["inputs"]["kernels"][0]["kernel_parameters"][key] = 0.332

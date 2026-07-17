@@ -91,6 +91,7 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
                 ("job 类型", f"`{job_kind}`"),
                 ("kernel_id", f"`{result.get('kernel_id', 'n/a')}`"),
                 ("$\\mu$ [GeV]", format_report_value(result.get("mu"))),
+                ("$\\Lambda_{\\mathrm{QCD}}$ [GeV]", format_report_value(result.get("LambdaQCD_gev"))),
                 ("派生 $\\alpha_s$", format_report_value(result.get("alpha_s_derived"))),
                 ("running helper", f"`{result.get('alpha_s_source', 'n/a')}`"),
                 ("$m_0$ [GeV]", format_report_value(result.get("m0", result.get("m0_gev")))),
@@ -113,6 +114,7 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
                 ("Job kind", f"`{job_kind}`"),
                 ("kernel_id", f"`{result.get('kernel_id', 'n/a')}`"),
                 ("$\\mu$ [GeV]", format_report_value(result.get("mu"))),
+                ("$\\Lambda_{\\mathrm{QCD}}$ [GeV]", format_report_value(result.get("LambdaQCD_gev"))),
                 ("Derived $\\alpha_s$", format_report_value(result.get("alpha_s_derived"))),
                 ("Running helper", f"`{result.get('alpha_s_source', 'n/a')}`"),
                 ("$m_0$ [GeV]", format_report_value(result.get("m0", result.get("m0_gev")))),
@@ -191,7 +193,7 @@ $$
 h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z;\mu)}.
 $$
 
-$Z_{\overline{\mathrm{MS}}}$ 由 `inputs.kernels` 中 `stage='renormalization'` 的 kernel（`ZMSbar_pdf` 或 `ZMSbar_da`）给出。$\alpha_s$ 由 `alphas_nloop(mu)` 派生并记录，不接受手动数值。`strict` 覆盖策略要求 target 完全位于 $z_R$ 网格内；`intersection` 显式裁剪到两者交集；`extrapolate` 在 target 超出拟合范围时自动对长程 $f_1(z)$ 作二次延拓并重建缺少的 $z_R$，不冻结端点。该 scheme 没有显式 $z_s$ 切换点；hybrid 性来自全程 self-renormalization 与短程 MSbar 有限 matching 的结合。
+$Z_{\overline{\mathrm{MS}}}$ 由 `inputs.kernels` 中 `stage='renormalization'` 的 kernel（`ZMSbar_pdf` 或 `ZMSbar_da`）给出。`scheme_parameters.LambdaQCD_gev` 是 self-renormalization ansatz 中必填的 $\Lambda_{\mathrm{QCD}}$（GeV），并记录在产物 provenance 中。$\alpha_s$ 仍由 `alphas_nloop(mu)` 独立派生并记录，不接受手动数值。`strict` 覆盖策略要求 target 完全位于 $z_R$ 网格内；`intersection` 显式裁剪到两者交集；`extrapolate` 在 target 超出拟合范围时自动对长程 $f_1(z)$ 作二次延拓并重建缺少的 $z_R$，不冻结端点。该 scheme 没有显式 $z_s$ 切换点；hybrid 性来自全程 self-renormalization 与短程 MSbar 有限 matching 的结合。
 """.strip()
         return r"""
 Hybrid self-renormalization fits the zero-momentum reference over the full $z$ range and uses short-distance
@@ -209,7 +211,7 @@ $$
 h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z;\mu)}.
 $$
 
-$Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). The coupling is derived by `alphas_nloop(mu)` and recorded as provenance; a numerical coupling cannot be supplied. The `strict` coverage policy requires the target to lie within the $z_R$ grid, `intersection` explicitly clips to their overlap, and `extrapolate` automatically extends the long-distance $f_1(z)$ quadratically and rebuilds only the missing $z_R$ points without endpoint freezing. There is no explicit $z_s$ switch; the hybrid character is the combination of full-range self-renormalization and short-distance MSbar finite matching.
+$Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). `scheme_parameters.LambdaQCD_gev` is the required $\Lambda_{\mathrm{QCD}}$ scale in GeV for the self-renormalization ansatz and is recorded in artifact provenance. The coupling is still derived independently by `alphas_nloop(mu)` and recorded as provenance; a numerical coupling cannot be supplied. The `strict` coverage policy requires the target to lie within the $z_R$ grid, `intersection` explicitly clips to their overlap, and `extrapolate` automatically extends the long-distance $f_1(z)$ quadratically and rebuilds only the missing $z_R$ points without endpoint freezing. There is no explicit $z_s$ switch; the hybrid character is the combination of full-range self-renormalization and short-distance MSbar finite matching.
 """.strip()
     if scheme == "ratio":
         if language == "zh":

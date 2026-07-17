@@ -13,6 +13,7 @@ import xarray as xr
 
 from lamet_agent.core.llm import request_llm_text
 from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.manifest_params import merge_stage_params
 
 STAGE_REPORTS = {
     "correlator_analysis": ("ca_report.md", "ca_report_CN.md"),
@@ -24,7 +25,7 @@ STAGE_REPORTS = {
 
 
 def _effective_params(manifest: AnalysisManifest, stage: str, job: Any) -> dict[str, Any]:
-    return {**manifest.stages[stage].defaults, **job.params}
+    return merge_stage_params(manifest.stages[stage].defaults, job.params)
 
 
 def _zs_path(manifest: AnalysisManifest, stage: str, job: Any) -> str:

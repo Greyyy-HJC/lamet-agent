@@ -25,6 +25,7 @@ from .core.tools import (
 )
 from .core.trace import AgentTrace
 from .manifest import AnalysisManifest, ArtifactInput, StageJob, resolve_manifest_artifact_metadata
+from .manifest_params import merge_stage_params
 
 # Partial runs reference external artifacts by id; hydrate them before the LLM loop.
 _STAGE_ARTIFACT_LOADERS: dict[str, dict[str, tuple[str, str]]] = {
@@ -123,7 +124,7 @@ def _run_job(
 
         effective_params = effective_matching_params(manifest, job)
     else:
-        effective_params = {**manifest.stages[stage].defaults, **job.params}
+        effective_params = merge_stage_params(manifest.stages[stage].defaults, job.params)
 
     _hydrate_external_artifact_inputs(
         stage,
