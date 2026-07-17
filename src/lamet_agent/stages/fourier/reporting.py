@@ -1236,6 +1236,14 @@ def write_fourier_stage_report(
     target.parent.mkdir(parents=True, exist_ok=True)
     first = jobs[0]["result"]
     for language, target in ((language, target),):
+        def artifact_paths(item: dict[str, Any]) -> dict[str, str]:
+            raw = item.get("artifacts", {})
+            return markdown_artifact_paths(
+                raw,
+                base_dir=target.parent,
+                path_keys=(*FOURIER_ARTIFACT_ORDER, *(key for key in raw if key.startswith("fourier_overlay_"))),
+            )
+
         observable = str(first.get("observable", ""))
         observable_text = OBSERVABLE_TEXT.get(observable, observable or "not recorded")
         method = str(first.get("method", "not recorded"))
@@ -1269,17 +1277,21 @@ def write_fourier_stage_report(
             result = item["result"]
             pz_value = result.get("momentum_gev")
             pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
-            artifacts = markdown_artifact_paths(
-                item.get("artifacts", {}),
-                base_dir=target.parent,
-                path_keys=FOURIER_ARTIFACT_ORDER,
-            )
+            artifacts = artifact_paths(item)
             lines.append(
                 f"| `{item['job_id']}` | {pz_text} | "
                 f"{result.get('selected_range_label', 'n/a')} | "
                 f"{artifacts.get('fourier_artifact', 'n/a')} | "
                 f"{artifacts.get('fourier_plot', 'n/a')} |"
             )
+        stage_artifacts = artifact_paths(jobs[0])
+        overlay_images = [value for key, value in sorted(stage_artifacts.items()) if key.startswith("fourier_overlay_image_")]
+        if overlay_images:
+            for image in overlay_images:
+                stem = Path(image).stem
+                label = stem[3:-5] if stem.startswith("ft_") and stem.endswith("_xdep") else stem
+                title = f"{label} ensemble overview" if language == "en" else f"{label}组态总览图"
+                lines.extend(["", f"## {title}", "", f"![{title}]({image})"])
         lines.extend(
             [
                 "",
@@ -1389,11 +1401,7 @@ def write_fourier_stage_report(
             result = item["result"]
             pz_value = result.get("momentum_gev")
             pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
-            artifacts = markdown_artifact_paths(
-                item.get("artifacts", {}),
-                base_dir=target.parent,
-                path_keys=FOURIER_ARTIFACT_ORDER,
-            )
+            artifacts = artifact_paths(item)
             lines.extend(["", f"### `{item['job_id']}`: $P_z={pz_text}$ GeV"])
             for key, title in (
                 ("fourier_plot", "Fourier result" if language == "en" else "傅立叶变换结果图"),
@@ -1418,16 +1426,20 @@ def write_fourier_stage_report(
             ]
         )
         for item in jobs:
-            artifacts = markdown_artifact_paths(
-                item.get("artifacts", {}),
-                base_dir=target.parent,
-                path_keys=FOURIER_ARTIFACT_ORDER,
-            )
+            artifacts = artifact_paths(item)
             for key in FOURIER_ARTIFACT_ORDER:
                 value = artifacts.get(key)
                 if value:
                     desc = FOURIER_ARTIFACT_DESCRIPTIONS[key]
                     lines.append(f"| [{Path(value).name}]({value}) | `{item['job_id']}`: {desc[1 if language == 'zh' else 0]} |")
+        stage_artifacts = artifact_paths(jobs[0])
+        for key, value in sorted(stage_artifacts.items()):
+            if not key.startswith("fourier_overlay_"):
+                continue
+            stem = Path(value).stem
+            label = stem[3:-5] if stem.startswith("ft_") and stem.endswith("_xdep") else stem
+            desc = f"Fourier overlay for ensemble {label}" if language == "en" else f"{label}组态下的傅立叶叠图"
+            lines.append(f"| [{Path(value).name}]({value}) | {desc} |")
         lines.extend(["", *_artifact_help(language=language)])
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"report": target}

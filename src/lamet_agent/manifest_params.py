@@ -52,6 +52,7 @@ STAGE_PARAM_CONTRACTS = {
     "renormalization": StageParamContract(
         schema={
             "d": None,
+            "ensemble": None,
             "kernel_id": None,
             "m0_gev": None,
             "mu": None,

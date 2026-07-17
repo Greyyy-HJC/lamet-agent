@@ -12,6 +12,10 @@ from lamet_agent.core.reporting import (
     markdown_artifact_paths,
     resolve_report_target,
 )
+from lamet_agent.stages.correlator.reporting import build_correlator_stage_report_markdown
+from lamet_agent.stages.renorm.reporting import build_renorm_stage_report_markdown
+from lamet_agent.stages.fourier.reporting import write_fourier_stage_report
+from lamet_agent.stages.matching import reporting as matching_reporting
 
 
 def test_report_formatters_handle_scalars_and_list_previews() -> None:
@@ -51,3 +55,141 @@ def test_markdown_artifact_paths_relativizes_selected_scalar_and_list_paths(
     assert output["plots"] == ["../artifacts/plot.svg", "relative.svg"]
     assert output["relative"] == "already-relative.pdf"
     assert output["untouched"] == artifact
+
+
+def test_correlator_stage_report_shows_overlay_and_omits_dispersion_from_job_outputs(tmp_path: Path) -> None:
+    text = build_correlator_stage_report_markdown(
+        jobs=[
+            {
+                "job_id": "ca_p4",
+                "result": {"fit_scope": "ratio", "fit_strategy": "joint"},
+                "artifacts": {
+                    "bare_artifact": "ca_p4.nc",
+                    "summary_plot": "ca_p4.pdf",
+                    "summary_plot_image": "ca_p4.svg",
+                    "tuning_log": "fit_logs/tuning.log",
+                    "sample_log": "fit_logs/sample.log",
+                    "E0_artifact": "dispersion_relation.nc",
+                    "dispersion_relation_plot": "dispersion_relation.pdf",
+                    "dispersion_relation_image": "dispersion_relation.svg",
+                    "matrix_overlay_re_image_ca_HISQa060_X_re": "ca_HISQa060_X_re.svg",
+                    "matrix_overlay_im_image_ca_HISQa060_X_im": "ca_HISQa060_X_im.svg",
+                },
+            }
+        ],
+        base_dir=tmp_path,
+        language="zh",
+    )
+
+    assert "## HISQa060_X组态总览图" in text
+    assert "![HISQa060_X组态总览图](ca_HISQa060_X_re.svg)" in text
+    assert text.index("ca_HISQa060_X_re.svg") < text.index("ca_HISQa060_X_im.svg")
+    per_job = text.split("### fit_logs", 1)[1].split("### 诊断 SVG", 1)[0]
+    assert "dispersion_relation" not in per_job
+
+
+def test_renorm_stage_report_shows_overlay_after_method(tmp_path: Path) -> None:
+    text = build_renorm_stage_report_markdown(
+        jobs=[
+            {
+                "job_id": "rn_p4",
+                "result": {"scheme": "hybrid_ratio", "zs_fm": 0.17},
+                "artifacts": {
+                    "renormalized_artifact": "rn_p4.nc",
+                    "renormalized_plot": "rn_p4.pdf",
+                    "matrix_overlay_re_image_rn_HISQa060_X_re": "rn_HISQa060_X_re.svg",
+                    "matrix_overlay_im_image_rn_HISQa060_X_im": "rn_HISQa060_X_im.svg",
+                },
+            }
+        ],
+        base_dir=tmp_path,
+        language="zh",
+    )
+
+    assert text.index("## 方法") < text.index("## HISQa060_X组态总览图") < text.index("## `rn_p4`")
+    assert text.index("rn_HISQa060_X_re.svg") < text.index("rn_HISQa060_X_im.svg")
+
+
+def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_path: Path) -> None:
+    path = tmp_path / "ft_report.md"
+    write_fourier_stage_report(
+        jobs=[
+            {
+                "job_id": "ft_p4",
+                "result": {
+                    "momentum_gev": 1.8,
+                    "observable": "pion_quark_quasi_pdf",
+                    "method": "LA",
+                    "order": 2,
+                    "z_ext_max": 2.0,
+                },
+                "artifacts": {
+                    "fourier_artifact": "ft_p4.nc",
+                    "fourier_plot": "ft_p4_xdep.pdf",
+                    "fourier_overlay_ft_HISQa060_X_xdep": "ft_HISQa060_X_xdep.pdf",
+                    "fourier_overlay_image_ft_HISQa060_X_xdep": "ft_HISQa060_X_xdep.svg",
+                },
+            },
+            {
+                "job_id": "ft_p5",
+                "result": {"momentum_gev": 2.25, "observable": "pion_quark_quasi_pdf"},
+                "artifacts": {"fourier_artifact": "ft_p5.nc", "fourier_plot": "ft_p5_xdep.pdf"},
+            },
+        ],
+        path=path,
+        report_language="ch",
+    )
+    text = path.with_name("ft_report_CN.md").read_text(encoding="utf-8")
+    output = text.split("## 输出文件", 1)[1].split("## 读取", 1)[0]
+
+    assert "## HISQa060_X组态总览图" in text
+    assert output.rfind("ft_HISQa060_X_xdep.svg") > output.rfind("ft_p5_xdep.pdf")
+    assert "HISQa060_X组态下的傅立叶叠图" in output
+    assert "`ft_p4`: 阶段级傅立叶叠图" not in output
+
+
+def test_matching_stage_report_lists_overlay_last_with_ensemble_description(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(matching_reporting, "_llm_kernel_formula", lambda *args, **kwargs: ("formula", False))
+    path = tmp_path / "matching_report.md"
+    matching_reporting.write_matching_stage_report(
+        jobs=[
+            {
+                "job_id": "mt_p4",
+                "result": {
+                    "kernel_id": "dummy_kernel",
+                    "momentum_gev": 1.8,
+                    "x_grid": [0.0, 1.0],
+                    "quasi_mean": [1.0, 1.0],
+                    "lightcone_mean": [1.0, 1.0],
+                },
+                "artifacts": {
+                    "lightcone_artifact": "mt_p4.nc",
+                    "matched_plot": "mt_p4.pdf",
+                    "matching_overlay_mt_HISQa060_X": "mt_HISQa060_X.pdf",
+                    "matching_overlay_image_mt_HISQa060_X": "mt_HISQa060_X.svg",
+                },
+            },
+            {
+                "job_id": "mt_p5",
+                "result": {
+                    "kernel_id": "dummy_kernel",
+                    "momentum_gev": 2.25,
+                    "x_grid": [0.0, 1.0],
+                    "quasi_mean": [1.0, 1.0],
+                    "lightcone_mean": [1.0, 1.0],
+                },
+                "artifacts": {"lightcone_artifact": "mt_p5.nc", "matched_plot": "mt_p5.pdf"},
+            },
+        ],
+        path=path,
+        report_language="ch",
+        llm=matching_reporting.FormulaLlm(backend="codex"),
+    )
+    text = path.with_name("matching_report_CN.md").read_text(encoding="utf-8")
+    output = text.split("## 输出文件", 1)[1]
+
+    assert "## HISQa060_X组态总览图" in text
+    assert output.rfind("mt_HISQa060_X.pdf") > output.rfind("mt_p5.pdf")
+    assert output.rfind("mt_HISQa060_X.svg") > output.rfind("mt_HISQa060_X.pdf")
+    assert "HISQa060_X组态下的quasi/光锥叠图" in output
+    assert "`mt_p4`: 阶段级 quasi/光锥叠图" not in output

@@ -131,6 +131,8 @@ def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
     header = "| Artifact | Description |" if language == "en" else "| 文件 | 说明 |"
     lines = [header, "|---|---|"]
     for key in CORRELATOR_ARTIFACT_ORDER:
+        if key in {"E0_artifact", "dispersion_relation_plot", "dispersion_relation_image"}:
+            continue
         value = artifacts.get(key)
         if not value:
             continue
@@ -295,7 +297,10 @@ def build_correlator_stage_report_markdown(
         artifacts = markdown_artifact_paths(
             item.get("artifacts", {}),
             base_dir=base_dir,
-            path_keys=CORRELATOR_ARTIFACT_ORDER,
+            path_keys=(
+                *CORRELATOR_ARTIFACT_ORDER,
+                *(key for key in item.get("artifacts", {}) if key.startswith("matrix_overlay_")),
+            ),
             list_path_keys=("sample0_pt2_plots", "sample0_fit_plots"),
         )
         markdown_jobs.append((item, result, artifacts))
@@ -322,6 +327,21 @@ def build_correlator_stage_report_markdown(
                 f"![Dispersion relation]({stage_artifacts['dispersion_relation_image']})",
             ]
         )
+    overlay_images = [
+        value for key, value in sorted(stage_artifacts.items()) if key.startswith("matrix_overlay_") and "_image_" in key
+    ]
+    if overlay_images:
+        overlay_groups: dict[str, list[str]] = {}
+        for image in overlay_images:
+            stem = Path(image).stem
+            label = stem[3:] if stem.startswith("ca_") else stem
+            label = label[:-3] if label.endswith(("_re", "_im")) else label
+            overlay_groups.setdefault(label, []).append(image)
+        for label, images in overlay_groups.items():
+            title = f"{label} ensemble overview" if language == "en" else f"{label}组态总览图"
+            lines.extend(["", f"## {title}", ""])
+            images.sort(key=lambda image: 0 if Path(image).stem.endswith("_re") else 1)
+            lines.extend(f"![{title}]({image})" for image in images)
 
     for item, result, artifacts in markdown_jobs:
         lines.extend(

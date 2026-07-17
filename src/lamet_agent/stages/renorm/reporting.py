@@ -330,7 +330,7 @@ def build_renorm_stage_report_markdown(
             path_keys=(
                 key
                 for key in raw_artifacts
-                if key in RENORM_ARTIFACT_ORDER or key.startswith("diag_")
+                if key in RENORM_ARTIFACT_ORDER or key.startswith("diag_") or key.startswith("matrix_overlay_")
             ),
         )
         markdown_jobs.append((item, result, artifacts))
@@ -349,6 +349,10 @@ def build_renorm_stage_report_markdown(
             f"{plot_path} |"
         )
 
+    stage_artifacts = markdown_jobs[0][2] if markdown_jobs else {}
+    overlay_images = [
+        value for key, value in sorted(stage_artifacts.items()) if key.startswith("matrix_overlay_") and "_image_" in key
+    ]
     method_text = (
         "\n\n".join(_formula_text(language=language, scheme=scheme) for scheme in sorted(schemes))
         if primary_scheme == "mixed"
@@ -361,6 +365,18 @@ def build_renorm_stage_report_markdown(
             method_text,
         ]
     )
+    if overlay_images:
+        overlay_groups: dict[str, list[str]] = {}
+        for image in overlay_images:
+            stem = Path(image).stem
+            label = stem[3:] if stem.startswith("rn_") else stem
+            label = label[:-3] if label.endswith(("_re", "_im")) else label
+            overlay_groups.setdefault(label, []).append(image)
+        for label, images in overlay_groups.items():
+            title = f"{label} ensemble overview" if language == "en" else f"{label}组态总览图"
+            lines.extend(["", f"## {title}", ""])
+            images.sort(key=lambda image: 0 if Path(image).stem.endswith("_re") else 1)
+            lines.extend(f"![{title}]({image})" for image in images)
     for item, result, artifacts in markdown_jobs:
         is_fit_job = result.get("job_kind") == "fit" or (
             result.get("scheme") == "hybrid_self_renormalization" and artifacts.get("zR_artifact") and not artifacts.get("renormalized_artifact")

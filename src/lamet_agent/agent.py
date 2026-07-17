@@ -12,8 +12,9 @@ import xarray as xr
 
 from .core.llm import LlmSession, format_api_model_spec, make_llm_session
 from .core.data import EnsembleData
-from .core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FONT_SIZE, LEGEND_SETS, default_plot
+from .core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FIG_SIZE, FONT_SIZE, LABEL_SIZE, LEGEND_SETS, apply_plot_style, default_plot
 from .core.prompting import build_stage_static_prompt
+from .core.resampling import sample_mean_and_sdev
 from .core.tools import (
     filter_tool_kwargs,
     prepare_tool_args,
@@ -402,6 +403,242 @@ def _write_correlator_energy_artifacts(records: list[dict[str, Any]], stage_dir:
     }
 
 
+def _ensemble_label(data: EnsembleData, fallback: str = "") -> str:
+    value = fallback or data.attrs.get("ensemble")
+    return str(value or "ensemble")
+
+
+def _momentum_label(attrs: dict[str, Any], result: dict[str, Any]) -> str:
+    form = str(attrs.get("fitting_form") or result.get("fitting_form") or "Breit")
+    if form == "NonBreit":
+        q2 = result.get("q2_gev2", attrs.get("q2_gev2"))
+        xi = result.get("xi", attrs.get("xi"))
+        initial = result.get("initial_momentum_gev", attrs.get("initial_momentum_gev"))
+        final = result.get("final_momentum_gev", attrs.get("final_momentum_gev"))
+        if (q2 is None or xi is None) and initial is not None and final is not None:
+            q2 = (float(final) - float(initial)) ** 2
+            denominator = float(initial) + float(final)
+            xi = None if denominator == 0.0 else (float(initial) - float(final)) / denominator
+        q2_text = "n/a" if q2 is None else f"{float(q2):.2f}"
+        xi_text = "n/a" if xi is None else f"{float(xi):.2f}"
+        return rf"$Q^2={q2_text}\,\mathrm{{GeV}}^2$, $\xi={xi_text}$"
+    momentum = attrs.get("momentum_gev") or result.get("momentum_gev")
+    p_text = "n/a" if momentum in (None, "") else f"{float(momentum):.2f}"
+    return rf"Breit, $p={p_text}\,\mathrm{{GeV}}$"
+
+
+def _overlay_paths(stage_dir: Path, prefix: str, ensemble: str, suffix: str) -> tuple[Path, Path]:
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in ensemble)
+    stem = stage_dir / f"{prefix}_{safe}_{suffix}" if suffix else stage_dir / f"{prefix}_{safe}"
+    return stem.with_suffix(".pdf"), stem.with_suffix(".svg")
+
+
+def _write_matrix_overlay_artifacts(
+    jobs: list[dict[str, Any]],
+    stage_dir: Path,
+    *,
+    artifact_key: str,
+    prefix: str,
+    title_suffix: str,
+    y_label: str,
+) -> dict[str, str]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    records = [record for record in jobs if record.get("artifacts", {}).get(artifact_key)]
+    if len(records) <= 1:
+        return {}
+    for record in records:
+        path = record.get("artifacts", {}).get(artifact_key)
+        if not path:
+            continue
+        data = EnsembleData.from_netcdf(path)
+        groups.setdefault(_ensemble_label(data, str(record.get("result", {}).get("ensemble") or "")), []).append(
+            {"record": record, "data": data}
+        )
+    artifacts: dict[str, str] = {}
+    for ensemble, items in groups.items():
+        if len(items) <= 1:
+            continue
+        for part, attr_key, marker in (("re", "matrix_overlay_re", "o"), ("im", "matrix_overlay_im", "s")):
+            fig, ax = default_plot()
+            n_items = len(items)
+            for index, item in enumerate(items):
+                data: EnsembleData = item["data"]
+                z = np.asarray(data.coords["z"], dtype=float)
+                values = np.asarray(data.values)
+                mode = "jk" if data.resample == "jackknife" else "bs"
+                sample_error_mode = str(data.attrs.get("sample_error_mode", data.attrs.get("average_method", "covariance")))
+                offset = 0.06 * (index - (n_items - 1) / 2.0)
+                if part == "re":
+                    mean, err = sample_mean_and_sdev(np.real(values), mode=mode, sample_error_mode=sample_error_mode, axis=0)
+                else:
+                    mean, err = sample_mean_and_sdev(np.imag(values), mode=mode, sample_error_mode=sample_error_mode, axis=0)
+                ax.errorbar(
+                    z + offset,
+                    mean,
+                    np.abs(err),
+                    label=_momentum_label(dict(data.attrs), item["record"].get("result", {})),
+                    color=COLOR_CYCLE[index % len(COLOR_CYCLE)],
+                    marker=marker,
+                    **ERRORBAR_STYLE,
+                )
+            ax.set_xlabel(r"$z/a$", **FONT_SIZE)
+            ax.set_ylabel(y_label, **FONT_SIZE)
+            ax.set_title(f"{ensemble} {title_suffix}", **FONT_SIZE)
+            ax.legend(**LEGEND_SETS)
+            fig.tight_layout()
+            pdf, svg = _overlay_paths(stage_dir, prefix, ensemble, part)
+            fig.savefig(pdf, bbox_inches="tight", transparent=True)
+            fig.savefig(svg, bbox_inches="tight")
+            import matplotlib.pyplot as plt
+
+            plt.close(fig)
+            artifacts[f"{attr_key}_{pdf.stem}"] = str(pdf)
+            artifacts[f"{attr_key}_image_{svg.stem}"] = str(svg)
+    return artifacts
+
+
+def _write_fourier_overlay_artifacts(jobs: list[dict[str, Any]], stage_dir: Path) -> dict[str, str]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    records = [record for record in jobs if record.get("artifacts", {}).get("fourier_artifact")]
+    if len(records) <= 1:
+        return {}
+    for record in records:
+        path = record.get("artifacts", {}).get("fourier_artifact")
+        if not path:
+            continue
+        data = EnsembleData.from_netcdf(path)
+        ensemble = _ensemble_label(data, str(record.get("result", {}).get("ensemble") or ""))
+        groups.setdefault(ensemble, []).append({"record": record, "data": data})
+    artifacts: dict[str, str] = {}
+    for ensemble, items in groups.items():
+        if len(items) <= 1:
+            continue
+        import matplotlib.pyplot as plt
+
+        apply_plot_style()
+        fig, (ax_re, ax_im) = plt.subplots(
+            2,
+            1,
+            figsize=FIG_SIZE,
+            gridspec_kw={"height_ratios": [1, 1]},
+            sharex=True,
+        )
+        fig.subplots_adjust(hspace=0)
+        for ax in (ax_re, ax_im):
+            ax.tick_params(direction="in", top=True, right=True, **LABEL_SIZE)
+            ax.ticklabel_format(axis="y", style="plain", useOffset=False)
+            ax.grid(linestyle=":")
+            ax.axhline(0.0, color="black", linewidth=0.8, alpha=0.45)
+        for index, item in enumerate(items):
+            data: EnsembleData = item["data"]
+            result = item["record"].get("result", {})
+            x = np.asarray(data.coords["x"], dtype=float)
+            p = result.get("momentum_gev", data.attrs.get("momentum_gev"))
+            p_text = "n/a" if p in (None, "") else f"{float(p):.2f}"
+            color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
+            values = np.asarray(data.values)
+            mode = "jk" if data.resample == "jackknife" else "bs"
+            sample_error_mode = str(data.attrs.get("sample_error_mode", data.attrs.get("average_method", "covariance")))
+            for ax, name in ((ax_re, "re"), (ax_im, "im")):
+                if f"ft_{name}_mean" in data.attrs:
+                    mean = np.asarray(json.loads(data.attrs[f"ft_{name}_mean"]), dtype=float)
+                    stat = np.asarray(json.loads(data.attrs.get(f"ft_{name}_stat_sdev", "0.0")), dtype=float)
+                    sys = np.asarray(json.loads(data.attrs.get(f"ft_{name}_sys_sdev", "0.0")), dtype=float)
+                    err = np.sqrt(stat**2 + sys**2)
+                else:
+                    mean, err = sample_mean_and_sdev(
+                        np.real(values) if name == "re" else np.imag(values),
+                        mode=mode,
+                        sample_error_mode=sample_error_mode,
+                        axis=0,
+                    )
+                mean = np.where(np.abs(mean) < 1e-14, 0.0, mean)
+                err = np.where(err < 1e-14, 0.0, err)
+                ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.28, linewidth=0, label=rf"$P_z={p_text}\,\mathrm{{GeV}}$")
+                ax.plot(x, mean, color=color, linewidth=0.9, alpha=0.72)
+        ax_re.set_xlim(-2.0, 2.0)
+        ax_im.set_xlim(-2.0, 2.0)
+        ax_re.set_ylabel(r"$\mathrm{Re}\,\tilde{q}(x)$", **FONT_SIZE)
+        ax_im.set_ylabel(r"$\mathrm{Im}\,\tilde{q}(x)$", **FONT_SIZE)
+        ax_re.yaxis.set_label_coords(-0.11, 0.5)
+        ax_im.yaxis.set_label_coords(-0.11, 0.5)
+        ax_im.set_xlabel(r"$x$", **FONT_SIZE)
+        ax_re.legend(**LEGEND_SETS)
+        ax_im.legend(**LEGEND_SETS)
+        ax_re.set_title(f"{ensemble} quasi distribution", **FONT_SIZE)
+        fig.tight_layout()
+        pdf, svg = _overlay_paths(stage_dir, "ft", ensemble, "xdep")
+        fig.savefig(pdf, bbox_inches="tight", transparent=True)
+        fig.savefig(svg, bbox_inches="tight")
+
+        plt.close(fig)
+        artifacts[f"fourier_overlay_{pdf.stem}"] = str(pdf)
+        artifacts[f"fourier_overlay_image_{svg.stem}"] = str(svg)
+    return artifacts
+
+
+def _write_matching_overlay_artifacts(jobs: list[dict[str, Any]], stage_dir: Path) -> dict[str, str]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    records = [record for record in jobs if record.get("artifacts", {}).get("lightcone_artifact")]
+    if len(records) <= 1:
+        return {}
+    for record in records:
+        path = record.get("artifacts", {}).get("lightcone_artifact")
+        if not path:
+            continue
+        lightcone = EnsembleData.from_netcdf(path)
+        ensemble = _ensemble_label(lightcone, str(record.get("result", {}).get("ensemble") or ""))
+        groups.setdefault(ensemble, []).append({"record": record, "lightcone": lightcone})
+    artifacts: dict[str, str] = {}
+    for ensemble, items in groups.items():
+        if len(items) <= 1:
+            continue
+        fig, ax = default_plot()
+        x_limits = []
+        y_limits = []
+        for index, item in enumerate(items):
+            result = item["record"].get("result", {})
+            color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
+            p = result.get("momentum_gev")
+            p_text = "n/a" if p in (None, "") else f"{float(p):.2f}"
+            if result.get("matching_plot_xlim"):
+                x_limits.append(result["matching_plot_xlim"])
+            if result.get("matching_plot_ylim"):
+                y_limits.append(result["matching_plot_ylim"])
+            x_quasi = np.asarray(result.get("quasi_x_grid") or result.get("x_grid"), dtype=float)
+            quasi_mean = np.asarray(result.get("quasi_mean"), dtype=float)
+            quasi_err = np.asarray(result.get("quasi_sdev", np.zeros_like(quasi_mean)), dtype=float)
+            lightcone: EnsembleData = item["lightcone"]
+            x_lc = np.asarray(lightcone.coords.get("x", result.get("x_grid")), dtype=float)
+            lc_mean = np.asarray(lightcone.mean, dtype=float)
+            lc_err = np.asarray(lightcone.sdev, dtype=float)
+            for x, mean, err, linestyle, label in (
+                (x_quasi, quasi_mean, quasi_err, "--", rf"$p={p_text}\,\mathrm{{GeV}}$ quasi"),
+                (x_lc, lc_mean, lc_err, "-", rf"$p={p_text}\,\mathrm{{GeV}}$ light-cone"),
+            ):
+                ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.22, linewidth=0)
+                ax.plot(x, mean, color=color, linestyle=linestyle, linewidth=1.0, label=label)
+        ax.axhline(0.0, color="black", linewidth=0.8, alpha=0.45)
+        ax.set_xlabel(r"$x$", **FONT_SIZE)
+        ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
+        if x_limits:
+            ax.set_xlim(float(min(v[0] for v in x_limits)), float(max(v[1] for v in x_limits)))
+        if y_limits:
+            ax.set_ylim(float(min(v[0] for v in y_limits)), float(max(v[1] for v in y_limits)))
+        ax.set_title(ensemble, **FONT_SIZE)
+        ax.legend(**LEGEND_SETS)
+        fig.tight_layout()
+        pdf, svg = _overlay_paths(stage_dir, "mt", ensemble, "")
+        fig.savefig(pdf, bbox_inches="tight", transparent=True)
+        fig.savefig(svg, bbox_inches="tight")
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+        artifacts[f"matching_overlay_{pdf.stem}"] = str(pdf)
+        artifacts[f"matching_overlay_image_{svg.stem}"] = str(svg)
+    return artifacts
+
+
 def _normalize_report_language(report_language: str) -> str:
     language = report_language.lower()
     if language not in {"en", "ch"}:
@@ -511,10 +748,11 @@ def run_agent(
             if stage == "correlator_analysis" and "output" in store:
                 fit_result = _last_tool_result(observations, "fit_bare_matrix_grid")
                 if fit_result is not None:
+                    matrix_attrs = dict(getattr(store.get("bare_matrix_element_data"), "attrs", {}))
                     stage_job_records.append(
                         {
                             "job_id": job.id,
-                            "result": fit_result,
+                            "result": {**matrix_attrs, **fit_result},
                             "artifacts": {
                                 "bare_artifact": fit_result.get("artifact") or fit_result.get("netcdf_path"),
                                 "summary_plot": fit_result.get("plot_pdf"),
@@ -536,6 +774,7 @@ def run_agent(
                 if apply_result is not None:
                     z_grid = []
                     matrix = store.get("matrix_element_data") or store.get("output")
+                    matrix_attrs = dict(getattr(matrix, "attrs", {}))
                     if hasattr(matrix, "coords") and "z" in matrix.coords:
                         z_grid = np.asarray(matrix.coords["z"], dtype=float).tolist()
                     artifacts = {
@@ -550,6 +789,7 @@ def run_agent(
                         {
                             "job_id": job.id,
                             "result": {
+                                **matrix_attrs,
                                 **apply_result,
                                 "scheme": apply_result.get("scheme", "hybrid_ratio"),
                                 "z_grid": z_grid,
@@ -577,10 +817,11 @@ def run_agent(
                         }
                     )
             if stage == "fourier_transform" and "fourier_result" in store:
+                fourier_attrs = dict(getattr(store.get("matrix_element_data") or store.get("input"), "attrs", {}))
                 stage_job_records.append(
                     {
                         "job_id": job.id,
-                        "result": store["fourier_result"],
+                        "result": {**store["fourier_result"], **fourier_attrs},
                         "summary": store.get("fourier_summary"),
                         "artifacts": {
                             "fourier_artifact": store["fourier_result"].get("artifact"),
@@ -598,11 +839,14 @@ def run_agent(
                 quasi_ed = store["quasi_ed"]
                 lightcone_ed = store["lightcone_ed"]
                 kernel_info = dict(store.get("matching_kernel_info", {}))
+                matching_attrs = {**dict(getattr(lightcone_ed, "attrs", {})), **dict(getattr(quasi_ed, "attrs", {}))}
                 x_ls = np.asarray(store["x_ls"], dtype=float)
+                quasi_x = np.asarray(quasi_ed.coords.get("x", store.get("quasi_y_ls", x_ls)), dtype=float)
                 stage_job_records.append(
                     {
                         "job_id": job.id,
                         "result": {
+                            **matching_attrs,
                             **kernel_info,
                             "component": store.get("matching_component"),
                             "source": "job input",
@@ -610,8 +854,12 @@ def run_agent(
                             "n_sample": int(lightcone_ed.n_sample),
                             "n_points": int(x_ls.size),
                             "x_grid": x_ls.tolist(),
+                            "quasi_x_grid": quasi_x.tolist(),
                             "quasi_mean": [float(v) for v in np.asarray(quasi_ed.mean)],
+                            "quasi_sdev": [float(v) for v in np.asarray(quasi_ed.sdev)],
                             "lightcone_mean": [float(v) for v in np.asarray(lightcone_ed.mean)],
+                            "matching_plot_xlim": store.get("matching_plot", {}).get("xlim"),
+                            "matching_plot_ylim": store.get("matching_plot", {}).get("ylim"),
                         },
                         "artifacts": {
                             "lightcone_artifact": store.get("matching_artifact"),
@@ -637,6 +885,16 @@ def run_agent(
             if energy_artifacts:
                 for record in stage_job_records:
                     record.setdefault("artifacts", {}).update(energy_artifacts)
+            overlay_artifacts = _write_matrix_overlay_artifacts(
+                stage_job_records,
+                manifest.artifacts_directory / stage,
+                artifact_key="bare_artifact",
+                prefix="ca",
+                title_suffix="bare matrix elements",
+                y_label=r"Bare matrix element",
+            )
+            if overlay_artifacts:
+                stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             paths = write_correlator_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "ca_report.md",
@@ -646,6 +904,16 @@ def run_agent(
         if stage == "renormalization" and stage_job_records:
             from lamet_agent.stages.renorm.reporting import write_renorm_stage_report
 
+            overlay_artifacts = _write_matrix_overlay_artifacts(
+                stage_job_records,
+                manifest.artifacts_directory / stage,
+                artifact_key="renormalized_artifact",
+                prefix="rn",
+                title_suffix="renormalized matrix elements",
+                y_label=r"Renormalized matrix element",
+            )
+            if overlay_artifacts:
+                stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             paths = write_renorm_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "renorm_report.md",
@@ -655,6 +923,9 @@ def run_agent(
         if stage == "fourier_transform" and stage_job_records:
             from lamet_agent.stages.fourier.reporting import write_fourier_stage_report
 
+            overlay_artifacts = _write_fourier_overlay_artifacts(stage_job_records, manifest.artifacts_directory / stage)
+            if overlay_artifacts:
+                stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             paths = write_fourier_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "ft_report.md",
@@ -664,6 +935,9 @@ def run_agent(
         if stage == "perturbative_matching" and stage_job_records:
             from lamet_agent.stages.matching.reporting import FormulaLlm, write_matching_stage_report
 
+            overlay_artifacts = _write_matching_overlay_artifacts(stage_job_records, manifest.artifacts_directory / stage)
+            if overlay_artifacts:
+                stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             paths = write_matching_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "matching_report.md",

@@ -35,7 +35,7 @@ matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 
-from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.data import EnsembleData, EnsembleInfo
 from lamet_agent.core.plotting import plot_fourier_artifact, plot_fourier_extension_quality
 from lamet_agent.core.resampling import (
     normalize_resample_mode,
@@ -1700,7 +1700,7 @@ def ensemble_data_to_legacy_arrays(data: EnsembleData) -> dict[str, np.ndarray]:
     }
 
 
-def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
+def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: EnsembleInfo | None = None) -> EnsembleData:
     """Build a complex EnsembleData(x) from Fourier workflow samples."""
     if "final_ft_re_samples" in result and "final_ft_im_samples" in result:
         re_samples = np.asarray(result["final_ft_re_samples"], dtype=float)
@@ -1735,6 +1735,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
         "momentum",
         "volume",
         "bz_direction",
+        "ensemble",
         "momentum_gev",
         "final_momentum_gev",
         "lattice_spacing_fm",
@@ -1779,8 +1780,17 @@ def fourier_result_to_ensemble_data(result: dict[str, Any]) -> EnsembleData:
     ):
         if key in result:
             attrs[key] = json.dumps(np.asarray(result[key]).tolist())
+    ensemble_label = str(result.get("ensemble", ""))
     return EnsembleData(
-        ensemble=result.get("ensemble"),
+        ensemble=EnsembleInfo(
+            source_ensemble.series if source_ensemble is not None else "",
+            ensemble_label,
+            source_ensemble.a_s if source_ensemble is not None else float(result.get("lattice_spacing_fm") or 1.0),
+            source_ensemble.a_t if source_ensemble is not None else float(result.get("lattice_spacing_fm") or 1.0),
+            source_ensemble.L_s if source_ensemble is not None else 1,
+            source_ensemble.L_t if source_ensemble is not None else 1,
+            source_ensemble.m_pi if source_ensemble is not None else 0.0,
+        ),
         resample=_normalise_resample_mode(str(result.get("resample_mode", "bootstrap"))),
         values=values,
         dims=("x",),
@@ -1970,7 +1980,7 @@ def _svg_companion_path(path: Path) -> Path:
     return path.with_suffix(".svg")
 
 
-def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
+def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any], source_ensemble: EnsembleInfo | None = None) -> None:
     schemes = result["scheme_results"]
     fit_param_labels = []
     for item in schemes:
@@ -2006,8 +2016,17 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any]) -> None:
 
     scheme_labels = np.asarray(result["scheme_labels"])
     param_samples = np.moveaxis(fit_params, 1, 0)
+    ensemble_label = str(result.get("ensemble", ""))
     fit_info_data = EnsembleData(
-        ensemble=result.get("ensemble"),
+        ensemble=EnsembleInfo(
+            source_ensemble.series if source_ensemble is not None else "",
+            ensemble_label,
+            source_ensemble.a_s if source_ensemble is not None else float(result.get("lattice_spacing_fm") or 1.0),
+            source_ensemble.a_t if source_ensemble is not None else float(result.get("lattice_spacing_fm") or 1.0),
+            source_ensemble.L_s if source_ensemble is not None else 1,
+            source_ensemble.L_t if source_ensemble is not None else 1,
+            source_ensemble.m_pi if source_ensemble is not None else 0.0,
+        ),
         resample=resample_mode,
         values=[param_samples[idx] for idx in range(param_samples.shape[0])],
         dims=("scheme", "parameter"),
@@ -2592,6 +2611,7 @@ def run_fourier_transform(
     bz_direction: str | None = None,
     momentum_gev: float | None = None,
     final_momentum_gev: float | None = None,
+    ensemble: str | None = None,
     lattice_spacing_fm: float | None = None,
     im_flip_for_ft: bool = False,
     phase_shift: float = 0.0,
@@ -2936,7 +2956,7 @@ def run_fourier_transform(
     result["psi1_flavor_class"] = psi1_flavor_class
     result["psi2_flavor_class"] = psi2_flavor_class
     result["workers"] = int(workers)
-    result["ensemble"] = matrix_element_data.ensemble
+    result["ensemble"] = str(ensemble or "")
     result.update(candidate_diagnostics)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
@@ -2948,12 +2968,12 @@ def run_fourier_transform(
             model_average=model_average,
         )
         _apply_fourier_output_scale(result, float(output_scale))
-    store["fourier_result_data"] = fourier_result_to_ensemble_data(result)
+    store["fourier_result_data"] = fourier_result_to_ensemble_data(result, source_ensemble=matrix_element_data.ensemble)
     store[out] = result
     artifact = _artifact_path(save_path, default_name=f"{out}.nc", artifacts_dir=artifacts_dir).with_suffix(".nc")
     fit_info_artifact = _artifact_path(None, default_name=f"{artifact.stem}_fit_info.nc", artifacts_dir=artifacts_dir)
     store["fourier_result_data"].to_netcdf(artifact)
-    _save_fourier_fit_info_netcdf(fit_info_artifact, result)
+    _save_fourier_fit_info_netcdf(fit_info_artifact, result, source_ensemble=matrix_element_data.ensemble)
     result["artifact"] = str(artifact)
     result["fit_info_artifact"] = str(fit_info_artifact)
     summary = summarize_fourier_result(store)

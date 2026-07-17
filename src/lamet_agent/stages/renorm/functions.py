@@ -416,6 +416,7 @@ def apply_ratio_scheme_renormalization(
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     job_id: str | None = None,
+    ensemble: str | None = None,
     sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
     """Apply ratio or hybrid-ratio renormalization and preserve all samples."""
@@ -467,6 +468,8 @@ def apply_ratio_scheme_renormalization(
         "sample_error_mode": sample_error_mode,
         "average_method": sample_error_mode,
     }
+    if ensemble:
+        attrs["ensemble"] = ensemble
     attrs.update({key: str(value) for key, value in hybrid_metadata.items()})
     result = _matrix_to_ensemble(
         z_values=z_target,
@@ -911,6 +914,7 @@ def apply_self_renormalization(
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     job_id: str | None = None,
+    ensemble: str | None = None,
     sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
     """Apply hybrid self-renormalization: H / (zR * ZMSbar), preserving samples.
@@ -1059,6 +1063,8 @@ def apply_self_renormalization(
         "zR_input_min_fm": str(float(np.min(z_zr))),
         "zR_input_max_fm": str(float(np.max(z_zr))),
     }
+    if ensemble:
+        attrs["ensemble"] = ensemble
     if remap:
         attrs["d_from"] = str(d_from)
         attrs["m0_from"] = str(m0_from)

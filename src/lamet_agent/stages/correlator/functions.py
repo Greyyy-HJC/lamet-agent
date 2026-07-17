@@ -3079,6 +3079,7 @@ def fit_bare_matrix_grid(
             "momentum_gev": momentum_gev,
             "initial_momentum_gev": initial_momentum_gev,
             "final_momentum_gev": final_momentum_gev,
+            **({"q2_gev2": q2, "xi": xi} if form == "NonBreit" and q2 is not None and xi is not None else {}),
             "fitting_form": form,
             "fit_scope": scope,
             "nstate_values": json.dumps(fit_nstates),
@@ -3186,6 +3187,11 @@ def fit_bare_matrix_grid(
         "z_fits": z_report,
         "sample0_pt2_plot_paths": sample0_pt2_paths,
         "pt2_energies": pt2_energies,
+        "momentum_gev": momentum_gev,
+        "initial_momentum_gev": initial_momentum_gev,
+        "final_momentum_gev": final_momentum_gev,
+        "q2_gev2": q2 if form == "NonBreit" else None,
+        "xi": xi if form == "NonBreit" else None,
     }
 
 
