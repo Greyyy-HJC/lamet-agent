@@ -40,6 +40,7 @@ import numpy as np
 np.seterr(over="ignore")
 
 from lamet_agent.core.data import EnsembleData, EnsembleInfo
+from lamet_agent.manifest import HBAR_C_GEV_FM
 from lamet_agent.core.plotting import (
     COLOR_CYCLE,
     ERRORBAR_STYLE,
@@ -84,6 +85,54 @@ def _state_energies(p: dict, nstate: int, suffix: str = "") -> list[Any]:
             energy = energy + p[_state_key("dE", state, suffix)]
         energies.append(energy)
     return energies
+
+
+def _energy_summary(
+    *,
+    fit: lsf.nonlinear_fit | None,
+    key: str,
+    momentum: str | None,
+    momentum_gev: float | None,
+    lattice_spacing_fm: float | None,
+    channel: str,
+    pt2_path: str | None,
+    ensemble: str,
+    hadron: str | None,
+    gfix: str | None,
+    volume: str | None,
+    source_operator: str,
+    sink_operator: str,
+    fitting_form: str,
+    job_id: str | None,
+) -> dict[str, Any] | None:
+    if fit is None or key not in fit.p or momentum is None or momentum_gev is None or lattice_spacing_fm is None:
+        return None
+    e_lattice = fit.p[key]
+    scale = HBAR_C_GEV_FM / float(lattice_spacing_fm)
+    e_mean = float(gv.mean(e_lattice)) * scale
+    e_sdev = float(gv.sdev(e_lattice)) * scale
+    return {
+        "job_id": job_id,
+        "pt2_path": pt2_path,
+        "ensemble": ensemble,
+        "hadron": hadron,
+        "gfix": gfix,
+        "volume": volume,
+        "lattice_spacing_fm": float(lattice_spacing_fm),
+        "source_operator": source_operator,
+        "sink_operator": sink_operator,
+        "fitting_form": fitting_form,
+        "channel": channel,
+        "momentum": momentum,
+        "p_gev": float(momentum_gev),
+        "p2_gev2": float(momentum_gev) ** 2,
+        "E0_lattice_mean": float(gv.mean(e_lattice)),
+        "E0_lattice_sdev": float(gv.sdev(e_lattice)),
+        "E0_gev_mean": e_mean,
+        "E0_gev_sdev": e_sdev,
+        "E0_gev2_mean": e_mean**2,
+        "E0_gev2_sdev": abs(2.0 * e_mean * e_sdev),
+    }
 
 
 def _pt2_re_fcn_with_suffix(t: np.ndarray, p: dict, Lt: int, nstate: int = 2, suffix: str = "") -> np.ndarray:
@@ -2598,6 +2647,7 @@ def fit_bare_matrix_grid(
     tuning_logger.info("shared setting (%s): %s", selection_rule, shared_specs)
     z_records: list[dict[str, Any]] = []
     z_report: list[dict[str, Any]] = []
+    energy_record: dict[str, Any] | None = None
 
     try:
         from tqdm import tqdm
@@ -2637,6 +2687,8 @@ def fit_bare_matrix_grid(
 
             best_avg_index, fallback = select_best(candidate_records, q_min=q_min)
             selected_avg_record = candidate_records[best_avg_index]
+            if z == tune_z_value:
+                energy_record = selected_avg_record
             avg_records = candidate_records if model_average else [selected_avg_record]
             fit_model_candidates = [
                 {
@@ -3049,6 +3101,66 @@ def fit_bare_matrix_grid(
         "n_sample": bare_data.n_sample,
         "outputs": output_rows,
     }
+    pt2_energies = []
+    if form == "NonBreit":
+        initial_fit = pt2_best["fit"] if pt2_best is not None else (energy_record or {}).get("fit")
+        final_fit = pt2_f_best["fit"] if pt2_f_best is not None else (energy_record or {}).get("fit")
+        initial_energy = _energy_summary(
+            fit=initial_fit,
+            key="E0_i" if pt2_best is None else "E0",
+            momentum=initial_momentum,
+            momentum_gev=initial_momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
+            channel="initial",
+            pt2_path=pt2_path,
+            ensemble=ensemble,
+            hadron=hadron,
+            gfix=gfix,
+            volume=volume,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            fitting_form=form,
+            job_id=job_id,
+        )
+        final_energy = _energy_summary(
+            fit=final_fit,
+            key="E0_f" if pt2_f_best is None else "E0",
+            momentum=final_momentum,
+            momentum_gev=final_momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
+            channel="final",
+            pt2_path=pt2_out_path or pt2_path,
+            ensemble=ensemble,
+            hadron=hadron,
+            gfix=gfix,
+            volume=volume,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            fitting_form=form,
+            job_id=job_id,
+        )
+        pt2_energies.extend(item for item in (initial_energy, final_energy) if item is not None)
+    else:
+        energy_fit = pt2_best["fit"] if pt2_best is not None else (energy_record or {}).get("fit")
+        energy = _energy_summary(
+            fit=energy_fit,
+            key="E0",
+            momentum=momentum,
+            momentum_gev=momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
+            channel="breit",
+            pt2_path=pt2_path,
+            ensemble=ensemble,
+            hadron=hadron,
+            gfix=gfix,
+            volume=volume,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            fitting_form=form,
+            job_id=job_id,
+        )
+        if energy is not None:
+            pt2_energies.append(energy)
     store["bare_matrix_element_data"] = bare_data
     store["bare_matrix_element_netcdf"] = output["netcdf_path"]
     store["output"] = bare_data
@@ -3073,6 +3185,7 @@ def fit_bare_matrix_grid(
         "tune_z": tune_z_value,
         "z_fits": z_report,
         "sample0_pt2_plot_paths": sample0_pt2_paths,
+        "pt2_energies": pt2_energies,
     }
 
 

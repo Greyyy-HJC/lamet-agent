@@ -19,9 +19,21 @@ CORRELATOR_ARTIFACT_DESCRIPTIONS = {
     "summary_plot_image": ("SVG companion for Markdown embedding", "供 Markdown 嵌入的裸矩阵元 SVG 图"),
     "tuning_log": ("Window tuning and sample-average fit-quality log", "窗口选择和样本平均拟合质量日志"),
     "sample_log": ("Per-sample and per-z fit-quality log", "逐样本、逐 z 拟合质量日志"),
+    "E0_artifact": ("Stage-level dispersion-relation table (NetCDF)", "阶段级色散关系数据表（NetCDF）"),
+    "dispersion_relation_plot": ("Stage-level dispersion-relation PDF", "阶段级色散关系 PDF 图"),
+    "dispersion_relation_image": ("Stage-level dispersion-relation SVG", "阶段级色散关系 SVG 图"),
 }
 
-CORRELATOR_ARTIFACT_ORDER = ("bare_artifact", "summary_plot", "summary_plot_image", "tuning_log", "sample_log")
+CORRELATOR_ARTIFACT_ORDER = (
+    "bare_artifact",
+    "summary_plot",
+    "summary_plot_image",
+    "tuning_log",
+    "sample_log",
+    "E0_artifact",
+    "dispersion_relation_plot",
+    "dispersion_relation_image",
+)
 
 
 def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
@@ -291,6 +303,24 @@ def build_correlator_stage_report_markdown(
             f"| `{item['job_id']}` | `{result.get('fit_scope', 'n/a')}` | "
             f"`{result.get('fit_strategy', 'n/a')}` | "
             f"{artifacts.get('bare_artifact', 'n/a')} | {artifacts.get('summary_plot', 'n/a')} |"
+        )
+
+    stage_artifacts = markdown_jobs[0][2] if markdown_jobs else {}
+    if stage_artifacts.get("dispersion_relation_image"):
+        lines.extend(
+            [
+                "",
+                "## Dispersion Relation" if language == "en" else "## 色散关系",
+                "",
+                (
+                    "The dispersion-relation plot is designed to check the dependence of $E_0^2$ on $p^2$ and shows the ground-state energy posterior obtained from 2pt correlator fits at different ensembles and momenta. "
+                    r"The conversion to physical units uses $E_0^{\rm GeV}=E_0^{\rm lat}\hbar c/a$."
+                    if language == "en"
+                    else r"色散关系图旨在检查 $E_0^2$ 随 $p^2$ 的变化，展示了不同组态、不同动量下由 2pt correlator 拟合得到的基态能量后验值。能量按 $E_0^{\rm GeV}=E_0^{\rm lat}\hbar c/a$ 转换到物理单位。"
+                ),
+                "",
+                f"![Dispersion relation]({stage_artifacts['dispersion_relation_image']})",
+            ]
         )
 
     for item, result, artifacts in markdown_jobs:
