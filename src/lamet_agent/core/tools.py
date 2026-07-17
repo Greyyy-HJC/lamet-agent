@@ -541,8 +541,8 @@ def prepare_tool_args(
             for key, value in {**kernel_parameters, **scheme_parameters}.items():
                 if key in {"mu", "d", "m0_gev", "z_coverage_policy"}:
                     resolved[key] = value
-            for key in ("mu", "d", "m0_gev", "z_coverage_policy", "lqcd", "ensemble"):
-                if key in effective_params and key not in resolved:
+            for key in ("mu", "d", "m0_gev", "z_coverage_policy"):
+                if key in effective_params:
                     resolved[key] = effective_params[key]
         elif tool_name == "plot_self_renormalization_diagnostics":
             is_fit_job = set(job.inputs) == {"reference"}
