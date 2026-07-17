@@ -663,3 +663,59 @@
 - Added ``scheme: "ratio"`` beside hybrid-ratio and self-renormalization, applying sample-preserving ``target(z) / denominator(z)`` on the complete coordinate grid without hybrid switch or mass parameters.
 - Extended renormalization validation, tool preparation, prompts, planning guidance, and bilingual reports while preserving the existing optional z=0 normalization preprocessing.
 - Added numerical, metadata, planning, argument-binding, validation, and report coverage for the new scheme.
+
+## 2026-07-17 (Pion PDF data layout)
+
+- Renamed the local CG/GI pion PDF data roots to ``data_pion_pdf_cg`` and ``data_pion_pdf_gi`` and updated active manifests, conversion utilities, and comparison scripts.
+- Consolidated 191 per-z CG bare-matrix bootstrap text files into seven HDF5 sample grids with ``z`` and complex ``samples`` datasets while retaining mean/sdev x-dependence tables as text.
+- Updated CG/GI comparison readers to consume the HDF5 sample-grid contract and preserve bootstrap mean/error calculations.
+
+## 2026-07-17 (Bare-matrix ensemble containers)
+
+- Consolidated the seven CG bare-matrix sample grids into three ensemble-named HDF5 files, using ``direction/momentum`` groups to distinguish operator directions and kinematics without encoding implementation details in filenames.
+- Updated CG/GI comparison readers to select the required HDF5 group from the simplified per-ensemble container convention.
+
+## 2026-07-17 (Particle-first manifest names)
+
+- Renamed the formal pion PDF and pion/kaon DA manifests to particle-first names, synchronized their run ids, and updated active documentation, tests, and run-script references.
+- Added dedicated ``ds_pion_da_gi`` and ``ds_kaon_da_gi`` run entry points for the renormalization-only DA workflows while retaining the unrelated J/psi DA temp workflow.
+
+## 2026-07-17 (Renormalization job tool routing)
+
+- Restricted model-visible renormalization tools by scheme and job input roles after external-artifact hydration, preventing self-renormalization apply jobs from invoking the reference-only fit tool.
+- Added the job-specific allowed tool list to static prompts and made disallowed stage-tool requests recoverable observations instead of executing them against incompatible stores.
+- Added routing and agent-loop regression coverage for ratio, self-renormalization fit, and self-renormalization apply jobs.
+- Made the pion/kaon DA run scripts invoke the repository ``.venv`` CLI explicitly and verified the pion API workflow through one fit plus nine apply jobs.
+
+## 2026-07-17 (Hybrid self-renormalization parity)
+
+- Renamed the public ``self_renormalization`` scheme to ``hybrid_self_renormalization`` with an explicit migration error for the removed name, while retaining the internal fit/apply tool names.
+- Restored the legacy MILC+RBC joint fit with shared ``g(z)``, discretization-group-specific ``f_i(z)``, quadratic long-distance extension through 1.50 fm, and strict target-grid/lattice-spacing checks.
+- Added explicit ``alpha_s`` support to the MSbar kernels and propagated the legacy coupling, SVD cut, PDF fit, and DA conversion parameters through manifests, diagnostics, reports, and artifacts.
+- Regenerated the grouped pion/kaon zero-momentum references, reran both DA workflows, and verified the 25-point ``Z_R`` and all 18 renormalized 600-sample outputs against the legacy formulas to machine precision.
+
+## 2026-07-17 (Momentum-resolved discretization diagnostics)
+
+- Split hybrid-self-renormalization discrete-effect overlays by momentum so each figure compares only lattice spacings for the same matrix-element quantity.
+- Added momentum-specific stage artifact names and documented that the legacy explicit coupling is derived from one-loop running with a manually fixed ``Lambda_MSbar``, distinct from the self-renormalization ``lqcd`` ansatz parameter.
+
+## 2026-07-17 (Generalized hybrid self-renormalization)
+
+- Removed the legacy-only numerical ``alpha_s`` override, multi-discretization grouping, long-distance ``z_R`` extension, kernel aliases, and user-overridable ansatz constants; rejected every removed manifest field with migration guidance.
+- Routed PDF matching, DA conversion, and diagnostics through ``alphas_nloop(mu, order, Nf)`` and recorded the derived coupling and running-helper provenance in NetCDF artifacts and reports.
+- Added strict/intersection target coverage policies with explicit range/drop provenance, kept exact lattice-spacing matching, and constrained fitted ``z_R`` to the single-family reference grid.
+- Reduced the pion/kaon references to five MILC spacings and twenty points through 1.20 fm, reran both workflows, and verified all 18 outputs (600 samples by 20 points) exactly against the direct hybrid-self-renormalization formula.
+
+## 2026-07-17 (Automatic apply-time zR extension)
+
+- Added default apply-time long-distance extension for hybrid self-renormalization: when the target exceeds the fitted ``z_R`` grid, infer the single-family ``f1(z)``, fit its derived long-distance tail quadratically, and rebuild only the missing upper-end ``z_R`` points.
+- Kept ``strict`` and ``intersection`` as explicit alternatives while requiring no user-supplied extension length or fit boundary; artifacts and reports record the source range, extrapolated-point count, tail boundary, and method.
+- Clarified that the fit job determines the reference-operator ``m0``, while apply jobs continue to accept ``m0_gev`` and ``d`` overrides for the target operator.
+- Restored all 18 pion/kaon DA outputs to 600 samples by 25 points, verified them exactly against the direct extrapolated formula, and removed tests and documentation for the retired partial pion-PDF manifest.
+- Expanded the annotated sample manifest with every supported hybrid-self optional parameter, fit/apply scope, defaults, target-``m0`` override semantics, and coverage-policy choices.
+
+## 2026-07-17 (Deterministic renormalization job completion)
+
+- Removed ``order`` and ``Nf`` from the self-renormalization manifest, tools, MSbar conversion interfaces, provenance, reports, and examples; self-renormalization now derives its coupling through ``alphas_nloop(mu)`` while the general running helper remains available to matching.
+- Rebuilt renormalization tool arguments exclusively from runner-owned manifest and store state so model-supplied role names, paths, and explicit null values cannot override job contracts.
+- Enforced the scheme-specific renormalization tool sequence, rejected premature finish/input requests as recoverable observations, and made exhausted incomplete jobs fail instead of reporting a partial stage as completed.

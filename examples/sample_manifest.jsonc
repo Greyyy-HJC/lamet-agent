@@ -49,7 +49,7 @@
       {
         "correlator_id": "a060_x_2pt",
         "correlator_type": "2pt", // currently "2pt" or "3pt"; 4pt is reserved but unsupported
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5", // relative to root_directory; standard path is source/sink/momentum
+        "data_path": "data_pion_pdf_cg/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5", // relative to root_directory; standard path is source/sink/momentum
         "ensemble": "HISQa060_X", // ensemble identifier propagated to artifacts
         "hadron": "pion", // e.g. "pion", "proton", or another stage-supported label
         "gfix": "CG", // normally "CG" or "GI"; Fourier method is inferred from this
@@ -62,7 +62,7 @@
       {
         "correlator_id": "a060_x_3pt",
         "correlator_type": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_free_3pt.h5",
+        "data_path": "data_pion_pdf_cg/correlators/HISQa060_X/3pt/HISQa060_X_free_3pt.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
@@ -96,6 +96,15 @@
         "scheme": "hybrid_ratio", // choose a scheme compatible with kernel_id
         "kernel_parameters": {} // fixed kernel-specific values; do not put zs_fm here
       }
+      // A hybrid-self-renormalization branch also needs a renormalization kernel
+      // declaration (keep the matching kernel above when running a full chain):
+      // ,{
+      //   "stage": "renormalization",
+      //   "kernel_id": "ZMSbar_pdf", // use ZMSbar_da when the apply target is a DA operator
+      //   "kernel_path": "src/lamet_agent/kernels.py",
+      //   "scheme": "hybrid_self_renormalization",
+      //   "kernel_parameters": {} // optional mu may be declared here or in stage defaults/jobs
+      // }
     ]
   },
   "stages": {
@@ -175,11 +184,16 @@
           "m0_gev": 0.0, // optional hybrid long-range renormalon slope in GeV
           "delta_m_gev": 0.0 // optional target-denominator mass gap in GeV
         }
-        // Incompatible alternative branch (replace scheme + scheme_parameters above):
-        // "scheme": "self_renormalization",
-        // "kernel_id": "ZMSbar_da", // needed when multiple renorm kernels are declared
-        // "mu": 2.0,                // renormalization scale in GeV
-        // "svdcut": 1e-12           // correlated short-distance fit cutoff
+        // Incompatible hybrid-self-renormalization branch: replace the active
+        // scheme + scheme_parameters above and replace the jobs below.
+        // "scheme": "hybrid_self_renormalization",
+        // Optional shared/default parameters for that branch:
+        // The shared normalization field above also applies here; set it false
+        // when hybrid-self inputs are already normalized at z=0.
+        // "kernel_id": "ZMSbar_pdf", // optional with one renorm kernel; required to disambiguate multiple kernels
+        // "mu": 2.0,              // default 2 GeV; may instead come from kernel_parameters
+        // "svdcut": 1e-12,        // default 1e-12; fit-job correlated g(z) and reference-m0 fits only
+        // "z_coverage_policy": "extrapolate" // default; alternatives: "strict" or "intersection"
       },
       "jobs": [
         // MERGE POINT 1: p0 (ca_p0) is the shared denominator for p4 and p5.
@@ -194,12 +208,16 @@
           "params": { "zs_fm": 0.1722 }
         }
         // No job for p0 -> p0 stops after correlator_analysis.
-        // Self-renormalization uses a different DAG and must replace, not mix
+        // Hybrid self-renormalization uses a different DAG and must replace, not mix
         // with, the hybrid jobs above:
         // { "id": "rn_zR_fit", "inputs": { "reference": "bare_reference" },
-        //   "params": { "d": -0.08183 } }, // optional m0_gev freezes rather than fits m0
+        //   "params": { "d": -0.08183 } }, // d is required; reference m0 is fitted, not user-set
         // { "id": "rn_apply", "inputs": { "target": "bare_target", "zR": "rn_zR_fit" },
-        //   "params": { "d": 0.19, "m0_gev": -0.094 } } // optional PDF->DA remap
+        //   "params": {
+        //     "d": 0.19,          // optional target-operator d; omit to inherit fitted zR value
+        //     "m0_gev": -0.094,   // optional target-operator m0; apply jobs may override reference m0
+        //     "z_coverage_policy": "strict" // optional per-job override of the default coverage policy
+        //   } }
       ]
     },
     "fourier_transform": {

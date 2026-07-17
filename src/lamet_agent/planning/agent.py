@@ -147,11 +147,11 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     },
                 },
                 "renormalization": {
-                    "required": {"scheme": "ratio | hybrid_ratio | self_renormalization"},
+                    "required": {"scheme": "ratio | hybrid_ratio | hybrid_self_renormalization"},
                     "branches": {
                         "ratio": {"inputs": ["target", "denominator"]},
                         "hybrid_ratio": {"inputs": ["target", "denominator"], "zs_fm": 0.2},
-                        "self_renormalization": {"fit_inputs": ["reference"], "apply_inputs": ["target", "zR"]},
+                        "hybrid_self_renormalization": {"fit_inputs": ["reference"], "apply_inputs": ["target", "zR"]},
                     },
                     "optional": {
                         "normalization": True,
@@ -181,7 +181,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                         "zs_fm": "required",
                         "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
                     },
-                    "self_renormalization_inputs": {"fit": ["reference"], "apply": ["target", "zR"]},
+                    "hybrid_self_renormalization_inputs": {"fit": ["reference"], "apply": ["target", "zR"]},
                 },
                 "fourier_transform": {"inputs": {"input": "renormalized matrix-element job or artifact"}},
                 "perturbative_matching": {"inputs": {"quasi": "Fourier transform job or artifact"}},

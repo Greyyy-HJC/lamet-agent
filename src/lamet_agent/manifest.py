@@ -432,6 +432,24 @@ class AnalysisManifest(BaseModel):
                     "use stages.perturbative_matching.defaults.zs_fm or "
                     "stages.perturbative_matching.jobs[].params.zs_fm"
                 )
+            if kernel.stage == "renormalization":
+                removed_kernel_parameters = {
+                    "alpha_s": "is derived from mu by alphas_nloop and cannot be specified",
+                    "b0": "is an internal hybrid-self-renormalization ansatz constant",
+                    "cf": "is an internal hybrid-self-renormalization ansatz constant",
+                    "f1_extension_zmin_fm": "is no longer supported",
+                    "k": "is an internal hybrid-self-renormalization ansatz constant",
+                    "lqcd": "is an internal hybrid-self-renormalization ansatz constant",
+                    "Nf": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu)",
+                    "order": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu)",
+                    "zms_kind": "is no longer supported; select the kernel_id instead",
+                    "zr_zmax_fm": "is no longer supported",
+                }
+                for key, message in removed_kernel_parameters.items():
+                    if key in kernel.kernel_parameters:
+                        raise ValueError(
+                            f"inputs.kernels[{index}].kernel_parameters.{key} {message}."
+                        )
 
         if len(set(self.metadata.stages)) != len(self.metadata.stages):
             raise ValueError("metadata.stages contains duplicate stage ids")

@@ -65,6 +65,7 @@ def build_stage_static_prompt(
     effective_params: dict,
     completed_stages: list[str],
     input_issues: list[str] | None = None,
+    allowed_tool_names: list[str] | None = None,
 ) -> str:
     """Build the static context for one stage job."""
     stage_prompt = get_stage_instruction(stage)
@@ -86,6 +87,8 @@ def build_stage_static_prompt(
         f"Job inputs: {json.dumps(job.inputs)}\n"
         f"Effective job parameters: {json.dumps(effective_params)}\n\n"
         f"Input issues: {json.dumps(input_issues or [])}\n\n"
+        f"Tools allowed for this job: {json.dumps(allowed_tool_names or [])}\n"
+        "Do not call tools outside this job-specific list.\n\n"
         f"Stage instruction: {stage_prompt}\n\n"
         f"{stage_skill}\n\n"
         f"{ACTION_OUTPUT_HINT}\n"

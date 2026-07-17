@@ -198,17 +198,17 @@ def test_planning_accepts_ratio_without_hybrid_parameters(tmp_path: Path) -> Non
     assert not any(gap["stage"] == "renormalization" for gap in gaps)
 
 
-def test_planning_distinguishes_self_renormalization_fit_jobs(tmp_path: Path) -> None:
+def test_planning_distinguishes_hybrid_self_renormalization_fit_jobs(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     payload["inputs"]["kernels"] = [{
         "stage": "renormalization",
         "kernel_id": "ZMSbar_pdf",
         "kernel_path": "src/lamet_agent/kernels.py",
-        "scheme": "self_renormalization",
+        "scheme": "hybrid_self_renormalization",
         "kernel_parameters": {},
     }]
     payload["stages"]["renormalization"] = {
-        "defaults": {"scheme": "self_renormalization"},
+        "defaults": {"scheme": "hybrid_self_renormalization"},
         "jobs": [{"id": "rn_fit", "inputs": {"reference": "ca"}, "params": {"d": -0.08183}}],
     }
 

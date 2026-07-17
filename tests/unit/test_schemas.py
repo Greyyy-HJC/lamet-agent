@@ -203,6 +203,56 @@ def test_manifest_rejects_zs_fm_in_kernel_parameters() -> None:
         AnalysisManifest.model_validate(payload)
 
 
+def _hybrid_self_payload() -> dict:
+    payload = _payload()
+    payload["metadata"]["stages"] = ["renormalization"]
+    payload["inputs"]["artifacts"] = [
+        {"id": "reference", "stage": "correlator_analysis", "path": "reference.nc"}
+    ]
+    payload["inputs"]["kernels"] = [
+        {
+            "stage": "renormalization",
+            "kernel_id": "ZMSbar_da",
+            "kernel_path": "kernels.py",
+            "scheme": "hybrid_self_renormalization",
+            "kernel_parameters": {"mu": 2.0},
+        }
+    ]
+    payload["stages"] = {
+        "renormalization": {
+            "defaults": {"scheme": "hybrid_self_renormalization"},
+            "jobs": [
+                {"id": "fit", "inputs": {"reference": "reference"}, "params": {"d": -0.08183}}
+            ],
+        }
+    }
+    return payload
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["alpha_s", "b0", "cf", "f1_extension_zmin_fm", "k", "lqcd", "Nf", "order", "zms_kind", "zr_zmax_fm"],
+)
+def test_manifest_rejects_removed_hybrid_self_parameters(key: str) -> None:
+    payload = _hybrid_self_payload()
+    payload["stages"]["renormalization"]["defaults"][key] = 0.1
+
+    with pytest.raises(ValidationError, match=rf"renormalization\.defaults\.{key}"):
+        AnalysisManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize("key", ["alpha_s", "Nf", "order"])
+def test_manifest_rejects_running_parameters_in_renormalization_kernel_parameters(key: str) -> None:
+    payload = _hybrid_self_payload()
+    payload["inputs"]["kernels"][0]["kernel_parameters"][key] = 0.332
+
+    with pytest.raises(
+        ValidationError,
+        match=rf"inputs\.kernels\[0\]\.kernel_parameters\.{key}",
+    ):
+        AnalysisManifest.model_validate(payload)
+
+
 def test_manifest_rejects_zs_fm_in_renormalization_scheme_parameters() -> None:
     payload = _payload()
     payload["metadata"]["stages"] = ["renormalization"]
