@@ -25,7 +25,7 @@ Ordered five-stage workflow:
 5. `extrapolation` -> `stages/extrapolation/`
 
 The renormalization stage supports pointwise ratio, hybrid-ratio, and
-self-renormalization workflows within the job DAG.
+hybrid-self-renormalization workflows within the job DAG.
 
 ## Minimal Structure
 
@@ -35,7 +35,7 @@ self-renormalization workflows within the job DAG.
 │   ├── fake_data/
 │   │   └── generate_fake_data.py
 │   ├── sample_manifest.jsonc
-│   └── cg_pion_pdf_manifest.json
+│   └── pion_pdf_cg_manifest.json
 ├── src/lamet_agent/
 │   ├── __init__.py
 │   ├── agent.py
@@ -282,17 +282,36 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   lamet-agent run manifest.json
 ```
 
-## Self-Renormalization
+## Hybrid Self-Renormalization
 
-Self-renormalization (`scheme: "self_renormalization"`) fits a coordinate-space
-factor $z_R(z,a)$ from a zero-momentum **reference**, then applies
+Hybrid self-renormalization (`scheme: "hybrid_self_renormalization"`) fits the
+zero-momentum **reference** over the full coordinate range and uses short-distance
+$\overline{\mathrm{MS}}$ matching to fix the finite renormalization:
+
+$$
+g(z)-\ln Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z;\mu)\simeq m_0z+b,
+\qquad
+z_R(z,a)=\exp[\ln M_{\mathrm{fit}}(z,a)-g(z)+m_0z].
+$$
+
+The resulting factor is defined only on the reference grid and is applied as
 
 $$
 H_{\mathrm{ren}}(z) = \frac{H_{\mathrm{bare}}(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z)}
 $$
 
-to each target sample. The stage always splits into **one fit job** plus one or
-more **apply jobs**. See `examples/temp_self_renorm_manifest.json` and
+for every retained target sample. By default, apply detects missing
+long-distance points, infers $f_1(z)$ from the
+available $z_R$, fits its long-distance tail quadratically, and rebuilds only
+the missing $z_R$ points. No endpoint is frozen, and no explicit extension
+length or fit boundary is required. `z_coverage_policy: "strict"` can require
+complete coverage instead, while `intersection` explicitly keeps only the
+target/$z_R$ overlap.
+
+The scheme has no explicit $z_s$ switch: its hybrid character is the combination
+of full-range self-renormalization with short-distance MSbar finite matching.
+The stage always splits into **one fit job** plus one or more **apply jobs**.
+See `examples/temp_self_renorm_manifest.json` and
 `runs/ds_self_renorm/` for a runnable PDF→DA smoke test.
 
 ### Workflow
@@ -304,7 +323,7 @@ inputs.artifacts (bare reference + bare targets)
 ┌───────────────────────┐
 │ fit job {reference}   │  fit_self_renormalization_factor
 │ params.d required     │  → store['zR'] / <job_id>.nc
-│ params.m0_gev optional│  → fit diagnostics (ln|M|, mR, f1, …)
+│ reference m0 fitted   │  → fit diagnostics (ln|M|, mR, f1, …)
 └───────────┬───────────┘
             │ zR job id
             ▼
@@ -312,7 +331,7 @@ inputs.artifacts (bare reference + bare targets)
 │ apply job {target,zR} │  optional params.d / m0_gev remap zR
 │ per lattice / momentum│  → H/(zR ZMSbar) NetCDF + ME plot
 └───────────────────────┘  → zmsbar_compare; last apply may emit
-                             stage-level discrete_effect_re/im
+                             stage-level momentum-resolved discrete-effect plots
 ```
 
 Typical agent tool order:
@@ -323,18 +342,19 @@ Typical agent tool order:
    `apply_self_renormalization` → `plot_self_renormalization_diagnostics` →
    `plot_renormalized_matrix_element` → finish.
 
-Same-operator use (zero-momentum PDF → finite-$P_z$ PDF): fit with the PDF `d`,
-omit `m0_gev` so $m_0$ is fitted, and leave apply jobs without `d`/`m0_gev`
+Same-operator use (zero-momentum PDF → finite-$P_z$ PDF): fit with the PDF `d`
+($m_0$ of the reference operator is fitted), and leave apply jobs without `d`/`m0_gev`
 overrides. Cross-operator use (PDF reference → DA targets): fit with PDF `d`
-(and usually omit `m0_gev`); on each apply job set DA `d` and `m0_gev` so
+(and do not set `m0_gev` on the fit job); on each apply job set DA `d` and
+`m0_gev` so the target operator can use a different finite renormalization and
 upstream $z_R$ is remapped before division.
 
 ### Manifest shape
 
-Declare a renormalization kernel with `scheme: "self_renormalization"` and
+Declare a renormalization kernel with `scheme: "hybrid_self_renormalization"` and
 `kernel_id` `ZMSbar_pdf` or `ZMSbar_da`. Bare inputs are either upstream
 correlator job ids or `inputs.artifacts` with `stage: "correlator_analysis"`.
-Self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybrid-ratio
+Hybrid-self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybrid-ratio
 `zs_fm` is also a flat stage/job parameter; only supporting values such as
 `m0_gev` and `delta_m_gev` remain under `scheme_parameters`.
 
@@ -350,7 +370,7 @@ Self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybrid-ratio
         "stage": "renormalization",
         "kernel_id": "ZMSbar_da",
         "kernel_path": "src/lamet_agent/kernels.py",
-        "scheme": "self_renormalization",
+        "scheme": "hybrid_self_renormalization",
         "kernel_parameters": { "mu": 2.0 }
       }
     ]
@@ -359,9 +379,8 @@ Self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybrid-ratio
     "renormalization": {
       "defaults": {
         "normalization": false,
-        "scheme": "self_renormalization",
-        "mu": 2.0,
-        "svdcut": 1e-12
+        "scheme": "hybrid_self_renormalization",
+        "mu": 2.0
       },
       "jobs": [
         {
@@ -384,32 +403,41 @@ Self-renorm knobs are **flat job `params`** (and stage `defaults`). Hybrid-ratio
 
 | Parameter | Where | Required? | Meaning |
 |-----------|--------|-----------|---------|
-| `scheme` | stage defaults / job | yes (`"self_renormalization"`) | Selects the self-renorm tool path instead of hybrid ratio. |
+| `scheme` | stage defaults / job | yes (`"hybrid_self_renormalization"`) | Selects full-range self-renormalization with short-distance MSbar finite matching. The removed `self_renormalization` name produces a migration error. |
 | `normalization` | stage defaults / job | no (default `true`) | If `true`, divide bare inputs by lattice $z=0$ before tools. Set `false` when inputs are already $z=0$-normalized (`normalized_at_z0` attr). |
 | `d` | **fit** job `params` | **yes** | Fixed continuum/discretization coefficient in the $g(z)$ fit and in the initial $z_R$ construction. Never fitted. Use the reference-operator value (e.g. PDF $d_{\mathrm{pdf}}$). |
-| `m0_gev` | **fit** job `params` | no | If set, freeze $m_0$ (GeV) when building $z_R$. If omitted, fit $m_0$ from the first three $g(z)$ points against $\log Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z)$. |
+| `m0_gev` | **fit** job `params` | not allowed | The fit determines the **reference-operator** $m_0$ from the first three $g(z)$ points against $\log Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z)$. This does not restrict the apply-job override below. |
 | `d` | **apply** job `params` | no | If set (alone or with `m0_gev`), remap upstream $z_R$ from the fit-job $(d,m_0)$ onto this operator’s $d$ before $H/(z_R Z_{\overline{\mathrm{MS}}})$. Typical DA value: $0.19$. |
 | `m0_gev` | **apply** job `params` | no | Target-operator $m_0$ for the same remap. If only one of `d` / `m0_gev` is set, the other is taken from upstream $z_R$ attrs. |
 | `mu` | defaults, job, or `kernel_parameters` | no (tool default `2.0`) | Renormalization scale (GeV) for $Z_{\overline{\mathrm{MS}}}$ and related logs. |
-| `svdcut` | defaults / fit job | no (default `1e-12`) | SVD cut for the correlated $g(z)$ (and optional $m_0$) fits. |
+| `svdcut` | defaults / fit job | no (default `1e-12`) | SVD cut for the correlated $g(z)$ and short-distance $m_0$ fits. |
+| `z_coverage_policy` | defaults / apply job | no (default `extrapolate`) | `extrapolate` automatically extends the inferred long-distance $f_1(z)$ quadratically and rebuilds missing upper-end $z_R$ points. `strict` rejects uncovered target points; `intersection` explicitly drops them. Reports record input/output ranges and dropped/extrapolated point counts. |
 | `kernel_id` | job or unique `inputs.kernels` entry | yes if multiple kernels | `ZMSbar_pdf` or `ZMSbar_da`; choose the conversion factor for the **apply** target. Fit diagnostics compare $m_R$ to `ZMSbar_pdf` regardless. |
-| `lqcd`, `k`, `cf`, `b0` | rarely overridden | no | Advanced fit constants (defaults match the usual self-renorm ansatz). |
+
+The removed parameters `alpha_s`, `order`, `Nf`, `zr_zmax_fm`,
+`f1_extension_zmin_fm`, `zms_kind`, `k`, `lqcd`, `cf`, and `b0` produce
+explicit migration errors rather than being ignored. Long-distance extension
+is selected by `z_coverage_policy: "extrapolate"` and has no numerical knobs.
+Self-renormalization derives the coupling with `alphas_nloop(mu)`; the general
+running helper remains configurable for matching code paths.
 
 Job roles:
 
 | Role | Job type | Points to |
 |------|----------|-----------|
-| `reference` | fit | Bare zero-momentum `EnsembleData` (often multi-$a$ on `(a,z)`). |
+| `reference` | fit | Bare zero-momentum `EnsembleData`, often multi-$a$ on `(a,z)`, from one discretization family. All spacings share $g(z)$ and one $f_1(z)$. The obsolete `discretization_groups` metadata is rejected. |
 | `target` | apply | Bare matrix element to renormalize. |
 | `zR` | apply | Fit job id whose NetCDF / store output holds $z_R$. |
 
 ### Outputs
 
-- Fit job: `<artifacts>/renormalization/<fit_job_id>.nc` ($z_R$), plus fit panels
+- Fit job: `<artifacts>/renormalization/<fit_job_id>.nc` ($z_R$ on exactly the
+  reference grid), plus fit panels
   (`*_fit_lnM_vs_inv_a`, `*_fit_mR_zmsbar`, `*_fit_m_over_zR`, `*_fit_f1`).
 - Apply job: `<artifacts>/renormalization/<apply_job_id>.nc` (renormalized ME),
   ME plot, `*_zmsbar_compare`; the last apply job with sibling NetCDFs present
-  can also write stage-level `discrete_effect_re` / `discrete_effect_im`.
+  writes one stage-level `discrete_effect_<momentum>_re/im` pair per momentum,
+  with only the corresponding lattice spacings overlaid in each figure.
 
 ## Quick Start
 
@@ -422,8 +450,8 @@ pip install -e ".[dev,analysis]"
 Validate and run manifest:
 
 ```bash
-lamet-agent validate examples/cg_pion_pdf_manifest.json
-lamet-agent run examples/cg_pion_pdf_manifest.json
+lamet-agent validate examples/pion_pdf_cg_manifest.json
+lamet-agent run examples/pion_pdf_cg_manifest.json
 ```
 
 Interactively plan a draft manifest before running it:
@@ -472,11 +500,10 @@ Correlator, artifact, kernel, and artifact-output paths resolve from that root.
 `metadata.stages` is the sole ordered list of stages to execute; partial runs use a
 manifest with a shorter list and source nodes under `inputs.artifacts`.
 
-`examples/cg_pion_pdf_manifest.json` runs the current P0/P5 workflow through
+`examples/pion_pdf_cg_manifest.json` runs the current P0/P5 workflow through
 correlator analysis, hybrid-ratio renormalization, Fourier transformation, and
-perturbative matching. `examples/partial_cg_pion_pdf_manifest.json` starts from
-the saved `rn_p5` renormalization artifact and runs only Fourier and matching.
-For a standard `EnsembleData` NetCDF source, an `inputs.artifacts[]` entry only
+perturbative matching. For a standard `EnsembleData` NetCDF source, an
+`inputs.artifacts[]` entry only
 needs `id`, `stage`, and `path`: the runner reads the discrete kinematic triple
 `momentum`, `volume`, and `lattice_spacing_fm`, plus provenance such as `hadron`,
 `gfix`, and `bz_direction`, from the data-variable attrs without loading the
@@ -603,7 +630,7 @@ Print each agent cycle (prompt, model action, tool observation) while the run
 executes:
 
 ```bash
-lamet-agent run examples/cg_pion_pdf_manifest.json --backend api --model deepseek/deepseek-chat --verbose
+lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model deepseek/deepseek-chat --verbose
 ```
 
 Choose the LLM integration with `--backend` (`mock`, `external`, `api`, or `codex`).
@@ -612,7 +639,7 @@ extra first:
 
 ```bash
 python -m pip install -e ".[codex]"
-lamet-agent run examples/cg_pion_pdf_manifest.json --backend codex --verbose
+lamet-agent run examples/pion_pdf_cg_manifest.json --backend codex --verbose
 ```
 
 The `api` backend reads the API key from `--api-key-file` (default `api.key`) or the
@@ -621,20 +648,20 @@ provider environment variable (`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`). Pass
 Override the HTTP endpoint with `--base-url` when needed:
 
 ```bash
-lamet-agent run examples/cg_pion_pdf_manifest.json --backend api --model openai/gpt-4o-mini --verbose
-lamet-agent run examples/cg_pion_pdf_manifest.json --backend api --model openai/gpt-4o
+lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model openai/gpt-4o-mini --verbose
+lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model openai/gpt-4o
 ```
 
 Replay a deterministic JSONL action transcript (tests and regression):
 
 ```bash
-lamet-agent run examples/cg_pion_pdf_manifest.json --backend external --actions-path actions.jsonl
+lamet-agent run examples/pion_pdf_cg_manifest.json --backend external --actions-path actions.jsonl
 ```
 
 Run the agent loop without a real LLM (dev/test smoke only):
 
 ```bash
-lamet-agent run examples/cg_pion_pdf_manifest.json --backend mock
+lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 ```
 
 ## File Responsibilities
@@ -714,11 +741,16 @@ lamet-agent run examples/cg_pion_pdf_manifest.json --backend mock
 - `examples/sample_manifest.jsonc`
   - Annotated reference manifest (JSONC). Copy it, drop the `//` comments, and save
     as `.json` to author a real run.
-- `examples/cg_pion_pdf_manifest.json`
+- `examples/pion_pdf_cg_manifest.json`
   - Runnable P0/P5 correlator and hybrid-ratio renormalization manifest.
+- `examples/pion_pdf_gi_manifest.json`
+  - Runnable P0/P4 GI pion PDF workflow.
+- `examples/pion_da_gi_manifest.json` and `examples/kaon_da_gi_manifest.json`
+  - Renormalization-only GI distribution-amplitude workflows; API run helpers live
+    under `runs/ds_pion_da_gi/` and `runs/ds_kaon_da_gi/`.
 - `examples/temp_self_renorm_manifest.json`
-  - Renorm-only self-renormalization smoke (PDF reference → DA mom=6 targets);
-    see [Self-Renormalization](#self-renormalization). Prepare/run helpers live
+  - Renorm-only hybrid-self-renormalization smoke (PDF reference → DA mom=6 targets);
+    see [Hybrid Self-Renormalization](#hybrid-self-renormalization). Prepare/run helpers live
     under `runs/ds_self_renorm/`.
 
 ## Agent Workflow

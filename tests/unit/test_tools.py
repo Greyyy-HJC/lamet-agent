@@ -5,13 +5,100 @@ from types import SimpleNamespace
 
 import pytest
 
-from lamet_agent.core.tools import prepare_tool_args, resolve_plot_save_path, validate_stage_inputs
+from lamet_agent.core.tools import (
+    prepare_tool_args,
+    required_job_tool_sequence,
+    resolve_job_tools,
+    resolve_plot_save_path,
+    validate_stage_inputs,
+)
 from lamet_agent.manifest import AnalysisManifest, derive_job_kinematics, validate_manifest_file
 from lamet_agent.stages.matching.skills import effective_matching_params
 
 
 def _manifest():
-    return validate_manifest_file(Path("examples/cg_pion_pdf_manifest.json"))
+    return validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
+
+
+def test_resolve_renormalization_job_tools_by_scheme_and_roles() -> None:
+    stage_tools = {
+        name: lambda store: {}
+        for name in (
+            "apply_ratio_scheme_renormalization",
+            "fit_self_renormalization_factor",
+            "apply_self_renormalization",
+            "plot_self_renormalization_diagnostics",
+            "plot_renormalized_matrix_element",
+            "load_bare_matrix_element",
+        )
+    }
+    pdf_manifest = _manifest()
+    ratio_job = pdf_manifest.stages["renormalization"].jobs[0]
+    ratio_params = {**pdf_manifest.stages["renormalization"].defaults, **ratio_job.params}
+    assert set(resolve_job_tools(
+        "renormalization", ratio_job, ratio_params, stage_tools=stage_tools,
+    )) == {"apply_ratio_scheme_renormalization", "plot_renormalized_matrix_element"}
+    assert required_job_tool_sequence("renormalization", ratio_job, ratio_params) == (
+        "apply_ratio_scheme_renormalization",
+        "plot_renormalized_matrix_element",
+    )
+
+    da_manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
+    fit_job, apply_job = da_manifest.stages["renormalization"].jobs[:2]
+    defaults = da_manifest.stages["renormalization"].defaults
+    assert set(resolve_job_tools(
+        "renormalization", fit_job, {**defaults, **fit_job.params}, stage_tools=stage_tools,
+    )) == {"fit_self_renormalization_factor", "plot_self_renormalization_diagnostics"}
+    assert set(resolve_job_tools(
+        "renormalization", apply_job, {**defaults, **apply_job.params}, stage_tools=stage_tools,
+    )) == {
+        "apply_self_renormalization",
+        "plot_self_renormalization_diagnostics",
+        "plot_renormalized_matrix_element",
+    }
+    assert required_job_tool_sequence(
+        "renormalization", fit_job, {**defaults, **fit_job.params}
+    ) == ("fit_self_renormalization_factor", "plot_self_renormalization_diagnostics")
+    assert required_job_tool_sequence(
+        "renormalization", apply_job, {**defaults, **apply_job.params}
+    ) == (
+        "apply_self_renormalization",
+        "plot_self_renormalization_diagnostics",
+        "plot_renormalized_matrix_element",
+    )
+
+
+def test_legacy_self_renormalization_scheme_returns_migration_error() -> None:
+    manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
+    manifest.stages["renormalization"].defaults["scheme"] = "self_renormalization"
+    issue = validate_stage_inputs("renormalization", manifest, manifest.stages["renormalization"].jobs[0])
+
+    assert issue == [
+        "renormalization scheme 'self_renormalization' was renamed; "
+        "use 'hybrid_self_renormalization'."
+    ]
+
+
+def test_hybrid_self_fit_rejects_fixed_m0() -> None:
+    manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
+    job = manifest.stages["renormalization"].jobs[0]
+    job.params["m0_gev"] = -0.094
+
+    assert validate_stage_inputs("renormalization", manifest, job) == [
+        "hybrid_self_renormalization fit jobs determine the reference m0; "
+        "remove params.m0_gev here (apply jobs may override target m0_gev)."
+    ]
+
+
+def test_hybrid_self_rejects_unknown_z_coverage_policy() -> None:
+    manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
+    job = manifest.stages["renormalization"].jobs[1]
+    manifest.stages["renormalization"].defaults["z_coverage_policy"] = "freeze"
+
+    assert validate_stage_inputs("renormalization", manifest, job) == [
+        "hybrid_self_renormalization z_coverage_policy must be "
+        "'strict', 'intersection', or 'extrapolate'."
+    ]
 
 
 def test_resolve_plot_save_path_uses_artifact_directory(tmp_path: Path) -> None:
@@ -394,14 +481,19 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
                         "stage": "renormalization",
                         "kernel_id": "ZMSbar_da",
                         "kernel_path": "src/lamet_agent/kernels.py",
-                        "scheme": "self_renormalization",
+                        "scheme": "hybrid_self_renormalization",
                         "kernel_parameters": {"mu": 2.0},
                     }
                 ],
             },
             "stages": {
                 "renormalization": {
-                    "defaults": {"scheme": "self_renormalization", "mu": 2.0, "svdcut": 1e-12},
+                    "defaults": {
+                        "scheme": "hybrid_self_renormalization",
+                        "mu": 2.0,
+                        "svdcut": 1e-12,
+                        "z_coverage_policy": "intersection",
+                    },
                     "jobs": [
                         {
                             "id": "rn_zR_fit",
@@ -440,7 +532,7 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
 
     fit_args = prepare_tool_args(
         "fit_self_renormalization_factor",
-        {},
+        {"reference": "wrong", "order": None, "Nf": None, "save_path": None},
         manifest=manifest,
         stage="renormalization",
         job=fit_job,
@@ -454,7 +546,10 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert "d_fit" not in fit_args
     assert "n_m0" not in fit_args
     assert fit_args["mu"] == 2.0
+    assert "order" not in fit_args
+    assert "Nf" not in fit_args
     assert fit_args["svdcut"] == 1e-12
+    assert "z_coverage_policy" not in fit_args
     assert fit_args["save_path"] == str(tmp_path / "rn_zR_fit")
     # Fit-job params carry required d (PDF); m0_gev omitted → fit.
     assert fit_effective["d"] == -0.08183
@@ -462,7 +557,14 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
 
     apply_args = prepare_tool_args(
         "apply_self_renormalization",
-        {},
+        {
+            "target": "bare_da_mom6_a06",
+            "zR": "rn_zR_fit",
+            "kernel_id": None,
+            "order": None,
+            "Nf": None,
+            "save_path": None,
+        },
         manifest=manifest,
         stage="renormalization",
         job=apply_job,
@@ -473,6 +575,9 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert apply_args["zR"] == "zR"
     assert apply_args["kernel_id"] == "ZMSbar_da"
     assert apply_args["mu"] == 2.0
+    assert "order" not in apply_args
+    assert "Nf" not in apply_args
+    assert apply_args["z_coverage_policy"] == "intersection"
     assert apply_args["d"] == 0.19
     assert apply_args["m0_gev"] == -0.094
     assert apply_args["save_path"] == str(tmp_path / "rn_mom6_a06")
@@ -489,6 +594,8 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert fit_diag["mode"] == "fit"
     assert fit_diag["zR"] == "zR"
     assert fit_diag["fit"] == "self_renorm_fit"
+    assert "order" not in fit_diag
+    assert "Nf" not in fit_diag
     assert "target" not in fit_diag
     assert "include_discrete_effect" not in fit_diag
 
@@ -503,6 +610,9 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     )
     assert apply_diag["mode"] == "apply"
     assert apply_diag["target"] == "target"
+    assert "order" not in apply_diag
+    assert "Nf" not in apply_diag
+    assert apply_diag["z_coverage_policy"] == "intersection"
     assert apply_diag["include_discrete_effect"] is False
     assert apply_diag["sibling_artifacts"] == []
 
@@ -575,47 +685,6 @@ def test_prepare_fourier_args_passes_lambda0_gev(tmp_path: Path) -> None:
 
     assert args["Lambda0_gev"] == 0.37
     assert "Lambda0" not in args
-
-
-def test_prepare_partial_fourier_loader_uses_external_artifact(tmp_path: Path) -> None:
-    manifest = validate_manifest_file(Path("examples/partial_cg_pion_pdf_manifest.json"))
-    job = manifest.stages["fourier_transform"].jobs[0]
-    source = manifest.inputs.artifacts[0]
-    args = prepare_tool_args(
-        "load_renormalized_matrix_element_samples", {}, manifest=manifest,
-        stage="fourier_transform", job=job,
-        effective_params={**manifest.stages["fourier_transform"].defaults, **job.params},
-        artifacts_dir=tmp_path, store={"input": source},
-    )
-    assert args["path"] == source.path
-
-
-def test_prepare_partial_fourier_loader_uses_manifest_artifact_after_hydration(tmp_path: Path) -> None:
-    manifest = validate_manifest_file(Path("examples/partial_cg_pion_pdf_manifest.json"))
-    job = manifest.stages["fourier_transform"].jobs[0]
-    source = manifest.inputs.artifacts[0]
-    from lamet_agent.core.data import EnsembleData
-
-    quasi = EnsembleData(
-        ensemble=None,
-        resample="jackknife",
-        values=[[1.0 + 0.1j]],
-        dims=("z",),
-        coords={"z": [0.0]},
-        name="renormalized_matrix_element",
-    )
-    args = prepare_tool_args(
-        "load_renormalized_matrix_element_samples",
-        {},
-        manifest=manifest,
-        stage="fourier_transform",
-        job=job,
-        effective_params={**manifest.stages["fourier_transform"].defaults, **job.params},
-        artifacts_dir=tmp_path,
-        store={"input": quasi, "matrix_element_data": quasi},
-    )
-    assert args["path"] == source.path
-    assert args["resample_mode"] == manifest.metadata.resample_mode
 
 
 def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:
@@ -707,9 +776,8 @@ def test_hybrid_stage_validators_use_flat_effective_zs_fm() -> None:
     [
         Path("examples/sample_manifest.jsonc"),
         Path("examples/partial_sample_manifest.jsonc"),
-        Path("examples/cg_pion_pdf_manifest.json"),
-        Path("examples/gi_pion_pdf_manifest.json"),
-        Path("examples/partial_cg_pion_pdf_manifest.json"),
+        Path("examples/pion_pdf_cg_manifest.json"),
+        Path("examples/pion_pdf_gi_manifest.json"),
     ],
 )
 def test_example_manifests_validate(path: Path) -> None:

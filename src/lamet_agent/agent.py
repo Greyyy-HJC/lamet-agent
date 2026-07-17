@@ -14,7 +14,14 @@ from .core.llm import LlmSession, format_api_model_spec, make_llm_session
 from .core.data import EnsembleData
 from .core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FONT_SIZE, LEGEND_SETS, default_plot
 from .core.prompting import build_stage_static_prompt
-from .core.tools import filter_tool_kwargs, prepare_tool_args, resolve_stage_tools, validate_stage_inputs
+from .core.tools import (
+    filter_tool_kwargs,
+    prepare_tool_args,
+    required_job_tool_sequence,
+    resolve_job_tools,
+    resolve_stage_tools,
+    validate_stage_inputs,
+)
 from .core.trace import AgentTrace
 from .manifest import AnalysisManifest, ArtifactInput, StageJob, resolve_manifest_artifact_metadata
 
@@ -106,7 +113,7 @@ def _run_job(
     report_language: str,
 ) -> list[dict[str, Any]]:
     """Drive the LLM/tool loop for one isolated job store."""
-    tools = resolve_stage_tools(stage)
+    stage_tools = resolve_stage_tools(stage)
     observations: list[dict[str, Any]] = []
     stage_dir = manifest.artifacts_directory / stage
     stage_dir.mkdir(parents=True, exist_ok=True)
@@ -125,6 +132,14 @@ def _run_job(
         effective_params=effective_params,
         artifacts_dir=stage_dir,
     )
+    tools = resolve_job_tools(
+        stage,
+        job,
+        effective_params,
+        stage_tools=stage_tools,
+    )
+    required_sequence = required_job_tool_sequence(stage, job, effective_params)
+    required_index = 0
 
     if stage == "renormalization" and effective_params.get("normalization", True):
         from lamet_agent.stages.renorm.functions import normalize_bare_matrix_element_at_z0
@@ -140,6 +155,7 @@ def _run_job(
         effective_params=effective_params,
         completed_stages=state.completed_stages.copy(),
         input_issues=input_issues,
+        allowed_tool_names=sorted(tools),
     )
     session.begin_stage(static_prompt)
     trace.stage_context(static_prompt)
@@ -168,12 +184,32 @@ def _run_job(
         state.actions.append({"stage": stage, "job": job.id, "action": action})
 
         if action.get("action") != "call_tool":
+            if required_index < len(required_sequence):
+                expected = required_sequence[required_index]
+                observation = {
+                    "tool_name": expected,
+                    "error": (
+                        f"job {job.id!r} cannot {action.get('action', 'stop')} before "
+                        f"required tool {expected!r} succeeds"
+                    ),
+                }
+                observations.append(observation)
+                trace.observation(observation)
+                last_observation = observation
+                continue
             break
 
         tool_name = action.get("tool_name", "")
+        expected = required_sequence[required_index] if required_index < len(required_sequence) else None
         tool = tools.get(tool_name)
-        if tool is None:
-            observation = {"tool_name": tool_name, "error": "unknown tool"}
+        if expected is not None and tool_name != expected:
+            observation = {
+                "tool_name": tool_name,
+                "error": f"job {job.id!r} must call required tool {expected!r} next",
+            }
+        elif tool is None:
+            error = "tool is not allowed for the current job" if tool_name in stage_tools else "unknown tool"
+            observation = {"tool_name": tool_name, "error": error}
         else:
             args = prepare_tool_args(
                 tool_name,
@@ -204,9 +240,24 @@ def _run_job(
                     observation["ignored_args"] = dropped_args
             except (ValueError, TypeError, FileNotFoundError) as exc:
                 observation = {"tool_name": tool_name, "error": str(exc)}
+        if observation.get("result") is not None and tool_name == expected:
+            required_index += 1
         observations.append(observation)
         trace.observation(observation)
         last_observation = observation
+
+    if required_index < len(required_sequence):
+        missing = list(required_sequence[required_index:])
+        last_error = next(
+            (str(item["error"]) for item in reversed(observations) if item.get("error")),
+            "no tool error was recorded",
+        )
+        raise ValueError(
+            f"job {stage}/{job.id} did not complete required tools {missing} "
+            f"within {max_tool_steps} steps; last error: {last_error}"
+        )
+    if required_sequence and "output" not in store:
+        raise ValueError(f"job {stage}/{job.id} completed its tool sequence without store['output']")
 
     trace.stage_end(f"{stage}/{job.id}", n_steps=cycle)
     return observations
@@ -518,7 +569,7 @@ def run_agent(
                             "job_id": job.id,
                             "result": {
                                 **fit_result,
-                                "scheme": "self_renormalization",
+                                "scheme": "hybrid_self_renormalization",
                                 "job_kind": "fit",
                                 "diagnostic_plots": list((diag_result.get("plots") or {}).keys()),
                             },

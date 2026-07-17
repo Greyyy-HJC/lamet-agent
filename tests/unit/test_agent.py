@@ -7,12 +7,14 @@ import urllib.error
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from lamet_agent.agent import _hydrate_external_artifact_inputs, run_agent
+from lamet_agent.agent import AgentState, _hydrate_external_artifact_inputs, _run_job, run_agent
 from lamet_agent.core import llm
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.tools import resolve_stage_tools
-from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.core.trace import AgentTrace
+from lamet_agent.manifest import AnalysisManifest, validate_manifest_file
 
 
 def _demo_manifest() -> AnalysisManifest:
@@ -312,6 +314,138 @@ def test_run_agent_registers_job_output_for_downstream_role(tmp_path: Path, monk
 
     assert result["status"] == "completed"
     assert result["stage_results"]["renormalization"]["rn"][0]["result"] == {"value": "ok"}
+
+
+def test_self_renorm_apply_job_rejects_fit_tool_then_recovers(tmp_path: Path, monkeypatch) -> None:
+    manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
+    manifest._artifacts_directory = tmp_path
+    job = manifest.stages["renormalization"].jobs[1]
+    fit_called = False
+    apply_kwargs: dict[str, object] = {}
+
+    def forbidden_fit(store, **kwargs):
+        nonlocal fit_called
+        fit_called = True
+        raise AssertionError("fit tool must not run for an apply job")
+
+    def apply(store, **kwargs):
+        apply_kwargs.update(kwargs)
+        store["output"] = "renormalized"
+        return {"artifact": str(tmp_path / "rn.nc")}
+
+    def diagnostics(store, **kwargs):
+        return {"plots": {"zmsbar_compare": str(tmp_path / "diag.pdf")}}
+
+    def plot(store, **kwargs):
+        return {"plot": str(tmp_path / "rn.pdf")}
+
+    stage_tools = {
+        "fit_self_renormalization_factor": forbidden_fit,
+        "apply_self_renormalization": apply,
+        "plot_self_renormalization_diagnostics": diagnostics,
+        "plot_renormalized_matrix_element": plot,
+    }
+    monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", lambda stage: stage_tools)
+
+    class ScriptedSession:
+        def __init__(self):
+            self.actions = iter([
+                {"action": "call_tool", "tool_name": "fit_self_renormalization_factor", "args": {}},
+                {"action": "request_user_input", "reason": "not needed"},
+                {
+                    "action": "call_tool",
+                    "tool_name": "apply_self_renormalization",
+                    "args": {
+                        "target": "bare_a06m130_pz6",
+                        "zR": "rn_zr_fit",
+                        "kernel_id": None,
+                        "order": None,
+                        "Nf": None,
+                        "save_path": None,
+                    },
+                },
+                {"action": "finish", "reason": "too early"},
+                {"action": "call_tool", "tool_name": "plot_self_renormalization_diagnostics", "args": {}},
+                {"action": "call_tool", "tool_name": "plot_renormalized_matrix_element", "args": {}},
+                {"action": "finish", "reason": "done"},
+            ])
+
+        def begin_stage(self, prompt):
+            assert "hybrid_self_renormalization" in prompt
+            assert '"apply_self_renormalization"' in prompt
+            assert '"fit_self_renormalization_factor"' not in prompt.split("Stage instruction:", 1)[0]
+
+        def decide(self, *, last_observation=None):
+            return next(self.actions)
+
+    observations = _run_job(
+        "renormalization",
+        job,
+        manifest,
+        AgentState(run_id=manifest.run_id),
+        ScriptedSession(),
+        input_issues=[],
+        max_tool_steps=7,
+        backend="external",
+        model_spec=None,
+        trace=AgentTrace(enabled=False),
+        store={"target": "bare", "zR": "factor"},
+        report_language="en",
+    )
+
+    assert fit_called is False
+    assert apply_kwargs["target"] == "target"
+    assert apply_kwargs["zR"] == "zR"
+    assert apply_kwargs["save_path"] is not None
+    assert "order" not in apply_kwargs
+    assert "Nf" not in apply_kwargs
+    assert observations[0]["tool_name"] == "fit_self_renormalization_factor"
+    assert "must call required tool 'apply_self_renormalization' next" in observations[0]["error"]
+    assert "cannot request_user_input" in observations[1]["error"]
+    assert observations[2]["result"]["artifact"].endswith("rn.nc")
+    assert "cannot finish" in observations[3]["error"]
+    assert observations[4]["result"]["plots"]["zmsbar_compare"].endswith("diag.pdf")
+    assert observations[5]["result"]["plot"].endswith("rn.pdf")
+
+
+def test_self_renorm_job_fails_when_required_tool_never_succeeds(tmp_path: Path, monkeypatch) -> None:
+    manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
+    manifest._artifacts_directory = tmp_path
+    job = manifest.stages["renormalization"].jobs[1]
+
+    def failing_apply(store, **kwargs):
+        raise ValueError("synthetic apply failure")
+
+    monkeypatch.setattr(
+        "lamet_agent.agent.resolve_stage_tools",
+        lambda stage: {"apply_self_renormalization": failing_apply},
+    )
+
+    class RetryingSession:
+        def begin_stage(self, prompt):
+            pass
+
+        def decide(self, *, last_observation=None):
+            return {"action": "call_tool", "tool_name": "apply_self_renormalization", "args": {}}
+
+    with pytest.raises(
+        ValueError,
+        match=r"renormalization/rn_a06m130_pz6.*apply_self_renormalization.*synthetic apply failure",
+    ):
+        _run_job(
+            "renormalization",
+            job,
+            manifest,
+            AgentState(run_id=manifest.run_id),
+            RetryingSession(),
+            input_issues=[],
+            max_tool_steps=2,
+            backend="external",
+            model_spec=None,
+            trace=AgentTrace(enabled=False),
+            store={"target": "bare", "zR": "factor"},
+            report_language="en",
+        )
 
 
 def _write_renorm_nc(path: Path) -> None:
@@ -845,11 +979,20 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
     store = {"target": target, "denominator": target}
 
     class _FinishSession(LlmSession):
+        def __init__(self) -> None:
+            self.actions = iter(
+                [
+                    {"action": "call_tool", "tool_name": "apply_ratio_scheme_renormalization", "args": {}},
+                    {"action": "call_tool", "tool_name": "plot_renormalized_matrix_element", "args": {}},
+                    {"action": "finish", "reason": "done"},
+                ]
+            )
+
         def begin_stage(self, prompt: str) -> None:
             return None
 
         def decide(self, *, last_observation=None):
-            return {"action": "finish", "reason": "done"}
+            return next(self.actions)
 
     _run_job(
         "renormalization",
@@ -858,7 +1001,7 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
         AgentState(run_id="demo"),
         _FinishSession(),
         input_issues=[],
-        max_tool_steps=1,
+        max_tool_steps=3,
         backend="external",
         model_spec=None,
         trace=AgentTrace(enabled=False),

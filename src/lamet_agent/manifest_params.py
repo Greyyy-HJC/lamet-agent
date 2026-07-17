@@ -51,12 +51,8 @@ STAGE_PARAM_CONTRACTS = {
     ),
     "renormalization": StageParamContract(
         schema={
-            "b0": None,
-            "cf": None,
             "d": None,
-            "k": None,
             "kernel_id": None,
-            "lqcd": None,
             "m0_gev": None,
             "mu": None,
             "normalization": None,
@@ -66,13 +62,29 @@ STAGE_PARAM_CONTRACTS = {
                 "m0_gev": None,
             },
             "svdcut": None,
-            "zms_kind": None,
+            "z_coverage_policy": None,
             "zs_fm": None,
         },
         removed={
+            "alpha_s": "is derived from mu by alphas_nloop and cannot be specified.",
+            "Nf": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu).",
+            "order": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu).",
+            "b0": "is an internal hybrid-self-renormalization ansatz constant and cannot be overridden.",
+            "cf": "is an internal hybrid-self-renormalization ansatz constant and cannot be overridden.",
+            "f1_extension_zmin_fm": (
+                "is no longer supported; apply-time extension is automatic with "
+                "z_coverage_policy='extrapolate'."
+            ),
+            "k": "is an internal hybrid-self-renormalization ansatz constant and cannot be overridden.",
+            "lqcd": "is an internal hybrid-self-renormalization ansatz constant and cannot be overridden.",
             "scheme_parameters.zs_fm": (
                 "is no longer supported; use flat stages.renormalization.defaults.zs_fm "
                 "or the corresponding jobs[].params.zs_fm."
+            ),
+            "zms_kind": "is no longer supported; select a declared ZMSbar_pdf or ZMSbar_da kernel_id.",
+            "zr_zmax_fm": (
+                "is no longer supported; the target grid determines automatic apply-time extension with "
+                "z_coverage_policy='extrapolate'."
             ),
         },
     ),

@@ -72,7 +72,7 @@ Top-level layout:
 .
 ├── examples/
 │   ├── fake_data/generate_fake_data.py
-│   └── cg_pion_pdf_manifest.json
+│   └── pion_pdf_cg_manifest.json
 ├── src/lamet_agent/
 │   ├── agent.py
 │   ├── cli.py

@@ -282,7 +282,7 @@ def test_fit_self_renormalization_respects_normalized_at_z0_attr(normalized: boo
     monkeypatch = pytest.MonkeyPatch()
     try:
         monkeypatch.setattr(lsf, "nonlinear_fit", fake_nonlinear_fit)
-        fit_self_renormalization_factor(store, m0_gev=-0.094, d=0.19, save_path=str(tmp_path / "zR"))
+        fit_self_renormalization_factor(store, d=0.19, save_path=str(tmp_path / "zR"))
     finally:
         monkeypatch.undo()
 
@@ -362,10 +362,7 @@ def test_fit_self_renormalization_fits_m0_when_omitted(tmp_path: Path) -> None:
     assert store["zR"].attrs.get("d") == "0.19"
 
 
-def test_fit_self_renormalization_uses_fixed_m0_and_d(tmp_path: Path) -> None:
-    gv = pytest.importorskip("gvar")
-    pytest.importorskip("lsqfit")
-    import lsqfit as lsf
+def test_fit_self_renormalization_rejects_fixed_m0(tmp_path: Path) -> None:
     from lamet_agent.stages.renorm.functions import fit_self_renormalization_factor
 
     z = [0.06, 0.12, 0.18]
@@ -379,56 +376,14 @@ def test_fit_self_renormalization_uses_fixed_m0_and_d(tmp_path: Path) -> None:
         attrs={"normalized_at_z0": "true"},
         name="reference",
     )
-    store = {"reference": reference}
-    call_count = {"n": 0}
-    captured_svdcut: list[float] = []
-
-    def fake_nonlinear_fit(*, data, prior, fcn, **kwargs):
-        call_count["n"] += 1
-        captured_svdcut.append(kwargs.get("svdcut"))
-        fit = gv.BufferDict()
-        for key in prior:
-            fit[key] = gv.gvar(0.0, 0.1)
-        fit.p = fit
-        return fit
-
-    monkeypatch = pytest.MonkeyPatch()
-    try:
-        monkeypatch.setattr(lsf, "nonlinear_fit", fake_nonlinear_fit)
-        result = fit_self_renormalization_factor(
-            store,
+    with pytest.raises(TypeError, match="m0_gev"):
+        fit_self_renormalization_factor(
+            {"reference": reference},
             kernel_id="ZMSbar_da",
             m0_gev=-0.094,
             d=0.19,
             save_path=str(tmp_path / "rn_zR_fit"),
         )
-    finally:
-        monkeypatch.undo()
-
-    assert call_count["n"] == 1
-    assert captured_svdcut == [1e-12]
-    assert result["m0"] == pytest.approx(-0.094)
-    assert result["m0_source"] == "fixed"
-    assert result["kernel_id"] == "ZMSbar_da"
-    assert result["svdcut"] == pytest.approx(1e-12)
-    assert result["d"] == pytest.approx(0.19)
-    assert "d_fit" not in result
-    assert result["n_sample"] == 1
-    assert "zR" in store
-    assert store["output"] is store["zR"]
-    assert store["zR"].resample == "jackknife"
-    assert store["zR"].values.shape[0] == 1
-    assert store["zR"].attrs.get("sample_construction") == "mean_from_averaged_fit"
-    assert store["zR"].attrs.get("m0_source") == "fixed"
-    assert store["zR"].attrs.get("d") == "0.19"
-    assert Path(result["artifact"]).is_file()
-    assert "self_renorm_fit" in store
-    assert store["self_renorm_fit"]["m0"] == pytest.approx(-0.094)
-    assert store["self_renorm_fit"]["m0_source"] == "fixed"
-    assert store["self_renorm_fit"]["svdcut"] == pytest.approx(1e-12)
-    assert store["self_renorm_fit"]["d"] == pytest.approx(0.19)
-    assert "d_fit" not in store["self_renorm_fit"]
-    assert "n_m0" not in store["self_renorm_fit"]
 
 
 def test_fit_self_renormalization_uses_d_in_gz_fit(tmp_path: Path) -> None:
@@ -437,11 +392,11 @@ def test_fit_self_renormalization_uses_d_in_gz_fit(tmp_path: Path) -> None:
     import lsqfit as lsf
     from lamet_agent.stages.renorm.functions import fit_self_renormalization_factor
 
-    z = [0.06, 0.12]
+    z = [0.06, 0.12, 0.18]
     a_vals = [0.0574, 0.0882]
     samples = [
-        np.asarray([[1.0, 0.8], [1.05, 0.82]], dtype=complex),
-        np.asarray([[1.1, 0.85], [1.15, 0.88]], dtype=complex),
+        np.asarray([[1.0, 0.8, 0.6], [1.05, 0.82, 0.62]], dtype=complex),
+        np.asarray([[1.1, 0.85, 0.65], [1.15, 0.88, 0.68]], dtype=complex),
     ]
     reference = EnsembleData(
         EnsembleInfo("", "E", a_vals[0], a_vals[0], 1, 1, 0),
@@ -456,7 +411,8 @@ def test_fit_self_renormalization_uses_d_in_gz_fit(tmp_path: Path) -> None:
     captured = {"fcn": None}
 
     def fake_nonlinear_fit(*, data, prior, fcn, **kwargs):
-        captured["fcn"] = fcn
+        if captured["fcn"] is None:
+            captured["fcn"] = fcn
         fit = gv.BufferDict()
         for key in prior:
             fit[key] = gv.gvar(0.0, 0.1)
@@ -469,7 +425,6 @@ def test_fit_self_renormalization_uses_d_in_gz_fit(tmp_path: Path) -> None:
         fit_self_renormalization_factor(
             store,
             kernel_id="ZMSbar_da",
-            m0_gev=-0.094,
             d=0.19,
             save_path=str(tmp_path / "rn_zR_fit"),
         )
@@ -518,7 +473,6 @@ def test_fit_self_renormalization_forwards_svdcut_override(tmp_path: Path) -> No
         result = fit_self_renormalization_factor(
             store,
             kernel_id="ZMSbar_da",
-            m0_gev=-0.094,
             d=0.19,
             svdcut=1e-8,
             save_path=str(tmp_path / "rn_zR_fit"),
@@ -526,9 +480,77 @@ def test_fit_self_renormalization_forwards_svdcut_override(tmp_path: Path) -> No
     finally:
         monkeypatch.undo()
 
-    assert captured_svdcut == [1e-8]
+    assert captured_svdcut == [1e-8, 1e-8]
     assert result["svdcut"] == pytest.approx(1e-8)
     assert store["self_renorm_fit"]["svdcut"] == pytest.approx(1e-8)
+
+
+def test_fit_hybrid_self_renormalization_uses_single_f1_without_extension(tmp_path: Path, monkeypatch) -> None:
+    gv = pytest.importorskip("gvar")
+    pytest.importorskip("lsqfit")
+    import lsqfit as lsf
+    from lamet_agent.stages.renorm.functions import fit_self_renormalization_factor
+
+    z = np.round(np.arange(1, 21) * 0.06, 2).tolist()
+    a_vals = [0.0574, 0.0626]
+    samples = [
+        np.asarray([np.exp(-0.20 * np.asarray(z)), np.exp(-0.18 * np.asarray(z))], dtype=complex),
+        np.asarray([np.exp(-0.21 * np.asarray(z)), np.exp(-0.19 * np.asarray(z))], dtype=complex),
+    ]
+    reference = EnsembleData(
+        EnsembleInfo("", "E", a_vals[0], a_vals[0], 1, 1, 0),
+        "bootstrap",
+        values=samples,
+        dims=("a", "z"),
+        coords={"a": a_vals, "z": z},
+        attrs={},
+        name="reference",
+    )
+    captured_priors: list[set[str]] = []
+
+    def fake_nonlinear_fit(*, data, prior, fcn, **kwargs):
+        captured_priors.append(set(prior))
+        fit = gv.BufferDict()
+        for key in prior:
+            fit[key] = gv.gvar(0.1, 0.01)
+        fit.p = fit
+        return fit
+
+    monkeypatch.setattr(lsf, "nonlinear_fit", fake_nonlinear_fit)
+    store = {"reference": reference}
+    result = fit_self_renormalization_factor(
+        store,
+        kernel_id="ZMSbar_da",
+        d=-0.08183,
+        save_path=str(tmp_path / "zr"),
+    )
+
+    assert any(key.startswith("f1") for key in captured_priors[0])
+    assert not any(key.startswith("f2") for key in captured_priors[0])
+    assert result["scheme"] == "hybrid_self_renormalization"
+    assert result["n_z"] == 20
+    assert store["zR"].attrs["scheme"] == "hybrid_self_renormalization"
+    assert np.allclose(store["zR"].coords["z"], z)
+    assert store["zR"].values.shape == (1, 2, 20)
+    assert "f_by_group_mean" not in store["self_renorm_fit"]
+
+
+def test_fit_hybrid_self_renormalization_rejects_discretization_groups(tmp_path: Path) -> None:
+    from lamet_agent.stages.renorm.functions import fit_self_renormalization_factor
+
+    reference = EnsembleData(
+        EnsembleInfo("", "E", 0.0574, 0.0574, 1, 1, 0),
+        "bootstrap",
+        values=[np.ones((2, 3), dtype=complex), np.ones((2, 3), dtype=complex)],
+        dims=("a", "z"),
+        coords={"a": [0.0574, 0.0882], "z": [0.06, 0.12, 0.18]},
+        attrs={"discretization_groups": '["milc", "rbc"]'},
+        name="reference",
+    )
+    with pytest.raises(ValueError, match="discretization_groups metadata is no longer supported"):
+        fit_self_renormalization_factor(
+            {"reference": reference}, d=-0.08183, save_path=str(tmp_path / "zr")
+        )
 
 
 def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -> None:
@@ -572,12 +594,34 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
 
     zms = kernels.ZMSbar_da(z, mu=2.0)
     expected = target_values / (zr_vals[None, :] * zms[None, :])
-    assert result["scheme"] == "self_renormalization"
+    assert result["scheme"] == "hybrid_self_renormalization"
     assert result["kernel_id"] == "ZMSbar_da"
+    assert result["alpha_s_derived"] == pytest.approx(0.293)
+    assert result["alpha_s_source"] == "alphas_nloop"
     assert result["remapped"] is False
     assert Path(result["artifact"]).is_file()
+    assert store["output"].attrs["scheme"] == "hybrid_self_renormalization"
+    assert float(store["output"].attrs["alpha_s_derived"]) == pytest.approx(0.293)
     assert np.allclose(store["output"].values, expected)
     assert store["output"] is store["matrix_element_data"]
+
+
+def test_zmsbar_uses_running_coupling_without_manual_override() -> None:
+    from lamet_agent import kernels
+
+    at_reference_scale = [kernels.alphas_nloop(2.0, order=order, Nf=3) for order in (0, 1, 2)]
+    away_from_reference = [kernels.alphas_nloop(4.0, order=order, Nf=3) for order in (0, 1, 2)]
+
+    assert at_reference_scale == pytest.approx([0.293, 0.293, 0.293])
+    assert len({round(value, 12) for value in away_from_reference}) == 3
+    removed_calls = (
+        lambda: kernels.ZMSbar(np.asarray([0.1]), mu=2.0, offset=3.5, alpha_s=0.332),  # type: ignore[call-arg]
+        lambda: kernels.ZMSbar_pdf(np.asarray([0.1]), mu=2.0, alpha_s=0.332),  # type: ignore[call-arg]
+        lambda: kernels.ZMSbar_da(np.asarray([0.1]), mu=2.0, alpha_s=0.332),  # type: ignore[call-arg]
+    )
+    for call in removed_calls:
+        with pytest.raises(TypeError, match="alpha_s"):
+            call()
 
 
 def test_apply_self_renormalization_remaps_d_and_m0(tmp_path: Path) -> None:
@@ -639,6 +683,172 @@ def test_apply_self_renormalization_remaps_d_and_m0(tmp_path: Path) -> None:
     assert np.allclose(store["output"].values, expected)
 
 
+@pytest.mark.parametrize(
+    ("target_a", "target_z", "message"),
+    [
+        (0.0600, [0.06, 0.12], "no exact lattice-spacing match"),
+        (0.0574, [0.06, 0.18], "outside the fitted zR range"),
+    ],
+)
+def test_apply_hybrid_self_renormalization_rejects_uncovered_target(
+    target_a: float,
+    target_z: list[float],
+    message: str,
+    tmp_path: Path,
+) -> None:
+    zR = EnsembleData(
+        EnsembleInfo("", "E", 0.0574, 0.0574, 1, 1, 0),
+        "bootstrap",
+        [np.asarray([[0.5, 0.4]], dtype=complex)],
+        dims=("a", "z"),
+        coords={"a": [0.0574], "z": [0.06, 0.12]},
+        attrs={"kernel_id": "ZMSbar_da", "m0_gev": "-0.094", "d": "0.19"},
+        name="zR",
+    )
+    target = EnsembleData(
+        EnsembleInfo("", "E", target_a, target_a, 1, 1, 0),
+        "bootstrap",
+        [np.ones(len(target_z), dtype=complex), np.ones(len(target_z), dtype=complex)],
+        dims=("z",),
+        coords={"z": target_z},
+        attrs={"lattice_spacing_fm": str(target_a)},
+        name="target",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        apply_self_renormalization(
+            {"target": target, "zR": zR},
+            kernel_id="ZMSbar_da",
+            z_coverage_policy="strict",
+            save_path=str(tmp_path / "uncovered"),
+        )
+
+
+def test_apply_hybrid_self_renormalization_intersects_target_z_grid(tmp_path: Path) -> None:
+    zR = EnsembleData(
+        EnsembleInfo("", "E", 0.0574, 0.0574, 1, 1, 0),
+        "bootstrap",
+        [np.asarray([[0.5, 0.4]], dtype=complex)],
+        dims=("a", "z"),
+        coords={"a": [0.0574], "z": [0.06, 0.12]},
+        attrs={"kernel_id": "ZMSbar_da", "m0_gev": "-0.094", "d": "0.19"},
+        name="zR",
+    )
+    target_values = np.asarray(
+        [[1.0, 2.0, 3.0], [1.1, 2.1, 3.1]], dtype=complex
+    )
+    target = EnsembleData(
+        EnsembleInfo("", "E", 0.0574, 0.0574, 1, 1, 0),
+        "bootstrap",
+        values=list(target_values),
+        dims=("z",),
+        coords={"z": [0.06, 0.12, 0.18]},
+        attrs={"lattice_spacing_fm": "0.0574"},
+        name="target",
+    )
+    store = {"target": target, "zR": zR}
+    result = apply_self_renormalization(
+        store,
+        kernel_id="ZMSbar_da",
+        z_coverage_policy="intersection",
+        save_path=str(tmp_path / "intersection"),
+    )
+
+    assert store["output"].coords["z"] == [0.06, 0.12]
+    assert store["output"].values.shape == (2, 2)
+    assert result["n_z_input"] == 3
+    assert result["n_z"] == 2
+    assert result["n_z_dropped"] == 1
+    assert result["z_output_range_fm"] == [0.06, 0.12]
+    assert store["output"].attrs["z_coverage_policy"] == "intersection"
+    assert store["output"].attrs["n_z_dropped"] == "1"
+
+    diagnostic = plot_self_renormalization_diagnostics(
+        store,
+        mode="apply",
+        z_coverage_policy="intersection",
+        save_path=str(tmp_path / "intersection_diag"),
+        artifacts_dir=tmp_path,
+    )
+    assert diagnostic["n_z_dropped"] == 1
+    assert diagnostic["z_coverage_policy"] == "intersection"
+    assert Path(diagnostic["plots"]["zmsbar_compare"]).is_file()
+
+
+def test_apply_hybrid_self_renormalization_extrapolates_long_distance_f1(tmp_path: Path) -> None:
+    from lamet_agent import kernels
+    from lamet_agent.stages.renorm.functions import _self_renorm_zr_from_f1
+
+    lattice_spacing_fm = 0.0574
+    d = 0.19
+    m0_gev = -0.094
+    z_fit = np.round(np.arange(1, 21) * 0.06, 2)
+    z_target = np.round(np.arange(1, 26) * 0.06, 2)
+    f1_target = 0.3 * z_target**2 - 0.2 * z_target + 0.1
+    zr_fit = _self_renorm_zr_from_f1(
+        z_fit,
+        f1_target[: len(z_fit)],
+        lattice_spacing_fm=lattice_spacing_fm,
+        d=d,
+        m0_gev=m0_gev,
+        mu=2.0,
+    )
+    zR = EnsembleData(
+        EnsembleInfo("", "E", lattice_spacing_fm, lattice_spacing_fm, 1, 1, 0),
+        "bootstrap",
+        [np.asarray(zr_fit[None, :], dtype=complex)],
+        dims=("a", "z"),
+        coords={"a": [lattice_spacing_fm], "z": z_fit.tolist()},
+        attrs={"kernel_id": "ZMSbar_da", "m0_gev": str(m0_gev), "d": str(d), "mu": "2.0"},
+        name="zR",
+    )
+    target_values = np.asarray(
+        [np.ones(len(z_target)), np.full(len(z_target), 1.1)], dtype=complex
+    )
+    target = EnsembleData(
+        EnsembleInfo("", "E", lattice_spacing_fm, lattice_spacing_fm, 1, 1, 0),
+        "bootstrap",
+        values=list(target_values),
+        dims=("z",),
+        coords={"z": z_target.tolist()},
+        attrs={"lattice_spacing_fm": str(lattice_spacing_fm)},
+        name="target",
+    )
+    store = {"target": target, "zR": zR}
+    result = apply_self_renormalization(
+        store,
+        kernel_id="ZMSbar_da",
+        save_path=str(tmp_path / "extrapolate"),
+    )
+
+    zr_expected = _self_renorm_zr_from_f1(
+        z_target,
+        f1_target,
+        lattice_spacing_fm=lattice_spacing_fm,
+        d=d,
+        m0_gev=m0_gev,
+        mu=2.0,
+    )
+    expected = target_values / (zr_expected[None, :] * kernels.ZMSbar_da(z_target)[None, :])
+    assert store["output"].coords["z"] == z_target.tolist()
+    assert store["output"].values.shape == (2, 25)
+    assert np.allclose(store["output"].values, expected, rtol=1e-12, atol=1e-12)
+    assert result["n_z_dropped"] == 0
+    assert result["n_z_extrapolated"] == 5
+    assert result["z_extrapolation_method"] == "quadratic_f1_tail"
+    assert result["f1_tail_zmin_fm"] == pytest.approx(0.48)
+    assert store["output"].attrs["n_z_extrapolated"] == "5"
+
+    diagnostic = plot_self_renormalization_diagnostics(
+        store,
+        mode="apply",
+        save_path=str(tmp_path / "extrapolate_diag"),
+        artifacts_dir=tmp_path,
+    )
+    assert diagnostic["n_z_extrapolated"] == 5
+    assert diagnostic["z_extrapolation_method"] == "quadratic_f1_tail"
+
+
 def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Path) -> None:
     z = np.asarray([0.06, 0.12, 0.18], dtype=float)
     a_vals = [0.0574, 0.0882]
@@ -669,7 +879,7 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
         values=[sibling_values[0], sibling_values[1]],
         dims=("z",),
         coords={"z": z.tolist()},
-        attrs={"lattice_spacing_fm": str(a_vals[1])},
+        attrs={"lattice_spacing_fm": str(a_vals[1]), "momentum": "PX0PY0PZ6"},
         name="renormalized_matrix_element",
     )
     sibling_a = tmp_path / "rn_mom6_a06.nc"
@@ -680,11 +890,26 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
         values=[target_values[0], target_values[1]],
         dims=("z",),
         coords={"z": z.tolist()},
-        attrs={"lattice_spacing_fm": str(a_vals[0])},
+        attrs={"lattice_spacing_fm": str(a_vals[0]), "momentum": "PX0PY0PZ6"},
         name="renormalized_matrix_element",
     )
     target_renorm.to_netcdf(sibling_a)
     sibling.to_netcdf(sibling_b)
+    sibling_c = tmp_path / "rn_mom8_a06.nc"
+    sibling_d = tmp_path / "rn_mom8_a09.nc"
+    for path, a_val, values in (
+        (sibling_c, a_vals[0], target_values * 0.8),
+        (sibling_d, a_vals[1], sibling_values * 0.8),
+    ):
+        EnsembleData(
+            EnsembleInfo("", "E", a_val, a_val, 1, 1, 0),
+            "jackknife",
+            values=list(values),
+            dims=("z",),
+            coords={"z": z.tolist()},
+            attrs={"lattice_spacing_fm": str(a_val), "momentum": "PX0PY0PZ8"},
+            name="renormalized_matrix_element",
+        ).to_netcdf(path)
 
     fit = {
         "z": z.tolist(),
@@ -727,7 +952,7 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
     apply_result = plot_self_renormalization_diagnostics(
         store,
         mode="apply",
-        sibling_artifacts=[str(sibling_a), str(sibling_b)],
+        sibling_artifacts=[str(sibling_a), str(sibling_b), str(sibling_c), str(sibling_d)],
         include_discrete_effect=True,
         save_path=str(tmp_path / "rn_mom6_a12"),
         artifacts_dir=tmp_path,
@@ -735,13 +960,21 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
         mu=2.0,
     )
     assert "zmsbar_compare" in apply_result["plots"]
-    assert "discrete_effect_re" in apply_result["plots"]
-    assert "discrete_effect_im" in apply_result["plots"]
+    assert "discrete_effect_px0py0pz6_re" in apply_result["plots"]
+    assert "discrete_effect_px0py0pz6_im" in apply_result["plots"]
+    assert "discrete_effect_px0py0pz8_re" in apply_result["plots"]
+    assert "discrete_effect_px0py0pz8_im" in apply_result["plots"]
     assert "fit_m_over_zR" not in apply_result["plots"]
     assert "fit_vs_data" not in apply_result["plots"]
-    for key in ("zmsbar_compare", "discrete_effect_re", "discrete_effect_im"):
+    for key in (
+        "zmsbar_compare",
+        "discrete_effect_px0py0pz6_re",
+        "discrete_effect_px0py0pz6_im",
+        "discrete_effect_px0py0pz8_re",
+        "discrete_effect_px0py0pz8_im",
+    ):
         assert Path(apply_result["plots"][key]).is_file()
         assert Path(apply_result["plots"][f"{key}_image"]).is_file()
-    assert Path(apply_result["plots"]["discrete_effect_re"]).name == "discrete_effect_re.pdf"
-    assert Path(apply_result["plots"]["discrete_effect_im"]).name == "discrete_effect_im.pdf"
-    assert "rn_mom6_a12" not in Path(apply_result["plots"]["discrete_effect_re"]).name
+    assert Path(apply_result["plots"]["discrete_effect_px0py0pz6_re"]).name == "discrete_effect_px0py0pz6_re.pdf"
+    assert Path(apply_result["plots"]["discrete_effect_px0py0pz6_im"]).name == "discrete_effect_px0py0pz6_im.pdf"
+    assert "rn_mom6_a12" not in Path(apply_result["plots"]["discrete_effect_px0py0pz6_re"]).name

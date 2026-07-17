@@ -1,0 +1,204 @@
+{
+  "metadata": {
+    "run_id": "kaon_da_gi",
+    "root_directory": "..",
+    "artifacts_directory": "runs/ds_kaon_da_gi/artifacts",
+    "target_observable": "da",
+    "parton": "quark",
+    "resample_mode": "bs",
+    "sample_error_mode": "covariance",
+    "bs_samples": 600,
+    "bin_size": 1,
+    "random_seed": 1984,
+    "stages": [
+      "renormalization"
+    ]
+  },
+  "inputs": {
+    "correlators": [],
+    "artifacts": [
+      {
+        "id": "pion_zero_momentum_reference",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/correlators/self_renormalization/pion_zero_momentum_reference.nc",
+        "hadron": "pion",
+        "gfix": "CG"
+      },
+      {
+        "id": "bare_a06m130_pz6",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a06m130_PX0PY0PZ6_bare.nc"
+      },
+      {
+        "id": "bare_a09m130_pz6",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a09m130_PX0PY0PZ6_bare.nc"
+      },
+      {
+        "id": "bare_a12m130_pz6",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a12m130_PX0PY0PZ6_bare.nc"
+      },
+      {
+        "id": "bare_a06m130_pz8",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a06m130_PX0PY0PZ8_bare.nc"
+      },
+      {
+        "id": "bare_a09m130_pz8",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a09m130_PX0PY0PZ8_bare.nc"
+      },
+      {
+        "id": "bare_a12m130_pz8",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a12m130_PX0PY0PZ8_bare.nc"
+      },
+      {
+        "id": "bare_a06m130_pz10",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a06m130_PX0PY0PZ10_bare.nc"
+      },
+      {
+        "id": "bare_a09m130_pz10",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a09m130_PX0PY0PZ10_bare.nc"
+      },
+      {
+        "id": "bare_a12m130_pz10",
+        "stage": "correlator_analysis",
+        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a12m130_PX0PY0PZ10_bare.nc"
+      }
+    ],
+    "kernels": [
+      {
+        "stage": "renormalization",
+        "kernel_id": "ZMSbar_da",
+        "kernel_path": "src/lamet_agent/kernels.py",
+        "scheme": "hybrid_self_renormalization",
+        "kernel_parameters": {
+          "mu": 2.0
+        }
+      }
+    ]
+  },
+  "stages": {
+    "renormalization": {
+      "defaults": {
+        "normalization": false,
+        "scheme": "hybrid_self_renormalization",
+        "mu": 2.0
+      },
+      "jobs": [
+        {
+          "id": "rn_zr_fit",
+          "inputs": {
+            "reference": "pion_zero_momentum_reference"
+          },
+          "params": {
+            "d": -0.08183
+          }
+        },
+        {
+          "id": "rn_a06m130_pz6",
+          "inputs": {
+            "target": "bare_a06m130_pz6",
+            "zR": "rn_zr_fit"
+          },
+          "params": {
+            "d": 0.19,
+            "m0_gev": -0.094
+          }
+        },
+        {
+          "id": "rn_a09m130_pz6",
+          "inputs": {
+            "target": "bare_a09m130_pz6",
+            "zR": "rn_zr_fit"
+          },
+          "params": {
+            "d": 0.19,
+            "m0_gev": -0.094
+          }
+        },
+        {
+          "id": "rn_a12m130_pz6",
+          "inputs": {
+            "target": "bare_a12m130_pz6",
+            "zR": "rn_zr_fit"
+          },
+          "params": {
+            "d": 0.19,
+            "m0_gev": -0.094
+          }
+        },
+        {
+          "id": "rn_a06m130_pz8",
+          "inputs": {
+            "target": "bare_a06m130_pz8",
+            "zR": "rn_zr_fit"
+          },
+          "params": {
+            "d": 0.19,
+            "m0_gev": -0.094
+          }
+        },
+        {
+          "id": "rn_a09m130_pz8",
+          "inputs": {
+            "target": "bare_a09m130_pz8",
+            "zR": "rn_zr_fit"
+          },
+          "params": {
+            "d": 0.19,
+            "m0_gev": -0.094
+          }
+        },
+        {
+          "id": "rn_a12m130_pz8",
+          "inputs": {
+            "target": "bare_a12m130_pz8",
+            "zR": "rn_zr_fit"
+          },
+          "params": {
+            "d": 0.19,
+            "m0_gev": -0.094
+          }
+        },
+        {
+          "id": "rn_a06m130_pz10",
+          "inputs": {
+            "target": "bare_a06m130_pz10",
+            "zR": "rn_zr_fit"
+          },
+          "params": {
+            "d": 0.19,
+            "m0_gev": -0.094
+          }
+        },
+        {
+          "id": "rn_a09m130_pz10",
+          "inputs": {
+            "target": "bare_a09m130_pz10",
+            "zR": "rn_zr_fit"
+          },
+          "params": {
+            "d": 0.19,
+            "m0_gev": -0.094
+          }
+        },
+        {
+          "id": "rn_a12m130_pz10",
+          "inputs": {
+            "target": "bare_a12m130_pz10",
+            "zR": "rn_zr_fit"
+          },
+          "params": {
+            "d": 0.19,
+            "m0_gev": -0.094
+          }
+        }
+      ]
+    }
+  }
+}

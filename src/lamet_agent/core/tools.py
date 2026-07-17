@@ -25,9 +25,7 @@ _RENORM_ARTIFACT_TOOLS = frozenset(
         "load_bare_matrix_element",
     }
 )
-_RENORM_SELF_PARAM_KEYS = frozenset(
-    {"kernel_id", "zms_kind", "m0_gev", "k", "lqcd", "mu", "d", "cf", "b0", "svdcut"}
-)
+_RENORM_SELF_FIT_PARAM_KEYS = frozenset({"d", "kernel_id", "mu", "svdcut"})
 _FOURIER_ARTIFACT_TOOLS = frozenset(
     {
         "run_fourier_transform",
@@ -197,6 +195,71 @@ def resolve_stage_tools(stage: str) -> dict[str, Callable[..., dict[str, Any]]]:
         return {}
     module = import_module(f"lamet_agent.stages.{package_name}.functions")
     return getattr(module, "STAGE_TOOLS", {})
+
+
+def resolve_job_tools(
+    stage: str,
+    job: StageJob,
+    effective_params: dict[str, Any],
+    *,
+    stage_tools: dict[str, Callable[..., dict[str, Any]]] | None = None,
+) -> dict[str, Callable[..., dict[str, Any]]]:
+    """Return only the stage tools that are valid for the current job contract."""
+    tools = dict(stage_tools if stage_tools is not None else resolve_stage_tools(stage))
+    if stage != "renormalization":
+        return tools
+
+    scheme = effective_params.get("scheme")
+    roles = set(job.inputs)
+    if scheme in {"ratio", "hybrid_ratio"} and roles == {"target", "denominator"}:
+        allowed = {
+            "apply_ratio_scheme_renormalization",
+            "plot_renormalized_matrix_element",
+        }
+    elif scheme == "hybrid_self_renormalization" and roles == {"reference"}:
+        allowed = {
+            "fit_self_renormalization_factor",
+            "plot_self_renormalization_diagnostics",
+        }
+    elif scheme == "hybrid_self_renormalization" and roles == {"target", "zR"}:
+        allowed = {
+            "apply_self_renormalization",
+            "plot_self_renormalization_diagnostics",
+            "plot_renormalized_matrix_element",
+        }
+    else:
+        return tools
+    return {name: tool for name, tool in tools.items() if name in allowed}
+
+
+def required_job_tool_sequence(
+    stage: str,
+    job: StageJob,
+    effective_params: dict[str, Any],
+) -> tuple[str, ...]:
+    """Return the successful tool order required before a job may finish."""
+    if stage != "renormalization":
+        return ()
+
+    scheme = effective_params.get("scheme")
+    roles = set(job.inputs)
+    if scheme in {"ratio", "hybrid_ratio"} and roles == {"target", "denominator"}:
+        return (
+            "apply_ratio_scheme_renormalization",
+            "plot_renormalized_matrix_element",
+        )
+    if scheme == "hybrid_self_renormalization" and roles == {"reference"}:
+        return (
+            "fit_self_renormalization_factor",
+            "plot_self_renormalization_diagnostics",
+        )
+    if scheme == "hybrid_self_renormalization" and roles == {"target", "zR"}:
+        return (
+            "apply_self_renormalization",
+            "plot_self_renormalization_diagnostics",
+            "plot_renormalized_matrix_element",
+        )
+    return ()
 
 
 def validate_stage_inputs(stage: str, manifest: Any, job: StageJob) -> list[str]:
@@ -407,6 +470,16 @@ def prepare_tool_args(
             resolved["model_average"] = defaults["model_average"]
 
     if stage == "renormalization":
+        if tool_name in {
+            "apply_ratio_scheme_renormalization",
+            "fit_self_renormalization_factor",
+            "apply_self_renormalization",
+            "plot_self_renormalization_diagnostics",
+            "plot_renormalized_matrix_element",
+        }:
+            # These job tools have runner-owned contracts. Ignore model-supplied
+            # values (including explicit nulls) and rebuild arguments below.
+            resolved = {}
         scheme_parameters = effective_params.get("scheme_parameters")
         if not isinstance(scheme_parameters, dict):
             scheme_parameters = {}
@@ -444,13 +517,13 @@ def prepare_tool_args(
         elif tool_name == "fit_self_renormalization_factor":
             resolved["reference"] = "reference"
             resolved["save_path"] = str(artifacts_dir / job.id)
-            if kernel_id is not None and "kernel_id" not in resolved:
+            if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
             for key, value in {**kernel_parameters, **scheme_parameters}.items():
-                if key in _RENORM_SELF_PARAM_KEYS and key not in resolved:
+                if key in _RENORM_SELF_FIT_PARAM_KEYS:
                     resolved[key] = value
-            for key in _RENORM_SELF_PARAM_KEYS:
-                if key in effective_params and key not in resolved:
+            for key in _RENORM_SELF_FIT_PARAM_KEYS:
+                if key in effective_params:
                     resolved[key] = effective_params[key]
         elif tool_name == "apply_self_renormalization":
             resolved.update(
@@ -462,13 +535,13 @@ def prepare_tool_args(
                     "sample_error_mode": manifest.metadata.sample_error_mode,
                 }
             )
-            if kernel_id is not None and "kernel_id" not in resolved:
+            if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
             for key, value in {**kernel_parameters, **scheme_parameters}.items():
-                if key in {"mu", "zms_kind", "d", "m0_gev", "lqcd"} and key not in resolved:
+                if key in {"mu", "d", "m0_gev", "z_coverage_policy"}:
                     resolved[key] = value
-            for key in ("mu", "d", "m0_gev", "lqcd"):
-                if key in effective_params and key not in resolved:
+            for key in ("mu", "d", "m0_gev", "z_coverage_policy"):
+                if key in effective_params:
                     resolved[key] = effective_params[key]
         elif tool_name == "plot_self_renormalization_diagnostics":
             is_fit_job = set(job.inputs) == {"reference"}
@@ -483,13 +556,14 @@ def prepare_tool_args(
             )
             if not is_fit_job:
                 resolved["target"] = "target"
-            if kernel_id is not None and "kernel_id" not in resolved:
+            if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
             for key, value in {**kernel_parameters, **scheme_parameters}.items():
-                if key == "mu" and key not in resolved:
+                if key == "mu":
                     resolved[key] = value
-            if "mu" in effective_params and "mu" not in resolved:
-                resolved["mu"] = effective_params["mu"]
+            for key in ("mu", "z_coverage_policy"):
+                if key in effective_params:
+                    resolved[key] = effective_params[key]
             if not is_fit_job:
                 apply_jobs = [
                     other

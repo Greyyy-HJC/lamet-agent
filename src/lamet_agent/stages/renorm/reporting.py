@@ -80,7 +80,7 @@ def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
 
 def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
     scheme = str(result.get("scheme", "hybrid_ratio"))
-    if scheme == "self_renormalization":
+    if scheme == "hybrid_self_renormalization":
         job_kind = str(
             result.get("job_kind")
             or ("fit" if result.get("d") is not None and "lattice_spacing_fm" not in result else "apply")
@@ -91,9 +91,17 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
                 ("job 类型", f"`{job_kind}`"),
                 ("kernel_id", f"`{result.get('kernel_id', 'n/a')}`"),
                 ("$\\mu$ [GeV]", format_report_value(result.get("mu"))),
+                ("派生 $\\alpha_s$", format_report_value(result.get("alpha_s_derived"))),
+                ("running helper", f"`{result.get('alpha_s_source', 'n/a')}`"),
                 ("$m_0$ [GeV]", format_report_value(result.get("m0", result.get("m0_gev")))),
                 ("$d$", format_report_value(result.get("d"))),
                 ("svdcut", format_report_value(result.get("svdcut"))),
+                ("z 覆盖策略", format_report_value(result.get("z_coverage_policy"))),
+                ("丢弃 z 点数", format_report_value(result.get("n_z_dropped"))),
+                ("延拓 z 点数", format_report_value(result.get("n_z_extrapolated"))),
+                ("延拓方法", format_report_value(result.get("z_extrapolation_method"))),
+                ("输入 z 范围 [fm]", format_report_list(result.get("z_input_range_fm", []))),
+                ("输出 z 范围 [fm]", format_report_list(result.get("z_output_range_fm", []))),
                 ("$a$ [fm]", format_report_value(result.get("lattice_spacing_fm"))),
                 ("z 网格", format_report_list(result.get("z_grid", result.get("z_values", [])))),
                 ("重采样", f"{result.get('n_sample', 'n/a')} 个样本"),
@@ -105,9 +113,17 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
                 ("Job kind", f"`{job_kind}`"),
                 ("kernel_id", f"`{result.get('kernel_id', 'n/a')}`"),
                 ("$\\mu$ [GeV]", format_report_value(result.get("mu"))),
+                ("Derived $\\alpha_s$", format_report_value(result.get("alpha_s_derived"))),
+                ("Running helper", f"`{result.get('alpha_s_source', 'n/a')}`"),
                 ("$m_0$ [GeV]", format_report_value(result.get("m0", result.get("m0_gev")))),
                 ("$d$", format_report_value(result.get("d"))),
                 ("svdcut", format_report_value(result.get("svdcut"))),
+                ("z coverage policy", format_report_value(result.get("z_coverage_policy"))),
+                ("Dropped z points", format_report_value(result.get("n_z_dropped"))),
+                ("Extrapolated z points", format_report_value(result.get("n_z_extrapolated"))),
+                ("Extrapolation method", format_report_value(result.get("z_extrapolation_method"))),
+                ("Input z range [fm]", format_report_list(result.get("z_input_range_fm", []))),
+                ("Output z range [fm]", format_report_list(result.get("z_output_range_fm", []))),
                 ("$a$ [fm]", format_report_value(result.get("lattice_spacing_fm"))),
                 ("z grid", format_report_list(result.get("z_grid", result.get("z_values", [])))),
                 ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
@@ -157,25 +173,43 @@ def _scheme_table(result: dict[str, Any], *, language: str) -> list[str]:
 
 
 def _formula_text(*, language: str, scheme: str = "hybrid_ratio") -> str:
-    if scheme == "self_renormalization":
+    if scheme == "hybrid_self_renormalization":
         if language == "zh":
             return r"""
-Self-renormalization 先从零动量 reference 拟合 $z_R(z,a)$，再对每个重采样样本作用
+Hybrid self-renormalization 在完整 $z$ 范围拟合零动量 reference，并以短程
+$Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}$ matching 固定有限重整化 $m_0$：
+
+$$
+g(z)-\ln Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z;\mu)\simeq m_0 z+b,
+\qquad
+z_R(z,a)=\exp[\ln M_{\mathrm{fit}}(z,a)-g(z)+m_0z].
+$$
+
+然后在 $z_R$ 覆盖的坐标网格上对每个重采样样本作用
 
 $$
 h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z;\mu)}.
 $$
 
-$Z_{\overline{\mathrm{MS}}}$ 由 `inputs.kernels` 中 `stage='renormalization'` 的 kernel（`ZMSbar_pdf` 或 `ZMSbar_da`）给出。该步骤不重新拟合矩阵元，而是对所有样本施加同一个重整化 map。
+$Z_{\overline{\mathrm{MS}}}$ 由 `inputs.kernels` 中 `stage='renormalization'` 的 kernel（`ZMSbar_pdf` 或 `ZMSbar_da`）给出。$\alpha_s$ 由 `alphas_nloop(mu)` 派生并记录，不接受手动数值。`strict` 覆盖策略要求 target 完全位于 $z_R$ 网格内；`intersection` 显式裁剪到两者交集；`extrapolate` 在 target 超出拟合范围时自动对长程 $f_1(z)$ 作二次延拓并重建缺少的 $z_R$，不冻结端点。该 scheme 没有显式 $z_s$ 切换点；hybrid 性来自全程 self-renormalization 与短程 MSbar 有限 matching 的结合。
 """.strip()
         return r"""
-Self-renormalization first fits $z_R(z,a)$ from a zero-momentum reference, then acts sample by sample as
+Hybrid self-renormalization fits the zero-momentum reference over the full $z$ range and uses short-distance
+$Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}$ matching to fix the finite renormalization $m_0$:
+
+$$
+g(z)-\ln Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z;\mu)\simeq m_0 z+b,
+\qquad
+z_R(z,a)=\exp[\ln M_{\mathrm{fit}}(z,a)-g(z)+m_0z].
+$$
+
+It then acts sample by sample on the coordinate grid covered by $z_R$ as
 
 $$
 h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z;\mu)}.
 $$
 
-$Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). This stage does not refit matrix elements; it applies one renormalization map to all resampled samples.
+$Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). The coupling is derived by `alphas_nloop(mu)` and recorded as provenance; a numerical coupling cannot be supplied. The `strict` coverage policy requires the target to lie within the $z_R$ grid, `intersection` explicitly clips to their overlap, and `extrapolate` automatically extends the long-distance $f_1(z)$ quadratically and rebuilds only the missing $z_R$ points without endpoint freezing. There is no explicit $z_s$ switch; the hybrid character is the combination of full-range self-renormalization and short-distance MSbar finite matching.
 """.strip()
     if scheme == "ratio":
         if language == "zh":
@@ -252,8 +286,8 @@ def build_renorm_stage_report_markdown(
     title = "# Renormalization Stage Report" if language == "en" else "# Renormalization 阶段报告"
     if language == "en":
         intro = {
-            "self_renormalization": (
-                "This report summarizes self-renormalization jobs that convert bare matrix elements into "
+            "hybrid_self_renormalization": (
+                "This report summarizes hybrid-self-renormalization jobs that convert bare matrix elements into "
                 "renormalized coordinate-space matrix elements."
             ),
             "ratio": (
@@ -272,7 +306,7 @@ def build_renorm_stage_report_markdown(
         summary_header = "| job | scheme | key | output | plot |"
     else:
         intro = {
-            "self_renormalization": "本报告汇总 self-renormalization job，将裸矩阵元转换为坐标空间重整化矩阵元。",
+            "hybrid_self_renormalization": "本报告汇总 hybrid-self-renormalization job，将裸矩阵元转换为坐标空间重整化矩阵元。",
             "ratio": "本报告汇总 ratio scheme job，将裸矩阵元转换为坐标空间重整化矩阵元。",
             "hybrid_ratio": "本报告汇总 hybrid-ratio 重整化 job，将裸矩阵元转换为坐标空间重整化矩阵元。",
         }.get(primary_scheme, "本报告汇总重整化 job，将裸矩阵元转换为坐标空间重整化矩阵元。")
@@ -300,7 +334,7 @@ def build_renorm_stage_report_markdown(
             ),
         )
         markdown_jobs.append((item, result, artifacts))
-        if result.get("scheme") == "self_renormalization":
+        if result.get("scheme") == "hybrid_self_renormalization":
             key = result.get("kernel_id")
         elif result.get("scheme") == "ratio":
             key = "pointwise"
@@ -329,7 +363,7 @@ def build_renorm_stage_report_markdown(
     )
     for item, result, artifacts in markdown_jobs:
         is_fit_job = result.get("job_kind") == "fit" or (
-            result.get("scheme") == "self_renormalization" and artifacts.get("zR_artifact") and not artifacts.get("renormalized_artifact")
+            result.get("scheme") == "hybrid_self_renormalization" and artifacts.get("zR_artifact") and not artifacts.get("renormalized_artifact")
         )
         lines.extend(
             [
