@@ -1,10 +1,42 @@
 """Markdown reporting helpers for the perturbative-matching stage.
 
-Mirrors ``stages/fourier/reporting.py``: it turns the matching-stage result and
-artifacts into an English report plus a Chinese companion. The matching stage is
-simpler than the Fourier stage (no scheme scan / model averaging), so the report
-focuses on the chosen kernel, the matching convolution, and a small set of
-"is this a sane perturbative correction" diagnostics.
+The organizing rule: **nothing here is hardcoded to one kernel**. The same report
+serves a Coulomb-gauge quark PDF and a gauge-invariant meson DA, which differ in
+their factorization, their notation, and their source paper -- so every statement is
+derived from the ``kernel_id`` the manifest chose, and the numbers themselves always
+come from ``kernels.py`` alone (nothing here can change a result).
+
+The 25 functions fall into five groups:
+
+1. Reading the kernel_id. ``_split_kernel_id`` breaks
+   ``<gauge>_<operator>_<distribution>_<scheme>_<order>`` into its fields;
+   ``_parse_kernel_id`` is the common two-field view; ``is_da_kernel`` and
+   ``_kernel_description`` answer "what is this kernel?" from those fields plus the
+   OPERATOR_TEXT / DISTRIBUTION_TEXT / PDF_POLARIZATION_TEXT tables at the top. Add a
+   kernel with a new operator or distribution and those tables want a new row.
+
+2. Reading the kernel's provenance. ``_kernel_reference`` returns the paper and
+   equations the kernel function tags itself with (``@kernel_reference`` in
+   kernels.py), so citations follow the kernel rather than a table kept in sync here.
+
+3. The static tables: ``_settings_table``, ``_field_definitions``,
+   ``_scheme_explanation``, ``_diagnostics``, ``_figure_block``, ``_outputs_table``.
+   Plain formatting of the job record the stage produced.
+
+4. The formula section -- the only part that calls an LLM. ``_kernel_source`` collects
+   the kernel and everything it actually calls (following the call graph, so a DA
+   kernel gets its ``V(x, y)`` and a PDF kernel its ``C(ksi)``); ``_fetch_paper_text``
+   pulls the LaTeX of the tagged arXiv paper; ``_formula_prompt`` asks the model to
+   write the closed form *and* cross-check code against paper; ``_llm_kernel_formula``
+   makes the call and caches it; ``_matching_formula_text`` wraps that in the
+   factorization, which branches on ``is_da_kernel``. Division of labour: the code is
+   authoritative for WHICH terms exist, the paper for how they are WRITTEN, and the
+   cross-check reports where the two disagree. ``FormulaLlm`` carries the run's LLM
+   config down from the CLI; this section raises rather than invent a formula offline.
+
+5. Assembly and writing: ``build_matching_report_markdown`` orders the sections,
+   ``write_matching_report`` writes one job's file, and ``write_matching_stage_report``
+   writes the one report per stage that the runner actually calls.
 """
 
 from __future__ import annotations
@@ -36,16 +68,36 @@ from lamet_agent.core.reporting import (
 
 
 # Logical operator -> human text, keyed by the ``<operator>`` field of a
-# ``CG_<operator>_quark_PDF_<scheme>_NLO`` kernel_id.
+# ``<gauge>_<operator>_<distribution>_<scheme>_<order>`` kernel_id. The Dirac structure
+# only; the distribution it measures comes from DISTRIBUTION_TEXT, since the same
+# operator serves a PDF and a DA. Naming the polarization here too would say
+# "helicity DA", which is not a thing.
 OPERATOR_TEXT = {
-    "gt": ("unpolarized $\\gamma^t$ quark PDF", "非极化 $\\gamma^t$ 夸克 PDF"),
-    "gtg5": ("helicity $\\gamma^t\\gamma_5$ quark PDF", "螺旋度 $\\gamma^t\\gamma_5$ 夸克 PDF"),
-    "gz": ("unpolarized $\\gamma^z$ quark PDF", "非极化 $\\gamma^z$ 夸克 PDF"),
-    "gzg5": ("helicity $\\gamma^z\\gamma_5$ quark PDF", "螺旋度 $\\gamma^z\\gamma_5$ 夸克 PDF"),
-    "gtgpg5": (
-        "transversity $\\gamma^t\\gamma_\\perp\\gamma_5$ quark PDF",
-        "横向 $\\gamma^t\\gamma_\\perp\\gamma_5$ 夸克 PDF",
-    ),
+    "gt": ("$\\gamma^t$", "$\\gamma^t$"),
+    "gtg5": ("$\\gamma^t\\gamma_5$", "$\\gamma^t\\gamma_5$"),
+    "gz": ("$\\gamma^z$", "$\\gamma^z$"),
+    "gzg5": ("$\\gamma^z\\gamma_5$", "$\\gamma^z\\gamma_5$"),
+    "gtgpg5": ("$\\gamma^t\\gamma_\\perp\\gamma_5$", "$\\gamma^t\\gamma_\\perp\\gamma_5$"),
+}
+
+# What the operator measures, keyed by the ``<distribution>`` field of the id. A PDF's
+# polarization is the operator's; a DA has none, so it is not spelled out here.
+DISTRIBUTION_TEXT = {
+    "quark_PDF": ("quark PDF", "夸克 PDF"),
+    "gluon_PDF": ("gluon PDF", "胶子 PDF"),
+    "DA": ("meson distribution amplitude", "介子分布振幅"),
+    "qDA": ("quark distribution amplitude", "夸克分布振幅"),
+    "gDA": ("gluon distribution amplitude", "胶子分布振幅"),
+}
+
+# The polarization a Dirac structure selects, but only for a PDF -- a DA's gamma^z gamma_5
+# is not a "helicity DA".
+PDF_POLARIZATION_TEXT = {
+    "gt": ("unpolarized", "非极化"),
+    "gtg5": ("helicity", "螺旋度"),
+    "gz": ("unpolarized", "非极化"),
+    "gzg5": ("helicity", "螺旋度"),
+    "gtgpg5": ("transversity", "横向"),
 }
 
 # Scheme -> human text. The paper and equation numbers are NOT listed here: they are
@@ -85,13 +137,24 @@ def is_da_kernel(kernel_id: str) -> bool:
 def _parse_kernel_id(kernel_id: str) -> tuple[str, str]:
     """Split a ``<gauge>_<operator>_<distribution>_<scheme>_<order>`` id into (operator, scheme).
 
+    See ``_split_kernel_id`` for the field layout; this is the two-field view most callers
+    want. Falls back to ('', '') for an id that does not follow the convention so the
+    report degrades gracefully instead of raising.
+    """
+    _gauge, operator, _distribution, scheme = _split_kernel_id(kernel_id)
+    return operator, scheme
+
+
+def _split_kernel_id(kernel_id: str) -> tuple[str, str, str, str]:
+    """Split an id into (gauge, operator, distribution, scheme).
+
     The distribution token (quark_PDF/gluon_PDF for the quark/gluon PDF, DA for the meson
     distribution amplitude) separates the operator from the scheme, and the order (NLO)
     trails it. A token may itself span several ``_`` segments, so match on joined segments
-    rather than on a single one. The leading token is the gauge construction (CG or GI) and
-    is not returned -- ``_settings_table`` reads it off the id directly. Falls back to
-    ('', '') for any id that does not follow the convention so the report degrades
-    gracefully instead of raising.
+    rather than on a single one. Every field is returned rather than hardcoded by callers:
+    the same report serves a Coulomb-gauge quark PDF and a gauge-invariant DA, and naming
+    either one's fields in prose would misdescribe the other. Falls back to empty strings
+    for an id that does not follow the convention.
     """
     parts = str(kernel_id).split("_")
     # <gauge>, <op...>, quark_PDF|DA, <scheme>, <order>
@@ -99,8 +162,28 @@ def _parse_kernel_id(kernel_id: str) -> tuple[str, str]:
         for token in DISTRIBUTION_TOKENS:
             width = len(token.split("_"))
             if idx + width < len(parts) and "_".join(parts[idx : idx + width]) == token:
-                return "_".join(parts[1:idx]), parts[idx + width]
-    return "", ""
+                return parts[0], "_".join(parts[1:idx]), token, parts[idx + width]
+    return "", "", "", ""
+
+
+def _kernel_description(kernel_id: str, *, language: str) -> str:
+    """Describe what a kernel matches, composed from the id's own fields.
+
+    A PDF is named by its polarization and Dirac structure; a DA by its Dirac structure
+    alone, since "helicity DA" would be a category error. Anything the id does not spell
+    out is left out rather than guessed.
+    """
+    idx = 1 if language == "zh" else 0
+    _gauge, operator, distribution, _scheme = _split_kernel_id(kernel_id)
+    dirac = OPERATOR_TEXT.get(operator, (operator, operator))[idx]
+    measured = DISTRIBUTION_TEXT.get(distribution, (distribution, distribution))[idx]
+    if not measured:
+        return dirac or ("未记录" if language == "zh" else "not recorded")
+    if distribution in DA_TOKENS:
+        return f"{dirac} {measured}" if dirac else measured
+    polarization = PDF_POLARIZATION_TEXT.get(operator, ("", ""))[idx]
+    parts_text = [part for part in (polarization, dirac, measured) if part]
+    return " ".join(parts_text)
 
 
 def _kernel_reference(kernel_id: str) -> tuple[str, str]:
@@ -144,8 +227,9 @@ def _trapz_norm(x_grid: np.ndarray, values: np.ndarray) -> float:
 
 def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     kernel_id = str(data.get("kernel_id", "not recorded"))
-    operator, scheme = _parse_kernel_id(kernel_id)
-    op_en, op_zh = OPERATOR_TEXT.get(operator, (operator or "not recorded",) * 2)
+    _operator, scheme = _parse_kernel_id(kernel_id)
+    op_en = _kernel_description(kernel_id, language="en")
+    op_zh = _kernel_description(kernel_id, language="zh")
     scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
     # The `CG` prefix of the kernel_id marks the Coulomb-gauge (no Wilson line)
     # construction; anything else is the conventional gauge-invariant one.
@@ -177,7 +261,7 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
             ("匹配核出处", reference_zh),
             ("规范约定", gauge_zh),
             ("匹配方案", f"`{scheme}`（{scheme_en}）"),
-            ("夸克/胶子分量", f"`{data.get('component', 'not recorded')}`"),
+            ("实部/虚部分量", f"`{data.get('component', 'not recorded')}`"),
             ("强子动量", pz_text),
             ("重整化标度", f"$\\mu={_fmt(data.get('mu'))}$ GeV"),
         ]
@@ -199,7 +283,7 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
             ("Kernel reference", reference_en),
             ("Gauge convention", gauge_en),
             ("Matching scheme", f"`{scheme}` ({scheme_en})"),
-            ("Quark/gluon component", f"`{data.get('component', 'not recorded')}`"),
+            ("Component (re/im)", f"`{data.get('component', 'not recorded')}`"),
             ("Hadron momentum", pz_text),
             ("Renormalization scale", f"$\\mu={_fmt(data.get('mu'))}$ GeV"),
         ]
@@ -221,47 +305,65 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
 
 
 def _field_definitions(*, language: str) -> list[str]:
+    """Explain the report's rows, describing the id layout rather than one kernel's.
+
+    Spelling a concrete id here (it used to say ``CG_<operator>_quark_PDF_<scheme>_NLO``)
+    misnames every kernel that is not a Coulomb-gauge quark PDF -- a gauge-invariant DA
+    matched none of those three fields.
+    """
     if language == "zh":
         return [
             "| 条目 | 含义 |",
             "|---|---|",
-            "| Operator / kernel | 选定的匹配核 `CG_<算符>_PDF_<方案>`；算符决定 Dirac 结构（gt、gtg5），方案决定有限项。 |",
-            "| Matching scheme | `msbar` / `ratio` / `hybrid`，由 kernel_id 后缀选定；hybrid 还需要 Wilson 线长度 $z_s$。 |",
-            "| Hadron momentum | $P_z$，必须与傅立叶阶段一致，进入核的 $\\log(4y^2P_z^2/\\mu^2)$ 项。 |",
-            "| Renormalization scale | MSbar 重整化标度 $\\mu$（GeV），默认 2.0。 |",
-            "| Resampling mode | quasi-PDF 携带的重采样轴（bootstrap/jackknife）；匹配逐样本进行以保留关联结构。 |",
+            "| Operator / kernel | 选定的匹配核，id 形如 `<规范>_<算符>_<分布>_<方案>_<阶数>`：规范为 `CG`（库伦规范）或 `GI`（规范不变）；算符是 Dirac 结构（gt、gtg5 等）；分布是 `quark_PDF` 或 `DA`；方案决定有限项；阶数为微扰阶（目前均为 NLO）。 |",
+            "| Matching scheme | `msbar` / `ratio` / `hybrid`，由 kernel_id 的方案字段选定；hybrid 还需要 Wilson 线长度 $z_s$。 |",
+            "| Hadron momentum | $P_z$，必须与傅立叶阶段一致，进入核的对数标度。 |",
+            "| Renormalization scale | MSbar 重整化标度 $\\mu$（GeV）。 |",
+            "| Resampling mode | 输入携带的重采样轴（bootstrap/jackknife）；匹配逐样本进行以保留关联结构。 |",
         ]
     return [
         "| Entry | Meaning |",
         "|---|---|",
-        "| Operator / kernel | The selected matching kernel `CG_<operator>_quark_PDF_<scheme>_NLO`; the operator sets the Dirac structure (gt, gtg5), `quark_PDF` marks it as a quark kernel, the scheme sets the finite terms, and NLO is the perturbative order. |",
-        "| Matching scheme | `msbar` / `ratio` / `hybrid`, chosen by the kernel_id suffix; hybrid also needs the Wilson-line length $z_s$. |",
-        "| Hadron momentum | $P_z$, which must match the Fourier stage and enters the kernel's $\\log(4y^2P_z^2/\\mu^2)$ terms. |",
-        "| Renormalization scale | MSbar renormalization scale $\\mu$ in GeV (default 2.0). |",
-        "| Resampling mode | The resampling axis carried by the quasi-PDF (bootstrap/jackknife); matching is done sample by sample to preserve the correlation structure. |",
+        "| Operator / kernel | The selected matching kernel, whose id reads `<gauge>_<operator>_<distribution>_<scheme>_<order>`: the gauge is `CG` (Coulomb) or `GI` (gauge-invariant); the operator is the Dirac structure (gt, gtg5, ...); the distribution is `quark_PDF` or `DA`; the scheme sets the finite terms; the order is the perturbative order (NLO throughout). |",
+        "| Matching scheme | `msbar` / `ratio` / `hybrid`, chosen by the kernel_id's scheme field; hybrid also needs the Wilson-line length $z_s$. |",
+        "| Hadron momentum | $P_z$, which must match the Fourier stage and enters the kernel's logarithmic scale. |",
+        "| Renormalization scale | MSbar renormalization scale $\\mu$ in GeV. |",
+        "| Resampling mode | The resampling axis carried by the input (bootstrap/jackknife); matching is done sample by sample to preserve the correlation structure. |",
     ]
 
 
 # --- LLM-derived kernel formula --------------------------------------------
-# The explicit matching coefficient is NOT stored as a hand-written formula. At
-# report time the model reads the exact ``kernels.py`` code that produced the
-# number (the source of truth) and writes the closed form. Everything needed for
-# the call lives in this file so only ``reporting.py`` carries the change; the LLM
-# config is read from the environment because the report cannot receive it from
-# the agent.
-
-# Provider configs (base_url / default_model / key_env) are reused from
+# The whole section answers one question -- "what coefficient did this run apply?" --
+# for whichever kernel_id the manifest named, and it splits that job three ways:
+#
+#   * the CODE decides WHICH terms exist. ``_kernel_source`` hands the model the kernel
+#     function and everything it calls, and the prompt says the code is the single
+#     source of truth for the terms: which logs, which branches, whether a delta term
+#     is there, what the scheme correction is. No formula is hand-written here, so a
+#     kernel and its report cannot drift apart.
+#   * the PAPER decides HOW it is WRITTEN. ``_fetch_paper_text`` pulls the LaTeX of the
+#     arXiv id the kernel tags itself with, and the prompt says the paper is the
+#     authority for notation: xi = x/y versus V(x, y), the plus-prescription's bracket
+#     structure, how the subtraction domain is marked.
+#   * the CROSS-CHECK decides WHETHER THE TWO AGREE. The prompt requires a verdict
+#     comparing code against paper term by term, listing every discrepancy. Handing
+#     over both without demanding that verdict just lets the model quietly reconcile
+#     them, and a mistranscribed kernel would read as agreement.
+#
+# Nothing in this section names a kernel or a paper. The manifest picks a kernel_id,
+# the kernel carries its own @kernel_reference (arXiv id + equations), and
+# _kernel_reference reads it back -- so a kernel from a new paper needs no change here.
+# See kernels.py. Provider configs (base_url / default_model / key_env) come from
 # ``core.llm.PROVIDERS`` so this module stays in sync with the rest of the agent.
 
-# No paper is named in this module. The manifest picks a kernel_id, the kernel carries
-# its own @kernel_reference (arXiv id + equations), and _kernel_reference reads it back
-# -- so adding a kernel from a new paper needs no change here. See kernels.py.
-
 # Generating a formula is a network round-trip; memoize so the per-job and the
-# stage-level report reuse one call per (operator, scheme, language). The value
-# is ``(markdown, paper_used)`` so the provenance note knows whether the paper
-# text actually made it into the prompt.
-_FORMULA_CACHE: dict[tuple[str, str, str], tuple[str, bool]] = {}
+# stage-level report reuse one call per kernel and language. The key is the kernel_id
+# itself, not its parsed fields: CG_gt_quark_PDF_hybrid_NLO and GI_gt_quark_PDF_hybrid_NLO
+# share an operator and a scheme but are different kernels from different papers, and
+# keying on those fields would serve one of them the other's formula. The value is
+# ``(markdown, paper_used)`` so the provenance note knows whether the paper text
+# actually made it into the prompt.
+_FORMULA_CACHE: dict[tuple[str, str], tuple[str, bool]] = {}
 # Paper text fetched once per source (local path or arXiv id).
 _PAPER_CACHE: dict[str, str | None] = {}
 
@@ -317,22 +419,41 @@ class FormulaLlm:
 
 
 def _kernel_source(kernel_id: str) -> str:
-    """Return the implemented kernel + coefficient functions as LLM ground truth."""
-    pieces: list[str] = []
-    # The registry name is the function name in kernels.py, so resolve it directly
-    # instead of rebuilding it from the parsed operator/scheme.
+    """Return the kernel and everything it actually calls, as LLM ground truth.
+
+    The dependencies are followed from the kernel itself rather than listed here. A
+    hardcoded list named only the PDF coefficients, so a DA kernel's prompt carried
+    ``C_ratio`` and friends -- which it never calls -- while omitting the ``V(x, y)`` it
+    integrates. The model then had no way to document the coefficient, and (correctly)
+    said so instead of inventing one. Following the call graph keeps this honest for
+    whatever kernel is added next, too.
+    """
     builder = getattr(kernels, str(kernel_id), None)
-    if builder is not None:
-        pieces.append(inspect.getsource(builder))
-    for name in (
-        "C_ratio", "C_ratio_perp", "C_msbar", "C_msbar_gz", "C_hybrid",
-        "C_ratio_gi", "C_hybrid_gi", "_atan_piece", "build_matching_matrix",
-    ):
-        fn = getattr(kernels, name, None)
-        if fn is not None:
-            pieces.append(inspect.getsource(fn))
-    if not pieces:
+    if builder is None:
         return inspect.getsource(kernels)
+
+    # Walk the module-level functions the kernel reaches, transitively. co_names lists
+    # every global name a code object mentions; the ones resolving to a function defined
+    # in kernels.py are its real dependencies. Nested code objects have to be walked too
+    # -- the PDF kernels pass their coefficient in as a lambda, so C_hybrid and friends
+    # are named only inside that lambda's own code object, not the function's.
+    collected: dict[str, Any] = {}
+
+    def walk_code(code: Any) -> None:
+        for name in code.co_names:
+            if name in collected:
+                continue
+            dependency = getattr(kernels, name, None)
+            if inspect.isfunction(dependency) and dependency.__module__ == kernels.__name__:
+                collected[name] = dependency
+                walk_code(dependency.__code__)
+        for const in code.co_consts:
+            if inspect.iscode(const):
+                walk_code(const)
+
+    walk_code(builder.__code__)
+    pieces = [inspect.getsource(builder)]
+    pieces.extend(inspect.getsource(fn) for fn in collected.values())
     return "\n\n".join(pieces)
 
 
@@ -454,6 +575,7 @@ def _formula_prompt(
     scheme: str,
     language: str,
     *,
+    is_da: bool,
     source: str,
     paper_text: str | None,
     paper_arxiv_id: str,
@@ -468,8 +590,8 @@ def _formula_prompt(
         "for the matching coefficient verbatim.\n\"\"\"\n" + paper_text + "\n\"\"\"\n\n"
         if paper_text
         else "No paper text was available; rely on the code below as the source of truth and use "
-        "the paper's $[\\,g(\\xi)\\,]^{D}_{+(1)}$ plus-prescription convention (subtraction point "
-        "$\\xi=1$, domain $D$ in the superscript).\n\n"
+        "the paper's own plus-prescription convention, writing the subtraction point and the "
+        "domain explicitly.\n\n"
     )
     # The kernel is tagged with the exact equations it transcribes, so point the model
     # at them instead of making it search the paper for the right coefficient.
@@ -477,6 +599,59 @@ def _formula_prompt(
         f"The kernel implements {equations} of that paper -- document that coefficient.\n\n"
         if equations
         else ""
+    )
+    # A DA kernel's density is a genuine V(x, y) integrated with a plain dy over the DA's
+    # support; a PDF's is a coefficient of ksi = x/y integrated with dy/|y|. Handing the
+    # model the PDF's ksi notation for a DA would ask it to describe V(x, y) as a function
+    # of a variable it does not depend on, so the notation follows the kernel.
+    if is_da:
+        notation_block = (
+            "Requirements:\n"
+            "- Use $...$ for inline math and $$...$$ for display equations (KaTeX/MathJax).\n"
+            "- This is a distribution-amplitude kernel. Its density is a genuine two-variable "
+            "$V(x,y)$ carrying its own $1/y$ and $1/(1-y)$ poles, integrated with a plain $dy$ "
+            "over the DA's support $y\\in[0,1]$. Do NOT introduce $\\xi=x/y$ and do NOT write the "
+            "coefficient as a function of $x/y$ alone -- it is not one.\n"
+            "- Define the notation the paper itself uses for $V(x,y)$ and its logarithm scale.\n"
+            "- The coefficient carries a plus-prescription at $x=y$ (the code restores it by "
+            "making each $y$-column integrate to zero over the $x$ grid). Reproduce the paper's "
+            "EXACT bracket notation for it, copying the structure verbatim from the LaTeX above, "
+            "including the paper's definition of the bracket and its subtraction domain.\n"
+        )
+    else:
+        notation_block = (
+            "Requirements:\n"
+            "- Use $...$ for inline math and $$...$$ for display equations (KaTeX/MathJax).\n"
+            "- Define notation once: $\\xi=x/y$ and $L=\\ln(4y^2P_z^2/\\mu^2)$.\n"
+            "- The coefficient has a plus-prescription at $\\xi=1$ (the code restores it by making "
+            "each $y$-column integrate to zero). Reproduce it using the paper's EXACT "
+            "plus-prescription notation, copying the bracket structure verbatim from the LaTeX "
+            "above: the paper writes $[\\,g(\\xi)\\,]^{D}_{+(x_0)}$ where the subscript $+(x_0)$ marks "
+            "the subtraction point ($x_0=1$, i.e. $+(1)$) and the superscript $D$ marks the domain. "
+            "Keep that subscript/superscript placement precisely -- do NOT move the $(1)$ into the "
+            "superscript or drop the domain. The paper splits the coefficient into more than one "
+            "plus-bracket over different domains (e.g. $[0,1]$ and $(-\\infty,\\infty)$): reproduce "
+            "exactly that split, and include the paper's definition of $[g]^{D}_{+(x_0)}$ plus any "
+            "$\\delta(1-\\xi)$ term.\n"
+        )
+    # The point of handing over both the paper and the code is to let one check the other.
+    # Without an explicit verdict the model silently reconciles them and a transcription
+    # error in the kernel would read as agreement.
+    crosscheck_block = (
+        "- Then cross-check the code against the paper and report the result under a final "
+        "`#### Consistency check` heading. Compare term by term: the regular coefficient, every "
+        "logarithm and its argument, the plus-prescription and its domain, any delta term, and "
+        "the scheme-specific correction. State plainly whether the code reproduces "
+        f"{equations or 'the cited equations'} of arXiv:{paper_arxiv_id or 'the cited paper'}. "
+        "List every discrepancy you find, however small (a sign, a factor, a missing term, a "
+        "different argument inside a log), and say which side has it. If the paper text was not "
+        "available to you, say that no check was possible instead of implying one passed. Do not "
+        "smooth over a disagreement: reporting a real discrepancy is the most valuable thing "
+        "this section can do.\n"
+        if paper_text
+        else "- Then state, under a final `#### Consistency check` heading, that the paper text "
+        "could not be retrieved, so the closed form above was derived from the code alone and "
+        "was NOT checked against the paper.\n"
     )
     return (
         "You are documenting one stage of a LaMET lattice-QCD analysis. Produce a Markdown "
@@ -490,22 +665,12 @@ def _formula_prompt(
         "arctan/arctanh branch, and any scheme-specific finite correction. If the paper and the "
         "code disagree on a term, follow the code; but for NOTATION always follow the paper.\n"
         f"```python\n{source}\n```\n\n"
-        "Requirements:\n"
-        "- Use $...$ for inline math and $$...$$ for display equations (KaTeX/MathJax).\n"
-        "- Define notation once: $\\xi=x/y$ and $L=\\ln(4y^2P_z^2/\\mu^2)$.\n"
-        "- The coefficient has a plus-prescription at $\\xi=1$ (the code restores it by making "
-        "each $y$-column integrate to zero). Reproduce it using the paper's EXACT "
-        "plus-prescription notation, copying the bracket structure verbatim from the LaTeX "
-        "above: the paper writes $[\\,g(\\xi)\\,]^{D}_{+(x_0)}$ where the subscript $+(x_0)$ marks "
-        "the subtraction point ($x_0=1$, i.e. $+(1)$) and the superscript $D$ marks the domain. "
-        "Keep that subscript/superscript placement precisely -- do NOT move the $(1)$ into the "
-        "superscript or drop the domain. The paper splits the coefficient into more than one "
-        "plus-bracket over different domains (e.g. $[0,1]$ and $(-\\infty,\\infty)$): reproduce "
-        "exactly that split, and include the paper's definition of $[g]^{D}_{+(x_0)}$ plus any "
-        "$\\delta(1-\\xi)$ term.\n"
+        f"{notation_block}"
         "- State the explicit regular coefficient and any scheme-specific correction.\n"
-        "- Be concise (a few sentences plus the equations); no headings, no preamble like "
-        "'Here is'. Output only the Markdown fragment.\n"
+        f"{crosscheck_block}"
+        "- Be concise (a few sentences plus the equations); no headings other than the "
+        "consistency-check one asked for above, no preamble like 'Here is'. Output only the "
+        "Markdown fragment.\n"
         f"- {lang_line}"
     )
 
@@ -513,17 +678,20 @@ def _formula_prompt(
 def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tuple[str, bool]:
     """Generate the explicit kernel coefficient with an LLM, returning ``(md, paper_used)``.
 
-    The model reads the LaTeX of the paper the kernel is tagged with (when reachable)
-    together with the exact ``kernels.py`` code that produced the number, and writes
-    the closed form using the paper's own plus-prescription notation. The code is
-    authoritative for which terms are present; the paper is authoritative for the
-    notation. The report stores no hand-written formula; this raises on any LLM
-    failure (formula generation is required, no offline fallback). The boolean
-    reports whether the paper text actually reached the prompt.
+    The model reads the exact ``kernels.py`` code that produced the number together with
+    the LaTeX of the paper that kernel tags itself with (when reachable), and returns two
+    things: the closed form, and a verdict on whether the code and the paper agree. The
+    three-way split is the point (see the section comment above) -- the code is
+    authoritative for which terms are present, the paper for how they are written, and
+    the cross-check is what turns "the model saw both" into something a reader can rely
+    on. The report stores no hand-written formula; this raises on any LLM failure
+    (formula generation is required, no offline fallback). The boolean reports whether
+    the paper text actually reached the prompt, which decides whether the cross-check
+    could run at all.
     """
     operator, scheme = _parse_kernel_id(kernel_id)
     paper_arxiv_id, equations = _kernel_reference(kernel_id)
-    cache_key = (kernel_id, scheme, language)
+    cache_key = (kernel_id, language)  # the id already carries the scheme
     if cache_key in _FORMULA_CACHE:
         return _FORMULA_CACHE[cache_key]
 
@@ -534,6 +702,7 @@ def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tu
         operator,
         scheme,
         language,
+        is_da=is_da_kernel(kernel_id),
         source=source,
         paper_text=paper_text,
         paper_arxiv_id=paper_arxiv_id,
@@ -566,10 +735,23 @@ def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaL
         reference = f"arXiv:{paper_arxiv_id} {equations}".strip()
     else:
         reference = "匹配核未标注出处" if language == "zh" else "The kernel declares no paper reference"
-    formula = (
-        r"f(x,\mu)=\int\frac{dy}{|y|}\,C^{-1}\!\left(\frac{x}{y},\frac{\mu}{yP_z}\right)"
-        r"\tilde f\!\left(y,P_z\right),"
-    )
+    # The factorization follows the kernel, not the stage: a DA is matched by a genuine
+    # V(x, y) integrated with a plain dy over the DA's support, a PDF by a coefficient of
+    # ksi = x/y integrated with dy/|y|. One hardcoded form would misstate the other.
+    if is_da_kernel(kernel_id):
+        formula = (
+            r"\phi(x,\mu)=\int_0^1 dy\,\Big[\delta(x-y)-\frac{\alpha_s C_F}{2\pi}"
+            r"\big[V(x,y)\big]_+\Big]\,\tilde\phi\!\left(y,P_z\right)+O(\alpha_s^2),"
+        )
+        result_name_en, result_name_zh = "light-cone DA", "光锥 DA"
+        source_name_en, source_name_zh = "quasi-DA", "quasi-DA"
+    else:
+        formula = (
+            r"f(x,\mu)=\int\frac{dy}{|y|}\,C^{-1}\!\left(\frac{x}{y},\frac{\mu}{yP_z}\right)"
+            r"\tilde f\!\left(y,P_z\right),"
+        )
+        result_name_en, result_name_zh = "light-cone PDF", "光锥 PDF"
+        source_name_en, source_name_zh = "quasi-PDF", "quasi-PDF"
     discrete = r"f_i=\sum_j K_{ij}\,\tilde f_j,\qquad K=\text{(nx, ny) matching matrix}."
     # The explicit coefficient is generated at report time by an LLM that reads
     # the source paper together with the kernels.py code which produced the number
@@ -589,7 +771,7 @@ def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaL
     explicit = note + generated
     if language == "zh":
         return (
-            f"{reference}。光锥 PDF 由 quasi-PDF 经匹配核反卷积得到：\n\n"
+            f"{reference}。{result_name_zh} 由 {source_name_zh} 经匹配核反卷积得到：\n\n"
             f"$$\n{formula}\n$$\n\n"
             "离散化后即矩阵乘法（本阶段对每个重采样样本独立施加，再重建统计量）：\n\n"
             f"$$\n{discrete}\n$$\n\n"
@@ -597,7 +779,7 @@ def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaL
             f"{explicit}"
         )
     return (
-        f"{reference}. The light-cone PDF is obtained from the quasi-PDF by inverting the matching kernel:\n\n"
+        f"{reference}. The {result_name_en} is obtained from the {source_name_en} by inverting the matching kernel:\n\n"
         f"$$\n{formula}\n$$\n\n"
         "After discretization this is a matrix product (applied to every resampling sample independently, then the statistics are rebuilt):\n\n"
         f"$$\n{discrete}\n$$\n\n"
@@ -607,22 +789,35 @@ def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaL
 
 
 def _scheme_explanation(data: dict[str, Any], *, language: str) -> list[str]:
+    """Describe the scheme, citing the equations the selected kernel is tagged with.
+
+    What each scheme adds is a property of the scheme, but *where it is written down* is a
+    property of the kernel's paper. Hardcoding equation numbers here cited the Coulomb-gauge
+    PDF paper at every kernel, including DA kernels from an entirely different one, so the
+    citation is read off ``@kernel_reference`` instead.
+    """
     kernel_id = str(data.get("kernel_id", ""))
     _operator, scheme = _parse_kernel_id(kernel_id)
+    arxiv_id, equations = _kernel_reference(kernel_id)
+    cite = f"arXiv:{arxiv_id} {equations}".strip() if arxiv_id else ""
     if language == "zh":
         notes = {
-            "msbar": "MSbar 方案在裸 ratio 系数上加上有限的 MSbar 转换项（Eq. 2.14）。",
-            "ratio": "ratio 方案直接使用裸的正则系数 $C_r$（Eq. 2.16），不含额外有限项。",
-            "hybrid": "hybrid 方案在 ratio 系数上加上 Wilson 线的正弦积分修正，依赖 $z_sP_z$（Eq. 2.19-2.20）。",
+            "msbar": "MSbar 方案在裸 ratio 系数上加上有限的 MSbar 转换项。",
+            "ratio": "ratio 方案直接使用裸的正则系数，不含额外有限项。",
+            "hybrid": "hybrid 方案在 ratio 系数上加上 Wilson 线的正弦积分修正，依赖 $z_sP_z$。",
         }
         body = notes.get(scheme, "未识别的匹配方案，仅记录所选 kernel_id。")
+        if cite:
+            body = f"{body}本次所用匹配核取自 {cite}。"
         return ["## 匹配方案", body]
     notes = {
-        "msbar": "The MSbar scheme adds a finite MSbar conversion on top of the bare ratio coefficient (Eq. 2.14).",
-        "ratio": "The ratio scheme uses the bare regular coefficient $C_r$ directly (Eq. 2.16) with no extra finite terms.",
-        "hybrid": "The hybrid scheme adds a Wilson-line sine-integral correction to the ratio coefficient and depends on $z_sP_z$ (Eqs. 2.19-2.20).",
+        "msbar": "The MSbar scheme adds a finite MSbar conversion on top of the bare ratio coefficient.",
+        "ratio": "The ratio scheme uses the bare regular coefficient directly, with no extra finite terms.",
+        "hybrid": "The hybrid scheme adds a Wilson-line sine-integral correction to the ratio coefficient and depends on $z_sP_z$.",
     }
     body = notes.get(scheme, "Unrecognized matching scheme; only the selected kernel_id is recorded.")
+    if cite:
+        body = f"{body} The kernel used here is transcribed from {cite}."
     return ["## Matching Scheme", body]
 
 
@@ -696,8 +891,9 @@ def build_matching_report_markdown(
 ) -> str:
     artifacts = artifacts or {}
     kernel_id = str(result.get("kernel_id", "not recorded"))
-    operator, scheme = _parse_kernel_id(kernel_id)
-    op_en, op_zh = OPERATOR_TEXT.get(operator, (operator or "not recorded",) * 2)
+    _operator, scheme = _parse_kernel_id(kernel_id)
+    op_en = _kernel_description(kernel_id, language="en")
+    op_zh = _kernel_description(kernel_id, language="zh")
     scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
 
     if language == "zh":
@@ -793,8 +989,9 @@ def write_matching_stage_report(
     first = jobs[0]["result"]
     for language, target in ((language, target),):
         kernel_id = str(first.get("kernel_id", "not recorded"))
-        operator, scheme = _parse_kernel_id(kernel_id)
-        op_en, op_zh = OPERATOR_TEXT.get(operator, (operator or "not recorded",) * 2)
+        _operator, scheme = _parse_kernel_id(kernel_id)
+        op_en = _kernel_description(kernel_id, language="en")
+        op_zh = _kernel_description(kernel_id, language="zh")
         scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
         lines = [
             "# Perturbative Matching Stage Report" if language == "en" else "# 微扰匹配阶段报告",
