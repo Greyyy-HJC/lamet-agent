@@ -54,6 +54,7 @@ STAGE_PARAM_CONTRACTS = {
             "b0": None,
             "cf": None,
             "d": None,
+            "ensemble": None,
             "k": None,
             "kernel_id": None,
             "lqcd": None,

@@ -9,8 +9,9 @@ from pathlib import Path
 import numpy as np
 
 from lamet_agent.agent import _hydrate_external_artifact_inputs, run_agent
+from lamet_agent import agent as agent_module
 from lamet_agent.core import llm
-from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.data import EnsembleData, EnsembleInfo
 from lamet_agent.core.tools import resolve_stage_tools
 from lamet_agent.manifest import AnalysisManifest
 
@@ -339,6 +340,239 @@ def _write_renorm_nc(path: Path) -> None:
         name="renormalized_matrix_element",
     )
     data.to_netcdf(path)
+
+
+def _ensemble_info(name: str) -> EnsembleInfo:
+    return EnsembleInfo("test", name, 0.06, 0.06, 48, 96, 0.14)
+
+
+def _write_matrix_nc(path: Path, *, ensemble: str, momentum_gev: float, attrs: dict[str, str] | None = None) -> None:
+    metadata = {"ensemble": ensemble, "momentum_gev": str(momentum_gev), "fitting_form": "Breit"}
+    metadata.update(attrs or {})
+    EnsembleData(
+        ensemble=_ensemble_info(ensemble),
+        resample="jackknife",
+        values=[
+            np.array([1.0 + 0.2j, 0.8 + 0.1j]),
+            np.array([1.1 + 0.3j, 0.9 + 0.2j]),
+            np.array([0.9 + 0.1j, 0.7 + 0.0j]),
+        ],
+        dims=("z",),
+        coords={"z": [0, 1]},
+        attrs=metadata,
+        name="matrix_element",
+    ).to_netcdf(path)
+
+
+def test_matrix_overlay_single_job_is_skipped(tmp_path: Path) -> None:
+    nc_path = tmp_path / "ca_p1.nc"
+    _write_matrix_nc(nc_path, ensemble="ens", momentum_gev=1.0)
+
+    artifacts = agent_module._write_matrix_overlay_artifacts(
+        [{"job_id": "ca_p1", "artifacts": {"bare_artifact": str(nc_path)}, "result": {}}],
+        tmp_path,
+        artifact_key="bare_artifact",
+        prefix="ca",
+        title_suffix="bare matrix elements",
+        y_label="Bare",
+    )
+
+    assert artifacts == {}
+    assert not (tmp_path / "ca_ens_re.pdf").exists()
+
+
+def test_matrix_overlay_generates_re_im_with_x_shift(tmp_path: Path, monkeypatch) -> None:
+    paths = [tmp_path / "ca_p1.nc", tmp_path / "ca_p2.nc"]
+    _write_matrix_nc(paths[0], ensemble="ens", momentum_gev=1.0)
+    _write_matrix_nc(
+        paths[1],
+        ensemble="ens",
+        momentum_gev=2.0,
+        attrs={"fitting_form": "NonBreit", "initial_momentum_gev": "2.0", "final_momentum_gev": "1.0"},
+    )
+    x_values: list[np.ndarray] = []
+    labels: list[str] = []
+    real_default_plot = agent_module.default_plot
+
+    def capture_plot():
+        fig, ax = real_default_plot()
+        real_errorbar = ax.errorbar
+
+        def capture_errorbar(x, *args, **kwargs):
+            x_values.append(np.asarray(x, dtype=float))
+            labels.append(str(kwargs.get("label")))
+            return real_errorbar(x, *args, **kwargs)
+
+        ax.errorbar = capture_errorbar
+        return fig, ax
+
+    monkeypatch.setattr(agent_module, "default_plot", capture_plot)
+
+    artifacts = agent_module._write_matrix_overlay_artifacts(
+        [
+            {"job_id": "ca_p1", "artifacts": {"bare_artifact": str(paths[0])}, "result": {"ensemble": "ens"}},
+            {"job_id": "ca_p2", "artifacts": {"bare_artifact": str(paths[1])}, "result": {"ensemble": "ens"}},
+        ],
+        tmp_path,
+        artifact_key="bare_artifact",
+        prefix="ca",
+        title_suffix="bare matrix elements",
+        y_label="Bare",
+    )
+
+    assert (tmp_path / "ca_ens_re.pdf").exists()
+    assert (tmp_path / "ca_ens_im.svg").exists()
+    assert any(key.startswith("matrix_overlay_re_") for key in artifacts)
+    assert np.allclose(x_values[0], [-0.03, 0.97])
+    assert np.allclose(x_values[1], [0.03, 1.03])
+    assert np.allclose(x_values[2], [-0.03, 0.97])
+    assert np.allclose(x_values[3], [0.03, 1.03])
+    assert any("Q^2=1.00" in label and "\\xi=0.33" in label for label in labels)
+
+
+def _write_fourier_nc(path: Path, *, ensemble: str, pz: float) -> None:
+    EnsembleData(
+        ensemble=_ensemble_info(ensemble),
+        resample="jackknife",
+        values=[
+            np.array([0.2 + 0.1j, 0.4 + 0.0j, 0.2 - 0.1j]),
+            np.array([0.22 + 0.12j, 0.38 - 0.01j, 0.21 - 0.09j]),
+        ],
+        dims=("x",),
+        coords={"x": [0.0, 0.5, 1.0]},
+        attrs={"ensemble": ensemble, "momentum_gev": str(pz)},
+        name="fourier_transform",
+    ).to_netcdf(path)
+
+
+def test_fourier_overlay_uses_original_grid_and_same_color_for_re_im(tmp_path: Path, monkeypatch) -> None:
+    paths = [tmp_path / "ft_p1.nc", tmp_path / "ft_p2.nc"]
+    _write_fourier_nc(paths[0], ensemble="ens", pz=1.0)
+    _write_fourier_nc(paths[1], ensemble="ens", pz=2.0)
+    plotted: list[tuple[np.ndarray, str, str]] = []
+    from matplotlib.axes import Axes
+
+    real_plot = Axes.plot
+
+    def capture_line(self, x, y, *args, **kwargs):
+        plotted.append((np.asarray(x, dtype=float), str(kwargs.get("color")), str(kwargs.get("label"))))
+        return real_plot(self, x, y, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "plot", capture_line)
+
+    artifacts = agent_module._write_fourier_overlay_artifacts(
+        [
+            {
+                "job_id": "ft_p1",
+                "artifacts": {"fourier_artifact": str(paths[0])},
+                "result": {"ensemble": "HISQa060_X", "momentum_gev": 1.0},
+            },
+            {
+                "job_id": "ft_p2",
+                "artifacts": {"fourier_artifact": str(paths[1])},
+                "result": {"ensemble": "HISQa060_X", "momentum_gev": 2.0},
+            },
+        ],
+        tmp_path,
+    )
+
+    assert (tmp_path / "ft_HISQa060_X_xdep.pdf").exists()
+    assert any(key.startswith("fourier_overlay_image_") for key in artifacts)
+    assert all(np.allclose(x, [0.0, 0.5, 1.0]) for x, _, _ in plotted)
+    assert plotted[0][1] == plotted[1][1]
+    assert plotted[2][1] == plotted[3][1]
+
+
+def test_matching_overlay_labels_quasi_and_lightcone(tmp_path: Path, monkeypatch) -> None:
+    paths = [tmp_path / "mt_p1.nc", tmp_path / "mt_p2.nc"]
+    for path in paths:
+        EnsembleData(
+            ensemble=_ensemble_info("ens"),
+            resample="jackknife",
+            values=[np.array([0.2, 0.4, 0.2]), np.array([0.22, 0.38, 0.21])],
+            dims=("x",),
+            coords={"x": [0.0, 0.5, 1.0]},
+            attrs={"ensemble": "ens"},
+            name="lightcone",
+        ).to_netcdf(path)
+    labels: list[str] = []
+    titles: list[str] = []
+    xlims: list[tuple[float, float]] = []
+    ylims: list[tuple[float, float]] = []
+    real_default_plot = agent_module.default_plot
+
+    def capture_plot():
+        fig, ax = real_default_plot()
+        real_plot = ax.plot
+        real_set_title = ax.set_title
+        real_set_xlim = ax.set_xlim
+        real_set_ylim = ax.set_ylim
+
+        def capture_line(x, y, *args, **kwargs):
+            labels.append(str(kwargs.get("label")))
+            return real_plot(x, y, *args, **kwargs)
+
+        def capture_title(label, *args, **kwargs):
+            titles.append(str(label))
+            return real_set_title(label, *args, **kwargs)
+
+        def capture_xlim(left=None, right=None, *args, **kwargs):
+            if np.isscalar(left) and np.isscalar(right):
+                xlims.append((float(left), float(right)))
+            return real_set_xlim(left, right, *args, **kwargs)
+
+        def capture_ylim(bottom=None, top=None, *args, **kwargs):
+            if np.isscalar(bottom) and np.isscalar(top):
+                ylims.append((float(bottom), float(top)))
+            return real_set_ylim(bottom, top, *args, **kwargs)
+
+        ax.plot = capture_line
+        ax.set_title = capture_title
+        ax.set_xlim = capture_xlim
+        ax.set_ylim = capture_ylim
+        return fig, ax
+
+    monkeypatch.setattr(agent_module, "default_plot", capture_plot)
+
+    artifacts = agent_module._write_matching_overlay_artifacts(
+        [
+            {
+                "job_id": "mt_p1",
+                "artifacts": {"lightcone_artifact": str(paths[0])},
+                "result": {
+                    "momentum_gev": 1.0,
+                    "ensemble": "HISQa060_X",
+                    "x_grid": [0.0, 0.5, 1.0],
+                    "quasi_mean": [0.1, 0.2, 0.1],
+                    "quasi_sdev": [0.01, 0.01, 0.01],
+                    "matching_plot_xlim": [-0.01, 1.01],
+                    "matching_plot_ylim": [-0.2, 1.3],
+                },
+            },
+            {
+                "job_id": "mt_p2",
+                "artifacts": {"lightcone_artifact": str(paths[1])},
+                "result": {
+                    "momentum_gev": 2.0,
+                    "ensemble": "HISQa060_X",
+                    "x_grid": [0.0, 0.5, 1.0],
+                    "quasi_mean": [0.2, 0.3, 0.2],
+                    "quasi_sdev": [0.01, 0.01, 0.01],
+                    "matching_plot_xlim": [-0.01, 1.01],
+                    "matching_plot_ylim": [-0.4, 1.7],
+                },
+            },
+        ],
+        tmp_path,
+    )
+
+    assert (tmp_path / "mt_HISQa060_X.pdf").exists()
+    assert any(key.startswith("matching_overlay_image_") for key in artifacts)
+    assert any("quasi" in label for label in labels)
+    assert any("light-cone" in label for label in labels)
+    assert titles == ["HISQa060_X"]
+    assert xlims == [(-0.01, 1.01)]
+    assert ylims == [(-0.4, 1.7)]
 
 
 def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) -> None:

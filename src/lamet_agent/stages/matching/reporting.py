@@ -988,6 +988,14 @@ def write_matching_stage_report(
     target.parent.mkdir(parents=True, exist_ok=True)
     first = jobs[0]["result"]
     for language, target in ((language, target),):
+        def artifact_paths(item: dict[str, Any]) -> dict[str, str]:
+            raw = item.get("artifacts", {})
+            return markdown_artifact_paths(
+                raw,
+                base_dir=target.parent,
+                path_keys=(*MATCHING_ARTIFACT_ORDER, *(key for key in raw if key.startswith("matching_overlay_"))),
+            )
+
         kernel_id = str(first.get("kernel_id", "not recorded"))
         _operator, scheme = _parse_kernel_id(kernel_id)
         op_en = _kernel_description(kernel_id, language="en")
@@ -1008,17 +1016,21 @@ def write_matching_stage_report(
         ]
         for item in jobs:
             result = item["result"]
-            artifacts = markdown_artifact_paths(
-                item.get("artifacts", {}),
-                base_dir=target.parent,
-                path_keys=MATCHING_ARTIFACT_ORDER,
-            )
+            artifacts = artifact_paths(item)
             lines.append(
                 f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
                 f"{_fmt(result.get('momentum_gev'))} | "
                 f"{artifacts.get('lightcone_artifact', 'n/a')} | "
                 f"{artifacts.get('matched_plot', 'n/a')} |"
             )
+        stage_artifacts = artifact_paths(jobs[0])
+        overlay_images = [value for key, value in sorted(stage_artifacts.items()) if key.startswith("matching_overlay_image_")]
+        if overlay_images:
+            for image in overlay_images:
+                stem = Path(image).stem
+                label = stem[3:] if stem.startswith("mt_") else stem
+                title = f"{label} ensemble overview" if language == "en" else f"{label}组态总览图"
+                lines.extend(["", f"## {title}", "", f"![{title}]({image})"])
         setting_data = {**first, "momentum_gev": "see per-momentum table" if language == "en" else "见下方动量表"}
         lines.extend(
             [
@@ -1068,11 +1080,7 @@ def write_matching_stage_report(
         )
         for item in jobs:
             result = item["result"]
-            artifacts = markdown_artifact_paths(
-                item.get("artifacts", {}),
-                base_dir=target.parent,
-                path_keys=MATCHING_ARTIFACT_ORDER,
-            )
+            artifacts = artifact_paths(item)
             image = artifacts.get("matched_plot_image")
             plot = artifacts.get("matched_plot")
             label = "Quasi vs light-cone comparison" if language == "en" else "quasi 与光锥 PDF 对比图"
@@ -1103,15 +1111,20 @@ def write_matching_stage_report(
             ]
         )
         for item in jobs:
-            artifacts = markdown_artifact_paths(
-                item.get("artifacts", {}),
-                base_dir=target.parent,
-                path_keys=MATCHING_ARTIFACT_ORDER,
-            )
+            artifacts = artifact_paths(item)
             for key in MATCHING_ARTIFACT_ORDER:
                 value = artifacts.get(key)
                 if value:
                     desc = MATCHING_ARTIFACT_DESCRIPTIONS[key]
                     lines.append(f"| [{Path(value).name}]({value}) | `{item['job_id']}`: {desc[1 if language == 'zh' else 0]} |")
+        stage_artifacts = artifact_paths(jobs[0])
+        overlay_keys = sorted(key for key in stage_artifacts if key.startswith("matching_overlay_") and not key.startswith("matching_overlay_image_"))
+        overlay_keys.extend(sorted(key for key in stage_artifacts if key.startswith("matching_overlay_image_")))
+        for key in overlay_keys:
+            value = stage_artifacts[key]
+            stem = Path(value).stem
+            label = stem[3:] if stem.startswith("mt_") else stem
+            desc = f"quasi/light-cone overlay for ensemble {label}" if language == "en" else f"{label}组态下的quasi/光锥叠图"
+            lines.append(f"| [{Path(value).name}]({value}) | {desc} |")
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"report": target}
