@@ -143,10 +143,15 @@ def test_correlator_rejects_4pt_and_enforces_conditional_fields() -> None:
     extra_current["current_operator"] = "gT_nonlocal"
     with pytest.raises(ValueError, match="only valid for 3pt"):
         CorrelatorInput.model_validate(extra_current)
-    extra_direction = _correlator_payload("2pt")
-    extra_direction["bz_direction"] = "Z"
+    da_like = _correlator_payload("2pt")
+    da_like["bz_direction"] = "Z"
+    da_like["bT"] = [0]
+    da_like["bz"] = [0, 1]
+    assert CorrelatorInput.model_validate(da_like).bz == [0, 1]
+    extra_tsep = _correlator_payload("2pt")
+    extra_tsep["tsep"] = [8]
     with pytest.raises(ValueError, match="only valid for 3pt"):
-        CorrelatorInput.model_validate(extra_direction)
+        CorrelatorInput.model_validate(extra_tsep)
 
 
 def test_momentum_helpers_cover_zero_negative_axes_and_xyz_norm() -> None:

@@ -143,7 +143,45 @@ def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
     return lines
 
 
-def _fit_form_text(*, language: str) -> str:
+def _fit_form_text(*, language: str, has_2pt_ratio: bool = False, has_3pt_ratio: bool = True) -> str:
+    if has_2pt_ratio:
+        if language == "zh":
+            text = r"""
+`analysis_mode="2pt_ratio"` 使用 arXiv:2201.09173 Eq. (2) 的非局域 2pt 比值拟合。对每个 Wilson 线长度 $z$，本阶段先用同一批重采样样本构造
+
+$$
+R_m(z,P,t)=\frac{C_2^m(z,P,t)}{C_2^m(0,P,t)} ,
+$$
+
+再在选定的 2pt 时间窗口内拟合
+
+$$
+R_m(z,P,t)=H_B^m(z)
+\frac{1+c_m(z)e^{-\Delta E t}}
+{1+c_m(0)e^{-\Delta E t}} .
+$$
+
+输出到 NetCDF 的裸矩阵元是 $H_B^m(z)$。该模式没有 3pt、$t_{\rm sep}$、$\tau$ 或 current insertion；`reference_z` 默认为 0。
+""".strip()
+        else:
+            text = r"""
+`analysis_mode="2pt_ratio"` uses the nonlocal two-point ratio fit of arXiv:2201.09173 Eq. (2). For each Wilson-line length $z$, the stage first builds
+
+$$
+R_m(z,P,t)=\frac{C_2^m(z,P,t)}{C_2^m(0,P,t)}
+$$
+
+from the same resampled ensemble and fits
+
+$$
+R_m(z,P,t)=H_B^m(z)
+\frac{1+c_m(z)e^{-\Delta E t}}
+{1+c_m(0)e^{-\Delta E t}}
+$$
+
+in the selected 2pt time window. The bare matrix element written to NetCDF is $H_B^m(z)$. This mode has no 3pt correlator, $t_{\rm sep}$, $\tau$, or current insertion; `reference_z` defaults to 0.
+""".strip()
+        return text + ("\n\n" + _fit_form_text(language=language) if has_3pt_ratio else "")
     if language == "zh":
         return r"""
 lamet-agent 在该阶段以同一批重采样样本构造 2pt/3pt 数据，并在选定时间窗口内提取裸矩阵元。2pt 输入为给定动量与 interpolator 的 $C_2(t)$；3pt 输入为各 $t_{\rm sep}$、插入时间 $\tau$ 和 Wilson 线长度 $z$ 的 $C_3(t_{\rm sep},\tau,z)$。对每个 job，调参步骤先在样本平均数据上确定窗口、态数、`fit_scope` 与 `fit_strategy`；随后固定这些选择，对所有 $z$ 和所有重采样样本执行拟合。
@@ -274,8 +312,15 @@ def build_correlator_stage_report_markdown(
 ) -> str:
     """Build one Markdown report for all correlator-analysis jobs."""
     title = "# Correlator Analysis Stage Report" if language == "en" else "# Correlator Analysis 阶段报告"
+    all_2pt_ratio = bool(jobs) and all((item.get("result", {}).get("analysis_mode") == "2pt_ratio") for item in jobs)
+    has_2pt_ratio = any((item.get("result", {}).get("analysis_mode") == "2pt_ratio") for item in jobs)
+    has_3pt_ratio = any((item.get("result", {}).get("analysis_mode") != "2pt_ratio") for item in jobs)
     intro = (
-        "This report summarizes correlator fits that extract bare matrix elements from 2pt/3pt data."
+        "This report summarizes correlator fits that extract bare matrix elements from 2pt correlators."
+        if all_2pt_ratio and language == "en"
+        else "本报告汇总从 2pt 关联函数中提取裸矩阵元的拟合结果。"
+        if all_2pt_ratio
+        else "This report summarizes correlator fits that extract bare matrix elements from 2pt/3pt data."
         if language == "en"
         else "本报告汇总从 2pt/3pt 关联函数中提取裸矩阵元的拟合结果。"
     )
@@ -285,7 +330,7 @@ def build_correlator_stage_report_markdown(
         intro,
         "",
         "## Fitting Form" if language == "en" else "## 拟合形式",
-        _fit_form_text(language=language),
+        _fit_form_text(language=language, has_2pt_ratio=has_2pt_ratio, has_3pt_ratio=has_3pt_ratio),
         "",
         "## Job Summary" if language == "en" else "## Job 汇总",
         "| job | fit scope | strategy | output | plot |" if language == "en" else "| job | 拟合对象 | 策略 | 输出 | 图像 |",
@@ -366,9 +411,18 @@ def build_correlator_stage_report_markdown(
                 ),
                 "",
                 *_outputs_table(artifacts, language=language),
-                "",
-                "### Diagnostic SVGs" if language == "en" else "### 诊断 SVG",
-                *_diagnostic_plots(artifacts, language=language),
+            ]
+        )
+        if result.get("analysis_mode") != "2pt_ratio":
+            lines.extend(
+                [
+                    "",
+                    "### Diagnostic SVGs" if language == "en" else "### 诊断 SVG",
+                    *_diagnostic_plots(artifacts, language=language),
+                ]
+            )
+        lines.extend(
+            [
                 "",
                 "### Summary Figure" if language == "en" else "### 总览图",
                 (

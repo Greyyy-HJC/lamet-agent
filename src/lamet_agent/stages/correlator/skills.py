@@ -26,6 +26,9 @@ Correlator-analysis physics:
   cross-z feasibility, good chi2/dof, and more data points when chi2/dof values
   are comparable.
 - The bare matrix element is O00/(2*E0) and is invariant under 2pt rescaling.
+- For analysis_mode="2pt_ratio", use the DA 2pt/2pt ratio of arXiv:2201.09173
+  Eq. (2). This mode has no 3pt, tsep, tau_cut, or current insertion; it extracts
+  H_B^m(z) from C2(z,P,t)/C2(0,P,t).
 """.strip()
 
 TOOL_CATALOG = {
@@ -40,6 +43,7 @@ TOOL_CATALOG = {
         "recommended_robust_index."
     ),
     "fit_bare_matrix_grid": "Apply one shared data window, optionally model-average fit functions per sample, and write store['output']; the runner writes one stage report with fit_logs links.",
+    "fit_da_2pt_ratio_grid": "Fit DA bare matrix elements from nonlocal 2pt z-ratios and write store['output'].",
 }
 
 
@@ -52,7 +56,30 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     params = merge_stage_params(manifest.stages["correlator_analysis"].defaults, job.params)
     if "variant" in manifest.stages["correlator_analysis"].defaults or "variant" in job.params:
         return ["variant is not a supported correlator_analysis parameter."]
+    analysis_mode = str(params.get("analysis_mode", "3pt_ratio"))
     fitting_form = str(params.get("fitting_form", "Breit"))
+    if analysis_mode == "2pt_ratio":
+        pt2 = [item for item in selected if item.correlator_type == "2pt"]
+        momentum = params.get("momentum")
+        if not isinstance(momentum, str):
+            return ["A 2pt_ratio correlator_analysis job requires scalar params.momentum."]
+        selected_pt2 = [item for item in pt2 if momentum in item.momentum]
+        if not selected_pt2:
+            return [f"No selected 2pt correlator declares momentum {momentum!r}."]
+        if any(item.bz is None or 0 not in item.bz for item in selected_pt2):
+            return ["2pt_ratio 2pt correlators must declare a bz grid containing 0."]
+        provenance = (
+            selected_pt2[0].ensemble,
+            selected_pt2[0].hadron,
+            selected_pt2[0].gfix,
+            selected_pt2[0].volume,
+            selected_pt2[0].lattice_spacing_fm,
+        )
+        if any((item.ensemble, item.hadron, item.gfix, item.volume, item.lattice_spacing_fm) != provenance for item in selected_pt2):
+            return ["Selected 2pt_ratio 2pt correlators must use the same ensemble, hadron, gfix, volume, and lattice spacing."]
+        return []
+    if analysis_mode != "3pt_ratio":
+        return ["analysis_mode must be '2pt_ratio' or '3pt_ratio'."]
     if fitting_form not in {"Breit", "NonBreit"}:
         return ["fitting_form must be 'Breit' or 'NonBreit'."]
     raw_scopes = params.get("fit_scope", ["ratio"])

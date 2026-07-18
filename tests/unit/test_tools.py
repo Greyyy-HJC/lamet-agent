@@ -69,6 +69,93 @@ def test_resolve_renormalization_job_tools_by_scheme_and_roles() -> None:
     )
 
 
+def test_2pt_ratio_correlator_job_uses_dedicated_tool() -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "da",
+                "root_directory": ".",
+                "artifacts_directory": "artifacts",
+                "target_observable": "da",
+                "parton": "quark",
+                "resample_mode": "bs",
+                "bs_samples": 8,
+                "random_seed": 1984,
+                "workers": 4,
+                "stages": ["correlator_analysis"],
+            },
+            "inputs": {
+                "correlators": [
+                    {
+                        "correlator_id": "c2",
+                        "correlator_type": "2pt",
+                        "data_path": "c2.h5",
+                        "ensemble": "E",
+                        "hadron": "pion",
+                        "gfix": "GI",
+                        "source_operator": "g5",
+                        "sink_operator": "gT5_nonlocal_bT0_bz<bz>",
+                        "bz_direction": "Z",
+                        "bT": [0],
+                        "bz": [0, 1],
+                        "volume": "S48T64",
+                        "lattice_spacing_fm": 0.1,
+                        "momentum": ["PX0PY0PZ0"],
+                    }
+                ],
+                "artifacts": [],
+                "kernels": [],
+            },
+            "stages": {
+                "correlator_analysis": {
+                    "defaults": {"analysis_mode": "2pt_ratio", "momentum": "PX0PY0PZ0", "model_average": True},
+                    "jobs": [{"id": "ca", "correlator_ids": ["c2"], "params": {}}],
+                }
+            },
+        }
+    )
+    job = manifest.stages["correlator_analysis"].jobs[0]
+    params = merge_stage_params(manifest.stages["correlator_analysis"].defaults, job.params)
+    assert set(resolve_job_tools(
+        "correlator_analysis",
+        job,
+        params,
+        stage_tools={"fit_da_2pt_ratio_grid": lambda store: {}, "fit_bare_matrix_grid": lambda store: {}},
+    )) == {"fit_da_2pt_ratio_grid"}
+    assert required_job_tool_sequence("correlator_analysis", job, params) == ("fit_da_2pt_ratio_grid",)
+    args = prepare_tool_args(
+        "fit_da_2pt_ratio_grid",
+        {},
+        manifest=manifest,
+        stage="correlator_analysis",
+        job=job,
+        effective_params=params,
+        artifacts_dir=Path("artifacts/correlator_analysis"),
+    )
+    assert args["z_values"] == [0, 1]
+    assert args["sink_operator_pattern"] == "gT5_nonlocal_bT0_bz<bz>"
+    assert args["model_average"] is True
+    assert args["workers"] == 4
+
+
+def test_3pt_ratio_correlator_job_keeps_default_tool_routing() -> None:
+    manifest = validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
+    job = manifest.stages["correlator_analysis"].jobs[0]
+    params = merge_stage_params(manifest.stages["correlator_analysis"].defaults, job.params)
+    tools = {
+        "inspect_correlator_scale": lambda store: {},
+        "tune_bare_matrix": lambda store: {},
+        "fit_bare_matrix_grid": lambda store: {},
+        "fit_da_2pt_ratio_grid": lambda store: {},
+    }
+    assert required_job_tool_sequence("correlator_analysis", job, params) == ()
+    assert set(resolve_job_tools("correlator_analysis", job, params, stage_tools=tools)) == set(tools)
+    explicit = dict(params)
+    explicit["analysis_mode"] = "3pt_ratio"
+    assert required_job_tool_sequence("correlator_analysis", job, explicit) == ()
+    assert set(resolve_job_tools("correlator_analysis", job, explicit, stage_tools=tools)) == set(tools)
+
+
 def test_legacy_self_renormalization_scheme_returns_migration_error() -> None:
     manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
     manifest.stages["renormalization"].defaults["scheme"] = "self_renormalization"
@@ -243,9 +330,64 @@ def test_metadata_workers_override_stage_params_for_sample_fit_tools(tmp_path: P
         artifacts_dir=tmp_path,
         store={"input": SimpleNamespace(attrs={})},
     )
+    da_manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "da",
+                "root_directory": ".",
+                "artifacts_directory": "artifacts",
+                "target_observable": "da",
+                "parton": "quark",
+                "resample_mode": "bs",
+                "bs_samples": 8,
+                "random_seed": 1984,
+                "workers": 3,
+                "stages": ["correlator_analysis"],
+            },
+            "inputs": {
+                "correlators": [
+                    {
+                        "correlator_id": "c2",
+                        "correlator_type": "2pt",
+                        "data_path": "c2.h5",
+                        "ensemble": "E",
+                        "hadron": "pion",
+                        "gfix": "GI",
+                        "source_operator": "g5",
+                        "sink_operator": "gT5_nonlocal_bT0_bz<bz>",
+                        "bz_direction": "Z",
+                        "bT": [0],
+                        "bz": [0, 1],
+                        "volume": "S48T64",
+                        "lattice_spacing_fm": 0.1,
+                        "momentum": ["PX0PY0PZ0"],
+                    }
+                ],
+                "artifacts": [],
+                "kernels": [],
+            },
+            "stages": {
+                "correlator_analysis": {
+                    "defaults": {"analysis_mode": "2pt_ratio", "momentum": "PX0PY0PZ0"},
+                    "jobs": [{"id": "ca", "correlator_ids": ["c2"], "params": {}}],
+                }
+            },
+        }
+    )
+    da_job = da_manifest.stages["correlator_analysis"].jobs[0]
+    da_args = prepare_tool_args(
+        "fit_da_2pt_ratio_grid",
+        {},
+        manifest=da_manifest,
+        stage="correlator_analysis",
+        job=da_job,
+        effective_params={**da_manifest.stages["correlator_analysis"].defaults, "workers": 99},
+        artifacts_dir=tmp_path,
+    )
 
     assert correlator_args["workers"] == 3
     assert fourier_args["workers"] == 3
+    assert da_args["workers"] == 3
 
 
 def test_prepare_correlator_terminal_args_pass_nstate_values_when_not_selected(tmp_path: Path) -> None:
@@ -383,6 +525,21 @@ def test_nonbreit_requires_initial_and_final_momentum(tmp_path: Path) -> None:
     job = manifest.stages["correlator_analysis"].jobs[0].model_copy(update={"params": {"fitting_form": "NonBreit"}})
     assert validate_stage_inputs("correlator_analysis", manifest, job) == [
         "A NonBreit correlator_analysis job requires params.initial_momentum and params.final_momentum."
+    ]
+
+
+def test_correlator_analysis_mode_accepts_new_names_and_rejects_old_names() -> None:
+    manifest = _manifest()
+    job = manifest.stages["correlator_analysis"].jobs[0]
+    manifest.stages["correlator_analysis"].defaults["analysis_mode"] = "3pt_ratio"
+    assert validate_stage_inputs("correlator_analysis", manifest, job) == []
+    manifest.stages["correlator_analysis"].defaults["analysis_mode"] = "standard_3pt"
+    assert validate_stage_inputs("correlator_analysis", manifest, job) == [
+        "analysis_mode must be '2pt_ratio' or '3pt_ratio'."
+    ]
+    manifest.stages["correlator_analysis"].defaults["analysis_mode"] = "da_2pt_ratio"
+    assert validate_stage_inputs("correlator_analysis", manifest, job) == [
+        "analysis_mode must be '2pt_ratio' or '3pt_ratio'."
     ]
 
 

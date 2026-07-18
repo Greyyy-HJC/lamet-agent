@@ -2139,6 +2139,16 @@ def tune_bare_matrix(
 # --- tool 4: apply one shared setting to all samples and z -------------------
 
 
+def _fit_da_2pt_ratio_sample_batch(payload: dict[str, Any], sample_indices: list[int]) -> list[dict[str, float]]:
+    y_samples = payload["y_samples"]
+    fit_t = payload["fit_t"]
+    correction = payload["correction"]
+    return [
+        {"sample": int(sample_index), "value": float(np.mean(y_samples[sample_index, fit_t] / correction))}
+        for sample_index in sample_indices
+    ]
+
+
 def _fit_correlator_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[str, Any]]:
     """Fit one batch of correlator samples without logging or plotting."""
     # deserialize once per process batch so gvar correlations remain intact
@@ -3195,9 +3205,351 @@ def fit_bare_matrix_grid(
     }
 
 
+def fit_da_2pt_ratio_grid(
+    store: dict[str, Any],
+    *,
+    pt2_path: str,
+    z_values: list[int],
+    ensemble: str,
+    tag: str,
+    momentum: str,
+    source_operator: str = "g5",
+    sink_operator_pattern: str = "gT5_nonlocal_bT0_bz<bz>",
+    reference_z: int = 0,
+    bz_direction: str | None = "z",
+    bT: int = 0,
+    pt2_window: dict[str, int] | None = None,
+    pt2_windows: list[dict[str, int]] | None = None,
+    resample_mode: str = "bs",
+    sample_error_mode: str = "covariance",
+    n_boot: int = 200,
+    seed: int | None = 1984,
+    bin_size: int = 1,
+    svdcut: float = 1e-2,
+    part: str = "both",
+    q_min: float = 0.05,
+    nstate: int | list[int] = 2,
+    nstate_values: list[int] | None = None,
+    fit_strategy: str = "single_ratio",
+    fit_strategies: list[str] | None = None,
+    prior_width: float | list[float] | None = None,
+    posterior_prior_error_scale: float = PT2_PRIOR_ERROR_SCALE,
+    model_average: bool = False,
+    job_id: str | None = None,
+    volume: str | None = None,
+    lattice_spacing_fm: float | None = None,
+    momentum_gev: float | None = None,
+    temporal_extent: int | None = None,
+    save_path: str | None = None,
+    log_dir: str | Path | None = None,
+    artifacts_dir: str | Path | None = None,
+    out: str = "bare_matrix_grid",
+    workers: int = 1,
+    **metadata: Any,
+) -> dict[str, Any]:
+    """Fit DA bare matrix elements from the 2pt z-ratio of arXiv:2201.09173 Eq. (2)."""
+    del out
+    if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or int(workers) < 1:
+        raise ValueError("workers must be a positive integer")
+    workers = int(workers)
+    mode = _check_mode(resample_mode)
+    fitted_parts = _parts(part)
+    raw_states = nstate_values if nstate_values is not None else (nstate if isinstance(nstate, list) else [nstate])
+    fit_nstates = [int(value) for value in raw_states]
+    strategy_values = [str(value) for value in (fit_strategies or [fit_strategy])]
+    prior_widths = _normalise_prior_width(prior_width)
+    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
+    fit_log_dir = Path(log_dir) if log_dir is not None else out_dir / "fit_logs"
+    fit_log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = fit_log_dir / f"{ensemble}_{tag}_{momentum}_da_2pt_ratio.log"
+    logger = setup_logger(log_path, logger_name="da_2pt_ratio_logger")
+    resolved_save = resolve_plot_save_path(
+        save_path,
+        artifacts_dir=out_dir,
+        default_stem=tag or "2pt_ratio",
+    )
+
+    reference = _read_2pt(
+        pt2_path,
+        source_operator=source_operator,
+        sink_operator=sink_operator_pattern.replace("<bz>", str(int(reference_z))).replace("{bz}", str(int(reference_z))),
+        momentum=momentum,
+        temporal_extent=temporal_extent,
+    )
+    _, reference_samples, indices = _resample_pt2(
+        reference,
+        mode=mode,
+        n_boot=n_boot,
+        seed=seed,
+        bin_size=bin_size,
+    )
+    n_samples = int(reference_samples.shape[0])
+    first_z = next((int(value) for value in z_values if int(value) != int(reference_z)), int(reference_z))
+    first_ratio = None
+    if first_z != int(reference_z):
+        first_numerator = _read_2pt(
+            pt2_path,
+            source_operator=source_operator,
+            sink_operator=sink_operator_pattern.replace("<bz>", str(first_z)).replace("{bz}", str(first_z)),
+            momentum=momentum,
+            temporal_extent=temporal_extent,
+        )
+        _, first_numerator_samples, _ = _resample_pt2(first_numerator, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices)
+        first_ratio = np.divide(first_numerator_samples, reference_samples, out=np.zeros_like(first_numerator_samples), where=reference_samples != 0)
+    candidates: list[dict[str, Any]] = []
+    for candidate_window in ([pt2_window] if pt2_window is not None else (pt2_windows or [{"tmin": 8, "tmax": 16}])):
+        cand_tmin = int(candidate_window["tmin"])
+        cand_tmax = int(candidate_window["tmax"])
+        cand_t = np.arange(cand_tmin, cand_tmax, dtype=int)
+        for width in prior_widths:
+            if first_ratio is None:
+                candidates.append({"pt2_window": candidate_window, "tmin": cand_tmin, "tmax": cand_tmax, "Q": 1.0, "chi2_dof": 0.0, "logGBF": 0.0, "prior_width": width})
+                continue
+            y_mean, y_sdev = sample_mean_and_sdev(np.real(first_ratio)[:, cand_t], mode=mode, sample_error_mode=sample_error_mode)
+            prior = gv.BufferDict()
+            prior["H"] = gv.gvar(1.0, 10.0 * width)
+            prior["c_z"] = gv.gvar(0.0, 10.0 * width)
+            prior["c_0"] = gv.gvar(0.0, 10.0 * width)
+            prior["log_deltaE"] = gv.gvar(-1.0, 2.0 * width)
+            fit = lsf.nonlinear_fit(
+                data=(cand_t, gv.gvar(y_mean, np.maximum(np.asarray(y_sdev, dtype=float), 1e-12))),
+                prior=prior,
+                fcn=lambda t, p: p["H"] * (1.0 + p["c_z"] * np.exp(-np.exp(p["log_deltaE"]) * t)) / (1.0 + p["c_0"] * np.exp(-np.exp(p["log_deltaE"]) * t)),
+                svdcut=svdcut,
+                maxit=10000,
+            )
+            candidates.append({"pt2_window": candidate_window, "tmin": cand_tmin, "tmax": cand_tmax, "Q": float(fit.Q), "chi2_dof": float(fit.chi2 / fit.dof), "logGBF": float(fit.logGBF), "prior_width": width})
+    usable = [item for item in candidates if item["Q"] >= float(q_min)]
+    selected = min(usable or candidates, key=lambda item: (item["chi2_dof"], -item["Q"]))
+    tmin = int(selected["tmin"])
+    tmax = int(selected["tmax"])
+    fit_t = np.arange(tmin, tmax, dtype=int)
+    prior_scale = float(selected["prior_width"])
+    z_records: list[dict[str, Any]] = []
+    z_report: list[dict[str, Any]] = []
+    output_rows: list[dict[str, Any]] = []
+
+    z_list = [int(value) for value in z_values]
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        z_iterator = z_list
+    else:
+        z_iterator = tqdm(
+            z_list,
+            desc=f"fit DA 2pt ratio {ensemble} {momentum}",
+        )
+
+    sample_batches = [
+        batch.tolist()
+        for batch in np.array_split(np.arange(n_samples), min(workers, n_samples))
+        if batch.size
+    ]
+    sample_executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
+    try:
+        for z in z_iterator:
+            if z == int(reference_z):
+                real_samples = np.ones(n_samples)
+                imag_samples = np.zeros(n_samples)
+                rec = {
+                    "z": z,
+                    "real_samples": real_samples,
+                    "imag_samples": imag_samples,
+                    "real_mean": 1.0,
+                    "imag_mean": 0.0,
+                    "real_stat_sdev": 0.0,
+                    "imag_stat_sdev": 0.0,
+                    "real_sys_sdev": 0.0,
+                    "imag_sys_sdev": 0.0,
+                }
+                z_records.append(rec)
+                z_report.append({"z": z, "Q": 1.0, "chi2_dof": 0.0, "logGBF": 0.0, "n_failed_samples": 0, "real_sys_sdev": 0.0, "imag_sys_sdev": 0.0})
+                output_rows.append({"z": z, "real_mean": 1.0, "imag_mean": 0.0})
+                continue
+
+            numerator = _read_2pt(
+                pt2_path,
+                source_operator=source_operator,
+                sink_operator=sink_operator_pattern.replace("<bz>", str(z)).replace("{bz}", str(z)),
+                momentum=momentum,
+                temporal_extent=temporal_extent,
+            )
+            _, numerator_samples, _ = _resample_pt2(
+                numerator,
+                mode=mode,
+                n_boot=n_boot,
+                seed=seed,
+                bin_size=bin_size,
+                indices=indices,
+            )
+            ratio = np.divide(
+                numerator_samples,
+                reference_samples,
+                out=np.zeros_like(numerator_samples),
+                where=reference_samples != 0,
+            )
+            real_samples = np.empty(n_samples)
+            imag_samples = np.empty(n_samples)
+            fit_info: dict[str, Any] = {"z": z, "n_failed_samples": 0}
+            for component, sample_out in (("re", real_samples), ("im", imag_samples)):
+                if component not in fitted_parts:
+                    sample_out[:] = 0.0
+                    continue
+                y_samples = np.real(ratio) if component == "re" else np.imag(ratio)
+                y_mean, y_sdev = sample_mean_and_sdev(y_samples[:, fit_t], mode=mode, sample_error_mode=sample_error_mode)
+                y_gv = gv.gvar(y_mean, np.maximum(np.asarray(y_sdev, dtype=float), 1e-12))
+                prior = gv.BufferDict()
+                prior["H"] = gv.gvar(1.0 if component == "re" else 0.0, 10.0 * prior_scale)
+                prior["c_z"] = gv.gvar(0.0, 10.0 * prior_scale)
+                prior["c_0"] = gv.gvar(0.0, 10.0 * prior_scale)
+                prior["log_deltaE"] = gv.gvar(-1.0, 2.0 * prior_scale)
+                fit = lsf.nonlinear_fit(
+                    data=(fit_t, y_gv),
+                    prior=prior,
+                    fcn=lambda t, p: p["H"]
+                    * (1.0 + p["c_z"] * np.exp(-np.exp(p["log_deltaE"]) * t))
+                    / (1.0 + p["c_0"] * np.exp(-np.exp(p["log_deltaE"]) * t)),
+                    svdcut=svdcut,
+                    maxit=10000,
+                )
+                status = log_nonlinear_fit_quality(fit, kind=f"DA 2pt ratio {component}", label=f"z={z}", logger=logger, q_min=q_min)
+                p = {key: float(gv.mean(fit.p[key])) for key in ("c_z", "c_0", "log_deltaE")}
+                correction = (1.0 + p["c_z"] * np.exp(-np.exp(p["log_deltaE"]) * fit_t)) / (
+                    1.0 + p["c_0"] * np.exp(-np.exp(p["log_deltaE"]) * fit_t)
+                )
+                payload = {"y_samples": y_samples, "fit_t": fit_t, "correction": correction}
+                if sample_executor is None:
+                    sample_results = _fit_da_2pt_ratio_sample_batch(payload, sample_batches[0])
+                else:
+                    futures = [
+                        sample_executor.submit(_fit_da_2pt_ratio_sample_batch, payload, batch)
+                        for batch in sample_batches
+                    ]
+                    sample_results = [item for future in futures for item in future.result()]
+                for result in sample_results:
+                    sample_out[int(result["sample"])] = float(result["value"])
+                if component == "re":
+                    fit_info.update(Q=float(fit.Q), chi2_dof=float(fit.chi2 / fit.dof), logGBF=float(fit.logGBF), status=status)
+            real_mean, real_sdev = sample_mean_and_sdev(real_samples, mode=mode, sample_error_mode=sample_error_mode)
+            imag_mean, imag_sdev = sample_mean_and_sdev(imag_samples, mode=mode, sample_error_mode=sample_error_mode)
+            z_records.append(
+                {
+                    "z": z,
+                    "real_samples": real_samples,
+                    "imag_samples": imag_samples,
+                    "real_mean": float(real_mean),
+                    "imag_mean": float(imag_mean),
+                    "real_stat_sdev": float(real_sdev),
+                    "imag_stat_sdev": float(imag_sdev),
+                    "real_sys_sdev": 0.0,
+                    "imag_sys_sdev": 0.0,
+                }
+            )
+            fit_info["real_sys_sdev"] = 0.0
+            fit_info["imag_sys_sdev"] = 0.0
+            z_report.append(fit_info)
+            output_rows.append({"z": z, "real_mean": float(real_mean), "imag_mean": float(imag_mean)})
+    finally:
+        if sample_executor is not None:
+            sample_executor.shutdown()
+
+    sorted_records = sorted(z_records, key=lambda item: item["z"])
+    z_arr = np.asarray([rec["z"] for rec in sorted_records], dtype=float)
+    re_mean = np.asarray([rec["real_mean"] for rec in sorted_records], dtype=float)
+    im_mean = np.asarray([rec["imag_mean"] for rec in sorted_records], dtype=float)
+    re_err = np.asarray([rec["real_stat_sdev"] for rec in sorted_records], dtype=float)
+    im_err = np.asarray([rec["imag_stat_sdev"] for rec in sorted_records], dtype=float)
+    figure, axis = default_plot()
+    axis.errorbar(z_arr, re_mean, yerr=re_err, label="Re", color=COLOR_CYCLE[0], marker="o", **ERRORBAR_STYLE)
+    axis.errorbar(z_arr, im_mean, yerr=im_err, label="Im", color=COLOR_CYCLE[1], marker="s", **ERRORBAR_STYLE)
+    axis.set_xlabel(r"$z/a$", **FONT_SIZE)
+    axis.set_ylabel(r"Bare matrix element $H_m$", **FONT_SIZE)
+    p_label = "n/a" if momentum_gev in (None, "") else f"{float(momentum_gev):.2f}"
+    axis.set_title(rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ bare matrix elements", **FONT_SIZE)
+    axis.legend(**LEGEND_SETS)
+    figure.tight_layout()
+    pdf_path = f"{resolved_save}.pdf"
+    svg_path = f"{resolved_save}.svg"
+    figure.savefig(pdf_path, bbox_inches="tight", transparent=True)
+    figure.savefig(svg_path, bbox_inches="tight")
+    plt.close(figure)
+
+    bare_data = _bare_records_to_ensemble(
+        z_records,
+        resample_mode=mode,
+        attrs={
+            "ensemble": ensemble,
+            "tag": tag,
+            "analysis_mode": "2pt_ratio",
+            "fitting_form": "2pt_ratio",
+            "fit_scope": "2pt_z_ratio",
+            "fit_strategy": strategy_values[0],
+            "fit_mode": "2pt_ratio",
+            "bz_direction": bz_direction,
+            "momentum": momentum,
+            "bT": bT,
+            "resample_mode": mode,
+            "sample_error_mode": sample_error_mode,
+            "average_method": sample_error_mode,
+            "part": part,
+            "component": part,
+            "job_id": job_id,
+            "volume": volume,
+            "lattice_spacing_fm": lattice_spacing_fm,
+            "momentum_gev": momentum_gev,
+            "reference_z": reference_z,
+            "model_average": model_average,
+            "nstate_values": json.dumps(fit_nstates),
+            "fit_strategies": json.dumps(strategy_values),
+            "prior_width": json.dumps(prior_widths),
+            "posterior_prior_error_scale": posterior_prior_error_scale,
+            "workers": int(workers),
+            **metadata,
+        },
+    )
+    artifact_path = f"{resolved_save}.nc"
+    bare_data.to_netcdf(artifact_path)
+    store["bare_matrix_element_data"] = bare_data
+    store["bare_matrix_element_netcdf"] = artifact_path
+    store["output"] = bare_data
+    return {
+        "artifact": artifact_path,
+        "netcdf_path": artifact_path,
+        "plot_pdf": pdf_path,
+        "plot_svg": svg_path,
+        "n_z": len(z_records),
+        "n_sample": bare_data.n_sample,
+        "outputs": output_rows,
+        "analysis_mode": "2pt_ratio",
+        "fitting_form": "2pt_ratio",
+        "fit_scope": "2pt_z_ratio",
+        "fit_strategy": strategy_values[0],
+        "fit_mode": "2pt_ratio",
+        "model_average": model_average,
+        "selection_rule": "sample-average 2pt ratio window scan",
+        "shared_window_specs": [{"fit_scope": "2pt_z_ratio", "fit_strategy": strategy_values[0], "nstate": fit_nstates[0] if fit_nstates else "Eq.(2)", "pt2_window": f"[{tmin},{tmax})", "pt3_window": "not used", "n_data": len(fit_t), "n_params": 4}],
+        "sample_log_path": str(log_path),
+        "resample_mode": mode,
+        "sample_error_mode": sample_error_mode,
+        "n_samples": n_samples,
+        "z_values": [int(value) for value in z_values],
+        "reference_z": int(reference_z),
+        "z_fits": z_report,
+        "momentum_gev": momentum_gev,
+        "component": part,
+        "nstate_values": fit_nstates,
+        "fit_strategies": strategy_values,
+        "prior_width": prior_widths,
+        "posterior_prior_error_scale": posterior_prior_error_scale,
+        "workers": int(workers),
+        "window_candidates": candidates,
+    }
+
+
 STAGE_TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "inspect_correlator_scale": inspect_correlator_scale,
     "tune_ground_state": tune_ground_state,
     "tune_bare_matrix": tune_bare_matrix,
     "fit_bare_matrix_grid": fit_bare_matrix_grid,
+    "fit_da_2pt_ratio_grid": fit_da_2pt_ratio_grid,
 }

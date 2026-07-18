@@ -144,8 +144,8 @@ class CorrelatorInput(BaseModel):
                 raise ValueError("bT must not contain duplicates")
             if len(set(self.bz)) != len(self.bz):
                 raise ValueError("bz must not contain duplicates")
-        elif any(value is not None for value in (self.current_operator, self.bz_direction, self.tsep, self.bT, self.bz)):
-            raise ValueError("current_operator, bz_direction, tsep, bT, and bz are only valid for 3pt correlators")
+        elif self.current_operator is not None or self.tsep is not None:
+            raise ValueError("current_operator and tsep are only valid for 3pt correlators")
         return self
 
     @property

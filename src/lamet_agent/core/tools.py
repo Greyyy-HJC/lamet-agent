@@ -14,7 +14,7 @@ from lamet_agent.manifest_params import merge_stage_params
 
 from .stages import resolve_stage_package
 
-_PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid", "plot_matched_pdf"})
+_PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid", "fit_da_2pt_ratio_grid", "plot_matched_pdf"})
 _RENORM_ARTIFACT_TOOLS = frozenset(
     {
         "apply_ratio_scheme_renormalization",
@@ -208,6 +208,8 @@ def resolve_job_tools(
 ) -> dict[str, Callable[..., dict[str, Any]]]:
     """Return only the stage tools that are valid for the current job contract."""
     tools = dict(stage_tools if stage_tools is not None else resolve_stage_tools(stage))
+    if stage == "correlator_analysis" and effective_params.get("analysis_mode", "3pt_ratio") == "2pt_ratio":
+        return {name: tool for name, tool in tools.items() if name == "fit_da_2pt_ratio_grid"}
     if stage != "renormalization":
         return tools
 
@@ -240,6 +242,8 @@ def required_job_tool_sequence(
     effective_params: dict[str, Any],
 ) -> tuple[str, ...]:
     """Return the successful tool order required before a job may finish."""
+    if stage == "correlator_analysis" and effective_params.get("analysis_mode", "3pt_ratio") == "2pt_ratio":
+        return ("fit_da_2pt_ratio_grid",)
     if stage != "renormalization":
         return ()
 
@@ -352,6 +356,7 @@ def prepare_tool_args(
         selected = [item for item in manifest.correlators if item.correlator_id in job.correlator_ids]
         defaults = merge_stage_params(effective_params, job.params)
         fitting_form = str(defaults.get("fitting_form", "Breit"))
+        analysis_mode = str(defaults.get("analysis_mode", "3pt_ratio"))
         pt2_all = [item for item in selected if item.correlator_type == "2pt"]
         pt3_all = [item for item in selected if item.correlator_type == "3pt"]
         if fitting_form == "NonBreit":
@@ -392,6 +397,11 @@ def prepare_tool_args(
                     "gfix": pt2.gfix,
                 }
             )
+            if analysis_mode == "2pt_ratio":
+                defaults["sink_operator_pattern"] = pt2.sink_operator
+                defaults["z_values"] = pt2.bz
+                defaults["bz_direction"] = pt2.bz_direction
+                defaults["bT"] = pt2.bT[0] if pt2.bT else 0
             if fitting_form == "NonBreit":
                 defaults["initial_momentum"] = initial_momentum
                 defaults["final_momentum"] = final_momentum
@@ -423,7 +433,7 @@ def prepare_tool_args(
                 defaults["fit_strategies"] = defaults.pop("fit_strategy")
             if "fit_scope" in defaults:
                 defaults["fit_scope_values"] = defaults.pop("fit_scope")
-        elif tool_name == "fit_bare_matrix_grid":
+        elif tool_name in {"fit_bare_matrix_grid", "fit_da_2pt_ratio_grid"}:
             use_model_average = bool(defaults.get("model_average", False))
             if use_model_average and isinstance(defaults.get("nstate"), list):
                 defaults["nstate_values"] = defaults.pop("nstate")
@@ -468,7 +478,7 @@ def prepare_tool_args(
         for key, value in defaults.items():
             if key not in resolved or resolved[key] is None:
                 resolved[key] = value
-        if tool_name == "fit_bare_matrix_grid" and "model_average" in defaults:
+        if tool_name in {"fit_bare_matrix_grid", "fit_da_2pt_ratio_grid"} and "model_average" in defaults:
             resolved["model_average"] = defaults["model_average"]
 
     if stage == "renormalization":

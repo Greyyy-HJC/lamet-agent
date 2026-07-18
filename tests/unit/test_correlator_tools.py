@@ -60,6 +60,7 @@ from lamet_agent.stages.correlator.functions import (
     _vary_prior_width,
     bayesian_average,
     fit_bare_matrix_grid,
+    fit_da_2pt_ratio_grid,
     fit_matrix_element,
     fit_two_point,
     fh_prior,
@@ -162,6 +163,21 @@ def _write_fake_correlators(
     return str(pt2_path), pt3_paths
 
 
+def _write_fake_da_2pt(tmp_path: Path, *, Lt: int = 24, n_cfg: int = 32, seed: int = 1) -> str:
+    rng = np.random.default_rng(seed)
+    t = np.arange(Lt, dtype=float)
+    base = np.exp(-0.45 * t) + np.exp(-0.45 * (Lt - t))
+    path = tmp_path / "da_pt2.h5"
+    with h5py.File(path, "w") as h5f:
+        for z, h in ((0, 1.0), (1, 0.82), (2, 0.68)):
+            ratio = h * (1.0 + 0.08 * z * np.exp(-0.35 * t)) / (1.0 + 0.03 * np.exp(-0.35 * t))
+            data = np.empty((n_cfg, Lt), dtype=complex)
+            for cfg in range(n_cfg):
+                data[cfg] = base * ratio * (1.0 + rng.normal(0.0, 1e-3, Lt))
+            h5f.create_dataset(f"g5/gT5_nonlocal_bT0_bz{z}/PX0PY0PZ0", data=data.T)
+    return str(path)
+
+
 # --- registry ----------------------------------------------------------------
 
 
@@ -171,6 +187,7 @@ def test_stage_tools_expose_the_four_agentic_tools() -> None:
         "tune_ground_state",
         "tune_bare_matrix",
         "fit_bare_matrix_grid",
+        "fit_da_2pt_ratio_grid",
     }
     assert set(TOOL_CATALOG) == set(STAGE_TOOLS)
 
@@ -179,6 +196,107 @@ def test_terminal_tool_uses_bz_direction_and_removes_variant() -> None:
     parameters = inspect.signature(fit_bare_matrix_grid).parameters
     assert "bz_direction" in parameters
     assert "variant" not in parameters
+
+
+def test_fit_da_2pt_ratio_grid_writes_bare_matrix_contract(tmp_path: Path) -> None:
+    pt2_path = _write_fake_da_2pt(tmp_path)
+    result = fit_da_2pt_ratio_grid(
+        {},
+        pt2_path=pt2_path,
+        z_values=[0, 1, 2],
+        ensemble="E",
+        tag="ca_da",
+        momentum="PX0PY0PZ0",
+        pt2_window={"tmin": 6, "tmax": 14},
+        resample_mode="bs",
+        sample_error_mode="mean",
+        n_boot=24,
+        seed=11,
+        nstate=[2, 3],
+        fit_strategy="single_ratio",
+        prior_width=0.5,
+        posterior_prior_error_scale=4.0,
+        model_average=True,
+        temporal_extent=24,
+        artifacts_dir=tmp_path,
+        save_path=str(tmp_path / "ca_da"),
+    )
+    assert Path(result["netcdf_path"]).exists()
+    assert result["analysis_mode"] == "2pt_ratio"
+    assert result["model_average"] is True
+    assert result["nstate_values"] == [2, 3]
+    assert result["prior_width"] == [0.5]
+    assert result["posterior_prior_error_scale"] == 4.0
+    data = correlator_functions.EnsembleData.from_netcdf(result["netcdf_path"])
+    assert data.attrs["analysis_mode"] == "2pt_ratio"
+    assert tuple(data.dims) == ("z",)
+    assert list(data.coords["z"]) == [0, 1, 2]
+    assert np.real(data.mean[0]) == pytest.approx(1.0)
+
+
+def test_fit_da_2pt_ratio_grid_parallel_matches_serial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class InlineFuture:
+        def __init__(self, value):
+            self._value = value
+
+        def result(self):
+            return self._value
+
+    class InlineExecutor:
+        def __init__(self, max_workers: int):
+            self.max_workers = max_workers
+
+        def submit(self, fn, *args):
+            return InlineFuture(fn(*args))
+
+        def shutdown(self):
+            pass
+
+    pt2_path = _write_fake_da_2pt(tmp_path)
+    monkeypatch.setattr(correlator_functions, "ProcessPoolExecutor", InlineExecutor)
+    common = {
+        "pt2_path": pt2_path,
+        "z_values": [0, 1, 2],
+        "ensemble": "E",
+        "momentum": "PX0PY0PZ0",
+        "pt2_window": {"tmin": 6, "tmax": 14},
+        "resample_mode": "bs",
+        "sample_error_mode": "mean",
+        "n_boot": 24,
+        "seed": 11,
+        "prior_width": 0.5,
+        "temporal_extent": 24,
+    }
+    serial_store: dict = {}
+    parallel_store: dict = {}
+    serial = fit_da_2pt_ratio_grid(
+        serial_store,
+        tag="serial",
+        artifacts_dir=tmp_path / "serial",
+        save_path=str(tmp_path / "serial" / "ca_da"),
+        workers=1,
+        **common,
+    )
+    parallel = fit_da_2pt_ratio_grid(
+        parallel_store,
+        tag="parallel",
+        artifacts_dir=tmp_path / "parallel",
+        save_path=str(tmp_path / "parallel" / "ca_da"),
+        workers=2,
+        **common,
+    )
+
+    assert serial["workers"] == 1
+    assert parallel["workers"] == 2
+    assert parallel_store["bare_matrix_element_data"].attrs["workers"] == "2"
+    assert np.allclose(
+        serial_store["bare_matrix_element_data"].values,
+        parallel_store["bare_matrix_element_data"].values,
+        equal_nan=True,
+    )
+    assert [item["n_failed_samples"] for item in serial["z_fits"]] == [
+        item["n_failed_samples"] for item in parallel["z_fits"]
+    ]
 
 
 # --- physics models and fits -------------------------------------------------

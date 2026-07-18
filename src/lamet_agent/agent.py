@@ -425,7 +425,7 @@ def _momentum_label(attrs: dict[str, Any], result: dict[str, Any]) -> str:
         return rf"$Q^2={q2_text}\,\mathrm{{GeV}}^2$, $\xi={xi_text}$"
     momentum = attrs.get("momentum_gev") or result.get("momentum_gev")
     p_text = "n/a" if momentum in (None, "") else f"{float(momentum):.2f}"
-    return rf"Breit, $p={p_text}\,\mathrm{{GeV}}$"
+    return rf"$p={p_text}\,\mathrm{{GeV}}$"
 
 
 def _overlay_paths(stage_dir: Path, prefix: str, ensemble: str, suffix: str) -> tuple[Path, Path]:
@@ -748,6 +748,8 @@ def run_agent(
                 stage_reports[stage] = {"report": str(store["output"])}
             if stage == "correlator_analysis" and "output" in store:
                 fit_result = _last_tool_result(observations, "fit_bare_matrix_grid")
+                if fit_result is None:
+                    fit_result = _last_tool_result(observations, "fit_da_2pt_ratio_grid")
                 if fit_result is not None:
                     matrix_attrs = dict(getattr(store.get("bare_matrix_element_data"), "attrs", {}))
                     stage_job_records.append(
