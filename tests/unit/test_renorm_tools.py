@@ -614,6 +614,15 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
         kernel_id="ZMSbar_da",
         mu=2.0,
         LambdaQCD_gev=0.12,
+        metadata={
+            "ensemble": "a06m130",
+            "momentum": "PX0PY0PZ6",
+            "volume": "S96T96",
+            "lattice_spacing_fm": lattice_spacing_fm,
+            "momentum_gev": 1.35,
+            "hadron": "pion",
+            "gfix": "GI",
+        },
         save_path=str(tmp_path / "self"),
     )
 
@@ -626,11 +635,21 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
     assert result["alpha_s_source"] == "alphas_nloop"
     assert result["remapped"] is False
     assert Path(result["artifact"]).is_file()
+    assert result["ensemble"] == "a06m130"
+    assert result["momentum"] == "PX0PY0PZ6"
+    assert result["momentum_gev"] == pytest.approx(1.35)
     assert store["output"].attrs["scheme"] == "hybrid_self_renormalization"
+    assert store["output"].attrs["ensemble"] == "a06m130"
+    assert store["output"].attrs["momentum"] == "PX0PY0PZ6"
+    assert float(store["output"].attrs["momentum_gev"]) == pytest.approx(1.35)
     assert float(store["output"].attrs["LambdaQCD_gev"]) == pytest.approx(0.12)
     assert float(store["output"].attrs["alpha_s_derived"]) == pytest.approx(0.293)
     assert np.allclose(store["output"].values, expected)
     assert store["output"] is store["matrix_element_data"]
+    reloaded = EnsembleData.from_netcdf(result["artifact"])
+    assert reloaded.ensemble.id == "a06m130"
+    assert reloaded.attrs["momentum"] == "PX0PY0PZ6"
+    assert float(reloaded.attrs["momentum_gev"]) == pytest.approx(1.35)
 
 
 def test_zmsbar_uses_running_coupling_without_manual_override() -> None:

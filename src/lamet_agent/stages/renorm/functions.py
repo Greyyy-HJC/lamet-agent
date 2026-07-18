@@ -949,6 +949,7 @@ def apply_self_renormalization(
     artifacts_dir: str | Path | None = None,
     job_id: str | None = None,
     ensemble: str | None = None,
+    metadata: dict[str, Any] | None = None,
     sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
     """Apply hybrid self-renormalization: H / (zR * ZMSbar), preserving samples.
@@ -973,7 +974,35 @@ def apply_self_renormalization(
     z_target = z_target_input[target_mask]
     n_z_dropped = int(len(z_target_input) - len(z_target))
     a_coords = list(zR_data.coords.get("a", [zR_data.ensemble.a_s]))
-    lattice_spacing_fm = float(target_data.attrs.get("lattice_spacing_fm", a_coords[0]))
+    metadata_fields = {
+        "ensemble",
+        "momentum",
+        "volume",
+        "bz_direction",
+        "lattice_spacing_fm",
+        "momentum_gev",
+        "initial_momentum",
+        "final_momentum",
+        "initial_momentum_gev",
+        "final_momentum_gev",
+        "q2_gev2",
+        "xi",
+        "fitting_form",
+        "hadron",
+        "gfix",
+    }
+    metadata_out = {
+        key: value
+        for key, value in (metadata or {}).items()
+        if key in metadata_fields and value is not None
+    }
+    if ensemble:
+        metadata_out["ensemble"] = ensemble
+    elif "ensemble" not in metadata_out and target_data.ensemble is not None:
+        metadata_out["ensemble"] = target_data.ensemble.id
+    lattice_spacing_fm = float(
+        metadata_out.get("lattice_spacing_fm", target_data.attrs.get("lattice_spacing_fm", a_coords[0]))
+    )
     ia = _match_lattice_spacing([float(a) for a in a_coords], lattice_spacing_fm)
     a_used = float(a_coords[ia])
 
@@ -1106,8 +1135,7 @@ def apply_self_renormalization(
         "zR_input_min_fm": str(float(np.min(z_zr))),
         "zR_input_max_fm": str(float(np.max(z_zr))),
     }
-    if ensemble:
-        attrs["ensemble"] = ensemble
+    attrs.update(metadata_out)
     if remap:
         attrs["d_from"] = str(d_from)
         attrs["m0_from"] = str(m0_from)
@@ -1144,6 +1172,7 @@ def apply_self_renormalization(
         "alpha_s_source": "alphas_nloop",
         "m0_gev": m0_to,
         "d": d_to,
+        **{key: value for key, value in metadata_out.items() if key != "lattice_spacing_fm"},
         "remapped": bool(remap),
         "n_z": int(len(z_target)),
         "n_sample": int(renorm_values.shape[0]),

@@ -406,6 +406,8 @@ def _write_correlator_energy_artifacts(records: list[dict[str, Any]], stage_dir:
 
 def _ensemble_label(data: EnsembleData, fallback: str = "") -> str:
     value = fallback or data.attrs.get("ensemble")
+    if not value and data.ensemble is not None:
+        value = data.ensemble.id
     return str(value or "ensemble")
 
 

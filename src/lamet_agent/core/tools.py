@@ -538,6 +538,32 @@ def prepare_tool_args(
                 if key in effective_params:
                     resolved[key] = effective_params[key]
         elif tool_name == "apply_self_renormalization":
+            source = store.get("target")
+            source_metadata = dict(
+                source.resolved_metadata if isinstance(source, ArtifactInput) else getattr(source, "attrs", {})
+            )
+            if isinstance(source, ArtifactInput) and source.momentum_gev is not None:
+                source_metadata["momentum_gev"] = source.momentum_gev
+            if source is None:
+                target_ref = job.inputs.get("target")
+                artifact = next(
+                    (
+                        item
+                        for item in manifest.inputs.artifacts
+                        if isinstance(target_ref, str) and item.id == target_ref
+                    ),
+                    None,
+                )
+                if artifact is not None:
+                    source_metadata.update(artifact.resolved_metadata)
+                    if artifact.momentum_gev is not None:
+                        source_metadata["momentum_gev"] = artifact.momentum_gev
+            source_ensemble = getattr(source, "ensemble", None)
+            if source_ensemble is not None:
+                source_metadata.setdefault("ensemble", source_ensemble.id)
+            source_metadata.update(derive_job_kinematics(manifest, job))
+            if "ensemble" in effective_params:
+                source_metadata["ensemble"] = effective_params["ensemble"]
             resolved.update(
                 {
                     "target": "target",
@@ -545,6 +571,11 @@ def prepare_tool_args(
                     "save_path": str(artifacts_dir / job.id),
                     "job_id": job.id,
                     "sample_error_mode": manifest.metadata.sample_error_mode,
+                    "metadata": {
+                        key: value
+                        for key, value in source_metadata.items()
+                        if value is not None
+                    },
                 }
             )
             if kernel_id is not None:

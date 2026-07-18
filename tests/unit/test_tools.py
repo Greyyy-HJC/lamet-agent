@@ -636,15 +636,18 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
             "id": artifact_id,
             "stage": "correlator_analysis",
             "path": f"{artifact_id}.nc",
+            "ensemble": ensemble,
+            "hadron": "pion",
+            "gfix": "GI",
             "momentum": momentum,
             "volume": "S96T192",
             "lattice_spacing_fm": spacing,
         }
-        for artifact_id, momentum, spacing in (
-            ("bare_pdf_reference", "PX0PY0PZ0", 0.0574),
-            ("bare_da_mom6_a06", "PX0PY0PZ6", 0.0574),
-            ("bare_da_mom6_a09", "PX0PY0PZ6", 0.0882),
-            ("bare_da_mom6_a12", "PX0PY0PZ6", 0.1213),
+        for artifact_id, ensemble, momentum, spacing in (
+            ("bare_pdf_reference", "a06m130", "PX0PY0PZ0", 0.0574),
+            ("bare_da_mom6_a06", "a06m130", "PX0PY0PZ6", 0.0574),
+            ("bare_da_mom6_a09", "a09m130", "PX0PY0PZ6", 0.0882),
+            ("bare_da_mom6_a12", "a12m130", "PX0PY0PZ6", 0.1213),
         )
     ]
     manifest = AnalysisManifest.model_validate(
@@ -789,6 +792,13 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert apply_args["z_coverage_policy"] == "intersection"
     assert apply_args["d"] == 0.19
     assert apply_args["m0_gev"] == -0.094
+    assert apply_args["metadata"]["ensemble"] == "a06m130"
+    assert apply_args["metadata"]["momentum"] == "PX0PY0PZ6"
+    assert apply_args["metadata"]["hadron"] == "pion"
+    assert apply_args["metadata"]["gfix"] == "GI"
+    assert apply_args["metadata"]["momentum_gev"] == pytest.approx(
+        derive_job_kinematics(manifest, apply_job)["momentum_gev"]
+    )
     assert apply_args["save_path"] == str(tmp_path / "rn_mom6_a06")
 
     fit_diag = prepare_tool_args(
