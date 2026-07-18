@@ -1447,7 +1447,7 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_chinese_instruct
         },
         "stages": {
             "correlator_analysis": {
-                "defaults": {"fit_scope": ["ratio"]},
+                "defaults": {"fit_scope": ["3pt_ratio"]},
                 "jobs": [
                     {"id": "ca_p0_fh", "correlator_ids": ["p0_2pt", "p0_3pt"], "params": {"momentum": "PX0PY0PZ0"}},
                     {"id": "ca_p5_fh", "correlator_ids": ["p5_2pt", "p5_3pt"], "params": {"momentum": "PX5PY0PZ0"}},

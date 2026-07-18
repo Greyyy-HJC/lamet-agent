@@ -644,12 +644,91 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
     assert float(store["output"].attrs["momentum_gev"]) == pytest.approx(1.35)
     assert float(store["output"].attrs["LambdaQCD_gev"]) == pytest.approx(0.12)
     assert float(store["output"].attrs["alpha_s_derived"]) == pytest.approx(0.293)
+    assert store["output"].attrs["coord_unit"] == "fm"
+    assert store["output"].attrs["input_coord_unit"] == "fm"
     assert np.allclose(store["output"].values, expected)
     assert store["output"] is store["matrix_element_data"]
     reloaded = EnsembleData.from_netcdf(result["artifact"])
     assert reloaded.ensemble.id == "a06m130"
     assert reloaded.attrs["momentum"] == "PX0PY0PZ6"
     assert float(reloaded.attrs["momentum_gev"]) == pytest.approx(1.35)
+
+
+def test_hybrid_self_converts_lattice_z_and_preserves_normalized_z0(
+    tmp_path: Path,
+) -> None:
+    from lamet_agent import kernels
+
+    lattice_spacing_fm = 0.1
+    z_fm = np.asarray([0.1, 0.2])
+    zr_vals = np.asarray([0.5, 0.4])
+    zR = EnsembleData(
+        EnsembleInfo("", "E", lattice_spacing_fm, lattice_spacing_fm, 1, 1, 0),
+        "bootstrap",
+        [np.asarray(zr_vals[None, :], dtype=complex)],
+        dims=("a", "z"),
+        coords={"a": [lattice_spacing_fm], "z": z_fm.tolist()},
+        attrs={
+            "kernel_id": "ZMSbar_da",
+            "LambdaQCD_gev": "0.1",
+            "m0_gev": "-0.094",
+            "d": "0.19",
+        },
+        name="zR",
+    )
+    target_values = np.asarray(
+        [[1.0, 2.0, 3.0], [1.0, 2.2, 3.3]], dtype=complex
+    )
+    target = EnsembleData(
+        EnsembleInfo("", "E", lattice_spacing_fm, lattice_spacing_fm, 1, 1, 0),
+        "bootstrap",
+        values=list(target_values),
+        dims=("z",),
+        coords={"z": [0, 1, 2]},
+        attrs={
+            "lattice_spacing_fm": str(lattice_spacing_fm),
+            "coord_unit": "lattice",
+        },
+        name="target",
+    )
+    store = {"target": target, "zR": zR}
+
+    result = apply_self_renormalization(
+        store,
+        kernel_id="ZMSbar_da",
+        LambdaQCD_gev=0.1,
+        z_coverage_policy="strict",
+        save_path=str(tmp_path / "lattice_target"),
+    )
+
+    expected_nonzero = target_values[:, 1:] / (
+        zr_vals[None, :] * kernels.ZMSbar_da(z_fm, mu=2.0)[None, :]
+    )
+    expected = np.column_stack((target_values[:, 0], expected_nonzero))
+    assert store["output"].coords["z"] == pytest.approx([0.0, *z_fm.tolist()])
+    assert np.allclose(store["output"].values, expected)
+    assert np.allclose(store["output"].values[:, 0], 1.0)
+    assert store["output"].attrs["coord_unit"] == "fm"
+    assert store["output"].attrs["input_coord_unit"] == "lattice"
+    assert store["output"].attrs["z0_treatment"] == "passthrough_without_self_renormalization"
+    assert result["n_z_input"] == 3
+    assert result["n_z"] == 3
+    assert result["n_z_dropped"] == 0
+    assert result["n_z_zero_passthrough"] == 1
+    assert result["n_z_coverage_dropped"] == 0
+
+    diagnostic = plot_self_renormalization_diagnostics(
+        store,
+        mode="apply",
+        LambdaQCD_gev=0.1,
+        z_coverage_policy="strict",
+        save_path=str(tmp_path / "lattice_target_diag"),
+        artifacts_dir=tmp_path,
+    )
+    assert diagnostic["n_z_dropped"] == 0
+    assert diagnostic["n_z_zero_skipped"] == 1
+    assert diagnostic["input_coord_unit"] == "lattice"
+    assert Path(diagnostic["plots"]["zmsbar_compare"]).is_file()
 
 
 def test_zmsbar_uses_running_coupling_without_manual_override() -> None:

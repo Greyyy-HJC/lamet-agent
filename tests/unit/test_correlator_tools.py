@@ -18,6 +18,7 @@ from matplotlib.legend import Legend
 pytest.importorskip("lsqfit")
 
 import lamet_agent.stages.correlator.functions as correlator_functions
+import lamet_agent.stages.correlator.qda as qda_module
 from lamet_agent.stages.correlator.skills import TOOL_CATALOG
 from lamet_agent.core.plotting import (
     FIT_LOG_YLIM_BOTTOM_FACTOR,
@@ -28,6 +29,7 @@ from lamet_agent.core.plotting import (
     _ratio_denominator_correction,
     _ylim_middle_third,
     _ylim_mean_middle_third,
+    plot_qda_ratio_fit_on_data,
     plot_pt2_fit_on_data,
     plot_pt2_meff_on_data,
 )
@@ -60,13 +62,16 @@ from lamet_agent.stages.correlator.functions import (
     _vary_prior_width,
     bayesian_average,
     fit_bare_matrix_grid,
-    fit_da_2pt_ratio_grid,
     fit_matrix_element,
     fit_two_point,
     fh_prior,
     inspect_correlator_scale,
     pt2_prior,
     pt2_re_fcn,
+    qda_fcn,
+    qda_mixed_pt2_re_fcn,
+    qda_pt2_prior,
+    qda_ratio_fcn,
     pt3_nonbreit_ratio_fcn,
     pt3_nonbreit_ratio_prior,
     pt3_ratio_fcn,
@@ -166,15 +171,34 @@ def _write_fake_correlators(
 def _write_fake_da_2pt(tmp_path: Path, *, Lt: int = 24, n_cfg: int = 32, seed: int = 1) -> str:
     rng = np.random.default_rng(seed)
     t = np.arange(Lt, dtype=float)
-    base = np.exp(-0.45 * t) + np.exp(-0.45 * (Lt - t))
+    spectrum = {"E0": 0.45, "dE1": 0.5, "z0": 1.0, "z1": 0.1}
     path = tmp_path / "da_pt2.h5"
     with h5py.File(path, "w") as h5f:
+        denominator = pt2_re_fcn(t, spectrum, Lt, nstate=2)
+        denominator_data = np.empty((n_cfg, Lt), dtype=complex)
+        for cfg in range(n_cfg):
+            denominator_data[cfg] = denominator * (
+                1.0
+                + rng.normal(0.0, 5e-4, Lt)
+                + 1j * rng.normal(0.0, 5e-4, Lt)
+            )
+        h5f.create_dataset("g5/g5/PX0PY0PZ0", data=denominator_data.T)
         for z, h in ((0, 1.0), (1, 0.82), (2, 0.68)):
-            ratio = h * (1.0 + 0.08 * z * np.exp(-0.35 * t)) / (1.0 + 0.03 * np.exp(-0.35 * t))
+            params = {
+                **spectrum,
+                "O00_re": spectrum["z0"] * h,
+                "O01_re": spectrum["z1"] * (h + 0.03 * z),
+                "O00_im": 0.02 * z,
+                "O01_im": 0.002 * z,
+            }
+            numerator = qda_fcn(t, params, Lt, nstate=2, part="re") + 1j * qda_fcn(
+                t, params, Lt, nstate=2, part="im"
+            )
             data = np.empty((n_cfg, Lt), dtype=complex)
             for cfg in range(n_cfg):
-                data[cfg] = base * ratio * (1.0 + rng.normal(0.0, 1e-3, Lt))
-            h5f.create_dataset(f"g5/gT5_nonlocal_bT0_bz{z}/PX0PY0PZ0", data=data.T)
+                data[cfg] = numerator * (1.0 + rng.normal(0.0, 5e-4, Lt))
+                data[cfg] += 1j * np.abs(np.real(numerator)) * rng.normal(0.0, 5e-4, Lt)
+            h5f.create_dataset(f"g5/gT5_nonlocal/PX0PY0PZ0/bT0/bz{z}", data=data.T)
     return str(path)
 
 
@@ -187,7 +211,6 @@ def test_stage_tools_expose_the_four_agentic_tools() -> None:
         "tune_ground_state",
         "tune_bare_matrix",
         "fit_bare_matrix_grid",
-        "fit_da_2pt_ratio_grid",
     }
     assert set(TOOL_CATALOG) == set(STAGE_TOOLS)
 
@@ -195,46 +218,70 @@ def test_stage_tools_expose_the_four_agentic_tools() -> None:
 def test_terminal_tool_uses_bz_direction_and_removes_variant() -> None:
     parameters = inspect.signature(fit_bare_matrix_grid).parameters
     assert "bz_direction" in parameters
+    assert "reference_z" not in parameters
     assert "variant" not in parameters
 
 
-def test_fit_da_2pt_ratio_grid_writes_bare_matrix_contract(tmp_path: Path) -> None:
+def test_fit_qda_ratio_scope_writes_bare_matrix_contract(tmp_path: Path) -> None:
     pt2_path = _write_fake_da_2pt(tmp_path)
-    result = fit_da_2pt_ratio_grid(
-        {},
+    store: dict = {}
+    result = fit_bare_matrix_grid(
+        store,
         pt2_path=pt2_path,
+        qda_path=pt2_path,
         z_values=[0, 1, 2],
         ensemble="E",
         tag="ca_da",
         momentum="PX0PY0PZ0",
+        fit_scope="qda_ratio",
+        fit_strategy="joint",
+        sink_operator="g5",
+        qda_source_operator="g5",
+        qda_sink_operator="gT5_nonlocal",
+        bz_direction="Z",
         pt2_window={"tmin": 6, "tmax": 14},
         resample_mode="bs",
         sample_error_mode="mean",
         n_boot=24,
         seed=11,
-        nstate=[2, 3],
-        fit_strategy="single_ratio",
-        prior_width=0.5,
+        nstate=[2],
+        prior_width=[0.8, 1.2],
         posterior_prior_error_scale=4.0,
         model_average=True,
+        tune_z=1,
         temporal_extent=24,
         artifacts_dir=tmp_path,
         save_path=str(tmp_path / "ca_da"),
     )
     assert Path(result["netcdf_path"]).exists()
-    assert result["analysis_mode"] == "2pt_ratio"
+    assert result["fit_scope"] == "qda_ratio"
+    assert result["bz"] == [0, 1, 2]
+    assert "reference_z" not in result
+    assert "z_values" not in result
     assert result["model_average"] is True
-    assert result["nstate_values"] == [2, 3]
-    assert result["prior_width"] == [0.5]
-    assert result["posterior_prior_error_scale"] == 4.0
+    assert result["nstate_values"] == [2]
+    assert result["prior_width"] == [0.8, 1.2]
     data = correlator_functions.EnsembleData.from_netcdf(result["netcdf_path"])
-    assert data.attrs["analysis_mode"] == "2pt_ratio"
+    assert data.attrs["fit_scope"] == "qda_ratio"
+    assert "reference_z" not in data.attrs
     assert tuple(data.dims) == ("z",)
     assert list(data.coords["z"]) == [0, 1, 2]
-    assert np.real(data.mean[0]) == pytest.approx(1.0)
+    assert np.real(data.mean[0]) == pytest.approx(1.0, abs=0.08)
+    assert np.real(data.mean[1]) == pytest.approx(0.82, abs=0.08)
+    assert len(result["z_fits"]) == 3
+    for z_fit in result["z_fits"]:
+        paths = z_fit["sample0_plot_paths"]
+        assert set(paths) == {
+            "qda_ratio_re_pdf",
+            "qda_ratio_re_svg",
+            "qda_ratio_im_pdf",
+            "qda_ratio_im_svg",
+        }
+        assert all(Path(path).is_file() for path in paths.values())
+        assert all(f"_bT0_bz{z_fit['z']}_sample0_" in path for path in paths.values())
 
 
-def test_fit_da_2pt_ratio_grid_parallel_matches_serial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fit_qda_ratio_parallel_matches_serial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class InlineFuture:
         def __init__(self, value):
             self._value = value
@@ -253,23 +300,31 @@ def test_fit_da_2pt_ratio_grid_parallel_matches_serial(tmp_path: Path, monkeypat
             pass
 
     pt2_path = _write_fake_da_2pt(tmp_path)
-    monkeypatch.setattr(correlator_functions, "ProcessPoolExecutor", InlineExecutor)
+    monkeypatch.setattr(qda_module, "ProcessPoolExecutor", InlineExecutor)
     common = {
         "pt2_path": pt2_path,
+        "qda_path": pt2_path,
         "z_values": [0, 1, 2],
         "ensemble": "E",
         "momentum": "PX0PY0PZ0",
+        "fit_scope": "qda_ratio",
+        "fit_strategy": "chained",
+        "sink_operator": "g5",
+        "qda_source_operator": "g5",
+        "qda_sink_operator": "gT5_nonlocal",
+        "bz_direction": "Z",
         "pt2_window": {"tmin": 6, "tmax": 14},
         "resample_mode": "bs",
         "sample_error_mode": "mean",
         "n_boot": 24,
         "seed": 11,
-        "prior_width": 0.5,
+        "prior_width": 1.0,
+        "tune_z": 1,
         "temporal_extent": 24,
     }
     serial_store: dict = {}
     parallel_store: dict = {}
-    serial = fit_da_2pt_ratio_grid(
+    serial = fit_bare_matrix_grid(
         serial_store,
         tag="serial",
         artifacts_dir=tmp_path / "serial",
@@ -277,7 +332,7 @@ def test_fit_da_2pt_ratio_grid_parallel_matches_serial(tmp_path: Path, monkeypat
         workers=1,
         **common,
     )
-    parallel = fit_da_2pt_ratio_grid(
+    parallel = fit_bare_matrix_grid(
         parallel_store,
         tag="parallel",
         artifacts_dir=tmp_path / "parallel",
@@ -294,12 +349,136 @@ def test_fit_da_2pt_ratio_grid_parallel_matches_serial(tmp_path: Path, monkeypat
         parallel_store["bare_matrix_element_data"].values,
         equal_nan=True,
     )
+    assert [set(item["sample0_plot_paths"]) for item in serial["z_fits"]] == [
+        set(item["sample0_plot_paths"]) for item in parallel["z_fits"]
+    ]
+    assert all(
+        Path(path).is_file()
+        for item in parallel["z_fits"]
+        for path in item["sample0_plot_paths"].values()
+    )
+    assert np.real(serial_store["bare_matrix_element_data"].mean[1]) == pytest.approx(0.82, abs=0.08)
     assert [item["n_failed_samples"] for item in serial["z_fits"]] == [
         item["n_failed_samples"] for item in parallel["z_fits"]
     ]
 
 
 # --- physics models and fits -------------------------------------------------
+
+
+def test_qda_ratio_fcn_is_spectral_numerator_over_two_point() -> None:
+    params = {
+        "E0": 0.45,
+        "dE1": 0.5,
+        "z0": 1.2,
+        "z1": 0.2,
+        "O00_re": 0.84,
+        "O01_re": 0.05,
+    }
+    t = np.asarray([5.0, 7.0])
+    numerator = qda_fcn(t, params, 32, nstate=2, part="re")
+    ratio = qda_ratio_fcn(t, params, 32, nstate=2, part="re")
+    assert np.allclose(ratio, numerator / pt2_re_fcn(t, params, 32, nstate=2))
+    assert _bare_matrix_element_mean_for_part(
+        params,
+        output_part="re",
+        fit_part="re",
+        fitting_form="Breit",
+        fit_scope="qda_ratio",
+    ) == pytest.approx(0.7)
+
+
+def test_qda_mixed_denominator_uses_distinct_overlaps_and_extraction() -> None:
+    params = {
+        "E0": 0.45,
+        "dE1": 0.5,
+        "z0": 1.2,
+        "z1": 0.2,
+        "zprime0": 0.8,
+        "zprime1": 0.1,
+        "O00_re": 0.56,
+        "O01_re": 0.03,
+    }
+    t = np.asarray([5.0, 7.0])
+    energies = [params["E0"], params["E0"] + params["dE1"]]
+    expected = sum(
+        params[f"z{state}"]
+        * params[f"zprime{state}"]
+        / (2 * energy)
+        * (np.exp(-energy * t) + np.exp(-energy * (32 - t)))
+        for state, energy in enumerate(energies)
+    )
+    denominator = qda_mixed_pt2_re_fcn(t, params, 32, nstate=2)
+    ratio = qda_ratio_fcn(
+        t,
+        params,
+        32,
+        nstate=2,
+        part="re",
+        qda_denominator_mode="nonlocal_bz0",
+    )
+    assert np.allclose(denominator, expected)
+    assert np.allclose(
+        ratio,
+        qda_fcn(t, params, 32, nstate=2, part="re") / expected,
+    )
+    assert set(qda_pt2_prior(2, qda_denominator_mode="nonlocal_bz0")) >= {
+        "zprime0",
+        "zprime1",
+    }
+    assert _bare_matrix_element_mean_for_part(
+        params,
+        output_part="re",
+        fit_part="re",
+        fitting_form="Breit",
+        fit_scope="qda_ratio",
+        qda_denominator_mode="nonlocal_bz0",
+    ) == pytest.approx(0.7)
+
+
+def test_qda_bz0_fallback_ratio_is_exact_and_reads_legacy_layout(tmp_path: Path) -> None:
+    path = tmp_path / "legacy_qda.h5"
+    rng = np.random.default_rng(7)
+    denominator = rng.normal(size=(12, 16)) + 1j * rng.normal(size=(12, 16))
+    with h5py.File(path, "w") as h5f:
+        h5f.create_dataset(
+            "g5/gT5_nonlocal_bT0_bz0/PX0PY0PZ6", data=denominator.T
+        )
+
+    loaded, _, denominator_samples, indices, _ = qda_module._load_denominator(
+        pt2_path=str(path),
+        source_operator="g5",
+        sink_operator="gT5_nonlocal",
+        momentum="PX0PY0PZ6",
+        temporal_extent=16,
+        pt2_bT=0,
+        pt2_bz=0,
+        mode="bs",
+        n_boot=10,
+        seed=1984,
+        bin_size=1,
+        sample_error_mode="mean",
+    )
+    sample_re, sample_im, _, _ = qda_module._load_ratio(
+        z=0,
+        denominator_shape=loaded.shape,
+        denominator_samples=denominator_samples,
+        indices=indices,
+        qda_path=str(path),
+        qda_source_operator="g5",
+        qda_sink_operator="gT5_nonlocal",
+        momentum="PX0PY0PZ6",
+        bT=0,
+        temporal_extent=16,
+        mode="bs",
+        n_boot=10,
+        seed=1984,
+        bin_size=1,
+        sample_error_mode="mean",
+    )
+    assert np.array_equal(loaded, denominator)
+    assert np.allclose(sample_re, 1.0)
+    assert np.allclose(sample_im, 0.0)
 
 
 def test_pt3_ratio_fcn_part_selects_matrix_element() -> None:
@@ -376,7 +555,7 @@ def test_fit_ratio_recovers_parameters() -> None:
         1,
         32,
         strategy="chained",
-        fit_scope="ratio",
+        fit_scope="3pt_ratio",
         fitting_form="Breit",
         prior=pt3_ratio_prior(2),
     )
@@ -435,7 +614,7 @@ def test_fit_joint_recovers_parameters_and_is_rescale_invariant() -> None:
         1,
         32,
         strategy="joint",
-        fit_scope="ratio",
+        fit_scope="3pt_ratio",
         fitting_form="Breit",
         pt2_gv=_toy_pt2_gv(Lt=32) / scale,
         tmin=2,
@@ -451,7 +630,7 @@ def test_fit_joint_recovers_parameters_and_is_rescale_invariant() -> None:
         1,
         32,
         strategy="joint",
-        fit_scope="ratio",
+        fit_scope="3pt_ratio",
         fitting_form="Breit",
         pt2_gv=_toy_pt2_gv(Lt=32),
         tmin=2,
@@ -522,7 +701,7 @@ def test_fit_matrix_element_supports_nonbreit_joint_data() -> None:
         1,
         Lt,
         strategy="joint",
-        fit_scope="ratio",
+        fit_scope="3pt_ratio",
         fitting_form="NonBreit",
         pt2_gv=pt2_i_gv,
         pt2_f_gv=pt2_f_gv,
@@ -547,7 +726,7 @@ def test_fit_ratio_rejects_empty_tau_window() -> None:
             3,
             32,
             strategy="chained",
-            fit_scope="ratio",
+            fit_scope="3pt_ratio",
             fitting_form="Breit",
             prior=pt3_ratio_prior(2),
         )
@@ -785,10 +964,13 @@ def test_normalise_strategy_aliases() -> None:
         _normalise_strategy("nonsense")
 
 
-def test_normalise_fit_scope_aliases() -> None:
-    assert _normalise_fit_scope(None) == ("ratio", "ratio")
+def test_normalise_fit_scope_accepts_only_public_names() -> None:
+    assert _normalise_fit_scope(None) == ("3pt_ratio", "3pt_ratio")
     assert _normalise_fit_scope("FH") == ("FH", "fh")
-    assert _normalise_fit_scope("ratio+FH") == ("ratio+FH", "ratio_fh")
+    assert _normalise_fit_scope("3pt_ratio+FH") == ("3pt_ratio+FH", "3pt_ratio_fh")
+    assert _normalise_fit_scope("qda_ratio") == ("qda_ratio", "qda_ratio")
+    with pytest.raises(ValueError):
+        _normalise_fit_scope("ratio")
     with pytest.raises(ValueError, match="fit_scope"):
         _normalise_fit_scope("summed")
 
@@ -948,7 +1130,7 @@ def test_tune_bare_matrix_returns_ranked_candidates(tmp_path) -> None:
     assert result["tune_z_values"] == [0]
     assert result["tuning_diagnostic_pdfs"] == {}
     assert not list((tmp_path / "artifacts").glob("tune_*_sample0_pt3_ratio_*.pdf"))
-    assert result["candidates"][0]["fit_scope"] == "ratio"
+    assert result["candidates"][0]["fit_scope"] == "3pt_ratio"
     assert result["candidates"][0]["n_data"] > result["candidates"][0]["n_params"]
     assert result["candidates"][0]["dof_is_positive"] is True
     assert result["recommended_window"]["n_data"] > result["recommended_window"]["n_params"]
@@ -972,7 +1154,7 @@ def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
         "pt2_window": {"tmin": 2, "tmax": 10},
         "pt3_window": {"tsep_ls": [6, 8], "tau_cut": 1},
         "fit_strategy": "joint",
-        "fit_scope": "ratio",
+        "fit_scope": "3pt_ratio",
         "nstate": 2,
         "prior_width": 1.0,
         "resample_mode": "jk",
@@ -1061,7 +1243,7 @@ def test_summarise_cross_z_feasibility_tracks_failures() -> None:
 def test_window_candidate_key_is_stable() -> None:
     meta = {
         "fit_strategy": "joint",
-        "fit_scope": "ratio",
+        "fit_scope": "3pt_ratio",
         "nstate": 2,
         "prior_width": 1.0,
         "tmin": 3,
@@ -1144,6 +1326,35 @@ def test_plot_pt2_legend_upper_right() -> None:
     upper_right = Legend.codes["upper right"]
     assert ax_c2.get_legend()._loc == upper_right
     assert ax_meff.get_legend()._loc == upper_right
+
+
+def test_plot_qda_ratio_fit_on_data_writes_selected_components(tmp_path: Path) -> None:
+    t = np.arange(5, dtype=int)
+    fit_t = np.arange(1, 4, dtype=int)
+    ratio_re = gv.gvar([1.0, 0.9, 0.82, 0.78, 0.75], [0.03] * 5)
+    ratio_im = gv.gvar([0.0, 0.02, 0.03, 0.03, 0.02], [0.01] * 5)
+    fit_re = gv.gvar([0.89, 0.83, 0.79], [0.02] * 3)
+    fit_im = gv.gvar([0.02, 0.03, 0.03], [0.008] * 3)
+    stem = tmp_path / "qda_sample0"
+
+    figures = plot_qda_ratio_fit_on_data(
+        t,
+        ratio_re,
+        ratio_im,
+        fit_t=fit_t,
+        fit_real=fit_re,
+        fit_imag=fit_im,
+        components=("re",),
+        title="PX0PY0PZ1, bT=0, bz=2",
+        save_path=stem,
+    )
+
+    assert set(figures) == {"re"}
+    assert "qDA" in figures["re"][1].get_ylabel()
+    assert (tmp_path / "qda_sample0_qda_ratio_re.pdf").is_file()
+    assert (tmp_path / "qda_sample0_qda_ratio_re.svg").is_file()
+    assert not (tmp_path / "qda_sample0_qda_ratio_im.pdf").exists()
+    figures["re"][0].clear()
 
 
 # --- logging -----------------------------------------------------------------

@@ -177,13 +177,38 @@ Some manifest parameters change both the statistical treatment and the runtime
 substantially. This section records behavior that is not obvious from the field
 name alone.
 
+### `correlator_analysis.defaults.fit_scope`
+
+Each correlator job selects one analysis family through `fit_scope`:
+`3pt_ratio`, `FH`, `3pt_ratio+FH`, or `qda_ratio`. The old `ratio` and
+`ratio+FH` names are rejected. The first three scopes consume ordinary 2pt and
+3pt inputs. `qda_ratio` consumes one qDA 2pt with a nonlocal operator plus
+explicit `bT` and `bz` metadata, and may also consume one ordinary correlator
+whose source and sink operators are local. Operator names never encode `bT` or
+`bz`; the standard qDA HDF5 path is `source/sink/momentum/bT*/bz*`.
+
+For `qda_ratio`, `inputs.correlators[].momentum` remains a list of available
+momenta, while each correlator-analysis job selects one scalar
+`params.momentum`. The fit constructs the resampled nonlocal ratio and models
+it as a qDA numerator spectral decomposition divided by the selected 2pt
+spectral function. When the ordinary 2pt is omitted, the qDA input must contain
+`bz=0`; that slice supplies the denominator and uses the mixed overlap
+`z_n*zprime_n` rather than `z_n^2`. `fit_strategy: joint` fits the selected 2pt
+and qDA ratio together; `chained` first fits that 2pt and transfers its complete
+widened spectrum to the ratio prior. The exported bare matrix element is
+`O00/z0` for the ordinary denominator and `O00/zprime0` for the `bz=0`
+fallback. In the fallback, the `z=0` ratio is naturally one because numerator
+and denominator are identical resampled data; it is never assigned manually.
+Each `bz` fit also writes sample-0 real/imaginary
+fit-on-data PDF and SVG diagnostics under the job's `fit_logs/` directory.
+
 ### `correlator_analysis.defaults.model_average`
 
 This boolean controls how `fit_bare_matrix_grid` uses fit-function candidates.
 It does not control whether tuning scans the candidates: `tune_bare_matrix` always
-tests the configured `pt2_windows`, `pt3_tau_cuts`, `nstate`, `prior_width`, and
-`fit_strategy` candidates on sample-average data at LLM-supplied `tune_z_values`
-first. The tool returns cross-z feasibility summaries and
+tests the configured `pt2_windows`, `nstate`, `prior_width`, and `fit_strategy`
+candidates on sample-average data at LLM-supplied `tune_z_values`; 3pt/FH
+scopes additionally scan `pt3_tau_cuts`. The tool returns cross-z feasibility summaries and
 `recommended_robust_index`; the agent must pass explicit `tune_z_values` when
 calling `tune_bare_matrix`.
 
@@ -309,6 +334,14 @@ the missing $z_R$ points. No endpoint is frozen, and no explicit extension
 length or fit boundary is required. `scheme_parameters.z_coverage_policy: "strict"` can require
 complete coverage instead, while `intersection` explicitly keeps only the
 target/$z_R$ overlap.
+
+Targets with `coord_unit: "lattice"` are converted inside this scheme as
+$z_{\mathrm{fm}}=|z/a|a_{\mathrm{fm}}$; `fm` targets and legacy targets without
+the attribute are already physical coordinates. After conversion, `z=0` is
+excluded from coverage checks and from the evaluation of $z_R$ and
+$Z_{\overline{\mathrm{MS}}}$, then its already-normalized target samples are
+passed through unchanged and merged back into the output. Hybrid-self outputs
+therefore retain the complete coordinate grid, including $H^R(0)=1$, in fm.
 
 The scheme has no explicit $z_s$ switch: its hybrid character is the combination
 of full-range self-renormalization with short-distance MSbar finite matching.
@@ -550,7 +583,11 @@ The operator fields are free strings:
 
 Datasets use these paths and axis orders:
 
-- 2pt: `<source_operator>/<sink_operator>/<momentum>`, shape `(Lt, n_cfg)`.
+- ordinary 2pt: `<source_operator>/<sink_operator>/<momentum>`, shape `(Lt, n_cfg)`.
+- qDA 2pt: `<source_operator>/<sink_operator>/<momentum>/bT<bT>/bz<bz>`,
+  shape `(Lt, n_cfg)`; `bT` and `bz` come from correlator metadata rather than
+  being appended to either operator name. The reader also accepts the legacy
+  `<source>/<nonlocal_sink>_bT<bT>_bz<bz>/<momentum>` layout.
 - 3pt: `<source_operator>/<sink_operator>/<current_operator>/<momentum>/tsep<tsep>/bT<bT>/bz<bz>`,
   shape `(tsep + 1, n_cfg)`.
 
@@ -762,8 +799,10 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
   - Runnable P0/P5 correlator and hybrid-ratio renormalization manifest.
 - `examples/pion_pdf_gi_manifest.json`
   - Runnable P0/P4 GI pion PDF workflow.
-- `examples/pion_da_gi_manifest.json` and `examples/kaon_da_gi_manifest.json`
-  - Renormalization-only GI distribution-amplitude workflows; API run helpers live
+- `examples/pion_da_gi_manifest.json`
+  - Two-stage qDA correlator-analysis and hybrid-self-renormalization workflow.
+- `examples/kaon_da_gi_manifest.json`
+  - Renormalization-only GI distribution-amplitude workflow; API run helpers live
     under `runs/ds_pion_da_gi/` and `runs/ds_kaon_da_gi/`.
 - `examples/temp_self_renorm_manifest.json`
   - Renorm-only hybrid-self-renormalization smoke (PDF reference → DA mom=6 targets);

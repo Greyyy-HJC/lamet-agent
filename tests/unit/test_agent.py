@@ -32,6 +32,24 @@ def _demo_manifest() -> AnalysisManifest:
     )
 
 
+def test_correlator_sample0_plot_collection_includes_qda_artifacts() -> None:
+    result = {
+        "z_fits": [
+            {
+                "z": 2,
+                "sample0_plot_paths": {
+                    "qda_ratio_re_pdf": "fit_logs/qda_bz2_re.pdf",
+                    "qda_ratio_re_svg": "fit_logs/qda_bz2_re.svg",
+                },
+            }
+        ]
+    }
+    assert agent_module._correlator_sample0_plots(result) == [
+        "fit_logs/qda_bz2_re.pdf",
+        "fit_logs/qda_bz2_re.svg",
+    ]
+
+
 def test_run_agent_uses_manifest_stage_order(tmp_path: Path, monkeypatch) -> None:
     transcript = tmp_path / "actions.jsonl"
     transcript.write_text(
@@ -1018,12 +1036,12 @@ def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, mon
             "artifact": str(tmp_path / "ca_p4.nc"),
             "plot_pdf": str(tmp_path / "ca_p4.pdf"),
             "fit_strategy": "joint",
-            "fit_scope": "ratio+FH",
+            "fit_scope": "3pt_ratio+FH",
             "fit_mode": "bare_matrix",
             "fitting_form": "Breit",
             "model_average": False,
             "selection_rule": "best_Q",
-            "shared_window_specs": [{"fit_scope": "ratio", "fit_strategy": "joint", "nstate": 2}],
+            "shared_window_specs": [{"fit_scope": "3pt_ratio", "fit_strategy": "joint", "nstate": 2}],
             "tuning_log_path": str(tmp_path / "fit_logs" / "ca_p4_tuning.log"),
             "sample_log_path": str(tmp_path / "fit_logs" / "ca_p4_samples.log"),
             "z_values": [0, 1],

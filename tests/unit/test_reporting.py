@@ -62,7 +62,7 @@ def test_correlator_stage_report_shows_overlay_and_omits_dispersion_from_job_out
         jobs=[
             {
                 "job_id": "ca_p4",
-                "result": {"fit_scope": "ratio", "fit_strategy": "joint"},
+                "result": {"fit_scope": "3pt_ratio", "fit_strategy": "joint"},
                 "artifacts": {
                     "bare_artifact": "ca_p4.nc",
                     "summary_plot": "ca_p4.pdf",
@@ -86,6 +86,37 @@ def test_correlator_stage_report_shows_overlay_and_omits_dispersion_from_job_out
     assert text.index("ca_HISQa060_X_re.svg") < text.index("ca_HISQa060_X_im.svg")
     per_job = text.split("### fit_logs", 1)[1].split("### 诊断 SVG", 1)[0]
     assert "dispersion_relation" not in per_job
+
+
+def test_correlator_qda_report_uses_spectral_ratio_without_3pt_diagnostics(tmp_path: Path) -> None:
+    text = build_correlator_stage_report_markdown(
+        jobs=[
+            {
+                "job_id": "ca_qda",
+                "result": {"fit_scope": "qda_ratio", "fit_strategy": "chained"},
+                "artifacts": {
+                    "bare_artifact": "ca_qda.nc",
+                    "summary_plot": "ca_qda.pdf",
+                    "summary_plot_image": "ca_qda.svg",
+                    "sample0_fit_plots": [
+                        "fit_logs/qda_bz1_qda_ratio_re.pdf",
+                        "fit_logs/qda_bz1_qda_ratio_re.svg",
+                    ],
+                },
+            }
+        ],
+        base_dir=tmp_path,
+        language="en",
+    )
+    assert 'fit_scope="qda_ratio"' in text
+    assert "O_{00}^{(a)}/z_0" in text
+    assert "ordinary local-local 2pt input" in text
+    assert "O_{00}^{(a)}/z'_0" in text
+    assert "automatically normalized" in text
+    assert "bz=0" not in text
+    assert "analysis_mode" not in text
+    assert "### Diagnostic SVGs" in text
+    assert "fit_logs/qda_bz1_qda_ratio_re.svg" in text
 
 
 def test_renorm_stage_report_shows_overlay_after_method(tmp_path: Path) -> None:

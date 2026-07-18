@@ -50,6 +50,21 @@ def test_manifest_schema_uses_metadata_inputs_and_stage_jobs() -> None:
     assert manifest.stages["correlator_analysis"].jobs[0].id == "ca"
 
 
+def test_manifest_rejects_removed_correlator_analysis_mode() -> None:
+    payload = _payload()
+    payload["stages"]["correlator_analysis"]["defaults"]["analysis_mode"] = "2pt_ratio"
+    with pytest.raises(ValidationError, match="analysis_mode"):
+        AnalysisManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize("parameter", ["reference_z", "z_values"])
+def test_manifest_rejects_runner_owned_qda_grid_parameters(parameter: str) -> None:
+    payload = _payload()
+    payload["stages"]["correlator_analysis"]["defaults"][parameter] = 0
+    with pytest.raises(ValidationError, match=parameter):
+        AnalysisManifest.model_validate(payload)
+
+
 def test_manifest_accepts_positive_workers() -> None:
     payload = _payload()
     payload["metadata"]["workers"] = 4

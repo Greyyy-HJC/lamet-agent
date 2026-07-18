@@ -215,6 +215,36 @@ def _target_z_mask(
     return covered
 
 
+def _self_renorm_target_coordinates(
+    target_data: EnsembleData,
+    *,
+    lattice_spacing_fm: float,
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """Return target coordinates in fm and the nonzero mask for hybrid self renorm."""
+    z_input = np.asarray(target_data.coords["z"], dtype=float)
+    raw_unit = target_data.attrs.get("coord_unit")
+    input_unit = "fm" if raw_unit in {None, ""} else str(raw_unit).lower()
+    if input_unit == "lattice":
+        if not np.isfinite(lattice_spacing_fm) or lattice_spacing_fm <= 0.0:
+            raise ValueError(
+                "hybrid self-renormalization requires positive lattice_spacing_fm "
+                "when target coord_unit='lattice'"
+            )
+        z_fm = np.abs(z_input) * float(lattice_spacing_fm)
+    elif input_unit == "fm":
+        z_fm = z_input.copy()
+    else:
+        raise ValueError(
+            "hybrid self-renormalization target coord_unit must be 'lattice' or 'fm'"
+        )
+    nonzero = ~np.isclose(z_fm, 0.0, rtol=0.0, atol=1e-10)
+    if not np.any(nonzero):
+        raise ValueError(
+            "hybrid self-renormalization target has no nonzero z points after unit conversion"
+        )
+    return z_fm, nonzero, input_unit
+
+
 def _match_lattice_spacing(a_coords: list[float], lattice_spacing_fm: float) -> int:
     matches = np.flatnonzero(
         np.isclose(np.asarray(a_coords, dtype=float), float(lattice_spacing_fm), rtol=0.0, atol=1e-10)
@@ -968,11 +998,7 @@ def apply_self_renormalization(
     resolved_kernel_id, zms_fn = _resolve_zmsbar(kernel_id or zR_data.attrs.get("kernel_id"))
     alpha_s_derived = float(kernels.alphas_nloop(mu))
 
-    z_target_input = np.asarray(target_data.coords["z"], dtype=float)
     z_zr = np.asarray(zR_data.coords["z"], dtype=float)
-    target_mask = _target_z_mask(z_target_input, z_zr, policy=z_coverage_policy)
-    z_target = z_target_input[target_mask]
-    n_z_dropped = int(len(z_target_input) - len(z_target))
     a_coords = list(zR_data.coords.get("a", [zR_data.ensemble.a_s]))
     metadata_fields = {
         "ensemble",
@@ -1005,6 +1031,21 @@ def apply_self_renormalization(
     )
     ia = _match_lattice_spacing([float(a) for a in a_coords], lattice_spacing_fm)
     a_used = float(a_coords[ia])
+    z_target_input, nonzero_mask, input_coord_unit = _self_renorm_target_coordinates(
+        target_data, lattice_spacing_fm=lattice_spacing_fm
+    )
+    nonzero_indices = np.flatnonzero(nonzero_mask)
+    coverage_mask = _target_z_mask(
+        z_target_input[nonzero_mask], z_zr, policy=z_coverage_policy
+    )
+    target_indices = nonzero_indices[coverage_mask]
+    z_target = z_target_input[target_indices]
+    zero_indices = np.flatnonzero(~nonzero_mask)
+    output_indices = np.sort(np.concatenate((zero_indices, target_indices)))
+    z_output = z_target_input[output_indices]
+    n_z_zero_passthrough = int(len(zero_indices))
+    n_z_coverage_dropped = int(len(nonzero_indices) - len(target_indices))
+    n_z_dropped = n_z_coverage_dropped
 
     # Mean zR on the fit grid (zR is bootstrap EnsembleData on (a,z) or (z)).
     zr_arr = np.asarray(zR_data.values)
@@ -1104,8 +1145,22 @@ def apply_self_renormalization(
         }
 
     zms = np.asarray(zms_fn(z_target, mu=mu), dtype=float)
-    target_values = np.asarray(target_data.values, dtype=complex)[:, target_mask]
-    renorm_values = target_values / (zr_on_target[None, :] * zms[None, :])
+    all_target_values = np.asarray(target_data.values, dtype=complex)
+    target_values = all_target_values[:, target_indices]
+    renorm_nonzero = target_values / (zr_on_target[None, :] * zms[None, :])
+    renorm_by_index = {
+        int(input_index): renorm_nonzero[:, position]
+        for position, input_index in enumerate(target_indices)
+    }
+    renorm_values = np.stack(
+        [
+            all_target_values[:, input_index]
+            if not nonzero_mask[input_index]
+            else renorm_by_index[int(input_index)]
+            for input_index in output_indices
+        ],
+        axis=1,
+    )
     attrs = {
         **target_data.attrs,
         "scheme": "hybrid_self_renormalization",
@@ -1121,12 +1176,17 @@ def apply_self_renormalization(
         "job_id": job_id,
         "sample_error_mode": sample_error_mode,
         "average_method": sample_error_mode,
+        "coord_unit": "fm",
+        "input_coord_unit": input_coord_unit,
         "z_coverage_policy": z_coverage_policy,
         "z_input_min_fm": str(float(np.min(z_target_input))),
         "z_input_max_fm": str(float(np.max(z_target_input))),
-        "z_output_min_fm": str(float(np.min(z_target))),
-        "z_output_max_fm": str(float(np.max(z_target))),
+        "z_output_min_fm": str(float(np.min(z_output))),
+        "z_output_max_fm": str(float(np.max(z_output))),
         "n_z_dropped": str(n_z_dropped),
+        "n_z_zero_passthrough": str(n_z_zero_passthrough),
+        "n_z_coverage_dropped": str(n_z_coverage_dropped),
+        "z0_treatment": "passthrough_without_self_renormalization",
         "n_z_extrapolated": str(extrapolation["n_z_extrapolated"]),
         "z_extrapolation_method": str(extrapolation["z_extrapolation_method"]),
         "f1_tail_zmin_fm": (
@@ -1140,7 +1200,7 @@ def apply_self_renormalization(
         attrs["d_from"] = str(d_from)
         attrs["m0_from"] = str(m0_from)
     result = _matrix_to_ensemble(
-        z_values=z_target,
+        z_values=z_output,
         samples=renorm_values,
         resample=target_data.resample,
         attrs=attrs,
@@ -1150,7 +1210,7 @@ def apply_self_renormalization(
     store["matrix_element_data"] = result
     store["output"] = result
     store["matrix_element"] = {
-        "coord": z_target,
+        "coord": z_output,
         "re_samples": np.real(renorm_values),
         "im_samples": np.imag(renorm_values),
         "scheme": "hybrid_self_renormalization",
@@ -1174,15 +1234,18 @@ def apply_self_renormalization(
         "d": d_to,
         **{key: value for key, value in metadata_out.items() if key != "lattice_spacing_fm"},
         "remapped": bool(remap),
-        "n_z": int(len(z_target)),
+        "n_z": int(len(z_output)),
         "n_sample": int(renorm_values.shape[0]),
         "lattice_spacing_fm": lattice_spacing_fm,
         "z_coverage_policy": z_coverage_policy,
         "n_z_input": int(len(z_target_input)),
         "n_z_dropped": n_z_dropped,
+        "n_z_zero_passthrough": n_z_zero_passthrough,
+        "n_z_coverage_dropped": n_z_coverage_dropped,
+        "input_coord_unit": input_coord_unit,
         **extrapolation,
         "z_input_range_fm": [float(np.min(z_target_input)), float(np.max(z_target_input))],
-        "z_output_range_fm": [float(np.min(z_target)), float(np.max(z_target))],
+        "z_output_range_fm": [float(np.min(z_output)), float(np.max(z_output))],
         "zR_input_range_fm": [float(np.min(z_zr)), float(np.max(z_zr))],
     }
 
@@ -1343,7 +1406,6 @@ def plot_self_renormalization_diagnostics(
 
     # apply mode
     target_data = _require_matrix_data(store, target)
-    z_target_input = np.asarray(target_data.coords["z"], dtype=float)
     a_coords = list(zR_data.coords.get("a", [zR_data.ensemble.a_s]))
     lattice_spacing_fm = float(target_data.attrs.get("lattice_spacing_fm", a_coords[0]))
     ia = _match_lattice_spacing([float(a) for a in a_coords], lattice_spacing_fm)
@@ -1355,8 +1417,15 @@ def plot_self_renormalization_diagnostics(
     else:
         raise ValueError(f"store[{zR!r}] values must be shaped (resample,a,z) or (resample,z)")
     z_zr = np.asarray(zR_data.coords["z"], dtype=float)
-    target_mask = _target_z_mask(z_target_input, z_zr, policy=z_coverage_policy)
-    z_target = z_target_input[target_mask]
+    z_target_input, nonzero_mask, input_coord_unit = _self_renorm_target_coordinates(
+        target_data, lattice_spacing_fm=lattice_spacing_fm
+    )
+    nonzero_indices = np.flatnonzero(nonzero_mask)
+    coverage_mask = _target_z_mask(
+        z_target_input[nonzero_mask], z_zr, policy=z_coverage_policy
+    )
+    target_indices = nonzero_indices[coverage_mask]
+    z_target = z_target_input[target_indices]
     if z_coverage_policy == "extrapolate":
         zr_on_target, extrapolation = _extrapolate_zr_long_distance(
             z_target,
@@ -1380,7 +1449,7 @@ def plot_self_renormalization_diagnostics(
             "f1_tail_zmin_fm": None,
         }
     zms_target = np.asarray(zms_fn(z_target, mu=mu_val), dtype=float)
-    target_values = np.asarray(target_data.values, dtype=complex)[:, target_mask]
+    target_values = np.asarray(target_data.values, dtype=complex)[:, target_indices]
     mode_rs = _resample_mode(target_data)
     h_over_zr = target_values / zr_on_target[None, :]
     re_hzr, re_hzr_err = sample_mean_and_sdev(np.real(h_over_zr), mode=mode_rs, sample_error_mode=sample_error_mode, axis=0)
@@ -1464,7 +1533,10 @@ def plot_self_renormalization_diagnostics(
         "lattice_spacing_fm": lattice_spacing_fm,
         "include_discrete_effect": bool(include_discrete_effect),
         "z_coverage_policy": z_coverage_policy,
-        "n_z_dropped": int(len(z_target_input) - len(z_target)),
+        "n_z_dropped": int(len(nonzero_indices) - len(target_indices)),
+        "n_z_zero_skipped": int(np.count_nonzero(~nonzero_mask)),
+        "n_z_coverage_dropped": int(len(nonzero_indices) - len(target_indices)),
+        "input_coord_unit": input_coord_unit,
         **extrapolation,
     }
 

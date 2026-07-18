@@ -5,17 +5,68 @@
     "artifacts_directory": "runs/ds_pion_da_gi/artifacts",
     "target_observable": "da",
     "parton": "quark",
-    "resample_mode": "bs",
+    "resample_mode": "jk",
     "sample_error_mode": "covariance",
     "bs_samples": 600,
     "bin_size": 1,
     "random_seed": 1984,
+    "workers": 8,
     "stages": [
+      "correlator_analysis",
       "renormalization"
     ]
   },
   "inputs": {
-    "correlators": [],
+    "correlators": [
+      {
+        "correlator_id": "qda_a06m130_2pt",
+        "correlator_type": "2pt",
+        "data_path": "data_pion_da_gi/correlators/a06m130/2pt/a06m130_pion_2pt.h5",
+        "ensemble": "a06m130",
+        "hadron": "pion",
+        "gfix": "GI",
+        "source_operator": "g5",
+        "sink_operator": "gT5_nonlocal",
+        "bz_direction": "Z",
+        "bT": [0],
+        "bz": [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
+        "volume": "S96T96",
+        "lattice_spacing_fm": 0.0574,
+        "momentum": ["PX0PY0PZ6", "PX0PY0PZ8", "PX0PY0PZ10"]
+      },
+      {
+        "correlator_id": "qda_a09m130_2pt",
+        "correlator_type": "2pt",
+        "data_path": "data_pion_da_gi/correlators/a09m130/2pt/a09m130_pion_2pt.h5",
+        "ensemble": "a09m130",
+        "hadron": "pion",
+        "gfix": "GI",
+        "source_operator": "g5",
+        "sink_operator": "gT5_nonlocal",
+        "bz_direction": "Z",
+        "bT": [0],
+        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+        "volume": "S64T64",
+        "lattice_spacing_fm": 0.0882,
+        "momentum": ["PX0PY0PZ6", "PX0PY0PZ8", "PX0PY0PZ10"]
+      },
+      {
+        "correlator_id": "qda_a12m130_2pt",
+        "correlator_type": "2pt",
+        "data_path": "data_pion_da_gi/correlators/a12m130/2pt/a12m130_pion_2pt.h5",
+        "ensemble": "a12m130",
+        "hadron": "pion",
+        "gfix": "GI",
+        "source_operator": "g5",
+        "sink_operator": "gT5_nonlocal",
+        "bz_direction": "Z",
+        "bT": [0],
+        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "volume": "S48T48",
+        "lattice_spacing_fm": 0.1213,
+        "momentum": ["PX0PY0PZ6", "PX0PY0PZ8", "PX0PY0PZ10"]
+      }
+    ],
     "artifacts": [
       {
         "id": "pion_zero_momentum_reference",
@@ -23,51 +74,6 @@
         "path": "data_pion_da_gi/correlators/self_renormalization/pion_zero_momentum_reference.nc",
         "hadron": "pion",
         "gfix": "CG"
-      },
-      {
-        "id": "bare_a06m130_pz6",
-        "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/bare_matrix_elements/netcdf/pion_DA_a06m130_PX0PY0PZ6_bare.nc"
-      },
-      {
-        "id": "bare_a09m130_pz6",
-        "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/bare_matrix_elements/netcdf/pion_DA_a09m130_PX0PY0PZ6_bare.nc"
-      },
-      {
-        "id": "bare_a12m130_pz6",
-        "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/bare_matrix_elements/netcdf/pion_DA_a12m130_PX0PY0PZ6_bare.nc"
-      },
-      {
-        "id": "bare_a06m130_pz8",
-        "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/bare_matrix_elements/netcdf/pion_DA_a06m130_PX0PY0PZ8_bare.nc"
-      },
-      {
-        "id": "bare_a09m130_pz8",
-        "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/bare_matrix_elements/netcdf/pion_DA_a09m130_PX0PY0PZ8_bare.nc"
-      },
-      {
-        "id": "bare_a12m130_pz8",
-        "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/bare_matrix_elements/netcdf/pion_DA_a12m130_PX0PY0PZ8_bare.nc"
-      },
-      {
-        "id": "bare_a06m130_pz10",
-        "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/bare_matrix_elements/netcdf/pion_DA_a06m130_PX0PY0PZ10_bare.nc"
-      },
-      {
-        "id": "bare_a09m130_pz10",
-        "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/bare_matrix_elements/netcdf/pion_DA_a09m130_PX0PY0PZ10_bare.nc"
-      },
-      {
-        "id": "bare_a12m130_pz10",
-        "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/bare_matrix_elements/netcdf/pion_DA_a12m130_PX0PY0PZ10_bare.nc"
       }
     ],
     "kernels": [
@@ -83,6 +89,95 @@
     ]
   },
   "stages": {
+    "correlator_analysis": {
+      "defaults": {
+        "nstate": [2],
+        "fit_scope": ["qda_ratio"],
+        "fit_strategy": ["joint"],
+        "svdcut": 1e-06,
+        "posterior_prior_error_scale": 3.0,
+        "prior_width": [0.5, 1.0, 2.0],
+        "fitting_form": "Breit",
+        "component": "both",
+        "q_min": 0.05,
+        "model_average": false,
+        "correlator_rescale": 1.0
+      },
+      "jobs": [
+        {
+          "id": "ca_a06m130_pz6",
+          "correlator_ids": ["qda_a06m130_2pt"],
+          "params": {
+            "momentum": "PX0PY0PZ6",
+            "pt2_windows": [{"tmin": 8, "tmax": 18}, {"tmin": 9, "tmax": 18}, {"tmin": 10, "tmax": 18}]
+          }
+        },
+        {
+          "id": "ca_a09m130_pz6",
+          "correlator_ids": ["qda_a09m130_2pt"],
+          "params": {
+            "momentum": "PX0PY0PZ6",
+            "pt2_windows": [{"tmin": 5, "tmax": 14}, {"tmin": 6, "tmax": 14}, {"tmin": 7, "tmax": 14}]
+          }
+        },
+        {
+          "id": "ca_a12m130_pz6",
+          "correlator_ids": ["qda_a12m130_2pt"],
+          "params": {
+            "momentum": "PX0PY0PZ6",
+            "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}]
+          }
+        },
+        {
+          "id": "ca_a06m130_pz8",
+          "correlator_ids": ["qda_a06m130_2pt"],
+          "params": {
+            "momentum": "PX0PY0PZ8",
+            "pt2_windows": [{"tmin": 5, "tmax": 14}, {"tmin": 6, "tmax": 14}, {"tmin": 7, "tmax": 14}]
+          }
+        },
+        {
+          "id": "ca_a09m130_pz8",
+          "correlator_ids": ["qda_a09m130_2pt"],
+          "params": {
+            "momentum": "PX0PY0PZ8",
+            "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}]
+          }
+        },
+        {
+          "id": "ca_a12m130_pz8",
+          "correlator_ids": ["qda_a12m130_2pt"],
+          "params": {
+            "momentum": "PX0PY0PZ8",
+            "pt2_windows": [{"tmin": 2, "tmax": 10}, {"tmin": 3, "tmax": 10}, {"tmin": 4, "tmax": 10}]
+          }
+        },
+        {
+          "id": "ca_a06m130_pz10",
+          "correlator_ids": ["qda_a06m130_2pt"],
+          "params": {
+            "momentum": "PX0PY0PZ10",
+            "pt2_windows": [{"tmin": 4, "tmax": 13}, {"tmin": 5, "tmax": 13}, {"tmin": 6, "tmax": 13}]
+          }
+        },
+        {
+          "id": "ca_a09m130_pz10",
+          "correlator_ids": ["qda_a09m130_2pt"],
+          "params": {
+            "momentum": "PX0PY0PZ10",
+            "pt2_windows": [{"tmin": 2, "tmax": 11}, {"tmin": 3, "tmax": 11}, {"tmin": 4, "tmax": 11}]
+          }
+        },
+        {
+          "id": "ca_a12m130_pz10",
+          "correlator_ids": ["qda_a12m130_2pt"],
+          "params": {
+            "momentum": "PX0PY0PZ10",
+            "pt2_windows": [{"tmin": 1, "tmax": 9}, {"tmin": 2, "tmax": 9}, {"tmin": 3, "tmax": 9}]
+          }
+        }
+      ]
+    },
     "renormalization": {
       "defaults": {
         "normalization": false,
@@ -95,131 +190,53 @@
       "jobs": [
         {
           "id": "rn_zr_fit",
-          "inputs": {
-            "reference": "pion_zero_momentum_reference"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": -0.08183
-            }
-          }
+          "inputs": {"reference": "pion_zero_momentum_reference"},
+          "params": {"scheme_parameters": {"d": -0.08183}}
         },
         {
           "id": "rn_a06m130_pz6",
-          "inputs": {
-            "target": "bare_a06m130_pz6",
-            "zR": "rn_zr_fit"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
-          }
+          "inputs": {"target": "ca_a06m130_pz6", "zR": "rn_zr_fit"},
+          "params": {"scheme_parameters": {"d": 0.19, "m0_gev": -0.094}}
         },
         {
           "id": "rn_a09m130_pz6",
-          "inputs": {
-            "target": "bare_a09m130_pz6",
-            "zR": "rn_zr_fit"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
-          }
+          "inputs": {"target": "ca_a09m130_pz6", "zR": "rn_zr_fit"},
+          "params": {"scheme_parameters": {"d": 0.19, "m0_gev": -0.094}}
         },
         {
           "id": "rn_a12m130_pz6",
-          "inputs": {
-            "target": "bare_a12m130_pz6",
-            "zR": "rn_zr_fit"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
-          }
+          "inputs": {"target": "ca_a12m130_pz6", "zR": "rn_zr_fit"},
+          "params": {"scheme_parameters": {"d": 0.19, "m0_gev": -0.094}}
         },
         {
           "id": "rn_a06m130_pz8",
-          "inputs": {
-            "target": "bare_a06m130_pz8",
-            "zR": "rn_zr_fit"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
-          }
+          "inputs": {"target": "ca_a06m130_pz8", "zR": "rn_zr_fit"},
+          "params": {"scheme_parameters": {"d": 0.19, "m0_gev": -0.094}}
         },
         {
           "id": "rn_a09m130_pz8",
-          "inputs": {
-            "target": "bare_a09m130_pz8",
-            "zR": "rn_zr_fit"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
-          }
+          "inputs": {"target": "ca_a09m130_pz8", "zR": "rn_zr_fit"},
+          "params": {"scheme_parameters": {"d": 0.19, "m0_gev": -0.094}}
         },
         {
           "id": "rn_a12m130_pz8",
-          "inputs": {
-            "target": "bare_a12m130_pz8",
-            "zR": "rn_zr_fit"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
-          }
+          "inputs": {"target": "ca_a12m130_pz8", "zR": "rn_zr_fit"},
+          "params": {"scheme_parameters": {"d": 0.19, "m0_gev": -0.094}}
         },
         {
           "id": "rn_a06m130_pz10",
-          "inputs": {
-            "target": "bare_a06m130_pz10",
-            "zR": "rn_zr_fit"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
-          }
+          "inputs": {"target": "ca_a06m130_pz10", "zR": "rn_zr_fit"},
+          "params": {"scheme_parameters": {"d": 0.19, "m0_gev": -0.094}}
         },
         {
           "id": "rn_a09m130_pz10",
-          "inputs": {
-            "target": "bare_a09m130_pz10",
-            "zR": "rn_zr_fit"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
-          }
+          "inputs": {"target": "ca_a09m130_pz10", "zR": "rn_zr_fit"},
+          "params": {"scheme_parameters": {"d": 0.19, "m0_gev": -0.094}}
         },
         {
           "id": "rn_a12m130_pz10",
-          "inputs": {
-            "target": "bare_a12m130_pz10",
-            "zR": "rn_zr_fit"
-          },
-          "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
-          }
+          "inputs": {"target": "ca_a12m130_pz10", "zR": "rn_zr_fit"},
+          "params": {"scheme_parameters": {"d": 0.19, "m0_gev": -0.094}}
         }
       ]
     }

@@ -37,6 +37,7 @@ CORRELATOR_ARTIFACT_ORDER = (
 
 
 def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
+    z_grid = result.get("bz", result.get("z_values", []))
     if language == "zh":
         rows = [
             ("拟合形式", f"`{result.get('fitting_form', 'not recorded')}`"),
@@ -46,7 +47,7 @@ def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
             ("Model average", f"`{result.get('model_average', 'not recorded')}`"),
             ("选择规则", f"`{result.get('selection_rule', 'not recorded')}`"),
             ("重采样", f"`{result.get('resample_mode', 'not recorded')}`，共 {result.get('n_samples', 'n/a')} 个样本"),
-            ("z 网格", format_report_list(result.get("z_values", []))),
+            ("z 网格", format_report_list(z_grid)),
             ("调参 z", format_report_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
             ("correlator_rescale", format_report_value(result.get("correlator_rescale"))),
         ]
@@ -60,7 +61,7 @@ def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
             ("Model average", f"`{result.get('model_average', 'not recorded')}`"),
             ("Selection rule", f"`{result.get('selection_rule', 'not recorded')}`"),
             ("Resampling", f"`{result.get('resample_mode', 'not recorded')}` with {result.get('n_samples', 'n/a')} samples"),
-            ("z grid", format_report_list(result.get("z_values", []))),
+            ("z grid", format_report_list(z_grid)),
             ("Tuning z values", format_report_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
             ("correlator_rescale", format_report_value(result.get("correlator_rescale"))),
         ]
@@ -143,43 +144,43 @@ def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
     return lines
 
 
-def _fit_form_text(*, language: str, has_2pt_ratio: bool = False, has_3pt_ratio: bool = True) -> str:
-    if has_2pt_ratio:
+def _fit_form_text(*, language: str, has_qda_ratio: bool = False, has_3pt_ratio: bool = True) -> str:
+    if has_qda_ratio:
         if language == "zh":
             text = r"""
-`analysis_mode="2pt_ratio"` 使用 arXiv:2201.09173 Eq. (2) 的非局域 2pt 比值拟合。对每个 Wilson 线长度 $z$，本阶段先用同一批重采样样本构造
+`fit_scope="qda_ratio"` 使用同一批重采样样本构造非局域 qDA 两点函数与所选两点函数分母的比值
 
 $$
-R_m(z,P,t)=\frac{C_2^m(z,P,t)}{C_2^m(0,P,t)} ,
+R_{\rm qDA}^{(a)}(z,P,t)=\frac{C_{\rm qDA}^{(a)}(z,P,t)}{C_2(P,t)} .
 $$
 
-再在选定的 2pt 时间窗口内拟合
+分子和分母使用共享能谱参数的多态谱分解：
 
 $$
-R_m(z,P,t)=H_B^m(z)
-\frac{1+c_m(z)e^{-\Delta E t}}
-{1+c_m(0)e^{-\Delta E t}} .
+C_{\rm qDA}^{(a)}(t)=\sum_n\frac{z_n O_{0n}^{(a)}}{2E_n}
+\left[e^{-E_nt}+e^{-E_n(L_t-t)}\right],\qquad
+C_2(t)=\sum_n\frac{z_n z'_n}{2E_n}\left[e^{-E_nt}+e^{-E_n(L_t-t)}\right].
 $$
 
-输出到 NetCDF 的裸矩阵元是 $H_B^m(z)$。该模式没有 3pt、$t_{\rm sep}$、$\tau$ 或 current insertion；`reference_z` 默认为 0。
+当 job 提供普通 local-local 2pt 时取 $z'_n=z_n$，输出 $O_{00}^{(a)}/z_0$。缺省普通 2pt 时，分母使用同一 qDA operator 的 $b_z=0$ 数据，$z'_n$ 是非局域 sink overlap，输出 $O_{00}^{(a)}/z'_0$；此时 $z=0$ ratio 由相同 numerator/denominator 自动归一。该 scope 没有 3pt、$t_{\rm sep}$、$\tau$ 或 current insertion。
 """.strip()
         else:
             text = r"""
-`analysis_mode="2pt_ratio"` uses the nonlocal two-point ratio fit of arXiv:2201.09173 Eq. (2). For each Wilson-line length $z$, the stage first builds
+`fit_scope="qda_ratio"` builds the ratio of a nonlocal qDA two-point correlator to the selected two-point denominator from shared resamples,
 
 $$
-R_m(z,P,t)=\frac{C_2^m(z,P,t)}{C_2^m(0,P,t)}
+R_{\rm qDA}^{(a)}(z,P,t)=\frac{C_{\rm qDA}^{(a)}(z,P,t)}{C_2(P,t)}.
 $$
 
-from the same resampled ensemble and fits
+The numerator and denominator use a shared multi-state spectrum,
 
 $$
-R_m(z,P,t)=H_B^m(z)
-\frac{1+c_m(z)e^{-\Delta E t}}
-{1+c_m(0)e^{-\Delta E t}}
+C_{\rm qDA}^{(a)}(t)=\sum_n\frac{z_n O_{0n}^{(a)}}{2E_n}
+\left[e^{-E_nt}+e^{-E_n(L_t-t)}\right],\qquad
+C_2(t)=\sum_n\frac{z_n z'_n}{2E_n}\left[e^{-E_nt}+e^{-E_n(L_t-t)}\right].
 $$
 
-in the selected 2pt time window. The bare matrix element written to NetCDF is $H_B^m(z)$. This mode has no 3pt correlator, $t_{\rm sep}$, $\tau$, or current insertion; `reference_z` defaults to 0.
+With an ordinary local-local 2pt input, $z'_n=z_n$ and the output is $O_{00}^{(a)}/z_0$. When that input is omitted, the same qDA operator at $b_z=0$ supplies the denominator, $z'_n$ is the nonlocal sink overlap, and the output is $O_{00}^{(a)}/z'_0$; the $z=0$ ratio is then automatically normalized by identical numerator and denominator data. This scope has no 3pt correlator, $t_{\rm sep}$, $\tau$, or current insertion.
 """.strip()
         return text + ("\n\n" + _fit_form_text(language=language) if has_3pt_ratio else "")
     if language == "zh":
@@ -225,7 +226,7 @@ $$
 
 该形式输入 initial 2pt、final 2pt 以及 non-forward 3pt；拟合参数包括两套 2pt 谱参数和每个 $z$ 的 transition matrix elements $O_{mn}(z)$。报告中 NonBreit 总览图的裸矩阵元对应 $O_{00}/(E_{0,i}+E_{0,f})$，并带有基态重叠符号约定。
 
-若 `fit_scope` 包含 `FH` 或 `ratio+FH`，还会从 ratio 构造 summed-ratio/Feynman-Hellmann 约束：
+若 `fit_scope` 为 `FH` 或 `3pt_ratio+FH`，还会从 ratio 构造 summed-ratio/Feynman-Hellmann 约束：
 
 $$
 S(t)=\sum_{\tau=\tau_c}^{t-\tau_c}R(t,\tau),
@@ -233,7 +234,7 @@ S(t)=\sum_{\tau=\tau_c}^{t-\tau_c}R(t,\tau),
 R_{\rm FH}(t)=\frac{S(t+\Delta t)-S(t)}{\Delta t}.
 $$
 
-`fit_strategy="joint"` 表示 2pt 与 3pt/FH 在同一个非线性拟合中共同约束，相关参数同时浮动。`fit_strategy="chained"` 表示先拟合 2pt 并把得到的能量与重叠因子作为后续 3pt/FH 拟合的锚定先验；Breit chained 主要锚定单套 $E_0,z_0$，NonBreit chained 锚定 initial/final 两套基态和激发态相关参数。`fit_scope="ratio"` 只用 ratio 数据，`fit_scope="FH"` 只用 summed-ratio/FH 数据，`fit_scope="ratio+FH"` 同时使用两类约束。
+`fit_strategy="joint"` 表示 2pt 与 3pt/FH 在同一个非线性拟合中共同约束，相关参数同时浮动。`fit_strategy="chained"` 表示先拟合 2pt 并把得到的能量与重叠因子作为后续 3pt/FH 拟合的锚定先验。`fit_scope="3pt_ratio"` 只用 3pt ratio 数据，`fit_scope="FH"` 只用 summed-ratio/FH 数据，`fit_scope="3pt_ratio+FH"` 同时使用两类约束。
 """.strip()
     return r"""
 lamet-agent builds 2pt/3pt data from the same resampled ensemble and extracts bare matrix elements in the selected time windows. The 2pt input is $C_2(t)$ for the chosen momentum and interpolator; the 3pt input is $C_3(t_{\rm sep},\tau,z)$ for each source-sink separation, insertion time, and Wilson-line length. For each job, tuning first fixes the window, state count, `fit_scope`, and `fit_strategy` on sample-average data; those choices are then held fixed for all $z$ and all resampled samples.
@@ -277,7 +278,7 @@ $$
 
 The inputs are initial 2pt, final 2pt, and non-forward 3pt data. The fit parameters include both 2pt spectra and the transition matrix elements $O_{mn}(z)$. The reported NonBreit summary uses $O_{00}/(E_{0,i}+E_{0,f})$ with the ground-state overlap sign convention.
 
-When `fit_scope` contains `FH` or `ratio+FH`, a summed-ratio/Feynman-Hellmann constraint is also formed:
+When `fit_scope` is `FH` or `3pt_ratio+FH`, a summed-ratio/Feynman-Hellmann constraint is also formed:
 
 $$
 S(t)=\sum_{\tau=\tau_c}^{t-\tau_c}R(t,\tau),
@@ -285,7 +286,7 @@ S(t)=\sum_{\tau=\tau_c}^{t-\tau_c}R(t,\tau),
 R_{\rm FH}(t)=\frac{S(t+\Delta t)-S(t)}{\Delta t}.
 $$
 
-`fit_strategy="joint"` fits 2pt and 3pt/FH constraints in one nonlinear fit with shared floating parameters. `fit_strategy="chained"` fits the 2pt data first and uses the resulting energies and overlaps as anchored priors for the following 3pt/FH fit. `fit_scope="ratio"` uses only ratio data, `fit_scope="FH"` uses only summed-ratio/FH data, and `fit_scope="ratio+FH"` uses both.
+`fit_strategy="joint"` fits 2pt and 3pt/FH constraints in one nonlinear fit with shared floating parameters. `fit_strategy="chained"` fits the 2pt data first and uses the resulting energies and overlaps as anchored priors for the following 3pt/FH fit. `fit_scope="3pt_ratio"` uses only 3pt-ratio data, `fit_scope="FH"` uses only summed-ratio/FH data, and `fit_scope="3pt_ratio+FH"` uses both.
 """.strip()
 
 
@@ -312,14 +313,14 @@ def build_correlator_stage_report_markdown(
 ) -> str:
     """Build one Markdown report for all correlator-analysis jobs."""
     title = "# Correlator Analysis Stage Report" if language == "en" else "# Correlator Analysis 阶段报告"
-    all_2pt_ratio = bool(jobs) and all((item.get("result", {}).get("analysis_mode") == "2pt_ratio") for item in jobs)
-    has_2pt_ratio = any((item.get("result", {}).get("analysis_mode") == "2pt_ratio") for item in jobs)
-    has_3pt_ratio = any((item.get("result", {}).get("analysis_mode") != "2pt_ratio") for item in jobs)
+    all_qda_ratio = bool(jobs) and all((item.get("result", {}).get("fit_scope") == "qda_ratio") for item in jobs)
+    has_qda_ratio = any((item.get("result", {}).get("fit_scope") == "qda_ratio") for item in jobs)
+    has_3pt_ratio = any((item.get("result", {}).get("fit_scope") != "qda_ratio") for item in jobs)
     intro = (
         "This report summarizes correlator fits that extract bare matrix elements from 2pt correlators."
-        if all_2pt_ratio and language == "en"
+        if all_qda_ratio and language == "en"
         else "本报告汇总从 2pt 关联函数中提取裸矩阵元的拟合结果。"
-        if all_2pt_ratio
+        if all_qda_ratio
         else "This report summarizes correlator fits that extract bare matrix elements from 2pt/3pt data."
         if language == "en"
         else "本报告汇总从 2pt/3pt 关联函数中提取裸矩阵元的拟合结果。"
@@ -330,7 +331,7 @@ def build_correlator_stage_report_markdown(
         intro,
         "",
         "## Fitting Form" if language == "en" else "## 拟合形式",
-        _fit_form_text(language=language, has_2pt_ratio=has_2pt_ratio, has_3pt_ratio=has_3pt_ratio),
+        _fit_form_text(language=language, has_qda_ratio=has_qda_ratio, has_3pt_ratio=has_3pt_ratio),
         "",
         "## Job Summary" if language == "en" else "## Job 汇总",
         "| job | fit scope | strategy | output | plot |" if language == "en" else "| job | 拟合对象 | 策略 | 输出 | 图像 |",
@@ -413,14 +414,13 @@ def build_correlator_stage_report_markdown(
                 *_outputs_table(artifacts, language=language),
             ]
         )
-        if result.get("analysis_mode") != "2pt_ratio":
-            lines.extend(
-                [
-                    "",
-                    "### Diagnostic SVGs" if language == "en" else "### 诊断 SVG",
-                    *_diagnostic_plots(artifacts, language=language),
-                ]
-            )
+        lines.extend(
+            [
+                "",
+                "### Diagnostic SVGs" if language == "en" else "### 诊断 SVG",
+                *_diagnostic_plots(artifacts, language=language),
+            ]
+        )
         lines.extend(
             [
                 "",

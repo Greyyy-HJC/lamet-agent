@@ -128,7 +128,7 @@
         //   { "tsep_ls": [10, 12], "tau_cut": 3 }
         // ],
         "nstate": [2], // positive state counts to scan; FH currently supports nstate <= 2
-        "fit_scope": ["ratio"], // any of "ratio", "FH", "ratio+FH"; FH needs >=2 tsep and Breit form
+        "fit_scope": ["3pt_ratio"], // "3pt_ratio", "FH", "3pt_ratio+FH", or "qda_ratio"; qda_ratio uses ordinary and nonlocal-qDA 2pt inputs
         "fit_strategy": ["joint"], // "joint" fits 2pt+3pt together; "chained" fits 2pt first
         "svdcut": 1e-06, // covariance SVD cutoff used by nonlinear fits
         "posterior_prior_error_scale": 3.0, // posterior/prior tension gate

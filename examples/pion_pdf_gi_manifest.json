@@ -64,7 +64,7 @@
         "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}],
         "pt3_tau_cuts": [3, 4],
         "nstate": [2],
-        "fit_scope": ["ratio"],
+        "fit_scope": ["3pt_ratio"],
         "fit_strategy": ["joint"],
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 3.0,

@@ -1,12 +1,13 @@
 """Correlator-analysis stage tools.
 
 Purpose:
-- provide a small, agentic tool set for 2pt ground-state and 3pt/2pt ratio analysis
+- provide one agentic tool set for 2pt ground-state, 3pt/FH, and qDA-ratio analysis
 - the agent drives strategy: inspect the 2pt scale, tune one shared fit setting on
   sample-average data, then apply that setting to every bootstrap/jackknife sample
 
 Expected inputs:
-- 2pt HDF5: ``source_operator/sink_operator/momentum`` with shape (Lt, n_cfg)
+- local 2pt HDF5: ``source_operator/sink_operator/momentum`` with shape (Lt, n_cfg)
+- qDA 2pt HDF5: ``source_operator/sink_operator/momentum/bT*/bz*``
 - 3pt HDF5: ``source_operator/sink_operator/current_operator/momentum/tsep*/bT*/bz*``
   with shape (tsep+1, n_cfg)
 - tool arguments supplied by the agent as JSON-compatible values
@@ -150,6 +151,39 @@ def pt2_re_fcn(t: np.ndarray, p: dict, Lt: int, nstate: int = 2) -> np.ndarray:
     return _pt2_re_fcn_with_suffix(t, p, Lt, nstate=nstate)
 
 
+def qda_mixed_pt2_re_fcn(
+    t: np.ndarray, p: dict, Lt: int, nstate: int = 2
+) -> np.ndarray:
+    """qDA ``bz=0`` two-point function with distinct source/sink overlaps."""
+    energies = _state_energies(p, nstate)
+    value = 0.0
+    for state, energy in enumerate(energies):
+        value = value + (
+            p[f"z{state}"]
+            * p[f"zprime{state}"]
+            / (2 * energy)
+            * (np.exp(-energy * t) + np.exp(-energy * (Lt - t)))
+        )
+    return value
+
+
+def _qda_denominator_fcn(
+    t: np.ndarray,
+    p: dict,
+    Lt: int,
+    *,
+    nstate: int,
+    qda_denominator_mode: str,
+) -> np.ndarray:
+    if qda_denominator_mode == "local_local":
+        return pt2_re_fcn(t, p, Lt, nstate=nstate)
+    if qda_denominator_mode == "nonlocal_bz0":
+        return qda_mixed_pt2_re_fcn(t, p, Lt, nstate=nstate)
+    raise ValueError(
+        "qda_denominator_mode must be 'local_local' or 'nonlocal_bz0'"
+    )
+
+
 def pt3_ratio_fcn(
     t: np.ndarray,
     tau: np.ndarray,
@@ -176,6 +210,46 @@ def pt3_ratio_fcn(
                 / (2 * snk_e)
             )
     return numerator / pt2_re_fcn(t, p, Lt, nstate=nstate)
+
+
+def qda_fcn(
+    t: np.ndarray,
+    p: dict,
+    Lt: int,
+    *,
+    nstate: int = 2,
+    part: str = "re",
+) -> np.ndarray:
+    """Real or imaginary qDA two-point numerator spectral decomposition."""
+    energies = _state_energies(p, nstate)
+    value = 0.0
+    for state, energy in enumerate(energies):
+        value = value + (
+            p[f"z{state}"]
+            * p[f"O0{state}_{part}"]
+            / (2 * energy)
+            * (np.exp(-energy * t) + np.exp(-energy * (Lt - t)))
+        )
+    return value
+
+
+def qda_ratio_fcn(
+    t: np.ndarray,
+    p: dict,
+    Lt: int,
+    *,
+    nstate: int = 2,
+    part: str = "re",
+    qda_denominator_mode: str = "local_local",
+) -> np.ndarray:
+    """qDA numerator divided by the selected two-point model."""
+    return qda_fcn(t, p, Lt, nstate=nstate, part=part) / _qda_denominator_fcn(
+        t,
+        p,
+        Lt,
+        nstate=nstate,
+        qda_denominator_mode=qda_denominator_mode,
+    )
 
 
 def pt3_nonbreit_ratio_fcn(
@@ -229,6 +303,21 @@ def pt2_prior(nstate: int = 2) -> gv.BufferDict:
     return prior
 
 
+def qda_pt2_prior(
+    nstate: int = 2, *, qda_denominator_mode: str = "local_local"
+) -> gv.BufferDict:
+    """Two-point prior for the selected qDA denominator overlap structure."""
+    prior = pt2_prior(nstate)
+    if qda_denominator_mode == "nonlocal_bz0":
+        for state in range(nstate):
+            prior[f"zprime{state}"] = gv.gvar(1, 10) / 3**state
+    elif qda_denominator_mode != "local_local":
+        raise ValueError(
+            "qda_denominator_mode must be 'local_local' or 'nonlocal_bz0'"
+        )
+    return prior
+
+
 def _pt2_prior_with_suffix(nstate: int, suffix: str) -> gv.BufferDict:
     prior = gv.BufferDict()
     prior[_state_key("E0", suffix=suffix)] = gv.gvar(1, 10)
@@ -246,6 +335,19 @@ def pt3_ratio_prior(nstate: int = 2) -> gv.BufferDict:
         for col in range(row, nstate):
             prior[f"O{row}{col}_re"] = gv.gvar(1, 10)
             prior[f"O{row}{col}_im"] = gv.gvar(1, 10)
+    return prior
+
+
+def qda_ratio_prior(
+    nstate: int = 2, *, qda_denominator_mode: str = "local_local"
+) -> gv.BufferDict:
+    """Two-point spectral prior extended by qDA source-to-state amplitudes."""
+    prior = qda_pt2_prior(
+        nstate, qda_denominator_mode=qda_denominator_mode
+    )
+    for state in range(nstate):
+        prior[f"O0{state}_re"] = gv.gvar(1, 10)
+        prior[f"O0{state}_im"] = gv.gvar(0, 10)
     return prior
 
 
@@ -379,19 +481,26 @@ def _normalise_fitting_form(value: str | None) -> str:
 
 
 def _normalise_fit_scope(value: str | None) -> tuple[str, str]:
-    raw = "ratio" if value is None else str(value).strip().lower().replace(" ", "")
-    if raw in {"ratio", "pt3_ratio", "3pt_ratio"}:
-        return "ratio", "ratio"
-    if raw in {"fh", "feynman-hellmann", "feynman_hellmann"}:
+    raw = "3pt_ratio" if value is None else str(value).strip().lower().replace(" ", "")
+    if raw == "3pt_ratio":
+        return "3pt_ratio", "3pt_ratio"
+    if raw == "fh":
         return "FH", "fh"
-    if raw in {"ratio+fh", "fh+ratio", "ratio_fh", "fh_ratio", "joint_ratio_fh"}:
-        return "ratio+FH", "ratio_fh"
-    raise ValueError(f"fit_scope must be 'ratio', 'FH', or 'ratio+FH', got {value!r}")
+    if raw == "3pt_ratio+fh":
+        return "3pt_ratio+FH", "3pt_ratio_fh"
+    if raw == "qda_ratio":
+        return "qda_ratio", "qda_ratio"
+    raise ValueError(
+        "fit_scope must be '3pt_ratio', 'FH', '3pt_ratio+FH', or 'qda_ratio', "
+        f"got {value!r}"
+    )
 
 
 def _validate_scope_form(scope: str, fitting_form: str) -> None:
     if "FH" in scope and fitting_form == "NonBreit":
         raise ValueError("fit_scope values containing 'FH' currently require fitting_form='Breit'")
+    if scope == "qda_ratio" and fitting_form != "Breit":
+        raise ValueError("fit_scope='qda_ratio' requires fitting_form='Breit'")
 
 
 def _ratio_points(
@@ -478,6 +587,7 @@ def fit_two_point(
     rescale: float = 1.0,
     prior: gv.BufferDict | None = None,
     p0: dict[str, float] | None = None,
+    qda_denominator_mode: str = "local_local",
 ) -> lsf.nonlinear_fit:
     """Fit a two-point correlator over ``[tmin, tmax)`` with an n-state ansatz."""
     fit_t = np.arange(tmin, tmax, dtype=int)
@@ -485,8 +595,20 @@ def fit_two_point(
     kwargs = {"p0": p0} if p0 is not None else {}
     return lsf.nonlinear_fit(
         data=(fit_t, fit_y),
-        prior=prior if prior is not None else pt2_prior(nstate),
-        fcn=lambda t, p: pt2_re_fcn(t, p, Lt, nstate=nstate),
+        prior=(
+            prior
+            if prior is not None
+            else qda_pt2_prior(
+                nstate, qda_denominator_mode=qda_denominator_mode
+            )
+        ),
+        fcn=lambda t, p: _qda_denominator_fcn(
+            t,
+            p,
+            Lt,
+            nstate=nstate,
+            qda_denominator_mode=qda_denominator_mode,
+        ),
         svdcut=svdcut,
         maxit=10000,
         **kwargs,
@@ -494,10 +616,10 @@ def fit_two_point(
 
 
 def fit_matrix_element(
-    ratio_re: dict[int, np.ndarray],
-    ratio_im: dict[int, np.ndarray],
-    tsep_ls: list[int],
-    tau_cut: int,
+    ratio_re: dict[int, np.ndarray] | np.ndarray,
+    ratio_im: dict[int, np.ndarray] | np.ndarray,
+    tsep_ls: list[int] | None,
+    tau_cut: int | None,
     Lt: int,
     *,
     strategy: str,
@@ -513,11 +635,12 @@ def fit_matrix_element(
     rescale: float = 1.0,
     prior: gv.BufferDict,
     p0: dict[str, float] | None = None,
+    qda_denominator_mode: str = "local_local",
 ) -> lsf.nonlinear_fit:
     """Fit the configured 2pt, ratio, and FH observables with one numeric core."""
     if strategy not in {"joint", "chained"}:
         raise ValueError(f"unsupported fit strategy {strategy!r}")
-    if fit_scope not in {"ratio", "FH", "ratio+FH"}:
+    if fit_scope not in {"3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"}:
         raise ValueError(f"unsupported fit scope {fit_scope!r}")
     if fitting_form not in {"Breit", "NonBreit"}:
         raise ValueError(f"unsupported fitting form {fitting_form!r}")
@@ -541,7 +664,9 @@ def fit_matrix_element(
             y_data["pt2"] = np.asarray(pt2_gv)[fit_t] * rescale
 
     # ratio and FH channels share the same component selection and matrix elements
-    if fit_scope in {"ratio", "ratio+FH"}:
+    if fit_scope in {"3pt_ratio", "3pt_ratio+FH"}:
+        if not isinstance(ratio_re, dict) or not isinstance(ratio_im, dict) or tsep_ls is None or tau_cut is None:
+            raise ValueError("3pt ratio fits require tsep-indexed ratio data and tau_cut")
         ts, taus, re_vals, im_vals = _ratio_points(ratio_re, ratio_im, tsep_ls, tau_cut)
         x_data["ratio_t"] = np.asarray(ts, dtype=float)
         x_data["ratio_tau"] = np.asarray(taus, dtype=float)
@@ -549,9 +674,20 @@ def fit_matrix_element(
             y_data["ratio_re"] = re_vals
         if "im" in parts:
             y_data["ratio_im"] = im_vals
+    elif fit_scope == "qda_ratio":
+        if isinstance(ratio_re, dict) or isinstance(ratio_im, dict) or tmin is None or tmax is None:
+            raise ValueError("qda_ratio fits require array ratio data and a 2pt window")
+        qda_t = np.arange(tmin, tmax, dtype=int)
+        x_data["qda_t"] = qda_t
+        if "re" in parts:
+            y_data["qda_re"] = np.asarray(ratio_re, dtype=object)[qda_t]
+        if "im" in parts:
+            y_data["qda_im"] = np.asarray(ratio_im, dtype=object)[qda_t]
 
     dt: int | float | None = None
     if "FH" in fit_scope:
+        if not isinstance(ratio_re, dict) or not isinstance(ratio_im, dict) or tsep_ls is None or tau_cut is None:
+            raise ValueError("FH fits require tsep-indexed ratio data and tau_cut")
         fh_re, fh_im = _fh_samples_from_ratios(ratio_re, ratio_im, tsep_ls, tau_cut)
         x_data["fh_t"] = np.asarray(tsep_ls[:-1], dtype=float)
         dt = _fh_dt(tsep_ls)
@@ -572,8 +708,18 @@ def fit_matrix_element(
                     x["pt2_t"], p, Lt, nstate=nstate, suffix="_f"
                 )
             else:
-                values["pt2"] = pt2_re_fcn(x["pt2_t"], p, Lt, nstate=nstate)
-        if fit_scope in {"ratio", "ratio+FH"}:
+                values["pt2"] = _qda_denominator_fcn(
+                    x["pt2_t"],
+                    p,
+                    Lt,
+                    nstate=nstate,
+                    qda_denominator_mode=(
+                        qda_denominator_mode
+                        if fit_scope == "qda_ratio"
+                        else "local_local"
+                    ),
+                )
+        if fit_scope in {"3pt_ratio", "3pt_ratio+FH"}:
             ratio_fcn = pt3_nonbreit_ratio_fcn if fitting_form == "NonBreit" else pt3_ratio_fcn
             for component in parts:
                 values[f"ratio_{component}"] = ratio_fcn(
@@ -583,6 +729,16 @@ def fit_matrix_element(
                     Lt,
                     nstate=nstate,
                     part=component,
+                )
+        elif fit_scope == "qda_ratio":
+            for component in parts:
+                values[f"qda_{component}"] = qda_ratio_fcn(
+                    x["qda_t"],
+                    p,
+                    Lt,
+                    nstate=nstate,
+                    part=component,
+                    qda_denominator_mode=qda_denominator_mode,
                 )
         if "FH" in fit_scope:
             for component in parts:
@@ -714,14 +870,18 @@ def _fit_data_count(
     """Count data points implied by a correlator fit window."""
     components = len(_parts(part))
     pt2_points = max(int(spec["tmax"]) - int(spec["tmin"]), 0)
-    ratio_points = _ratio_data_count([int(t) for t in spec["tsep_ls"]], int(spec["tau_cut"]))
-    fh_points = max(len(spec["tsep_ls"]) - 1, 0)
+    tsep_ls = [int(t) for t in spec.get("tsep_ls", [])]
+    tau_cut = int(spec.get("tau_cut", 0))
+    ratio_points = _ratio_data_count(tsep_ls, tau_cut)
+    fh_points = max(len(tsep_ls) - 1, 0)
 
     total = 0
     if strategy == "joint":
         total += pt2_points * (2 if fitting_form == "NonBreit" else 1)
-    if fit_scope in {"ratio", "ratio+FH"}:
+    if fit_scope in {"3pt_ratio", "3pt_ratio+FH"}:
         total += ratio_points * components
+    if fit_scope == "qda_ratio":
+        total += pt2_points * components
     if "FH" in fit_scope:
         total += fh_points * components
     return int(total)
@@ -876,6 +1036,23 @@ def _anchor_pt2_prior(prior: gv.BufferDict, pt2_fit: lsf.nonlinear_fit, suffix: 
         prior[_state_key(key, suffix=suffix)] = gv.gvar(gv.mean(value), gv.sdev(value) * PT2_PRIOR_ERROR_SCALE)
 
 
+def _anchor_qda_pt2_prior(
+    prior: gv.BufferDict,
+    pt2_fit: lsf.nonlinear_fit,
+    nstate: int,
+    *,
+    qda_denominator_mode: str = "local_local",
+) -> None:
+    """Anchor the complete qDA spectrum to widened two-point posteriors."""
+    keys = ["E0", *(f"log(dE{state})" for state in range(1, nstate)), *(f"z{state}" for state in range(nstate))]
+    if qda_denominator_mode == "nonlocal_bz0":
+        keys.extend(f"zprime{state}" for state in range(nstate))
+    for key in keys:
+        if key in prior and key in pt2_fit.p:
+            value = pt2_fit.p[key]
+            prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * PT2_PRIOR_ERROR_SCALE)
+
+
 def _anchor_fh_energy_prior(prior: gv.BufferDict, pt2_fit: lsf.nonlinear_fit, nstate: int) -> None:
     """Pin FH energy priors to widened 2pt posteriors in chained mode."""
     for key in ("E0", *(f"log(dE{state})" for state in range(1, nstate))):
@@ -900,7 +1077,19 @@ def _overlaps(p: dict, nstate: int, rescale: float) -> dict[str, gv.GVar]:
     return diag
 
 
-def _bare_matrix_element_from_fit(p: dict, *, part: str, fitting_form: str) -> Any:
+def _bare_matrix_element_from_fit(
+    p: dict,
+    *,
+    part: str,
+    fitting_form: str,
+    fit_scope: str = "3pt_ratio",
+    qda_denominator_mode: str = "local_local",
+) -> Any:
+    if fit_scope == "qda_ratio":
+        denominator_overlap = (
+            "zprime0" if qda_denominator_mode == "nonlocal_bz0" else "z0"
+        )
+        return p[f"O00_{part}"] / p[denominator_overlap]
     if fitting_form == "NonBreit":
         overlap_sign = -1.0 if gv.mean(p["z0_f"] * p["z0_i"]) < 0.0 else 1.0
         return overlap_sign * p[f"O00_{part}"] / (p["E0_f"] + p["E0_i"])
@@ -913,11 +1102,23 @@ def _bare_matrix_element_mean_for_part(
     output_part: str,
     fit_part: str,
     fitting_form: str,
+    fit_scope: str = "3pt_ratio",
+    qda_denominator_mode: str = "local_local",
 ) -> float:
     """Return zero for the component that was intentionally excluded from the fit."""
     if output_part not in _parts(fit_part):
         return 0.0
-    return float(gv.mean(_bare_matrix_element_from_fit(p, part=output_part, fitting_form=fitting_form)))
+    return float(
+        gv.mean(
+            _bare_matrix_element_from_fit(
+                p,
+                part=output_part,
+                fitting_form=fitting_form,
+                fit_scope=fit_scope,
+                qda_denominator_mode=qda_denominator_mode,
+            )
+        )
+    )
 
 
 def _ratio_prior_template(fitting_form: str, nstate: int) -> gv.BufferDict:
@@ -926,21 +1127,47 @@ def _ratio_prior_template(fitting_form: str, nstate: int) -> gv.BufferDict:
     return pt3_ratio_prior(nstate)
 
 
-def _scope_prior_template(fitting_form: str, nstate: int, fit_scope: str, strategy: str) -> gv.BufferDict:
+def _scope_prior_template(
+    fitting_form: str,
+    nstate: int,
+    fit_scope: str,
+    strategy: str,
+    *,
+    qda_denominator_mode: str = "local_local",
+) -> gv.BufferDict:
     _validate_scope_form(fit_scope, fitting_form)
-    if fit_scope == "ratio":
+    if fit_scope == "3pt_ratio":
         return _ratio_prior_template(fitting_form, nstate)
     if fit_scope == "FH":
         return _joint_fh_prior(nstate) if strategy == "joint" else fh_prior(nstate)
-    if fit_scope == "ratio+FH":
+    if fit_scope == "3pt_ratio+FH":
         return _ratio_fh_prior(nstate)
+    if fit_scope == "qda_ratio":
+        return qda_ratio_prior(
+            nstate, qda_denominator_mode=qda_denominator_mode
+        )
     raise ValueError(f"unsupported fit_scope {fit_scope!r}")
 
 
 def _scope_prior_with_width(
-    fitting_form: str, nstate: int, fit_scope: str, strategy: str, prior_width: float
+    fitting_form: str,
+    nstate: int,
+    fit_scope: str,
+    strategy: str,
+    prior_width: float,
+    *,
+    qda_denominator_mode: str = "local_local",
 ) -> gv.BufferDict:
-    return _vary_prior_width(_scope_prior_template(fitting_form, nstate, fit_scope, strategy), prior_width)
+    return _vary_prior_width(
+        _scope_prior_template(
+            fitting_form,
+            nstate,
+            fit_scope,
+            strategy,
+            qda_denominator_mode=qda_denominator_mode,
+        ),
+        prior_width,
+    )
 
 
 def _fit_summary(rec: dict[str, Any], *, fallback: bool, index: int) -> dict[str, Any]:
@@ -984,13 +1211,33 @@ def _read_2pt(
     sink_operator: str,
     momentum: str,
     temporal_extent: int | None = None,
+    bT: int | None = None,
+    bz: int | None = None,
 ) -> np.ndarray:
     """Read one 2pt dataset as a complex (n_cfg, Lt) array."""
     dset = f"{source_operator}/{sink_operator}/{momentum}"
+    if (bT is None) != (bz is None):
+        raise ValueError("qDA 2pt reads require bT and bz together")
+    candidates = [dset]
+    if bT is not None and bz is not None:
+        candidates = [f"{dset}/bT{int(bT)}/bz{int(bz)}"]
+        if "_nonlocal" in sink_operator:
+            candidates.append(
+                f"{source_operator}/{sink_operator}_bT{int(bT)}_bz{int(bz)}/{momentum}"
+            )
+        elif "_nonlocal" in source_operator:
+            candidates.append(
+                f"{source_operator}_bT{int(bT)}_bz{int(bz)}/{sink_operator}/{momentum}"
+            )
     with h5py.File(path, "r") as h5f:
-        data = np.swapaxes(np.asarray(h5f[dset]), 0, 1)
+        selected = next((candidate for candidate in candidates if candidate in h5f), None)
+        if selected is None:
+            raise KeyError(
+                f"none of the expected 2pt datasets exist in {path}: {candidates}"
+            )
+        data = np.swapaxes(np.asarray(h5f[selected]), 0, 1)
     if temporal_extent is not None and data.shape[1] != int(temporal_extent):
-        raise ValueError(f"{path}:{dset} has Lt={data.shape[1]}, expected {temporal_extent} from manifest volume")
+        raise ValueError(f"{path}:{selected} has Lt={data.shape[1]}, expected {temporal_extent} from manifest volume")
     return data
 
 
@@ -1368,6 +1615,8 @@ def inspect_correlator_scale(
     sink_operator: str = "g5",
     momentum: str = "PX0PY0PZ0",
     temporal_extent: int | None = None,
+    pt2_bT: int | None = None,
+    pt2_bz: int | None = None,
     selectors: dict[str, Any] | None = None,
     out: str = "correlator_scale_inspection",
 ) -> dict[str, Any]:
@@ -1383,6 +1632,8 @@ def inspect_correlator_scale(
             sink_operator=sink_operator,
             momentum=momentum,
             temporal_extent=temporal_extent,
+            bT=pt2_bT,
+            bz=pt2_bz,
         )
     )
     n_cfg, Lt = pt2_real.shape
@@ -1594,7 +1845,7 @@ def _scan_average(
                     _anchor_pt2_prior(fit_prior, pt2_best["fit"], suffix="_i")
                     _anchor_pt2_prior(fit_prior, (pt2_f_best or pt2_best)["fit"], suffix="_f")
                 else:
-                    if fit_scope in {"ratio", "ratio+FH"}:
+                    if fit_scope in {"3pt_ratio", "3pt_ratio+FH"}:
                         _anchor_pt2_prior(fit_prior, pt2_best["fit"])
                     if "FH" in fit_scope:
                         _anchor_fh_energy_prior(fit_prior, pt2_best["fit"], nstate)
@@ -1663,8 +1914,9 @@ def tune_bare_matrix(
     *,
     pt2_path: str,
     pt2_out_path: str | None = None,
-    pt3_paths: dict[str, str] | list[str],
-    tsep_ls: list[int],
+    qda_path: str | None = None,
+    pt3_paths: dict[str, str] | list[str] | None = None,
+    tsep_ls: list[int] | None = None,
     momentum: str | None = None,
     initial_momentum: str | None = None,
     final_momentum: str | None = None,
@@ -1673,6 +1925,11 @@ def tune_bare_matrix(
     z_values: list[int] | None = None,
     source_operator: str = "g5",
     sink_operator: str = "g5",
+    qda_source_operator: str | None = None,
+    qda_sink_operator: str | None = None,
+    qda_denominator_mode: str = "local_local",
+    pt2_bT: int | None = None,
+    pt2_bz: int | None = None,
     current_operator: str = "gT_nonlocal",
     bT: int = 0,
     temporal_extent: int | None = None,
@@ -1708,6 +1965,48 @@ def tune_bare_matrix(
     form = _normalise_fitting_form(fitting_form)
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
+    requested_scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["3pt_ratio"])
+    normalised_scopes = [_normalise_fit_scope(value)[0] for value in requested_scopes]
+    if normalised_scopes == ["qda_ratio"]:
+        from .qda import tune_qda_ratio
+
+        return tune_qda_ratio(
+            store,
+            pt2_path=pt2_path,
+            qda_path=qda_path,
+            momentum=momentum,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            qda_source_operator=qda_source_operator,
+            qda_sink_operator=qda_sink_operator,
+            qda_denominator_mode=qda_denominator_mode,
+            pt2_bT=pt2_bT,
+            pt2_bz=pt2_bz,
+            bT=bT,
+            tune_z_values=tune_z_values,
+            bz=z_values,
+            temporal_extent=temporal_extent,
+            pt2_windows=pt2_windows,
+            fit_strategies=fit_strategies,
+            fit_strategy=fit_strategy,
+            nstate_values=nstate_values,
+            nstate=nstate,
+            prior_width=prior_width,
+            svdcut=svdcut,
+            correlator_rescale=scale,
+            resample_mode=mode,
+            sample_error_mode=sample_error_mode,
+            n_boot=n_boot,
+            seed=seed,
+            bin_size=bin_size,
+            part=part,
+            q_min=q_min,
+            out=out,
+        )
+    if "qda_ratio" in normalised_scopes:
+        raise ValueError("qda_ratio cannot be mixed with 3pt/FH fit_scope values")
+    if tsep_ls is None or pt3_paths is None:
+        raise ValueError("3pt/FH tuning requires pt3_paths and tsep_ls")
     tseps = [int(t) for t in tsep_ls]
     paths_by_tsep = _normalise_pt3_paths(pt3_paths, tsep_ls=tseps)
     if form == "Breit":
@@ -1772,7 +2071,7 @@ def tune_bare_matrix(
     pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=Lt)
     pt3_window_specs = _normalise_pt3_windows(pt3_windows, tsep_ls=tseps, tau_cuts=pt3_tau_cuts)
     strategies = fit_strategies or ([fit_strategy] if fit_strategy is not None else ["joint"])
-    scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["ratio"])
+    scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["3pt_ratio"])
     states = nstate_values or ([nstate] if nstate is not None else [2])
     prior_widths = _normalise_prior_width(prior_width)
 
@@ -2139,16 +2438,6 @@ def tune_bare_matrix(
 # --- tool 4: apply one shared setting to all samples and z -------------------
 
 
-def _fit_da_2pt_ratio_sample_batch(payload: dict[str, Any], sample_indices: list[int]) -> list[dict[str, float]]:
-    y_samples = payload["y_samples"]
-    fit_t = payload["fit_t"]
-    correction = payload["correction"]
-    return [
-        {"sample": int(sample_index), "value": float(np.mean(y_samples[sample_index, fit_t] / correction))}
-        for sample_index in sample_indices
-    ]
-
-
 def _fit_correlator_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[str, Any]]:
     """Fit one batch of correlator samples without logging or plotting."""
     # deserialize once per process batch so gvar correlations remain intact
@@ -2322,8 +2611,9 @@ def fit_bare_matrix_grid(
     *,
     pt2_path: str,
     pt2_out_path: str | None = None,
-    pt3_paths: dict[str, str] | list[str],
-    tsep_ls: list[int],
+    qda_path: str | None = None,
+    pt3_paths: dict[str, str] | list[str] | None = None,
+    tsep_ls: list[int] | None = None,
     z_values: list[int],
     ensemble: str,
     tag: str,
@@ -2335,6 +2625,11 @@ def fit_bare_matrix_grid(
     gfix: str | None = None,
     source_operator: str = "g5",
     sink_operator: str = "g5",
+    qda_source_operator: str | None = None,
+    qda_sink_operator: str | None = None,
+    qda_denominator_mode: str = "local_local",
+    pt2_bT: int | None = None,
+    pt2_bz: int | None = None,
     current_operator: str = "gT_nonlocal",
     bz_direction: str,
     bT: int = 0,
@@ -2347,7 +2642,7 @@ def fit_bare_matrix_grid(
     model_average: bool = False,
     tune_z: int | None = None,
     fit_strategy: str = "joint",
-    fit_scope: str = "ratio",
+    fit_scope: str = "3pt_ratio",
     nstate: int | list[int] = 2,
     nstate_values: list[int] | None = None,
     prior_width: float | list[float] | None = None,
@@ -2408,6 +2703,58 @@ def fit_bare_matrix_grid(
         raise ValueError("FH fits currently support nstate <= 2")
     primary_nstate = fit_nstates[0]
     prior_widths = _normalise_prior_width(prior_width)
+    if scope == "qda_ratio":
+        from .qda import fit_qda_ratio_grid
+
+        return fit_qda_ratio_grid(
+            store,
+            pt2_path=pt2_path,
+            qda_path=qda_path,
+            bz=z_values,
+            ensemble=ensemble,
+            tag=tag,
+            momentum=momentum,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            qda_source_operator=qda_source_operator,
+            qda_sink_operator=qda_sink_operator,
+            qda_denominator_mode=qda_denominator_mode,
+            pt2_bT=pt2_bT,
+            pt2_bz=pt2_bz,
+            bz_direction=bz_direction,
+            bT=bT,
+            pt2_window=pt2_window,
+            pt2_windows=pt2_windows,
+            resample_mode=resample_mode,
+            sample_error_mode=sample_error_mode,
+            n_boot=n_boot,
+            seed=seed,
+            bin_size=bin_size,
+            svdcut=svdcut,
+            part=part,
+            q_min=q_min,
+            nstate_values=fit_nstates,
+            fit_strategy=strategy,
+            prior_width=prior_widths,
+            posterior_prior_error_scale=posterior_prior_error_scale,
+            correlator_rescale=correlator_rescale,
+            model_average=model_average,
+            tune_z=tune_z,
+            job_id=job_id,
+            hadron=hadron,
+            gfix=gfix,
+            volume=volume,
+            lattice_spacing_fm=lattice_spacing_fm,
+            momentum_gev=momentum_gev,
+            temporal_extent=temporal_extent,
+            save_path=save_path,
+            log_dir=log_dir,
+            log_path=log_path,
+            artifacts_dir=artifacts_dir,
+            workers=workers,
+        )
+    if tsep_ls is None or pt3_paths is None:
+        raise ValueError("3pt/FH grid fits require pt3_paths and tsep_ls")
     fit_mode = f"{strategy}_2pt_{scope_label}"
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
@@ -3205,351 +3552,10 @@ def fit_bare_matrix_grid(
     }
 
 
-def fit_da_2pt_ratio_grid(
-    store: dict[str, Any],
-    *,
-    pt2_path: str,
-    z_values: list[int],
-    ensemble: str,
-    tag: str,
-    momentum: str,
-    source_operator: str = "g5",
-    sink_operator_pattern: str = "gT5_nonlocal_bT0_bz<bz>",
-    reference_z: int = 0,
-    bz_direction: str | None = "z",
-    bT: int = 0,
-    pt2_window: dict[str, int] | None = None,
-    pt2_windows: list[dict[str, int]] | None = None,
-    resample_mode: str = "bs",
-    sample_error_mode: str = "covariance",
-    n_boot: int = 200,
-    seed: int | None = 1984,
-    bin_size: int = 1,
-    svdcut: float = 1e-2,
-    part: str = "both",
-    q_min: float = 0.05,
-    nstate: int | list[int] = 2,
-    nstate_values: list[int] | None = None,
-    fit_strategy: str = "single_ratio",
-    fit_strategies: list[str] | None = None,
-    prior_width: float | list[float] | None = None,
-    posterior_prior_error_scale: float = PT2_PRIOR_ERROR_SCALE,
-    model_average: bool = False,
-    job_id: str | None = None,
-    volume: str | None = None,
-    lattice_spacing_fm: float | None = None,
-    momentum_gev: float | None = None,
-    temporal_extent: int | None = None,
-    save_path: str | None = None,
-    log_dir: str | Path | None = None,
-    artifacts_dir: str | Path | None = None,
-    out: str = "bare_matrix_grid",
-    workers: int = 1,
-    **metadata: Any,
-) -> dict[str, Any]:
-    """Fit DA bare matrix elements from the 2pt z-ratio of arXiv:2201.09173 Eq. (2)."""
-    del out
-    if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or int(workers) < 1:
-        raise ValueError("workers must be a positive integer")
-    workers = int(workers)
-    mode = _check_mode(resample_mode)
-    fitted_parts = _parts(part)
-    raw_states = nstate_values if nstate_values is not None else (nstate if isinstance(nstate, list) else [nstate])
-    fit_nstates = [int(value) for value in raw_states]
-    strategy_values = [str(value) for value in (fit_strategies or [fit_strategy])]
-    prior_widths = _normalise_prior_width(prior_width)
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
-    fit_log_dir = Path(log_dir) if log_dir is not None else out_dir / "fit_logs"
-    fit_log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = fit_log_dir / f"{ensemble}_{tag}_{momentum}_da_2pt_ratio.log"
-    logger = setup_logger(log_path, logger_name="da_2pt_ratio_logger")
-    resolved_save = resolve_plot_save_path(
-        save_path,
-        artifacts_dir=out_dir,
-        default_stem=tag or "2pt_ratio",
-    )
-
-    reference = _read_2pt(
-        pt2_path,
-        source_operator=source_operator,
-        sink_operator=sink_operator_pattern.replace("<bz>", str(int(reference_z))).replace("{bz}", str(int(reference_z))),
-        momentum=momentum,
-        temporal_extent=temporal_extent,
-    )
-    _, reference_samples, indices = _resample_pt2(
-        reference,
-        mode=mode,
-        n_boot=n_boot,
-        seed=seed,
-        bin_size=bin_size,
-    )
-    n_samples = int(reference_samples.shape[0])
-    first_z = next((int(value) for value in z_values if int(value) != int(reference_z)), int(reference_z))
-    first_ratio = None
-    if first_z != int(reference_z):
-        first_numerator = _read_2pt(
-            pt2_path,
-            source_operator=source_operator,
-            sink_operator=sink_operator_pattern.replace("<bz>", str(first_z)).replace("{bz}", str(first_z)),
-            momentum=momentum,
-            temporal_extent=temporal_extent,
-        )
-        _, first_numerator_samples, _ = _resample_pt2(first_numerator, mode=mode, n_boot=n_boot, seed=seed, bin_size=bin_size, indices=indices)
-        first_ratio = np.divide(first_numerator_samples, reference_samples, out=np.zeros_like(first_numerator_samples), where=reference_samples != 0)
-    candidates: list[dict[str, Any]] = []
-    for candidate_window in ([pt2_window] if pt2_window is not None else (pt2_windows or [{"tmin": 8, "tmax": 16}])):
-        cand_tmin = int(candidate_window["tmin"])
-        cand_tmax = int(candidate_window["tmax"])
-        cand_t = np.arange(cand_tmin, cand_tmax, dtype=int)
-        for width in prior_widths:
-            if first_ratio is None:
-                candidates.append({"pt2_window": candidate_window, "tmin": cand_tmin, "tmax": cand_tmax, "Q": 1.0, "chi2_dof": 0.0, "logGBF": 0.0, "prior_width": width})
-                continue
-            y_mean, y_sdev = sample_mean_and_sdev(np.real(first_ratio)[:, cand_t], mode=mode, sample_error_mode=sample_error_mode)
-            prior = gv.BufferDict()
-            prior["H"] = gv.gvar(1.0, 10.0 * width)
-            prior["c_z"] = gv.gvar(0.0, 10.0 * width)
-            prior["c_0"] = gv.gvar(0.0, 10.0 * width)
-            prior["log_deltaE"] = gv.gvar(-1.0, 2.0 * width)
-            fit = lsf.nonlinear_fit(
-                data=(cand_t, gv.gvar(y_mean, np.maximum(np.asarray(y_sdev, dtype=float), 1e-12))),
-                prior=prior,
-                fcn=lambda t, p: p["H"] * (1.0 + p["c_z"] * np.exp(-np.exp(p["log_deltaE"]) * t)) / (1.0 + p["c_0"] * np.exp(-np.exp(p["log_deltaE"]) * t)),
-                svdcut=svdcut,
-                maxit=10000,
-            )
-            candidates.append({"pt2_window": candidate_window, "tmin": cand_tmin, "tmax": cand_tmax, "Q": float(fit.Q), "chi2_dof": float(fit.chi2 / fit.dof), "logGBF": float(fit.logGBF), "prior_width": width})
-    usable = [item for item in candidates if item["Q"] >= float(q_min)]
-    selected = min(usable or candidates, key=lambda item: (item["chi2_dof"], -item["Q"]))
-    tmin = int(selected["tmin"])
-    tmax = int(selected["tmax"])
-    fit_t = np.arange(tmin, tmax, dtype=int)
-    prior_scale = float(selected["prior_width"])
-    z_records: list[dict[str, Any]] = []
-    z_report: list[dict[str, Any]] = []
-    output_rows: list[dict[str, Any]] = []
-
-    z_list = [int(value) for value in z_values]
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        z_iterator = z_list
-    else:
-        z_iterator = tqdm(
-            z_list,
-            desc=f"fit DA 2pt ratio {ensemble} {momentum}",
-        )
-
-    sample_batches = [
-        batch.tolist()
-        for batch in np.array_split(np.arange(n_samples), min(workers, n_samples))
-        if batch.size
-    ]
-    sample_executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
-    try:
-        for z in z_iterator:
-            if z == int(reference_z):
-                real_samples = np.ones(n_samples)
-                imag_samples = np.zeros(n_samples)
-                rec = {
-                    "z": z,
-                    "real_samples": real_samples,
-                    "imag_samples": imag_samples,
-                    "real_mean": 1.0,
-                    "imag_mean": 0.0,
-                    "real_stat_sdev": 0.0,
-                    "imag_stat_sdev": 0.0,
-                    "real_sys_sdev": 0.0,
-                    "imag_sys_sdev": 0.0,
-                }
-                z_records.append(rec)
-                z_report.append({"z": z, "Q": 1.0, "chi2_dof": 0.0, "logGBF": 0.0, "n_failed_samples": 0, "real_sys_sdev": 0.0, "imag_sys_sdev": 0.0})
-                output_rows.append({"z": z, "real_mean": 1.0, "imag_mean": 0.0})
-                continue
-
-            numerator = _read_2pt(
-                pt2_path,
-                source_operator=source_operator,
-                sink_operator=sink_operator_pattern.replace("<bz>", str(z)).replace("{bz}", str(z)),
-                momentum=momentum,
-                temporal_extent=temporal_extent,
-            )
-            _, numerator_samples, _ = _resample_pt2(
-                numerator,
-                mode=mode,
-                n_boot=n_boot,
-                seed=seed,
-                bin_size=bin_size,
-                indices=indices,
-            )
-            ratio = np.divide(
-                numerator_samples,
-                reference_samples,
-                out=np.zeros_like(numerator_samples),
-                where=reference_samples != 0,
-            )
-            real_samples = np.empty(n_samples)
-            imag_samples = np.empty(n_samples)
-            fit_info: dict[str, Any] = {"z": z, "n_failed_samples": 0}
-            for component, sample_out in (("re", real_samples), ("im", imag_samples)):
-                if component not in fitted_parts:
-                    sample_out[:] = 0.0
-                    continue
-                y_samples = np.real(ratio) if component == "re" else np.imag(ratio)
-                y_mean, y_sdev = sample_mean_and_sdev(y_samples[:, fit_t], mode=mode, sample_error_mode=sample_error_mode)
-                y_gv = gv.gvar(y_mean, np.maximum(np.asarray(y_sdev, dtype=float), 1e-12))
-                prior = gv.BufferDict()
-                prior["H"] = gv.gvar(1.0 if component == "re" else 0.0, 10.0 * prior_scale)
-                prior["c_z"] = gv.gvar(0.0, 10.0 * prior_scale)
-                prior["c_0"] = gv.gvar(0.0, 10.0 * prior_scale)
-                prior["log_deltaE"] = gv.gvar(-1.0, 2.0 * prior_scale)
-                fit = lsf.nonlinear_fit(
-                    data=(fit_t, y_gv),
-                    prior=prior,
-                    fcn=lambda t, p: p["H"]
-                    * (1.0 + p["c_z"] * np.exp(-np.exp(p["log_deltaE"]) * t))
-                    / (1.0 + p["c_0"] * np.exp(-np.exp(p["log_deltaE"]) * t)),
-                    svdcut=svdcut,
-                    maxit=10000,
-                )
-                status = log_nonlinear_fit_quality(fit, kind=f"DA 2pt ratio {component}", label=f"z={z}", logger=logger, q_min=q_min)
-                p = {key: float(gv.mean(fit.p[key])) for key in ("c_z", "c_0", "log_deltaE")}
-                correction = (1.0 + p["c_z"] * np.exp(-np.exp(p["log_deltaE"]) * fit_t)) / (
-                    1.0 + p["c_0"] * np.exp(-np.exp(p["log_deltaE"]) * fit_t)
-                )
-                payload = {"y_samples": y_samples, "fit_t": fit_t, "correction": correction}
-                if sample_executor is None:
-                    sample_results = _fit_da_2pt_ratio_sample_batch(payload, sample_batches[0])
-                else:
-                    futures = [
-                        sample_executor.submit(_fit_da_2pt_ratio_sample_batch, payload, batch)
-                        for batch in sample_batches
-                    ]
-                    sample_results = [item for future in futures for item in future.result()]
-                for result in sample_results:
-                    sample_out[int(result["sample"])] = float(result["value"])
-                if component == "re":
-                    fit_info.update(Q=float(fit.Q), chi2_dof=float(fit.chi2 / fit.dof), logGBF=float(fit.logGBF), status=status)
-            real_mean, real_sdev = sample_mean_and_sdev(real_samples, mode=mode, sample_error_mode=sample_error_mode)
-            imag_mean, imag_sdev = sample_mean_and_sdev(imag_samples, mode=mode, sample_error_mode=sample_error_mode)
-            z_records.append(
-                {
-                    "z": z,
-                    "real_samples": real_samples,
-                    "imag_samples": imag_samples,
-                    "real_mean": float(real_mean),
-                    "imag_mean": float(imag_mean),
-                    "real_stat_sdev": float(real_sdev),
-                    "imag_stat_sdev": float(imag_sdev),
-                    "real_sys_sdev": 0.0,
-                    "imag_sys_sdev": 0.0,
-                }
-            )
-            fit_info["real_sys_sdev"] = 0.0
-            fit_info["imag_sys_sdev"] = 0.0
-            z_report.append(fit_info)
-            output_rows.append({"z": z, "real_mean": float(real_mean), "imag_mean": float(imag_mean)})
-    finally:
-        if sample_executor is not None:
-            sample_executor.shutdown()
-
-    sorted_records = sorted(z_records, key=lambda item: item["z"])
-    z_arr = np.asarray([rec["z"] for rec in sorted_records], dtype=float)
-    re_mean = np.asarray([rec["real_mean"] for rec in sorted_records], dtype=float)
-    im_mean = np.asarray([rec["imag_mean"] for rec in sorted_records], dtype=float)
-    re_err = np.asarray([rec["real_stat_sdev"] for rec in sorted_records], dtype=float)
-    im_err = np.asarray([rec["imag_stat_sdev"] for rec in sorted_records], dtype=float)
-    figure, axis = default_plot()
-    axis.errorbar(z_arr, re_mean, yerr=re_err, label="Re", color=COLOR_CYCLE[0], marker="o", **ERRORBAR_STYLE)
-    axis.errorbar(z_arr, im_mean, yerr=im_err, label="Im", color=COLOR_CYCLE[1], marker="s", **ERRORBAR_STYLE)
-    axis.set_xlabel(r"$z/a$", **FONT_SIZE)
-    axis.set_ylabel(r"Bare matrix element $H_m$", **FONT_SIZE)
-    p_label = "n/a" if momentum_gev in (None, "") else f"{float(momentum_gev):.2f}"
-    axis.set_title(rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ bare matrix elements", **FONT_SIZE)
-    axis.legend(**LEGEND_SETS)
-    figure.tight_layout()
-    pdf_path = f"{resolved_save}.pdf"
-    svg_path = f"{resolved_save}.svg"
-    figure.savefig(pdf_path, bbox_inches="tight", transparent=True)
-    figure.savefig(svg_path, bbox_inches="tight")
-    plt.close(figure)
-
-    bare_data = _bare_records_to_ensemble(
-        z_records,
-        resample_mode=mode,
-        attrs={
-            "ensemble": ensemble,
-            "tag": tag,
-            "analysis_mode": "2pt_ratio",
-            "fitting_form": "2pt_ratio",
-            "fit_scope": "2pt_z_ratio",
-            "fit_strategy": strategy_values[0],
-            "fit_mode": "2pt_ratio",
-            "bz_direction": bz_direction,
-            "momentum": momentum,
-            "bT": bT,
-            "resample_mode": mode,
-            "sample_error_mode": sample_error_mode,
-            "average_method": sample_error_mode,
-            "part": part,
-            "component": part,
-            "job_id": job_id,
-            "volume": volume,
-            "lattice_spacing_fm": lattice_spacing_fm,
-            "momentum_gev": momentum_gev,
-            "reference_z": reference_z,
-            "model_average": model_average,
-            "nstate_values": json.dumps(fit_nstates),
-            "fit_strategies": json.dumps(strategy_values),
-            "prior_width": json.dumps(prior_widths),
-            "posterior_prior_error_scale": posterior_prior_error_scale,
-            "workers": int(workers),
-            **metadata,
-        },
-    )
-    artifact_path = f"{resolved_save}.nc"
-    bare_data.to_netcdf(artifact_path)
-    store["bare_matrix_element_data"] = bare_data
-    store["bare_matrix_element_netcdf"] = artifact_path
-    store["output"] = bare_data
-    return {
-        "artifact": artifact_path,
-        "netcdf_path": artifact_path,
-        "plot_pdf": pdf_path,
-        "plot_svg": svg_path,
-        "n_z": len(z_records),
-        "n_sample": bare_data.n_sample,
-        "outputs": output_rows,
-        "analysis_mode": "2pt_ratio",
-        "fitting_form": "2pt_ratio",
-        "fit_scope": "2pt_z_ratio",
-        "fit_strategy": strategy_values[0],
-        "fit_mode": "2pt_ratio",
-        "model_average": model_average,
-        "selection_rule": "sample-average 2pt ratio window scan",
-        "shared_window_specs": [{"fit_scope": "2pt_z_ratio", "fit_strategy": strategy_values[0], "nstate": fit_nstates[0] if fit_nstates else "Eq.(2)", "pt2_window": f"[{tmin},{tmax})", "pt3_window": "not used", "n_data": len(fit_t), "n_params": 4}],
-        "sample_log_path": str(log_path),
-        "resample_mode": mode,
-        "sample_error_mode": sample_error_mode,
-        "n_samples": n_samples,
-        "z_values": [int(value) for value in z_values],
-        "reference_z": int(reference_z),
-        "z_fits": z_report,
-        "momentum_gev": momentum_gev,
-        "component": part,
-        "nstate_values": fit_nstates,
-        "fit_strategies": strategy_values,
-        "prior_width": prior_widths,
-        "posterior_prior_error_scale": posterior_prior_error_scale,
-        "workers": int(workers),
-        "window_candidates": candidates,
-    }
-
 
 STAGE_TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "inspect_correlator_scale": inspect_correlator_scale,
     "tune_ground_state": tune_ground_state,
     "tune_bare_matrix": tune_bare_matrix,
     "fit_bare_matrix_grid": fit_bare_matrix_grid,
-    "fit_da_2pt_ratio_grid": fit_da_2pt_ratio_grid,
 }

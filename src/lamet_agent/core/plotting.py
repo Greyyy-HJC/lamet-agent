@@ -89,6 +89,9 @@ RATIO_IMAG_LABEL = r"$\Im\left[\mathcal{R}(t_{\mathrm{sep}},\tau)\right]$"
 TSEP_TAG = r"$t_{\mathrm{sep}}$"
 FH_REAL_LABEL = r"$\Re\left[\mathrm{FH}(t_{\mathrm{sep}})\right]$"
 FH_IMAG_LABEL = r"$\Im\left[\mathrm{FH}(t_{\mathrm{sep}})\right]$"
+QDA_TIME_LABEL = r"$t/a$"
+QDA_RATIO_REAL_LABEL = r"$\Re\left[R_{\mathrm{qDA}}(t)\right]$"
+QDA_RATIO_IMAG_LABEL = r"$\Im\left[R_{\mathrm{qDA}}(t)\right]$"
 
 
 def apply_plot_style() -> None:
@@ -478,6 +481,81 @@ def _ratio_denominator_correction(
 ) -> gv.GVar | float:
     """Convert C3/C2_periodic ratios to a forward-denominator convention."""
     return 1.0 + gv.exp(-energy * (float(int(Lt)) - 2.0 * float(int(tsep))))
+
+
+def plot_qda_ratio_fit_on_data(
+    t: np.ndarray,
+    ratio_real: np.ndarray,
+    ratio_imag: np.ndarray,
+    *,
+    fit_t: np.ndarray,
+    fit_real: np.ndarray,
+    fit_imag: np.ndarray,
+    components: tuple[str, ...] = ("re", "im"),
+    fit_label: str = "Sample-0 fit",
+    title: str | None = None,
+    save_path: str | Path | None = None,
+) -> dict[str, tuple[Figure, Axes]]:
+    """Plot qDA/ordinary-2pt ratio data with posterior fit bands."""
+    t_arr = np.asarray(t, dtype=float)
+    fit_t_arr = np.asarray(fit_t, dtype=float)
+    if t_arr.ndim != 1 or fit_t_arr.ndim != 1:
+        raise ValueError("qDA plot time coordinates must be one-dimensional")
+    if np.asarray(ratio_real).shape != t_arr.shape or np.asarray(ratio_imag).shape != t_arr.shape:
+        raise ValueError("qDA ratio data must match the plot time coordinate")
+    if np.asarray(fit_real).shape != fit_t_arr.shape or np.asarray(fit_imag).shape != fit_t_arr.shape:
+        raise ValueError("qDA fit bands must match the fit time coordinate")
+    if not components or any(component not in {"re", "im"} for component in components):
+        raise ValueError("qDA plot components must contain 're' and/or 'im'")
+
+    output: dict[str, tuple[Figure, Axes]] = {}
+    values = {
+        "re": (ratio_real, fit_real, QDA_RATIO_REAL_LABEL),
+        "im": (ratio_imag, fit_imag, QDA_RATIO_IMAG_LABEL),
+    }
+    for component in components:
+        data, fit, ylabel = values[component]
+        data_mean = np.asarray(gv.mean(data), dtype=float)
+        data_sdev = np.asarray(gv.sdev(data), dtype=float)
+        fit_mean = np.asarray(gv.mean(fit), dtype=float)
+        fit_sdev = np.asarray(gv.sdev(fit), dtype=float)
+        figure, axis = default_plot()
+        axis.errorbar(t_arr, data_mean, yerr=data_sdev, label="Data", **ERRORBAR_STYLE)
+        axis.fill_between(
+            fit_t_arr,
+            fit_mean - fit_sdev,
+            fit_mean + fit_sdev,
+            color=COLOR_CYCLE[1],
+            alpha=0.35,
+            label=fit_label,
+        )
+        axis.set_xlabel(QDA_TIME_LABEL, **FONT_SIZE)
+        axis.set_ylabel(ylabel, **FONT_SIZE)
+        if title:
+            axis.set_title(title, **FONT_SIZE)
+        axis.set_ylim(
+            _ylim_middle_third(
+                [data_mean],
+                [data_sdev],
+                bottom_margin_factor=FIT_LOG_YLIM_BOTTOM_FACTOR,
+                top_margin_factor=FIT_LOG_YLIM_TOP_FACTOR,
+            )
+        )
+        axis.legend(**LEGEND_SETS)
+        if save_path is not None:
+            path = Path(save_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            figure.savefig(
+                path.with_name(f"{path.name}_qda_ratio_{component}.pdf"),
+                bbox_inches="tight",
+                transparent=True,
+            )
+            figure.savefig(
+                path.with_name(f"{path.name}_qda_ratio_{component}.svg"),
+                bbox_inches="tight",
+            )
+        output[component] = (figure, axis)
+    return output
 
 
 def plot_pt3_ratio_fit_on_data(

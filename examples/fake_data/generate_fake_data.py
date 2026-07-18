@@ -69,7 +69,7 @@ def _three_point_path(tsep: int, pz: int, b: int, z: int) -> str:
 
 
 def _qtmdwf_path(pz: int, b: int, z: int) -> str:
-    return _two_point_path(f"{SINK_OPERATOR_QTMDWF}_bT{b}_bz{z}", pz)
+    return f"{_two_point_path(SINK_OPERATOR_QTMDWF, pz)}/bT{b}/bz{z}"
 
 
 def _pt2_model(

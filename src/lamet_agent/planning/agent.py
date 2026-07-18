@@ -135,16 +135,20 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                         "pt2_windows": [{"tmin": 2, "tmax": 12}, {"tmin": 3, "tmax": 12}],
                         "pt3_tau_cuts": [2, 3],
                         "nstate": [2],
-                        "fit_scope": ["ratio"],
+                        "fit_scope": ["3pt_ratio"],
                         "fit_strategy": ["joint"],
                         "fitting_form": "Breit",
                     },
                     "options": {
-                        "fit_scope": ["ratio", "FH", "ratio+FH"],
+                        "fit_scope": ["3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"],
                         "fit_strategy": ["joint", "chained"],
                         "fitting_form": ["Breit", "NonBreit"],
                         "component": ["re", "im", "both"],
                     },
+                    "qda_ratio_inputs": (
+                        "one ordinary 2pt with local source/sink operators and one qDA 2pt "
+                        "with a nonlocal operator plus bT/bz metadata"
+                    ),
                 },
                 "renormalization": {
                     "required": {"scheme": "ratio | hybrid_ratio | hybrid_self_renormalization"},
@@ -188,6 +192,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
             },
             "correlator_conversion_contract": {
                 "standard_2pt_h5": "source_operator/sink_operator/momentum with dataset shape (Lt, n_cfg)",
+                "qda_2pt_h5": "source_operator/sink_operator/momentum/bT<bT>/bz<bz> with dataset shape (Lt, n_cfg); bT/bz are selectors, not operator-name suffixes",
                 "standard_3pt_h5": "source_operator/sink_operator/current_operator/momentum/tsep<tsep>/bT<bT>/bz<bz> with dataset shape (tsep+1, n_cfg)",
                 "bz_direction": "required 3pt manifest provenance: X, Y, Z, XY, XZ, YZ, or XYZ; it is not an HDF5 path layer",
                 "npy_source": "single array; source may be 'array'; user must identify cfg/time or cfg/tau axes and any selected momentum/z indices",

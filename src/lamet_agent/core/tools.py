@@ -14,7 +14,7 @@ from lamet_agent.manifest_params import merge_stage_params
 
 from .stages import resolve_stage_package
 
-_PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid", "fit_da_2pt_ratio_grid", "plot_matched_pdf"})
+_PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid", "plot_matched_pdf"})
 _RENORM_ARTIFACT_TOOLS = frozenset(
     {
         "apply_ratio_scheme_renormalization",
@@ -208,8 +208,6 @@ def resolve_job_tools(
 ) -> dict[str, Callable[..., dict[str, Any]]]:
     """Return only the stage tools that are valid for the current job contract."""
     tools = dict(stage_tools if stage_tools is not None else resolve_stage_tools(stage))
-    if stage == "correlator_analysis" and effective_params.get("analysis_mode", "3pt_ratio") == "2pt_ratio":
-        return {name: tool for name, tool in tools.items() if name == "fit_da_2pt_ratio_grid"}
     if stage != "renormalization":
         return tools
 
@@ -242,8 +240,6 @@ def required_job_tool_sequence(
     effective_params: dict[str, Any],
 ) -> tuple[str, ...]:
     """Return the successful tool order required before a job may finish."""
-    if stage == "correlator_analysis" and effective_params.get("analysis_mode", "3pt_ratio") == "2pt_ratio":
-        return ("fit_da_2pt_ratio_grid",)
     if stage != "renormalization":
         return ()
 
@@ -353,10 +349,15 @@ def prepare_tool_args(
     resolved = resolve_tool_args(args, manifest)
 
     if stage == "correlator_analysis":
+        # The correlator z grid is runner-owned input metadata, not a stage/job
+        # parameter. Ignore model-supplied copies and derive it below.
+        resolved.pop("z_values", None)
         selected = [item for item in manifest.correlators if item.correlator_id in job.correlator_ids]
         defaults = merge_stage_params(effective_params, job.params)
         fitting_form = str(defaults.get("fitting_form", "Breit"))
-        analysis_mode = str(defaults.get("analysis_mode", "3pt_ratio"))
+        raw_scopes = defaults.get("fit_scope", ["3pt_ratio"])
+        scope_values = raw_scopes if isinstance(raw_scopes, list) else [raw_scopes]
+        is_qda = [str(value) for value in scope_values] == ["qda_ratio"]
         pt2_all = [item for item in selected if item.correlator_type == "2pt"]
         pt3_all = [item for item in selected if item.correlator_type == "3pt"]
         if fitting_form == "NonBreit":
@@ -367,8 +368,37 @@ def prepare_tool_args(
             selected_momentum = defaults.get("momentum")
             initial_momentum = final_momentum = selected_momentum
 
-        pt2 = next((item for item in pt2_all if initial_momentum in item.momentum), None)
-        pt2_out = next((item for item in pt2_all if final_momentum in item.momentum), None)
+        qda_input = None
+        qda_denominator_mode = "local_local"
+        if is_qda:
+            qda_candidates = [
+                item
+                for item in pt2_all
+                if initial_momentum in item.momentum
+                and item.bz is not None
+                and (
+                    "_nonlocal" in item.source_operator
+                    or "_nonlocal" in item.sink_operator
+                )
+            ]
+            local_candidates = [
+                item
+                for item in pt2_all
+                if initial_momentum in item.momentum
+                and "_nonlocal" not in item.source_operator
+                and "_nonlocal" not in item.sink_operator
+            ]
+            qda_input = qda_candidates[0] if len(qda_candidates) == 1 else None
+            if len(local_candidates) == 1:
+                pt2 = local_candidates[0]
+            elif not local_candidates and qda_input is not None:
+                pt2 = qda_input
+                qda_denominator_mode = "nonlocal_bz0"
+            else:
+                pt2 = None
+        else:
+            pt2 = next((item for item in pt2_all if initial_momentum in item.momentum), None)
+        pt2_out = pt2 if is_qda else next((item for item in pt2_all if final_momentum in item.momentum), None)
         pt3 = [item for item in pt3_all if selected_momentum in item.momentum]
         first_pt3 = pt3[0] if pt3 else None
         if "component" in defaults:
@@ -397,11 +427,17 @@ def prepare_tool_args(
                     "gfix": pt2.gfix,
                 }
             )
-            if analysis_mode == "2pt_ratio":
-                defaults["sink_operator_pattern"] = pt2.sink_operator
-                defaults["z_values"] = pt2.bz
-                defaults["bz_direction"] = pt2.bz_direction
-                defaults["bT"] = pt2.bT[0] if pt2.bT else 0
+            if is_qda and qda_input is not None:
+                defaults["qda_path"] = qda_input.data_path
+                defaults["qda_source_operator"] = qda_input.source_operator
+                defaults["qda_sink_operator"] = qda_input.sink_operator
+                defaults["z_values"] = qda_input.bz
+                defaults["bz_direction"] = qda_input.bz_direction
+                defaults["bT"] = qda_input.bT[0]
+                defaults["qda_denominator_mode"] = qda_denominator_mode
+                if qda_denominator_mode == "nonlocal_bz0":
+                    defaults["pt2_bT"] = qda_input.bT[0]
+                    defaults["pt2_bz"] = 0
             if fitting_form == "NonBreit":
                 defaults["initial_momentum"] = initial_momentum
                 defaults["final_momentum"] = final_momentum
@@ -433,7 +469,7 @@ def prepare_tool_args(
                 defaults["fit_strategies"] = defaults.pop("fit_strategy")
             if "fit_scope" in defaults:
                 defaults["fit_scope_values"] = defaults.pop("fit_scope")
-        elif tool_name in {"fit_bare_matrix_grid", "fit_da_2pt_ratio_grid"}:
+        elif tool_name == "fit_bare_matrix_grid":
             use_model_average = bool(defaults.get("model_average", False))
             if use_model_average and isinstance(defaults.get("nstate"), list):
                 defaults["nstate_values"] = defaults.pop("nstate")
@@ -447,7 +483,11 @@ def prepare_tool_args(
                 resolved["prior_width"] = defaults["prior_width"]
             for key in ("fit_strategy", "fit_scope"):
                 if isinstance(defaults.get(key), list):
-                    defaults.pop(key)
+                    values = defaults[key]
+                    if len(values) == 1:
+                        defaults[key] = values[0]
+                    else:
+                        defaults.pop(key)
             if "pt2_window" not in resolved and "tmin" in resolved and "tmax" in resolved:
                 resolved["pt2_window"] = {"tmin": int(resolved["tmin"]), "tmax": int(resolved["tmax"])}
             if "pt3_window" not in resolved and "tau_cut" in resolved:
@@ -478,7 +518,7 @@ def prepare_tool_args(
         for key, value in defaults.items():
             if key not in resolved or resolved[key] is None:
                 resolved[key] = value
-        if tool_name in {"fit_bare_matrix_grid", "fit_da_2pt_ratio_grid"} and "model_average" in defaults:
+        if tool_name == "fit_bare_matrix_grid" and "model_average" in defaults:
             resolved["model_average"] = defaults["model_average"]
 
     if stage == "renormalization":

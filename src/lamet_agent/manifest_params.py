@@ -47,7 +47,6 @@ STAGE_PARAM_CONTRACTS = {
     "correlator_analysis": StageParamContract(
         schema={
             "component": None,
-            "analysis_mode": None,
             "correlator_rescale": None,
             "final_momentum": None,
             "fit_scope": None,
@@ -60,8 +59,6 @@ STAGE_PARAM_CONTRACTS = {
             "posterior_prior_error_scale": None,
             "prior_width": None,
             "pt2_windows": ListItems({"tmin": None, "tmax": None}),
-            "reference_z": None,
-            "z_values": None,
             "pt3_tau_cuts": None,
             "pt3_windows": ListItems({"tau_cut": None, "tsep_ls": None}),
             "q_min": None,

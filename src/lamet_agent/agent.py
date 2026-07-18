@@ -750,8 +750,6 @@ def run_agent(
                 stage_reports[stage] = {"report": str(store["output"])}
             if stage == "correlator_analysis" and "output" in store:
                 fit_result = _last_tool_result(observations, "fit_bare_matrix_grid")
-                if fit_result is None:
-                    fit_result = _last_tool_result(observations, "fit_da_2pt_ratio_grid")
                 if fit_result is not None:
                     matrix_attrs = dict(getattr(store.get("bare_matrix_element_data"), "attrs", {}))
                     stage_job_records.append(

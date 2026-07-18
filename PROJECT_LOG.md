@@ -737,3 +737,25 @@
 - Replaced shallow defaults/job parameter composition with one shared recursive merge used by the runner, stage validation, planning, kinematics derivation, and review checks.
 - Nested mappings now inherit and override by key, while job-level lists, scalars, and type changes still replace the complete default value.
 - Moved the required pion/kaon DA ``scheme_parameters.LambdaQCD_gev: 0.1`` to renormalization defaults; fit/apply jobs now declare only their operator-specific ``d``, ``m0_gev``, ``svdcut``, or coverage overrides.
+
+## 2026-07-18 (Unified qDA-ratio correlator fits)
+
+- Replaced the standalone empirical DA 2pt-ratio tool with ``fit_scope: qda_ratio`` in the shared correlator tuning and grid-fit tools.
+- Added a multi-state qDA numerator divided by the existing 2pt spectral function, with joint/chained strategies and ``O00/z0`` bare-matrix output.
+- Replaced the old correlator scopes with ``3pt_ratio``, ``FH``, ``3pt_ratio+FH``, and ``qda_ratio`` and removed ``analysis_mode`` from the manifest and reporting interfaces.
+- Fixed qDA normalization to the local ``bz=0`` correlator and made the ``bz`` grid runner-derived, removing the redundant ``reference_z`` and ``z_values`` stage parameters.
+- Corrected the qDA denominator contract to use a separate ordinary local-source/local-sink 2pt correlator; ``bT`` and ``bz`` are now independent qDA HDF5 selectors rather than operator-name placeholders, with no special ``bz=0`` normalization branch.
+- Added sample-0 qDA-ratio fit-on-data PDF/SVG diagnostics for every ``bz``, with posterior bands, component filtering, fit-log artifact collection, and report embedding aligned with 3pt fits.
+
+## 2026-07-18 (qDA bz=0 denominator fallback)
+
+- Made the ordinary local-local 2pt input optional for ``qda_ratio`` jobs; qDA-only jobs now use the same nonlocal operator at ``bz=0`` as the resampled denominator.
+- Added the mixed source/sink overlap model ``z_n*zprime_n`` for chained and joint qDA fits, with ``O00/zprime0`` extraction while retaining the existing local-local path.
+- Added compatibility for legacy qDA HDF5 paths whose nonlocal operator label carries ``bT`` and ``bz`` suffixes.
+- Moved lattice-to-fm target conversion into hybrid self-renormalization and excluded ``z=0`` before coverage, ``zR``, and MSbar-factor evaluation.
+- Converted ``examples/pion_da_gi_manifest.json`` from precomputed-bare renormalization to a two-stage qDA correlator-analysis and hybrid-self-renormalization workflow.
+
+## 2026-07-18 (Hybrid-self z=0 output preservation)
+
+- Kept normalized ``z=0`` target samples out of ``zR`` and MSbar-factor evaluation while passing them through unchanged into the renormalized output.
+- Restored the complete physical-coordinate output grid with ``H^R(0)=1`` and separated zero-point passthrough provenance from genuine coverage drops.
