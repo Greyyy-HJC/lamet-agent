@@ -759,3 +759,8 @@
 
 - Kept normalized ``z=0`` target samples out of ``zR`` and MSbar-factor evaluation while passing them through unchanged into the renormalized output.
 - Restored the complete physical-coordinate output grid with ``H^R(0)=1`` and separated zero-point passthrough provenance from genuine coverage drops.
+
+## 2026-07-18 (Fast qDA unit coverage)
+
+- Removed two qDA grid-fit tests that repeated full nonlinear fits across multiple coordinates and resamples, including a duplicate serial/parallel run, from the regular unit-test suite.
+- Retained fast coverage for the qDA spectral formulas, mixed overlaps, ``bz=0`` fallback, legacy HDF5 layout, and fit plotting.
