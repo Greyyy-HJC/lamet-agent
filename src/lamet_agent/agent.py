@@ -365,7 +365,7 @@ def _write_correlator_energy_artifacts(records: list[dict[str, Any]], stage_dir:
             [float(item["p2_gev2"]) for item in group],
             [float(item["E0_gev2_mean"]) for item in group],
             yerr=[float(item["E0_gev2_sdev"]) for item in group],
-            label="_nolegend_",
+            label=label or "ensemble",
             color=COLOR_CYCLE[index % len(COLOR_CYCLE)],
             **ERRORBAR_STYLE,
         )
@@ -383,7 +383,7 @@ def _write_correlator_energy_artifacts(records: list[dict[str, Any]], stage_dir:
             color=COLOR_CYCLE[index % len(COLOR_CYCLE)],
             linewidth=1.0,
             alpha=0.65,
-            label=label or "ensemble",
+            label="_nolegend_",
         )
     ax.set_xlabel(r"$p^2\,[\mathrm{GeV}^2]$", **FONT_SIZE)
     ax.set_ylabel(r"$E_0^2\,[\mathrm{GeV}^2]$", **FONT_SIZE)
