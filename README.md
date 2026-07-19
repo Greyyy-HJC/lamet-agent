@@ -206,9 +206,12 @@ fit-on-data PDF and SVG diagnostics under the job's `fit_logs/` directory.
 
 This boolean controls how `fit_bare_matrix_grid` uses fit-function candidates.
 It does not control whether tuning scans the candidates: `tune_bare_matrix` always
-tests the configured `pt2_windows`, `nstate`, `prior_width`, and `fit_strategy`
-candidates on sample-average data at LLM-supplied `tune_z_values`; 3pt/FH
-scopes additionally scan `pt3_tau_cuts`. The tool returns cross-z feasibility summaries and
+tests the `nstate`, `prior_width`, `fit_strategy`, and fit-window candidates on
+sample-average data at LLM-supplied `tune_z_values`. When `pt2_windows`,
+`pt3_windows`, and `pt3_tau_cuts` are omitted, the stage generates a bounded
+window scan from the resampled first-half 2pt signal and the available `tsep`
+grid. Explicit window lists are used unchanged. The tool returns the generated
+grid in `auto_window_scan`, cross-z feasibility summaries, and
 `recommended_robust_index`; the agent must pass explicit `tune_z_values` when
 calling `tune_bare_matrix`.
 
@@ -800,10 +803,10 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 - `examples/pion_pdf_gi_manifest.json`
   - Runnable P0/P4 GI pion PDF workflow.
 - `examples/pion_da_gi_manifest.json`
-  - Two-stage qDA correlator-analysis and hybrid-self-renormalization workflow.
+  - Full GI pion DA workflow from qDA correlator analysis through matching and review.
 - `examples/kaon_da_gi_manifest.json`
-  - Renormalization-only GI distribution-amplitude workflow; API run helpers live
-    under `runs/ds_pion_da_gi/` and `runs/ds_kaon_da_gi/`.
+  - Full GI kaon DA workflow from qDA correlator analysis through matching and review;
+    API run helpers live under `runs/ds_pion_da_gi/` and `runs/ds_kaon_da_gi/`.
 - `examples/temp_self_renorm_manifest.json`
   - Renorm-only hybrid-self-renormalization smoke (PDF reference → DA mom=6 targets);
     see [Hybrid Self-Renormalization](#hybrid-self-renormalization). Prepare/run helpers live

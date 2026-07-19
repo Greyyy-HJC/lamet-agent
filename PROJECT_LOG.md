@@ -764,3 +764,29 @@
 
 - Removed two qDA grid-fit tests that repeated full nonlinear fits across multiple coordinates and resamples, including a duplicate serial/parallel run, from the regular unit-test suite.
 - Retained fast coverage for the qDA spectral formulas, mixed overlaps, ``bz=0`` fallback, legacy HDF5 layout, and fit plotting.
+
+## 2026-07-19 (Short-distance self-renormalization reference)
+
+- Generated local ignored sample-based ``(a,z)`` self-renormalization references from the legacy five-spacing pion PDF mean/error table.
+- Replaced the inherited 0.06 fm grid with the positive pion-DA target-coordinate union inside common source coverage: 44 points from 0.0574 to 1.213 fm.
+- Restored a06 ``bz=1`` in the pion DA correlator grids and regenerated identical pion/kaon reference artifacts while retaining apply-time long-distance ``zR`` extension.
+- Corrected the shared pion/kaon DA reference provenance to ``gfix=GI`` and ``target_observable=pdf`` in the generated artifacts, with matching ``gfix`` declarations in the GI workflow manifests.
+
+## 2026-07-19 (Full pion/kaon GI-DA workflows)
+
+- Rebuilt the local ignored pion/kaon ``gZ5_nonlocal`` correlator files from the legacy ``DA_new.hdf5`` arrays with the physical 192/96/64 temporal extents.
+- Expanded the kaon manifest from precomputed bare-matrix inputs to the same correlator-analysis, self-renormalization, Fourier, matching, and review chain used by pion.
+- Kept the shared DA self-renormalization conversion parameters ``d=0.19`` and ``m0=-0.094 GeV`` and the light/light Fourier tail constraint for kaon.
+
+## 2026-07-19 (Unified qDA correlator implementation and sample logs)
+
+- Merged the qDA-ratio tuning, data-loading, worker, plotting, and grid-fit implementation into the correlator stage's `functions.py`, removing the circular implementation split through `qda.py`.
+- Aligned qDA fit logging with the other correlator scopes by writing separate `_tuning.log` and `_samples.log` artifacts.
+- Added per-z and per-sample qDA fit-quality, rejected-model, failed-sample, and summary records while preserving the existing fit and output contracts.
+- Added stage-package hygiene guidance requiring tightly coupled stage helpers to remain in `functions.py` and dependencies between any additional modules to stay one-way.
+
+## 2026-07-19 (Automatic correlator fit-window scans)
+
+- Added bounded automatic 2pt windows from first-half resampled signal-to-noise diagnostics, with conservative NonBreit channel handling and explicit fallback metadata.
+- Added automatic contiguous-`tsep`/`tau_cut` candidates that allow a single central insertion point, while preserving explicit `pt2_windows`, `pt3_windows`, and `pt3_tau_cuts` as exact overrides.
+- Propagated `auto_window_scan` diagnostics through tuning, grid-fit logs, and bilingual reports, and stopped the full planner variant from synthesizing correlator windows.

@@ -588,10 +588,6 @@ def _expand_correlator_search_params(
     suppressed_paths: set[str],
 ) -> None:
     params["model_average"] = True
-    if (fill_missing or "pt2_windows" in params) and f"{base_path}.pt2_windows" not in suppressed_paths:
-        params["pt2_windows"] = _expand_pt2_windows(params.get("pt2_windows"))
-    if (fill_missing or "pt3_tau_cuts" in params) and f"{base_path}.pt3_tau_cuts" not in suppressed_paths:
-        params["pt3_tau_cuts"] = _expand_tau_cuts(params.get("pt3_tau_cuts"))
     if (fill_missing or "nstate" in params) and f"{base_path}.nstate" not in suppressed_paths:
         params["nstate"] = _expand_nstate(params.get("nstate"))
     if (fill_missing or "prior_width" in params) and f"{base_path}.prior_width" not in suppressed_paths:

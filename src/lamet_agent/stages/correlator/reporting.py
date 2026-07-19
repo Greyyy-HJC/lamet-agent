@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +103,44 @@ def _window_text(result: dict[str, Any], *, language: str) -> list[str]:
         )
     if len(lines) == 2:
         lines.append("| n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+    return lines
+
+
+def _auto_window_scan_text(result: dict[str, Any], *, language: str) -> list[str]:
+    scan = result.get("auto_window_scan")
+    if not isinstance(scan, dict):
+        return [
+            "No automatic-window diagnostics were recorded."
+            if language == "en"
+            else "未记录自动窗口诊断。"
+        ]
+    lines = [
+        "| channel | source | candidates | stable tmax | fallback |"
+        if language == "en"
+        else "| 通道 | 来源 | 候选 | 稳定 tmax | fallback |",
+        "|---|---|---:|---:|---|",
+    ]
+    candidate_lines: list[str] = []
+    for scan_key, channel, window_key in (
+        ("pt2", "2pt", "pt2_windows"),
+        ("pt3", "3pt", "pt3_windows"),
+    ):
+        details = scan.get(scan_key)
+        if not isinstance(details, dict):
+            continue
+        windows = details.get(window_key, [])
+        fallback = details.get("fallback_reason") or "none"
+        lines.append(
+            f"| `{channel}` | `{details.get('source', 'not recorded')}` | "
+            f"{len(windows) if isinstance(windows, list) else 'n/a'} | "
+            f"{format_report_value(details.get('stable_tmax'))} | {fallback} |"
+        )
+        if isinstance(windows, list) and windows:
+            label = "Generated candidates" if language == "en" else "生成的候选"
+            payload = json.dumps(windows, ensure_ascii=False, separators=(",", ":"))
+            candidate_lines.append(f"- {label} `{channel}`: `{payload}`")
+    if candidate_lines:
+        lines.extend(["", *candidate_lines])
     return lines
 
 
@@ -400,6 +439,9 @@ def build_correlator_stage_report_markdown(
                 "",
                 "### Shared Windows" if language == "en" else "### 共享窗口",
                 *_window_text(result, language=language),
+                "",
+                "### Automatic Window Scan" if language == "en" else "### 自动窗口扫描",
+                *_auto_window_scan_text(result, language=language),
                 "",
                 "### Per-z Fit Summary" if language == "en" else "### 逐 z 拟合摘要",
                 *_z_fit_table(result, language=language),

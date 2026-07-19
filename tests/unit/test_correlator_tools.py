@@ -17,8 +17,6 @@ from matplotlib.legend import Legend
 
 pytest.importorskip("lsqfit")
 
-import lamet_agent.stages.correlator.functions as correlator_functions
-import lamet_agent.stages.correlator.qda as qda_module
 from lamet_agent.stages.correlator.skills import TOOL_CATALOG
 from lamet_agent.core.plotting import (
     FIT_LOG_YLIM_BOTTOM_FACTOR,
@@ -40,6 +38,8 @@ from lamet_agent.stages.correlator.functions import (
     PT2_PRIOR_ERROR_SCALE,
     STAGE_TOOLS,
     _anchor_pt2_prior,
+    _auto_pt2_windows,
+    _auto_pt3_windows,
     _bare_matrix_element_mean_for_part,
     _candidate_specs,
     _check_mode,
@@ -48,6 +48,9 @@ from lamet_agent.stages.correlator.functions import (
     _fit_usable,
     _fh_samples_from_ratios,
     _loggbf_weights,
+    _load_denominator,
+    _load_ratio,
+    _log_qda_sample_results,
     _normalise_pt2_windows,
     _normalise_pt3_windows,
     _normalise_fit_scope,
@@ -58,7 +61,10 @@ from lamet_agent.stages.correlator.functions import (
     _read_2pt,
     _read_3pt,
     _resample_pt2,
+    _resolve_pt2_windows,
+    _resolve_pt3_windows,
     _scaled_prior,
+    _split_fit_log_paths,
     _vary_prior_width,
     bayesian_average,
     fit_bare_matrix_grid,
@@ -270,7 +276,7 @@ def test_qda_bz0_fallback_ratio_is_exact_and_reads_legacy_layout(tmp_path: Path)
             "g5/gT5_nonlocal_bT0_bz0/PX0PY0PZ6", data=denominator.T
         )
 
-    loaded, _, denominator_samples, indices, _ = qda_module._load_denominator(
+    loaded, _, denominator_samples, indices, _ = _load_denominator(
         pt2_path=str(path),
         source_operator="g5",
         sink_operator="gT5_nonlocal",
@@ -284,7 +290,7 @@ def test_qda_bz0_fallback_ratio_is_exact_and_reads_legacy_layout(tmp_path: Path)
         bin_size=1,
         sample_error_mode="mean",
     )
-    sample_re, sample_im, _, _ = qda_module._load_ratio(
+    sample_re, sample_im, _, _ = _load_ratio(
         z=0,
         denominator_shape=loaded.shape,
         denominator_samples=denominator_samples,
@@ -749,6 +755,64 @@ def test_default_pt2_windows_use_l_over_four() -> None:
     assert all(window["tmax"] - window["tmin"] >= 4 for window in windows)
 
 
+def test_auto_pt2_windows_use_snr_endpoint_and_candidate_bounds() -> None:
+    Lt = 32
+    mean = np.exp(-0.3 * np.arange(Lt))
+    sdev = np.where(np.arange(Lt) <= 10, 0.25 * mean, 2.0 * mean)
+    windows, diagnostics = _auto_pt2_windows(
+        gv.gvar(mean, sdev),
+        Lt=Lt,
+        nstate_values=[2],
+    )
+
+    assert diagnostics["stable_tmax"] == 13
+    assert diagnostics["used_fallback"] is False
+    assert 1 <= len(windows) <= 6
+    assert {window["tmax"] for window in windows} == {12, 13}
+    assert all(window["tmax"] <= Lt // 2 for window in windows)
+    assert all(window["tmax"] - window["tmin"] >= 5 for window in windows)
+
+
+def test_auto_pt2_windows_use_conservative_nonbreit_endpoint() -> None:
+    Lt = 32
+    mean = np.exp(-0.3 * np.arange(Lt))
+    initial_sdev = np.where(np.arange(Lt) <= 10, 0.25 * mean, 2.0 * mean)
+    final_sdev = np.where(np.arange(Lt) <= 7, 0.25 * mean, 2.0 * mean)
+
+    _windows, diagnostics = _auto_pt2_windows(
+        gv.gvar(mean, initial_sdev),
+        pt2_f_gv=gv.gvar(mean, final_sdev),
+        Lt=Lt,
+        nstate_values=[2],
+    )
+
+    assert diagnostics["stable_tmax"] == 10
+    assert diagnostics["channels"]["initial"]["stable_tmax"] == 13
+    assert diagnostics["channels"]["final"]["stable_tmax"] == 10
+
+
+def test_auto_pt2_windows_fall_back_and_explicit_windows_are_exact() -> None:
+    data = gv.gvar(np.zeros(32), np.ones(32))
+    windows, diagnostics = _auto_pt2_windows(data, Lt=32, nstate_values=[2])
+    assert diagnostics["stable_tmax"] == 8
+    assert diagnostics["used_fallback"] is True
+    assert diagnostics["fallback_reason"]
+    assert windows
+
+    explicit = [{"tmin": 4, "tmax": 13}]
+    resolved, explicit_diagnostics = _resolve_pt2_windows(
+        explicit,
+        Lt=32,
+        pt2_gv=data,
+        nstate_values=[2],
+    )
+    assert resolved == explicit
+    assert explicit_diagnostics["source"] == "explicit"
+
+    with pytest.raises(ValueError, match="provide explicit pt2_windows"):
+        _auto_pt2_windows(gv.gvar(np.zeros(8), np.ones(8)), Lt=8, nstate_values=[2])
+
+
 def test_normalise_pt3_windows_expands_tau_cuts() -> None:
     windows = _normalise_pt3_windows(None, tsep_ls=[6, 8], tau_cuts=[1, 2])
     assert [w["tau_cut"] for w in windows] == [1, 2]
@@ -765,6 +829,56 @@ def test_normalise_pt3_windows_preserves_explicit_tsep_subsets() -> None:
         {"tsep_ls": [6, 8], "tau_cut": 1},
         {"tsep_ls": [6, 8, 10], "tau_cut": 2},
     ]
+
+
+def test_auto_pt3_windows_include_single_central_insertion_and_contiguous_subsets() -> None:
+    windows, diagnostics = _auto_pt3_windows(
+        tsep_ls=[6, 8, 10],
+        fit_scopes=["3pt_ratio"],
+    )
+    assert diagnostics["minimum_insertion_points"] == 1
+    assert {tuple(window["tsep_ls"]) for window in windows} == {
+        (6, 8, 10),
+        (8, 10),
+        (6, 8),
+    }
+    assert {"tsep_ls": [6, 8, 10], "tau_cut": 3} in windows
+    assert 6 + 1 - 2 * 3 == 1
+    assert all(
+        tsep + 1 - 2 * window["tau_cut"] >= 1
+        for window in windows
+        for tsep in window["tsep_ls"]
+    )
+
+
+def test_auto_pt3_windows_keep_two_tseps_for_fh_and_preserve_precedence() -> None:
+    windows, _diagnostics = _auto_pt3_windows(
+        tsep_ls=[6, 8, 10],
+        fit_scopes=["FH"],
+    )
+    assert all(len(window["tsep_ls"]) >= 2 for window in windows)
+
+    explicit_windows = [{"tsep_ls": [8, 10], "tau_cut": 4}]
+    resolved, diagnostics = _resolve_pt3_windows(
+        explicit_windows,
+        tsep_ls=[6, 8, 10],
+        tau_cuts=[1],
+        fit_scopes=["3pt_ratio"],
+    )
+    assert resolved == explicit_windows
+    assert diagnostics["source"] == "explicit_pt3_windows"
+
+    resolved, diagnostics = _resolve_pt3_windows(
+        None,
+        tsep_ls=[6, 8, 10],
+        tau_cuts=[2, 3],
+        fit_scopes=["3pt_ratio"],
+    )
+    assert resolved == [
+        {"tsep_ls": [6, 8, 10], "tau_cut": 2},
+        {"tsep_ls": [6, 8, 10], "tau_cut": 3},
+    ]
+    assert diagnostics["source"] == "explicit_pt3_tau_cuts"
 
 
 def test_candidate_specs_joint_is_cartesian() -> None:
@@ -959,6 +1073,63 @@ def test_tune_bare_matrix_returns_ranked_candidates(tmp_path) -> None:
     assert result["candidates"][0]["n_data"] > result["candidates"][0]["n_params"]
     assert result["candidates"][0]["dof_is_positive"] is True
     assert result["recommended_window"]["n_data"] > result["recommended_window"]["n_params"]
+
+
+def test_automatic_windows_flow_from_tuning_into_grid_result(tmp_path) -> None:
+    pt2_path, pt3_paths = _write_fake_correlators(
+        tmp_path,
+        n_cfg=8,
+        tsep_ls=(6, 8),
+        z_values=(0,),
+    )
+    store: dict = {}
+    tuned = tune_bare_matrix(
+        store,
+        pt2_path=pt2_path,
+        pt3_paths=pt3_paths,
+        tsep_ls=[6, 8],
+        momentum="PX0PY0PZ0",
+        tune_z_values=[0],
+        z_values=[0],
+        nstate=2,
+        prior_width=1.0,
+        fit_strategy="joint",
+        resample_mode="jk",
+        sample_error_mode="mean",
+        svdcut=1e-6,
+    )
+    scan = tuned["auto_window_scan"]
+    assert scan["pt2"]["source"] == "automatic"
+    assert scan["pt3"]["source"] == "automatic"
+    robust = tuned["recommended_robust_window"]
+    assert robust is not None
+    candidate = tuned["candidates"][tuned["recommended_robust_index"]]
+
+    fitted = fit_bare_matrix_grid(
+        store,
+        pt2_path=pt2_path,
+        pt3_paths=pt3_paths,
+        tsep_ls=[6, 8],
+        z_values=[0],
+        ensemble="toy",
+        tag="auto",
+        momentum="PX0PY0PZ0",
+        bz_direction="Z",
+        pt2_window={"tmin": robust["tmin"], "tmax": robust["tmax"]},
+        pt3_window={"tsep_ls": robust["tsep_ls"], "tau_cut": robust["tau_cut"]},
+        fit_strategy=candidate["fit_strategy"],
+        fit_scope=candidate["fit_scope"],
+        nstate=robust["nstate"],
+        prior_width=robust["prior_width"],
+        resample_mode="jk",
+        sample_error_mode="mean",
+        svdcut=1e-6,
+        artifacts_dir=tmp_path / "artifacts",
+        save_path=str(tmp_path / "artifacts" / "bare"),
+    )
+    assert fitted["auto_window_scan"] == scan
+    assert fitted["shared_window_specs"][0]["tmin"] == robust["tmin"]
+    assert fitted["shared_window_specs"][0]["tau_cut"] == robust["tau_cut"]
 
 
 def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
@@ -1211,3 +1382,77 @@ def test_log_nonlinear_fit_quality_writes_good_and_bad(tmp_path) -> None:
     log_text = log_path.read_text()
     assert "Good toy good" in log_text
     assert "WARNING - Bad toy bad" in log_text
+
+
+def test_qda_fit_logs_split_tuning_and_all_sample_records(tmp_path: Path) -> None:
+    tuning_path, sample_path = _split_fit_log_paths(
+        log_path=tmp_path / "qda.log",
+        log_dir=tmp_path,
+        log_stem="unused",
+    )
+    assert tuning_path.name == "qda_tuning.log"
+    assert sample_path.name == "qda_samples.log"
+    assert tuning_path != sample_path
+    default_tuning_path, default_sample_path = _split_fit_log_paths(
+        log_path=None,
+        log_dir=tmp_path,
+        log_stem="ensemble_job_PX0PY0PZ6_joint_qda_ratio",
+    )
+    assert default_tuning_path.name.endswith("_joint_qda_ratio_tuning.log")
+    assert default_sample_path.name.endswith("_joint_qda_ratio_samples.log")
+
+    tuning_logger = setup_logger(tuning_path, logger_name="qda_test_tuning_logger")
+    sample_logger = setup_logger(sample_path, logger_name="qda_test_sample_logger")
+    tuning_logger.info("selected qda_ratio window t=[3,8)")
+    sample_results = [
+        {
+            "sample": 0,
+            "logs": [
+                {
+                    "kind": "fit",
+                    "nstate": 2,
+                    "prior_width": 1.0,
+                    "Q": 0.8,
+                    "chi2": 3.0,
+                    "dof": 6,
+                    "logGBF": 12.5,
+                },
+                {
+                    "kind": "rejected",
+                    "nstate": 1,
+                    "prior_width": 2.0,
+                    "reason": "non-physical E0",
+                },
+            ],
+            "error": None,
+        },
+        {
+            "sample": 1,
+            "logs": [],
+            "error": "fit did not converge",
+        },
+    ]
+    for z in (0, 1):
+        _log_qda_sample_results(
+            sample_results,
+            z=z,
+            strategy="joint",
+            shared_window={"tmin": 3, "tmax": 8},
+            logger=sample_logger,
+            q_min=0.05,
+        )
+    for logger in (tuning_logger, sample_logger):
+        for handler in logger.handlers:
+            handler.flush()
+
+    assert tuning_path.is_file()
+    assert sample_path.is_file()
+    sample_text = sample_path.read_text()
+    for z in (0, 1):
+        assert f"z={z} sample=0" in sample_text
+        assert f"z={z} sample=1" in sample_text
+    assert "Q=0.8 chi2/dof=0.5 chi2=3 dof=6 logGBF=12.5" in sample_text
+    assert "Rejected joint_2pt_qda_ratio" in sample_text
+    assert "non-physical E0" in sample_text
+    assert "Bad joint_2pt_qda_ratio" in sample_text
+    assert "fit did not converge" in sample_text

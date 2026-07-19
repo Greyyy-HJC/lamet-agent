@@ -2,8 +2,11 @@
 
 STAGE_PROMPT = """
 Analyze only the correlators listed for the current job. Manifest-derived paths,
-selectors, resampling mode, candidate windows, nstate_values, prior_width, and
-fit_strategies are injected into tool calls when omitted.
+selectors, resampling mode, nstate_values, prior_width, and fit_strategies are
+injected into tool calls when omitted. When pt2_windows, pt3_windows, and
+pt3_tau_cuts are absent, the tools generate bounded automatic window candidates
+from the resampled 2pt signal and available tsep grid; explicit windows are exact
+overrides.
 
 fit_scope selects exactly one analysis family for a job. 3pt_ratio, FH, and
 3pt_ratio+FH consume 3pt data. qda_ratio constructs C_qDA(bz,P,t)/C2(P,t)

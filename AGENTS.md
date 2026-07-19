@@ -119,6 +119,13 @@ Package modules:
 4. Extend `core/prompting.py` if the new stage needs shared prompt fragments.
 5. Add unit tests under `tests/unit/` and, when appropriate, extend a dedicated example manifest.
 
+## Stage Package Hygiene
+
+- Keep stage packages centered on `functions.py`, `prompts.py`, and `skills.py`.
+- Put stage tools and their tightly coupled private helpers in `functions.py` instead of creating one-off implementation modules.
+- Add another stage module only for a coherent, independently maintained responsibility that would otherwise obscure the stage contract, such as report generation.
+- Keep dependencies between stage modules one-way; do not introduce circular or bidirectional implementation imports.
+
 ## How To Add A New Script Or Example
 
 1. Put reusable logic in the package, not in the example script.

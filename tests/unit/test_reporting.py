@@ -62,7 +62,22 @@ def test_correlator_stage_report_shows_overlay_and_omits_dispersion_from_job_out
         jobs=[
             {
                 "job_id": "ca_p4",
-                "result": {"fit_scope": "3pt_ratio", "fit_strategy": "joint"},
+                "result": {
+                    "fit_scope": "3pt_ratio",
+                    "fit_strategy": "joint",
+                    "auto_window_scan": {
+                        "pt2": {
+                            "source": "automatic",
+                            "stable_tmax": 12,
+                            "fallback_reason": None,
+                            "pt2_windows": [{"tmin": 3, "tmax": 12}],
+                        },
+                        "pt3": {
+                            "source": "automatic",
+                            "pt3_windows": [{"tsep_ls": [8, 10], "tau_cut": 2}],
+                        },
+                    },
+                },
                 "artifacts": {
                     "bare_artifact": "ca_p4.nc",
                     "summary_plot": "ca_p4.pdf",
@@ -84,6 +99,8 @@ def test_correlator_stage_report_shows_overlay_and_omits_dispersion_from_job_out
     assert "## HISQa060_X组态总览图" in text
     assert "![HISQa060_X组态总览图](ca_HISQa060_X_re.svg)" in text
     assert text.index("ca_HISQa060_X_re.svg") < text.index("ca_HISQa060_X_im.svg")
+    assert "### 自动窗口扫描" in text
+    assert '"tau_cut":2' in text
     per_job = text.split("### fit_logs", 1)[1].split("### 诊断 SVG", 1)[0]
     assert "dispersion_relation" not in per_job
 

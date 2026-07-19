@@ -794,6 +794,32 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
     assert quick["stages"]["correlator_analysis"]["defaults"]["nstate"] == [2]
     assert full["metadata"]["sample_error_mode"] == "covariance"
     assert full["stages"]["correlator_analysis"]["defaults"]["model_average"] is True
+    assert "pt2_windows" not in full["stages"]["correlator_analysis"]["defaults"]
+    assert "pt3_tau_cuts" not in full["stages"]["correlator_analysis"]["defaults"]
+
+
+def test_full_plan_variant_preserves_explicit_correlator_windows(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    explicit_pt2 = [{"tmin": 3, "tmax": 12}, {"tmin": 5, "tmax": 13}]
+    explicit_tau = [2, 4]
+    payload["stages"] = {
+        "correlator_analysis": {
+            "defaults": {
+                "pt2_windows": explicit_pt2,
+                "pt3_tau_cuts": explicit_tau,
+                "nstate": [2],
+            },
+            "jobs": [],
+        }
+    }
+
+    _quick, full, _edits = build_repaired_manifests(
+        tmp_path / "draft.json", payload, []
+    )
+
+    defaults = full["stages"]["correlator_analysis"]["defaults"]
+    assert defaults["pt2_windows"] == explicit_pt2
+    assert defaults["pt3_tau_cuts"] == explicit_tau
 
 
 def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Path) -> None:
@@ -1167,7 +1193,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     defaults = full["stages"]["correlator_analysis"]["defaults"]
     assert {"tmin": 2, "tmax": 12} in defaults["pt2_windows"]
     assert {"tmin": 6, "tmax": 12} in defaults["pt2_windows"]
-    assert defaults["pt3_tau_cuts"] == [2, 3, 4, 5, 6, 7]
+    assert defaults["pt3_tau_cuts"] == [2, 3, 4, 5]
     assert defaults["model_average"] is True
     assert full["metadata"]["sample_error_mode"] == "covariance"
     assert "Quick manifest changes:" in result.output
