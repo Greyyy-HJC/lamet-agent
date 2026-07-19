@@ -210,27 +210,52 @@ def sum_ft_re_im(x_ls, fx_re_ls, fx_im_ls, output_k, *, phase_shift: float = 0.0
     x = np.asarray(x_ls)
     fx_re = np.asarray(fx_re_ls)
     fx_im = np.asarray(fx_im_ls)
-    delta_x = abs(x[1] - x[0])
     k = np.asarray(output_k)
     shifted_k = k - float(phase_shift)
-    pref = delta_x / (2 * np.pi)
+    diffs = np.diff(x)
+    if np.allclose(diffs, diffs[0], rtol=1e-7, atol=1e-12):
+        pref = abs(float(diffs[0])) / (2 * np.pi)
+        if k.ndim == 0:
+            phase = x * shifted_k
+            cos_phase = np.cos(phase)
+            sin_phase = np.sin(phase)
+            val_re = pref * np.sum(cos_phase * fx_re) - pref * np.sum(sin_phase * fx_im)
+            val_im = pref * np.sum(sin_phase * fx_re) + pref * np.sum(cos_phase * fx_im)
+            return val_re, val_im
+
+        phase = np.multiply.outer(x, shifted_k)
+        cos_phase = np.cos(phase)
+        sin_phase = np.sin(phase)
+        val_re = pref * np.sum(cos_phase * fx_re[:, None], axis=0) - pref * np.sum(
+            sin_phase * fx_im[:, None], axis=0
+        )
+        val_im = pref * np.sum(sin_phase * fx_re[:, None], axis=0) + pref * np.sum(
+            cos_phase * fx_im[:, None], axis=0
+        )
+        return val_re, val_im
+
+    weights = np.empty_like(x, dtype=float)
+    weights[0] = abs(float(x[1] - x[0])) / 2.0
+    weights[-1] = abs(float(x[-1] - x[-2])) / 2.0
+    weights[1:-1] = np.abs(x[2:] - x[:-2]) / 2.0
+    pref = weights / (2 * np.pi)
 
     if k.ndim == 0:
         phase = x * shifted_k
         cos_phase = np.cos(phase)
         sin_phase = np.sin(phase)
-        val_re = pref * np.sum(cos_phase * fx_re) - pref * np.sum(sin_phase * fx_im)
-        val_im = pref * np.sum(sin_phase * fx_re) + pref * np.sum(cos_phase * fx_im)
+        val_re = np.sum(pref * cos_phase * fx_re) - np.sum(pref * sin_phase * fx_im)
+        val_im = np.sum(pref * sin_phase * fx_re) + np.sum(pref * cos_phase * fx_im)
         return val_re, val_im
 
     phase = np.multiply.outer(x, shifted_k)
     cos_phase = np.cos(phase)
     sin_phase = np.sin(phase)
-    val_re = pref * np.sum(cos_phase * fx_re[:, None], axis=0) - pref * np.sum(
-        sin_phase * fx_im[:, None], axis=0
+    val_re = np.sum(pref[:, None] * cos_phase * fx_re[:, None], axis=0) - np.sum(
+        pref[:, None] * sin_phase * fx_im[:, None], axis=0
     )
-    val_im = pref * np.sum(sin_phase * fx_re[:, None], axis=0) + pref * np.sum(
-        cos_phase * fx_im[:, None], axis=0
+    val_im = np.sum(pref[:, None] * sin_phase * fx_re[:, None], axis=0) + np.sum(
+        pref[:, None] * cos_phase * fx_im[:, None], axis=0
     )
     return val_re, val_im
 
@@ -1276,8 +1301,15 @@ def _run_one_scheme(
             Lambda0_gev=Lambda0_gev,
         )
 
-    dz = _uniform_step(fit_coord)
-    z_ext = np.arange(fit_coord[0], z_ext_fit_max + 0.5 * dz, dz)
+    diffs = np.diff(fit_coord)
+    if np.allclose(diffs, diffs[0], rtol=1e-7, atol=1e-12):
+        dz = _uniform_step(fit_coord)
+        z_ext = np.arange(fit_coord[0], z_ext_fit_max + 0.5 * dz, dz)
+    else:
+        dz = float(np.min(diffs))
+        z_ext = fit_coord[fit_coord <= z_ext_fit_max + 0.5 * dz]
+        z_tail = np.arange(z_ext[-1] + dz, z_ext_fit_max + 0.5 * dz, dz)
+        z_ext = np.concatenate([z_ext, z_tail])
     lambda_ext = z_ext * ft_scale_over_fit_scale
 
     data_re = _interp_samples(fit_coord, re_samples, z_ext)
@@ -1503,7 +1535,12 @@ def run_fourier_workflow(
     resample_mode = _normalise_resample_mode(resample_mode)
     sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
     part = _normalise_part(part)
-    coord_step = _uniform_step(coord_arr)
+    coord_diffs = np.diff(coord_arr)
+    coord_step = (
+        _uniform_step(coord_arr)
+        if np.allclose(coord_diffs, coord_diffs[0], rtol=1e-7, atol=1e-12)
+        else float(np.min(coord_diffs))
+    )
     missing_short_distance_coord = np.arange(0.0, coord_arr[0], coord_step).tolist()
 
     re_mat = _as_sample_matrix("re_samples", re_samples)

@@ -90,6 +90,27 @@ def test_sum_ft_re_im_applies_phase_shift() -> None:
     assert np.allclose(got_im, expected_im)
 
 
+def test_sum_ft_re_im_uses_quadrature_weights_for_nonuniform_grid() -> None:
+    lam = np.array([0.0, 0.8, 1.5, 3.0])
+    re = np.array([1.0, 2.0, 1.5, 0.5])
+    im = np.array([0.2, 0.1, -0.1, -0.2])
+    x_grid = np.array([0.0, 0.4])
+    weights = np.array([0.4, 0.75, 1.1, 0.75])
+    phase = np.multiply.outer(lam, x_grid)
+
+    got_re, got_im = sum_ft_re_im(lam, re, im, x_grid)
+
+    pref = weights[:, None] / (2 * np.pi)
+    expected_re = np.sum(pref * np.cos(phase) * re[:, None], axis=0) - np.sum(
+        pref * np.sin(phase) * im[:, None], axis=0
+    )
+    expected_im = np.sum(pref * np.sin(phase) * re[:, None], axis=0) + np.sum(
+        pref * np.cos(phase) * im[:, None], axis=0
+    )
+    assert np.allclose(got_re, expected_re)
+    assert np.allclose(got_im, expected_im)
+
+
 def test_fourier_workflow_omits_missing_short_distance_grid() -> None:
     coord = np.arange(2.0, 8.0)
     base = np.exp(-0.2 * coord) * np.cos(0.3 * coord)
@@ -121,6 +142,38 @@ def test_fourier_workflow_omits_missing_short_distance_grid() -> None:
     assert result["missing_short_distance_coord"] == [0.0, 1.0]
     assert result["fourier_positive_coord_start"] == 2.0
     assert np.isclose(result["scheme_results"][0]["z_ext"][0], 2.0 * 0.04 / 0.197327)
+
+
+def test_fourier_workflow_accepts_nonuniform_input_grid() -> None:
+    coord = np.array([0.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    base = np.exp(-0.2 * coord) * np.cos(0.3 * coord)
+    re_samples = np.vstack([base * (1.0 + 0.001 * idx) for idx in range(8)])
+    im_samples = np.zeros_like(re_samples)
+
+    result = run_fourier_workflow(
+        coord,
+        re_samples,
+        im_samples,
+        [-0.5, 0.0, 0.5],
+        schemes=[{"label": "manual", "zmin": 2.0, "zmax": 5.0, "z_ext_max": 6.0, "smooth": "linear"}],
+        method="GI",
+        order="LA",
+        observable="meson_quasi_da",
+        coord_unit="lattice",
+        momentum_gev=2.4,
+        lattice_spacing_fm=0.04,
+        resample_mode="jackknife",
+        sample_error_mode="mean",
+        part="re",
+        sector="valence",
+        hadron="pion",
+        psi1_flavor_class="light",
+        psi2_flavor_class="light",
+    )
+
+    assert result["input_coord_step"] == 1.0
+    assert np.allclose(result["scheme_results"][0]["z_ext"], coord * 0.04 / 0.197327)
+    assert result["ft_re_samples"].shape == (1, 8, 3)
 
 
 def test_fourier_parallel_sample_fits_match_serial() -> None:
