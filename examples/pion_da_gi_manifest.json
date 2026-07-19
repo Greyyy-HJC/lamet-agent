@@ -103,7 +103,7 @@
         "nstate": [1, 2],
         "fit_scope": ["qda_ratio"],
         "fit_strategy": ["joint"],
-        "svdcut": 1e-06,
+        "svdcut": 1e-05,
         "posterior_prior_error_scale": 3.0,
         "prior_width": [1.0],
         "fitting_form": "Breit",
@@ -117,72 +117,63 @@
           "id": "ca_a06m130_pz6",
           "correlator_ids": ["qda_a06m130_2pt"],
           "params": {
-            "momentum": "PX0PY0PZ6",
-            "pt2_windows": [{"tmin": 8, "tmax": 18}, {"tmin": 9, "tmax": 18}, {"tmin": 10, "tmax": 18}]
+            "momentum": "PX0PY0PZ6"
           }
         },
         {
           "id": "ca_a09m130_pz6",
           "correlator_ids": ["qda_a09m130_2pt"],
           "params": {
-            "momentum": "PX0PY0PZ6",
-            "pt2_windows": [{"tmin": 5, "tmax": 14}, {"tmin": 6, "tmax": 14}, {"tmin": 7, "tmax": 14}]
+            "momentum": "PX0PY0PZ6"
           }
         },
         {
           "id": "ca_a12m130_pz6",
           "correlator_ids": ["qda_a12m130_2pt"],
           "params": {
-            "momentum": "PX0PY0PZ6",
-            "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}]
+            "momentum": "PX0PY0PZ6"
           }
         },
         {
           "id": "ca_a06m130_pz8",
           "correlator_ids": ["qda_a06m130_2pt"],
           "params": {
-            "momentum": "PX0PY0PZ8",
-            "pt2_windows": [{"tmin": 5, "tmax": 14}, {"tmin": 6, "tmax": 14}, {"tmin": 7, "tmax": 14}]
+            "momentum": "PX0PY0PZ8"
           }
         },
         {
           "id": "ca_a09m130_pz8",
           "correlator_ids": ["qda_a09m130_2pt"],
           "params": {
-            "momentum": "PX0PY0PZ8",
-            "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}]
+            "momentum": "PX0PY0PZ8"
           }
         },
         {
           "id": "ca_a12m130_pz8",
           "correlator_ids": ["qda_a12m130_2pt"],
           "params": {
-            "momentum": "PX0PY0PZ8",
-            "pt2_windows": [{"tmin": 2, "tmax": 10}, {"tmin": 3, "tmax": 10}, {"tmin": 4, "tmax": 10}]
+            "momentum": "PX0PY0PZ8"
           }
         },
         {
           "id": "ca_a06m130_pz10",
           "correlator_ids": ["qda_a06m130_2pt"],
           "params": {
-            "momentum": "PX0PY0PZ10",
-            "pt2_windows": [{"tmin": 4, "tmax": 13}, {"tmin": 5, "tmax": 13}, {"tmin": 6, "tmax": 13}]
+            "momentum": "PX0PY0PZ10"
           }
         },
         {
           "id": "ca_a09m130_pz10",
           "correlator_ids": ["qda_a09m130_2pt"],
           "params": {
-            "momentum": "PX0PY0PZ10",
-            "pt2_windows": [{"tmin": 2, "tmax": 11}, {"tmin": 3, "tmax": 11}, {"tmin": 4, "tmax": 11}]
+            "momentum": "PX0PY0PZ10"
           }
         },
         {
           "id": "ca_a12m130_pz10",
           "correlator_ids": ["qda_a12m130_2pt"],
           "params": {
-            "momentum": "PX0PY0PZ10",
-            "pt2_windows": [{"tmin": 1, "tmax": 9}, {"tmin": 2, "tmax": 9}, {"tmin": 3, "tmax": 9}]
+            "momentum": "PX0PY0PZ10"
           }
         }
       ]
