@@ -52,6 +52,7 @@ from lamet_agent.core.plotting import (
     plot_pt2_fit_on_data,
     plot_pt2_meff_on_data,
     plot_pt3_ratio_fit_on_data,
+    plot_qda_ratio_fit_on_data,
 )
 from lamet_agent.core.resampling import (
     resample_config_samples,
@@ -1337,6 +1338,9 @@ def _normalise_pt3_paths(pt3_paths: dict[str, str] | list[str], *, tsep_ls: list
 # --- window grids ------------------------------------------------------------
 
 DEFAULT_MAX_PT2_WINDOWS = 6
+AUTO_MAX_PT3_TAU_CUTS = 3
+AUTO_PT2_SNR_MIN = 1.0
+AUTO_PT2_TAIL_POINTS = 2
 
 
 def _normalise_pt2_windows(windows: list[dict[str, int]] | None, *, Lt: int) -> list[dict[str, int]]:
@@ -1345,6 +1349,125 @@ def _normalise_pt2_windows(windows: list[dict[str, int]] | None, *, Lt: int) -> 
     quarter = max(Lt // 4, 1)
     tmins = list(range(2, quarter - 3))
     return [{"tmin": tmin, "tmax": quarter} for tmin in tmins[:DEFAULT_MAX_PT2_WINDOWS]]
+
+
+def _evenly_spaced_integers(start: int, stop: int, *, limit: int) -> list[int]:
+    """Return up to ``limit`` ordered integers spanning an inclusive interval."""
+    if stop < start or limit < 1:
+        return []
+    if stop - start + 1 <= limit:
+        return list(range(start, stop + 1))
+    return sorted({int(round(value)) for value in np.linspace(start, stop, limit)})
+
+
+def _pt2_snr_endpoint(pt2_gv: np.ndarray, *, Lt: int) -> tuple[int | None, dict[str, Any]]:
+    """Find the exclusive first-half endpoint through two points past SNR >= 1."""
+    half = max(int(Lt) // 2, 1)
+    mean = np.asarray(gv.mean(pt2_gv), dtype=float)
+    sdev = np.asarray(gv.sdev(pt2_gv), dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        snr = np.divide(
+            np.abs(mean),
+            sdev,
+            out=np.where(np.abs(mean) > 0.0, np.full_like(mean, np.inf), np.zeros_like(mean)),
+            where=sdev > 0.0,
+        )
+    eligible = np.arange(2, min(half, len(snr)), dtype=int)
+    stable = eligible[(~np.isnan(snr[eligible])) & (snr[eligible] >= AUTO_PT2_SNR_MIN)]
+    if stable.size == 0:
+        return None, {
+            "last_snr_passing_t": None,
+            "stable_tmax": None,
+            "fallback_reason": "no first-half 2pt point at t>=2 has SNR >= 1",
+        }
+    last = int(stable[-1])
+    endpoint = min(half, last + 1 + AUTO_PT2_TAIL_POINTS)
+    return endpoint, {
+        "last_snr_passing_t": last,
+        "stable_tmax": int(endpoint),
+        "fallback_reason": None,
+    }
+
+
+def _auto_pt2_windows(
+    pt2_gv: np.ndarray,
+    *,
+    Lt: int,
+    nstate_values: list[int],
+    pt2_f_gv: np.ndarray | None = None,
+) -> tuple[list[dict[str, int]], dict[str, Any]]:
+    """Generate a bounded, data-driven first-half 2pt window scan."""
+    states = [int(value) for value in nstate_values]
+    if not states or any(value < 1 for value in states):
+        raise ValueError("automatic pt2 window scan requires positive nstate values")
+    minimum_points = max(4, 2 * max(states) + 1)
+    endpoint, primary_diag = _pt2_snr_endpoint(pt2_gv, Lt=Lt)
+    channel_diags: dict[str, Any] = {"initial": primary_diag}
+    fallback_reasons: list[str] = []
+    if endpoint is None:
+        fallback_reasons.append(str(primary_diag["fallback_reason"]))
+    if pt2_f_gv is not None:
+        final_endpoint, final_diag = _pt2_snr_endpoint(pt2_f_gv, Lt=Lt)
+        channel_diags["final"] = final_diag
+        if final_endpoint is None:
+            fallback_reasons.append(str(final_diag["fallback_reason"]))
+        endpoints = [value for value in (endpoint, final_endpoint) if value is not None]
+        endpoint = min(endpoints) if len(endpoints) == 2 else None
+
+    used_fallback = endpoint is None
+    if endpoint is None:
+        endpoint = min(max(int(Lt) // 4, 1), max(int(Lt) // 2, 1))
+
+    tmax_values = [value for value in (endpoint - 1, endpoint) if value >= 2 + minimum_points]
+    windows: list[dict[str, int]] = []
+    for tmax in sorted(set(tmax_values)):
+        for tmin in _evenly_spaced_integers(2, tmax - minimum_points, limit=3):
+            windows.append({"tmin": int(tmin), "tmax": int(tmax)})
+    windows = windows[:DEFAULT_MAX_PT2_WINDOWS]
+    if not windows:
+        reason = "; ".join(fallback_reasons) or (
+            f"stable first-half endpoint tmax={endpoint} leaves fewer than {minimum_points} fit points"
+        )
+        raise ValueError(
+            "automatic pt2 window scan could not generate a legal window "
+            f"({reason}); provide explicit pt2_windows"
+        )
+    return windows, {
+        "source": "automatic",
+        "snr_threshold": AUTO_PT2_SNR_MIN,
+        "tail_points": AUTO_PT2_TAIL_POINTS,
+        "minimum_points": minimum_points,
+        "stable_tmax": int(endpoint),
+        "used_fallback": used_fallback,
+        "fallback_reason": "; ".join(fallback_reasons) if fallback_reasons else None,
+        "channels": channel_diags,
+        "pt2_windows": windows,
+    }
+
+
+def _resolve_pt2_windows(
+    windows: list[dict[str, int]] | None,
+    *,
+    Lt: int,
+    pt2_gv: np.ndarray,
+    nstate_values: list[int],
+    pt2_f_gv: np.ndarray | None = None,
+) -> tuple[list[dict[str, int]], dict[str, Any]]:
+    """Use explicit 2pt windows exactly, or generate automatic candidates."""
+    if windows is not None:
+        resolved = _normalise_pt2_windows(windows, Lt=Lt)
+        return resolved, {
+            "source": "explicit",
+            "used_fallback": False,
+            "fallback_reason": None,
+            "pt2_windows": resolved,
+        }
+    return _auto_pt2_windows(
+        pt2_gv,
+        Lt=Lt,
+        nstate_values=nstate_values,
+        pt2_f_gv=pt2_f_gv,
+    )
 
 
 def _normalise_pt3_windows(
@@ -1360,6 +1483,74 @@ def _normalise_pt3_windows(
         ]
     cuts = [int(cut) for cut in (tau_cuts if tau_cuts is not None else [1, 2, 3, 4])]
     return [{"tsep_ls": list(tsep_ls), "tau_cut": cut} for cut in cuts]
+
+
+def _auto_pt3_windows(
+    *,
+    tsep_ls: list[int],
+    fit_scopes: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Generate bounded contiguous-tsep and non-empty insertion windows."""
+    tseps = sorted({int(value) for value in tsep_ls})
+    if not tseps:
+        raise ValueError("automatic pt3 window scan requires at least one tsep")
+    requires_fh = any("FH" in str(scope) for scope in fit_scopes)
+    minimum_tseps = 2 if requires_fh else 1
+    raw_subsets = [tseps]
+    if len(tseps) > minimum_tseps:
+        raw_subsets.extend((tseps[1:], tseps[:-1]))
+    subsets: list[list[int]] = []
+    for subset in raw_subsets:
+        if len(subset) >= minimum_tseps and subset not in subsets:
+            subsets.append(subset)
+
+    windows: list[dict[str, Any]] = []
+    for subset in subsets:
+        max_cut = min(int(tsep) // 2 for tsep in subset)
+        cuts = _evenly_spaced_integers(1, max_cut, limit=AUTO_MAX_PT3_TAU_CUTS)
+        for cut in cuts:
+            if all(int(tsep) + 1 - 2 * int(cut) >= 1 for tsep in subset):
+                windows.append({"tsep_ls": list(subset), "tau_cut": int(cut)})
+    if not windows:
+        raise ValueError(
+            "automatic pt3 window scan could not leave a non-empty insertion window; "
+            "provide explicit pt3_windows or pt3_tau_cuts"
+        )
+    return windows, {
+        "source": "automatic",
+        "minimum_tseps": minimum_tseps,
+        "minimum_insertion_points": 1,
+        "pt3_windows": windows,
+        "used_fallback": False,
+        "fallback_reason": None,
+    }
+
+
+def _resolve_pt3_windows(
+    windows: list[dict[str, Any]] | None,
+    *,
+    tsep_ls: list[int],
+    tau_cuts: list[int] | None,
+    fit_scopes: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Apply explicit 3pt precedence, otherwise generate automatic candidates."""
+    if windows is not None:
+        resolved = _normalise_pt3_windows(windows, tsep_ls=tsep_ls, tau_cuts=tau_cuts)
+        return resolved, {
+            "source": "explicit_pt3_windows",
+            "used_fallback": False,
+            "fallback_reason": None,
+            "pt3_windows": resolved,
+        }
+    if tau_cuts is not None:
+        resolved = _normalise_pt3_windows(None, tsep_ls=tsep_ls, tau_cuts=tau_cuts)
+        return resolved, {
+            "source": "explicit_pt3_tau_cuts",
+            "used_fallback": False,
+            "fallback_reason": None,
+            "pt3_windows": resolved,
+        }
+    return _auto_pt3_windows(tsep_ls=tsep_ls, fit_scopes=fit_scopes)
 
 
 # --- plotting helpers (sample-average tuning and per-sample diagnostics) -----
@@ -1617,6 +1808,7 @@ def inspect_correlator_scale(
     temporal_extent: int | None = None,
     pt2_bT: int | None = None,
     pt2_bz: int | None = None,
+    nstate: int | list[int] = 2,
     selectors: dict[str, Any] | None = None,
     out: str = "correlator_scale_inspection",
 ) -> dict[str, Any]:
@@ -1637,7 +1829,20 @@ def inspect_correlator_scale(
         )
     )
     n_cfg, Lt = pt2_real.shape
-    windows = _normalise_pt2_windows(pt2_windows, Lt=Lt)
+    pt2_mean = np.mean(pt2_real, axis=0)
+    pt2_sem = (
+        np.std(pt2_real, axis=0, ddof=1) / np.sqrt(n_cfg)
+        if n_cfg > 1
+        else np.zeros(Lt, dtype=float)
+    )
+    pt2_gv = gv.gvar(pt2_mean, pt2_sem)
+    states = [int(value) for value in (nstate if isinstance(nstate, list) else [nstate])]
+    windows, auto_window_scan = _resolve_pt2_windows(
+        pt2_windows,
+        Lt=Lt,
+        pt2_gv=pt2_gv,
+        nstate_values=states,
+    )
     window_stats = []
     for window in windows:
         values = np.abs(pt2_real[:, window["tmin"] : window["tmax"]]).reshape(-1)
@@ -1660,6 +1865,7 @@ def inspect_correlator_scale(
         "n_cfg": int(n_cfg),
         "Lt": int(Lt),
         "windows": window_stats,
+        "auto_window_scan": {"pt2": auto_window_scan},
         "target_typical_abs_range": [0.0001, 0.01],
     }
     store[out] = result
@@ -1715,7 +1921,12 @@ def tune_ground_state(
     store["Lt"] = int(Lt)
 
     # fit every candidate window and retain numerical failures as diagnostics
-    windows = _normalise_pt2_windows(pt2_windows, Lt=Lt)
+    windows, pt2_scan = _resolve_pt2_windows(
+        pt2_windows,
+        Lt=Lt,
+        pt2_gv=pt2_gv,
+        nstate_values=[int(nstate)],
+    )
     records: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     for window in windows:
@@ -1778,6 +1989,7 @@ def tune_ground_state(
             for i, rec in enumerate(records)
         ],
         "rejected": rejected,
+        "auto_window_scan": {"pt2": pt2_scan},
         "E0_avg": str(e0_avg) if e0_avg is not None else None,
         "z0_avg": str(z0_avg) if z0_avg is not None else None,
         "c2pt_pdf": f"{resolved_save}_c2pt.pdf",
@@ -1968,8 +2180,6 @@ def tune_bare_matrix(
     requested_scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["3pt_ratio"])
     normalised_scopes = [_normalise_fit_scope(value)[0] for value in requested_scopes]
     if normalised_scopes == ["qda_ratio"]:
-        from .qda import tune_qda_ratio
-
         return tune_qda_ratio(
             store,
             pt2_path=pt2_path,
@@ -2067,13 +2277,25 @@ def tune_bare_matrix(
         )
         pt2_f_gv = samples_to_gvar(re_f_samples, mode=mode, sample_error_mode=sample_error_mode)
 
-    # resolve the full window and fit-model search space
-    pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=Lt)
-    pt3_window_specs = _normalise_pt3_windows(pt3_windows, tsep_ls=tseps, tau_cuts=pt3_tau_cuts)
+    # resolve the fit-model search first because automatic windows depend on its size
     strategies = fit_strategies or ([fit_strategy] if fit_strategy is not None else ["joint"])
     scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["3pt_ratio"])
     states = nstate_values or ([nstate] if nstate is not None else [2])
     prior_widths = _normalise_prior_width(prior_width)
+    pt2_window_specs, pt2_scan = _resolve_pt2_windows(
+        pt2_windows,
+        Lt=Lt,
+        pt2_gv=pt2_gv,
+        pt2_f_gv=pt2_f_gv,
+        nstate_values=[int(value) for value in states],
+    )
+    pt3_window_specs, pt3_scan = _resolve_pt3_windows(
+        pt3_windows,
+        tsep_ls=tseps,
+        tau_cuts=pt3_tau_cuts,
+        fit_scopes=[str(value) for value in scopes],
+    )
+    auto_window_scan = {"pt2": pt2_scan, "pt3": pt3_scan}
 
     by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
     all_rejected: list[dict[str, Any]] = []
@@ -2410,7 +2632,7 @@ def tune_bare_matrix(
         assert robust_record is not None
         robust_window = _fit_summary(robust_record, fallback=False, index=robust_index)
 
-    return {
+    result = {
         "out": out,
         "fit_strategies": strategies,
         "fit_scopes": scopes,
@@ -2432,7 +2654,15 @@ def tune_bare_matrix(
         "recommended_robust_index": robust_index,
         "recommended_robust_window": robust_window,
         "tuning_diagnostic_pdfs": {},
+        "auto_window_scan": auto_window_scan,
     }
+    store["_correlator_tuning_summary"] = {
+        "pt2_path": str(pt2_path),
+        "fit_scopes": [str(value) for value in scopes],
+        "auto_window_scan": auto_window_scan,
+        "recommended_robust_window": robust_window,
+    }
+    return result
 
 
 # --- tool 4: apply one shared setting to all samples and z -------------------
@@ -2704,8 +2934,6 @@ def fit_bare_matrix_grid(
     primary_nstate = fit_nstates[0]
     prior_widths = _normalise_prior_width(prior_width)
     if scope == "qda_ratio":
-        from .qda import fit_qda_ratio_grid
-
         return fit_qda_ratio_grid(
             store,
             pt2_path=pt2_path,
@@ -2815,12 +3043,30 @@ def fit_bare_matrix_grid(
         )
         pt2_f_gv = samples_to_gvar(pt2_f_samples, mode=mode, sample_error_mode=sample_error_mode)
     n_samples = int(pt2_samples.shape[0])
-    pt2_window_specs = _normalise_pt2_windows(pt2_windows, Lt=Lt)
-    if pt2_window is not None:
-        explicit_pt2_spec = {"tmin": int(pt2_window["tmin"]), "tmax": int(pt2_window["tmax"])}
-        if explicit_pt2_spec not in pt2_window_specs:
-            pt2_window_specs = [explicit_pt2_spec, *pt2_window_specs]
-    pt3_window_specs = _normalise_pt3_windows(pt3_windows, tsep_ls=tseps, tau_cuts=pt3_tau_cuts)
+    effective_pt2_windows = [pt2_window] if pt2_window is not None else pt2_windows
+    pt2_window_specs, pt2_scan = _resolve_pt2_windows(
+        effective_pt2_windows,
+        Lt=Lt,
+        pt2_gv=pt2_gv,
+        pt2_f_gv=pt2_f_gv,
+        nstate_values=fit_nstates,
+    )
+    effective_pt3_windows = [pt3_window] if pt3_window is not None else pt3_windows
+    pt3_window_specs, pt3_scan = _resolve_pt3_windows(
+        effective_pt3_windows,
+        tsep_ls=tseps,
+        tau_cuts=pt3_tau_cuts,
+        fit_scopes=[scope],
+    )
+    auto_window_scan = {"pt2": pt2_scan, "pt3": pt3_scan}
+    tuning_summary = store.get("_correlator_tuning_summary")
+    if (
+        isinstance(tuning_summary, dict)
+        and tuning_summary.get("pt2_path") == str(pt2_path)
+        and isinstance(tuning_summary.get("auto_window_scan"), dict)
+    ):
+        auto_window_scan = tuning_summary["auto_window_scan"]
+    tuning_logger.info("auto_window_scan=%s", json.dumps(auto_window_scan, sort_keys=True))
     tuning_logger.info("Lt=%s n_cfg=%s mode=%s n_samples=%s", Lt, n_cfg, mode, n_samples)
 
     # ratio loading is reused for the tune z and every production z
@@ -3549,8 +3795,1376 @@ def fit_bare_matrix_grid(
         "final_momentum_gev": final_momentum_gev,
         "q2_gev2": q2 if form == "NonBreit" else None,
         "xi": xi if form == "NonBreit" else None,
+        "auto_window_scan": auto_window_scan,
     }
 
+
+
+# --- qDA-ratio tuning and grid fits -----------------------------------------
+
+def _split_fit_log_paths(
+    *,
+    log_path: str | Path | None,
+    log_dir: Path,
+    log_stem: str,
+) -> tuple[Path, Path]:
+    """Return the standard tuning and per-sample fit-log paths."""
+    if log_path is not None:
+        base_log_path = Path(log_path)
+        log_suffix = base_log_path.suffix or ".log"
+        return (
+            base_log_path.with_name(f"{base_log_path.stem}_tuning{log_suffix}"),
+            base_log_path.with_name(f"{base_log_path.stem}_samples{log_suffix}"),
+        )
+    return (
+        log_dir / f"{log_stem}_tuning.log",
+        log_dir / f"{log_stem}_samples.log",
+    )
+
+
+def _plot_sample0_qda_ratio(
+    *,
+    ratio_re: np.ndarray,
+    ratio_im: np.ndarray,
+    fit: Any,
+    nstate: int,
+    tmin: int,
+    tmax: int,
+    Lt: int,
+    strategy: str,
+    momentum: str,
+    bT: int,
+    bz: int,
+    part: str,
+    qda_denominator_mode: str,
+    log_dir: Path,
+) -> dict[str, str]:
+    """Write sample-0 qDA ratio data and posterior bands on the main process."""
+    plot_t = np.arange(0, Lt // 2 + 1, dtype=int)
+    fit_t = np.arange(tmin, tmax, dtype=int)
+    stem = log_dir / (
+        f"{strategy}_qda_ratio_fit_{momentum}_bT{int(bT)}_bz{int(bz)}_sample0"
+    )
+    figures = plot_qda_ratio_fit_on_data(
+        plot_t,
+        np.asarray(ratio_re, dtype=object)[plot_t],
+        np.asarray(ratio_im, dtype=object)[plot_t],
+        fit_t=fit_t,
+        fit_real=qda_ratio_fcn(
+            fit_t,
+            fit.p,
+            Lt,
+            nstate=nstate,
+            part="re",
+            qda_denominator_mode=qda_denominator_mode,
+        ),
+        fit_imag=qda_ratio_fcn(
+            fit_t,
+            fit.p,
+            Lt,
+            nstate=nstate,
+            part="im",
+            qda_denominator_mode=qda_denominator_mode,
+        ),
+        components=_parts(part),
+        fit_label=f"{nstate}-state sample-0 fit",
+        title=f"{momentum}, bT={int(bT)}, bz={int(bz)}",
+        save_path=stem,
+    )
+    for figure, _axis in figures.values():
+        plt.close(figure)
+    output: dict[str, str] = {}
+    for component in figures:
+        output[f"qda_ratio_{component}_pdf"] = str(
+            stem.with_name(f"{stem.name}_qda_ratio_{component}.pdf")
+        )
+        output[f"qda_ratio_{component}_svg"] = str(
+            stem.with_name(f"{stem.name}_qda_ratio_{component}.svg")
+        )
+    return output
+
+
+def _qda_ratio_samples(
+    numerator_samples: np.ndarray,
+    denominator_samples: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    ratio = np.divide(
+        numerator_samples,
+        denominator_samples,
+        out=np.zeros_like(numerator_samples),
+        where=denominator_samples != 0,
+    )
+    return np.real(ratio), np.imag(ratio)
+
+
+def _ratio_samples_to_gvar(
+    samples: np.ndarray,
+    *,
+    mode: str,
+    sample_error_mode: str,
+) -> np.ndarray:
+    """Convert ratio samples, regularizing only exactly deterministic data."""
+    values = samples_to_gvar(
+        samples, mode=mode, sample_error_mode=sample_error_mode
+    )
+    sample_array = np.asarray(samples, dtype=float)
+    if sample_array.shape[0] > 0 and np.allclose(
+        sample_array,
+        np.broadcast_to(sample_array[0], sample_array.shape),
+        rtol=1e-14,
+        atol=1e-14,
+    ):
+        mean = np.asarray(np.mean(sample_array, axis=0), dtype=float)
+        floor = np.maximum(np.abs(mean), 1.0) * 1e-8
+        return gv.gvar(mean, floor)
+    return values
+
+
+def _validate_denominator_selectors(
+    qda_denominator_mode: str,
+    *,
+    pt2_bT: int | None,
+    pt2_bz: int | None,
+) -> None:
+    if qda_denominator_mode == "local_local":
+        if pt2_bT is not None or pt2_bz is not None:
+            raise ValueError(
+                "local_local qDA denominators must not declare pt2_bT or pt2_bz"
+            )
+        return
+    if qda_denominator_mode == "nonlocal_bz0":
+        if pt2_bT is None or pt2_bz != 0:
+            raise ValueError(
+                "nonlocal_bz0 qDA denominators require pt2_bT and pt2_bz=0"
+            )
+        return
+    raise ValueError(
+        "qda_denominator_mode must be 'local_local' or 'nonlocal_bz0'"
+    )
+
+
+def _average_records(
+    *,
+    pt2_gv: np.ndarray,
+    ratio_re: np.ndarray,
+    ratio_im: np.ndarray,
+    windows: list[dict[str, int]],
+    strategies: list[str],
+    nstates: list[int],
+    prior_widths: list[float],
+    Lt: int,
+    part: str,
+    svdcut: float,
+    scale: float,
+    qda_denominator_mode: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Fit every qDA strategy/model/window candidate on ensemble averages."""
+    records: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for strategy_value, nstate, width, window in product(
+        strategies, nstates, prior_widths, windows
+    ):
+        strategy, _ = _normalise_strategy(strategy_value)
+        template = _scope_prior_with_width(
+            "Breit",
+            nstate,
+            "qda_ratio",
+            strategy,
+            width,
+            qda_denominator_mode=qda_denominator_mode,
+        )
+        fit_prior = _scope_prior_with_width(
+            "Breit",
+            nstate,
+            "qda_ratio",
+            strategy,
+            width,
+            qda_denominator_mode=qda_denominator_mode,
+        )
+        metadata = {
+            "tmin": int(window["tmin"]),
+            "tmax": int(window["tmax"]),
+            "nstate": int(nstate),
+            "prior_width": float(width),
+            "fit_strategy": strategy,
+            "fit_scope": "qda_ratio",
+            "part": part,
+            "correlator_rescale": scale,
+        }
+        metadata = _with_fit_size_metadata(
+            metadata,
+            n_data=_fit_data_count(
+                metadata,
+                strategy=strategy,
+                fit_scope="qda_ratio",
+                part=part,
+                fitting_form="Breit",
+            ),
+            n_params=_prior_parameter_count(template),
+        )
+        try:
+            pt2_fit = None
+            if strategy == "chained":
+                pt2_fit = fit_two_point(
+                    pt2_gv,
+                    metadata["tmin"],
+                    metadata["tmax"],
+                    Lt,
+                    nstate=nstate,
+                    svdcut=svdcut,
+                    rescale=scale,
+                    prior=_vary_prior_width(
+                        qda_pt2_prior(
+                            nstate,
+                            qda_denominator_mode=qda_denominator_mode,
+                        ),
+                        width,
+                    ),
+                    qda_denominator_mode=qda_denominator_mode,
+                )
+                _anchor_qda_pt2_prior(
+                    fit_prior,
+                    pt2_fit,
+                    nstate,
+                    qda_denominator_mode=qda_denominator_mode,
+                )
+            fit = fit_matrix_element(
+                ratio_re,
+                ratio_im,
+                None,
+                None,
+                Lt,
+                strategy=strategy,
+                fit_scope="qda_ratio",
+                fitting_form="Breit",
+                pt2_gv=pt2_gv if strategy == "joint" else None,
+                tmin=metadata["tmin"],
+                tmax=metadata["tmax"],
+                nstate=nstate,
+                part=part,
+                svdcut=svdcut,
+                rescale=scale,
+                prior=fit_prior,
+                qda_denominator_mode=qda_denominator_mode,
+            )
+            usable, reason = _fit_usable(fit, template)
+            if not usable:
+                rejected.append({**metadata, "reason": reason})
+                continue
+            records.append(_record(fit, pt2_fit=pt2_fit, **metadata))
+        except NUMERICAL_FIT_ERRORS as exc:
+            rejected.append({**metadata, "reason": str(exc)})
+    return records, rejected
+
+
+def _fit_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[str, Any]]:
+    """Fit a process batch of recentered qDA-ratio samples."""
+    context = gv.loads(payload)
+    output: list[dict[str, Any]] = []
+    for sample_index in sample_indices:
+        records: list[dict[str, Any]] = []
+        logs: list[dict[str, Any]] = []
+        try:
+            ratio_re = _recenter(
+                context["ratio_re_samples"][sample_index], context["ratio_re_gv"]
+            )
+            ratio_im = _recenter(
+                context["ratio_im_samples"][sample_index], context["ratio_im_gv"]
+            )
+            pt2_sample = None
+            if context["strategy"] == "joint":
+                pt2_sample = _recenter(
+                    context["pt2_samples"][sample_index], context["pt2_gv"]
+                )
+            for candidate_index, candidate in enumerate(context["candidates"]):
+                fit = fit_matrix_element(
+                    ratio_re,
+                    ratio_im,
+                    None,
+                    None,
+                    context["Lt"],
+                    strategy=context["strategy"],
+                    fit_scope="qda_ratio",
+                    fitting_form="Breit",
+                    pt2_gv=pt2_sample,
+                    tmin=context["tmin"],
+                    tmax=context["tmax"],
+                    nstate=candidate["nstate"],
+                    part=context["part"],
+                    svdcut=context["svdcut"],
+                    rescale=context["scale"],
+                    prior=candidate["prior"],
+                    p0=candidate["p0"],
+                    qda_denominator_mode=context["qda_denominator_mode"],
+                )
+                usable, reason = _fit_usable(fit, candidate["template"])
+                if not usable:
+                    logs.append(
+                        {
+                            "kind": "rejected",
+                            "nstate": candidate["nstate"],
+                            "prior_width": candidate["prior_width"],
+                            "reason": reason,
+                        }
+                    )
+                    continue
+                records.append(
+                    _record(
+                        fit,
+                        candidate_index=candidate_index,
+                        nstate=candidate["nstate"],
+                        prior_width=candidate["prior_width"],
+                    )
+                )
+                logs.append(
+                    {
+                        "kind": "fit",
+                        "nstate": candidate["nstate"],
+                        "prior_width": candidate["prior_width"],
+                        "Q": float(fit.Q),
+                        "chi2": float(fit.chi2),
+                        "dof": int(fit.dof),
+                        "logGBF": float(fit.logGBF),
+                    }
+                )
+            if not records:
+                raise ValueError("all qda_ratio candidate fits failed")
+            weights = (
+                _loggbf_weights(records)
+                if context["model_average"] and len(records) > 1
+                else np.asarray([1.0])
+            )
+            real_values = np.asarray(
+                [
+                    _bare_matrix_element_mean_for_part(
+                        record["fit"].p,
+                        output_part="re",
+                        fit_part=context["part"],
+                        fitting_form="Breit",
+                        fit_scope="qda_ratio",
+                        qda_denominator_mode=context["qda_denominator_mode"],
+                    )
+                    for record in records
+                ]
+            )
+            imag_values = np.asarray(
+                [
+                    _bare_matrix_element_mean_for_part(
+                        record["fit"].p,
+                        output_part="im",
+                        fit_part=context["part"],
+                        fitting_form="Breit",
+                        fit_scope="qda_ratio",
+                        qda_denominator_mode=context["qda_denominator_mode"],
+                    )
+                    for record in records
+                ]
+            )
+            full_weights = np.zeros(len(context["candidates"]), dtype=float)
+            for weight, record in zip(weights, records):
+                full_weights[int(record["candidate_index"])] = float(weight)
+            plot_payload = None
+            if sample_index == 0:
+                plot_record = records[int(np.argmax(weights))]
+                plot_payload = gv.dumps(
+                    {
+                        "fit": plot_record["fit"],
+                        "ratio_re": ratio_re,
+                        "ratio_im": ratio_im,
+                        "nstate": int(plot_record["nstate"]),
+                        "prior_width": float(plot_record["prior_width"]),
+                    }
+                )
+            output.append(
+                {
+                    "sample": int(sample_index),
+                    "real": float(np.sum(weights * real_values)),
+                    "imag": float(np.sum(weights * imag_values)),
+                    "candidate_weights": full_weights.tolist(),
+                    "logs": logs,
+                    "plot_payload": plot_payload,
+                    "error": None,
+                }
+            )
+        except NUMERICAL_FIT_ERRORS as exc:
+            output.append(
+                {
+                    "sample": int(sample_index),
+                    "real": float("nan"),
+                    "imag": float("nan"),
+                    "candidate_weights": [0.0] * len(context["candidates"]),
+                    "logs": logs,
+                    "plot_payload": None,
+                    "error": str(exc),
+                }
+            )
+    return output
+
+
+def _log_qda_sample_results(
+    sample_results: list[dict[str, Any]],
+    *,
+    z: int,
+    strategy: str,
+    shared_window: dict[str, int],
+    logger: Any,
+    q_min: float,
+) -> None:
+    """Write every qDA sample fit, rejection, and failure to the sample log."""
+    for result in sample_results:
+        sample_index = int(result["sample"])
+        for log_item in result["logs"]:
+            if log_item["kind"] == "rejected":
+                logger.info(
+                    "Rejected %s_2pt_qda_ratio z=%s sample=%s "
+                    "nstate=%s prior_width=%s: %s",
+                    strategy,
+                    z,
+                    sample_index,
+                    log_item["nstate"],
+                    log_item["prior_width"],
+                    log_item["reason"],
+                )
+                continue
+            log_nonlinear_fit_quality(
+                SimpleNamespace(
+                    Q=log_item["Q"],
+                    chi2=log_item["chi2"],
+                    dof=log_item["dof"],
+                    logGBF=log_item["logGBF"],
+                ),
+                kind=f"sample ground-state {strategy}_2pt_qda_ratio",
+                label=(
+                    f"z={z} sample={sample_index} "
+                    f"t=[{shared_window['tmin']},{shared_window['tmax']}) "
+                    f"nstate={log_item['nstate']} "
+                    f"prior_width={log_item['prior_width']}"
+                ),
+                logger=logger,
+                q_min=q_min,
+            )
+        if result["error"] is not None:
+            logger.info(
+                "Bad %s_2pt_qda_ratio z=%s sample=%s: %s",
+                strategy,
+                z,
+                sample_index,
+                result["error"],
+            )
+
+
+def _load_denominator(
+    *,
+    pt2_path: str,
+    source_operator: str,
+    sink_operator: str,
+    momentum: str,
+    temporal_extent: int | None,
+    pt2_bT: int | None,
+    pt2_bz: int | None,
+    mode: str,
+    n_boot: int,
+    seed: int | None,
+    bin_size: int,
+    sample_error_mode: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, np.ndarray]:
+    denominator = _read_2pt(
+        pt2_path,
+        source_operator=source_operator,
+        sink_operator=sink_operator,
+        momentum=momentum,
+        temporal_extent=temporal_extent,
+        bT=pt2_bT,
+        bz=pt2_bz,
+    )
+    pt2_samples, denominator_samples, indices = _resample_pt2(
+        denominator,
+        mode=mode,
+        n_boot=n_boot,
+        seed=seed,
+        bin_size=bin_size,
+    )
+    pt2_gv = samples_to_gvar(
+        pt2_samples, mode=mode, sample_error_mode=sample_error_mode
+    )
+    return denominator, pt2_samples, denominator_samples, indices, pt2_gv
+
+
+def _load_ratio(
+    *,
+    z: int,
+    denominator_shape: tuple[int, ...],
+    denominator_samples: np.ndarray,
+    indices: np.ndarray | None,
+    qda_path: str,
+    qda_source_operator: str,
+    qda_sink_operator: str,
+    momentum: str,
+    bT: int,
+    temporal_extent: int | None,
+    mode: str,
+    n_boot: int,
+    seed: int | None,
+    bin_size: int,
+    sample_error_mode: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    numerator = _read_2pt(
+        qda_path,
+        source_operator=qda_source_operator,
+        sink_operator=qda_sink_operator,
+        momentum=momentum,
+        temporal_extent=temporal_extent,
+        bT=bT,
+        bz=z,
+    )
+    if numerator.shape != denominator_shape:
+        raise ValueError(
+            f"qda numerator shape mismatch at z={z}: {numerator.shape} != {denominator_shape}"
+        )
+    _, numerator_samples, _ = _resample_pt2(
+        numerator,
+        mode=mode,
+        n_boot=n_boot,
+        seed=seed,
+        bin_size=bin_size,
+        indices=indices,
+    )
+    sample_re, sample_im = _qda_ratio_samples(numerator_samples, denominator_samples)
+    ratio_re = _ratio_samples_to_gvar(
+        sample_re, mode=mode, sample_error_mode=sample_error_mode
+    )
+    ratio_im = _ratio_samples_to_gvar(
+        sample_im, mode=mode, sample_error_mode=sample_error_mode
+    )
+    return sample_re, sample_im, ratio_re, ratio_im
+
+
+def tune_qda_ratio(
+    store: dict[str, Any],
+    *,
+    pt2_path: str,
+    qda_path: str | None,
+    momentum: str | None,
+    source_operator: str,
+    sink_operator: str,
+    qda_source_operator: str | None,
+    qda_sink_operator: str | None,
+    qda_denominator_mode: str,
+    pt2_bT: int | None,
+    pt2_bz: int | None,
+    bT: int,
+    tune_z_values: list[int] | None,
+    bz: list[int] | None,
+    temporal_extent: int | None,
+    pt2_windows: list[dict[str, int]] | None,
+    fit_strategies: list[str] | None,
+    fit_strategy: str | None,
+    nstate_values: list[int] | None,
+    nstate: int | None,
+    prior_width: float | list[float] | None,
+    svdcut: float,
+    correlator_rescale: float,
+    resample_mode: str,
+    sample_error_mode: str,
+    n_boot: int,
+    seed: int | None,
+    bin_size: int,
+    part: str,
+    q_min: float,
+    out: str,
+) -> dict[str, Any]:
+    """Tune qDA windows/models across representative qDA bz values."""
+    if momentum is None:
+        raise ValueError("qda_ratio jobs require scalar params.momentum")
+    if qda_path is None or qda_source_operator is None or qda_sink_operator is None:
+        raise ValueError("qda_ratio jobs require one nonlocal qDA 2pt correlator")
+    _validate_denominator_selectors(
+        qda_denominator_mode, pt2_bT=pt2_bT, pt2_bz=pt2_bz
+    )
+    z_list = [int(value) for value in (bz or [])]
+    if not z_list:
+        raise ValueError("the qDA 2pt correlator must declare a non-empty bz grid")
+    tune_list = list(
+        dict.fromkeys(
+            int(value)
+            for value in (tune_z_values or [])
+        )
+    )
+    if not tune_list or any(value not in z_list for value in tune_list):
+        raise ValueError(
+            "tune_z_values must contain values from the qda_ratio bz grid"
+        )
+    denominator, pt2_samples, denominator_samples, indices, pt2_gv = _load_denominator(
+        pt2_path=pt2_path,
+        source_operator=source_operator,
+        sink_operator=sink_operator,
+        momentum=momentum,
+        temporal_extent=temporal_extent,
+        pt2_bT=pt2_bT,
+        pt2_bz=pt2_bz,
+        mode=resample_mode,
+        n_boot=n_boot,
+        seed=seed,
+        bin_size=bin_size,
+        sample_error_mode=sample_error_mode,
+    )
+    del pt2_samples
+    Lt = int(denominator.shape[1])
+    strategies = fit_strategies or ([fit_strategy] if fit_strategy else ["joint"])
+    states = [
+        int(value)
+        for value in (nstate_values or ([nstate] if nstate is not None else [2]))
+    ]
+    windows, pt2_scan = _resolve_pt2_windows(
+        pt2_windows,
+        Lt=Lt,
+        pt2_gv=pt2_gv,
+        nstate_values=states,
+    )
+    auto_window_scan = {
+        "pt2": pt2_scan,
+        "pt3": {"source": "not_used", "pt3_windows": []},
+    }
+    widths = _normalise_prior_width(prior_width)
+    records_by_z: dict[int, dict[tuple[Any, ...], dict[str, Any]]] = {}
+    rejected: list[dict[str, Any]] = []
+    for z in tune_list:
+        _, _, ratio_re, ratio_im = _load_ratio(
+            z=z,
+            denominator_shape=denominator.shape,
+            denominator_samples=denominator_samples,
+            indices=indices,
+            qda_path=qda_path,
+            qda_source_operator=qda_source_operator,
+            qda_sink_operator=qda_sink_operator,
+            momentum=momentum,
+            bT=bT,
+            temporal_extent=temporal_extent,
+            mode=resample_mode,
+            n_boot=n_boot,
+            seed=seed,
+            bin_size=bin_size,
+            sample_error_mode=sample_error_mode,
+        )
+        records, rejected_z = _average_records(
+            pt2_gv=pt2_gv,
+            ratio_re=ratio_re,
+            ratio_im=ratio_im,
+            windows=windows,
+            strategies=strategies,
+            nstates=states,
+            prior_widths=widths,
+            Lt=Lt,
+            part=part,
+            svdcut=svdcut,
+            scale=correlator_rescale,
+            qda_denominator_mode=qda_denominator_mode,
+        )
+        rejected.extend({**item, "z": z} for item in rejected_z)
+        records_by_z[z] = {
+            (
+                record["fit_strategy"],
+                record["nstate"],
+                record["prior_width"],
+                record["tmin"],
+                record["tmax"],
+            ): record
+            for record in records
+        }
+    common_keys = set.intersection(
+        *(set(records) for records in records_by_z.values())
+    )
+    if not common_keys:
+        raise ValueError("no qda_ratio fit candidate succeeded at every tune z")
+    candidates: list[dict[str, Any]] = []
+    primary_records: list[dict[str, Any]] = []
+    for key in sorted(common_keys):
+        diagnostics = {
+            str(z): _fit_summary(records_by_z[z][key], fallback=False, index=0)
+            for z in tune_list
+        }
+        primary = records_by_z[tune_list[0]][key]
+        primary_records.append(primary)
+        candidates.append(
+            {
+                "index": len(candidates),
+                "fit_strategy": key[0],
+                "fit_scope": "qda_ratio",
+                "nstate": key[1],
+                "prior_width": key[2],
+                "tmin": key[3],
+                "tmax": key[4],
+                "tune_z_diagnostics": diagnostics,
+                "feasible_at_all_tune_z": True,
+                "min_Q": min(item["Q"] for item in diagnostics.values()),
+                "worst_chi2_dof": max(
+                    item["chi2_dof"] for item in diagnostics.values()
+                ),
+                "bare_re": str(
+                    _bare_matrix_element_from_fit(
+                        primary["fit"].p,
+                        part="re",
+                        fitting_form="Breit",
+                        fit_scope="qda_ratio",
+                        qda_denominator_mode=qda_denominator_mode,
+                    )
+                ),
+                "bare_im": str(
+                    _bare_matrix_element_from_fit(
+                        primary["fit"].p,
+                        part="im",
+                        fitting_form="Breit",
+                        fit_scope="qda_ratio",
+                        qda_denominator_mode=qda_denominator_mode,
+                    )
+                ),
+            }
+        )
+    best_index, fallback = select_data_window(primary_records, q_min=q_min)
+    robust_index = min(
+        range(len(candidates)),
+        key=lambda index: (
+            -candidates[index]["min_Q"],
+            candidates[index]["worst_chi2_dof"],
+        ),
+    )
+    store[out] = primary_records
+    result = {
+        "out": out,
+        "fit_strategies": [_normalise_strategy(value)[0] for value in strategies],
+        "fit_scopes": ["qda_ratio"],
+        "nstate_values": states,
+        "prior_width": widths,
+        "tune_z_values": tune_list,
+        "primary_tune_z": tune_list[0],
+        "tune_z": tune_list[0],
+        "allowed_bz": z_list,
+        "Lt": Lt,
+        "n_cfg": int(denominator.shape[0]),
+        "correlator_rescale": correlator_rescale,
+        "fitting_form": "Breit",
+        "qda_denominator_mode": qda_denominator_mode,
+        "candidates": candidates,
+        "rejected": rejected,
+        "recommended_index": best_index,
+        "recommended_fallback_no_q_passing": fallback,
+        "recommended_window": _fit_summary(
+            primary_records[best_index], fallback=fallback, index=best_index
+        ),
+        "recommended_robust_index": robust_index,
+        "recommended_robust_window": _fit_summary(
+            primary_records[robust_index], fallback=False, index=robust_index
+        ),
+        "tuning_diagnostic_pdfs": {},
+        "auto_window_scan": auto_window_scan,
+    }
+    store["_correlator_tuning_summary"] = {
+        "pt2_path": str(pt2_path),
+        "fit_scopes": ["qda_ratio"],
+        "auto_window_scan": auto_window_scan,
+        "recommended_robust_window": result["recommended_robust_window"],
+    }
+    return result
+
+
+def fit_qda_ratio_grid(
+    store: dict[str, Any],
+    *,
+    pt2_path: str,
+    qda_path: str | None,
+    bz: list[int],
+    ensemble: str,
+    tag: str,
+    momentum: str | None,
+    source_operator: str,
+    sink_operator: str,
+    qda_source_operator: str | None,
+    qda_sink_operator: str | None,
+    qda_denominator_mode: str,
+    pt2_bT: int | None,
+    pt2_bz: int | None,
+    bz_direction: str | None,
+    bT: int,
+    pt2_window: dict[str, int] | None,
+    pt2_windows: list[dict[str, int]] | None,
+    resample_mode: str,
+    sample_error_mode: str,
+    n_boot: int,
+    seed: int | None,
+    bin_size: int,
+    svdcut: float,
+    part: str,
+    q_min: float,
+    nstate_values: list[int],
+    fit_strategy: str,
+    prior_width: list[float],
+    posterior_prior_error_scale: float,
+    correlator_rescale: float,
+    model_average: bool,
+    tune_z: int | None,
+    job_id: str | None,
+    hadron: str | None,
+    gfix: str | None,
+    volume: str | None,
+    lattice_spacing_fm: float | None,
+    momentum_gev: float | None,
+    temporal_extent: int | None,
+    save_path: str | None,
+    log_dir: str | Path | None,
+    log_path: str | Path | None,
+    artifacts_dir: str | Path | None,
+    workers: int,
+) -> dict[str, Any]:
+    """Fit qDA ratios with the shared correlator fit and artifact contracts."""
+    if momentum is None:
+        raise ValueError("qda_ratio jobs require scalar params.momentum")
+    if qda_path is None or qda_source_operator is None or qda_sink_operator is None:
+        raise ValueError("qda_ratio jobs require one nonlocal qDA 2pt correlator")
+    _validate_denominator_selectors(
+        qda_denominator_mode, pt2_bT=pt2_bT, pt2_bz=pt2_bz
+    )
+    if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or workers < 1:
+        raise ValueError("workers must be a positive integer")
+    strategy, _ = _normalise_strategy(fit_strategy)
+    mode = _check_mode(resample_mode)
+    scale = _check_rescale(correlator_rescale)
+    z_list = [int(value) for value in bz]
+    if not z_list:
+        raise ValueError("the qDA 2pt correlator must declare a non-empty bz grid")
+    tune_z_value = int(tune_z) if tune_z is not None else z_list[0]
+    if tune_z_value not in z_list:
+        raise ValueError("tune_z must be present in the qda_ratio bz grid")
+    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
+    fit_log_dir = Path(log_dir) if log_dir is not None else out_dir / "fit_logs"
+    fit_log_dir.mkdir(parents=True, exist_ok=True)
+    tuning_log_path, sample_log_path = _split_fit_log_paths(
+        log_path=log_path,
+        log_dir=fit_log_dir,
+        log_stem=f"{ensemble}_{tag}_{momentum}_{strategy}_qda_ratio",
+    )
+    tuning_logger = setup_logger(
+        tuning_log_path, logger_name="qda_ratio_tuning_logger"
+    )
+    sample_logger = setup_logger(
+        sample_log_path, logger_name="qda_ratio_sample_logger"
+    )
+    resolved_save = resolve_plot_save_path(
+        save_path, artifacts_dir=out_dir, default_stem=tag or "qda_ratio"
+    )
+    denominator, pt2_samples, denominator_samples, indices, pt2_gv = _load_denominator(
+        pt2_path=pt2_path,
+        source_operator=source_operator,
+        sink_operator=sink_operator,
+        momentum=momentum,
+        temporal_extent=temporal_extent,
+        pt2_bT=pt2_bT,
+        pt2_bz=pt2_bz,
+        mode=mode,
+        n_boot=n_boot,
+        seed=seed,
+        bin_size=bin_size,
+        sample_error_mode=sample_error_mode,
+    )
+    n_cfg, Lt = denominator.shape
+    n_samples = int(pt2_samples.shape[0])
+    effective_pt2_windows = [pt2_window] if pt2_window is not None else pt2_windows
+    windows, pt2_scan = _resolve_pt2_windows(
+        effective_pt2_windows,
+        Lt=Lt,
+        pt2_gv=pt2_gv,
+        nstate_values=nstate_values,
+    )
+    auto_window_scan = {
+        "pt2": pt2_scan,
+        "pt3": {"source": "not_used", "pt3_windows": []},
+    }
+    tuning_summary = store.get("_correlator_tuning_summary")
+    if (
+        isinstance(tuning_summary, dict)
+        and tuning_summary.get("pt2_path") == str(pt2_path)
+        and isinstance(tuning_summary.get("auto_window_scan"), dict)
+    ):
+        auto_window_scan = tuning_summary["auto_window_scan"]
+    tuning_logger.info("auto_window_scan=%s", json.dumps(auto_window_scan, sort_keys=True))
+    tune_sample_re, tune_sample_im, tune_ratio_re, tune_ratio_im = _load_ratio(
+        z=tune_z_value,
+        denominator_shape=denominator.shape,
+        denominator_samples=denominator_samples,
+        indices=indices,
+        qda_path=qda_path,
+        qda_source_operator=qda_source_operator,
+        qda_sink_operator=qda_sink_operator,
+        momentum=momentum,
+        bT=bT,
+        temporal_extent=temporal_extent,
+        mode=mode,
+        n_boot=n_boot,
+        seed=seed,
+        bin_size=bin_size,
+        sample_error_mode=sample_error_mode,
+    )
+    del tune_sample_re, tune_sample_im
+    tune_records, tune_rejected = _average_records(
+        pt2_gv=pt2_gv,
+        ratio_re=tune_ratio_re,
+        ratio_im=tune_ratio_im,
+        windows=windows,
+        strategies=[strategy],
+        nstates=nstate_values,
+        prior_widths=prior_width,
+        Lt=Lt,
+        part=part,
+        svdcut=svdcut,
+        scale=scale,
+        qda_denominator_mode=qda_denominator_mode,
+    )
+    if not tune_records:
+        raise ValueError("all qda_ratio shared-window tuning fits failed")
+    tune_index, tune_fallback = select_data_window(tune_records, q_min=q_min)
+    chosen = tune_records[tune_index]
+    shared_window = {"tmin": int(chosen["tmin"]), "tmax": int(chosen["tmax"])}
+    tuning_logger.info(
+        "selected qda_ratio window t=[%s,%s)",
+        shared_window["tmin"],
+        shared_window["tmax"],
+    )
+    sample_batches = [
+        batch.tolist()
+        for batch in np.array_split(
+            np.arange(n_samples), min(int(workers), n_samples)
+        )
+        if batch.size
+    ]
+    executor = ProcessPoolExecutor(max_workers=int(workers)) if workers > 1 else None
+    z_records: list[dict[str, Any]] = []
+    z_report: list[dict[str, Any]] = []
+    energy_fit = chosen.get("pt2_fit") or chosen["fit"]
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        z_iterator = z_list
+    else:
+        z_iterator = tqdm(
+            z_list,
+            desc=f"fit qDA ratio {ensemble} {momentum}",
+        )
+    try:
+        for z in z_iterator:
+            sample_re, sample_im, ratio_re, ratio_im = _load_ratio(
+                z=z,
+                denominator_shape=denominator.shape,
+                denominator_samples=denominator_samples,
+                indices=indices,
+                qda_path=qda_path,
+                qda_source_operator=qda_source_operator,
+                qda_sink_operator=qda_sink_operator,
+                momentum=momentum,
+                bT=bT,
+                temporal_extent=temporal_extent,
+                mode=mode,
+                n_boot=n_boot,
+                seed=seed,
+                bin_size=bin_size,
+                sample_error_mode=sample_error_mode,
+            )
+            average_records, rejected = _average_records(
+                pt2_gv=pt2_gv,
+                ratio_re=ratio_re,
+                ratio_im=ratio_im,
+                windows=[shared_window],
+                strategies=[strategy],
+                nstates=nstate_values,
+                prior_widths=prior_width,
+                Lt=Lt,
+                part=part,
+                svdcut=svdcut,
+                scale=scale,
+                qda_denominator_mode=qda_denominator_mode,
+            )
+            if not average_records:
+                raise ValueError(f"all qda_ratio sample-average fits failed for z={z}")
+            fallback = False
+            if not model_average:
+                selected_index, fallback = select_data_window(
+                    average_records, q_min=q_min
+                )
+                average_records = [average_records[selected_index]]
+            average_weights = (
+                _loggbf_weights(average_records)
+                if model_average and len(average_records) > 1
+                else np.asarray([1.0])
+            )
+            average_real = np.asarray(
+                [
+                    _bare_matrix_element_mean_for_part(
+                        record["fit"].p,
+                        output_part="re",
+                        fit_part=part,
+                        fitting_form="Breit",
+                        fit_scope="qda_ratio",
+                        qda_denominator_mode=qda_denominator_mode,
+                    )
+                    for record in average_records
+                ]
+            )
+            average_imag = np.asarray(
+                [
+                    _bare_matrix_element_mean_for_part(
+                        record["fit"].p,
+                        output_part="im",
+                        fit_part=part,
+                        fitting_form="Breit",
+                        fit_scope="qda_ratio",
+                        qda_denominator_mode=qda_denominator_mode,
+                    )
+                    for record in average_records
+                ]
+            )
+            real_sys = (
+                _weighted_model_sdev(average_real, average_weights)
+                if model_average and "re" in _parts(part)
+                else 0.0
+            )
+            imag_sys = (
+                _weighted_model_sdev(average_imag, average_weights)
+                if model_average and "im" in _parts(part)
+                else 0.0
+            )
+            candidates = []
+            for record in average_records:
+                template = _scope_prior_with_width(
+                    "Breit",
+                    int(record["nstate"]),
+                    "qda_ratio",
+                    strategy,
+                    float(record["prior_width"]),
+                    qda_denominator_mode=qda_denominator_mode,
+                )
+                candidates.append(
+                    {
+                        "nstate": int(record["nstate"]),
+                        "prior_width": float(record["prior_width"]),
+                        "template": template,
+                        "prior": _scaled_prior(
+                            record["fit"],
+                            template,
+                            error_scale=posterior_prior_error_scale,
+                            prior_width=float(record["prior_width"]),
+                        ),
+                        "p0": _p0_from_fit(record["fit"], template),
+                    }
+                )
+                log_nonlinear_fit_quality(
+                    record["fit"],
+                    kind="sample-average qda_ratio",
+                    label=(
+                        f"z={z} t=[{shared_window['tmin']},{shared_window['tmax']}) "
+                        f"nstate={record['nstate']} prior_width={record['prior_width']}"
+                    ),
+                    logger=tuning_logger,
+                    q_min=q_min,
+                )
+            payload = gv.dumps(
+                {
+                    "pt2_samples": pt2_samples,
+                    "pt2_gv": pt2_gv,
+                    "ratio_re_samples": sample_re,
+                    "ratio_im_samples": sample_im,
+                    "ratio_re_gv": ratio_re,
+                    "ratio_im_gv": ratio_im,
+                    "strategy": strategy,
+                    "Lt": Lt,
+                    "tmin": shared_window["tmin"],
+                    "tmax": shared_window["tmax"],
+                    "part": part,
+                    "svdcut": svdcut,
+                    "scale": scale,
+                    "model_average": model_average,
+                    "candidates": candidates,
+                    "qda_denominator_mode": qda_denominator_mode,
+                }
+            )
+            if executor is None:
+                sample_results = _fit_sample_batch(payload, sample_batches[0])
+            else:
+                futures = [
+                    executor.submit(_fit_sample_batch, payload, batch)
+                    for batch in sample_batches
+                ]
+                sample_results = [
+                    item for future in futures for item in future.result()
+                ]
+            sample_results.sort(key=lambda item: item["sample"])
+            _log_qda_sample_results(
+                sample_results,
+                z=z,
+                strategy=strategy,
+                shared_window=shared_window,
+                logger=sample_logger,
+                q_min=q_min,
+            )
+            real_samples = np.asarray(
+                [item["real"] for item in sample_results], dtype=float
+            )
+            imag_samples = np.asarray(
+                [item["imag"] for item in sample_results], dtype=float
+            )
+            failures = [item for item in sample_results if item["error"] is not None]
+            if not np.any(np.isfinite(real_samples)):
+                raise ValueError(f"all qda_ratio resampled fits failed for z={z}")
+            real_mean, real_sdev = sample_mean_and_sdev(
+                real_samples, mode=mode, sample_error_mode=sample_error_mode
+            )
+            imag_mean, imag_sdev = sample_mean_and_sdev(
+                imag_samples, mode=mode, sample_error_mode=sample_error_mode
+            )
+            sample_logger.info(
+                "summary z=%s real=%s +/- %s imag=%s +/- %s failed=%s",
+                z,
+                float(real_mean),
+                float(real_sdev),
+                float(imag_mean),
+                float(imag_sdev),
+                len(failures),
+            )
+            sample0_paths: dict[str, str] = {}
+            sample0_result = next(
+                (item for item in sample_results if item["sample"] == 0), None
+            )
+            if sample0_result is not None and sample0_result["plot_payload"] is not None:
+                plot_data = gv.loads(sample0_result["plot_payload"])
+                sample0_paths = _plot_sample0_qda_ratio(
+                    ratio_re=plot_data["ratio_re"],
+                    ratio_im=plot_data["ratio_im"],
+                    fit=plot_data["fit"],
+                    nstate=int(plot_data["nstate"]),
+                    tmin=shared_window["tmin"],
+                    tmax=shared_window["tmax"],
+                    Lt=Lt,
+                    strategy=strategy,
+                    momentum=momentum,
+                    bT=bT,
+                    bz=z,
+                    part=part,
+                    qda_denominator_mode=qda_denominator_mode,
+                    log_dir=fit_log_dir,
+                )
+            best_average = average_records[int(np.argmax(average_weights))]
+            z_records.append(
+                {
+                    "z": z,
+                    "real_samples": real_samples,
+                    "imag_samples": imag_samples,
+                    "real_sys_sdev": real_sys,
+                    "imag_sys_sdev": imag_sys,
+                    "window": _fit_summary(
+                        best_average, fallback=fallback, index=0
+                    ),
+                    "sample0_plot_paths": sample0_paths,
+                }
+            )
+            z_report.append(
+                {
+                    "z": z,
+                    "window": _fit_summary(
+                        best_average, fallback=fallback, index=0
+                    ),
+                    "rejected_fit_models": rejected,
+                    "n_failed_samples": len(failures),
+                    "sample_failures": failures[:10],
+                    "real_sys_sdev": real_sys,
+                    "imag_sys_sdev": imag_sys,
+                    "sample0_plot_paths": sample0_paths,
+                }
+            )
+    finally:
+        if executor is not None:
+            executor.shutdown()
+    sorted_records = sorted(z_records, key=lambda item: item["z"])
+    summary_z = [int(item["z"]) for item in sorted_records]
+    real_means: list[float] = []
+    real_errors: list[float] = []
+    imag_means: list[float] = []
+    imag_errors: list[float] = []
+    output_rows: list[dict[str, Any]] = []
+    for record in sorted_records:
+        real_mean, real_error = sample_mean_and_sdev(
+            np.asarray(record["real_samples"]),
+            mode=mode,
+            sample_error_mode=sample_error_mode,
+        )
+        imag_mean, imag_error = sample_mean_and_sdev(
+            np.asarray(record["imag_samples"]),
+            mode=mode,
+            sample_error_mode=sample_error_mode,
+        )
+        record.update(
+            real_mean=float(real_mean),
+            imag_mean=float(imag_mean),
+            real_stat_sdev=float(real_error),
+            imag_stat_sdev=float(imag_error),
+        )
+        real_means.append(float(real_mean))
+        real_errors.append(float(real_error))
+        imag_means.append(float(imag_mean))
+        imag_errors.append(float(imag_error))
+        output_rows.append(
+            {
+                "z": record["z"],
+                "real_mean": float(real_mean),
+                "real_stat_sdev": float(real_error),
+                "real_sys_sdev": float(record["real_sys_sdev"]),
+                "imag_mean": float(imag_mean),
+                "imag_stat_sdev": float(imag_error),
+                "imag_sys_sdev": float(record["imag_sys_sdev"]),
+                "n_failed_samples": int(
+                    np.count_nonzero(~np.isfinite(record["real_samples"]))
+                ),
+            }
+        )
+    figure, axis = default_plot()
+    if "re" in _parts(part):
+        axis.errorbar(
+            summary_z,
+            real_means,
+            real_errors,
+            label="Re",
+            color=COLOR_CYCLE[0],
+            **ERRORBAR_STYLE,
+        )
+    if "im" in _parts(part):
+        axis.errorbar(
+            summary_z,
+            imag_means,
+            imag_errors,
+            label="Im",
+            color=COLOR_CYCLE[1],
+            marker="s",
+            **ERRORBAR_STYLE,
+        )
+    axis.set_xlabel(r"$z/a$", **FONT_SIZE)
+    denominator_label = "z'_0" if qda_denominator_mode == "nonlocal_bz0" else "z_0"
+    axis.set_ylabel(
+        rf"Bare matrix element $O_{{00}}/{denominator_label}$", **FONT_SIZE
+    )
+    p_label = "n/a" if momentum_gev is None else f"{float(momentum_gev):.2f}"
+    axis.set_title(
+        rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ bare matrix elements",
+        **FONT_SIZE,
+    )
+    axis.legend(**LEGEND_SETS)
+    figure.tight_layout()
+    pdf_path = f"{resolved_save}.pdf"
+    svg_path = f"{resolved_save}.svg"
+    figure.savefig(pdf_path, bbox_inches="tight", transparent=True)
+    figure.savefig(svg_path, bbox_inches="tight")
+    plt.close(figure)
+    bare_data = _bare_records_to_ensemble(
+        z_records,
+        resample_mode=mode,
+        attrs={
+            "ensemble": ensemble,
+            "tag": tag,
+            "fitting_form": "Breit",
+            "fit_scope": "qda_ratio",
+            "fit_strategy": strategy,
+            "fit_mode": f"{strategy}_2pt_qda_ratio",
+            "qda_denominator_mode": qda_denominator_mode,
+            "coord_unit": "lattice",
+            "bz_direction": bz_direction,
+            "momentum": momentum,
+            "bT": bT,
+            "resample_mode": mode,
+            "sample_error_mode": sample_error_mode,
+            "average_method": sample_error_mode,
+            "part": part,
+            "component": part,
+            "job_id": job_id,
+            "volume": volume,
+            "lattice_spacing_fm": lattice_spacing_fm,
+            "momentum_gev": momentum_gev,
+            "model_average": model_average,
+            "nstate_values": json.dumps(nstate_values),
+            "prior_width": json.dumps(prior_width),
+            "posterior_prior_error_scale": posterior_prior_error_scale,
+            "hadron": hadron,
+            "gfix": gfix,
+            "workers": int(workers),
+        },
+    )
+    artifact_path = f"{resolved_save}.nc"
+    bare_data.to_netcdf(artifact_path)
+    energy = _energy_summary(
+        fit=energy_fit,
+        key="E0",
+        momentum=momentum,
+        momentum_gev=momentum_gev,
+        lattice_spacing_fm=lattice_spacing_fm,
+        channel="qda_denominator",
+        pt2_path=pt2_path,
+        ensemble=ensemble,
+        hadron=hadron,
+        gfix=gfix,
+        volume=volume,
+        source_operator=source_operator,
+        sink_operator=sink_operator,
+        fitting_form="Breit",
+        job_id=job_id,
+    )
+    store["bare_matrix_element_data"] = bare_data
+    store["bare_matrix_element_netcdf"] = artifact_path
+    store["output"] = bare_data
+    shared_spec = {
+        "fit_scope": "qda_ratio",
+        "fit_strategy": strategy,
+        "tmin": shared_window["tmin"],
+        "tmax": shared_window["tmax"],
+        "pt2_window": f"[{shared_window['tmin']},{shared_window['tmax']})",
+        "pt3_window": "not used",
+        "n_data": int(chosen["n_data"]),
+        "n_params": int(chosen["n_params"]),
+    }
+    return {
+        "artifact": artifact_path,
+        "netcdf_path": artifact_path,
+        "plot_pdf": pdf_path,
+        "plot_svg": svg_path,
+        "n_z": len(z_records),
+        "n_sample": bare_data.n_sample,
+        "outputs": output_rows,
+        "fitting_form": "Breit",
+        "fit_scope": "qda_ratio",
+        "fit_strategy": strategy,
+        "fit_mode": f"{strategy}_2pt_qda_ratio",
+        "qda_denominator_mode": qda_denominator_mode,
+        "model_average": model_average,
+        "selection_rule": (
+            "qda_ratio shared pt2 window "
+            f"(fallback_no_q_passing={tune_fallback})"
+        ),
+        "shared_window_specs": [shared_spec],
+        "tuning_log_path": str(tuning_log_path),
+        "sample_log_path": str(sample_log_path),
+        "correlator_rescale": scale,
+        "resample_mode": mode,
+        "sample_error_mode": sample_error_mode,
+        "n_samples": n_samples,
+        "workers": int(workers),
+        "bz": z_list,
+        "tune_z": tune_z_value,
+        "z_fits": z_report,
+        "pt2_energies": [energy] if energy is not None else [],
+        "momentum_gev": momentum_gev,
+        "component": part,
+        "nstate_values": nstate_values,
+        "prior_width": prior_width,
+        "window_candidates": [
+            _fit_summary(record, fallback=False, index=index)
+            for index, record in enumerate(tune_records)
+        ],
+        "rejected_windows": tune_rejected,
+        "auto_window_scan": auto_window_scan,
+    }
 
 
 STAGE_TOOLS: dict[str, Callable[..., dict[str, Any]]] = {

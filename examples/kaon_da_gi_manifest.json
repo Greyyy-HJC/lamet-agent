@@ -6,68 +6,156 @@
     "target_observable": "da",
     "parton": "quark",
     "resample_mode": "bs",
-    "sample_error_mode": "covariance",
+    "sample_error_mode": "median",
     "bs_samples": 600,
     "bin_size": 1,
     "random_seed": 1984,
+    "workers": 12,
     "stages": [
-      "renormalization"
+      "correlator_analysis",
+      "renormalization",
+      "fourier_transform",
+      "perturbative_matching",
+      "review"
     ]
   },
   "inputs": {
-    "correlators": [],
+    "correlators": [
+      {
+        "correlator_id": "qda_a06m130_2pt",
+        "correlator_type": "2pt",
+        "data_path": "data_kaon_da_gi/correlators/a06m130/2pt/a06m130_kaon_2pt.h5",
+        "ensemble": "a06m130",
+        "hadron": "kaon",
+        "gfix": "GI",
+        "source_operator": "g5",
+        "sink_operator": "gZ5_nonlocal",
+        "bz_direction": "Z",
+        "bT": [
+          0
+        ],
+        "bz": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26
+        ],
+        "volume": "S96T192",
+        "lattice_spacing_fm": 0.0574,
+        "momentum": [
+          "PX0PY0PZ6",
+          "PX0PY0PZ8",
+          "PX0PY0PZ10"
+        ]
+      },
+      {
+        "correlator_id": "qda_a09m130_2pt",
+        "correlator_type": "2pt",
+        "data_path": "data_kaon_da_gi/correlators/a09m130/2pt/a09m130_kaon_2pt.h5",
+        "ensemble": "a09m130",
+        "hadron": "kaon",
+        "gfix": "GI",
+        "source_operator": "g5",
+        "sink_operator": "gZ5_nonlocal",
+        "bz_direction": "Z",
+        "bT": [
+          0
+        ],
+        "bz": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17
+        ],
+        "volume": "S64T96",
+        "lattice_spacing_fm": 0.0882,
+        "momentum": [
+          "PX0PY0PZ6",
+          "PX0PY0PZ8",
+          "PX0PY0PZ10"
+        ]
+      },
+      {
+        "correlator_id": "qda_a12m130_2pt",
+        "correlator_type": "2pt",
+        "data_path": "data_kaon_da_gi/correlators/a12m130/2pt/a12m130_kaon_2pt.h5",
+        "ensemble": "a12m130",
+        "hadron": "kaon",
+        "gfix": "GI",
+        "source_operator": "g5",
+        "sink_operator": "gZ5_nonlocal",
+        "bz_direction": "Z",
+        "bT": [
+          0
+        ],
+        "bz": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
+        "volume": "S48T64",
+        "lattice_spacing_fm": 0.1213,
+        "momentum": [
+          "PX0PY0PZ6",
+          "PX0PY0PZ8",
+          "PX0PY0PZ10"
+        ]
+      }
+    ],
     "artifacts": [
       {
         "id": "pion_zero_momentum_reference",
         "stage": "correlator_analysis",
         "path": "data_kaon_da_gi/correlators/self_renormalization/pion_zero_momentum_reference.nc",
         "hadron": "pion",
-        "gfix": "CG"
-      },
-      {
-        "id": "bare_a06m130_pz6",
-        "stage": "correlator_analysis",
-        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a06m130_PX0PY0PZ6_bare.nc"
-      },
-      {
-        "id": "bare_a09m130_pz6",
-        "stage": "correlator_analysis",
-        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a09m130_PX0PY0PZ6_bare.nc"
-      },
-      {
-        "id": "bare_a12m130_pz6",
-        "stage": "correlator_analysis",
-        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a12m130_PX0PY0PZ6_bare.nc"
-      },
-      {
-        "id": "bare_a06m130_pz8",
-        "stage": "correlator_analysis",
-        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a06m130_PX0PY0PZ8_bare.nc"
-      },
-      {
-        "id": "bare_a09m130_pz8",
-        "stage": "correlator_analysis",
-        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a09m130_PX0PY0PZ8_bare.nc"
-      },
-      {
-        "id": "bare_a12m130_pz8",
-        "stage": "correlator_analysis",
-        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a12m130_PX0PY0PZ8_bare.nc"
-      },
-      {
-        "id": "bare_a06m130_pz10",
-        "stage": "correlator_analysis",
-        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a06m130_PX0PY0PZ10_bare.nc"
-      },
-      {
-        "id": "bare_a09m130_pz10",
-        "stage": "correlator_analysis",
-        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a09m130_PX0PY0PZ10_bare.nc"
-      },
-      {
-        "id": "bare_a12m130_pz10",
-        "stage": "correlator_analysis",
-        "path": "data_kaon_da_gi/bare_matrix_elements/netcdf/kaon_DA_a12m130_PX0PY0PZ10_bare.nc"
+        "gfix": "GI"
       }
     ],
     "kernels": [
@@ -79,10 +167,249 @@
         "kernel_parameters": {
           "mu": 2.0
         }
+      },
+      {
+        "stage": "perturbative_matching",
+        "kernel_id": "GI_gzg5_DA_hybrid_NLO",
+        "kernel_path": "src/lamet_agent/kernels.py",
+        "scheme": "hybrid_self_renormalization"
       }
     ]
   },
   "stages": {
+    "correlator_analysis": {
+      "defaults": {
+        "nstate": [
+          1,
+          2
+        ],
+        "fit_scope": [
+          "qda_ratio"
+        ],
+        "fit_strategy": [
+          "joint"
+        ],
+        "svdcut": 1e-06,
+        "posterior_prior_error_scale": 3.0,
+        "prior_width": [
+          1.0
+        ],
+        "fitting_form": "Breit",
+        "component": "both",
+        "q_min": 0.05,
+        "model_average": false,
+        "correlator_rescale": 1.0
+      },
+      "jobs": [
+        {
+          "id": "ca_a06m130_pz6",
+          "correlator_ids": [
+            "qda_a06m130_2pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ6",
+            "pt2_windows": [
+              {
+                "tmin": 8,
+                "tmax": 18
+              },
+              {
+                "tmin": 9,
+                "tmax": 18
+              },
+              {
+                "tmin": 10,
+                "tmax": 18
+              }
+            ]
+          }
+        },
+        {
+          "id": "ca_a09m130_pz6",
+          "correlator_ids": [
+            "qda_a09m130_2pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ6",
+            "pt2_windows": [
+              {
+                "tmin": 5,
+                "tmax": 14
+              },
+              {
+                "tmin": 6,
+                "tmax": 14
+              },
+              {
+                "tmin": 7,
+                "tmax": 14
+              }
+            ]
+          }
+        },
+        {
+          "id": "ca_a12m130_pz6",
+          "correlator_ids": [
+            "qda_a12m130_2pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ6",
+            "pt2_windows": [
+              {
+                "tmin": 3,
+                "tmax": 12
+              },
+              {
+                "tmin": 4,
+                "tmax": 12
+              },
+              {
+                "tmin": 5,
+                "tmax": 12
+              }
+            ]
+          }
+        },
+        {
+          "id": "ca_a06m130_pz8",
+          "correlator_ids": [
+            "qda_a06m130_2pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ8",
+            "pt2_windows": [
+              {
+                "tmin": 5,
+                "tmax": 14
+              },
+              {
+                "tmin": 6,
+                "tmax": 14
+              },
+              {
+                "tmin": 7,
+                "tmax": 14
+              }
+            ]
+          }
+        },
+        {
+          "id": "ca_a09m130_pz8",
+          "correlator_ids": [
+            "qda_a09m130_2pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ8",
+            "pt2_windows": [
+              {
+                "tmin": 3,
+                "tmax": 12
+              },
+              {
+                "tmin": 4,
+                "tmax": 12
+              },
+              {
+                "tmin": 5,
+                "tmax": 12
+              }
+            ]
+          }
+        },
+        {
+          "id": "ca_a12m130_pz8",
+          "correlator_ids": [
+            "qda_a12m130_2pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ8",
+            "pt2_windows": [
+              {
+                "tmin": 2,
+                "tmax": 10
+              },
+              {
+                "tmin": 3,
+                "tmax": 10
+              },
+              {
+                "tmin": 4,
+                "tmax": 10
+              }
+            ]
+          }
+        },
+        {
+          "id": "ca_a06m130_pz10",
+          "correlator_ids": [
+            "qda_a06m130_2pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ10",
+            "pt2_windows": [
+              {
+                "tmin": 4,
+                "tmax": 13
+              },
+              {
+                "tmin": 5,
+                "tmax": 13
+              },
+              {
+                "tmin": 6,
+                "tmax": 13
+              }
+            ]
+          }
+        },
+        {
+          "id": "ca_a09m130_pz10",
+          "correlator_ids": [
+            "qda_a09m130_2pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ10",
+            "pt2_windows": [
+              {
+                "tmin": 2,
+                "tmax": 11
+              },
+              {
+                "tmin": 3,
+                "tmax": 11
+              },
+              {
+                "tmin": 4,
+                "tmax": 11
+              }
+            ]
+          }
+        },
+        {
+          "id": "ca_a12m130_pz10",
+          "correlator_ids": [
+            "qda_a12m130_2pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ10",
+            "pt2_windows": [
+              {
+                "tmin": 1,
+                "tmax": 9
+              },
+              {
+                "tmin": 2,
+                "tmax": 9
+              },
+              {
+                "tmin": 3,
+                "tmax": 9
+              }
+            ]
+          }
+        }
+      ]
+    },
     "renormalization": {
       "defaults": {
         "normalization": false,
@@ -107,7 +434,7 @@
         {
           "id": "rn_a06m130_pz6",
           "inputs": {
-            "target": "bare_a06m130_pz6",
+            "target": "ca_a06m130_pz6",
             "zR": "rn_zr_fit"
           },
           "params": {
@@ -120,7 +447,7 @@
         {
           "id": "rn_a09m130_pz6",
           "inputs": {
-            "target": "bare_a09m130_pz6",
+            "target": "ca_a09m130_pz6",
             "zR": "rn_zr_fit"
           },
           "params": {
@@ -133,7 +460,7 @@
         {
           "id": "rn_a12m130_pz6",
           "inputs": {
-            "target": "bare_a12m130_pz6",
+            "target": "ca_a12m130_pz6",
             "zR": "rn_zr_fit"
           },
           "params": {
@@ -146,7 +473,7 @@
         {
           "id": "rn_a06m130_pz8",
           "inputs": {
-            "target": "bare_a06m130_pz8",
+            "target": "ca_a06m130_pz8",
             "zR": "rn_zr_fit"
           },
           "params": {
@@ -159,7 +486,7 @@
         {
           "id": "rn_a09m130_pz8",
           "inputs": {
-            "target": "bare_a09m130_pz8",
+            "target": "ca_a09m130_pz8",
             "zR": "rn_zr_fit"
           },
           "params": {
@@ -172,7 +499,7 @@
         {
           "id": "rn_a12m130_pz8",
           "inputs": {
-            "target": "bare_a12m130_pz8",
+            "target": "ca_a12m130_pz8",
             "zR": "rn_zr_fit"
           },
           "params": {
@@ -185,7 +512,7 @@
         {
           "id": "rn_a06m130_pz10",
           "inputs": {
-            "target": "bare_a06m130_pz10",
+            "target": "ca_a06m130_pz10",
             "zR": "rn_zr_fit"
           },
           "params": {
@@ -198,7 +525,7 @@
         {
           "id": "rn_a09m130_pz10",
           "inputs": {
-            "target": "bare_a09m130_pz10",
+            "target": "ca_a09m130_pz10",
             "zR": "rn_zr_fit"
           },
           "params": {
@@ -211,7 +538,7 @@
         {
           "id": "rn_a12m130_pz10",
           "inputs": {
-            "target": "bare_a12m130_pz10",
+            "target": "ca_a12m130_pz10",
             "zR": "rn_zr_fit"
           },
           "params": {
@@ -220,6 +547,227 @@
               "m0_gev": -0.094
             }
           }
+        }
+      ]
+    },
+    "fourier_transform": {
+      "defaults": {
+        "order": [
+          "LA",
+          "NLA"
+        ],
+        "sector": "full",
+        "coord_unit": "fm",
+        "phase_shift": 0.0,
+        "posterior_prior_error_scale": [
+          2.0,
+          3.0,
+          5.0
+        ],
+        "y_grid": {
+          "start": -1.0,
+          "stop": 2.0,
+          "num": 300
+        },
+        "scheme_scan": {
+          "z_ext_max": 50.0,
+          "model_average": false
+        }
+      },
+      "jobs": [
+        {
+          "id": "ft_a06m130_pz6",
+          "inputs": {
+            "input": "rn_a06m130_pz6"
+          },
+          "params": {
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "light"
+          }
+        },
+        {
+          "id": "ft_a09m130_pz6",
+          "inputs": {
+            "input": "rn_a09m130_pz6"
+          },
+          "params": {
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "light"
+          }
+        },
+        {
+          "id": "ft_a12m130_pz6",
+          "inputs": {
+            "input": "rn_a12m130_pz6"
+          },
+          "params": {
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "light"
+          }
+        },
+        {
+          "id": "ft_a06m130_pz8",
+          "inputs": {
+            "input": "rn_a06m130_pz8"
+          },
+          "params": {
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "light"
+          }
+        },
+        {
+          "id": "ft_a09m130_pz8",
+          "inputs": {
+            "input": "rn_a09m130_pz8"
+          },
+          "params": {
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "light"
+          }
+        },
+        {
+          "id": "ft_a12m130_pz8",
+          "inputs": {
+            "input": "rn_a12m130_pz8"
+          },
+          "params": {
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "light"
+          }
+        },
+        {
+          "id": "ft_a06m130_pz10",
+          "inputs": {
+            "input": "rn_a06m130_pz10"
+          },
+          "params": {
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "light"
+          }
+        },
+        {
+          "id": "ft_a09m130_pz10",
+          "inputs": {
+            "input": "rn_a09m130_pz10"
+          },
+          "params": {
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "light"
+          }
+        },
+        {
+          "id": "ft_a12m130_pz10",
+          "inputs": {
+            "input": "rn_a12m130_pz10"
+          },
+          "params": {
+            "psi1_flavor_class": "light",
+            "psi2_flavor_class": "light"
+          }
+        }
+      ]
+    },
+    "perturbative_matching": {
+      "defaults": {
+        "mu": 2.0,
+        "component": "re",
+        "endpoint_cut": 0.01,
+        "plot": {
+          "xlim": [
+            -1,
+            2
+          ]
+        }
+      },
+      "jobs": [
+        {
+          "id": "mt_a06m130_pz6",
+          "inputs": {
+            "quasi": "ft_a06m130_pz6"
+          },
+          "params": {
+            "zs_fm": 0.2
+          }
+        },
+        {
+          "id": "mt_a09m130_pz6",
+          "inputs": {
+            "quasi": "ft_a09m130_pz6"
+          },
+          "params": {
+            "zs_fm": 0.2
+          }
+        },
+        {
+          "id": "mt_a12m130_pz6",
+          "inputs": {
+            "quasi": "ft_a12m130_pz6"
+          },
+          "params": {
+            "zs_fm": 0.2
+          }
+        },
+        {
+          "id": "mt_a06m130_pz8",
+          "inputs": {
+            "quasi": "ft_a06m130_pz8"
+          },
+          "params": {
+            "zs_fm": 0.2
+          }
+        },
+        {
+          "id": "mt_a09m130_pz8",
+          "inputs": {
+            "quasi": "ft_a09m130_pz8"
+          },
+          "params": {
+            "zs_fm": 0.2
+          }
+        },
+        {
+          "id": "mt_a12m130_pz8",
+          "inputs": {
+            "quasi": "ft_a12m130_pz8"
+          },
+          "params": {
+            "zs_fm": 0.2
+          }
+        },
+        {
+          "id": "mt_a06m130_pz10",
+          "inputs": {
+            "quasi": "ft_a06m130_pz10"
+          },
+          "params": {
+            "zs_fm": 0.2
+          }
+        },
+        {
+          "id": "mt_a09m130_pz10",
+          "inputs": {
+            "quasi": "ft_a09m130_pz10"
+          },
+          "params": {
+            "zs_fm": 0.2
+          }
+        },
+        {
+          "id": "mt_a12m130_pz10",
+          "inputs": {
+            "quasi": "ft_a12m130_pz10"
+          },
+          "params": {
+            "zs_fm": 0.2
+          }
+        }
+      ]
+    },
+    "review": {
+      "defaults": {},
+      "jobs": [
+        {
+          "id": "review"
         }
       ]
     }

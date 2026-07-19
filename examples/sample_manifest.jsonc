@@ -112,17 +112,13 @@
     // Each stage: `defaults` shared by its jobs + a `jobs` list (one per data set).
     "correlator_analysis": {
       "defaults": {
-        // Candidate 2pt windows use [tmin, tmax); every candidate is scanned
-        // during tuning, then one shared window is used for all z and samples.
-        "pt2_windows": [
-          { "tmin": 2, "tmax": 12 },
-          { "tmin": 3, "tmax": 12 },
-          { "tmin": 4, "tmax": 12 },
-          { "tmin": 5, "tmax": 12 }
-        ],
-        "pt3_tau_cuts": [2, 3, 4], // symmetric endpoint cuts scanned for every selected tsep
-        // More explicit alternative/addition when different candidates use
-        // different tsep subsets:
+        // Omit pt2_windows, pt3_windows, and pt3_tau_cuts to generate bounded
+        // candidates automatically. Explicit lists are exact overrides:
+        // "pt2_windows": [
+        //   { "tmin": 2, "tmax": 12 },
+        //   { "tmin": 3, "tmax": 12 }
+        // ],
+        // "pt3_tau_cuts": [2, 3, 4],
         // "pt3_windows": [
         //   { "tsep_ls": [8, 10, 12], "tau_cut": 2 },
         //   { "tsep_ls": [10, 12], "tau_cut": 3 }

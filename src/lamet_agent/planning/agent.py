@@ -132,13 +132,16 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
             "stage_parameter_guidance": {
                 "correlator_analysis": {
                     "common_defaults": {
-                        "pt2_windows": [{"tmin": 2, "tmax": 12}, {"tmin": 3, "tmax": 12}],
-                        "pt3_tau_cuts": [2, 3],
                         "nstate": [2],
                         "fit_scope": ["3pt_ratio"],
                         "fit_strategy": ["joint"],
                         "fitting_form": "Breit",
                     },
+                    "automatic_windows": (
+                        "Omit pt2_windows, pt3_windows, and pt3_tau_cuts to let the stage "
+                        "generate bounded data-driven candidates. Preserve any explicitly "
+                        "authored window lists exactly."
+                    ),
                     "options": {
                         "fit_scope": ["3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"],
                         "fit_strategy": ["joint", "chained"],

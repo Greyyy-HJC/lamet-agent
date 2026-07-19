@@ -19,6 +19,9 @@ Correlator-analysis physics:
   chosen by the agent. fit_bare_matrix_grid then keeps one shared window and
   either selects one fit function on sample-average data or, when model_average
   is enabled, averages nstate/prior_width fit functions sample by sample.
+- When manifest windows are omitted, generate bounded 2pt candidates from the
+  first-half resampled signal and 3pt candidates from the available tsep grid.
+  Explicit pt2_windows, pt3_windows, and pt3_tau_cuts remain exact overrides.
 - A shared data window must pass sample-average joint fits at every tune z the
   agent selects; a good chi2/dof at only the smallest tune z is not sufficient.
 - Data-window candidates with different pt2/pt3 points should not be ranked by
@@ -43,7 +46,7 @@ TOOL_CATALOG = {
         "ground-state fits."
     ),
     "tune_bare_matrix": (
-        "Scan every configured nstate, prior_width, fit strategy, and fit window "
+        "Scan every configured nstate, prior_width, fit strategy, and explicit or automatic fit window "
         "at LLM-supplied tune_z_values; return cross-z feasibility and "
         "recommended_robust_index."
     ),
