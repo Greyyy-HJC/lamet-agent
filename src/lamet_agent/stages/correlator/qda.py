@@ -895,7 +895,16 @@ def fit_qda_ratio_grid(
     z_report: list[dict[str, Any]] = []
     energy_fit = chosen.get("pt2_fit") or chosen["fit"]
     try:
-        for z in z_list:
+        from tqdm import tqdm
+    except ImportError:
+        z_iterator = z_list
+    else:
+        z_iterator = tqdm(
+            z_list,
+            desc=f"fit qDA ratio {ensemble} {momentum}",
+        )
+    try:
+        for z in z_iterator:
             sample_re, sample_im, ratio_re, ratio_im = _load_ratio(
                 z=z,
                 denominator_shape=denominator.shape,

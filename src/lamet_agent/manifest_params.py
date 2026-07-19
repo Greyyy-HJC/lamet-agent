@@ -63,6 +63,7 @@ STAGE_PARAM_CONTRACTS = {
             "pt3_windows": ListItems({"tau_cut": None, "tsep_ls": None}),
             "q_min": None,
             "svdcut": None,
+            "tune_z": None,
         },
         removed={},
     ),

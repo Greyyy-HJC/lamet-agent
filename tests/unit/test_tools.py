@@ -350,6 +350,14 @@ def test_correlator_stage_rejects_removed_variant_parameter() -> None:
     ]
 
 
+def test_correlator_stage_allows_tune_z_parameter() -> None:
+    manifest = _manifest()
+    manifest.stages["correlator_analysis"].jobs[0].params["tune_z"] = 2
+    job = manifest.stages["correlator_analysis"].jobs[0]
+
+    assert validate_stage_inputs("correlator_analysis", manifest, job) == []
+
+
 def test_metadata_workers_override_stage_params_for_sample_fit_tools(tmp_path: Path) -> None:
     manifest = _manifest()
     manifest.metadata.workers = 3
