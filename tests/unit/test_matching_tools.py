@@ -118,6 +118,15 @@ def test_formula_cache_does_not_serve_one_kernel_another_kernels_formula() -> No
         reporting._FORMULA_CACHE.clear()
 
 
+def test_formula_llm_preserves_codex_model_name() -> None:
+    from lamet_agent.stages.matching.reporting import FormulaLlm
+
+    assert FormulaLlm(
+        backend="codex",
+        model_name="test-codex-model",
+    ).resolved() == ("codex", None, None, "test-codex-model", None)
+
+
 def test_kernel_source_carries_what_the_kernel_actually_calls() -> None:
     from lamet_agent.stages.matching.reporting import _kernel_source
 

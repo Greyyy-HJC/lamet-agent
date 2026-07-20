@@ -678,11 +678,12 @@ def run_agent(
     trace = AgentTrace(enabled=verbose, quiet_ui=not verbose)
     outputs: dict[str, Any] = {item.id: item for item in manifest.inputs.artifacts}
     stage_reports: dict[str, dict[str, str]] = {}
-    model_spec = (
-        format_api_model_spec(provider, model_name)
-        if backend == "api" and provider and model_name
-        else None
-    )
+    if backend == "api" and provider and model_name:
+        model_spec = format_api_model_spec(provider, model_name)
+    elif backend == "codex":
+        model_spec = model_name
+    else:
+        model_spec = None
 
     if verbose:
         trace.run_begin(

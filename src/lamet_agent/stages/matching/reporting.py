@@ -427,9 +427,9 @@ class FormulaLlm:
     """The LLM the report uses to write the kernel's closed form.
 
     Passed in explicitly, exactly like the review stage's tool arguments: the run's
-    ``--backend`` and (for ``api``) the provider/key/model the CLI already resolved are
-    handed down as parameters. Reading them back out of the environment would mean the
-    report could silently use a different model, or a different key, from the run itself.
+    ``--backend`` and the provider/key/model the CLI already resolved are handed down as
+    parameters. Reading them back out of the environment would mean the report could
+    silently use a different model, or a different key, from the run itself.
     """
 
     backend: str = "api"
@@ -441,7 +441,7 @@ class FormulaLlm:
     def resolved(self) -> tuple[str, str | None, str | None, str | None, str | None]:
         """Validate and fill provider defaults, returning what request_llm_text needs."""
         if self.backend == "codex":
-            return "codex", None, None, None, None
+            return "codex", None, None, self.model_name, None
         if self.backend != "api":
             raise RuntimeError(
                 f"The matching report's formula section needs an LLM, but this run used "

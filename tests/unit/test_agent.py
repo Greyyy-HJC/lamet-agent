@@ -65,6 +65,27 @@ def test_run_agent_uses_manifest_stage_order(tmp_path: Path, monkeypatch) -> Non
     assert result["actions"][0]["action"]["reason"] == "done"
 
 
+def test_run_agent_reports_explicit_codex_model(monkeypatch) -> None:
+    def fake_codex_decide(
+        messages: list[dict[str, str]],
+        *,
+        model_name: str | None = None,
+    ) -> dict:
+        assert model_name == "test-codex-model"
+        return {"action": "finish", "reason": "done"}
+
+    monkeypatch.setattr(llm, "_codex_decide", fake_codex_decide)
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+
+    result = run_agent(
+        _demo_manifest(),
+        backend="codex",
+        model_name="test-codex-model",
+    )
+
+    assert result["model"] == "test-codex-model"
+
+
 def test_deepseek_request_retries_transient_url_error(monkeypatch) -> None:
     calls = {"count": 0}
 
@@ -216,24 +237,30 @@ def test_make_llm_session_api_requires_key() -> None:
 
 
 def test_make_llm_session_codex_uses_codex_decide(monkeypatch) -> None:
-    captured: list[list[dict[str, str]]] = []
+    captured: list[tuple[list[dict[str, str]], str | None]] = []
 
-    def fake_codex_decide(messages: list[dict[str, str]]) -> dict:
-        captured.append(messages)
+    def fake_codex_decide(
+        messages: list[dict[str, str]],
+        *,
+        model_name: str | None = None,
+    ) -> dict:
+        captured.append((messages, model_name))
         return {"action": "finish", "reason": "done"}
 
     monkeypatch.setattr(llm, "_codex_decide", fake_codex_decide)
 
-    session = llm.make_llm_session("codex")
+    session = llm.make_llm_session("codex", model_name="test-codex-model")
     session.begin_stage("stage prompt")
     action = session.decide(last_observation={"tool_name": "inspect", "result": {"ok": True}})
 
     assert action == {"action": "finish", "reason": "done"}
-    assert captured[0][0]["role"] == "system"
-    assert "LaMET analysis agent" in captured[0][0]["content"]
-    assert captured[0][1] == {"role": "user", "content": "stage prompt"}
-    assert captured[0][2]["role"] == "user"
-    assert "Tool result" in captured[0][2]["content"]
+    messages, model_name = captured[0]
+    assert model_name == "test-codex-model"
+    assert messages[0]["role"] == "system"
+    assert "LaMET analysis agent" in messages[0]["content"]
+    assert messages[1] == {"role": "user", "content": "stage prompt"}
+    assert messages[2]["role"] == "user"
+    assert "Tool result" in messages[2]["content"]
 
 
 def test_codex_decide_does_not_pass_strict_output_schema(monkeypatch) -> None:
@@ -269,15 +296,57 @@ def test_codex_decide_does_not_pass_strict_output_schema(monkeypatch) -> None:
         [
             {"role": "system", "content": "system instructions"},
             {"role": "user", "content": "stage prompt"},
-        ]
+        ],
+        model_name="test-codex-model",
     )
 
     assert action == {"action": "finish", "reason": "done"}
     assert captured["thread_start_kwargs"]["developer_instructions"] == "system instructions"
     assert captured["thread_start_kwargs"]["sandbox"] == _Sandbox.read_only
     assert captured["thread_start_kwargs"]["ephemeral"] is True
+    assert captured["thread_start_kwargs"]["model"] == "test-codex-model"
     assert captured["run_kwargs"] == {"sandbox": _Sandbox.read_only}
     assert "stage prompt" in captured["task_input"]
+
+
+def test_request_llm_text_passes_codex_model_to_thread(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _Sandbox:
+        read_only = "read-only"
+
+    class _Thread:
+        def run(self, task_input, **kwargs):
+            return types.SimpleNamespace(final_response="plan response")
+
+    class _Codex:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def thread_start(self, **kwargs):
+            captured.update(kwargs)
+            return _Thread()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "openai_codex",
+        types.SimpleNamespace(Codex=_Codex, Sandbox=_Sandbox),
+    )
+
+    response = llm.request_llm_text(
+        backend="codex",
+        messages=[
+            {"role": "system", "content": "system instructions"},
+            {"role": "user", "content": "planning prompt"},
+        ],
+        model_name="test-codex-model",
+    )
+
+    assert response == "plan response"
+    assert captured["model"] == "test-codex-model"
 
 
 def test_run_agent_registers_job_output_for_downstream_role(tmp_path: Path, monkeypatch) -> None:

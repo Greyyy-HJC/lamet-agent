@@ -93,7 +93,11 @@ def format_api_model_spec(provider: str, model_name: str) -> str:
     return f"{provider}/{model_name}"
 
 
-def _codex_decide(messages: list[dict]) -> dict:
+def _codex_decide(
+    messages: list[dict],
+    *,
+    model_name: str | None = None,
+) -> dict:
     try:
         from openai_codex import Codex, Sandbox
     except ImportError as exc:
@@ -128,6 +132,7 @@ def _codex_decide(messages: list[dict]) -> dict:
             developer_instructions=developer_instructions,
             sandbox=Sandbox.read_only,
             ephemeral=True,
+            model=model_name,
         )
 
         result = thread.run(
@@ -317,6 +322,7 @@ def request_llm_text(
                 developer_instructions=messages[0]["content"] if messages else "",
                 sandbox=Sandbox.read_only,
                 ephemeral=True,
+                model=model_name,
             )
             result = thread.run("\n\n".join(item["content"] for item in messages[1:]), sandbox=Sandbox.read_only)
         if not result.final_response:
@@ -338,7 +344,10 @@ def _request_llm_action(
     if backend == "mock":
         return dict(_MOCK_TOOL_ACTION)
     if backend == "codex":
-        return _codex_decide([{"role": "system", "content": _SYSTEM_PROMPT}, *messages])
+        return _codex_decide(
+            [{"role": "system", "content": _SYSTEM_PROMPT}, *messages],
+            model_name=model_name,
+        )
     if backend == "api":
         if not provider:
             raise ValueError("backend='api' requires a provider.")
@@ -396,7 +405,7 @@ def _external_session(actions_path: str | Path) -> LlmSession:
     return _ExternalSession()
 
 
-def _codex_session() -> LlmSession:
+def _codex_session(model_name: str | None = None) -> LlmSession:
     """Return a multi-turn session backed by the Codex Python SDK."""
 
     class _CodexSession:
@@ -414,7 +423,11 @@ def _codex_session() -> LlmSession:
                         "content": format_tool_observation(last_observation),
                     }
                 )
-            action = _request_llm_action(backend="codex", messages=self._messages)
+            action = _request_llm_action(
+                backend="codex",
+                messages=self._messages,
+                model_name=model_name,
+            )
             self._messages.append(
                 {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
             )
@@ -475,7 +488,8 @@ def make_llm_session(
 
     ``backend`` selects the integration (``mock``/``external``/``api``/``codex``).
     For ``api``, pass ``provider`` and ``model_name``; ``base_url`` overrides the
-    provider default when given.
+    provider default when given. For ``codex``, ``model_name`` optionally selects
+    the Codex model; omitting it preserves the SDK default.
     """
     if backend == "mock":
         return _mock_session()
@@ -484,7 +498,7 @@ def make_llm_session(
             raise ValueError("backend='external' requires an actions_path transcript.")
         return _external_session(actions_path)
     if backend == "codex":
-        return _codex_session()
+        return _codex_session(model_name)
     if backend == "api":
         if not provider:
             raise ValueError("backend='api' requires a provider.")

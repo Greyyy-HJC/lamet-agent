@@ -790,3 +790,13 @@
 - Added bounded automatic 2pt windows from first-half resampled signal-to-noise diagnostics, with conservative NonBreit channel handling and explicit fallback metadata.
 - Added automatic contiguous-`tsep`/`tau_cut` candidates that allow a single central insertion point, while preserving explicit `pt2_windows`, `pt3_windows`, and `pt3_tau_cuts` as exact overrides.
 - Propagated `auto_window_scan` diagnostics through tuning, grid-fit logs, and bilingual reports, and stopped the full planner variant from synthesizing correlator windows.
+
+## 2026-07-19 (Codex backend model selection)
+
+- Allowed `--model <model_id>` with the `codex` backend for both `run` and
+  `plan`, while preserving the Codex SDK default when the option is omitted.
+- Routed the selected model through structured agent decisions and free-form
+  planning/report requests, and included explicit Codex models in run traces and
+  summaries.
+- Added unit coverage for CLI model resolution and Codex SDK `thread_start`
+  model forwarding.
