@@ -195,11 +195,13 @@ spectral function. When the ordinary 2pt is omitted, the qDA input must contain
 `bz=0`; that slice supplies the denominator and uses the mixed overlap
 `z_n*zprime_n` rather than `z_n^2`. `fit_strategy: joint` fits the selected 2pt
 and qDA ratio together; `chained` first fits that 2pt and transfers its complete
-widened spectrum to the ratio prior. The exported bare matrix element is
+widened spectrum to the ratio prior; `independent` fits the ratio alone with no
+2pt channel and no prior 2pt fit. The exported bare matrix element is
 `O00/z0` for the ordinary denominator and `O00/zprime0` for the `bz=0`
-fallback. In the fallback, the `z=0` ratio is naturally one because numerator
-and denominator are identical resampled data; it is never assigned manually.
-Each `bz` fit also writes sample-0 real/imaginary
+fallback. In the fallback, the `z=0` ratio is identically one because numerator
+and denominator are identical resampled data; correlator tools skip fitting
+that point and assign bare matrix-element samples `1+0j` in the output NetCDF.
+Each fitted nonzero `bz` also writes sample-0 real/imaginary
 fit-on-data PDF and SVG diagnostics under the job's `fit_logs/` directory.
 
 ### `correlator_analysis.defaults.model_average`
@@ -810,7 +812,8 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
   - Full GI pion DA workflow from qDA correlator analysis through matching and review.
 - `examples/kaon_da_gi_manifest.json`
   - Full GI kaon DA workflow from qDA correlator analysis through matching and review;
-    API run helpers live under `runs/ds_pion_da_gi/` and `runs/ds_kaon_da_gi/`.
+    API run helpers live under `runs/ds_pion_da_gi/` and `runs/ds_kaon_da_gi/`
+    (including `plot_agent_data_compare.py` for agent vs reference overlays).
 - `examples/temp_self_renorm_manifest.json`
   - Renorm-only hybrid-self-renormalization smoke (PDF reference → DA mom=6 targets);
     see [Hybrid Self-Renormalization](#hybrid-self-renormalization). Prepare/run helpers live

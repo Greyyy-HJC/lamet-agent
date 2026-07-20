@@ -53,16 +53,103 @@ def test_correlator_sample0_plot_collection_includes_qda_artifacts() -> None:
 def test_run_agent_uses_manifest_stage_order(tmp_path: Path, monkeypatch) -> None:
     transcript = tmp_path / "actions.jsonl"
     transcript.write_text(
-        json.dumps({"action": "finish", "reason": "done"}) + "\n",
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "action": "call_tool",
+                        "tool_name": "mark_done",
+                        "args": {},
+                        "reason": "produce output",
+                    }
+                ),
+                json.dumps({"action": "finish", "reason": "done"}),
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
 
+    def mark_done(store, **kwargs):
+        store["output"] = "ok"
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "lamet_agent.agent.resolve_stage_tools",
+        lambda stage: {"mark_done": mark_done},
+    )
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
     result = run_agent(_demo_manifest(), backend="external", actions_path=transcript)
 
     assert result["status"] == "completed"
     assert result["completed_stages"] == ["correlator_analysis"]
-    assert result["actions"][0]["action"]["reason"] == "done"
+    assert result["actions"][-1]["action"]["reason"] == "done"
+
+
+def test_run_agent_stops_on_request_user_input(tmp_path: Path, monkeypatch) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "demo",
+                "root_directory": ".",
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "random_seed": 1984,
+                "stages": ["correlator_analysis", "review"],
+            },
+            "inputs": {"correlators": [], "artifacts": [], "kernels": []},
+            "stages": {
+                "correlator_analysis": {
+                    "defaults": {},
+                    "jobs": [{"id": "ca_first"}, {"id": "ca_second"}],
+                },
+                "review": {"defaults": {}, "jobs": [{"id": "review_job"}]},
+            },
+        }
+    )
+    manifest._root_directory = tmp_path.resolve()
+    manifest._artifacts_directory = (tmp_path / "artifacts").resolve()
+    transcript = tmp_path / "actions.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "action": "request_user_input",
+                "reason": "Need a narrower tune_z grid.",
+                "args": {
+                    "prompt": "Which tune_z_values should I retry with?",
+                    "question_id": "tune_z",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", lambda stage: {})
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+
+    result = run_agent(manifest, backend="external", actions_path=transcript)
+
+    assert result["status"] == "waiting_for_user_input"
+    assert result["pending_user_input"] == {
+        "correlator_analysis": {"ca_first": ["Which tune_z_values should I retry with?"]}
+    }
+    assert "ca_second" not in result["stage_results"].get("correlator_analysis", {})
+    assert "review" not in result["stage_results"]
+    assert result["completed_stages"] == []
+
+
+def test_run_agent_raises_when_job_finishes_without_output(tmp_path: Path, monkeypatch) -> None:
+    transcript = tmp_path / "actions.jsonl"
+    transcript.write_text(
+        json.dumps({"action": "finish", "reason": "done without output"}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", lambda stage: {})
+    monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+
+    with pytest.raises(ValueError, match="finished without store\\['output'\\]"):
+        run_agent(_demo_manifest(), backend="external", actions_path=transcript)
 
 
 def test_run_agent_reports_explicit_codex_model(monkeypatch) -> None:

@@ -40,6 +40,7 @@ from lamet_agent.stages.correlator.functions import (
     _anchor_pt2_prior,
     _auto_pt2_windows,
     _auto_pt3_windows,
+    _average_records,
     _bare_matrix_element_mean_for_part,
     _candidate_specs,
     _check_mode,
@@ -78,12 +79,16 @@ from lamet_agent.stages.correlator.functions import (
     qda_mixed_pt2_re_fcn,
     qda_pt2_prior,
     qda_ratio_fcn,
+    qda_ratio_prior,
     pt3_nonbreit_ratio_fcn,
     pt3_nonbreit_ratio_prior,
     pt3_ratio_fcn,
     pt3_ratio_prior,
     select_data_window,
     select_best,
+    _assigned_unity_z0_record,
+    _bare_records_to_ensemble,
+    _qda_fit_z_list,
     _summarise_cross_z_feasibility,
     _window_candidate_key,
     tune_bare_matrix,
@@ -392,6 +397,52 @@ def test_fit_ratio_recovers_parameters() -> None:
     )
     assert abs(gv.mean(fit.p["E0"]) - gv.mean(p_true["E0"])) < 0.05
     assert abs(gv.mean(fit.p["O00_re"]) - gv.mean(p_true["O00_re"])) < 0.05
+
+
+def test_fit_independent_qda_ratio_recovers_matrix_element() -> None:
+    Lt = 32
+    params = {
+        "E0": 0.45,
+        "z0": 1.2,
+        "O00_re": 0.84,
+        "O00_im": 0.12,
+    }
+    t = np.arange(Lt, dtype=float)
+    ratio_re = np.asarray(
+        [
+            gv.gvar(value, max(abs(value) * 1e-3, 1e-6))
+            for value in qda_ratio_fcn(t, params, Lt, nstate=1, part="re")
+        ],
+        dtype=object,
+    )
+    ratio_im = np.asarray(
+        [
+            gv.gvar(value, max(abs(value) * 1e-3, 1e-6))
+            for value in qda_ratio_fcn(t, params, Lt, nstate=1, part="im")
+        ],
+        dtype=object,
+    )
+    prior = qda_ratio_prior(1)
+    for key, value in params.items():
+        prior[key] = gv.gvar(value, 0.25)
+    fit = fit_matrix_element(
+        ratio_re,
+        ratio_im,
+        None,
+        None,
+        Lt,
+        strategy="independent",
+        fit_scope="qda_ratio",
+        fitting_form="Breit",
+        tmin=4,
+        tmax=10,
+        nstate=1,
+        prior=prior,
+        svdcut=1e-8,
+    )
+    assert "pt2" not in fit.y
+    assert gv.mean(fit.p["O00_re"] / fit.p["z0"]) == pytest.approx(0.7, rel=0.05)
+    assert gv.mean(fit.p["O00_im"] / fit.p["z0"]) == pytest.approx(0.1, rel=0.05)
 
 
 def test_fh_samples_from_ratios_finite_differences_summed_ratio() -> None:
@@ -767,10 +818,59 @@ def test_auto_pt2_windows_use_snr_endpoint_and_candidate_bounds() -> None:
 
     assert diagnostics["stable_tmax"] == 13
     assert diagnostics["used_fallback"] is False
-    assert 1 <= len(windows) <= 6
-    assert {window["tmax"] for window in windows} == {12, 13}
+    assert diagnostics["tmax_limit"] == 4
+    assert diagnostics["tmin_limit"] == 4
+    assert diagnostics["tmax_values"]
+    assert 1 <= len(windows) <= 16
+    tmax_set = {window["tmax"] for window in windows}
+    assert 13 in tmax_set
+    assert any(tmax < 13 for tmax in tmax_set)
     assert all(window["tmax"] <= Lt // 2 for window in windows)
-    assert all(window["tmax"] - window["tmin"] >= 5 for window in windows)
+    assert all(window["tmax"] - window["tmin"] >= diagnostics["minimum_points"] for window in windows)
+
+
+def test_auto_pt2_windows_span_tmax_and_dense_tmin_on_long_snr() -> None:
+    Lt = 64
+    t = np.arange(Lt)
+    mean = np.exp(-0.2 * t)
+    sdev = 0.05 * mean
+    windows, diagnostics = _auto_pt2_windows(
+        gv.gvar(mean, sdev),
+        Lt=Lt,
+        nstate_values=[2],
+    )
+
+    endpoint = diagnostics["stable_tmax"]
+    assert endpoint == Lt // 2
+    assert len(diagnostics["tmax_values"]) >= 2
+    assert diagnostics["tmax_values"][0] < endpoint
+    assert diagnostics["tmax_values"][-1] == endpoint
+    assert len({window["tmax"] for window in windows}) >= 2
+    largest_tmax = max(window["tmax"] for window in windows)
+    tmins = {window["tmin"] for window in windows if window["tmax"] == largest_tmax}
+    assert 2 <= len(tmins) <= 4
+    assert all(window["tmax"] - window["tmin"] >= diagnostics["minimum_points"] for window in windows)
+    assert len(windows) <= 16
+
+
+def test_auto_pt2_windows_never_extend_into_zero_padded_tail() -> None:
+    Lt = 64
+    t = np.arange(Lt)
+    mean = np.where(t <= 23, np.exp(-0.3 * t), 0.0)
+    sdev = np.where(t <= 23, 0.05 * np.exp(-0.3 * t), 0.0)
+    windows, diagnostics = _auto_pt2_windows(
+        gv.gvar(mean, sdev),
+        Lt=Lt,
+        nstate_values=[1, 2],
+    )
+
+    assert diagnostics["channels"]["initial"]["last_snr_passing_t"] == 23
+    assert diagnostics["channels"]["initial"]["last_valid_t"] == 23
+    # Without the valid-data cap the tail extension would reach tmax=26 and
+    # include exactly-zero points, which make every fit singular.
+    assert diagnostics["stable_tmax"] == 24
+    assert windows
+    assert all(window["tmax"] <= 24 for window in windows)
 
 
 def test_auto_pt2_windows_use_conservative_nonbreit_endpoint() -> None:
@@ -889,6 +989,19 @@ def test_candidate_specs_joint_is_cartesian() -> None:
     assert {(s["tmin"], s["tau_cut"]) for s in specs} == {(2, 1), (2, 2), (3, 1), (3, 2)}
 
 
+def test_candidate_specs_independent_is_cartesian_without_pt2_best() -> None:
+    pt2 = [{"tmin": 2, "tmax": 10}, {"tmin": 3, "tmax": 10}]
+    pt3 = [{"tsep_ls": [6, 8], "tau_cut": 1}, {"tsep_ls": [6, 8], "tau_cut": 2}]
+    specs = _candidate_specs(
+        strategy="independent",
+        pt2_window_specs=pt2,
+        pt3_window_specs=pt3,
+        pt2_best=None,
+    )
+    assert len(specs) == 4
+    assert {(s["tmin"], s["tau_cut"]) for s in specs} == {(2, 1), (2, 2), (3, 1), (3, 2)}
+
+
 def test_candidate_specs_chained_uses_pt2_best_window() -> None:
     pt3 = [{"tsep_ls": [6, 8], "tau_cut": 1}]
     best = {"tmin": 3, "tmax": 11}
@@ -899,8 +1012,61 @@ def test_candidate_specs_chained_uses_pt2_best_window() -> None:
 def test_normalise_strategy_aliases() -> None:
     assert _normalise_strategy("joint") == ("joint", "joint_2pt_ratio")
     assert _normalise_strategy("chain") == ("chained", "chained_2pt_ratio")
+    assert _normalise_strategy("independent") == ("independent", "independent_ratio")
     with pytest.raises(ValueError, match="fit_strategy"):
         _normalise_strategy("nonsense")
+
+
+def test_average_records_independent_skips_two_point_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    Lt = 24
+    params = {"E0": 0.45, "z0": 1.2, "O00_re": 0.84, "O00_im": 0.12}
+    t = np.arange(Lt, dtype=float)
+    ratio_re = np.asarray(
+        [
+            gv.gvar(value, max(abs(value) * 1e-3, 1e-6))
+            for value in qda_ratio_fcn(t, params, Lt, nstate=1, part="re")
+        ],
+        dtype=object,
+    )
+    ratio_im = np.asarray(
+        [
+            gv.gvar(value, max(abs(value) * 1e-3, 1e-6))
+            for value in qda_ratio_fcn(t, params, Lt, nstate=1, part="im")
+        ],
+        dtype=object,
+    )
+    pt2_gv = _toy_pt2_gv(Lt=Lt)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("fit_two_point must not run for independent strategy")
+
+    monkeypatch.setattr(
+        "lamet_agent.stages.correlator.functions.fit_two_point",
+        boom,
+    )
+    records, rejected = _average_records(
+        pt2_gv=pt2_gv,
+        ratio_re=ratio_re,
+        ratio_im=ratio_im,
+        windows=[{"tmin": 4, "tmax": 8}],
+        strategies=["independent"],
+        nstates=[1],
+        prior_widths=[1.0],
+        Lt=Lt,
+        part="both",
+        svdcut=1e-8,
+        scale=1.0,
+        qda_denominator_mode="local",
+    )
+    assert not rejected
+    assert len(records) == 1
+    assert records[0]["fit_strategy"] == "independent"
+    assert records[0].get("pt2_fit") is None
+    assert gv.mean(records[0]["fit"].p["O00_re"] / records[0]["fit"].p["z0"]) == pytest.approx(
+        0.7, rel=0.05
+    )
 
 
 def test_normalise_fit_scope_accepts_only_public_names() -> None:
@@ -1190,6 +1356,231 @@ def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
     assert np.allclose(serial["z_fits"][0]["fit_model_weights"], parallel["z_fits"][0]["fit_model_weights"])
     assert parallel["z_fits"][0]["sample0_plot_paths"]
     assert all(Path(path).is_file() for path in parallel["z_fits"][0]["sample0_plot_paths"].values())
+    assert all(
+        "toy" in Path(path).name and "parallel" in Path(path).name
+        for path in parallel["z_fits"][0]["sample0_plot_paths"].values()
+    )
+
+
+def test_sample0_plot_paths_include_ensemble_and_tag(tmp_path) -> None:
+    pt2_path, pt3_paths = _write_fake_correlators(
+        tmp_path,
+        n_cfg=8,
+        tsep_ls=(6, 8),
+        z_values=(0,),
+    )
+    fit_logs = tmp_path / "fit_logs"
+    common = {
+        "pt2_path": pt2_path,
+        "pt3_paths": pt3_paths,
+        "tsep_ls": [6, 8],
+        "z_values": [0],
+        "momentum": "PX0PY0PZ0",
+        "bz_direction": "Z",
+        "pt2_window": {"tmin": 2, "tmax": 10},
+        "pt3_window": {"tsep_ls": [6, 8], "tau_cut": 1},
+        "fit_strategy": "joint",
+        "fit_scope": "3pt_ratio",
+        "nstate": 2,
+        "prior_width": 1.0,
+        "resample_mode": "jk",
+        "sample_error_mode": "mean",
+        "svdcut": 1e-6,
+        "artifacts_dir": tmp_path / "artifacts",
+        "log_dir": str(fit_logs),
+        "workers": 1,
+    }
+    paths_by_ensemble: dict[str, set[str]] = {}
+    for ensemble, tag in (("ensA", "tagA"), ("ensB", "tagB")):
+        result = fit_bare_matrix_grid(
+            {},
+            ensemble=ensemble,
+            tag=tag,
+            save_path=str(tmp_path / "artifacts" / f"{tag}_bare"),
+            **common,
+        )
+        plot_paths = result["z_fits"][0]["sample0_plot_paths"]
+        assert plot_paths
+        for path in plot_paths.values():
+            name = Path(path).name
+            assert ensemble in name
+            assert tag in name
+            assert Path(path).is_file()
+        paths_by_ensemble[ensemble] = set(plot_paths.values())
+    assert paths_by_ensemble["ensA"].isdisjoint(paths_by_ensemble["ensB"])
+
+
+def test_qda_fit_z_list_skips_z0_only_for_nonlocal_bz0() -> None:
+    assert _qda_fit_z_list([0, 1, 2], qda_denominator_mode="local") == ([0, 1, 2], False)
+    assert _qda_fit_z_list([0, 1, 2], qda_denominator_mode="nonlocal_bz0") == (
+        [1, 2],
+        True,
+    )
+    with pytest.raises(ValueError, match="nonzero"):
+        _qda_fit_z_list([0], qda_denominator_mode="nonlocal_bz0")
+
+
+def test_assigned_unity_z0_record_is_ones() -> None:
+    record = _assigned_unity_z0_record(5)
+    assert record["z"] == 0
+    assert np.array_equal(record["real_samples"], np.ones(5))
+    assert np.array_equal(record["imag_samples"], np.zeros(5))
+
+
+def test_reinjected_z0_unity_sorts_into_ensemble_coords() -> None:
+    z0 = _assigned_unity_z0_record(4)
+    z0.update(
+        real_mean=1.0,
+        imag_mean=0.0,
+        real_stat_sdev=0.0,
+        imag_stat_sdev=0.0,
+    )
+    z1 = {
+        "z": 1,
+        "real_samples": np.full(4, 0.4),
+        "imag_samples": np.zeros(4),
+        "real_mean": 0.4,
+        "imag_mean": 0.0,
+        "real_stat_sdev": 0.0,
+        "imag_stat_sdev": 0.0,
+        "real_sys_sdev": 0.0,
+        "imag_sys_sdev": 0.0,
+    }
+    ensemble = _bare_records_to_ensemble([z1, z0], resample_mode="jk", attrs={})
+    assert list(ensemble.coords["z"]) == [0, 1]
+    assert ensemble.values[0][0] == pytest.approx(1 + 0j)
+    assert ensemble.values[0][1] == pytest.approx(0.4 + 0j)
+
+
+def test_tune_qda_drops_z0_from_tune_list_for_nonlocal_bz0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "qda.h5"
+    rng = np.random.default_rng(1)
+    data = rng.normal(size=(8, 16)) + 1j * rng.normal(size=(8, 16))
+    with h5py.File(path, "w") as h5f:
+        for bz in (0, 1, 2):
+            h5f.create_dataset(f"g5/gT5_nonlocal_bT0_bz{bz}/PX0PY0PZ6", data=data.T)
+
+    seen_z: list[int] = []
+
+    def fake_average_records(**kwargs):
+        # Caller loads ratio per z before this; track via closure set below.
+        return [], [{"reason": "forced empty"}]
+
+    original_load_ratio = __import__(
+        "lamet_agent.stages.correlator.functions", fromlist=["_load_ratio"]
+    )._load_ratio
+
+    def tracking_load_ratio(*, z, **kwargs):
+        seen_z.append(int(z))
+        return original_load_ratio(z=z, **kwargs)
+
+    monkeypatch.setattr(
+        "lamet_agent.stages.correlator.functions._average_records",
+        fake_average_records,
+    )
+    monkeypatch.setattr(
+        "lamet_agent.stages.correlator.functions._load_ratio",
+        tracking_load_ratio,
+    )
+    result = tune_bare_matrix(
+        {},
+        pt2_path=str(path),
+        qda_path=str(path),
+        momentum="PX0PY0PZ6",
+        source_operator="g5",
+        sink_operator="gT5_nonlocal",
+        qda_source_operator="g5",
+        qda_sink_operator="gT5_nonlocal",
+        qda_denominator_mode="nonlocal_bz0",
+        pt2_bT=0,
+        pt2_bz=0,
+        tune_z_values=[0, 1, 2],
+        z_values=[0, 1, 2],
+        fit_scope="qda_ratio",
+        fit_strategy="joint",
+        nstate=1,
+        prior_width=1.0,
+        pt2_windows=[{"tmin": 2, "tmax": 8}],
+        resample_mode="jk",
+        temporal_extent=16,
+    )
+    assert result["skipped_z0_fit"] is True
+    assert result["tune_z_values"] == [1, 2]
+    assert seen_z == [1, 2]
+    assert 0 not in seen_z
+
+
+def test_tune_qda_ratio_soft_fails_when_no_common_feasible_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "qda.h5"
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(8, 16)) + 1j * rng.normal(size=(8, 16))
+    with h5py.File(path, "w") as h5f:
+        for bz in (0, 1, 2):
+            h5f.create_dataset(f"g5/gT5_nonlocal_bT0_bz{bz}/PX0PY0PZ6", data=data.T)
+
+    call_count = {"n": 0}
+
+    def fake_average_records(**kwargs):
+        tmin = 2 + call_count["n"]
+        call_count["n"] += 1
+        record = {
+            "fit_strategy": "joint",
+            "nstate": 1,
+            "prior_width": 1.0,
+            "tmin": tmin,
+            "tmax": 8,
+            "Q": 0.9,
+            "chi2_dof": 0.5,
+            "logGBF": 1.0,
+            "n_data": 10,
+            "n_params": 3,
+            "dof_is_positive": True,
+            "fit": object(),
+        }
+        return [record], [{"reason": "synthetic reject", "tmin": tmin}]
+
+    monkeypatch.setattr(
+        "lamet_agent.stages.correlator.functions._average_records",
+        fake_average_records,
+    )
+    result = tune_bare_matrix(
+        {},
+        pt2_path=str(path),
+        qda_path=str(path),
+        momentum="PX0PY0PZ6",
+        source_operator="g5",
+        sink_operator="gT5_nonlocal",
+        qda_source_operator="g5",
+        qda_sink_operator="gT5_nonlocal",
+        qda_denominator_mode="nonlocal_bz0",
+        pt2_bT=0,
+        pt2_bz=0,
+        tune_z_values=[0, 1, 2],
+        z_values=[0, 1, 2],
+        fit_scope="qda_ratio",
+        fit_strategy="joint",
+        nstate=1,
+        prior_width=1.0,
+        pt2_windows=[{"tmin": 2, "tmax": 8}],
+        resample_mode="jk",
+        temporal_extent=16,
+    )
+
+    assert result["status"] == "no_common_feasible_candidate"
+    assert result["candidates"] == []
+    assert result["recommended_index"] is None
+    assert result["recommended_robust_index"] is None
+    assert result["recommended_window"] is None
+    assert result["recommended_robust_window"] is None
+    assert result["skipped_z0_fit"] is True
+    # z=0 is dropped before fitting under nonlocal_bz0
+    assert result["succeeded_counts_by_z"] == {"1": 1, "2": 1}
+    assert "narrower tune_z_values" in result["retry_hint"]
+    assert "no_common_feasible_candidate" in TOOL_CATALOG["tune_bare_matrix"]
 
 
 def test_tune_bare_matrix_requires_tune_z_values(tmp_path) -> None:

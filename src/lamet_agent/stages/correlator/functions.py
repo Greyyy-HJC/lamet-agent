@@ -176,12 +176,12 @@ def _qda_denominator_fcn(
     nstate: int,
     qda_denominator_mode: str,
 ) -> np.ndarray:
-    if qda_denominator_mode == "local_local":
+    if qda_denominator_mode == "local":
         return pt2_re_fcn(t, p, Lt, nstate=nstate)
     if qda_denominator_mode == "nonlocal_bz0":
         return qda_mixed_pt2_re_fcn(t, p, Lt, nstate=nstate)
     raise ValueError(
-        "qda_denominator_mode must be 'local_local' or 'nonlocal_bz0'"
+        "qda_denominator_mode must be 'local' or 'nonlocal_bz0'"
     )
 
 
@@ -241,7 +241,7 @@ def qda_ratio_fcn(
     *,
     nstate: int = 2,
     part: str = "re",
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
 ) -> np.ndarray:
     """qDA numerator divided by the selected two-point model."""
     return qda_fcn(t, p, Lt, nstate=nstate, part=part) / _qda_denominator_fcn(
@@ -305,16 +305,16 @@ def pt2_prior(nstate: int = 2) -> gv.BufferDict:
 
 
 def qda_pt2_prior(
-    nstate: int = 2, *, qda_denominator_mode: str = "local_local"
+    nstate: int = 2, *, qda_denominator_mode: str = "local"
 ) -> gv.BufferDict:
     """Two-point prior for the selected qDA denominator overlap structure."""
     prior = pt2_prior(nstate)
     if qda_denominator_mode == "nonlocal_bz0":
         for state in range(nstate):
             prior[f"zprime{state}"] = gv.gvar(1, 10) / 3**state
-    elif qda_denominator_mode != "local_local":
+    elif qda_denominator_mode != "local":
         raise ValueError(
-            "qda_denominator_mode must be 'local_local' or 'nonlocal_bz0'"
+            "qda_denominator_mode must be 'local' or 'nonlocal_bz0'"
         )
     return prior
 
@@ -340,7 +340,7 @@ def pt3_ratio_prior(nstate: int = 2) -> gv.BufferDict:
 
 
 def qda_ratio_prior(
-    nstate: int = 2, *, qda_denominator_mode: str = "local_local"
+    nstate: int = 2, *, qda_denominator_mode: str = "local"
 ) -> gv.BufferDict:
     """Two-point spectral prior extended by qDA source-to-state amplitudes."""
     prior = qda_pt2_prior(
@@ -588,7 +588,7 @@ def fit_two_point(
     rescale: float = 1.0,
     prior: gv.BufferDict | None = None,
     p0: dict[str, float] | None = None,
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
 ) -> lsf.nonlinear_fit:
     """Fit a two-point correlator over ``[tmin, tmax)`` with an n-state ansatz."""
     fit_t = np.arange(tmin, tmax, dtype=int)
@@ -636,10 +636,10 @@ def fit_matrix_element(
     rescale: float = 1.0,
     prior: gv.BufferDict,
     p0: dict[str, float] | None = None,
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
 ) -> lsf.nonlinear_fit:
     """Fit the configured 2pt, ratio, and FH observables with one numeric core."""
-    if strategy not in {"joint", "chained"}:
+    if strategy not in {"joint", "chained", "independent"}:
         raise ValueError(f"unsupported fit strategy {strategy!r}")
     if fit_scope not in {"3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"}:
         raise ValueError(f"unsupported fit scope {fit_scope!r}")
@@ -717,7 +717,7 @@ def fit_matrix_element(
                     qda_denominator_mode=(
                         qda_denominator_mode
                         if fit_scope == "qda_ratio"
-                        else "local_local"
+                        else "local"
                     ),
                 )
         if fit_scope in {"3pt_ratio", "3pt_ratio+FH"}:
@@ -1042,7 +1042,7 @@ def _anchor_qda_pt2_prior(
     pt2_fit: lsf.nonlinear_fit,
     nstate: int,
     *,
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
 ) -> None:
     """Anchor the complete qDA spectrum to widened two-point posteriors."""
     keys = ["E0", *(f"log(dE{state})" for state in range(1, nstate)), *(f"z{state}" for state in range(nstate))]
@@ -1084,7 +1084,7 @@ def _bare_matrix_element_from_fit(
     part: str,
     fitting_form: str,
     fit_scope: str = "3pt_ratio",
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
 ) -> Any:
     if fit_scope == "qda_ratio":
         denominator_overlap = (
@@ -1104,7 +1104,7 @@ def _bare_matrix_element_mean_for_part(
     fit_part: str,
     fitting_form: str,
     fit_scope: str = "3pt_ratio",
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
 ) -> float:
     """Return zero for the component that was intentionally excluded from the fit."""
     if output_part not in _parts(fit_part):
@@ -1134,7 +1134,7 @@ def _scope_prior_template(
     fit_scope: str,
     strategy: str,
     *,
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
 ) -> gv.BufferDict:
     _validate_scope_form(fit_scope, fitting_form)
     if fit_scope == "3pt_ratio":
@@ -1157,7 +1157,7 @@ def _scope_prior_with_width(
     strategy: str,
     prior_width: float,
     *,
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
 ) -> gv.BufferDict:
     return _vary_prior_width(
         _scope_prior_template(
@@ -1338,6 +1338,9 @@ def _normalise_pt3_paths(pt3_paths: dict[str, str] | list[str], *, tsep_ls: list
 # --- window grids ------------------------------------------------------------
 
 DEFAULT_MAX_PT2_WINDOWS = 6
+AUTO_MAX_PT2_WINDOWS = 16
+AUTO_PT2_TMAX_LIMIT = 4
+AUTO_PT2_TMIN_LIMIT = 4
 AUTO_MAX_PT3_TAU_CUTS = 3
 AUTO_PT2_SNR_MIN = 1.0
 AUTO_PT2_TAIL_POINTS = 2
@@ -1360,6 +1363,16 @@ def _evenly_spaced_integers(start: int, stop: int, *, limit: int) -> list[int]:
     return sorted({int(round(value)) for value in np.linspace(start, stop, limit)})
 
 
+def _evenly_subsample(items: list[Any], *, limit: int) -> list[Any]:
+    """Keep up to ``limit`` items with even index spacing (first and last included)."""
+    if limit < 1 or not items:
+        return []
+    if len(items) <= limit:
+        return list(items)
+    indices = _evenly_spaced_integers(0, len(items) - 1, limit=limit)
+    return [items[index] for index in indices]
+
+
 def _pt2_snr_endpoint(pt2_gv: np.ndarray, *, Lt: int) -> tuple[int | None, dict[str, Any]]:
     """Find the exclusive first-half endpoint through two points past SNR >= 1."""
     half = max(int(Lt) // 2, 1)
@@ -1377,13 +1390,20 @@ def _pt2_snr_endpoint(pt2_gv: np.ndarray, *, Lt: int) -> tuple[int | None, dict[
     if stable.size == 0:
         return None, {
             "last_snr_passing_t": None,
+            "last_valid_t": None,
             "stable_tmax": None,
             "fallback_reason": "no first-half 2pt point at t>=2 has SNR >= 1",
         }
     last = int(stable[-1])
-    endpoint = min(half, last + 1 + AUTO_PT2_TAIL_POINTS)
+    # Zero-padded (or otherwise degenerate) tail points have sdev == 0 and
+    # would make every fit window that includes them numerically singular, so
+    # the tail-point extension must never reach past the last usable point.
+    valid = eligible[np.isfinite(mean[eligible]) & (sdev[eligible] > 0.0)]
+    last_valid = int(valid[-1]) if valid.size else last
+    endpoint = min(half, last + 1 + AUTO_PT2_TAIL_POINTS, last_valid + 1)
     return endpoint, {
         "last_snr_passing_t": last,
+        "last_valid_t": last_valid,
         "stable_tmax": int(endpoint),
         "fallback_reason": None,
     }
@@ -1418,12 +1438,13 @@ def _auto_pt2_windows(
     if endpoint is None:
         endpoint = min(max(int(Lt) // 4, 1), max(int(Lt) // 2, 1))
 
-    tmax_values = [value for value in (endpoint - 1, endpoint) if value >= 2 + minimum_points]
+    tmax_min = 2 + minimum_points
+    tmax_values = _evenly_spaced_integers(tmax_min, int(endpoint), limit=AUTO_PT2_TMAX_LIMIT)
     windows: list[dict[str, int]] = []
-    for tmax in sorted(set(tmax_values)):
-        for tmin in _evenly_spaced_integers(2, tmax - minimum_points, limit=3):
+    for tmax in tmax_values:
+        for tmin in _evenly_spaced_integers(2, tmax - minimum_points, limit=AUTO_PT2_TMIN_LIMIT):
             windows.append({"tmin": int(tmin), "tmax": int(tmax)})
-    windows = windows[:DEFAULT_MAX_PT2_WINDOWS]
+    windows = _evenly_subsample(windows, limit=AUTO_MAX_PT2_WINDOWS)
     if not windows:
         reason = "; ".join(fallback_reasons) or (
             f"stable first-half endpoint tmax={endpoint} leaves fewer than {minimum_points} fit points"
@@ -1437,6 +1458,9 @@ def _auto_pt2_windows(
         "snr_threshold": AUTO_PT2_SNR_MIN,
         "tail_points": AUTO_PT2_TAIL_POINTS,
         "minimum_points": minimum_points,
+        "tmax_limit": AUTO_PT2_TMAX_LIMIT,
+        "tmin_limit": AUTO_PT2_TMIN_LIMIT,
+        "tmax_values": [int(value) for value in tmax_values],
         "stable_tmax": int(endpoint),
         "used_fallback": used_fallback,
         "fallback_reason": "; ".join(fallback_reasons) if fallback_reasons else None,
@@ -1597,13 +1621,15 @@ def _plot_sample0_ratio(
     rec: dict[str, Any],
     Lt: int,
     log_dir: Path,
+    ensemble: str,
+    tag: str,
     momentum: str,
     z: int,
     fit_label: str,
     fitting_form: str = "Breit",
     part: str = "both",
 ) -> dict[str, str]:
-    stem = log_dir / f"{fit_label}_{momentum}_z{z}_sample0"
+    stem = log_dir / f"{ensemble}_{tag}_{fit_label}_{momentum}_z{z}_sample0"
     plotted_parts = _parts(part)
     p = rec["fit"].p
     plateau_ref_re = (
@@ -1674,12 +1700,14 @@ def _plot_sample0_fh(
     ratio_im: dict[int, np.ndarray],
     rec: dict[str, Any],
     log_dir: Path,
+    ensemble: str,
+    tag: str,
     momentum: str,
     z: int,
     fit_label: str,
     part: str = "both",
 ) -> dict[str, str]:
-    stem = log_dir / f"{fit_label}_{momentum}_z{z}_sample0"
+    stem = log_dir / f"{ensemble}_{tag}_{fit_label}_{momentum}_z{z}_sample0"
     plotted_parts = _parts(part)
     fh_re, fh_im = _fh_samples_from_ratios(ratio_re, ratio_im, rec["tsep_ls"], rec["tau_cut"])
     p = rec["fit"].p
@@ -1717,10 +1745,12 @@ def _plot_sample0_pt2(
     rec: dict[str, Any],
     Lt: int,
     log_dir: Path,
+    ensemble: str,
+    tag: str,
     momentum: str,
     fit_label: str,
 ) -> dict[str, str]:
-    stem = log_dir / f"{fit_label}_{momentum}_sample0"
+    stem = log_dir / f"{ensemble}_{tag}_{fit_label}_{momentum}_sample0"
     fit_t, fit_gv = _pt2_band(rec, Lt)
     fig, _ax = plot_pt2_meff_on_data(
         pt2_sample,
@@ -2006,7 +2036,11 @@ def _normalise_strategy(value: str | None) -> tuple[str, str]:
         return "joint", "joint_2pt_ratio"
     if raw in ("chained", "chained_2pt_ratio", "chain"):
         return "chained", "chained_2pt_ratio"
-    raise ValueError(f"fit_strategy must be 'joint' or 'chained', got {value!r}")
+    if raw in ("independent", "independent_ratio"):
+        return "independent", "independent_ratio"
+    raise ValueError(
+        f"fit_strategy must be 'joint', 'chained', or 'independent', got {value!r}"
+    )
 
 
 def _scan_average(
@@ -2107,12 +2141,14 @@ def _candidate_specs(
     pt3_window_specs: list[dict[str, Any]],
     pt2_best: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Cartesian window candidates: joint pairs 2pt windows with ratio windows."""
-    if strategy == "joint":
+    """Cartesian window candidates: joint/independent pair 2pt windows with ratio windows."""
+    if strategy in {"joint", "independent"}:
         return [
             {"tmin": w["tmin"], "tmax": w["tmax"], "tsep_ls": p["tsep_ls"], "tau_cut": p["tau_cut"]}
             for w, p in product(pt2_window_specs, pt3_window_specs)
         ]
+    if pt2_best is None:
+        raise ValueError("chained candidate specs require a selected 2pt window")
     tmin = pt2_best["tmin"]
     tmax = pt2_best["tmax"]
     return [{"tmin": tmin, "tmax": tmax, "tsep_ls": p["tsep_ls"], "tau_cut": p["tau_cut"]} for p in pt3_window_specs]
@@ -2139,7 +2175,7 @@ def tune_bare_matrix(
     sink_operator: str = "g5",
     qda_source_operator: str | None = None,
     qda_sink_operator: str | None = None,
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
     pt2_bT: int | None = None,
     pt2_bz: int | None = None,
     current_operator: str = "gT_nonlocal",
@@ -2857,7 +2893,7 @@ def fit_bare_matrix_grid(
     sink_operator: str = "g5",
     qda_source_operator: str | None = None,
     qda_sink_operator: str | None = None,
-    qda_denominator_mode: str = "local_local",
+    qda_denominator_mode: str = "local",
     pt2_bT: int | None = None,
     pt2_bz: int | None = None,
     current_operator: str = "gT_nonlocal",
@@ -2983,7 +3019,11 @@ def fit_bare_matrix_grid(
         )
     if tsep_ls is None or pt3_paths is None:
         raise ValueError("3pt/FH grid fits require pt3_paths and tsep_ls")
-    fit_mode = f"{strategy}_2pt_{scope_label}"
+    fit_mode = (
+        f"independent_{scope_label}"
+        if strategy == "independent"
+        else f"{strategy}_2pt_{scope_label}"
+    )
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
     fitted_parts = _parts(part)
@@ -3184,7 +3224,14 @@ def fit_bare_matrix_grid(
                 correlator_rescale=scale,
             )
             sample0_pt2_paths = _plot_sample0_pt2(
-                pt2_sample=pt2_sample0, rec=rec0, Lt=Lt, log_dir=fit_log_dir, momentum=momentum, fit_label="chained_fit"
+                pt2_sample=pt2_sample0,
+                rec=rec0,
+                Lt=Lt,
+                log_dir=fit_log_dir,
+                ensemble=ensemble,
+                tag=tag,
+                momentum=momentum,
+                fit_label="chained_fit",
             )
         except NUMERICAL_FIT_ERRORS as exc:
             sample_logger.info("Bad chained 2pt sample=0: %s", exc)
@@ -3480,6 +3527,8 @@ def fit_bare_matrix_grid(
                                 rec=rec0,
                                 Lt=Lt,
                                 log_dir=fit_log_dir,
+                                ensemble=ensemble,
+                                tag=tag,
                                 momentum=momentum,
                                 z=z,
                                 fit_label=f"{strategy}_{scope_label}_fit",
@@ -3494,6 +3543,8 @@ def fit_bare_matrix_grid(
                                 ratio_im=plot_data["rim"],
                                 rec=rec0,
                                 log_dir=fit_log_dir,
+                                ensemble=ensemble,
+                                tag=tag,
                                 momentum=momentum,
                                 z=z,
                                 fit_label=f"{strategy}_{scope_label}_fit",
@@ -3832,6 +3883,8 @@ def _plot_sample0_qda_ratio(
     tmax: int,
     Lt: int,
     strategy: str,
+    ensemble: str,
+    tag: str,
     momentum: str,
     bT: int,
     bz: int,
@@ -3843,7 +3896,7 @@ def _plot_sample0_qda_ratio(
     plot_t = np.arange(0, Lt // 2 + 1, dtype=int)
     fit_t = np.arange(tmin, tmax, dtype=int)
     stem = log_dir / (
-        f"{strategy}_qda_ratio_fit_{momentum}_bT{int(bT)}_bz{int(bz)}_sample0"
+        f"{ensemble}_{tag}_{strategy}_qda_ratio_fit_{momentum}_bT{int(bT)}_bz{int(bz)}_sample0"
     )
     figures = plot_qda_ratio_fit_on_data(
         plot_t,
@@ -3868,7 +3921,7 @@ def _plot_sample0_qda_ratio(
         ),
         components=_parts(part),
         fit_label=f"{nstate}-state sample-0 fit",
-        title=f"{momentum}, bT={int(bT)}, bz={int(bz)}",
+        title=f"{ensemble}, {momentum}, bT={int(bT)}, bz={int(bz)}",
         save_path=stem,
     )
     for figure, _axis in figures.values():
@@ -3926,10 +3979,10 @@ def _validate_denominator_selectors(
     pt2_bT: int | None,
     pt2_bz: int | None,
 ) -> None:
-    if qda_denominator_mode == "local_local":
+    if qda_denominator_mode == "local":
         if pt2_bT is not None or pt2_bz is not None:
             raise ValueError(
-                "local_local qDA denominators must not declare pt2_bT or pt2_bz"
+                "local qDA denominators must not declare pt2_bT or pt2_bz"
             )
         return
     if qda_denominator_mode == "nonlocal_bz0":
@@ -3939,8 +3992,45 @@ def _validate_denominator_selectors(
             )
         return
     raise ValueError(
-        "qda_denominator_mode must be 'local_local' or 'nonlocal_bz0'"
+        "qda_denominator_mode must be 'local' or 'nonlocal_bz0'"
     )
+
+
+def _qda_fit_z_list(
+    z_values: list[int],
+    *,
+    qda_denominator_mode: str,
+    label: str = "bz",
+) -> tuple[list[int], bool]:
+    """Return z values to fit; drop z=0 only for ``nonlocal_bz0``.
+
+    With the nonlocal bz=0 denominator fallback the ratio at z=0 is identically
+    one, so fitting that point is skipped and later reinjected as ME=1.
+    """
+    values = [int(z) for z in z_values]
+    if qda_denominator_mode != "nonlocal_bz0":
+        return values, False
+    fit_values = [z for z in values if z != 0]
+    if not fit_values:
+        raise ValueError(
+            f"nonlocal_bz0 qDA requires at least one nonzero {label} value"
+        )
+    return fit_values, True
+
+
+def _assigned_unity_z0_record(n_sample: int) -> dict[str, Any]:
+    """Synthetic bare-ME record for nonlocal_bz0 z=0 (ratio identically one)."""
+    ones = np.ones(int(n_sample), dtype=float)
+    zeros = np.zeros(int(n_sample), dtype=float)
+    return {
+        "z": 0,
+        "real_samples": ones,
+        "imag_samples": zeros,
+        "real_sys_sdev": 0.0,
+        "imag_sys_sdev": 0.0,
+        "window": None,
+        "sample0_plot_paths": {},
+    }
 
 
 def _average_records(
@@ -4201,6 +4291,13 @@ def _fit_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[st
     return output
 
 
+def _qda_fit_mode_label(strategy: str) -> str:
+    """Return the log/token label for a qDA fit strategy."""
+    if strategy == "independent":
+        return "independent_qda_ratio"
+    return f"{strategy}_2pt_qda_ratio"
+
+
 def _log_qda_sample_results(
     sample_results: list[dict[str, Any]],
     *,
@@ -4211,14 +4308,15 @@ def _log_qda_sample_results(
     q_min: float,
 ) -> None:
     """Write every qDA sample fit, rejection, and failure to the sample log."""
+    fit_mode = _qda_fit_mode_label(strategy)
     for result in sample_results:
         sample_index = int(result["sample"])
         for log_item in result["logs"]:
             if log_item["kind"] == "rejected":
                 logger.info(
-                    "Rejected %s_2pt_qda_ratio z=%s sample=%s "
+                    "Rejected %s z=%s sample=%s "
                     "nstate=%s prior_width=%s: %s",
-                    strategy,
+                    fit_mode,
                     z,
                     sample_index,
                     log_item["nstate"],
@@ -4233,7 +4331,7 @@ def _log_qda_sample_results(
                     dof=log_item["dof"],
                     logGBF=log_item["logGBF"],
                 ),
-                kind=f"sample ground-state {strategy}_2pt_qda_ratio",
+                kind=f"sample ground-state {fit_mode}",
                 label=(
                     f"z={z} sample={sample_index} "
                     f"t=[{shared_window['tmin']},{shared_window['tmax']}) "
@@ -4245,8 +4343,8 @@ def _log_qda_sample_results(
             )
         if result["error"] is not None:
             logger.info(
-                "Bad %s_2pt_qda_ratio z=%s sample=%s: %s",
-                strategy,
+                "Bad %s z=%s sample=%s: %s",
+                fit_mode,
                 z,
                 sample_index,
                 result["error"],
@@ -4394,6 +4492,11 @@ def tune_qda_ratio(
         raise ValueError(
             "tune_z_values must contain values from the qda_ratio bz grid"
         )
+    tune_list, skipped_z0_fit = _qda_fit_z_list(
+        tune_list,
+        qda_denominator_mode=qda_denominator_mode,
+        label="tune_z",
+    )
     denominator, pt2_samples, denominator_samples, indices, pt2_gv = _load_denominator(
         pt2_path=pt2_path,
         source_operator=source_operator,
@@ -4471,11 +4574,62 @@ def tune_qda_ratio(
             ): record
             for record in records
         }
+    succeeded_counts_by_z = {
+        str(z): len(records_by_z[z]) for z in tune_list
+    }
     common_keys = set.intersection(
         *(set(records) for records in records_by_z.values())
     )
     if not common_keys:
-        raise ValueError("no qda_ratio fit candidate succeeded at every tune z")
+        store[out] = []
+        result = {
+            "out": out,
+            "status": "no_common_feasible_candidate",
+            "retry_hint": (
+                "No shared (strategy, nstate, prior_width, tmin, tmax) window "
+                "succeeded at every tune_z. Retry tune_bare_matrix with a "
+                "narrower tune_z_values list: keep the minimum nonzero z and "
+                "one mid-range z; drop the largest tune z first. Do not guess "
+                "a primary-z-only window for fit_bare_matrix_grid."
+                + (
+                    " For nonlocal_bz0, do not include z=0 in tune_z_values."
+                    if skipped_z0_fit
+                    else ""
+                )
+            ),
+            "fit_strategies": [_normalise_strategy(value)[0] for value in strategies],
+            "fit_scopes": ["qda_ratio"],
+            "nstate_values": states,
+            "prior_width": widths,
+            "tune_z_values": tune_list,
+            "primary_tune_z": tune_list[0],
+            "tune_z": tune_list[0],
+            "allowed_bz": z_list,
+            "Lt": Lt,
+            "n_cfg": int(denominator.shape[0]),
+            "correlator_rescale": correlator_rescale,
+            "fitting_form": "Breit",
+            "qda_denominator_mode": qda_denominator_mode,
+            "skipped_z0_fit": skipped_z0_fit,
+            "succeeded_counts_by_z": succeeded_counts_by_z,
+            "candidates": [],
+            "rejected": rejected,
+            "recommended_index": None,
+            "recommended_fallback_no_q_passing": None,
+            "recommended_window": None,
+            "recommended_robust_index": None,
+            "recommended_robust_window": None,
+            "tuning_diagnostic_pdfs": {},
+            "auto_window_scan": auto_window_scan,
+        }
+        store["_correlator_tuning_summary"] = {
+            "pt2_path": str(pt2_path),
+            "fit_scopes": ["qda_ratio"],
+            "auto_window_scan": auto_window_scan,
+            "recommended_robust_window": None,
+            "status": result["status"],
+        }
+        return result
     candidates: list[dict[str, Any]] = []
     primary_records: list[dict[str, Any]] = []
     for key in sorted(common_keys):
@@ -4531,6 +4685,7 @@ def tune_qda_ratio(
     store[out] = primary_records
     result = {
         "out": out,
+        "status": "ok",
         "fit_strategies": [_normalise_strategy(value)[0] for value in strategies],
         "fit_scopes": ["qda_ratio"],
         "nstate_values": states,
@@ -4544,6 +4699,8 @@ def tune_qda_ratio(
         "correlator_rescale": correlator_rescale,
         "fitting_form": "Breit",
         "qda_denominator_mode": qda_denominator_mode,
+        "skipped_z0_fit": skipped_z0_fit,
+        "succeeded_counts_by_z": succeeded_counts_by_z,
         "candidates": candidates,
         "rejected": rejected,
         "recommended_index": best_index,
@@ -4631,9 +4788,16 @@ def fit_qda_ratio_grid(
     z_list = [int(value) for value in bz]
     if not z_list:
         raise ValueError("the qDA 2pt correlator must declare a non-empty bz grid")
-    tune_z_value = int(tune_z) if tune_z is not None else z_list[0]
+    fit_z_list, skipped_z0_fit = _qda_fit_z_list(
+        z_list,
+        qda_denominator_mode=qda_denominator_mode,
+        label="bz",
+    )
+    tune_z_value = int(tune_z) if tune_z is not None else fit_z_list[0]
     if tune_z_value not in z_list:
         raise ValueError("tune_z must be present in the qda_ratio bz grid")
+    if skipped_z0_fit and tune_z_value == 0:
+        tune_z_value = fit_z_list[0]
     out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
     fit_log_dir = Path(log_dir) if log_dir is not None else out_dir / "fit_logs"
     fit_log_dir.mkdir(parents=True, exist_ok=True)
@@ -4742,10 +4906,10 @@ def fit_qda_ratio_grid(
     try:
         from tqdm import tqdm
     except ImportError:
-        z_iterator = z_list
+        z_iterator = fit_z_list
     else:
         z_iterator = tqdm(
-            z_list,
+            fit_z_list,
             desc=f"fit qDA ratio {ensemble} {momentum}",
         )
     try:
@@ -4942,6 +5106,8 @@ def fit_qda_ratio_grid(
                     tmax=shared_window["tmax"],
                     Lt=Lt,
                     strategy=strategy,
+                    ensemble=ensemble,
+                    tag=tag,
                     momentum=momentum,
                     bT=bT,
                     bz=z,
@@ -4980,6 +5146,21 @@ def fit_qda_ratio_grid(
     finally:
         if executor is not None:
             executor.shutdown()
+    if skipped_z0_fit:
+        z_records.append(_assigned_unity_z0_record(n_samples))
+        z_report.append(
+            {
+                "z": 0,
+                "source": "assigned_unity_nonlocal_bz0",
+                "window": None,
+                "rejected_fit_models": [],
+                "n_failed_samples": 0,
+                "sample_failures": [],
+                "real_sys_sdev": 0.0,
+                "imag_sys_sdev": 0.0,
+                "sample0_plot_paths": {},
+            }
+        )
     sorted_records = sorted(z_records, key=lambda item: item["z"])
     summary_z = [int(item["z"]) for item in sorted_records]
     real_means: list[float] = []
@@ -5070,6 +5251,8 @@ def fit_qda_ratio_grid(
             "fit_strategy": strategy,
             "fit_mode": f"{strategy}_2pt_qda_ratio",
             "qda_denominator_mode": qda_denominator_mode,
+            "skipped_z0_fit": skipped_z0_fit,
+            "assigned_z0_unity": skipped_z0_fit,
             "coord_unit": "lattice",
             "bz_direction": bz_direction,
             "momentum": momentum,
@@ -5137,6 +5320,8 @@ def fit_qda_ratio_grid(
         "fit_strategy": strategy,
         "fit_mode": f"{strategy}_2pt_qda_ratio",
         "qda_denominator_mode": qda_denominator_mode,
+        "skipped_z0_fit": skipped_z0_fit,
+        "assigned_z0_unity": skipped_z0_fit,
         "model_average": model_average,
         "selection_rule": (
             "qda_ratio shared pt2 window "
