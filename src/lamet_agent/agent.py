@@ -885,6 +885,25 @@ def run_agent(
                         },
                     }
                 )
+            if stage == "extrapolation":
+                result = _last_tool_result(observations, "run_extrapolation")
+                if result is not None:
+                    stage_job_records.append(
+                        {
+                            "job_id": job.id,
+                            "result": result,
+                            "artifacts": {
+                                "extrapolated_artifact": result.get("artifact"),
+                                "fit_info_artifact": result.get("fit_info_artifact"),
+                                "extrapolated_plot": result.get("plot"),
+                                "extrapolated_plot_image": result.get("plot_image"),
+                                "adep_plot": result.get("adep_plot"),
+                                "adep_plot_image": result.get("adep_plot_image"),
+                                "pdep_plot": result.get("pdep_plot"),
+                                "pdep_plot_image": result.get("pdep_plot_image"),
+                            },
+                        }
+                    )
         if stage in state.pending_user_input:
             break
         if stage == "correlator_analysis" and stage_job_records:
@@ -963,6 +982,15 @@ def run_agent(
                     backend=backend, provider=provider, api_key=api_key,
                     model_name=model_name, base_url=base_url,
                 ),
+            )
+            stage_reports[stage] = {"report": str(paths["report"])}
+        if stage == "extrapolation" and stage_job_records:
+            from lamet_agent.stages.extrapolation.reporting import write_extrapolation_stage_report
+
+            paths = write_extrapolation_stage_report(
+                jobs=stage_job_records,
+                path=manifest.artifacts_directory / stage / "extrapolation_report.md",
+                report_language=report_language,
             )
             stage_reports[stage] = {"report": str(paths["report"])}
         state.completed_stages.append(stage)

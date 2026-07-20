@@ -240,6 +240,8 @@ def required_job_tool_sequence(
     effective_params: dict[str, Any],
 ) -> tuple[str, ...]:
     """Return the successful tool order required before a job may finish."""
+    if stage == "extrapolation":
+        return ("run_extrapolation",)
     if stage != "renormalization":
         return ()
 
@@ -819,6 +821,29 @@ def prepare_tool_args(
         elif tool_name == "report_matching_result":
             resolved.update({key: matching[key] for key in ("kernel_id", "momentum_gev", "mu", "zs_fm", "component") if key in matching})
             resolved.update({"save_path": f"{job.id}_report.md", "artifacts_dir": str(artifacts_dir)})
+    if stage == "extrapolation" and tool_name == "run_extrapolation":
+        extrapolation = dict(effective_params)
+        resolved["lightcone"] = "lightcone"
+        resolved.update(
+            {
+                key: extrapolation[key]
+                for key in (
+                    "lowest_lattice_spacing_order",
+                    "highest_momentum_order",
+                    "pdep_gev",
+                    "sample_error_mode",
+                    "posterior_prior_error_scale",
+                    "workers",
+                )
+                if key in extrapolation
+            }
+        )
+        if "sample_error_mode" not in resolved and getattr(manifest.metadata, "sample_error_mode", None):
+            resolved["sample_error_mode"] = manifest.metadata.sample_error_mode
+        if "workers" not in resolved:
+            resolved["workers"] = manifest.metadata.workers
+        resolved["save_path"] = str(artifacts_dir / job.id)
+        resolved["artifacts_dir"] = str(artifacts_dir)
     if tool_name in _RENORM_ARTIFACT_TOOLS:
         raw_save = resolved.get("save_path")
         if isinstance(raw_save, str) or raw_save is None:

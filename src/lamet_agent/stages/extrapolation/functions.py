@@ -1,3 +1,432 @@
-"""Execution placeholders for extrapolation stage."""
+"""Extrapolation stage tools."""
 
 from __future__ import annotations
+
+from concurrent.futures import ProcessPoolExecutor
+import json
+from pathlib import Path
+from typing import Any, Callable
+
+import gvar as gv
+import lsqfit
+import matplotlib.pyplot as plt
+import numpy as np
+import xarray as xr
+
+from lamet_agent.core.data import EnsembleData, EnsembleInfo
+from lamet_agent.core.plotting import COLOR_CYCLE, FONT_SIZE, default_plot
+from lamet_agent.core.resampling import sample_mean_and_sdev, sample_value_with_error
+
+
+def _scaled_prior(pmean: gv.BufferDict, psdev: gv.BufferDict, scale: float) -> gv.BufferDict:
+    prior = gv.BufferDict()
+    for key in pmean:
+        prior[key] = gv.gvar(float(pmean[key]), max(float(psdev[key]) * max(float(scale), 0.0), 1e-8))
+    return prior
+
+
+def _fit_extrapolation_one(design: np.ndarray, y_data, *, p0: np.ndarray | None = None, prior: gv.BufferDict | None = None) -> tuple[np.ndarray, gv.BufferDict | None, gv.BufferDict | None, bool, float, int, float, float]:
+    n_param = int(design.shape[1])
+    start = np.zeros(n_param, dtype=float) if p0 is None else np.asarray(p0, dtype=float)
+
+    def fcn(x_design: np.ndarray, p: gv.BufferDict):
+        coeff = [p[f"c{idx}"] for idx in range(n_param)]
+        return sum(x_design[:, idx] * coeff[idx] for idx in range(n_param))
+
+    fit_prior = prior
+    if fit_prior is None:
+        fit_prior = gv.BufferDict()
+        for idx, value in enumerate(start):
+            fit_prior[f"c{idx}"] = gv.gvar(float(value), 3.0)
+    try:
+        fit = lsqfit.nonlinear_fit(
+            data=(design, y_data),
+            fcn=fcn,
+            p0={f"c{idx}": float(start[idx]) for idx in range(n_param)},
+            prior=fit_prior,
+            maxit=2000,
+            svdcut=1e-12,
+            fitter="scipy_least_squares",
+        )
+        params = np.asarray([float(fit.pmean[f"c{idx}"]) for idx in range(n_param)], dtype=float)
+        return params, fit.pmean, fit.psdev, bool(np.isfinite(fit.chi2)), float(fit.chi2), int(fit.dof), float(fit.Q), float(fit.logGBF)
+    except (FloatingPointError, RuntimeError, ValueError, OverflowError, AssertionError):
+        return start, None, None, False, float("inf"), max(1, int(design.shape[0] - n_param)), 0.0, float("-inf")
+
+
+def _save_fit_info(path: Path, *, x: np.ndarray, parameter_labels: list[str], fit_params: np.ndarray, fit_chi2: np.ndarray, fit_dof: np.ndarray, fit_q: np.ndarray, fit_log_gbf: np.ndarray, mean_fit_params: np.ndarray, mean_fit_chi2: np.ndarray, mean_fit_dof: np.ndarray, mean_fit_q: np.ndarray, attrs: dict[str, str]) -> None:
+    dataset = xr.Dataset(
+        {
+            "fit_params": (("resample", "x", "parameter"), fit_params),
+            "fit_chi2": (("resample", "x"), fit_chi2),
+            "fit_dof": (("resample", "x"), fit_dof),
+            "fit_q": (("resample", "x"), fit_q),
+            "fit_log_gbf": (("resample", "x"), fit_log_gbf),
+            "mean_fit_params": (("x", "parameter"), mean_fit_params),
+            "mean_fit_chi2": (("x",), mean_fit_chi2),
+            "mean_fit_dof": (("x",), mean_fit_dof),
+            "mean_fit_q": (("x",), mean_fit_q),
+        },
+        coords={"resample": list(range(fit_params.shape[0])), "x": x.tolist(), "parameter": parameter_labels},
+        attrs={
+            **attrs,
+            "fit_chi2_dof": json.dumps((fit_chi2 / np.maximum(fit_dof, 1)).tolist()),
+            "fit_chi2_dof_center": json.dumps(np.mean(fit_chi2 / np.maximum(fit_dof, 1), axis=0).tolist()),
+            "mean_fit_chi2_dof": json.dumps((mean_fit_chi2 / np.maximum(mean_fit_dof, 1)).tolist()),
+        },
+    )
+    dataset.to_netcdf(path, format="NETCDF4")
+
+
+def _sample_batches(n_samples: int, workers: int) -> list[list[int]]:
+    return [batch.tolist() for batch in np.array_split(np.arange(n_samples), min(int(workers), int(n_samples))) if batch.size]
+
+
+def _fit_extrapolation_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[str, Any]]:
+    context = gv.loads(payload)
+    results: list[dict[str, Any]] = []
+    for isample in sample_indices:
+        sample_y_data = sample_value_with_error(
+            context["samples"][:, isample],
+            context["fit_samples"],
+            mode=context["resample_mode"],
+            sample_error_mode=context["sample_error_mode"],
+        )
+        params, _pmean, _psdev, ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(
+            context["design"],
+            sample_y_data,
+            p0=context["mean_params"],
+            prior=context["sample_prior"],
+        )
+        results.append(
+            {
+                "sample": int(isample),
+                "params": params,
+                "success": bool(ok),
+                "chi2": float(chi2),
+                "dof": int(dof),
+                "q_value": float(q_value),
+                "log_gbf": float(log_gbf),
+            }
+        )
+    return results
+
+
+def run_extrapolation(
+    store: dict[str, Any],
+    *,
+    lightcone: str = "lightcone",
+    lowest_lattice_spacing_order: int = 2,
+    highest_momentum_order: int = 2,
+    pdep_gev: list[float] | None = None,
+    sample_error_mode: str = "covariance",
+    posterior_prior_error_scale: float = 3.0,
+    workers: int = 1,
+    save_path: str | None = None,
+    artifacts_dir: str | Path | None = None,
+    out: str = "extrapolated_distribution",
+) -> dict[str, Any]:
+    """Fit matched light-cone data to the IMF and/or continuum limit."""
+    workers = int(workers)
+    inputs = [
+        item if isinstance(item, EnsembleData) else EnsembleData.from_netcdf(item.path)
+        for item in list(store.get(lightcone, []))
+    ]
+    ensembles = {str(data.attrs.get("ensemble") or (data.ensemble.id if data.ensemble else "")) for data in inputs}
+    momenta_gev = {float(data.attrs.get("momentum_gev")) for data in inputs}
+    stage_dir = Path(artifacts_dir or ".")
+    stem = Path(save_path) if save_path is not None else stage_dir / "extrapolation"
+    stem.parent.mkdir(parents=True, exist_ok=True)
+
+    if len(ensembles) == 1 and len(momenta_gev) == 1:
+        warning = "Input from perturbative_matching cannot have only one ensemble and one momentum."
+        result = {"out": out, "warning": warning, "mode": "insufficient_input", "n_inputs": len(inputs)}
+        store["output"] = result
+        return result
+
+    x = np.asarray(inputs[0].coords["x"], dtype=float)
+    n_sample = min(data.n_sample for data in inputs)
+    input_samples = []
+    for data in inputs:
+        x_in = np.asarray(data.coords["x"], dtype=float)
+        values = np.asarray(data.values, dtype=float)[:n_sample]
+        if not np.array_equal(x_in, x):
+            values = np.asarray([np.interp(x, x_in, sample) for sample in values], dtype=float)
+        input_samples.append(values)
+    samples = np.asarray(input_samples, dtype=float)
+
+    use_a = len(ensembles) > 1
+    use_p = any(
+        len(
+            {
+                float(data.attrs.get("momentum_gev"))
+                for data in inputs
+                if str(data.attrs.get("ensemble") or (data.ensemble.id if data.ensemble else "")) == ensemble
+            }
+        )
+        > 1
+        for ensemble in ensembles
+    )
+    mode = "IMF+Continuum Extrapolation" if use_a and use_p else "IMF Extrapolation" if use_p else "Continuum Extrapolation"
+
+    a_powers = list(range(int(lowest_lattice_spacing_order), 3)) if use_a else []
+    p_powers = list(range(2, int(highest_momentum_order) + 1, 2)) if use_p else []
+    rows = []
+    for data in inputs:
+        a = float(data.attrs["lattice_spacing_fm"])
+        p = float(data.attrs["momentum_gev"])
+        row = [1.0]
+        row.extend(a**i for i in a_powers)
+        row.extend(1.0 / p**power for power in p_powers)
+        rows.append(row)
+    design = np.asarray(rows, dtype=float)
+    parameter_labels = ["h0", *(f"c_a_{power}" for power in a_powers), *(f"c_p_{power // 2}" for power in p_powers)]
+    n_param = int(design.shape[1])
+    coeff_samples = np.empty((n_sample, n_param, len(x)), dtype=float)
+    fit_chi2 = np.empty((n_sample, len(x)), dtype=float)
+    fit_dof = np.empty((n_sample, len(x)), dtype=int)
+    fit_q = np.empty((n_sample, len(x)), dtype=float)
+    fit_log_gbf = np.empty((n_sample, len(x)), dtype=float)
+    mean_fit_params = np.empty((len(x), n_param), dtype=float)
+    mean_fit_chi2 = np.empty(len(x), dtype=float)
+    mean_fit_dof = np.empty(len(x), dtype=int)
+    mean_fit_q = np.empty(len(x), dtype=float)
+    mean_fit_log_gbf = np.empty(len(x), dtype=float)
+    sample_executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
+    try:
+        for ix in range(len(x)):
+            fit_samples = samples[:, :, ix].T
+            mean, _sdev = sample_mean_and_sdev(fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
+            mean_y_data = sample_value_with_error(mean, fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
+            mean_params, mean_pmean, mean_psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(design, mean_y_data)
+            sample_prior = None
+            if mean_ok and mean_pmean is not None and mean_psdev is not None:
+                sample_prior = _scaled_prior(mean_pmean, mean_psdev, posterior_prior_error_scale)
+                mean_params, _pmean, _psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(
+                    design, mean_y_data, p0=mean_params, prior=sample_prior
+                )
+            mean_fit_params[ix] = mean_params
+            mean_fit_chi2[ix] = chi2
+            mean_fit_dof[ix] = dof
+            mean_fit_q[ix] = q_value
+            mean_fit_log_gbf[ix] = log_gbf
+            payload = gv.dumps(
+                {
+                    "design": design,
+                    "samples": samples[:, :, ix],
+                    "fit_samples": fit_samples,
+                    "resample_mode": inputs[0].resample,
+                    "sample_error_mode": sample_error_mode,
+                    "mean_params": mean_params,
+                    "sample_prior": sample_prior,
+                }
+            )
+            batches = _sample_batches(n_sample, workers)
+            if sample_executor is None:
+                sample_results = _fit_extrapolation_sample_batch(payload, batches[0])
+            else:
+                futures = [sample_executor.submit(_fit_extrapolation_sample_batch, payload, batch) for batch in batches]
+                sample_results = [item for future in futures for item in future.result()]
+            for item in sorted(sample_results, key=lambda value: value["sample"]):
+                isample = int(item["sample"])
+                params = np.asarray(item["params"], dtype=float)
+                chi2 = float(item["chi2"])
+                dof = int(item["dof"])
+                q_value = float(item["q_value"])
+                log_gbf = float(item["log_gbf"])
+                if not item["success"]:
+                    params = mean_params
+                    chi2 = mean_fit_chi2[ix]
+                    dof = mean_fit_dof[ix]
+                    q_value = mean_fit_q[ix]
+                    log_gbf = mean_fit_log_gbf[ix]
+                coeff_samples[isample, :, ix] = params
+                fit_chi2[isample, ix] = chi2
+                fit_dof[isample, ix] = dof
+                fit_q[isample, ix] = q_value
+                fit_log_gbf[isample, ix] = log_gbf
+    finally:
+        if sample_executor is not None:
+            sample_executor.shutdown()
+    extrapolated = coeff_samples[:, 0, :]
+    chi2_dof = float(np.mean(mean_fit_chi2 / np.maximum(mean_fit_dof, 1)))
+
+    attrs = {
+        "mode": mode,
+        "model": "h(x,Pz,a)=h0(x)+sum_i c_a a^i+sum_j c_p/Pz^(2j)",
+        "lowest_lattice_spacing_order": str(int(lowest_lattice_spacing_order)),
+        "highest_momentum_order": str(int(highest_momentum_order)),
+        "input_jobs": ",".join(str(data.attrs.get("job_id", "")) for data in inputs),
+        "input_ensembles": ",".join(str(data.attrs.get("ensemble") or (data.ensemble.id if data.ensemble else "")) for data in inputs),
+        "input_momenta_gev": ",".join(f"{float(data.attrs['momentum_gev']):.12g}" for data in inputs),
+        "parameter_labels": json.dumps(parameter_labels),
+        "design_matrix": json.dumps(design.tolist()),
+        "resample_mode": inputs[0].resample,
+        "sample_error_mode": str(sample_error_mode),
+        "posterior_prior_error_scale": str(float(posterior_prior_error_scale)),
+        "workers": str(int(workers)),
+    }
+    output = EnsembleData(
+        EnsembleInfo("", mode, 0.0, 0.0, 0, 0, 0.0),
+        inputs[0].resample,
+        [extrapolated[i] for i in range(n_sample)],
+        dims=("x",),
+        coords={"x": x.tolist()},
+        attrs=attrs,
+        name="extrapolated_distribution",
+    )
+    artifact = stem.with_suffix(".nc")
+    coords = {"resample": list(range(n_sample)), "x": x.tolist()}
+    data_vars = {
+        "extrapolated_distribution": (("resample", "x"), extrapolated),
+    }
+    offset = 1
+    for index, power in enumerate(a_powers):
+        data_vars[f"c_a_{power}"] = (("resample", "x"), coeff_samples[:, offset + index, :])
+    offset += len(a_powers)
+    for index, power in enumerate(p_powers):
+        data_vars[f"c_p_{power // 2}"] = (("resample", "x"), coeff_samples[:, offset + index, :])
+    dataset = xr.Dataset(data_vars, coords=coords, attrs=attrs)
+    dataset["extrapolated_distribution"].attrs.update(attrs)
+    dataset["extrapolated_distribution"].attrs["ensemble"] = json.dumps(output.ensemble._asdict())
+    dataset["extrapolated_distribution"].attrs["resample"] = output.resample
+    dataset.to_netcdf(artifact, format="NETCDF4", auto_complex=True)
+    fit_info_artifact = stem.with_name(f"{stem.name}_fit_info").with_suffix(".nc")
+    _save_fit_info(
+        fit_info_artifact,
+        x=x,
+        parameter_labels=parameter_labels,
+        fit_params=np.moveaxis(coeff_samples, 1, 2),
+        fit_chi2=fit_chi2,
+        fit_dof=fit_dof,
+        fit_q=fit_q,
+        fit_log_gbf=fit_log_gbf,
+        mean_fit_params=mean_fit_params,
+        mean_fit_chi2=mean_fit_chi2,
+        mean_fit_dof=mean_fit_dof,
+        mean_fit_q=mean_fit_q,
+        attrs=attrs,
+    )
+    store[out] = output
+    store["output"] = output
+
+    fig, ax = default_plot()
+    for index, data in enumerate(inputs):
+        xi = np.asarray(data.coords["x"], dtype=float)
+        mean = np.asarray(data.mean, dtype=float)
+        err = np.asarray(data.sdev, dtype=float)
+        a = float(data.attrs["lattice_spacing_fm"])
+        p = float(data.attrs["momentum_gev"])
+        color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
+        ax.plot(xi, mean, color=color, linewidth=1.0, label=f"a={a:.2f} fm, p={p:.2f} GeV")
+        ax.fill_between(xi, mean - err, mean + err, color=color, alpha=0.18, linewidth=0)
+    mean = np.asarray(output.mean, dtype=float)
+    err = np.asarray(output.sdev, dtype=float)
+    if mode == "IMF+Continuum Extrapolation":
+        mode_label = r"$a\rightarrow0,\ p\rightarrow\infty$"
+    elif mode == "IMF Extrapolation":
+        mode_label = r"$p\rightarrow\infty$"
+    else:
+        mode_label = r"$a\rightarrow0$"
+    ax.plot(x, mean, color="0.45", linewidth=1.4, label=mode_label)
+    ax.fill_between(x, mean - err, mean + err, color="0.75", alpha=0.60, linewidth=0)
+    ax.set_xlabel(r"$x$", **FONT_SIZE)
+    ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
+    ax.set_title("Extrapolation", **FONT_SIZE)
+    ax.text(
+        0.03,
+        0.95,
+        rf"$\chi^2/\mathrm{{dof}}={chi2_dof:.3g}$",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=14,
+        bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "none", "alpha": 0.75},
+    )
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0, frameon=False, fontsize=12)
+    fig.tight_layout()
+    pdf = stem.with_suffix(".pdf")
+    svg = stem.with_suffix(".svg")
+    fig.savefig(pdf, bbox_inches="tight", transparent=True)
+    fig.savefig(svg, bbox_inches="tight")
+    plt.close(fig)
+
+    adep_pdf = adep_svg = pdep_pdf = pdep_svg = None
+    if use_a:
+        fig, ax = default_plot()
+        for index, a in enumerate(sorted({float(data.attrs["lattice_spacing_fm"]) for data in inputs})):
+            row = [1.0, *(a**power for power in a_powers), *(0.0 for _power in p_powers)]
+            values = np.einsum("p,spx->sx", np.asarray(row, dtype=float), coeff_samples)
+            mean = np.mean(values, axis=0)
+            err = np.std(values, axis=0, ddof=1) if values.shape[0] > 1 else np.zeros_like(mean)
+            color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
+            ax.plot(x, mean, color=color, linewidth=1.0, label=f"a={a:.2f} fm")
+            ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.18, linewidth=0)
+        ax.plot(x, output.mean, color="0.45", linewidth=1.4, label=r"$a\rightarrow0$")
+        ax.fill_between(x, output.mean - output.sdev, output.mean + output.sdev, color="0.75", alpha=0.60, linewidth=0)
+        ax.set_xlabel(r"$x$", **FONT_SIZE)
+        ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
+        ax.set_title("Extrapolation, lattice spacing dependence", **FONT_SIZE)
+        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0, frameon=False, fontsize=12)
+        fig.tight_layout()
+        adep_pdf = stem.with_name("extrapolate_adep").with_suffix(".pdf")
+        adep_svg = stem.with_name("extrapolate_adep").with_suffix(".svg")
+        fig.savefig(adep_pdf, bbox_inches="tight", transparent=True)
+        fig.savefig(adep_svg, bbox_inches="tight")
+        plt.close(fig)
+
+    if use_p and pdep_gev:
+        fig, ax = default_plot()
+        for index, p in enumerate([float(value) for value in pdep_gev]):
+            row = [1.0, *(0.0 for _power in a_powers), *(1.0 / p**power for power in p_powers)]
+            values = np.einsum("p,spx->sx", np.asarray(row, dtype=float), coeff_samples)
+            mean = np.mean(values, axis=0)
+            err = np.std(values, axis=0, ddof=1) if values.shape[0] > 1 else np.zeros_like(mean)
+            color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
+            ax.plot(x, mean, color=color, linewidth=1.0, label=f"p={p:.2f} GeV")
+            ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.18, linewidth=0)
+        ax.plot(x, output.mean, color="0.45", linewidth=1.4, label=r"$p\rightarrow\infty$")
+        ax.fill_between(x, output.mean - output.sdev, output.mean + output.sdev, color="0.75", alpha=0.60, linewidth=0)
+        ax.set_xlabel(r"$x$", **FONT_SIZE)
+        ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
+        ax.set_title("Extrapolation, momentum dependence", **FONT_SIZE)
+        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0, frameon=False, fontsize=12)
+        fig.tight_layout()
+        pdep_pdf = stem.with_name("extrapolate_pdep").with_suffix(".pdf")
+        pdep_svg = stem.with_name("extrapolate_pdep").with_suffix(".svg")
+        fig.savefig(pdep_pdf, bbox_inches="tight", transparent=True)
+        fig.savefig(pdep_svg, bbox_inches="tight")
+        plt.close(fig)
+
+    result = {
+        "out": out,
+        "mode": mode,
+        "model": attrs["model"],
+        "artifact": str(artifact),
+        "fit_info_artifact": str(fit_info_artifact),
+        "plot": str(pdf),
+        "plot_image": str(svg),
+        "n_inputs": len(inputs),
+        "n_points": int(len(x)),
+        "n_sample": int(n_sample),
+        "n_parameters": int(coeff_samples.shape[1]),
+        "chi2_dof": chi2_dof,
+        "lowest_lattice_spacing_order": int(lowest_lattice_spacing_order),
+        "highest_momentum_order": int(highest_momentum_order),
+        "use_lattice_spacing_dependence": use_a,
+        "use_momentum_dependence": use_p,
+        "pdep_gev": [float(value) for value in pdep_gev] if pdep_gev else [],
+        "sample_error_mode": str(sample_error_mode),
+        "posterior_prior_error_scale": float(posterior_prior_error_scale),
+        "workers": int(workers),
+    }
+    if adep_pdf is not None and adep_svg is not None:
+        result.update({"adep_plot": str(adep_pdf), "adep_plot_image": str(adep_svg)})
+    if pdep_pdf is not None and pdep_svg is not None:
+        result.update({"pdep_plot": str(pdep_pdf), "pdep_plot_image": str(pdep_svg)})
+    return result
+
+
+STAGE_TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
+    "run_extrapolation": run_extrapolation,
+}

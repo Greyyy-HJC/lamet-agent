@@ -16,6 +16,7 @@
       "renormalization",
       "fourier_transform",
       "perturbative_matching",
+      "extrapolation",
       "review"
     ]
   },
@@ -502,6 +503,24 @@
           },
           "params": {
             "zs_fm": 0.2
+          }
+        }
+      ]
+    },
+    "extrapolation": {
+      "defaults": {
+        "lowest_lattice_spacing_order": 2,
+        "highest_momentum_order": 2,
+        "pdep_gev": [1.5, 2.0, 2.5]
+      },
+      "jobs": [
+        {
+          "id": "extrapolate_all",
+          "inputs": {
+            "lightcone": [
+              "mt_a06m130_pz6", "mt_a09m130_pz6", "mt_a12m130_pz6",
+              "mt_a06m130_pz8", "mt_a09m130_pz8", "mt_a12m130_pz8",
+              "mt_a06m130_pz10", "mt_a09m130_pz10", "mt_a12m130_pz10"]
           }
         }
       ]

@@ -1002,8 +1002,8 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 ):
                     add_gap("zs_fm", f"stages.{stage}.defaults.zs_fm", f"hybrid matching job {job_id!r} is missing flat parameter zs_fm.", 'Example: {"zs_fm": 0.2}.')
             elif stage == "extrapolation":
-                if "momenta" not in roles:
-                    add_gap("inputs.momenta", f"stages.{stage}.jobs[{index}].inputs", "extrapolation requires a momenta input role, but the stage is currently a placeholder.", 'Example: {"momenta": ["mt_pz1", "mt_pz2"]}.')
+                if "lightcone" not in roles:
+                    add_gap("inputs.lightcone", f"stages.{stage}.jobs[{index}].inputs", "extrapolation requires a lightcone input role.", 'Example: {"lightcone": ["mt_pz1", "mt_pz2"]}.')
     return gaps
 
 

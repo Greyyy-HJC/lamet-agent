@@ -173,7 +173,10 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     "required": {"kernel_id": "declared inputs.kernels kernel_id", "momentum_gev": 2.15, "mu": 2.0, "component": "re", "zs_fm": "required for hybrid kernels"},
                     "options": {"component": ["re", "im"]},
                 },
-                "extrapolation": {"status": "placeholder; requires momenta input role but is not implemented yet"},
+                "extrapolation": {
+                    "required": {"inputs": {"lightcone": ["matching_job_1", "matching_job_2"]}},
+                    "defaults": {"lowest_lattice_spacing_order": 2, "highest_momentum_order": 2, "pdep_gev": [1.5, 2.0, 2.5]},
+                },
                 "review": {"required": "none"},
             },
             "common_stage_contracts": {
