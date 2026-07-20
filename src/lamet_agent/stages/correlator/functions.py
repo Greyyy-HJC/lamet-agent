@@ -4902,7 +4902,27 @@ def fit_qda_ratio_grid(
     executor = ProcessPoolExecutor(max_workers=int(workers)) if workers > 1 else None
     z_records: list[dict[str, Any]] = []
     z_report: list[dict[str, Any]] = []
-    energy_fit = chosen.get("pt2_fit") or chosen["fit"]
+    energy_fit = chosen.get("pt2_fit")
+    if energy_fit is None and strategy == "independent":
+        energy_fit = fit_two_point(
+            pt2_gv,
+            shared_window["tmin"],
+            shared_window["tmax"],
+            Lt,
+            nstate=int(chosen["nstate"]),
+            svdcut=svdcut,
+            rescale=scale,
+            prior=_vary_prior_width(
+                qda_pt2_prior(
+                    int(chosen["nstate"]),
+                    qda_denominator_mode=qda_denominator_mode,
+                ),
+                float(chosen["prior_width"]),
+            ),
+            qda_denominator_mode=qda_denominator_mode,
+        )
+    if energy_fit is None:
+        energy_fit = chosen["fit"]
     try:
         from tqdm import tqdm
     except ImportError:
