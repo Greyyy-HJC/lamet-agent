@@ -513,7 +513,7 @@ Interactively plan a draft manifest before running it:
 
 ```bash
 lamet-agent plan draft_manifest.jsonc --backend api --model deepseek/deepseek-chat
-lamet-agent plan draft_manifest.jsonc --backend codex
+lamet-agent plan draft_manifest.jsonc --backend codex --model CODEX_MODEL_ID
 ```
 
 `plan` accepts incomplete JSON/JSONC manifests and runs an LLM-controlled
@@ -698,8 +698,11 @@ extra first:
 
 ```bash
 python -m pip install -e ".[codex]"
-lamet-agent run examples/pion_pdf_cg_manifest.json --backend codex --verbose
+lamet-agent run examples/pion_pdf_cg_manifest.json --backend codex --model CODEX_MODEL_ID --verbose
 ```
+
+For the `codex` backend, `--model` accepts a Codex model ID and passes it to the
+SDK. Omit `--model` to use the current Codex SDK default.
 
 The `api` backend reads the API key from `--api-key-file` (default `api.key`) or the
 provider environment variable (`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`). Pass
@@ -769,7 +772,8 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 - `src/lamet_agent/cli.py`
   - Exposes `validate` and `run` commands.
   - `run` requires `--backend` (`mock`/`external`/`api`/`codex`), accepts
-    `--model provider/model_id` (for `api`), `--verbose` / `-v` (ReAct-style trace
+    `--model model_id` (for `codex`) or `--model provider/model_id` (for `api`),
+    `--verbose` / `-v` (ReAct-style trace
     to stdout), `--actions-path` (for `external`), and `--api-key-file`/`--base-url`
     (for `api`), plus `--report_language en|ch` to select the single report language
     written for each stage.
@@ -836,7 +840,8 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 5. Session backends: `mock` (deterministic scaffold), `external` (JSONL
    transcript replay via `--actions-path`), `codex` (Codex Python SDK), or `api`
    (OpenAI-compatible chat-completions providers in `core/llm.py` via
-   `--model provider/model_id`).
+   `--model provider/model_id`). The `codex` backend accepts an optional Codex
+   model ID through the same `--model` option.
 6. The run ends with a compact JSON summary on stdout (`run_id`, `status`,
    `summary`, manifest paths, etc.). By default, stdout first shows a LaMET Agent
    banner and one line per job (`Stage: … | Job: …`) before stage tool progress

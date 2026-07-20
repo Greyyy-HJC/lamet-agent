@@ -29,10 +29,15 @@ The 25 functions fall into five groups:
    pulls the LaTeX of the tagged arXiv paper; ``_formula_prompt`` asks the model to
    write the closed form *and* cross-check code against paper; ``_llm_kernel_formula``
    makes the call and caches it; ``_matching_formula_text`` wraps that in the
-   factorization, which branches on ``is_da_kernel``. Division of labour: the code is
-   authoritative for WHICH terms exist, the paper for how they are WRITTEN, and the
-   cross-check reports where the two disagree. ``FormulaLlm`` carries the run's LLM
-   config down from the CLI; this section raises rather than invent a formula offline.
+   factorization. The factorization is NOT branched on here: ``_kernel_structure`` reads
+   the ``matching_structure`` the kernel declares in ``kernels.py`` (its display equation,
+   its notation guidance, and any all-orders resummation), and both the prompt and the
+   rendered factorization follow it -- so a DA kernel, a PDF kernel, or a renormalon-resummed
+   kernel each render themselves with no ``if is_da``/``if is_lrr`` in this module, and a new
+   kernel needs no change here. Division of labour: the code is authoritative for WHICH
+   terms exist, the paper for how they are WRITTEN, and the cross-check reports where the
+   two disagree. ``FormulaLlm`` carries the run's LLM config down from the CLI; this section
+   raises rather than invent a formula offline.
 
 5. Assembly and writing: ``build_matching_report_markdown`` orders the sections,
    ``write_matching_report`` writes one job's file, and ``write_matching_stage_report``
@@ -186,6 +191,34 @@ def _kernel_description(kernel_id: str, *, language: str) -> str:
     return " ".join(parts_text)
 
 
+def _kernel_structure(kernel_id: str) -> dict[str, Any]:
+    """Return the render-structure the kernel declares (its ``matching_structure``).
+
+    The kernel is the single source of truth for how its factorization is drawn (see
+    ``kernels.py``): whether it is a PDF coefficient $C(x/y)$, a DA $V(x,y)$, or carries an
+    all-orders resummation on top. This module only reads that description and renders it,
+    so it never enumerates kernel families -- a new kernel needs no change here. A kernel
+    with no declaration (or an unknown id) falls back to letting the formula LLM state the
+    factorization from the source code alone.
+    """
+    fn = getattr(kernels, str(kernel_id), None)
+    structure = getattr(fn, "matching_structure", None)
+    if isinstance(structure, dict):
+        return structure
+    return {
+        "factorization": None,
+        "result_noun": ("light-cone distribution", "光锥分布"),
+        "source_noun": ("quasi distribution", "quasi 分布"),
+        "notation": (
+            "- Read the factorization and the coefficient off the code above; state the "
+            "matching relation the kernel implements and the explicit coefficient, in the "
+            "paper's notation.\n"
+        ),
+        "extra_structure": None,
+        "extra_note": None,
+    }
+
+
 def _kernel_reference(kernel_id: str) -> tuple[str, str]:
     """Return the ``(arxiv_id, equations)`` tagged on the kernel the manifest selected.
 
@@ -215,14 +248,35 @@ def _format_grid(x_grid: np.ndarray, *, language: str) -> str:
     return f"nonuniform grid with {x_grid.size} points; preview `{_fmt_list(x_grid)}`"
 
 
-def _trapz_norm(x_grid: np.ndarray, values: np.ndarray) -> float:
-    """Integral of ``values`` over the x grid (the PDF norm sum rule check)."""
+def _trapz_norm(
+    x_grid: np.ndarray, values: np.ndarray, *, lo: float | None = None, hi: float | None = None
+) -> float:
+    """Integral of ``values`` over the x grid, optionally restricted to ``[lo, hi]``.
+
+    The full-grid integral runs over the whole computed range (here $[-2, 2]$), which spans
+    both the quark ($x>0$) and antiquark ($x<0$) sides. For a quasi-PDF that is symmetric in
+    $x$ that double-counts the distribution, so the full-range integral lands near 2 while the
+    physical one-sided (valence) integral $\\int_0^1$ lands near 1. Callers ask for the window
+    that answers the question they are posing, and the diagnostics report both so neither is
+    mistaken for the other.
+    """
     if x_grid.size < 2 or values.size != x_grid.size:
         return float("nan")
     order = np.argsort(x_grid)
+    x_sorted = x_grid[order]
+    v_sorted = values[order]
+    if lo is not None or hi is not None:
+        mask = np.ones(x_sorted.shape, dtype=bool)
+        if lo is not None:
+            mask &= x_sorted >= lo
+        if hi is not None:
+            mask &= x_sorted <= hi
+        x_sorted, v_sorted = x_sorted[mask], v_sorted[mask]
+        if x_sorted.size < 2:
+            return float("nan")
     # np.trapezoid is the NumPy 2.x name; fall back to np.trapz on older NumPy.
     trapezoid = getattr(np, "trapezoid", None) or np.trapz
-    return float(trapezoid(values[order], x_grid[order]))
+    return float(trapezoid(v_sorted, x_sorted))
 
 
 def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
@@ -373,9 +427,9 @@ class FormulaLlm:
     """The LLM the report uses to write the kernel's closed form.
 
     Passed in explicitly, exactly like the review stage's tool arguments: the run's
-    ``--backend`` and (for ``api``) the provider/key/model the CLI already resolved are
-    handed down as parameters. Reading them back out of the environment would mean the
-    report could silently use a different model, or a different key, from the run itself.
+    ``--backend`` and the provider/key/model the CLI already resolved are handed down as
+    parameters. Reading them back out of the environment would mean the report could
+    silently use a different model, or a different key, from the run itself.
     """
 
     backend: str = "api"
@@ -387,7 +441,7 @@ class FormulaLlm:
     def resolved(self) -> tuple[str, str | None, str | None, str | None, str | None]:
         """Validate and fill provider defaults, returning what request_llm_text needs."""
         if self.backend == "codex":
-            return "codex", None, None, None, None
+            return "codex", None, None, self.model_name, None
         if self.backend != "api":
             raise RuntimeError(
                 f"The matching report's formula section needs an LLM, but this run used "
@@ -575,7 +629,8 @@ def _formula_prompt(
     scheme: str,
     language: str,
     *,
-    is_da: bool,
+    notation: str,
+    extra_note: str | None,
     source: str,
     paper_text: str | None,
     paper_arxiv_id: str,
@@ -600,40 +655,17 @@ def _formula_prompt(
         if equations
         else ""
     )
-    # A DA kernel's density is a genuine V(x, y) integrated with a plain dy over the DA's
-    # support; a PDF's is a coefficient of ksi = x/y integrated with dy/|y|. Handing the
-    # model the PDF's ksi notation for a DA would ask it to describe V(x, y) as a function
-    # of a variable it does not depend on, so the notation follows the kernel.
-    if is_da:
-        notation_block = (
-            "Requirements:\n"
-            "- Use $...$ for inline math and $$...$$ for display equations (KaTeX/MathJax).\n"
-            "- This is a distribution-amplitude kernel. Its density is a genuine two-variable "
-            "$V(x,y)$ carrying its own $1/y$ and $1/(1-y)$ poles, integrated with a plain $dy$ "
-            "over the DA's support $y\\in[0,1]$. Do NOT introduce $\\xi=x/y$ and do NOT write the "
-            "coefficient as a function of $x/y$ alone -- it is not one.\n"
-            "- Define the notation the paper itself uses for $V(x,y)$ and its logarithm scale.\n"
-            "- The coefficient carries a plus-prescription at $x=y$ (the code restores it by "
-            "making each $y$-column integrate to zero over the $x$ grid). Reproduce the paper's "
-            "EXACT bracket notation for it, copying the structure verbatim from the LaTeX above, "
-            "including the paper's definition of the bracket and its subtraction domain.\n"
-        )
-    else:
-        notation_block = (
-            "Requirements:\n"
-            "- Use $...$ for inline math and $$...$$ for display equations (KaTeX/MathJax).\n"
-            "- Define notation once: $\\xi=x/y$ and $L=\\ln(4y^2P_z^2/\\mu^2)$.\n"
-            "- The coefficient has a plus-prescription at $\\xi=1$ (the code restores it by making "
-            "each $y$-column integrate to zero). Reproduce it using the paper's EXACT "
-            "plus-prescription notation, copying the bracket structure verbatim from the LaTeX "
-            "above: the paper writes $[\\,g(\\xi)\\,]^{D}_{+(x_0)}$ where the subscript $+(x_0)$ marks "
-            "the subtraction point ($x_0=1$, i.e. $+(1)$) and the superscript $D$ marks the domain. "
-            "Keep that subscript/superscript placement precisely -- do NOT move the $(1)$ into the "
-            "superscript or drop the domain. The paper splits the coefficient into more than one "
-            "plus-bracket over different domains (e.g. $[0,1]$ and $(-\\infty,\\infty)$): reproduce "
-            "exactly that split, and include the paper's definition of $[g]^{D}_{+(x_0)}$ plus any "
-            "$\\delta(1-\\xi)$ term.\n"
-        )
+    # The notation guidance and any extra-structure instruction are declared by the kernel
+    # (its ``matching_structure`` in kernels.py) and passed in here: a PDF kernel supplies
+    # its $\xi=x/y$ plus-prescription block, a DA kernel its $V(x,y)$ block, and a resummed
+    # kernel adds the instruction to document the all-orders piece too. This module does not
+    # know or branch on which family it is -- it just relays what the kernel asked for.
+    notation_block = (
+        "Requirements:\n"
+        "- Use $...$ for inline math and $$...$$ for display equations (KaTeX/MathJax).\n"
+        + notation
+        + (extra_note or "")
+    )
     # The point of handing over both the paper and the code is to let one check the other.
     # Without an explicit verdict the model silently reconciles them and a transcription
     # error in the kernel would read as agreement.
@@ -696,13 +728,15 @@ def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tu
         return _FORMULA_CACHE[cache_key]
 
     backend, provider, api_key, model_name, base_url = llm.resolved()
+    structure = _kernel_structure(kernel_id)
     source = _kernel_source(kernel_id)
     paper_text = _fetch_paper_text(paper_arxiv_id)
     prompt = _formula_prompt(
         operator,
         scheme,
         language,
-        is_da=is_da_kernel(kernel_id),
+        notation=structure["notation"],
+        extra_note=structure.get("extra_note"),
         source=source,
         paper_text=paper_text,
         paper_arxiv_id=paper_arxiv_id,
@@ -735,23 +769,15 @@ def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaL
         reference = f"arXiv:{paper_arxiv_id} {equations}".strip()
     else:
         reference = "匹配核未标注出处" if language == "zh" else "The kernel declares no paper reference"
-    # The factorization follows the kernel, not the stage: a DA is matched by a genuine
-    # V(x, y) integrated with a plain dy over the DA's support, a PDF by a coefficient of
-    # ksi = x/y integrated with dy/|y|. One hardcoded form would misstate the other.
-    if is_da_kernel(kernel_id):
-        formula = (
-            r"\phi(x,\mu)=\int_0^1 dy\,\Big[\delta(x-y)-\frac{\alpha_s C_F}{2\pi}"
-            r"\big[V(x,y)\big]_+\Big]\,\tilde\phi\!\left(y,P_z\right)+O(\alpha_s^2),"
-        )
-        result_name_en, result_name_zh = "light-cone DA", "光锥 DA"
-        source_name_en, source_name_zh = "quasi-DA", "quasi-DA"
-    else:
-        formula = (
-            r"f(x,\mu)=\int\frac{dy}{|y|}\,C^{-1}\!\left(\frac{x}{y},\frac{\mu}{yP_z}\right)"
-            r"\tilde f\!\left(y,P_z\right),"
-        )
-        result_name_en, result_name_zh = "light-cone PDF", "光锥 PDF"
-        source_name_en, source_name_zh = "quasi-PDF", "quasi-PDF"
+    # The factorization follows the kernel: it declares its own display equation, the names
+    # of the matched/source distributions, and any all-orders structure it carries. This
+    # module renders whatever the kernel declared -- it does not know PDF from DA from LRR.
+    structure = _kernel_structure(kernel_id)
+    idx = 1 if language == "zh" else 0
+    formula = structure.get("factorization")
+    result_name = structure["result_noun"][idx]
+    source_name = structure["source_noun"][idx]
+    extra_structure = structure.get("extra_structure")
     discrete = r"f_i=\sum_j K_{ij}\,\tilde f_j,\qquad K=\text{(nx, ny) matching matrix}."
     # The explicit coefficient is generated at report time by an LLM that reads
     # the source paper together with the kernels.py code which produced the number
@@ -769,23 +795,44 @@ def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaL
         )
         note = f"(the explicit form below was generated by the model from {source_en})\n\n"
     explicit = note + generated
+
+    parts: list[str] = []
     if language == "zh":
-        return (
-            f"{reference}。{result_name_zh} 由 {source_name_zh} 经匹配核反卷积得到：\n\n"
-            f"$$\n{formula}\n$$\n\n"
+        lead = f"{reference}。{result_name} 由 {source_name} 经匹配核反卷积得到"
+        parts.append(f"{lead}：\n\n" if formula else f"{lead}（因子化形式见下方解析式）。\n\n")
+        if formula:
+            parts.append(f"$$\n{formula}\n$$\n\n")
+        parts.append(
             "离散化后即矩阵乘法（本阶段对每个重采样样本独立施加，再重建统计量）：\n\n"
             f"$$\n{discrete}\n$$\n\n"
-            "其中 LO 部分为单位阵，匹配修正的解析形式为：\n\n"
-            f"{explicit}"
         )
-    return (
-        f"{reference}. The {result_name_en} is obtained from the {source_name_en} by inverting the matching kernel:\n\n"
-        f"$$\n{formula}\n$$\n\n"
+        if extra_structure:
+            parts.append(
+                "本匹配核并未止步于固定阶：它在固定阶矩阵之上，对 Wilson 线首要重正化子做全阶求和，"
+                "匹配矩阵取如下矩阵指数形式：\n\n"
+                f"$$\n{extra_structure}\n$$\n\n"
+            )
+        parts.append("其中 LO 部分为单位阵，匹配修正（含上述结构）的解析形式为：\n\n")
+        parts.append(explicit)
+        return "".join(parts)
+
+    lead = f"{reference}. The {result_name} is obtained from the {source_name} by inverting the matching kernel"
+    parts.append(f"{lead}:\n\n" if formula else f"{lead} (its factorization is given in the explicit form below).\n\n")
+    if formula:
+        parts.append(f"$$\n{formula}\n$$\n\n")
+    parts.append(
         "After discretization this is a matrix product (applied to every resampling sample independently, then the statistics are rebuilt):\n\n"
         f"$$\n{discrete}\n$$\n\n"
-        "Here the LO part is the identity, and the explicit matching correction is:\n\n"
-        f"{explicit}"
     )
+    if extra_structure:
+        parts.append(
+            "This kernel does not stop at fixed order: on top of the fixed-order matrix it resums the "
+            "leading Wilson-line renormalon to all orders, so the matching matrix takes the matrix-exponential form\n\n"
+            f"$$\n{extra_structure}\n$$\n\n"
+        )
+    parts.append("Here the LO part is the identity, and the explicit matching correction (including the structure above) is:\n\n")
+    parts.append(explicit)
+    return "".join(parts)
 
 
 def _scheme_explanation(data: dict[str, Any], *, language: str) -> list[str]:
@@ -828,21 +875,29 @@ def _diagnostics(data: dict[str, Any], *, language: str) -> list[str]:
     lines: list[str] = []
 
     if x_grid.size >= 2 and quasi_mean.size == x_grid.size and lc_mean.size == x_grid.size:
-        quasi_norm = _trapz_norm(x_grid, quasi_mean)
-        lc_norm = _trapz_norm(x_grid, lc_mean)
-        rel = abs(lc_norm - quasi_norm) / abs(quasi_norm) if quasi_norm not in (0.0, float("nan")) else float("nan")
+        # The valence-region integral over [0, 1] is the physically meaningful normalization
+        # (~1 for a valence quark). The full-grid integral is reported too, but a symmetric
+        # quasi-PDF double-counts across x>0 and x<0 there, so it lands near 2 and must not be
+        # read as "the norm should be 1".
+        quasi_val = _trapz_norm(x_grid, quasi_mean, lo=0.0, hi=1.0)
+        lc_val = _trapz_norm(x_grid, lc_mean, lo=0.0, hi=1.0)
+        quasi_full = _trapz_norm(x_grid, quasi_mean)
+        lc_full = _trapz_norm(x_grid, lc_mean)
+        rel = abs(lc_val - quasi_val) / abs(quasi_val) if quasi_val not in (0.0, float("nan")) else float("nan")
         if language == "zh":
             lines.extend(
                 [
-                    f"- quasi-PDF 归一 $\\int f\\,dx={_fmt(quasi_norm)}$；光锥 PDF 归一 $\\int f\\,dx={_fmt(lc_norm)}$。",
-                    f"- 归一相对变化 {_fmt(100 * rel)}%。NLO 匹配是微扰修正，应当接近守恒。",
+                    f"- 价区归一 $\\int_0^1 f\\,dx$：quasi-PDF ${_fmt(quasi_val)}$，光锥 PDF ${_fmt(lc_val)}$（价夸克数应约为 1）。",
+                    f"- 价区归一相对变化 {_fmt(100 * rel)}%。NLO 匹配是微扰修正，应当接近守恒。",
+                    f"- 参考：全网格积分 $\\int_{{-2}}^{{2}} f\\,dx$ 为 quasi ${_fmt(quasi_full)}$、光锥 ${_fmt(lc_full)}$；由于分布关于 $x\\to-x$ 近似对称，该值同时计入夸克侧与反夸克侧，约为价区的两倍，不应误读为“归一应为 1”。",
                 ]
             )
         else:
             lines.extend(
                 [
-                    f"- Quasi-PDF norm $\\int f\\,dx={_fmt(quasi_norm)}$; light-cone norm $\\int f\\,dx={_fmt(lc_norm)}$.",
-                    f"- Relative norm change {_fmt(100 * rel)}%. NLO matching is a perturbative correction and should nearly preserve the norm.",
+                    f"- Valence-region norm $\\int_0^1 f\\,dx$: quasi-PDF ${_fmt(quasi_val)}$, light-cone ${_fmt(lc_val)}$ (the valence-quark number should be near 1).",
+                    f"- Relative valence-norm change {_fmt(100 * rel)}%. NLO matching is a perturbative correction and should nearly preserve it.",
+                    f"- For reference, the full-grid integral $\\int_{{-2}}^{{2}} f\\,dx$ is quasi ${_fmt(quasi_full)}$, light-cone ${_fmt(lc_full)}$; because the distribution is nearly symmetric under $x\\to-x$ this sums the quark and antiquark sides and lands near twice the valence value -- it must not be read as 'the norm should be 1'.",
                 ]
             )
     else:
@@ -988,14 +1043,6 @@ def write_matching_stage_report(
     target.parent.mkdir(parents=True, exist_ok=True)
     first = jobs[0]["result"]
     for language, target in ((language, target),):
-        def artifact_paths(item: dict[str, Any]) -> dict[str, str]:
-            raw = item.get("artifacts", {})
-            return markdown_artifact_paths(
-                raw,
-                base_dir=target.parent,
-                path_keys=(*MATCHING_ARTIFACT_ORDER, *(key for key in raw if key.startswith("matching_overlay_"))),
-            )
-
         kernel_id = str(first.get("kernel_id", "not recorded"))
         _operator, scheme = _parse_kernel_id(kernel_id)
         op_en = _kernel_description(kernel_id, language="en")
@@ -1016,21 +1063,17 @@ def write_matching_stage_report(
         ]
         for item in jobs:
             result = item["result"]
-            artifacts = artifact_paths(item)
+            artifacts = markdown_artifact_paths(
+                item.get("artifacts", {}),
+                base_dir=target.parent,
+                path_keys=MATCHING_ARTIFACT_ORDER,
+            )
             lines.append(
                 f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
                 f"{_fmt(result.get('momentum_gev'))} | "
                 f"{artifacts.get('lightcone_artifact', 'n/a')} | "
                 f"{artifacts.get('matched_plot', 'n/a')} |"
             )
-        stage_artifacts = artifact_paths(jobs[0])
-        overlay_images = [value for key, value in sorted(stage_artifacts.items()) if key.startswith("matching_overlay_image_")]
-        if overlay_images:
-            for image in overlay_images:
-                stem = Path(image).stem
-                label = stem[3:] if stem.startswith("mt_") else stem
-                title = f"{label} ensemble overview" if language == "en" else f"{label}组态总览图"
-                lines.extend(["", f"## {title}", "", f"![{title}]({image})"])
         setting_data = {**first, "momentum_gev": "see per-momentum table" if language == "en" else "见下方动量表"}
         lines.extend(
             [
@@ -1047,9 +1090,9 @@ def write_matching_stage_report(
                 *_scheme_explanation(first, language=language),
                 "",
                 "## Diagnostics and Consistency Checks" if language == "en" else "## 诊断与一致性检查",
-                "| job | $P_z$ | quasi norm | matched norm | norm change |"
+                "| job | $P_z$ | quasi $\\int_0^1$ | matched $\\int_0^1$ | valence-norm change |"
                 if language == "en"
-                else "| job | $P_z$ | quasi 归一 | 匹配后归一 | 归一变化 |",
+                else "| job | $P_z$ | quasi $\\int_0^1$ | 匹配后 $\\int_0^1$ | 价区归一变化 |",
                 "|---|---:|---:|---:|---:|",
             ]
         )
@@ -1059,8 +1102,10 @@ def write_matching_stage_report(
             quasi_mean = np.asarray(result.get("quasi_mean", []), dtype=float)
             lc_mean = np.asarray(result.get("lightcone_mean", []), dtype=float)
             if x_grid.size >= 2 and quasi_mean.size == x_grid.size and lc_mean.size == x_grid.size:
-                quasi_norm = _trapz_norm(x_grid, quasi_mean)
-                lc_norm = _trapz_norm(x_grid, lc_mean)
+                # Valence region [0, 1]; the full-grid integral double-counts a symmetric
+                # quasi-PDF across x>0/x<0 and would read ~2 (see _trapz_norm / _diagnostics).
+                quasi_norm = _trapz_norm(x_grid, quasi_mean, lo=0.0, hi=1.0)
+                lc_norm = _trapz_norm(x_grid, lc_mean, lo=0.0, hi=1.0)
                 rel = abs(lc_norm - quasi_norm) / abs(quasi_norm) if quasi_norm != 0.0 else float("nan")
                 lines.append(
                     f"| `{item['job_id']}` | {_fmt(result.get('momentum_gev'))} | {_fmt(quasi_norm)} | "
@@ -1071,16 +1116,20 @@ def write_matching_stage_report(
         lines.extend(
             [
                 "",
-                "The table compares the quasi-PDF and matched light-cone PDF norm for each momentum. Moderate norm changes are expected from the NLO kernel; a very large norm change usually indicates an x-grid or momentum-convention issue."
+                "The table compares the quasi-PDF and matched light-cone PDF valence-region norm $\\int_0^1 f\\,dx$ (near 1 for a valence quark) for each momentum. Moderate norm changes are expected from the NLO kernel; a very large norm change usually indicates an x-grid or momentum-convention issue. The full-grid integral over $[-2,2]$ is not used here because a symmetric quasi-PDF double-counts the quark and antiquark sides, landing near 2."
                 if language == "en"
-                else "上表逐动量比较 quasi-PDF 与匹配后光锥 PDF 的归一。NLO 匹配会带来有限修正；若归一变化很大，通常需要检查 x 网格或动量约定。",
+                else "上表逐动量比较 quasi-PDF 与匹配后光锥 PDF 的价区归一 $\\int_0^1 f\\,dx$（价夸克数应约为 1）。NLO 匹配会带来有限修正；若归一变化很大，通常需要检查 x 网格或动量约定。此处不采用全网格 $[-2,2]$ 积分：分布关于 $x\\to-x$ 近似对称，会同时计入夸克与反夸克侧，约为价区的两倍。",
                 "",
                 "## Figures and Visual Assessment" if language == "en" else "## 图像与可视化评估",
             ]
         )
         for item in jobs:
             result = item["result"]
-            artifacts = artifact_paths(item)
+            artifacts = markdown_artifact_paths(
+                item.get("artifacts", {}),
+                base_dir=target.parent,
+                path_keys=MATCHING_ARTIFACT_ORDER,
+            )
             image = artifacts.get("matched_plot_image")
             plot = artifacts.get("matched_plot")
             label = "Quasi vs light-cone comparison" if language == "en" else "quasi 与光锥 PDF 对比图"
@@ -1111,20 +1160,15 @@ def write_matching_stage_report(
             ]
         )
         for item in jobs:
-            artifacts = artifact_paths(item)
+            artifacts = markdown_artifact_paths(
+                item.get("artifacts", {}),
+                base_dir=target.parent,
+                path_keys=MATCHING_ARTIFACT_ORDER,
+            )
             for key in MATCHING_ARTIFACT_ORDER:
                 value = artifacts.get(key)
                 if value:
                     desc = MATCHING_ARTIFACT_DESCRIPTIONS[key]
                     lines.append(f"| [{Path(value).name}]({value}) | `{item['job_id']}`: {desc[1 if language == 'zh' else 0]} |")
-        stage_artifacts = artifact_paths(jobs[0])
-        overlay_keys = sorted(key for key in stage_artifacts if key.startswith("matching_overlay_") and not key.startswith("matching_overlay_image_"))
-        overlay_keys.extend(sorted(key for key in stage_artifacts if key.startswith("matching_overlay_image_")))
-        for key in overlay_keys:
-            value = stage_artifacts[key]
-            stem = Path(value).stem
-            label = stem[3:] if stem.startswith("mt_") else stem
-            desc = f"quasi/light-cone overlay for ensemble {label}" if language == "en" else f"{label}组态下的quasi/光锥叠图"
-            lines.append(f"| [{Path(value).name}]({value}) | {desc} |")
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"report": target}

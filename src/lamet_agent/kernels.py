@@ -39,6 +39,7 @@ discretization (loop + plus prescription + LO delta) is shared.
 
 from __future__ import annotations
 
+import types
 from typing import Any, Callable, Final
 
 import numpy as np
@@ -95,41 +96,30 @@ def alphas_nloop(mu: float, order: int = 0, Nf: int = 3) -> float:
     raise NotImplementedError(f"alpha_s at order={order} is not implemented.")
 
 
-# --- coordinate-space MSbar conversion for hybrid self-renormalization ------
+# --- coordinate-space MSbar conversion for self-renormalization -------------
 # Used by the renormalization stage (stages/renorm/functions.py), not by the matching
 # kernels below.
 
 
-def ZMSbar(
-    z_fm: np.ndarray | float,
-    *,
-    mu: float = 2.0,
-    offset: float,
-) -> np.ndarray:
+def ZMSbar(z_fm: np.ndarray | float, *, mu: float = 2.0, offset: float, order: int = 0, Nf: int = 3) -> np.ndarray:
     """1-loop coordinate-space conversion to MSbar at scale ``mu`` (GeV).
 
     ``offset`` is the finite constant: ``5/2`` for PDF and ``7/2`` for DA.
     """
     z_arr = np.asarray(z_fm, dtype=float)
-    alphas = alphas_nloop(mu)
+    alphas = alphas_nloop(mu, order=order, Nf=Nf)
     log_term = np.log(mu**2 * (z_arr / GEV_FM) ** 2 * np.exp(2.0 * np.euler_gamma) / 4.0)
     return 1.0 + alphas * CF / (2.0 * np.pi) * (1.5 * log_term + offset)
 
 
-def ZMSbar_pdf(
-    z_fm: np.ndarray | float,
-    mu: float = 2.0,
-) -> np.ndarray:
-    """1-loop MSbar conversion factor for PDF hybrid self-renormalization."""
-    return ZMSbar(z_fm, mu=mu, offset=2.5)
+def ZMSbar_pdf(z_fm: np.ndarray | float, mu: float = 2.0, order: int = 0, Nf: int = 3) -> np.ndarray:
+    """1-loop MSbar conversion factor for PDF self-renormalization."""
+    return ZMSbar(z_fm, mu=mu, offset=2.5, order=order, Nf=Nf)
 
 
-def ZMSbar_da(
-    z_fm: np.ndarray | float,
-    mu: float = 2.0,
-) -> np.ndarray:
-    """1-loop MSbar conversion factor for DA hybrid self-renormalization."""
-    return ZMSbar(z_fm, mu=mu, offset=3.5)
+def ZMSbar_da(z_fm: np.ndarray | float, mu: float = 2.0, order: int = 0, Nf: int = 3) -> np.ndarray:
+    """1-loop MSbar conversion factor for DA self-renormalization."""
+    return ZMSbar(z_fm, mu=mu, offset=3.5, order=order, Nf=Nf)
 
 
 def _sine_integral(value: float) -> float:
@@ -1260,3 +1250,448 @@ def GI_gzg5_DA_hybrid_NLO(
         coefficient=V_qq_p,
         wilson_line=_da_wilson_line("hybrid", zspz, eps),
     )
+
+
+# --- leading-renormalon resummation (LRR), arXiv:2305.05212 -------------------
+# The gauge-invariant hybrid kernel above is a fixed-order (NLO) truncation of an
+# asymptotic series: the straight Wilson line carries a linear UV (self-energy)
+# divergence whose renormalon makes the matching coefficients c_n grow like
+# n! (beta0/2 pi)^n -- the *same* growth as the heavy-quark pole mass. Leading
+# renormalon resummation (LRR) sums that divergence to all orders in the
+# principal-value (PV) Borel scheme and subtracts the low orders already in the
+# fixed-order kernel, so the O(Lambda_QCD z) power correction is removed without
+# double counting (arXiv:2305.05212 Eqs. 12-17, transcribed from LRR.nb).
+#
+# The construction is *matrix valued* -- it is not one more per-element coefficient
+# fed to build_matching_matrix, but a product of discretized matrices with a matrix
+# exponential:
+#
+#     M_LRR = (M_fix + r0 MCz) . exp(-MCz rsumPV)                     (LRR.nb MfixGen)
+#
+# where M_fix = I - C1 is exactly the fixed-order GI hybrid kernel already built
+# above (its C1 = alpha_s C_F/(2 pi)(the GI ratio + Wilson-line Si terms) is the
+# notebook's -Log[(mu/Pz)^2] P + Cratio1pluswomu + Chybrid1plus, which sum to
+# C_hybrid_gi -- a test pins this), MCz is the *bare* plus-prescribed discretization
+# of the renormalon shape C_z (no alpha_s, no C_F), and rsumPV, r0 are the two scalar
+# renormalon numbers below. Both grids must coincide (the matrix exponential needs a
+# square matrix), so the LRR kernels take lc_x_ls == quasi_y_ls.
+
+
+# Renormalon normalization N_m (the pole-mass residue), arXiv:2305.05212 around Eq. (12).
+# nf-indexed constants copied verbatim from LRR.nb; only nf = 3 is used for the pion.
+_NM_RENORMALON: Final[dict[int, float]] = {
+    3: 0.5749687262865643,
+    4: 0.5522713118193284,
+    5: 0.5235323457364502,
+}
+
+
+def _renormalon_params(nf: int) -> tuple[float, float, float, float]:
+    """Return ``(beta0, b, c1, c2)`` for the renormalon series (LRR.nb rnasym/dPVasym).
+
+    ``beta0..beta3`` are the standard MS-bar coefficients (beta0 = 11 - 2 nf/3 = 9 at
+    nf = 3, beta1 = 102 - 38 nf/3, ...); the notebook writes them divided by (4 pi)^n and
+    then multiplied back, which cancels, so the plain integer-coefficient forms are used.
+    ``b``, ``c1``, ``c2`` are the sub-asymptotic corrections of arXiv:hep-ph/0105008.
+    """
+    beta0 = 11.0 - 2.0 * nf / 3.0
+    beta1 = 102.0 - 38.0 * nf / 3.0
+    beta2 = 2857.0 / 2.0 - 5033.0 * nf / 18.0 + 325.0 * nf**2 / 54.0
+    beta3 = 29243.0 - 6946.3 * nf + 405.089 * nf**2 + 1.49931 * nf**3
+    b = beta1 / (2.0 * beta0**2)
+    c1 = 1.0 / (4.0 * b * beta0**3) * (beta1**2 / beta0 - beta2)
+    c2 = (
+        beta1**4
+        + 4.0 * beta0**3 * beta1 * beta2
+        - 2.0 * beta0 * beta1**2 * beta2
+        + beta0**2 * (-2.0 * beta1**3 + beta2**2)
+        - 2.0 * beta0**4 * beta3
+    ) / (32.0 * (b - 1.0) * b * beta0**8)
+    return beta0, b, c1, c2
+
+
+def rnasym(n: int, z: float, mu: float, nf: int = 3) -> float:
+    """Asymptotic leading-renormalon coefficient ``r_n``, arXiv:2305.05212 Eq. (12).
+
+    ``r_n = N_m |z mu| (beta0/2 pi)^n Gamma(n+1+b)/Gamma(1+b) (1 + b c1/(n+b) + ...)``.
+    In the matching only ``r_0`` is used (``rnasym(0, 1, mu, nf) * alpha_s`` is the
+    single-power subtraction that stops the exponential double counting the O(alpha_s)
+    renormalon already in the fixed-order kernel).
+    """
+    from math import gamma  # local: gamma of a non-integer argument, no numpy equivalent
+
+    beta0, b, c1, c2 = _renormalon_params(nf)
+    tail = 1.0 + b * c1 / (n + b) + b * (b - 1.0) * c2 / ((n + b) * (n + b - 1.0))
+    return float(
+        _NM_RENORMALON[nf]
+        * abs(z * mu)
+        * (beta0 / (2.0 * np.pi)) ** n
+        * gamma(n + 1.0 + b)
+        / gamma(1.0 + b)
+        * tail
+    )
+
+
+def dPVasym(z: float, mu: float, nf: int, alphas: float) -> float:
+    """Principal-value Borel sum of the renormalon series, arXiv:2305.05212 Eq. (13).
+
+    The closed form (LRR.nb) evaluates the PV integral as a sum of exponential-integral
+    functions ``E_nu(w)`` at ``w = -2 pi/(alpha_s beta0)``::
+
+        dPVasym = N_m |z mu| e^w (-2 pi/beta0) Re[E_{1+b}(w) + c1 E_b(w) + c2 E_{-1+b}(w)]
+
+    ``E_nu`` at non-integer order and negative real argument is complex (Borel cut), so
+    the PV prescription takes the real part; ``mpmath.expint`` supplies ``E_nu``.
+    Validated against LRR.nb's stored outputs (dPVasym = 4.9371 at mu = 100 GeV,
+    2.8577 at mu = 50 GeV, with the paper's threshold-crossing alpha_s).
+    """
+    try:
+        import mpmath  # local: the only consumer of the non-integer exponential integral
+    except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without mpmath
+        raise ModuleNotFoundError(
+            "The LRR matching kernels need mpmath for the exponential-integral E_nu; "
+            "install the 'analysis' extra (pip install -e '.[analysis]')."
+        ) from exc
+
+    beta0, b, c1, c2 = _renormalon_params(nf)
+    w = -2.0 * np.pi / (alphas * beta0)
+    borel = (
+        mpmath.expint(1.0 + b, w)
+        + c1 * mpmath.expint(b, w)
+        + c2 * mpmath.expint(-1.0 + b, w)
+    )
+    value = _NM_RENORMALON[nf] * abs(z * mu) * mpmath.e**w * (-2.0 * np.pi / beta0) * mpmath.re(borel)
+    return float(value)
+
+
+def C_z_lrr(
+    ksi: float,
+    y: float,
+    momentum_gev: float,
+    zspz: float,
+    eps_m: float = 0.005,
+    eps: float = 1e-12,
+) -> float:
+    """Renormalon shape ``C_z(ksi)`` of the LRR matching kernel, arXiv:2305.05212 Eq. (17).
+
+    This is the Fourier transform of the regularized linear-``z`` Wilson-line tail (LRR.nb
+    ``Cz``), *without* the ``N_m mu`` normalization -- that scalar rides on ``rsumPV`` and
+    ``r0`` instead. ``eps_m`` (GeV) is the paper's ``epsilon_m`` long-distance regulator
+    (``z -> z e^{-eps_m|z|}``), 0.005 GeV in the notebook. The partonic momentum is
+    ``pz = |y| P_z`` (``y`` is the quasi/integration momentum fraction) and the Wilson-line
+    length is ``zs = zspz / P_z`` in GeV^{-1}, so ``pz zs = |y| zspz`` and ``eps_m zs`` are
+    the notebook's dimensionless combinations.
+
+    The ``ksi = 1`` limit is finite (``e^{-eps_m zs} pz (1 + eps_m zs + eps_m^2 zs^2)/(eps_m^2 pi)``)
+    but the discretization skips ``x = y`` and restores it by the plus prescription, so this
+    branch only guards grid points that fall numerically on ``ksi = 1``.
+    """
+    M = eps_m
+    pz = abs(y) * momentum_gev
+    zs = zspz / momentum_gev  # z_s in GeV^{-1}: pz*zs = |y|*zspz, M*zs = eps_m*zspz/Pz
+    emz = np.exp(-M * zs)
+
+    om = ksi - 1.0  # the notebook's (-1 + ksi)
+    if abs(om) <= eps:
+        return float(emz * pz * (1.0 + M * zs + M**2 * zs**2) / (M**2 * np.pi))
+
+    phi = pz * zs * (1.0 - ksi)  # = pz zs - pz ksi zs; note pz(-1+ksi)zs = -phi (cos is even)
+    sin_phi = np.sin(phi)
+    cos_phi = np.cos(phi)
+    denom = (M**2 + pz**2 * om**2) ** 2
+
+    term1 = -(emz * zs * sin_phi) / (np.pi * om)
+    term2 = (emz * pz / (np.pi * denom)) * (
+        (M**2 - pz**2 * om**2 + M**3 * zs + M * pz**2 * om**2 * zs) * cos_phi
+        + pz * om * (2.0 * M + M**2 * zs + pz**2 * om**2 * zs) * sin_phi
+    )
+    return float(term1 + term2)
+
+
+def _plus_prescription_matrix(
+    x_grid: np.ndarray, y_grid: np.ndarray, density: DensityFn, eps: float
+) -> np.ndarray:
+    """The bare plus-prescribed integral of a density -- LRR.nb ``SubMGen``, no alpha_s/C_F/LO.
+
+    Same off-diagonal fill and column-sum-to-zero plus prescription as build_matching_matrix
+    (so MCz lines up row-for-row with the fixed-order kernel), but it returns only the NLO
+    integral ``sum_y density(x, y) dy`` -- there is no LO identity, no ``alpha_s C_F/(2 pi)``
+    prefactor -- because the LRR assembly supplies those (or not) itself.
+    """
+    x = np.asarray(x_grid, dtype=float)
+    y = np.asarray(y_grid, dtype=float)
+    dy = float(np.abs(np.diff(y)[0]))
+    matrix = np.zeros((len(x), len(y)))
+    diag_rows = np.abs(x[:, None] - y[None, :]).argmin(axis=0)
+    for idx, x_val in enumerate(x):
+        for idy, y_val in enumerate(y):
+            if np.abs(x_val - y_val) <= eps * np.abs(y_val):
+                continue
+            matrix[idx, idy] = density(x_val, y_val)
+    for idy, diag_row in enumerate(diag_rows):
+        matrix[int(diag_row), idy] -= np.sum(matrix[:, idy])
+    return matrix * dy
+
+
+def _lrr_improve(
+    fixed_order_matrix: np.ndarray,
+    x_ls: np.ndarray,
+    y_ls: np.ndarray,
+    momentum_gev: float,
+    mu: float,
+    zspz: float,
+    eps: float,
+    *,
+    nf: int = 3,
+    eps_m: float = 0.005,
+    restrict_unit_interval: bool = False,
+) -> np.ndarray:
+    """Wrap a fixed-order GI hybrid kernel with the LRR resummation (LRR.nb ``MfixGen``).
+
+    ``M_LRR = (M_fix + r0 MCz) . exp(-MCz rsumPV)``. The renormalon shape ``C_z`` is
+    discretized with the ``dy/|y|`` measure (bare, no alpha_s/C_F -- the same measure the GI
+    hybrid Wilson-line Si term already uses, see ``_da_wilson_line``), and the two scalar
+    renormalon numbers are ``rsumPV = dPVasym(1, mu, nf, alpha_s)`` and
+    ``r0 = rnasym(0, 1, mu, nf) alpha_s`` at the NLO running coupling. ``restrict_unit_interval``
+    zeroes ``C_z`` outside 0 < y < 1, matching a DA kernel's support (see ``_da_matrix``).
+    """
+    from scipy.linalg import expm  # local: the only matrix-exponential in the package
+
+    def density_cz(x: float, y: float) -> float:
+        if restrict_unit_interval and not (eps < y < 1.0 - eps):
+            return 0.0
+        return C_z_lrr(x / y, y, momentum_gev, zspz, eps_m, eps) / np.abs(y)
+
+    m_cz = _plus_prescription_matrix(x_ls, y_ls, density_cz, eps)
+    alpha_s = alphas_nloop(mu, order=1, Nf=nf)
+    rsum_pv = dPVasym(1.0, mu, nf, alpha_s)
+    r0 = rnasym(0, 1.0, mu, nf) * alpha_s
+    return (fixed_order_matrix + r0 * m_cz) @ expm(-m_cz * rsum_pv)
+
+
+def _require_square_grid(lc_x_ls: np.ndarray, quasi_y_ls: np.ndarray | None) -> np.ndarray:
+    """Return the shared grid, rejecting distinct lc/quasi grids the matrix exponential can't take."""
+    x = np.asarray(lc_x_ls, dtype=float)
+    if quasi_y_ls is None:
+        return x
+    y = np.asarray(quasi_y_ls, dtype=float)
+    if x.shape != y.shape or not np.allclose(x, y, rtol=0.0, atol=1e-12):
+        raise ValueError(
+            "LRR kernels resum via a matrix exponential and so need lc_x_ls == quasi_y_ls "
+            "(a single square grid); pass matching grids or leave lc_x_ls unset."
+        )
+    return x
+
+
+def _lrr_from_fixed_order(
+    fixed_order_builder: Callable[..., np.ndarray],
+    lc_x_ls: np.ndarray,
+    momentum_gev: float,
+    mu: float,
+    quasi_y_ls: np.ndarray | None,
+    eps: float,
+    zspz: float | None,
+    *,
+    restrict_unit_interval: bool = False,
+) -> np.ndarray:
+    """Shared body of every GI+LRR kernel below: fixed-order matrix, then the universal resummation.
+
+    Only ``fixed_order_builder`` (the operator's own ``GI_*_hybrid_NLO``) changes between
+    kernels -- the leading renormalon is a property of the straight Wilson line, so its ``C_z``
+    shape and the scalar numbers ``r0``/``rsumPV`` are operator independent. This is exactly why
+    one implementation covers gamma^t, gamma^z, transversity and the meson DA at once.
+    """
+    if zspz is None:
+        raise ValueError("`zspz` is required for the hybrid (LRR) matching kernel.")
+    x = _require_square_grid(lc_x_ls, quasi_y_ls)
+    m_fix = fixed_order_builder(x, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=x, eps=eps, zspz=zspz)
+    return _lrr_improve(m_fix, x, x, momentum_gev, mu, float(zspz), eps, restrict_unit_interval=restrict_unit_interval)
+
+
+@kernel_reference("2305.05212", "Eqs. (12)-(17)")
+def GI_gt_quark_PDF_hybrid_LRR_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None
+) -> np.ndarray:
+    """NLO+LRR GI ``gamma^t`` hybrid kernel: GI_gt fixed order + the Wilson-line renormalon (arXiv:2305.05212)."""
+    return _lrr_from_fixed_order(GI_gt_quark_PDF_hybrid_NLO, lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz)
+
+
+@kernel_reference("2305.05212", "Eqs. (12)-(17)")
+def GI_gtg5_quark_PDF_hybrid_LRR_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None
+) -> np.ndarray:
+    """NLO+LRR helicity kernel: same renormalon and (via the shared gamma^t fixed order) coefficient."""
+    return _lrr_from_fixed_order(GI_gtg5_quark_PDF_hybrid_NLO, lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz)
+
+
+@kernel_reference("2305.05212", "Eqs. (12)-(17)")
+def GI_gz_quark_PDF_hybrid_LRR_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None
+) -> np.ndarray:
+    """NLO+LRR GI ``gamma^z`` hybrid kernel: GI_gz fixed order (the +2(1-ksi) of Eq. C7) + same renormalon."""
+    return _lrr_from_fixed_order(GI_gz_quark_PDF_hybrid_NLO, lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz)
+
+
+@kernel_reference("2305.05212", "Eqs. (12)-(17)")
+def GI_gzg5_quark_PDF_hybrid_LRR_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None
+) -> np.ndarray:
+    """NLO+LRR helicity kernel: same renormalon and (via the shared gamma^z fixed order) coefficient."""
+    return _lrr_from_fixed_order(GI_gzg5_quark_PDF_hybrid_NLO, lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz)
+
+
+@kernel_reference("2305.05212", "Eqs. (12)-(17)")
+def GI_gtgpg5_quark_PDF_hybrid_LRR_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None
+) -> np.ndarray:
+    """NLO+LRR GI transversity kernel: GI_gtgpg5 fixed order + the same Wilson-line renormalon.
+
+    The linear divergence is spin independent, so transversity carries the identical C_z / r0 /
+    rsumPV as the unpolarized kernels; only the fixed order (arXiv:2208.08008 Eq. 22-23) differs.
+    """
+    return _lrr_from_fixed_order(GI_gtgpg5_quark_PDF_hybrid_NLO, lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz)
+
+
+@kernel_reference("2305.05212", "Eqs. (12)-(17)")
+def GI_gtg5_DA_hybrid_LRR_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None
+) -> np.ndarray:
+    """NLO+LRR meson-DA (gamma^t gamma5) kernel: GI_gtg5_DA fixed order + the Wilson-line renormalon.
+
+    The quasi-DA carries the same straight Wilson line and hence the same linear renormalon, so by
+    universality the C_z / r0 / rsumPV are reused, restricted to the DA support 0 < y < 1 (as the
+    DA fixed-order kernel is). The C_z closed form itself is transcribed for the PDF in arXiv:2305.05212;
+    applying it to the DA is the universality assumption, pending a DA-specific reference.
+    """
+    return _lrr_from_fixed_order(
+        GI_gtg5_DA_hybrid_NLO, lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz, restrict_unit_interval=True
+    )
+
+
+@kernel_reference("2305.05212", "Eqs. (12)-(17)")
+def GI_gzg5_DA_hybrid_LRR_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None
+) -> np.ndarray:
+    """NLO+LRR meson-DA (gamma^z gamma5) kernel: GI_gzg5_DA fixed order + the same Wilson-line renormalon.
+
+    See GI_gtg5_DA_hybrid_LRR_NLO for the DA universality assumption; only the fixed order differs.
+    """
+    return _lrr_from_fixed_order(
+        GI_gzg5_DA_hybrid_NLO, lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz, restrict_unit_interval=True
+    )
+
+
+# --- self-describing structure for the matching report -----------------------
+# A kernel declares HOW its factorization should be rendered, exactly as it declares its
+# paper via ``@kernel_reference``. The report reads ``fn.matching_structure`` and renders
+# whatever it finds -- it never enumerates kernel families (no ``if is_lrr``/``if is_da``
+# in the report). So a new kernel needs no report change: it either inherits a default
+# below (matched by the id convention) or overrides by setting ``.matching_structure``
+# on its function.
+#
+# A structure dict has:
+#   factorization : the continuum factorization, as a display-equation LaTeX body.
+#   result_noun   : (en, zh) name of the matched distribution ("light-cone PDF").
+#   source_noun   : (en, zh) name of the lattice input ("quasi-PDF").
+#   notation      : the notation guidance handed to the formula LLM (bullet lines).
+#   extra_structure : optional extra display equation (e.g. an all-orders resummation).
+#   extra_note      : optional extra LLM instruction documenting that structure.
+# The content lives here (with the kernels) rather than in the report so that adding a
+# kernel -- or a whole new structure -- touches only this file.
+
+_PDF_STRUCTURE: dict[str, Any] = {
+    "factorization": (
+        r"f(x,\mu)=\int\frac{dy}{|y|}\,C^{-1}\!\left(\frac{x}{y},\frac{\mu}{yP_z}\right)"
+        r"\tilde f\!\left(y,P_z\right),"
+    ),
+    "result_noun": ("light-cone PDF", "光锥 PDF"),
+    "source_noun": ("quasi-PDF", "quasi-PDF"),
+    "notation": (
+        "- Define notation once: $\\xi=x/y$ and $L=\\ln(4y^2P_z^2/\\mu^2)$.\n"
+        "- The coefficient has a plus-prescription at $\\xi=1$ (the code restores it by making "
+        "each $y$-column integrate to zero). Reproduce it using the paper's EXACT "
+        "plus-prescription notation, copying the bracket structure verbatim from the LaTeX "
+        "above: the paper writes $[\\,g(\\xi)\\,]^{D}_{+(x_0)}$ where the subscript $+(x_0)$ marks "
+        "the subtraction point ($x_0=1$, i.e. $+(1)$) and the superscript $D$ marks the domain. "
+        "Keep that subscript/superscript placement precisely -- do NOT move the $(1)$ into the "
+        "superscript or drop the domain. The paper splits the coefficient into more than one "
+        "plus-bracket over different domains (e.g. $[0,1]$ and $(-\\infty,\\infty)$): reproduce "
+        "exactly that split, and include the paper's definition of $[g]^{D}_{+(x_0)}$ plus any "
+        "$\\delta(1-\\xi)$ term.\n"
+    ),
+    "extra_structure": None,
+    "extra_note": None,
+}
+
+_DA_STRUCTURE: dict[str, Any] = {
+    "factorization": (
+        r"\phi(x,\mu)=\int_0^1 dy\,\Big[\delta(x-y)-\frac{\alpha_s C_F}{2\pi}"
+        r"\big[V(x,y)\big]_+\Big]\,\tilde\phi\!\left(y,P_z\right)+O(\alpha_s^2),"
+    ),
+    "result_noun": ("light-cone DA", "光锥 DA"),
+    "source_noun": ("quasi-DA", "quasi-DA"),
+    "notation": (
+        "- This is a distribution-amplitude kernel. Its density is a genuine two-variable "
+        "$V(x,y)$ carrying its own $1/y$ and $1/(1-y)$ poles, integrated with a plain $dy$ "
+        "over the DA's support $y\\in[0,1]$. Do NOT introduce $\\xi=x/y$ and do NOT write the "
+        "coefficient as a function of $x/y$ alone -- it is not one.\n"
+        "- Define the notation the paper itself uses for $V(x,y)$ and its logarithm scale.\n"
+        "- The coefficient carries a plus-prescription at $x=y$ (the code restores it by "
+        "making each $y$-column integrate to zero over the $x$ grid). Reproduce the paper's "
+        "EXACT bracket notation for it, copying the structure verbatim from the LaTeX above, "
+        "including the paper's definition of the bracket and its subtraction domain.\n"
+    ),
+    "extra_structure": None,
+    "extra_note": None,
+}
+
+# Leading-renormalon resummation: an add-on any fixed-order kernel can carry. It does not
+# replace the base factorization -- it wraps the fixed-order matrix in an all-orders
+# matrix exponential -- so it is merged onto whichever base (PDF or DA) applies.
+_LRR_EXTRA: dict[str, Any] = {
+    "extra_structure": (
+        r"M_{\mathrm{LRR}}=\left(M_{\mathrm{fix}}+r_0\,M_{C_z}\right)"
+        r"\exp\!\left(-\,M_{C_z}\,r_{\mathrm{sumPV}}\right),"
+    ),
+    "extra_note": (
+        "- This kernel does NOT stop at fixed order: on top of the fixed-order matrix "
+        "$M_{\\mathrm{fix}}$ it resums the leading Wilson-line renormalon to ALL orders via a "
+        "matrix exponential, $M_{\\mathrm{LRR}}=(M_{\\mathrm{fix}}+r_0 M_{C_z})"
+        "\\exp(-M_{C_z}\\,r_{\\mathrm{sumPV}})$, where $M_{C_z}$ is built from the renormalon "
+        "shape $C_z(\\xi)$ and $r_{\\mathrm{sumPV}}$ is its principal-value Borel sum. Document "
+        "this resummation explicitly -- the shape $C_z$, the coefficient $r_0$, the PV sum "
+        "$r_{\\mathrm{sumPV}}$, and the matrix exponential -- reading it from the code. Do NOT "
+        "present this kernel as a plain fixed-order coefficient.\n"
+    ),
+}
+
+
+def _default_matching_structure(kernel_id: str) -> dict[str, Any]:
+    """Pick a kernel's structure from its id convention (``..._DA_...`` / ``..._LRR_...``).
+
+    The id already encodes the distribution and the resummation, so the default reads them
+    off it: a DA base or a PDF base, plus the renormalon add-on when the id carries ``LRR``.
+    A kernel that does not fit the convention can set ``.matching_structure`` directly.
+    """
+    parts = str(kernel_id).split("_")
+    base = dict(_DA_STRUCTURE if any(p in {"DA", "qDA", "gDA"} for p in parts) else _PDF_STRUCTURE)
+    if "LRR" in parts:
+        base.update(_LRR_EXTRA)
+    return base
+
+
+def _attach_default_structures() -> None:
+    """Give every kernel a ``matching_structure`` unless it already declares one.
+
+    Runs once at import over this module's kernel functions (named ``..._NLO``). Keeping
+    the family logic here -- next to the kernels -- is what lets the report stay a generic
+    reader with no per-kernel branches of its own.
+    """
+    for _name, _obj in list(globals().items()):
+        if not isinstance(_obj, types.FunctionType) or not _name.endswith("_NLO"):
+            continue
+        if getattr(_obj, "matching_structure", None) is None:
+            _obj.matching_structure = _default_matching_structure(_name)
+
+
+_attach_default_structures()

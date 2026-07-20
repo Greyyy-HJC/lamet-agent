@@ -62,14 +62,14 @@ def validate_manifest(path: Path) -> None:
     )
 
 
-def _resolve_api_config(
+def _resolve_llm_config(
     *,
     backend: str,
     model: str | None,
     api_key_file: Path,
     base_url: str | None,
 ) -> tuple[str | None, str | None, str | None, str | None]:
-    """Resolve optional OpenAI-compatible API configuration for CLI commands."""
+    """Resolve model and optional OpenAI-compatible API configuration."""
     provider: str | None = None
     model_name: str | None = None
     api_key: str | None = None
@@ -86,6 +86,8 @@ def _resolve_api_config(
         assert config is not None
         if not api_key:
             api_key = os.environ.get(config["key_env"])
+    elif backend == "codex" and model:
+        model_name = model.strip()
     return provider, model_name, api_key, resolved_base_url
 
 
@@ -100,7 +102,7 @@ def plan_workflow(
     model: str | None = typer.Option(
         None,
         "--model",
-        help="API model as provider/model_id, e.g. deepseek/deepseek-chat (api backend only).",
+        help="Codex model ID, or API model as provider/model_id (api backend).",
     ),
     api_key_file: Path = Path("api.key"),
     base_url: str | None = typer.Option(
@@ -116,13 +118,13 @@ def plan_workflow(
         )
     if backend == "api" and not model:
         raise typer.BadParameter("backend='api' requires --model provider/model_id.")
-    if backend in {"mock", "codex"} and model:
+    if backend == "mock" and model:
         print(
             f"warning: --model is ignored for backend={backend!r}.",
             file=sys.stderr,
         )
 
-    provider, model_name, api_key, resolved_base_url = _resolve_api_config(
+    provider, model_name, api_key, resolved_base_url = _resolve_llm_config(
         backend=backend,
         model=model,
         api_key_file=api_key_file,
@@ -153,7 +155,7 @@ def run_workflow(
     model: str | None = typer.Option(
         None,
         "--model",
-        help="API model as provider/model_id, e.g. deepseek/deepseek-chat (api backend only).",
+        help="Codex model ID, or API model as provider/model_id (api backend).",
     ),
     actions_path: Path | None = None,
     api_key_file: Path = Path("api.key"),
@@ -181,7 +183,8 @@ def run_workflow(
 ) -> None:
     """Run the staged agent loop.
 
-    With ``--backend codex`` the loop is driven by the Codex Python SDK. With
+    With ``--backend codex`` the loop is driven by the Codex Python SDK and
+    ``--model`` optionally selects its model. With
     ``--backend api`` pass ``--model provider/model_id`` (e.g. ``deepseek/deepseek-chat``).
     The API key is read from ``--api-key-file`` (default ``api.key``) or the provider
     environment variable (``DEEPSEEK_API_KEY`` / ``OPENAI_API_KEY``).
@@ -202,13 +205,13 @@ def run_workflow(
         raise typer.BadParameter("backend='external' requires --actions-path.")
     if backend == "api" and not model:
         raise typer.BadParameter("backend='api' requires --model provider/model_id.")
-    if backend in {"mock", "external", "codex"} and model:
+    if backend in {"mock", "external"} and model:
         print(
             f"warning: --model is ignored for backend={backend!r}.",
             file=sys.stderr,
         )
 
-    provider, model_name, api_key, resolved_base_url = _resolve_api_config(
+    provider, model_name, api_key, resolved_base_url = _resolve_llm_config(
         backend=backend,
         model=model,
         api_key_file=api_key_file,

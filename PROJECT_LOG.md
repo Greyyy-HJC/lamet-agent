@@ -857,3 +857,14 @@
 - Comparison outputs go under `artifacts/comparison/` as SVG only (no PDF/TSV);
   missing agent stages are skipped with a warning so partial kaon runs still
   produce renorm overlays.
+  
+## 2026-07-19 (Codex backend model selection)
+
+- Allowed `--model <model_id>` with the `codex` backend for both `run` and
+  `plan`, while preserving the Codex SDK default when the option is omitted.
+- Routed the selected model through structured agent decisions and free-form
+  planning/report requests, and included explicit Codex models in run traces and
+  summaries.
+- Added unit coverage for CLI model resolution and Codex SDK `thread_start`
+  model forwarding.
+
