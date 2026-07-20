@@ -369,7 +369,7 @@ def prepare_tool_args(
             initial_momentum = final_momentum = selected_momentum
 
         qda_input = None
-        qda_denominator_mode = "local_local"
+        qda_denominator_mode = "local"
         if is_qda:
             qda_candidates = [
                 item

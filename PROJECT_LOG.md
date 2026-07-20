@@ -790,3 +790,70 @@
 - Added bounded automatic 2pt windows from first-half resampled signal-to-noise diagnostics, with conservative NonBreit channel handling and explicit fallback metadata.
 - Added automatic contiguous-`tsep`/`tau_cut` candidates that allow a single central insertion point, while preserving explicit `pt2_windows`, `pt3_windows`, and `pt3_tau_cuts` as exact overrides.
 - Propagated `auto_window_scan` diagnostics through tuning, grid-fit logs, and bilingual reports, and stopped the full planner variant from synthesizing correlator windows.
+
+## 2026-07-19 (qDA tune soft-fail and agent stop-on-input)
+
+- Changed `tune_qda_ratio` so an empty cross-z window intersection returns
+  `status="no_common_feasible_candidate"` with `succeeded_counts_by_z` and
+  `retry_hint` instead of raising, and updated correlator prompts/skills to
+  narrow `tune_z_values` at least once before `request_user_input`.
+- Record LLM `request_user_input` into `pending_user_input` and stop the run
+  instead of silently finishing the job; raise immediately when a job ends
+  without `store["output"]` so downstream stages cannot start on holes.
+
+## 2026-07-19 (Skip z=0 fit for nonlocal_bz0 qDA)
+
+- For `qda_ratio` with `qda_denominator_mode="nonlocal_bz0"` only, skip fitting
+  z=0 in tune/grid paths and reinject bare ME samples `1+0j` into the output
+  NetCDF; `local` denominator mode still fits z=0.
+- Renamed the denominator mode token `local_local` to `local`.
+- Updated correlator prompts/skills and README to describe the gate and
+  assigned-unity output.
+
+## 2026-07-19 (Cap auto 2pt windows at the last valid data point)
+
+- Fixed `_pt2_snr_endpoint` so the tail-point extension past the last
+  SNR-passing timeslice can no longer reach zero-padded (zero-sdev) tail
+  points; the endpoint is now additionally capped at `last_valid_t + 1`.
+- Root cause: the pion GI-DA correlator files are zero-padded beyond the
+  measured range (t<=23 on a06m130, t<=15 on a09m130/a12m130), so every
+  automatic window included exactly-zero points and every tune fit failed
+  with "Residuals are not finite in the initial point" at all tune z values.
+- Added `last_valid_t` to the auto-window diagnostics and a unit test that a
+  zero-padded tail bounds all generated window `tmax` values.
+
+## 2026-07-19 (Widen automatic 2pt window scan)
+
+- Expanded `_auto_pt2_windows` so `tmax` is evenly sampled (up to 4 values)
+  from the shortest overdetermined length through the SNR `stable_tmax`, and
+  `tmin` uses up to 4 evenly spaced candidates per `tmax`.
+- Raised the auto-only candidate cap to 16 with even subsampling when the
+  cartesian product exceeds that limit, avoiding the old `[:6]` short-`tmax`
+  bias. Legacy `_normalise_pt2_windows(None, ...)` still uses the cap of 6.
+
+## 2026-07-19 (Unique sample-0 fit-log plot names)
+
+- Prefixed correlator sample-0 diagnostic plot stems with `{ensemble}_{tag}_`
+  for qDA, 3pt ratio, FH, and chained 2pt plots so multi-ensemble jobs sharing
+  one `fit_logs/` directory no longer overwrite identical momentum/bT/bz files.
+
+## 2026-07-19 (Independent correlator fit strategy)
+
+- Added `fit_strategy: independent` for ratio/FH/`qda_ratio` fits that skip any
+  2pt channel and any prior 2pt fit (alongside `joint` and `chained`).
+- Updated correlator prompts, skills, reporting, and README to document the
+  three strategies.
+- Set `examples/pion_da_gi_manifest.json` to one-state `independent` qDA fits
+  with per-job `pt2_windows` of length 3/4/5 from paper physical \(t_{\min}\).
+
+## 2026-07-19 (Agent vs reference DA comparison plots)
+
+- Renamed `runs/ds_{pion,kaon}_da_gi/plot_renormalized_matrix_compare.py` to
+  `plot_agent_data_compare.py` and expanded it to overlay agent artifacts against
+  `data_*_da_gi` bare ME, renormalized ME, quasi-x, and lightcone DA.
+- Exported large-\(P_z\) lightcone references from
+  `temp/lamet_da_self_renorm/final_plots/dump/*_final_plot_mom_space.pkl` to
+  `data_{pion,kaon}_da_gi/x_dependence/{pion,kaon}_DA_lightcone_x.txt` (TXT only).
+- Comparison outputs go under `artifacts/comparison/` as SVG only (no PDF/TSV);
+  missing agent stages are skipped with a warning so partial kaon runs still
+  produce renorm overlays.

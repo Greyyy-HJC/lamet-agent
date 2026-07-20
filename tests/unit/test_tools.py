@@ -152,7 +152,7 @@ def test_qda_ratio_correlator_job_uses_unified_tool_contract() -> None:
     assert args["qda_path"].endswith("qda.h5")
     assert args["qda_sink_operator"] == "gT5_nonlocal"
     assert args["fit_scope"] == "qda_ratio"
-    assert args["qda_denominator_mode"] == "local_local"
+    assert args["qda_denominator_mode"] == "local"
     assert "pt2_bT" not in args
     assert "pt2_bz" not in args
     assert args["model_average"] is True

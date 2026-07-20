@@ -199,6 +199,17 @@ def _run_job(
                 trace.observation(observation)
                 last_observation = observation
                 continue
+            if action.get("action") == "request_user_input":
+                args = action.get("args") or {}
+                questions = action.get("questions")
+                if questions is None:
+                    prompt = args.get("prompt") or action.get("reason") or "User input requested."
+                    questions = [prompt] if isinstance(prompt, str) else list(prompt)
+                elif isinstance(questions, str):
+                    questions = [questions]
+                else:
+                    questions = list(questions)
+                state.pending_user_input.setdefault(stage, {})[job.id] = questions
             break
 
         tool_name = action.get("tool_name", "")
@@ -248,18 +259,19 @@ def _run_job(
         trace.observation(observation)
         last_observation = observation
 
-    if required_index < len(required_sequence):
-        missing = list(required_sequence[required_index:])
-        last_error = next(
-            (str(item["error"]) for item in reversed(observations) if item.get("error")),
-            "no tool error was recorded",
-        )
-        raise ValueError(
-            f"job {stage}/{job.id} did not complete required tools {missing} "
-            f"within {max_tool_steps} steps; last error: {last_error}"
-        )
-    if required_sequence and "output" not in store:
-        raise ValueError(f"job {stage}/{job.id} completed its tool sequence without store['output']")
+    if job.id not in state.pending_user_input.get(stage, {}):
+        if required_index < len(required_sequence):
+            missing = list(required_sequence[required_index:])
+            last_error = next(
+                (str(item["error"]) for item in reversed(observations) if item.get("error")),
+                "no tool error was recorded",
+            )
+            raise ValueError(
+                f"job {stage}/{job.id} did not complete required tools {missing} "
+                f"within {max_tool_steps} steps; last error: {last_error}"
+            )
+        if required_sequence and "output" not in store:
+            raise ValueError(f"job {stage}/{job.id} completed its tool sequence without store['output']")
 
     trace.stage_end(f"{stage}/{job.id}", n_steps=cycle)
     return observations
@@ -744,8 +756,9 @@ def run_agent(
             state.stage_results[stage][job.id] = observations
             if job.id in state.pending_user_input.get(stage, {}):
                 break
-            if "output" in store:
-                outputs[job.id] = store["output"]
+            if "output" not in store:
+                raise ValueError(f"job {job.id!r} finished without store['output']")
+            outputs[job.id] = store["output"]
             if stage == "review" and "output" in store:
                 stage_reports[stage] = {"report": str(store["output"])}
             if stage == "correlator_analysis" and "output" in store:

@@ -273,7 +273,7 @@ S(t)=\sum_{\tau=\tau_c}^{t-\tau_c}R(t,\tau),
 R_{\rm FH}(t)=\frac{S(t+\Delta t)-S(t)}{\Delta t}.
 $$
 
-`fit_strategy="joint"` 表示 2pt 与 3pt/FH 在同一个非线性拟合中共同约束，相关参数同时浮动。`fit_strategy="chained"` 表示先拟合 2pt 并把得到的能量与重叠因子作为后续 3pt/FH 拟合的锚定先验。`fit_scope="3pt_ratio"` 只用 3pt ratio 数据，`fit_scope="FH"` 只用 summed-ratio/FH 数据，`fit_scope="3pt_ratio+FH"` 同时使用两类约束。
+`fit_strategy="joint"` 表示 2pt 与 3pt/FH 在同一个非线性拟合中共同约束，相关参数同时浮动。`fit_strategy="chained"` 表示先拟合 2pt 并把得到的能量与重叠因子作为后续 3pt/FH 拟合的锚定先验。`fit_strategy="independent"` 表示不拟合 2pt，只对 ratio/FH/`qda_ratio` 做独立拟合。`fit_scope="3pt_ratio"` 只用 3pt ratio 数据，`fit_scope="FH"` 只用 summed-ratio/FH 数据，`fit_scope="3pt_ratio+FH"` 同时使用两类约束。
 """.strip()
     return r"""
 lamet-agent builds 2pt/3pt data from the same resampled ensemble and extracts bare matrix elements in the selected time windows. The 2pt input is $C_2(t)$ for the chosen momentum and interpolator; the 3pt input is $C_3(t_{\rm sep},\tau,z)$ for each source-sink separation, insertion time, and Wilson-line length. For each job, tuning first fixes the window, state count, `fit_scope`, and `fit_strategy` on sample-average data; those choices are then held fixed for all $z$ and all resampled samples.
@@ -325,7 +325,7 @@ S(t)=\sum_{\tau=\tau_c}^{t-\tau_c}R(t,\tau),
 R_{\rm FH}(t)=\frac{S(t+\Delta t)-S(t)}{\Delta t}.
 $$
 
-`fit_strategy="joint"` fits 2pt and 3pt/FH constraints in one nonlinear fit with shared floating parameters. `fit_strategy="chained"` fits the 2pt data first and uses the resulting energies and overlaps as anchored priors for the following 3pt/FH fit. `fit_scope="3pt_ratio"` uses only 3pt-ratio data, `fit_scope="FH"` uses only summed-ratio/FH data, and `fit_scope="3pt_ratio+FH"` uses both.
+`fit_strategy="joint"` fits 2pt and 3pt/FH constraints in one nonlinear fit with shared floating parameters. `fit_strategy="chained"` fits the 2pt data first and uses the resulting energies and overlaps as anchored priors for the following 3pt/FH fit. `fit_strategy="independent"` fits the ratio/FH/`qda_ratio` alone with no 2pt channel and no prior 2pt fit. `fit_scope="3pt_ratio"` uses only 3pt-ratio data, `fit_scope="FH"` uses only summed-ratio/FH data, and `fit_scope="3pt_ratio+FH"` uses both.
 """.strip()
 
 

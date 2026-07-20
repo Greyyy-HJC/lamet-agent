@@ -8,9 +8,12 @@ pt3_tau_cuts are absent, the tools generate bounded automatic window candidates
 from the resampled 2pt signal and available tsep grid; explicit windows are exact
 overrides.
 
-fit_scope selects exactly one analysis family for a job. 3pt_ratio, FH, and
-3pt_ratio+FH consume 3pt data. qda_ratio constructs C_qDA(bz,P,t)/C2(P,t)
-from a nonlocal qDA 2pt and an optional ordinary local-source/local-sink 2pt.
+fit_strategy selects joint (fit 2pt with ratio), chained (fit 2pt first, then
+anchor the ratio prior), or independent (fit ratio/FH/qda_ratio alone with no
+2pt channel). fit_scope selects exactly one analysis family for a job.
+3pt_ratio, FH, and 3pt_ratio+FH consume 3pt data. qda_ratio constructs
+C_qDA(bz,P,t)/C2(P,t) from a nonlocal qDA 2pt and an optional ordinary
+local-source/local-sink 2pt.
 When the ordinary input is absent, the qDA operator's bz=0 correlator supplies
 C2 and uses the mixed overlap z_n*zprime_n; the extracted matrix element is
 O00/zprime0 instead of O00/z0. qda_ratio has no 3pt data, tsep, tau_cut, or
@@ -23,18 +26,25 @@ current operator.
    at least one mid-range z, and the maximum z; use 3-5 values when the grid is
    wide. Put the smallest or most trusted z first in tune_z_values.
    For qda_ratio, choose representative values directly from the qDA input's
-   bz grid. With the bz=0 fallback denominator, the bz=0 ratio is naturally
-   normalized because numerator and denominator use the same resampled data.
-   Compare returned candidates across nstate, prior_width, fit_scope,
-   fit_strategy, windows, Q, chi2/dof, n_data, n_params, and cross-z feasibility.
+   bz grid. With an ordinary local denominator, include z=0 in tune/fit as usual.
+   With the nonlocal bz=0 fallback denominator only: do not include z=0 in
+   tune_z_values (choose min/mid/max among z>0); the tools skip fitting z=0
+   because the ratio is identically one and write bare ME=1 at z=0 in the
+   output NetCDF. Compare returned candidates across nstate, prior_width,
+   fit_scope, fit_strategy, windows, Q, chi2/dof, n_data, n_params, and
+   cross-z feasibility.
    For data-window selection:
    - only consider candidates with feasible_at_all_tune_z=true;
    - prefer recommended_robust_index; do not pick recommended_index if that
      candidate fails any tune z;
    - among feasible candidates, prefer higher min_Q, lower worst_chi2_dof, then
      more n_data; do not rank different data windows by raw logGBF;
-   - if no candidate is feasible at all tune z values, call request_user_input
-     instead of guessing a primary-z-best window.
+   - if status is "no_common_feasible_candidate" (or no candidate is feasible at
+     all tune z values), retry tune_bare_matrix at least once with a narrower
+     tune_z_values list: keep the minimum (nonzero, for nonlocal_bz0) z and one
+     mid-range z; drop the largest tune z first. Use succeeded_counts_by_z and
+     retry_hint from the observation. Only after that retry still fails, call
+     request_user_input instead of guessing a primary-z-best window.
 3. Call fit_bare_matrix_grid with the selected fit_scope and fit_strategy, the
    same scale, and the selected pt2_window/pt3_window from the robust candidate.
    Use pt2_window={"tmin": ..., "tmax": ...} and
