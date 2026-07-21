@@ -92,7 +92,7 @@
       },
       {
         "stage": "perturbative_matching",
-        "kernel_id": "GI_gzg5_DA_hybrid_NLO",
+        "kernel_id": "GI_gzg5_DA_ratio_NLO",
         "kernel_path": "src/lamet_agent/kernels.py",
         "scheme": "hybrid_self_renormalization"
       }
