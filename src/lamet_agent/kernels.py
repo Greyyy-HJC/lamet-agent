@@ -235,6 +235,20 @@ def C_msbar(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
     return C_ratio(ksi, log_scale, eps) + 0.5 / (np.abs(1.0 - ksi) + eps)
 
 
+def C_msbar_plus(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
+    """Integrand of the MSbar delta subtraction, Eq. (2.14).
+
+    Identical to ``C_msbar`` except that the ``0.5/|1-ksi|`` piece only enters for
+    ksi in [0, 2]: its delta partner in Eq. (2.14) is ``-1/2 int_0^2 d ksi'``, so
+    outside [0, 2] the term is a plain regular contribution with no subtraction.
+    This is the ``plus_coeff`` handed to ``_build_pdf_matrix`` for the MSbar scheme.
+    """
+    entry = C_ratio(ksi, log_scale, eps)
+    if 0.0 <= ksi <= 2.0:
+        entry += 0.5 / (np.abs(1.0 - ksi) + eps)
+    return entry
+
+
 def C_msbar_gz(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
     """gamma^z MSbar off-diagonal coefficient, Eq. (2.15).
 
@@ -243,6 +257,18 @@ def C_msbar_gz(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
     ``2(1-ksi)`` is plus-prescribed at ksi = 1 by the shared discretization.
     """
     entry = C_msbar(ksi, log_scale, eps)
+    if eps < ksi < 1.0 - eps:
+        entry += 2.0 * (1.0 - ksi)
+    return entry
+
+
+def C_msbar_gz_plus(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
+    """Integrand of the gamma^z MSbar delta subtraction (Eqs. 2.14-2.15).
+
+    Like ``C_msbar_plus`` (0.5/|1-ksi| only on [0, 2]) plus the ``2(1-ksi)`` piece,
+    which is nonzero only on 0 < ksi < 1 so it is subtracted on its whole support.
+    """
+    entry = C_msbar_plus(ksi, log_scale, eps)
     if eps < ksi < 1.0 - eps:
         entry += 2.0 * (1.0 - ksi)
     return entry
@@ -312,10 +338,11 @@ def build_matching_matrix(
 ) -> np.ndarray:
     """Discretize a kernel density ``density(x, y)`` into an (nx, ny) matching matrix.
 
-    This step knows no physics beyond "a regular NLO integrand that is singular on the
-    line x = y, plus-prescribed there". It is therefore shared by the PDF kernels (whose
-    density is a function of ksi = x/y, integrated with dy/|y|) and the meson-DA kernel
-    (a genuine two-variable V(x, y), integrated with a plain dy) -- see ``DensityFn``.
+    This is the column-sum plus prescription: it knows no physics beyond "a regular NLO
+    integrand singular on x = y, made a plus function by forcing each y column to sum to
+    zero". It serves the meson-DA kernel, a genuine two-variable V(x, y) integrated with a
+    plain dy (the ``0.5/|1-ksi|``-over-[0, 2] structure of the CG PDFs needs the ksi
+    integral of ``_build_pdf_matrix`` instead, so PDF kernels use that, not this).
 
     The matrix rows live on ``lc_x_ls`` (the output light-cone x grid) and its
     columns on ``quasi_y_ls`` (the input quasi x grid), so the caller forms the matched
@@ -325,7 +352,7 @@ def build_matching_matrix(
     stencil from the y grid onto each x, so it survives when the grids are staggered and
     collapses to the identity when they coincide; the plus prescription makes every y
     column integrate to zero and thereby restores the x = y singularity;
-    ``diagonal_extra(y)`` (MSbar only) adds the finite diagonal conversion term.
+    ``diagonal_extra(y)`` adds an optional finite diagonal conversion term.
     Returns ``identity - alpha_s C_x/(2 pi) * matrix * dy`` -- the matched distribution
     is one matrix product, with no matrix inverse anywhere.
     """
@@ -378,10 +405,11 @@ def build_matching_matrix(
     return identity - alpha_s * color_factor / (2.0 * np.pi) * nlo_matrix * dy
 
 
-# --- adapters: turn a PDF coefficient C(ksi, L) into a density(x, y) ---------
-# A PDF coefficient knows only ksi = x/y and the lamet log L(y); the dy/|y| measure and
-# the log are supplied here, so every PDF kernel below stays a one-line wrapper and the
-# coefficient functions themselves are untouched by the (x, y) generalization.
+# --- PDF coefficient signature ----------------------------------------------
+# A PDF coefficient knows only ksi = x/y, the lamet log L(y) and y; the dy/|y| measure
+# and the frozen-delta ksi integral are supplied by ``_build_pdf_matrix`` below, so every
+# PDF kernel stays a one-line wrapper handing it a ``coeff`` (and, for MSbar, a
+# ``plus_coeff`` and a ``diagonal_extra``).
 CoeffFn = Callable[[float, float, float], float]
 
 
@@ -390,15 +418,184 @@ def _pdf_log_scale(y: float, momentum_gev: float, mu: float) -> float:
     return float(np.log(4.0 * y**2 * momentum_gev**2 / mu**2))
 
 
-def _pdf_density(coeff: CoeffFn, momentum_gev: float, mu: float) -> DensityFn:
-    """Wrap a PDF coefficient ``coeff(ksi, L, y)`` into the ``density(x, y)`` the
-    discretization consumes: evaluate it at ksi = x/y and divide by |y| (the dy/|y|
-    measure of the PDF factorization formula)."""
+# --- PDF discretization: unpol_matching's ksi-integral plus prescription ------
+# The PDF kernels use a frozen-at-delta-point ksi-integral for the plus subtraction
+# (not build_matching_matrix's column-sum): each x row's delta carries
+# ``diagonal_extra(L(x)) - int d(ksi) plus_coeff(ksi, L(x), x)``, the integral summed
+# on the grid ksi lattice ``x / y_j`` (measure d(ksi) = |x| dy / y^2) and completed by
+# ``_integrate`` over the ksi regions the y grid cannot reach. This reproduces the
+# collaborator reference kernels (msbar_kernel/*.npy, hybrid_nlo/*.npy); the plain
+# column-sum in build_matching_matrix does not, because the MSbar 1/(2|1-ksi|) term is
+# plus-prescribed only over ksi in [0, 2] and its far tail leaves the finite grid.
 
-    def density(x: float, y: float) -> float:
-        return coeff(x / y, _pdf_log_scale(y, momentum_gev, mu), y) / np.abs(y)
 
-    return density
+def _integrate(func: Callable[[float], float], lo: float, hi: float) -> float:
+    """Integrate a smooth coefficient tail over (lo, hi); +-inf limits allowed.
+
+    Uses scipy when available; the fallback maps infinite tails onto u = 1/ksi
+    (the coefficients decay like 1/ksi^2, so the transformed integrand is finite)
+    and applies a fixed Simpson rule.
+    """
+    if hi <= lo:
+        return 0.0
+    try:
+        import warnings
+
+        from scipy import integrate as _si
+
+        with np.errstate(all="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore", _si.IntegrationWarning)
+            value, _ = _si.quad(func, lo, hi, limit=400)
+        return float(value)
+    except ModuleNotFoundError:
+        pass
+
+    def simpson(f: Callable[[float], float], a: float, b: float, n: int = 2000) -> float:
+        grid = np.linspace(a, b, n + 1)
+        vals = np.array([f(t) for t in grid])
+        h = (b - a) / n
+        return float(h / 3.0 * (vals[0] + vals[-1] + 4.0 * vals[1:-1:2].sum() + 2.0 * vals[2:-2:2].sum()))
+
+    finite_lo, finite_hi = np.isfinite(lo), np.isfinite(hi)
+    if finite_lo and finite_hi:
+        return simpson(func, lo, hi)
+    # Map an infinite tail via u = 1/ksi (ksi = 1/u, d ksi = -du / u^2).
+    if finite_lo and not finite_hi:  # (lo, +inf), lo > 0
+        return simpson(lambda u: func(1.0 / u) / u**2, 0.0 + 1e-9, 1.0 / lo)
+    if not finite_lo and finite_hi:  # (-inf, hi), hi < 0
+        return simpson(lambda u: func(1.0 / u) / u**2, 1.0 / hi, 0.0 - 1e-9)
+    return 0.0
+
+
+def _uncovered_ksi_intervals(
+    x_val: float, y_grid: np.ndarray, dy: float, eps: float
+) -> list[tuple[float, float]]:
+    """Return the ksi intervals NOT reached by ``ksi = x / y`` on the y grid.
+
+    For fixed x > 0 the y grid maps onto one ksi interval per sign of y; the
+    complement (the gap around ksi = 0 from |y| beyond the grid ends, plus the far
+    |ksi| tails from |y| below the smallest grid value) is added to the delta
+    subtraction by direct integration. Intervals are clipped half a grid step away
+    from ksi = 1, where the discrete sum takes over the (regulated) plus singularity.
+    """
+    covered: list[tuple[float, float]] = []
+    for sign in (1.0, -1.0):
+        ys = y_grid[y_grid * sign > eps]
+        if ys.size:
+            lo, hi = x_val / (sign * np.max(sign * ys)), x_val / (sign * np.min(sign * ys))
+            covered.append((min(lo, hi), max(lo, hi)))
+    covered.sort()
+
+    gaps: list[tuple[float, float]] = []
+    edge = -np.inf
+    for lo, hi in covered:
+        gaps.append((edge, lo))
+        edge = hi
+    gaps.append((edge, np.inf))
+
+    guard = 0.5 * dy / np.abs(x_val)
+    clipped = []
+    for lo, hi in gaps:
+        for piece_lo, piece_hi in ((lo, min(hi, 1.0 - guard)), (max(lo, 1.0 + guard), hi)):
+            if piece_hi > piece_lo:
+                clipped.append((piece_lo, piece_hi))
+    return clipped
+
+
+def _build_pdf_matrix(
+    x_ls: np.ndarray,
+    momentum_gev: float,
+    mu: float,
+    y_ls: np.ndarray | None,
+    eps: float,
+    *,
+    coeff: CoeffFn,
+    plus_coeff: CoeffFn | None = None,
+    color_factor: float = CF,
+    diagonal_extra: Callable[[float], float] | None = None,
+) -> np.ndarray:
+    """Discretize a PDF coefficient ``coeff(ksi, log_scale, y)`` into the full (nx, ny)
+    matching matrix (LO identity + NLO correction), using the ksi-integral plus
+    prescription of ``unpol_matching`` -- see the module note above.
+
+    ``coeff`` fills every regular (ksi != 1) entry with ``coeff(x/y, L(y), y)/|y|``.
+    Each x row then receives one delta term spread over the two columns bracketing
+    y = x, carrying ``diagonal_extra(L(x)) - int d(ksi) plus_coeff(ksi, L(x), x)``.
+    ``plus_coeff`` defaults to ``coeff`` (MSbar passes a [0, 2]-restricted variant).
+    """
+    x_grid = np.asarray(x_ls, dtype=float)
+    y_grid = np.asarray(x_grid if y_ls is None else y_ls, dtype=float)
+
+    if x_grid.ndim != 1:
+        raise ValueError("`x_ls` must be a 1D array.")
+    if y_grid.ndim != 1 or y_grid.size < 2:
+        raise ValueError("`quasi_y_ls` must be a 1D array with at least 2 points.")
+    if np.any(np.abs(y_grid) <= eps):
+        raise ValueError("`quasi_y_ls` must avoid values too close to 0 to keep ksi=x/y finite.")
+
+    y_step = np.diff(y_grid)
+    dy = float(np.abs(y_step[0]))
+    if dy <= eps:
+        raise ValueError("`quasi_y_ls` spacing must be non-zero.")
+    if not np.allclose(y_step, y_step[0], rtol=0.0, atol=eps):
+        raise ValueError("`quasi_y_ls` must be uniformly spaced.")
+    if np.any(x_grid < np.min(y_grid) - 0.5 * dy) or np.any(x_grid > np.max(y_grid) + 0.5 * dy):
+        raise ValueError("every x must lie inside the y grid to place its delta term.")
+
+    if plus_coeff is None:
+        plus_coeff = coeff
+
+    alpha_s = alphas_nloop(mu, order=1, Nf=3)
+    nx, ny = len(x_grid), len(y_grid)
+    identity = _lo_interp_matrix(x_grid, y_grid)
+    nlo_matrix = np.zeros((nx, ny))
+
+    # 1) Regular (ksi != 1) coefficients.
+    for idx, x_val in enumerate(x_grid):
+        for idy, y_val in enumerate(y_grid):
+            ksi = x_val / y_val
+            if np.abs(1.0 - ksi) <= eps:
+                continue
+            log_scale = _pdf_log_scale(y_val, momentum_gev, mu)
+            nlo_matrix[idx, idy] = coeff(ksi, log_scale, y_val) / np.abs(y_val)
+
+    # 2) Delta terms: one per x row, spread over the two bracketing columns, carrying
+    #    diagonal_extra(L(x)) - int d(ksi) plus_coeff frozen at the delta point.
+    ascending = y_grid[1] > y_grid[0]
+    y_sorted = y_grid if ascending else y_grid[::-1]
+    for idx, x_val in enumerate(x_grid):
+        if np.abs(x_val) <= eps:
+            # x = 0: ksi = x/y is 0 for every column, so the row never crosses the
+            # ksi = 1 plus singularity and needs no delta subtraction. (L(x) and the
+            # d(ksi) = |x| dy / y^2 measure are both singular here; skipping is the
+            # finite, well-defined limit -- the row is pure off-diagonal + LO.)
+            continue
+        pos = int(np.searchsorted(y_sorted, x_val))
+        pos = min(max(pos, 1), ny - 1)
+        w_hi = np.clip((x_val - y_sorted[pos - 1]) / (y_sorted[pos] - y_sorted[pos - 1]), 0.0, 1.0)
+        cols_weights = (
+            ((pos - 1 if ascending else ny - pos), 1.0 - w_hi),
+            ((pos if ascending else ny - 1 - pos), w_hi),
+        )
+
+        log_scale = _pdf_log_scale(x_val, momentum_gev, mu)
+
+        subtraction = 0.0
+        for y_val in y_grid:
+            ksi = x_val / y_val
+            if np.abs(1.0 - ksi) <= eps:
+                continue
+            subtraction += plus_coeff(ksi, log_scale, x_val) * np.abs(x_val) * dy / y_val**2
+        for lo, hi in _uncovered_ksi_intervals(x_val, y_grid, dy, eps):
+            subtraction += _integrate(lambda ksi: plus_coeff(ksi, log_scale, x_val), lo, hi)
+
+        delta_entry = -subtraction
+        if diagonal_extra is not None:
+            delta_entry += diagonal_extra(log_scale)
+        for col, weight in cols_weights:
+            nlo_matrix[idx, int(col)] += weight * delta_entry / dy
+
+    return identity - alpha_s * color_factor / (2.0 * np.pi) * nlo_matrix * dy
 
 
 # --- provenance: which paper each kernel is transcribed from -----------------
@@ -441,9 +638,9 @@ def CG_gt_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel ``C_r`` for the Coulomb-gauge ``gamma^t`` PDF (Eq. 2.16)."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio(ksi, log_scale, eps), momentum_gev, mu),
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_ratio(ksi, log_scale, eps),
     )
 
 
@@ -458,10 +655,14 @@ def CG_gt_quark_PDF_msbar_NLO(
 ) -> np.ndarray:
     """NLO MSbar kernel for the Coulomb-gauge ``gamma^t`` PDF (Eq. 2.14)."""
     del zspz  # MSbar has no Wilson-line scale; kept for a uniform signature.
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_msbar(ksi, log_scale, eps), momentum_gev, mu),
-        diagonal_extra=lambda y: 0.5 * (1.0 + _pdf_log_scale(y, momentum_gev, mu)),
+    # Off-diagonal carries the full C_msbar (C_ratio + 0.5/|1-ksi|); the delta
+    # subtraction uses C_msbar_plus, which restricts 0.5/|1-ksi| to the paper's
+    # int_0^2 counterterm, and _build_pdf_matrix completes the grid-uncovered tail.
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_msbar(ksi, log_scale, eps),
+        plus_coeff=lambda ksi, log_scale, y: C_msbar_plus(ksi, log_scale, eps),
+        diagonal_extra=lambda log_scale: 0.5 * (1.0 + log_scale),
     )
 
 
@@ -481,9 +682,9 @@ def CG_gt_quark_PDF_hybrid_NLO(
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid matching kernel.")
     z = float(zspz)
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid(ksi, log_scale, y, z, eps), momentum_gev, mu),
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_hybrid(ksi, log_scale, y, z, eps),
     )
 
 
@@ -566,10 +767,14 @@ def CG_gz_quark_PDF_msbar_NLO(
     extra ``2(1-ksi)`` and the diagonal carries the extra ``delta(1-ksi)`` (coefficient 1).
     """
     del zspz  # MSbar has no Wilson-line scale; kept for a uniform signature.
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_msbar_gz(ksi, log_scale, eps), momentum_gev, mu),
-        diagonal_extra=lambda y: 0.5 * (1.0 + _pdf_log_scale(y, momentum_gev, mu)) + 1.0,
+    # Off-diagonal carries the full C_msbar_gz; the delta subtraction uses
+    # C_msbar_gz_plus (0.5/|1-ksi| restricted to [0, 2], the 2(1-ksi) piece on its
+    # whole (0,1) support). The extra delta(1-ksi) of Eq. 2.15 rides on diagonal_extra.
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_msbar_gz(ksi, log_scale, eps),
+        plus_coeff=lambda ksi, log_scale, y: C_msbar_gz_plus(ksi, log_scale, eps),
+        diagonal_extra=lambda log_scale: 0.5 * (1.0 + log_scale) + 1.0,
     )
 
 
@@ -642,9 +847,9 @@ def CG_gtgpg5_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the Coulomb-gauge transversity ``gamma^t gamma_perp gamma5`` PDF (Eq. 2.18)."""
     del zspz  # transversity has no Wilson-line scale at NLO (Eq. 2.21).
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_perp(ksi, log_scale, eps), momentum_gev, mu),
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_ratio_perp(ksi, log_scale, eps),
     )
 
 
@@ -830,9 +1035,9 @@ def GI_gt_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the gauge-invariant ``gamma^t`` PDF (Eq. 23)."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi(ksi, log_scale, eps), momentum_gev, mu),
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_ratio_gi(ksi, log_scale, eps),
     )
 
 
@@ -852,9 +1057,9 @@ def GI_gt_quark_PDF_hybrid_NLO(
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid matching kernel.")
     z = float(zspz)
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi(ksi, log_scale, y, z, eps), momentum_gev, mu),
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_hybrid_gi(ksi, log_scale, y, z, eps),
     )
 
 
@@ -901,9 +1106,9 @@ def GI_gz_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the gauge-invariant ``gamma^z`` PDF (Eq. C7)."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_gz(ksi, log_scale, eps), momentum_gev, mu),
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_ratio_gi_gz(ksi, log_scale, eps),
     )
 
 
@@ -924,9 +1129,9 @@ def GI_gz_quark_PDF_hybrid_NLO(
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid matching kernel.")
     z = float(zspz)
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi_gz(ksi, log_scale, y, z, eps), momentum_gev, mu),
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_hybrid_gi_gz(ksi, log_scale, y, z, eps),
     )
 
 
@@ -973,9 +1178,9 @@ def GI_gtgpg5_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the GI transversity ``gamma^t gamma_perp gamma5`` PDF (Eq. 22)."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_perp(ksi, log_scale, eps), momentum_gev, mu),
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_ratio_gi_perp(ksi, log_scale, eps),
     )
 
 
@@ -995,9 +1200,9 @@ def GI_gtgpg5_quark_PDF_hybrid_NLO(
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid matching kernel.")
     z = float(zspz)
-    return build_matching_matrix(
-        lc_x_ls, mu, quasi_y_ls, eps,
-        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi_perp(ksi, log_scale, y, z, eps), momentum_gev, mu),
+    return _build_pdf_matrix(
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
+        coeff=lambda ksi, log_scale, y: C_hybrid_gi_perp(ksi, log_scale, y, z, eps),
     )
 
 
