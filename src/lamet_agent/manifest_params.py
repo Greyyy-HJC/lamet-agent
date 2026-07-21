@@ -196,14 +196,17 @@ STAGE_PARAM_CONTRACTS = {
     ),
     "extrapolation": StageParamContract(
         schema={
-            "highest_momentum_order": None,
-            "lowest_lattice_spacing_order": None,
+            "lattice_spacing_allow_order": None,
+            "momentum_allow_order": None,
             "posterior_prior_error_scale": None,
             "pdep_gev": None,
             "sample_error_mode": None,
             "workers": None,
         },
-        removed={},
+        removed={
+            "highest_momentum_order": "was replaced by momentum_allow_order, for example [2] or [2, 4].",
+            "lowest_lattice_spacing_order": "was replaced by lattice_spacing_allow_order, for example [2].",
+        },
     ),
     "review": StageParamContract(schema={}, removed={}),
 }

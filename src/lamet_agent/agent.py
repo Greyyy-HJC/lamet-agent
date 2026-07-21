@@ -304,118 +304,6 @@ def _correlator_sample0_plots(result: dict[str, Any]) -> list[str]:
     return plots
 
 
-def _write_correlator_energy_artifacts(records: list[dict[str, Any]], stage_dir: Path) -> dict[str, str]:
-    deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
-    for record in records:
-        key = (
-            record.get("pt2_path"),
-            record.get("ensemble"),
-            record.get("hadron"),
-            record.get("gfix"),
-            record.get("volume"),
-            record.get("lattice_spacing_fm"),
-            record.get("source_operator"),
-            record.get("sink_operator"),
-            record.get("fitting_form"),
-            record.get("channel"),
-            record.get("momentum"),
-        )
-        deduped.setdefault(key, record)
-    rows = list(deduped.values())
-    if not rows:
-        return {}
-
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    row = np.arange(len(rows), dtype=int)
-    numeric_keys = [
-        "lattice_spacing_fm",
-        "p_gev",
-        "p2_gev2",
-        "E0_lattice_mean",
-        "E0_lattice_sdev",
-        "E0_gev_mean",
-        "E0_gev_sdev",
-        "E0_gev2_mean",
-        "E0_gev2_sdev",
-    ]
-    text_keys = [
-        "job_id",
-        "pt2_path",
-        "ensemble",
-        "hadron",
-        "gfix",
-        "volume",
-        "source_operator",
-        "sink_operator",
-        "fitting_form",
-        "channel",
-        "momentum",
-    ]
-    data_vars = {
-        key: ("row", np.asarray([float(item.get(key, np.nan)) for item in rows], dtype=float))
-        for key in numeric_keys
-    }
-    data_vars.update({key: ("row", np.asarray([str(item.get(key, "")) for item in rows], dtype=object)) for key in text_keys})
-    dataset = xr.Dataset(data_vars=data_vars, coords={"row": row})
-    dataset.attrs.update(
-        {
-            "description": "Ground-state energies from final 2pt fit posteriors used in correlator_analysis.",
-            "energy_unit": "GeV",
-            "momentum_unit": "GeV",
-            "dispersion_y": "E0_gev_mean^2 with propagated E0_gev_sdev",
-        }
-    )
-    e0_path = stage_dir / "dispersion_relation.nc"
-    dataset.to_netcdf(e0_path)
-
-    fig, ax = default_plot()
-    labels = sorted({str(item.get("ensemble", "")) for item in rows})
-    for index, label in enumerate(labels):
-        group = [item for item in rows if str(item.get("ensemble", "")) == label]
-        group.sort(key=lambda item: (float(item["p2_gev2"]), str(item.get("channel", "")), str(item.get("momentum", ""))))
-        ax.errorbar(
-            [float(item["p2_gev2"]) for item in group],
-            [float(item["E0_gev2_mean"]) for item in group],
-            yerr=[float(item["E0_gev2_sdev"]) for item in group],
-            label=label or "ensemble",
-            color=COLOR_CYCLE[index % len(COLOR_CYCLE)],
-            **ERRORBAR_STYLE,
-        )
-    p2_max = max(float(item["p2_gev2"]) for item in rows)
-    p2_line = np.linspace(0.0, p2_max * 1.05 if p2_max > 0.0 else 1.0, 200)
-    ax.plot(p2_line, p2_line, color="0.65", linestyle="--", linewidth=1.0, label=r"$E^2=p^2$")
-    for index, label in enumerate(labels):
-        zeros = [item for item in rows if str(item.get("ensemble", "")) == label and abs(float(item["p2_gev2"])) < 1e-12]
-        if not zeros:
-            continue
-        mass2 = float(zeros[0]["E0_gev2_mean"])
-        ax.plot(
-            p2_line,
-            mass2 + p2_line,
-            color=COLOR_CYCLE[index % len(COLOR_CYCLE)],
-            linewidth=1.0,
-            alpha=0.65,
-            label="_nolegend_",
-        )
-    ax.set_xlabel(r"$p^2\,[\mathrm{GeV}^2]$", **FONT_SIZE)
-    ax.set_ylabel(r"$E_0^2\,[\mathrm{GeV}^2]$", **FONT_SIZE)
-    ax.set_title("Dispersion relation", **FONT_SIZE)
-    ax.legend(**{**LEGEND_SETS, "loc": "upper left"})
-    fig.tight_layout()
-    pdf_path = stage_dir / "dispersion_relation.pdf"
-    svg_path = stage_dir / "dispersion_relation.svg"
-    fig.savefig(pdf_path, bbox_inches="tight", transparent=True)
-    fig.savefig(svg_path, bbox_inches="tight")
-    import matplotlib.pyplot as plt
-
-    plt.close(fig)
-    return {
-        "E0_artifact": str(e0_path),
-        "dispersion_relation_plot": str(pdf_path),
-        "dispersion_relation_image": str(svg_path),
-    }
-
-
 def _ensemble_label(data: EnsembleData, fallback: str = "") -> str:
     value = fallback or data.attrs.get("ensemble")
     if not value and data.ensemble is not None:
@@ -908,8 +796,9 @@ def run_agent(
             break
         if stage == "correlator_analysis" and stage_job_records:
             from lamet_agent.stages.correlator.reporting import write_correlator_stage_report
+            from lamet_agent.stages.correlator.functions import write_correlator_energy_artifacts
 
-            energy_artifacts = _write_correlator_energy_artifacts(
+            energy_artifacts = write_correlator_energy_artifacts(
                 [
                     energy
                     for record in stage_job_records

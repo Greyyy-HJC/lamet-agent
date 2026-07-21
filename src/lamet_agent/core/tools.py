@@ -828,8 +828,8 @@ def prepare_tool_args(
             {
                 key: extrapolation[key]
                 for key in (
-                    "lowest_lattice_spacing_order",
-                    "highest_momentum_order",
+                    "lattice_spacing_allow_order",
+                    "momentum_allow_order",
                     "pdep_gev",
                     "sample_error_mode",
                     "posterior_prior_error_scale",

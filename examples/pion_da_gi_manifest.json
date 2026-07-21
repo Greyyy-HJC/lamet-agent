@@ -509,8 +509,8 @@
     },
     "extrapolation": {
       "defaults": {
-        "lowest_lattice_spacing_order": 2,
-        "highest_momentum_order": 2,
+        "lattice_spacing_allow_order": [2],
+        "momentum_allow_order": [2],
         "pdep_gev": [1.5, 2.0, 2.5]
       },
       "jobs": [

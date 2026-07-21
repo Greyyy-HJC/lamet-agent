@@ -37,6 +37,7 @@ import h5py
 import lsqfit as lsf
 import matplotlib.pyplot as plt
 import numpy as np
+import xarray as xr
 
 np.seterr(over="ignore")
 
@@ -57,6 +58,7 @@ from lamet_agent.core.plotting import (
 from lamet_agent.core.resampling import (
     resample_config_samples,
     sample_mean_and_sdev,
+    sample_value_with_error,
     samples_to_gvar,
 )
 from lamet_agent.core.tools import (
@@ -106,6 +108,10 @@ def _energy_summary(
     sink_operator: str,
     fitting_form: str,
     job_id: str | None,
+    E0_lattice_samples: list[float] | np.ndarray | None = None,
+    resample_mode: str | None = None,
+    sample_error_mode: str | None = None,
+    workers: int = 1,
 ) -> dict[str, Any] | None:
     if fit is None or key not in fit.p or momentum is None or momentum_gev is None or lattice_spacing_fm is None:
         return None
@@ -113,6 +119,19 @@ def _energy_summary(
     scale = HBAR_C_GEV_FM / float(lattice_spacing_fm)
     e_mean = float(gv.mean(e_lattice)) * scale
     e_sdev = float(gv.sdev(e_lattice)) * scale
+    e_samples = np.asarray(E0_lattice_samples, dtype=float) * scale if E0_lattice_samples is not None else np.asarray([], dtype=float)
+    e2_samples = e_samples**2
+    finite_e2 = e2_samples[np.isfinite(e2_samples)]
+    if finite_e2.size > 1 and resample_mode:
+        e2_mean, e2_sdev = sample_mean_and_sdev(finite_e2, mode=resample_mode, sample_error_mode=sample_error_mode or "covariance")
+        e2_mean = float(e2_mean)
+        e2_sdev = float(e2_sdev)
+    elif finite_e2.size == 1:
+        e2_mean = float(finite_e2[0])
+        e2_sdev = 0.0
+    else:
+        e2_mean = e_mean**2
+        e2_sdev = abs(2.0 * e_mean * e_sdev)
     return {
         "job_id": job_id,
         "pt2_path": pt2_path,
@@ -132,8 +151,195 @@ def _energy_summary(
         "E0_lattice_sdev": float(gv.sdev(e_lattice)),
         "E0_gev_mean": e_mean,
         "E0_gev_sdev": e_sdev,
-        "E0_gev2_mean": e_mean**2,
-        "E0_gev2_sdev": abs(2.0 * e_mean * e_sdev),
+        "E0_gev2_mean": e2_mean,
+        "E0_gev2_sdev": e2_sdev,
+        "E0_gev_samples": json.dumps(e_samples.tolist()),
+        "resample_mode": resample_mode or "",
+        "sample_error_mode": sample_error_mode or "",
+        "workers": int(workers),
+    }
+
+
+def _fit_dispersion_sample_batch(payload: bytes, sample_indices: list[int]) -> list[tuple[int, list[float]]]:
+    context = gv.loads(payload)
+    design = context["design"]
+    samples = context["samples"]
+    template = context["template"]
+    p0 = context["p0"]
+    prior = context["prior"]
+
+    def fcn(x_design: np.ndarray, p: gv.BufferDict):
+        return p["m2"] + p["k2"] * x_design[:, 0] + p["k3"] * x_design[:, 1]
+
+    out = []
+    for sample in sample_indices:
+        y = sample_value_with_error(
+            samples[sample],
+            template,
+            mode=context["resample_mode"],
+            sample_error_mode=context["sample_error_mode"],
+        )
+        try:
+            fit = lsf.nonlinear_fit(
+                data=(design, y),
+                fcn=fcn,
+                p0=p0,
+                prior=prior,
+                maxit=2000,
+                svdcut=1e-12,
+                fitter="scipy_least_squares",
+            )
+            out.append((int(sample), [float(fit.pmean[key]) for key in ("m2", "k2", "k3")]))
+        except (*NUMERICAL_FIT_ERRORS, AssertionError):
+            out.append((int(sample), [float(p0[key]) for key in ("m2", "k2", "k3")]))
+    return out
+
+
+def write_correlator_energy_artifacts(records: list[dict[str, Any]], stage_dir: Path) -> dict[str, str]:
+    deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for record in records:
+        key = (
+            record.get("pt2_path"),
+            record.get("ensemble"),
+            record.get("hadron"),
+            record.get("gfix"),
+            record.get("volume"),
+            record.get("lattice_spacing_fm"),
+            record.get("source_operator"),
+            record.get("sink_operator"),
+            record.get("fitting_form"),
+            record.get("channel"),
+            record.get("momentum"),
+        )
+        deduped.setdefault(key, record)
+    rows = list(deduped.values())
+    if not rows:
+        return {}
+
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    row = np.arange(len(rows), dtype=int)
+    numeric_keys = [
+        "lattice_spacing_fm",
+        "p_gev",
+        "p2_gev2",
+        "E0_lattice_mean",
+        "E0_lattice_sdev",
+        "E0_gev_mean",
+        "E0_gev_sdev",
+        "E0_gev2_mean",
+        "E0_gev2_sdev",
+        "workers",
+    ]
+    text_keys = [
+        "job_id",
+        "pt2_path",
+        "ensemble",
+        "hadron",
+        "gfix",
+        "volume",
+        "source_operator",
+        "sink_operator",
+        "fitting_form",
+        "channel",
+        "momentum",
+        "E0_gev_samples",
+        "resample_mode",
+        "sample_error_mode",
+    ]
+    data_vars = {
+        key: ("row", np.asarray([float(item.get(key, np.nan)) for item in rows], dtype=float))
+        for key in numeric_keys
+    }
+    data_vars.update({key: ("row", np.asarray([str(item.get(key, "")) for item in rows], dtype=object)) for key in text_keys})
+    dataset = xr.Dataset(data_vars=data_vars, coords={"row": row})
+    dataset.attrs.update(
+        {
+            "description": "Ground-state energies from final 2pt fit posteriors used in correlator_analysis.",
+            "energy_unit": "GeV",
+            "momentum_unit": "GeV",
+            "dispersion_y": "E0_gev^2 from final 2pt fit posterior samples",
+            "fit_model": "E0^2 = m^2 + k2 P^2 + k3 P^4 a^2",
+        }
+    )
+    e0_path = stage_dir / "dispersion_relation.nc"
+    dataset.to_netcdf(e0_path)
+
+    fig, ax = default_plot()
+    labels = sorted({str(item.get("ensemble", "")) for item in rows})
+    for index, label in enumerate(labels):
+        group = [item for item in rows if str(item.get("ensemble", "")) == label]
+        group.sort(key=lambda item: (float(item["p2_gev2"]), str(item.get("channel", "")), str(item.get("momentum", ""))))
+        ax.errorbar(
+            [float(item["p2_gev2"]) for item in group],
+            [float(item["E0_gev2_mean"]) for item in group],
+            yerr=[float(item["E0_gev2_sdev"]) for item in group],
+            label=label or "ensemble",
+            color=COLOR_CYCLE[index % len(COLOR_CYCLE)],
+            **ERRORBAR_STYLE,
+        )
+    p2_max = max(float(item["p2_gev2"]) for item in rows)
+    p2_line = np.linspace(0.0, p2_max * 1.05 if p2_max > 0.0 else 1.0, 200)
+    ax.plot(p2_line, p2_line, color="0.65", linestyle="--", linewidth=1.0, label=r"$E^2=p^2$")
+    for index, label in enumerate(labels):
+        group = [item for item in rows if str(item.get("ensemble", "")) == label]
+        fit_group = []
+        for item in group:
+            e_samples = np.asarray(json.loads(str(item.get("E0_gev_samples") or "[]")), dtype=float)
+            samples = e_samples**2
+            if samples.size:
+                fit_group.append((item, samples))
+        if len(fit_group) < 2:
+            continue
+        n_sample = min(samples.size for _item, samples in fit_group)
+        y_samples = np.asarray([samples[:n_sample] for _item, samples in fit_group], dtype=float).T
+        y_samples = y_samples[np.all(np.isfinite(y_samples), axis=1)]
+        if y_samples.shape[0] < 2:
+            continue
+        p2 = np.asarray([float(item["p2_gev2"]) for item, _samples in fit_group], dtype=float)
+        a2 = np.asarray([(float(item["lattice_spacing_fm"]) / HBAR_C_GEV_FM) ** 2 for item, _samples in fit_group], dtype=float)
+        design = np.column_stack([p2, p2**2 * a2])
+        mode = str(fit_group[0][0].get("resample_mode") or "bootstrap")
+        sample_error_mode = str(fit_group[0][0].get("sample_error_mode") or "covariance")
+        mean, _ = sample_mean_and_sdev(y_samples, mode=mode, sample_error_mode=sample_error_mode, axis=0)
+        y_data = sample_value_with_error(mean, y_samples, mode=mode, sample_error_mode=sample_error_mode, axis=0)
+
+        def fcn(x_design: np.ndarray, p: gv.BufferDict):
+            return p["m2"] + p["k2"] * x_design[:, 0] + p["k3"] * x_design[:, 1]
+
+        prior = gv.BufferDict({"m2": gv.gvar(float(np.nanmin(mean)), 10.0), "k2": gv.gvar(1.0, 10.0), "k3": gv.gvar(0.0, 10.0)})
+        p0 = {"m2": float(np.nanmin(mean)), "k2": 1.0, "k3": 0.0}
+        fit = lsf.nonlinear_fit(data=(design, y_data), fcn=fcn, p0=p0, prior=prior, maxit=2000, svdcut=1e-12, fitter="scipy_least_squares")
+        p0 = {key: float(fit.pmean[key]) for key in ("m2", "k2", "k3")}
+        prior = gv.BufferDict({key: gv.gvar(p0[key], max(float(fit.psdev[key]) * 3.0, 1e-8)) for key in ("m2", "k2", "k3")})
+        workers = max(int(item.get("workers", 1) or 1) for item in group)
+        batches = [batch.tolist() for batch in np.array_split(np.arange(n_sample), min(workers, n_sample)) if batch.size]
+        payload = gv.dumps({"design": design, "samples": y_samples, "template": y_samples, "p0": p0, "prior": prior, "resample_mode": mode, "sample_error_mode": sample_error_mode})
+        if workers > 1:
+            with ProcessPoolExecutor(max_workers=min(workers, n_sample)) as executor:
+                fit_results = [item for future in [executor.submit(_fit_dispersion_sample_batch, payload, batch) for batch in batches] for item in future.result()]
+        else:
+            fit_results = _fit_dispersion_sample_batch(payload, batches[0])
+        params = np.asarray([values for _sample, values in sorted(fit_results)], dtype=float)
+        p4a2_line = p2_line**2 * float(np.mean(a2))
+        curves = params[:, 0, None] + params[:, 1, None] * p2_line[None, :] + params[:, 2, None] * p4a2_line[None, :]
+        band_mean, band_sdev = sample_mean_and_sdev(curves, mode=mode, sample_error_mode=sample_error_mode, axis=0)
+        color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
+        ax.plot(p2_line, band_mean, color=color, linewidth=1.0, alpha=0.75, label="_nolegend_")
+        ax.fill_between(p2_line, band_mean - band_sdev, band_mean + band_sdev, color=color, alpha=0.18, linewidth=0.0, label="_nolegend_")
+    ax.set_xlabel(r"$p^2\,[\mathrm{GeV}^2]$", **FONT_SIZE)
+    ax.set_ylabel(r"$E_0^2\,[\mathrm{GeV}^2]$", **FONT_SIZE)
+    ax.set_title("Dispersion relation", **FONT_SIZE)
+    ax.legend(**{**LEGEND_SETS, "loc": "upper left"})
+    fig.tight_layout()
+    pdf_path = stage_dir / "dispersion_relation.pdf"
+    svg_path = stage_dir / "dispersion_relation.svg"
+    fig.savefig(pdf_path, bbox_inches="tight", transparent=True)
+    fig.savefig(svg_path, bbox_inches="tight")
+    plt.close(fig)
+    return {
+        "E0_artifact": str(e0_path),
+        "dispersion_relation_plot": str(pdf_path),
+        "dispersion_relation_image": str(svg_path),
     }
 
 
@@ -2844,6 +3050,9 @@ def _fit_correlator_sample_batch(payload: bytes, sample_indices: list[int]) -> l
             candidate_weights = np.zeros(len(context["candidates"]), dtype=float)
             for weight, sample_record in zip(sample_weights, sample_records):
                 candidate_weights[int(sample_record["candidate_index"])] += float(weight)
+            e0_pairs = [(weight, record) for weight, record in zip(sample_weights, sample_records) if "E0" in record["fit"].p]
+            e0_i_pairs = [(weight, record) for weight, record in zip(sample_weights, sample_records) if "E0_i" in record["fit"].p]
+            e0_f_pairs = [(weight, record) for weight, record in zip(sample_weights, sample_records) if "E0_f" in record["fit"].p]
             plot_payload = None
             if sample_index == 0:
                 plot_payload = gv.dumps(
@@ -2854,6 +3063,9 @@ def _fit_correlator_sample_batch(payload: bytes, sample_indices: list[int]) -> l
                     "sample": sample_index,
                     "real": float(np.sum(sample_weights * np.asarray(re_vals))),
                     "imag": float(np.sum(sample_weights * np.asarray(im_vals))),
+                    "E0_lattice": float(sum(weight * float(gv.mean(record["fit"].p["E0"])) for weight, record in e0_pairs) / sum(weight for weight, _record in e0_pairs)) if e0_pairs else float("nan"),
+                    "E0_i_lattice": float(sum(weight * float(gv.mean(record["fit"].p["E0_i"])) for weight, record in e0_i_pairs) / sum(weight for weight, _record in e0_i_pairs)) if e0_i_pairs else float("nan"),
+                    "E0_f_lattice": float(sum(weight * float(gv.mean(record["fit"].p["E0_f"])) for weight, record in e0_f_pairs) / sum(weight for weight, _record in e0_f_pairs)) if e0_f_pairs else float("nan"),
                     "candidate_weights": candidate_weights,
                     "logs": logs,
                     "plot_payload": plot_payload,
@@ -3298,6 +3510,9 @@ def fit_bare_matrix_grid(
     z_records: list[dict[str, Any]] = []
     z_report: list[dict[str, Any]] = []
     energy_record: dict[str, Any] | None = None
+    E0_lattice_samples: list[float] | None = None
+    E0_i_lattice_samples: list[float] | None = None
+    E0_f_lattice_samples: list[float] | None = None
 
     try:
         from tqdm import tqdm
@@ -3471,6 +3686,15 @@ def fit_bare_matrix_grid(
                 ]
                 sample_results = [item for future in futures for item in future.result()]
             parallel_results = sorted(sample_results, key=lambda item: item["sample"])
+            if z == tune_z_value and E0_lattice_samples is None:
+                values = [float(item.get("E0_lattice", np.nan)) for item in parallel_results]
+                E0_lattice_samples = values if np.any(np.isfinite(values)) else None
+            if z == tune_z_value and E0_i_lattice_samples is None:
+                values = [float(item.get("E0_i_lattice", np.nan)) for item in parallel_results]
+                E0_i_lattice_samples = values if np.any(np.isfinite(values)) else None
+            if z == tune_z_value and E0_f_lattice_samples is None:
+                values = [float(item.get("E0_f_lattice", np.nan)) for item in parallel_results]
+                E0_f_lattice_samples = values if np.any(np.isfinite(values)) else None
             for result in parallel_results:
                 sample_index = int(result["sample"])
                 for log_item in result["logs"]:
@@ -3776,6 +4000,10 @@ def fit_bare_matrix_grid(
             sink_operator=sink_operator,
             fitting_form=form,
             job_id=job_id,
+            E0_lattice_samples=E0_i_lattice_samples,
+            resample_mode=mode,
+            sample_error_mode=sample_error_mode,
+            workers=workers,
         )
         final_energy = _energy_summary(
             fit=final_fit,
@@ -3793,6 +4021,10 @@ def fit_bare_matrix_grid(
             sink_operator=sink_operator,
             fitting_form=form,
             job_id=job_id,
+            E0_lattice_samples=E0_f_lattice_samples,
+            resample_mode=mode,
+            sample_error_mode=sample_error_mode,
+            workers=workers,
         )
         pt2_energies.extend(item for item in (initial_energy, final_energy) if item is not None)
     else:
@@ -3813,6 +4045,10 @@ def fit_bare_matrix_grid(
             sink_operator=sink_operator,
             fitting_form=form,
             job_id=job_id,
+            E0_lattice_samples=E0_lattice_samples,
+            resample_mode=mode,
+            sample_error_mode=sample_error_mode,
+            workers=workers,
         )
         if energy is not None:
             pt2_energies.append(energy)
@@ -4289,6 +4525,30 @@ def _fit_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[st
                 }
             )
     return output
+
+
+def _fit_qda_pt2_energy_sample_batch(payload: bytes, sample_indices: list[int]) -> list[tuple[int, float]]:
+    context = gv.loads(payload)
+    out: list[tuple[int, float]] = []
+    for sample_index in sample_indices:
+        try:
+            pt2_sample = _recenter(context["pt2_samples"][sample_index], context["pt2_gv"])
+            fit = fit_two_point(
+                pt2_sample,
+                context["tmin"],
+                context["tmax"],
+                context["Lt"],
+                nstate=context["nstate"],
+                svdcut=context["svdcut"],
+                rescale=context["scale"],
+                prior=context["prior"],
+                p0=context["p0"],
+                qda_denominator_mode=context["qda_denominator_mode"],
+            )
+            out.append((int(sample_index), float(gv.mean(fit.p["E0"]))))
+        except NUMERICAL_FIT_ERRORS:
+            out.append((int(sample_index), float("nan")))
+    return out
 
 
 def _qda_fit_mode_label(strategy: str) -> str:
@@ -4933,6 +5193,40 @@ def fit_qda_ratio_grid(
             desc=f"fit qDA ratio {ensemble} {momentum}",
         )
     try:
+        energy_template = qda_pt2_prior(
+            int(chosen["nstate"]),
+            qda_denominator_mode=qda_denominator_mode,
+        )
+        energy_prior = _scaled_prior(
+            energy_fit,
+            energy_template,
+            error_scale=posterior_prior_error_scale,
+            prior_width=float(chosen["prior_width"]),
+        )
+        energy_payload = gv.dumps(
+            {
+                "pt2_samples": pt2_samples,
+                "pt2_gv": pt2_gv,
+                "tmin": shared_window["tmin"],
+                "tmax": shared_window["tmax"],
+                "Lt": Lt,
+                "nstate": int(chosen["nstate"]),
+                "svdcut": svdcut,
+                "scale": scale,
+                "prior": energy_prior,
+                "p0": _p0_from_fit(energy_fit, energy_template),
+                "qda_denominator_mode": qda_denominator_mode,
+            }
+        )
+        if executor is None:
+            energy_results = _fit_qda_pt2_energy_sample_batch(energy_payload, sample_batches[0])
+        else:
+            futures = [
+                executor.submit(_fit_qda_pt2_energy_sample_batch, energy_payload, batch)
+                for batch in sample_batches
+            ]
+            energy_results = [item for future in futures for item in future.result()]
+        E0_lattice_samples = [value for _sample, value in sorted(energy_results)]
         for z in z_iterator:
             sample_re, sample_im, ratio_re, ratio_im = _load_ratio(
                 z=z,
@@ -5313,6 +5607,10 @@ def fit_qda_ratio_grid(
         sink_operator=sink_operator,
         fitting_form="Breit",
         job_id=job_id,
+        E0_lattice_samples=E0_lattice_samples,
+        resample_mode=mode,
+        sample_error_mode=sample_error_mode,
+        workers=workers,
     )
     store["bare_matrix_element_data"] = bare_data
     store["bare_matrix_element_netcdf"] = artifact_path

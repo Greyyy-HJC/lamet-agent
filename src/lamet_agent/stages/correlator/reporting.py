@@ -404,9 +404,9 @@ def build_correlator_stage_report_markdown(
                 "",
                 (
                     "The dispersion-relation plot is designed to check the dependence of $E_0^2$ on $p^2$ and shows the ground-state energy posterior obtained from 2pt correlator fits at different ensembles and momenta. "
-                    r"The conversion to physical units uses $E_0^{\rm GeV}=E_0^{\rm lat}\hbar c/a$."
+                    r"For each ensemble, the fit form is $E_0^2=m^2+k_2P^2+k_3P^4a^2$."
                     if language == "en"
-                    else r"色散关系图旨在检查 $E_0^2$ 随 $p^2$ 的变化，展示了不同组态、不同动量下由 2pt correlator 拟合得到的基态能量后验值。能量按 $E_0^{\rm GeV}=E_0^{\rm lat}\hbar c/a$ 转换到物理单位。"
+                    else r"色散关系图旨在检查 $E_0^2$ 随 $p^2$ 的变化，展示了不同组态、不同动量下由 2pt correlator 拟合得到的基态能量后验值。对每个系综的拟合形式为 $E_0^2=m^2+k_2P^2+k_3P^4a^2$。"
                 ),
                 "",
                 f"![Dispersion relation]({stage_artifacts['dispersion_relation_image']})",

@@ -294,7 +294,11 @@ def test_prepare_correlator_args_injects_bs_samples_for_bootstrap_mode(tmp_path:
                 "bs_samples": 500,
                 "stages": ["correlator_analysis"],
             },
-            "inputs": {"correlators": [], "artifacts": [], "kernels": []},
+            "inputs": {
+                "correlators": [],
+                "artifacts": [],
+                "kernels": [],
+            },
             "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]}},
         }
     )
@@ -1040,6 +1044,57 @@ def test_new_downstream_job_validators_accept_full_manifest() -> None:
     for stage in ("fourier_transform", "perturbative_matching"):
         job = manifest.stages[stage].jobs[0]
         assert validate_stage_inputs(stage, manifest, job) == []
+
+
+def test_extrapolation_tool_args_use_allow_order_lists(tmp_path: Path) -> None:
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "ex",
+                "root_directory": ".",
+                "artifacts_directory": "artifacts",
+                "target_observable": "pdf",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "sample_error_mode": "covariance",
+                "random_seed": 1984,
+                "workers": 4,
+                "stages": ["extrapolation"],
+            },
+            "inputs": {
+                "correlators": [],
+                "artifacts": [
+                    {"id": "mt1", "stage": "perturbative_matching", "path": "mt1.nc"},
+                    {"id": "mt2", "stage": "perturbative_matching", "path": "mt2.nc"},
+                ],
+                "kernels": [],
+            },
+            "stages": {
+                "extrapolation": {
+                    "defaults": {
+                        "lattice_spacing_allow_order": [1, 2],
+                        "momentum_allow_order": [2, 4],
+                        "pdep_gev": [1.5, 2.0],
+                    },
+                    "jobs": [{"id": "extrapolate_all", "inputs": {"lightcone": ["mt1", "mt2"]}}],
+                }
+            },
+        }
+    )
+    job = manifest.stages["extrapolation"].jobs[0]
+    args = prepare_tool_args(
+        "run_extrapolation",
+        {},
+        manifest=manifest,
+        stage="extrapolation",
+        job=job,
+        effective_params=merge_stage_params(manifest.stages["extrapolation"].defaults, job.params),
+        artifacts_dir=tmp_path,
+        store={},
+    )
+    assert args["lattice_spacing_allow_order"] == [1, 2]
+    assert args["momentum_allow_order"] == [2, 4]
+    assert args["workers"] == 4
 
 
 def test_hybrid_stage_validators_use_flat_effective_zs_fm() -> None:

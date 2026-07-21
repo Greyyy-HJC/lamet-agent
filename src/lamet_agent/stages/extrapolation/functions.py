@@ -55,25 +55,25 @@ def _fit_extrapolation_one(design: np.ndarray, y_data, *, p0: np.ndarray | None 
 
 
 def _save_fit_info(path: Path, *, x: np.ndarray, parameter_labels: list[str], fit_params: np.ndarray, fit_chi2: np.ndarray, fit_dof: np.ndarray, fit_q: np.ndarray, fit_log_gbf: np.ndarray, mean_fit_params: np.ndarray, mean_fit_chi2: np.ndarray, mean_fit_dof: np.ndarray, mean_fit_q: np.ndarray, attrs: dict[str, str]) -> None:
+    fit_chi2_dof = fit_chi2 / np.maximum(fit_dof, 1)
+    mean_fit_chi2_dof = mean_fit_chi2 / np.maximum(mean_fit_dof, 1)
     dataset = xr.Dataset(
         {
             "fit_params": (("resample", "x", "parameter"), fit_params),
             "fit_chi2": (("resample", "x"), fit_chi2),
             "fit_dof": (("resample", "x"), fit_dof),
+            "fit_chi2_dof": (("resample", "x"), fit_chi2_dof),
             "fit_q": (("resample", "x"), fit_q),
             "fit_log_gbf": (("resample", "x"), fit_log_gbf),
             "mean_fit_params": (("x", "parameter"), mean_fit_params),
             "mean_fit_chi2": (("x",), mean_fit_chi2),
             "mean_fit_dof": (("x",), mean_fit_dof),
+            "mean_fit_chi2_dof": (("x",), mean_fit_chi2_dof),
             "mean_fit_q": (("x",), mean_fit_q),
+            "fit_chi2_dof_center": (("x",), np.mean(fit_chi2_dof, axis=0)),
         },
         coords={"resample": list(range(fit_params.shape[0])), "x": x.tolist(), "parameter": parameter_labels},
-        attrs={
-            **attrs,
-            "fit_chi2_dof": json.dumps((fit_chi2 / np.maximum(fit_dof, 1)).tolist()),
-            "fit_chi2_dof_center": json.dumps(np.mean(fit_chi2 / np.maximum(fit_dof, 1), axis=0).tolist()),
-            "mean_fit_chi2_dof": json.dumps((mean_fit_chi2 / np.maximum(mean_fit_dof, 1)).tolist()),
-        },
+        attrs=attrs,
     )
     dataset.to_netcdf(path, format="NETCDF4")
 
@@ -116,8 +116,8 @@ def run_extrapolation(
     store: dict[str, Any],
     *,
     lightcone: str = "lightcone",
-    lowest_lattice_spacing_order: int = 2,
-    highest_momentum_order: int = 2,
+    lattice_spacing_allow_order: list[int] | None = None,
+    momentum_allow_order: list[int] | None = None,
     pdep_gev: list[float] | None = None,
     sample_error_mode: str = "covariance",
     posterior_prior_error_scale: float = 3.0,
@@ -169,8 +169,10 @@ def run_extrapolation(
     )
     mode = "IMF+Continuum Extrapolation" if use_a and use_p else "IMF Extrapolation" if use_p else "Continuum Extrapolation"
 
-    a_powers = list(range(int(lowest_lattice_spacing_order), 3)) if use_a else []
-    p_powers = list(range(2, int(highest_momentum_order) + 1, 2)) if use_p else []
+    lattice_spacing_allow_order = [2] if lattice_spacing_allow_order is None else [int(value) for value in lattice_spacing_allow_order]
+    momentum_allow_order = [2] if momentum_allow_order is None else [int(value) for value in momentum_allow_order]
+    a_powers = lattice_spacing_allow_order if use_a else []
+    p_powers = momentum_allow_order if use_p else []
     rows = []
     for data in inputs:
         a = float(data.attrs["lattice_spacing_fm"])
@@ -180,7 +182,7 @@ def run_extrapolation(
         row.extend(1.0 / p**power for power in p_powers)
         rows.append(row)
     design = np.asarray(rows, dtype=float)
-    parameter_labels = ["h0", *(f"c_a_{power}" for power in a_powers), *(f"c_p_{power // 2}" for power in p_powers)]
+    parameter_labels = ["h0", *(f"c_a_{power}" for power in a_powers), *(f"c_p_{power}" for power in p_powers)]
     n_param = int(design.shape[1])
     coeff_samples = np.empty((n_sample, n_param, len(x)), dtype=float)
     fit_chi2 = np.empty((n_sample, len(x)), dtype=float)
@@ -194,7 +196,12 @@ def run_extrapolation(
     mean_fit_log_gbf = np.empty(len(x), dtype=float)
     sample_executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
     try:
-        for ix in range(len(x)):
+        x_iterator = range(len(x))
+        if len(x) > 1:
+            from tqdm import tqdm
+
+            x_iterator = tqdm(x_iterator, desc="extrapolation x fits", leave=False)
+        for ix in x_iterator:
             fit_samples = samples[:, :, ix].T
             mean, _sdev = sample_mean_and_sdev(fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
             mean_y_data = sample_value_with_error(mean, fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
@@ -249,13 +256,21 @@ def run_extrapolation(
         if sample_executor is not None:
             sample_executor.shutdown()
     extrapolated = coeff_samples[:, 0, :]
+    fit_chi2_dof = fit_chi2 / np.maximum(fit_dof, 1)
+    finite_fit_chi2_dof = fit_chi2_dof[np.isfinite(fit_chi2_dof)]
     chi2_dof = float(np.mean(mean_fit_chi2 / np.maximum(mean_fit_dof, 1)))
+    chi2_dof_min = float(np.min(finite_fit_chi2_dof)) if finite_fit_chi2_dof.size else float("nan")
+    chi2_dof_max = float(np.max(finite_fit_chi2_dof)) if finite_fit_chi2_dof.size else float("nan")
 
     attrs = {
         "mode": mode,
-        "model": "h(x,Pz,a)=h0(x)+sum_i c_a a^i+sum_j c_p/Pz^(2j)",
-        "lowest_lattice_spacing_order": str(int(lowest_lattice_spacing_order)),
-        "highest_momentum_order": str(int(highest_momentum_order)),
+        "model": "h(x,Pz,a)=h0(x)+sum_i c_a_i a^i+sum_j c_p_j/Pz^j",
+        "fit_chi2_dof_mean": str(chi2_dof),
+        "fit_chi2_dof_min": str(chi2_dof_min),
+        "fit_chi2_dof_max": str(chi2_dof_max),
+        "fit_chi2_dof_source": "sample_level_fits",
+        "lattice_spacing_allow_order": json.dumps(a_powers),
+        "momentum_allow_order": json.dumps(p_powers),
         "input_jobs": ",".join(str(data.attrs.get("job_id", "")) for data in inputs),
         "input_ensembles": ",".join(str(data.attrs.get("ensemble") or (data.ensemble.id if data.ensemble else "")) for data in inputs),
         "input_momenta_gev": ",".join(f"{float(data.attrs['momentum_gev']):.12g}" for data in inputs),
@@ -285,7 +300,7 @@ def run_extrapolation(
         data_vars[f"c_a_{power}"] = (("resample", "x"), coeff_samples[:, offset + index, :])
     offset += len(a_powers)
     for index, power in enumerate(p_powers):
-        data_vars[f"c_p_{power // 2}"] = (("resample", "x"), coeff_samples[:, offset + index, :])
+        data_vars[f"c_p_{power}"] = (("resample", "x"), coeff_samples[:, offset + index, :])
     dataset = xr.Dataset(data_vars, coords=coords, attrs=attrs)
     dataset["extrapolated_distribution"].attrs.update(attrs)
     dataset["extrapolated_distribution"].attrs["ensemble"] = json.dumps(output.ensemble._asdict())
@@ -411,8 +426,11 @@ def run_extrapolation(
         "n_sample": int(n_sample),
         "n_parameters": int(coeff_samples.shape[1]),
         "chi2_dof": chi2_dof,
-        "lowest_lattice_spacing_order": int(lowest_lattice_spacing_order),
-        "highest_momentum_order": int(highest_momentum_order),
+        "chi2_dof_min": chi2_dof_min,
+        "chi2_dof_max": chi2_dof_max,
+        "chi2_dof_source": "sample_level_fits",
+        "lattice_spacing_allow_order": a_powers,
+        "momentum_allow_order": p_powers,
         "use_lattice_spacing_dependence": use_a,
         "use_momentum_dependence": use_p,
         "pdep_gev": [float(value) for value in pdep_gev] if pdep_gev else [],
