@@ -830,6 +830,7 @@ def prepare_tool_args(
                 for key in (
                     "lattice_spacing_allow_order",
                     "momentum_allow_order",
+                    "fitting_param_xdep",
                     "pdep_gev",
                     "sample_error_mode",
                     "posterior_prior_error_scale",

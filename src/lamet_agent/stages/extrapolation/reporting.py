@@ -42,13 +42,19 @@ def write_extrapolation_stage_report(
         )
         a_orders = result.get("lattice_spacing_allow_order", [2])
         p_orders = result.get("momentum_allow_order", [2])
+        xdep = result.get("fitting_param_xdep", [True, True])
+        a_xdep = bool(xdep[0]) if xdep else True
+        p_xdep = bool(xdep[1]) if len(xdep) > 1 else True
         a_text = ",".join(str(int(value)) for value in a_orders)
         p_text = ",".join(str(int(value)) for value in p_orders)
+        ca_label = "c_{a,i}(x)" if a_xdep else "c_{a,i}"
+        cp_label = "c_{p,j}(x)" if p_xdep else "c_{p,j}"
         formula = (
-            rf"$h(x,p_z,a)=h(x,\infty,0)+\sum_{{i\in\{{{a_text}\}}}} c_{{a,i}}a^i"
-            rf"+\sum_{{j\in\{{{p_text}\}}}}\frac{{c_{{p,j}}}}{{p_z^j}}$"
+            rf"$h(x,p_z,a)=h(x,\infty,0)+\sum_{{i\in\{{{a_text}\}}}} {ca_label}a^i"
+            rf"+\sum_{{j\in\{{{p_text}\}}}}\frac{{{cp_label}}}{{p_z^j}}$"
         )
         pdep_text = ", ".join(f"{float(value):.2f}" for value in result.get("pdep_gev", [])) or "not set"
+        xdep_text = f"[{str(a_xdep).lower()}, {str(p_xdep).lower()}]"
         chi_text = f"{float(result.get('chi2_dof', 0.0)):.3g}"
         fit_columns: list[tuple[str, np.ndarray]] = []
         fit_x = np.asarray([], dtype=float)
@@ -95,6 +101,7 @@ def write_extrapolation_stage_report(
                     "|---|---|---|",
                     f"| `lattice_spacing_allow_order` | {a_orders} | 允许进入拟合的格距修正幂次；代码使用 $a^i$。 |",
                     f"| `momentum_allow_order` | {p_orders} | 允许进入拟合的有限动量修正幂次；代码使用 $1/p_z^j$。 |",
+                    f"| `fitting_param_xdep` | {xdep_text} | 第一个值控制 $c_{{a,i}}$ 是否依赖 $x$，第二个值控制 $c_{{p,j}}$ 是否依赖 $x$。 |",
                     f"| `pdep_gev` | {pdep_text} | 额外动量依赖图中指定的 $p_z$（GeV）取值；缺省时不生成 `extrapolate_pdep` 图。 |",
                     "",
                     "## 拟合模型参数表",
@@ -125,6 +132,7 @@ def write_extrapolation_stage_report(
                     "|---|---|---|",
                     f"| `lattice_spacing_allow_order` | {a_orders} | Allowed lattice-spacing correction powers; the code fits $a^i$ terms. |",
                     f"| `momentum_allow_order` | {p_orders} | Allowed finite-momentum correction powers; the code fits $1/p_z^j$ terms. |",
+                    f"| `fitting_param_xdep` | {xdep_text} | The first value controls whether $c_{{a,i}}$ depends on $x$; the second controls whether $c_{{p,j}}$ depends on $x$. |",
                     f"| `pdep_gev` | {pdep_text} | Requested $p_z$ values in GeV for the extra momentum-dependence figure; if unset, `extrapolate_pdep` is not generated. |",
                     "",
                     "## Fit Model Parameter Table",

@@ -112,12 +112,45 @@ def _fit_extrapolation_sample_batch(payload: bytes, sample_indices: list[int]) -
     return results
 
 
+def _fit_extrapolation_global_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[str, Any]]:
+    context = gv.loads(payload)
+    results: list[dict[str, Any]] = []
+    fit_samples = context["fit_samples"]
+    for isample in sample_indices:
+        values = context["samples"][:, isample, :].reshape(-1)
+        sample_y_data = sample_value_with_error(
+            values,
+            fit_samples,
+            mode=context["resample_mode"],
+            sample_error_mode=context["sample_error_mode"],
+        )
+        params, _pmean, _psdev, ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(
+            context["design"],
+            sample_y_data,
+            p0=context["mean_params"],
+            prior=context["sample_prior"],
+        )
+        results.append(
+            {
+                "sample": int(isample),
+                "params": params,
+                "success": bool(ok),
+                "chi2": float(chi2),
+                "dof": int(dof),
+                "q_value": float(q_value),
+                "log_gbf": float(log_gbf),
+            }
+        )
+    return results
+
+
 def run_extrapolation(
     store: dict[str, Any],
     *,
     lightcone: str = "lightcone",
     lattice_spacing_allow_order: list[int] | None = None,
     momentum_allow_order: list[int] | None = None,
+    fitting_param_xdep: list[bool] | None = None,
     pdep_gev: list[float] | None = None,
     sample_error_mode: str = "covariance",
     posterior_prior_error_scale: float = 3.0,
@@ -171,6 +204,9 @@ def run_extrapolation(
 
     lattice_spacing_allow_order = [2] if lattice_spacing_allow_order is None else [int(value) for value in lattice_spacing_allow_order]
     momentum_allow_order = [2] if momentum_allow_order is None else [int(value) for value in momentum_allow_order]
+    fitting_param_xdep = [True, True] if fitting_param_xdep is None else [bool(value) for value in fitting_param_xdep]
+    a_xdep = bool(fitting_param_xdep[0]) if fitting_param_xdep else True
+    p_xdep = bool(fitting_param_xdep[1]) if len(fitting_param_xdep) > 1 else True
     a_powers = lattice_spacing_allow_order if use_a else []
     p_powers = momentum_allow_order if use_p else []
     rows = []
@@ -196,31 +232,106 @@ def run_extrapolation(
     mean_fit_log_gbf = np.empty(len(x), dtype=float)
     sample_executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
     try:
-        x_iterator = range(len(x))
-        if len(x) > 1:
-            from tqdm import tqdm
+        if a_xdep and p_xdep:
+            x_iterator = range(len(x))
+            if len(x) > 1:
+                from tqdm import tqdm
 
-            x_iterator = tqdm(x_iterator, desc="extrapolation x fits", leave=False)
-        for ix in x_iterator:
-            fit_samples = samples[:, :, ix].T
+                x_iterator = tqdm(x_iterator, desc="extrapolation x fits", leave=False)
+            for ix in x_iterator:
+                fit_samples = samples[:, :, ix].T
+                mean, _sdev = sample_mean_and_sdev(fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
+                mean_y_data = sample_value_with_error(mean, fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
+                mean_params, mean_pmean, mean_psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(design, mean_y_data)
+                sample_prior = None
+                if mean_ok and mean_pmean is not None and mean_psdev is not None:
+                    sample_prior = _scaled_prior(mean_pmean, mean_psdev, posterior_prior_error_scale)
+                    mean_params, _pmean, _psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(
+                        design, mean_y_data, p0=mean_params, prior=sample_prior
+                    )
+                mean_fit_params[ix] = mean_params
+                mean_fit_chi2[ix] = chi2
+                mean_fit_dof[ix] = dof
+                mean_fit_q[ix] = q_value
+                mean_fit_log_gbf[ix] = log_gbf
+                payload = gv.dumps(
+                    {
+                        "design": design,
+                        "samples": samples[:, :, ix],
+                        "fit_samples": fit_samples,
+                        "resample_mode": inputs[0].resample,
+                        "sample_error_mode": sample_error_mode,
+                        "mean_params": mean_params,
+                        "sample_prior": sample_prior,
+                    }
+                )
+                batches = _sample_batches(n_sample, workers)
+                if sample_executor is None:
+                    sample_results = _fit_extrapolation_sample_batch(payload, batches[0])
+                else:
+                    futures = [sample_executor.submit(_fit_extrapolation_sample_batch, payload, batch) for batch in batches]
+                    sample_results = [item for future in futures for item in future.result()]
+                for item in sorted(sample_results, key=lambda value: value["sample"]):
+                    isample = int(item["sample"])
+                    params = np.asarray(item["params"], dtype=float)
+                    chi2 = float(item["chi2"])
+                    dof = int(item["dof"])
+                    q_value = float(item["q_value"])
+                    log_gbf = float(item["log_gbf"])
+                    if not item["success"]:
+                        params = mean_params
+                        chi2 = mean_fit_chi2[ix]
+                        dof = mean_fit_dof[ix]
+                        q_value = mean_fit_q[ix]
+                        log_gbf = mean_fit_log_gbf[ix]
+                    coeff_samples[isample, :, ix] = params
+                    fit_chi2[isample, ix] = chi2
+                    fit_dof[isample, ix] = dof
+                    fit_q[isample, ix] = q_value
+                    fit_log_gbf[isample, ix] = log_gbf
+        else:
+            n_input = len(inputs)
+            internal_labels = [("h0", None, ix) for ix in range(len(x))]
+            internal_labels.extend(("a", index, ix if a_xdep else None) for index in range(len(a_powers)) for ix in (range(len(x)) if a_xdep else [None]))
+            internal_labels.extend(("p", index, ix if p_xdep else None) for index in range(len(p_powers)) for ix in (range(len(x)) if p_xdep else [None]))
+            global_design = np.zeros((n_input * len(x), len(internal_labels)), dtype=float)
+            for input_index in range(n_input):
+                for ix in range(len(x)):
+                    row_index = input_index * len(x) + ix
+                    for column, (kind, power_index, x_index) in enumerate(internal_labels):
+                        if kind == "h0":
+                            global_design[row_index, column] = 1.0 if x_index == ix else 0.0
+                        elif kind == "a" and (x_index is None or x_index == ix):
+                            global_design[row_index, column] = design[input_index, 1 + int(power_index)]
+                        elif kind == "p" and (x_index is None or x_index == ix):
+                            global_design[row_index, column] = design[input_index, 1 + len(a_powers) + int(power_index)]
+            fit_samples = np.moveaxis(samples, 1, 0).reshape(n_sample, -1)
             mean, _sdev = sample_mean_and_sdev(fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
             mean_y_data = sample_value_with_error(mean, fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
-            mean_params, mean_pmean, mean_psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(design, mean_y_data)
+            mean_params, mean_pmean, mean_psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(global_design, mean_y_data)
             sample_prior = None
             if mean_ok and mean_pmean is not None and mean_psdev is not None:
                 sample_prior = _scaled_prior(mean_pmean, mean_psdev, posterior_prior_error_scale)
                 mean_params, _pmean, _psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(
-                    design, mean_y_data, p0=mean_params, prior=sample_prior
+                    global_design, mean_y_data, p0=mean_params, prior=sample_prior
                 )
-            mean_fit_params[ix] = mean_params
-            mean_fit_chi2[ix] = chi2
-            mean_fit_dof[ix] = dof
-            mean_fit_q[ix] = q_value
-            mean_fit_log_gbf[ix] = log_gbf
+            for ix in range(len(x)):
+                external = [mean_params[ix]]
+                for index in range(len(a_powers)):
+                    target = ("a", index, ix if a_xdep else None)
+                    external.append(mean_params[internal_labels.index(target)])
+                for index in range(len(p_powers)):
+                    target = ("p", index, ix if p_xdep else None)
+                    external.append(mean_params[internal_labels.index(target)])
+                mean_fit_params[ix] = np.asarray(external, dtype=float)
+                mean_fit_chi2[ix] = chi2
+                mean_fit_dof[ix] = dof
+                mean_fit_q[ix] = q_value
+                mean_fit_log_gbf[ix] = log_gbf
             payload = gv.dumps(
                 {
-                    "design": design,
-                    "samples": samples[:, :, ix],
+                    "design": global_design,
+                    "samples": samples,
                     "fit_samples": fit_samples,
                     "resample_mode": inputs[0].resample,
                     "sample_error_mode": sample_error_mode,
@@ -230,28 +341,26 @@ def run_extrapolation(
             )
             batches = _sample_batches(n_sample, workers)
             if sample_executor is None:
-                sample_results = _fit_extrapolation_sample_batch(payload, batches[0])
+                sample_results = _fit_extrapolation_global_sample_batch(payload, batches[0])
             else:
-                futures = [sample_executor.submit(_fit_extrapolation_sample_batch, payload, batch) for batch in batches]
+                futures = [sample_executor.submit(_fit_extrapolation_global_sample_batch, payload, batch) for batch in batches]
                 sample_results = [item for future in futures for item in future.result()]
             for item in sorted(sample_results, key=lambda value: value["sample"]):
                 isample = int(item["sample"])
                 params = np.asarray(item["params"], dtype=float)
-                chi2 = float(item["chi2"])
-                dof = int(item["dof"])
-                q_value = float(item["q_value"])
-                log_gbf = float(item["log_gbf"])
                 if not item["success"]:
                     params = mean_params
-                    chi2 = mean_fit_chi2[ix]
-                    dof = mean_fit_dof[ix]
-                    q_value = mean_fit_q[ix]
-                    log_gbf = mean_fit_log_gbf[ix]
-                coeff_samples[isample, :, ix] = params
-                fit_chi2[isample, ix] = chi2
-                fit_dof[isample, ix] = dof
-                fit_q[isample, ix] = q_value
-                fit_log_gbf[isample, ix] = log_gbf
+                for ix in range(len(x)):
+                    external = [params[ix]]
+                    for index in range(len(a_powers)):
+                        external.append(params[internal_labels.index(("a", index, ix if a_xdep else None))])
+                    for index in range(len(p_powers)):
+                        external.append(params[internal_labels.index(("p", index, ix if p_xdep else None))])
+                    coeff_samples[isample, :, ix] = np.asarray(external, dtype=float)
+                    fit_chi2[isample, ix] = float(item["chi2"]) if item["success"] else mean_fit_chi2[ix]
+                    fit_dof[isample, ix] = int(item["dof"]) if item["success"] else mean_fit_dof[ix]
+                    fit_q[isample, ix] = float(item["q_value"]) if item["success"] else mean_fit_q[ix]
+                    fit_log_gbf[isample, ix] = float(item["log_gbf"]) if item["success"] else mean_fit_log_gbf[ix]
     finally:
         if sample_executor is not None:
             sample_executor.shutdown()
@@ -261,16 +370,19 @@ def run_extrapolation(
     chi2_dof = float(np.mean(mean_fit_chi2 / np.maximum(mean_fit_dof, 1)))
     chi2_dof_min = float(np.min(finite_fit_chi2_dof)) if finite_fit_chi2_dof.size else float("nan")
     chi2_dof_max = float(np.max(finite_fit_chi2_dof)) if finite_fit_chi2_dof.size else float("nan")
+    ca_label = "c_a_i(x)" if a_xdep else "c_a_i"
+    cp_label = "c_p_j(x)" if p_xdep else "c_p_j"
 
     attrs = {
         "mode": mode,
-        "model": "h(x,Pz,a)=h0(x)+sum_i c_a_i a^i+sum_j c_p_j/Pz^j",
+        "model": f"h(x,Pz,a)=h0(x)+sum_i {ca_label} a^i+sum_j {cp_label}/Pz^j",
         "fit_chi2_dof_mean": str(chi2_dof),
         "fit_chi2_dof_min": str(chi2_dof_min),
         "fit_chi2_dof_max": str(chi2_dof_max),
         "fit_chi2_dof_source": "sample_level_fits",
         "lattice_spacing_allow_order": json.dumps(a_powers),
         "momentum_allow_order": json.dumps(p_powers),
+        "fitting_param_xdep": json.dumps([a_xdep, p_xdep]),
         "input_jobs": ",".join(str(data.attrs.get("job_id", "")) for data in inputs),
         "input_ensembles": ",".join(str(data.attrs.get("ensemble") or (data.ensemble.id if data.ensemble else "")) for data in inputs),
         "input_momenta_gev": ",".join(f"{float(data.attrs['momentum_gev']):.12g}" for data in inputs),
@@ -431,6 +543,7 @@ def run_extrapolation(
         "chi2_dof_source": "sample_level_fits",
         "lattice_spacing_allow_order": a_powers,
         "momentum_allow_order": p_powers,
+        "fitting_param_xdep": [a_xdep, p_xdep],
         "use_lattice_spacing_dependence": use_a,
         "use_momentum_dependence": use_p,
         "pdep_gev": [float(value) for value in pdep_gev] if pdep_gev else [],

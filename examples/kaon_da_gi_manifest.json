@@ -511,6 +511,7 @@
       "defaults": {
         "lattice_spacing_allow_order": [2],
         "momentum_allow_order": [2],
+        "fitting_param_xdep": [true, true],
         "pdep_gev": [1.5, 2.0, 2.5]
       },
       "jobs": [

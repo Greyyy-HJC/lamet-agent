@@ -175,7 +175,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                 },
                 "extrapolation": {
                     "required": {"inputs": {"lightcone": ["matching_job_1", "matching_job_2"]}},
-                    "defaults": {"lattice_spacing_allow_order": [2], "momentum_allow_order": [2], "pdep_gev": [1.5, 2.0, 2.5]},
+                    "defaults": {"lattice_spacing_allow_order": [2], "momentum_allow_order": [2], "fitting_param_xdep": [true, true], "pdep_gev": [1.5, 2.0, 2.5]},
                 },
                 "review": {"required": "none"},
             },

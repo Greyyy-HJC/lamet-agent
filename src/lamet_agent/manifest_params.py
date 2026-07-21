@@ -198,6 +198,7 @@ STAGE_PARAM_CONTRACTS = {
         schema={
             "lattice_spacing_allow_order": None,
             "momentum_allow_order": None,
+            "fitting_param_xdep": None,
             "posterior_prior_error_scale": None,
             "pdep_gev": None,
             "sample_error_mode": None,

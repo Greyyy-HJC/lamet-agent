@@ -1074,6 +1074,7 @@ def test_extrapolation_tool_args_use_allow_order_lists(tmp_path: Path) -> None:
                     "defaults": {
                         "lattice_spacing_allow_order": [1, 2],
                         "momentum_allow_order": [2, 4],
+                        "fitting_param_xdep": [False, True],
                         "pdep_gev": [1.5, 2.0],
                     },
                     "jobs": [{"id": "extrapolate_all", "inputs": {"lightcone": ["mt1", "mt2"]}}],
@@ -1094,6 +1095,7 @@ def test_extrapolation_tool_args_use_allow_order_lists(tmp_path: Path) -> None:
     )
     assert args["lattice_spacing_allow_order"] == [1, 2]
     assert args["momentum_allow_order"] == [2, 4]
+    assert args["fitting_param_xdep"] == [False, True]
     assert args["workers"] == 4
 
 
