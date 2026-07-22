@@ -1072,9 +1072,10 @@ def test_extrapolation_tool_args_use_allow_order_lists(tmp_path: Path) -> None:
             "stages": {
                 "extrapolation": {
                     "defaults": {
-                        "lattice_spacing_allow_order": [1, 2],
-                        "momentum_allow_order": [2, 4],
-                        "fitting_param_xdep": [False, True],
+                        "allow_order_a": [1, 2],
+                        "allow_order_1overp": [2, 4],
+                        "allow_order_ap": [2],
+                        "fitting_param_xdep": [False, True, True],
                         "pdep_gev": [1.5, 2.0],
                     },
                     "jobs": [{"id": "extrapolate_all", "inputs": {"lightcone": ["mt1", "mt2"]}}],
@@ -1093,9 +1094,10 @@ def test_extrapolation_tool_args_use_allow_order_lists(tmp_path: Path) -> None:
         artifacts_dir=tmp_path,
         store={},
     )
-    assert args["lattice_spacing_allow_order"] == [1, 2]
-    assert args["momentum_allow_order"] == [2, 4]
-    assert args["fitting_param_xdep"] == [False, True]
+    assert args["allow_order_a"] == [1, 2]
+    assert args["allow_order_1overp"] == [2, 4]
+    assert args["allow_order_ap"] == [2]
+    assert args["fitting_param_xdep"] == [False, True, True]
     assert args["workers"] == 4
 
 

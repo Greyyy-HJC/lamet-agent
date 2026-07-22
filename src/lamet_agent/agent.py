@@ -785,6 +785,8 @@ def run_agent(
                                 "fit_info_artifact": result.get("fit_info_artifact"),
                                 "extrapolated_plot": result.get("plot"),
                                 "extrapolated_plot_image": result.get("plot_image"),
+                                "chi2_xdep_plot": result.get("chi2_xdep_plot"),
+                                "chi2_xdep_plot_image": result.get("chi2_xdep_plot_image"),
                                 "adep_plot": result.get("adep_plot"),
                                 "adep_plot_image": result.get("adep_plot_image"),
                                 "pdep_plot": result.get("pdep_plot"),
