@@ -65,16 +65,25 @@ from lamet_agent.kernels import (
     CG_gzg5_quark_PDF_hybrid_NLO,
     CG_gzg5_quark_PDF_msbar_NLO,
     CG_gzg5_quark_PDF_ratio_NLO,
+    GI_gt_quark_PDF_hybrid_LRR_NLO,
     GI_gt_quark_PDF_hybrid_NLO,
     GI_gt_quark_PDF_ratio_NLO,
-    GI_gtgpg5_quark_PDF_hybrid_NLO,
-    GI_gtgpg5_quark_PDF_ratio_NLO,
+    GI_gtg5_DA_hybrid_LRR_NLO,
+    GI_gtg5_DA_hybrid_NLO,
+    GI_gtg5_DA_ratio_NLO,
+    GI_gtg5_quark_PDF_hybrid_LRR_NLO,
     GI_gtg5_quark_PDF_hybrid_NLO,
     GI_gtg5_quark_PDF_ratio_NLO,
+    GI_gtgpg5_quark_PDF_hybrid_LRR_NLO,
+    GI_gtgpg5_quark_PDF_hybrid_NLO,
+    GI_gtgpg5_quark_PDF_ratio_NLO,
+    GI_gz_quark_PDF_hybrid_LRR_NLO,
     GI_gz_quark_PDF_hybrid_NLO,
     GI_gz_quark_PDF_ratio_NLO,
+    GI_gzg5_DA_hybrid_LRR_NLO,
     GI_gzg5_DA_hybrid_NLO,
     GI_gzg5_DA_ratio_NLO,
+    GI_gzg5_quark_PDF_hybrid_LRR_NLO,
     GI_gzg5_quark_PDF_hybrid_NLO,
     GI_gzg5_quark_PDF_ratio_NLO,
 )
@@ -144,6 +153,18 @@ KERNEL_REGISTRY: dict[str, Callable[..., np.ndarray]] = {
     # genuine V(x, y), not a function of x/y -- see the DA section of kernels.py.
     "GI_gzg5_DA_ratio_NLO": GI_gzg5_DA_ratio_NLO,
     "GI_gzg5_DA_hybrid_NLO": GI_gzg5_DA_hybrid_NLO,
+    "GI_gtg5_DA_ratio_NLO": GI_gtg5_DA_ratio_NLO,
+    "GI_gtg5_DA_hybrid_NLO": GI_gtg5_DA_hybrid_NLO,
+    # gauge-invariant hybrid kernels with the leading Wilson-line renormalon resummed to
+    # all orders (arXiv:2305.05212). Each wraps the same-operator fixed-order hybrid builder,
+    # so the renormalon extends to every GI hybrid operator (PDF, transversity, meson DA).
+    "GI_gt_quark_PDF_hybrid_LRR_NLO": GI_gt_quark_PDF_hybrid_LRR_NLO,
+    "GI_gtg5_quark_PDF_hybrid_LRR_NLO": GI_gtg5_quark_PDF_hybrid_LRR_NLO,
+    "GI_gz_quark_PDF_hybrid_LRR_NLO": GI_gz_quark_PDF_hybrid_LRR_NLO,
+    "GI_gzg5_quark_PDF_hybrid_LRR_NLO": GI_gzg5_quark_PDF_hybrid_LRR_NLO,
+    "GI_gtgpg5_quark_PDF_hybrid_LRR_NLO": GI_gtgpg5_quark_PDF_hybrid_LRR_NLO,
+    "GI_gtg5_DA_hybrid_LRR_NLO": GI_gtg5_DA_hybrid_LRR_NLO,
+    "GI_gzg5_DA_hybrid_LRR_NLO": GI_gzg5_DA_hybrid_LRR_NLO,
 }
 
 
