@@ -418,7 +418,27 @@ def _pdf_log_scale(y: float, momentum_gev: float, mu: float) -> float:
     return float(np.log(4.0 * y**2 * momentum_gev**2 / mu**2))
 
 
-# --- PDF discretization: unpol_matching's ksi-integral plus prescription ------
+def _pdf_density(coeff: CoeffFn, momentum_gev: float, mu: float) -> DensityFn:
+    """Wrap a PDF coefficient ``coeff(ksi, L, y)`` into the ``density(x, y)`` the
+    discretization consumes: evaluate it at ksi = x/y and divide by |y| (the dy/|y|
+    measure of the PDF factorization formula).
+
+    Used by the ratio / hybrid PDF kernels, which go through the column-sum
+    ``build_matching_matrix`` (2nd-order accurate, smooth on the run grid). Only the
+    MSbar kernels take the ``_build_pdf_matrix`` ksi-integral path below, whose
+    ``int_0^2`` plus counterterm they genuinely need.
+    """
+
+    def density(x: float, y: float) -> float:
+        return coeff(x / y, _pdf_log_scale(y, momentum_gev, mu), y) / np.abs(y)
+
+    return density
+
+
+# --- PDF MSbar discretization: unpol_matching's ksi-integral plus prescription ---
+# Only the MSbar kernels use this path (the ratio / hybrid kernels use the column-sum
+# build_matching_matrix, which is 2nd-order accurate and stays smooth -- the ksi-integral
+# below is only 1st-order and adds grid-scale noise to the Wilson-line hybrid term).
 # The PDF kernels use a frozen-at-delta-point ksi-integral for the plus subtraction
 # (not build_matching_matrix's column-sum): each x row's delta carries
 # ``diagonal_extra(L(x)) - int d(ksi) plus_coeff(ksi, L(x), x)``, the integral summed
@@ -638,9 +658,9 @@ def CG_gt_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel ``C_r`` for the Coulomb-gauge ``gamma^t`` PDF (Eq. 2.16)."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-    return _build_pdf_matrix(
-        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
-        coeff=lambda ksi, log_scale, y: C_ratio(ksi, log_scale, eps),
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
@@ -682,9 +702,9 @@ def CG_gt_quark_PDF_hybrid_NLO(
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid matching kernel.")
     z = float(zspz)
-    return _build_pdf_matrix(
-        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
-        coeff=lambda ksi, log_scale, y: C_hybrid(ksi, log_scale, y, z, eps),
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid(ksi, log_scale, y, z, eps), momentum_gev, mu),
     )
 
 
@@ -847,9 +867,9 @@ def CG_gtgpg5_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the Coulomb-gauge transversity ``gamma^t gamma_perp gamma5`` PDF (Eq. 2.18)."""
     del zspz  # transversity has no Wilson-line scale at NLO (Eq. 2.21).
-    return _build_pdf_matrix(
-        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
-        coeff=lambda ksi, log_scale, y: C_ratio_perp(ksi, log_scale, eps),
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_perp(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
@@ -1035,9 +1055,9 @@ def GI_gt_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the gauge-invariant ``gamma^t`` PDF (Eq. 23)."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-    return _build_pdf_matrix(
-        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
-        coeff=lambda ksi, log_scale, y: C_ratio_gi(ksi, log_scale, eps),
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
@@ -1057,9 +1077,9 @@ def GI_gt_quark_PDF_hybrid_NLO(
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid matching kernel.")
     z = float(zspz)
-    return _build_pdf_matrix(
-        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
-        coeff=lambda ksi, log_scale, y: C_hybrid_gi(ksi, log_scale, y, z, eps),
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi(ksi, log_scale, y, z, eps), momentum_gev, mu),
     )
 
 
@@ -1106,9 +1126,9 @@ def GI_gz_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the gauge-invariant ``gamma^z`` PDF (Eq. C7)."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-    return _build_pdf_matrix(
-        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
-        coeff=lambda ksi, log_scale, y: C_ratio_gi_gz(ksi, log_scale, eps),
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_gz(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
@@ -1129,9 +1149,9 @@ def GI_gz_quark_PDF_hybrid_NLO(
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid matching kernel.")
     z = float(zspz)
-    return _build_pdf_matrix(
-        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
-        coeff=lambda ksi, log_scale, y: C_hybrid_gi_gz(ksi, log_scale, y, z, eps),
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi_gz(ksi, log_scale, y, z, eps), momentum_gev, mu),
     )
 
 
@@ -1178,9 +1198,9 @@ def GI_gtgpg5_quark_PDF_ratio_NLO(
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the GI transversity ``gamma^t gamma_perp gamma5`` PDF (Eq. 22)."""
     del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
-    return _build_pdf_matrix(
-        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
-        coeff=lambda ksi, log_scale, y: C_ratio_gi_perp(ksi, log_scale, eps),
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_perp(ksi, log_scale, eps), momentum_gev, mu),
     )
 
 
@@ -1200,9 +1220,9 @@ def GI_gtgpg5_quark_PDF_hybrid_NLO(
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid matching kernel.")
     z = float(zspz)
-    return _build_pdf_matrix(
-        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
-        coeff=lambda ksi, log_scale, y: C_hybrid_gi_perp(ksi, log_scale, y, z, eps),
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gi_perp(ksi, log_scale, y, z, eps), momentum_gev, mu),
     )
 
 
