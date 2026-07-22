@@ -566,9 +566,13 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
         configured_stages = metadata.get("stages", []) if isinstance(metadata, dict) else []
         configured_stage_list = [stage for stage in configured_stages if isinstance(stage, str)] if isinstance(configured_stages, list) else []
         stage_parameter_gaps = _stage_parameter_gaps(state.candidate_payload)
+        manifest = copy.deepcopy(state.candidate_payload)
+        for correlator in manifest.get("inputs", {}).get("correlators", []):
+            if isinstance(correlator, dict):
+                correlator.pop("plan_generated", None)
         return {
             "tool_name": tool_name,
-            "manifest": state.candidate_payload,
+            "manifest": manifest,
             "quick_manifest_path": str(quick_path),
             "full_manifest_path": str(full_path),
             "canonical_stage_flow": canonical_stages,

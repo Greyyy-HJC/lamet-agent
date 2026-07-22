@@ -171,7 +171,7 @@ def load_relaxed_manifest(path: Path) -> tuple[dict[str, Any], str]:
 
 def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     """Build a sparse plan-only manifest draft from a free-form text request."""
-    paths = [
+    raw_paths = [
         token.strip("'\"`,;:()[]{}")
         for token in re.findall(r"(?:~|/|\.{1,2}/)?[^\s'\"`]+?\.(?:h5|hdf5|npy|npz)", text, flags=re.I)
     ]
@@ -182,6 +182,23 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     parton = "gluon" if "gluon" in lowered else "quark"
     correlators: list[dict[str, Any]] = []
     current_sources: list[dict[str, Any]] = []
+    paths: list[str] = []
+    for raw_path in raw_paths:
+        raw_lower = raw_path.lower()
+        if "{mom}" in raw_lower or "{tsep}" in raw_lower:
+            resolved = Path(raw_path).expanduser()
+            if not resolved.is_absolute():
+                resolved = (path.parent / resolved).resolve()
+            pattern = resolved.name.replace("{mom}", "*").replace("{tsep}", "*")
+            paths.extend(str(item) for item in sorted(resolved.parent.glob(pattern)))
+        else:
+            paths.append(raw_path)
+    seen_data_paths: set[str] = set()
+    ensemble = "HISQa060_X" if "a060_x" in lowered else "planned"
+    hadron = "pion" if "pion" in lowered else "hadron"
+    gfix = "CG" if "coulomb" in lowered or "coulomb-gauge" in lowered or "cg" in lowered else "unknown"
+    lattice_spacing_fm = 0.0574 if "a060" in lowered else 1.0
+    volume = "S48T64" if "a060" in lowered else "S1T1"
     for index, raw_path in enumerate(paths):
         token = raw_path.lower()
         is_current = "current" in token or "insertion" in token
@@ -194,24 +211,66 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             data_path = str(resolved.relative_to(root))
         except ValueError:
             data_path = str(resolved)
+        if data_path in seen_data_paths:
+            continue
+        seen_data_paths.add(data_path)
         if is_current:
             current_sources.append({"source_id": f"current_{index}", "data_path": data_path})
             continue
+        parsed = re.search(r"_p(?P<mom>[^_]+)_(?P<kind>[23]pt)(?:_ts(?P<tsep>\d+))?$", resolved.stem)
+        mom = parsed.group("mom") if parsed else "0"
+        momentum = mom if mom.startswith("PX") else f"PX{mom}PY0PZ0"
+        if kind == "3pt":
+            companion = resolved.with_name(resolved.stem.split("_3pt_ts", 1)[0] + "_2pt" + resolved.suffix)
+            if companion.exists():
+                try:
+                    companion_data_path = str(companion.relative_to(root))
+                except ValueError:
+                    companion_data_path = str(companion)
+                if companion_data_path not in seen_data_paths:
+                    seen_data_paths.add(companion_data_path)
+                    correlators.append(
+                        {
+                            "correlator_id": companion.stem,
+                            "correlator_type": "2pt",
+                            "data_path": companion_data_path,
+                            "ensemble": ensemble,
+                            "hadron": hadron,
+                            "gfix": gfix,
+                            "source_operator": "source",
+                            "sink_operator": "sink",
+                            "volume": volume,
+                            "momentum": [momentum],
+                            "lattice_spacing_fm": lattice_spacing_fm,
+                            "plan_generated": True,
+                        }
+                    )
         correlator = {
-            "correlator_id": f"{label}_{index}",
+            "correlator_id": resolved.stem if resolved.exists() else f"{label}_{index}",
             "correlator_type": kind,
             "data_path": data_path,
-            "ensemble": "planned",
-            "hadron": "hadron",
-            "gfix": "unknown",
+            "ensemble": ensemble,
+            "hadron": hadron,
+            "gfix": gfix,
             "source_operator": "source",
             "sink_operator": "sink",
-            "volume": "S1T1",
-            "momentum": ["PX0PY0PZ0"],
-            "lattice_spacing_fm": 1.0,
+            "volume": volume,
+            "momentum": [momentum],
+            "lattice_spacing_fm": lattice_spacing_fm,
+            "plan_generated": True,
         }
         if kind == "3pt":
             correlator["current_operator"] = "current"
+            correlator["tsep"] = [int(parsed.group("tsep"))] if parsed and parsed.group("tsep") else [1]
+            correlator["bT"] = [0]
+            if resolved.exists() and resolved.suffix.lower() == ".npy":
+                import numpy as np
+
+                shape = np.load(resolved, mmap_mode="r").shape
+                correlator["bz"] = list(range(int(shape[0]))) if len(shape) >= 3 else [0]
+            else:
+                correlator["bz"] = [0]
+            correlator["bz_direction"] = "X" if "_x_" in token or "x" in lowered else "Z"
         correlators.append(correlator)
     two_point = next((item for item in correlators if item.get("correlator_type") == "2pt"), None)
     if two_point is not None and current_sources:
@@ -237,6 +296,9 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             }
         )
     stages = ["correlator_analysis"] if correlators else []
+    for stage in ("renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"):
+        if stage in lowered and stage not in stages:
+            stages.append(stage)
     payload: dict[str, Any] = {
         "metadata": {
             "run_id": run_id,
@@ -252,10 +314,40 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         "stages": {},
     }
     if correlators:
+        jobs_by_momentum: dict[str, list[str]] = {}
+        for item in correlators:
+            momentum = str(_as_list(item.get("momentum"))[0])
+            jobs_by_momentum.setdefault(momentum, []).append(str(item["correlator_id"]))
         payload["stages"]["correlator_analysis"] = {
             "defaults": {"fit_scope": ["3pt_ratio"] if any(item["correlator_type"] == "3pt" for item in correlators) else ["2pt"]},
-            "jobs": [{"id": "ca_planned", "correlator_ids": [item["correlator_id"] for item in correlators], "params": {"momentum": "PX0PY0PZ0"}}],
+            "jobs": [
+                {"id": f"ca_p{re.search(r'PX([^P]+)PY', momentum).group(1) if re.search(r'PX([^P]+)PY', momentum) else index}", "correlator_ids": ids, "params": {"momentum": momentum}}
+                for index, (momentum, ids) in enumerate(sorted(jobs_by_momentum.items()))
+            ],
         }
+    if "renormalization" in stages:
+        ca_jobs = payload["stages"]["correlator_analysis"]["jobs"]
+        denominator = next((job["id"] for job in ca_jobs if job["params"].get("momentum") == "PX0PY0PZ0"), ca_jobs[0]["id"])
+        nonzero_jobs = [job for job in ca_jobs if job["id"] != denominator]
+        payload["stages"]["renormalization"] = {
+            "defaults": {"scheme": "hybrid_ratio", "zs_fm": 3.0 * lattice_spacing_fm},
+            "jobs": [{"id": job["id"].replace("ca_", "rn_"), "inputs": {"target": job["id"], "denominator": denominator}} for job in nonzero_jobs],
+        }
+    if "fourier_transform" in stages:
+        rn_jobs = payload["stages"].get("renormalization", {}).get("jobs", [])
+        payload["stages"]["fourier_transform"] = {
+            "defaults": {"order": ["LA", "NLA"], "coord_unit": "lattice", "sector": "valence", "y_grid": {"start": -2.0, "stop": 2.0, "num": 100}, "scheme_scan": {"model_average": True}},
+            "jobs": [{"id": job["id"].replace("rn_", "ft_"), "inputs": {"input": job["id"]}} for job in rn_jobs],
+        }
+    if "perturbative_matching" in stages:
+        ft_jobs = payload["stages"].get("fourier_transform", {}).get("jobs", [])
+        payload["inputs"]["kernels"] = [{"stage": "perturbative_matching", "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "kernel_path": str(Path(__file__).resolve().parents[1] / "kernels.py"), "scheme": "hybrid_ratio"}]
+        payload["stages"]["perturbative_matching"] = {
+            "defaults": {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "mu": 2.0, "component": "re", "zs_fm": 3.0 * lattice_spacing_fm},
+            "jobs": [{"id": job["id"].replace("ft_", "mt_"), "inputs": {"quasi": job["id"]}} for job in ft_jobs],
+        }
+    if "review" in stages:
+        payload["stages"]["review"] = {"defaults": {}, "jobs": [{"id": "review"}]}
     return payload
 
 
@@ -640,6 +732,7 @@ def _update_conversion_paths(payload: dict[str, Any], conversions: list[Correlat
         old = correlator.get("data_path")
         correlator["data_path"] = new_path
         correlator.pop("plan_sources", None)
+        correlator.pop("plan_generated", None)
         edits.append({"path": f"inputs.correlators[{index}].data_path", "old": old, "new": new_path})
     return edits
 

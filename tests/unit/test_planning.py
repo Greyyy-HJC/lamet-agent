@@ -732,6 +732,58 @@ def test_text_plan_composes_2pt_current_into_standard_3pt_h5(tmp_path: Path) -> 
     )
 
 
+def test_text_plan_expands_momentum_tsep_npy_template_into_standard_h5(tmp_path: Path) -> None:
+    pytest.importorskip("h5py")
+    inputs = tmp_path / "npy_inputs"
+    inputs.mkdir()
+    np.save(inputs / "a060_x_p0_2pt.npy", np.ones((64, 5), dtype=np.complex128))
+    np.save(inputs / "a060_x_p5_2pt.npy", np.ones((64, 5), dtype=np.complex128) * 2)
+    for mom in (0, 5):
+        for tsep in (8, 10):
+            np.save(inputs / f"a060_x_p{mom}_3pt_ts{tsep}.npy", np.ones((3, tsep + 1, 5), dtype=np.complex128) * (mom + tsep))
+    request = tmp_path / "CGPDF.txt"
+    request.write_text(
+        "Analyze a coulomb-gauge fixing pion quark PDF workflow from two-point npy file and three-point npy file.\n"
+        f"The two-point correlator file is {inputs / 'a060_x_p0_2pt.npy'}.\n"
+        f"The three-point correlator file is {inputs}/a060_x_p{{mom}}_3pt_ts{{tsep}}.npy, where mom means the momentum and tsep means t-separation.\n"
+        "Correlator_analysis, hybrid-ratio renormalization, fourier_transform, perturbative_matching and review are required for the manifest draft.\n",
+        encoding="utf-8",
+    )
+
+    payload, _raw = load_relaxed_manifest(request)
+    correlators = payload["inputs"]["correlators"]
+    assert payload["metadata"]["stages"] == ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "review"]
+    assert {item["correlator_id"] for item in correlators} == {
+        "a060_x_p0_2pt",
+        "a060_x_p5_2pt",
+        "a060_x_p0_3pt_ts8",
+        "a060_x_p0_3pt_ts10",
+        "a060_x_p5_3pt_ts8",
+        "a060_x_p5_3pt_ts10",
+    }
+    conversions = plan_correlator_h5_conversions(request, payload)
+    assert len(conversions) == 6
+    assert all(not item.ambiguous for item in conversions)
+    three_point = next(item for item in conversions if item.correlator_id == "a060_x_p5_3pt_ts10")
+    assert len(three_point.datasets) == 3
+
+    convert_correlator_h5(three_point)
+
+    assert np.array_equal(
+        _read_3pt(
+            three_point.output_file,
+            source_operator="source",
+            sink_operator="sink",
+            current_operator="current",
+            momentum="PX5PY0PZ0",
+            bT=0,
+            bz=2,
+            tsep=10,
+        ),
+        (np.ones((11, 5), dtype=np.complex128) * 15).T,
+    )
+
+
 def test_correlator_conversion_mapping_rejects_bad_shapes_and_targets(tmp_path: Path) -> None:
     pytest.importorskip("h5py")
     root = tmp_path / "repo"

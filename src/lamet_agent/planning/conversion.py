@@ -282,10 +282,21 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
             if suffix in {".h5", ".hdf5"}:
                 datasets, ambiguous, reason = _choose_source_datasets(item, source)
             elif suffix == ".npy":
-                if len(targets) == 1 and names.get("array"):
+                array_shape = names.get("array")
+                plan_generated = bool(item.get("plan_generated"))
+                if plan_generated and item.get("correlator_type") == "3pt" and array_shape and len(array_shape) == 3 and len(targets) == array_shape[0]:
+                    datasets = [
+                        {"source": "array", "target": target, "index": {0: index}, "transpose": False}
+                        for index, target in enumerate(targets)
+                    ]
+                    ambiguous, reason = False, None
+                elif len(targets) == 1 and array_shape:
                     if item.get("correlator_type") == "2pt":
-                        datasets = [{"source": "array", "target": targets[0], "transpose": False}]
-                        ambiguous = str(item.get("ensemble")) != "planned"
+                        lt_match = re.search(r"T(\d+)", str(item.get("volume", "")))
+                        lt = int(lt_match.group(1)) if lt_match else None
+                        transpose = bool(lt and len(array_shape) == 2 and array_shape[1] == lt and array_shape[0] != lt)
+                        datasets = [{"source": "array", "target": targets[0], "transpose": transpose}]
+                        ambiguous = not (plan_generated and lt and len(array_shape) == 2 and lt in array_shape)
                         reason = None if not ambiguous else (
                             "NumPy 2pt input requires explicit confirmation of cfg and time axes, momentum selection, and whether transpose is needed. "
                             f"Available array: {_source_summary(names)}. Expected standard target: {targets[0]}."
@@ -304,6 +315,20 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
                 available = set(names)
                 if targets and all(target in available for target in targets):
                     datasets, ambiguous, reason = [{"source": target, "target": target, "transpose": False} for target in targets], False, None
+                elif item.get("plan_generated") and item.get("correlator_type") == "3pt" and len(names) == 1:
+                    source_name = next(iter(names))
+                    shape = names[source_name]
+                    if len(shape) == 3 and len(targets) == shape[0]:
+                        datasets = [
+                            {"source": source_name, "target": target, "index": {0: index}, "transpose": False}
+                            for index, target in enumerate(targets)
+                        ]
+                        ambiguous, reason = False, None
+                    else:
+                        datasets, ambiguous, reason = [], True, (
+                            "NPZ 3pt input requires a single array with shape (bz, tau, cfg). "
+                            f"Available arrays: {_source_summary(names)}. Expected standard targets: {targets}."
+                        )
                 elif len(targets) == 1 and len(names) == 1:
                     source_name = next(iter(names))
                     datasets, ambiguous, reason = [{"source": source_name, "target": targets[0], "transpose": False}], True, (
