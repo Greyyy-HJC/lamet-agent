@@ -1221,6 +1221,7 @@ def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, mon
 
     monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", lambda stage: {"fit_bare_matrix_grid": fake_fit_bare_matrix_grid})
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
+    monkeypatch.setattr("lamet_agent.stages.correlator.reporting.translate_markdown_report", lambda markdown, **kwargs: "# translated correlator report\n\nca_p4.nc")
 
     result = run_agent(manifest, backend="external", actions_path=transcript, report_language="ch")
 
@@ -1228,9 +1229,9 @@ def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, mon
     assert report_path.exists()
     assert report_path.name == "ca_report_CN.md"
     assert "report_cn" not in result["stage_reports"]["correlator_analysis"]
-    assert not report_path.with_name("ca_report.md").exists()
+    assert report_path.with_name("ca_report.md").exists()
     report_text = report_path.read_text(encoding="utf-8")
-    assert "# Correlator Analysis 阶段报告" in report_text
+    assert "# translated correlator report" in report_text
     assert "ca_p4.nc" in report_text
     assert ".png" not in report_text
 

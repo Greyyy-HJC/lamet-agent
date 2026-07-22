@@ -314,6 +314,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "fourier_fit_info.nc" in report_text
     assert Path(run["artifact"]).name in report_text
     assert Path(run["fit_info_artifact"]).name in report_text
+    monkeypatch.setattr("lamet_agent.stages.fourier.reporting.translate_markdown_report", lambda markdown, **kwargs: markdown)
     report_cn = report_fourier_result(
         store,
         save_path=str(tmp_path / "report_fourier_ch.md"),
@@ -322,14 +323,14 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     report_cn_path = Path(report_cn["report"])
     assert report_cn_path.name == "report_fourier_ch_CN.md"
     assert report_cn_path.is_file()
-    assert not (tmp_path / "report_fourier_ch.md").exists()
+    assert (tmp_path / "report_fourier_ch.md").exists()
     report_cn_text = report_cn_path.read_text(encoding="utf-8")
-    assert "# 傅立叶变换分析报告" in report_cn_text
+    assert "# Fourier Transform Analysis Report" in report_cn_text
     assert "Active fitted component" in report_cn_text
-    assert "实部和虚部同时参与拟合" in report_cn_text
-    assert "图像与可视化评估" in report_cn_text
+    assert "fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together" in report_cn_text
+    assert "Figures and Visual Assessment" in report_cn_text
     assert "Lambda0_gev" in report_cn_text
-    assert "如何读取 NetCDF 输出" in report_cn_text
+    assert "Reading the NetCDF Outputs" in report_cn_text
     assert "fourier_result.nc" in report_cn_text
     assert "fourier_fit_info.nc" in report_cn_text
     assert "fourier_xdep.svg" in report_cn_text

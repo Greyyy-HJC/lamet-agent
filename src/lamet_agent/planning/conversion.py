@@ -210,6 +210,52 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
     for item in correlators:
         if not isinstance(item, dict):
             continue
+        plan_sources = item.get("plan_sources")
+        if isinstance(plan_sources, dict):
+            two_point_path = _resolve_manifest_path(manifest_path, payload, plan_sources.get("two_point"))
+            current = _resolve_manifest_path(manifest_path, payload, plan_sources.get("current"))
+            targets = _standard_dataset_paths(item)
+            if two_point_path is None or not two_point_path.exists() or current is None or not current.exists() or len(targets) != 1:
+                continue
+            two_point_names = _dataset_names(two_point_path)
+            current_names = _dataset_names(current)
+            source_name = next(iter(two_point_names)) if len(two_point_names) == 1 else None
+            current_name = next(iter(current_names)) if len(current_names) == 1 else None
+            if source_name is None or current_name is None:
+                conversions.append(
+                    CorrelatorH5Mapping(
+                        correlator_id=str(item.get("correlator_id")),
+                        source_file=str(two_point_path),
+                        output_file=str(_resolve_manifest_path(manifest_path, payload, item.get("data_path")) or data_dir / f"{item.get('correlator_id')}.h5"),
+                        datasets=[],
+                        attrs={"standard_correlator_hdf5_version": 2, "bz_direction": item.get("bz_direction", "z")},
+                        ambiguous=True,
+                        reason="Planned 2pt-current composition requires exactly one dataset in the 2pt file and one dataset in the current file.",
+                        operation="compose_2pt_current",
+                    )
+                )
+                continue
+            output = _resolve_manifest_path(manifest_path, payload, item.get("data_path")) or data_dir / f"{item.get('correlator_id')}.h5"
+            script = data_dir / f"compose_{item.get('correlator_id')}.py"
+            conversions.append(
+                CorrelatorH5Mapping(
+                    correlator_id=str(item.get("correlator_id")),
+                    source_file=str(two_point_path),
+                    output_file=str(output),
+                    script_file=str(script),
+                    datasets=[
+                        {
+                            "source": source_name,
+                            "current_file": str(current),
+                            "current_source": current_name,
+                            "target": targets[0],
+                        }
+                    ],
+                    attrs={"standard_correlator_hdf5_version": 2, "bz_direction": item.get("bz_direction", "z")},
+                    operation="compose_2pt_current",
+                )
+            )
+            continue
         source = _resolve_manifest_path(manifest_path, payload, item.get("data_path"))
         if source is None or not source.exists():
             continue
@@ -238,7 +284,9 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
             elif suffix == ".npy":
                 if len(targets) == 1 and names.get("array"):
                     if item.get("correlator_type") == "2pt":
-                        datasets, ambiguous, reason = [{"source": "array", "target": targets[0], "transpose": False}], True, (
+                        datasets = [{"source": "array", "target": targets[0], "transpose": False}]
+                        ambiguous = str(item.get("ensemble")) != "planned"
+                        reason = None if not ambiguous else (
                             "NumPy 2pt input requires explicit confirmation of cfg and time axes, momentum selection, and whether transpose is needed. "
                             f"Available array: {_source_summary(names)}. Expected standard target: {targets[0]}."
                         )
@@ -315,6 +363,42 @@ def convert_correlator_h5(mapping: CorrelatorH5Mapping) -> None:
             "convert_correlator_h5(mapping)\n",
             encoding="utf-8",
         )
+    if mapping.operation == "compose_2pt_current":
+        with h5py.File(output, "w") as dst:
+            for key, value in mapping.attrs.items():
+                dst.attrs[key] = value
+            for item in mapping.datasets:
+                c2_name = str(item.get("source") or "array")
+                current_file = str(item["current_file"])
+                current_name = str(item.get("current_source") or "array")
+                if Path(mapping.source_file).suffix.lower() in {".h5", ".hdf5"}:
+                    with h5py.File(mapping.source_file, "r") as h5f:
+                        c2 = np.asarray(h5f[c2_name])
+                elif Path(mapping.source_file).suffix.lower() == ".npz":
+                    with np.load(mapping.source_file) as npz:
+                        c2 = np.asarray(npz[c2_name])
+                else:
+                    c2 = np.asarray(np.load(mapping.source_file))
+                if Path(current_file).suffix.lower() in {".h5", ".hdf5"}:
+                    with h5py.File(current_file, "r") as h5f:
+                        current = np.asarray(h5f[current_name])
+                elif Path(current_file).suffix.lower() == ".npz":
+                    with np.load(current_file) as npz:
+                        current = np.asarray(npz[current_name])
+                else:
+                    current = np.asarray(np.load(current_file))
+                data = c2 * current
+                target_name = str(item["target"])
+                match = re.search(r"/tsep(\d+)/", f"/{target_name}/")
+                if match and data.ndim == 2 and data.shape[0] == 1 and int(match.group(1)) + 1 > 1:
+                    data = np.repeat(data, int(match.group(1)) + 1, axis=0)
+                dataset = dst.create_dataset(target_name, data=data)
+                dataset.attrs["lamet_agent_original_2pt_file"] = mapping.source_file
+                dataset.attrs["lamet_agent_original_2pt_dataset"] = str(item.get("source") or "array")
+                dataset.attrs["lamet_agent_original_current_file"] = str(item["current_file"])
+                dataset.attrs["lamet_agent_original_current_dataset"] = str(item.get("current_source") or "array")
+                dataset.attrs["lamet_agent_plan_operation"] = mapping.operation
+        return
     suffix = Path(mapping.source_file).suffix.lower()
     npy_data = np.load(mapping.source_file, mmap_mode="r") if suffix == ".npy" else None
     npz_data = np.load(mapping.source_file) if suffix == ".npz" else None

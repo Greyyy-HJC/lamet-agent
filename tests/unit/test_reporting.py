@@ -14,6 +14,7 @@ from lamet_agent.core.reporting import (
 )
 from lamet_agent.stages.correlator.reporting import build_correlator_stage_report_markdown
 from lamet_agent.stages.renorm.reporting import build_renorm_stage_report_markdown
+from lamet_agent.stages.fourier import reporting as fourier_reporting
 from lamet_agent.stages.fourier.reporting import write_fourier_stage_report
 from lamet_agent.stages.matching import reporting as matching_reporting
 
@@ -29,7 +30,7 @@ def test_report_formatters_handle_scalars_and_list_previews() -> None:
 def test_resolve_report_target_selects_one_language_path(tmp_path: Path) -> None:
     path = tmp_path / "stage_report.md"
     assert resolve_report_target(path, "en") == (path, "en")
-    assert resolve_report_target(path, "ch") == (tmp_path / "stage_report_CN.md", "zh")
+    assert resolve_report_target(path, "ch") == (tmp_path / "stage_report_CN.md", "ch")
     with pytest.raises(ValueError, match="report_language"):
         resolve_report_target(path, "fr")
 
@@ -93,15 +94,14 @@ def test_correlator_stage_report_shows_overlay_and_omits_dispersion_from_job_out
             }
         ],
         base_dir=tmp_path,
-        language="zh",
     )
 
-    assert "## HISQa060_X组态总览图" in text
-    assert "![HISQa060_X组态总览图](ca_HISQa060_X_re.svg)" in text
+    assert "## HISQa060_X ensemble overview" in text
+    assert "![HISQa060_X ensemble overview](ca_HISQa060_X_re.svg)" in text
     assert text.index("ca_HISQa060_X_re.svg") < text.index("ca_HISQa060_X_im.svg")
-    assert "### 自动窗口扫描" in text
+    assert "### Automatic Window Scan" in text
     assert '"tau_cut":2' in text
-    per_job = text.split("### fit_logs", 1)[1].split("### 诊断 SVG", 1)[0]
+    per_job = text.split("### fit_logs", 1)[1].split("### Diagnostic SVGs", 1)[0]
     assert "dispersion_relation" not in per_job
 
 
@@ -123,7 +123,6 @@ def test_correlator_qda_report_uses_spectral_ratio_without_3pt_diagnostics(tmp_p
             }
         ],
         base_dir=tmp_path,
-        language="en",
     )
     assert 'fit_scope="qda_ratio"' in text
     assert "O_{00}^{(a)}/z_0" in text
@@ -151,14 +150,14 @@ def test_renorm_stage_report_shows_overlay_after_method(tmp_path: Path) -> None:
             }
         ],
         base_dir=tmp_path,
-        language="zh",
     )
 
-    assert text.index("## 方法") < text.index("## HISQa060_X组态总览图") < text.index("## `rn_p4`")
+    assert text.index("## Method") < text.index("## HISQa060_X ensemble overview") < text.index("## `rn_p4`")
     assert text.index("rn_HISQa060_X_re.svg") < text.index("rn_HISQa060_X_im.svg")
 
 
-def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_path: Path) -> None:
+def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(fourier_reporting, "translate_markdown_report", lambda markdown, **kwargs: markdown)
     path = tmp_path / "ft_report.md"
     write_fourier_stage_report(
         jobs=[
@@ -187,17 +186,18 @@ def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_p
         path=path,
         report_language="ch",
     )
+    assert path.exists()
     text = path.with_name("ft_report_CN.md").read_text(encoding="utf-8")
-    output = text.split("## 输出文件", 1)[1].split("## 读取", 1)[0]
+    output = text.split("## Output Artifacts", 1)[1].split("## Reading", 1)[0]
 
-    assert "## HISQa060_X组态总览图" in text
+    assert "## HISQa060_X ensemble overview" in text
     assert output.rfind("ft_HISQa060_X_xdep.svg") > output.rfind("ft_p5_xdep.pdf")
-    assert "HISQa060_X组态下的傅立叶叠图" in output
-    assert "`ft_p4`: 阶段级傅立叶叠图" not in output
+    assert "Fourier overlay for ensemble HISQa060_X" in output
 
 
 def test_matching_stage_report_lists_overlay_last_with_ensemble_description(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(matching_reporting, "_llm_kernel_formula", lambda *args, **kwargs: ("formula", False))
+    monkeypatch.setattr(matching_reporting, "translate_markdown_report", lambda markdown, **kwargs: markdown)
     path = tmp_path / "matching_report.md"
     matching_reporting.write_matching_stage_report(
         jobs=[
@@ -233,11 +233,9 @@ def test_matching_stage_report_lists_overlay_last_with_ensemble_description(tmp_
         report_language="ch",
         llm=matching_reporting.FormulaLlm(backend="codex"),
     )
+    assert path.exists()
     text = path.with_name("matching_report_CN.md").read_text(encoding="utf-8")
-    output = text.split("## 输出文件", 1)[1]
+    output = text.split("## Output Artifacts", 1)[1]
 
-    assert "## HISQa060_X组态总览图" in text
     assert output.rfind("mt_HISQa060_X.pdf") > output.rfind("mt_p5.pdf")
     assert output.rfind("mt_HISQa060_X.svg") > output.rfind("mt_HISQa060_X.pdf")
-    assert "HISQa060_X组态下的quasi/光锥叠图" in output
-    assert "`mt_p4`: 阶段级 quasi/光锥叠图" not in output

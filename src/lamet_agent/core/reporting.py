@@ -10,6 +10,45 @@ from typing import Any
 import numpy as np
 
 
+def translate_markdown_report(
+    markdown: str,
+    *,
+    backend: str,
+    provider: str | None = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> str:
+    """Translate one English Markdown report to Simplified Chinese with an LLM."""
+    from lamet_agent.core.llm import request_llm_text
+
+    translated = request_llm_text(
+        backend=backend,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Translate the supplied English LaMET analysis Markdown into Simplified Chinese. "
+                    "Translation using physics biased language (especially lattice QCD and large momentum effective theory preference)."
+                    "Preserve Markdown structure, tables, image links, file paths, code spans, code blocks, "
+                    "identifiers, JSON keys, numbers, units, and all LaTeX math exactly. "
+                    "Return only the translated Markdown."
+                ),
+            },
+            {"role": "user", "content": markdown},
+        ],
+    ).strip()
+    if translated.startswith("```"):
+        lines = translated.splitlines()
+        if lines and lines[0].strip().startswith("```") and lines[-1].strip() == "```":
+            translated = "\n".join(lines[1:-1]).strip()
+    return translated
+
+
 def format_report_value(value: Any, digits: int = 4) -> str:
     """Format one scalar value for a compact Markdown report."""
     if value is None:
@@ -41,7 +80,7 @@ def resolve_report_target(path: Path, report_language: str) -> tuple[Path, str]:
         return path, "en"
     if language == "ch":
         target = path.with_name(f"{path.stem}_CN{path.suffix or '.md'}")
-        return target, "zh"
+        return target, "ch"
     raise ValueError("report_language must be 'en' or 'ch'")
 
 

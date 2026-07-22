@@ -3175,6 +3175,11 @@ def report_fourier_result(
     save_path: str | None = None,
     artifacts_dir: str | None = None,
     report_language: str = "en",
+    backend: str = "",
+    provider: str | None = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     """Write a Markdown report explaining the Fourier-stage computation."""
     data = store["fourier_result"]
@@ -3199,6 +3204,11 @@ def report_fourier_result(
         artifacts=artifacts,
         path=output,
         report_language=report_language,
+        backend=backend,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url,
     )
     report = {
         "report": str(paths["report"]),

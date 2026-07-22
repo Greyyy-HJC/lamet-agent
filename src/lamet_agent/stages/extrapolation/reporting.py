@@ -9,7 +9,7 @@ import gvar
 import numpy as np
 import xarray as xr
 
-from lamet_agent.core.reporting import markdown_artifact_paths, resolve_report_target
+from lamet_agent.core.reporting import markdown_artifact_paths, resolve_report_target, translate_markdown_report
 
 
 def write_extrapolation_stage_report(
@@ -17,12 +17,17 @@ def write_extrapolation_stage_report(
     jobs: list[dict[str, Any]],
     path: str | Path,
     report_language: str = "en",
+    backend: str = "",
+    provider: str | None = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Path]:
     """Write a compact stage-level extrapolation report."""
-    target, language = resolve_report_target(Path(path), report_language)
+    output = Path(path)
+    target, language = resolve_report_target(output, report_language)
     target.parent.mkdir(parents=True, exist_ok=True)
-    zh = language == "zh"
-    lines = ["# 外推阶段报告" if zh else "# Extrapolation Report", ""]
+    lines = ["# Extrapolation Report", ""]
     for record in jobs:
         result = record.get("result", {})
         raw_artifacts = record.get("artifacts", {})
@@ -91,90 +96,69 @@ def write_extrapolation_stage_report(
                 sdev = 0.0 if samples.size < 2 else float(np.std(samples, ddof=1))
                 cells.append(str(gvar.gvar(float(np.mean(samples)), sdev)))
             fit_rows.append("| " + " | ".join(cells) + " |")
-        if zh:
-            lines.extend(
-                [
-                    f"## {record.get('job_id')}",
-                    "",
-                    "本报告汇总 perturbative matching 输出的光锥分布，并对格距和动量依赖进行联合或单变量外推。",
-                    "",
-                    "## 外推形式",
-                    "",
-                    formula,
-                    "",
-                    "## Job 汇总",
-                    "| job | 模式 | 输入数 | 参数数 | $\\chi^2/\\mathrm{dof}$ | 输出 |",
-                    "|---|---|---:|---:|---:|---|",
-                    f"| `{record.get('job_id')}` | {result.get('mode')} | {result.get('n_inputs')} | {result.get('n_parameters')} | {chi_text} | {Path(str(artifacts.get('extrapolated_artifact'))).name if artifacts.get('extrapolated_artifact') else 'n/a'} |",
-                    "",
-                    "## 分析设置",
-                    "| 条目 | 数值或设置 | 解释 |",
-                    "|---|---|---|",
-                    f"| `allow_order_a` | {a_orders} | 允许进入拟合的格距修正幂次；代码使用 $a^i$。 |",
-                    f"| `allow_order_1overp` | {p_orders} | 允许进入拟合的有限动量修正幂次；代码使用 $1/p_z^j$。 |",
-                    f"| `allow_order_ap` | {ap_orders} | 允许进入拟合的格距-动量交叉修正幂次；启用时使用 $a^k p_z^k$。 |",
-                    f"| `fitting_param_xdep` | {xdep_text} | 前两项控制 $c_{{a,i}}$、$c_{{p,j}}$ 是否依赖 $x$；第三项控制是否加入 $c_{{ap,k}}(x)a^k p_z^k$。 |",
-                    f"| `pdep_gev` | {pdep_text} | 额外动量依赖图中指定的 $p_z$（GeV）取值；缺省时不生成 `extrapolate_pdep` 图。 |",
-                    "",
-                    "## 拟合模型参数表",
-                    header,
-                    divider,
-                    *fit_rows,
-                    "",
-                ]
-            )
-        else:
-            lines.extend(
-                [
-                    f"## {record.get('job_id')}",
-                    "",
-                    "This report summarizes the light-cone distributions from perturbative matching and extrapolates their lattice-spacing and momentum dependence.",
-                    "",
-                    "## Extrapolation Form",
-                    "",
-                    formula,
-                    "",
-                    "## Job Summary",
-                    "| job | mode | inputs | parameters | $\\chi^2/\\mathrm{dof}$ | output |",
-                    "|---|---|---:|---:|---:|---|",
-                    f"| `{record.get('job_id')}` | {result.get('mode')} | {result.get('n_inputs')} | {result.get('n_parameters')} | {chi_text} | {Path(str(artifacts.get('extrapolated_artifact'))).name if artifacts.get('extrapolated_artifact') else 'n/a'} |",
-                    "",
-                    "## Analysis Settings",
-                    "| Item | Value or setting | Explanation |",
-                    "|---|---|---|",
-                    f"| `allow_order_a` | {a_orders} | Allowed lattice-spacing correction powers; the code fits $a^i$ terms. |",
-                    f"| `allow_order_1overp` | {p_orders} | Allowed finite-momentum correction powers; the code fits $1/p_z^j$ terms. |",
-                    f"| `allow_order_ap` | {ap_orders} | Allowed lattice-spacing-momentum cross-term powers; when enabled, the code fits $a^k p_z^k$ terms. |",
-                    f"| `fitting_param_xdep` | {xdep_text} | The first two values control whether $c_{{a,i}}$ and $c_{{p,j}}$ depend on $x$; the third controls whether $c_{{ap,k}}(x)a^k p_z^k$ is included. |",
-                    f"| `pdep_gev` | {pdep_text} | Requested $p_z$ values in GeV for the extra momentum-dependence figure; if unset, `extrapolate_pdep` is not generated. |",
-                    "",
-                    "## Fit Model Parameter Table",
-                    header,
-                    divider,
-                    *fit_rows,
-                    "",
-                ]
-            )
+        lines.extend(
+            [
+                f"## {record.get('job_id')}",
+                "",
+                "This report summarizes the light-cone distributions from perturbative matching and extrapolates their lattice-spacing and momentum dependence.",
+                "",
+                "## Extrapolation Form",
+                "",
+                formula,
+                "",
+                "## Job Summary",
+                "| job | mode | inputs | parameters | $\\chi^2/\\mathrm{dof}$ | output |",
+                "|---|---|---:|---:|---:|---|",
+                f"| `{record.get('job_id')}` | {result.get('mode')} | {result.get('n_inputs')} | {result.get('n_parameters')} | {chi_text} | {Path(str(artifacts.get('extrapolated_artifact'))).name if artifacts.get('extrapolated_artifact') else 'n/a'} |",
+                "",
+                "## Analysis Settings",
+                "| Item | Value or setting | Explanation |",
+                "|---|---|---|",
+                f"| `allow_order_a` | {a_orders} | Allowed lattice-spacing correction powers; the code fits $a^i$ terms. |",
+                f"| `allow_order_1overp` | {p_orders} | Allowed finite-momentum correction powers; the code fits $1/p_z^j$ terms. |",
+                f"| `allow_order_ap` | {ap_orders} | Allowed lattice-spacing-momentum cross-term powers; when enabled, the code fits $a^k p_z^k$ terms. |",
+                f"| `fitting_param_xdep` | {xdep_text} | The first two values control whether $c_{{a,i}}$ and $c_{{p,j}}$ depend on $x$; the third controls whether $c_{{ap,k}}(x)a^k p_z^k$ is included. |",
+                f"| `pdep_gev` | {pdep_text} | Requested $p_z$ values in GeV for the extra momentum-dependence figure; if unset, `extrapolate_pdep` is not generated. |",
+                "",
+                "## Fit Model Parameter Table",
+                header,
+                divider,
+                *fit_rows,
+                "",
+            ]
+        )
         if result.get("warning"):
-            lines.append(("警告：" if zh else "Warning: ") + str(result["warning"]))
+            lines.append("Warning: " + str(result["warning"]))
             lines.append("")
         if result.get("use_lattice_spacing_dependence") and not result.get("use_momentum_dependence"):
-            lines.append("由于输入为多系综单动量，本阶段只能生成格距依赖图。" if zh else "The inputs contain multiple ensembles at a single momentum, so only the lattice-spacing-dependence figure can be generated.")
+            lines.append("The inputs contain multiple ensembles at a single momentum, so only the lattice-spacing-dependence figure can be generated.")
             lines.append("")
         if result.get("use_momentum_dependence") and not result.get("use_lattice_spacing_dependence"):
-            lines.append("由于输入为单系综多动量，本阶段只能生成动量依赖图；若未设置 `pdep_gev`，则不生成该图。" if zh else "The inputs contain one ensemble at multiple momenta, so only the momentum-dependence figure can be generated; it is omitted unless `pdep_gev` is set.")
+            lines.append("The inputs contain one ensemble at multiple momenta, so only the momentum-dependence figure can be generated; it is omitted unless `pdep_gev` is set.")
             lines.append("")
-        title = "外推结果" if zh else "Extrapolated Result"
+        title = "Extrapolated Result"
         if artifacts.get("extrapolated_plot_image"):
             lines.extend([f"## {title}", "", f"![{title}]({artifacts['extrapolated_plot_image']})", ""])
         if artifacts.get("chi2_xdep_plot_image"):
-            title = "拟合质量图" if zh else "Fit Quality"
+            title = "Fit Quality"
             lines.extend([f"## {title}", "", f"![chi2_xdep]({artifacts['chi2_xdep_plot_image']})", ""])
         if artifacts.get("adep_plot_image"):
-            title = "格距依赖图" if zh else "Lattice-Spacing Dependence"
+            title = "Lattice-Spacing Dependence"
             lines.extend([f"## {title}", "", f"![{title}]({artifacts['adep_plot_image']})", ""])
         if artifacts.get("pdep_plot_image"):
-            title = "动量依赖图" if zh else "Momentum Dependence"
+            title = "Momentum Dependence"
             lines.extend([f"## {title}", "", f"![{title}]({artifacts['pdep_plot_image']})", ""])
-    target.write_text("\n".join(lines), encoding="utf-8")
+    markdown = "\n".join(lines)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(markdown, encoding="utf-8")
+    if language == "ch":
+        translated = translate_markdown_report(
+            markdown,
+            backend=backend,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        target.write_text(translated, encoding="utf-8")
     return {"report": target}

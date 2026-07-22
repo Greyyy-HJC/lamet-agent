@@ -234,10 +234,12 @@ def _run_job(
                 artifacts_dir=stage_dir,
                 store=store,
             )
-            if (stage == "review" and tool_name == "write_review") or (
-                stage == "perturbative_matching" and tool_name == "report_matching_result"
+            if (
+                (stage == "review" and tool_name == "write_review")
+                or (stage == "fourier_transform" and tool_name == "report_fourier_result")
+                or (stage == "perturbative_matching" and tool_name == "report_matching_result")
             ):
-                # Both tools call an LLM. Hand them this run's resolved config rather than
+                # These tools may call an LLM. Hand them this run's resolved config rather than
                 # letting them rediscover it from the environment.
                 args["report_language"] = report_language
                 args["backend"] = backend
@@ -826,6 +828,11 @@ def run_agent(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "ca_report.md",
                 report_language=report_language,
+                backend=backend,
+                provider=provider,
+                api_key=api_key,
+                model_name=model_name,
+                base_url=base_url,
             )
             stage_reports[stage] = {"report": str(paths["report"])}
         if stage == "renormalization" and stage_job_records:
@@ -845,6 +852,11 @@ def run_agent(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "renorm_report.md",
                 report_language=report_language,
+                backend=backend,
+                provider=provider,
+                api_key=api_key,
+                model_name=model_name,
+                base_url=base_url,
             )
             stage_reports[stage] = {"report": str(paths["report"])}
         if stage == "fourier_transform" and stage_job_records:
@@ -857,6 +869,11 @@ def run_agent(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "ft_report.md",
                 report_language=report_language,
+                backend=backend,
+                provider=provider,
+                api_key=api_key,
+                model_name=model_name,
+                base_url=base_url,
             )
             stage_reports[stage] = {"report": str(paths["report"])}
         if stage == "perturbative_matching" and stage_job_records:
@@ -882,6 +899,11 @@ def run_agent(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "extrapolation_report.md",
                 report_language=report_language,
+                backend=backend,
+                provider=provider,
+                api_key=api_key,
+                model_name=model_name,
+                base_url=base_url,
             )
             stage_reports[stage] = {"report": str(paths["report"])}
         state.completed_stages.append(stage)

@@ -69,6 +69,7 @@ from lamet_agent.core.reporting import (
     format_report_value as _fmt,
     markdown_artifact_paths,
     resolve_report_target as _report_target,
+    translate_markdown_report,
 )
 
 
@@ -78,31 +79,31 @@ from lamet_agent.core.reporting import (
 # operator serves a PDF and a DA. Naming the polarization here too would say
 # "helicity DA", which is not a thing.
 OPERATOR_TEXT = {
-    "gt": ("$\\gamma^t$", "$\\gamma^t$"),
-    "gtg5": ("$\\gamma^t\\gamma_5$", "$\\gamma^t\\gamma_5$"),
-    "gz": ("$\\gamma^z$", "$\\gamma^z$"),
-    "gzg5": ("$\\gamma^z\\gamma_5$", "$\\gamma^z\\gamma_5$"),
-    "gtgpg5": ("$\\gamma^t\\gamma_\\perp\\gamma_5$", "$\\gamma^t\\gamma_\\perp\\gamma_5$"),
+    "gt": "$\\gamma^t$",
+    "gtg5": "$\\gamma^t\\gamma_5$",
+    "gz": "$\\gamma^z$",
+    "gzg5": "$\\gamma^z\\gamma_5$",
+    "gtgpg5": "$\\gamma^t\\gamma_\\perp\\gamma_5$",
 }
 
 # What the operator measures, keyed by the ``<distribution>`` field of the id. A PDF's
 # polarization is the operator's; a DA has none, so it is not spelled out here.
 DISTRIBUTION_TEXT = {
-    "quark_PDF": ("quark PDF", "夸克 PDF"),
-    "gluon_PDF": ("gluon PDF", "胶子 PDF"),
-    "DA": ("meson distribution amplitude", "介子分布振幅"),
-    "qDA": ("quark distribution amplitude", "夸克分布振幅"),
-    "gDA": ("gluon distribution amplitude", "胶子分布振幅"),
+    "quark_PDF": "quark PDF",
+    "gluon_PDF": "gluon PDF",
+    "DA": "meson distribution amplitude",
+    "qDA": "quark distribution amplitude",
+    "gDA": "gluon distribution amplitude",
 }
 
 # The polarization a Dirac structure selects, but only for a PDF -- a DA's gamma^z gamma_5
 # is not a "helicity DA".
 PDF_POLARIZATION_TEXT = {
-    "gt": ("unpolarized", "非极化"),
-    "gtg5": ("helicity", "螺旋度"),
-    "gz": ("unpolarized", "非极化"),
-    "gzg5": ("helicity", "螺旋度"),
-    "gtgpg5": ("transversity", "横向"),
+    "gt": "unpolarized",
+    "gtg5": "helicity",
+    "gz": "unpolarized",
+    "gzg5": "helicity",
+    "gtgpg5": "transversity",
 }
 
 # Scheme -> human text. The paper and equation numbers are NOT listed here: they are
@@ -115,9 +116,9 @@ SCHEME_TEXT = {
 }
 
 MATCHING_ARTIFACT_DESCRIPTIONS = {
-    "lightcone_artifact": ("Matched light-cone PDF samples (EnsembleData NetCDF)", "匹配后的光锥 PDF 样本（EnsembleData NetCDF）"),
-    "matched_plot": ("PDF plot comparing quasi and light-cone PDFs", "quasi 与光锥 PDF 对比 PDF 图"),
-    "matched_plot_image": ("SVG companion for Markdown embedding", "供 Markdown 嵌入的 SVG 对比图"),
+    "lightcone_artifact": "Matched light-cone PDF samples (EnsembleData NetCDF)",
+    "matched_plot": "PDF plot comparing quasi and light-cone PDFs",
+    "matched_plot_image": "SVG companion for Markdown embedding",
 }
 
 MATCHING_ARTIFACT_ORDER = ("lightcone_artifact", "matched_plot", "matched_plot_image")
@@ -178,15 +179,14 @@ def _kernel_description(kernel_id: str, *, language: str) -> str:
     alone, since "helicity DA" would be a category error. Anything the id does not spell
     out is left out rather than guessed.
     """
-    idx = 1 if language == "zh" else 0
     _gauge, operator, distribution, _scheme = _split_kernel_id(kernel_id)
-    dirac = OPERATOR_TEXT.get(operator, (operator, operator))[idx]
-    measured = DISTRIBUTION_TEXT.get(distribution, (distribution, distribution))[idx]
+    dirac = OPERATOR_TEXT.get(operator, operator)
+    measured = DISTRIBUTION_TEXT.get(distribution, distribution)
     if not measured:
-        return dirac or ("未记录" if language == "zh" else "not recorded")
+        return dirac or "not recorded"
     if distribution in DA_TOKENS:
         return f"{dirac} {measured}" if dirac else measured
-    polarization = PDF_POLARIZATION_TEXT.get(operator, ("", ""))[idx]
+    polarization = PDF_POLARIZATION_TEXT.get(operator, "")
     parts_text = [part for part in (polarization, dirac, measured) if part]
     return " ".join(parts_text)
 
@@ -207,8 +207,8 @@ def _kernel_structure(kernel_id: str) -> dict[str, Any]:
         return structure
     return {
         "factorization": None,
-        "result_noun": ("light-cone distribution", "光锥分布"),
-        "source_noun": ("quasi distribution", "quasi 分布"),
+        "result_noun": "light-cone distribution",
+        "source_noun": "quasi distribution",
         "notation": (
             "- Read the factorization and the coefficient off the code above; state the "
             "matching relation the kernel implements and the explicit coefficient, in the "
@@ -235,16 +235,12 @@ def _kernel_reference(kernel_id: str) -> tuple[str, str]:
 
 def _format_grid(x_grid: np.ndarray, *, language: str) -> str:
     if x_grid.size == 0:
-        return "未记录" if language == "zh" else "not recorded"
+        return "not recorded"
     if x_grid.size == 1:
         return f"one point at $x={_fmt(x_grid[0])}$"
     diffs = np.diff(x_grid)
     if np.allclose(diffs, diffs[0], rtol=1e-7, atol=1e-12):
-        if language == "zh":
-            return f"从 $x={_fmt(x_grid[0])}$ 到 $x={_fmt(x_grid[-1])}$，每隔 $\\Delta x={_fmt(diffs[0])}$ 取一个点，共 {x_grid.size} 个点"
         return f"from $x={_fmt(x_grid[0])}$ to $x={_fmt(x_grid[-1])}$ with spacing $\\Delta x={_fmt(diffs[0])}$, for {x_grid.size} points"
-    if language == "zh":
-        return f"非均匀网格，共 {x_grid.size} 个点；预览 `{_fmt_list(x_grid)}`"
     return f"nonuniform grid with {x_grid.size} points; preview `{_fmt_list(x_grid)}`"
 
 
@@ -283,18 +279,15 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     kernel_id = str(data.get("kernel_id", "not recorded"))
     _operator, scheme = _parse_kernel_id(kernel_id)
     op_en = _kernel_description(kernel_id, language="en")
-    op_zh = _kernel_description(kernel_id, language="zh")
     scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
     # The `CG` prefix of the kernel_id marks the Coulomb-gauge (no Wilson line)
     # construction; anything else is the conventional gauge-invariant one.
     is_coulomb = kernel_id.upper().startswith("CG")
     gauge_en = "Coulomb gauge ($\\partial_i A_i=0$, no Wilson line)" if is_coulomb else "gauge-invariant (straight Wilson line)"
-    gauge_zh = "库伦规范（Coulomb gauge，$\\partial_i A_i=0$，无 Wilson 线）" if is_coulomb else "规范不变（gauge-invariant，含直 Wilson 线）"
     # The paper is whatever the selected kernel declares in kernels.py -- the manifest
     # picks the kernel_id, and the citation follows it.
     arxiv_id, equations = _kernel_reference(kernel_id)
     reference_en = f"arXiv:{arxiv_id} {equations}".strip() if arxiv_id else "not declared by the kernel"
-    reference_zh = f"arXiv:{arxiv_id} {equations}".strip() if arxiv_id else "该匹配核未标注出处"
     x_grid = np.asarray(data.get("x_grid", []), dtype=float)
     # The quasi grid is only worth its own row when matching did not simply keep it:
     # normally it is the light-cone grid, and repeating it would be noise.
@@ -309,50 +302,27 @@ def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
     except (TypeError, ValueError):
         pz_text = str(pz_value or "not recorded")
 
-    if language == "zh":
-        rows = [
-            ("矩阵元/算符", f"`{kernel_id}`（{op_zh}）"),
-            ("匹配核出处", reference_zh),
-            ("规范约定", gauge_zh),
-            ("匹配方案", f"`{scheme}`（{scheme_en}）"),
-            ("实部/虚部分量", f"`{data.get('component', 'not recorded')}`"),
-            ("强子动量", pz_text),
-            ("重整化标度", f"$\\mu={_fmt(data.get('mu'))}$ GeV"),
+    rows = [
+        ("Operator / kernel", f"`{kernel_id}` ({op_en})"),
+        ("Kernel reference", reference_en),
+        ("Gauge convention", gauge_en),
+        ("Matching scheme", f"`{scheme}` ({scheme_en})"),
+        ("Component (re/im)", f"`{data.get('component', 'not recorded')}`"),
+        ("Hadron momentum", pz_text),
+        ("Renormalization scale", f"$\\mu={_fmt(data.get('mu'))}$ GeV"),
+    ]
+    if zspz is not None:
+        rows.append(("Wilson-line scale", f"$z_sP_z={_fmt(zspz)}$"))
+    rows.extend(
+        [
+            ("Resampling mode", f"`{data.get('resample', 'not recorded')}` with {data.get('n_sample', 'n/a')} samples"),
+            ("x grid (light-cone output)", _format_grid(x_grid, language="en")),
         ]
-        if zspz is not None:
-            rows.append(("Wilson 线标度", f"$z_sP_z={_fmt(zspz)}$"))
-        rows.extend(
-            [
-                ("重采样模式", f"`{data.get('resample', 'not recorded')}`，共 {data.get('n_sample', 'n/a')} 个样本"),
-                ("x 网格（光锥输出）", _format_grid(x_grid, language="zh")),
-            ]
-        )
-        if separate_quasi_grid:
-            rows.append(("x 网格（quasi 输入）", _format_grid(quasi_x_grid, language="zh") + "；与输出网格不同，quasi 数据经线性插值"))
-        rows.append(("quasi-PDF 来源", f"`{data.get('source', 'not recorded')}`"))
-        header = "| 条目 | 数值或设置 |"
-    else:
-        rows = [
-            ("Operator / kernel", f"`{kernel_id}` ({op_en})"),
-            ("Kernel reference", reference_en),
-            ("Gauge convention", gauge_en),
-            ("Matching scheme", f"`{scheme}` ({scheme_en})"),
-            ("Component (re/im)", f"`{data.get('component', 'not recorded')}`"),
-            ("Hadron momentum", pz_text),
-            ("Renormalization scale", f"$\\mu={_fmt(data.get('mu'))}$ GeV"),
-        ]
-        if zspz is not None:
-            rows.append(("Wilson-line scale", f"$z_sP_z={_fmt(zspz)}$"))
-        rows.extend(
-            [
-                ("Resampling mode", f"`{data.get('resample', 'not recorded')}` with {data.get('n_sample', 'n/a')} samples"),
-                ("x grid (light-cone output)", _format_grid(x_grid, language="en")),
-            ]
-        )
-        if separate_quasi_grid:
-            rows.append(("x grid (quasi input)", _format_grid(quasi_x_grid, language="en") + "; differs from the output grid, so the quasi data was linearly interpolated"))
-        rows.append(("Quasi-PDF source", f"`{data.get('source', 'not recorded')}`"))
-        header = "| Quantity | Value |"
+    )
+    if separate_quasi_grid:
+        rows.append(("x grid (quasi input)", _format_grid(quasi_x_grid, language="en") + "; differs from the output grid, so the quasi data was linearly interpolated"))
+    rows.append(("Quasi-PDF source", f"`{data.get('source', 'not recorded')}`"))
+    header = "| Quantity | Value |"
     lines = [header, "|---|---|"]
     lines.extend(f"| {name} | {value} |" for name, value in rows)
     return lines
@@ -365,16 +335,6 @@ def _field_definitions(*, language: str) -> list[str]:
     misnames every kernel that is not a Coulomb-gauge quark PDF -- a gauge-invariant DA
     matched none of those three fields.
     """
-    if language == "zh":
-        return [
-            "| 条目 | 含义 |",
-            "|---|---|",
-            "| Operator / kernel | 选定的匹配核，id 形如 `<规范>_<算符>_<分布>_<方案>_<阶数>`：规范为 `CG`（库伦规范）或 `GI`（规范不变）；算符是 Dirac 结构（gt、gtg5 等）；分布是 `quark_PDF` 或 `DA`；方案决定有限项；阶数为微扰阶（目前均为 NLO）。 |",
-            "| Matching scheme | `msbar` / `ratio` / `hybrid`，由 kernel_id 的方案字段选定；hybrid 还需要 Wilson 线长度 $z_s$。 |",
-            "| Hadron momentum | $P_z$，必须与傅立叶阶段一致，进入核的对数标度。 |",
-            "| Renormalization scale | MSbar 重整化标度 $\\mu$（GeV）。 |",
-            "| Resampling mode | 输入携带的重采样轴（bootstrap/jackknife）；匹配逐样本进行以保留关联结构。 |",
-        ]
     return [
         "| Entry | Meaning |",
         "|---|---|",
@@ -636,9 +596,7 @@ def _formula_prompt(
     paper_arxiv_id: str,
     equations: str,
 ) -> str:
-    lang_line = (
-        "Write the prose in Simplified Chinese." if language == "zh" else "Write the prose in English."
-    )
+    lang_line = "Write the prose in English."
     paper_block = (
         f"LaTeX source of the paper (arXiv:{paper_arxiv_id}). It is the authority for the "
         "NOTATION: copy its symbols and, in particular, its exact plus-prescription convention "
@@ -768,54 +726,30 @@ def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaL
     if paper_arxiv_id:
         reference = f"arXiv:{paper_arxiv_id} {equations}".strip()
     else:
-        reference = "匹配核未标注出处" if language == "zh" else "The kernel declares no paper reference"
+        reference = "The kernel declares no paper reference"
     # The factorization follows the kernel: it declares its own display equation, the names
     # of the matched/source distributions, and any all-orders structure it carries. This
     # module renders whatever the kernel declared -- it does not know PDF from DA from LRR.
     structure = _kernel_structure(kernel_id)
-    idx = 1 if language == "zh" else 0
     formula = structure.get("factorization")
-    result_name = structure["result_noun"][idx]
-    source_name = structure["source_noun"][idx]
+    result_name = structure["result_noun"]
+    source_name = structure["source_noun"]
     extra_structure = structure.get("extra_structure")
     discrete = r"f_i=\sum_j K_{ij}\,\tilde f_j,\qquad K=\text{(nx, ny) matching matrix}."
     # The explicit coefficient is generated at report time by an LLM that reads
     # the source paper together with the kernels.py code which produced the number
     # (no formula is hardcoded). A short note records the provenance so a reader
     # knows it was machine-derived and from which sources.
-    generated, paper_used = _llm_kernel_formula(kernel_id, language=language, llm=llm)
-    if language == "zh":
-        source_zh = f"文章 arXiv:{paper_arxiv_id} 与 `kernels.py` 实现" if paper_used else "`kernels.py` 实现"
-        note = f"（以下解析形式由模型阅读{source_zh}后生成）\n\n"
-    else:
-        source_en = (
-            f"arXiv:{paper_arxiv_id} together with the `kernels.py` implementation"
-            if paper_used
-            else "the `kernels.py` implementation"
-        )
-        note = f"(the explicit form below was generated by the model from {source_en})\n\n"
+    generated, paper_used = _llm_kernel_formula(kernel_id, language="en", llm=llm)
+    source_en = (
+        f"arXiv:{paper_arxiv_id} together with the `kernels.py` implementation"
+        if paper_used
+        else "the `kernels.py` implementation"
+    )
+    note = f"(the explicit form below was generated by the model from {source_en})\n\n"
     explicit = note + generated
 
     parts: list[str] = []
-    if language == "zh":
-        lead = f"{reference}。{result_name} 由 {source_name} 经匹配核反卷积得到"
-        parts.append(f"{lead}：\n\n" if formula else f"{lead}（因子化形式见下方解析式）。\n\n")
-        if formula:
-            parts.append(f"$$\n{formula}\n$$\n\n")
-        parts.append(
-            "离散化后即矩阵乘法（本阶段对每个重采样样本独立施加，再重建统计量）：\n\n"
-            f"$$\n{discrete}\n$$\n\n"
-        )
-        if extra_structure:
-            parts.append(
-                "本匹配核并未止步于固定阶：它在固定阶矩阵之上，对 Wilson 线首要重正化子做全阶求和，"
-                "匹配矩阵取如下矩阵指数形式：\n\n"
-                f"$$\n{extra_structure}\n$$\n\n"
-            )
-        parts.append("其中 LO 部分为单位阵，匹配修正（含上述结构）的解析形式为：\n\n")
-        parts.append(explicit)
-        return "".join(parts)
-
     lead = f"{reference}. The {result_name} is obtained from the {source_name} by inverting the matching kernel"
     parts.append(f"{lead}:\n\n" if formula else f"{lead} (its factorization is given in the explicit form below).\n\n")
     if formula:
@@ -847,16 +781,6 @@ def _scheme_explanation(data: dict[str, Any], *, language: str) -> list[str]:
     _operator, scheme = _parse_kernel_id(kernel_id)
     arxiv_id, equations = _kernel_reference(kernel_id)
     cite = f"arXiv:{arxiv_id} {equations}".strip() if arxiv_id else ""
-    if language == "zh":
-        notes = {
-            "msbar": "MSbar 方案在裸 ratio 系数上加上有限的 MSbar 转换项。",
-            "ratio": "ratio 方案直接使用裸的正则系数，不含额外有限项。",
-            "hybrid": "hybrid 方案在 ratio 系数上加上 Wilson 线的正弦积分修正，依赖 $z_sP_z$。",
-        }
-        body = notes.get(scheme, "未识别的匹配方案，仅记录所选 kernel_id。")
-        if cite:
-            body = f"{body}本次所用匹配核取自 {cite}。"
-        return ["## 匹配方案", body]
     notes = {
         "msbar": "The MSbar scheme adds a finite MSbar conversion on top of the bare ratio coefficient.",
         "ratio": "The ratio scheme uses the bare regular coefficient directly, with no extra finite terms.",
@@ -884,30 +808,21 @@ def _diagnostics(data: dict[str, Any], *, language: str) -> list[str]:
         quasi_full = _trapz_norm(x_grid, quasi_mean)
         lc_full = _trapz_norm(x_grid, lc_mean)
         rel = abs(lc_val - quasi_val) / abs(quasi_val) if quasi_val not in (0.0, float("nan")) else float("nan")
-        if language == "zh":
-            lines.extend(
-                [
-                    f"- 价区归一 $\\int_0^1 f\\,dx$：quasi-PDF ${_fmt(quasi_val)}$，光锥 PDF ${_fmt(lc_val)}$（价夸克数应约为 1）。",
-                    f"- 价区归一相对变化 {_fmt(100 * rel)}%。NLO 匹配是微扰修正，应当接近守恒。",
-                    f"- 参考：全网格积分 $\\int_{{-2}}^{{2}} f\\,dx$ 为 quasi ${_fmt(quasi_full)}$、光锥 ${_fmt(lc_full)}$；由于分布关于 $x\\to-x$ 近似对称，该值同时计入夸克侧与反夸克侧，约为价区的两倍，不应误读为“归一应为 1”。",
-                ]
-            )
-        else:
-            lines.extend(
-                [
-                    f"- Valence-region norm $\\int_0^1 f\\,dx$: quasi-PDF ${_fmt(quasi_val)}$, light-cone ${_fmt(lc_val)}$ (the valence-quark number should be near 1).",
-                    f"- Relative valence-norm change {_fmt(100 * rel)}%. NLO matching is a perturbative correction and should nearly preserve it.",
-                    f"- For reference, the full-grid integral $\\int_{{-2}}^{{2}} f\\,dx$ is quasi ${_fmt(quasi_full)}$, light-cone ${_fmt(lc_full)}$; because the distribution is nearly symmetric under $x\\to-x$ this sums the quark and antiquark sides and lands near twice the valence value -- it must not be read as 'the norm should be 1'.",
-                ]
-            )
+        lines.extend(
+            [
+                f"- Valence-region norm $\\int_0^1 f\\,dx$: quasi-PDF ${_fmt(quasi_val)}$, light-cone ${_fmt(lc_val)}$ (the valence-quark number should be near 1).",
+                f"- Relative valence-norm change {_fmt(100 * rel)}%. NLO matching is a perturbative correction and should nearly preserve it.",
+                f"- For reference, the full-grid integral $\\int_{{-2}}^{{2}} f\\,dx$ is quasi ${_fmt(quasi_full)}$, light-cone ${_fmt(lc_full)}$; because the distribution is nearly symmetric under $x\\to-x$ this sums the quark and antiquark sides and lands near twice the valence value -- it must not be read as 'the norm should be 1'.",
+            ]
+        )
     else:
-        lines.append("- 无可用的匹配诊断。" if language == "zh" else "- Matching diagnostics were not available.")
+        lines.append("- Matching diagnostics were not available.")
     return lines
 
 
 def _figure_block(artifacts: dict[str, Any], *, language: str) -> list[str]:
-    heading = "## 图像与可视化评估" if language == "zh" else "## Figures and Visual Assessment"
-    label = "quasi 与光锥 PDF 对比图" if language == "zh" else "Quasi vs light-cone comparison"
+    heading = "## Figures and Visual Assessment"
+    label = "Quasi vs light-cone comparison"
     image_value = artifacts.get("matched_plot_image")
     pdf_value = artifacts.get("matched_plot")
     lines = [heading, "", f"### {label}"]
@@ -915,22 +830,22 @@ def _figure_block(artifacts: dict[str, Any], *, language: str) -> list[str]:
         lines.append(f"![{label}]({image_value})")
         if pdf_value:
             lines.append("")
-            lines.append(f"[{label}（PDF 矢量图）]({pdf_value})" if language == "zh" else f"[{label} (PDF, vector)]({pdf_value})")
+            lines.append(f"[{label} (PDF, vector)]({pdf_value})")
     elif pdf_value:
-        lines.append(f"[{label} (PDF)]({pdf_value})" if language == "en" else f"[{label}（PDF）]({pdf_value})")
+        lines.append(f"[{label} (PDF)]({pdf_value})")
     else:
-        lines.append("未生成。" if language == "zh" else "Not available.")
+        lines.append("Not available.")
     return lines
 
 
 def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
-    header = "| File | Description |" if language == "en" else "| 文件名 | 文件描述 |"
+    header = "| File | Description |"
     lines = [header, "|---|---|"]
     for key in MATCHING_ARTIFACT_ORDER:
         value = artifacts.get(key)
         if not value:
             continue
-        desc = MATCHING_ARTIFACT_DESCRIPTIONS[key][1 if language == "zh" else 0]
+        desc = MATCHING_ARTIFACT_DESCRIPTIONS[key]
         lines.append(f"| `{value}` | {desc} |")
     if len(lines) == 2:
         lines.append("| not available | not available |")
@@ -948,61 +863,33 @@ def build_matching_report_markdown(
     kernel_id = str(result.get("kernel_id", "not recorded"))
     _operator, scheme = _parse_kernel_id(kernel_id)
     op_en = _kernel_description(kernel_id, language="en")
-    op_zh = _kernel_description(kernel_id, language="zh")
     scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
 
-    if language == "zh":
-        lines = [
-            "# 微扰匹配分析报告",
-            "",
-            "## 摘要",
-            f"本报告总结将 `{kernel_id}`（{op_zh}）quasi-PDF 经 `{scheme_en}` 方案 NLO 匹配核转换为光锥 PDF 的过程。",
-            "",
-            "## 分析设置",
-            *_settings_table(result, language="zh"),
-            "",
-            "### 条目解释",
-            *_field_definitions(language="zh"),
-            "",
-            "## 匹配公式",
-            _matching_formula_text(result, language="zh", llm=llm),
-            "",
-            *_scheme_explanation(result, language="zh"),
-            "",
-            "## 诊断与一致性检查",
-            *_diagnostics(result, language="zh"),
-            "",
-            *_figure_block(artifacts, language="zh"),
-            "",
-            "## 输出文件",
-            *_outputs_table(artifacts, language="zh"),
-        ]
-    else:
-        lines = [
-            "# Perturbative Matching Analysis Report",
-            "",
-            "## Abstract",
-            f"This report summarizes converting the `{kernel_id}` ({op_en}) quasi-PDF into the light-cone PDF using the `{scheme_en}`-scheme NLO matching kernel.",
-            "",
-            "## Analysis Setup",
-            *_settings_table(result, language="en"),
-            "",
-            "### Field Definitions",
-            *_field_definitions(language="en"),
-            "",
-            "## Matching Formula",
-            _matching_formula_text(result, language="en", llm=llm),
-            "",
-            *_scheme_explanation(result, language="en"),
-            "",
-            "## Diagnostics and Consistency Checks",
-            *_diagnostics(result, language="en"),
-            "",
-            *_figure_block(artifacts, language="en"),
-            "",
-            "## Output Artifacts",
-            *_outputs_table(artifacts, language="en"),
-        ]
+    lines = [
+        "# Perturbative Matching Analysis Report",
+        "",
+        "## Abstract",
+        f"This report summarizes converting the `{kernel_id}` ({op_en}) quasi-PDF into the light-cone PDF using the `{scheme_en}`-scheme NLO matching kernel.",
+        "",
+        "## Analysis Setup",
+        *_settings_table(result, language="en"),
+        "",
+        "### Field Definitions",
+        *_field_definitions(language="en"),
+        "",
+        "## Matching Formula",
+        _matching_formula_text(result, language="en", llm=llm),
+        "",
+        *_scheme_explanation(result, language="en"),
+        "",
+        "## Diagnostics and Consistency Checks",
+        *_diagnostics(result, language="en"),
+        "",
+        *_figure_block(artifacts, language="en"),
+        "",
+        "## Output Artifacts",
+        *_outputs_table(artifacts, language="en"),
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -1016,18 +903,28 @@ def write_matching_report(
 ) -> dict[str, Path]:
     """Write one matching report and return its path."""
     output = Path(path)
-    target, language = _report_target(output, report_language)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
     report_artifacts = markdown_artifact_paths(
         artifacts,
-        base_dir=target.parent,
+        base_dir=output.parent,
         path_keys=MATCHING_ARTIFACT_ORDER,
     )
-    target.write_text(
-        build_matching_report_markdown(result=result, artifacts=report_artifacts, language=language, llm=llm),
-        encoding="utf-8",
-    )
-    return {"report": target}
+    markdown = build_matching_report_markdown(result=result, artifacts=report_artifacts, language="en", llm=llm)
+    output.write_text(markdown, encoding="utf-8")
+    if report_language.lower() == "ch":
+        backend, provider, api_key, model_name, base_url = llm.resolved()
+        translated = translate_markdown_report(
+            markdown,
+            backend=backend,
+            provider=provider,
+            api_key=api_key,
+            model_name=model_name,
+            base_url=base_url,
+        )
+        target, _language = _report_target(output, report_language)
+        target.write_text(translated, encoding="utf-8")
+        return {"report": target}
+    return {"report": output}
 
 
 def write_matching_stage_report(
@@ -1040,135 +937,144 @@ def write_matching_stage_report(
     """Write one report summarizing all matching jobs in a stage."""
     output = Path(path)
     target, language = _report_target(output, report_language)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    report_path = output
     first = jobs[0]["result"]
-    for language, target in ((language, target),):
-        kernel_id = str(first.get("kernel_id", "not recorded"))
-        _operator, scheme = _parse_kernel_id(kernel_id)
-        op_en = _kernel_description(kernel_id, language="en")
-        op_zh = _kernel_description(kernel_id, language="zh")
-        scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
-        lines = [
-            "# Perturbative Matching Stage Report" if language == "en" else "# 微扰匹配阶段报告",
+    language = "en"
+    kernel_id = str(first.get("kernel_id", "not recorded"))
+    _operator, scheme = _parse_kernel_id(kernel_id)
+    op_en = _kernel_description(kernel_id, language=language)
+    scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
+    lines = [
+        "# Perturbative Matching Stage Report",
+        "",
+        f"This report summarizes all perturbative-matching jobs for `{kernel_id}` ({op_en}) using the `{scheme_en}` scheme.",
+        "",
+        "## Job Summary",
+        "| job | kernel | $P_z$ | output | plot |",
+        "|---|---|---:|---|---|",
+    ]
+    for item in jobs:
+        result = item["result"]
+        artifacts = markdown_artifact_paths(
+            item.get("artifacts", {}),
+            base_dir=output.parent,
+            path_keys=MATCHING_ARTIFACT_ORDER,
+        )
+        lines.append(
+            f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
+            f"{_fmt(result.get('momentum_gev'))} | "
+            f"{artifacts.get('lightcone_artifact', 'n/a')} | "
+            f"{artifacts.get('matched_plot', 'n/a')} |"
+        )
+    setting_data = {**first, "momentum_gev": "see per-momentum table"}
+    lines.extend(
+        [
             "",
-            f"This report summarizes all perturbative-matching jobs for `{kernel_id}` ({op_en}) using the `{scheme_en}` scheme."
-            if language == "en"
-            else f"本报告汇总 `{kernel_id}`（{op_zh}）在 `{scheme_en}` 方案下的所有动量匹配。",
+            "## Analysis Setup",
+            *_settings_table(setting_data, language=language),
             "",
-            "## Job Summary" if language == "en" else "## Job 汇总",
-            "| job | kernel | $P_z$ | output | plot |"
-            if language == "en"
-            else "| job | kernel | $P_z$ | 输出 | 图像 |",
-            "|---|---|---:|---|---|",
+            "### Field Definitions",
+            *_field_definitions(language=language),
+            "",
+            "## Matching Formula",
+            _matching_formula_text(first, language=language, llm=llm),
+            "",
+            *_scheme_explanation(first, language=language),
+            "",
+            "## Diagnostics and Consistency Checks",
+            "| job | $P_z$ | quasi $\\int_0^1$ | matched $\\int_0^1$ | valence-norm change |",
+            "|---|---:|---:|---:|---:|",
         ]
-        for item in jobs:
-            result = item["result"]
-            artifacts = markdown_artifact_paths(
-                item.get("artifacts", {}),
-                base_dir=target.parent,
-                path_keys=MATCHING_ARTIFACT_ORDER,
-            )
+    )
+    for item in jobs:
+        result = item["result"]
+        x_grid = np.asarray(result.get("x_grid", []), dtype=float)
+        quasi_mean = np.asarray(result.get("quasi_mean", []), dtype=float)
+        lc_mean = np.asarray(result.get("lightcone_mean", []), dtype=float)
+        if x_grid.size >= 2 and quasi_mean.size == x_grid.size and lc_mean.size == x_grid.size:
+            # Valence region [0, 1]; the full-grid integral double-counts a symmetric
+            # quasi-PDF across x>0/x<0 and would read ~2 (see _trapz_norm / _diagnostics).
+            quasi_norm = _trapz_norm(x_grid, quasi_mean, lo=0.0, hi=1.0)
+            lc_norm = _trapz_norm(x_grid, lc_mean, lo=0.0, hi=1.0)
+            rel = abs(lc_norm - quasi_norm) / abs(quasi_norm) if quasi_norm != 0.0 else float("nan")
             lines.append(
-                f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
-                f"{_fmt(result.get('momentum_gev'))} | "
-                f"{artifacts.get('lightcone_artifact', 'n/a')} | "
-                f"{artifacts.get('matched_plot', 'n/a')} |"
+                f"| `{item['job_id']}` | {_fmt(result.get('momentum_gev'))} | {_fmt(quasi_norm)} | "
+                f"{_fmt(lc_norm)} | {_fmt(100 * rel)}% |"
             )
-        setting_data = {**first, "momentum_gev": "see per-momentum table" if language == "en" else "见下方动量表"}
-        lines.extend(
-            [
-                "",
-                "## Analysis Setup" if language == "en" else "## 分析设置",
-                *_settings_table(setting_data, language=language),
-                "",
-                "### Field Definitions" if language == "en" else "### 条目解释",
-                *_field_definitions(language=language),
-                "",
-                "## Matching Formula" if language == "en" else "## 匹配公式",
-                _matching_formula_text(first, language=language, llm=llm),
-                "",
-                *_scheme_explanation(first, language=language),
-                "",
-                "## Diagnostics and Consistency Checks" if language == "en" else "## 诊断与一致性检查",
-                "| job | $P_z$ | quasi $\\int_0^1$ | matched $\\int_0^1$ | valence-norm change |"
-                if language == "en"
-                else "| job | $P_z$ | quasi $\\int_0^1$ | 匹配后 $\\int_0^1$ | 价区归一变化 |",
-                "|---|---:|---:|---:|---:|",
-            ]
+        else:
+            lines.append(f"| `{item['job_id']}` | {_fmt(result.get('momentum_gev'))} | n/a | n/a | n/a |")
+    lines.extend(
+        [
+            "",
+            "The table compares the quasi-PDF and matched light-cone PDF valence-region norm $\\int_0^1 f\\,dx$ (near 1 for a valence quark) for each momentum. Moderate norm changes are expected from the NLO kernel; a very large norm change usually indicates an x-grid or momentum-convention issue. The full-grid integral over $[-2,2]$ is not used here because a symmetric quasi-PDF double-counts the quark and antiquark sides, landing near 2.",
+            "",
+            "## Figures and Visual Assessment",
+        ]
+    )
+    for item in jobs:
+        result = item["result"]
+        artifacts = markdown_artifact_paths(
+            item.get("artifacts", {}),
+            base_dir=output.parent,
+            path_keys=MATCHING_ARTIFACT_ORDER,
         )
-        for item in jobs:
-            result = item["result"]
-            x_grid = np.asarray(result.get("x_grid", []), dtype=float)
-            quasi_mean = np.asarray(result.get("quasi_mean", []), dtype=float)
-            lc_mean = np.asarray(result.get("lightcone_mean", []), dtype=float)
-            if x_grid.size >= 2 and quasi_mean.size == x_grid.size and lc_mean.size == x_grid.size:
-                # Valence region [0, 1]; the full-grid integral double-counts a symmetric
-                # quasi-PDF across x>0/x<0 and would read ~2 (see _trapz_norm / _diagnostics).
-                quasi_norm = _trapz_norm(x_grid, quasi_mean, lo=0.0, hi=1.0)
-                lc_norm = _trapz_norm(x_grid, lc_mean, lo=0.0, hi=1.0)
-                rel = abs(lc_norm - quasi_norm) / abs(quasi_norm) if quasi_norm != 0.0 else float("nan")
-                lines.append(
-                    f"| `{item['job_id']}` | {_fmt(result.get('momentum_gev'))} | {_fmt(quasi_norm)} | "
-                    f"{_fmt(lc_norm)} | {_fmt(100 * rel)}% |"
-                )
-            else:
-                lines.append(f"| `{item['job_id']}` | {_fmt(result.get('momentum_gev'))} | n/a | n/a | n/a |")
-        lines.extend(
-            [
-                "",
-                "The table compares the quasi-PDF and matched light-cone PDF valence-region norm $\\int_0^1 f\\,dx$ (near 1 for a valence quark) for each momentum. Moderate norm changes are expected from the NLO kernel; a very large norm change usually indicates an x-grid or momentum-convention issue. The full-grid integral over $[-2,2]$ is not used here because a symmetric quasi-PDF double-counts the quark and antiquark sides, landing near 2."
-                if language == "en"
-                else "上表逐动量比较 quasi-PDF 与匹配后光锥 PDF 的价区归一 $\\int_0^1 f\\,dx$（价夸克数应约为 1）。NLO 匹配会带来有限修正；若归一变化很大，通常需要检查 x 网格或动量约定。此处不采用全网格 $[-2,2]$ 积分：分布关于 $x\\to-x$ 近似对称，会同时计入夸克与反夸克侧，约为价区的两倍。",
-                "",
-                "## Figures and Visual Assessment" if language == "en" else "## 图像与可视化评估",
-            ]
+        image = artifacts.get("matched_plot_image")
+        plot = artifacts.get("matched_plot")
+        label = "Quasi vs light-cone comparison"
+        lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('momentum_gev'))}$ GeV"])
+        if image:
+            lines.append(f"![{label}]({image})")
+            if plot:
+                lines.append("")
+                lines.append(f"[{label} (PDF, vector)]({plot})")
+        elif plot:
+            lines.append(f"[{label} (PDF)]({plot})")
+        else:
+            lines.append("Not available.")
+    lines.extend(
+        [
+            "",
+            "## Output Artifacts",
+            "| File | Description |",
+            "|---|---|",
+        ]
+    )
+    for item in jobs:
+        artifacts = markdown_artifact_paths(
+            item.get("artifacts", {}),
+            base_dir=output.parent,
+            path_keys=(*MATCHING_ARTIFACT_ORDER, *(key for key in item.get("artifacts", {}) if key.startswith("matching_overlay_"))),
         )
-        for item in jobs:
-            result = item["result"]
-            artifacts = markdown_artifact_paths(
-                item.get("artifacts", {}),
-                base_dir=target.parent,
-                path_keys=MATCHING_ARTIFACT_ORDER,
-            )
-            image = artifacts.get("matched_plot_image")
-            plot = artifacts.get("matched_plot")
-            label = "Quasi vs light-cone comparison" if language == "en" else "quasi 与光锥 PDF 对比图"
-            lines.extend(["", f"### `{item['job_id']}`: $P_z={_fmt(result.get('momentum_gev'))}$ GeV"])
-            if image:
-                lines.append(f"![{label}]({image})")
-                if plot:
-                    lines.append("")
-                    lines.append(
-                        f"[{label} (PDF, vector)]({plot})"
-                        if language == "en"
-                        else f"[{label}（PDF 矢量图）]({plot})"
-                    )
-            elif plot:
-                lines.append(
-                    f"[{label} (PDF)]({plot})"
-                    if language == "en"
-                    else f"[{label}（PDF）]({plot})"
-                )
-            else:
-                lines.append("未生成。" if language == "zh" else "Not available.")
-        lines.extend(
-            [
-                "",
-                "## Output Artifacts" if language == "en" else "## 输出文件",
-                "| File | Description |" if language == "en" else "| 文件名 | 文件描述 |",
-                "|---|---|",
-            ]
+        for key in MATCHING_ARTIFACT_ORDER:
+            value = artifacts.get(key)
+            if value:
+                desc = MATCHING_ARTIFACT_DESCRIPTIONS[key]
+                lines.append(f"| [{Path(value).name}]({value}) | `{item['job_id']}`: {desc} |")
+    stage_artifacts = markdown_artifact_paths(
+        jobs[0].get("artifacts", {}),
+        base_dir=output.parent,
+        path_keys=(*(key for key in jobs[0].get("artifacts", {}) if key.startswith("matching_overlay_")),),
+    )
+    for key, value in sorted(stage_artifacts.items(), key=lambda item: ("_image_" in item[0], item[0])):
+        if not key.startswith("matching_overlay_"):
+            continue
+        stem = Path(value).stem
+        label = stem[3:] if stem.startswith("mt_") else stem
+        lines.append(f"| [{Path(value).name}]({value}) | Matching overlay for ensemble {label} |")
+    markdown = "\n".join(lines) + "\n"
+    output.write_text(markdown, encoding="utf-8")
+    if report_language.lower() == "ch":
+        backend, provider, api_key, model_name, base_url = llm.resolved()
+        translated = translate_markdown_report(
+            markdown,
+            backend=backend,
+            provider=provider,
+            api_key=api_key,
+            model_name=model_name,
+            base_url=base_url,
         )
-        for item in jobs:
-            artifacts = markdown_artifact_paths(
-                item.get("artifacts", {}),
-                base_dir=target.parent,
-                path_keys=MATCHING_ARTIFACT_ORDER,
-            )
-            for key in MATCHING_ARTIFACT_ORDER:
-                value = artifacts.get(key)
-                if value:
-                    desc = MATCHING_ARTIFACT_DESCRIPTIONS[key]
-                    lines.append(f"| [{Path(value).name}]({value}) | `{item['job_id']}`: {desc[1 if language == 'zh' else 0]} |")
-        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return {"report": target}
+        _target, _language = _report_target(output, report_language)
+        _target.write_text(translated, encoding="utf-8")
+        report_path = _target
+    return {"report": report_path}

@@ -160,8 +160,7 @@ def test_ratio_scheme_uses_preprocessed_z0_normalization(tmp_path: Path) -> None
     assert np.allclose(store["output"].values, expected)
 
 
-@pytest.mark.parametrize("language", ["en", "zh"])
-def test_ratio_report_omits_hybrid_parameters(language: str, tmp_path: Path) -> None:
+def test_ratio_report_omits_hybrid_parameters(tmp_path: Path) -> None:
     report = build_renorm_stage_report_markdown(
         jobs=[{
             "job_id": "rn_ratio",
@@ -176,7 +175,6 @@ def test_ratio_report_omits_hybrid_parameters(language: str, tmp_path: Path) -> 
             "artifacts": {},
         }],
         base_dir=tmp_path,
-        language=language,
     )
 
     assert "h^{\\rm tar}_s(z)" in report

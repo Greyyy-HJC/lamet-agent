@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -11,6 +11,7 @@ import gvar as gv
 import lsqfit
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 import xarray as xr
 
 from lamet_agent.core.data import EnsembleData, EnsembleInfo
@@ -161,7 +162,7 @@ def run_extrapolation(
     out: str = "extrapolated_distribution",
 ) -> dict[str, Any]:
     """Fit matched light-cone data to the IMF and/or continuum limit."""
-    workers = int(workers)
+    workers = max(1, int(workers))
     inputs = [
         item if isinstance(item, EnsembleData) else EnsembleData.from_netcdf(item.path)
         for item in list(store.get(lightcone, []))
@@ -240,65 +241,67 @@ def run_extrapolation(
     mean_fit_dof = np.empty(len(x), dtype=int)
     mean_fit_q = np.empty(len(x), dtype=float)
     mean_fit_log_gbf = np.empty(len(x), dtype=float)
-    sample_executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
+    sample_executor = ProcessPoolExecutor(max_workers=min(workers, n_sample)) if workers > 1 else None
     try:
         if a_xdep and p_xdep:
-            x_iterator = range(len(x))
-            if len(x) > 1:
-                from tqdm import tqdm
-
-                x_iterator = tqdm(x_iterator, desc="extrapolation x fits", leave=False)
-            for ix in x_iterator:
-                fit_samples = samples[:, :, ix].T
-                mean, _sdev = sample_mean_and_sdev(fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
-                mean_y_data = sample_value_with_error(mean, fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
-                mean_params, mean_pmean, mean_psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(design, mean_y_data)
-                sample_prior = None
-                if mean_ok and mean_pmean is not None and mean_psdev is not None:
-                    sample_prior = _scaled_prior(mean_pmean, mean_psdev, posterior_prior_error_scale)
-                    mean_params, _pmean, _psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(
-                        design, mean_y_data, p0=mean_params, prior=sample_prior
+            with tqdm(total=n_sample * len(x), desc="extrapolation sample fits", leave=False) as sample_progress:
+                for ix in range(len(x)):
+                    fit_samples = samples[:, :, ix].T
+                    mean, _sdev = sample_mean_and_sdev(fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
+                    mean_y_data = sample_value_with_error(mean, fit_samples, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
+                    mean_params, mean_pmean, mean_psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(design, mean_y_data)
+                    sample_prior = None
+                    if mean_ok and mean_pmean is not None and mean_psdev is not None:
+                        sample_prior = _scaled_prior(mean_pmean, mean_psdev, posterior_prior_error_scale)
+                        mean_params, _pmean, _psdev, mean_ok, chi2, dof, q_value, log_gbf = _fit_extrapolation_one(
+                            design, mean_y_data, p0=mean_params, prior=sample_prior
+                        )
+                    mean_fit_params[ix] = mean_params
+                    mean_fit_chi2[ix] = chi2
+                    mean_fit_dof[ix] = dof
+                    mean_fit_q[ix] = q_value
+                    mean_fit_log_gbf[ix] = log_gbf
+                    payload = gv.dumps(
+                        {
+                            "design": design,
+                            "samples": samples[:, :, ix],
+                            "fit_samples": fit_samples,
+                            "resample_mode": inputs[0].resample,
+                            "sample_error_mode": sample_error_mode,
+                            "mean_params": mean_params,
+                            "sample_prior": sample_prior,
+                        }
                     )
-                mean_fit_params[ix] = mean_params
-                mean_fit_chi2[ix] = chi2
-                mean_fit_dof[ix] = dof
-                mean_fit_q[ix] = q_value
-                mean_fit_log_gbf[ix] = log_gbf
-                payload = gv.dumps(
-                    {
-                        "design": design,
-                        "samples": samples[:, :, ix],
-                        "fit_samples": fit_samples,
-                        "resample_mode": inputs[0].resample,
-                        "sample_error_mode": sample_error_mode,
-                        "mean_params": mean_params,
-                        "sample_prior": sample_prior,
-                    }
-                )
-                batches = _sample_batches(n_sample, workers)
-                if sample_executor is None:
-                    sample_results = _fit_extrapolation_sample_batch(payload, batches[0])
-                else:
-                    futures = [sample_executor.submit(_fit_extrapolation_sample_batch, payload, batch) for batch in batches]
-                    sample_results = [item for future in futures for item in future.result()]
-                for item in sorted(sample_results, key=lambda value: value["sample"]):
-                    isample = int(item["sample"])
-                    params = np.asarray(item["params"], dtype=float)
-                    chi2 = float(item["chi2"])
-                    dof = int(item["dof"])
-                    q_value = float(item["q_value"])
-                    log_gbf = float(item["log_gbf"])
-                    if not item["success"]:
-                        params = mean_params
-                        chi2 = mean_fit_chi2[ix]
-                        dof = mean_fit_dof[ix]
-                        q_value = mean_fit_q[ix]
-                        log_gbf = mean_fit_log_gbf[ix]
-                    coeff_samples[isample, :, ix] = params
-                    fit_chi2[isample, ix] = chi2
-                    fit_dof[isample, ix] = dof
-                    fit_q[isample, ix] = q_value
-                    fit_log_gbf[isample, ix] = log_gbf
+                    batches = _sample_batches(n_sample, workers)
+                    if sample_executor is None:
+                        sample_results = _fit_extrapolation_sample_batch(payload, batches[0])
+                    else:
+                        futures = [sample_executor.submit(_fit_extrapolation_sample_batch, payload, batch) for batch in batches]
+                        sample_results = []
+                        for future in as_completed(futures):
+                            batch_results = future.result()
+                            sample_results.extend(batch_results)
+                            sample_progress.update(len(batch_results))
+                    if sample_executor is None:
+                        sample_progress.update(len(sample_results))
+                    for item in sorted(sample_results, key=lambda value: value["sample"]):
+                        isample = int(item["sample"])
+                        params = np.asarray(item["params"], dtype=float)
+                        chi2 = float(item["chi2"])
+                        dof = int(item["dof"])
+                        q_value = float(item["q_value"])
+                        log_gbf = float(item["log_gbf"])
+                        if not item["success"]:
+                            params = mean_params
+                            chi2 = mean_fit_chi2[ix]
+                            dof = mean_fit_dof[ix]
+                            q_value = mean_fit_q[ix]
+                            log_gbf = mean_fit_log_gbf[ix]
+                        coeff_samples[isample, :, ix] = params
+                        fit_chi2[isample, ix] = chi2
+                        fit_dof[isample, ix] = dof
+                        fit_q[isample, ix] = q_value
+                        fit_log_gbf[isample, ix] = log_gbf
         else:
             n_input = len(inputs)
             internal_labels = [("h0", None, ix) for ix in range(len(x))]
@@ -330,8 +333,6 @@ def run_extrapolation(
                 )
             x_iterator = range(len(x))
             if len(x) > 1:
-                from tqdm import tqdm
-
                 x_iterator = tqdm(x_iterator, desc="extrapolation x diagnostics", leave=False)
             fit_samples_by_x = [samples[:, :, ix].T for ix in range(len(x))]
             for ix in x_iterator:
@@ -371,12 +372,13 @@ def run_extrapolation(
                 sample_results = _fit_extrapolation_global_sample_batch(payload, batches[0])
             else:
                 futures = [sample_executor.submit(_fit_extrapolation_global_sample_batch, payload, batch) for batch in batches]
-                sample_results = [item for future in futures for item in future.result()]
+                sample_results = []
+                with tqdm(total=n_sample, desc="extrapolation sample fits", leave=False) as sample_progress:
+                    for future in as_completed(futures):
+                        batch_results = future.result()
+                        sample_results.extend(batch_results)
+                        sample_progress.update(len(batch_results))
             sample_iterator = sorted(sample_results, key=lambda value: value["sample"])
-            if len(sample_iterator) > 1:
-                from tqdm import tqdm
-
-                sample_iterator = tqdm(sample_iterator, desc="extrapolation sample fits", leave=False)
             for item in sample_iterator:
                 isample = int(item["sample"])
                 params = np.asarray(item["params"], dtype=float)

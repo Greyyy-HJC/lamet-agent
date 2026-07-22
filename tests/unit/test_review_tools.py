@@ -107,19 +107,37 @@ def test_review_appends_deterministic_consistency_sections(tmp_path: Path, monke
         "lamet_agent.stages.review.functions.request_llm_text",
         lambda **kwargs: "# LLM Review",
     )
+    monkeypatch.setattr(
+        "lamet_agent.stages.review.functions.translate_markdown_report",
+        lambda markdown, **kwargs: markdown,
+    )
     manifest = _manifest(matching_zs=0.3)
     manifest._artifacts_directory = tmp_path / "artifacts"
 
     english = write_review_from_manifest(manifest, output_dir=tmp_path / "en")
-    chinese = write_review_from_manifest(manifest, report_language="ch", output_dir=tmp_path / "zh")
+    chinese = write_review_from_manifest(manifest, report_language="ch", output_dir=tmp_path / "ch")
 
     english_text = Path(english["review"]).read_text(encoding="utf-8")
     chinese_text = Path(chinese["review"]).read_text(encoding="utf-8")
     assert "## Manifest Parameter Consistency" in english_text
     assert "`mismatch`" in english_text
     assert "stages.perturbative_matching.jobs[0].params.zs_fm" in english_text
-    assert "## Manifest 参数一致性" in chinese_text
+    assert "## Manifest Parameter Consistency" in chinese_text
     assert "`mismatch`" in chinese_text
+
+
+def test_review_rewrites_stage_svg_links_relative_to_review_dir(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "lamet_agent.stages.review.functions.request_llm_text",
+        lambda **kwargs: "![key](correlator_analysis/ca_HISQa060_X_re.svg)",
+    )
+    manifest = _manifest()
+    manifest._artifacts_directory = tmp_path / "artifacts"
+
+    result = write_review_from_manifest(manifest, output_dir=tmp_path / "artifacts")
+    text = Path(result["review"]).read_text(encoding="utf-8")
+
+    assert "](../correlator_analysis/ca_HISQa060_X_re.svg)" in text
 
 
 def test_review_prompt_avoids_repeating_matching_zs_fm(tmp_path: Path, monkeypatch) -> None:
@@ -130,9 +148,10 @@ def test_review_prompt_avoids_repeating_matching_zs_fm(tmp_path: Path, monkeypat
         return "# LLM Review"
 
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
+    monkeypatch.setattr("lamet_agent.stages.review.functions.translate_markdown_report", lambda markdown, **kwargs: markdown)
 
     write_review_from_manifest(_manifest(), output_dir=tmp_path / "en")
-    write_review_from_manifest(_manifest(), report_language="ch", output_dir=tmp_path / "zh")
+    write_review_from_manifest(_manifest(), report_language="ch", output_dir=tmp_path / "ch")
 
     assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[0]
-    assert "matching 章节不要重复描述同一个 `zs_fm`" in prompts[1]
+    assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[1]

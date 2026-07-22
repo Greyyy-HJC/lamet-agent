@@ -63,6 +63,7 @@ class CorrelatorH5Mapping:
     script_file: str | None = None
     ambiguous: bool = False
     reason: str | None = None
+    operation: str = "copy"
 
 
 @dataclass
@@ -157,6 +158,8 @@ def load_relaxed_manifest(path: Path) -> tuple[dict[str, Any], str]:
     if not manifest_path.is_file():
         raise ValueError(f"Manifest does not exist: {path}")
     text = manifest_path.read_text(encoding="utf-8")
+    if manifest_path.suffix.lower() == ".txt":
+        return draft_manifest_from_text(manifest_path, text), text
     try:
         payload = json.loads(_strip_jsonc(text))
     except json.JSONDecodeError as exc:
@@ -164,6 +167,96 @@ def load_relaxed_manifest(path: Path) -> tuple[dict[str, Any], str]:
     if not isinstance(payload, dict):
         raise ValueError("Manifest top-level value must be a JSON object.")
     return payload, text
+
+
+def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
+    """Build a sparse plan-only manifest draft from a free-form text request."""
+    paths = [
+        token.strip("'\"`,;:()[]{}")
+        for token in re.findall(r"(?:~|/|\.{1,2}/)?[^\s'\"`]+?\.(?:h5|hdf5|npy|npz)", text, flags=re.I)
+    ]
+    lowered = text.lower()
+    root = path.parent.resolve()
+    run_id = re.sub(r"[^a-zA-Z0-9_]+", "_", path.stem).strip("_") or "planned_analysis"
+    target_observable = "gpd" if "gpd" in lowered else "da" if "da" in lowered else "pdf"
+    parton = "gluon" if "gluon" in lowered else "quark"
+    correlators: list[dict[str, Any]] = []
+    current_sources: list[dict[str, Any]] = []
+    for index, raw_path in enumerate(paths):
+        token = raw_path.lower()
+        is_current = "current" in token or "insertion" in token
+        kind = "3pt" if "3pt" in token and not is_current else "2pt"
+        label = "current" if is_current else kind
+        resolved = Path(raw_path).expanduser()
+        if not resolved.is_absolute():
+            resolved = (path.parent / resolved).resolve()
+        try:
+            data_path = str(resolved.relative_to(root))
+        except ValueError:
+            data_path = str(resolved)
+        if is_current:
+            current_sources.append({"source_id": f"current_{index}", "data_path": data_path})
+            continue
+        correlator = {
+            "correlator_id": f"{label}_{index}",
+            "correlator_type": kind,
+            "data_path": data_path,
+            "ensemble": "planned",
+            "hadron": "hadron",
+            "gfix": "unknown",
+            "source_operator": "source",
+            "sink_operator": "sink",
+            "volume": "S1T1",
+            "momentum": ["PX0PY0PZ0"],
+            "lattice_spacing_fm": 1.0,
+        }
+        if kind == "3pt":
+            correlator["current_operator"] = "current"
+        correlators.append(correlator)
+    two_point = next((item for item in correlators if item.get("correlator_type") == "2pt"), None)
+    if two_point is not None and current_sources:
+        correlators.append(
+            {
+                "correlator_id": "planned_3pt_from_2pt_current",
+                "correlator_type": "3pt",
+                "data_path": f"artifacts/plan_data/{run_id}_planned_3pt.h5",
+                "ensemble": two_point.get("ensemble", "planned"),
+                "hadron": two_point.get("hadron", "hadron"),
+                "gfix": two_point.get("gfix", "unknown"),
+                "source_operator": two_point.get("source_operator", "source"),
+                "sink_operator": two_point.get("sink_operator", "sink"),
+                "current_operator": "current",
+                "momentum": two_point.get("momentum", ["PX0PY0PZ0"]),
+                "volume": two_point.get("volume", "S1T1"),
+                "lattice_spacing_fm": two_point.get("lattice_spacing_fm", 1.0),
+                "tsep": [1],
+                "bT": [0],
+                "bz": [0],
+                "bz_direction": "Z",
+                "plan_sources": {"two_point": two_point["data_path"], "current": current_sources[0]["data_path"]},
+            }
+        )
+    stages = ["correlator_analysis"] if correlators else []
+    payload: dict[str, Any] = {
+        "metadata": {
+            "run_id": run_id,
+            "root_directory": str(root),
+            "artifacts_directory": "artifacts",
+            "target_observable": target_observable,
+            "parton": parton,
+            "resample_mode": "jk",
+            "random_seed": 1984,
+            "stages": stages,
+        },
+        "inputs": {"correlators": correlators, "artifacts": [], "kernels": []},
+        "stages": {},
+    }
+    if correlators:
+        payload["stages"]["correlator_analysis"] = {
+            "defaults": {"fit_scope": ["3pt_ratio"] if any(item["correlator_type"] == "3pt" for item in correlators) else ["2pt"]},
+            "jobs": [{"id": "ca_planned", "correlator_ids": [item["correlator_id"] for item in correlators], "params": {"momentum": "PX0PY0PZ0"}}],
+        }
+    return payload
 
 
 def _manifest_root(manifest_path: Path, payload: dict[str, Any]) -> Path | None:
@@ -546,6 +639,7 @@ def _update_conversion_paths(payload: dict[str, Any], conversions: list[Correlat
             new_path = str(output)
         old = correlator.get("data_path")
         correlator["data_path"] = new_path
+        correlator.pop("plan_sources", None)
         edits.append({"path": f"inputs.correlators[{index}].data_path", "old": old, "new": new_path})
     return edits
 

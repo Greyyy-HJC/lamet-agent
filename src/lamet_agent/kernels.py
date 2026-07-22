@@ -1816,8 +1816,8 @@ def GI_gzg5_DA_hybrid_LRR_NLO(
 #
 # A structure dict has:
 #   factorization : the continuum factorization, as a display-equation LaTeX body.
-#   result_noun   : (en, zh) name of the matched distribution ("light-cone PDF").
-#   source_noun   : (en, zh) name of the lattice input ("quasi-PDF").
+#   result_noun   : English name of the matched distribution ("light-cone PDF").
+#   source_noun   : English name of the lattice input ("quasi-PDF").
 #   notation      : the notation guidance handed to the formula LLM (bullet lines).
 #   extra_structure : optional extra display equation (e.g. an all-orders resummation).
 #   extra_note      : optional extra LLM instruction documenting that structure.
@@ -1829,8 +1829,8 @@ _PDF_STRUCTURE: dict[str, Any] = {
         r"f(x,\mu)=\int\frac{dy}{|y|}\,C^{-1}\!\left(\frac{x}{y},\frac{\mu}{yP_z}\right)"
         r"\tilde f\!\left(y,P_z\right),"
     ),
-    "result_noun": ("light-cone PDF", "光锥 PDF"),
-    "source_noun": ("quasi-PDF", "quasi-PDF"),
+    "result_noun": "light-cone PDF",
+    "source_noun": "quasi-PDF",
     "notation": (
         "- Define notation once: $\\xi=x/y$ and $L=\\ln(4y^2P_z^2/\\mu^2)$.\n"
         "- The coefficient has a plus-prescription at $\\xi=1$ (the code restores it by making "
@@ -1853,8 +1853,8 @@ _DA_STRUCTURE: dict[str, Any] = {
         r"\phi(x,\mu)=\int_0^1 dy\,\Big[\delta(x-y)-\frac{\alpha_s C_F}{2\pi}"
         r"\big[V(x,y)\big]_+\Big]\,\tilde\phi\!\left(y,P_z\right)+O(\alpha_s^2),"
     ),
-    "result_noun": ("light-cone DA", "光锥 DA"),
-    "source_noun": ("quasi-DA", "quasi-DA"),
+    "result_noun": "light-cone DA",
+    "source_noun": "quasi-DA",
     "notation": (
         "- This is a distribution-amplitude kernel. Its density is a genuine two-variable "
         "$V(x,y)$ carrying its own $1/y$ and $1/(1-y)$ poles, integrated with a plain $dy$ "

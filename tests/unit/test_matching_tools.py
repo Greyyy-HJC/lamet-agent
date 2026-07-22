@@ -155,7 +155,7 @@ def test_every_registered_kernel_declares_a_render_structure() -> None:
         assert isinstance(structure, dict), kernel_id
         assert structure.get("factorization"), kernel_id
         assert structure.get("notation"), kernel_id
-        assert len(structure.get("result_noun", ())) == 2, kernel_id
+        assert isinstance(structure.get("result_noun"), str), kernel_id
 
 
 def test_report_formula_follows_the_kernel_structure_without_family_branches() -> None:
@@ -166,8 +166,7 @@ def test_report_formula_follows_the_kernel_structure_without_family_branches() -
     from lamet_agent.stages.matching import reporting as R
 
     def formula_text(kernel_id: str) -> str:
-        for language in ("en", "zh"):
-            R._FORMULA_CACHE[(kernel_id, language)] = ("STUB", False)
+        R._FORMULA_CACHE[(kernel_id, "en")] = ("STUB", False)
         return R._matching_formula_text({"kernel_id": kernel_id}, language="en", llm=None)
 
     # The renormalon-resummed kernel writes out its matrix-exponential structure...

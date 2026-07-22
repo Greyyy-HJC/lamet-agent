@@ -11,18 +11,19 @@ from lamet_agent.core.reporting import (
     format_report_value,
     markdown_artifact_paths,
     resolve_report_target,
+    translate_markdown_report,
 )
 
 
 CORRELATOR_ARTIFACT_DESCRIPTIONS = {
-    "bare_artifact": ("Bare matrix element samples (EnsembleData NetCDF)", "裸矩阵元样本（EnsembleData NetCDF）"),
-    "summary_plot": ("PDF plot of the bare matrix element versus Wilson-line length", "裸矩阵元随 Wilson 线长度变化的 PDF 图"),
-    "summary_plot_image": ("SVG companion for Markdown embedding", "供 Markdown 嵌入的裸矩阵元 SVG 图"),
-    "tuning_log": ("Window tuning and sample-average fit-quality log", "窗口选择和样本平均拟合质量日志"),
-    "sample_log": ("Per-sample and per-z fit-quality log", "逐样本、逐 z 拟合质量日志"),
-    "E0_artifact": ("Stage-level dispersion-relation table (NetCDF)", "阶段级色散关系数据表（NetCDF）"),
-    "dispersion_relation_plot": ("Stage-level dispersion-relation PDF", "阶段级色散关系 PDF 图"),
-    "dispersion_relation_image": ("Stage-level dispersion-relation SVG", "阶段级色散关系 SVG 图"),
+    "bare_artifact": "Bare matrix element samples (EnsembleData NetCDF)",
+    "summary_plot": "PDF plot of the bare matrix element versus Wilson-line length",
+    "summary_plot_image": "SVG companion for Markdown embedding",
+    "tuning_log": "Window tuning and sample-average fit-quality log",
+    "sample_log": "Per-sample and per-z fit-quality log",
+    "E0_artifact": "Stage-level dispersion-relation table (NetCDF)",
+    "dispersion_relation_plot": "Stage-level dispersion-relation PDF",
+    "dispersion_relation_image": "Stage-level dispersion-relation SVG",
 }
 
 CORRELATOR_ARTIFACT_ORDER = (
@@ -37,51 +38,33 @@ CORRELATOR_ARTIFACT_ORDER = (
 )
 
 
-def _job_settings_table(result: dict[str, Any], *, language: str) -> list[str]:
+def _job_settings_table(result: dict[str, Any]) -> list[str]:
     z_grid = result.get("bz", result.get("z_values", []))
-    if language == "zh":
-        rows = [
-            ("拟合形式", f"`{result.get('fitting_form', 'not recorded')}`"),
-            ("拟合对象", f"`{result.get('fit_scope', 'not recorded')}`"),
-            ("拟合策略", f"`{result.get('fit_strategy', 'not recorded')}`"),
-            ("拟合模式", f"`{result.get('fit_mode', 'not recorded')}`"),
-            ("Model average", f"`{result.get('model_average', 'not recorded')}`"),
-            ("选择规则", f"`{result.get('selection_rule', 'not recorded')}`"),
-            ("重采样", f"`{result.get('resample_mode', 'not recorded')}`，共 {result.get('n_samples', 'n/a')} 个样本"),
-            ("z 网格", format_report_list(z_grid)),
-            ("调参 z", format_report_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
-            ("correlator_rescale", format_report_value(result.get("correlator_rescale"))),
-        ]
-        header = "| 条目 | 数值或设置 |"
-    else:
-        rows = [
-            ("Fitting form", f"`{result.get('fitting_form', 'not recorded')}`"),
-            ("Fit scope", f"`{result.get('fit_scope', 'not recorded')}`"),
-            ("Fit strategy", f"`{result.get('fit_strategy', 'not recorded')}`"),
-            ("Fit mode", f"`{result.get('fit_mode', 'not recorded')}`"),
-            ("Model average", f"`{result.get('model_average', 'not recorded')}`"),
-            ("Selection rule", f"`{result.get('selection_rule', 'not recorded')}`"),
-            ("Resampling", f"`{result.get('resample_mode', 'not recorded')}` with {result.get('n_samples', 'n/a')} samples"),
-            ("z grid", format_report_list(z_grid)),
-            ("Tuning z values", format_report_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
-            ("correlator_rescale", format_report_value(result.get("correlator_rescale"))),
-        ]
-        header = "| Quantity | Value |"
-    lines = [header, "|---|---|"]
+    rows = [
+        ("Fitting form", f"`{result.get('fitting_form', 'not recorded')}`"),
+        ("Fit scope", f"`{result.get('fit_scope', 'not recorded')}`"),
+        ("Fit strategy", f"`{result.get('fit_strategy', 'not recorded')}`"),
+        ("Fit mode", f"`{result.get('fit_mode', 'not recorded')}`"),
+        ("Model average", f"`{result.get('model_average', 'not recorded')}`"),
+        ("Selection rule", f"`{result.get('selection_rule', 'not recorded')}`"),
+        ("Resampling", f"`{result.get('resample_mode', 'not recorded')}` with {result.get('n_samples', 'n/a')} samples"),
+        ("z grid", format_report_list(z_grid)),
+        ("Tuning z values", format_report_list(result.get("tune_z_values", [result.get("tune_z")] if result.get("tune_z") is not None else []))),
+        ("correlator_rescale", format_report_value(result.get("correlator_rescale"))),
+    ]
+    lines = ["| Quantity | Value |", "|---|---|"]
     lines.extend(f"| {name} | {value} |" for name, value in rows)
     return lines
 
 
-def _window_text(result: dict[str, Any], *, language: str) -> list[str]:
+def _window_text(result: dict[str, Any]) -> list[str]:
     specs = result.get("shared_window_specs")
     if not specs:
-        return ["No shared window metadata was recorded." if language == "en" else "未记录共享窗口信息。"]
+        return ["No shared window metadata was recorded."]
     if not isinstance(specs, list):
         specs = [specs]
     lines = [
-        "| scope | strategy | nstate | pt2 window | pt3 window | n_data | n_params |"
-        if language == "en"
-        else "| 拟合对象 | 策略 | nstate | 2pt 窗口 | 3pt 窗口 | n_data | n_params |",
+        "| scope | strategy | nstate | pt2 window | pt3 window | n_data | n_params |",
         "|---|---|---:|---|---|---:|---:|",
     ]
     for spec in specs:
@@ -106,18 +89,12 @@ def _window_text(result: dict[str, Any], *, language: str) -> list[str]:
     return lines
 
 
-def _auto_window_scan_text(result: dict[str, Any], *, language: str) -> list[str]:
+def _auto_window_scan_text(result: dict[str, Any]) -> list[str]:
     scan = result.get("auto_window_scan")
     if not isinstance(scan, dict):
-        return [
-            "No automatic-window diagnostics were recorded."
-            if language == "en"
-            else "未记录自动窗口诊断。"
-        ]
+        return ["No automatic-window diagnostics were recorded."]
     lines = [
-        "| channel | source | candidates | stable tmax | fallback |"
-        if language == "en"
-        else "| 通道 | 来源 | 候选 | 稳定 tmax | fallback |",
+        "| channel | source | candidates | stable tmax | fallback |",
         "|---|---|---:|---:|---|",
     ]
     candidate_lines: list[str] = []
@@ -136,20 +113,17 @@ def _auto_window_scan_text(result: dict[str, Any], *, language: str) -> list[str
             f"{format_report_value(details.get('stable_tmax'))} | {fallback} |"
         )
         if isinstance(windows, list) and windows:
-            label = "Generated candidates" if language == "en" else "生成的候选"
-            payload = json.dumps(windows, ensure_ascii=False, separators=(",", ":"))
-            candidate_lines.append(f"- {label} `{channel}`: `{payload}`")
+            payload = json.dumps(windows, separators=(",", ":"))
+            candidate_lines.append(f"- Generated candidates `{channel}`: `{payload}`")
     if candidate_lines:
         lines.extend(["", *candidate_lines])
     return lines
 
 
-def _z_fit_table(result: dict[str, Any], *, language: str) -> list[str]:
+def _z_fit_table(result: dict[str, Any]) -> list[str]:
     z_fits = result.get("z_fits") or []
     lines = [
-        "| z | Q | chi2/dof | logGBF | failed samples | Re sys | Im sys |"
-        if language == "en"
-        else "| z | Q | chi2/dof | logGBF | 失败样本 | Re sys | Im sys |",
+        "| z | Q | chi2/dof | logGBF | failed samples | Re sys | Im sys |",
         "|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for fit in z_fits[:20]:
@@ -167,44 +141,22 @@ def _z_fit_table(result: dict[str, Any], *, language: str) -> list[str]:
     return lines
 
 
-def _outputs_table(artifacts: dict[str, Any], *, language: str) -> list[str]:
-    header = "| Artifact | Description |" if language == "en" else "| 文件 | 说明 |"
-    lines = [header, "|---|---|"]
+def _outputs_table(artifacts: dict[str, Any]) -> list[str]:
+    lines = ["| Artifact | Description |", "|---|---|"]
     for key in CORRELATOR_ARTIFACT_ORDER:
         if key in {"E0_artifact", "dispersion_relation_plot", "dispersion_relation_image"}:
             continue
         value = artifacts.get(key)
-        if not value:
-            continue
-        desc = CORRELATOR_ARTIFACT_DESCRIPTIONS[key][0 if language == "en" else 1]
-        lines.append(f"| `{value}` | {desc} |")
+        if value:
+            lines.append(f"| `{value}` | {CORRELATOR_ARTIFACT_DESCRIPTIONS[key]} |")
     if len(lines) == 2:
         lines.append("| not available | not available |")
     return lines
 
 
-def _fit_form_text(*, language: str, has_qda_ratio: bool = False, has_3pt_ratio: bool = True) -> str:
+def _fit_form_text(*, has_qda_ratio: bool = False, has_3pt_ratio: bool = True) -> str:
     if has_qda_ratio:
-        if language == "zh":
-            text = r"""
-`fit_scope="qda_ratio"` 使用同一批重采样样本构造非局域 qDA 两点函数与所选两点函数分母的比值
-
-$$
-R_{\rm qDA}^{(a)}(z,P,t)=\frac{C_{\rm qDA}^{(a)}(z,P,t)}{C_2(P,t)} .
-$$
-
-分子和分母使用共享能谱参数的多态谱分解：
-
-$$
-C_{\rm qDA}^{(a)}(t)=\sum_n\frac{z_n O_{0n}^{(a)}}{2E_n}
-\left[e^{-E_nt}+e^{-E_n(L_t-t)}\right],\qquad
-C_2(t)=\sum_n\frac{z_n z'_n}{2E_n}\left[e^{-E_nt}+e^{-E_n(L_t-t)}\right].
-$$
-
-当 job 提供普通 local-local 2pt 时取 $z'_n=z_n$，输出 $O_{00}^{(a)}/z_0$。缺省普通 2pt 时，分母使用同一 qDA operator 的 $b_z=0$ 数据，$z'_n$ 是非局域 sink overlap，输出 $O_{00}^{(a)}/z'_0$；此时 $z=0$ ratio 由相同 numerator/denominator 自动归一。该 scope 没有 3pt、$t_{\rm sep}$、$\tau$ 或 current insertion。
-""".strip()
-        else:
-            text = r"""
+        text = r"""
 `fit_scope="qda_ratio"` builds the ratio of a nonlocal qDA two-point correlator to the selected two-point denominator from shared resamples,
 
 $$
@@ -221,60 +173,7 @@ $$
 
 With an ordinary local-local 2pt input, $z'_n=z_n$ and the output is $O_{00}^{(a)}/z_0$. When that input is omitted, the same qDA operator at $b_z=0$ supplies the denominator, $z'_n$ is the nonlocal sink overlap, and the output is $O_{00}^{(a)}/z'_0$; the $z=0$ ratio is then automatically normalized by identical numerator and denominator data. This scope has no 3pt correlator, $t_{\rm sep}$, $\tau$, or current insertion.
 """.strip()
-        return text + ("\n\n" + _fit_form_text(language=language) if has_3pt_ratio else "")
-    if language == "zh":
-        return r"""
-lamet-agent 在该阶段以同一批重采样样本构造 2pt/3pt 数据，并在选定时间窗口内提取裸矩阵元。2pt 输入为给定动量与 interpolator 的 $C_2(t)$；3pt 输入为各 $t_{\rm sep}$、插入时间 $\tau$ 和 Wilson 线长度 $z$ 的 $C_3(t_{\rm sep},\tau,z)$。对每个 job，调参步骤先在样本平均数据上确定窗口、态数、`fit_scope` 与 `fit_strategy`；随后固定这些选择，对所有 $z$ 和所有重采样样本执行拟合。
-
-2pt 谱分解写为
-
-$$
-C_2^\alpha(t)=\sum_{n=0}^{N_{\rm st}-1}
-\frac{z_{n,\alpha}^2}{2E_{n,\alpha}}
-\left(e^{-E_{n,\alpha}t}+e^{-E_{n,\alpha}(L_t-t)}\right),
-\qquad
-E_{n,\alpha}=E_{0,\alpha}+\sum_{k=1}^{n}e^{\log\Delta E_{k,\alpha}} .
-$$
-
-这里 $\alpha$ 标记初态或末态动量通道；Breit/forward 情形只有一套 $\{E_n,z_n\}$，NonBreit 情形有初态 $i$ 与末态 $f$ 两套 $\{E_{n,i},z_{n,i}\}$、$\{E_{n,f},z_{n,f}\}$。2pt 拟合参数包括 $E_0$、各激发能隙 $\log\Delta E_k$ 和重叠因子 $z_n$；NonBreit 中这些参数分别属于 initial/final 两个 2pt。
-
-Breit ratio 的 3pt 模型为
-
-$$
-R_{\rm B}(t,\tau,z)=\frac{C_3(t,\tau,z)}{C_2(t)}
-=\frac{1}{C_2(t)}
-\sum_{m,n}\frac{O^\Gamma_{mn}(z)z_mz_n}{(2E_m)(2E_n)}
-e^{-E_m(t-\tau)}e^{-E_n\tau},
-\qquad h_{\rm B}(z)=\frac{O_{00}(z)}{2E_0}.
-$$
-
-该形式输入同一动量下的 2pt 与 3pt ratio，拟合参数除 2pt 谱参数外，还包括每个 $z$ 的矩阵元 $O_{mn}(z)$。报告和 NetCDF 中输出的 Breit 裸矩阵元是基态归一化组合 $h_{\rm B}(z)$。
-
-NonBreit ratio 使用初末态不同动量的对称化 ratio：
-
-$$
-R_{\rm NB}(t,\tau,z)=
-\frac{C_3^{f\leftarrow i}(t,\tau,z)}{C_2^f(t)}
-\left[
-\frac{C_2^i(t-\tau)C_2^f(\tau)C_2^f(t)}
-{C_2^f(t-\tau)C_2^i(\tau)C_2^i(t)}
-\right]^{1/2},
-\qquad
-h_{\rm NB}(z)={\rm sign}(z_{0,i}z_{0,f})\frac{O_{00}(z)}{E_{0,i}+E_{0,f}} .
-$$
-
-该形式输入 initial 2pt、final 2pt 以及 non-forward 3pt；拟合参数包括两套 2pt 谱参数和每个 $z$ 的 transition matrix elements $O_{mn}(z)$。报告中 NonBreit 总览图的裸矩阵元对应 $O_{00}/(E_{0,i}+E_{0,f})$，并带有基态重叠符号约定。
-
-若 `fit_scope` 为 `FH` 或 `3pt_ratio+FH`，还会从 ratio 构造 summed-ratio/Feynman-Hellmann 约束：
-
-$$
-S(t)=\sum_{\tau=\tau_c}^{t-\tau_c}R(t,\tau),
-\qquad
-R_{\rm FH}(t)=\frac{S(t+\Delta t)-S(t)}{\Delta t}.
-$$
-
-`fit_strategy="joint"` 表示 2pt 与 3pt/FH 在同一个非线性拟合中共同约束，相关参数同时浮动。`fit_strategy="chained"` 表示先拟合 2pt 并把得到的能量与重叠因子作为后续 3pt/FH 拟合的锚定先验。`fit_strategy="independent"` 表示不拟合 2pt，只对 ratio/FH/`qda_ratio` 做独立拟合。`fit_scope="3pt_ratio"` 只用 3pt ratio 数据，`fit_scope="FH"` 只用 summed-ratio/FH 数据，`fit_scope="3pt_ratio+FH"` 同时使用两类约束。
-""".strip()
+        return text + ("\n\n" + _fit_form_text() if has_3pt_ratio else "")
     return r"""
 lamet-agent builds 2pt/3pt data from the same resampled ensemble and extracts bare matrix elements in the selected time windows. The 2pt input is $C_2(t)$ for the chosen momentum and interpolator; the 3pt input is $C_3(t_{\rm sep},\tau,z)$ for each source-sink separation, insertion time, and Wilson-line length. For each job, tuning first fixes the window, state count, `fit_scope`, and `fit_strategy` on sample-average data; those choices are then held fixed for all $z$ and all resampled samples.
 
@@ -329,12 +228,12 @@ $$
 """.strip()
 
 
-def _diagnostic_plots(artifacts: dict[str, Any], *, language: str) -> list[str]:
+def _diagnostic_plots(artifacts: dict[str, Any]) -> list[str]:
     plots = list(artifacts.get("sample0_fit_plots", [])) + list(artifacts.get("sample0_pt2_plots", []))
     plots = [plot for plot in plots if plot and str(plot).endswith(".svg")]
     if not plots:
-        return ["No sample-0 diagnostic SVGs were recorded." if language == "en" else "未记录 sample-0 诊断 SVG。"]
-    lines = ["Sample-0 diagnostic SVGs:" if language == "en" else "Sample-0 诊断 SVG："]
+        return ["No sample-0 diagnostic SVGs were recorded."]
+    lines = ["Sample-0 diagnostic SVGs:"]
     for start in range(0, len(plots), 4):
         row = plots[start : start + 4]
         lines.append("<table><tr>")
@@ -348,32 +247,26 @@ def build_correlator_stage_report_markdown(
     *,
     jobs: list[dict[str, Any]],
     base_dir: Path,
-    language: str = "en",
 ) -> str:
-    """Build one Markdown report for all correlator-analysis jobs."""
-    title = "# Correlator Analysis Stage Report" if language == "en" else "# Correlator Analysis 阶段报告"
+    """Build one English Markdown report for all correlator-analysis jobs."""
     all_qda_ratio = bool(jobs) and all((item.get("result", {}).get("fit_scope") == "qda_ratio") for item in jobs)
     has_qda_ratio = any((item.get("result", {}).get("fit_scope") == "qda_ratio") for item in jobs)
     has_3pt_ratio = any((item.get("result", {}).get("fit_scope") != "qda_ratio") for item in jobs)
     intro = (
         "This report summarizes correlator fits that extract bare matrix elements from 2pt correlators."
-        if all_qda_ratio and language == "en"
-        else "本报告汇总从 2pt 关联函数中提取裸矩阵元的拟合结果。"
         if all_qda_ratio
         else "This report summarizes correlator fits that extract bare matrix elements from 2pt/3pt data."
-        if language == "en"
-        else "本报告汇总从 2pt/3pt 关联函数中提取裸矩阵元的拟合结果。"
     )
     lines = [
-        title,
+        "# Correlator Analysis Stage Report",
         "",
         intro,
         "",
-        "## Fitting Form" if language == "en" else "## 拟合形式",
-        _fit_form_text(language=language, has_qda_ratio=has_qda_ratio, has_3pt_ratio=has_3pt_ratio),
+        "## Fitting Form",
+        _fit_form_text(has_qda_ratio=has_qda_ratio, has_3pt_ratio=has_3pt_ratio),
         "",
-        "## Job Summary" if language == "en" else "## Job 汇总",
-        "| job | fit scope | strategy | output | plot |" if language == "en" else "| job | 拟合对象 | 策略 | 输出 | 图像 |",
+        "## Job Summary",
+        "| job | fit scope | strategy | output | plot |",
         "|---|---|---|---|---|",
     ]
     markdown_jobs = []
@@ -400,14 +293,10 @@ def build_correlator_stage_report_markdown(
         lines.extend(
             [
                 "",
-                "## Dispersion Relation" if language == "en" else "## 色散关系",
+                "## Dispersion Relation",
                 "",
-                (
-                    "The dispersion-relation plot is designed to check the dependence of $E_0^2$ on $p^2$ and shows the ground-state energy posterior obtained from 2pt correlator fits at different ensembles and momenta. "
-                    r"For each ensemble, the fit form is $E_0^2=m^2+k_2P^2+k_3P^4a^2$."
-                    if language == "en"
-                    else r"色散关系图旨在检查 $E_0^2$ 随 $p^2$ 的变化，展示了不同组态、不同动量下由 2pt correlator 拟合得到的基态能量后验值。对每个系综的拟合形式为 $E_0^2=m^2+k_2P^2+k_3P^4a^2$。"
-                ),
+                "The dispersion-relation plot is designed to check the dependence of $E_0^2$ on $p^2$ and shows the ground-state energy posterior obtained from 2pt correlator fits at different ensembles and momenta. "
+                r"For each ensemble, the fit form is $E_0^2=m^2+k_2P^2+k_3P^4a^2$.",
                 "",
                 f"![Dispersion relation]({stage_artifacts['dispersion_relation_image']})",
             ]
@@ -423,7 +312,7 @@ def build_correlator_stage_report_markdown(
             label = label[:-3] if label.endswith(("_re", "_im")) else label
             overlay_groups.setdefault(label, []).append(image)
         for label, images in overlay_groups.items():
-            title = f"{label} ensemble overview" if language == "en" else f"{label}组态总览图"
+            title = f"{label} ensemble overview"
             lines.extend(["", f"## {title}", ""])
             images.sort(key=lambda image: 0 if Path(image).stem.endswith("_re") else 1)
             lines.extend(f"![{title}]({image})" for image in images)
@@ -434,43 +323,31 @@ def build_correlator_stage_report_markdown(
                 "",
                 f"## `{item['job_id']}`",
                 "",
-                "### Fit Setup" if language == "en" else "### 拟合设置",
-                *_job_settings_table(result, language=language),
+                "### Fit Setup",
+                *_job_settings_table(result),
                 "",
-                "### Shared Windows" if language == "en" else "### 共享窗口",
-                *_window_text(result, language=language),
+                "### Shared Windows",
+                *_window_text(result),
                 "",
-                "### Automatic Window Scan" if language == "en" else "### 自动窗口扫描",
-                *_auto_window_scan_text(result, language=language),
+                "### Automatic Window Scan",
+                *_auto_window_scan_text(result),
                 "",
-                "### Per-z Fit Summary" if language == "en" else "### 逐 z 拟合摘要",
-                *_z_fit_table(result, language=language),
+                "### Per-z Fit Summary",
+                *_z_fit_table(result),
                 "",
-                "### fit_logs" if language == "en" else "### fit_logs",
-                (
-                    "The `fit_logs` directory contains split logs: the tuning log records window selection and sample-average fit quality, while the sample log records per-sample and per-z fit quality, including failures."
-                    if language == "en"
-                    else "`fit_logs` 目录包含拆分日志：tuning log 记录窗口选择和样本平均拟合质量；sample log 记录逐样本、逐 z 的拟合质量以及失败信息。"
-                ),
+                "### fit_logs",
+                "The `fit_logs` directory contains split logs: the tuning log records window selection and sample-average fit quality, while the sample log records per-sample and per-z fit quality, including failures.",
                 "",
-                *_outputs_table(artifacts, language=language),
-            ]
-        )
-        lines.extend(
-            [
+                *_outputs_table(artifacts),
                 "",
-                "### Diagnostic SVGs" if language == "en" else "### 诊断 SVG",
-                *_diagnostic_plots(artifacts, language=language),
-            ]
-        )
-        lines.extend(
-            [
+                "### Diagnostic SVGs",
+                *_diagnostic_plots(artifacts),
                 "",
-                "### Summary Figure" if language == "en" else "### 总览图",
+                "### Summary Figure",
                 (
                     f"![Bare matrix element summary]({artifacts.get('summary_plot_image')})"
                     if artifacts.get("summary_plot_image")
-                    else ("Not available." if language == "en" else "未生成。")
+                    else "Not available."
                 ),
             ]
         )
@@ -482,13 +359,27 @@ def write_correlator_stage_report(
     jobs: list[dict[str, Any]],
     path: str | Path,
     report_language: str = "en",
+    backend: str = "",
+    provider: str | None = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Path]:
     """Write one report summarizing all correlator-analysis jobs."""
     output = Path(path)
     target, language = resolve_report_target(output, report_language)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        build_correlator_stage_report_markdown(jobs=jobs, base_dir=target.parent, language=language),
-        encoding="utf-8",
-    )
+    markdown = build_correlator_stage_report_markdown(jobs=jobs, base_dir=output.parent)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(markdown, encoding="utf-8")
+    if language == "ch":
+        translated = translate_markdown_report(
+            markdown,
+            backend=backend,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        target.write_text(translated, encoding="utf-8")
     return {"report": target}

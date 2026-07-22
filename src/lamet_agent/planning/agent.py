@@ -80,6 +80,8 @@ def _planning_system_prompt() -> str:
         "When a tool observation includes next_questions, let the controller ask those deterministic questions; do not rewrite them or invent alternate question_id values. "
         "Never claim a manifest edit was applied until a tool observation confirms it. "
         "Do not write files; final writes happen only after the user accepts. "
+        "All JSON, Python scripts, code blocks, identifiers, manifest summaries, and planned output files must use English ASCII text only. "
+        "The user may write free-form instructions in any language, but do not copy non-English prose into generated code blocks or JSON fields unless it is part of an existing file path. "
         "Return exactly one JSON object matching this schema: "
         + json.dumps(PLAN_ACTION_SCHEMA)
         + "\nAvailable planning tools:\n"
@@ -122,6 +124,11 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
     return json.dumps(
         {
             "task": "Prepare this LaMET analysis manifest for execution.",
+            "source_type": "free_form_text" if manifest_path.suffix.lower() == ".txt" else "manifest",
+            "text_input_policy": (
+                "For free_form_text input, the candidate manifest is a sparse draft inferred from file paths and broad analysis intent. "
+                "Ask concise follow-up questions for missing physics metadata, source/current operators, kinematics, and data-axis mappings."
+            ),
             "manifest_path": str(manifest_path),
             "manifest_text": manifest_text,
             "stage_ids": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"],
@@ -175,7 +182,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                 },
                 "extrapolation": {
                     "required": {"inputs": {"lightcone": ["matching_job_1", "matching_job_2"]}},
-                    "defaults": {"allow_order_a": [2], "allow_order_1overp": [2], "fitting_param_xdep": [false, true, false], "pdep_gev": [1.5, 2.0, 2.5]},
+                    "defaults": {"allow_order_a": [2], "allow_order_1overp": [2], "fitting_param_xdep": [False, True, False], "pdep_gev": [1.5, 2.0, 2.5]},
                 },
                 "review": {"required": "none"},
             },
@@ -259,7 +266,7 @@ class _PlanAgentSession:
             self.mock_phase = "mock_revision"
         elif observation.get("event") == "user_answer":
             if observation.get("question_id") == "stage.add_remaining":
-                self.mock_phase = "build"
+                self.mock_phase = "conversions"
             elif str(observation.get("question_id", "")).startswith("stage_params."):
                 value = str(observation.get("value", "")).strip().lower()
                 self.mock_phase = "blocked" if value in {"no", "n", "false", "0"} else "build"
@@ -365,9 +372,7 @@ class _PlanAgentSession:
             note = self.last_revision or ""
             text = note.lower()
             suppressions = []
-            if ("tau" in text or "pt3_tau_cuts" in text) and (
-                "改回" in note or "恢复" in note or "撤回" in note or "undo" in text or "revert" in text
-            ):
+            if ("tau" in text or "pt3_tau_cuts" in text) and ("undo" in text or "revert" in text):
                 suppressions.append("stages.correlator_analysis.defaults.pt3_tau_cuts")
             return {
                 "action": "call_tool",
@@ -419,7 +424,7 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
     if question_id == "stage.add_remaining":
         state.stage_completion_checked = True
         text = str(value).strip().lower()
-        negative = text in {"no", "n", "false", "0"} or "keep" in text and "partial" in text or "不" in text and ("加" in text or "添加" in text)
+        negative = text in {"no", "n", "none", "false", "0", "partial"} or "keep" in text and "partial" in text
         state.stage_completion_requested = not negative and text in {"yes", "y", "true", "1"}
         return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "stage completion preference recorded for the planning agent."}
     if question_id.startswith("stage_params."):
@@ -482,7 +487,7 @@ def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, A
     """Return deterministic mock patches so tests can exercise the agent patch path."""
     text = note.lower()
     payload = state.candidate_payload
-    if "renormalization" in text or "重整" in note:
+    if "renormalization" in text:
         stages = payload.get("stages", {})
         metadata = payload.get("metadata", {})
         order = list(metadata.get("stages", [])) if isinstance(metadata, dict) and isinstance(metadata.get("stages"), list) else []
@@ -522,7 +527,7 @@ def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, A
                 },
             },
         ]
-    if ("fit window" in text or "window" in text or "窗口" in note) and ("search" in text or "scan" in text or "多" in note or "加" in note):
+    if ("fit window" in text or "window" in text) and ("search" in text or "scan" in text):
         defaults = payload.get("stages", {}).get("correlator_analysis", {}).get("defaults", {})
         return [
             {
@@ -538,7 +543,7 @@ def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, A
                 "note": "LLM expanded the fit-window search.",
             },
         ]
-    if ("tau" in text or "pt3_tau_cuts" in text) and ("改回" in note or "恢复" in note or "撤回" in note or "undo" in text or "revert" in text):
+    if ("tau" in text or "pt3_tau_cuts" in text) and ("undo" in text or "revert" in text):
         original = _get_path_value(state.original_payload, "stages.correlator_analysis.defaults.pt3_tau_cuts")
         return [
             {
@@ -951,7 +956,7 @@ def run_interactive_plan(
             if answer in {"r", "revise"}:
                 note = input_func("Revision instruction: ").strip()
                 if note:
-                    if "stage" in note.lower() or "阶段" in note:
+                    if "stage" in note.lower():
                         state.stage_completion_checked = True
                     session.observe({"event": "user_revision", "text": note})
                 output_func("")

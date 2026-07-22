@@ -10,11 +10,13 @@ from typer.testing import CliRunner
 from lamet_agent.cli import app
 from lamet_agent.planning import (
     PlanAgentState,
+    _PlanAgentSession,
     _ask_plan_agent_question,
     _apply_user_answer_to_candidate,
     _run_planning_tool,
     _stage_parameter_gaps,
     _next_questions_for_state,
+    _manifest_question_id_from_user_input_action,
     apply_manifest_json_patches,
     build_repaired_manifests,
     check_manifest_draft,
@@ -377,6 +379,44 @@ def test_plan_stage_subset_answer_does_not_trigger_full_stage_gate(tmp_path: Pat
     assert result is False
 
 
+def test_plan_stage_none_answer_keeps_partial_workflow(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, payload)
+
+    applied = _apply_user_answer_to_candidate(state, "stage.add_remaining", "none")
+
+    assert applied["event"] == "user_answer_not_applied"
+    assert state.stage_completion_checked is True
+    assert state.stage_completion_requested is False
+
+
+def test_stage_control_question_id_is_not_rewritten_to_manifest_path() -> None:
+    question_id = _manifest_question_id_from_user_input_action(
+        {"question_id": "stage.add_remaining", "prompt": "This manifest is not a full canonical flow."},
+        "metadata.random_seed was skipped earlier.",
+    )
+
+    assert question_id == "stage.add_remaining"
+
+
+def test_mock_plan_stage_answer_still_runs_conversions(tmp_path: Path) -> None:
+    session = _PlanAgentSession(
+        backend="mock",
+        manifest_path=tmp_path / "request.txt",
+        manifest_text="",
+        api_key=None,
+        provider=None,
+        model_name=None,
+        base_url=None,
+    )
+
+    session.observe({"event": "user_answer", "question_id": "stage.add_remaining", "value": "none"})
+
+    action = session.decide()
+    assert action["action"] == "call_tool"
+    assert action["tool_name"] == "plan_correlator_h5_conversions"
+
+
 def test_plan_stage_params_question_without_choices_accepts_free_text() -> None:
     answer = _ask_plan_agent_question(
         {"question_id": "stage_params.fourier_transform.ft", "prompt": "Choose Fourier order."},
@@ -641,6 +681,54 @@ def test_correlator_npz_conversion_with_axis_order_and_index(tmp_path: Path) -> 
             tsep=3,
         ),
         data[1],
+    )
+
+
+def test_text_plan_composes_2pt_current_into_standard_3pt_h5(tmp_path: Path) -> None:
+    pytest.importorskip("h5py")
+    root = tmp_path / "repo"
+    data_dir = root / "data"
+    data_dir.mkdir(parents=True)
+    c2 = np.arange(4, dtype=float).reshape(1, 4)
+    current = np.full((1, 4), 2.0)
+    np.save(data_dir / "sample_2pt.npy", c2)
+    np.savez(data_dir / "sample_current.npz", current=current)
+    request = tmp_path / "request.txt"
+    request.write_text(
+        f"Build a DA plan from {data_dir / 'sample_2pt.npy'} and current file {data_dir / 'sample_current.npz'}.",
+        encoding="utf-8",
+    )
+
+    payload, raw = load_relaxed_manifest(request)
+    correlators = payload["inputs"]["correlators"]
+
+    assert "sample_current.npz" in raw
+    assert [item["correlator_type"] for item in correlators] == ["2pt", "3pt"]
+    planned_correlator = correlators[1]
+    assert planned_correlator["plan_sources"]["two_point"].endswith("sample_2pt.npy")
+    conversions = plan_correlator_h5_conversions(request, payload)
+    planned = next(item for item in conversions if item.operation == "compose_2pt_current")
+    assert planned.ambiguous is False
+
+    convert_correlator_h5(planned)
+    quick, full, _edits = build_repaired_manifests(request, payload, conversions)
+    for repaired in (quick, full):
+        assert "plan_sources" not in json.dumps(repaired)
+        repaired_3pt = next(item for item in repaired["inputs"]["correlators"] if item["correlator_id"] == "planned_3pt_from_2pt_current")
+        assert repaired_3pt["data_path"].endswith("request_planned_3pt.h5")
+
+    assert np.array_equal(
+        _read_3pt(
+            planned.output_file,
+            source_operator="source",
+            sink_operator="sink",
+            current_operator="current",
+            momentum="PX0PY0PZ0",
+            bT=0,
+            bz=0,
+            tsep=1,
+        ),
+        np.repeat(c2 * current, 2, axis=0).T,
     )
 
 
@@ -1183,7 +1271,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nr\n帮我多加几个 fit window 的搜索吧\n2\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nr\nPlease broaden the fit window search.\n2\na\n")
 
     assert result.exit_code == 0, result.output
     assert "LLM expanded the fit-window search" in result.output
@@ -1275,7 +1363,7 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
     result = runner.invoke(
         app,
         ["plan", str(manifest), "--backend", "mock"],
-        input="2\nr\n帮我多加几个 fit window 的搜索吧\nr\ntau cuts 改回去吧\na\n",
+        input="2\nr\nPlease broaden the fit window search.\nr\nPlease revert the tau cuts.\na\n",
     )
 
     assert result.exit_code == 0, result.output
@@ -1377,7 +1465,7 @@ def test_planning_patch_tool_rejects_invalid_candidate_without_mutating_state(tm
     assert state.candidate_payload["stages"]["renormalization"]["jobs"][0]["id"] == "rn"
 
 
-def test_cli_plan_mock_revision_adds_renormalization_stage_from_chinese_instruction(tmp_path: Path) -> None:
+def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruction(tmp_path: Path) -> None:
     h5py = pytest.importorskip("h5py")
     root = tmp_path / "repo"
     data_dir = root / "data"
@@ -1485,7 +1573,7 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_chinese_instruct
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nr\n加上 renormalization 的 stage 吧\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nr\nPlease add the renormalization stage.\na\n")
 
     assert result.exit_code == 0, result.output
     full = json.loads((root / "artifacts" / "plan_manifests" / "draft.full.json").read_text(encoding="utf-8"))
@@ -1494,3 +1582,25 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_chinese_instruct
     assert full["stages"]["renormalization"]["jobs"] == [
         {"id": "rn_p5_fh", "inputs": {"target": "ca_p5_fh", "denominator": "ca_p0_fh"}}
     ]
+
+
+def test_text_plan_drafts_2pt_current_composition_without_chinese_json(tmp_path: Path) -> None:
+    from lamet_agent.planning.core import load_relaxed_manifest
+
+    (tmp_path / "c2.npy").write_bytes(b"")
+    (tmp_path / "current.npz").write_bytes(b"")
+    request = tmp_path / "request.txt"
+    chinese_prefix = "\u8bf7\u7528"
+    request.write_text(
+        f"{chinese_prefix} c2.npy and current.npz to compose a nonlocal disconnected 3pt for pion DA.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(request)
+    correlators = payload["inputs"]["correlators"]
+    assert [item["correlator_type"] for item in correlators] == ["2pt", "3pt"]
+    assert correlators[1]["correlator_id"] == "planned_3pt_from_2pt_current"
+    assert correlators[1]["plan_sources"]["two_point"] == "c2.npy"
+    assert correlators[1]["plan_sources"]["current"] == "current.npz"
+    dumped = json.dumps(payload, ensure_ascii=False)
+    assert not any("\u4e00" <= char <= "\u9fff" for char in dumped)

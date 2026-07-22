@@ -164,6 +164,8 @@ def _manifest_question_id_from_user_input_action(args: dict[str, Any], reason: s
     raw = args.get("question_id")
     if isinstance(raw, str) and raw.strip():
         question_id = raw.strip()
+        if question_id in {"stage.add_remaining"} or question_id.startswith("stage_params."):
+            return question_id
         if _json_pointer_from_question_id(question_id) is not None:
             return "metadata.random_seed" if question_id == "random_seed" else question_id
     prompt = str(args.get("prompt") or "")
