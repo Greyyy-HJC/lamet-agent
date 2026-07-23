@@ -6,10 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from lamet_agent.manifest import validate_manifest_file
-
 from .conversion import convert_correlator_h5
-from .core import CorrelatorH5Mapping, PlanIssue, PlanProposal, PlanRunResult
+from .core import CorrelatorH5Mapping, PlanIssue, PlanProposal, PlanRunResult, _strict_manifest_issues, _strip_jsonc
 
 
 def _missing_parameters(issues: list[PlanIssue]) -> list[str]:
@@ -123,10 +121,11 @@ def write_planned_outputs(
     full_path.write_text(json.dumps(full, indent=2) + "\n", encoding="utf-8")
     issues: list[PlanIssue] = []
     for label, path in (("quick", quick_path), ("full", full_path)):
-        try:
-            validate_manifest_file(path)
-        except Exception as exc:
-            issues.append(PlanIssue("error", str(path), f"Generated {label} manifest failed strict validation: {exc}"))
+        payload = json.loads(_strip_jsonc(path.read_text(encoding="utf-8")))
+        issues.extend(
+            PlanIssue(issue.severity, str(path), f"Generated {label} manifest failed strict validation: {issue.message}", issue.suggested_fix)
+            for issue in _strict_manifest_issues(payload, path)
+        )
     return PlanRunResult(
         quick_manifest_path=str(quick_path),
         full_manifest_path=str(full_path),

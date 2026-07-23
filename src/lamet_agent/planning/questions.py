@@ -50,7 +50,8 @@ def _stage_required_prompt(stage: str, payload: dict[str, Any]) -> str:
     return "review has no required parameters. Reply none to continue."
 
 
-def _stage_optional_prompt(stage: str) -> str:
+def _stage_optional_prompt(stage: str, payload: dict[str, Any]) -> str:
+    target = str(payload.get("metadata", {}).get("target_observable", "pdf")) if isinstance(payload.get("metadata"), dict) else "pdf"
     if stage == "correlator_analysis":
         return (
             "correlator_analysis optional choices: pt2_windows, pt3_windows, pt3_tau_cuts, nstate, prior_width, "
@@ -62,9 +63,10 @@ def _stage_optional_prompt(stage: str) -> str:
             "or z_coverage_policy and svdcut for hybrid_self_renormalization. Reply with values to set, or none."
         )
     if stage == "fourier_transform":
+        sector_text = "sector is fixed to full for DA" if target == "da" else "sector options are valence, total, full, sea"
         return (
             "fourier_transform optional choices: scheme_scan, posterior_prior_error_scale, plot names, x/y limits, "
-            "method, observable. Reply with values to set, or none."
+            f"method, observable; {sector_text}. Reply with values to set, or none."
         )
     if stage == "perturbative_matching":
         return (
@@ -143,7 +145,7 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
         if stage not in state.stage_required_checked:
             state.stage_required_checked.add(stage)
         if stage not in state.stage_optional_checked:
-            return [{"question_id": f"stage_optional.{stage}", "prompt": _stage_optional_prompt(stage)}]
+            return [{"question_id": f"stage_optional.{stage}", "prompt": _stage_optional_prompt(stage, payload)}]
     if gaps:
         gap = gaps[0]
         if not state.parameter_completion_checked:

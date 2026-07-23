@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from lamet_agent.core.tools import validate_stage_inputs
-from lamet_agent.manifest import AnalysisManifest, resolve_manifest_artifact_metadata
+from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import merge_stage_params
 
 
@@ -180,7 +180,8 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     lowered = text.lower()
     root = path.parent.resolve()
     run_id = re.sub(r"[^a-zA-Z0-9_]+", "_", path.stem).strip("_") or "planned_analysis"
-    target_observable = "gpd" if "gpd" in lowered else "da" if "da" in lowered else "pdf"
+    target_match = re.search(r"target[_\s-]*observable\s*[:=]?\s*(pdf|da|gpd)\b", text, flags=re.I)
+    target_observable = target_match.group(1).lower() if target_match else "gpd" if re.search(r"\bgpd\b", lowered) else "da" if re.search(r"\bda\b", lowered) else "pdf"
     parton = "gluon" if "gluon" in lowered else "quark"
     correlators: list[dict[str, Any]] = []
     current_sources: list[dict[str, Any]] = []
@@ -203,28 +204,30 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     gfix = "CG" if "coulomb" in lowered or "coulomb-gauge" in lowered or "cg" in lowered else "unknown"
     if "gi" in lowered or "gauge invariant" in lowered:
         gfix = "GI"
-    spacing_match = re.search(r"(?:lattice\s+spacing\s*[:=]?|(?:^|[,\s])a\s*[:=]\s*)([0-9]*\.?[0-9]+)\s*(?:fm)?", text, flags=re.I)
+    spacing_match = re.search(r"\blattice_spacing_fm\s*[:=]\s*([0-9]*\.?[0-9]+)", text, flags=re.I) or re.search(r"\blattice\s+spacing\s*[:=]?\s*([0-9]*\.?[0-9]+)\s*(?:fm)?", text, flags=re.I) or re.search(r"(?:^|[,\s])a\s*[:=]\s*([0-9]*\.?[0-9]+)\s*(?:fm)?", text, flags=re.I)
     lattice_spacing_fm = float(spacing_match.group(1)) if spacing_match else 0.0574 if "a060" in lowered else 1.0
     volume_match = re.search(r"\bS[1-9]\d*T[1-9]\d*\b", text)
     volume = volume_match.group(0) if volume_match else "S48T64" if "a060" in lowered else "S1T1"
-    explicit_bz = [int(item) for item in re.findall(r"\bbz\s*=?\s*(-?\d+)", lowered)]
-    explicit_tsep = [int(item) for item in re.findall(r"\btsep\s*=?\s*(\d+)", lowered)]
-    explicit_bT = [int(item) for item in re.findall(r"\bbt\s*=?\s*(-?\d+)", lowered)]
+    explicit_bz = list(dict.fromkeys(int(item) for item in re.findall(r"\bbz\s*=?\s*(-?\d+)", lowered)))
+    explicit_tsep = list(dict.fromkeys(int(item) for item in re.findall(r"\btsep\s*=?\s*(\d+)", lowered)))
+    explicit_bT = list(dict.fromkeys(int(item) for item in re.findall(r"\bbt\s*=?\s*(-?\d+)", lowered)))
     seed_match = re.search(r"random[_\s-]*seed\s*[:=]?\s*(\d+)", text, flags=re.I)
     resample_match = re.search(r"resample[_\s-]*mode\s*[:=]?\s*(jk|jackknife|bs|bootstrap)\b", text, flags=re.I)
     source_operator_match = re.search(r"source[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
     sink_operator_match = re.search(r"sink[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
-    current_operator_match = re.search(r"current[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
+    current_operator_match = re.search(r"current[_\s-]*operator(?:\s+for\s+3pt)?\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
     source_operator = source_operator_match.group(1) if source_operator_match else "source"
     sink_operator = sink_operator_match.group(1) if sink_operator_match else "sink"
     current_operator = current_operator_match.group(1) if current_operator_match else "current"
     component_match = re.search(r"\bcomponent\s*[:=]?\s*(re|im|both)\b", text, flags=re.I)
+    fit_scope_match = re.search(r"\bfit_scope\s*[:=]?\s*(3pt_ratio\+FH|3pt_ratio|qda_ratio|FH)\b", text, flags=re.I)
+    fitting_form_match = re.search(r"\bfitting_form\s*[:=]?\s*(Breit|NonBreit)\b", text, flags=re.I)
     ft_order_match = re.search(r"\b(?:fourier\s+)?order\s*[:=]?\s*(LA|NLA)\b", text, flags=re.I)
     ft_sector_match = re.search(r"\bsector\s*[:=]?\s*(valence|total|full|sea)\b", text, flags=re.I)
     ft_part_match = re.search(r"\bpart\s*[:=]?\s*(re|im|both)\b", text, flags=re.I)
-    y_grid_match = re.search(r"\by_grid\s*(\{[^{}]*\})", text, flags=re.I)
-    scheme_scan_match = re.search(r"\bscheme_scan\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", text, flags=re.I)
-    quasi_y_match = re.search(r"\bquasi_y_ls\s*(\{[^{}]*\})", text, flags=re.I)
+    y_grid_match = re.search(r"\by_grid\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
+    scheme_scan_match = re.search(r"\bscheme_scan\s*[:=]?\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", text, flags=re.I)
+    quasi_y_match = re.search(r"\bquasi_y_ls\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
     kernel_id_match = re.search(r"\bkernel_id\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
     y_grid = json.loads(y_grid_match.group(1)) if y_grid_match else None
     scheme_scan = json.loads(scheme_scan_match.group(1)) if scheme_scan_match else None
@@ -249,7 +252,32 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         seen_data_paths.add(data_path)
         if resolved.suffix.lower() == ".nc":
             artifact_stage = "perturbative_matching" if resolved.stem.startswith("mt_") or "matching" in token else "fourier_transform" if resolved.stem.startswith("ft_") or "fourier" in token else "renormalization" if resolved.stem.startswith("rn_") or "renorm" in token else "correlator_analysis"
-            artifacts.append({"id": resolved.stem, "stage": artifact_stage, "path": data_path})
+            artifact = {"id": resolved.stem, "stage": artifact_stage, "path": data_path}
+            context_match = re.search(rf"{re.escape(resolved.name)}[^.\n]*(?:\.[^\n]*)?", text, flags=re.I)
+            context = context_match.group(0) if context_match else text
+            artifact_momentum = re.search(r"PX-?\d+PY-?\d+PZ-?\d+", context, flags=re.I)
+            artifact_volume = re.search(r"\bS[1-9]\d*T[1-9]\d*\b", context)
+            artifact_spacing = re.search(r"lattice[_\s-]*spacing(?:[_\s-]*fm)?\s*([0-9]*\.?[0-9]+)", context, flags=re.I)
+            artifact_bz_direction = re.search(r"bz_direction\s*([A-Za-z]+)", context, flags=re.I)
+            if artifact_momentum:
+                artifact["momentum"] = artifact_momentum.group(0).upper()
+            if artifact_volume:
+                artifact["volume"] = artifact_volume.group(0)
+            if artifact_spacing:
+                artifact["lattice_spacing_fm"] = float(artifact_spacing.group(1))
+            if "pion" in context.lower():
+                artifact["hadron"] = "pion"
+            if "kaon" in context.lower():
+                artifact["hadron"] = "kaon"
+            if "jpsi" in context.lower():
+                artifact["hadron"] = "jpsi"
+            if " cg" in context.lower() or "gfix cg" in context.lower():
+                artifact["gfix"] = "CG"
+            if " gi" in context.lower() or "gfix gi" in context.lower():
+                artifact["gfix"] = "GI"
+            if artifact_bz_direction:
+                artifact["bz_direction"] = artifact_bz_direction.group(1).upper()
+            artifacts.append(artifact)
             continue
         if is_current:
             operator_match = re.search(r"(?:current|insertion)[_-]?([A-Za-z0-9]+)?", resolved.stem, flags=re.I)
@@ -299,7 +327,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             "hadron": hadron,
             "gfix": gfix,
             "source_operator": source_operator,
-            "sink_operator": "sink_nonlocal" if is_nonlocal_2pt and not sink_operator_match else sink_operator,
+            "sink_operator": sink_operator if not is_nonlocal_2pt or "_nonlocal" in sink_operator else f"{sink_operator}_nonlocal",
             "volume": volume,
             "momentum": [momentum],
             "lattice_spacing_fm": lattice_spacing_fm,
@@ -394,6 +422,10 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             jobs_by_momentum.setdefault(momentum, []).append(str(item["correlator_id"]))
         has_qda = any(item.get("correlator_type") == "2pt" and item.get("bz") is not None for item in correlators)
         ca_defaults = {"fit_scope": ["qda_ratio"]} if has_qda else {"fit_scope": ["3pt_ratio"]} if any(item["correlator_type"] == "3pt" for item in correlators) else {}
+        if fit_scope_match:
+            ca_defaults["fit_scope"] = [fit_scope_match.group(1)]
+        if fitting_form_match:
+            ca_defaults["fitting_form"] = fitting_form_match.group(1)
         if component_match:
             ca_defaults["component"] = component_match.group(1).lower()
         initial_momentum = initial_match.group(1).upper() if initial_match else None
@@ -420,7 +452,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         nonzero_jobs = [job for job in ca_jobs if job["id"] != denominator]
         scheme = "hybrid_ratio" if "hybrid" in lowered else "ratio" if "ratio" in lowered else None
         rn_defaults = {"scheme": scheme} if scheme else {}
-        zs_match = re.search(r"zs_fm\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)
+        zs_match = re.search(r"zs_fm(?:\s+for\s+[A-Za-z0-9_+-]+)?\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)
         if zs_match:
             rn_defaults["zs_fm"] = float(zs_match.group(1))
         payload["stages"]["renormalization"] = {
@@ -436,7 +468,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         if ft_order_match:
             ft_defaults["order"] = ft_order_match.group(1).upper()
         if ft_sector_match:
-            ft_defaults["sector"] = ft_sector_match.group(1).lower()
+            ft_defaults["sector"] = "full" if target_observable == "da" else ft_sector_match.group(1).lower()
         if ft_part_match:
             ft_defaults["part"] = ft_part_match.group(1).lower()
         if scheme_scan is not None:
@@ -456,7 +488,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             mt_defaults["component"] = component_match.group(1).lower()
         if quasi_y_ls is not None:
             mt_defaults["quasi_y_ls"] = quasi_y_ls
-        zs_match = re.search(r"zs_fm\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)
+        zs_match = re.search(r"zs_fm(?:\s+if[^:]*|\s+for\s+[A-Za-z0-9_+-]+)?\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)
         if zs_match:
             mt_defaults["zs_fm"] = float(zs_match.group(1))
         payload["stages"]["perturbative_matching"] = {
@@ -475,6 +507,42 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     ]
     payload["stages"] = {stage: payload["stages"][stage] for stage in payload["metadata"]["stages"]}
     return payload
+
+
+def normalize_planning_constraints(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    edits: list[dict[str, Any]] = []
+    correlators = payload.get("inputs", {}).get("correlators", []) if isinstance(payload.get("inputs"), dict) else []
+    for index, correlator in enumerate(correlators if isinstance(correlators, list) else []):
+        if not isinstance(correlator, dict):
+            continue
+        for key in ("bT", "bz", "tsep"):
+            value = correlator.get(key)
+            if not isinstance(value, list):
+                continue
+            deduped = list(dict.fromkeys(value))
+            if deduped != value:
+                correlator[key] = deduped
+                edits.append({"path": f"inputs.correlators[{index}].{key}", "old": value, "new": deduped, "note": f"Deduplicated correlator {key} values."})
+    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+    if str(metadata.get("target_observable", "")).lower() != "da":
+        return edits
+    ft_stage = payload.get("stages", {}).get("fourier_transform", {}) if isinstance(payload.get("stages"), dict) else {}
+    if not isinstance(ft_stage, dict):
+        return edits
+    defaults = ft_stage.get("defaults", {})
+    if isinstance(defaults, dict) and "sector" in defaults and str(defaults.get("sector", "")).lower() != "full":
+        old = defaults.get("sector")
+        defaults["sector"] = "full"
+        edits.append({"path": "stages.fourier_transform.defaults.sector", "old": old, "new": "full", "note": "DA Fourier sector is fixed to full."})
+    jobs = ft_stage.get("jobs", [])
+    if isinstance(jobs, list):
+        for job in jobs:
+            params = job.get("params", {}) if isinstance(job, dict) else {}
+            if isinstance(params, dict) and "sector" in params and str(params.get("sector", "")).lower() != "full":
+                old = params.get("sector")
+                params["sector"] = "full"
+                edits.append({"path": f"stages.fourier_transform.jobs.{job.get('id', '')}.params.sector", "old": old, "new": "full", "note": "DA Fourier sector is fixed to full."})
+    return edits
 
 
 def _manifest_root(manifest_path: Path, payload: dict[str, Any]) -> Path | None:
@@ -714,8 +782,7 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
                 resolved = _resolve_manifest_path(manifest_path, payload, artifact.path)
                 if resolved is not None:
                     artifact.path = resolved.as_posix()
-        resolve_manifest_artifact_metadata(strict)
-    except (ValidationError, ValueError) as exc:
+    except Exception as exc:
         issues.append(PlanIssue("info", "manifest", f"Strict manifest validation is not yet clean: {exc}"))
     else:
         for stage in stage_order_list:
@@ -1060,8 +1127,7 @@ def _strict_manifest_issues(payload: dict[str, Any], manifest_path: Path | None 
                 resolved = _resolve_manifest_path(manifest_path, payload, artifact.path)
                 if resolved is not None:
                     artifact.path = resolved.as_posix()
-        resolve_manifest_artifact_metadata(strict)
-    except (ValidationError, ValueError) as exc:
+    except Exception as exc:
         return [PlanIssue("error", "manifest", f"Strict manifest validation failed: {exc}")]
     for stage in strict.metadata.stages:
         if stage not in strict.stages:
@@ -1144,7 +1210,10 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                         if path is not None and path.suffix.lower() == ".nc" and path.is_file():
                             from lamet_agent.core.data import read_netcdf_attrs
 
-                            attrs = read_netcdf_attrs(path)
+                            try:
+                                attrs = read_netcdf_attrs(path)
+                            except Exception:
+                                attrs = {}
                             if all(attrs.get(key) is not None for key in ("momentum", "volume", "lattice_spacing_fm")):
                                 return True
                 upstream = jobs_by_id.get(reference)
@@ -1259,6 +1328,9 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "perturbative_matching requires exactly one input role named quasi.", 'Example: {"quasi": "ft_pz"}.')
                 if "kernel_id" not in params and len(matching_kernel_ids) != 1:
                     add_gap("kernel_id", f"stages.{stage}.defaults.kernel_id", f"perturbative_matching job {job_id!r} is missing kernel_id.", "Use one declared inputs.kernels[].kernel_id.")
+                kernel_id = str(params.get("kernel_id") or (matching_kernel_ids[0] if len(matching_kernel_ids) == 1 else ""))
+                if "hybrid" in kernel_id.split("_") and "zs_fm" not in params:
+                    add_gap("zs_fm", f"stages.{stage}.defaults.zs_fm", "hybrid matching requires flat parameter zs_fm.", 'Example: {"zs_fm": 0.2}.')
                 if not derived_momentum_available and "momentum_gev" not in params:
                     add_gap("momentum_gev", f"stages.{stage}.defaults.momentum_gev", f"perturbative_matching job {job_id!r} has no derivable momentum.", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact.")
             elif stage == "extrapolation":

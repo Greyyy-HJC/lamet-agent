@@ -20,6 +20,7 @@ from .core import (
     build_repaired_manifests,
     check_manifest_draft,
     load_relaxed_manifest,
+    normalize_planning_constraints,
     _as_list,
     _dataclass_json,
     _expand_pt2_windows,
@@ -106,6 +107,7 @@ def _planning_system_prompt() -> str:
         "For stage additions, preserve existing ids and wire jobs through existing upstream job ids. "
         "For inputs.kernels[].stage, treat legacy value 'matching' as an alias of 'perturbative_matching'; do not ask the user to rename it. "
         "The written quick/full manifests normalize that alias to 'perturbative_matching'. "
+        "For target_observable='da', fourier_transform sector is fixed to 'full'; if free text, examples, or user answers say valence, total, or sea for DA Fourier transform, correct it to full instead of asking whether to keep the invalid value. "
         "For correlator data conversion, inspect HDF5/NPY/NPZ inputs and never guess ambiguous axes or source keys. "
         "Use multiple-choice questions for simple axis/index choices, but use free-form questions for high-dimensional mappings where the user must describe source, target, cfg/time or cfg/tau axes, z/bz ordering, momentum selection, optional axis_order, optional index selections, and transpose. "
         "When the user gives an unambiguous mapping, call apply_correlator_conversion_mapping with args.correlator_id and args.datasets as a non-empty list of dataset mappings. "
@@ -115,6 +117,7 @@ def _planning_system_prompt() -> str:
         "Do not pass source, target, axis_order, index, or transpose directly in top-level args. "
         "For multi-bz 3pt data, include one datasets item per standard bz target in a single tool call when practical. "
         "For planned conversions whose operation is compose_2pt_current, the conversion tool can create the standard 3pt HDF5 directly from the referenced 2pt and current files: it uses C2(tsep) as the per-configuration factor, multiplies it by the current array, and repeats a single current tau slice to length tsep+1 when needed. Do not ask the user to pre-compose that HDF5 file. "
+        "When plan_correlator_h5_conversions returns mappings with ambiguous=false, do not ask the user to confirm them; build_quick_full_candidates will apply those deterministic conversions. Ask conversion questions only for mappings with ambiguous=true. "
         "Do not create a custom conversion section in the manifest and do not encode conversion mappings as JSON Patch manifest edits. "
         "Only use JSON Patch for ordinary manifest fields such as metadata, inputs, and stages. "
         "If a correlator data file is not .npy, .npz, .h5, or .hdf5, tell the user the format is unsupported and strongly recommend converting to standard .h5. "
@@ -173,6 +176,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     "minimal_policy": "Do not add method, observable, or momentum_gev when they can be supplied by run/stage defaults or derived from upstream metadata.",
                     "required_inputs": {"input": "renormalized matrix-element job or artifact"},
                     "required_parameters": {"y_grid": "list of x/y points or {start, stop, num}"},
+                    "sector_rule": "For target_observable=da, sector must be full; correct valence/total/sea to full without asking.",
                 },
                 "perturbative_matching": {
                     "minimal_policy": "Do not ask for or add mu, component, grids, or momentum_gev when omitted. Select kernel_id only when it is inferable from the observable/scheme or ask the user. Add zs_fm only if the selected hybrid kernel needs it and it is explicit or already known from renormalization.",
@@ -564,6 +568,7 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                         before = copy.deepcopy(params)
                         params.update(copy.deepcopy(job_param_patch))
                         edits.append({"path": f"stages.{stage}.jobs.{job.get('id', '')}.params", "old": before, "new": copy.deepcopy(params), "note": f"Applied {bucket} stage job parameters."})
+                edits.extend(normalize_planning_constraints(state.candidate_payload))
                 state.manifest_edits.extend(edits)
                 ok, issues = validate_candidate_payload(state.manifest_path, state.candidate_payload)
                 state.issues = issues
@@ -606,7 +611,8 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
         if text.lower() not in {"yes", "y", "true", "1", "no", "n", "false", "0", "none", "default", "defaults", "keep"}:
             gaps = _stage_parameter_gaps(state.candidate_payload, state.manifest_path)
             if gaps:
-                pointer = _json_pointer_from_question_id(str(gaps[0].get("path")))
+                target_gap = next((gap for gap in gaps if str(gap.get("question_id")) == question_id), gaps[0])
+                pointer = _json_pointer_from_question_id(str(target_gap.get("path")))
                 if pointer is not None:
                     try:
                         parsed = json.loads(text)
@@ -901,6 +907,7 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
             candidate, edits = apply_manifest_json_patches(state.candidate_payload, patches)
         except ValueError as exc:
             return {"tool_name": tool_name, "ok": False, "error": str(exc)}
+        edits.extend(normalize_planning_constraints(candidate))
         allow_incomplete = bool(args.get("allow_incomplete"))
         ok, issues = validate_candidate_payload(state.manifest_path, candidate)
         correlators = candidate.get("inputs", {}).get("correlators", [])
@@ -1047,12 +1054,14 @@ def run_interactive_plan(
 ) -> PlanRunResult | None:
     """Run the terminal planning loop under LLM/tool control."""
     payload, manifest_text = load_relaxed_manifest(manifest_path)
+    initial_edits = normalize_planning_constraints(payload)
     state = PlanAgentState(
         manifest_path=manifest_path,
         manifest_text=manifest_text,
         original_payload=copy.deepcopy(payload),
         candidate_payload=copy.deepcopy(payload),
     )
+    state.manifest_edits.extend(initial_edits)
     if manifest_path.suffix.lower() == ".txt" and re.search(
         r"\bonly\b.+\brequired\b|\brun\b.+\b(correlator_analysis|renormalization|fourier_transform|perturbative_matching|matching|extrapolation|review)\b",
         manifest_text,
@@ -1163,6 +1172,10 @@ def run_interactive_plan(
                 return None
             question_id = _manifest_question_id_from_user_input_action(args, reason) or str(args.get("question_id"))
             if _json_pointer_from_question_id(question_id) is None and str(answer).strip().lower() in {"yes", "y", "no", "n"}:
+                prompt_text = f"{args.get('prompt', '')}\n{reason}".lower()
+                if any(token in prompt_text for token in ("canonical full flow", "additional stages", "add extrapolation", "add extra stages")):
+                    state.stage_completion_checked = True
+                    state.stage_completion_requested = str(answer).strip().lower() in {"yes", "y"}
                 session.observe({"event": "user_answer", "question_id": question_id, "value": answer})
                 session.observe({"event": "user_answer_not_applied", "question_id": question_id, "value": answer, "reason": "confirmation answer recorded without manifest mutation."})
                 continue

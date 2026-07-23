@@ -596,6 +596,132 @@ def test_text_plan_reads_metadata_from_free_form_request(tmp_path: Path) -> None
     assert payload["metadata"]["resample_mode"] == "jk"
 
 
+def test_text_plan_target_observable_does_not_match_data_path(tmp_path: Path) -> None:
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a manifest with target_observable: pdf from sample_2pt.npy and current_data_path sample_current.npz. "
+        "Use random_seed 1984 and resample_mode jk.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+
+    assert payload["metadata"]["target_observable"] == "pdf"
+
+
+def test_da_text_plan_normalizes_fourier_sector(tmp_path: Path) -> None:
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion DA manifest from rn_pz.nc. "
+        "Use random_seed 1984 and resample_mode jk. "
+        "Run fourier_transform with y_grid {\"start\": -1.0, \"stop\": 1.0, \"num\": 101} and sector valence.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+
+    assert payload["metadata"]["target_observable"] == "da"
+    assert payload["stages"]["fourier_transform"]["defaults"]["sector"] == "full"
+
+
+def test_text_plan_reads_colon_json_stage_defaults(tmp_path: Path) -> None:
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion PDF manifest from rn_pz.nc. "
+        "Use random_seed 1984 and resample_mode jk. "
+        "Run fourier_transform and perturbative_matching. "
+        "y_grid: {\"start\": -1.0, \"stop\": 1.0, \"num\": 101}. "
+        "scheme_scan: {\"zmin_values\": [1], \"zmax_values\": [5], \"z_ext_max\": 8}. "
+        "quasi_y_ls: {\"start\": -1.0, \"stop\": 1.0, \"num\": 100}.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+
+    assert payload["stages"]["fourier_transform"]["defaults"]["y_grid"]["num"] == 101
+    assert payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"]["z_ext_max"] == 8
+    assert payload["stages"]["perturbative_matching"]["defaults"]["quasi_y_ls"]["num"] == 100
+
+
+def test_text_plan_reads_partial_artifact_fallback_metadata(tmp_path: Path) -> None:
+    (tmp_path / "mt_p5.nc").write_text("not a real netcdf", encoding="utf-8")
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a partial extrapolation manifest from mt_p5.nc. "
+        "mt_p5.nc: stage perturbative_matching, path mt_p5.nc. If metadata is missing, use momentum PX5PY0PZ0, volume S48T64, lattice_spacing_fm 0.0574, hadron pion, gfix CG, bz_direction X. "
+        "Use random_seed 1984 and resample_mode jk. Run extrapolation.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+    artifact = payload["inputs"]["artifacts"][0]
+    ok, issues = validate_candidate_payload(manifest, payload)
+
+    assert artifact["momentum"] == "PX5PY0PZ0"
+    assert artifact["volume"] == "S48T64"
+    assert artifact["lattice_spacing_fm"] == 0.0574
+    assert not any("IO backends" in issue.message for issue in issues)
+
+
+def test_text_plan_deduplicates_repeated_discrete_3pt_values(tmp_path: Path) -> None:
+    for name in ("a060_x_p0_3pt_ts8.h5", "a060_x_p0_3pt_ts10.h5", "a060_x_p5_3pt_ts8.h5", "a060_x_p5_3pt_ts10.h5"):
+        (tmp_path / name).write_text("", encoding="utf-8")
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion PDF correlator_analysis manifest from "
+        "a060_x_p0_3pt_ts8.h5 with bT 0, bz 0, tsep 8; "
+        "a060_x_p0_3pt_ts10.h5 with bT 0, bz 0, tsep 10; "
+        "a060_x_p5_3pt_ts8.h5 with bT 0, bz 0, tsep 8; "
+        "a060_x_p5_3pt_ts10.h5 with bT 0, bz 0, tsep 10. "
+        "Use random_seed 1984 and resample_mode jk.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+    three_points = [item for item in payload["inputs"]["correlators"] if item["correlator_type"] == "3pt"]
+
+    assert len(three_points) == 4
+    assert {tuple(item["bT"]) for item in three_points} == {(0,)}
+    assert {tuple(item["bz"]) for item in three_points} == {(0,)}
+    assert {tuple(item["tsep"]) for item in three_points} == {(8,), (10,)}
+
+
+def test_text_plan_reads_current_operator_for_3pt_label(tmp_path: Path) -> None:
+    (tmp_path / "sample_p0_3pt_ts8.h5").write_text("", encoding="utf-8")
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion PDF correlator_analysis manifest from sample_p0_3pt_ts8.h5. "
+        "Use random_seed 1984, resample_mode jk, current_operator for 3pt: current, bT 0, bz 0, tsep 8.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+    three_point = next(item for item in payload["inputs"]["correlators"] if item["correlator_type"] == "3pt")
+
+    assert three_point["current_operator"] == "current"
+
+
+def test_text_plan_reads_correlator_required_choices(tmp_path: Path) -> None:
+    np.save(tmp_path / "local_PX0PY0PZ6_2pt.npy", np.ones((64, 4)))
+    np.save(tmp_path / "nonlocal_PX0PY0PZ6_2pt.npy", np.ones((1, 64, 4)))
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion DA qda_ratio correlator_analysis manifest from local_PX0PY0PZ6_2pt.npy and nonlocal_PX0PY0PZ6_2pt.npy. "
+        "Use random_seed 1984, resample_mode jk, momentum PX0PY0PZ6, lattice_spacing_fm: 0.0574, sink_operator: sink, bT 0, bz 0, bz_direction Z. "
+        "fit_scope: qda_ratio. fitting_form: Breit.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+    defaults = payload["stages"]["correlator_analysis"]["defaults"]
+    nonlocal_pt2 = next(item for item in payload["inputs"]["correlators"] if item["correlator_id"] == "nonlocal_PX0PY0PZ6_2pt")
+
+    assert defaults["fit_scope"] == ["qda_ratio"]
+    assert defaults["fitting_form"] == "Breit"
+    assert nonlocal_pt2["sink_operator"] == "sink_nonlocal"
+    assert nonlocal_pt2["lattice_spacing_fm"] == 0.0574
+
+
 def test_stage_parameter_gap_answer_applies_first_gap_path(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     payload["metadata"]["stages"] = ["fourier_transform"]
@@ -624,6 +750,28 @@ def test_stage_parameter_gap_answer_applies_first_gap_path(tmp_path: Path) -> No
     assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["y_grid"]["num"] == 101
 
 
+def test_stage_parameter_gap_answer_uses_matching_question_id(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"]["stages"] = ["renormalization", "perturbative_matching"]
+    payload["inputs"]["artifacts"] = [
+        {"id": "ft", "stage": "fourier_transform", "path": "ft.nc", "momentum": "PX1PY0PZ0", "volume": "S16T5", "lattice_spacing_fm": 0.1}
+    ]
+    payload["inputs"]["kernels"] = [
+        {"stage": "perturbative_matching", "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "kernel_path": "src/lamet_agent/kernels.py", "scheme": "hybrid_ratio"}
+    ]
+    payload["stages"] = {
+        "renormalization": {"defaults": {"scheme": "hybrid_ratio"}, "jobs": [{"id": "rn", "inputs": {"target": "ca_p1", "denominator": "ca_p0"}}]},
+        "perturbative_matching": {"defaults": {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO"}, "jobs": [{"id": "mt_p5", "inputs": {"quasi": "ft"}}]},
+    }
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(state, "stage_params.perturbative_matching.mt_p5", "0.1722")
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["stages"]["perturbative_matching"]["defaults"]["zs_fm"] == 0.1722
+    assert "zs_fm" not in state.candidate_payload["stages"]["renormalization"]["defaults"]
+
+
 def test_stage_optional_answer_updates_stage_defaults(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     payload["metadata"]["stages"].append("fourier_transform")
@@ -642,6 +790,77 @@ def test_stage_optional_answer_updates_stage_defaults(tmp_path: Path) -> None:
     assert result["event"] == "user_answer_applied"
     assert state.stage_optional_checked == {"fourier_transform"}
     assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["y_grid"]["num"] == 5
+
+
+def test_da_stage_answer_normalizes_fourier_sector(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"]["target_observable"] = "da"
+    payload["metadata"]["stages"] = ["fourier_transform"]
+    payload["stages"] = {
+        "fourier_transform": {
+            "defaults": {},
+            "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
+        }
+    }
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_optional.fourier_transform",
+        '{"sector": "valence"}',
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["sector"] == "full"
+
+
+def test_da_manifest_patch_normalizes_fourier_sector(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"]["target_observable"] = "da"
+    payload["metadata"]["stages"] = ["fourier_transform"]
+    payload["stages"] = {
+        "fourier_transform": {
+            "defaults": {},
+            "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
+        }
+    }
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _run_planning_tool(
+        state,
+        "apply_manifest_patch_to_candidate",
+        {"patches": [{"op": "add", "path": "/stages/fourier_transform/defaults/sector", "value": "valence"}], "allow_incomplete": True},
+    )
+
+    assert result["ok"] is True
+    assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["sector"] == "full"
+
+
+def test_manifest_patch_deduplicates_correlator_discrete_values(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["inputs"]["correlators"][0]["correlator_type"] = "3pt"
+    payload["inputs"]["correlators"][0]["bT"] = [0]
+    payload["inputs"]["correlators"][0]["bz"] = [0]
+    payload["inputs"]["correlators"][0]["tsep"] = [8]
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _run_planning_tool(
+        state,
+        "apply_manifest_patch_to_candidate",
+        {
+            "patches": [
+                {"op": "replace", "path": "/inputs/correlators/0/bT", "value": [0, 0, 0, 0]},
+                {"op": "replace", "path": "/inputs/correlators/0/bz", "value": [0, 0]},
+                {"op": "replace", "path": "/inputs/correlators/0/tsep", "value": [8, 8, 10]},
+            ],
+            "allow_incomplete": True,
+        },
+    )
+
+    assert result["ok"] is True
+    assert state.candidate_payload["inputs"]["correlators"][0]["bT"] == [0]
+    assert state.candidate_payload["inputs"]["correlators"][0]["bz"] == [0]
+    assert state.candidate_payload["inputs"]["correlators"][0]["tsep"] == [8, 10]
 
 
 def test_manifest_confirmation_answer_is_not_applied(tmp_path: Path) -> None:

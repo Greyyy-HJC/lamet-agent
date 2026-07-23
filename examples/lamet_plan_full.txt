@@ -1,0 +1,154 @@
+Build a LaMET analysis manifest from the following user-filled information.
+
+Required metadata:
+random_seed(positive integer seed, example 1984):
+resample_mode(jk or bs):
+bs_samples(required only when resample_mode is bs, positive integer, example 400):
+run_id(short ASCII run name, example pion_pdf_cg):
+target_observable(pdf, da, or gpd):
+parton(quark or gluon):
+root_directory(base directory for input paths; use an absolute path or "this folder"):
+artifacts_directory(output directory relative to root_directory, example artifacts):
+stages(comma-separated stage list):
+Stage options: correlator_analysis, renormalization, fourier_transform, perturbative_matching, extrapolation, review.
+
+Optional metadata:
+sample_error_mode(mean, median, or covariance; default covariance):
+bin_size(optional positive integer for binning before resampling):
+workers(optional positive integer for parallel jobs):
+
+Common correlator metadata:
+ensemble(configuration/ensemble label, example a06m130 or HISQa060_X):
+hadron(pion, kaon, jpsi, proton, or other):
+gfix(CG or GI):
+volume(lattice volume in S#T# format, example S48T64):
+lattice_spacing_fm(lattice spacing in fm, positive number):
+source_operator(source interpolating operator, example g5 or source):
+sink_operator(sink interpolating operator, example g5 or sink):
+current_operator for 3pt(current/insertion operator, example gt, gzg5, current):
+bz_direction for 3pt(X, Y, Z, XY, XZ, YZ, or XYZ):
+
+Input correlators:
+2pt files(each entry: correlator_id, data_path, momentum list, and any metadata different from common metadata):
+
+3pt files(each entry: correlator_id, data_path, momentum list, tsep list, bT list, bz list, current_operator, bz_direction):
+
+qDA/nonlocal 2pt files(each entry: correlator_id, data_path, momentum list, bT list, bz list, bz_direction):
+
+current_data_path files for plan-only 2pt_current composition(each entry: current file path, current_operator, paired 2pt file, momentum, tsep, bT, bz, bz_direction):
+
+Existing .nc artifacts for partial workflows(each entry: id, stage, path, and optional metadata if the .nc file does not store it):
+Optional artifact metadata: momentum, volume, lattice_spacing_fm, hadron, gfix, bz_direction.
+
+Input kernels:
+kernel_id(kernel identifier used by matching/renormalization, example CG_gt_quark_PDF_hybrid_NLO):
+kernel_path(path to kernels.py, or say lamet_agent built-in kernels.py):
+kernel stage(perturbative_matching or renormalization):
+scheme(kernel scheme, example ratio or hybrid_ratio):
+kernel_parameters(JSON object, example {}):
+
+Data layout:
+2pt array layout(shape and axes, example all 2pt NPY files have shape (Lt, n_cfg), axis 0 time, axis 1 cfg):
+
+3pt array layout(shape and axes, example all 3pt NPY files have shape (n_bz, tsep+1, n_cfg), axis 0 bz, axis 1 tau, axis 2 cfg):
+
+qDA/nonlocal 2pt array layout(shape and axes, example nonlocal 2pt NPY files have shape (n_bz, Lt, n_cfg), axis 0 bz, axis 1 time, axis 2 cfg):
+
+NPZ/H5 source keys or dataset paths(keys or dataset paths to read, example NPZ key current or H5 path g5/g5/PX0PY0PZ0):
+
+Correlator kinematics:
+momenta(momentum labels in PX#PY#PZ# format, comma-separated):
+bT values(transverse separation integers, example 0):
+bz values(Wilson-line z/bz integers, example 0,1,2,3):
+tsep values(source-sink separations for 3pt, positive integers):
+initial_momentum for NonBreit GPD(PX#PY#PZ#):
+final_momentum for NonBreit GPD(PX#PY#PZ#):
+
+Stage jobs:
+correlator_analysis jobs(each job: id, correlator_ids, and params such as momentum, initial_momentum, final_momentum):
+
+renormalization jobs(each job: id and inputs; ratio/hybrid_ratio use target and denominator; hybrid_self_renormalization may use reference, target, zR):
+
+fourier_transform jobs(each job: id and input):
+
+perturbative_matching jobs(each job: id and quasi input):
+
+extrapolation jobs(each job: id and lightcone inputs):
+
+review jobs(each job only needs id):
+
+correlator_analysis required choices:
+fit_scope(3pt_ratio, qda_ratio, FH, or 3pt_ratio+FH):
+fitting_form(Breit or NonBreit):
+
+correlator_analysis optional choices:
+component(re, im, or both):
+pt2_windows(list of {"tmin": int, "tmax": int}, example [{"tmin": 3, "tmax": 12}]):
+pt3_windows(list of 3pt window specs, if needed):
+pt3_tau_cuts(list of tau cuts, example [3, 4]):
+nstate(integer or list, example [2]):
+prior_width(number or list, example [1.0]):
+fit_strategy(joint, chained, or independent):
+model_average(true or false):
+svdcut(number, example 1e-6):
+posterior_prior_error_scale(number or list):
+q_min(number):
+
+renormalization required choices:
+scheme(ratio, hybrid_ratio, or hybrid_self_renormalization):
+target input job(job id, example ca_p5):
+denominator input job(job id, example ca_p0):
+reference input for self-renormalization(job/artifact id):
+zR input for self-renormalization(job/artifact id):
+zs_fm for hybrid_ratio(reference z in fm, example 0.1722):
+
+renormalization optional choices:
+normalization(true or false):
+scheme_parameters(JSON object, example {"m0_gev": 0.0, "delta_m_gev": 0.0}):
+z_coverage_policy(policy name if supported by your workflow):
+svdcut(number):
+
+fourier_transform required choices:
+input job or artifact(job/artifact id, example rn_p5):
+y_grid(list or {"start": number, "stop": number, "num": int}, example {"start": -1.0, "stop": 1.0, "num": 101}):
+coord_unit if not known from upstream .nc(lattice, fm, gev_inv, or lambda):
+
+fourier_transform optional choices:
+order(LA, NLA, or both):
+sector(for DA use full only; for PDF/GPD use valence, total, full, or sea):
+part(re, im, or both):
+scheme_scan(JSON object, example {"zmin_values": [1], "zmax_values": [5], "z_ext_max": 8, "smooth": "linear", "model_average": false}):
+posterior_prior_error_scale(number or list):
+Lambda0_gev(number):
+method(method name if needed):
+observable(observable label if needed):
+
+perturbative_matching required choices:
+quasi input job or artifact(job/artifact id, example ft_p5):
+kernel_id(example CG_gt_quark_PDF_hybrid_NLO, CG_gt_quark_PDF_ratio_NLO, GI_gzg5_DA_hybrid_NLO, GI_gzg5_DA_ratio_NLO):
+zs_fm if the selected hybrid kernel needs it(number in fm):
+
+perturbative_matching optional choices:
+component(re or im):
+mu(renormalization scale in GeV, example 2.0):
+quasi_y_ls(list or grid object):
+lc_x_ls(list or grid object):
+sector(valence, total, full, or sea):
+x limits or plot settings(optional plotting controls):
+
+extrapolation required choices:
+lightcone input jobs or artifacts(list of perturbative_matching outputs, example mt_p4, mt_p5):
+Note: perturbative_matching input cannot have only one ensemble and one momentum.
+
+extrapolation optional choices:
+allow_order_a(list of lattice-spacing powers, example [2]):
+allow_order_1overp(list of 1/p powers, example [2]):
+allow_order_ap(list of mixed a*p powers, example []):
+fitting_param_xdep(three booleans for a, 1/p, a*p x-dependence, example [false, true, false]):
+pdep_gev(list of momenta for p-dependence plots, example [1.5, 2.0, 2.5]):
+
+review:
+No required parameters.
+
+If no other optional stage parameters are needed, write:
+No other optional stage parameters are requested.
