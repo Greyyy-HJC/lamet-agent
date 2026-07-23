@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from lamet_agent.core.tools import validate_stage_inputs
-from lamet_agent.manifest import AnalysisManifest
+from lamet_agent.manifest import AnalysisManifest, resolve_manifest_artifact_metadata
 from lamet_agent.manifest_params import merge_stage_params
 
 
@@ -109,6 +109,8 @@ class PlanAgentState:
     suppressed_full_expansions: set[str] = field(default_factory=set)
     stage_completion_checked: bool = False
     stage_completion_requested: bool = False
+    stage_required_checked: set[str] = field(default_factory=set)
+    stage_optional_checked: set[str] = field(default_factory=set)
     parameter_completion_checked: bool = False
     parameter_completion_requested: bool = False
 
@@ -173,7 +175,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     """Build a sparse plan-only manifest draft from a free-form text request."""
     raw_paths = [
         token.strip("'\"`,;:()[]{}")
-        for token in re.findall(r"(?:~|/|\.{1,2}/)?[^\s'\"`]+?\.(?:h5|hdf5|npy|npz)", text, flags=re.I)
+        for token in re.findall(r"(?:~|/|\.{1,2}/)?[^\s'\"`]+?\.(?:h5|hdf5|npy|npz|nc)", text, flags=re.I)
     ]
     lowered = text.lower()
     root = path.parent.resolve()
@@ -182,6 +184,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     parton = "gluon" if "gluon" in lowered else "quark"
     correlators: list[dict[str, Any]] = []
     current_sources: list[dict[str, Any]] = []
+    artifacts: list[dict[str, Any]] = []
     paths: list[str] = []
     for raw_path in raw_paths:
         raw_lower = raw_path.lower()
@@ -194,11 +197,41 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         else:
             paths.append(raw_path)
     seen_data_paths: set[str] = set()
-    ensemble = "HISQa060_X" if "a060_x" in lowered else "planned"
-    hadron = "pion" if "pion" in lowered else "hadron"
+    ensemble_match = re.search(r"ensemble\s*[:=]?\s*([A-Za-z0-9_.-]+)", text, flags=re.I)
+    ensemble = ensemble_match.group(1) if ensemble_match else "HISQa060_X" if "a060_x" in lowered else "planned"
+    hadron = "kaon" if "kaon" in lowered else "jpsi" if "jpsi" in lowered else "pion" if "pion" in lowered else "hadron"
     gfix = "CG" if "coulomb" in lowered or "coulomb-gauge" in lowered or "cg" in lowered else "unknown"
-    lattice_spacing_fm = 0.0574 if "a060" in lowered else 1.0
-    volume = "S48T64" if "a060" in lowered else "S1T1"
+    if "gi" in lowered or "gauge invariant" in lowered:
+        gfix = "GI"
+    spacing_match = re.search(r"(?:lattice\s+spacing\s*[:=]?|(?:^|[,\s])a\s*[:=]\s*)([0-9]*\.?[0-9]+)\s*(?:fm)?", text, flags=re.I)
+    lattice_spacing_fm = float(spacing_match.group(1)) if spacing_match else 0.0574 if "a060" in lowered else 1.0
+    volume_match = re.search(r"\bS[1-9]\d*T[1-9]\d*\b", text)
+    volume = volume_match.group(0) if volume_match else "S48T64" if "a060" in lowered else "S1T1"
+    explicit_bz = [int(item) for item in re.findall(r"\bbz\s*=?\s*(-?\d+)", lowered)]
+    explicit_tsep = [int(item) for item in re.findall(r"\btsep\s*=?\s*(\d+)", lowered)]
+    explicit_bT = [int(item) for item in re.findall(r"\bbt\s*=?\s*(-?\d+)", lowered)]
+    seed_match = re.search(r"random[_\s-]*seed\s*[:=]?\s*(\d+)", text, flags=re.I)
+    resample_match = re.search(r"resample[_\s-]*mode\s*[:=]?\s*(jk|jackknife|bs|bootstrap)\b", text, flags=re.I)
+    source_operator_match = re.search(r"source[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
+    sink_operator_match = re.search(r"sink[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
+    current_operator_match = re.search(r"current[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
+    source_operator = source_operator_match.group(1) if source_operator_match else "source"
+    sink_operator = sink_operator_match.group(1) if sink_operator_match else "sink"
+    current_operator = current_operator_match.group(1) if current_operator_match else "current"
+    component_match = re.search(r"\bcomponent\s*[:=]?\s*(re|im|both)\b", text, flags=re.I)
+    ft_order_match = re.search(r"\b(?:fourier\s+)?order\s*[:=]?\s*(LA|NLA)\b", text, flags=re.I)
+    ft_sector_match = re.search(r"\bsector\s*[:=]?\s*(valence|total|full|sea)\b", text, flags=re.I)
+    ft_part_match = re.search(r"\bpart\s*[:=]?\s*(re|im|both)\b", text, flags=re.I)
+    y_grid_match = re.search(r"\by_grid\s*(\{[^{}]*\})", text, flags=re.I)
+    scheme_scan_match = re.search(r"\bscheme_scan\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", text, flags=re.I)
+    quasi_y_match = re.search(r"\bquasi_y_ls\s*(\{[^{}]*\})", text, flags=re.I)
+    kernel_id_match = re.search(r"\bkernel_id\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
+    y_grid = json.loads(y_grid_match.group(1)) if y_grid_match else None
+    scheme_scan = json.loads(scheme_scan_match.group(1)) if scheme_scan_match else None
+    quasi_y_ls = json.loads(quasi_y_match.group(1)) if quasi_y_match else None
+    initial_match = re.search(r"initial[_\s-]*momentum\s*[:=]?\s*(PX-?\d+PY-?\d+PZ-?\d+)", text, flags=re.I)
+    final_match = re.search(r"final[_\s-]*momentum\s*[:=]?\s*(PX-?\d+PY-?\d+PZ-?\d+)", text, flags=re.I)
+    nonbreit = target_observable == "gpd" or "non-forward" in lowered or "nonbreit" in lowered
     for index, raw_path in enumerate(paths):
         token = raw_path.lower()
         is_current = "current" in token or "insertion" in token
@@ -214,12 +247,25 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         if data_path in seen_data_paths:
             continue
         seen_data_paths.add(data_path)
+        if resolved.suffix.lower() == ".nc":
+            artifact_stage = "perturbative_matching" if resolved.stem.startswith("mt_") or "matching" in token else "fourier_transform" if resolved.stem.startswith("ft_") or "fourier" in token else "renormalization" if resolved.stem.startswith("rn_") or "renorm" in token else "correlator_analysis"
+            artifacts.append({"id": resolved.stem, "stage": artifact_stage, "path": data_path})
+            continue
         if is_current:
-            current_sources.append({"source_id": f"current_{index}", "data_path": data_path})
+            operator_match = re.search(r"(?:current|insertion)[_-]?([A-Za-z0-9]+)?", resolved.stem, flags=re.I)
+            current_sources.append(
+                {
+                    "source_id": f"current_{index}",
+                    "data_path": data_path,
+                    "current_operator": operator_match.group(1) if operator_match and operator_match.group(1) else current_operator,
+                }
+            )
             continue
         parsed = re.search(r"_p(?P<mom>[^_]+)_(?P<kind>[23]pt)(?:_ts(?P<tsep>\d+))?$", resolved.stem)
+        canonical_momentum = re.search(r"PX-?\d+PY-?\d+PZ-?\d+", resolved.stem, flags=re.I)
         mom = parsed.group("mom") if parsed else "0"
-        momentum = mom if mom.startswith("PX") else f"PX{mom}PY0PZ0"
+        momentum = canonical_momentum.group(0).upper() if canonical_momentum else mom if mom.startswith("PX") else f"PX{mom}PY0PZ0"
+        is_nonlocal_2pt = kind == "2pt" and ("nonlocal" in token or ("qda" in lowered and "nonlocal" in lowered and "local" not in token.replace("nonlocal", "")))
         if kind == "3pt":
             companion = resolved.with_name(resolved.stem.split("_3pt_ts", 1)[0] + "_2pt" + resolved.suffix)
             if companion.exists():
@@ -237,8 +283,8 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
                             "ensemble": ensemble,
                             "hadron": hadron,
                             "gfix": gfix,
-                            "source_operator": "source",
-                            "sink_operator": "sink",
+                            "source_operator": source_operator,
+                            "sink_operator": sink_operator,
                             "volume": volume,
                             "momentum": [momentum],
                             "lattice_spacing_fm": lattice_spacing_fm,
@@ -252,102 +298,182 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             "ensemble": ensemble,
             "hadron": hadron,
             "gfix": gfix,
-            "source_operator": "source",
-            "sink_operator": "sink",
+            "source_operator": source_operator,
+            "sink_operator": "sink_nonlocal" if is_nonlocal_2pt and not sink_operator_match else sink_operator,
             "volume": volume,
             "momentum": [momentum],
             "lattice_spacing_fm": lattice_spacing_fm,
             "plan_generated": True,
         }
         if kind == "3pt":
-            correlator["current_operator"] = "current"
-            correlator["tsep"] = [int(parsed.group("tsep"))] if parsed and parsed.group("tsep") else [1]
-            correlator["bT"] = [0]
+            correlator["current_operator"] = current_operator
+            stem_tsep = re.search(r"(?:^|_)ts(?:ep)?(?P<tsep>\d+)(?:_|$)", resolved.stem, flags=re.I)
+            correlator["tsep"] = [int(parsed.group("tsep"))] if parsed and parsed.group("tsep") else [int(stem_tsep.group("tsep"))] if stem_tsep else explicit_tsep or [1]
+            correlator["bT"] = explicit_bT or [0]
             if resolved.exists() and resolved.suffix.lower() == ".npy":
                 import numpy as np
 
                 shape = np.load(resolved, mmap_mode="r").shape
                 correlator["bz"] = list(range(int(shape[0]))) if len(shape) >= 3 else [0]
             else:
-                correlator["bz"] = [0]
-            correlator["bz_direction"] = "X" if "_x_" in token or "x" in lowered else "Z"
+                correlator["bz"] = explicit_bz or [0]
+            direction_match = re.search(r"bz_direction\s*[:=]?\s*(X|Y|Z|XY|XZ|YZ|XYZ)\b", text, flags=re.I)
+            correlator["bz_direction"] = direction_match.group(1).upper() if direction_match else "X" if "_x_" in token else "Z"
+        elif is_nonlocal_2pt:
+            correlator["bT"] = explicit_bT or [0]
+            if resolved.exists() and resolved.suffix.lower() == ".npy":
+                import numpy as np
+
+                shape = np.load(resolved, mmap_mode="r").shape
+                correlator["bz"] = list(range(int(shape[0]))) if len(shape) >= 3 else explicit_bz or [0]
+            else:
+                correlator["bz"] = explicit_bz or [0]
+            correlator["bz_direction"] = "Z"
         correlators.append(correlator)
-    two_point = next((item for item in correlators if item.get("correlator_type") == "2pt"), None)
-    if two_point is not None and current_sources:
-        correlators.append(
-            {
-                "correlator_id": "planned_3pt_from_2pt_current",
-                "correlator_type": "3pt",
-                "data_path": f"artifacts/plan_data/{run_id}_planned_3pt.h5",
-                "ensemble": two_point.get("ensemble", "planned"),
-                "hadron": two_point.get("hadron", "hadron"),
-                "gfix": two_point.get("gfix", "unknown"),
-                "source_operator": two_point.get("source_operator", "source"),
-                "sink_operator": two_point.get("sink_operator", "sink"),
-                "current_operator": "current",
-                "momentum": two_point.get("momentum", ["PX0PY0PZ0"]),
-                "volume": two_point.get("volume", "S1T1"),
-                "lattice_spacing_fm": two_point.get("lattice_spacing_fm", 1.0),
-                "tsep": [1],
-                "bT": [0],
-                "bz": [0],
-                "bz_direction": "Z",
-                "plan_sources": {"two_point": two_point["data_path"], "current": current_sources[0]["data_path"]},
-            }
-        )
+    two_points = [item for item in correlators if item.get("correlator_type") == "2pt" and item.get("bz") is None]
+    for current_source in current_sources:
+        for two_point in two_points:
+            suffix = ""
+            if len(current_sources) > 1 or len(two_points) > 1:
+                momentum_label = str(_as_list(two_point.get("momentum"))[0]).replace("PX", "px").replace("PY", "py").replace("PZ", "pz")
+                suffix = f"_{current_source['current_operator']}_{momentum_label}"
+            correlators.append(
+                {
+                    "correlator_id": f"planned_3pt_from_current{suffix}",
+                    "correlator_type": "3pt",
+                    "data_path": f"artifacts/plan_data/{run_id}_planned_3pt{suffix}.h5",
+                    "ensemble": two_point.get("ensemble", "planned"),
+                    "hadron": two_point.get("hadron", "hadron"),
+                    "gfix": two_point.get("gfix", "unknown"),
+                    "source_operator": two_point.get("source_operator", "source"),
+                    "sink_operator": two_point.get("sink_operator", "sink"),
+                    "current_operator": current_source["current_operator"],
+                    "momentum": two_point.get("momentum", ["PX0PY0PZ0"]),
+                    "volume": two_point.get("volume", "S1T1"),
+                    "lattice_spacing_fm": two_point.get("lattice_spacing_fm", 1.0),
+                    "tsep": explicit_tsep or [1],
+                    "bT": explicit_bT or [0],
+                    "bz": explicit_bz or [0],
+                    "bz_direction": "Z",
+                    "plan_sources": {"two_point": two_point["data_path"], "current": current_source["data_path"]},
+                }
+            )
     stages = ["correlator_analysis"] if correlators else []
     for stage in ("renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"):
-        if stage in lowered and stage not in stages:
+        if (stage in lowered or ("matching" in lowered and stage == "perturbative_matching") or ("fourier" in lowered and stage == "fourier_transform")) and stage not in stages:
             stages.append(stage)
+    if artifacts and not stages:
+        if any(item["stage"] == "renormalization" for item in artifacts):
+            stages.extend(["fourier_transform", "perturbative_matching"])
+        elif any(item["stage"] == "fourier_transform" for item in artifacts):
+            stages.append("perturbative_matching")
+        elif any(item["stage"] == "perturbative_matching" for item in artifacts):
+            stages.append("extrapolation")
+        if "review" in lowered:
+            stages.append("review")
     payload: dict[str, Any] = {
         "metadata": {
             "run_id": run_id,
             "root_directory": str(root),
-            "artifacts_directory": "artifacts",
             "target_observable": target_observable,
             "parton": parton,
-            "resample_mode": "jk",
-            "random_seed": 1984,
             "stages": stages,
         },
-        "inputs": {"correlators": correlators, "artifacts": [], "kernels": []},
+        "inputs": {"correlators": correlators, "artifacts": artifacts, "kernels": []},
         "stages": {},
     }
+    if seed_match:
+        payload["metadata"]["random_seed"] = int(seed_match.group(1))
+    if resample_match:
+        mode = resample_match.group(1).lower()
+        payload["metadata"]["resample_mode"] = "jk" if mode in {"jk", "jackknife"} else "bs"
     if correlators:
         jobs_by_momentum: dict[str, list[str]] = {}
         for item in correlators:
             momentum = str(_as_list(item.get("momentum"))[0])
             jobs_by_momentum.setdefault(momentum, []).append(str(item["correlator_id"]))
-        payload["stages"]["correlator_analysis"] = {
-            "defaults": {"fit_scope": ["3pt_ratio"] if any(item["correlator_type"] == "3pt" for item in correlators) else ["2pt"]},
-            "jobs": [
-                {"id": f"ca_p{re.search(r'PX([^P]+)PY', momentum).group(1) if re.search(r'PX([^P]+)PY', momentum) else index}", "correlator_ids": ids, "params": {"momentum": momentum}}
-                for index, (momentum, ids) in enumerate(sorted(jobs_by_momentum.items()))
-            ],
-        }
-    if "renormalization" in stages:
+        has_qda = any(item.get("correlator_type") == "2pt" and item.get("bz") is not None for item in correlators)
+        ca_defaults = {"fit_scope": ["qda_ratio"]} if has_qda else {"fit_scope": ["3pt_ratio"]} if any(item["correlator_type"] == "3pt" for item in correlators) else {}
+        if component_match:
+            ca_defaults["component"] = component_match.group(1).lower()
+        initial_momentum = initial_match.group(1).upper() if initial_match else None
+        final_momentum = final_match.group(1).upper() if final_match else None
+        if nonbreit and initial_momentum and final_momentum:
+            payload["stages"]["correlator_analysis"] = {
+                "defaults": {**ca_defaults, "fit_scope": ["3pt_ratio"], "fitting_form": "NonBreit"},
+                "jobs": [{"id": "ca_nonforward", "correlator_ids": [item["correlator_id"] for item in correlators], "params": {"initial_momentum": initial_momentum, "final_momentum": final_momentum}}],
+            }
+        else:
+            ca_jobs = []
+            for index, (momentum, ids) in enumerate(sorted(jobs_by_momentum.items())):
+                match = re.fullmatch(r"PX(-?\d+)PY(-?\d+)PZ(-?\d+)", momentum)
+                components = [int(value) for value in match.groups()] if match else []
+                nonzero = next((abs(value) for value in reversed(components) if value), index)
+                ca_jobs.append({"id": f"ca_p{nonzero}", "correlator_ids": ids, "params": {"momentum": momentum}})
+            payload["stages"]["correlator_analysis"] = {
+                "defaults": ca_defaults,
+                "jobs": ca_jobs,
+            }
+    if "renormalization" in stages and "correlator_analysis" in payload["stages"]:
         ca_jobs = payload["stages"]["correlator_analysis"]["jobs"]
         denominator = next((job["id"] for job in ca_jobs if job["params"].get("momentum") == "PX0PY0PZ0"), ca_jobs[0]["id"])
         nonzero_jobs = [job for job in ca_jobs if job["id"] != denominator]
+        scheme = "hybrid_ratio" if "hybrid" in lowered else "ratio" if "ratio" in lowered else None
+        rn_defaults = {"scheme": scheme} if scheme else {}
+        zs_match = re.search(r"zs_fm\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)
+        if zs_match:
+            rn_defaults["zs_fm"] = float(zs_match.group(1))
         payload["stages"]["renormalization"] = {
-            "defaults": {"scheme": "hybrid_ratio", "zs_fm": 3.0 * lattice_spacing_fm},
+            "defaults": rn_defaults,
             "jobs": [{"id": job["id"].replace("ca_", "rn_"), "inputs": {"target": job["id"], "denominator": denominator}} for job in nonzero_jobs],
         }
     if "fourier_transform" in stages:
         rn_jobs = payload["stages"].get("renormalization", {}).get("jobs", [])
+        source_jobs = rn_jobs or [{"id": item["id"]} for item in artifacts if item["stage"] == "renormalization"]
+        ft_defaults: dict[str, Any] = {}
+        if y_grid is not None:
+            ft_defaults["y_grid"] = y_grid
+        if ft_order_match:
+            ft_defaults["order"] = ft_order_match.group(1).upper()
+        if ft_sector_match:
+            ft_defaults["sector"] = ft_sector_match.group(1).lower()
+        if ft_part_match:
+            ft_defaults["part"] = ft_part_match.group(1).lower()
+        if scheme_scan is not None:
+            ft_defaults["scheme_scan"] = scheme_scan
         payload["stages"]["fourier_transform"] = {
-            "defaults": {"order": ["LA", "NLA"], "coord_unit": "lattice", "sector": "valence", "y_grid": {"start": -2.0, "stop": 2.0, "num": 100}, "scheme_scan": {"model_average": True}},
-            "jobs": [{"id": job["id"].replace("rn_", "ft_"), "inputs": {"input": job["id"]}} for job in rn_jobs],
+            "defaults": ft_defaults,
+            "jobs": [{"id": job["id"].replace("rn_", "ft_"), "inputs": {"input": job["id"]}} for job in source_jobs],
         }
     if "perturbative_matching" in stages:
-        ft_jobs = payload["stages"].get("fourier_transform", {}).get("jobs", [])
-        payload["inputs"]["kernels"] = [{"stage": "perturbative_matching", "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "kernel_path": str(Path(__file__).resolve().parents[1] / "kernels.py"), "scheme": "hybrid_ratio"}]
+        ft_jobs = payload["stages"].get("fourier_transform", {}).get("jobs", []) or [{"id": item["id"]} for item in artifacts if item["stage"] == "fourier_transform"]
+        scheme = str(payload["stages"].get("renormalization", {}).get("defaults", {}).get("scheme") or ("hybrid_ratio" if "hybrid" in lowered else "ratio"))
+        operator = "gzg5" if target_observable == "da" else "gt"
+        kernel_id = kernel_id_match.group(1) if kernel_id_match else f"{gfix if gfix in {'CG', 'GI'} else 'CG'}_{operator}_{'DA' if target_observable == 'da' else 'quark_PDF'}_{'hybrid' if 'hybrid' in scheme else 'ratio'}_NLO"
+        payload["inputs"]["kernels"] = [{"stage": "perturbative_matching", "kernel_id": kernel_id, "kernel_path": str(Path(__file__).resolve().parents[1] / "kernels.py"), "scheme": scheme}]
+        mt_defaults: dict[str, Any] = {"kernel_id": kernel_id}
+        if component_match:
+            mt_defaults["component"] = component_match.group(1).lower()
+        if quasi_y_ls is not None:
+            mt_defaults["quasi_y_ls"] = quasi_y_ls
+        zs_match = re.search(r"zs_fm\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)
+        if zs_match:
+            mt_defaults["zs_fm"] = float(zs_match.group(1))
         payload["stages"]["perturbative_matching"] = {
-            "defaults": {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "mu": 2.0, "component": "re", "zs_fm": 3.0 * lattice_spacing_fm},
+            "defaults": mt_defaults,
             "jobs": [{"id": job["id"].replace("ft_", "mt_"), "inputs": {"quasi": job["id"]}} for job in ft_jobs],
         }
+    if "extrapolation" in stages:
+        mt_jobs = payload["stages"].get("perturbative_matching", {}).get("jobs", []) or [{"id": item["id"]} for item in artifacts if item["stage"] == "perturbative_matching"]
+        payload["stages"]["extrapolation"] = {"defaults": {}, "jobs": [{"id": "extrapolate_all", "inputs": {"lightcone": [job["id"] for job in mt_jobs]}}]}
     if "review" in stages:
         payload["stages"]["review"] = {"defaults": {}, "jobs": [{"id": "review"}]}
+    payload["metadata"]["stages"] = [
+        stage
+        for stage in stages
+        if stage in payload["stages"] and payload["stages"][stage].get("jobs")
+    ]
+    payload["stages"] = {stage: payload["stages"][stage] for stage in payload["metadata"]["stages"]}
     return payload
 
 
@@ -483,6 +609,8 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
     for index, item in enumerate(correlators):
         if not isinstance(item, dict):
             continue
+        if isinstance(item.get("plan_sources"), dict):
+            continue
         data_path = _resolve_manifest_path(manifest_path, payload, item.get("data_path"))
         display_path = f"inputs.correlators[{index}].data_path"
         if data_path is None:
@@ -572,11 +700,21 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
                 )
 
     strict_payload = copy.deepcopy(payload)
+    for correlator in strict_payload.get("inputs", {}).get("correlators", []) if isinstance(strict_payload.get("inputs"), dict) else []:
+        if isinstance(correlator, dict):
+            correlator.pop("plan_generated", None)
+            correlator.pop("plan_sources", None)
     for kernel in strict_payload.get("inputs", {}).get("kernels", []) if isinstance(strict_payload.get("inputs"), dict) else []:
         if isinstance(kernel, dict) and kernel.get("stage") == "matching":
             kernel["stage"] = "perturbative_matching"
     try:
         strict = AnalysisManifest.model_validate(strict_payload)
+        if root is not None:
+            for artifact in strict.inputs.artifacts:
+                resolved = _resolve_manifest_path(manifest_path, payload, artifact.path)
+                if resolved is not None:
+                    artifact.path = resolved.as_posix()
+        resolve_manifest_artifact_metadata(strict)
     except (ValidationError, ValueError) as exc:
         issues.append(PlanIssue("info", "manifest", f"Strict manifest validation is not yet clean: {exc}"))
     else:
@@ -590,7 +728,7 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
                 except Exception as exc:
                     issues.append(PlanIssue("warning", f"stages.{stage}.jobs.{job.id}", f"Stage input check failed: {exc}"))
 
-    for gap in _stage_parameter_gaps(payload):
+    for gap in _stage_parameter_gaps(payload, manifest_path):
         issues.append(PlanIssue("warning", str(gap["path"]), str(gap["message"]), str(gap["suggested_fix"])))
 
     return issues
@@ -741,52 +879,8 @@ def _shrink_list(value: Any) -> Any:
     return value[:1] if isinstance(value, list) and value else value
 
 
-def _expand_nstate(value: Any) -> Any:
-    values = [int(item) for item in _as_list(value) if isinstance(item, int) or str(item).isdigit()]
-    if not values:
-        return [2, 3]
-    expanded = set(values)
-    expanded.add(max(values) + 1)
-    return sorted(expanded)
-
-
-def _expand_prior_width(value: Any) -> list[float]:
-    values: list[float] = []
-    for item in _as_list(value):
-        try:
-            width = float(item)
-        except (TypeError, ValueError):
-            continue
-        if width > 0:
-            values.append(width)
-    if not values:
-        return [0.5, 1.0, 2.0]
-    expanded = set(values)
-    expanded.add(min(values) * 0.5)
-    expanded.add(max(values) * 2.0)
-    return sorted(expanded)
-
-
-def _expand_correlator_search_params(
-    params: dict[str, Any],
-    *,
-    fill_missing: bool,
-    base_path: str,
-    suppressed_paths: set[str],
-) -> None:
-    params["model_average"] = True
-    if (fill_missing or "nstate" in params) and f"{base_path}.nstate" not in suppressed_paths:
-        params["nstate"] = _expand_nstate(params.get("nstate"))
-    if (fill_missing or "prior_width" in params) and f"{base_path}.prior_width" not in suppressed_paths:
-        params["prior_width"] = _expand_prior_width(params.get("prior_width"))
-
-
 def _make_quick_variant(payload: dict[str, Any]) -> dict[str, Any]:
     quick = copy.deepcopy(payload)
-    metadata = quick.setdefault("metadata", {})
-    if isinstance(metadata, dict):
-        metadata["resample_mode"] = "jk"
-        metadata["sample_error_mode"] = "mean"
     stages = quick.get("stages")
     if not isinstance(stages, dict):
         return quick
@@ -795,14 +889,11 @@ def _make_quick_variant(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         defaults = config.get("defaults")
         if isinstance(defaults, dict):
-            if stage_name == "correlator_analysis":
-                defaults["model_average"] = False
             for key in ("pt2_windows", "pt3_tau_cuts", "nstate", "fit_scope", "fit_strategy", "prior_width", "order"):
                 if key in defaults:
                     defaults[key] = _shrink_list(defaults[key])
             scheme_scan = defaults.get("scheme_scan")
             if isinstance(scheme_scan, dict):
-                scheme_scan["model_average"] = False
                 for key in ("zmin_values", "zmax_values", "order", "posterior_prior_error_scale"):
                     if key in scheme_scan:
                         scheme_scan[key] = _shrink_list(scheme_scan[key])
@@ -813,8 +904,6 @@ def _make_quick_variant(payload: dict[str, Any]) -> dict[str, Any]:
             for job in jobs:
                 if not isinstance(job, dict) or not isinstance(job.get("params"), dict):
                     continue
-                if stage_name == "correlator_analysis":
-                    job["params"]["model_average"] = False
                 for key in ("pt2_windows", "pt3_tau_cuts", "nstate", "fit_scope", "fit_strategy", "prior_width", "order"):
                     if key in job["params"]:
                         job["params"][key] = _shrink_list(job["params"][key])
@@ -822,34 +911,7 @@ def _make_quick_variant(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _make_full_variant(payload: dict[str, Any], *, suppressed_paths: set[str] | None = None) -> dict[str, Any]:
-    suppressed_paths = suppressed_paths or set()
     full = copy.deepcopy(payload)
-    metadata = full.setdefault("metadata", {})
-    if isinstance(metadata, dict):
-        metadata["sample_error_mode"] = "covariance"
-    stages = full.get("stages")
-    if not isinstance(stages, dict):
-        return full
-    correlator = stages.get("correlator_analysis")
-    if isinstance(correlator, dict):
-        defaults = correlator.setdefault("defaults", {})
-        if isinstance(defaults, dict):
-            _expand_correlator_search_params(
-                defaults,
-                fill_missing=True,
-                base_path="stages.correlator_analysis.defaults",
-                suppressed_paths=suppressed_paths,
-            )
-        jobs = correlator.get("jobs")
-        if isinstance(jobs, list):
-            for index, job in enumerate(jobs):
-                if isinstance(job, dict) and isinstance(job.get("params"), dict):
-                    _expand_correlator_search_params(
-                        job["params"],
-                        fill_missing=False,
-                        base_path=f"stages.correlator_analysis.jobs[{index}].params",
-                        suppressed_paths=suppressed_paths,
-                    )
     return full
 
 
@@ -865,6 +927,10 @@ def build_repaired_manifests(
     edits = _set_kernel_stage_aliases(base)
     edits.extend(_set_kernel_scheme_from_renorm(base))
     edits.extend(_update_conversion_paths(base, conversions, manifest_path))
+    for correlator in base.get("inputs", {}).get("correlators", []):
+        if isinstance(correlator, dict):
+            correlator.pop("plan_generated", None)
+            correlator.pop("plan_sources", None)
     quick = _make_quick_variant(base)
     full = _make_full_variant(base, suppressed_paths=suppressed_full_expansions)
     return quick, full, edits
@@ -887,6 +953,8 @@ def _json_pointer_parts(path: str) -> list[str]:
         parts = path.split(".")
     if not parts or parts[0] not in {"metadata", "inputs", "stages"}:
         raise ValueError("JSON Patch may only modify /metadata, /inputs, or /stages.")
+    if any(part in {"plan_sources", "plan_generated"} for part in parts):
+        raise ValueError("JSON Patch may not modify plan-only conversion fields.")
     return parts
 
 
@@ -978,10 +1046,21 @@ def apply_manifest_json_patches(payload: dict[str, Any], patches: list[dict[str,
     return candidate, edits
 
 
-def _strict_manifest_issues(payload: dict[str, Any]) -> list[PlanIssue]:
+def _strict_manifest_issues(payload: dict[str, Any], manifest_path: Path | None = None) -> list[PlanIssue]:
     issues: list[PlanIssue] = []
+    strict_payload = copy.deepcopy(payload)
+    for correlator in strict_payload.get("inputs", {}).get("correlators", []) if isinstance(strict_payload.get("inputs"), dict) else []:
+        if isinstance(correlator, dict):
+            correlator.pop("plan_generated", None)
+            correlator.pop("plan_sources", None)
     try:
-        strict = AnalysisManifest.model_validate(copy.deepcopy(payload))
+        strict = AnalysisManifest.model_validate(strict_payload)
+        if manifest_path is not None:
+            for artifact in strict.inputs.artifacts:
+                resolved = _resolve_manifest_path(manifest_path, payload, artifact.path)
+                if resolved is not None:
+                    artifact.path = resolved.as_posix()
+        resolve_manifest_artifact_metadata(strict)
     except (ValidationError, ValueError) as exc:
         return [PlanIssue("error", "manifest", f"Strict manifest validation failed: {exc}")]
     for stage in strict.metadata.stages:
@@ -996,7 +1075,7 @@ def _strict_manifest_issues(payload: dict[str, Any]) -> list[PlanIssue]:
     return issues
 
 
-def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = None) -> list[dict[str, Any]]:
     metadata = payload.get("metadata", {})
     stages = payload.get("stages", {})
     inputs = payload.get("inputs", {})
@@ -1057,10 +1136,17 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             for reference in _as_list(value):
                 reference = str(reference)
                 artifact = artifacts.get(reference)
-                if artifact is not None and all(
-                    artifact.get(key) is not None for key in ("momentum", "volume", "lattice_spacing_fm")
-                ):
-                    return True
+                if artifact is not None:
+                    if all(artifact.get(key) is not None for key in ("momentum", "volume", "lattice_spacing_fm")):
+                        return True
+                    if manifest_path is not None:
+                        path = _resolve_manifest_path(manifest_path, payload, artifact.get("path"))
+                        if path is not None and path.suffix.lower() == ".nc" and path.is_file():
+                            from lamet_agent.core.data import read_netcdf_attrs
+
+                            attrs = read_netcdf_attrs(path)
+                            if all(attrs.get(key) is not None for key in ("momentum", "volume", "lattice_spacing_fm")):
+                                return True
                 upstream = jobs_by_id.get(reference)
                 if upstream is not None and reference not in seen:
                     if has_discrete_kinematics(upstream[0], upstream[1], seen | {reference}):
@@ -1164,30 +1250,17 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             elif stage == "fourier_transform":
                 if roles != {"input"}:
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "fourier_transform requires exactly one input role named input.", 'Example: {"input": "rn_pz"}.')
-                for key, example in (("order", 'Choose "LA", "NLA", or ["LA", "NLA"].'), ("coord_unit", 'Choose "lattice", "fm", "gev_inv", or "lambda".'), ("y_grid", 'Example: {"start": -2.0, "stop": 2.0, "num": 100}.'), ("momentum_gev", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact.")):
-                    if key not in params and not (key == "momentum_gev" and derived_momentum_available):
-                        add_gap(key, f"stages.{stage}.defaults.{key}", f"fourier_transform job {job_id!r} is missing parameter {key}.", example)
-                if "sector" not in params and "part" not in params:
-                    add_gap("sector", f"stages.{stage}.defaults.sector", f"fourier_transform job {job_id!r} is missing sector or part.", 'For PDF choose one of "valence", "total", "full", "sea"; alternatively set part to "re", "im", or "both".')
+                if "y_grid" not in params:
+                    add_gap("y_grid", f"stages.{stage}.defaults.y_grid", "fourier_transform requires y_grid.", 'Example: {"start": -1.0, "stop": 1.0, "num": 101}.')
+                if not derived_momentum_available and "momentum_gev" not in params:
+                    add_gap("momentum_gev", f"stages.{stage}.defaults.momentum_gev", f"fourier_transform job {job_id!r} has no derivable momentum.", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact.")
             elif stage == "perturbative_matching":
                 if roles != {"quasi"}:
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "perturbative_matching requires exactly one input role named quasi.", 'Example: {"quasi": "ft_pz"}.')
                 if "kernel_id" not in params and len(matching_kernel_ids) != 1:
                     add_gap("kernel_id", f"stages.{stage}.defaults.kernel_id", f"perturbative_matching job {job_id!r} is missing kernel_id.", "Use one declared inputs.kernels[].kernel_id.")
-                for key, example in (("momentum_gev", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact."), ("mu", "Example: 2.0."), ("component", 'Choose "re" or "im".')):
-                    if key not in params and not (key == "momentum_gev" and derived_momentum_available):
-                        add_gap(key, f"stages.{stage}.defaults.{key}", f"perturbative_matching job {job_id!r} is missing parameter {key}.", example)
-                selected_kernel_id = params.get("kernel_id") or (matching_kernel_ids[0] if len(matching_kernel_ids) == 1 else None)
-                selected_kernel = next(
-                    (item for item in matching_kernels if item.get("kernel_id") == selected_kernel_id),
-                    None,
-                )
-                if (
-                    isinstance(selected_kernel, dict)
-                    and "hybrid" in str(selected_kernel.get("kernel_id", "")).lower()
-                    and "zs_fm" not in params
-                ):
-                    add_gap("zs_fm", f"stages.{stage}.defaults.zs_fm", f"hybrid matching job {job_id!r} is missing flat parameter zs_fm.", 'Example: {"zs_fm": 0.2}.')
+                if not derived_momentum_available and "momentum_gev" not in params:
+                    add_gap("momentum_gev", f"stages.{stage}.defaults.momentum_gev", f"perturbative_matching job {job_id!r} has no derivable momentum.", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact.")
             elif stage == "extrapolation":
                 if "lightcone" not in roles:
                     add_gap("inputs.lightcone", f"stages.{stage}.jobs[{index}].inputs", "extrapolation requires a lightcone input role.", 'Example: {"lightcone": ["mt_pz1", "mt_pz2"]}.')
@@ -1197,6 +1270,6 @@ def _stage_parameter_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
 def validate_candidate_payload(manifest_path: Path, payload: dict[str, Any]) -> tuple[bool, list[PlanIssue]]:
     """Validate a candidate manifest payload before it can become writable state."""
     issues = check_manifest_draft(manifest_path, payload)
-    issues.extend(_strict_manifest_issues(payload))
+    issues.extend(_strict_manifest_issues(payload, manifest_path))
     blocking = [issue for issue in issues if issue.severity == "error"]
     return not blocking, issues

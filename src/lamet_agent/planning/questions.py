@@ -10,20 +10,88 @@ from .core import PlanAgentState, _stage_parameter_gaps
 from .conversion import _standard_dataset_paths
 
 
+def _stage_required_prompt(stage: str, payload: dict[str, Any]) -> str:
+    target = str(payload.get("metadata", {}).get("target_observable", "pdf")) if isinstance(payload.get("metadata"), dict) else "pdf"
+    if stage == "correlator_analysis":
+        return (
+            "correlator_analysis required choices: fit_scope options are 3pt_ratio, qda_ratio, FH, 3pt_ratio+FH; "
+            "fitting_form options are Breit or NonBreit; NonBreit also needs initial_momentum and final_momentum. "
+            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
+        )
+    if stage == "renormalization":
+        return (
+            "renormalization required choices: scheme options are ratio, hybrid_ratio, hybrid_self_renormalization. "
+            "ratio/hybrid_ratio need target and denominator inputs; hybrid_ratio also needs zs_fm. "
+            "hybrid_self_renormalization needs reference fit input or target plus zR inputs, LambdaQCD_gev, and fit parameter d. "
+            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
+        )
+    if stage == "fourier_transform":
+        sectors = "full" if target == "da" else "valence, total, full, sea"
+        return (
+            "fourier_transform required choices: input must be one renormalized job or artifact; "
+            "order options are LA, NLA, or both; sector options are "
+            f"{sectors}; part options are re, im, both. "
+            "y_grid is required and may be a list or {start, stop, num}. "
+            "coord_unit options are lattice, fm, gev_inv, lambda if not known from the input artifact. "
+            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
+        )
+    if stage == "perturbative_matching":
+        return (
+            "perturbative_matching required choices: quasi input must be one Fourier job or artifact; "
+            "kernel_id must select one declared kernel; component options are re or im; hybrid kernels need zs_fm. "
+            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
+        )
+    if stage == "extrapolation":
+        return (
+            "extrapolation required choices: inputs.lightcone must list the matching jobs or artifacts to fit. "
+            "If only one ensemble and one momentum are available the stage cannot run. "
+            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
+        )
+    return "review has no required parameters. Reply none to continue."
+
+
+def _stage_optional_prompt(stage: str) -> str:
+    if stage == "correlator_analysis":
+        return (
+            "correlator_analysis optional choices: pt2_windows, pt3_windows, pt3_tau_cuts, nstate, prior_width, "
+            "fit_strategy, model_average, component. Reply with values to set, or none to let run/stage decide."
+        )
+    if stage == "renormalization":
+        return (
+            "renormalization optional choices: normalization, scheme_parameters such as m0_gev and delta_m_gev for ratio branches, "
+            "or z_coverage_policy and svdcut for hybrid_self_renormalization. Reply with values to set, or none."
+        )
+    if stage == "fourier_transform":
+        return (
+            "fourier_transform optional choices: scheme_scan, posterior_prior_error_scale, plot names, x/y limits, "
+            "method, observable. Reply with values to set, or none."
+        )
+    if stage == "perturbative_matching":
+        return (
+            "perturbative_matching optional choices: mu, matching grids, x/y limits, sector, plot settings. "
+            "Reply with values to set, or none."
+        )
+    if stage == "extrapolation":
+        return (
+            "extrapolation optional choices: allow_order_a, allow_order_1overp, allow_order_ap, fitting_param_xdep, pdep_gev. "
+            "Reply with values to set, or none."
+        )
+    return "review has no optional manifest parameters. Reply none to continue."
+
+
 def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
     payload = state.candidate_payload
     metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-    if "random_seed" not in metadata:
+    missing_metadata = [key for key in ("random_seed", "resample_mode") if key not in metadata]
+    if missing_metadata:
         return [
             {
-                "question_id": "metadata.random_seed",
-                "prompt": "metadata.random_seed is required. Which integer seed should be used?",
-                "choices": [
-                    {"label": "1", "value": 1984, "description": "Use 1984, matching the repository examples."},
-                    {"label": "2", "value": "__custom_int__", "description": "Enter a custom positive integer seed."},
-                ],
-                "custom_hint": "Enter random_seed as an integer: ",
-                "skip_if_present": "metadata.random_seed",
+                "question_id": "metadata.required",
+                "prompt": (
+                    "metadata required choices: random_seed is a positive integer; "
+                    "resample_mode options are jk/jackknife or bs/bootstrap. "
+                    'Reply as JSON or key=value pairs, for example {"random_seed": 1984, "resample_mode": "jk"}.'
+                ),
             }
         ]
     correlators = payload.get("inputs", {}).get("correlators", []) if isinstance(payload.get("inputs"), dict) else []
@@ -67,7 +135,15 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
                 "prompt": "This manifest is not a full canonical flow. Which additional stages should be added? Answer none, all, or a subset such as renormalization and fourier_transform.",
             }
         ]
-    gaps = _stage_parameter_gaps(payload)
+    gaps = _stage_parameter_gaps(payload, state.manifest_path)
+    gap_stages = {str(gap.get("stage")) for gap in gaps}
+    for stage in configured_stage_list:
+        if stage not in state.stage_required_checked and stage in gap_stages:
+            return [{"question_id": f"stage_required.{stage}", "prompt": _stage_required_prompt(stage, payload)}]
+        if stage not in state.stage_required_checked:
+            state.stage_required_checked.add(stage)
+        if stage not in state.stage_optional_checked:
+            return [{"question_id": f"stage_optional.{stage}", "prompt": _stage_optional_prompt(stage)}]
     if gaps:
         gap = gaps[0]
         if not state.parameter_completion_checked:
@@ -164,7 +240,12 @@ def _manifest_question_id_from_user_input_action(args: dict[str, Any], reason: s
     raw = args.get("question_id")
     if isinstance(raw, str) and raw.strip():
         question_id = raw.strip()
-        if question_id in {"stage.add_remaining"} or question_id.startswith("stage_params."):
+        if (
+            question_id in {"stage.add_remaining"}
+            or question_id.startswith("stage_params.")
+            or question_id.startswith("stage_required.")
+            or question_id.startswith("stage_optional.")
+        ):
             return question_id
         if _json_pointer_from_question_id(question_id) is not None:
             return "metadata.random_seed" if question_id == "random_seed" else question_id
@@ -192,6 +273,11 @@ def _coerce_user_answer_for_manifest_path(question_id: str, value: Any) -> Any:
         or question_id.endswith(".zs_fm")
     ):
         return float(value)
+    if question_id.endswith(".data_path"):
+        text = str(value).strip()
+        if not re.search(r"\.(h5|hdf5|npy|npz|nc)$", text, flags=re.I):
+            raise ValueError("data_path must point to a supported data file.")
+        return text
     if question_id.endswith(".momentum"):
         if isinstance(value, list):
             return [str(item) for item in value]

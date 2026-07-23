@@ -53,7 +53,7 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
         return ["A perturbative_matching job requires exactly one quasi input role."]
     params = effective_matching_params(manifest, job)
     params = {**derive_job_kinematics(manifest, job), **params}
-    missing = [key for key in ("kernel_id", "momentum_gev", "mu", "component") if key not in params]
+    missing = [key for key in ("kernel_id", "momentum_gev") if key not in params]
     if missing:
         return [f"Matching job {job.id!r} is missing parameters: {missing}"]
     declaration = next((item for item in manifest.kernels if item.kernel_id == params["kernel_id"]), None)

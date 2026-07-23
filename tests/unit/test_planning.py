@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -161,11 +162,14 @@ def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> No
     path.write_text(json.dumps(payload), encoding="utf-8")
     state = PlanAgentState(path, "", payload, payload)
     state.stage_completion_checked = True
+    state.stage_required_checked.add("fourier_transform")
+    state.stage_optional_checked.add("fourier_transform")
 
     listed = _run_planning_tool(state, "list_stage_parameter_gaps", {})
     gaps = listed["stage_parameter_gaps"]
-    assert any(gap["parameter"] == "order" and '"LA"' in gap["suggested_fix"] for gap in gaps)
-    assert any(gap["parameter"] == "y_grid" and "start" in gap["suggested_fix"] for gap in gaps)
+    assert not any(gap["parameter"] in {"order", "coord_unit"} for gap in gaps)
+    assert any(gap["parameter"] == "y_grid" for gap in gaps)
+    assert any(gap["parameter"] == "momentum_gev" for gap in gaps)
 
     blocked = _run_planning_tool(state, "build_quick_full_candidates", {})
     assert blocked["ok"] is False
@@ -225,14 +229,15 @@ def test_planning_distinguishes_hybrid_self_renormalization_fit_jobs(tmp_path: P
     assert not any(gap["stage"] == "renormalization" for gap in gaps)
 
 
-def test_plan_load_manifest_reports_deterministic_random_seed_question(tmp_path: Path) -> None:
+def test_plan_load_manifest_reports_combined_metadata_question(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     payload["metadata"].pop("random_seed", None)
+    payload["metadata"].pop("resample_mode", None)
     state = PlanAgentState(tmp_path / "draft.json", "", payload, payload)
 
     loaded = _run_planning_tool(state, "load_manifest", {})
 
-    assert loaded["next_questions"][0]["question_id"] == "metadata.random_seed"
+    assert loaded["next_questions"][0]["question_id"] == "metadata.required"
 
 
 def test_plan_reports_correlator_metadata_question_before_ambiguous_paths(tmp_path: Path) -> None:
@@ -335,6 +340,8 @@ def test_plan_requires_patch_after_yes_to_stage_parameter_completion(tmp_path: P
     path.write_text(json.dumps(payload), encoding="utf-8")
     state = PlanAgentState(path, "", payload, payload)
     state.stage_completion_checked = True
+    state.stage_required_checked.add("fourier_transform")
+    state.stage_optional_checked.add("fourier_transform")
 
     answered = _run_planning_tool(
         state,
@@ -361,11 +368,10 @@ def test_plan_stage_question_accepts_free_form_subset() -> None:
     assert answer == "I only want renormalization and fourier_transform"
 
 
-def test_plan_stage_subset_answer_does_not_trigger_full_stage_gate(tmp_path: Path) -> None:
+def test_plan_stage_subset_answer_adds_requested_stage_shells(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     state = PlanAgentState(tmp_path / "draft.json", "", payload, payload)
 
-    result = state.stage_completion_checked
     answer = _run_planning_tool(
         state,
         "load_manifest",
@@ -373,10 +379,11 @@ def test_plan_stage_subset_answer_does_not_trigger_full_stage_gate(tmp_path: Pat
     )
     assert answer["stage_completion_question_required"] is True
     applied = _apply_user_answer_to_candidate(state, "stage.add_remaining", "I only want renormalization and fourier_transform")
-    assert applied["event"] == "user_answer_not_applied"
+    assert applied["event"] == "user_answer_applied"
     assert state.stage_completion_checked is True
-    assert state.stage_completion_requested is False
-    assert result is False
+    assert state.stage_completion_requested is True
+    assert state.candidate_payload["metadata"]["stages"] == ["correlator_analysis", "renormalization", "fourier_transform"]
+    assert state.candidate_payload["stages"]["fourier_transform"]["jobs"] == [{"id": "fourier_transform"}]
 
 
 def test_plan_stage_none_answer_keeps_partial_workflow(tmp_path: Path) -> None:
@@ -397,6 +404,258 @@ def test_stage_control_question_id_is_not_rewritten_to_manifest_path() -> None:
     )
 
     assert question_id == "stage.add_remaining"
+
+
+def test_stage_choice_question_id_is_not_rewritten_to_manifest_path() -> None:
+    question_id = _manifest_question_id_from_user_input_action(
+        {"question_id": "stage_required.renormalization", "prompt": "renormalization required choices"},
+        "metadata.random_seed was skipped earlier.",
+    )
+
+    assert question_id == "stage_required.renormalization"
+
+
+def test_stage_required_answer_updates_stage_defaults(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["stages"]["renormalization"]["defaults"] = {}
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_required.renormalization",
+        "scheme=hybrid_ratio, zs_fm=0.2",
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.stage_required_checked == {"renormalization"}
+    assert state.candidate_payload["stages"]["renormalization"]["defaults"]["scheme"] == "hybrid_ratio"
+    assert state.candidate_payload["stages"]["renormalization"]["defaults"]["zs_fm"] == 0.2
+
+
+def test_stage_required_answer_updates_job_inputs(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["stages"]["renormalization"] = {"defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.2}, "jobs": [{"id": "rn"}]}
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_required.renormalization",
+        '{"target": "ca_pz", "denominator": "ca_p0"}',
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["stages"]["renormalization"]["jobs"][0]["inputs"] == {"target": "ca_pz", "denominator": "ca_p0"}
+    assert "target" not in state.candidate_payload["stages"]["renormalization"]["defaults"]
+
+
+def test_extrapolation_required_answer_updates_lightcone_input(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"]["stages"] = ["extrapolation"]
+    payload["stages"] = {"extrapolation": {"defaults": {}, "jobs": [{"id": "ext"}]}}
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_required.extrapolation",
+        '{"inputs.lightcone": ["mt_p4", "mt_p5"]}',
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["stages"]["extrapolation"]["jobs"][0]["inputs"] == {"lightcone": ["mt_p4", "mt_p5"]}
+
+
+def test_stage_required_answer_keeps_list_stage_fields_as_lists(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_required.correlator_analysis",
+        "fit_scope=3pt_ratio, fitting_form=Breit",
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["stages"]["correlator_analysis"]["defaults"]["fit_scope"] == ["3pt_ratio"]
+    assert state.candidate_payload["stages"]["correlator_analysis"]["defaults"].get("fit_strategy") is None
+    assert state.candidate_payload["stages"]["correlator_analysis"]["defaults"]["fitting_form"] == "Breit"
+
+
+def test_stage_optional_answer_keeps_fit_strategy_as_list(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_optional.correlator_analysis",
+        "fit_strategy=chained, nstate=1",
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["stages"]["correlator_analysis"]["defaults"]["fit_strategy"] == ["chained"]
+    assert state.candidate_payload["stages"]["correlator_analysis"]["defaults"]["nstate"] == [1]
+
+
+def test_unparsed_stage_answer_does_not_mark_stage_checked(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(state, "stage_required.renormalization", "hybrid ratio please")
+
+    assert result["event"] == "user_answer_not_applied"
+    assert state.stage_required_checked == set()
+    assert state.candidate_payload == payload
+
+
+def test_required_none_does_not_clear_existing_stage_gaps(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"]["stages"] = ["fourier_transform"]
+    payload["stages"] = {"fourier_transform": {"defaults": {}, "jobs": [{"id": "ft"}]}}
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(state, "stage_required.fourier_transform", "none")
+
+    assert result["event"] == "user_answer_not_applied"
+    assert state.stage_required_checked == set()
+
+
+def test_none_manifest_answer_is_not_written_as_string(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(state, "stages.correlator_analysis.defaults.component", "none")
+
+    assert result["event"] == "user_answer_not_applied"
+    assert "component" not in state.candidate_payload["stages"]["correlator_analysis"]["defaults"]
+
+
+def test_axis_description_is_not_written_to_data_path(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "inputs.correlators.0.data_path",
+        "shape (64, 48), axis 0 is time, axis 1 is cfg",
+    )
+
+    assert result["event"] == "user_answer_not_applied"
+    assert state.candidate_payload["inputs"]["correlators"][0]["data_path"] == "data/c2.h5"
+
+
+def test_metadata_answers_can_be_applied_one_at_a_time(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"].pop("random_seed")
+    payload["metadata"].pop("resample_mode")
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    seed = _apply_user_answer_to_candidate(state, "metadata.random_seed", 1984)
+    mode = _apply_user_answer_to_candidate(state, "metadata.resample_mode", "jk")
+
+    assert seed["event"] == "user_answer_applied"
+    assert mode["event"] == "user_answer_applied"
+    assert state.candidate_payload["metadata"]["random_seed"] == 1984
+    assert state.candidate_payload["metadata"]["resample_mode"] == "jk"
+
+
+def test_combined_metadata_answer_updates_required_fields(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"].pop("random_seed")
+    payload["metadata"].pop("resample_mode")
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(state, "metadata.required", "random_seed=1984, resample_mode=jackknife")
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["metadata"]["random_seed"] == 1984
+    assert state.candidate_payload["metadata"]["resample_mode"] == "jk"
+
+
+def test_complete_stage_skips_required_question_and_asks_optional(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+    state.stage_completion_checked = True
+
+    question = _next_questions_for_state(state)[0]
+
+    assert question["question_id"] == "stage_optional.correlator_analysis"
+    assert "correlator_analysis" in state.stage_required_checked
+
+
+def test_text_plan_reads_metadata_from_free_form_request(tmp_path: Path) -> None:
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion PDF manifest from c2.h5. "
+        "Use random_seed 1984 and resample_mode jk. "
+        "Only correlator_analysis is required.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+
+    assert payload["metadata"]["random_seed"] == 1984
+    assert payload["metadata"]["resample_mode"] == "jk"
+
+
+def test_stage_parameter_gap_answer_applies_first_gap_path(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"]["stages"] = ["fourier_transform"]
+    payload["inputs"]["correlators"] = []
+    payload["inputs"]["kernels"] = []
+    payload["inputs"]["artifacts"] = [
+        {
+            "id": "rn",
+            "stage": "renormalization",
+            "path": "rn.nc",
+            "momentum": "PX1PY0PZ0",
+            "volume": "S16T5",
+            "lattice_spacing_fm": 0.1,
+        }
+    ]
+    payload["stages"] = {"fourier_transform": {"defaults": {}, "jobs": [{"id": "ft", "inputs": {"input": "rn"}}]}}
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_params.fourier_transform.ft",
+        '{"start": -1.0, "stop": 1.0, "num": 101}',
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["y_grid"]["num"] == 101
+
+
+def test_stage_optional_answer_updates_stage_defaults(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["metadata"]["stages"].append("fourier_transform")
+    payload["stages"]["fourier_transform"] = {
+        "defaults": {},
+        "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
+    }
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_optional.fourier_transform",
+        '{"y_grid": {"start": -1.0, "stop": 1.0, "num": 5}}',
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.stage_optional_checked == {"fourier_transform"}
+    assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["y_grid"]["num"] == 5
+
+
+def test_manifest_confirmation_answer_is_not_applied(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "confirm.inputs.correlators.0.current_operator",
+        "yes",
+    )
+
+    assert result["event"] == "user_answer_not_applied"
+    assert state.candidate_payload == payload
 
 
 def test_mock_plan_stage_answer_still_runs_conversions(tmp_path: Path) -> None:
@@ -429,7 +688,7 @@ def test_plan_stage_params_question_without_choices_accepts_free_text() -> None:
 
 def test_planner_requests_missing_bz_direction_for_3pt() -> None:
     payload = {
-        "metadata": {"random_seed": 1984, "stages": []},
+        "metadata": {"random_seed": 1984, "resample_mode": "jk", "stages": []},
         "inputs": {
             "correlators": [
                 {
@@ -689,7 +948,7 @@ def test_text_plan_composes_2pt_current_into_standard_3pt_h5(tmp_path: Path) -> 
     root = tmp_path / "repo"
     data_dir = root / "data"
     data_dir.mkdir(parents=True)
-    c2 = np.arange(4, dtype=float).reshape(1, 4)
+    c2 = np.arange(8, dtype=float).reshape(2, 4)
     current = np.full((1, 4), 2.0)
     np.save(data_dir / "sample_2pt.npy", c2)
     np.savez(data_dir / "sample_current.npz", current=current)
@@ -714,7 +973,7 @@ def test_text_plan_composes_2pt_current_into_standard_3pt_h5(tmp_path: Path) -> 
     quick, full, _edits = build_repaired_manifests(request, payload, conversions)
     for repaired in (quick, full):
         assert "plan_sources" not in json.dumps(repaired)
-        repaired_3pt = next(item for item in repaired["inputs"]["correlators"] if item["correlator_id"] == "planned_3pt_from_2pt_current")
+        repaired_3pt = next(item for item in repaired["inputs"]["correlators"] if item["correlator_id"] == "planned_3pt_from_current")
         assert repaired_3pt["data_path"].endswith("request_planned_3pt.h5")
 
     assert np.array_equal(
@@ -728,7 +987,7 @@ def test_text_plan_composes_2pt_current_into_standard_3pt_h5(tmp_path: Path) -> 
             bz=0,
             tsep=1,
         ),
-        np.repeat(c2 * current, 2, axis=0).T,
+        np.repeat(c2[1:2] * current, 2, axis=0).T,
     )
 
 
@@ -781,6 +1040,98 @@ def test_text_plan_expands_momentum_tsep_npy_template_into_standard_h5(tmp_path:
             tsep=10,
         ),
         (np.ones((11, 5), dtype=np.complex128) * 15).T,
+    )
+
+
+def test_build_quick_full_candidates_plans_missing_conversions(tmp_path: Path) -> None:
+    np.save(tmp_path / "sample_2pt.npy", np.ones((64, 4)))
+    np.savez(tmp_path / "sample_current.npz", current=np.ones((1, 4)))
+    request = tmp_path / "request.txt"
+    request.write_text(
+        "Build a pion PDF correlator_analysis manifest from sample_2pt.npy and current_data_path sample_current.npz. "
+        "Use ensemble planned, CG, volume S48T64, lattice spacing 0.0574 fm, momentum PX0PY0PZ0, "
+        "source operator source, sink operator sink, current operator current, bz_direction Z, bT 0, bz 0, tsep 1. "
+        "Use plan-only 2pt_current composition. Only correlator_analysis is required.",
+        encoding="utf-8",
+    )
+    payload, _raw = load_relaxed_manifest(request)
+    payload["metadata"]["random_seed"] = 1984
+    payload["metadata"]["resample_mode"] = "jk"
+    state = PlanAgentState(request, request.read_text(encoding="utf-8"), payload, copy.deepcopy(payload))
+    state.stage_completion_checked = True
+    state.stage_required_checked.add("correlator_analysis")
+    state.stage_optional_checked.add("correlator_analysis")
+
+    result = _run_planning_tool(state, "build_quick_full_candidates", {})
+
+    assert result["ok"] is True
+    assert state.conversions
+    dumped = json.dumps(state.full)
+    assert "sample_2pt.npy" not in dumped
+    assert "2pt_current" not in dumped
+    assert "plan_sources" not in dumped
+
+
+def test_text_plan_drafts_multiple_2pt_current_components(tmp_path: Path) -> None:
+    np.save(tmp_path / "sample_p0_2pt.npy", np.ones((64, 4)))
+    np.save(tmp_path / "sample_p1_2pt.npy", np.ones((64, 4)))
+    np.savez(tmp_path / "sample_current_V4.npz", current=np.ones((1, 4)))
+    np.savez(tmp_path / "sample_current_A4.npz", current=np.ones((1, 4)))
+    request = tmp_path / "request.txt"
+    request.write_text(
+        "Build a pion PDF correlator_analysis manifest from sample_p0_2pt.npy sample_p1_2pt.npy "
+        "and current_data_path sample_current_V4.npz sample_current_A4.npz. "
+        "Use ensemble planned, CG, volume S48T64, lattice spacing 0.0574 fm, bz_direction Z, bT 0, bz 0, tsep 1. "
+        "Use plan-only 2pt_current composition. Only correlator_analysis is required.",
+        encoding="utf-8",
+    )
+
+    payload, _raw = load_relaxed_manifest(request)
+    planned = [item for item in payload["inputs"]["correlators"] if item["correlator_type"] == "3pt"]
+
+    assert len(planned) == 4
+    assert {item["current_operator"] for item in planned} == {"V4", "A4"}
+    assert {item["momentum"][0] for item in planned} == {"PX0PY0PZ0", "PX1PY0PZ0"}
+
+
+def test_text_plan_maps_nonlocal_qda_2pt_template_into_standard_h5(tmp_path: Path) -> None:
+    pytest.importorskip("h5py")
+    local = np.ones((64, 5), dtype=np.complex128)
+    nonlocal_data = np.arange(3 * 64 * 5, dtype=float).reshape(3, 64, 5).astype(np.complex128)
+    np.save(tmp_path / "local_PX0PY0PZ6_2pt.npy", local)
+    np.save(tmp_path / "nonlocal_PX0PY0PZ6_2pt.npy", nonlocal_data)
+    request = tmp_path / "qda_da.txt"
+    request.write_text(
+        "Build a GI pion DA qda_ratio correlator_analysis manifest.\n"
+        "Use ensemble planned, volume S48T64, lattice spacing 0.0574 fm, momentum PX0PY0PZ6.\n"
+        "The local 2pt file is local_PX0PY0PZ6_2pt.npy.\n"
+        "The nonlocal DA 2pt file is nonlocal_PX0PY0PZ6_2pt.npy with axes bz,time,cfg.\n"
+        "Use fit_scope qda_ratio. Only correlator_analysis is required.\n",
+        encoding="utf-8",
+    )
+
+    payload, _raw = load_relaxed_manifest(request)
+
+    assert payload["stages"]["correlator_analysis"]["defaults"] == {"fit_scope": ["qda_ratio"]}
+    nonlocal_correlator = next(item for item in payload["inputs"]["correlators"] if item["correlator_id"].startswith("nonlocal"))
+    assert nonlocal_correlator["sink_operator"] == "sink_nonlocal"
+    assert nonlocal_correlator["bz"] == [0, 1, 2]
+    conversions = plan_correlator_h5_conversions(request, payload)
+    mapping = next(item for item in conversions if item.correlator_id == "nonlocal_PX0PY0PZ6_2pt")
+    assert len(mapping.datasets) == 3
+
+    convert_correlator_h5(mapping)
+
+    assert np.array_equal(
+        _read_2pt(
+            mapping.output_file,
+            source_operator="source",
+            sink_operator="sink_nonlocal",
+            momentum="PX0PY0PZ6",
+            bT=0,
+            bz=2,
+        ),
+        nonlocal_data[2].T,
     )
 
 
@@ -922,7 +1273,7 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nnone\nnone\na\n")
 
     assert result.exit_code == 0, result.output
     quick_path = root / "artifacts" / "plan_manifests" / "draft.quick.json"
@@ -932,8 +1283,8 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
     quick = json.loads(quick_path.read_text(encoding="utf-8"))
     full = json.loads(full_path.read_text(encoding="utf-8"))
     assert quick["stages"]["correlator_analysis"]["defaults"]["nstate"] == [2]
-    assert full["metadata"]["sample_error_mode"] == "covariance"
-    assert full["stages"]["correlator_analysis"]["defaults"]["model_average"] is True
+    assert "sample_error_mode" not in full["metadata"]
+    assert "model_average" not in full["stages"]["correlator_analysis"]["defaults"]
     assert "pt2_windows" not in full["stages"]["correlator_analysis"]["defaults"]
     assert "pt3_tau_cuts" not in full["stages"]["correlator_analysis"]["defaults"]
 
@@ -1032,17 +1383,17 @@ def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Pat
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="1\n2\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="random_seed=1984, resample_mode=bs\nnone\nnone\na\n")
 
     assert result.exit_code == 0, result.output
-    assert "metadata.random_seed is required" in result.output
+    assert "metadata required choices" in result.output
     quick = json.loads((root / "artifacts" / "plan_manifests" / "draft.quick.json").read_text(encoding="utf-8"))
     full = json.loads((root / "artifacts" / "plan_manifests" / "draft.full.json").read_text(encoding="utf-8"))
     assert full["metadata"]["random_seed"] == 1984
     assert quick["metadata"]["random_seed"] == 1984
-    assert quick["metadata"]["resample_mode"] == "jk"
-    assert quick["metadata"]["sample_error_mode"] == "mean"
-    assert quick["stages"]["correlator_analysis"]["defaults"]["model_average"] is False
+    assert quick["metadata"]["resample_mode"] == "bs"
+    assert quick["metadata"]["sample_error_mode"] == "covariance"
+    assert quick["stages"]["correlator_analysis"]["defaults"]["model_average"] is True
     assert "Unresolved questions" not in result.output
 
 
@@ -1122,6 +1473,12 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
                 "args": {"question_id": "stage.add_remaining", "prompt": "Add extra downstream stages?"},
             },
             {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates after stage preference."},
+            {
+                "action": "request_user_input",
+                "reason": "Confirm optional correlator_analysis choices.",
+                "args": {"question_id": "stage_optional.correlator_analysis", "prompt": "correlator_analysis optional choices. Reply none."},
+            },
+            {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates after stage choices."},
             {"action": "propose_plan", "reason": "Ready.", "args": {"summary": "Ready after rejecting malformed question."}},
         ]
     )
@@ -1132,6 +1489,7 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr("lamet_agent.planning.request_llm_text", fake_request_llm_text)
     outputs: list[str] = []
+    answers = iter(["none", "none", "a"])
 
     result = run_interactive_plan(
         manifest,
@@ -1139,7 +1497,7 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
         provider="deepseek",
         model_name="deepseek-chat",
         api_key="test",
-        input_func=lambda prompt: "a",
+        input_func=lambda prompt: next(answers),
         output_func=outputs.append,
     )
 
@@ -1225,6 +1583,13 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
                 "args": {"question_id": "stage.add_remaining", "prompt": "Add extra downstream stages?"},
             },
             {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates after stage preference."},
+            {
+                "action": "request_user_input",
+                "reason": "Confirm optional correlator_analysis choices.",
+                "args": {"question_id": "stage_optional.correlator_analysis", "prompt": "correlator_analysis optional choices. Reply none."},
+            },
+            {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates after stage choices."},
+            {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates after optional choices."},
             {"action": "propose_plan", "reason": "Ready.", "args": {"summary": "Ready after user seed answer."}},
         ]
     )
@@ -1233,7 +1598,7 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
         del kwargs
         return json.dumps(next(actions))
 
-    answers = iter(["1999", "no", "a"])
+    answers = iter(["1999", "no", "none", "a"])
     monkeypatch.setattr("lamet_agent.planning.request_llm_text", fake_request_llm_text)
 
     result = run_interactive_plan(
@@ -1323,7 +1688,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nr\nPlease broaden the fit window search.\n2\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nnone\nnone\nr\nPlease broaden the fit window search.\n2\na\n")
 
     assert result.exit_code == 0, result.output
     assert "LLM expanded the fit-window search" in result.output
@@ -1334,8 +1699,8 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     assert {"tmin": 2, "tmax": 12} in defaults["pt2_windows"]
     assert {"tmin": 6, "tmax": 12} in defaults["pt2_windows"]
     assert defaults["pt3_tau_cuts"] == [2, 3, 4, 5]
-    assert defaults["model_average"] is True
-    assert full["metadata"]["sample_error_mode"] == "covariance"
+    assert "model_average" not in defaults
+    assert "sample_error_mode" not in full["metadata"]
     assert "Quick manifest changes:" in result.output
     assert "Full manifest changes:" in result.output
 
@@ -1415,7 +1780,7 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
     result = runner.invoke(
         app,
         ["plan", str(manifest), "--backend", "mock"],
-        input="2\nr\nPlease broaden the fit window search.\nr\nPlease revert the tau cuts.\na\n",
+        input="2\nnone\nnone\nr\nPlease broaden the fit window search.\nr\nPlease revert the tau cuts.\na\n",
     )
 
     assert result.exit_code == 0, result.output
@@ -1515,6 +1880,32 @@ def test_planning_patch_tool_rejects_invalid_candidate_without_mutating_state(tm
 
     assert observation["ok"] is False
     assert state.candidate_payload["stages"]["renormalization"]["jobs"][0]["id"] == "rn"
+
+
+def test_planning_patch_tool_rejects_plan_only_conversion_fields(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, json.loads(json.dumps(payload)))
+
+    observation = _run_planning_tool(
+        state,
+        "apply_manifest_patch_to_candidate",
+        {"patches": [{"op": "add", "path": "/inputs/correlators/0/plan_sources", "value": {"two_point": "c2.npy"}}]},
+    )
+
+    assert observation["ok"] is False
+    assert "plan-only" in observation["error"]
+    assert "plan_sources" not in state.candidate_payload["inputs"]["correlators"][0]
+
+
+def test_correlator_manifest_answer_invalidates_planned_conversions(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+    state.conversions = [object()]  # type: ignore[list-item]
+
+    result = _apply_user_answer_to_candidate(state, "inputs.correlators.0.source_operator", "g5")
+
+    assert result["event"] == "user_answer_applied"
+    assert state.conversions == []
 
 
 def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruction(tmp_path: Path) -> None:
@@ -1625,7 +2016,7 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruct
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nr\nPlease add the renormalization stage.\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nnone\nnone\nr\nPlease add the renormalization stage.\nnone\nnone\na\n")
 
     assert result.exit_code == 0, result.output
     full = json.loads((root / "artifacts" / "plan_manifests" / "draft.full.json").read_text(encoding="utf-8"))
@@ -1651,8 +2042,32 @@ def test_text_plan_drafts_2pt_current_composition_without_chinese_json(tmp_path:
     payload, _text = load_relaxed_manifest(request)
     correlators = payload["inputs"]["correlators"]
     assert [item["correlator_type"] for item in correlators] == ["2pt", "3pt"]
-    assert correlators[1]["correlator_id"] == "planned_3pt_from_2pt_current"
+    assert correlators[1]["correlator_id"] == "planned_3pt_from_current"
     assert correlators[1]["plan_sources"]["two_point"] == "c2.npy"
     assert correlators[1]["plan_sources"]["current"] == "current.npz"
     dumped = json.dumps(payload, ensure_ascii=False)
     assert not any("\u4e00" <= char <= "\u9fff" for char in dumped)
+
+
+def test_text_plan_preserves_explicit_gpd_operators(tmp_path: Path) -> None:
+    from lamet_agent.planning.core import load_relaxed_manifest
+
+    np.save(tmp_path / "gpd_PX0PY0PZ0_2pt.npy", np.ones((64, 4)))
+    np.save(tmp_path / "gpd_PX1PY0PZ0_2pt.npy", np.ones((64, 4)))
+    np.save(tmp_path / "gpd_PX1PY0PZ0_3pt_ts8.npy", np.ones((2, 9, 4)))
+    request = tmp_path / "gpd_nonforward.txt"
+    request.write_text(
+        "Build a pion GPD non-forward correlator_analysis manifest. "
+        "Use source operator g5, sink operator g5, current operator gt. "
+        "Files: gpd_PX0PY0PZ0_2pt.npy, gpd_PX1PY0PZ0_2pt.npy, gpd_PX1PY0PZ0_3pt_ts8.npy.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(request)
+    correlators = payload["inputs"]["correlators"]
+    assert {item["source_operator"] for item in correlators} == {"g5"}
+    assert {item["sink_operator"] for item in correlators} == {"g5"}
+    assert [item["current_operator"] for item in correlators if item["correlator_type"] == "3pt"] == ["gt"]
+    conversions = plan_correlator_h5_conversions(request, payload)
+    targets = [dataset["target"] for mapping in conversions for dataset in mapping.datasets]
+    assert "g5/g5/gt/PX1PY0PZ0/tsep8/bT0/bz0" in targets

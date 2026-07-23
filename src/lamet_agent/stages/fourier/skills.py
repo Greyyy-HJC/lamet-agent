@@ -31,17 +31,15 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
         return ["A fourier_transform job requires exactly one input role."]
     params = merge_stage_params(manifest.stages["fourier_transform"].defaults, job.params)
     params = {**derive_job_kinematics(manifest, job), **params}
-    missing = [key for key in ("order", "coord_unit", "y_grid", "momentum_gev") if key not in params]
-    if "sector" not in params and "part" not in params:
-        missing.append("sector")
+    missing = [key for key in ("momentum_gev",) if key not in params]
     if missing:
         return [f"Fourier job {job.id!r} is missing parameters: {missing}"]
-    orders = params["order"] if isinstance(params["order"], list) else [params["order"]]
-    if any(order not in {"LA", "NLA"} for order in orders):
+    orders = params["order"] if isinstance(params.get("order"), list) else [params.get("order")] if "order" in params else []
+    if orders and any(order not in {"LA", "NLA"} for order in orders):
         return ["Fourier order must be 'LA' or 'NLA'."]
     sectors = {"pdf": {"valence", "total", "full", "sea"}, "da": {"full"}, "gpd": {"valence", "total", "full", "sea"}}
     if "sector" in params and str(params["sector"]).lower() not in sectors[manifest.metadata.target_observable]:
         return [f"Fourier sector must be one of {sorted(sectors[manifest.metadata.target_observable])}."]
-    if "sector" not in params and params.get("part") not in {"re", "im", "both"}:
+    if "sector" not in params and "part" in params and params.get("part") not in {"re", "im", "both"}:
         return ["Fourier part must be 're', 'im', or 'both'."]
     return []

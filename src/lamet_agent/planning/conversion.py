@@ -106,6 +106,13 @@ def _standard_dataset_paths(correlator: dict[str, Any]) -> list[str]:
     sink_operator = str(correlator.get("sink_operator", ""))
     momenta = _as_list(correlator.get("momentum"))
     if correlator_type == "2pt":
+        if correlator.get("bT") is not None and correlator.get("bz") is not None:
+            return [
+                f"{source_operator}/{sink_operator}/{momentum}/bT{bT}/bz{z}"
+                for momentum in momenta
+                for bT in _as_list(correlator.get("bT"))
+                for z in _as_list(correlator.get("bz"))
+            ]
         return [f"{source_operator}/{sink_operator}/{momentum}" for momentum in momenta]
     if correlator_type == "3pt":
         current_operator = str(correlator.get("current_operator", ""))
@@ -284,7 +291,7 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
             elif suffix == ".npy":
                 array_shape = names.get("array")
                 plan_generated = bool(item.get("plan_generated"))
-                if plan_generated and item.get("correlator_type") == "3pt" and array_shape and len(array_shape) == 3 and len(targets) == array_shape[0]:
+                if plan_generated and item.get("correlator_type") in {"2pt", "3pt"} and array_shape and len(array_shape) == 3 and len(targets) == array_shape[0]:
                     datasets = [
                         {"source": "array", "target": target, "index": {0: index}, "transpose": False}
                         for index, target in enumerate(targets)
@@ -315,7 +322,7 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
                 available = set(names)
                 if targets and all(target in available for target in targets):
                     datasets, ambiguous, reason = [{"source": target, "target": target, "transpose": False} for target in targets], False, None
-                elif item.get("plan_generated") and item.get("correlator_type") == "3pt" and len(names) == 1:
+                elif item.get("plan_generated") and item.get("correlator_type") in {"2pt", "3pt"} and len(names) == 1:
                     source_name = next(iter(names))
                     shape = names[source_name]
                     if len(shape) == 3 and len(targets) == shape[0]:
@@ -412,9 +419,14 @@ def convert_correlator_h5(mapping: CorrelatorH5Mapping) -> None:
                         current = np.asarray(npz[current_name])
                 else:
                     current = np.asarray(np.load(current_file))
-                data = c2 * current
                 target_name = str(item["target"])
                 match = re.search(r"/tsep(\d+)/", f"/{target_name}/")
+                if current.ndim == 1:
+                    current = current[None, :]
+                if match and c2.ndim == 2:
+                    tsep = int(match.group(1))
+                    c2 = c2[tsep : tsep + 1]
+                data = c2 * current
                 if match and data.ndim == 2 and data.shape[0] == 1 and int(match.group(1)) + 1 > 1:
                     data = np.repeat(data, int(match.group(1)) + 1, axis=0)
                 dataset = dst.create_dataset(target_name, data=data)

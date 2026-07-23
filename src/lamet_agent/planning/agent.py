@@ -88,10 +88,10 @@ def _planning_system_prompt() -> str:
         + "\n".join(f"- {name}: {description}" for name, description in PLAN_TOOL_CATALOG.items())
         + "\nJSON Patch rules: edits may only target /metadata, /inputs, or /stages; use op add, replace, or remove. "
         "For request_user_input, args.prompt must be a concrete user-facing question and args.question_id must identify the decision. "
-        "Ask exactly one question per request_user_input action; never combine stage choices, metadata values, parameter values, and data-axis mappings in one prompt. "
+        "Ask exactly one question per request_user_input action; metadata.required may combine random_seed and resample_mode, and stage_required/stage_optional may combine the fields for that one stage. Never combine unrelated stages or data-axis mappings in one prompt. "
         "For ordinary manifest fields, ask for exactly one manifest field at a time and set question_id to the exact dotted manifest path, for example metadata.random_seed, inputs.correlators.0.momentum, inputs.correlators.0.source_operator, or inputs.correlators.1.current_operator. "
         "Do not ask for several ordinary manifest fields in one answer; after the user answers one field, let the automatic patch observation update the candidate before asking the next field. "
-        "When multiple items are missing, ask and resolve them one at a time, starting with deterministic manifest fields such as metadata.random_seed before broader workflow choices. "
+        "When multiple items are missing, ask and resolve them one topic at a time, starting with deterministic metadata.required before broader workflow choices. "
         "Prefer Yes/No or multiple-choice questions only when the answer is genuinely binary or enumerable; use free-form questions when the user may need to name a subset, axis meaning, or concrete parameter values. "
         "Keep request_user_input prompts concise: state the file shape, uncertain axes or indices, and exact answer format only. "
         "If metadata.stages is not the full canonical flow, ask whether the user wants to add extra downstream stages. "
@@ -114,9 +114,11 @@ def _planning_system_prompt() -> str:
         "Do not use one-based axis_order such as [1,2] for a two-dimensional post-index dataset. "
         "Do not pass source, target, axis_order, index, or transpose directly in top-level args. "
         "For multi-bz 3pt data, include one datasets item per standard bz target in a single tool call when practical. "
+        "For planned conversions whose operation is compose_2pt_current, the conversion tool can create the standard 3pt HDF5 directly from the referenced 2pt and current files: it uses C2(tsep) as the per-configuration factor, multiplies it by the current array, and repeats a single current tau slice to length tsep+1 when needed. Do not ask the user to pre-compose that HDF5 file. "
         "Do not create a custom conversion section in the manifest and do not encode conversion mappings as JSON Patch manifest edits. "
         "Only use JSON Patch for ordinary manifest fields such as metadata, inputs, and stages. "
-        "If a correlator data file is not .npy, .npz, .h5, or .hdf5, tell the user the format is unsupported and strongly recommend converting to standard .h5."
+        "If a correlator data file is not .npy, .npz, .h5, or .hdf5, tell the user the format is unsupported and strongly recommend converting to standard .h5. "
+        "After the user answers the stage-scope or stage-parameter question, if there are no unresolved conversion ambiguities or missing manifest fields, call build_quick_full_candidates immediately and propose the plan."
     )
 
 
@@ -138,12 +140,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
             ),
             "stage_parameter_guidance": {
                 "correlator_analysis": {
-                    "common_defaults": {
-                        "nstate": [2],
-                        "fit_scope": ["3pt_ratio"],
-                        "fit_strategy": ["joint"],
-                        "fitting_form": "Breit",
-                    },
+                    "minimal_policy": "Do not add nstate, prior_width, model_average, fit windows, or fit_strategy unless the user explicitly requests them. Let run/stage defaults and automatic tuning decide them.",
                     "automatic_windows": (
                         "Omit pt2_windows, pt3_windows, and pt3_tau_cuts to let the stage "
                         "generate bounded data-driven candidates. Preserve any explicitly "
@@ -173,16 +170,18 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     },
                 },
                 "fourier_transform": {
-                    "required": {"order": ["LA", "NLA"], "coord_unit": "lattice", "sector": "valence", "y_grid": {"start": -2.0, "stop": 2.0, "num": 100}, "momentum_gev": 2.15},
-                    "options": {"order": ["LA", "NLA"], "sector_pdf": ["valence", "total", "full", "sea"], "part": ["re", "im", "both"]},
+                    "minimal_policy": "Do not add method, observable, or momentum_gev when they can be supplied by run/stage defaults or derived from upstream metadata.",
+                    "required_inputs": {"input": "renormalized matrix-element job or artifact"},
+                    "required_parameters": {"y_grid": "list of x/y points or {start, stop, num}"},
                 },
                 "perturbative_matching": {
-                    "required": {"kernel_id": "declared inputs.kernels kernel_id", "momentum_gev": 2.15, "mu": 2.0, "component": "re", "zs_fm": "required for hybrid kernels"},
+                    "minimal_policy": "Do not ask for or add mu, component, grids, or momentum_gev when omitted. Select kernel_id only when it is inferable from the observable/scheme or ask the user. Add zs_fm only if the selected hybrid kernel needs it and it is explicit or already known from renormalization.",
+                    "required_inputs": {"quasi": "Fourier transform job or artifact"},
                     "options": {"component": ["re", "im"]},
                 },
                 "extrapolation": {
                     "required": {"inputs": {"lightcone": ["matching_job_1", "matching_job_2"]}},
-                    "defaults": {"allow_order_a": [2], "allow_order_1overp": [2], "fitting_param_xdep": [False, True, False], "pdep_gev": [1.5, 2.0, 2.5]},
+                    "minimal_policy": "Do not add allow_order_a, allow_order_1overp, allow_order_ap, fitting_param_xdep, pdep_gev, or fit-control defaults unless the user explicitly requests them.",
                 },
                 "review": {"required": "none"},
             },
@@ -207,6 +206,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                 "standard_2pt_h5": "source_operator/sink_operator/momentum with dataset shape (Lt, n_cfg)",
                 "qda_2pt_h5": "source_operator/sink_operator/momentum/bT<bT>/bz<bz> with dataset shape (Lt, n_cfg); bT/bz are selectors, not operator-name suffixes",
                 "standard_3pt_h5": "source_operator/sink_operator/current_operator/momentum/tsep<tsep>/bT<bT>/bz<bz> with dataset shape (tsep+1, n_cfg)",
+                "plan_only_2pt_current": "When text provides a 2pt file plus current_data_path/current/insertion data, plan may keep plan_sources in memory and write a standard 3pt H5 at acceptance time. The final quick/full manifests must contain only the generated 3pt H5 path.",
                 "bz_direction": "required 3pt manifest provenance: X, Y, Z, XY, XZ, YZ, or XYZ; it is not an HDF5 path layer",
                 "npy_source": "single array; source may be 'array'; user must identify cfg/time or cfg/tau axes and any selected momentum/z indices",
                 "npz_source": "source must be an NPZ key; user must map each key to one standard target",
@@ -267,6 +267,10 @@ class _PlanAgentSession:
         elif observation.get("event") == "user_answer":
             if observation.get("question_id") == "stage.add_remaining":
                 self.mock_phase = "conversions"
+            elif observation.get("question_id") == "metadata.required":
+                self.mock_phase = "conversions"
+            elif str(observation.get("question_id", "")).startswith(("stage_required.", "stage_optional.")):
+                self.mock_phase = "conversions"
             elif str(observation.get("question_id", "")).startswith("stage_params."):
                 value = str(observation.get("value", "")).strip().lower()
                 self.mock_phase = "blocked" if value in {"no", "n", "false", "0"} else "build"
@@ -310,17 +314,10 @@ class _PlanAgentSession:
             self.mock_phase = "conversions"
             return {
                 "action": "request_user_input",
-                "reason": "metadata.random_seed is required when absent.",
+                "reason": "metadata required values are missing.",
                 "args": {
-                    "question_id": "metadata.random_seed",
-                    "prompt": "metadata.random_seed is required. Which seed should be used?",
-                    "choices": [
-                        {"label": "1", "value": 1984, "description": "Use 1984, matching the repository examples."},
-                        {"label": "2", "value": 20260707, "description": "Use a date-based seed for this planning run."},
-                        {"label": "3", "value": "__custom_int__", "description": "Enter a custom positive integer seed."},
-                    ],
-                    "custom_hint": "Enter random_seed as an integer: ",
-                    "skip_if_present": "metadata.random_seed",
+                    "question_id": "metadata.required",
+                    "prompt": 'metadata required choices: random_seed is a positive integer; resample_mode options are jk/jackknife or bs/bootstrap. Example: {"random_seed": 1984, "resample_mode": "jk"}.',
                 },
             }
         if phase == "mock_answer":
@@ -419,17 +416,211 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+_CANONICAL_STAGES = ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"]
+_STAGE_INPUT_KEYS = {
+    "renormalization": {"target", "denominator", "reference", "zR"},
+    "fourier_transform": {"input"},
+    "perturbative_matching": {"quasi"},
+    "extrapolation": {"lightcone"},
+}
+_JOB_PARAM_KEYS = {
+    "correlator_analysis": {"momentum", "initial_momentum", "final_momentum"},
+}
+
+
+def _parse_stage_subset(text: str) -> list[str]:
+    lowered = text.lower()
+    if lowered in {"yes", "y", "true", "1", "all"}:
+        return list(_CANONICAL_STAGES)
+    aliases = {"matching": "perturbative_matching", "mt": "perturbative_matching", "ft": "fourier_transform", "rn": "renormalization", "ca": "correlator_analysis"}
+    selected = []
+    for token in re.split(r"[^A-Za-z0-9_]+", lowered):
+        stage = aliases.get(token, token)
+        if stage in _CANONICAL_STAGES and stage not in selected:
+            selected.append(stage)
+    return selected
+
+
+def _ensure_stage_shells(payload: dict[str, Any], requested: list[str]) -> list[dict[str, Any]]:
+    metadata = payload.setdefault("metadata", {})
+    stages = metadata.setdefault("stages", [])
+    if not isinstance(stages, list):
+        stages = []
+        metadata["stages"] = stages
+    configs = payload.setdefault("stages", {})
+    edits = []
+    for stage in _CANONICAL_STAGES:
+        if stage not in requested or stage in stages:
+            continue
+        stages.append(stage)
+        configs[stage] = {"defaults": {}, "jobs": [{"id": stage}]}
+        edits.append({"path": f"stages.{stage}", "old": None, "new": copy.deepcopy(configs[stage]), "note": "Added stage shell from planner stage-scope answer."})
+    return edits
+
+
 def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, value: Any) -> dict[str, Any]:
     """Apply direct answers to manifest-path questions through the same patch guardrails."""
+    if question_id == "metadata.required":
+        text = str(value).strip()
+        parsed = _parse_json_object(text)
+        if not parsed:
+            parsed = {}
+            for item in re.split(r"[,;]\s*", text):
+                if "=" not in item:
+                    continue
+                key, raw = item.split("=", 1)
+                parsed[key.strip()] = raw.strip()
+        seed = parsed.get("random_seed")
+        mode = parsed.get("resample_mode")
+        if seed is None or mode is None:
+            return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "metadata answer must include random_seed and resample_mode."}
+        mode_text = str(mode).strip().lower()
+        mode_value = "jk" if mode_text in {"jk", "jackknife"} else "bs" if mode_text in {"bs", "bootstrap"} else mode_text
+        patches = [
+            {"op": "add" if _get_dotted_path(state.candidate_payload, "metadata.random_seed") is None else "replace", "path": "/metadata/random_seed", "value": int(seed), "note": "Applied metadata required answer."},
+            {"op": "add" if _get_dotted_path(state.candidate_payload, "metadata.resample_mode") is None else "replace", "path": "/metadata/resample_mode", "value": mode_value, "note": "Applied metadata required answer."},
+        ]
+        observation = _run_planning_tool(state, "apply_manifest_patch_to_candidate", {"patches": patches, "allow_incomplete": True})
+        observation["event"] = "user_answer_applied"
+        observation["question_id"] = question_id
+        observation["value"] = {"random_seed": int(seed), "resample_mode": mode_value}
+        return observation
     if question_id == "stage.add_remaining":
         state.stage_completion_checked = True
         text = str(value).strip().lower()
         negative = text in {"no", "n", "none", "false", "0", "partial"} or "keep" in text and "partial" in text
-        state.stage_completion_requested = not negative and text in {"yes", "y", "true", "1"}
-        return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "stage completion preference recorded for the planning agent."}
+        requested = [] if negative else _parse_stage_subset(text)
+        state.stage_completion_requested = bool(requested)
+        edits = _ensure_stage_shells(state.candidate_payload, requested)
+        state.manifest_edits.extend(edits)
+        return {"event": "user_answer_applied" if edits else "user_answer_not_applied", "question_id": question_id, "value": value, "edits": edits, "reason": "stage completion preference recorded for the planning agent."}
+    match = re.fullmatch(r"stage_(required|optional)\.([A-Za-z_][A-Za-z0-9_]*)", question_id)
+    if match:
+        bucket, stage = match.groups()
+        text = str(value).strip()
+        if text.lower() not in {"", "none", "no", "n", "default", "defaults", "keep"}:
+            parsed = _parse_json_object(text)
+            if not parsed:
+                parsed = {}
+                for item in re.split(r"[,;]\s*", text):
+                    if "=" not in item:
+                        continue
+                    key, raw = item.split("=", 1)
+                    key = key.strip()
+                    raw = raw.strip()
+                    try:
+                        parsed[key] = json.loads(raw)
+                    except json.JSONDecodeError:
+                        parsed[key] = raw
+            if parsed:
+                stage_config = state.candidate_payload.setdefault("stages", {}).setdefault(stage, {})
+                defaults_patch = copy.deepcopy(stage_config.get("defaults", {}) if isinstance(stage_config.get("defaults"), dict) else {})
+                jobs = stage_config.setdefault("jobs", [])
+                if not isinstance(jobs, list):
+                    jobs = []
+                    stage_config["jobs"] = jobs
+                if not jobs:
+                    jobs.append({"id": stage})
+                input_patch: dict[str, Any] = {}
+                job_param_patch: dict[str, Any] = {}
+                for key, item_value in parsed.items():
+                    parts = str(key).split(".")
+                    if parts[0] == "inputs":
+                        parts = parts[1:]
+                    if stage == "extrapolation" and parts[:1] == ["lightcone"]:
+                        parts = ["lightcone"]
+                    if parts[0] in _STAGE_INPUT_KEYS.get(stage, set()):
+                        input_patch[parts[0]] = item_value
+                        continue
+                    if parts[0] in _JOB_PARAM_KEYS.get(stage, set()):
+                        job_param_patch[parts[0]] = item_value
+                        continue
+                    target = defaults_patch
+                    for part in parts[:-1]:
+                        target = target.setdefault(part, {})
+                    if stage == "correlator_analysis" and parts[-1] in {"fit_scope", "fit_strategy", "nstate", "prior_width", "pt3_tau_cuts"} and not isinstance(item_value, list):
+                        item_value = [item_value]
+                    if stage == "extrapolation" and parts[-1] in {"allow_order_a", "allow_order_1overp", "allow_order_ap", "fitting_param_xdep", "pdep_gev"} and not isinstance(item_value, list):
+                        item_value = [item_value]
+                    target[parts[-1]] = item_value
+                old = copy.deepcopy(stage_config.get("defaults"))
+                stage_config["defaults"] = defaults_patch
+                edit = {
+                    "path": f"stages.{stage}.defaults",
+                    "old": old,
+                    "new": copy.deepcopy(defaults_patch),
+                    "note": f"Applied {bucket} stage choices from planner question.",
+                }
+                edits = [edit]
+                for job in jobs:
+                    if not isinstance(job, dict):
+                        continue
+                    if input_patch:
+                        before = copy.deepcopy(job.get("inputs"))
+                        job["inputs"] = copy.deepcopy(input_patch)
+                        edits.append({"path": f"stages.{stage}.jobs.{job.get('id', '')}.inputs", "old": before, "new": copy.deepcopy(input_patch), "note": f"Applied {bucket} stage input choices."})
+                    if job_param_patch:
+                        params = job.setdefault("params", {})
+                        before = copy.deepcopy(params)
+                        params.update(copy.deepcopy(job_param_patch))
+                        edits.append({"path": f"stages.{stage}.jobs.{job.get('id', '')}.params", "old": before, "new": copy.deepcopy(params), "note": f"Applied {bucket} stage job parameters."})
+                state.manifest_edits.extend(edits)
+                ok, issues = validate_candidate_payload(state.manifest_path, state.candidate_payload)
+                state.issues = issues
+                observation = {"tool_name": "apply_stage_choice_answer", "ok": ok, "candidate_complete": ok, "edits": edits, "issues": _dataclass_json(issues)}
+                observation["event"] = "user_answer_applied"
+                observation["question_id"] = question_id
+                observation["value"] = parsed
+                if bucket == "required":
+                    state.stage_required_checked.add(stage)
+                else:
+                    state.stage_optional_checked.add(stage)
+                return observation
+            return {
+                "event": "user_answer_not_applied",
+                "question_id": question_id,
+                "value": value,
+                "reason": "stage answer must be none, a JSON object, or key=value pairs.",
+            }
+        if bucket == "required" and any(gap.get("stage") == stage for gap in _stage_parameter_gaps(state.candidate_payload, state.manifest_path)):
+            return {
+                "event": "user_answer_not_applied",
+                "question_id": question_id,
+                "value": value,
+                "reason": f"{stage} still has required stage gaps; provide values instead of none.",
+            }
+        if bucket == "required":
+            state.stage_required_checked.add(stage)
+        else:
+            state.stage_optional_checked.add(stage)
+        return {
+            "event": "user_answer_not_applied",
+            "question_id": question_id,
+            "value": value,
+            "reason": f"{bucket} stage choices recorded for {stage}.",
+        }
     if question_id.startswith("stage_params."):
         state.parameter_completion_checked = True
-        state.parameter_completion_requested = str(value).strip().lower() in {"yes", "y", "true", "1"}
+        text = str(value).strip()
+        state.parameter_completion_requested = text.lower() in {"yes", "y", "true", "1"}
+        if text.lower() not in {"yes", "y", "true", "1", "no", "n", "false", "0", "none", "default", "defaults", "keep"}:
+            gaps = _stage_parameter_gaps(state.candidate_payload, state.manifest_path)
+            if gaps:
+                pointer = _json_pointer_from_question_id(str(gaps[0].get("path")))
+                if pointer is not None:
+                    try:
+                        parsed = json.loads(text)
+                    except json.JSONDecodeError:
+                        parsed = text
+                    observation = _run_planning_tool(
+                        state,
+                        "apply_manifest_patch_to_candidate",
+                        {"patches": [{"op": "add", "path": pointer, "value": parsed, "note": "Applied user answer for stage parameter gap."}]},
+                    )
+                    observation["event"] = "user_answer_applied"
+                    observation["question_id"] = question_id
+                    observation["value"] = parsed
+                    return observation
         return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "stage parameter completion preference recorded for the planning agent."}
     match = re.fullmatch(r"inputs\.correlators\.\d+\.([A-Za-z_][A-Za-z0-9_]*)", question_id)
     if match and match.group(1) not in {
@@ -454,6 +645,13 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
     pointer = _json_pointer_from_question_id(question_id)
     if pointer is None:
         return {"event": "user_answer_not_applied", "question_id": question_id, "reason": "question_id is not a manifest path."}
+    if isinstance(value, str) and value.strip().lower() in {"", "none", "default", "defaults", "keep"}:
+        return {
+            "event": "user_answer_not_applied",
+            "question_id": question_id,
+            "value": value,
+            "reason": "empty/default answer recorded without manifest mutation.",
+        }
     try:
         coerced = _coerce_user_answer_for_manifest_path(question_id, value)
     except (TypeError, ValueError):
@@ -474,7 +672,8 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                     "value": coerced,
                     "note": "Applied user answer from planner question.",
                 }
-            ]
+            ],
+            "allow_incomplete": True,
         },
     )
     observation["event"] = "user_answer_applied"
@@ -565,7 +764,7 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
         metadata = state.candidate_payload.get("metadata", {})
         configured_stages = metadata.get("stages", []) if isinstance(metadata, dict) else []
         configured_stage_list = [stage for stage in configured_stages if isinstance(stage, str)] if isinstance(configured_stages, list) else []
-        stage_parameter_gaps = _stage_parameter_gaps(state.candidate_payload)
+        stage_parameter_gaps = _stage_parameter_gaps(state.candidate_payload, state.manifest_path)
         manifest = copy.deepcopy(state.candidate_payload)
         for correlator in manifest.get("inputs", {}).get("correlators", []):
             if isinstance(correlator, dict):
@@ -587,7 +786,7 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
         state.issues = check_manifest_draft(state.manifest_path, state.candidate_payload)
         return {"tool_name": tool_name, "issues": _dataclass_json(state.issues), "next_questions": _next_questions_for_state(state)}
     if tool_name == "list_stage_parameter_gaps":
-        return {"tool_name": tool_name, "stage_parameter_gaps": _stage_parameter_gaps(state.candidate_payload), "next_questions": _next_questions_for_state(state)}
+        return {"tool_name": tool_name, "stage_parameter_gaps": _stage_parameter_gaps(state.candidate_payload, state.manifest_path), "next_questions": _next_questions_for_state(state)}
     if tool_name == "inspect_correlator_h5_files":
         state.inspections = inspect_correlator_h5_files(state.manifest_path, state.candidate_payload)
         return {"tool_name": tool_name, "h5_inspections": _dataclass_json(state.inspections)}
@@ -702,18 +901,27 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
             candidate, edits = apply_manifest_json_patches(state.candidate_payload, patches)
         except ValueError as exc:
             return {"tool_name": tool_name, "ok": False, "error": str(exc)}
+        allow_incomplete = bool(args.get("allow_incomplete"))
         ok, issues = validate_candidate_payload(state.manifest_path, candidate)
         correlators = candidate.get("inputs", {}).get("correlators", [])
         incomplete_correlator = isinstance(correlators, list) and any(isinstance(item, dict) and not _standard_dataset_paths(item) for item in correlators)
-        incomplete_stage_params = bool(_stage_parameter_gaps(candidate))
+        incomplete_stage_params = bool(_stage_parameter_gaps(candidate, state.manifest_path))
         incomplete_kernel = any(
             issue.severity == "error" and ("kernel_id" in issue.message or "kernel_parameters" in issue.message or "zs_fm" in issue.message)
             for issue in issues
         )
-        if not ok and not incomplete_correlator and not incomplete_stage_params and not incomplete_kernel and any(issue.severity == "error" and "Field required" not in issue.message for issue in issues):
+        blocking_errors = [issue for issue in issues if issue.severity == "error"]
+        non_required_errors = [
+            issue
+            for issue in blocking_errors
+            if "Field required" not in issue.message and "Missing required" not in issue.message
+        ]
+        if not allow_incomplete and not ok and not incomplete_correlator and not incomplete_stage_params and not incomplete_kernel and non_required_errors:
             return {"tool_name": tool_name, "ok": False, "issues": _dataclass_json(issues), "edits": edits}
         state.candidate_payload = candidate
         state.manifest_edits.extend(edits)
+        if any(str(edit.get("path", "")).startswith("inputs.correlators") for edit in edits):
+            state.conversions = []
         suppressions = args.get("suppress_full_expansions")
         if isinstance(suppressions, list):
             state.suppressed_full_expansions.update(str(item) for item in suppressions if isinstance(item, str))
@@ -747,7 +955,29 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
                 "configured_stages": configured_stage_list,
                 "missing_canonical_stages": [stage for stage in canonical_stages if stage not in configured_stage_list],
             }
-        parameter_gaps = _stage_parameter_gaps(state.candidate_payload)
+        missing_stage_choice = next(
+            (
+                stage
+                for stage in configured_stage_list
+                if (
+                    stage not in state.stage_optional_checked
+                    or (
+                        stage not in state.stage_required_checked
+                        and any(gap.get("stage") == stage for gap in _stage_parameter_gaps(state.candidate_payload, state.manifest_path))
+                    )
+                )
+            ),
+            None,
+        )
+        if missing_stage_choice is not None:
+            return {
+                "tool_name": tool_name,
+                "ok": False,
+                "error": "Configured stages require required/optional choice questions before building manifests.",
+                "stage": missing_stage_choice,
+                "next_questions": _next_questions_for_state(state),
+            }
+        parameter_gaps = _stage_parameter_gaps(state.candidate_payload, state.manifest_path)
         if parameter_gaps and not state.parameter_completion_checked:
             return {
                 "tool_name": tool_name,
@@ -764,6 +994,8 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
                 "stage_parameter_gaps": parameter_gaps,
                 "next_questions": _next_questions_for_state(state),
             }
+        if not state.conversions:
+            state.conversions = plan_correlator_h5_conversions(state.manifest_path, state.candidate_payload)
         ambiguous = [item for item in state.conversions if item.ambiguous]
         if ambiguous:
             return {
@@ -778,8 +1010,8 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
             state.conversions,
             suppressed_full_expansions=state.suppressed_full_expansions,
         )
-        quick_issues = _strict_manifest_issues(quick)
-        full_issues = _strict_manifest_issues(full)
+        quick_issues = _strict_manifest_issues(quick, state.manifest_path)
+        full_issues = _strict_manifest_issues(full, state.manifest_path)
         if quick_issues or full_issues:
             return {
                 "tool_name": tool_name,
@@ -821,6 +1053,16 @@ def run_interactive_plan(
         original_payload=copy.deepcopy(payload),
         candidate_payload=copy.deepcopy(payload),
     )
+    if manifest_path.suffix.lower() == ".txt" and re.search(
+        r"\bonly\b.+\brequired\b|\brun\b.+\b(correlator_analysis|renormalization|fourier_transform|perturbative_matching|matching|extrapolation|review)\b",
+        manifest_text,
+        flags=re.I | re.S,
+    ):
+        state.stage_completion_checked = True
+    if re.search(r"\bno\s+other\s+optional\b|\bno\s+additional\s+optional\b", manifest_text, flags=re.I):
+        stages = payload.get("metadata", {}).get("stages", []) if isinstance(payload.get("metadata"), dict) else []
+        if isinstance(stages, list):
+            state.stage_optional_checked.update(stage for stage in stages if isinstance(stage, str))
     session = _PlanAgentSession(
         backend=backend,
         manifest_path=manifest_path,
@@ -878,18 +1120,52 @@ def run_interactive_plan(
                 session.observe({"event": "question_skipped", "reason": f"{skip_path} is already present."})
                 continue
             raw_question_id = str(args.get("question_id"))
+            if _json_pointer_from_question_id(raw_question_id) is not None:
+                dotted = re.sub(r"\[(\d+)\]", r".\1", "metadata.random_seed" if raw_question_id == "random_seed" else raw_question_id)
+                if _get_dotted_path(state.candidate_payload, dotted) is not None:
+                    session.observe({"event": "question_skipped", "reason": f"{dotted} is already present."})
+                    continue
+            prompt_text = f"{args.get('prompt', '')}\n{reason}".lower()
+            if raw_question_id == "metadata.required" and all(
+                _get_dotted_path(state.candidate_payload, dotted) is not None
+                for dotted in ("metadata.random_seed", "metadata.resample_mode")
+            ):
+                session.observe({"event": "question_skipped", "reason": "metadata.required was already answered."})
+                continue
+            if raw_question_id != "metadata.required":
+                skip_existing_metadata = False
+                for dotted, patterns in {
+                    "metadata.random_seed": ("random_seed", "random seed"),
+                    "metadata.resample_mode": ("resample_mode", "resampling mode", "resample mode"),
+                }.items():
+                    if any(pattern in prompt_text for pattern in patterns) and _get_dotted_path(state.candidate_payload, dotted) is not None:
+                        session.observe({"event": "question_skipped", "reason": f"{dotted} is already present."})
+                        skip_existing_metadata = True
+                        break
+                if skip_existing_metadata:
+                    continue
             if raw_question_id == "stage.add_remaining" and state.stage_completion_checked:
                 session.observe({"event": "question_skipped", "reason": "stage.add_remaining was already answered."})
                 continue
             if raw_question_id.startswith("stage_params.") and state.parameter_completion_checked:
                 session.observe({"event": "question_skipped", "reason": f"{raw_question_id} was already answered."})
                 continue
+            stage_match = re.fullmatch(r"stage_(required|optional)\.([A-Za-z_][A-Za-z0-9_]*)", raw_question_id)
+            if stage_match:
+                bucket, stage = stage_match.groups()
+                answered = state.stage_required_checked if bucket == "required" else state.stage_optional_checked
+                if stage in answered:
+                    session.observe({"event": "question_skipped", "reason": f"{raw_question_id} was already answered."})
+                    continue
             answer = _ask_plan_agent_question(args, input_func, output_func)
             if answer == "quit":
                 output_func("Plan cancelled; no files were written.")
                 return None
             question_id = _manifest_question_id_from_user_input_action(args, reason) or str(args.get("question_id"))
-            normalized_question_id = re.sub(r"\[(\d+)\]", r".\1", question_id)
+            if _json_pointer_from_question_id(question_id) is None and str(answer).strip().lower() in {"yes", "y", "no", "n"}:
+                session.observe({"event": "user_answer", "question_id": question_id, "value": answer})
+                session.observe({"event": "user_answer_not_applied", "question_id": question_id, "value": answer, "reason": "confirmation answer recorded without manifest mutation."})
+                continue
             if _json_pointer_from_question_id(question_id) is None:
                 text = f"{args.get('prompt', '')}\n{reason}"
                 match = re.search(
@@ -905,7 +1181,7 @@ def run_interactive_plan(
                             break
                 if _json_pointer_from_question_id(question_id) is None:
                     text_lower = text.lower()
-                    for gap in _stage_parameter_gaps(state.candidate_payload):
+                    for gap in _stage_parameter_gaps(state.candidate_payload, state.manifest_path):
                         stage = str(gap.get("stage", ""))
                         job_id = str(gap.get("job_id", ""))
                         parameter = str(gap.get("parameter", ""))
