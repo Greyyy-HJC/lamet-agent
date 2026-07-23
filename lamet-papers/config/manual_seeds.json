@@ -1,0 +1,4 @@
+{
+  "notes": "Optional manual seed arXiv IDs can be added here. They receive a high score boost and are always kept if harvested by the query groups.",
+  "seed_ids": []
+}

@@ -155,3 +155,37 @@ def test_review_prompt_avoids_repeating_matching_zs_fm(tmp_path: Path, monkeypat
 
     assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[0]
     assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[1]
+
+
+def test_review_prompt_omits_literature_context_when_disabled(tmp_path: Path, monkeypatch) -> None:
+    prompts = []
+
+    def fake_request_llm_text(**kwargs):
+        prompts.append("\n".join(message["content"] for message in kwargs["messages"]))
+        return "# LLM Review"
+
+    monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
+    monkeypatch.setattr("lamet_agent.stages.review.functions.translate_markdown_report", lambda markdown, **kwargs: markdown)
+
+    write_review_from_manifest(_manifest(), output_dir=tmp_path / "en")
+
+    assert "Relevant literature context (background only)" not in prompts[0]
+    assert "Literature context rules:" not in prompts[0]
+
+
+def test_review_prompt_includes_literature_context_when_enabled(tmp_path: Path, monkeypatch) -> None:
+    prompts = []
+
+    def fake_request_llm_text(**kwargs):
+        prompts.append("\n".join(message["content"] for message in kwargs["messages"]))
+        return "# LLM Review"
+
+    monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
+    monkeypatch.setattr("lamet_agent.stages.review.functions.translate_markdown_report", lambda markdown, **kwargs: markdown)
+
+    manifest = _manifest()
+    manifest.stages["review"].defaults["literature"] = True
+    write_review_from_manifest(manifest, output_dir=tmp_path / "en")
+
+    assert "Relevant literature context (background only)" in prompts[0]
+    assert "Literature context rules:" in prompts[0]

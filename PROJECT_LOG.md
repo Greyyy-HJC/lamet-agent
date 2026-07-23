@@ -868,3 +868,12 @@
 - Added unit coverage for CLI model resolution and Codex SDK `thread_start`
   model forwarding.
 
+## 2026-07-23 (Review-stage literature context)
+
+- Added a minimal review-stage SQLite literature lookup in `src/lamet_agent/stages/review/functions.py`.
+- The review stage now reads background-only LaMET papers from `lamet-papers/data/lamet_arxiv.sqlite3` using a repository-relative path.
+- Retrieved papers are selected from lightweight keyword matches against the manifest, stage report text, and stage SVG subpaths, then injected into the review prompt as qualitative literature context.
+- Prompt rules now explicitly forbid using literature abstracts as numerical evidence for the current run; run-specific numbers must still come only from the manifest, stage reports, NetCDF summaries, and deterministic checks.
+- Added `stages.review.defaults.literature` as a manifest-controlled boolean toggle.
+- `literature=false` restores the pre-literature review prompt path, while `literature=true` enables background-only SQLite paper retrieval from `lamet-papers/data/lamet_arxiv.sqlite3`.
+- Added schema and review-stage tests to verify that literature context is omitted when disabled and injected only when explicitly enabled.

@@ -8,8 +8,10 @@ from lamet_agent.manifest import AnalysisManifest, StageJob
 STAGE_SKILL = """
 The review stage is an LLM-written synthesis pass. It asks the configured
 backend/model to write the full review from stage reports, NetCDF summaries, and
-SVG artifact paths. SVG paths are provenance only, and figure statements must be
-grounded in report text and NetCDF summaries.
+SVG artifact paths. When `stages.review.defaults.literature` is true, the stage
+also injects background-only LaMET literature context from the local SQLite
+library. SVG paths are provenance only, and figure statements must be grounded
+in report text and NetCDF summaries.
 """.strip()
 
 TOOL_CATALOG = {

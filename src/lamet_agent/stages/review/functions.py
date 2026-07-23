@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -204,6 +205,8 @@ def write_review_from_manifest(
     english_target = review_dir / "review.md"
     target = review_dir / ("review_CN.md" if language == "ch" else "review.md")
     consistency_checks = hybrid_zs_consistency_checks(manifest)
+    review_params = merge_stage_params(manifest.stages["review"].defaults, {})
+    use_literature = bool(review_params.get("literature", False))
     materials = []
     stages = [stage for stage in STAGE_REPORTS if (artifacts_dir / stage).is_dir() or stage in manifest.metadata.stages]
     for stage in stages:
@@ -253,32 +256,131 @@ def write_review_from_manifest(
             for path in sorted(stage_dir.rglob("*.svg"))[:80]
         ]
         materials.append(item)
+    literature_context = []
+    kb_path = Path(__file__).resolve().parents[4] / "lamet-papers" / "data" / "lamet_arxiv.sqlite3"
+    if use_literature and kb_path.exists():
+        keyword_blob = json.dumps(manifest.model_dump(mode="json"), ensure_ascii=False).lower()
+        for item in materials:
+            keyword_blob += "\n" + item["report_text"].lower()
+            keyword_blob += "\n" + " ".join(svg["stage_subpath"].lower() for svg in item["svg"])
+        keyword_terms = []
+        for term in [
+            "lamet",
+            "large momentum effective theory",
+            "quasi-pdf",
+            "quasi pdf",
+            "pseudo-pdf",
+            "pseudo pdf",
+            "pdf",
+            "tmd",
+            "gpd",
+            "distribution amplitude",
+            "gluon",
+            "helicity",
+            "transversity",
+            "pion",
+            "kaon",
+            "nucleon",
+            "matching",
+            "renormalization",
+            "hybrid ratio",
+            "ri/mom",
+            "fourier",
+            "extrapolation",
+            "collins-soper",
+            "first moment",
+            "zeroth moment",
+            "positivity",
+            "oscillation",
+            "error amplification",
+            "window dependence",
+            "excited-state contamination",
+            "long-distance noise",
+        ]:
+            if term in keyword_blob and term not in keyword_terms:
+                keyword_terms.append(term)
+        if not keyword_terms:
+            keyword_terms = ["lamet", "quasi-pdf", "matching", "renormalization"]
+        query = (
+            "SELECT arxiv_id, title, summary, published, label, score, abs_url FROM papers "
+            "WHERE label IN ('core', 'secondary') AND ("
+            + " OR ".join("(lower(title) LIKE ? OR lower(summary) LIKE ?)" for _ in keyword_terms)
+            + ") ORDER BY published DESC LIMIT 80"
+        )
+        params: list[str] = []
+        for term in keyword_terms[:12]:
+            pattern = f"%{term}%"
+            params.extend([pattern, pattern])
+        with sqlite3.connect(kb_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(query, params).fetchall()
+        ranked_rows = []
+        for row in rows:
+            title_lower = row["title"].lower()
+            summary_lower = row["summary"].lower()
+            matched_topics = [term for term in keyword_terms if term in title_lower or term in summary_lower]
+            if not matched_topics:
+                continue
+            match_score = sum(3 if term in title_lower else 1 for term in matched_topics)
+            ranked_rows.append((match_score, int(row["score"]), row["published"], row, matched_topics[:4]))
+        ranked_rows.sort(reverse=True)
+        for _, _, _, row, matched_topics in ranked_rows[:8]:
+            summary = " ".join(row["summary"].split())
+            if len(summary) > 420:
+                summary = summary[:417] + "..."
+            literature_context.append(
+                {
+                    "arxiv_id": row["arxiv_id"],
+                    "published": row["published"][:10],
+                    "label": row["label"],
+                    "title": row["title"],
+                    "matched_topics": matched_topics,
+                    "relevance": f"Background context for {', '.join(matched_topics)}.",
+                    "summary": summary,
+                    "abs_url": row["abs_url"],
+                }
+            )
     lamet_review_rules_en = (
         "You are an expert AI specialized in LaMET lattice numerical analysis. Your task is to generate a fact-grounded Review from the supplied five-step analysis reports and provide Recommended Manifest Changes.\n"
-        "Domain background: LaMET extracts light-cone PDFs/TMDs/DAs/GPDs from lattice QCD through Fourier reconstruction, perturbative matching, and momentum extrapolation of large-momentum quasi distributions. The standard flow is: Step 1 correlator_analysis usually fits two- and three-point correlators to obtain ground-state spectra, overlap factors, and bare matrix elements h(z,Pz), with diagnostics from fit quality, excited-state gaps, relative overlap errors, and signal-to-noise at z=0 and maximal z; if the manifest or report shows `fit_scope=\"qda_ratio\"`, this step is a nonlocal 2pt z-ratio analysis and must be described as extracting bare matrix elements from nonlocal two-point correlator ratios, without forcing 3pt/2pt ratio, overlap, source-sink separation, tau, or current-insertion diagnostics. Step 2 renormalization removes UV divergences and gives h_R(z), with diagnostics from renormalization constants, error amplification, and window dependence; Step 3 fourier_transform reconstructs quasi distributions from h_R(z), with diagnostics from zmin/zmax, oscillations, x/y-space errors, and the zeroth moment; Step 4 perturbative_matching applies LaMET kernels to obtain light-cone distributions, with diagnostics from positivity, first moment and deviation from 1, intermediate-x errors, and matching order; Step 5 extrapolation performs infinite-momentum or continuum extrapolation, with diagnostics from model reasonableness, fit quality, and stability.\n"
-        "Data extraction rules: read or calculate only from the reports and NetCDF summaries; write 'not provided' when absent. For standard 3pt_ratio Step1, extract fit quality, excited-state gaps, overlap relative errors, and signal-to-noise at z=0 and maximal z. For `fit_scope=\"qda_ratio\"`, extract only nonlocal 2pt z-ratio fit quality, 2pt fit windows, the ordinary local 2pt denominator, z-dependent signal-to-noise, and long-Wilson-line noise behavior; do not treat missing 3pt/overlap/tsep/tau diagnostics as a problem. Step2 extract renormalization constants with errors and statistical-error amplification. Step3 extract zmin/zmax, quasi-distribution error bars, and zeroth moment. Step4 extract matched q(x) error bars, first moment, and deviation from 1. Step5 extract extrapolation model, fit quality, and final total uncertainty. For each stage, write one coherent physics summary of the operation, key result, and quality.\n"
-        "Physical Summary writing rules: each stage's Physical Summary must read like publication-level prose that can be inserted directly into a paper's Results or Analysis section. Use third-person passive voice or 'we' as the subject, and describe the completed analysis rather than an ongoing process. Do not use meta-language such as 'according to the report', 'the Step 1 indicators show', or 'here we see'. Each paragraph must contain 3-5 compact professional sentences, optionally beginning with a short bold label such as **Correlator analysis.**, **Renormalization.**, **Fourier transform.**, **Perturbative matching.**, or **Extrapolation.** The paragraph must naturally include the physical purpose, key methods or settings, core numerical results with statistical/systematic precision, and a short physics interpretation of quality. All physics quantities must use `$...$`, for example `$\\chi^2/\\mathrm{dof}$`, `$h(z,P_z)$`, and `$\\langle x \\rangle$`. If the indicators are good, use scholarly language such as 'demonstrates good convergence', 'is well under control', or 'agrees with expectations'; if thresholds are approached or exceeded, state the issue faithfully with language such as 'shows a mild tension', 'indicates potential systematic effects', or 'may require further investigation'.\n"
-        "Diagnostics writing rules: Diagnostics must not repeat the Summary and must not judge physics reliability only from `$\\chi^2/\\mathrm{dof}$`, logGBF, or job success. It must separate three kinds of statements: (1) numerical facts directly supported by reports/NetCDF summaries; (2) analysis issues that can be addressed through manifest changes; and (3) raw-data or external LQCD limitations that cannot be fixed by lamet-agent tuning and would require new measurements or improved external simulation conditions. If quasi distributions oscillate outside the physical region, positivity/normalization is unreasonable, error bands are large, different momenta or lattice spacings are inconsistent, renormalization produces an anomalously enlarged dynamic range, or long-distance matrix elements are noise dominated, Diagnostics must state that successful numerical execution does not imply a physically reliable result. External explanations may include the intrinsic noisiness of gluon operators, insufficient three-point statistics, limited source-sink separation or excited-state control, degraded overlap at large momentum, exponential signal-to-noise loss for long Wilson lines, lattice-spacing/volume/finite-momentum systematics, autocorrelations or too few effectively independent configurations, and weak signal from the original 2pt/3pt construction or projection. For `fit_scope=\"qda_ratio\"`, external explanations should instead focus on nonlocal 2pt z-ratio statistics, long-distance nonlocal two-point signal-to-noise, pt2 windows, the ordinary local 2pt denominator, autocorrelations, sample size, and Wilson-line length; do not require three-point statistics, source-sink separations, tau coverage, current insertion, or overlap diagnostics. These explanations must be phrased as physics interpretations consistent with the observed anomalies, not as proven facts; when the corresponding diagnostic is absent, state that confirmation requires checking the raw correlators, statistics, or independent LQCD inputs.\n"
-        "Recommendation triggers: recommend manifest changes only when triggered; otherwise state that the current setting is reasonable and no change is justified. For standard 3pt_ratio Step1, poor fit quality, very large overlap errors, or h(z) signal-to-noise < 3 triggers fit-window, nstate, or statistics recommendations. For `fit_scope=\"qda_ratio\"`, poor nonlocal 2pt z-ratio fit quality or long-z signal-to-noise < 3 should prioritize `pt2_windows`, `nstate`/`nstate_values`, `fit_strategy`, `prior_width`, `svdcut`, and should not recommend `pt3_tau_cuts`. Step2 error amplification > 2.0 or significant window dependence triggers renormalization-window or scheme recommendations. Step3 strong quasi-distribution oscillations with zmax signal-to-noise < 3, or zeroth-moment deviation > 10%, triggers larger zmax or improved transform-method recommendations. Step4 first moment differs from 1 by more than 3 sigma, or q(x) shows clear unphysical values, triggers larger Pz or higher-order matching recommendations. Step5 poor extrapolation fit quality or leave-one-momentum-out changes above 1 sigma triggers adding intermediate momenta or reassessing the model. Explicitly flag any other significant anomaly.\n"
-        "Each Recommended Manifest Changes item must contain `parameter`, `current_value`, `recommended_change`, `evidence`, and `expected_effect`; use `related_parameter` when the exact manifest key is uncertain. Never invent unreported numbers or phenomena. Do not use vague words such as 'maybe' or 'possibly'. If evidence is insufficient, state that the indicators are normal and there is no clear basis for a change.\n"
+        + "Domain background: LaMET extracts light-cone PDFs/TMDs/DAs/GPDs from lattice QCD through Fourier reconstruction, perturbative matching, and momentum extrapolation of large-momentum quasi distributions. The standard flow is: Step 1 correlator_analysis usually fits two- and three-point correlators to obtain ground-state spectra, overlap factors, and bare matrix elements h(z,Pz), with diagnostics from fit quality, excited-state gaps, relative overlap errors, and signal-to-noise at z=0 and maximal z; if the manifest or report shows `fit_scope=\"qda_ratio\"`, this step is a nonlocal 2pt z-ratio analysis and must be described as extracting bare matrix elements from nonlocal two-point correlator ratios, without forcing 3pt/2pt ratio, overlap, source-sink separation, tau, or current-insertion diagnostics. Step 2 renormalization removes UV divergences and gives h_R(z), with diagnostics from renormalization constants, error amplification, and window dependence; Step 3 fourier_transform reconstructs quasi distributions from h_R(z), with diagnostics from zmin/zmax, oscillations, x/y-space errors, and the zeroth moment; Step 4 perturbative_matching applies LaMET kernels to obtain light-cone distributions, with diagnostics from positivity, first moment and deviation from 1, intermediate-x errors, and matching order; Step 5 extrapolation performs infinite-momentum or continuum extrapolation, with diagnostics from model reasonableness, fit quality, and stability.\n"
+        + "Data extraction rules: read or calculate only from the reports and NetCDF summaries; write 'not provided' when absent. For standard 3pt_ratio Step1, extract fit quality, excited-state gaps, overlap relative errors, and signal-to-noise at z=0 and maximal z. For `fit_scope=\"qda_ratio\"`, extract only nonlocal 2pt z-ratio fit quality, 2pt fit windows, the ordinary local 2pt denominator, z-dependent signal-to-noise, and long-Wilson-line noise behavior; do not treat missing 3pt/overlap/tsep/tau diagnostics as a problem. Step2 extract renormalization constants with errors and statistical-error amplification. Step3 extract zmin/zmax, quasi-distribution error bars, and zeroth moment. Step4 extract matched q(x) error bars, first moment, and deviation from 1. Step5 extract extrapolation model, fit quality, and final total uncertainty. For each stage, write one coherent physics summary of the operation, key result, and quality.\n"
+        + (
+            "Literature context rules: retrieved literature context is background only. It may be used for standard methodology, qualitative comparison, common diagnostics, and typical systematic effects, but never as evidence of this run's numerical results. All numerical claims about this run must come only from the supplied manifest, stage reports, NetCDF summaries, and deterministic checks. Do not use literature abstracts to supply, infer, normalize, or validate any number for this run. If literature and run materials differ, trust the run materials. When a run diagnostic is missing, write 'not provided' rather than filling the gap from literature. Manifest-change recommendations must be triggered by run evidence, not only by literature expectations.\n"
+            if use_literature
+            else ""
+        )
+        + "Physical Summary writing rules: each stage's Physical Summary must read like publication-level prose that can be inserted directly into a paper's Results or Analysis section. Use third-person passive voice or 'we' as the subject, and describe the completed analysis rather than an ongoing process. Do not use meta-language such as 'according to the report', 'the Step 1 indicators show', or 'here we see'. Each paragraph must contain 3-5 compact professional sentences, optionally beginning with a short bold label such as **Correlator analysis.**, **Renormalization.**, **Fourier transform.**, **Perturbative matching.**, or **Extrapolation.** The paragraph must naturally include the physical purpose, key methods or settings, core numerical results with statistical/systematic precision, and a short physics interpretation of quality. All physics quantities must use `$...$`, for example `$\\chi^2/\\mathrm{dof}$`, `$h(z,P_z)$`, and `$\\langle x \\rangle$`. If the indicators are good, use scholarly language such as 'demonstrates good convergence', 'is well under control', or 'agrees with expectations'; if thresholds are approached or exceeded, state the issue faithfully with language such as 'shows a mild tension', 'indicates potential systematic effects', or 'may require further investigation'.\n"
+        + "Diagnostics writing rules: Diagnostics must not repeat the Summary and must not judge physics reliability only from `$\\chi^2/\\mathrm{dof}$`, logGBF, or job success. It must separate three kinds of statements: (1) numerical facts directly supported by reports/NetCDF summaries; (2) analysis issues that can be addressed through manifest changes; and (3) raw-data or external LQCD limitations that cannot be fixed by lamet-agent tuning and would require new measurements or improved external simulation conditions. If quasi distributions oscillate outside the physical region, positivity/normalization is unreasonable, error bands are large, different momenta or lattice spacings are inconsistent, renormalization produces an anomalously enlarged dynamic range, or long-distance matrix elements are noise dominated, Diagnostics must state that successful numerical execution does not imply a physically reliable result. External explanations may include the intrinsic noisiness of gluon operators, insufficient three-point statistics, limited source-sink separation or excited-state control, degraded overlap at large momentum, exponential signal-to-noise loss for long Wilson lines, lattice-spacing/volume/finite-momentum systematics, autocorrelations or too few effectively independent configurations, and weak signal from the original 2pt/3pt construction or projection. For `fit_scope=\"qda_ratio\"`, external explanations should instead focus on nonlocal 2pt z-ratio statistics, long-distance nonlocal two-point signal-to-noise, pt2 windows, the ordinary local 2pt denominator, autocorrelations, sample size, and Wilson-line length; do not require three-point statistics, source-sink separations, tau coverage, current insertion, or overlap diagnostics. These explanations must be phrased as physics interpretations consistent with the observed anomalies, not as proven facts; when the corresponding diagnostic is absent, state that confirmation requires checking the raw correlators, statistics, or independent LQCD inputs.\n"
+        + "Recommendation triggers: recommend manifest changes only when triggered; otherwise state that the current setting is reasonable and no change is justified. For standard 3pt_ratio Step1, poor fit quality, very large overlap errors, or h(z) signal-to-noise < 3 triggers fit-window, nstate, or statistics recommendations. For `fit_scope=\"qda_ratio\"`, poor nonlocal 2pt z-ratio fit quality or long-z signal-to-noise < 3 should prioritize `pt2_windows`, `nstate`/`nstate_values`, `fit_strategy`, `prior_width`, `svdcut`, and should not recommend `pt3_tau_cuts`. Step2 error amplification > 2.0 or significant window dependence triggers renormalization-window or scheme recommendations. Step3 strong quasi-distribution oscillations with zmax signal-to-noise < 3, or zeroth-moment deviation > 10%, triggers larger zmax or improved transform-method recommendations. Step4 first moment differs from 1 by more than 3 sigma, or q(x) shows clear unphysical values, triggers larger Pz or higher-order matching recommendations. Step5 poor extrapolation fit quality or leave-one-momentum-out changes above 1 sigma triggers adding intermediate momenta or reassessing the model. Explicitly flag any other significant anomaly.\n"
+        + "Each Recommended Manifest Changes item must contain `parameter`, `current_value`, `recommended_change`, `evidence`, and `expected_effect`; use `related_parameter` when the exact manifest key is uncertain. Never invent unreported numbers or phenomena. Do not use vague words such as 'maybe' or 'possibly'. If evidence is insufficient, state that the indicators are normal and there is no clear basis for a change.\n"
     )
     system = lamet_review_rules_en + "Write a detailed scientific review using only the supplied stage reports, NetCDF summaries, SVG file lists, and manifest. Do not invent unreported numbers; when settings or outputs do not match a realistic LaMET analysis scenario, give executable manifest-level recommendations."
     user = (
         "Generate the complete `review.md` body directly. Follow the order in Stage materials; these stages come from stage subdirectories under `root_directory/artifacts_directory/<stage>` plus stages declared in the manifest. For example, correlator diagnostics are also collected from the `correlator_analysis/fit_logs` subdirectory. "
-        "Return normal Markdown only; do not wrap the whole answer in a fenced code block. "
-        "Write one level-2 section for each stage with available material, and include `Physical Summary`, `Key figure`, `Diagnostics`, and `Recommended Manifest Changes` subsections. "
-        "`Physical Summary` must follow the publication-style prose rules in the system prompt rather than report-like listing, and may only use numerical values supplied by the reports and NetCDF summaries. "
-        "`Key figure` must choose one SVG from that stage's `svg` list; if the list contains an ensemble overview figure such as `ca_<ensemble>_*.svg`, `rn_<ensemble>_*.svg`, `ft_<ensemble>_xdep.svg`, or `mt_<ensemble>.svg`, choose that overview figure first, otherwise follow the usual single-job figure selection rule. Embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths, do not use only the basename, and do not use `absolute_path` as the Markdown link. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
-        "`Diagnostics` must judge whether the stage is self-consistent and whether it matches a realistic LaMET analysis scenario; it must follow the Diagnostics rules in the system prompt and explicitly distinguish successful execution, manifest-tunable analysis issues, and raw-data or external LQCD limitations that lamet-agent tuning cannot fix. `Recommended Manifest Changes` must use the required field format above; if no trigger is met, state that the current setting is reasonable and no change is justified. "
-        "Recommendations must cite real manifest paths and values such as `stages.<stage>.defaults.<key>`, `stages.<stage>.jobs[].params.<key>`, or `inputs.kernels[].kernel_parameters.<key>`, and state suggested values or ranges with reasons. "
-        "Prioritize these tunable parameters: for correlator, `pt2_windows`, `nstate`, `fit_scope`, `fit_strategy`, `prior_width`, `svdcut`, and discuss `pt3_tau_cuts` only for three-point fit scopes; for renormalization, `zs_fm`, `scheme_parameters.m0_gev`, `scheme_parameters.delta_m_gev`; for Fourier, `scheme_scan.zmin_values`, `zmax_values`, `z_ext_max`, `smooth`, `order`, `posterior_prior_error_scale`, `y_grid`; for matching, `kernel_id`, `mu`, `momentum_gev`. "
-        "If `zs_fm` has already been described in the renormalization section, do not repeat the same `zs_fm` discussion in the matching section; discuss it under matching only when the manifest consistency checks show a renormalization/matching mismatch or when there is an independent matching-specific `zs_fm` issue. "
-        "Do not recommend changing lamet-agent source code. You cannot inspect SVG images; the SVG list only records figure paths and provenance. "
-        "Do not infer numerical values or curve shapes from SVG pixels, path geometry, or filenames. Figure-related statements must come from report text and NetCDF summaries. "
-        "State missing reports, NetCDF files, or SVG figures explicitly and do not fill in missing numbers. Output Markdown in English.\n\n"
-        f"Manifest JSON:\n```json\n{json.dumps(manifest.model_dump(mode='json'), indent=2)}\n```\n\n"
-        f"Stage materials:\n```json\n{json.dumps(materials, indent=2)}\n```\n\n"
-        f"Deterministic manifest consistency checks:\n```json\n{json.dumps(consistency_checks, indent=2)}\n```"
+        + "Return normal Markdown only; do not wrap the whole answer in a fenced code block. "
+        + "Write one level-2 section for each stage with available material, and include `Physical Summary`, `Key figure`, `Diagnostics`, and `Recommended Manifest Changes` subsections. "
+        + "`Physical Summary` must follow the publication-style prose rules in the system prompt rather than report-like listing, and may only use numerical values supplied by the reports and NetCDF summaries. "
+        + "`Key figure` must choose one SVG from that stage's `svg` list; if the list contains an ensemble overview figure such as `ca_<ensemble>_*.svg`, `rn_<ensemble>_*.svg`, `ft_<ensemble>_xdep.svg`, or `mt_<ensemble>.svg`, choose that overview figure first, otherwise follow the usual single-job figure selection rule. Embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths, do not use only the basename, and do not use `absolute_path` as the Markdown link. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
+        + "`Diagnostics` must judge whether the stage is self-consistent and whether it matches a realistic LaMET analysis scenario; it must follow the Diagnostics rules in the system prompt and explicitly distinguish successful execution, manifest-tunable analysis issues, and raw-data or external LQCD limitations that lamet-agent tuning cannot fix. `Recommended Manifest Changes` must use the required field format above; if no trigger is met, state that the current setting is reasonable and no change is justified. "
+        + "Recommendations must cite real manifest paths and values such as `stages.<stage>.defaults.<key>`, `stages.<stage>.jobs[].params.<key>`, or `inputs.kernels[].kernel_parameters.<key>`, and state suggested values or ranges with reasons. "
+        + "Prioritize these tunable parameters: for correlator, `pt2_windows`, `nstate`, `fit_scope`, `fit_strategy`, `prior_width`, `svdcut`, and discuss `pt3_tau_cuts` only for three-point fit scopes; for renormalization, `zs_fm`, `scheme_parameters.m0_gev`, `scheme_parameters.delta_m_gev`; for Fourier, `scheme_scan.zmin_values`, `zmax_values`, `z_ext_max`, `smooth`, `order`, `posterior_prior_error_scale`, `y_grid`; for matching, `kernel_id`, `mu`, `momentum_gev`. "
+        + "If `zs_fm` has already been described in the renormalization section, do not repeat the same `zs_fm` discussion in the matching section; discuss it under matching only when the manifest consistency checks show a renormalization/matching mismatch or when there is an independent matching-specific `zs_fm` issue. "
+        + "Do not recommend changing lamet-agent source code. You cannot inspect SVG images; the SVG list only records figure paths and provenance. "
+        + "Do not infer numerical values or curve shapes from SVG pixels, path geometry, or filenames. Figure-related statements must come from report text and NetCDF summaries. "
+        + (
+            "Use literature context sparingly and only as qualitative background when it directly helps explain the physical role of a stage, a common systematic effect, or why a diagnostic matters. Do not turn literature context into a separate evidence chain.\n"
+            if use_literature
+            else ""
+        )
+        + "State missing reports, NetCDF files, or SVG figures explicitly and do not fill in missing numbers. Output Markdown in English.\n\n"
+        + f"Manifest JSON:\n```json\n{json.dumps(manifest.model_dump(mode='json'), indent=2)}\n```\n\n"
+        + f"Stage materials:\n```json\n{json.dumps(materials, indent=2)}\n```\n\n"
+        + (
+            f"Relevant literature context (background only):\n```json\n{json.dumps(literature_context, indent=2)}\n```\n\n"
+            if use_literature
+            else ""
+        )
+        + f"Deterministic manifest consistency checks:\n```json\n{json.dumps(consistency_checks, indent=2)}\n```"
     )
     review = request_llm_text(
         backend=backend,

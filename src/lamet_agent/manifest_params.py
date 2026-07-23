@@ -210,7 +210,7 @@ STAGE_PARAM_CONTRACTS = {
             "momentum_allow_order": "was replaced by allow_order_1overp, for example [2] or [2, 4].",
         },
     ),
-    "review": StageParamContract(schema={}, removed={}),
+    "review": StageParamContract(schema={"literature": None}, removed={}),
 }
 
 
