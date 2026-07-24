@@ -896,3 +896,9 @@
 - Added validation for missing or invalid lattice spacing and unit coverage for
   in-memory, legacy-array, and NetCDF outputs while preserving hybrid-ratio
   physics calculations.
+
+## 2026-07-24 (Papers path and broader LaMET KB rules)
+
+- Documented the in-repo literature knowledge base under `papers/` in the root `README.md`, including first bootstrap, update, and review-stage usage.
+- Updated `papers/README.md` to use the renamed repository path and to describe the broader LaMET-related scope rather than only a narrow core set.
+- Expanded `papers/config/relevance_config.json` so harvesting and scoring cover broader LaMET-related theory, lattice-analysis, and perturbative papers, including short-distance factorization and systematics-oriented queries.

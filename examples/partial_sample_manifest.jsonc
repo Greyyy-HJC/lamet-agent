@@ -77,7 +77,7 @@
       "defaults": {
         "order": ["LA", "NLA"],
         "sector": "valence", // "valence", "sea", "total", "full" for "pdf", "full" for "da" or "gpd"
-        "coord_unit": "lattice",
+        "coord_unit": "fm", // default for renormalized .nc inputs; override with "lattice", "gev_inv", or "lambda" only when needed
         "posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {
           "start": -2.0,

@@ -257,7 +257,7 @@ def write_review_from_manifest(
         ]
         materials.append(item)
     literature_context = []
-    kb_path = Path(__file__).resolve().parents[4] / "lamet-papers" / "data" / "lamet_arxiv.sqlite3"
+    kb_path = Path(__file__).resolve().parents[4] / "papers" / "data" / "lamet_arxiv.sqlite3"
     if use_literature and kb_path.exists():
         manifest_json = manifest.model_dump(mode="json")
         metadata = manifest_json.get("metadata", {})

@@ -737,6 +737,9 @@ def prepare_tool_args(
         ):
             if key in source_metadata:
                 fourier[key] = source_metadata[key]
+        if "coord_unit" not in fourier and "coord_unit" in source_metadata:
+            fourier["coord_unit"] = source_metadata["coord_unit"]
+        fourier.setdefault("coord_unit", "fm")
         for key in ("hadron", "gfix"):
             if key not in fourier and key in source_metadata:
                 fourier[key] = source_metadata[key]

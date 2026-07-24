@@ -225,6 +225,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     ft_order_match = re.search(r"\b(?:fourier\s+)?order\s*[:=]?\s*(LA|NLA)\b", text, flags=re.I)
     ft_sector_match = re.search(r"\bsector\s*[:=]?\s*(valence|total|full|sea)\b", text, flags=re.I)
     ft_part_match = re.search(r"\bpart\s*[:=]?\s*(re|im|both)\b", text, flags=re.I)
+    ft_coord_unit_match = re.search(r"\bcoord_unit\s*[:=]?\s*(lattice|fm|gev_inv|lambda)\b", text, flags=re.I)
     y_grid_match = re.search(r"\by_grid\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
     scheme_scan_match = re.search(r"\bscheme_scan\s*[:=]?\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", text, flags=re.I)
     quasi_y_match = re.search(r"\bquasi_y_ls\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
@@ -259,6 +260,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             artifact_volume = re.search(r"\bS[1-9]\d*T[1-9]\d*\b", context)
             artifact_spacing = re.search(r"lattice[_\s-]*spacing(?:[_\s-]*fm)?\s*([0-9]*\.?[0-9]+)", context, flags=re.I)
             artifact_bz_direction = re.search(r"bz_direction\s*([A-Za-z]+)", context, flags=re.I)
+            artifact_coord_unit = re.search(r"coord_unit\s*(lattice|fm|gev_inv|lambda)", context, flags=re.I)
             if artifact_momentum:
                 artifact["momentum"] = artifact_momentum.group(0).upper()
             if artifact_volume:
@@ -277,6 +279,8 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
                 artifact["gfix"] = "GI"
             if artifact_bz_direction:
                 artifact["bz_direction"] = artifact_bz_direction.group(1).upper()
+            if artifact_coord_unit:
+                artifact["coord_unit"] = artifact_coord_unit.group(1).lower()
             artifacts.append(artifact)
             continue
         if is_current:
@@ -471,6 +475,8 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             ft_defaults["sector"] = "full" if target_observable == "da" else ft_sector_match.group(1).lower()
         if ft_part_match:
             ft_defaults["part"] = ft_part_match.group(1).lower()
+        if ft_coord_unit_match:
+            ft_defaults["coord_unit"] = ft_coord_unit_match.group(1).lower()
         if scheme_scan is not None:
             ft_defaults["scheme_scan"] = scheme_scan
         payload["stages"]["fourier_transform"] = {

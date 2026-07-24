@@ -32,7 +32,6 @@ def _stage_required_prompt(stage: str, payload: dict[str, Any]) -> str:
             "order options are LA, NLA, or both; sector options are "
             f"{sectors}; part options are re, im, both. "
             "y_grid is required and may be a list or {start, stop, num}. "
-            "coord_unit options are lattice, fm, gev_inv, lambda if not known from the input artifact. "
             "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
         )
     if stage == "perturbative_matching":
@@ -66,7 +65,7 @@ def _stage_optional_prompt(stage: str, payload: dict[str, Any]) -> str:
         sector_text = "sector is fixed to full for DA" if target == "da" else "sector options are valence, total, full, sea"
         return (
             "fourier_transform optional choices: scheme_scan, posterior_prior_error_scale, plot names, x/y limits, "
-            f"method, observable; {sector_text}. Reply with values to set, or none."
+            f"method, observable, coord_unit override (default fm); {sector_text}. Reply with values to set, or none."
         )
     if stage == "perturbative_matching":
         return (

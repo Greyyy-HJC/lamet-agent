@@ -111,9 +111,9 @@ svdcut(number):
 fourier_transform required choices:
 input job or artifact(job/artifact id, example rn_p5):
 y_grid(list or {"start": number, "stop": number, "num": int}, example {"start": -1.0, "stop": 1.0, "num": 101}):
-coord_unit if not known from upstream .nc(lattice, fm, gev_inv, or lambda):
 
 fourier_transform optional choices:
+coord_unit override(default fm for renormalized .nc; allowed lattice, fm, gev_inv, or lambda):
 order(LA, NLA, or both):
 sector(for DA use full only; for PDF/GPD use valence, total, full, or sea):
 part(re, im, or both):

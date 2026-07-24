@@ -226,7 +226,7 @@
         "sector": "valence", // PDF: valence/sea/total/full; DA and most GPD flows use full
         // Lower-level incompatible alternative: omit sector and set
         // "part": "re" // "re", "im", or "both"; sector is preferred when available
-        "coord_unit": "lattice", // "lattice", "fm", "gev_inv", or "lambda"
+        "coord_unit": "fm", // default for renormalized .nc inputs; override with "lattice", "gev_inv", or "lambda" only when needed
         "Lambda0_gev": 0.0, // optional fixed extra exponential scale in GeV
         "posterior_prior_error_scale": [2.0, 3.0, 5.0], // tail-fit model candidates
         "y_grid": {

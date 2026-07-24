@@ -22,6 +22,7 @@ StageId = Literal[
     "review",
 ]
 BzDirection = Literal["X", "Y", "Z", "XY", "XZ", "YZ", "XYZ"]
+CoordUnit = Literal["lattice", "fm", "gev_inv", "lambda"]
 
 
 HBAR_C_GEV_FM = 0.1973269804
@@ -179,6 +180,7 @@ class ArtifactInput(BaseModel):
     hadron: str | None = None
     gfix: str | None = None
     bz_direction: BzDirection | None = None
+    coord_unit: CoordUnit | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -238,6 +240,7 @@ _ARTIFACT_METADATA_FIELDS = (
     "hadron",
     "gfix",
     "bz_direction",
+    "coord_unit",
 )
 _NETCDF_STORAGE_ATTRS = frozenset({"ensemble", "resample", "gvar_encoding"})
 
@@ -258,6 +261,8 @@ def _normalize_artifact_metadata_value(artifact: ArtifactInput, key: str, value:
             parse_volume(normalized)
         elif key == "bz_direction" and normalized not in {"X", "Y", "Z", "XY", "XZ", "YZ", "XYZ"}:
             raise ValueError("must be a canonical axis-set label")
+        elif key == "coord_unit" and normalized not in {"lattice", "fm", "gev_inv", "lambda"}:
+            raise ValueError("must be one of lattice, fm, gev_inv, lambda")
         return normalized
     except (TypeError, ValueError) as exc:
         raise ValueError(

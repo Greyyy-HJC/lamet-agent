@@ -96,13 +96,11 @@
         "order": ["LA", "NLA"],
         "Lambda0_gev": 0.1,
         "sector": "valence",
-        "coord_unit": "lattice",
         "posterior_prior_error_scale": [3.0, 4.0, 5.0],
         "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
         "scheme_scan": {
           "zmin_values": [12.0, 13.0, 14.0, 15.0],
           "zmax_values": [21.0, 22.0, 23.0, 24.0],
-          "z_ext_max": 100.0,
           "smooth": "linear",
           "model_average": false,
           "max_schemes": 200

@@ -346,6 +346,7 @@ def _write_matrix_overlay_artifacts(
     prefix: str,
     title_suffix: str,
     y_label: str,
+    x_label: str = r"$z/a$",
 ) -> dict[str, str]:
     groups: dict[str, list[dict[str, Any]]] = {}
     records = [record for record in jobs if record.get("artifacts", {}).get(artifact_key)]
@@ -372,7 +373,8 @@ def _write_matrix_overlay_artifacts(
                 values = np.asarray(data.values)
                 mode = "jk" if data.resample == "jackknife" else "bs"
                 sample_error_mode = str(data.attrs.get("sample_error_mode", data.attrs.get("average_method", "covariance")))
-                offset = 0.06 * (index - (n_items - 1) / 2.0)
+                z_step = float(np.median(np.diff(np.unique(z)))) if len(np.unique(z)) > 1 else 1.0
+                offset = 0.06 * z_step * (index - (n_items - 1) / 2.0)
                 if part == "re":
                     mean, err = sample_mean_and_sdev(np.real(values), mode=mode, sample_error_mode=sample_error_mode, axis=0)
                 else:
@@ -386,7 +388,7 @@ def _write_matrix_overlay_artifacts(
                     marker=marker,
                     **ERRORBAR_STYLE,
                 )
-            ax.set_xlabel(r"$z/a$", **FONT_SIZE)
+            ax.set_xlabel(x_label, **FONT_SIZE)
             ax.set_ylabel(y_label, **FONT_SIZE)
             ax.set_title(f"{ensemble} {title_suffix}", **FONT_SIZE)
             ax.legend(**LEGEND_SETS)
@@ -845,6 +847,7 @@ def run_agent(
                 prefix="rn",
                 title_suffix="renormalized matrix elements",
                 y_label=r"Renormalized matrix element",
+                x_label=r"$z$ [fm]",
             )
             if overlay_artifacts:
                 stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)

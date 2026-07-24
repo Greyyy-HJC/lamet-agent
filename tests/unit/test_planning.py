@@ -624,6 +624,36 @@ def test_da_text_plan_normalizes_fourier_sector(tmp_path: Path) -> None:
     assert payload["stages"]["fourier_transform"]["defaults"]["sector"] == "full"
 
 
+def test_text_plan_omits_default_fourier_coord_unit(tmp_path: Path) -> None:
+    (tmp_path / "rn_pz.nc").write_text("placeholder", encoding="utf-8")
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion PDF manifest from rn_pz.nc. "
+        "Use random_seed 1984 and resample_mode jk. "
+        'Run fourier_transform with y_grid {"start": -1.0, "stop": 1.0, "num": 101}.',
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+
+    assert "coord_unit" not in payload["stages"]["fourier_transform"]["defaults"]
+
+
+def test_text_plan_keeps_explicit_fourier_coord_unit_override(tmp_path: Path) -> None:
+    (tmp_path / "rn_pz.nc").write_text("placeholder", encoding="utf-8")
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion PDF manifest from rn_pz.nc. "
+        "Use random_seed 1984 and resample_mode jk. "
+        'Run fourier_transform with y_grid {"start": -1.0, "stop": 1.0, "num": 101} and coord_unit: lattice.',
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+
+    assert payload["stages"]["fourier_transform"]["defaults"]["coord_unit"] == "lattice"
+
+
 def test_text_plan_reads_colon_json_stage_defaults(tmp_path: Path) -> None:
     manifest = tmp_path / "request.txt"
     manifest.write_text(

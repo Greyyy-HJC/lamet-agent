@@ -301,7 +301,6 @@
           "NLA"
         ],
         "sector": "full",
-        "coord_unit": "fm",
         "phase_shift": 0.0,
         "posterior_prior_error_scale": [
           2.0,
@@ -314,7 +313,6 @@
           "num": 300
         },
         "scheme_scan": {
-          "z_ext_max": 50.0,
           "model_average": false
         }
       },

@@ -1,0 +1,156 @@
+{
+  "bootstrap_start_date": "2013-01-01",
+  "api_url": "https://export.arxiv.org/api/query",
+  "default_page_size": 25,
+  "default_sleep_seconds": 5.0,
+  "accepted_labels": ["core", "secondary"],
+  "category_bonus": {
+    "hep-lat": 6,
+    "hep-ph": 4,
+    "hep-th": 3,
+    "nucl-th": 3,
+    "hep-ex": 1
+  },
+  "thresholds": {
+    "core_score": 24,
+    "secondary_score": 12,
+    "review_score": 9
+  },
+  "query_groups": [
+    {
+      "name": "lamet_core",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:LaMET OR all:\"large momentum effective theory\")"
+    },
+    {
+      "name": "quasi_pdf",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:\"quasi-PDF\" OR all:\"quasi PDF\" OR all:\"quasi parton distribution\" OR (all:quasi AND all:PDF))"
+    },
+    {
+      "name": "pseudo_pdf",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:\"pseudo-PDF\" OR all:\"pseudo PDF\" OR all:\"pseudo parton distribution\" OR all:\"pseudo-distribution\")"
+    },
+    {
+      "name": "ioffe_time",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:\"Ioffe-time distribution\" OR all:\"Ioffe time distribution\" OR (all:Ioffe AND all:lattice AND all:distribution))"
+    },
+    {
+      "name": "lattice_cross_section",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:\"lattice cross section\" OR all:\"good lattice cross section\" OR (all:lattice AND all:hadronic AND all:tensor))"
+    },
+    {
+      "name": "lattice_parton_structure",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND ((all:lattice AND all:parton AND all:distribution) OR (all:lattice AND all:hadron AND all:structure AND all:x-dependent))"
+    },
+    {
+      "name": "lamet_gpd_tmd_da",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND ((all:GPD OR all:TMD OR all:\"distribution amplitude\" OR all:LCDA) AND (all:quasi OR all:pseudo OR all:LaMET OR all:\"short-distance factorization\"))"
+    },
+    {
+      "name": "lamet_perturbative",
+      "query": "(cat:hep-ph OR cat:hep-th OR cat:nucl-th) AND ((all:LaMET OR all:\"large momentum effective theory\" OR all:\"quasi-PDF\" OR all:\"quasi PDF\" OR all:\"pseudo-PDF\" OR all:\"pseudo PDF\" OR all:\"Ioffe-time\" OR all:\"Ioffe time\") AND (all:matching OR all:factorization OR all:kernel OR all:renormalization OR all:\"one-loop\" OR all:\"two-loop\" OR all:NLO OR all:NNLO OR all:evolution OR all:\"anomalous dimension\"))"
+    },
+    {
+      "name": "lamet_theory_general",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:hep-th OR cat:nucl-th) AND ((all:LaMET OR all:\"large momentum effective theory\") OR ((all:quasi OR all:pseudo) AND (all:distribution OR all:amplitude OR all:structure)))"
+    },
+    {
+      "name": "lamet_short_distance",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:hep-th OR cat:nucl-th) AND ((all:\"short-distance factorization\" OR all:OPE OR all:\"operator product expansion\" OR all:factorization OR all:resummation OR all:evolution) AND (all:LaMET OR all:\"quasi-PDF\" OR all:\"pseudo-PDF\" OR all:\"Ioffe-time\" OR all:\"lattice cross section\"))"
+    },
+    {
+      "name": "lamet_lattice_systematics",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th) AND ((all:LaMET OR all:\"quasi-PDF\" OR all:\"pseudo-PDF\" OR all:\"Ioffe-time\" OR all:\"lattice cross section\") AND (all:continuum OR all:discretization OR all:\"finite volume\" OR all:\"excited-state\" OR all:\"momentum smearing\" OR all:systematic))"
+    }
+  ],
+  "anchor_terms": [
+    {
+      "name": "lamet",
+      "weight": 24,
+      "patterns": ["lamet", "large momentum effective theory"]
+    },
+    {
+      "name": "quasi_pdf",
+      "weight": 16,
+      "patterns": ["quasi-pdf", "quasi pdf", "quasi parton distribution", "quasi distribution"]
+    },
+    {
+      "name": "pseudo_pdf",
+      "weight": 15,
+      "patterns": ["pseudo-pdf", "pseudo pdf", "pseudo parton distribution", "pseudo-distribution", "pseudo distribution"]
+    },
+    {
+      "name": "ioffe_time",
+      "weight": 14,
+      "patterns": ["ioffe-time distribution", "ioffe time distribution", "reduced ioffe-time distribution", "pseudo-ITD"]
+    },
+    {
+      "name": "lattice_cross_section",
+      "weight": 14,
+      "patterns": ["lattice cross section", "good lattice cross section", "hadronic tensor approach"]
+    },
+    {
+      "name": "x_dependent_lattice_structure",
+      "weight": 14,
+      "patterns": ["x-dependent parton", "x dependent parton", "parton distribution from lattice", "lattice parton distribution", "lattice qcd determination of pdf"]
+    },
+    {
+      "name": "lamet_observables",
+      "weight": 14,
+      "patterns": ["generalized parton distribution", "gpd", "transverse momentum dependent", "tmd", "distribution amplitude", "light-cone distribution amplitude", "lcda", "tmdpdf", "tmdwf"]
+    },
+    {
+      "name": "short_distance_lamet",
+      "weight": 13,
+      "patterns": ["short-distance factorization", "short distance factorization", "operator product expansion", "ope", "reduced ioffe-time distribution", "pseudo itd", "lattice cross section", "good lattice cross section"]
+    },
+    {
+      "name": "lamet_lattice_analysis",
+      "weight": 12,
+      "patterns": ["continuum limit", "infinite-momentum extrapolation", "infinite momentum extrapolation", "discretization effect", "finite volume", "excited-state contamination", "momentum smearing", "large-momentum nucleon", "boosted hadron"]
+    }
+  ],
+  "secondary_terms": [
+    {
+      "name": "matching",
+      "weight": 7,
+      "patterns": ["matching kernel", "perturbative matching", "factorization matching", "one-loop matching", "two-loop matching", "matching coefficient", "coefficient function", "short-distance coefficient"]
+    },
+    {
+      "name": "perturbative_qcd",
+      "weight": 7,
+      "patterns": ["one-loop", "two-loop", "three-loop", "nlo", "nnlo", "perturbative qcd", "factorization theorem", "anomalous dimension", "evolution kernel", "hard coefficient", "rapidity evolution", "collins-soper kernel", "resummation", "dglap", "erbl", "operator mixing"]
+    },
+    {
+      "name": "renormalization",
+      "weight": 5,
+      "patterns": ["ri/mom", "ri mom", "nonperturbative renormalization", "renormalization", "linear divergence", "wilson line self-energy", "power divergence", "hybrid renormalization", "self renormalization", "self-renormalized", "msbar", "zmsbar"]
+    },
+    {
+      "name": "boosted_hadrons",
+      "weight": 4,
+      "patterns": ["momentum smearing", "boosted nucleon", "boosted hadron", "large-momentum nucleon", "large momentum", "finite-momentum correction", "target-mass correction"]
+    },
+    {
+      "name": "nonlocal_operators",
+      "weight": 4,
+      "patterns": ["nonlocal operator", "wilson-line operator", "equal-time correlator", "bilocal operator", "equal time correlator", "straight wilson line", "staple-shaped wilson line"]
+    },
+    {
+      "name": "partonic_observables",
+      "weight": 4,
+      "patterns": ["transversity", "gluon pdf", "helicity pdf", "unpolarized pdf", "distribution amplitude", "gpd", "tmd", "oam", "pion pdf", "kaon pdf", "gluon tmd"]
+    },
+    {
+      "name": "systematics",
+      "weight": 3,
+      "patterns": ["higher-twist", "higher twist", "target-mass correction", "finite-volume", "finite volume", "excited-state contamination", "discretization effect", "continuum extrapolation", "infinite-momentum extrapolation", "systematic uncertainty"]
+    }
+  ],
+  "negative_terms": [
+    {
+      "name": "generic_pdf_noise",
+      "weight": -6,
+      "patterns": ["portable document format", "probability density function"]
+    }
+  ]
+}

@@ -4,6 +4,12 @@
 
 这个目录维护的是一个本地 LaMET arXiv 文章知识库。它不镜像全部 arXiv PDF，而是先抓取和保存文章元数据，再按 LaMET 相关性打分，保留 `core` 和 `secondary` 两类文章。
 
+这里的 “LaMET 相关” 现在采用更宽的口径，包含：
+
+- 直接以 LaMET、quasi-distribution、pseudo-distribution、Ioffe-time、lattice cross section 为主题的方法论文
+- 格点数值分析论文，包括 PDF / GPD / TMD / LCDA 等具体可观测量
+- 微扰 matching、factorization、kernel、renormalization、resummation、evolution 等理论与计算论文
+
 当前知识库主要服务三类任务：
 
 - 追踪 LaMET 及其相邻方法文献
@@ -39,7 +45,7 @@
 在本目录下运行：
 
 ```bash
-cd /Users/zhaodianjun/Desktop/lamet-papers
+cd /Users/zhaodianjun/lamet-agent/papers
 ```
 
 ### 3.1 查看当前库状态
@@ -109,7 +115,7 @@ python3 scripts/harvest_lamet.py export
 ### 4.1 首轮主线抓取
 
 ```bash
-python3 scripts/harvest_lamet.py bootstrap --end-date 2026-07-22 --page-size 3 --sleep-seconds 15 --window-days 10
+python3 scripts/harvest_lamet.py bootstrap --start-date 2010-01-01 --end-date 2026-07-24 --page-size 3 --sleep-seconds 15 --window-days 10
 ```
 
 这个命令适合长时间跑。若中途被 arXiv 限流或断连，下次直接重跑同一条命令即可，它会根据断点继续，不需要从头来。
@@ -143,13 +149,16 @@ python3 scripts/harvest_lamet.py backfill --start-date 2010-01-01 --end-date 201
 里面已经加入：
 
 - `lamet_perturbative` query group
+- `lamet_theory_general` query group
+- `lamet_short_distance` query group
+- `lamet_lattice_systematics` query group
 - `hep-th` 分类支持
-- 更强的 perturbative关键词模式
+- 更强的 perturbative、theory、lattice-analysis、systematics关键词模式
 
 但改规则之后，历史上此前未被纳入的文章不会自动出现。你需要把相关时间段重新抓一遍，例如：
 
 ```bash
-python3 scripts/harvest_lamet.py bootstrap --start-date 2010-01-01 --end-date 2026-07-22 --page-size 3 --sleep-seconds 15 --window-days 10 --no-resume
+python3 scripts/harvest_lamet.py bootstrap --start-date 2010-01-01 --end-date 2026-07-24 --page-size 3 --sleep-seconds 15 --window-days 10 --no-resume
 ```
 
 如果你不想全范围重扫，也可以只回填早期缺口。
@@ -188,4 +197,3 @@ python3 scripts/harvest_lamet.py search --query nnlo --limit 20
   适合结构化查询
 - `data/papers.jsonl`
   适合批处理、向量化、RAG、脚本串联
-
