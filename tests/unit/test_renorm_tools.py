@@ -24,7 +24,12 @@ def _write_bare_netcdf(base: Path, stem: str, values: np.ndarray, *, resample: s
         values=[values[idx] for idx in range(values.shape[0])],
         dims=("z",),
         coords={"z": [0, 1, 4, 5]},
-        attrs={"ensemble": "E", "momentum": "PX0PY0PZ0", "lattice_spacing_fm": "0.1"},
+        attrs={
+            "ensemble": "E",
+            "momentum": "PX0PY0PZ0",
+            "lattice_spacing_fm": "0.1",
+            "coord_unit": "lattice",
+        },
         name="bare_matrix_element",
     )
     path = base / f"{stem}.nc"
@@ -94,11 +99,18 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
     assert data.values.shape == (2, 4)
     assert np.allclose(data.values[:, :3], 1.0)
     assert np.allclose(data.values[:, 3], 1.25)
+    assert np.allclose(data.coords["z"], [0.0, 0.1, 0.4, 0.5])
+    assert data.attrs["coord_unit"] == "fm"
+    assert data.attrs["input_coord_unit"] == "lattice"
+    assert data.attrs["lattice_spacing_fm"] == "0.1"
+    assert np.allclose(store["matrix_element"]["coord"], [0.0, 0.1, 0.4, 0.5])
 
     saved = EnsembleData.from_netcdf(result["artifact"])
     assert saved.dims == ["z"]
     assert saved.values.shape == (2, 4)
-    assert np.allclose(saved.coords["z"], [0, 1, 4, 5])
+    assert np.allclose(saved.coords["z"], [0.0, 0.1, 0.4, 0.5])
+    assert saved.attrs["coord_unit"] == "fm"
+    assert saved.attrs["input_coord_unit"] == "lattice"
 
     plot = plot_renormalized_matrix_element(store, save_path="renorm")
     assert Path(plot["plot"]).is_file()
@@ -110,11 +122,13 @@ def test_ratio_scheme_without_normalization_uses_pure_ratio(tmp_path: Path) -> N
     store = {
         "target": EnsembleData(
             EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
-            values=[target[0], target[1]], dims=("z",), coords={"z": [0, 1, 5]}, name="target",
+            values=[target[0], target[1]], dims=("z",), coords={"z": [-1, 0, 5]},
+            attrs={"lattice_spacing_fm": "0.1"}, name="target",
         ),
         "denominator": EnsembleData(
             EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
-            values=[denom[0], denom[1]], dims=("z",), coords={"z": [0, 1, 5]}, name="denominator",
+            values=[denom[0], denom[1]], dims=("z",), coords={"z": [-1, 0, 5]},
+            attrs={"lattice_spacing_fm": "0.1"}, name="denominator",
         ),
     }
 
@@ -128,6 +142,9 @@ def test_ratio_scheme_without_normalization_uses_pure_ratio(tmp_path: Path) -> N
     )
 
     assert np.allclose(store["output"].values, target / denom)
+    assert np.allclose(store["output"].coords["z"], [-0.1, 0.0, 0.5])
+    assert store["output"].attrs["coord_unit"] == "fm"
+    assert store["output"].attrs["input_coord_unit"] == "lattice"
     assert result["scheme"] == "ratio"
     assert not {"zs_fm", "zs_lattice", "zs_grid", "m0_gev", "delta_m_gev"} & result.keys()
     assert not {"zs_fm", "zs_lattice", "zs_grid", "m0_gev", "delta_m_gev"} & store["output"].attrs.keys()
@@ -139,11 +156,13 @@ def test_ratio_scheme_uses_preprocessed_z0_normalization(tmp_path: Path) -> None
     store = {
         "target": EnsembleData(
             EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
-            values=list(target), dims=("z",), coords={"z": [0, 1, 5]}, name="target",
+            values=list(target), dims=("z",), coords={"z": [0, 1, 5]},
+            attrs={"lattice_spacing_fm": "0.1"}, name="target",
         ),
         "denominator": EnsembleData(
             EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
-            values=list(denom), dims=("z",), coords={"z": [0, 1, 5]}, name="denominator",
+            values=list(denom), dims=("z",), coords={"z": [0, 1, 5]},
+            attrs={"lattice_spacing_fm": "0.1"}, name="denominator",
         ),
     }
     _prepare_renorm_inputs(store)
@@ -158,6 +177,7 @@ def test_ratio_scheme_uses_preprocessed_z0_normalization(tmp_path: Path) -> None
 
     expected = (target / target[:, :1]) / (denom / denom[:, :1])
     assert np.allclose(store["output"].values, expected)
+    assert np.allclose(store["output"].coords["z"], [0.0, 0.1, 0.5])
 
 
 def test_ratio_report_omits_hybrid_parameters(tmp_path: Path) -> None:
@@ -208,6 +228,7 @@ def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path
     # z=3 remains in the short-distance branch; z=4 uses h(z_s=3) in the denominator.
     assert np.allclose(store["output"].values[:, 3], [0.25, 0.25])
     assert np.allclose(store["output"].values[:, 4], [0.25, 0.25])
+    assert np.allclose(store["output"].coords["z"], np.asarray(z) * 0.0574)
 
 
 def test_hybrid_ratio_long_range_exponent_uses_physical_distance(tmp_path: Path) -> None:
@@ -243,6 +264,41 @@ def test_hybrid_ratio_long_range_exponent_uses_physical_distance(tmp_path: Path)
     z4_fm = 4 * lattice_spacing_fm
     expected_exp = np.exp((m0_gev + delta_m_gev) * (z4_fm - zs_fm) / GEV_FM)
     assert np.allclose(store["output"].values[:, 4], expected_exp)
+    assert np.allclose(store["output"].coords["z"], np.asarray(z) * lattice_spacing_fm)
+
+
+@pytest.mark.parametrize("lattice_spacing_fm", [None, "", "not-a-number", "nan", "0", "-0.1"])
+def test_ratio_scheme_requires_positive_finite_lattice_spacing(
+    lattice_spacing_fm: str | None,
+    tmp_path: Path,
+) -> None:
+    attrs = {} if lattice_spacing_fm is None else {"lattice_spacing_fm": lattice_spacing_fm}
+    target = EnsembleData(
+        EnsembleInfo("", "E", 1, 1, 1, 1, 0),
+        "jackknife",
+        values=[np.ones(2), np.ones(2)],
+        dims=("z",),
+        coords={"z": [0, 1]},
+        attrs=attrs,
+        name="target",
+    )
+    denominator = EnsembleData(
+        EnsembleInfo("", "E", 1, 1, 1, 1, 0),
+        "jackknife",
+        values=[np.ones(2), np.ones(2)],
+        dims=("z",),
+        coords={"z": [0, 1]},
+        name="denominator",
+    )
+
+    with pytest.raises(ValueError, match="finite positive value|convert output z coordinates"):
+        apply_ratio_scheme_renormalization(
+            {"target": target, "denominator": denominator},
+            target="target",
+            denominator="denominator",
+            scheme="ratio",
+            save_path=str(tmp_path / "invalid-spacing"),
+        )
 
 
 @pytest.mark.parametrize("normalized", [True, False])

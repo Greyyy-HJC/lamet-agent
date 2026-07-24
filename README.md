@@ -261,6 +261,14 @@ long-distance exponential correction. Hybrid-only settings (`zs_fm`,
 they remain in shared defaults. The `normalization` preprocessing described
 above still applies; set it to `false` for a direct ratio of raw bare inputs.
 
+Both ratio and hybrid-ratio jobs consume lattice-unit `z` coordinates and
+require a positive finite `lattice_spacing_fm` on the target data. Their
+terminal `EnsembleData`, `store["matrix_element"]`, and NetCDF artifact convert
+the coordinate to signed physical distance as
+$z_{\mathrm{fm}}=(z/a)a_{\mathrm{fm}}$ and record `coord_unit: "fm"` plus
+`input_coord_unit: "lattice"`. Hybrid-ratio branch selection and its
+long-distance exponent continue to use $|z_{\mathrm{fm}}|$.
+
 ### Per-job hybrid-ratio `zs_fm`
 
 The hybrid switch distance belongs to the data-processing job, not to a global

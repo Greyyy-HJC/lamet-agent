@@ -886,3 +886,13 @@
 - Literature ranking now prioritizes overlap with `target_observable`, `parton`, hadron channel, gauge fixing, renormalization scheme, matching order/method, boosted-momentum context, and lattice ensemble signals rather than report/SVG diagnostic keywords.
 - The injected literature context now records stronger `matched_topics` and instructs the review prompt to prefer the papers with the closest manifest-physics overlap, while keeping literature strictly background-only.
 - Added review-stage tests with a temporary SQLite paper table to verify that exact physics-channel matches outrank generic LaMET background papers.
+
+## 2026-07-24 (Unified renormalization output coordinates)
+
+- Converted ratio and hybrid-ratio terminal `z` coordinates from lattice units
+  to signed physical fm using the target `lattice_spacing_fm`.
+- Standardized their output provenance with `coord_unit="fm"` and
+  `input_coord_unit="lattice"` to match hybrid self-renormalization artifacts.
+- Added validation for missing or invalid lattice spacing and unit coverage for
+  in-memory, legacy-array, and NetCDF outputs while preserving hybrid-ratio
+  physics calculations.

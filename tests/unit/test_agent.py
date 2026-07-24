@@ -153,15 +153,35 @@ def test_run_agent_raises_when_job_finishes_without_output(tmp_path: Path, monke
 
 
 def test_run_agent_reports_explicit_codex_model(monkeypatch) -> None:
+    decisions = iter(
+        [
+            {
+                "action": "call_tool",
+                "tool_name": "mark_done",
+                "args": {},
+                "reason": "produce output",
+            },
+            {"action": "finish", "reason": "done"},
+        ]
+    )
+
     def fake_codex_decide(
         messages: list[dict[str, str]],
         *,
         model_name: str | None = None,
     ) -> dict:
         assert model_name == "test-codex-model"
-        return {"action": "finish", "reason": "done"}
+        return next(decisions)
+
+    def mark_done(store, **kwargs):
+        store["output"] = "ok"
+        return {"ok": True}
 
     monkeypatch.setattr(llm, "_codex_decide", fake_codex_decide)
+    monkeypatch.setattr(
+        "lamet_agent.agent.resolve_stage_tools",
+        lambda stage: {"mark_done": mark_done},
+    )
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
 
     result = run_agent(
@@ -171,6 +191,7 @@ def test_run_agent_reports_explicit_codex_model(monkeypatch) -> None:
     )
 
     assert result["model"] == "test-codex-model"
+    assert result["status"] == "completed"
 
 
 def test_deepseek_request_retries_transient_url_error(monkeypatch) -> None:

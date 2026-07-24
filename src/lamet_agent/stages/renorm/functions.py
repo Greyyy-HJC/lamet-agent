@@ -475,7 +475,7 @@ def apply_ratio_scheme_renormalization(
     ensemble: str | None = None,
     sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
-    """Apply ratio or hybrid-ratio renormalization and preserve all samples."""
+    """Apply ratio or hybrid-ratio renormalization and output z coordinates in fm."""
     if scheme not in {"ratio", "hybrid_ratio"}:
         raise ValueError(f"unsupported renormalization scheme: {scheme!r}")
     target_data = _require_matrix_data(store, target)
@@ -487,6 +487,25 @@ def apply_ratio_scheme_renormalization(
     z_denom = np.asarray(denom_data.coords["z"], dtype=float)
     if z_target.shape != z_denom.shape or not np.allclose(z_target, z_denom, rtol=0.0, atol=1e-10):
         raise ValueError("target and denominator z grids must match exactly")
+    lattice_spacing_raw = target_data.attrs.get("lattice_spacing_fm")
+    if lattice_spacing_raw in {None, ""}:
+        raise ValueError(
+            "ratio and hybrid_ratio renormalization require target lattice_spacing_fm "
+            "to convert output z coordinates to fm"
+        )
+    try:
+        lattice_spacing_fm = float(lattice_spacing_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "ratio and hybrid_ratio renormalization require target lattice_spacing_fm "
+            "to be a finite positive value"
+        ) from exc
+    if not np.isfinite(lattice_spacing_fm) or lattice_spacing_fm <= 0.0:
+        raise ValueError(
+            "ratio and hybrid_ratio renormalization require target lattice_spacing_fm "
+            "to be a finite positive value"
+        )
+    z_output_fm = z_target * lattice_spacing_fm
     target_values = np.asarray(target_data.values, dtype=complex)
     denom_values = np.asarray(denom_data.values, dtype=complex)
     if target_values.shape != denom_values.shape:
@@ -499,14 +518,13 @@ def apply_ratio_scheme_renormalization(
         zs_fm = float(params["zs_fm"])
         m0_gev = float(params.get("m0_gev", 0.0))
         delta_m_gev = float(params.get("delta_m_gev", 0.0))
-        lattice_spacing_fm = float(target_data.attrs["lattice_spacing_fm"])
         zs_lattice = zs_fm / lattice_spacing_fm
         zs_idx = int(np.argmin(np.abs(np.abs(z_denom) - zs_lattice)))
-        z_fm = np.abs(z_target) * lattice_spacing_fm
+        z_abs_fm = np.abs(z_output_fm)
         mass_scale = (delta_m_gev + m0_gev) / GEV_FM
-        exponent = np.exp(mass_scale * (z_fm - zs_fm))
+        exponent = np.exp(mass_scale * (z_abs_fm - zs_fm))
         long = exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
-        renorm_values = np.where(z_fm[None, :] <= zs_fm, renorm_values, long)
+        renorm_values = np.where(z_abs_fm[None, :] <= zs_fm, renorm_values, long)
         hybrid_metadata = {
             "zs_fm": zs_fm,
             "zs_lattice": zs_lattice,
@@ -523,12 +541,14 @@ def apply_ratio_scheme_renormalization(
         "job_id": job_id,
         "sample_error_mode": sample_error_mode,
         "average_method": sample_error_mode,
+        "coord_unit": "fm",
+        "input_coord_unit": "lattice",
     }
     if ensemble:
         attrs["ensemble"] = ensemble
     attrs.update({key: str(value) for key, value in hybrid_metadata.items()})
     result = _matrix_to_ensemble(
-        z_values=z_target,
+        z_values=z_output_fm,
         samples=renorm_values,
         resample=target_data.resample,
         attrs=attrs,
@@ -538,7 +558,7 @@ def apply_ratio_scheme_renormalization(
     store["matrix_element_data"] = result
     store["output"] = result
     store["matrix_element"] = {
-        "coord": z_target,
+        "coord": z_output_fm,
         "re_samples": np.real(renorm_values),
         "im_samples": np.imag(renorm_values),
         "scheme": scheme,
