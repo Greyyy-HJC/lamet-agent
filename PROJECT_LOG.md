@@ -877,3 +877,12 @@
 - Added `stages.review.defaults.literature` as a manifest-controlled boolean toggle.
 - `literature=false` restores the pre-literature review prompt path, while `literature=true` enables background-only SQLite paper retrieval from `lamet-papers/data/lamet_arxiv.sqlite3`.
 - Added schema and review-stage tests to verify that literature context is omitted when disabled and injected only when explicitly enabled.
+- Refined the literature-enabled review prompt so that each stage may append one short literature-based context paragraph inside the Diagnostics subsection, rather than creating a separate literature section.
+- Refined the literature-enabled review prompt so figure embedding keeps the original review-relative `markdown_path` convention (for example `../correlator_analysis/...`) and literature diagnostics may now cite the most relevant retrieved papers for qualitative signal/noise/systematics reasonableness checks without treating literature as run-specific numerical evidence.
+
+## 2026-07-24 (Review literature anchor ranking)
+
+- Replaced the review-stage literature retrieval heuristic with manifest-anchor weighting in `src/lamet_agent/stages/review/functions.py`.
+- Literature ranking now prioritizes overlap with `target_observable`, `parton`, hadron channel, gauge fixing, renormalization scheme, matching order/method, boosted-momentum context, and lattice ensemble signals rather than report/SVG diagnostic keywords.
+- The injected literature context now records stronger `matched_topics` and instructs the review prompt to prefer the papers with the closest manifest-physics overlap, while keeping literature strictly background-only.
+- Added review-stage tests with a temporary SQLite paper table to verify that exact physics-channel matches outrank generic LaMET background papers.

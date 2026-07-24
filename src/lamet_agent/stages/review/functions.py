@@ -259,56 +259,176 @@ def write_review_from_manifest(
     literature_context = []
     kb_path = Path(__file__).resolve().parents[4] / "lamet-papers" / "data" / "lamet_arxiv.sqlite3"
     if use_literature and kb_path.exists():
-        keyword_blob = json.dumps(manifest.model_dump(mode="json"), ensure_ascii=False).lower()
-        for item in materials:
-            keyword_blob += "\n" + item["report_text"].lower()
-            keyword_blob += "\n" + " ".join(svg["stage_subpath"].lower() for svg in item["svg"])
-        keyword_terms = []
-        for term in [
+        manifest_json = manifest.model_dump(mode="json")
+        metadata = manifest_json.get("metadata", {})
+        correlators = manifest_json.get("inputs", {}).get("correlators", [])
+        anchor_terms: list[tuple[str, int, str]] = []
+        seen_terms: set[str] = set()
+        observable = str(metadata.get("target_observable", "")).strip().lower()
+        parton = str(metadata.get("parton", "")).strip().lower()
+        if observable == "pdf":
+            for term, weight in [("pdf", 6), ("quasi-pdf", 6), ("quasi pdf", 6), ("parton distribution", 4)]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, weight, "target_observable=pdf"))
+                    seen_terms.add(term)
+        elif observable == "gpd":
+            for term, weight in [("gpd", 6), ("generalized parton distribution", 5), ("pseudo-distribution", 3)]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, weight, "target_observable=gpd"))
+                    seen_terms.add(term)
+        elif observable == "tmd":
+            for term, weight in [("tmd", 6), ("tmdpdf", 5), ("transverse momentum dependent", 5), ("collins-soper", 4)]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, weight, "target_observable=tmd"))
+                    seen_terms.add(term)
+        elif observable == "da":
+            for term, weight in [("distribution amplitude", 6), ("light-cone distribution amplitude", 5), ("lcda", 5)]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, weight, "target_observable=da"))
+                    seen_terms.add(term)
+        if parton == "quark":
+            for term, weight in [("quark", 5), ("isovector", 3), ("valence", 3)]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, weight, "parton=quark"))
+                    seen_terms.add(term)
+        elif parton == "gluon":
+            for term, weight in [("gluon", 5), ("glue", 3)]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, weight, "parton=gluon"))
+                    seen_terms.add(term)
+        elif parton:
+            if parton not in seen_terms:
+                anchor_terms.append((parton, 5, f"parton={parton}"))
+                seen_terms.add(parton)
+        hadrons = sorted({str(item.get("hadron", "")).strip().lower() for item in correlators if item.get("hadron")})
+        for hadron in hadrons:
+            aliases = [hadron]
+            if hadron == "proton":
+                aliases.append("nucleon")
+            for term in aliases:
+                if term and term not in seen_terms:
+                    anchor_terms.append((term, 5, f"hadron={hadron}"))
+                    seen_terms.add(term)
+        gfixes = sorted({str(item.get("gfix", "")).strip().lower() for item in correlators if item.get("gfix")})
+        for gfix in gfixes:
+            if gfix == "cg":
+                for term in ["coulomb gauge", "coulomb"]:
+                    if term not in seen_terms:
+                        anchor_terms.append((term, 4, "gfix=CG"))
+                        seen_terms.add(term)
+            elif gfix in {"landau", "lg"}:
+                if "landau gauge" not in seen_terms:
+                    anchor_terms.append(("landau gauge", 4, f"gfix={gfix.upper()}"))
+                    seen_terms.add("landau gauge")
+        schemes = set()
+        kernel_ids = set()
+        momentum_values = set()
+        momentum_labels = set()
+        mu_values = set()
+        for item in correlators:
+            for momentum in item.get("momentum", []) or []:
+                token = str(momentum).strip().upper()
+                if token:
+                    momentum_labels.add(token)
+                    if any(f"P{axis}{digit}" in token for axis in "XYZ" for digit in "123456789"):
+                        momentum_labels.add(f"boosted:{token}")
+        for kernel in manifest_json.get("inputs", {}).get("kernels", []):
+            if kernel.get("scheme"):
+                schemes.add(str(kernel["scheme"]).strip().lower())
+            if kernel.get("kernel_id"):
+                kernel_ids.add(str(kernel["kernel_id"]).strip().lower())
+        for stage_config in manifest_json.get("stages", {}).values():
+            for scope in [stage_config.get("defaults", {})] + [job.get("params", {}) for job in stage_config.get("jobs", [])]:
+                if scope.get("scheme"):
+                    schemes.add(str(scope["scheme"]).strip().lower())
+                if scope.get("kernel_id"):
+                    kernel_ids.add(str(scope["kernel_id"]).strip().lower())
+                for key in ["momentum_gev", "initial_momentum_gev", "final_momentum_gev"]:
+                    if scope.get(key) is not None:
+                        momentum_values.add(float(scope[key]))
+                if scope.get("mu") is not None:
+                    mu_values.add(float(scope["mu"]))
+        for scheme in sorted(schemes):
+            if scheme == "hybrid_ratio":
+                for term, weight in [("hybrid ratio", 4), ("hybrid-ratio scheme", 4), ("hybrid renormalization", 3)]:
+                    if term not in seen_terms:
+                        anchor_terms.append((term, weight, "scheme=hybrid_ratio"))
+                        seen_terms.add(term)
+            elif scheme == "ratio":
+                for term, weight in [("ratio scheme", 3), ("matching factor", 2)]:
+                    if term not in seen_terms:
+                        anchor_terms.append((term, weight, "scheme=ratio"))
+                        seen_terms.add(term)
+            elif "ri/mom" in scheme or "rimom" in scheme:
+                for term in ["ri/mom", "ri mom"]:
+                    if term not in seen_terms:
+                        anchor_terms.append((term, 4, "scheme=ri/mom"))
+                        seen_terms.add(term)
+            elif "self" in scheme:
+                for term in ["self-renormalized", "self-renormalization", "zmsbar"]:
+                    if term not in seen_terms:
+                        anchor_terms.append((term, 4, f"scheme={scheme}"))
+                        seen_terms.add(term)
+        for kernel_id in sorted(kernel_ids):
+            if "nnlo" in kernel_id:
+                for term in ["nnlo", "two-loop matching"]:
+                    if term not in seen_terms:
+                        anchor_terms.append((term, 3, "matching=NNLO"))
+                        seen_terms.add(term)
+            elif "nlo" in kernel_id:
+                for term in ["nlo", "one-loop matching"]:
+                    if term not in seen_terms:
+                        anchor_terms.append((term, 3, "matching=NLO"))
+                        seen_terms.add(term)
+        if momentum_values:
+            momentum_label = f"momentum_gev={max(momentum_values):.2f}"
+            for term, weight in [("large momentum", 3), ("boosted", 3), ("boosted correlations", 3)]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, weight, momentum_label))
+                    seen_terms.add(term)
+        elif any(label.startswith("boosted:") for label in momentum_labels):
+            momentum_label = next(label for label in sorted(momentum_labels) if label.startswith("boosted:")).split(":", 1)[1]
+            for term, weight in [("large momentum", 3), ("boosted", 3), ("boosted correlations", 3)]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, weight, f"momentum={momentum_label}"))
+                    seen_terms.add(term)
+        if mu_values:
+            mu_label = f"mu_gev={max(mu_values):.2f}"
+            for term in ["matching scale", "renormalization scale", "msbar"]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, 2, mu_label))
+                    seen_terms.add(term)
+        lattice_spacings = sorted(
+            {str(item.get("lattice_spacing_fm")) for item in correlators if item.get("lattice_spacing_fm") is not None}
+        )
+        if lattice_spacings:
+            lattice_label = f"lattice_spacing_fm={lattice_spacings[0]}"
+            for term in ["lattice spacing", "continuum limit"]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, 2, lattice_label))
+                    seen_terms.add(term)
+        volumes = sorted({str(item.get("volume")) for item in correlators if item.get("volume")})
+        if volumes and "finite volume" not in seen_terms:
+            anchor_terms.append(("finite volume", 1, f"volume={volumes[0]}"))
+            seen_terms.add("finite volume")
+        for term in ["lamet", "large momentum effective theory", "matching", "renormalization"]:
+            if term not in seen_terms:
+                anchor_terms.append((term, 1, "lamet"))
+                seen_terms.add(term)
+        search_terms = [term for term, _weight, _label in anchor_terms][:12] or [
             "lamet",
-            "large momentum effective theory",
             "quasi-pdf",
-            "quasi pdf",
-            "pseudo-pdf",
-            "pseudo pdf",
-            "pdf",
-            "tmd",
-            "gpd",
-            "distribution amplitude",
-            "gluon",
-            "helicity",
-            "transversity",
-            "pion",
-            "kaon",
-            "nucleon",
             "matching",
             "renormalization",
-            "hybrid ratio",
-            "ri/mom",
-            "fourier",
-            "extrapolation",
-            "collins-soper",
-            "first moment",
-            "zeroth moment",
-            "positivity",
-            "oscillation",
-            "error amplification",
-            "window dependence",
-            "excited-state contamination",
-            "long-distance noise",
-        ]:
-            if term in keyword_blob and term not in keyword_terms:
-                keyword_terms.append(term)
-        if not keyword_terms:
-            keyword_terms = ["lamet", "quasi-pdf", "matching", "renormalization"]
+        ]
         query = (
             "SELECT arxiv_id, title, summary, published, label, score, abs_url FROM papers "
             "WHERE label IN ('core', 'secondary') AND ("
-            + " OR ".join("(lower(title) LIKE ? OR lower(summary) LIKE ?)" for _ in keyword_terms)
+            + " OR ".join("(lower(title) LIKE ? OR lower(summary) LIKE ?)" for _ in search_terms)
             + ") ORDER BY published DESC LIMIT 80"
         )
         params: list[str] = []
-        for term in keyword_terms[:12]:
+        for term in search_terms:
             pattern = f"%{term}%"
             params.extend([pattern, pattern])
         with sqlite3.connect(kb_path) as conn:
@@ -318,11 +438,34 @@ def write_review_from_manifest(
         for row in rows:
             title_lower = row["title"].lower()
             summary_lower = row["summary"].lower()
-            matched_topics = [term for term in keyword_terms if term in title_lower or term in summary_lower]
+            matched_topics = []
+            matched_fields = set()
+            match_score = 0
+            for term, weight, label in anchor_terms:
+                in_title = term in title_lower
+                in_summary = term in summary_lower
+                if not in_title and not in_summary:
+                    continue
+                match_score += weight * (3 if in_title else 1)
+                if label not in matched_topics:
+                    matched_topics.append(label)
+                matched_fields.add(label.split("=", 1)[0])
             if not matched_topics:
                 continue
-            match_score = sum(3 if term in title_lower else 1 for term in matched_topics)
-            ranked_rows.append((match_score, int(row["score"]), row["published"], row, matched_topics[:4]))
+            if "target_observable" in matched_fields and "parton" in matched_fields:
+                match_score += 12
+            if "hadron" in matched_fields:
+                match_score += 8
+            if "scheme" in matched_fields or "matching" in matched_fields:
+                match_score += 8
+            if "gfix" in matched_fields:
+                match_score += 4
+            if "momentum_gev" in matched_fields:
+                match_score += 3
+            if "lattice_spacing_fm" in matched_fields or "volume" in matched_fields:
+                match_score += 2
+            match_score += 2 if row["label"] == "core" else 0
+            ranked_rows.append((match_score, int(row["score"]), row["published"], row, matched_topics[:6]))
         ranked_rows.sort(reverse=True)
         for _, _, _, row, matched_topics in ranked_rows[:8]:
             summary = " ".join(row["summary"].split())
@@ -335,7 +478,7 @@ def write_review_from_manifest(
                     "label": row["label"],
                     "title": row["title"],
                     "matched_topics": matched_topics,
-                    "relevance": f"Background context for {', '.join(matched_topics)}.",
+                    "relevance": f"Strongest overlap with manifest anchors: {', '.join(matched_topics)}.",
                     "summary": summary,
                     "abs_url": row["abs_url"],
                 }
@@ -346,6 +489,7 @@ def write_review_from_manifest(
         + "Data extraction rules: read or calculate only from the reports and NetCDF summaries; write 'not provided' when absent. For standard 3pt_ratio Step1, extract fit quality, excited-state gaps, overlap relative errors, and signal-to-noise at z=0 and maximal z. For `fit_scope=\"qda_ratio\"`, extract only nonlocal 2pt z-ratio fit quality, 2pt fit windows, the ordinary local 2pt denominator, z-dependent signal-to-noise, and long-Wilson-line noise behavior; do not treat missing 3pt/overlap/tsep/tau diagnostics as a problem. Step2 extract renormalization constants with errors and statistical-error amplification. Step3 extract zmin/zmax, quasi-distribution error bars, and zeroth moment. Step4 extract matched q(x) error bars, first moment, and deviation from 1. Step5 extract extrapolation model, fit quality, and final total uncertainty. For each stage, write one coherent physics summary of the operation, key result, and quality.\n"
         + (
             "Literature context rules: retrieved literature context is background only. It may be used for standard methodology, qualitative comparison, common diagnostics, and typical systematic effects, but never as evidence of this run's numerical results. All numerical claims about this run must come only from the supplied manifest, stage reports, NetCDF summaries, and deterministic checks. Do not use literature abstracts to supply, infer, normalize, or validate any number for this run. If literature and run materials differ, trust the run materials. When a run diagnostic is missing, write 'not provided' rather than filling the gap from literature. Manifest-change recommendations must be triggered by run evidence, not only by literature expectations.\n"
+            + "When literature is enabled and relevant context exists for a stage, append one short paragraph at the end of that stage's Diagnostics subsection as a literature-based context paragraph. This paragraph must stay inside Diagnostics rather than becoming a new heading. It may cite the most relevant retrieved paper(s) as qualitative background to explain the stage purpose, why the observed issue matters physically, whether the observed signal quality, statistical noise, or systematic-error pattern is qualitatively reasonable for this kind of LaMET analysis, and which systematic effects are commonly discussed for that stage. Prefer papers whose `matched_topics` overlap most directly with the manifest observable, parton/hadron channel, gauge fixing, ensemble scale, momentum, renormalization scheme, and matching method; use weaker semantic neighbors only as secondary context. Keep it qualitative and concise, and do not use literature as numerical evidence for this run.\n"
             if use_literature
             else ""
         )
@@ -360,7 +504,7 @@ def write_review_from_manifest(
         + "Return normal Markdown only; do not wrap the whole answer in a fenced code block. "
         + "Write one level-2 section for each stage with available material, and include `Physical Summary`, `Key figure`, `Diagnostics`, and `Recommended Manifest Changes` subsections. "
         + "`Physical Summary` must follow the publication-style prose rules in the system prompt rather than report-like listing, and may only use numerical values supplied by the reports and NetCDF summaries. "
-        + "`Key figure` must choose one SVG from that stage's `svg` list; if the list contains an ensemble overview figure such as `ca_<ensemble>_*.svg`, `rn_<ensemble>_*.svg`, `ft_<ensemble>_xdep.svg`, or `mt_<ensemble>.svg`, choose that overview figure first, otherwise follow the usual single-job figure selection rule. Embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths, do not use only the basename, and do not use `absolute_path` as the Markdown link. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
+        + "`Key figure` must choose one SVG from that stage's `svg` list; if the list contains an ensemble overview figure such as `ca_<ensemble>_*.svg`, `rn_<ensemble>_*.svg`, `ft_<ensemble>_xdep.svg`, or `mt_<ensemble>.svg`, choose that overview figure first, otherwise follow the usual single-job figure selection rule. Embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths, do not use only the basename, and do not use `absolute_path` as the Markdown link. The `markdown_path` usually has the form of a path from the review directory to a sibling stage directory, for example `../correlator_analysis/xxx.svg`; preserve that exact relative path string when embedding the image. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
         + "`Diagnostics` must judge whether the stage is self-consistent and whether it matches a realistic LaMET analysis scenario; it must follow the Diagnostics rules in the system prompt and explicitly distinguish successful execution, manifest-tunable analysis issues, and raw-data or external LQCD limitations that lamet-agent tuning cannot fix. `Recommended Manifest Changes` must use the required field format above; if no trigger is met, state that the current setting is reasonable and no change is justified. "
         + "Recommendations must cite real manifest paths and values such as `stages.<stage>.defaults.<key>`, `stages.<stage>.jobs[].params.<key>`, or `inputs.kernels[].kernel_parameters.<key>`, and state suggested values or ranges with reasons. "
         + "Prioritize these tunable parameters: for correlator, `pt2_windows`, `nstate`, `fit_scope`, `fit_strategy`, `prior_width`, `svdcut`, and discuss `pt3_tau_cuts` only for three-point fit scopes; for renormalization, `zs_fm`, `scheme_parameters.m0_gev`, `scheme_parameters.delta_m_gev`; for Fourier, `scheme_scan.zmin_values`, `zmax_values`, `z_ext_max`, `smooth`, `order`, `posterior_prior_error_scale`, `y_grid`; for matching, `kernel_id`, `mu`, `momentum_gev`. "
@@ -368,7 +512,7 @@ def write_review_from_manifest(
         + "Do not recommend changing lamet-agent source code. You cannot inspect SVG images; the SVG list only records figure paths and provenance. "
         + "Do not infer numerical values or curve shapes from SVG pixels, path geometry, or filenames. Figure-related statements must come from report text and NetCDF summaries. "
         + (
-            "Use literature context sparingly and only as qualitative background when it directly helps explain the physical role of a stage, a common systematic effect, or why a diagnostic matters. Do not turn literature context into a separate evidence chain.\n"
+            "Use literature context sparingly and only as qualitative background when it directly helps explain the physical role of a stage, a common systematic effect, why a diagnostic matters, or whether the observed signal/noise/systematic pattern is qualitatively consistent with related LaMET literature. The paragraph may mention the most relevant retrieved paper(s), but must not turn literature into a separate evidence chain or into numerical validation for this run. If a stage has relevant literature context, place it as one additional paragraph immediately below the main Diagnostics paragraph for that same stage, not as a separate section and not under Recommended Manifest Changes.\n"
             if use_literature
             else ""
         )

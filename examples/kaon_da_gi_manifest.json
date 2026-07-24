@@ -528,7 +528,7 @@
       ]
     },
     "review": {
-      "defaults": {},
+      "defaults": {"literature": true},
       "jobs": [
         {
           "id": "review"

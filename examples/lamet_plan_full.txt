@@ -148,7 +148,7 @@ fitting_param_xdep(three booleans for a, 1/p, a*p x-dependence, example [false, 
 pdep_gev(list of momenta for p-dependence plots, example [1.5, 2.0, 2.5]):
 
 review:
-No required parameters.
+literature(true or false):
 
 If no other optional stage parameters are needed, write:
 No other optional stage parameters are requested.

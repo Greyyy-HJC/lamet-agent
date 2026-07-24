@@ -1,5 +1,6 @@
 """Tests for deterministic review-stage manifest consistency checks."""
 
+import sqlite3
 from pathlib import Path
 
 from lamet_agent.manifest import AnalysisManifest
@@ -19,7 +20,21 @@ def _manifest(*, matching_zs: float = 0.2, renorm_zs: float = 0.2) -> AnalysisMa
                 "stages": ["renormalization", "fourier_transform", "perturbative_matching", "review"],
             },
             "inputs": {
-                "correlators": [],
+                "correlators": [
+                    {
+                        "correlator_id": "c2",
+                        "correlator_type": "2pt",
+                        "data_path": "c2.h5",
+                        "ensemble": "E",
+                        "hadron": "pion",
+                        "gfix": "CG",
+                        "source_operator": "g5",
+                        "sink_operator": "g5",
+                        "volume": "S16T32",
+                        "momentum": ["PX0PY0PZ5"],
+                        "lattice_spacing_fm": 0.1,
+                    }
+                ],
                 "artifacts": [
                     {"id": "target", "stage": "correlator_analysis", "path": "target.nc"},
                     {"id": "denominator", "stage": "correlator_analysis", "path": "denominator.nc"},
@@ -189,3 +204,66 @@ def test_review_prompt_includes_literature_context_when_enabled(tmp_path: Path, 
 
     assert "Relevant literature context (background only)" in prompts[0]
     assert "Literature context rules:" in prompts[0]
+    assert "append one short paragraph at the end of that stage's Diagnostics subsection" in prompts[0]
+    assert "may cite the most relevant retrieved paper(s) as qualitative background" in prompts[0]
+    assert "for example `../correlator_analysis/xxx.svg`" in prompts[0]
+    assert "must not turn literature into a separate evidence chain or into numerical validation for this run" in prompts[0]
+    assert "Prefer papers whose `matched_topics` overlap most directly" in prompts[0]
+
+
+def test_review_literature_ranking_prefers_manifest_anchor_matches(tmp_path: Path, monkeypatch) -> None:
+    prompts = []
+
+    def fake_request_llm_text(**kwargs):
+        prompts.append("\n".join(message["content"] for message in kwargs["messages"]))
+        return "# LLM Review"
+
+    db_path = tmp_path / "lamet.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE papers ("
+            "arxiv_id TEXT, title TEXT, summary TEXT, published TEXT, label TEXT, score INTEGER, abs_url TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO papers VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    "exact-1",
+                    "Pion Quark PDF in the Coulomb Gauge with Hybrid-Ratio Matching",
+                    "A LaMET study of boosted pion quasi-PDFs with one-loop matching and continuum-limit checks.",
+                    "2026-01-01T00:00:00Z",
+                    "core",
+                    95,
+                    "https://arxiv.org/abs/exact-1",
+                ),
+                (
+                    "generic-1",
+                    "Large Momentum Effective Theory Overview",
+                    "A generic review of LaMET methodology and renormalization ideas.",
+                    "2026-01-02T00:00:00Z",
+                    "core",
+                    99,
+                    "https://arxiv.org/abs/generic-1",
+                ),
+            ],
+        )
+
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(
+        "lamet_agent.stages.review.functions.sqlite3.connect",
+        lambda *_args, **kwargs: real_connect(db_path, **kwargs),
+    )
+    monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
+    monkeypatch.setattr("lamet_agent.stages.review.functions.translate_markdown_report", lambda markdown, **kwargs: markdown)
+
+    manifest = _manifest()
+    manifest.stages["review"].defaults["literature"] = True
+    write_review_from_manifest(manifest, output_dir=tmp_path / "en")
+
+    prompt = prompts[0]
+    assert "Strongest overlap with manifest anchors: target_observable=pdf, parton=quark, hadron=pion, gfix=CG" in prompt
+    assert "Pion Quark PDF in the Coulomb Gauge with Hybrid-Ratio Matching" in prompt
+    if "Large Momentum Effective Theory Overview" in prompt:
+        assert prompt.index("Pion Quark PDF in the Coulomb Gauge with Hybrid-Ratio Matching") < prompt.index(
+            "Large Momentum Effective Theory Overview"
+        )
