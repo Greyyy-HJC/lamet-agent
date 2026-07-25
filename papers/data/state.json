@@ -1,0 +1,11 @@
+{
+  "db_path": "/Users/zhaodianjun/lamet-agent/papers/data/lamet_arxiv.sqlite3",
+  "effective_from_date": "2013-01-01",
+  "jsonl_path": "/Users/zhaodianjun/lamet-agent/papers/data/papers.jsonl",
+  "last_completed_at": "2026-07-25T13:49:34Z",
+  "last_exported_count": 2802,
+  "last_harvest_date": "2026-07-24",
+  "last_jsonl_export": "2026-07-25T13:49:34Z",
+  "last_run_id": 14,
+  "last_run_mode": "bootstrap"
+}

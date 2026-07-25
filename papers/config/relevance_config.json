@@ -22,6 +22,10 @@
       "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:LaMET OR all:\"large momentum effective theory\")"
     },
     {
+      "name": "lamet_early_foundational",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:\"Parton Physics on Euclidean Lattice\" OR (all:\"equal-time correlator\" AND all:\"large momentum\") OR (all:\"equal time correlator\" AND all:\"large momentum\") OR (all:\"large momentum limit\" AND all:\"Euclidean lattice\") OR (all:\"parton physics\" AND all:\"Euclidean lattice\") OR (all:\"frame-dependent\" AND all:\"equal-time correlator\"))"
+    },
+    {
       "name": "quasi_pdf",
       "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:\"quasi-PDF\" OR all:\"quasi PDF\" OR all:\"quasi parton distribution\" OR (all:quasi AND all:PDF))"
     },
@@ -42,16 +46,40 @@
       "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND ((all:lattice AND all:parton AND all:distribution) OR (all:lattice AND all:hadron AND all:structure AND all:x-dependent))"
     },
     {
+      "name": "lattice_pdf_observables_broad",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th) AND (all:lattice OR all:\"lattice QCD\" OR all:Euclidean) AND (all:PDF OR all:\"parton distribution\" OR all:\"parton distributions\" OR all:transversity OR all:helicity OR all:\"gluon PDF\" OR all:\"pion PDF\" OR all:\"kaon PDF\" OR all:\"nucleon PDF\")"
+    },
+    {
       "name": "lamet_gpd_tmd_da",
       "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND ((all:GPD OR all:TMD OR all:\"distribution amplitude\" OR all:LCDA) AND (all:quasi OR all:pseudo OR all:LaMET OR all:\"short-distance factorization\"))"
+    },
+    {
+      "name": "lamet_observables_broad",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:GPD OR all:TMD OR all:\"generalized parton distribution\" OR all:\"transverse momentum dependent\" OR all:\"distribution amplitude\" OR all:\"light-cone distribution amplitude\" OR all:LCDA OR all:OAM) AND (all:lattice OR all:quasi OR all:pseudo OR all:LaMET OR all:\"large momentum\" OR all:\"Wilson line\" OR all:\"nonlocal operator\")"
+    },
+    {
+      "name": "wilson_line_nonlocal_lattice",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:\"Wilson line\" OR all:\"gauge link\" OR all:\"nonlocal operator\" OR all:\"bilocal operator\" OR all:\"nonlocal quark\" OR all:\"straight link\" OR all:\"staple-shaped\") AND (all:lattice OR all:Euclidean OR all:LaMET OR all:quasi OR all:pseudo) AND (all:PDF OR all:parton OR all:distribution OR all:GPD OR all:TMD OR all:LCDA OR all:\"distribution amplitude\")"
+    },
+    {
+      "name": "ri_mom_wilson_line",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:hep-th OR cat:nucl-th) AND (all:\"RI/MOM\" OR all:\"RI-MOM\" OR all:\"RI'\" OR all:\"regularization independent\" OR all:\"nonperturbative renormalization\") AND (all:\"Wilson line\" OR all:nonlocal OR all:quasi OR all:pseudo OR all:LaMET OR all:\"parton distribution\")"
     },
     {
       "name": "lamet_perturbative",
       "query": "(cat:hep-ph OR cat:hep-th OR cat:nucl-th) AND ((all:LaMET OR all:\"large momentum effective theory\" OR all:\"quasi-PDF\" OR all:\"quasi PDF\" OR all:\"pseudo-PDF\" OR all:\"pseudo PDF\" OR all:\"Ioffe-time\" OR all:\"Ioffe time\") AND (all:matching OR all:factorization OR all:kernel OR all:renormalization OR all:\"one-loop\" OR all:\"two-loop\" OR all:NLO OR all:NNLO OR all:evolution OR all:\"anomalous dimension\"))"
     },
     {
+      "name": "matching_factorization_broad",
+      "query": "(cat:hep-ph OR cat:hep-th OR cat:nucl-th OR cat:hep-lat) AND (all:matching OR all:factorization OR all:\"coefficient function\" OR all:\"matching coefficient\" OR all:\"operator mixing\" OR all:\"linear divergence\" OR all:\"power divergence\" OR all:\"Wilson-line renormalization\") AND (all:quasi OR all:pseudo OR all:LaMET OR all:\"large momentum\" OR all:\"Ioffe-time\" OR all:\"Wilson line\" OR all:nonlocal OR all:\"parton distribution\")"
+    },
+    {
       "name": "lamet_theory_general",
       "query": "(cat:hep-lat OR cat:hep-ph OR cat:hep-th OR cat:nucl-th) AND ((all:LaMET OR all:\"large momentum effective theory\") OR ((all:quasi OR all:pseudo) AND (all:distribution OR all:amplitude OR all:structure)))"
+    },
+    {
+      "name": "pseudo_itd_broad",
+      "query": "(cat:hep-lat OR cat:hep-ph OR cat:nucl-th OR cat:hep-th) AND (all:pseudo OR all:\"Ioffe-time\" OR all:\"Ioffe time\" OR all:ITD OR all:\"reduced ITD\" OR all:\"current-current correlator\") AND (all:lattice OR all:Euclidean OR all:parton OR all:PDF OR all:distribution OR all:\"Wilson line\")"
     },
     {
       "name": "lamet_short_distance",
@@ -91,22 +119,27 @@
     {
       "name": "x_dependent_lattice_structure",
       "weight": 14,
-      "patterns": ["x-dependent parton", "x dependent parton", "parton distribution from lattice", "lattice parton distribution", "lattice qcd determination of pdf"]
+      "patterns": ["x-dependent parton", "x dependent parton", "parton distribution from lattice", "lattice parton distribution", "lattice qcd determination of pdf", "parton physics on euclidean lattice", "parton physics on the euclidean lattice", "parton physics from lattice"]
     },
     {
       "name": "lamet_observables",
       "weight": 14,
-      "patterns": ["generalized parton distribution", "gpd", "transverse momentum dependent", "tmd", "distribution amplitude", "light-cone distribution amplitude", "lcda", "tmdpdf", "tmdwf"]
+      "patterns": ["generalized parton distribution", "gpd", "transverse momentum dependent", "tmd", "distribution amplitude", "light-cone distribution amplitude", "lcda", "tmdpdf", "tmdwf", "quasi-gpd", "quasi gpd", "quasi-tmd", "quasi tmd", "quasi distribution amplitude", "quasi-da", "quasi da"]
     },
     {
       "name": "short_distance_lamet",
       "weight": 13,
-      "patterns": ["short-distance factorization", "short distance factorization", "operator product expansion", "ope", "reduced ioffe-time distribution", "pseudo itd", "lattice cross section", "good lattice cross section"]
+      "patterns": ["short-distance factorization", "short distance factorization", "operator product expansion", "ope", "reduced ioffe-time distribution", "pseudo itd", "lattice cross section", "good lattice cross section", "equal-time correlator", "equal time correlator", "large momentum limit"]
+    },
+    {
+      "name": "wilson_line_parton_structure",
+      "weight": 12,
+      "patterns": ["wilson line operator", "wilson-line operator", "straight wilson line", "staple-shaped wilson line", "nonlocal quark bilinear", "nonlocal quark operator", "gauge link operator", "bilocal operator"]
     },
     {
       "name": "lamet_lattice_analysis",
       "weight": 12,
-      "patterns": ["continuum limit", "infinite-momentum extrapolation", "infinite momentum extrapolation", "discretization effect", "finite volume", "excited-state contamination", "momentum smearing", "large-momentum nucleon", "boosted hadron"]
+      "patterns": ["continuum limit", "infinite-momentum extrapolation", "infinite momentum extrapolation", "discretization effect", "finite volume", "excited-state contamination", "momentum smearing", "large-momentum nucleon", "boosted hadron", "boosted pion", "boosted meson", "large momentum pion", "large momentum nucleon"]
     }
   ],
   "secondary_terms": [
@@ -123,7 +156,7 @@
     {
       "name": "renormalization",
       "weight": 5,
-      "patterns": ["ri/mom", "ri mom", "nonperturbative renormalization", "renormalization", "linear divergence", "wilson line self-energy", "power divergence", "hybrid renormalization", "self renormalization", "self-renormalized", "msbar", "zmsbar"]
+      "patterns": ["ri/mom", "ri mom", "ri-mom", "ri'", "regularization independent", "nonperturbative renormalization", "renormalization", "linear divergence", "wilson line self-energy", "power divergence", "hybrid renormalization", "self renormalization", "self-renormalized", "msbar", "zmsbar"]
     },
     {
       "name": "boosted_hadrons",
@@ -133,12 +166,12 @@
     {
       "name": "nonlocal_operators",
       "weight": 4,
-      "patterns": ["nonlocal operator", "wilson-line operator", "equal-time correlator", "bilocal operator", "equal time correlator", "straight wilson line", "staple-shaped wilson line"]
+      "patterns": ["nonlocal operator", "non-local operator", "wilson-line operator", "wilson line operator", "equal-time correlator", "bilocal operator", "equal time correlator", "straight wilson line", "staple-shaped wilson line", "nonlocal quark bilinear", "gauge link", "gauge-link"]
     },
     {
       "name": "partonic_observables",
       "weight": 4,
-      "patterns": ["transversity", "gluon pdf", "helicity pdf", "unpolarized pdf", "distribution amplitude", "gpd", "tmd", "oam", "pion pdf", "kaon pdf", "gluon tmd"]
+      "patterns": ["transversity", "gluon pdf", "helicity pdf", "unpolarized pdf", "distribution amplitude", "gpd", "tmd", "oam", "pion pdf", "kaon pdf", "gluon tmd", "nucleon pdf", "proton pdf", "meson pdf", "pion distribution amplitude", "kaon distribution amplitude", "light meson distribution amplitude"]
     },
     {
       "name": "systematics",
