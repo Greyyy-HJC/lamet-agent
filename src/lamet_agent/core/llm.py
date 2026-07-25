@@ -44,7 +44,7 @@ _SYSTEM_PROMPT = (
 PROVIDERS: dict[str, dict[str, str]] = {
     "deepseek": {
         "base_url": "https://api.deepseek.com",
-        "default_model": "deepseek-chat",
+        "default_model": "deepseek-v4-flash",
         "key_env": "DEEPSEEK_API_KEY",
     },
     "openai": {
@@ -65,7 +65,7 @@ def parse_api_model(spec: str) -> tuple[str, str]:
     text = spec.strip()
     if not text:
         raise ValueError(
-            "API model spec must be non-empty, e.g. 'deepseek/deepseek-chat' or 'openai/gpt-4o-mini'."
+            "API model spec must be non-empty, e.g. 'deepseek/deepseek-v4-flash' or 'openai/gpt-4o-mini'."
         )
     if "/" in text:
         provider, model_name = text.split("/", 1)
@@ -73,7 +73,7 @@ def parse_api_model(spec: str) -> tuple[str, str]:
         model_name = model_name.strip()
         if not provider or not model_name:
             raise ValueError(
-                f"Invalid API model spec {spec!r}; use 'provider/model_id', e.g. 'deepseek/deepseek-chat'."
+                f"Invalid API model spec {spec!r}; use 'provider/model_id', e.g. 'deepseek/deepseek-v4-flash'."
             )
     else:
         provider = text
