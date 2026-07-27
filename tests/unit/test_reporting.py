@@ -195,7 +195,7 @@ def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_p
     assert "Fourier overlay for ensemble HISQa060_X" in output
 
 
-def test_da_fourier_stage_report_documents_input_phase_rotation(tmp_path: Path) -> None:
+def test_da_fourier_stage_report_documents_symmetry_projection(tmp_path: Path) -> None:
     path = tmp_path / "ft_report.md"
     write_fourier_stage_report(
         jobs=[
@@ -208,6 +208,7 @@ def test_da_fourier_stage_report_documents_input_phase_rotation(tmp_path: Path) 
                     "method": "GI",
                     "order": "NLA",
                     "part": "both",
+                    "symmetry_guarantee": True,
                 },
                 "artifacts": {},
             }
@@ -218,7 +219,9 @@ def test_da_fourier_stage_report_documents_input_phase_rotation(tmp_path: Path) 
     text = path.read_text(encoding="utf-8")
     assert "before range selection and large-distance fitting" in text
     assert "e^{+izP_z/2}" in text
-    assert "lambda=zP_z" in text
+    assert "discards $\\operatorname{Im}h_{+}$" in text
+    assert "e^{-izP_z/2}" in text
+    assert "e^{+ix\\lambda}" in text
 
 
 def test_matching_stage_report_lists_overlay_last_with_ensemble_description(tmp_path: Path, monkeypatch) -> None:

@@ -205,25 +205,24 @@ def _zero_inactive_channel(re_values: np.ndarray, im_values: np.ndarray, part: s
     return re_values, im_values
 
 
-def sum_ft_re_im(x_ls, fx_re_ls, fx_im_ls, output_k, *, phase_shift: float = 0.0):
+def sum_ft_re_im(x_ls, fx_re_ls, fx_im_ls, output_k):
     """Forward transform with separated real and imaginary input parts."""
     x = np.asarray(x_ls)
     fx_re = np.asarray(fx_re_ls)
     fx_im = np.asarray(fx_im_ls)
     k = np.asarray(output_k)
-    shifted_k = k - float(phase_shift)
     diffs = np.diff(x)
     if np.allclose(diffs, diffs[0], rtol=1e-7, atol=1e-12):
         pref = abs(float(diffs[0])) / (2 * np.pi)
         if k.ndim == 0:
-            phase = x * shifted_k
+            phase = x * k
             cos_phase = np.cos(phase)
             sin_phase = np.sin(phase)
             val_re = pref * np.sum(cos_phase * fx_re) - pref * np.sum(sin_phase * fx_im)
             val_im = pref * np.sum(sin_phase * fx_re) + pref * np.sum(cos_phase * fx_im)
             return val_re, val_im
 
-        phase = np.multiply.outer(x, shifted_k)
+        phase = np.multiply.outer(x, k)
         cos_phase = np.cos(phase)
         sin_phase = np.sin(phase)
         val_re = pref * np.sum(cos_phase * fx_re[:, None], axis=0) - pref * np.sum(
@@ -241,14 +240,14 @@ def sum_ft_re_im(x_ls, fx_re_ls, fx_im_ls, output_k, *, phase_shift: float = 0.0
     pref = weights / (2 * np.pi)
 
     if k.ndim == 0:
-        phase = x * shifted_k
+        phase = x * k
         cos_phase = np.cos(phase)
         sin_phase = np.sin(phase)
         val_re = np.sum(pref * cos_phase * fx_re) - np.sum(pref * sin_phase * fx_im)
         val_im = np.sum(pref * sin_phase * fx_re) + np.sum(pref * cos_phase * fx_im)
         return val_re, val_im
 
-    phase = np.multiply.outer(x, shifted_k)
+    phase = np.multiply.outer(x, k)
     cos_phase = np.cos(phase)
     sin_phase = np.sin(phase)
     val_re = np.sum(pref[:, None] * cos_phase * fx_re[:, None], axis=0) - np.sum(
@@ -258,6 +257,21 @@ def sum_ft_re_im(x_ls, fx_re_ls, fx_im_ls, output_k, *, phase_shift: float = 0.0
         pref[:, None] * cos_phase * fx_im[:, None], axis=0
     )
     return val_re, val_im
+
+
+def _project_da_symmetry(
+    coord: np.ndarray,
+    re_samples: np.ndarray,
+    im_samples: np.ndarray,
+    *,
+    phase_scale: float,
+) -> np.ndarray:
+    """Project ``exp(+i lambda/2) h`` to real values and rotate back."""
+    phase = np.exp(0.5j * np.asarray(coord, dtype=float) * float(phase_scale))[None, :]
+    rotated = (
+        np.asarray(re_samples, dtype=float) + 1j * np.asarray(im_samples, dtype=float)
+    ) * phase
+    return np.real(rotated) * np.conjugate(phase)
 
 
 def complete_z_negative(lam_ls, re_ls, im_ls, *, im_flip_for_ft=False):
@@ -1190,7 +1204,6 @@ def _run_one_scheme(
     observable: str,
     fit_scale: float,
     im_flip_for_ft: bool,
-    phase_shift: float,
     phase_scale: float,
     phase_prime_scale: float | None,
     resample_mode: str,
@@ -1456,7 +1469,7 @@ def _run_one_scheme(
             ext_im[sample],
             im_flip_for_ft=im_flip_for_ft,
         )
-        ft_re[sample], ft_im[sample] = sum_ft_re_im(lam_full, re_full, im_full, y_grid, phase_shift=phase_shift)
+        ft_re[sample], ft_im[sample] = sum_ft_re_im(lam_full, re_full, im_full, y_grid)
 
     return {
         "label": label,
@@ -1511,7 +1524,6 @@ def run_fourier_workflow(
     final_momentum_gev: float | None = None,
     lattice_spacing_fm: float | None = None,
     im_flip_for_ft: bool = False,
-    phase_shift: float = 0.0,
     resample_mode: str = "bootstrap",
     Lambda0_gev: float = 0.0,
     posterior_prior_error_scale: float = 3.0,
@@ -1600,7 +1612,6 @@ def run_fourier_workflow(
                     observable=observable,
                     fit_scale=fit_scale,
                     im_flip_for_ft=im_flip_for_ft,
-                    phase_shift=float(phase_shift),
                     phase_scale=phase_scale,
                     phase_prime_scale=phase_prime_scale,
                     resample_mode=resample_mode,
@@ -1664,7 +1675,6 @@ def run_fourier_workflow(
         "resample_mode": resample_mode,
         "sample_error_mode": sample_error_mode,
         "Lambda0_gev": float(Lambda0_gev),
-        "phase_shift": float(phase_shift),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
         "part": part,
         "hadron": hadron,
@@ -1761,8 +1771,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
         "fit_coord_unit": str(result.get("fit_coord_unit", "")),
         "part": str(result.get("part", "both")),
         "im_flip_for_ft": str(result.get("im_flip_for_ft", "")),
-        "phase_shift": str(result.get("phase_shift", 0.0)),
-        "da_phase_rotation": str(result.get("da_phase_rotation", False)),
+        "symmetry_guarantee": str(result.get("symmetry_guarantee", False)),
         "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
         "resample_mode": str(result.get("resample_mode", "")),
         "sample_error_mode": str(result.get("sample_error_mode", "")),
@@ -2079,6 +2088,7 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any], source_ens
             "hadron": str(result.get("hadron", "")),
             "psi1_flavor_class": str(result.get("psi1_flavor_class", "heavy")),
             "psi2_flavor_class": str(result.get("psi2_flavor_class", "heavy")),
+            "symmetry_guarantee": str(result.get("symmetry_guarantee", False)),
             "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
             "sample_error_mode": str(result.get("sample_error_mode", "")),
             "average_method": str(result.get("sample_error_mode", "")),
@@ -2656,7 +2666,7 @@ def run_fourier_transform(
     lattice_spacing_fm: float | None = None,
     zs_fm: float | None = None,
     im_flip_for_ft: bool = False,
-    phase_shift: float = 0.0,
+    symmetry_guarantee: bool = True,
     Lambda0_gev: float = 0.0,
     posterior_prior_error_scale: float | list[float] = 3.0,
     sample_error_mode: str = "covariance",
@@ -2678,15 +2688,17 @@ def run_fourier_transform(
     if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or int(workers) < 1:
         raise ValueError("workers must be a positive integer")
     workers = int(workers)
+    if not isinstance(symmetry_guarantee, bool):
+        raise ValueError("symmetry_guarantee must be a boolean")
     out = "fourier_result"
     sector = None if sector is None else str(sector).strip().lower()
     psi1_flavor_class = str(psi1_flavor_class or "heavy").strip().lower()
     psi2_flavor_class = str(psi2_flavor_class or "heavy").strip().lower()
     target = str(target_observable or "").strip().lower()
+    if not target:
+        observable_name = str(observable).strip().lower()
+        target = "da" if observable_name in {"meson_quasi_da", "quasi_da"} else "gpd" if "gpd" in observable_name else "pdf"
     if sector is not None:
-        if not target:
-            observable_name = str(observable).strip().lower()
-            target = "da" if observable_name == "meson_quasi_da" else "gpd" if "gpd" in observable_name else "pdf"
         if target == "da":
             sector = "full"
         if target in {"pdf", "gpd"}:
@@ -2702,8 +2714,6 @@ def run_fourier_transform(
             part, output_scale, im_flip_for_ft = "both", 1.0, False
     else:
         sector = {"re": "valence", "im": "total", "both": "full"}.get(str(part).lower(), str(part).lower())
-        if not target:
-            target = str(target_observable or "")
     matrix_element_data = store.get("matrix_element_data")
     if matrix_element_data is None:
         matrix_element_data = store["input"]
@@ -2716,21 +2726,22 @@ def run_fourier_transform(
     sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
     matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
     coord_arr = np.asarray(matrix_element["coord"], dtype=float)
-    if target == "da":
+    if target == "da" and symmetry_guarantee:
         _fit_scale, ft_scale = _coord_scale(
             coord_unit,
             momentum_gev=momentum_gev,
             final_momentum_gev=final_momentum_gev,
             lattice_spacing_fm=lattice_spacing_fm,
         )
-        rotated = (
-            np.asarray(matrix_element["re_samples"], dtype=float)
-            + 1j * np.asarray(matrix_element["im_samples"], dtype=float)
-        ) * np.exp(0.5j * coord_arr * ft_scale)[None, :]
-        matrix_element["re_samples"] = np.real(rotated)
-        matrix_element["im_samples"] = np.imag(rotated)
-        matrix_element_data.array.values = rotated
-        matrix_element_data.array.attrs["da_phase_rotation"] = "True"
+        projected = _project_da_symmetry(
+            coord_arr,
+            matrix_element["re_samples"],
+            matrix_element["im_samples"],
+            phase_scale=ft_scale,
+        )
+        matrix_element["re_samples"] = np.real(projected)
+        matrix_element["im_samples"] = np.imag(projected)
+        matrix_element_data.array.values = projected
     auto_scheme_scan = None
     range_order = str(order[0] if isinstance(order, list) else order).upper()
     range_prior_width = float(
@@ -2898,7 +2909,6 @@ def run_fourier_transform(
             final_momentum_gev=final_momentum_gev,
             lattice_spacing_fm=lattice_spacing_fm,
             im_flip_for_ft=True,
-            phase_shift=float(phase_shift),
             resample_mode=resample_mode,
             Lambda0_gev=float(Lambda0_gev),
             posterior_prior_error_scale=range_prior_width,
@@ -2924,7 +2934,6 @@ def run_fourier_transform(
             final_momentum_gev=final_momentum_gev,
             lattice_spacing_fm=lattice_spacing_fm,
             im_flip_for_ft=False,
-            phase_shift=float(phase_shift),
             resample_mode=resample_mode,
             Lambda0_gev=float(Lambda0_gev),
             posterior_prior_error_scale=range_prior_width,
@@ -2988,7 +2997,6 @@ def run_fourier_transform(
             final_momentum_gev=final_momentum_gev,
             lattice_spacing_fm=lattice_spacing_fm,
             im_flip_for_ft=im_flip_for_ft,
-            phase_shift=float(phase_shift),
             resample_mode=resample_mode,
             Lambda0_gev=float(Lambda0_gev),
             posterior_prior_error_scale=range_prior_width,
@@ -3010,8 +3018,7 @@ def run_fourier_transform(
     result["lattice_spacing_fm"] = lattice_spacing_fm
     result["zs_fm"] = zs_fm
     result["im_flip_for_ft"] = bool(im_flip_for_ft)
-    result["phase_shift"] = float(phase_shift)
-    result["da_phase_rotation"] = target == "da"
+    result["symmetry_guarantee"] = bool(target == "da" and symmetry_guarantee)
     result["sector"] = sector
     result["target_observable"] = target
     result["Lambda0_gev"] = float(Lambda0_gev)
@@ -3079,6 +3086,7 @@ def run_fourier_transform(
         "selected_range_label": result.get("selected_range_label"),
         "output_scale": result.get("output_scale", 1.0),
         "sector": result.get("sector", sector),
+        "symmetry_guarantee": result.get("symmetry_guarantee", False),
         "auto_scheme_scan": auto_scheme_scan,
         "Lambda0_gev": result.get("Lambda0_gev", 0.0),
         "workers": int(workers),
@@ -3111,7 +3119,7 @@ def summarize_fourier_result(
         "selected_fit_range": data.get("selected_fit_range"),
         "fit_info_artifact": data.get("fit_info_artifact"),
         "output_scale": data.get("output_scale", 1.0),
-        "phase_shift": data.get("phase_shift", 0.0),
+        "symmetry_guarantee": data.get("symmetry_guarantee", False),
         "Lambda0_gev": data.get("Lambda0_gev", 0.0),
         "sector": data.get("sector", data.get("part", "full")),
     }

@@ -14,6 +14,10 @@ sample-average tail-fit diagnostics over the configured zmin/zmax grid. After
 that range is fixed, scheme_scan.model_average controls per-sample averaging
 over fit-model candidates defined by order and posterior_prior_error_scale;
 the method argument is a fixed theory choice and is not scanned.
+For DA only, symmetry_guarantee defaults to true: rotate by exp(+i*z*Pz/2),
+discard the rotated imaginary part, rotate the retained real part back by
+exp(-i*z*Pz/2), then run the ordinary extension and Fourier transform.
+Set it false to use the DA input unchanged. It has no effect for PDF or GPD.
 """.strip()
 
 TOOL_CATALOG = {
@@ -42,4 +46,6 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
         return [f"Fourier sector must be one of {sorted(sectors[manifest.metadata.target_observable])}."]
     if "sector" not in params and "part" in params and params.get("part") not in {"re", "im", "both"}:
         return ["Fourier part must be 're', 'im', or 'both'."]
+    if "symmetry_guarantee" in params and not isinstance(params["symmetry_guarantee"], bool):
+        return ["Fourier symmetry_guarantee must be a boolean."]
     return []

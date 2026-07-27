@@ -54,7 +54,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "final_momentum_gev",
         "lattice_spacing_fm",
         "im_flip_for_ft",
-        "phase_shift",
+        "symmetry_guarantee",
         "sector",
         "target_observable",
         "hadron",

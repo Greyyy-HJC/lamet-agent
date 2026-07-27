@@ -99,6 +99,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     sector = str(result.get("sector", "")).lower()
     psi1_class = str(result.get("psi1_flavor_class", "heavy") or "heavy").lower()
     psi2_class = str(result.get("psi2_flavor_class", "heavy") or "heavy").lower()
+    symmetry_guarantee = bool(result.get("symmetry_guarantee", False))
     orders = [item.strip().upper() for item in order.split(",") if item.strip()]
     if len(orders) > 1:
         article_lines = []
@@ -336,6 +337,21 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "For these forward-like quark observables, the report distinguishes the article formula from the lamet-agent parameterized equivalent rewrite.",
             "The implementation fits only positive coordinates, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval; `method=CG` adds the explicit factor $z^{-n}$ shown in the implementation formula.",
         ]
+        if observable == "meson_quasi_da":
+            if symmetry_guarantee:
+                scope_lines.append(
+                    "With `symmetry_guarantee=true`, lamet-agent forms "
+                    "$h_{+}(z)=e^{+izP_z/2}h^R(z)$, discards $\\operatorname{Im}h_{+}$, "
+                    "and rotates back as $h_{\\rm proj}(z)=e^{-izP_z/2}\\operatorname{Re}h_{+}(z)$. "
+                    "Range selection, asymptotic fitting, extension plots, negative-$z$ completion, "
+                    "and the ordinary $e^{+ix\\lambda}$ Fourier transform all use $h_{\\rm proj}$."
+                )
+            else:
+                scope_lines.append(
+                    "With `symmetry_guarantee=false`, lamet-agent applies no DA phase rotation "
+                    "or real-part projection; range selection, asymptotic fitting, extension, and "
+                    "the ordinary $e^{+ix\\lambda}$ Fourier transform use the input $h^R$ unchanged."
+                )
     elif observable == "nucleon_gluon_quasi_pdf":
         article_formula = (
             (
@@ -445,19 +461,23 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
 
 def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
     part = str(result.get("part", "both")).lower()
-    shift = float(result.get("phase_shift", 0.0) or 0.0)
-    phase = f"(x-{_fmt(shift)})\\lambda" if shift else "x\\lambda"
+    phase = "x\\lambda"
     rotation = ""
     if str(result.get("target_observable", "")).lower() == "da":
-        rotation = (
-            "For `target_observable=da`, before range selection and large-distance fitting, "
-            "the renormalized matrix element is rotated as "
-            "$h_{\\mathrm{DA}}(z)=e^{+izP_z/2}h^R(z)=e^{+i\\lambda/2}h^R(z)$. "
-            "Here $\\lambda=zP_z$ is dimensionless: coordinates in fm are converted with "
-            "$1\\,\\mathrm{fm}=5.067731237\\,\\mathrm{GeV}^{-1}$, and lattice coordinates also include $a$.\n\n"
-        )
+        if bool(result.get("symmetry_guarantee", False)):
+            rotation = (
+                "For `target_observable=da` with `symmetry_guarantee=true`, before range selection "
+                "and large-distance fitting, lamet-agent computes $h_{+}=e^{+i\\lambda/2}h^R$, "
+                "sets $\\operatorname{Im}h_{+}=0$, and defines "
+                "$h_{\\rm proj}=e^{-i\\lambda/2}\\operatorname{Re}h_{+}$. The extrapolation and "
+                "Fourier transform use the real and imaginary parts of $h_{\\rm proj}$.\n\n"
+            )
+        else:
+            rotation = (
+                "For `target_observable=da` with `symmetry_guarantee=false`, the input matrix "
+                "element is not phase-rotated or projected before extrapolation.\n\n"
+            )
     convention = rotation + f"This stage uses the $e^{{+i{phase}}}$ Fourier convention, i.e. $q(x)=\\frac{{\\Delta\\lambda}}{{2\\pi}}\\sum_\\lambda e^{{+i{phase}}}h(\\lambda)$; the corresponding real/imaginary decomposition is shown below."
-    note = f"\n\nThis run uses `phase_shift={_fmt(shift)}`, i.e. the Fourier phase is ${phase}$." if shift else ""
     if part == "re":
         return (
             f"{convention}\n\n"
@@ -465,7 +485,6 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
             "q_{\\rm re}(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
             f"\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda).\n"
             "$$"
-            f"{note}"
         )
     if part == "im":
         return (
@@ -474,7 +493,6 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
             "q_{\\rm im}(x)=-\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
             f"\\sin({phase})\\,\\mathrm{{Im}}\\,h(\\lambda).\n"
             "$$"
-            f"{note}"
         )
     return (
         f"{convention}\n\n"
@@ -486,7 +504,6 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
         "\\mathrm{Im}\\,q(x)=\\frac{\\Delta\\lambda}{2\\pi}\\sum_{\\lambda}"
         f"\\left[\\sin({phase})\\,\\mathrm{{Re}}\\,h(\\lambda)+\\cos({phase})\\,\\mathrm{{Im}}\\,h(\\lambda)\\right].\n"
         "$$"
-        f"{note}"
     )
 
 
@@ -721,8 +738,6 @@ def _settings_table(
     except (TypeError, ValueError):
         z_ext_text = str(z_ext_max)
     missing = list(result.get("missing_short_distance_coord", []))
-    shift = float(result.get("phase_shift", 0.0) or 0.0)
-    phase_text = "x\\lambda" if shift == 0.0 else f"(x-{_fmt(shift)})\\lambda"
     if missing:
         short_distance_text = (
             f"`truncate_missing`; omitted short-distance coordinates {missing}; Fourier starts at {_fmt(result.get('fourier_positive_coord_start'))}"
@@ -737,7 +752,6 @@ def _settings_table(
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
         ("Coordinate unit", f"{_display_unit(result.get('coord_unit', 'not recorded'))}; fit unit {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
         ("Decay offset", f"$\\Lambda_0={_fmt(result.get('Lambda0_gev'))}$"),
-        ("Phase shift", f"`phase_shift={_fmt(shift)}`; phase ${phase_text}$"),
         ("Output scale", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
         ("Short-distance treatment", short_distance_text),
         ("Best fit range", fit_range_text),
@@ -746,6 +760,7 @@ def _settings_table(
     ]
     if observable == "meson_quasi_da":
         rows.insert(2, ("DA flavor classes", f"`psi1={result.get('psi1_flavor_class', 'heavy')}`, `psi2={result.get('psi2_flavor_class', 'heavy')}`"))
+        rows.insert(3, ("DA symmetry guarantee", f"`symmetry_guarantee={str(bool(result.get('symmetry_guarantee', False))).lower()}`"))
     header = "| Quantity | Value |"
     lines = [header, "|---|---|"]
     lines.extend(f"| {name} | {value} |" for name, value in rows)
@@ -767,7 +782,7 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging."),
             ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection."),
             ("attrs `momentum_gev`, `final_momentum_gev`, `lattice_spacing_fm`", "Momentum and lattice-spacing metadata."),
-            ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`, `phase_shift`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, formula choices, execution channel, final output normalization, Fourier phase convention, and DA flavor-class metadata."),
+            ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
         ]
     else:
         rows = [

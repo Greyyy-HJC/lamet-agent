@@ -70,16 +70,15 @@ def test_complete_z_negative_preserves_shortest_negative_point_without_zero() ->
     assert lam.tolist() == [-2.0, -1.0, 1.0, 2.0]
 
 
-def test_sum_ft_re_im_applies_phase_shift() -> None:
+def test_sum_ft_re_im_uses_unshifted_fourier_phase() -> None:
     lam = np.array([0.0, 1.0, 2.0])
     re = np.array([1.0, 2.0, 3.0])
     im = np.array([0.2, 0.3, 0.4])
     x_grid = np.array([0.0, 0.5, 1.0])
-    phase_shift = 0.5
     pref = (lam[1] - lam[0]) / (2 * np.pi)
-    phase = np.multiply.outer(lam, x_grid - phase_shift)
+    phase = np.multiply.outer(lam, x_grid)
 
-    got_re, got_im = sum_ft_re_im(lam, re, im, x_grid, phase_shift=phase_shift)
+    got_re, got_im = sum_ft_re_im(lam, re, im, x_grid)
 
     expected_re = pref * np.sum(np.cos(phase) * re[:, None], axis=0) - pref * np.sum(
         np.sin(phase) * im[:, None], axis=0
@@ -100,7 +99,7 @@ def test_sum_ft_re_im_applies_phase_shift() -> None:
         ("lattice", 2.0, 0.1, 0.2 * fourier_functions.FM_TO_GEV_INV),
     ],
 )
-def test_da_rotates_matrix_element_before_range_selection(
+def test_da_symmetry_projection_runs_before_range_selection(
     monkeypatch, coord_unit: str, momentum_gev: float, lattice_spacing_fm: float | None, scale: float
 ) -> None:
     coord = np.array([0.0, 1.0, 2.0])
@@ -118,10 +117,10 @@ def test_da_rotates_matrix_element_before_range_selection(
 
     def capture_scan(**kwargs):
         captured["values"] = kwargs["re_samples"] + 1j * kwargs["im_samples"]
-        raise RuntimeError("captured rotated matrix element")
+        raise RuntimeError("captured projected matrix element")
 
     monkeypatch.setattr(fourier_functions, "_auto_scheme_scan", capture_scan)
-    with pytest.raises(RuntimeError, match="captured rotated matrix element"):
+    with pytest.raises(RuntimeError, match="captured projected matrix element"):
         run_fourier_transform(
             store,
             y_grid=[0.0],
@@ -132,7 +131,46 @@ def test_da_rotates_matrix_element_before_range_selection(
             lattice_spacing_fm=lattice_spacing_fm,
         )
 
-    assert np.allclose(captured["values"], values * np.exp(0.5j * coord * scale)[None, :])
+    phase = np.exp(0.5j * coord * scale)[None, :]
+    expected = np.real(values * phase) * np.conjugate(phase)
+    assert np.allclose(captured["values"], expected)
+    assert np.allclose(np.imag(captured["values"] * phase), 0.0)
+
+
+@pytest.mark.parametrize(("target", "symmetry_guarantee"), [("da", False), ("pdf", True)])
+def test_da_symmetry_projection_is_optional_and_da_only(
+    monkeypatch, target: str, symmetry_guarantee: bool
+) -> None:
+    coord = np.array([0.0, 1.0, 2.0])
+    values = np.array([[1.0 + 0.2j, 0.8 + 0.1j, 0.6 - 0.1j]])
+    store = {
+        "input": EnsembleData(
+            ensemble=None,
+            resample="bootstrap",
+            values=list(values),
+            dims=("z",),
+            coords={"z": coord.tolist()},
+        )
+    }
+    captured: dict[str, np.ndarray] = {}
+
+    def capture_scan(**kwargs):
+        captured["values"] = kwargs["re_samples"] + 1j * kwargs["im_samples"]
+        raise RuntimeError("captured unchanged matrix element")
+
+    monkeypatch.setattr(fourier_functions, "_auto_scheme_scan", capture_scan)
+    with pytest.raises(RuntimeError, match="captured unchanged matrix element"):
+        run_fourier_transform(
+            store,
+            y_grid=[0.0],
+            target_observable=target,
+            sector="full",
+            coord_unit="lambda",
+            momentum_gev=2.0,
+            symmetry_guarantee=symmetry_guarantee,
+        )
+
+    assert np.allclose(captured["values"], values)
 
 
 def test_sum_ft_re_im_uses_quadrature_weights_for_nonuniform_grid() -> None:
@@ -282,14 +320,13 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         order="LA",
         Lambda0_gev=0.3,
         bz_direction="X",
-        phase_shift=0.5,
         artifacts_dir=str(tmp_path / "artifacts"),
         workers=2,
     )
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
     assert run["workers"] == 2
-    assert store["fourier_result"]["phase_shift"] == 0.5
+    assert store["fourier_result"]["symmetry_guarantee"] is False
     assert store["fourier_result"]["Lambda0_gev"] == pytest.approx(0.3)
     assert run["Lambda0_gev"] == pytest.approx(0.3)
     assert Path(run["artifact"]).is_file()
@@ -300,7 +337,8 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert ft_data.dims == ["x"]
     assert ft_data.resample == "bootstrap"
     assert ft_data.attrs["workers"] == "2"
-    assert ft_data.attrs["phase_shift"] == "0.5"
+    assert ft_data.attrs["symmetry_guarantee"] == "False"
+    assert "phase_shift" not in ft_data.attrs
     assert ft_data.attrs["Lambda0_gev"] == "0.3"
     assert ft_data.attrs["bz_direction"] == "X"
     assert ft_data.values.shape == (3, 3)
@@ -909,11 +947,23 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     store = {}
     load_renormalized_matrix_element_samples(store, path=str(data_path))
     original_values = np.asarray(store["matrix_element_data"].values).copy()
+    plotted_samples: dict[str, np.ndarray] = {}
+    original_extension_plot = fourier_functions.plot_fourier_extension_quality
+
+    def capture_extension_plot(coord_values, sample_values, result, **kwargs):
+        plotted_samples[str(kwargs["component"])] = np.asarray(sample_values).copy()
+        return original_extension_plot(coord_values, sample_values, result, **kwargs)
+
+    monkeypatch.setattr(
+        fourier_functions,
+        "plot_fourier_extension_quality",
+        capture_extension_plot,
+    )
 
     run = run_fourier_transform(
         store,
         y_grid=[0.0],
-        scheme_scan={"zmin_values": [1.0], "zmax_values": [10.0], "z_ext_max": 11.0},
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [10.0], "z_ext_max": 13.0},
         method="GI",
         order="NLA",
         observable="meson_quasi_da",
@@ -923,8 +973,18 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
         psi2_flavor_class="light",
     )
 
-    rotated_input = np.asarray(store["matrix_element_data"].values)
-    assert np.allclose(rotated_input, original_values * np.exp(0.5j * coord)[None, :])
+    projected_input = np.asarray(store["matrix_element_data"].values)
+    phase = np.exp(0.5j * coord)[None, :]
+    expected = np.real(original_values * phase) * np.conjugate(phase)
+    assert np.allclose(projected_input, expected)
+    assert np.allclose(np.imag(projected_input * phase), 0.0)
+    assert np.allclose(plotted_samples["re"], np.real(expected))
+    assert np.allclose(plotted_samples["im"], np.imag(expected))
+    assert Path(run["plot_re"]).is_file()
+    assert Path(run["plot_im"]).is_file()
+    scheme_result = store["fourier_result"]["scheme_results"][0]
+    assert float(np.max(scheme_result["lambda_ext"])) == pytest.approx(13.0)
+    assert scheme_result["extended_re_samples"].shape[1] > original_values.shape[1]
 
     fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
     labels = json.loads(fit_info.attrs["fit_param_labels"])
@@ -937,8 +997,18 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     result_data = EnsembleData.from_netcdf(run["artifact"])
     assert result_data.attrs["psi1_flavor_class"] == "light"
     assert result_data.attrs["psi2_flavor_class"] == "light"
+    assert result_data.attrs["symmetry_guarantee"] == "True"
     assert fit_info.attrs["psi1_flavor_class"] == "light"
     assert fit_info.attrs["psi2_flavor_class"] == "light"
+    assert fit_info.attrs["symmetry_guarantee"] == "True"
+    assert run["symmetry_guarantee"] is True
+    report = report_fourier_result(store, save_path=str(tmp_path / "da_report.md"))
+    report_text = Path(report["report"]).read_text(encoding="utf-8")
+    assert "### Scope and Equivalence" in report_text
+    assert "`symmetry_guarantee=true`" in report_text
+    assert "discards $\\operatorname{Im}h_{+}$" in report_text
+    assert "e^{-izP_z/2}" in report_text
+    assert "phase_shift" not in report_text
 
 
 def test_fourier_meson_da_flavor_classes_control_fit_labels() -> None:

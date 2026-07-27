@@ -253,7 +253,7 @@
         // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class
         // "psi2_flavor_class": "heavy",
         // "im_flip_for_ft": false, // manual imaginary-part sign override
-        // "phase_shift": 0.0,       // optional Fourier phase shift
+        // "symmetry_guarantee": true, // DA only: project exp(+i*z*Pz/2)h to real, then rotate back
         // "output_scale": 1.0,      // optional final multiplicative scale
         // "plot_fourier": { "save_path": "custom_xdep.pdf" },
         // "plot_extension": { "save_path": "custom_extension_re.pdf", "scheme_index": 0 },

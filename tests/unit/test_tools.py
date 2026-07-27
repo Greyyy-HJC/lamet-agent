@@ -941,6 +941,7 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
             **job.params,
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "heavy",
+            "symmetry_guarantee": False,
         },
     )
     args = prepare_tool_args(
@@ -954,6 +955,8 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     assert args["bz_direction"] == source.attrs["bz_direction"]
     assert args["psi1_flavor_class"] == "light"
     assert args["psi2_flavor_class"] == "heavy"
+    assert args["symmetry_guarantee"] is False
+    assert "phase_shift" not in args
     assert args["workers"] == manifest.metadata.workers
     assert args["save_path"] == str(tmp_path / job.id)
 
@@ -976,6 +979,16 @@ def test_prepare_fourier_args_passes_lambda0_gev(tmp_path: Path) -> None:
 
     assert args["Lambda0_gev"] == 0.37
     assert "Lambda0" not in args
+
+
+def test_fourier_symmetry_guarantee_requires_boolean() -> None:
+    manifest = _manifest()
+    job = manifest.stages["fourier_transform"].jobs[0]
+    manifest.stages["fourier_transform"].defaults["symmetry_guarantee"] = "true"
+
+    assert validate_stage_inputs("fourier_transform", manifest, job) == [
+        "Fourier symmetry_guarantee must be a boolean."
+    ]
 
 
 def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:

@@ -138,7 +138,7 @@ STAGE_PARAM_CONTRACTS = {
             "order": None,
             "output_scale": None,
             "part": None,
-            "phase_shift": None,
+            "symmetry_guarantee": None,
             "plot_extension": {
                 "save_path": None,
                 "scheme_index": None,
