@@ -177,6 +177,7 @@ Here $h^{\rm tar}_s(z)$ is the bare target matrix element, $h^{\rm den}_s(z)$ is
 def build_renorm_stage_report_markdown(
     *,
     jobs: list[dict[str, Any]],
+    systematics_jobs: list[dict[str, Any]] | None = None,
     base_dir: Path,
 ) -> str:
     """Build one English Markdown report for all renormalization jobs."""
@@ -210,7 +211,7 @@ def build_renorm_stage_report_markdown(
         "|---|---|---:|---|---|",
     ]
     markdown_jobs = []
-    for item in jobs:
+    for item in jobs + list(systematics_jobs or []):
         result = item.get("result", {})
         raw_artifacts = item.get("artifacts", {})
         artifacts = markdown_artifact_paths(
@@ -222,7 +223,8 @@ def build_renorm_stage_report_markdown(
                 if key in RENORM_ARTIFACT_ORDER or key.startswith("diag_") or key.startswith("matrix_overlay_")
             ),
         )
-        markdown_jobs.append((item, result, artifacts))
+        if item in jobs:
+            markdown_jobs.append((item, result, artifacts))
         if result.get("scheme") == "hybrid_self_renormalization":
             key = result.get("kernel_id")
         elif result.get("scheme") == "ratio":
@@ -293,12 +295,23 @@ def build_renorm_stage_report_markdown(
                 if artifacts.get(pdf_key):
                     lines.append(f"[PDF]({artifacts[pdf_key]})")
         lines.extend(["", "### Output Artifacts", *_outputs_table(artifacts)])
+        for systematics in item.get("systematics", []):
+            systematics_artifacts = markdown_artifact_paths(
+                systematics.get("artifacts", {}),
+                base_dir=base_dir,
+                path_keys=tuple(systematics.get("artifacts", {})),
+            )
+            lines.append(f"| `{systematics['job_id']}` | Systematics variation artifacts |")
+            for value in systematics_artifacts.values():
+                if value:
+                    lines.append(f"| `{value}` | `{systematics['job_id']}` output |")
     return "\n".join(lines) + "\n"
 
 
 def write_renorm_stage_report(
     *,
     jobs: list[dict[str, Any]],
+    systematics_jobs: list[dict[str, Any]] | None = None,
     path: str | Path,
     report_language: str = "en",
     backend: str = "",
@@ -311,7 +324,7 @@ def write_renorm_stage_report(
     output = Path(path)
     target, language = resolve_report_target(output, report_language)
     target.parent.mkdir(parents=True, exist_ok=True)
-    markdown = build_renorm_stage_report_markdown(jobs=jobs, base_dir=output.parent)
+    markdown = build_renorm_stage_report_markdown(jobs=jobs, systematics_jobs=systematics_jobs, base_dir=output.parent)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(markdown, encoding="utf-8")
     if language == "ch":

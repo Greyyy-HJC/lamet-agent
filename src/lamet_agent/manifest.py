@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
+import gvar as gv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from lamet_agent.manifest_params import merge_stage_params, validate_stage_parameter_mapping
@@ -633,5 +634,227 @@ def validate_manifest_file(path: Path) -> AnalysisManifest:
         artifact.path = _resolve_from_root(manifest.root_directory, artifact.path)
     for kernel in manifest.inputs.kernels:
         kernel.kernel_path = _resolve_from_root(manifest.root_directory, kernel.kernel_path)
+    renorm = manifest.stages.get("renormalization")
+    fourier = manifest.stages.get("fourier_transform")
+    matching = manifest.stages.get("perturbative_matching")
+    extrapolation = manifest.stages.get("extrapolation")
+    systematics_requested = (
+        renorm is not None
+        and fourier is not None
+        and matching is not None
+        and extrapolation is not None
+        and (
+            isinstance(renorm.defaults.get("zs_fm"), str)
+            or any(isinstance(job.params.get("zs_fm"), str) for job in renorm.jobs)
+            or "zmin_shift" in fourier.defaults
+            or any("zmin_shift" in job.params for job in fourier.jobs)
+            or "r" in matching.defaults
+            or any("r" in job.params for job in matching.jobs)
+            or any(key in extrapolation.defaults for key in ("allow_order_a_sym", "allow_order_1overp_sym", "allow_order_ap_sym"))
+            or any(
+                key in job.params
+                for job in extrapolation.jobs
+                for key in ("allow_order_a_sym", "allow_order_1overp_sym", "allow_order_ap_sym")
+            )
+        )
+    )
+    if systematics_requested:
+        renorm_defaults = dict(renorm.defaults)
+        fourier_defaults = dict(fourier.defaults)
+        matching_defaults = dict(matching.defaults)
+        extrapolation_defaults = dict(extrapolation.defaults)
+        renorm_default_raw_zs = renorm_defaults.get("zs_fm")
+        if "zs_fm" in renorm_defaults and isinstance(renorm_defaults["zs_fm"], str):
+            zs = gv.gvar(str(renorm_defaults["zs_fm"]))
+            renorm_defaults["zs_fm"] = float(gv.mean(zs))
+        if "zs_fm" in matching_defaults and isinstance(matching_defaults["zs_fm"], str):
+            zs = gv.gvar(str(matching_defaults["zs_fm"]))
+            matching_defaults["zs_fm"] = float(gv.mean(zs))
+        elif "zs_fm" in renorm_defaults and "zs_fm" not in matching_defaults:
+            matching_defaults["zs_fm"] = renorm_defaults["zs_fm"]
+        fourier_shift_default = int(fourier_defaults.get("zmin_shift", 0) or 0)
+        matching_r_default = float(matching_defaults.get("r", 1.0) or 1.0)
+        a_sym_default = list(extrapolation_defaults.get("allow_order_a_sym", []) or [])
+        p_sym_default = list(extrapolation_defaults.get("allow_order_1overp_sym", []) or [])
+        ap_sym_default = list(extrapolation_defaults.get("allow_order_ap_sym", []) or [])
+        renorm.defaults = {key: value for key, value in renorm_defaults.items()}
+        fourier.defaults = {key: value for key, value in fourier_defaults.items() if key != "zmin_shift"}
+        matching.defaults = {key: value for key, value in matching_defaults.items() if key != "r"}
+        extrapolation.defaults = {
+            key: value
+            for key, value in extrapolation_defaults.items()
+            if key not in {"allow_order_a_sym", "allow_order_1overp_sym", "allow_order_ap_sym"}
+        }
+        renorm_jobs: list[StageJob] = []
+        renorm_zs_variant_ids: dict[str, dict[str, str]] = {}
+        renorm_variant_zs: dict[str, float] = {}
+        for job in renorm.jobs:
+            main = job.model_copy(deep=True)
+            raw_zs = main.params.get("zs_fm", renorm_default_raw_zs)
+            zs_mean = raw_zs
+            zs_sdev = 0.0
+            if isinstance(raw_zs, str):
+                zs = gv.gvar(raw_zs)
+                zs_mean = float(gv.mean(zs))
+                zs_sdev = float(gv.sdev(zs))
+            elif raw_zs is not None:
+                zs_mean = float(raw_zs)
+            if zs_mean is not None:
+                main.params["zs_fm"] = float(zs_mean)
+            renorm_jobs.append(main)
+            if zs_sdev > 0.0:
+                low = main.model_copy(deep=True)
+                low.id = f"{main.id}_zs_low"
+                low.params["zs_fm"] = float(zs_mean - zs_sdev)
+                high = main.model_copy(deep=True)
+                high.id = f"{main.id}_zs_high"
+                high.params["zs_fm"] = float(zs_mean + zs_sdev)
+                renorm_jobs.extend([low, high])
+                renorm_zs_variant_ids[main.id] = {"low": low.id, "high": high.id}
+                renorm_variant_zs[low.id] = float(zs_mean - zs_sdev)
+                renorm_variant_zs[high.id] = float(zs_mean + zs_sdev)
+        renorm.jobs = renorm_jobs
+        fourier_jobs: list[StageJob] = []
+        fourier_variant_ids: dict[str, dict[str, str]] = {}
+        fourier_variant_zs: dict[str, float] = {}
+        for job in fourier.jobs:
+            main = job.model_copy(deep=True)
+            raw_shift = int(main.params.get("zmin_shift", fourier_shift_default) or 0)
+            main.params.pop("zmin_shift", None)
+            fourier_jobs.append(main)
+            input_ref = str(main.inputs.get("input", ""))
+            variants: dict[str, str] = {}
+            if input_ref in renorm_zs_variant_ids:
+                for tag in ("low", "high"):
+                    clone = main.model_copy(deep=True)
+                    clone.id = f"{main.id}_zs_{tag}"
+                    clone.inputs["input"] = renorm_zs_variant_ids[input_ref][tag]
+                    fourier_jobs.append(clone)
+                    variants[f"zs_{tag}"] = clone.id
+                    fourier_variant_zs[clone.id] = renorm_variant_zs[clone.inputs["input"]]
+            if raw_shift:
+                for tag, shift in (("low", -abs(raw_shift)), ("high", abs(raw_shift))):
+                    clone = main.model_copy(deep=True)
+                    clone.id = f"{main.id}_lambda_{tag}"
+                    clone.params["zmin_shift"] = int(shift)
+                    fourier_jobs.append(clone)
+                    variants[f"lambda_{tag}"] = clone.id
+            fourier_variant_ids[main.id] = variants
+        fourier.jobs = fourier_jobs
+        matching_jobs: list[StageJob] = []
+        matching_variant_ids: dict[str, dict[str, str]] = {}
+        for job in matching.jobs:
+            main = job.model_copy(deep=True)
+            raw_r = float(main.params.get("r", matching_r_default) or 1.0)
+            main.params.pop("r", None)
+            matching_jobs.append(main)
+            quasi_ref = str(main.inputs.get("quasi", ""))
+            variants: dict[str, str] = {}
+            parent_ft = quasi_ref
+            if parent_ft in fourier_variant_ids:
+                for key, suffix in (("zs_low", "zs_low"), ("zs_high", "zs_high"), ("lambda_low", "lambda_low"), ("lambda_high", "lambda_high")):
+                    if key in fourier_variant_ids[parent_ft]:
+                        clone = main.model_copy(deep=True)
+                        clone.id = f"{main.id}_{suffix}"
+                        clone.inputs["quasi"] = fourier_variant_ids[parent_ft][key]
+                        if key.startswith("zs_"):
+                            clone.params["zs_fm"] = fourier_variant_zs[clone.inputs["quasi"]]
+                        matching_jobs.append(clone)
+                        variants[key] = clone.id
+            if raw_r != 1.0:
+                mu = float(main.params.get("mu", matching.defaults.get("mu", 2.0)))
+                low = main.model_copy(deep=True)
+                low.id = f"{main.id}_mu_low"
+                low.params["mu"] = mu / raw_r
+                high = main.model_copy(deep=True)
+                high.id = f"{main.id}_mu_high"
+                high.params["mu"] = mu * raw_r
+                matching_jobs.extend([low, high])
+                variants["mu_low"] = low.id
+                variants["mu_high"] = high.id
+            matching_variant_ids[main.id] = variants
+        matching.jobs = matching_jobs
+        extrapolation_jobs: list[StageJob] = []
+        original_jobs = list(extrapolation.jobs)
+        for job in original_jobs:
+            main = job.model_copy(deep=True)
+            main.params.pop("allow_order_a_sym", None)
+            main.params.pop("allow_order_1overp_sym", None)
+            main.params.pop("allow_order_ap_sym", None)
+            extrapolation_jobs.append(main)
+            refs = [str(ref) for ref in list(main.inputs.get("lightcone", []))]
+            zs_low = [matching_variant_ids.get(ref, {}).get("zs_low") for ref in refs]
+            zs_high = [matching_variant_ids.get(ref, {}).get("zs_high") for ref in refs]
+            lambda_low = [matching_variant_ids.get(ref, {}).get("lambda_low") for ref in refs]
+            lambda_high = [matching_variant_ids.get(ref, {}).get("lambda_high") for ref in refs]
+            mu_low = [matching_variant_ids.get(ref, {}).get("mu_low") for ref in refs]
+            mu_high = [matching_variant_ids.get(ref, {}).get("mu_high") for ref in refs]
+            budget_inputs: dict[str, Any] = {"main": main.id}
+            if all(zs_low):
+                clone = main.model_copy(deep=True)
+                clone.id = f"{main.id}_zs_low" if main.id != "ex_main" else "ex_zs_low"
+                clone.inputs["lightcone"] = list(zs_low)
+                extrapolation_jobs.append(clone)
+                budget_inputs["zs"] = [clone.id]
+            if all(zs_high):
+                clone = main.model_copy(deep=True)
+                clone.id = f"{main.id}_zs_high" if main.id != "ex_main" else "ex_zs_high"
+                clone.inputs["lightcone"] = list(zs_high)
+                extrapolation_jobs.append(clone)
+                budget_inputs.setdefault("zs", []).append(clone.id)
+            if all(lambda_low):
+                clone = main.model_copy(deep=True)
+                clone.id = f"{main.id}_lambda_low" if main.id != "ex_main" else "ex_lambda_low"
+                clone.inputs["lightcone"] = list(lambda_low)
+                extrapolation_jobs.append(clone)
+                budget_inputs["lambda_extrapolation"] = [clone.id]
+            if all(lambda_high):
+                clone = main.model_copy(deep=True)
+                clone.id = f"{main.id}_lambda_high" if main.id != "ex_main" else "ex_lambda_high"
+                clone.inputs["lightcone"] = list(lambda_high)
+                extrapolation_jobs.append(clone)
+                budget_inputs.setdefault("lambda_extrapolation", []).append(clone.id)
+            if all(mu_low):
+                clone = main.model_copy(deep=True)
+                clone.id = f"{main.id}_mu_low" if main.id != "ex_main" else "ex_mu_low"
+                clone.inputs["lightcone"] = list(mu_low)
+                extrapolation_jobs.append(clone)
+                budget_inputs["lamet_scale"] = [clone.id]
+            if all(mu_high):
+                clone = main.model_copy(deep=True)
+                clone.id = f"{main.id}_mu_high" if main.id != "ex_main" else "ex_mu_high"
+                clone.inputs["lightcone"] = list(mu_high)
+                extrapolation_jobs.append(clone)
+                budget_inputs.setdefault("lamet_scale", []).append(clone.id)
+            other_ids: list[str] = []
+            a_sym = list(job.params.get("allow_order_a_sym", a_sym_default) or [])
+            p_sym = list(job.params.get("allow_order_1overp_sym", p_sym_default) or [])
+            ap_sym = list(job.params.get("allow_order_ap_sym", ap_sym_default) or [])
+            if a_sym:
+                clone = main.model_copy(deep=True)
+                clone.id = f"{main.id}_a_sym"
+                clone.params["allow_order_a"] = a_sym
+                extrapolation_jobs.append(clone)
+                other_ids.append(clone.id)
+            if p_sym:
+                clone = main.model_copy(deep=True)
+                clone.id = f"{main.id}_p_sym" if main.id != "ex_main" else "ex_other"
+                clone.params["allow_order_1overp"] = p_sym
+                extrapolation_jobs.append(clone)
+                other_ids.append(clone.id)
+            if ap_sym:
+                clone = main.model_copy(deep=True)
+                clone.id = f"{main.id}_ap_sym"
+                clone.params["allow_order_ap"] = ap_sym
+                extrapolation_jobs.append(clone)
+                other_ids.append(clone.id)
+            if any(key in budget_inputs for key in ("zs", "lambda_extrapolation", "lamet_scale")) or other_ids:
+                budget = StageJob(
+                    id="ex_budget" if main.id == "ex_main" else f"{main.id}_budget",
+                    inputs={**budget_inputs, **({"other_extrapolations": other_ids} if other_ids else {})},
+                    params={"operation": "systematics_budget"},
+                )
+                extrapolation_jobs.append(budget)
+        extrapolation.jobs = extrapolation_jobs
     resolve_manifest_artifact_metadata(manifest)
     return manifest

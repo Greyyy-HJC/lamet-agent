@@ -9,6 +9,7 @@ import pytest
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.tools import resolve_stage_tools
 from lamet_agent.core.plotting import _band_segment, plot_fourier_artifact, plot_fourier_extension_quality
+from lamet_agent.stages.fourier import functions as fourier_functions
 from lamet_agent.stages.fourier.functions import (
     _asymptotic_values,
     _param_labels,
@@ -88,6 +89,50 @@ def test_sum_ft_re_im_applies_phase_shift() -> None:
     )
     assert np.allclose(got_re, expected_re)
     assert np.allclose(got_im, expected_im)
+
+
+@pytest.mark.parametrize(
+    ("coord_unit", "momentum_gev", "lattice_spacing_fm", "scale"),
+    [
+        ("lambda", 2.0, None, 1.0),
+        ("gev_inv", 2.0, None, 2.0),
+        ("fm", 2.0, None, 2.0 * fourier_functions.FM_TO_GEV_INV),
+        ("lattice", 2.0, 0.1, 0.2 * fourier_functions.FM_TO_GEV_INV),
+    ],
+)
+def test_da_rotates_matrix_element_before_range_selection(
+    monkeypatch, coord_unit: str, momentum_gev: float, lattice_spacing_fm: float | None, scale: float
+) -> None:
+    coord = np.array([0.0, 1.0, 2.0])
+    values = np.array([[1.0 + 0.2j, 0.8 + 0.1j, 0.6 - 0.1j], [1.1 + 0.1j, 0.7 + 0.2j, 0.5 - 0.2j]])
+    store = {
+        "input": EnsembleData(
+            ensemble=None,
+            resample="bootstrap",
+            values=list(values),
+            dims=("z",),
+            coords={"z": coord.tolist()},
+        )
+    }
+    captured: dict[str, np.ndarray] = {}
+
+    def capture_scan(**kwargs):
+        captured["values"] = kwargs["re_samples"] + 1j * kwargs["im_samples"]
+        raise RuntimeError("captured rotated matrix element")
+
+    monkeypatch.setattr(fourier_functions, "_auto_scheme_scan", capture_scan)
+    with pytest.raises(RuntimeError, match="captured rotated matrix element"):
+        run_fourier_transform(
+            store,
+            y_grid=[0.0],
+            target_observable="da",
+            sector="full",
+            coord_unit=coord_unit,
+            momentum_gev=momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
+        )
+
+    assert np.allclose(captured["values"], values * np.exp(0.5j * coord * scale)[None, :])
 
 
 def test_sum_ft_re_im_uses_quadrature_weights_for_nonuniform_grid() -> None:
@@ -334,7 +379,6 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "fourier_result.nc" in report_cn_text
     assert "fourier_fit_info.nc" in report_cn_text
     assert "fourier_xdep.svg" in report_cn_text
-
     data = store["fourier_result"]
     fig, ax = plot_fourier_extension_quality(
         store["matrix_element"]["coord"],
@@ -346,6 +390,30 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "Extension Endpoint" not in labels
     assert r"\mathrm{Re}\,\tilde{h}^R" in ax.get_ylabel()
     fig.clf()
+
+
+def test_fourier_shift_relabels_range_and_inherits_zs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    data_path = tmp_path / "matrix_element.npz"
+    _write_npz(data_path)
+    store = {}
+    load_renormalized_matrix_element_samples(store, path=str(data_path))
+    store["matrix_element_data"].array.attrs["zs_fm"] = "0.2"
+
+    run = run_fourier_transform(
+        store,
+        y_grid=[-0.5, 0.0, 0.5],
+        scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
+        zmin_shift=1,
+        method="GI",
+        order="LA",
+        coord_unit="lambda",
+        artifacts_dir=str(tmp_path / "artifacts"),
+    )
+
+    data = EnsembleData.from_netcdf(run["artifact"])
+    assert data.attrs["selected_range_label"] == "zmin_2_zmax_4"
+    assert data.attrs["zs_fm"] == "0.2"
 
 
 def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> None:
@@ -840,6 +908,7 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     )
     store = {}
     load_renormalized_matrix_element_samples(store, path=str(data_path))
+    original_values = np.asarray(store["matrix_element_data"].values).copy()
 
     run = run_fourier_transform(
         store,
@@ -849,9 +918,13 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
         order="NLA",
         observable="meson_quasi_da",
         target_observable="da",
+        coord_unit="lambda",
         psi1_flavor_class="light",
         psi2_flavor_class="light",
     )
+
+    rotated_input = np.asarray(store["matrix_element_data"].values)
+    assert np.allclose(rotated_input, original_values * np.exp(0.5j * coord)[None, :])
 
     fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
     labels = json.loads(fit_info.attrs["fit_param_labels"])

@@ -195,6 +195,32 @@ def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_p
     assert "Fourier overlay for ensemble HISQa060_X" in output
 
 
+def test_da_fourier_stage_report_documents_input_phase_rotation(tmp_path: Path) -> None:
+    path = tmp_path / "ft_report.md"
+    write_fourier_stage_report(
+        jobs=[
+            {
+                "job_id": "ft_da",
+                "result": {
+                    "target_observable": "da",
+                    "observable": "meson_quasi_da",
+                    "momentum_gev": 2.0,
+                    "method": "GI",
+                    "order": "NLA",
+                    "part": "both",
+                },
+                "artifacts": {},
+            }
+        ],
+        path=path,
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert "before range selection and large-distance fitting" in text
+    assert "e^{+izP_z/2}" in text
+    assert "lambda=zP_z" in text
+
+
 def test_matching_stage_report_lists_overlay_last_with_ensemble_description(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(matching_reporting, "_llm_kernel_formula", lambda *args, **kwargs: ("formula", False))
     monkeypatch.setattr(matching_reporting, "translate_markdown_report", lambda markdown, **kwargs: markdown)

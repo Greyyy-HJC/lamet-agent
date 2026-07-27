@@ -840,7 +840,6 @@ def plot_fourier_artifact(
                     "fit_model_labels",
                     "fit_model_mean_weights",
                     "fit_model_chi2_dof",
-                    "selected_range_label",
                 }
             }
         else:

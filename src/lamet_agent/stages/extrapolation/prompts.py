@@ -1,6 +1,7 @@
 """Prompt text for extrapolation stage."""
 
 STAGE_PROMPT = (
-    "Run the extrapolation stage by calling run_extrapolation once. "
-    "The runner binds the perturbative-matching inputs from the lightcone role."
+    "For ordinary extrapolation jobs call run_extrapolation once. "
+    "For jobs with operation=systematics_budget call run_systematics_budget once. "
+    "The runner binds perturbative-matching inputs from the lightcone role."
 )

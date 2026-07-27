@@ -1762,6 +1762,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
         "part": str(result.get("part", "both")),
         "im_flip_for_ft": str(result.get("im_flip_for_ft", "")),
         "phase_shift": str(result.get("phase_shift", 0.0)),
+        "da_phase_rotation": str(result.get("da_phase_rotation", False)),
         "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
         "resample_mode": str(result.get("resample_mode", "")),
         "sample_error_mode": str(result.get("sample_error_mode", "")),
@@ -1776,10 +1777,14 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
         "momentum_gev",
         "final_momentum_gev",
         "lattice_spacing_fm",
+        "zs_fm",
     ):
         value = result.get(key)
         if value is not None:
             attrs[key] = str(value)
+    for key in ("selected_range_label", "selected_candidate_label"):
+        if key in result:
+            attrs[key] = str(result[key])
     for key in (
         "ft_re_mean",
         "ft_im_mean",
@@ -1799,14 +1804,12 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
         "fit_model_chi2_dof",
         "fit_model_logGBF",
         "best_fit_model_index_by_sample",
-        "selected_range_label",
         "selected_fit_range",
         "candidate_scheme_labels",
         "candidate_scheme_fit_chi2_dof",
         "candidate_scheme_q",
         "candidate_scheme_logGBF",
         "selected_candidate_index",
-        "selected_candidate_label",
         "selection_mode",
         "short_distance_policy",
         "input_coord_start",
@@ -2639,6 +2642,7 @@ def run_fourier_transform(
     *,
     y_grid: list[float] | dict[str, Any],
     scheme_scan: dict[str, Any] | None = None,
+    zmin_shift: int = 0,
     method: str = "GI",
     order: str | list[str] = "NLA",
     observable: str = "nucleon_quark_transversity_quasi_pdf",
@@ -2650,6 +2654,7 @@ def run_fourier_transform(
     final_momentum_gev: float | None = None,
     ensemble: str | None = None,
     lattice_spacing_fm: float | None = None,
+    zs_fm: float | None = None,
     im_flip_for_ft: bool = False,
     phase_shift: float = 0.0,
     Lambda0_gev: float = 0.0,
@@ -2703,11 +2708,30 @@ def run_fourier_transform(
     if matrix_element_data is None:
         matrix_element_data = store["input"]
         store["matrix_element_data"] = matrix_element_data
+    if zs_fm is None:
+        upstream_zs = getattr(matrix_element_data, "attrs", {}).get("zs_fm")
+        if upstream_zs not in {None, ""}:
+            zs_fm = float(upstream_zs)
     resample_mode = _normalise_resample_mode(getattr(matrix_element_data, "resample", "bootstrap"))
     sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
     matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
-    auto_scheme_scan = None
     coord_arr = np.asarray(matrix_element["coord"], dtype=float)
+    if target == "da":
+        _fit_scale, ft_scale = _coord_scale(
+            coord_unit,
+            momentum_gev=momentum_gev,
+            final_momentum_gev=final_momentum_gev,
+            lattice_spacing_fm=lattice_spacing_fm,
+        )
+        rotated = (
+            np.asarray(matrix_element["re_samples"], dtype=float)
+            + 1j * np.asarray(matrix_element["im_samples"], dtype=float)
+        ) * np.exp(0.5j * coord_arr * ft_scale)[None, :]
+        matrix_element["re_samples"] = np.real(rotated)
+        matrix_element["im_samples"] = np.imag(rotated)
+        matrix_element_data.array.values = rotated
+        matrix_element_data.array.attrs["da_phase_rotation"] = "True"
+    auto_scheme_scan = None
     range_order = str(order[0] if isinstance(order, list) else order).upper()
     range_prior_width = float(
         posterior_prior_error_scale[0] if isinstance(posterior_prior_error_scale, list) else posterior_prior_error_scale
@@ -2810,6 +2834,12 @@ def run_fourier_transform(
             key=lambda idx: candidate_qualities[idx]["q_value"] if candidate_qualities[idx]["tail_fit_success"] else float("-inf"),
         )
     selected_range = dict(schemes[best_candidate])
+    if int(zmin_shift):
+        positive_coord = coord_arr[coord_arr > 0]
+        zmin_candidates = positive_coord[positive_coord < float(selected_range["zmax"])]
+        current_index = int(np.argmin(np.abs(zmin_candidates - float(selected_range["zmin"]))))
+        shifted_index = min(max(current_index + int(zmin_shift), 0), len(zmin_candidates) - 1)
+        selected_range["zmin"] = float(zmin_candidates[shifted_index])
     fit_model_specs = []
     for spec in _fit_model_specs(order, posterior_prior_error_scale):
         n_model_params = len(
@@ -2839,7 +2869,7 @@ def run_fourier_transform(
             "candidate_scheme_logGBF": candidate_log_gbf,
             "selected_candidate_index": best_candidate,
             "selected_candidate_label": candidate_labels[best_candidate],
-            "selected_range_label": candidate_labels[best_candidate],
+            "selected_range_label": f"zmin_{float(selected_range['zmin']):g}_zmax_{float(selected_range['zmax']):g}".replace(".", "p"),
             "selected_fit_range": [float(selected_range["zmin"]), float(selected_range["zmax"])],
             "fit_model_labels": [spec["label"] for spec in fit_model_specs],
             "fit_model_orders": [spec["order"] for spec in fit_model_specs],
@@ -2978,8 +3008,10 @@ def run_fourier_transform(
     result["momentum_gev"] = momentum_gev
     result["final_momentum_gev"] = final_momentum_gev
     result["lattice_spacing_fm"] = lattice_spacing_fm
+    result["zs_fm"] = zs_fm
     result["im_flip_for_ft"] = bool(im_flip_for_ft)
     result["phase_shift"] = float(phase_shift)
+    result["da_phase_rotation"] = target == "da"
     result["sector"] = sector
     result["target_observable"] = target
     result["Lambda0_gev"] = float(Lambda0_gev)

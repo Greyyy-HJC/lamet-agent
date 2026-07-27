@@ -15,6 +15,7 @@ from lamet_agent.core.reporting import markdown_artifact_paths, resolve_report_t
 def write_extrapolation_stage_report(
     *,
     jobs: list[dict[str, Any]],
+    systematics_jobs: list[dict[str, Any]] | None = None,
     path: str | Path,
     report_language: str = "en",
     backend: str = "",
@@ -27,7 +28,62 @@ def write_extrapolation_stage_report(
     output = Path(path)
     target, language = resolve_report_target(output, report_language)
     target.parent.mkdir(parents=True, exist_ok=True)
+    systematics_jobs = list(systematics_jobs or [])
+    budget_record = next(
+        (record for record in systematics_jobs if record.get("result", {}).get("operation") == "systematics_budget"),
+        None,
+    )
+    summary_jobs = jobs + [
+        record for record in systematics_jobs if record.get("result", {}).get("operation") != "systematics_budget"
+    ]
     lines = ["# Extrapolation Report", ""]
+    if systematics_jobs:
+        lines.extend(
+            [
+                "## Job Summary",
+                "| job | mode | rn $z_s$ [fm] | ft selected range | mt $\\mu$ [GeV] | extrapolation form | $\\chi^2/\\mathrm{dof}$ | output |",
+                "|---|---|---|---|---|---|---:|---|",
+            ]
+        )
+        for record in summary_jobs:
+            result = record.get("result", {})
+            raw_artifacts = record.get("artifacts", {})
+            artifacts = markdown_artifact_paths(
+                raw_artifacts,
+                base_dir=target.parent,
+                path_keys=("extrapolated_artifact",),
+            )
+            a_orders = result.get("allow_order_a", [2])
+            p_orders = result.get("allow_order_1overp", [2])
+            ap_orders = result.get("allow_order_ap", [])
+            xdep = result.get("fitting_param_xdep", [False, True, False])
+            a_xdep = bool(xdep[0]) if xdep else True
+            p_xdep = bool(xdep[1]) if len(xdep) > 1 else True
+            include_ap = bool(xdep[2]) if len(xdep) > 2 else False
+            a_text = ",".join(str(int(value)) for value in a_orders)
+            p_text = ",".join(str(int(value)) for value in p_orders)
+            ap_text = ",".join(str(int(value)) for value in ap_orders)
+            form_terms = []
+            if a_orders:
+                form_terms.append(rf"\sum_{{i\in\{{{a_text}\}}}} {'c_{a,i}(x)' if a_xdep else 'c_{a,i}'}a^i")
+            if p_orders:
+                form_terms.append(rf"\sum_{{j\in\{{{p_text}\}}}}\frac{{{'c_{p,j}(x)' if p_xdep else 'c_{p,j}'}}}{{p_z^j}}")
+            if include_ap and ap_orders:
+                form_terms.append(rf"\sum_{{k\in\{{{ap_text}\}}}} c_{{ap,k}}(x)a^k p_z^k")
+            zs_values = result.get("zs_fm", [])
+            range_values = result.get("selected_range_label", [])
+            mu_values = result.get("mu", [])
+            zs_text = ", ".join(str(value) for value in zs_values) if isinstance(zs_values, list) else str(zs_values or "n/a")
+            range_text = ", ".join(str(value) for value in range_values) if isinstance(range_values, list) else str(range_values or "n/a")
+            mu_text = ", ".join(str(value) for value in mu_values) if isinstance(mu_values, list) else str(mu_values or "n/a")
+            chi_text = f"{float(result.get('chi2_dof', 0.0)):.3g}"
+            lines.append(
+                f"| `{record.get('job_id')}` | {result.get('mode')} | {zs_text or 'n/a'} | "
+                f"{range_text or 'n/a'} | {mu_text or 'n/a'} | "
+                f"${' + '.join(form_terms)}$ | {chi_text} | "
+                f"{Path(str(artifacts.get('extrapolated_artifact'))).name if artifacts.get('extrapolated_artifact') else 'n/a'} |"
+            )
+        lines.append("")
     for record in jobs:
         result = record.get("result", {})
         raw_artifacts = record.get("artifacts", {})
@@ -96,21 +152,28 @@ def write_extrapolation_stage_report(
                 sdev = 0.0 if samples.size < 2 else float(np.std(samples, ddof=1))
                 cells.append(str(gvar.gvar(float(np.mean(samples)), sdev)))
             fit_rows.append("| " + " | ".join(cells) + " |")
-        lines.extend(
-            [
-                f"## {record.get('job_id')}",
-                "",
-                "This report summarizes the light-cone distributions from perturbative matching and extrapolates their lattice-spacing and momentum dependence.",
-                "",
-                "## Extrapolation Form",
-                "",
-                formula,
-                "",
+        section = [
+            f"## {record.get('job_id')}",
+            "",
+            "This report summarizes the light-cone distributions from perturbative matching and extrapolates their lattice-spacing and momentum dependence.",
+            "",
+            "## Extrapolation Form",
+            "",
+            formula,
+            "",
+        ]
+        if not systematics_jobs:
+            section.extend(
+                [
                 "## Job Summary",
                 "| job | mode | inputs | parameters | $\\chi^2/\\mathrm{dof}$ | output |",
                 "|---|---|---:|---:|---:|---|",
                 f"| `{record.get('job_id')}` | {result.get('mode')} | {result.get('n_inputs')} | {result.get('n_parameters')} | {chi_text} | {Path(str(artifacts.get('extrapolated_artifact'))).name if artifacts.get('extrapolated_artifact') else 'n/a'} |",
                 "",
+                ]
+            )
+        section.extend(
+            [
                 "## Analysis Settings",
                 "| Item | Value or setting | Explanation |",
                 "|---|---|---|",
@@ -127,6 +190,7 @@ def write_extrapolation_stage_report(
                 "",
             ]
         )
+        lines.extend(section)
         if result.get("warning"):
             lines.append("Warning: " + str(result["warning"]))
             lines.append("")
@@ -148,6 +212,30 @@ def write_extrapolation_stage_report(
         if artifacts.get("pdep_plot_image"):
             title = "Momentum Dependence"
             lines.extend([f"## {title}", "", f"![{title}]({artifacts['pdep_plot_image']})", ""])
+    if budget_record:
+        budget_artifacts = markdown_artifact_paths(
+            budget_record.get("artifacts", {}),
+            base_dir=target.parent,
+            path_keys=("budget_artifact", "budget_plot", "budget_plot_image", "final_artifact", "final_plot", "final_plot_image"),
+        )
+        lines.extend(
+            [
+                "## Systematics Analysis",
+                "",
+                "<table><tr>"
+                f"<td width=\"50%\"><img src=\"{budget_artifacts.get('budget_plot_image', '')}\" width=\"100%\"></td>"
+                f"<td width=\"50%\"><img src=\"{budget_artifacts.get('final_plot_image', '')}\" width=\"100%\"></td>"
+                "</tr></table>",
+                "",
+                f"[{Path(str(budget_artifacts.get('budget_artifact'))).name}]({budget_artifacts.get('budget_artifact')})"
+                if budget_artifacts.get("budget_artifact")
+                else "",
+                f"[{Path(str(budget_artifacts.get('final_artifact'))).name}]({budget_artifacts.get('final_artifact')})"
+                if budget_artifacts.get("final_artifact")
+                else "",
+                "",
+            ]
+        )
     markdown = "\n".join(lines)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(markdown, encoding="utf-8")

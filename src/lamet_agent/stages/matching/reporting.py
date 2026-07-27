@@ -930,6 +930,7 @@ def write_matching_report(
 def write_matching_stage_report(
     *,
     jobs: list[dict[str, Any]],
+    systematics_jobs: list[dict[str, Any]] | None = None,
     path: str | Path,
     report_language: str = "en",
     llm: FormulaLlm,
@@ -945,28 +946,47 @@ def write_matching_stage_report(
     _operator, scheme = _parse_kernel_id(kernel_id)
     op_en = _kernel_description(kernel_id, language=language)
     scheme_en = SCHEME_TEXT.get(scheme, scheme or "not recorded")
+    all_jobs = jobs + list(systematics_jobs or [])
+    use_systematics_table = bool(systematics_jobs)
     lines = [
         "# Perturbative Matching Stage Report",
         "",
         f"This report summarizes all perturbative-matching jobs for `{kernel_id}` ({op_en}) using the `{scheme_en}` scheme.",
         "",
         "## Job Summary",
-        "| job | kernel | $P_z$ | output | plot |",
-        "|---|---|---:|---|---|",
+        (
+            "| job | kernel | $P_z$ | $z_s$ [fm] | selected range | $\\mu$ [GeV] | output | plot |"
+            if use_systematics_table
+            else "| job | kernel | $P_z$ | output | plot |"
+        ),
+        (
+            "|---|---|---:|---:|---|---:|---|---|"
+            if use_systematics_table
+            else "|---|---|---:|---|---|"
+        ),
     ]
-    for item in jobs:
+    for item in all_jobs:
         result = item["result"]
         artifacts = markdown_artifact_paths(
             item.get("artifacts", {}),
             base_dir=output.parent,
             path_keys=MATCHING_ARTIFACT_ORDER,
         )
-        lines.append(
-            f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
-            f"{_fmt(result.get('momentum_gev'))} | "
-            f"{artifacts.get('lightcone_artifact', 'n/a')} | "
-            f"{artifacts.get('matched_plot', 'n/a')} |"
-        )
+        if use_systematics_table:
+            lines.append(
+                f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
+                f"{_fmt(result.get('momentum_gev'))} | {_fmt(result.get('zs_fm'))} | "
+                f"{result.get('selected_range_label', 'n/a')} | {_fmt(result.get('mu'))} | "
+                f"{artifacts.get('lightcone_artifact', 'n/a')} | "
+                f"{artifacts.get('matched_plot', 'n/a')} |"
+            )
+        else:
+            lines.append(
+                f"| `{item['job_id']}` | {result.get('kernel_id', 'n/a')} | "
+                f"{_fmt(result.get('momentum_gev'))} | "
+                f"{artifacts.get('lightcone_artifact', 'n/a')} | "
+                f"{artifacts.get('matched_plot', 'n/a')} |"
+            )
     setting_data = {**first, "momentum_gev": "see per-momentum table"}
     lines.extend(
         [

@@ -40,6 +40,8 @@ _FOURIER_RUN_KEYS = frozenset(
     {
         "y_grid",
         "scheme_scan",
+        "zmin_shift",
+        "zs_fm",
         "method",
         "order",
         "observable",
@@ -241,7 +243,7 @@ def required_job_tool_sequence(
 ) -> tuple[str, ...]:
     """Return the successful tool order required before a job may finish."""
     if stage == "extrapolation":
-        return ("run_extrapolation",)
+        return ("run_systematics_budget",) if effective_params.get("operation") == "systematics_budget" else ("run_extrapolation",)
     if stage != "renormalization":
         return ()
 
@@ -847,6 +849,12 @@ def prepare_tool_args(
             resolved["sample_error_mode"] = manifest.metadata.sample_error_mode
         if "workers" not in resolved:
             resolved["workers"] = manifest.metadata.workers
+        resolved["save_path"] = str(artifacts_dir / job.id)
+        resolved["artifacts_dir"] = str(artifacts_dir)
+    if stage == "extrapolation" and tool_name == "run_systematics_budget":
+        for key in ("main", "zs", "lambda_extrapolation", "lamet_scale", "other_extrapolations"):
+            if key in job.inputs:
+                resolved[key] = key
         resolved["save_path"] = str(artifacts_dir / job.id)
         resolved["artifacts_dir"] = str(artifacts_dir)
     if tool_name in _RENORM_ARTIFACT_TOOLS:

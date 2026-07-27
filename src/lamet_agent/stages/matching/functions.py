@@ -621,13 +621,18 @@ def apply_matching(
         x_out = x_out[keep]
         lightcone_samples = lightcone_samples[:, keep]
 
+    attrs = dict(quasi_ed.attrs)
+    for key in ("kernel_id", "mu", "zspz"):
+        value = (store.get("matching_kernel_info") or {}).get(key)
+        if value is not None:
+            attrs[key] = str(value)
     lightcone_ed = EnsembleData(
         ensemble=quasi_ed.ensemble,
         resample=quasi_ed.resample,
         values=[lightcone_samples[idx] for idx in range(lightcone_samples.shape[0])],
         dims=("x",),
         coords={"x": x_out.tolist()},
-        attrs=quasi_ed.attrs,
+        attrs=attrs,
         name="lightcone_pdf",
     )
     store[out] = lightcone_ed

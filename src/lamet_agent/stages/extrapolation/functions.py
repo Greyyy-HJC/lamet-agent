@@ -172,6 +172,7 @@ def run_extrapolation(
     stage_dir = Path(artifacts_dir or ".")
     stem = Path(save_path) if save_path is not None else stage_dir / "extrapolation"
     stem.parent.mkdir(parents=True, exist_ok=True)
+    is_systematics = stem.parent.name == "sym"
 
     if len(ensembles) == 1 and len(momenta_gev) == 1:
         warning = "Input from perturbative_matching cannot have only one ensemble and one momentum."
@@ -529,67 +530,66 @@ def run_extrapolation(
     fig.savefig(svg, bbox_inches="tight")
     plt.close(fig)
 
-    chi2_plot_values = np.where(np.isfinite(fit_chi2_dof), fit_chi2_dof, np.nan)
-    chi2_x_mean = np.nanmean(chi2_plot_values, axis=0)
-    chi2_x_err = np.nanstd(chi2_plot_values, axis=0, ddof=1) if chi2_plot_values.shape[0] > 1 else np.zeros_like(chi2_x_mean)
-    fig, ax = default_plot()
-    ax.axhline(1.0, color="black", linewidth=1.0)
-    ax.errorbar(x, chi2_x_mean, yerr=chi2_x_err, color="0.35", **ERRORBAR_STYLE)
-    ax.set_xlabel(r"$x$", **FONT_SIZE)
-    ax.set_ylabel(r"$\chi^2/\mathrm{dof}$", **FONT_SIZE)
-    fig.tight_layout()
-    chi2_pdf = stem.with_name("chi2_xdep").with_suffix(".pdf")
-    chi2_svg = stem.with_name("chi2_xdep").with_suffix(".svg")
-    fig.savefig(chi2_pdf, bbox_inches="tight", transparent=True)
-    fig.savefig(chi2_svg, bbox_inches="tight")
-    plt.close(fig)
-
-    adep_pdf = adep_svg = pdep_pdf = pdep_svg = None
-    if use_a:
+    chi2_pdf = chi2_svg = adep_pdf = adep_svg = pdep_pdf = pdep_svg = None
+    if not is_systematics:
+        chi2_plot_values = np.where(np.isfinite(fit_chi2_dof), fit_chi2_dof, np.nan)
+        chi2_x_mean = np.nanmean(chi2_plot_values, axis=0)
+        chi2_x_err = np.nanstd(chi2_plot_values, axis=0, ddof=1) if chi2_plot_values.shape[0] > 1 else np.zeros_like(chi2_x_mean)
         fig, ax = default_plot()
-        for index, a in enumerate(sorted({float(data.attrs["lattice_spacing_fm"]) for data in inputs})):
-            row = [1.0, *(a**power for power in a_powers), *(0.0 for _power in p_powers), *(0.0 for _power in ap_powers)]
-            values = np.einsum("p,spx->sx", np.asarray(row, dtype=float), coeff_samples)
-            mean = np.mean(values, axis=0)
-            err = np.std(values, axis=0, ddof=1) if values.shape[0] > 1 else np.zeros_like(mean)
-            color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
-            ax.plot(x, mean, color=color, linewidth=1.0, label=f"a={a:.2f} fm")
-            ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.18, linewidth=0)
-        ax.plot(x, output.mean, color="0.45", linewidth=1.4, label=r"$a\rightarrow0$")
-        ax.fill_between(x, output.mean - output.sdev, output.mean + output.sdev, color="0.75", alpha=0.60, linewidth=0)
+        ax.axhline(1.0, color="black", linewidth=1.0)
+        ax.errorbar(x, chi2_x_mean, yerr=chi2_x_err, color="0.35", **ERRORBAR_STYLE)
         ax.set_xlabel(r"$x$", **FONT_SIZE)
-        ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
-        ax.set_title("Extrapolation, lattice spacing dependence", **FONT_SIZE)
-        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0, frameon=False, fontsize=12)
+        ax.set_ylabel(r"$\chi^2/\mathrm{dof}$", **FONT_SIZE)
         fig.tight_layout()
-        adep_pdf = stem.with_name("extrapolate_adep").with_suffix(".pdf")
-        adep_svg = stem.with_name("extrapolate_adep").with_suffix(".svg")
-        fig.savefig(adep_pdf, bbox_inches="tight", transparent=True)
-        fig.savefig(adep_svg, bbox_inches="tight")
+        chi2_pdf = stem.with_name("chi2_xdep").with_suffix(".pdf")
+        chi2_svg = stem.with_name("chi2_xdep").with_suffix(".svg")
+        fig.savefig(chi2_pdf, bbox_inches="tight", transparent=True)
+        fig.savefig(chi2_svg, bbox_inches="tight")
         plt.close(fig)
-
-    if use_p and pdep_gev:
-        fig, ax = default_plot()
-        for index, p in enumerate([float(value) for value in pdep_gev]):
-            row = [1.0, *(0.0 for _power in a_powers), *(1.0 / p**power for power in p_powers), *(0.0 for _power in ap_powers)]
-            values = np.einsum("p,spx->sx", np.asarray(row, dtype=float), coeff_samples)
-            mean = np.mean(values, axis=0)
-            err = np.std(values, axis=0, ddof=1) if values.shape[0] > 1 else np.zeros_like(mean)
-            color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
-            ax.plot(x, mean, color=color, linewidth=1.0, label=f"p={p:.2f} GeV")
-            ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.18, linewidth=0)
-        ax.plot(x, output.mean, color="0.45", linewidth=1.4, label=r"$p\rightarrow\infty$")
-        ax.fill_between(x, output.mean - output.sdev, output.mean + output.sdev, color="0.75", alpha=0.60, linewidth=0)
-        ax.set_xlabel(r"$x$", **FONT_SIZE)
-        ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
-        ax.set_title("Extrapolation, momentum dependence", **FONT_SIZE)
-        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0, frameon=False, fontsize=12)
-        fig.tight_layout()
-        pdep_pdf = stem.with_name("extrapolate_pdep").with_suffix(".pdf")
-        pdep_svg = stem.with_name("extrapolate_pdep").with_suffix(".svg")
-        fig.savefig(pdep_pdf, bbox_inches="tight", transparent=True)
-        fig.savefig(pdep_svg, bbox_inches="tight")
-        plt.close(fig)
+        if use_a:
+            fig, ax = default_plot()
+            for index, a in enumerate(sorted({float(data.attrs["lattice_spacing_fm"]) for data in inputs})):
+                row = [1.0, *(a**power for power in a_powers), *(0.0 for _power in p_powers), *(0.0 for _power in ap_powers)]
+                values = np.einsum("p,spx->sx", np.asarray(row, dtype=float), coeff_samples)
+                mean = np.mean(values, axis=0)
+                err = np.std(values, axis=0, ddof=1) if values.shape[0] > 1 else np.zeros_like(mean)
+                color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
+                ax.plot(x, mean, color=color, linewidth=1.0, label=f"a={a:.2f} fm")
+                ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.18, linewidth=0)
+            ax.plot(x, output.mean, color="0.45", linewidth=1.4, label=r"$a\rightarrow0$")
+            ax.fill_between(x, output.mean - output.sdev, output.mean + output.sdev, color="0.75", alpha=0.60, linewidth=0)
+            ax.set_xlabel(r"$x$", **FONT_SIZE)
+            ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
+            ax.set_title("Extrapolation, lattice spacing dependence", **FONT_SIZE)
+            ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0, frameon=False, fontsize=12)
+            fig.tight_layout()
+            adep_pdf = stem.with_name("extrapolate_adep").with_suffix(".pdf")
+            adep_svg = stem.with_name("extrapolate_adep").with_suffix(".svg")
+            fig.savefig(adep_pdf, bbox_inches="tight", transparent=True)
+            fig.savefig(adep_svg, bbox_inches="tight")
+            plt.close(fig)
+        if use_p and pdep_gev:
+            fig, ax = default_plot()
+            for index, p in enumerate([float(value) for value in pdep_gev]):
+                row = [1.0, *(0.0 for _power in a_powers), *(1.0 / p**power for power in p_powers), *(0.0 for _power in ap_powers)]
+                values = np.einsum("p,spx->sx", np.asarray(row, dtype=float), coeff_samples)
+                mean = np.mean(values, axis=0)
+                err = np.std(values, axis=0, ddof=1) if values.shape[0] > 1 else np.zeros_like(mean)
+                color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
+                ax.plot(x, mean, color=color, linewidth=1.0, label=f"p={p:.2f} GeV")
+                ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.18, linewidth=0)
+            ax.plot(x, output.mean, color="0.45", linewidth=1.4, label=r"$p\rightarrow\infty$")
+            ax.fill_between(x, output.mean - output.sdev, output.mean + output.sdev, color="0.75", alpha=0.60, linewidth=0)
+            ax.set_xlabel(r"$x$", **FONT_SIZE)
+            ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
+            ax.set_title("Extrapolation, momentum dependence", **FONT_SIZE)
+            ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0, frameon=False, fontsize=12)
+            fig.tight_layout()
+            pdep_pdf = stem.with_name("extrapolate_pdep").with_suffix(".pdf")
+            pdep_svg = stem.with_name("extrapolate_pdep").with_suffix(".svg")
+            fig.savefig(pdep_pdf, bbox_inches="tight", transparent=True)
+            fig.savefig(pdep_svg, bbox_inches="tight")
+            plt.close(fig)
 
     result = {
         "out": out,
@@ -599,8 +599,6 @@ def run_extrapolation(
         "fit_info_artifact": str(fit_info_artifact),
         "plot": str(pdf),
         "plot_image": str(svg),
-        "chi2_xdep_plot": str(chi2_pdf),
-        "chi2_xdep_plot_image": str(chi2_svg),
         "n_inputs": len(inputs),
         "n_points": int(len(x)),
         "n_sample": int(n_sample),
@@ -620,6 +618,8 @@ def run_extrapolation(
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
         "workers": int(workers),
     }
+    if chi2_pdf is not None and chi2_svg is not None:
+        result.update({"chi2_xdep_plot": str(chi2_pdf), "chi2_xdep_plot_image": str(chi2_svg)})
     if adep_pdf is not None and adep_svg is not None:
         result.update({"adep_plot": str(adep_pdf), "adep_plot_image": str(adep_svg)})
     if pdep_pdf is not None and pdep_svg is not None:
@@ -627,6 +627,141 @@ def run_extrapolation(
     return result
 
 
+def run_systematics_budget(
+    store: dict[str, Any],
+    *,
+    main: str = "main",
+    zs: str = "zs",
+    lambda_extrapolation: str = "lambda_extrapolation",
+    lamet_scale: str = "lamet_scale",
+    other_extrapolations: str = "other_extrapolations",
+    save_path: str | None = None,
+    artifacts_dir: str | Path | None = None,
+    out: str = "systematics_budget",
+) -> dict[str, Any]:
+    """Build a Fig.10-style systematic-error budget from extrapolated outputs."""
+    stage_dir = Path(artifacts_dir or ".")
+    stem = Path(save_path) if save_path is not None else stage_dir / "systematics_budget"
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    main_data = store[main]
+    x = np.asarray(main_data.coords["x"], dtype=float)
+    main_mean = np.asarray(main_data.mean, dtype=float)
+    stat_sdev = np.asarray(main_data.sdev, dtype=float)
+    components: dict[str, np.ndarray] = {}
+    for key in (zs, lambda_extrapolation, lamet_scale, other_extrapolations):
+        values = store.get(key, [])
+        variants = values if isinstance(values, list) else ([] if values in {None, ""} else [values])
+        if not variants:
+            components[key] = np.zeros_like(main_mean)
+            continue
+        aligned_values = []
+        for variant in variants:
+            variant_x = np.asarray(variant.coords["x"], dtype=float)
+            variant_mean = np.asarray(variant.mean, dtype=float)
+            aligned_values.append(variant_mean if np.array_equal(variant_x, x) else np.interp(x, variant_x, variant_mean))
+        aligned_stack = np.asarray(aligned_values, dtype=float)
+        if aligned_stack.shape[0] == 1:
+            components[key] = np.abs(aligned_stack[0] - main_mean)
+        else:
+            components[key] = np.max(aligned_stack, axis=0) - np.min(aligned_stack, axis=0)
+    total_sys = np.sqrt(
+        components[zs] ** 2
+        + components[lambda_extrapolation] ** 2
+        + components[lamet_scale] ** 2
+        + components[other_extrapolations] ** 2
+    )
+    total_err = np.sqrt(stat_sdev**2 + total_sys**2)
+
+    payload = {
+        "x": np.asarray(x, dtype=float).tolist(),
+        "stat_sdev": np.asarray(stat_sdev, dtype=float).tolist(),
+        "zs": np.asarray(components[zs], dtype=float).tolist(),
+        "lambda_extrapolation": np.asarray(components[lambda_extrapolation], dtype=float).tolist(),
+        "lamet_scale": np.asarray(components[lamet_scale], dtype=float).tolist(),
+        "other_extrapolations": np.asarray(components[other_extrapolations], dtype=float).tolist(),
+        "total_systematic_error": np.asarray(total_sys, dtype=float).tolist(),
+        "total_error": np.asarray(total_err, dtype=float).tolist(),
+    }
+    artifact = stem.with_suffix(".json")
+    artifact.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    if np.count_nonzero((x >= 0.0) & (x <= 1.0)) >= 6:
+        x_plot = np.arange(0.0, 1.0001, 0.1, dtype=float)
+        x_plot = x_plot[(x_plot >= float(np.min(x))) & (x_plot <= float(np.max(x)))]
+    else:
+        x_plot = np.asarray(x, dtype=float)
+    if x_plot.size == 0:
+        x_plot = np.asarray(x, dtype=float)
+    total_err_plot = np.interp(x_plot, x, total_err)
+    total_sys_plot = np.interp(x_plot, x, total_sys)
+    zs_plot = np.interp(x_plot, x, components[zs])
+    lambda_plot = np.interp(x_plot, x, components[lambda_extrapolation])
+    mu_plot = np.interp(x_plot, x, components[lamet_scale])
+    other_plot = np.interp(x_plot, x, components[other_extrapolations])
+    spacing = 0.1 if x_plot.size > 1 else 0.08
+    group_width = 0.078 if x_plot.size > 1 else 0.062
+    bar_width = group_width / 5.0
+    fig, ax = default_plot()
+    ax.bar(x_plot, total_err_plot, width=0.92 * group_width, color="0.82", label="total error", zorder=0)
+    ax.bar(x_plot, total_sys_plot, width=0.72 * group_width, color="0.65", label="total systematic error", zorder=1)
+    ax.bar(x_plot - 1.5 * bar_width, zs_plot, width=bar_width, color="tab:blue", label=r"sys : $z_s$ uncertainty", zorder=2)
+    ax.bar(x_plot - 0.5 * bar_width, lambda_plot, width=bar_width, color="tab:orange", label=r"sys : $\lambda$ extrapolation", zorder=2)
+    ax.bar(x_plot + 0.5 * bar_width, mu_plot, width=bar_width, color="tab:green", label="sys : LaMET scale", zorder=2)
+    ax.bar(x_plot + 1.5 * bar_width, other_plot, width=bar_width, color="tab:red", label="sys : other extrapolations", zorder=2)
+    ax.set_xlabel(r"$x$", **FONT_SIZE)
+    ax.set_ylabel(r"$\Delta f(x)$", **FONT_SIZE)
+    ax.set_title("Error Analysis", **FONT_SIZE)
+    ax.set_xticks(np.arange(0.0, 1.0001, 0.5, dtype=float))
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0.0, frameon=False, fontsize=12)
+    fig.tight_layout()
+    pdf = stem.with_suffix(".pdf")
+    svg = stem.with_suffix(".svg")
+    fig.savefig(pdf, bbox_inches="tight", transparent=True)
+    fig.savefig(svg, bbox_inches="tight")
+    plt.close(fig)
+
+    fig, ax = default_plot()
+    ax.fill_between(x, main_mean - total_err, main_mean + total_err, color="0.88", alpha=0.60, linewidth=0)
+    ax.fill_between(x, main_mean - stat_sdev, main_mean + stat_sdev, color="0.75", alpha=0.60, linewidth=0)
+    ax.plot(x, main_mean, color="0.45", linewidth=1.2)
+    ax.set_xlabel(r"$x$", **FONT_SIZE)
+    ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
+    ax.set_title("Extrapolation", **FONT_SIZE)
+    fig.tight_layout()
+    final_pdf = stem.with_name("ex_final").with_suffix(".pdf")
+    final_svg = stem.with_name("ex_final").with_suffix(".svg")
+    final_nc = stem.with_name("ex_final").with_suffix(".nc")
+    fig.savefig(final_pdf, bbox_inches="tight", transparent=True)
+    fig.savefig(final_svg, bbox_inches="tight")
+    plt.close(fig)
+    xr.Dataset(
+        {
+            "central": (("x",), np.asarray(main_mean, dtype=float)),
+            "stat_sdev": (("x",), np.asarray(stat_sdev, dtype=float)),
+            "total_systematic_error": (("x",), np.asarray(total_sys, dtype=float)),
+            "total_error": (("x",), np.asarray(total_err, dtype=float)),
+        },
+        coords={"x": np.asarray(x, dtype=float)},
+    ).to_netcdf(final_nc)
+
+    result = {
+        "out": out,
+        "operation": "systematics_budget",
+        "artifact": str(artifact),
+        "plot": str(pdf),
+        "plot_image": str(svg),
+        "final_artifact": str(final_nc),
+        "final_plot": str(final_pdf),
+        "final_plot_image": str(final_svg),
+        "n_points": int(x.size),
+        "plot_points": int(x_plot.size),
+        "sources": ["zs", "lambda_extrapolation", "lamet_scale", "other_extrapolations"],
+    }
+    store["output"] = result
+    return result
+
+
 STAGE_TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "run_extrapolation": run_extrapolation,
+    "run_systematics_budget": run_systematics_budget,
 }

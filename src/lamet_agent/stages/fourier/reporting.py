@@ -447,7 +447,16 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
     part = str(result.get("part", "both")).lower()
     shift = float(result.get("phase_shift", 0.0) or 0.0)
     phase = f"(x-{_fmt(shift)})\\lambda" if shift else "x\\lambda"
-    convention = f"This stage uses the $e^{{+i{phase}}}$ Fourier convention, i.e. $q(x)=\\frac{{\\Delta\\lambda}}{{2\\pi}}\\sum_\\lambda e^{{+i{phase}}}h(\\lambda)$; the corresponding real/imaginary decomposition is shown below."
+    rotation = ""
+    if str(result.get("target_observable", "")).lower() == "da":
+        rotation = (
+            "For `target_observable=da`, before range selection and large-distance fitting, "
+            "the renormalized matrix element is rotated as "
+            "$h_{\\mathrm{DA}}(z)=e^{+izP_z/2}h^R(z)=e^{+i\\lambda/2}h^R(z)$. "
+            "Here $\\lambda=zP_z$ is dimensionless: coordinates in fm are converted with "
+            "$1\\,\\mathrm{fm}=5.067731237\\,\\mathrm{GeV}^{-1}$, and lattice coordinates also include $a$.\n\n"
+        )
+    convention = rotation + f"This stage uses the $e^{{+i{phase}}}$ Fourier convention, i.e. $q(x)=\\frac{{\\Delta\\lambda}}{{2\\pi}}\\sum_\\lambda e^{{+i{phase}}}h(\\lambda)$; the corresponding real/imaginary decomposition is shown below."
     note = f"\n\nThis run uses `phase_shift={_fmt(shift)}`, i.e. the Fourier phase is ${phase}$." if shift else ""
     if part == "re":
         return (
@@ -914,6 +923,7 @@ def write_fourier_report(
 def write_fourier_stage_report(
     *,
     jobs: list[dict[str, Any]],
+    systematics_jobs: list[dict[str, Any]] | None = None,
     path: str | Path,
     report_language: str = "en",
     backend: str = "",
@@ -954,26 +964,44 @@ def write_fourier_stage_report(
     fit_range_text = "see the per-momentum diagnostics below"
     z_ext_max = finite_z_ext[0] if same_z_ext else "see the per-momentum diagnostics below"
     transform_text = _fourier_transform_text(first, language=language)
+    all_jobs = jobs + list(systematics_jobs or [])
+    use_systematics_table = bool(systematics_jobs)
     lines = [
         "# Fourier Transform Stage Report",
         "",
         f"This report summarizes all Fourier-transform jobs in this stage for `{observable}` ({observable_text}).",
         "",
         "## Job Summary",
-        "| job | $P_z$ | selected range | output | plot |",
-        "|---|---:|---|---|---|",
+        (
+            "| job | $P_z$ | $z_s$ [fm] | selected range | output | plot |"
+            if use_systematics_table
+            else "| job | $P_z$ | selected range | output | plot |"
+        ),
+        (
+            "|---|---:|---:|---|---|---|"
+            if use_systematics_table
+            else "|---|---:|---|---|---|"
+        ),
     ]
-    for item in jobs:
+    for item in all_jobs:
         result = item["result"]
         pz_value = result.get("momentum_gev")
         pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
         artifacts = artifact_paths(item)
-        lines.append(
-            f"| `{item['job_id']}` | {pz_text} | "
-            f"{result.get('selected_range_label', 'n/a')} | "
-            f"{artifacts.get('fourier_artifact', 'n/a')} | "
-            f"{artifacts.get('fourier_plot', 'n/a')} |"
-        )
+        if use_systematics_table:
+            lines.append(
+                f"| `{item['job_id']}` | {pz_text} | {_fmt(result.get('zs_fm'))} | "
+                f"{result.get('selected_range_label', 'n/a')} | "
+                f"{artifacts.get('fourier_artifact', 'n/a')} | "
+                f"{artifacts.get('fourier_plot', 'n/a')} |"
+            )
+        else:
+            lines.append(
+                f"| `{item['job_id']}` | {pz_text} | "
+                f"{result.get('selected_range_label', 'n/a')} | "
+                f"{artifacts.get('fourier_artifact', 'n/a')} | "
+                f"{artifacts.get('fourier_plot', 'n/a')} |"
+            )
     stage_artifacts = artifact_paths(jobs[0])
     overlay_images = [value for key, value in sorted(stage_artifacts.items()) if key.startswith("fourier_overlay_image_")]
     if overlay_images:

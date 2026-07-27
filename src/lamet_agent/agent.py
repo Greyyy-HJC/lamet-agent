@@ -117,7 +117,12 @@ def _run_job(
     """Drive the LLM/tool loop for one isolated job store."""
     stage_tools = resolve_stage_tools(stage)
     observations: list[dict[str, Any]] = []
-    stage_dir = manifest.artifacts_directory / stage
+    is_systematics_job = (
+        job.params.get("operation") == "systematics_budget"
+        or job.id == "ex_other"
+        or job.id.endswith(("_zs_low", "_zs_high", "_lambda_low", "_lambda_high", "_mu_low", "_mu_high", "_a_sym", "_p_sym", "_ap_sym", "_budget"))
+    )
+    stage_dir = manifest.artifacts_directory / stage / "sym" if is_systematics_job else manifest.artifacts_directory / stage
     stage_dir.mkdir(parents=True, exist_ok=True)
     if stage == "perturbative_matching":
         from lamet_agent.stages.matching.skills import effective_matching_params
@@ -349,7 +354,7 @@ def _write_matrix_overlay_artifacts(
     x_label: str = r"$z/a$",
 ) -> dict[str, str]:
     groups: dict[str, list[dict[str, Any]]] = {}
-    records = [record for record in jobs if record.get("artifacts", {}).get(artifact_key)]
+    records = [record for record in jobs if record.get("artifacts", {}).get(artifact_key) and not record.get("is_systematics")]
     if len(records) <= 1:
         return {}
     for record in records:
@@ -406,7 +411,7 @@ def _write_matrix_overlay_artifacts(
 
 def _write_fourier_overlay_artifacts(jobs: list[dict[str, Any]], stage_dir: Path) -> dict[str, str]:
     groups: dict[str, list[dict[str, Any]]] = {}
-    records = [record for record in jobs if record.get("artifacts", {}).get("fourier_artifact")]
+    records = [record for record in jobs if record.get("artifacts", {}).get("fourier_artifact") and not record.get("is_systematics")]
     if len(records) <= 1:
         return {}
     for record in records:
@@ -486,7 +491,7 @@ def _write_fourier_overlay_artifacts(jobs: list[dict[str, Any]], stage_dir: Path
 
 def _write_matching_overlay_artifacts(jobs: list[dict[str, Any]], stage_dir: Path) -> dict[str, str]:
     groups: dict[str, list[dict[str, Any]]] = {}
-    records = [record for record in jobs if record.get("artifacts", {}).get("lightcone_artifact")]
+    records = [record for record in jobs if record.get("artifacts", {}).get("lightcone_artifact") and not record.get("is_systematics")]
     if len(records) <= 1:
         return {}
     for record in records:
@@ -705,6 +710,7 @@ def run_agent(
                                 "diagnostic_plots": list((diag_result.get("plots") or {}).keys()),
                             },
                             "artifacts": artifacts,
+                            "is_systematics": job.id.endswith(("_zs_low", "_zs_high")),
                         }
                     )
                 elif fit_result is not None:
@@ -723,6 +729,7 @@ def run_agent(
                                 "diagnostic_plots": list((diag_result.get("plots") or {}).keys()),
                             },
                             "artifacts": artifacts,
+                            "is_systematics": job.id.endswith(("_zs_low", "_zs_high")),
                         }
                     )
             if stage == "fourier_transform" and "fourier_result" in store:
@@ -742,6 +749,7 @@ def run_agent(
                             "extension_plot_im": store.get("fourier_extension_plot", {}).get("plot_im"),
                             "extension_plot_im_image": store.get("fourier_extension_plot", {}).get("plot_im_image"),
                         },
+                        "is_systematics": job.id.endswith(("_zs_low", "_zs_high", "_lambda_low", "_lambda_high")),
                     }
                 )
             if stage == "perturbative_matching" and "lightcone_ed" in store and "quasi_ed" in store and "x_ls" in store:
@@ -775,15 +783,37 @@ def run_agent(
                             "matched_plot": store.get("matching_plot", {}).get("path"),
                             "matched_plot_image": store.get("matching_plot", {}).get("plot_image"),
                         },
+                        "is_systematics": job.id.endswith(("_zs_low", "_zs_high", "_lambda_low", "_lambda_high", "_mu_low", "_mu_high")),
                     }
                 )
             if stage == "extrapolation":
                 result = _last_tool_result(observations, "run_extrapolation")
                 if result is not None:
+                    lightcones = list(store.get("lightcone", []))
+                    zs_values = []
+                    range_values = []
+                    mu_values = []
+                    for item in lightcones:
+                        attrs = dict(getattr(item, "attrs", {}))
+                        zs_value = attrs.get("zs_fm")
+                        range_value = attrs.get("selected_range_label")
+                        mu_value = attrs.get("mu")
+                        if zs_value not in {None, ""}:
+                            zs_values.append(str(zs_value))
+                        if range_value not in {None, ""}:
+                            text = str(range_value)
+                            range_values.append(text[1:-1] if text.startswith('"') and text.endswith('"') else text)
+                        if mu_value not in {None, ""}:
+                            mu_values.append(str(mu_value))
                     stage_job_records.append(
                         {
                             "job_id": job.id,
-                            "result": result,
+                            "result": {
+                                **result,
+                                "zs_fm": list(dict.fromkeys(zs_values)),
+                                "selected_range_label": list(dict.fromkeys(range_values)),
+                                "mu": list(dict.fromkeys(mu_values)),
+                            },
                             "artifacts": {
                                 "extrapolated_artifact": result.get("artifact"),
                                 "fit_info_artifact": result.get("fit_info_artifact"),
@@ -796,6 +826,27 @@ def run_agent(
                                 "pdep_plot": result.get("pdep_plot"),
                                 "pdep_plot_image": result.get("pdep_plot_image"),
                             },
+                            "is_systematics": (
+                                job.id == "ex_other"
+                                or job.id.endswith(("_zs_low", "_zs_high", "_lambda_low", "_lambda_high", "_mu_low", "_mu_high", "_a_sym", "_p_sym", "_ap_sym"))
+                            ),
+                        }
+                    )
+                result = _last_tool_result(observations, "run_systematics_budget")
+                if result is not None:
+                    stage_job_records.append(
+                        {
+                            "job_id": job.id,
+                            "result": result,
+                            "artifacts": {
+                                "budget_artifact": result.get("artifact"),
+                                "budget_plot": result.get("plot"),
+                                "budget_plot_image": result.get("plot_image"),
+                                "final_artifact": result.get("final_artifact"),
+                                "final_plot": result.get("final_plot"),
+                                "final_plot_image": result.get("final_plot_image"),
+                            },
+                            "is_systematics": True,
                         }
                     )
         if stage in state.pending_user_input:
@@ -840,8 +891,14 @@ def run_agent(
         if stage == "renormalization" and stage_job_records:
             from lamet_agent.stages.renorm.reporting import write_renorm_stage_report
 
+            main_job_records = [record for record in stage_job_records if not record.get("is_systematics")]
+            sym_job_records = [record for record in stage_job_records if record.get("is_systematics")]
+            for record in main_job_records:
+                record["systematics"] = [
+                    item for item in sym_job_records if item["job_id"].startswith(f"{record['job_id']}_")
+                ]
             overlay_artifacts = _write_matrix_overlay_artifacts(
-                stage_job_records,
+                main_job_records,
                 manifest.artifacts_directory / stage,
                 artifact_key="renormalized_artifact",
                 prefix="rn",
@@ -849,10 +906,11 @@ def run_agent(
                 y_label=r"Renormalized matrix element",
                 x_label=r"$z$ [fm]",
             )
-            if overlay_artifacts:
-                stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
+            if overlay_artifacts and main_job_records:
+                main_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             paths = write_renorm_stage_report(
-                jobs=stage_job_records,
+                jobs=main_job_records,
+                systematics_jobs=sym_job_records,
                 path=manifest.artifacts_directory / stage / "renorm_report.md",
                 report_language=report_language,
                 backend=backend,
@@ -865,11 +923,14 @@ def run_agent(
         if stage == "fourier_transform" and stage_job_records:
             from lamet_agent.stages.fourier.reporting import write_fourier_stage_report
 
-            overlay_artifacts = _write_fourier_overlay_artifacts(stage_job_records, manifest.artifacts_directory / stage)
-            if overlay_artifacts:
-                stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
+            main_job_records = [record for record in stage_job_records if not record.get("is_systematics")]
+            sym_job_records = [record for record in stage_job_records if record.get("is_systematics")]
+            overlay_artifacts = _write_fourier_overlay_artifacts(main_job_records, manifest.artifacts_directory / stage)
+            if overlay_artifacts and main_job_records:
+                main_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             paths = write_fourier_stage_report(
-                jobs=stage_job_records,
+                jobs=main_job_records,
+                systematics_jobs=sym_job_records,
                 path=manifest.artifacts_directory / stage / "ft_report.md",
                 report_language=report_language,
                 backend=backend,
@@ -882,11 +943,14 @@ def run_agent(
         if stage == "perturbative_matching" and stage_job_records:
             from lamet_agent.stages.matching.reporting import FormulaLlm, write_matching_stage_report
 
-            overlay_artifacts = _write_matching_overlay_artifacts(stage_job_records, manifest.artifacts_directory / stage)
-            if overlay_artifacts:
-                stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
+            main_job_records = [record for record in stage_job_records if not record.get("is_systematics")]
+            sym_job_records = [record for record in stage_job_records if record.get("is_systematics")]
+            overlay_artifacts = _write_matching_overlay_artifacts(main_job_records, manifest.artifacts_directory / stage)
+            if overlay_artifacts and main_job_records:
+                main_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             paths = write_matching_stage_report(
-                jobs=stage_job_records,
+                jobs=main_job_records,
+                systematics_jobs=sym_job_records,
                 path=manifest.artifacts_directory / stage / "matching_report.md",
                 report_language=report_language,
                 llm=FormulaLlm(
@@ -898,8 +962,11 @@ def run_agent(
         if stage == "extrapolation" and stage_job_records:
             from lamet_agent.stages.extrapolation.reporting import write_extrapolation_stage_report
 
+            main_job_records = [record for record in stage_job_records if not record.get("is_systematics")]
+            sym_job_records = [record for record in stage_job_records if record.get("is_systematics")]
             paths = write_extrapolation_stage_report(
-                jobs=stage_job_records,
+                jobs=main_job_records,
+                systematics_jobs=sym_job_records,
                 path=manifest.artifacts_directory / stage / "extrapolation_report.md",
                 report_language=report_language,
                 backend=backend,
