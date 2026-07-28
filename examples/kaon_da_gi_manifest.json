@@ -301,7 +301,7 @@
           "NLA"
         ],
         "sector": "full",
-        "symmetry_guarantee": true,
+        "symmetry_guarantee": false,
         "posterior_prior_error_scale": [
           2.0,
           3.0,
