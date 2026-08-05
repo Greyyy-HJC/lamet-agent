@@ -313,8 +313,14 @@ def _uniform_step(coord: np.ndarray) -> float:
 
 
 def _ft_scale_momentum(momentum_gev: float | None, final_momentum_gev: float | None = None) -> float:
-    """Return the momentum used only for coord->lambda scaling."""
-    return max(abs(float(momentum_gev or 0.0)), abs(float(final_momentum_gev or 0.0)))
+    """Return the boost used for coord->lambda scaling.
+
+    NonBreit quasi-GPD inputs provide both momenta and use the average hadron
+    momentum. Forward/PDF/DA inputs provide one momentum and are unchanged.
+    """
+    if final_momentum_gev is None:
+        return abs(float(momentum_gev or 0.0))
+    return abs((float(momentum_gev or 0.0) + float(final_momentum_gev)) / 2.0)
 
 
 def _coord_scale(

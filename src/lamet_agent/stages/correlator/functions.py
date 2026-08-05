@@ -160,6 +160,30 @@ def _energy_summary(
     }
 
 
+def _physical_q2_gev2(
+    initial_momentum_gev: float | None,
+    final_momentum_gev: float | None,
+    initial_energy_gev: float | None,
+    final_energy_gev: float | None,
+) -> float | None:
+    """Return spacelike ``Q^2 = |Delta p|^2 - (Delta E)^2`` for NonBreit data."""
+    if None in (
+        initial_momentum_gev,
+        final_momentum_gev,
+        initial_energy_gev,
+        final_energy_gev,
+    ):
+        return None
+    delta_p = float(final_momentum_gev) - float(initial_momentum_gev)
+    delta_e = float(final_energy_gev) - float(initial_energy_gev)
+    return delta_p**2 - delta_e**2
+
+
+def _optional_float(value: Any) -> float | None:
+    """Preserve an unestimated quantity as ``None`` instead of reporting zero."""
+    return None if value is None else float(value)
+
+
 def _fit_dispersion_sample_batch(payload: bytes, sample_indices: list[int]) -> list[tuple[int, list[float]]]:
     context = gv.loads(payload)
     design = context["design"]
@@ -2007,8 +2031,18 @@ def _bare_records_to_ensemble(
             "bare_im_mean": json.dumps([float(rec["imag_mean"]) for rec in sorted_records]),
             "bare_re_stat_sdev": json.dumps([float(rec["real_stat_sdev"]) for rec in sorted_records]),
             "bare_im_stat_sdev": json.dumps([float(rec["imag_stat_sdev"]) for rec in sorted_records]),
-            "bare_re_sys_sdev": json.dumps([float(rec.get("real_sys_sdev", 0.0)) for rec in sorted_records]),
-            "bare_im_sys_sdev": json.dumps([float(rec.get("imag_sys_sdev", 0.0)) for rec in sorted_records]),
+            "bare_re_sys_sdev": json.dumps([_optional_float(rec.get("real_sys_sdev")) for rec in sorted_records]),
+            "bare_im_sys_sdev": json.dumps([_optional_float(rec.get("imag_sys_sdev")) for rec in sorted_records]),
+            "bare_re_sys_status": (
+                "not estimated"
+                if any(rec.get("real_sys_sdev") is None for rec in sorted_records)
+                else "estimated"
+            ),
+            "bare_im_sys_status": (
+                "not estimated"
+                if any(rec.get("imag_sys_sdev") is None for rec in sorted_records)
+                else "estimated"
+            ),
         }
     )
     return EnsembleData(
@@ -3599,12 +3633,12 @@ def fit_bare_matrix_grid(
             real_sys_sdev = (
                 _weighted_model_sdev(avg_re_vals, avg_weights, center=avg_re_mean)
                 if model_average and "re" in fitted_parts
-                else 0.0
+                else None
             )
             imag_sys_sdev = (
                 _weighted_model_sdev(avg_im_vals, avg_weights, center=avg_im_mean)
                 if model_average and "im" in fitted_parts
-                else 0.0
+                else None
             )
             templates = [
                 _scope_prior_with_width(form, int(rec["nstate"]), scope, strategy, float(rec["prior_width"]))
@@ -3822,10 +3856,34 @@ def fit_bare_matrix_grid(
             sample_executor.shutdown()
 
     if form == "NonBreit":
-        q2 = (
+        initial_fit = pt2_best["fit"] if pt2_best is not None else (energy_record or {}).get("fit")
+        final_fit = pt2_f_best["fit"] if pt2_f_best is not None else (energy_record or {}).get("fit")
+        initial_energy_key = "E0" if pt2_best is not None else "E0_i"
+        final_energy_key = "E0" if pt2_f_best is not None else "E0_f"
+        energy_scale = (
             None
-            if initial_momentum_gev is None or final_momentum_gev is None
-            else (float(final_momentum_gev) - float(initial_momentum_gev)) ** 2
+            if lattice_spacing_fm is None
+            else HBAR_C_GEV_FM / float(lattice_spacing_fm)
+        )
+        initial_energy_gev = (
+            None
+            if initial_fit is None
+            or energy_scale is None
+            or initial_energy_key not in initial_fit.p
+            else float(gv.mean(initial_fit.p[initial_energy_key])) * energy_scale
+        )
+        final_energy_gev = (
+            None
+            if final_fit is None
+            or energy_scale is None
+            or final_energy_key not in final_fit.p
+            else float(gv.mean(final_fit.p[final_energy_key])) * energy_scale
+        )
+        q2 = _physical_q2_gev2(
+            initial_momentum_gev,
+            final_momentum_gev,
+            initial_energy_gev,
+            final_energy_gev,
         )
         denominator = (
             None
@@ -3890,11 +3948,11 @@ def fit_bare_matrix_grid(
                 "real_mean": real_mean,
                 "real_sdev": real_error,
                 "real_stat_sdev": real_error,
-                "real_sys_sdev": float(record.get("real_sys_sdev", 0.0)),
+                "real_sys_sdev": _optional_float(record.get("real_sys_sdev")),
                 "imag_mean": imag_mean,
                 "imag_sdev": imag_error,
                 "imag_stat_sdev": imag_error,
-                "imag_sys_sdev": float(record.get("imag_sys_sdev", 0.0)),
+                "imag_sys_sdev": _optional_float(record.get("imag_sys_sdev")),
                 "window": record["window"],
                 "sample0_plot_paths": record.get("sample0_plot_paths", {}),
             }
@@ -3982,11 +4040,9 @@ def fit_bare_matrix_grid(
     }
     pt2_energies = []
     if form == "NonBreit":
-        initial_fit = pt2_best["fit"] if pt2_best is not None else (energy_record or {}).get("fit")
-        final_fit = pt2_f_best["fit"] if pt2_f_best is not None else (energy_record or {}).get("fit")
         initial_energy = _energy_summary(
             fit=initial_fit,
-            key="E0_i" if pt2_best is None else "E0",
+            key=initial_energy_key,
             momentum=initial_momentum,
             momentum_gev=initial_momentum_gev,
             lattice_spacing_fm=lattice_spacing_fm,
@@ -4007,7 +4063,7 @@ def fit_bare_matrix_grid(
         )
         final_energy = _energy_summary(
             fit=final_fit,
-            key="E0_f" if pt2_f_best is None else "E0",
+            key=final_energy_key,
             momentum=final_momentum,
             momentum_gev=final_momentum_gev,
             lattice_spacing_fm=lattice_spacing_fm,
@@ -5301,12 +5357,12 @@ def fit_qda_ratio_grid(
             real_sys = (
                 _weighted_model_sdev(average_real, average_weights)
                 if model_average and "re" in _parts(part)
-                else 0.0
+                else None
             )
             imag_sys = (
                 _weighted_model_sdev(average_imag, average_weights)
                 if model_average and "im" in _parts(part)
-                else 0.0
+                else None
             )
             candidates = []
             for record in average_records:
@@ -5508,10 +5564,10 @@ def fit_qda_ratio_grid(
                 "z": record["z"],
                 "real_mean": float(real_mean),
                 "real_stat_sdev": float(real_error),
-                "real_sys_sdev": float(record["real_sys_sdev"]),
+                "real_sys_sdev": _optional_float(record["real_sys_sdev"]),
                 "imag_mean": float(imag_mean),
                 "imag_stat_sdev": float(imag_error),
-                "imag_sys_sdev": float(record["imag_sys_sdev"]),
+                "imag_sys_sdev": _optional_float(record["imag_sys_sdev"]),
                 "n_failed_samples": int(
                     np.count_nonzero(~np.isfinite(record["real_samples"]))
                 ),

@@ -12,7 +12,7 @@ from lamet_agent.core.reporting import (
     markdown_artifact_paths,
     resolve_report_target,
 )
-from lamet_agent.stages.correlator.reporting import build_correlator_stage_report_markdown
+from lamet_agent.stages.correlator.reporting import _z_fit_table, build_correlator_stage_report_markdown
 from lamet_agent.stages.renorm.reporting import build_renorm_stage_report_markdown
 from lamet_agent.stages.fourier import reporting as fourier_reporting
 from lamet_agent.stages.fourier.reporting import write_fourier_stage_report
@@ -25,6 +25,22 @@ def test_report_formatters_handle_scalars_and_list_previews() -> None:
     assert format_report_value("label") == "label"
     assert format_report_list([]) == "[]"
     assert format_report_list(range(10), max_items=3) == "[0, 1, 2, ...]"
+
+
+def test_correlator_report_marks_unestimated_systematics() -> None:
+    table = _z_fit_table(
+        {
+            "z_fits": [
+                {
+                    "z": 0,
+                    "n_failed_samples": 0,
+                    "real_sys_sdev": None,
+                    "imag_sys_sdev": None,
+                }
+            ]
+        }
+    )
+    assert "not estimated" in table[-1]
 
 
 def test_resolve_report_target_selects_one_language_path(tmp_path: Path) -> None:

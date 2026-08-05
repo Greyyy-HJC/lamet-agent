@@ -1332,8 +1332,13 @@ def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path
     )
 
     auto = run["auto_scheme_scan"]
-    expected_ft_scale = 0.105 * 5.067731237 * 0.49
+    expected_ft_scale = 0.105 * 5.067731237 * ((0.0 + 0.49) / 2.0)
     assert auto["z_ext_max"] == pytest.approx(10.0 + 8.0 / expected_ft_scale)
+
+
+def test_nonbreit_fourier_scale_uses_average_momentum() -> None:
+    assert fourier_functions._ft_scale_momentum(1.0, 2.0) == pytest.approx(1.5)
+    assert fourier_functions._ft_scale_momentum(2.0) == pytest.approx(2.0)
 
 
 def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path, monkeypatch) -> None:

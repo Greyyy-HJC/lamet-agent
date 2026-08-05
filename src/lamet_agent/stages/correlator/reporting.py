@@ -134,11 +134,17 @@ def _z_fit_table(result: dict[str, Any]) -> list[str]:
             f"| {format_report_value(fit.get('z'))} | {format_report_value(fit.get('Q', window.get('Q')))} | "
             f"{format_report_value(fit.get('chi2_dof', fit.get('chi2/DOF', window.get('chi2_dof'))))} | "
             f"{format_report_value(fit.get('logGBF', window.get('logGBF')))} | {fit.get('n_failed_samples', 0)} | "
-            f"{format_report_value(fit.get('real_sys_sdev'))} | {format_report_value(fit.get('imag_sys_sdev'))} |"
+            f"{_format_systematic_error(fit.get('real_sys_sdev'))} | "
+            f"{_format_systematic_error(fit.get('imag_sys_sdev'))} |"
         )
     if len(lines) == 2:
         lines.append("| n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
     return lines
+
+
+def _format_systematic_error(value: Any) -> str:
+    """Distinguish an unestimated systematic error from a numerical zero."""
+    return "not estimated" if value is None else format_report_value(value)
 
 
 def _outputs_table(artifacts: dict[str, Any]) -> list[str]:

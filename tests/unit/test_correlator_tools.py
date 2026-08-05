@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from pathlib import Path
 
 import matplotlib
@@ -58,6 +59,7 @@ from lamet_agent.stages.correlator.functions import (
     _normalise_strategy,
     _non_forward_ratio_samples,
     _overlaps,
+    _physical_q2_gev2,
     _ratio_samples,
     _read_2pt,
     _read_3pt,
@@ -596,6 +598,11 @@ def test_fit_matrix_element_supports_nonbreit_joint_data() -> None:
     fitted = gv.mean(fit.p["O00_re"] / (fit.p["E0_i"] + fit.p["E0_f"]))
     expected = parameters["O00_re"] / (parameters["E0_i"] + parameters["E0_f"])
     assert fitted == pytest.approx(expected, rel=0.05)
+
+
+def test_nonbreit_q2_includes_energy_transfer() -> None:
+    assert _physical_q2_gev2(1.0, 1.5, 1.2, 1.6) == pytest.approx(0.09)
+    assert _physical_q2_gev2(1.0, 1.5, None, 1.6) is None
 
 
 def test_fit_ratio_rejects_empty_tau_window() -> None:
@@ -1296,6 +1303,8 @@ def test_automatic_windows_flow_from_tuning_into_grid_result(tmp_path) -> None:
     assert fitted["auto_window_scan"] == scan
     assert fitted["shared_window_specs"][0]["tmin"] == robust["tmin"]
     assert fitted["shared_window_specs"][0]["tau_cut"] == robust["tau_cut"]
+    assert fitted["z_fits"][0]["real_sys_sdev"] is None
+    assert fitted["outputs"][0]["real_sys_sdev"] is None
 
 
 def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
@@ -1450,6 +1459,23 @@ def test_reinjected_z0_unity_sorts_into_ensemble_coords() -> None:
     assert list(ensemble.coords["z"]) == [0, 1]
     assert ensemble.values[0][0] == pytest.approx(1 + 0j)
     assert ensemble.values[0][1] == pytest.approx(0.4 + 0j)
+
+
+def test_unestimated_systematics_are_not_serialized_as_zero() -> None:
+    record = {
+        "z": 0,
+        "real_samples": np.ones(4),
+        "imag_samples": np.zeros(4),
+        "real_mean": 1.0,
+        "imag_mean": 0.0,
+        "real_stat_sdev": 0.1,
+        "imag_stat_sdev": 0.1,
+        "real_sys_sdev": None,
+        "imag_sys_sdev": None,
+    }
+    ensemble = _bare_records_to_ensemble([record], resample_mode="jk", attrs={})
+    assert json.loads(ensemble.attrs["bare_re_sys_sdev"]) == [None]
+    assert ensemble.attrs["bare_re_sys_status"] == "not estimated"
 
 
 def test_tune_qda_drops_z0_from_tune_list_for_nonlocal_bz0(
