@@ -914,3 +914,9 @@
 
 - Updated `test_parse_api_model_provider_shorthand_uses_default_model` to expect DeepSeek default `deepseek-v4-flash`.
 - Added explicit `momentum_gev=2.0` to Fourier unit tests that called `run_fourier_transform` under default `coord_unit=\"fm\"` without kinematics.
+
+## 2026-08-06 (Drop unused zspz from ratio kernels)
+
+- Removed the unused `zspz` parameter from all `*_ratio_NLO` matching kernels in `kernels.py` (CG/GI PDF and GI DA).
+- Stopped forwarding `zspz` from ratio delegates and from CG transversity msbar/hybrid wrappers that call the ratio builder.
+- Updated the matching-stage registry comment so it no longer claims a uniform `zspz=None` signature; hybrid still receives `zspz` via `is_hybrid_kernel`.

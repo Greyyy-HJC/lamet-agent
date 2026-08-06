@@ -101,9 +101,12 @@ from lamet_agent.kernels import (
 #   3. add a "kernel_id": function line below.
 # Nothing else in this stage needs to change.
 #
-# Every registered kernel obeys the same signature (so build_matching_kernel can
-# call them uniformly):
-#   builder(lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None) -> (nx, ny) matrix
+# Every registered kernel accepts the common positional/keyword args
+# (so build_matching_kernel can call them uniformly):
+#   builder(lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12) -> (nx, ny) matrix
+# Hybrid (and hybrid_LRR) builders also take ``zspz``; ratio builders do not.
+# MSbar builders still accept and ignore ``zspz`` for call-site convenience.
+# ``build_matching_kernel`` only passes ``zspz`` when ``is_hybrid_kernel`` is true.
 #
 # Naming convention: <gauge>_<operator>_quark_PDF_<scheme>_<order>. <gauge> is the
 # operator's gauge construction -- CG for Coulomb gauge (arXiv:2602.11283, no Wilson
@@ -112,7 +115,7 @@ from lamet_agent.kernels import (
 # so a gluon kernel would be gluon_PDF; <scheme> is the matching scheme, always
 # written out explicitly (msbar / ratio / hybrid); <order> is the perturbative order
 # (NLO throughout). Only the hybrid kernels use the Wilson-line scale zspz (built
-# from the zs_fm input below); the others ignore it.
+# from the zs_fm input below).
 KERNEL_REGISTRY: dict[str, Callable[..., np.ndarray]] = {
     # unpolarized gamma^t
     "CG_gt_quark_PDF_msbar_NLO": CG_gt_quark_PDF_msbar_NLO,
@@ -504,9 +507,8 @@ def build_matching_kernel(
     store[lc_grid_key] = x_ls
 
     # Hybrid kernels need the Wilson-line scale zspz = z_s * P_z, built from the
-    # matching job parameters zs_fm (fm) and momentum_gev (GeV). Only the hybrid builders accept a
-    # zspz keyword (msbar/ratio do not), so it is computed and passed only for
-    # the hybrid ids.
+    # matching job parameters zs_fm (fm) and momentum_gev (GeV). Ratio builders do
+    # not accept zspz; it is computed and passed only for hybrid ids.
     zspz: float | None = None
     builder_kwargs: dict[str, Any] = {"momentum_gev": momentum_gev, "mu": mu, "quasi_y_ls": y_ls}
     if is_hybrid_kernel(kernel_id):

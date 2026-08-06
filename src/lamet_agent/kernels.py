@@ -654,10 +654,8 @@ def CG_gt_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme kernel ``C_r`` for the Coulomb-gauge ``gamma^t`` PDF (Eq. 2.16)."""
-    del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lc_x_ls, mu, quasi_y_ls, eps,
         density=_pdf_density(lambda ksi, log_scale, y: C_ratio(ksi, log_scale, eps), momentum_gev, mu),
@@ -720,10 +718,9 @@ def CG_gtg5_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme helicity kernel for the Coulomb-gauge ``gamma^t gamma5`` PDF."""
-    return CG_gt_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gt_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps)
 
 
 @kernel_reference("2602.11283", "Eq. (2.14)")
@@ -766,10 +763,9 @@ def CG_gz_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.16; = gamma^t)."""
-    return CG_gt_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gt_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps)
 
 
 @kernel_reference("2602.11283", "Eq. (2.15)")
@@ -818,10 +814,9 @@ def CG_gzg5_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme helicity kernel for the Coulomb-gauge ``gamma^z gamma5`` PDF."""
-    return CG_gz_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return CG_gz_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps)
 
 
 @kernel_reference("2602.11283", "Eq. (2.15)")
@@ -863,10 +858,8 @@ def CG_gtgpg5_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the Coulomb-gauge transversity ``gamma^t gamma_perp gamma5`` PDF (Eq. 2.18)."""
-    del zspz  # transversity has no Wilson-line scale at NLO (Eq. 2.21).
     return build_matching_matrix(
         lc_x_ls, mu, quasi_y_ls, eps,
         density=_pdf_density(lambda ksi, log_scale, y: C_ratio_perp(ksi, log_scale, eps), momentum_gev, mu),
@@ -883,7 +876,8 @@ def CG_gtgpg5_quark_PDF_msbar_NLO(
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO MSbar transversity kernel (Eq. 2.17: equals the ratio coefficient C_r^perp)."""
-    return CG_gtgpg5_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    del zspz  # CG transversity has no Wilson-line scale at NLO (Eq. 2.21).
+    return CG_gtgpg5_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps)
 
 
 @kernel_reference("2602.11283", "Eq. (2.21)")
@@ -896,7 +890,8 @@ def CG_gtgpg5_quark_PDF_hybrid_NLO(
     zspz: float | None = None,
 ) -> np.ndarray:
     """NLO hybrid transversity kernel (Eq. 2.21: delta C_hyb = 0, so equals C_r^perp)."""
-    return CG_gtgpg5_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    del zspz  # CG transversity has no Wilson-line scale at NLO (Eq. 2.21).
+    return CG_gtgpg5_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps)
 
 
 # --- gauge-invariant (straight Wilson line) coefficients, Eqs. (23)-(24) -----
@@ -1051,10 +1046,8 @@ def GI_gt_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the gauge-invariant ``gamma^t`` PDF (Eq. 23)."""
-    del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lc_x_ls, mu, quasi_y_ls, eps,
         density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi(ksi, log_scale, eps), momentum_gev, mu),
@@ -1090,10 +1083,9 @@ def GI_gtg5_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme helicity kernel: same coefficient as GI_gt_quark_PDF_ratio_NLO (Eq. 23)."""
-    return GI_gt_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return GI_gt_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps)
 
 
 @kernel_reference("2412.20461", "Eq. (24)")
@@ -1122,10 +1114,8 @@ def GI_gz_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the gauge-invariant ``gamma^z`` PDF (Eq. C7)."""
-    del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lc_x_ls, mu, quasi_y_ls, eps,
         density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_gz(ksi, log_scale, eps), momentum_gev, mu),
@@ -1162,10 +1152,9 @@ def GI_gzg5_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme helicity kernel: same coefficient as GI_gz_quark_PDF_ratio_NLO (Eq. C7)."""
-    return GI_gz_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    return GI_gz_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps)
 
 
 @kernel_reference("2604.00143", "Eqs. (C6)-(C8)")
@@ -1194,10 +1183,8 @@ def GI_gtgpg5_quark_PDF_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the GI transversity ``gamma^t gamma_perp gamma5`` PDF (Eq. 22)."""
-    del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return build_matching_matrix(
         lc_x_ls, mu, quasi_y_ls, eps,
         density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gi_perp(ksi, log_scale, eps), momentum_gev, mu),
@@ -1396,10 +1383,8 @@ def GI_gtg5_DA_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the meson DA measured with the gamma^t gamma_5 operator."""
-    del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return _da_matrix(
         lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
         coefficient=V_qq_h,
@@ -1442,10 +1427,8 @@ def GI_gzg5_DA_ratio_NLO(
     mu: float = 2.0,
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
-    zspz: float | None = None,
 ) -> np.ndarray:
     """NLO ratio-scheme kernel for the meson DA measured with the gamma^z gamma_5 operator."""
-    del zspz  # ratio scheme has no Wilson-line scale; kept for a uniform signature.
     return _da_matrix(
         lc_x_ls, momentum_gev, mu, quasi_y_ls, eps,
         coefficient=V_qq_p,
