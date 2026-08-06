@@ -67,7 +67,6 @@
         "stage": "perturbative_matching",
         "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
-        "scheme": "hybrid_ratio",
         "kernel_parameters": {}
       }
     ]
@@ -108,6 +107,7 @@
     },
     "perturbative_matching": {
       "defaults": {
+        "scheme": "hybrid",
         "mu": 2.0,
         "component": "re", // "re" or "im" or "re+im"
         // Both optional. quasi_y_ls is what the kernel integrates over; it must stay

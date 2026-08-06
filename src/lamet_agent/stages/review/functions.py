@@ -65,9 +65,11 @@ def hybrid_zs_consistency_checks(manifest: AnalysisManifest) -> list[dict[str, A
         is_hybrid = False
         if declaration is not None:
             try:
-                is_hybrid = is_hybrid_kernel(resolve_kernel_id(declaration.kernel_id, declaration.scheme))
+                is_hybrid = is_hybrid_kernel(
+                    resolve_kernel_id(declaration.kernel_id, matching_params.get("scheme"))
+                )
             except ValueError:
-                is_hybrid = declaration.scheme == "hybrid_ratio" and "hybrid" in declaration.kernel_id.lower()
+                is_hybrid = False
 
         base: dict[str, Any] = {
             "matching_job": matching_job.id,
@@ -122,9 +124,9 @@ def hybrid_zs_consistency_checks(manifest: AnalysisManifest) -> list[dict[str, A
                 else None
             ),
         }
-        if renorm_params.get("scheme") != "hybrid_ratio":
+        if renorm_params.get("scheme") != "hybrid":
             checks.append(
-                {**compared, "status": "not_applicable", "reason": "upstream renormalization is not hybrid_ratio"}
+                {**compared, "status": "not_applicable", "reason": "upstream renormalization is not hybrid"}
             )
             continue
         try:
@@ -321,6 +323,7 @@ def write_review_from_manifest(
                     anchor_terms.append(("landau gauge", 4, f"gfix={gfix.upper()}"))
                     seen_terms.add("landau gauge")
         schemes = set()
+        strategies = set()
         kernel_ids = set()
         momentum_values = set()
         momentum_labels = set()
@@ -333,14 +336,14 @@ def write_review_from_manifest(
                     if any(f"P{axis}{digit}" in token for axis in "XYZ" for digit in "123456789"):
                         momentum_labels.add(f"boosted:{token}")
         for kernel in manifest_json.get("inputs", {}).get("kernels", []):
-            if kernel.get("scheme"):
-                schemes.add(str(kernel["scheme"]).strip().lower())
             if kernel.get("kernel_id"):
                 kernel_ids.add(str(kernel["kernel_id"]).strip().lower())
         for stage_config in manifest_json.get("stages", {}).values():
             for scope in [stage_config.get("defaults", {})] + [job.get("params", {}) for job in stage_config.get("jobs", [])]:
                 if scope.get("scheme"):
                     schemes.add(str(scope["scheme"]).strip().lower())
+                if scope.get("strategy"):
+                    strategies.add(str(scope["strategy"]).strip().lower())
                 if scope.get("kernel_id"):
                     kernel_ids.add(str(scope["kernel_id"]).strip().lower())
                 for key in ["momentum_gev", "initial_momentum_gev", "final_momentum_gev"]:
@@ -349,10 +352,10 @@ def write_review_from_manifest(
                 if scope.get("mu") is not None:
                     mu_values.add(float(scope["mu"]))
         for scheme in sorted(schemes):
-            if scheme == "hybrid_ratio":
+            if scheme == "hybrid":
                 for term, weight in [("hybrid ratio", 4), ("hybrid-ratio scheme", 4), ("hybrid renormalization", 3)]:
                     if term not in seen_terms:
-                        anchor_terms.append((term, weight, "scheme=hybrid_ratio"))
+                        anchor_terms.append((term, weight, "scheme=hybrid"))
                         seen_terms.add(term)
             elif scheme == "ratio":
                 for term, weight in [("ratio scheme", 3), ("matching factor", 2)]:
@@ -364,11 +367,11 @@ def write_review_from_manifest(
                     if term not in seen_terms:
                         anchor_terms.append((term, 4, "scheme=ri/mom"))
                         seen_terms.add(term)
-            elif "self" in scheme:
-                for term in ["self-renormalized", "self-renormalization", "zmsbar"]:
-                    if term not in seen_terms:
-                        anchor_terms.append((term, 4, f"scheme={scheme}"))
-                        seen_terms.add(term)
+        if "self_renormalization" in strategies:
+            for term in ["self-renormalized", "self-renormalization", "zmsbar"]:
+                if term not in seen_terms:
+                    anchor_terms.append((term, 4, "strategy=self_renormalization"))
+                    seen_terms.add(term)
         for kernel_id in sorted(kernel_ids):
             if "nnlo" in kernel_id:
                 for term in ["nnlo", "two-loop matching"]:

@@ -152,7 +152,7 @@ def _run_job(
         from lamet_agent.stages.renorm.functions import normalize_bare_matrix_element_at_z0
 
         for role, value in list(store.items()):
-            if isinstance(value, EnsembleData):
+            if role != "zR" and isinstance(value, EnsembleData):
                 store[role] = normalize_bare_matrix_element_at_z0(value)
 
     static_prompt = build_stage_static_prompt(
@@ -705,7 +705,8 @@ def run_agent(
                             "result": {
                                 **matrix_attrs,
                                 **apply_result,
-                                "scheme": apply_result.get("scheme", "hybrid_ratio"),
+                                "scheme": apply_result.get("scheme"),
+                                "strategy": apply_result.get("strategy"),
                                 "z_grid": z_grid,
                                 "diagnostic_plots": list((diag_result.get("plots") or {}).keys()),
                             },
@@ -724,7 +725,8 @@ def run_agent(
                             "job_id": job.id,
                             "result": {
                                 **fit_result,
-                                "scheme": "hybrid_self_renormalization",
+                                "scheme": fit_result.get("scheme"),
+                                "strategy": fit_result.get("strategy"),
                                 "job_kind": "fit",
                                 "diagnostic_plots": list((diag_result.get("plots") or {}).keys()),
                             },

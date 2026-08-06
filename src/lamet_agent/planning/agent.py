@@ -161,11 +161,17 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     ),
                 },
                 "renormalization": {
-                    "required": {"scheme": "ratio | hybrid_ratio | hybrid_self_renormalization"},
+                    "required": {
+                        "scheme": "ratio | hybrid | msbar",
+                        "strategy": "ratio | self_renormalization",
+                    },
                     "branches": {
-                        "ratio": {"inputs": ["target", "denominator"]},
-                        "hybrid_ratio": {"inputs": ["target", "denominator"], "zs_fm": 0.2},
-                        "hybrid_self_renormalization": {"fit_inputs": ["reference"], "apply_inputs": ["target", "zR"]},
+                        "ratio_strategy": {"inputs": ["target", "denominator"]},
+                        "self_renormalization": {
+                            "fit_inputs": ["reference"],
+                            "ratio_or_msbar_apply_inputs": ["target", "zR"],
+                            "hybrid_apply_inputs": ["target", "denominator", "zR"],
+                        },
                     },
                     "optional": {
                         "normalization": True,
@@ -181,6 +187,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                 "perturbative_matching": {
                     "minimal_policy": "Do not ask for or add mu, component, grids, or momentum_gev when omitted. Select kernel_id only when it is inferable from the observable/scheme or ask the user. Add zs_fm only if the selected hybrid kernel needs it and it is explicit or already known from renormalization.",
                     "required_inputs": {"quasi": "Fourier transform job or artifact"},
+                    "required": {"scheme": "ratio | hybrid | msbar"},
                     "options": {"component": ["re", "im"]},
                 },
                 "extrapolation": {
@@ -195,13 +202,18 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                         "target": "upstream bare matrix-element job",
                         "denominator": "zero-momentum/reference bare matrix-element job",
                     },
-                    "ratio_defaults": {"scheme": "ratio"},
-                    "hybrid_ratio_defaults": {
-                        "scheme": "hybrid_ratio",
+                    "ratio_defaults": {"scheme": "ratio", "strategy": "ratio"},
+                    "hybrid_ratio_strategy_defaults": {
+                        "scheme": "hybrid",
+                        "strategy": "ratio",
                         "zs_fm": "required",
                         "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
                     },
-                    "hybrid_self_renormalization_inputs": {"fit": ["reference"], "apply": ["target", "zR"]},
+                    "self_renormalization_inputs": {
+                        "fit": ["reference"],
+                        "ratio_or_msbar_apply": ["target", "zR"],
+                        "hybrid_apply": ["target", "denominator", "zR"],
+                    },
                 },
                 "fourier_transform": {"inputs": {"input": "renormalized matrix-element job or artifact"}},
                 "perturbative_matching": {"inputs": {"quasi": "Fourier transform job or artifact"}},
@@ -724,7 +736,8 @@ def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, A
                 "value": {
                     "defaults": {
                         "normalization": False,
-                        "scheme": "hybrid_ratio",
+                        "scheme": "hybrid",
+                        "strategy": "ratio",
                         "zs_fm": 0.1722,
                         "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
                     },

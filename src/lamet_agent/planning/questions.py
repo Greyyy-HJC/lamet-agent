@@ -20,9 +20,10 @@ def _stage_required_prompt(stage: str, payload: dict[str, Any]) -> str:
         )
     if stage == "renormalization":
         return (
-            "renormalization required choices: scheme options are ratio, hybrid_ratio, hybrid_self_renormalization. "
-            "ratio/hybrid_ratio need target and denominator inputs; hybrid_ratio also needs zs_fm. "
-            "hybrid_self_renormalization needs reference fit input or target plus zR inputs, LambdaQCD_gev, and fit parameter d. "
+            "renormalization required choices: scheme options are ratio, hybrid, msbar; "
+            "strategy options are ratio and self_renormalization. The ratio strategy needs target and denominator. "
+            "Self-renormalization needs a reference fit input; ratio/msbar apply jobs need target plus zR, "
+            "while hybrid apply jobs also need denominator and zs_fm. LambdaQCD_gev and fit parameter d are required. "
             "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
         )
     if stage == "fourier_transform":
@@ -37,7 +38,8 @@ def _stage_required_prompt(stage: str, payload: dict[str, Any]) -> str:
     if stage == "perturbative_matching":
         return (
             "perturbative_matching required choices: quasi input must be one Fourier job or artifact; "
-            "kernel_id must select one declared kernel; component options are re or im; hybrid kernels need zs_fm. "
+            "scheme must be ratio, hybrid, or msbar and match kernel_id; component options are re or im; "
+            "hybrid kernels need zs_fm. "
             "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
         )
     if stage == "extrapolation":
@@ -58,8 +60,8 @@ def _stage_optional_prompt(stage: str, payload: dict[str, Any]) -> str:
         )
     if stage == "renormalization":
         return (
-            "renormalization optional choices: normalization, scheme_parameters such as m0_gev and delta_m_gev for ratio branches, "
-            "or z_coverage_policy and svdcut for hybrid_self_renormalization. Reply with values to set, or none."
+            "renormalization optional choices: normalization, scheme_parameters such as m0_gev and delta_m_gev, "
+            "or z_coverage_policy and svdcut for self_renormalization. Reply with values to set, or none."
         )
     if stage == "fourier_transform":
         sector_text = "sector is fixed to full for DA" if target == "da" else "sector options are valence, total, full, sea"

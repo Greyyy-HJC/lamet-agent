@@ -70,7 +70,6 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
                     "stage": "matching",
                     "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
                     "kernel_path": "src/lamet_agent/kernels.py",
-                    "scheme": "ratio",
                     "kernel_parameters": {},
                 }
             ],
@@ -78,9 +77,10 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
         "stages": {
             "correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2"], "params": {"momentum": "PX0PY0PZ0"}}]},
             "renormalization": {
-                "defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.2},
+                "defaults": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": 0.2},
                 "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
             },
+            "perturbative_matching": {"defaults": {"scheme": "ratio"}, "jobs": []},
         },
     }
 
@@ -197,24 +197,23 @@ def test_planning_reports_legacy_zs_locations_and_flat_parameter_gaps(tmp_path: 
 
 def test_planning_accepts_ratio_without_hybrid_parameters(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
-    payload["stages"]["renormalization"]["defaults"] = {"scheme": "ratio"}
+    payload["stages"]["renormalization"]["defaults"] = {"scheme": "ratio", "strategy": "ratio"}
 
     gaps = _stage_parameter_gaps(payload)
 
     assert not any(gap["stage"] == "renormalization" for gap in gaps)
 
 
-def test_planning_distinguishes_hybrid_self_renormalization_fit_jobs(tmp_path: Path) -> None:
+def test_planning_distinguishes_self_renormalization_fit_jobs(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     payload["inputs"]["kernels"] = [{
         "stage": "renormalization",
         "kernel_id": "ZMSbar_pdf",
         "kernel_path": "src/lamet_agent/kernels.py",
-        "scheme": "hybrid_self_renormalization",
         "kernel_parameters": {},
     }]
     payload["stages"]["renormalization"] = {
-        "defaults": {"scheme": "hybrid_self_renormalization"},
+        "defaults": {"scheme": "ratio", "strategy": "self_renormalization"},
         "jobs": [
             {
                 "id": "rn_fit",
@@ -423,18 +422,22 @@ def test_stage_required_answer_updates_stage_defaults(tmp_path: Path) -> None:
     result = _apply_user_answer_to_candidate(
         state,
         "stage_required.renormalization",
-        "scheme=hybrid_ratio, zs_fm=0.2",
+        "scheme=hybrid, strategy=ratio, zs_fm=0.2",
     )
 
     assert result["event"] == "user_answer_applied"
     assert state.stage_required_checked == {"renormalization"}
-    assert state.candidate_payload["stages"]["renormalization"]["defaults"]["scheme"] == "hybrid_ratio"
+    assert state.candidate_payload["stages"]["renormalization"]["defaults"]["scheme"] == "hybrid"
+    assert state.candidate_payload["stages"]["renormalization"]["defaults"]["strategy"] == "ratio"
     assert state.candidate_payload["stages"]["renormalization"]["defaults"]["zs_fm"] == 0.2
 
 
 def test_stage_required_answer_updates_job_inputs(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
-    payload["stages"]["renormalization"] = {"defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.2}, "jobs": [{"id": "rn"}]}
+    payload["stages"]["renormalization"] = {
+        "defaults": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": 0.2},
+        "jobs": [{"id": "rn"}],
+    }
     state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
 
     result = _apply_user_answer_to_candidate(
@@ -787,11 +790,11 @@ def test_stage_parameter_gap_answer_uses_matching_question_id(tmp_path: Path) ->
         {"id": "ft", "stage": "fourier_transform", "path": "ft.nc", "momentum": "PX1PY0PZ0", "volume": "S16T5", "lattice_spacing_fm": 0.1}
     ]
     payload["inputs"]["kernels"] = [
-        {"stage": "perturbative_matching", "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "kernel_path": "src/lamet_agent/kernels.py", "scheme": "hybrid_ratio"}
+        {"stage": "perturbative_matching", "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "kernel_path": "src/lamet_agent/kernels.py"}
     ]
     payload["stages"] = {
-        "renormalization": {"defaults": {"scheme": "hybrid_ratio"}, "jobs": [{"id": "rn", "inputs": {"target": "ca_p1", "denominator": "ca_p0"}}]},
-        "perturbative_matching": {"defaults": {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO"}, "jobs": [{"id": "mt_p5", "inputs": {"quasi": "ft"}}]},
+        "renormalization": {"defaults": {"scheme": "hybrid", "strategy": "ratio"}, "jobs": [{"id": "rn", "inputs": {"target": "ca_p1", "denominator": "ca_p0"}}]},
+        "perturbative_matching": {"defaults": {"scheme": "hybrid", "kernel_id": "CG_gt_quark_PDF_hybrid_NLO"}, "jobs": [{"id": "mt_p5", "inputs": {"quasi": "ft"}}]},
     }
     state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
 
@@ -2270,7 +2273,8 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruct
     assert result.exit_code == 0, result.output
     full = json.loads((root / "artifacts" / "plan_manifests" / "draft.full.json").read_text(encoding="utf-8"))
     assert full["metadata"]["stages"] == ["correlator_analysis", "renormalization"]
-    assert full["stages"]["renormalization"]["defaults"]["scheme"] == "hybrid_ratio"
+    assert full["stages"]["renormalization"]["defaults"]["scheme"] == "hybrid"
+    assert full["stages"]["renormalization"]["defaults"]["strategy"] == "ratio"
     assert full["stages"]["renormalization"]["jobs"] == [
         {"id": "rn_p5_fh", "inputs": {"target": "ca_p5_fh", "denominator": "ca_p0_fh"}}
     ]

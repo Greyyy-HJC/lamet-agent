@@ -156,7 +156,7 @@ def test_renorm_stage_report_shows_overlay_after_method(tmp_path: Path) -> None:
         jobs=[
             {
                 "job_id": "rn_p4",
-                "result": {"scheme": "hybrid_ratio", "zs_fm": 0.17},
+                "result": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": 0.17},
                 "artifacts": {
                     "renormalized_artifact": "rn_p4.nc",
                     "renormalized_plot": "rn_p4.pdf",

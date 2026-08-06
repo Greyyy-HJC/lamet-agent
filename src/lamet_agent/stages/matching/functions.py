@@ -180,21 +180,35 @@ def is_hybrid_kernel(kernel_id: str) -> bool:
     return "hybrid" in str(kernel_id).split("_")
 
 
-def resolve_kernel_id(kernel_id: str, scheme: str) -> str:
+def matching_scheme_from_kernel_id(kernel_id: str) -> str:
+    """Return the ratio, hybrid, or msbar scheme token encoded in a kernel id."""
+    matches = [scheme for scheme in ("ratio", "hybrid", "msbar") if scheme in str(kernel_id).split("_")]
+    if len(matches) != 1:
+        raise ValueError(
+            f"Matching kernel_id {kernel_id!r} must contain exactly one scheme token "
+            "('ratio', 'hybrid', or 'msbar')."
+        )
+    return matches[0]
+
+
+def resolve_kernel_id(kernel_id: str, scheme: str | None = None) -> str:
     """Validate that ``kernel_id`` is a registered kernel and return it.
 
     Kernels are selected by their own registry name -- e.g. ``CG_gt_quark_PDF_ratio_NLO``,
     ``CG_gz_quark_PDF_msbar_NLO``, ``CG_gtgpg5_quark_PDF_hybrid_NLO`` -- so the manifest names the exact
-    operator+scheme it wants; there is no logical alias to translate. ``scheme`` is
-    still part of the manifest declaration (it also drives the renormalization stage)
-    and is only used here to make the error message clearer.
+    operator+scheme it wants; there is no logical alias to translate. When supplied,
+    the stage-owned ``scheme`` must match the token encoded in the exact kernel id.
     """
-    if kernel_id in KERNEL_REGISTRY:
-        return kernel_id
-    raise ValueError(
-        f"Unknown kernel_id {kernel_id!r} (scheme {scheme!r}). "
-        f"Available: {sorted(KERNEL_REGISTRY)}"
-    )
+    if kernel_id not in KERNEL_REGISTRY:
+        suffix = "" if scheme is None else f" (scheme {scheme!r})"
+        raise ValueError(f"Unknown kernel_id {kernel_id!r}{suffix}. Available: {sorted(KERNEL_REGISTRY)}")
+    encoded_scheme = matching_scheme_from_kernel_id(kernel_id)
+    if scheme is not None and scheme != encoded_scheme:
+        raise ValueError(
+            f"Matching scheme {scheme!r} does not match kernel_id {kernel_id!r}, "
+            f"which encodes scheme {encoded_scheme!r}."
+        )
+    return kernel_id
 
 
 # --- hybrid-scheme scale -----------------------------------------------------

@@ -29,7 +29,7 @@ def _quasi_on(x_grid: np.ndarray, *, n_sample: int = 4) -> EnsembleData:
 
 def test_resolve_registered_hybrid_kernel() -> None:
     kernel_id = "CG_gt_quark_PDF_hybrid_NLO"
-    assert resolve_kernel_id(kernel_id, "hybrid_ratio") == kernel_id
+    assert resolve_kernel_id(kernel_id, "hybrid") == kernel_id
 
 
 def test_kernel_registry_ids_match_kernels_module_function_names() -> None:

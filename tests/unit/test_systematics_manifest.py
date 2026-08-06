@@ -37,7 +37,7 @@ def test_systematics_manifest_expands_complete_branches(tmp_path: Path) -> None:
         "inputs": {"correlators": [], "artifacts": [], "kernels": []},
         "stages": {
             "renormalization": {
-                "defaults": {"scheme": "hybrid_ratio", "zs_fm": "0.17(2)"},
+                "defaults": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": "0.17(2)"},
                 "jobs": [{"id": "rn4"}, {"id": "rn5"}],
             },
             "fourier_transform": {

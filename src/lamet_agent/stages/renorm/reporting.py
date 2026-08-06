@@ -73,14 +73,16 @@ def _outputs_table(artifacts: dict[str, Any]) -> list[str]:
 
 
 def _scheme_table(result: dict[str, Any]) -> list[str]:
-    scheme = str(result.get("scheme", "hybrid_ratio"))
-    if scheme == "hybrid_self_renormalization":
+    scheme = str(result.get("scheme", "ratio"))
+    strategy = str(result.get("strategy", "ratio"))
+    if strategy == "self_renormalization":
         job_kind = str(
             result.get("job_kind")
             or ("fit" if result.get("d") is not None and "lattice_spacing_fm" not in result else "apply")
         )
         rows = [
             ("Scheme", f"`{scheme}`"),
+            ("Strategy", f"`{strategy}`"),
             ("Job kind", f"`{job_kind}`"),
             ("kernel_id", f"`{result.get('kernel_id', 'n/a')}`"),
             ("$\\mu$ [GeV]", format_report_value(result.get("mu"))),
@@ -90,6 +92,9 @@ def _scheme_table(result: dict[str, Any]) -> list[str]:
             ("$m_0$ [GeV]", format_report_value(result.get("m0", result.get("m0_gev")))),
             ("$d$", format_report_value(result.get("d"))),
             ("svdcut", format_report_value(result.get("svdcut"))),
+            ("$z_s$ [fm]", format_report_value(result.get("zs_fm"))),
+            ("Selected $z_s$ grid [fm]", format_report_value(result.get("zs_grid_fm"))),
+            ("Mean Re $Z_T$", format_report_value(result.get("ZT_re_mean"))),
             ("z coverage policy", format_report_value(result.get("z_coverage_policy"))),
             ("Dropped z points", format_report_value(result.get("n_z_dropped"))),
             ("Extrapolated z points", format_report_value(result.get("n_z_extrapolated"))),
@@ -103,12 +108,14 @@ def _scheme_table(result: dict[str, Any]) -> list[str]:
     elif scheme == "ratio":
         rows = [
             ("Scheme", f"`{scheme}`"),
+            ("Strategy", f"`{strategy}`"),
             ("z grid", format_report_list(result.get("z_grid", []))),
             ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
         ]
     else:
         rows = [
             ("Scheme", f"`{scheme}`"),
+            ("Strategy", f"`{strategy}`"),
             ("$z_s$ [fm]", format_report_value(result.get("zs_fm"))),
             ("$z_s/a$", format_report_value(result.get("zs_lattice"))),
             ("Selected denominator z grid", format_report_value(result.get("zs_grid"))),
@@ -122,10 +129,41 @@ def _scheme_table(result: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _formula_text(*, scheme: str = "hybrid_ratio") -> str:
-    if scheme == "hybrid_self_renormalization":
+def _formula_text(*, scheme: str = "ratio", strategy: str = "ratio") -> str:
+    if strategy == "self_renormalization" and scheme == "hybrid":
         return r"""
-Hybrid self-renormalization fits the zero-momentum reference over the full $z$ range and uses short-distance
+The self-renormalization strategy first fits the full-range factor $z_R(z,a)$.
+For the hybrid scheme, the apply job also consumes a denominator:
+
+$$
+h^R_s(z)=
+\begin{cases}
+h^{\rm tar}_s(z)/h^{\rm den}_s(z), & |z|\le z_s,\\
+h^{\rm tar}_s(z)/(z_R(z,a)Z_{T,s}), & |z|>z_s,
+\end{cases}
+\qquad
+Z_{T,s}=\frac{h^{\rm den}_s(z_s^{\rm grid})}{z_R(z_s^{\rm grid},a)}.
+$$
+
+$Z_{T,s}$ is independent of $z$ and is constructed per resample, so the two
+branches are continuous at the switch and denominator uncertainty propagates
+through the long-distance branch.
+""".strip()
+    if strategy == "self_renormalization" and scheme == "msbar":
+        return r"""
+The self-renormalization strategy fits $z_R(z,a)$ from the reference and the
+MSbar-scheme apply job acts sample by sample as
+
+$$
+h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)}.
+$$
+
+The $z=0$ point is passed through unchanged. Coverage and optional long-distance
+extension follow the declared `scheme_parameters.z_coverage_policy`.
+""".strip()
+    if strategy == "self_renormalization" and scheme == "ratio":
+        return r"""
+The self-renormalization strategy fits the zero-momentum reference over the full $z$ range and uses short-distance
 $Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}$ matching to fix the finite renormalization $m_0$:
 
 $$
@@ -142,7 +180,7 @@ $$
 
 $Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). Lattice-unit targets are converted inside the scheme as $z_{\rm fm}=|z/a|a_{\rm fm}$. The $z=0$ samples are excluded from $z_R$ and $Z_{\overline{\mathrm{MS}}}$ evaluation but passed through unchanged into the complete output, preserving $h^R(0)=1$. `scheme_parameters.LambdaQCD_gev` is the required $\Lambda_{\mathrm{QCD}}$ scale in GeV for the self-renormalization ansatz and is recorded in artifact provenance. The coupling is still derived independently by `alphas_nloop(mu)` and recorded as provenance; a numerical coupling cannot be supplied. The `strict` coverage policy requires the nonzero target to lie within the $z_R$ grid, `intersection` explicitly clips to their overlap, and `extrapolate` automatically extends the long-distance $f_1(z)$ quadratically and rebuilds only the missing $z_R$ points without endpoint freezing. There is no explicit $z_s$ switch; the hybrid character is the combination of full-range self-renormalization and short-distance MSbar finite matching.
 """.strip()
-    if scheme == "ratio":
+    if strategy == "ratio" and scheme == "ratio":
         return r"""
 The ratio scheme acts pointwise on every resampled sample $s$ across the complete coordinate grid:
 
@@ -181,19 +219,27 @@ def build_renorm_stage_report_markdown(
     base_dir: Path,
 ) -> str:
     """Build one English Markdown report for all renormalization jobs."""
-    schemes = {str(item.get("result", {}).get("scheme", "hybrid_ratio")) for item in jobs}
-    primary_scheme = next(iter(schemes)) if len(schemes) == 1 else "mixed"
+    combinations = {
+        (
+            str(item.get("result", {}).get("scheme", "ratio")),
+            str(item.get("result", {}).get("strategy", "ratio")),
+        )
+        for item in jobs
+    }
+    primary_scheme, primary_strategy = (
+        next(iter(combinations)) if len(combinations) == 1 else ("mixed", "mixed")
+    )
     intro = {
-        "hybrid_self_renormalization": (
-            "This report summarizes hybrid-self-renormalization jobs that convert bare matrix elements into "
-            "renormalized coordinate-space matrix elements."
-        ),
         "ratio": (
             "This report summarizes ratio-scheme jobs that convert bare matrix elements into "
             "renormalized coordinate-space matrix elements."
         ),
-        "hybrid_ratio": (
-            "This report summarizes hybrid-ratio renormalization jobs that convert bare matrix elements into "
+        "hybrid": (
+            "This report summarizes hybrid-scheme renormalization jobs that convert bare matrix elements into "
+            "renormalized coordinate-space matrix elements."
+        ),
+        "msbar": (
+            "This report summarizes MSbar-scheme jobs that convert bare matrix elements into "
             "renormalized coordinate-space matrix elements."
         ),
     }.get(
@@ -207,8 +253,8 @@ def build_renorm_stage_report_markdown(
         intro,
         "",
         "## Job Summary",
-        "| job | scheme | key | output | plot |",
-        "|---|---|---:|---|---|",
+        "| job | scheme | strategy | key | output | plot |",
+        "|---|---|---|---:|---|---|",
     ]
     markdown_jobs = []
     for item in jobs + list(systematics_jobs or []):
@@ -225,7 +271,7 @@ def build_renorm_stage_report_markdown(
         )
         if item in jobs:
             markdown_jobs.append((item, result, artifacts))
-        if result.get("scheme") == "hybrid_self_renormalization":
+        if result.get("strategy") == "self_renormalization":
             key = result.get("kernel_id")
         elif result.get("scheme") == "ratio":
             key = "pointwise"
@@ -234,7 +280,8 @@ def build_renorm_stage_report_markdown(
         output_path = artifacts.get("renormalized_artifact") or artifacts.get("zR_artifact") or "n/a"
         plot_path = artifacts.get("renormalized_plot") or "n/a"
         lines.append(
-            f"| `{item['job_id']}` | `{result.get('scheme', 'hybrid_ratio')}` | "
+            f"| `{item['job_id']}` | `{result.get('scheme', 'ratio')}` | "
+            f"`{result.get('strategy', 'ratio')}` | "
             f"{key if key is not None else format_report_value(result.get('zs_fm'))} | "
             f"{output_path} | "
             f"{plot_path} |"
@@ -245,9 +292,12 @@ def build_renorm_stage_report_markdown(
         value for key, value in sorted(stage_artifacts.items()) if key.startswith("matrix_overlay_") and "_image_" in key
     ]
     method_text = (
-        "\n\n".join(_formula_text(scheme=scheme) for scheme in sorted(schemes))
+        "\n\n".join(
+            _formula_text(scheme=scheme, strategy=strategy)
+            for scheme, strategy in sorted(combinations)
+        )
         if primary_scheme == "mixed"
-        else _formula_text(scheme=primary_scheme)
+        else _formula_text(scheme=primary_scheme, strategy=primary_strategy)
     )
     lines.extend(["", "## Method", method_text])
     if overlay_images:
@@ -264,7 +314,9 @@ def build_renorm_stage_report_markdown(
             lines.extend(f"![{title}]({image})" for image in images)
     for item, result, artifacts in markdown_jobs:
         is_fit_job = result.get("job_kind") == "fit" or (
-            result.get("scheme") == "hybrid_self_renormalization" and artifacts.get("zR_artifact") and not artifacts.get("renormalized_artifact")
+            result.get("strategy") == "self_renormalization"
+            and artifacts.get("zR_artifact")
+            and not artifacts.get("renormalized_artifact")
         )
         lines.extend(["", f"## `{item['job_id']}`", "", "### Scheme Parameters", *_scheme_table(result)])
         if not is_fit_job:

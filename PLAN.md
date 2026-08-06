@@ -49,7 +49,7 @@ $$R(t, \tau) = \frac{C_\mathrm{3pt}(t, \tau)}{C_\mathrm{2pt}(t)}$$
 
 Hybrid scheme 指的是区分短程和长程的矩阵元，并分别应用不同的重整化方案。短程矩阵元可以被微扰论描述，但裸矩阵元中离散效应可能较严重；长程矩阵元离散效应较弱，但我们不希望引入额外的红外效应。因此，一般来说可以对短程矩阵元使用 ratio renormalization，对长程矩阵元使用 self-renormalization 或其他由微扰论控制的重整化方案。
 
-本仓库中的 `hybrid_self_renormalization` 是一个没有显式 $z_s$ 切换点的 hybrid 实现：在完整 $z$ 范围用 self-renormalization 拟合抽取 $Z_R(z,a)$，同时用短程 $\overline{\mathrm{MS}}$ matching 确定有限重整化 $m_0$。这与带显式 $z_s$ 分段的 `hybrid_ratio` 方案不同。
+本仓库将物理 scheme 与实现 strategy 分开：`scheme` 为 `ratio`、`hybrid` 或 `msbar`，renormalization `strategy` 为 `ratio` 或 `self_renormalization`。`hybrid + self_renormalization` 在短程使用 target/denominator，在长程使用 target/$(Z_R Z_T)$，其中 $Z_T$ 在最接近 $z_s$ 的网格点按每个重采样样本确定，以保证连续性。
 
 ### Self-renormalization
 

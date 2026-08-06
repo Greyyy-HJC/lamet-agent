@@ -74,6 +74,7 @@ STAGE_PARAM_CONTRACTS = {
             "mu": None,
             "normalization": None,
             "scheme": None,
+            "strategy": None,
             "scheme_parameters": {
                 "LambdaQCD_gev": None,
                 "d": None,
@@ -88,16 +89,15 @@ STAGE_PARAM_CONTRACTS = {
             "LambdaQCD": (
                 "was renamed; use scheme_parameters.LambdaQCD_gev and specify the value explicitly."
             ),
-            "d": "belongs to hybrid_self_renormalization; use scheme_parameters.d.",
+            "d": "belongs to strategy='self_renormalization'; use scheme_parameters.d.",
             "m0_gev": (
-                "is scheme-specific; use scheme_parameters.m0_gev for hybrid_ratio or "
-                "hybrid_self_renormalization."
+                "is scheme/strategy-specific; use scheme_parameters.m0_gev."
             ),
             "svdcut": (
-                "belongs to hybrid_self_renormalization; use scheme_parameters.svdcut."
+                "belongs to strategy='self_renormalization'; use scheme_parameters.svdcut."
             ),
             "z_coverage_policy": (
-                "belongs to hybrid_self_renormalization; use scheme_parameters.z_coverage_policy."
+                "belongs to strategy='self_renormalization'; use scheme_parameters.z_coverage_policy."
             ),
             "alpha_s": "is derived from mu by alphas_nloop and cannot be specified.",
             "Nf": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu).",
@@ -189,6 +189,7 @@ STAGE_PARAM_CONTRACTS = {
             "plot": {"xlim": None, "ylim": None},
             "quasi_y_ls": _GRID_SCHEMA,
             "r": None,
+            "scheme": None,
             "sector": None,
             "xlim": None,
             "ylim": None,

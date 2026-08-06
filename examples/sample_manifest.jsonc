@@ -94,16 +94,14 @@
         "stage": "perturbative_matching", // full consuming StageId, not package shorthand
         "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", // exact callable/registry id
         "kernel_path": "src/lamet_agent/kernels.py", // relative to the root directory
-        "scheme": "hybrid_ratio", // choose a scheme compatible with kernel_id
         "kernel_parameters": {} // fixed kernel-specific values; do not put zs_fm here
       }
-      // A hybrid-self-renormalization branch also needs a renormalization kernel
+      // A self_renormalization strategy also needs a renormalization kernel
       // declaration (keep the matching kernel above when running a full chain):
       // ,{
       //   "stage": "renormalization",
       //   "kernel_id": "ZMSbar_pdf", // use ZMSbar_da when the apply target is a DA operator
       //   "kernel_path": "src/lamet_agent/kernels.py",
-      //   "scheme": "hybrid_self_renormalization",
       //   "kernel_parameters": {} // optional mu may be declared here or in stage defaults/jobs
       // }
     ]
@@ -173,7 +171,8 @@
     "renormalization": {
       "defaults": {
         "normalization": true, // optional; divide each bare input by its z=0 value before the scheme
-        "scheme": "hybrid_ratio", // active branch; requires job roles target+denominator and flat zs_fm
+        "scheme": "hybrid", // physical renormalization scheme
+        "strategy": "ratio", // execution strategy; requires target+denominator
         // Pointwise alternative: set scheme to "ratio" with the same jobs;
         // zs_fm and scheme_parameters below are then optional and ignored.
         // A full chain must also select a ratio-compatible matching kernel.
@@ -181,9 +180,8 @@
           "m0_gev": 0.0, // optional hybrid long-range renormalon slope in GeV
           "delta_m_gev": 0.0 // optional target-denominator mass gap in GeV
         }
-        // Incompatible hybrid-self-renormalization branch: replace the active
-        // scheme + scheme_parameters above and replace the jobs below.
-        // "scheme": "hybrid_self_renormalization",
+        // Self-renormalization alternative: replace strategy and jobs below.
+        // "strategy": "self_renormalization",
         // Optional shared/default parameters for that branch:
         // The shared normalization field above also applies here; set it false
         // when hybrid-self inputs are already normalized at z=0.
@@ -276,6 +274,7 @@
     },
     "perturbative_matching": {
       "defaults": {
+        "scheme": "hybrid", // must match the ratio/hybrid/msbar token in kernel_id
         "mu": 2.0, // factorization/renormalization scale in GeV
         "component": "re", // select "re" or "im" from the quasi distribution
         // Both grids are optional and default to the grid the quasi input carries

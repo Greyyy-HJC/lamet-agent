@@ -53,7 +53,6 @@
         "stage": "perturbative_matching",
         "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
         "kernel_path": "src/lamet_agent/kernels.py",
-        "scheme": "hybrid_ratio",
         "kernel_parameters": {}
       }
     ]
@@ -82,7 +81,8 @@
       "defaults": {
         "normalization": true,
         "zs_fm": "0.1722(0.0200)",
-        "scheme": "hybrid_ratio",
+        "scheme": "hybrid",
+        "strategy": "ratio",
         "scheme_parameters": {
           "m0_gev": 0.0,
           "delta_m_gev": 0.0
@@ -113,6 +113,7 @@
     },
     "perturbative_matching": {
       "defaults": {
+        "scheme": "hybrid",
         "mu": 2.0,
         "r": 1.41421356237,
         "component": "re",
