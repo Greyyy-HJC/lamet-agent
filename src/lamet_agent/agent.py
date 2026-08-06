@@ -321,17 +321,17 @@ def _ensemble_label(data: EnsembleData, fallback: str = "") -> str:
 def _momentum_label(attrs: dict[str, Any], result: dict[str, Any]) -> str:
     form = str(attrs.get("fitting_form") or result.get("fitting_form") or "Breit")
     if form == "NonBreit":
-        q2 = result.get("q2_gev2", attrs.get("q2_gev2"))
+        t_gev2 = result.get("t_gev2", attrs.get("t_gev2"))
         xi = result.get("xi", attrs.get("xi"))
         initial = result.get("initial_momentum_gev", attrs.get("initial_momentum_gev"))
         final = result.get("final_momentum_gev", attrs.get("final_momentum_gev"))
-        if (q2 is None or xi is None) and initial is not None and final is not None:
-            q2 = (float(final) - float(initial)) ** 2
+        if (t_gev2 is None or xi is None) and initial is not None and final is not None:
+            t_gev2 = -(float(final) - float(initial)) ** 2
             denominator = float(initial) + float(final)
             xi = None if denominator == 0.0 else (float(initial) - float(final)) / denominator
-        q2_text = "n/a" if q2 is None else f"{float(q2):.2f}"
+        t_text = "n/a" if t_gev2 is None else f"{float(t_gev2):.2f}"
         xi_text = "n/a" if xi is None else f"{float(xi):.2f}"
-        return rf"$Q^2={q2_text}\,\mathrm{{GeV}}^2$, $\xi={xi_text}$"
+        return rf"$t={t_text}\,\mathrm{{GeV}}^2$, $\xi={xi_text}$"
     momentum = attrs.get("momentum_gev") or result.get("momentum_gev")
     p_text = "n/a" if momentum in (None, "") else f"{float(momentum):.2f}"
     return rf"$p={p_text}\,\mathrm{{GeV}}$"

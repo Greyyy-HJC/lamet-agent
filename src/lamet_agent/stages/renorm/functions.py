@@ -1031,7 +1031,7 @@ def apply_self_renormalization(
         "final_momentum",
         "initial_momentum_gev",
         "final_momentum_gev",
-        "q2_gev2",
+        "t_gev2",
         "xi",
         "fitting_form",
         "hadron",

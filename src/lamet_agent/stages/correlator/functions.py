@@ -160,13 +160,13 @@ def _energy_summary(
     }
 
 
-def _physical_q2_gev2(
+def _physical_t_gev2(
     initial_momentum_gev: float | None,
     final_momentum_gev: float | None,
     initial_energy_gev: float | None,
     final_energy_gev: float | None,
 ) -> float | None:
-    """Return spacelike ``Q^2 = |Delta p|^2 - (Delta E)^2`` for NonBreit data."""
+    """Return ``t = (Delta E)^2 - |Delta p|^2`` for NonBreit data."""
     if None in (
         initial_momentum_gev,
         final_momentum_gev,
@@ -176,7 +176,7 @@ def _physical_q2_gev2(
         return None
     delta_p = float(final_momentum_gev) - float(initial_momentum_gev)
     delta_e = float(final_energy_gev) - float(initial_energy_gev)
-    return delta_p**2 - delta_e**2
+    return delta_e**2 - delta_p**2
 
 
 def _optional_float(value: Any) -> float | None:
@@ -3879,7 +3879,7 @@ def fit_bare_matrix_grid(
             or final_energy_key not in final_fit.p
             else float(gv.mean(final_fit.p[final_energy_key])) * energy_scale
         )
-        q2 = _physical_q2_gev2(
+        t_gev2 = _physical_t_gev2(
             initial_momentum_gev,
             final_momentum_gev,
             initial_energy_gev,
@@ -3891,9 +3891,9 @@ def fit_bare_matrix_grid(
             else float(initial_momentum_gev) + float(final_momentum_gev)
         )
         xi = None if denominator in (None, 0.0) else (float(initial_momentum_gev) - float(final_momentum_gev)) / denominator
-        q2_label = "n/a" if q2 is None else f"{q2:.2f}"
+        t_label = "n/a" if t_gev2 is None else f"{t_gev2:.2f}"
         xi_label = "n/a" if xi is None else f"{xi:.2f}"
-        plot_title = rf"{ensemble} $Q^2={q2_label}\,\mathrm{{GeV}}^2$, $\xi={xi_label}$ bare matrix elements"
+        plot_title = rf"{ensemble} $t={t_label}\,\mathrm{{GeV}}^2$, $\xi={xi_label}$ bare matrix elements"
     else:
         p_label = "n/a" if momentum_gev is None else f"{float(momentum_gev):.2f}"
         plot_title = rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ bare matrix elements"
@@ -4015,7 +4015,7 @@ def fit_bare_matrix_grid(
             "momentum_gev": momentum_gev,
             "initial_momentum_gev": initial_momentum_gev,
             "final_momentum_gev": final_momentum_gev,
-            **({"q2_gev2": q2, "xi": xi} if form == "NonBreit" and q2 is not None and xi is not None else {}),
+            **({"t_gev2": t_gev2, "xi": xi} if form == "NonBreit" and t_gev2 is not None and xi is not None else {}),
             "fitting_form": form,
             "fit_scope": scope,
             "nstate_values": json.dumps(fit_nstates),
@@ -4136,7 +4136,7 @@ def fit_bare_matrix_grid(
         "momentum_gev": momentum_gev,
         "initial_momentum_gev": initial_momentum_gev,
         "final_momentum_gev": final_momentum_gev,
-        "q2_gev2": q2 if form == "NonBreit" else None,
+        "t_gev2": t_gev2 if form == "NonBreit" else None,
         "xi": xi if form == "NonBreit" else None,
         "auto_window_scan": auto_window_scan,
     }

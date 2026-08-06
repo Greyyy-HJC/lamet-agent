@@ -59,7 +59,7 @@ from lamet_agent.stages.correlator.functions import (
     _normalise_strategy,
     _non_forward_ratio_samples,
     _overlaps,
-    _physical_q2_gev2,
+    _physical_t_gev2,
     _ratio_samples,
     _read_2pt,
     _read_3pt,
@@ -600,9 +600,9 @@ def test_fit_matrix_element_supports_nonbreit_joint_data() -> None:
     assert fitted == pytest.approx(expected, rel=0.05)
 
 
-def test_nonbreit_q2_includes_energy_transfer() -> None:
-    assert _physical_q2_gev2(1.0, 1.5, 1.2, 1.6) == pytest.approx(0.09)
-    assert _physical_q2_gev2(1.0, 1.5, None, 1.6) is None
+def test_nonbreit_t_includes_energy_transfer() -> None:
+    assert _physical_t_gev2(1.0, 1.5, 1.2, 1.6) == pytest.approx(-0.09)
+    assert _physical_t_gev2(1.0, 1.5, None, 1.6) is None
 
 
 def test_fit_ratio_rejects_empty_tau_window() -> None:
