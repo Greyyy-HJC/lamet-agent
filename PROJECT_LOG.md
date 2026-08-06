@@ -902,3 +902,15 @@
 - Documented the in-repo literature knowledge base under `papers/` in the root `README.md`, including first bootstrap, update, and review-stage usage.
 - Updated `papers/README.md` to use the renamed repository path and to describe the broader LaMET-related scope rather than only a narrow core set.
 - Expanded `papers/config/relevance_config.json` so harvesting and scoring cover broader LaMET-related theory, lattice-analysis, and perturbative papers, including short-distance factorization and systematics-oriented queries.
+
+## 2026-08-06 (Repair broken local .venv)
+
+- Recreated the repository-root `.venv` after the previous environment pointed at a missing Miniconda interpreter (`/home/jinchen/miniconda3/bin/python`).
+- Bootstrapped with system CPython 3.12.3 via `uv venv --seed` because `python3.12-venv` is not installed on this host.
+- Reinstalled the editable package with `pip install -e ".[dev,analysis]"` and verified core imports plus the `lamet-agent` CLI entrypoint.
+- Added missing `mpmath>=1.3` to the `analysis` optional dependency set so LRR matching kernels can import `mpmath.expint` after a fresh editable install.
+
+## 2026-08-06 (Update stale unit tests)
+
+- Updated `test_parse_api_model_provider_shorthand_uses_default_model` to expect DeepSeek default `deepseek-v4-flash`.
+- Added explicit `momentum_gev=2.0` to Fourier unit tests that called `run_fourier_transform` under default `coord_unit=\"fm\"` without kinematics.

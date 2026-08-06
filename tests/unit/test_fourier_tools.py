@@ -322,6 +322,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         bz_direction="X",
         artifacts_dir=str(tmp_path / "artifacts"),
         workers=2,
+        momentum_gev=2.0,
     )
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
@@ -471,6 +472,7 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
+        momentum_gev=2.0,
     )
 
     assert run["n_schemes"] == 1
@@ -502,6 +504,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         order="LA",
         observable="nucleon_quark_unpolarized_quasi_pdf",
         part="re",
+        momentum_gev=2.0,
     )
     result_re = store["fourier_result"]
     assert result_re["part"] == "re"
@@ -528,6 +531,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         order="LA",
         observable="nucleon_quark_unpolarized_quasi_pdf",
         part="im",
+        momentum_gev=2.0,
     )
     result_im = store["fourier_result"]
     assert result_im["part"] == "im"
@@ -561,6 +565,7 @@ def test_fourier_sector_valence_resolves_projection(tmp_path: Path, monkeypatch)
         order="LA",
         sector="valence",
         target_observable="pdf",
+        momentum_gev=2.0,
     )
 
     result = store["fourier_result"]
@@ -597,6 +602,7 @@ def test_fourier_gpd_sector_valence_resolves_projection(tmp_path: Path, monkeypa
         sector="valence",
         target_observable="gpd",
         observable="nucleon_quark_quasi_gpd",
+        momentum_gev=2.0,
     )
 
     result = store["fourier_result"]
@@ -619,6 +625,7 @@ def test_fourier_sector_sea_combines_total_and_valence(tmp_path: Path, monkeypat
         method="GI",
         order="LA",
         target_observable="pdf",
+        momentum_gev=2.0,
     )
 
     total_store = {}
@@ -661,6 +668,7 @@ def test_fourier_gpd_sector_sea_combines_total_and_valence(tmp_path: Path, monke
         order="LA",
         target_observable="gpd",
         observable="nucleon_quark_quasi_gpd",
+        momentum_gev=2.0,
     )
 
     total_store = {}
@@ -700,6 +708,7 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
         order="LA",
         part="re",
         output_scale=1.0,
+        momentum_gev=2.0,
     )
     base = base_store["fourier_result"]
     base_artifact_values = np.asarray(base_store["fourier_result_data"].values)
@@ -714,6 +723,7 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
         order="LA",
         part="re",
         output_scale=2.0,
+        momentum_gev=2.0,
     )
     scaled = scaled_store["fourier_result"]
 
@@ -745,6 +755,7 @@ def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monke
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
+        momentum_gev=2.0,
     )
 
     ft_data = EnsembleData.from_netcdf(run["artifact"])
@@ -837,6 +848,7 @@ def test_fourier_transform_accepts_upstream_ensemble_data(tmp_path: Path, monkey
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
+        momentum_gev=2.0,
     )
 
     assert run["n_samples"] == 3
@@ -864,6 +876,7 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
         method="GI",
         order="NLA",
         observable="pion_quark_quasi_pdf",
+        momentum_gev=2.0,
     )
 
     fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
@@ -909,6 +922,7 @@ def test_fourier_pion_pdf_valence_tail_constraints(tmp_path: Path, monkeypatch) 
         observable="pion_quark_quasi_pdf",
         sector="valence",
         target_observable="pdf",
+        momentum_gev=2.0,
     )
 
     fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
@@ -1073,6 +1087,7 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
             method="GI",
             order=order,
             observable=observable,
+            momentum_gev=2.0,
         )
 
         fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
@@ -1164,6 +1179,7 @@ def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypat
         },
         method="GI",
         order="LA",
+        momentum_gev=2.0,
     )
     summary = summarize_fourier_result(store)
 
@@ -1194,6 +1210,7 @@ def test_fourier_model_average_false_selects_one_scheme_from_mean_scan(tmp_path:
         },
         method="GI",
         order="LA",
+        momentum_gev=2.0,
     )
     result = store["fourier_result"]
 
@@ -1225,6 +1242,7 @@ def test_fourier_model_average_scans_order_and_prior_width_per_sample(tmp_path: 
         order=["LA", "NLA"],
         posterior_prior_error_scale=[2.0, 3.0],
         observable="pion_quark_quasi_pdf",
+        momentum_gev=2.0,
     )
 
     result = store["fourier_result"]
@@ -1361,6 +1379,7 @@ def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path
         order="NLA",
         observable="pion_quark_quasi_pdf",
         part="both",
+        momentum_gev=2.0,
     )
 
     assert run["n_schemes"] > 0
@@ -1480,6 +1499,7 @@ def test_fourier_defaults_scheme_scoring_options_for_complete_scan(tmp_path: Pat
         },
         method="GI",
         order="LA",
+        momentum_gev=2.0,
     )
 
     assert len(store["fourier_result"]["fit_model_logGBF"]) == 1
@@ -1498,6 +1518,7 @@ def test_fourier_accepts_compact_y_grid_spec(tmp_path: Path, monkeypatch) -> Non
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
+        momentum_gev=2.0,
     )
     summary = summarize_fourier_result(store)
 
@@ -1519,6 +1540,7 @@ def test_fourier_accepts_covariance_sample_error_mode(tmp_path: Path, monkeypatc
         method="GI",
         order="LA",
         sample_error_mode="covariance",
+        momentum_gev=2.0,
     )
 
     assert run["n_schemes"] == 1

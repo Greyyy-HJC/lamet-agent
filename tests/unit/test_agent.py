@@ -318,7 +318,7 @@ def test_parse_api_model_accepts_provider_and_model_id() -> None:
 
 def test_parse_api_model_provider_shorthand_uses_default_model() -> None:
     assert llm.parse_api_model("openai") == ("openai", "gpt-4o-mini")
-    assert llm.parse_api_model("deepseek") == ("deepseek", "deepseek-chat")
+    assert llm.parse_api_model("deepseek") == ("deepseek", "deepseek-v4-flash")
 
 
 def test_parse_api_model_rejects_unknown_provider() -> None:
