@@ -466,7 +466,8 @@ def apply_ratio_scheme_renormalization(
     *,
     target: str = "target_bare_matrix_element",
     denominator: str = "denominator_bare_matrix_element",
-    scheme: str = "hybrid_ratio",
+    scheme: str = "ratio",
+    strategy: str = "ratio",
     scheme_parameters: dict[str, float] | None = None,
     out: str = "matrix_element_data",
     save_path: str | None = None,
@@ -475,8 +476,10 @@ def apply_ratio_scheme_renormalization(
     ensemble: str | None = None,
     sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
-    """Apply ratio or hybrid-ratio renormalization and output z coordinates in fm."""
-    if scheme not in {"ratio", "hybrid_ratio"}:
+    """Apply the ratio strategy in the ratio or hybrid scheme."""
+    if strategy != "ratio":
+        raise ValueError(f"unsupported renormalization strategy: {strategy!r}")
+    if scheme not in {"ratio", "hybrid"}:
         raise ValueError(f"unsupported renormalization scheme: {scheme!r}")
     target_data = _require_matrix_data(store, target)
     denom_data = _require_matrix_data(store, denominator)
@@ -490,19 +493,19 @@ def apply_ratio_scheme_renormalization(
     lattice_spacing_raw = target_data.attrs.get("lattice_spacing_fm")
     if lattice_spacing_raw in {None, ""}:
         raise ValueError(
-            "ratio and hybrid_ratio renormalization require target lattice_spacing_fm "
+            "ratio-strategy renormalization requires target lattice_spacing_fm "
             "to convert output z coordinates to fm"
         )
     try:
         lattice_spacing_fm = float(lattice_spacing_raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            "ratio and hybrid_ratio renormalization require target lattice_spacing_fm "
+            "ratio-strategy renormalization requires target lattice_spacing_fm "
             "to be a finite positive value"
         ) from exc
     if not np.isfinite(lattice_spacing_fm) or lattice_spacing_fm <= 0.0:
         raise ValueError(
-            "ratio and hybrid_ratio renormalization require target lattice_spacing_fm "
+            "ratio-strategy renormalization requires target lattice_spacing_fm "
             "to be a finite positive value"
         )
     z_output_fm = z_target * lattice_spacing_fm
@@ -513,7 +516,7 @@ def apply_ratio_scheme_renormalization(
 
     renorm_values = target_values / denom_values
     hybrid_metadata: dict[str, float] = {}
-    if scheme == "hybrid_ratio":
+    if scheme == "hybrid":
         params = scheme_parameters or {}
         zs_fm = float(params["zs_fm"])
         m0_gev = float(params.get("m0_gev", 0.0))
@@ -536,6 +539,7 @@ def apply_ratio_scheme_renormalization(
     attrs = {
         **target_data.attrs,
         "scheme": scheme,
+        "strategy": strategy,
         "target": target,
         "denominator": denominator,
         "job_id": job_id,
@@ -562,6 +566,7 @@ def apply_ratio_scheme_renormalization(
         "re_samples": np.real(renorm_values),
         "im_samples": np.imag(renorm_values),
         "scheme": scheme,
+        "strategy": strategy,
     }
 
     stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="renormalized_matrix_element")
@@ -575,6 +580,7 @@ def apply_ratio_scheme_renormalization(
         "n_z": int(len(z_target)),
         "n_sample": int(renorm_values.shape[0]),
         "scheme": scheme,
+        "strategy": strategy,
         **hybrid_metadata,
     }
 
@@ -696,6 +702,8 @@ def fit_self_renormalization_factor(
     *,
     reference: str = "reference",
     out: str = "zR",
+    scheme: str = "ratio",
+    strategy: str = "self_renormalization",
     kernel_id: str | None = None,
     mu: float = 2.0,
     LambdaQCD_gev: float,
@@ -704,7 +712,7 @@ def fit_self_renormalization_factor(
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Fit the zR factor for hybrid self-renormalization.
+    """Fit the zR factor for the self-renormalization strategy.
 
     ``d`` is required and fixed in the continuum/discretization fit and zR
     construction. The finite slope ``m0`` is always fitted from the first
@@ -712,6 +720,10 @@ def fit_self_renormalization_factor(
     one discretization coefficient ``f1(z)`` and never extrapolates beyond the
     reference z grid.
     """
+    if scheme not in {"ratio", "hybrid", "msbar"}:
+        raise ValueError(f"unsupported renormalization scheme: {scheme!r}")
+    if strategy != "self_renormalization":
+        raise ValueError(f"unsupported renormalization strategy: {strategy!r}")
     if d is None:
         raise ValueError("fit_self_renormalization_factor requires d (fixed; never fitted)")
     d_val = float(d)
@@ -887,7 +899,8 @@ def fit_self_renormalization_factor(
         dims=("a", "z"),
         coords={"a": a_coords, "z": z_arr.tolist()},
         attrs={
-            "scheme": "hybrid_self_renormalization",
+            "scheme": scheme,
+            "strategy": strategy,
             "kernel_id": resolved_kernel_id,
             "mu": str(mu),
             "LambdaQCD_gev": str(lambdaqcd_gev),
@@ -938,7 +951,8 @@ def fit_self_renormalization_factor(
     return {
         "out": out,
         "artifact": str(artifact),
-        "scheme": "hybrid_self_renormalization",
+        "scheme": scheme,
+        "strategy": strategy,
         "job_kind": "fit",
         "kernel_id": resolved_kernel_id,
         "m0": m0_mean,
@@ -987,7 +1001,11 @@ def apply_self_renormalization(
     store: dict[str, Any],
     *,
     target: str = "target",
+    denominator: str | None = None,
     zR: str = "zR",
+    scheme: str = "ratio",
+    strategy: str = "self_renormalization",
+    zs_fm: float | None = None,
     kernel_id: str | None = None,
     mu: float = 2.0,
     LambdaQCD_gev: float,
@@ -1002,12 +1020,19 @@ def apply_self_renormalization(
     metadata: dict[str, Any] | None = None,
     sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
-    """Apply hybrid self-renormalization: H / (zR * ZMSbar), preserving samples.
+    """Apply the self-renormalization strategy in ratio, hybrid, or MSbar scheme.
 
     Optional ``d`` / ``m0_gev`` remap upstream zR from the fit-job operator
     parameters onto this apply job (e.g. PDF-fit zR → DA ``d``/``m0``).
     """
+    if scheme not in {"ratio", "hybrid", "msbar"}:
+        raise ValueError(f"unsupported renormalization scheme: {scheme!r}")
+    if strategy != "self_renormalization":
+        raise ValueError(f"unsupported renormalization strategy: {strategy!r}")
+    if scheme == "hybrid" and (denominator is None or zs_fm is None):
+        raise ValueError("hybrid+self_renormalization requires denominator and zs_fm")
     target_data = _require_matrix_data(store, target)
+    denominator_data = _require_matrix_data(store, denominator) if denominator is not None else None
     zR_data = store[zR]
     if not isinstance(zR_data, EnsembleData):
         raise ValueError(f"store[{zR!r}] does not contain EnsembleData")
@@ -1054,6 +1079,29 @@ def apply_self_renormalization(
     z_target_input, nonzero_mask, input_coord_unit = _self_renorm_target_coordinates(
         target_data, lattice_spacing_fm=lattice_spacing_fm
     )
+    if scheme == "hybrid":
+        assert denominator_data is not None
+        if target_data.resample != denominator_data.resample:
+            raise ValueError(
+                "hybrid+self_renormalization target and denominator resampling must match: "
+                f"{target_data.resample} != {denominator_data.resample}"
+            )
+        z_denominator_input, _, denominator_coord_unit = _self_renorm_target_coordinates(
+            denominator_data, lattice_spacing_fm=lattice_spacing_fm
+        )
+        if (
+            z_denominator_input.shape != z_target_input.shape
+            or not np.allclose(z_denominator_input, z_target_input, rtol=0.0, atol=1e-10)
+        ):
+            raise ValueError(
+                "hybrid+self_renormalization target and denominator z grids must match exactly"
+            )
+        if np.asarray(denominator_data.values).shape != np.asarray(target_data.values).shape:
+            raise ValueError(
+                "hybrid+self_renormalization target and denominator sample arrays must have matching shape"
+            )
+    else:
+        denominator_coord_unit = None
     nonzero_indices = np.flatnonzero(nonzero_mask)
     coverage_mask = _target_z_mask(
         z_target_input[nonzero_mask], z_zr, policy=z_coverage_policy
@@ -1123,7 +1171,8 @@ def apply_self_renormalization(
             coords={dim: list(zR_data.coords[dim]) for dim in zR_data.dims},
             attrs={
                 **zR_data.attrs,
-                "scheme": "hybrid_self_renormalization",
+                "scheme": scheme,
+                "strategy": strategy,
                 "d": str(d_to),
                 "m0_gev": str(m0_to),
                 "d_from": str(d_from),
@@ -1164,17 +1213,46 @@ def apply_self_renormalization(
             "f1_tail_zmin_fm": None,
         }
 
-    zms = np.asarray(zms_fn(z_target, mu=mu), dtype=float)
     all_target_values = np.asarray(target_data.values, dtype=complex)
     target_values = all_target_values[:, target_indices]
-    renorm_nonzero = target_values / (zr_on_target[None, :] * zms[None, :])
+    hybrid_metadata: dict[str, str] = {}
+    if scheme == "ratio":
+        zms = np.asarray(zms_fn(z_target, mu=mu), dtype=float)
+        renorm_nonzero = target_values / (zr_on_target[None, :] * zms[None, :])
+    elif scheme == "msbar":
+        renorm_nonzero = target_values / zr_on_target[None, :]
+    else:
+        assert denominator_data is not None and zs_fm is not None
+        all_denominator_values = np.asarray(denominator_data.values, dtype=complex)
+        denominator_values = all_denominator_values[:, target_indices]
+        switch_position = int(np.argmin(np.abs(np.abs(z_target) - float(zs_fm))))
+        zt = denominator_values[:, switch_position] / zr_on_target[switch_position]
+        if np.any(np.isclose(np.abs(zt), 0.0, rtol=0.0, atol=1e-30)):
+            raise ValueError("hybrid+self_renormalization produced zero Z_T at the switch point")
+        short_values = target_values / denominator_values
+        long_values = target_values / (zr_on_target[None, :] * zt[:, None])
+        short_mask = np.abs(z_target) <= float(zs_fm)
+        renorm_nonzero = np.where(short_mask[None, :], short_values, long_values)
+        hybrid_metadata = {
+            "denominator": str(denominator),
+            "denominator_coord_unit": str(denominator_coord_unit),
+            "zs_fm": str(float(zs_fm)),
+            "zs_grid_fm": str(float(z_target[switch_position])),
+            "ZT_re_mean": str(float(np.mean(np.real(zt)))),
+            "ZT_im_mean": str(float(np.mean(np.imag(zt)))),
+        }
     renorm_by_index = {
         int(input_index): renorm_nonzero[:, position]
         for position, input_index in enumerate(target_indices)
     }
     renorm_values = np.stack(
         [
-            all_target_values[:, input_index]
+            (
+                all_target_values[:, input_index]
+                / np.asarray(denominator_data.values, dtype=complex)[:, input_index]
+                if scheme == "hybrid" and denominator_data is not None
+                else all_target_values[:, input_index]
+            )
             if not nonzero_mask[input_index]
             else renorm_by_index[int(input_index)]
             for input_index in output_indices
@@ -1183,7 +1261,8 @@ def apply_self_renormalization(
     )
     attrs = {
         **target_data.attrs,
-        "scheme": "hybrid_self_renormalization",
+        "scheme": scheme,
+        "strategy": strategy,
         "kernel_id": resolved_kernel_id,
         "mu": str(mu),
         "LambdaQCD_gev": str(lambdaqcd_gev),
@@ -1206,7 +1285,9 @@ def apply_self_renormalization(
         "n_z_dropped": str(n_z_dropped),
         "n_z_zero_passthrough": str(n_z_zero_passthrough),
         "n_z_coverage_dropped": str(n_z_coverage_dropped),
-        "z0_treatment": "passthrough_without_self_renormalization",
+        "z0_treatment": (
+            "target_over_denominator" if scheme == "hybrid" else "passthrough_without_self_renormalization"
+        ),
         "n_z_extrapolated": str(extrapolation["n_z_extrapolated"]),
         "z_extrapolation_method": str(extrapolation["z_extrapolation_method"]),
         "f1_tail_zmin_fm": (
@@ -1215,6 +1296,7 @@ def apply_self_renormalization(
         "zR_input_min_fm": str(float(np.min(z_zr))),
         "zR_input_max_fm": str(float(np.max(z_zr))),
     }
+    attrs.update(hybrid_metadata)
     attrs.update(metadata_out)
     if remap:
         attrs["d_from"] = str(d_from)
@@ -1233,7 +1315,8 @@ def apply_self_renormalization(
         "coord": z_output,
         "re_samples": np.real(renorm_values),
         "im_samples": np.imag(renorm_values),
-        "scheme": "hybrid_self_renormalization",
+        "scheme": scheme,
+        "strategy": strategy,
     }
 
     stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="renormalized_matrix_element")
@@ -1244,7 +1327,8 @@ def apply_self_renormalization(
         "out": out,
         "data": "matrix_element_data",
         "artifact": str(artifact),
-        "scheme": "hybrid_self_renormalization",
+        "scheme": scheme,
+        "strategy": strategy,
         "kernel_id": resolved_kernel_id,
         "mu": float(mu),
         "LambdaQCD_gev": lambdaqcd_gev,
@@ -1263,6 +1347,7 @@ def apply_self_renormalization(
         "n_z_zero_passthrough": n_z_zero_passthrough,
         "n_z_coverage_dropped": n_z_coverage_dropped,
         "input_coord_unit": input_coord_unit,
+        **hybrid_metadata,
         **extrapolation,
         "z_input_range_fm": [float(np.min(z_target_input)), float(np.max(z_target_input))],
         "z_output_range_fm": [float(np.min(z_output)), float(np.max(z_output))],

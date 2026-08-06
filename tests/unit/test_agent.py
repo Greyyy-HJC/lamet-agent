@@ -568,7 +568,7 @@ def test_self_renorm_apply_job_rejects_fit_tool_then_recovers(tmp_path: Path, mo
             ])
 
         def begin_stage(self, prompt):
-            assert "hybrid_self_renormalization" in prompt
+            assert "self_renormalization" in prompt
             assert '"apply_self_renormalization"' in prompt
             assert '"fit_self_renormalization_factor"' not in prompt.split("Stage instruction:", 1)[0]
 
@@ -1279,7 +1279,7 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
             },
             "stages": {
                 "renormalization": {
-                    "defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.3},
+                    "defaults": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": 0.3},
                     "jobs": [{"id": "rn_p4", "inputs": {"target": "target", "denominator": "denom"}}],
                 },
             },
@@ -1374,6 +1374,14 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
         attrs={"lattice_spacing_fm": "0.1"},
         name="target",
     )
+    zR = EnsembleData(
+        ensemble=None,
+        resample="bootstrap",
+        values=[np.asarray([2.0 + 0j, 5.0 + 0j])],
+        dims=("z",),
+        coords={"z": [0.0, 1.0]},
+        name="zR",
+    )
     manifest = AnalysisManifest.model_validate(
         {
             "metadata": {
@@ -1396,7 +1404,8 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
                 "renormalization": {
                     "defaults": {
                         "normalization": True,
-                        "scheme": "hybrid_ratio",
+                        "scheme": "hybrid",
+                        "strategy": "ratio",
                         "zs_fm": 0.3,
                     },
                     "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
@@ -1407,7 +1416,7 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
     manifest._root_directory = tmp_path.resolve()
     manifest._artifacts_directory = (tmp_path / "artifacts").resolve()
     job = manifest.stages["renormalization"].jobs[0]
-    store = {"target": target, "denominator": target}
+    store = {"target": target, "denominator": target, "zR": zR}
 
     class _FinishSession(LlmSession):
         def __init__(self) -> None:
@@ -1442,3 +1451,5 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
 
     assert store["target"].attrs.get("normalized_at_z0") == "true"
     assert np.allclose(store["target"].values[:, 0], 1.0)
+    assert store["zR"] is zR
+    assert np.allclose(store["zR"].values, [[2.0, 5.0]])

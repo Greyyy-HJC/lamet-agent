@@ -246,22 +246,28 @@ authoritative and cannot be overridden by an LLM tool call.
 
 ### Ratio renormalization
 
-Set `scheme: "ratio"` on a renormalization stage or job to divide the target and
-denominator pointwise on the complete coordinate grid for every resampled
-sample:
+Renormalization uses two independent stage parameters. `scheme` is the physical
+scheme (`ratio`, `hybrid`, or `msbar`), while `strategy` selects how it is
+implemented (`ratio` or `self_renormalization`). Perturbative matching owns only
+`scheme`; its value must match the scheme token in the selected `kernel_id`.
+Kernel declarations under `inputs.kernels` no longer carry a `scheme` field.
+
+Set `scheme: "ratio"` and `strategy: "ratio"` on a renormalization stage or job
+to divide the target and denominator pointwise on the complete coordinate grid
+for every resampled sample:
 
 $$
 h_s^R(z) = \frac{h_s^{\mathrm{target}}(z)}{h_s^{\mathrm{denominator}}(z)}.
 $$
 
-Ratio jobs use the same `{target, denominator}` input roles as hybrid-ratio
+Ratio-strategy jobs use the same `{target, denominator}` input roles as hybrid
 jobs, but do not require `zs_fm` and do not apply a fixed denominator or a
 long-distance exponential correction. Hybrid-only settings (`zs_fm`,
 `scheme_parameters.m0_gev`, and `scheme_parameters.delta_m_gev`) are ignored if
 they remain in shared defaults. The `normalization` preprocessing described
 above still applies; set it to `false` for a direct ratio of raw bare inputs.
 
-Both ratio and hybrid-ratio jobs consume lattice-unit `z` coordinates and
+Both ratio and hybrid jobs using the ratio strategy consume lattice-unit `z` coordinates and
 require a positive finite `lattice_spacing_fm` on the target data. Their
 terminal `EnsembleData`, `store["matrix_element"]`, and NetCDF artifact convert
 the coordinate to signed physical distance as
@@ -269,7 +275,7 @@ $z_{\mathrm{fm}}=(z/a)a_{\mathrm{fm}}$ and record `coord_unit: "fm"` plus
 `input_coord_unit: "lattice"`. Hybrid-ratio branch selection and its
 long-distance exponent continue to use $|z_{\mathrm{fm}}|$.
 
-### Per-job hybrid-ratio `zs_fm`
+### Per-job hybrid `zs_fm`
 
 The hybrid switch distance belongs to the data-processing job, not to a global
 kernel declaration. Set it as `stages.renormalization.defaults.zs_fm` or
@@ -322,9 +328,9 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   lamet-agent run manifest.json
 ```
 
-## Hybrid Self-Renormalization
+## Self-Renormalization Strategy
 
-Hybrid self-renormalization (`scheme: "hybrid_self_renormalization"`) fits the
+The self-renormalization strategy (`strategy: "self_renormalization"`) fits the
 zero-momentum **reference** over the full coordinate range and uses short-distance
 $\overline{\mathrm{MS}}$ matching to fix the finite renormalization:
 
@@ -356,8 +362,24 @@ $Z_{\overline{\mathrm{MS}}}$, then its already-normalized target samples are
 passed through unchanged and merged back into the output. Hybrid-self outputs
 therefore retain the complete coordinate grid, including $H^R(0)=1$, in fm.
 
-The scheme has no explicit $z_s$ switch: its hybrid character is the combination
-of full-range self-renormalization with short-distance MSbar finite matching.
+With `scheme: "ratio"`, there is no explicit $z_s$ switch and the apply formula
+above is used over the full nonzero coordinate range. With `scheme: "msbar"`,
+the apply formula is instead $H_{\mathrm{bare}}/z_R$.
+
+With `scheme: "hybrid"`, apply jobs additionally require a `denominator` input
+and flat `zs_fm`. They use the pointwise target/denominator ratio for
+$|z|\le z_s$ and
+
+$$
+H^R_s(z)=\frac{H^{\mathrm{target}}_s(z)}{z_R(z,a)Z_{T,s}},
+\qquad
+Z_{T,s}=\frac{H^{\mathrm{denominator}}_s(z_s^{\mathrm{grid}})}
+{z_R(z_s^{\mathrm{grid}},a)}
+$$
+
+for $|z|>z_s$. $Z_{T,s}$ is constant in $z$ but is constructed per resample,
+which keeps the two branches continuous at the nearest switch-grid point and
+propagates denominator uncertainty.
 The stage always splits into **one fit job** plus one or more **apply jobs**.
 See `examples/temp_self_renorm_manifest.json` and
 `runs/ds_self_renorm/` for a runnable PDF→DA smoke test.
@@ -386,7 +408,7 @@ Typical agent tool order:
 
 1. **Fit job** (`inputs` exactly `{ "reference": "<bare_ref_id>" }`):
    `fit_self_renormalization_factor` → `plot_self_renormalization_diagnostics` → finish.
-2. **Apply job** (`inputs` exactly `{ "target": "<bare_id>", "zR": "<fit_job_id>" }`):
+2. **Apply job** (`ratio`/`msbar` inputs are `{target, zR}`; `hybrid` also requires `denominator`):
    `apply_self_renormalization` → `plot_self_renormalization_diagnostics` →
    `plot_renormalized_matrix_element` → finish.
 
@@ -400,12 +422,12 @@ upstream $z_R$ is remapped before division.
 
 ### Manifest shape
 
-Declare a renormalization kernel with `scheme: "hybrid_self_renormalization"` and
-`kernel_id` `ZMSbar_pdf` or `ZMSbar_da`. Bare inputs are either upstream
+Declare a renormalization kernel with `kernel_id` `ZMSbar_pdf` or `ZMSbar_da`.
+Bare inputs are either upstream
 correlator job ids or `inputs.artifacts` with `stage: "correlator_analysis"`.
-Hybrid-self-renormalization-specific knobs are grouped under
+Self-renormalization-specific knobs are grouped under
 `scheme_parameters`; `kernel_id`, `mu`, and the cross-scheme `normalization`
-setting remain outside that object. Hybrid-ratio `zs_fm` remains a flat
+setting remain outside that object. Hybrid `zs_fm` remains a flat
 stage/job parameter.
 
 ```json
@@ -420,7 +442,6 @@ stage/job parameter.
         "stage": "renormalization",
         "kernel_id": "ZMSbar_da",
         "kernel_path": "src/lamet_agent/kernels.py",
-        "scheme": "hybrid_self_renormalization",
         "kernel_parameters": { "mu": 2.0 }
       }
     ]
@@ -429,7 +450,8 @@ stage/job parameter.
     "renormalization": {
       "defaults": {
         "normalization": false,
-        "scheme": "hybrid_self_renormalization",
+        "scheme": "ratio",
+        "strategy": "self_renormalization",
         "mu": 2.0,
         "scheme_parameters": { "LambdaQCD_gev": 0.1 }
       },
@@ -461,9 +483,10 @@ stage/job parameter.
 
 | Parameter | Where | Required? | Meaning |
 |-----------|--------|-----------|---------|
-| `scheme` | stage defaults / job | yes (`"hybrid_self_renormalization"`) | Selects full-range self-renormalization with short-distance MSbar finite matching. The removed `self_renormalization` name produces a migration error. |
+| `scheme` | stage defaults / job | yes | Physical scheme: `ratio`, `hybrid`, or `msbar`. |
+| `strategy` | stage defaults / job | yes | Execution strategy: `ratio` or `self_renormalization`. |
 | `normalization` | stage defaults / job | no (default `true`) | If `true`, divide bare inputs by lattice $z=0$ before tools. Set `false` when inputs are already $z=0$-normalized (`normalized_at_z0` attr). |
-| `scheme_parameters.LambdaQCD_gev` | fit/apply job | **yes** | $\Lambda_{\mathrm{QCD}}$ in GeV for the hybrid-self-renormalization ansatz. It has no default, is stored in $z_R$ provenance, and must be explicitly identical on every fit/apply job in the chain. |
+| `scheme_parameters.LambdaQCD_gev` | fit/apply job | **yes** | $\Lambda_{\mathrm{QCD}}$ in GeV for the self-renormalization ansatz. It has no default, is stored in $z_R$ provenance, and must be explicitly identical on every fit/apply job in the chain. |
 | `scheme_parameters.d` | **fit** job | **yes** | Fixed continuum/discretization coefficient in the $g(z)$ fit and in the initial $z_R$ construction. Never fitted. Use the reference-operator value (e.g. PDF $d_{\mathrm{pdf}}$). |
 | `scheme_parameters.m0_gev` | **fit** job | not allowed | The fit determines the **reference-operator** $m_0$ from the first three $g(z)$ points against $\log Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z)$. This does not restrict the apply-job override below. |
 | `scheme_parameters.d` | **apply** job | no | If set (alone or with `m0_gev`), remap upstream $z_R$ from the fit-job $(d,m_0)$ onto this operator’s $d$ before $H/(z_R Z_{\overline{\mathrm{MS}}})$. Typical DA value: $0.19$. |
@@ -472,6 +495,11 @@ stage/job parameter.
 | `scheme_parameters.svdcut` | defaults / fit job | no (default `1e-12`) | SVD cut for the correlated $g(z)$ and short-distance $m_0$ fits. |
 | `scheme_parameters.z_coverage_policy` | defaults / apply job | no (default `extrapolate`) | `extrapolate` automatically extends the inferred long-distance $f_1(z)$ quadratically and rebuilds missing upper-end $z_R$ points. `strict` rejects uncovered target points; `intersection` explicitly drops them. Reports record input/output ranges and dropped/extrapolated point counts. |
 | `kernel_id` | job or unique `inputs.kernels` entry | yes if multiple kernels | `ZMSbar_pdf` or `ZMSbar_da`; choose the conversion factor for the **apply** target. Fit diagnostics compare $m_R$ to `ZMSbar_pdf` regardless. |
+
+Legacy composite values migrate as follows: `hybrid_ratio` becomes
+`scheme: "hybrid", strategy: "ratio"`; `hybrid_self_renormalization` becomes
+`scheme: "ratio", strategy: "self_renormalization"`. The old
+`inputs.kernels[].scheme` field must move to the consuming stage defaults.
 
 The removed parameters `alpha_s`, `order`, `Nf`, `zr_zmax_fm`,
 `f1_extension_zmin_fm`, `zms_kind`, `k`, lowercase `lqcd`, `cf`, and `b0` produce

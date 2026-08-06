@@ -85,7 +85,6 @@
         "stage": "renormalization",
         "kernel_id": "ZMSbar_da",
         "kernel_path": "src/lamet_agent/kernels.py",
-        "scheme": "hybrid_self_renormalization",
         "kernel_parameters": {
           "mu": 2.0
         }
@@ -93,8 +92,7 @@
       {
         "stage": "perturbative_matching",
         "kernel_id": "GI_gzg5_DA_ratio_NLO",
-        "kernel_path": "src/lamet_agent/kernels.py",
-        "scheme": "hybrid_self_renormalization"
+        "kernel_path": "src/lamet_agent/kernels.py"
       }
     ]
   },
@@ -227,7 +225,8 @@
     "renormalization": {
       "defaults": {
         "normalization": false,
-        "scheme": "hybrid_self_renormalization",
+        "scheme": "ratio",
+        "strategy": "self_renormalization",
         "mu": 2.0,
         "scheme_parameters": {
           "LambdaQCD_gev": 0.1
@@ -411,6 +410,7 @@
     },
     "perturbative_matching": {
       "defaults": {
+        "scheme": "ratio",
         "mu": 2.0,
         "component": "re",
         "endpoint_cut": 0.01,

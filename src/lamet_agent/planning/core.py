@@ -454,8 +454,9 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         ca_jobs = payload["stages"]["correlator_analysis"]["jobs"]
         denominator = next((job["id"] for job in ca_jobs if job["params"].get("momentum") == "PX0PY0PZ0"), ca_jobs[0]["id"])
         nonzero_jobs = [job for job in ca_jobs if job["id"] != denominator]
-        scheme = "hybrid_ratio" if "hybrid" in lowered else "ratio" if "ratio" in lowered else None
-        rn_defaults = {"scheme": scheme} if scheme else {}
+        scheme = "hybrid" if "hybrid" in lowered else "ratio" if "ratio" in lowered else None
+        strategy = "self_renormalization" if "self" in lowered else "ratio"
+        rn_defaults = {"scheme": scheme, "strategy": strategy} if scheme else {"strategy": strategy}
         zs_match = re.search(r"zs_fm(?:\s+for\s+[A-Za-z0-9_+-]+)?\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)
         if zs_match:
             rn_defaults["zs_fm"] = float(zs_match.group(1))
@@ -485,11 +486,14 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         }
     if "perturbative_matching" in stages:
         ft_jobs = payload["stages"].get("fourier_transform", {}).get("jobs", []) or [{"id": item["id"]} for item in artifacts if item["stage"] == "fourier_transform"]
-        scheme = str(payload["stages"].get("renormalization", {}).get("defaults", {}).get("scheme") or ("hybrid_ratio" if "hybrid" in lowered else "ratio"))
+        scheme = str(
+            payload["stages"].get("renormalization", {}).get("defaults", {}).get("scheme")
+            or ("hybrid" if "hybrid" in lowered else "ratio")
+        )
         operator = "gzg5" if target_observable == "da" else "gt"
         kernel_id = kernel_id_match.group(1) if kernel_id_match else f"{gfix if gfix in {'CG', 'GI'} else 'CG'}_{operator}_{'DA' if target_observable == 'da' else 'quark_PDF'}_{'hybrid' if 'hybrid' in scheme else 'ratio'}_NLO"
-        payload["inputs"]["kernels"] = [{"stage": "perturbative_matching", "kernel_id": kernel_id, "kernel_path": str(Path(__file__).resolve().parents[1] / "kernels.py"), "scheme": scheme}]
-        mt_defaults: dict[str, Any] = {"kernel_id": kernel_id}
+        payload["inputs"]["kernels"] = [{"stage": "perturbative_matching", "kernel_id": kernel_id, "kernel_path": str(Path(__file__).resolve().parents[1] / "kernels.py")}]
+        mt_defaults: dict[str, Any] = {"kernel_id": kernel_id, "scheme": scheme}
         if component_match:
             mt_defaults["component"] = component_match.group(1).lower()
         if quasi_y_ls is not None:
@@ -761,17 +765,25 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
                         f"Move it to stages.renormalization.jobs[{index}].params.zs_fm.",
                     )
                 )
-    if isinstance(renorm_scheme, str):
-        for index, kernel in enumerate(kernels):
-            if isinstance(kernel, dict) and isinstance(kernel.get("scheme"), str) and kernel["scheme"] != renorm_scheme:
-                issues.append(
-                    PlanIssue(
-                        "warning",
-                        f"inputs.kernels[{index}].scheme",
-                        f"Kernel scheme `{kernel['scheme']}` differs from renormalization scheme `{renorm_scheme}`.",
-                        f"Set inputs.kernels[{index}].scheme to `{renorm_scheme}` unless this is intentional.",
-                    )
-                )
+    matching = stages.get("perturbative_matching")
+    matching_scheme = (
+        matching.get("defaults", {}).get("scheme")
+        if isinstance(matching, dict) and isinstance(matching.get("defaults"), dict)
+        else None
+    )
+    if (
+        isinstance(renorm_scheme, str)
+        and isinstance(matching_scheme, str)
+        and matching_scheme != renorm_scheme
+    ):
+        issues.append(
+            PlanIssue(
+                "warning",
+                "stages.perturbative_matching.defaults.scheme",
+                f"Matching scheme `{matching_scheme}` differs from renormalization scheme `{renorm_scheme}`.",
+                f"Set the matching scheme to `{renorm_scheme}` unless this is intentional.",
+            )
+        )
 
     strict_payload = copy.deepcopy(payload)
     for correlator in strict_payload.get("inputs", {}).get("correlators", []) if isinstance(strict_payload.get("inputs"), dict) else []:
@@ -808,25 +820,69 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
 
 
 def _set_kernel_scheme_from_renorm(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Move legacy kernel scheme fields to stage defaults and split renorm composites."""
     edits: list[dict[str, Any]] = []
     stages = payload.get("stages")
     inputs = payload.get("inputs")
     if not isinstance(stages, dict) or not isinstance(inputs, dict):
         return edits
     renorm = stages.get("renormalization")
-    if not isinstance(renorm, dict) or not isinstance(renorm.get("defaults"), dict):
-        return edits
-    scheme = renorm["defaults"].get("scheme")
-    if not isinstance(scheme, str):
-        return edits
+    if isinstance(renorm, dict) and isinstance(renorm.get("defaults"), dict):
+        defaults = renorm["defaults"]
+        legacy = defaults.get("scheme")
+        mapping = {
+            "hybrid_ratio": ("hybrid", "ratio"),
+            "hybrid_self_renormalization": ("ratio", "self_renormalization"),
+            "self_renormalization": ("ratio", "self_renormalization"),
+        }
+        if legacy in mapping:
+            scheme, strategy = mapping[str(legacy)]
+            defaults["scheme"] = scheme
+            defaults.setdefault("strategy", strategy)
+            edits.append(
+                {
+                    "path": "stages.renormalization.defaults",
+                    "old": {"scheme": legacy},
+                    "new": {"scheme": scheme, "strategy": defaults["strategy"]},
+                }
+            )
+        elif legacy in {"ratio", "hybrid", "msbar"} and "strategy" not in defaults:
+            defaults["strategy"] = "ratio"
+            edits.append(
+                {
+                    "path": "stages.renormalization.defaults.strategy",
+                    "old": None,
+                    "new": "ratio",
+                }
+            )
     kernels = inputs.get("kernels")
     if not isinstance(kernels, list):
         return edits
     for index, kernel in enumerate(kernels):
-        if isinstance(kernel, dict) and kernel.get("scheme") != scheme:
-            old = kernel.get("scheme")
-            kernel["scheme"] = scheme
-            edits.append({"path": f"inputs.kernels[{index}].scheme", "old": old, "new": scheme})
+        if not isinstance(kernel, dict):
+            continue
+        old = kernel.pop("scheme", None)
+        if old is not None:
+            edits.append({"path": f"inputs.kernels[{index}].scheme", "old": old, "new": None})
+        if kernel.get("stage") != "perturbative_matching":
+            continue
+        kernel_id = str(kernel.get("kernel_id", ""))
+        encoded = next(
+            (value for value in ("ratio", "hybrid", "msbar") if value in kernel_id.split("_")),
+            None,
+        )
+        matching = stages.get("perturbative_matching")
+        if encoded is not None and isinstance(matching, dict):
+            defaults = matching.setdefault("defaults", {})
+            if isinstance(defaults, dict) and "scheme" not in defaults:
+                defaults["scheme"] = encoded
+                edits.append(
+                    {
+                        "path": "stages.perturbative_matching.defaults.scheme",
+                        "old": None,
+                        "new": encoded,
+                    }
+                )
     return edits
 
 
@@ -1254,22 +1310,37 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 gaps.append({"stage": stage, "job_id": job_id, "parameter": parameter, "path": path, "message": message, "suggested_fix": suggested_fix, "question_id": f"stage_params.{stage}.{job_id}"})
             if stage == "renormalization":
                 scheme = params.get("scheme")
-                if scheme in {"ratio", "hybrid_ratio"}:
+                strategy = params.get("strategy")
+                if scheme not in {"ratio", "hybrid", "msbar"}:
+                    add_gap(
+                        "scheme",
+                        f"stages.{stage}.defaults.scheme",
+                        "renormalization requires scheme ratio, hybrid, or msbar.",
+                        'Choose "ratio", "hybrid", or "msbar".',
+                    )
+                if strategy == "ratio":
+                    if scheme == "msbar":
+                        add_gap(
+                            "strategy",
+                            f"stages.{stage}.defaults.strategy",
+                            "strategy ratio does not implement scheme msbar.",
+                            'Use strategy "self_renormalization" or choose another scheme.',
+                        )
                     if roles != {"target", "denominator"}:
                         add_gap(
                             "inputs",
                             f"stages.{stage}.jobs[{index}].inputs",
-                            f"{scheme} requires target and denominator input roles.",
+                            f"{scheme}+ratio requires target and denominator input roles.",
                             'Example: {"target": "ca_pz", "denominator": "ca_p0"}.',
                         )
-                    if scheme == "hybrid_ratio" and "zs_fm" not in params:
+                    if scheme == "hybrid" and "zs_fm" not in params:
                         add_gap(
                             "zs_fm",
                             f"stages.{stage}.defaults.zs_fm",
-                            "hybrid_ratio requires flat parameter zs_fm.",
+                            "hybrid scheme requires flat parameter zs_fm.",
                             'Example: {"zs_fm": 0.2}.',
                         )
-                elif scheme == "hybrid_self_renormalization":
+                elif strategy == "self_renormalization":
                     scheme_parameters = params.get("scheme_parameters", {})
                     if not isinstance(scheme_parameters, dict):
                         scheme_parameters = {}
@@ -1277,7 +1348,7 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                         add_gap(
                             "LambdaQCD_gev",
                             f"stages.{stage}.jobs[{index}].params.scheme_parameters.LambdaQCD_gev",
-                            "hybrid_self_renormalization requires an explicit LambdaQCD_gev value.",
+                            "self_renormalization requires an explicit LambdaQCD_gev value.",
                             'Example: {"scheme_parameters": {"LambdaQCD_gev": 0.1}}.',
                         )
                     if roles == {"reference"}:
@@ -1285,42 +1356,49 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                             add_gap(
                                 "d",
                                 f"stages.{stage}.jobs[{index}].params.scheme_parameters.d",
-                                "hybrid_self_renormalization fit jobs require fixed parameter d.",
+                                "self_renormalization fit jobs require fixed parameter d.",
                                 'Example: {"scheme_parameters": {"d": -0.08183}}.',
                             )
-                    elif roles != {"target", "zR"}:
+                    else:
+                        expected = (
+                            {"target", "denominator", "zR"}
+                            if scheme == "hybrid"
+                            else {"target", "zR"}
+                        )
+                        if roles != expected:
+                            add_gap(
+                                "inputs",
+                                f"stages.{stage}.jobs[{index}].inputs",
+                                f"self_renormalization scheme {scheme!r} requires apply roles {sorted(expected)}.",
+                                'Use {"reference": "bare_ref"} for a fit job or the scheme-specific apply roles.',
+                            )
+                    if scheme == "hybrid" and roles != {"reference"} and "zs_fm" not in params:
                         add_gap(
-                            "inputs",
-                            f"stages.{stage}.jobs[{index}].inputs",
-                            "hybrid_self_renormalization requires either reference or target plus zR input roles.",
-                            'Use {"reference": "bare_ref"} for a fit job or '
-                            '{"target": "bare", "zR": "rn_fit"} for an apply job.',
+                            "zs_fm",
+                            f"stages.{stage}.defaults.zs_fm",
+                            "hybrid scheme requires flat parameter zs_fm.",
+                            'Example: {"zs_fm": 0.2}.',
                         )
                     if not renorm_kernel_ids:
                         add_gap(
                             "kernel_id",
                             "inputs.kernels",
-                            "hybrid_self_renormalization requires a declared renormalization kernel.",
+                            "self_renormalization requires a declared renormalization kernel.",
                             'Declare ZMSbar_pdf or ZMSbar_da with stage "renormalization".',
                         )
                     elif len(renorm_kernel_ids) > 1 and "kernel_id" not in params:
                         add_gap(
                             "kernel_id",
                             f"stages.{stage}.defaults.kernel_id",
-                            f"hybrid_self_renormalization job {job_id!r} must select a renormalization kernel.",
+                            f"self_renormalization job {job_id!r} must select a renormalization kernel.",
                             "Use one declared inputs.kernels[].kernel_id.",
                         )
-                else:
-                    legacy_message = (
-                        " scheme 'self_renormalization' was renamed to 'hybrid_self_renormalization'."
-                        if scheme == "self_renormalization"
-                        else ""
-                    )
+                elif strategy not in {"ratio", "self_renormalization"}:
                     add_gap(
-                        "scheme",
-                        f"stages.{stage}.defaults.scheme",
-                        "renormalization requires a supported scheme." + legacy_message,
-                        'Choose "ratio", "hybrid_ratio", or "hybrid_self_renormalization".',
+                        "strategy",
+                        f"stages.{stage}.defaults.strategy",
+                        "renormalization requires strategy ratio or self_renormalization.",
+                        'Choose "ratio" or "self_renormalization".',
                     )
             elif stage == "fourier_transform":
                 if roles != {"input"}:
@@ -1332,6 +1410,13 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
             elif stage == "perturbative_matching":
                 if roles != {"quasi"}:
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "perturbative_matching requires exactly one input role named quasi.", 'Example: {"quasi": "ft_pz"}.')
+                if params.get("scheme") not in {"ratio", "hybrid", "msbar"}:
+                    add_gap(
+                        "scheme",
+                        f"stages.{stage}.defaults.scheme",
+                        "perturbative_matching requires scheme ratio, hybrid, or msbar.",
+                        'Choose the scheme token encoded in kernel_id.',
+                    )
                 if "kernel_id" not in params and len(matching_kernel_ids) != 1:
                     add_gap("kernel_id", f"stages.{stage}.defaults.kernel_id", f"perturbative_matching job {job_id!r} is missing kernel_id.", "Use one declared inputs.kernels[].kernel_id.")
                 kernel_id = str(params.get("kernel_id") or (matching_kernel_ids[0] if len(matching_kernel_ids) == 1 else ""))

@@ -249,11 +249,25 @@ def test_manifest_rejects_zs_fm_in_kernel_parameters() -> None:
             "stage": "perturbative_matching",
             "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
             "kernel_path": "kernels.py",
-            "scheme": "hybrid_ratio",
             "kernel_parameters": {"zs_fm": 0.2},
         }
     ]
     with pytest.raises(ValidationError, match=r"inputs\.kernels\[0\]\.kernel_parameters\.zs_fm"):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_rejects_stage_scheme_on_kernel_declaration() -> None:
+    payload = _payload()
+    payload["inputs"]["kernels"] = [
+        {
+            "stage": "perturbative_matching",
+            "kernel_id": "CG_gt_quark_PDF_ratio_NLO",
+            "kernel_path": "kernels.py",
+            "scheme": "ratio",
+        }
+    ]
+
+    with pytest.raises(ValidationError, match=r"inputs\.kernels\[0\]\.scheme is no longer supported"):
         AnalysisManifest.model_validate(payload)
 
 
@@ -268,13 +282,12 @@ def _hybrid_self_payload() -> dict:
             "stage": "renormalization",
             "kernel_id": "ZMSbar_da",
             "kernel_path": "kernels.py",
-            "scheme": "hybrid_self_renormalization",
             "kernel_parameters": {"mu": 2.0},
         }
     ]
     payload["stages"] = {
         "renormalization": {
-            "defaults": {"scheme": "hybrid_self_renormalization"},
+            "defaults": {"scheme": "ratio", "strategy": "self_renormalization"},
             "jobs": [
                 {
                     "id": "fit",
@@ -346,7 +359,7 @@ def test_manifest_rejects_zs_fm_in_renormalization_scheme_parameters() -> None:
     ]
     payload["stages"] = {
         "renormalization": {
-            "defaults": {"scheme": "hybrid_ratio", "scheme_parameters": {"zs_fm": 0.2}},
+            "defaults": {"scheme": "hybrid", "strategy": "ratio", "scheme_parameters": {"zs_fm": 0.2}},
             "jobs": [{"id": "rn", "inputs": {"target": "target", "denominator": "denominator"}}],
         }
     }
@@ -363,7 +376,7 @@ def test_manifest_rejects_zs_fm_in_renormalization_job_scheme_parameters() -> No
     ]
     payload["stages"] = {
         "renormalization": {
-            "defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.2},
+            "defaults": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": 0.2},
             "jobs": [
                 {
                     "id": "rn",
@@ -390,11 +403,11 @@ def test_manifest_accepts_flat_zs_fm_defaults_and_job_overrides() -> None:
     ]
     payload["stages"] = {
         "renormalization": {
-            "defaults": {"scheme": "hybrid_ratio", "zs_fm": 0.2},
+            "defaults": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": 0.2},
             "jobs": [{"id": "rn", "inputs": {"target": "target", "denominator": "denominator"}}],
         },
         "perturbative_matching": {
-            "defaults": {"zs_fm": 0.2},
+            "defaults": {"scheme": "hybrid", "zs_fm": 0.2},
             "jobs": [{"id": "mt", "inputs": {"quasi": "rn"}, "params": {"zs_fm": 0.3}}],
         },
     }

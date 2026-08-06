@@ -331,7 +331,6 @@ class KernelInput(BaseModel):
     stage: StageId
     kernel_id: str
     kernel_path: str
-    scheme: str
     kernel_parameters: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -432,6 +431,12 @@ class AnalysisManifest(BaseModel):
             raise ValueError(f"Unsupported stage manifest parameters:\n{details}")
 
         for index, kernel in enumerate(self.inputs.kernels):
+            if "scheme" in (kernel.model_extra or {}):
+                raise ValueError(
+                    f"inputs.kernels[{index}].scheme is no longer supported; "
+                    f"move it to stages.{kernel.stage}.defaults.scheme or the "
+                    "corresponding jobs[].params.scheme"
+                )
             if "zs_fm" in kernel.kernel_parameters:
                 raise ValueError(
                     f"inputs.kernels[{index}].kernel_parameters.zs_fm is no longer supported; "

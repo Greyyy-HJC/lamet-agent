@@ -920,3 +920,16 @@
 - Removed the unused `zspz` parameter from all `*_ratio_NLO` matching kernels in `kernels.py` (CG/GI PDF and GI DA).
 - Stopped forwarding `zspz` from ratio delegates and from CG transversity msbar/hybrid wrappers that call the ratio builder.
 - Updated the matching-stage registry comment so it no longer claims a uniform `zspz=None` signature; hybrid still receives `zspz` via `is_hybrid_kernel`.
+
+## 2026-08-06 (Split renormalization scheme and strategy)
+
+- Made stage parameters authoritative for `scheme`; removed the duplicated field
+  from kernel declarations and required matching scheme values to agree with the
+  exact kernel-id token.
+- Split renormalization into physical `ratio`/`hybrid`/`msbar` schemes and
+  `ratio`/`self_renormalization` execution strategies.
+- Added `msbar + self_renormalization` and a continuous
+  `hybrid + self_renormalization` path with per-resample constant `Z_T` fixed at
+  the nearest `zs_fm` grid point.
+- Migrated tracked examples, planning/review/reporting behavior, documentation,
+  and unit-test fixtures to the new contracts.

@@ -214,18 +214,25 @@ def resolve_job_tools(
         return tools
 
     scheme = effective_params.get("scheme")
+    strategy = effective_params.get("strategy")
     roles = set(job.inputs)
-    if scheme in {"ratio", "hybrid_ratio"} and roles == {"target", "denominator"}:
+    if strategy == "ratio" and scheme in {"ratio", "hybrid"} and roles == {"target", "denominator"}:
         allowed = {
             "apply_ratio_scheme_renormalization",
             "plot_renormalized_matrix_element",
         }
-    elif scheme == "hybrid_self_renormalization" and roles == {"reference"}:
+    elif strategy == "self_renormalization" and roles == {"reference"}:
         allowed = {
             "fit_self_renormalization_factor",
             "plot_self_renormalization_diagnostics",
         }
-    elif scheme == "hybrid_self_renormalization" and roles == {"target", "zR"}:
+    elif (
+        strategy == "self_renormalization"
+        and (
+            (scheme in {"ratio", "msbar"} and roles == {"target", "zR"})
+            or (scheme == "hybrid" and roles == {"target", "denominator", "zR"})
+        )
+    ):
         allowed = {
             "apply_self_renormalization",
             "plot_self_renormalization_diagnostics",
@@ -248,18 +255,25 @@ def required_job_tool_sequence(
         return ()
 
     scheme = effective_params.get("scheme")
+    strategy = effective_params.get("strategy")
     roles = set(job.inputs)
-    if scheme in {"ratio", "hybrid_ratio"} and roles == {"target", "denominator"}:
+    if strategy == "ratio" and scheme in {"ratio", "hybrid"} and roles == {"target", "denominator"}:
         return (
             "apply_ratio_scheme_renormalization",
             "plot_renormalized_matrix_element",
         )
-    if scheme == "hybrid_self_renormalization" and roles == {"reference"}:
+    if strategy == "self_renormalization" and roles == {"reference"}:
         return (
             "fit_self_renormalization_factor",
             "plot_self_renormalization_diagnostics",
         )
-    if scheme == "hybrid_self_renormalization" and roles == {"target", "zR"}:
+    if (
+        strategy == "self_renormalization"
+        and (
+            (scheme in {"ratio", "msbar"} and roles == {"target", "zR"})
+            or (scheme == "hybrid" and roles == {"target", "denominator", "zR"})
+        )
+    ):
         return (
             "apply_self_renormalization",
             "plot_self_renormalization_diagnostics",
@@ -554,7 +568,7 @@ def prepare_tool_args(
                     continue
                 if key not in resolved or resolved[key] is None:
                     resolved[key] = value
-            if effective_params.get("scheme") == "hybrid_ratio":
+            if effective_params.get("scheme") == "hybrid":
                 resolved["scheme_parameters"] = {
                     **scheme_parameters,
                     "zs_fm": effective_params["zs_fm"],
@@ -573,6 +587,8 @@ def prepare_tool_args(
         elif tool_name == "fit_self_renormalization_factor":
             resolved["reference"] = "reference"
             resolved["save_path"] = str(artifacts_dir / job.id)
+            resolved["scheme"] = effective_params["scheme"]
+            resolved["strategy"] = effective_params["strategy"]
             if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
             for key, value in {**kernel_parameters, **scheme_parameters}.items():
@@ -612,6 +628,8 @@ def prepare_tool_args(
                 {
                     "target": "target",
                     "zR": "zR",
+                    "scheme": effective_params["scheme"],
+                    "strategy": effective_params["strategy"],
                     "save_path": str(artifacts_dir / job.id),
                     "job_id": job.id,
                     "sample_error_mode": manifest.metadata.sample_error_mode,
@@ -622,6 +640,9 @@ def prepare_tool_args(
                     },
                 }
             )
+            if effective_params.get("scheme") == "hybrid":
+                resolved["denominator"] = "denominator"
+                resolved["zs_fm"] = effective_params["zs_fm"]
             if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
             for key, value in {**kernel_parameters, **scheme_parameters}.items():
@@ -655,7 +676,7 @@ def prepare_tool_args(
                 apply_jobs = [
                     other
                     for other in manifest.stages["renormalization"].jobs
-                    if set(other.inputs) == {"target", "zR"}
+                    if {"target", "zR"}.issubset(other.inputs)
                 ]
                 siblings = []
                 for other in apply_jobs:
@@ -800,7 +821,7 @@ def prepare_tool_args(
             parameters = {key: value for key, value in declaration.kernel_parameters.items() if key != "zs_fm"}
             parameters.update(matching)
             matching = parameters
-            matching["kernel_id"] = resolve_kernel_id(declared_id, declaration.scheme)
+            matching["kernel_id"] = resolve_kernel_id(declared_id, matching.get("scheme"))
         if tool_name == "load_quasi_pdf":
             resolved["component"] = matching.get("component", "re")
             resolved.update({key: matching[key] for key in _MATCHING_LOAD_KEYS if key in matching})

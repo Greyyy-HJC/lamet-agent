@@ -69,6 +69,32 @@ def test_resolve_renormalization_job_tools_by_scheme_and_roles() -> None:
     )
 
 
+def test_hybrid_scheme_self_renormalization_routes_denominator_apply_job(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
+    defaults = manifest.stages["renormalization"].defaults
+    defaults["scheme"] = "hybrid"
+    defaults["zs_fm"] = 0.2
+    job = manifest.stages["renormalization"].jobs[1]
+    job.inputs["denominator"] = "pion_zero_momentum_reference"
+    params = merge_stage_params(defaults, job.params)
+
+    assert validate_stage_inputs("renormalization", manifest, job) == []
+    assert required_job_tool_sequence("renormalization", job, params)[0] == "apply_self_renormalization"
+    args = prepare_tool_args(
+        "apply_self_renormalization",
+        {},
+        manifest=manifest,
+        stage="renormalization",
+        job=job,
+        effective_params=params,
+        artifacts_dir=tmp_path,
+    )
+    assert args["scheme"] == "hybrid"
+    assert args["strategy"] == "self_renormalization"
+    assert args["denominator"] == "denominator"
+    assert args["zs_fm"] == pytest.approx(0.2)
+
+
 def test_qda_ratio_correlator_job_uses_unified_tool_contract() -> None:
     manifest = AnalysisManifest.model_validate(
         {
@@ -206,8 +232,8 @@ def test_legacy_self_renormalization_scheme_returns_migration_error() -> None:
     issue = validate_stage_inputs("renormalization", manifest, manifest.stages["renormalization"].jobs[0])
 
     assert issue == [
-        "renormalization scheme 'self_renormalization' was renamed; "
-        "use 'hybrid_self_renormalization'."
+        "renormalization scheme 'self_renormalization' is no longer supported; "
+        "use scheme='ratio' with strategy='self_renormalization'."
     ]
 
 
@@ -217,7 +243,7 @@ def test_hybrid_self_fit_rejects_fixed_m0() -> None:
     job.params["scheme_parameters"]["m0_gev"] = -0.094
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
-        "hybrid_self_renormalization fit jobs determine the reference m0; "
+        "self_renormalization fit jobs determine the reference m0; "
         "remove scheme_parameters.m0_gev here (apply jobs may override target m0_gev)."
     ]
 
@@ -228,7 +254,7 @@ def test_hybrid_self_rejects_unknown_z_coverage_policy() -> None:
     job.params["scheme_parameters"]["z_coverage_policy"] = "freeze"
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
-        "hybrid_self_renormalization z_coverage_policy must be "
+        "self_renormalization z_coverage_policy must be "
         "'strict', 'intersection', or 'extrapolate'."
     ]
 
@@ -239,7 +265,7 @@ def test_hybrid_self_requires_explicit_lambdaqcd_gev() -> None:
     manifest.stages["renormalization"].defaults["scheme_parameters"].pop("LambdaQCD_gev")
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
-        "hybrid_self_renormalization requires scheme_parameters.LambdaQCD_gev "
+        "self_renormalization requires scheme_parameters.LambdaQCD_gev "
         "on every fit and apply job."
     ]
 
@@ -687,7 +713,7 @@ def test_ratio_schemes_reject_hybrid_self_only_scheme_parameters(key: str) -> No
     manifest.stages["renormalization"].defaults["scheme_parameters"][key] = 0.1
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
-        f"hybrid_ratio does not accept hybrid-self-only scheme_parameters: {key}."
+        f"strategy 'ratio' does not accept self-renormalization scheme_parameters: {key}."
     ]
 
 
@@ -698,6 +724,27 @@ def test_ratio_renormalization_stage_accepts_target_and_denominator_without_zs()
     job = manifest.stages["renormalization"].jobs[0]
 
     assert validate_stage_inputs("renormalization", manifest, job) == []
+
+
+def test_ratio_strategy_rejects_msbar_scheme() -> None:
+    manifest = _manifest()
+    manifest.stages["renormalization"].defaults["scheme"] = "msbar"
+    job = manifest.stages["renormalization"].jobs[0]
+
+    assert validate_stage_inputs("renormalization", manifest, job) == [
+        "renormalization strategy 'ratio' does not implement scheme 'msbar'."
+    ]
+
+
+def test_matching_scheme_must_match_kernel_id() -> None:
+    manifest = _manifest()
+    manifest.stages["perturbative_matching"].defaults["scheme"] = "ratio"
+    job = manifest.stages["perturbative_matching"].jobs[0]
+
+    assert validate_stage_inputs("perturbative_matching", manifest, job) == [
+        "Matching scheme 'ratio' does not match kernel_id 'CG_gt_quark_PDF_hybrid_NLO', "
+        "which encodes scheme 'hybrid'."
+    ]
 
 
 def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path) -> None:
@@ -739,7 +786,6 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
                         "stage": "renormalization",
                         "kernel_id": "ZMSbar_da",
                         "kernel_path": "src/lamet_agent/kernels.py",
-                        "scheme": "hybrid_self_renormalization",
                         "kernel_parameters": {"mu": 2.0},
                     }
                 ],
@@ -747,7 +793,8 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
             "stages": {
                 "renormalization": {
                     "defaults": {
-                        "scheme": "hybrid_self_renormalization",
+                        "scheme": "ratio",
+                        "strategy": "self_renormalization",
                         "mu": 2.0,
                         "scheme_parameters": {"LambdaQCD_gev": 0.12},
                     },

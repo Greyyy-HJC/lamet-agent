@@ -88,7 +88,7 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
 
     result = apply_ratio_scheme_renormalization(
         store,
-        scheme="hybrid_ratio",
+        scheme="hybrid",
         scheme_parameters={"zs_fm": 0.4},
         save_path="renorm",
     )
@@ -203,7 +203,7 @@ def test_ratio_report_omits_hybrid_parameters(tmp_path: Path) -> None:
     assert "delta m" not in report
 
 
-def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path) -> None:
+def test_hybrid_scheme_ratio_strategy_uses_physical_switch_and_nearest_grid_point(tmp_path: Path) -> None:
     z = list(range(6))
     target = EnsembleData(
         EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
@@ -220,6 +220,7 @@ def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path
 
     result = apply_ratio_scheme_renormalization(
         store, target="target", denominator="denominator",
+        scheme="hybrid",
         scheme_parameters={"zs_fm": 0.18}, save_path=str(tmp_path / "hybrid"),
     )
 
@@ -231,7 +232,7 @@ def test_hybrid_ratio_uses_physical_switch_and_nearest_grid_point(tmp_path: Path
     assert np.allclose(store["output"].coords["z"], np.asarray(z) * 0.0574)
 
 
-def test_hybrid_ratio_long_range_exponent_uses_physical_distance(tmp_path: Path) -> None:
+def test_hybrid_scheme_ratio_strategy_long_range_exponent_uses_physical_distance(tmp_path: Path) -> None:
     """Long-range exponent uses (m0_gev + delta_m_gev) * (z_fm - zs_fm) / GEV_FM."""
     from lamet_agent.stages.renorm.functions import GEV_FM
 
@@ -257,6 +258,7 @@ def test_hybrid_ratio_long_range_exponent_uses_physical_distance(tmp_path: Path)
         store,
         target="target",
         denominator="denominator",
+        scheme="hybrid",
         scheme_parameters={"zs_fm": zs_fm, "m0_gev": m0_gev, "delta_m_gev": delta_m_gev},
         save_path=str(tmp_path / "exponent"),
     )
@@ -550,7 +552,7 @@ def test_fit_self_renormalization_forwards_svdcut_override(tmp_path: Path) -> No
     assert store["zR"].attrs["LambdaQCD_gev"] == "0.12"
 
 
-def test_fit_hybrid_self_renormalization_uses_single_f1_without_extension(tmp_path: Path, monkeypatch) -> None:
+def test_fit_self_renormalization_uses_single_f1_without_extension(tmp_path: Path, monkeypatch) -> None:
     gv = pytest.importorskip("gvar")
     pytest.importorskip("lsqfit")
     import lsqfit as lsf
@@ -593,15 +595,17 @@ def test_fit_hybrid_self_renormalization_uses_single_f1_without_extension(tmp_pa
 
     assert any(key.startswith("f1") for key in captured_priors[0])
     assert not any(key.startswith("f2") for key in captured_priors[0])
-    assert result["scheme"] == "hybrid_self_renormalization"
+    assert result["scheme"] == "ratio"
+    assert result["strategy"] == "self_renormalization"
     assert result["n_z"] == 20
-    assert store["zR"].attrs["scheme"] == "hybrid_self_renormalization"
+    assert store["zR"].attrs["scheme"] == "ratio"
+    assert store["zR"].attrs["strategy"] == "self_renormalization"
     assert np.allclose(store["zR"].coords["z"], z)
     assert store["zR"].values.shape == (1, 2, 20)
     assert "f_by_group_mean" not in store["self_renorm_fit"]
 
 
-def test_fit_hybrid_self_renormalization_rejects_discretization_groups(tmp_path: Path) -> None:
+def test_fit_self_renormalization_rejects_discretization_groups(tmp_path: Path) -> None:
     from lamet_agent.stages.renorm.functions import fit_self_renormalization_factor
 
     reference = EnsembleData(
@@ -682,7 +686,8 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
 
     zms = kernels.ZMSbar_da(z, mu=2.0)
     expected = target_values / (zr_vals[None, :] * zms[None, :])
-    assert result["scheme"] == "hybrid_self_renormalization"
+    assert result["scheme"] == "ratio"
+    assert result["strategy"] == "self_renormalization"
     assert result["kernel_id"] == "ZMSbar_da"
     assert result["LambdaQCD_gev"] == pytest.approx(0.12)
     assert result["alpha_s_derived"] == pytest.approx(0.293)
@@ -692,7 +697,8 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
     assert result["ensemble"] == "a06m130"
     assert result["momentum"] == "PX0PY0PZ6"
     assert result["momentum_gev"] == pytest.approx(1.35)
-    assert store["output"].attrs["scheme"] == "hybrid_self_renormalization"
+    assert store["output"].attrs["scheme"] == "ratio"
+    assert store["output"].attrs["strategy"] == "self_renormalization"
     assert store["output"].attrs["ensemble"] == "a06m130"
     assert store["output"].attrs["momentum"] == "PX0PY0PZ6"
     assert float(store["output"].attrs["momentum_gev"]) == pytest.approx(1.35)
@@ -706,6 +712,99 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
     assert reloaded.ensemble.id == "a06m130"
     assert reloaded.attrs["momentum"] == "PX0PY0PZ6"
     assert float(reloaded.attrs["momentum_gev"]) == pytest.approx(1.35)
+
+
+def test_self_renormalization_msbar_scheme_divides_only_by_zr(tmp_path: Path) -> None:
+    z = [0.1, 0.2, 0.3]
+    spacing = 0.1
+    zr_values = np.asarray([0.5, 0.4, 0.25])
+    zR = EnsembleData(
+        EnsembleInfo("", "E", spacing, spacing, 1, 1, 0),
+        "bootstrap",
+        [np.asarray(zr_values[None, :], dtype=complex)],
+        dims=("a", "z"),
+        coords={"a": [spacing], "z": z},
+        attrs={"kernel_id": "ZMSbar_pdf", "LambdaQCD_gev": "0.1", "m0_gev": "0.0", "d": "0.0"},
+        name="zR",
+    )
+    target_values = np.asarray([[2.0, 4.0, 8.0], [3.0, 6.0, 12.0]], dtype=complex)
+    target = EnsembleData(
+        EnsembleInfo("", "E", spacing, spacing, 1, 1, 0),
+        "jackknife",
+        list(target_values),
+        dims=("z",),
+        coords={"z": z},
+        attrs={"lattice_spacing_fm": str(spacing)},
+        name="target",
+    )
+
+    store = {"target": target, "zR": zR}
+    result = apply_self_renormalization(
+        store,
+        scheme="msbar",
+        LambdaQCD_gev=0.1,
+        z_coverage_policy="strict",
+        save_path=str(tmp_path / "msbar"),
+    )
+
+    assert result["scheme"] == "msbar"
+    assert result["strategy"] == "self_renormalization"
+    assert np.allclose(store["output"].values, target_values / zr_values)
+
+
+def test_hybrid_scheme_self_renormalization_uses_per_sample_zt_for_continuity(tmp_path: Path) -> None:
+    z = np.asarray([0.1, 0.2, 0.3])
+    spacing = 0.1
+    zr_values = np.asarray([0.8, 0.5, 0.25])
+    zR = EnsembleData(
+        EnsembleInfo("", "E", spacing, spacing, 1, 1, 0),
+        "bootstrap",
+        [np.asarray(zr_values[None, :], dtype=complex)],
+        dims=("a", "z"),
+        coords={"a": [spacing], "z": z.tolist()},
+        attrs={"kernel_id": "ZMSbar_pdf", "LambdaQCD_gev": "0.1", "m0_gev": "0.0", "d": "0.0"},
+        name="zR",
+    )
+    target_values = np.asarray([[2.0, 4.0, 12.0], [3.0, 9.0, 18.0]], dtype=complex)
+    denominator_values = np.asarray([[1.0, 2.0, 5.0], [1.5, 3.0, 7.0]], dtype=complex)
+    ensemble = EnsembleInfo("", "E", spacing, spacing, 1, 1, 0)
+    target = EnsembleData(
+        ensemble,
+        "jackknife",
+        list(target_values),
+        dims=("z",),
+        coords={"z": z.tolist()},
+        attrs={"lattice_spacing_fm": str(spacing)},
+        name="target",
+    )
+    denominator = EnsembleData(
+        ensemble,
+        "jackknife",
+        list(denominator_values),
+        dims=("z",),
+        coords={"z": z.tolist()},
+        attrs={"lattice_spacing_fm": str(spacing)},
+        name="denominator",
+    )
+    store = {"target": target, "denominator": denominator, "zR": zR}
+
+    result = apply_self_renormalization(
+        store,
+        denominator="denominator",
+        scheme="hybrid",
+        zs_fm=0.2,
+        LambdaQCD_gev=0.1,
+        z_coverage_policy="strict",
+        save_path=str(tmp_path / "hybrid_self"),
+    )
+
+    zt = denominator_values[:, 1] / zr_values[1]
+    expected = target_values / denominator_values
+    expected[:, 2] = target_values[:, 2] / (zr_values[2] * zt)
+    assert np.allclose(store["output"].values, expected)
+    assert np.allclose(target_values[:, 1] / (zr_values[1] * zt), expected[:, 1])
+    assert result["zs_grid_fm"] == str(0.2)
+    assert store["output"].attrs["strategy"] == "self_renormalization"
 
 
 def test_hybrid_self_converts_lattice_z_and_preserves_normalized_z0(
@@ -913,7 +1012,7 @@ def test_apply_self_renormalization_remaps_d_and_m0(tmp_path: Path) -> None:
         (0.0574, [0.06, 0.18], "outside the fitted zR range"),
     ],
 )
-def test_apply_hybrid_self_renormalization_rejects_uncovered_target(
+def test_apply_self_renormalization_rejects_uncovered_target(
     target_a: float,
     target_z: list[float],
     message: str,
@@ -948,7 +1047,7 @@ def test_apply_hybrid_self_renormalization_rejects_uncovered_target(
         )
 
 
-def test_apply_hybrid_self_renormalization_intersects_target_z_grid(tmp_path: Path) -> None:
+def test_apply_self_renormalization_intersects_target_z_grid(tmp_path: Path) -> None:
     zR = EnsembleData(
         EnsembleInfo("", "E", 0.0574, 0.0574, 1, 1, 0),
         "bootstrap",
@@ -1001,7 +1100,7 @@ def test_apply_hybrid_self_renormalization_intersects_target_z_grid(tmp_path: Pa
     assert Path(diagnostic["plots"]["zmsbar_compare"]).is_file()
 
 
-def test_apply_hybrid_self_renormalization_extrapolates_long_distance_f1(tmp_path: Path) -> None:
+def test_apply_self_renormalization_extrapolates_long_distance_f1(tmp_path: Path) -> None:
     from lamet_agent import kernels
     from lamet_agent.stages.renorm.functions import _self_renorm_zr_from_f1
 
