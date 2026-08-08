@@ -80,7 +80,7 @@ def _stage_optional_prompt(stage: str, payload: dict[str, Any]) -> str:
             "extrapolation optional choices: allow_order_a, allow_order_1overp, allow_order_ap, fitting_param_xdep, pdep_gev. "
             "Reply with values to set, or none."
         )
-    return "review optional choices: literature options are true or false. Reply with values to set, or none."
+    return "review optional choices: literature is true or false; literature_max_papers optionally overrides its default of 4 when literature is true. Reply with values to set, or none."
 
 
 def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:

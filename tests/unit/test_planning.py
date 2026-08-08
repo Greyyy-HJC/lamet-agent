@@ -1257,13 +1257,15 @@ def test_text_plan_expands_momentum_tsep_npy_template_into_standard_h5(tmp_path:
         "Analyze a coulomb-gauge fixing pion quark PDF workflow from two-point npy file and three-point npy file.\n"
         f"The two-point correlator file is {inputs / 'a060_x_p0_2pt.npy'}.\n"
         f"The three-point correlator file is {inputs}/a060_x_p{{mom}}_3pt_ts{{tsep}}.npy, where mom means the momentum and tsep means t-separation.\n"
-        "Correlator_analysis, hybrid-ratio renormalization, fourier_transform, perturbative_matching and review are required for the manifest draft.\n",
+        "Correlator_analysis, hybrid-ratio renormalization, fourier_transform, perturbative_matching and review are required for the manifest draft.\n"
+        "Review literature: true.\n",
         encoding="utf-8",
     )
 
     payload, _raw = load_relaxed_manifest(request)
     correlators = payload["inputs"]["correlators"]
     assert payload["metadata"]["stages"] == ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "review"]
+    assert payload["stages"]["review"]["defaults"] == {"literature": True, "literature_max_papers": 4}
     assert {item["correlator_id"] for item in correlators} == {
         "a060_x_p0_2pt",
         "a060_x_p5_2pt",

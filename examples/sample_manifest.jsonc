@@ -39,7 +39,8 @@
     // "bin_size": 1, // optional; bins configurations before jackknife/bootstrap resampling (default: no binning)
     // Global stage ORDER only. Which data sets flow through each stage is
     // decided by the jobs declared under "stages", not here. Optional terminal
-    // review can be appended as "review" when a review job is also declared.
+    // review can be appended as "review" when a review job is also declared with
+    // "defaults": {"literature": true, "literature_max_papers": 4}.
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation"]
   },
   "inputs": {

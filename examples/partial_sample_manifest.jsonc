@@ -22,6 +22,8 @@
   // Here p4 and p5 each resume from their pre-computed renormalized matrix
   // elements, run fourier_transform -> perturbative_matching, and reconverge at
   // the extrapolation placeholder (MERGE POINT).
+  // An optional review job uses
+  // "defaults": {"literature": true, "literature_max_papers": 4}.
   "metadata": {
     "run_id": "workflow_cg_qpdf_partial_from_fourier",
     "root_directory": "~/lamet-agent",

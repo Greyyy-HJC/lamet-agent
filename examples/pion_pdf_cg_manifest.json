@@ -123,7 +123,7 @@
       ]
     },
     "review": {                                                                                                                      
-      "defaults": {"literature": true},
+      "defaults": {"literature": true, "literature_max_papers": 4},
       "jobs": [
         {"id": "review"}
       ]

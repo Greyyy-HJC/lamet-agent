@@ -13,7 +13,6 @@ import numpy as np
 import xarray as xr
 
 from lamet_agent.core.llm import request_llm_text
-from lamet_agent.core.reporting import translate_markdown_report
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import merge_stage_params
 
@@ -149,17 +148,27 @@ def hybrid_zs_consistency_checks(manifest: AnalysisManifest) -> list[dict[str, A
     return checks
 
 
-def _format_manifest_consistency(checks: list[dict[str, Any]]) -> str:
-    lines = [
-        "## Manifest Parameter Consistency",
-        "",
-        "This check follows `matching.quasi → fourier.input → renormalization job`; findings are review-only and do not block execution.",
-        "",
-        "| Matching job | Renormalization job | Matching `zs_fm` | Renormalization `zs_fm` | Status |",
-        "| --- | --- | ---: | ---: | --- |",
-    ]
+def _format_manifest_consistency(checks: list[dict[str, Any]], language: str) -> str:
+    if language == "ch":
+        lines = [
+            "## Manifest 参数一致性",
+            "",
+            "该检查沿 `matching.quasi → fourier.input → renormalization job` 追踪；结果仅供 review 使用，不会阻止流程执行。",
+            "",
+            "| Matching job | Renormalization job | Matching `zs_fm` | Renormalization `zs_fm` | 状态 |",
+            "| --- | --- | ---: | ---: | --- |",
+        ]
+    else:
+        lines = [
+            "## Manifest Parameter Consistency",
+            "",
+            "This check follows `matching.quasi → fourier.input → renormalization job`; findings are review-only and do not block execution.",
+            "",
+            "| Matching job | Renormalization job | Matching `zs_fm` | Renormalization `zs_fm` | Status |",
+            "| --- | --- | ---: | ---: | --- |",
+        ]
     if not checks:
-        lines.append("| — | — | — | — | not applicable |")
+        lines.append("| — | — | — | — | 不适用 |" if language == "ch" else "| — | — | — | — | not applicable |")
     for check in checks:
         renorm_job = f"`{check['renormalization_job']}`" if check.get("renormalization_job") else "—"
         matching_zs = check.get("matching_zs_fm")
@@ -174,17 +183,24 @@ def _format_manifest_consistency(checks: list[dict[str, Any]]) -> str:
     mismatches = [check for check in checks if check["status"] == "mismatch"]
     unverifiable = [check for check in checks if check["status"] == "unverifiable"]
     if mismatches:
-        lines.extend(["", "### Required changes"])
+        lines.extend(["", "### 必需修改" if language == "ch" else "### Required changes"])
         for check in mismatches:
             lines.append(
-                f"- `{check['matching_job']}` differs from upstream `{check['renormalization_job']}`: set "
+                f"- `{check['matching_job']}` 与上游 `{check['renormalization_job']}` 不一致：将 "
+                f"`{check['recommended_path']}` 设为 `{check['renormalization_zs_fm']}`。"
+                if language == "ch"
+                else f"- `{check['matching_job']}` differs from upstream `{check['renormalization_job']}`: set "
                 f"`{check['recommended_path']}` to `{check['renormalization_zs_fm']}`."
             )
     if unverifiable:
-        lines.extend(["", "### Not verifiable"])
+        lines.extend(["", "### 无法验证" if language == "ch" else "### Not verifiable"])
         for check in unverifiable:
             reason = check["reason"]
-            lines.append(f"- `{check['matching_job']}`: {reason}.")
+            lines.append(
+                f"- `{check['matching_job']}`：无法沿 manifest DAG 验证对应的 `zs_fm`。"
+                if language == "ch"
+                else f"- `{check['matching_job']}`: {reason}."
+            )
     return "\n".join(lines)
 
 
@@ -204,11 +220,11 @@ def write_review_from_manifest(
     review_dir = artifacts_dir / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
     language = "ch" if report_language.lower() == "ch" else "en"
-    english_target = review_dir / "review.md"
     target = review_dir / ("review_CN.md" if language == "ch" else "review.md")
     consistency_checks = hybrid_zs_consistency_checks(manifest)
     review_params = merge_stage_params(manifest.stages["review"].defaults, {})
     use_literature = bool(review_params.get("literature", False))
+    literature_max_papers = int(review_params.get("literature_max_papers", 4))
     materials = []
     stages = [stage for stage in STAGE_REPORTS if (artifacts_dir / stage).is_dir() or stage in manifest.metadata.stages]
     for stage in stages:
@@ -249,13 +265,11 @@ def write_review_from_manifest(
                 if np.iscomplexobj(mean):
                     summary["imag_mean_range"] = [float(np.nanmin(np.imag(mean))), float(np.nanmax(np.imag(mean)))]
             item["netcdf"].append(summary)
+        svg_paths = sorted(stage_dir.rglob("*.svg"))
+        svg_paths.sort(key=lambda path: (path.name not in item["report_text"], str(path)))
         item["svg"] = [
-            {
-                "markdown_path": os.path.relpath(path, review_dir),
-                "stage_subpath": os.path.relpath(path, stage_dir),
-                "absolute_path": str(path),
-            }
-            for path in sorted(stage_dir.rglob("*.svg"))[:80]
+            {"markdown_path": os.path.relpath(path, review_dir)}
+            for path in svg_paths[:12]
         ]
         materials.append(item)
     literature_context = []
@@ -470,10 +484,10 @@ def write_review_from_manifest(
             match_score += 2 if row["label"] == "core" else 0
             ranked_rows.append((match_score, int(row["score"]), row["published"], row, matched_topics[:6]))
         ranked_rows.sort(reverse=True)
-        for _, _, _, row, matched_topics in ranked_rows[:8]:
+        for _, _, _, row, matched_topics in ranked_rows[:literature_max_papers]:
             summary = " ".join(row["summary"].split())
-            if len(summary) > 420:
-                summary = summary[:417] + "..."
+            if len(summary) > 240:
+                summary = summary[:237] + "..."
             literature_context.append(
                 {
                     "arxiv_id": row["arxiv_id"],
@@ -481,7 +495,6 @@ def write_review_from_manifest(
                     "label": row["label"],
                     "title": row["title"],
                     "matched_topics": matched_topics,
-                    "relevance": f"Strongest overlap with manifest anchors: {', '.join(matched_topics)}.",
                     "summary": summary,
                     "abs_url": row["abs_url"],
                 }
@@ -503,11 +516,12 @@ def write_review_from_manifest(
     )
     system = lamet_review_rules_en + "Write a detailed scientific review using only the supplied stage reports, NetCDF summaries, SVG file lists, and manifest. Do not invent unreported numbers; when settings or outputs do not match a realistic LaMET analysis scenario, give executable manifest-level recommendations."
     user = (
-        "Generate the complete `review.md` body directly. Follow the order in Stage materials; these stages come from stage subdirectories under `root_directory/artifacts_directory/<stage>` plus stages declared in the manifest. For example, correlator diagnostics are also collected from the `correlator_analysis/fit_logs` subdirectory. "
+        f"Generate the complete `{target.name}` body directly in {'Simplified Chinese' if language == 'ch' else 'English'}. Follow the order in Stage materials; these stages come from stage subdirectories under `root_directory/artifacts_directory/<stage>` plus stages declared in the manifest. For example, correlator diagnostics are also collected from the `correlator_analysis/fit_logs` subdirectory. "
         + "Return normal Markdown only; do not wrap the whole answer in a fenced code block. "
         + "Write one level-2 section for each stage with available material, and include `Physical Summary`, `Key figure`, `Diagnostics`, and `Recommended Manifest Changes` subsections. "
+        + ("Use `物理总结`, `关键图像`, `诊断`, and `Manifest 修改建议` as the corresponding subsection headings. " if language == "ch" else "")
         + "`Physical Summary` must follow the publication-style prose rules in the system prompt rather than report-like listing, and may only use numerical values supplied by the reports and NetCDF summaries. "
-        + "`Key figure` must choose one SVG from that stage's `svg` list; if the list contains an ensemble overview figure such as `ca_<ensemble>_*.svg`, `rn_<ensemble>_*.svg`, `ft_<ensemble>_xdep.svg`, or `mt_<ensemble>.svg`, choose that overview figure first, otherwise follow the usual single-job figure selection rule. Embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths, do not use only the basename, and do not use `absolute_path` as the Markdown link. The `markdown_path` usually has the form of a path from the review directory to a sibling stage directory, for example `../correlator_analysis/xxx.svg`; preserve that exact relative path string when embedding the image. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
+        + "`Key figure` must choose one SVG from that stage's `svg` list; if the list contains an ensemble overview figure such as `ca_<ensemble>_*.svg`, `rn_<ensemble>_*.svg`, `ft_<ensemble>_xdep.svg`, or `mt_<ensemble>.svg`, choose that overview figure first, otherwise follow the usual single-job figure selection rule. Embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths or use only the basename. The `markdown_path` usually has the form of a path from the review directory to a sibling stage directory, for example `../correlator_analysis/xxx.svg`; preserve that exact relative path string when embedding the image. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
         + "`Diagnostics` must judge whether the stage is self-consistent and whether it matches a realistic LaMET analysis scenario; it must follow the Diagnostics rules in the system prompt and explicitly distinguish successful execution, manifest-tunable analysis issues, and raw-data or external LQCD limitations that lamet-agent tuning cannot fix. `Recommended Manifest Changes` must use the required field format above; if no trigger is met, state that the current setting is reasonable and no change is justified. "
         + "Recommendations must cite real manifest paths and values such as `stages.<stage>.defaults.<key>`, `stages.<stage>.jobs[].params.<key>`, or `inputs.kernels[].kernel_parameters.<key>`, and state suggested values or ranges with reasons. "
         + "Prioritize these tunable parameters: for correlator, `pt2_windows`, `nstate`, `fit_scope`, `fit_strategy`, `prior_width`, `svdcut`, and discuss `pt3_tau_cuts` only for three-point fit scopes; for renormalization, `zs_fm`, `scheme_parameters.m0_gev`, `scheme_parameters.delta_m_gev`; for Fourier, `scheme_scan.zmin_values`, `zmax_values`, `z_ext_max`, `smooth`, `order`, `posterior_prior_error_scale`, `y_grid`; for matching, `kernel_id`, `mu`, `momentum_gev`. "
@@ -519,7 +533,7 @@ def write_review_from_manifest(
             if use_literature
             else ""
         )
-        + "State missing reports, NetCDF files, or SVG figures explicitly and do not fill in missing numbers. Output Markdown in English.\n\n"
+        + f"State missing reports, NetCDF files, or SVG figures explicitly and do not fill in missing numbers. Output Markdown in {'Simplified Chinese' if language == 'ch' else 'English'}.\n\n"
         + f"Manifest JSON:\n```json\n{json.dumps(manifest.model_dump(mode='json'), indent=2)}\n```\n\n"
         + f"Stage materials:\n```json\n{json.dumps(materials, indent=2)}\n```\n\n"
         + (
@@ -542,19 +556,9 @@ def write_review_from_manifest(
         lines = review.splitlines()
         if lines and lines[0].strip().startswith("```") and lines[-1].strip() == "```":
             review = "\n".join(lines[1:-1]).strip()
-    output = review + "\n\n" + _format_manifest_consistency(consistency_checks) + "\n"
+    output = review + "\n\n" + _format_manifest_consistency(consistency_checks, language) + "\n"
     for stage in STAGE_REPORTS:
         output = output.replace(f"]({stage}/", f"](../{stage}/").replace(f"](./{stage}/", f"](../{stage}/")
-    english_target.write_text(output, encoding="utf-8")
-    if language == "ch":
-        output = translate_markdown_report(
-            output,
-            backend=backend,
-            provider=provider,
-            model_name=model_name,
-            api_key=api_key,
-            base_url=base_url,
-        )
     target.write_text(output, encoding="utf-8")
     return {"review": str(target), "artifact": str(target), "n_stages": len(materials)}
 

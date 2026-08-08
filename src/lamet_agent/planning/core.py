@@ -230,6 +230,8 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     scheme_scan_match = re.search(r"\bscheme_scan\s*[:=]?\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", text, flags=re.I)
     quasi_y_match = re.search(r"\bquasi_y_ls\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
     kernel_id_match = re.search(r"\bkernel_id\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
+    literature_match = re.search(r"\bliterature\s*[:=]?\s*(true|false)\b", text, flags=re.I)
+    literature_max_papers_match = re.search(r"\bliterature_max_papers\s*[:=]?\s*(\d+)", text, flags=re.I)
     y_grid = json.loads(y_grid_match.group(1)) if y_grid_match else None
     scheme_scan = json.loads(scheme_scan_match.group(1)) if scheme_scan_match else None
     quasi_y_ls = json.loads(quasi_y_match.group(1)) if quasi_y_match else None
@@ -509,7 +511,12 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         mt_jobs = payload["stages"].get("perturbative_matching", {}).get("jobs", []) or [{"id": item["id"]} for item in artifacts if item["stage"] == "perturbative_matching"]
         payload["stages"]["extrapolation"] = {"defaults": {}, "jobs": [{"id": "extrapolate_all", "inputs": {"lightcone": [job["id"] for job in mt_jobs]}}]}
     if "review" in stages:
-        payload["stages"]["review"] = {"defaults": {}, "jobs": [{"id": "review"}]}
+        review_defaults: dict[str, Any] = {}
+        if literature_match or literature_max_papers_match:
+            review_defaults["literature"] = literature_match is None or literature_match.group(1).lower() == "true"
+        if review_defaults.get("literature"):
+            review_defaults["literature_max_papers"] = int(literature_max_papers_match.group(1)) if literature_max_papers_match else 4
+        payload["stages"]["review"] = {"defaults": review_defaults, "jobs": [{"id": "review"}]}
     payload["metadata"]["stages"] = [
         stage
         for stage in stages
@@ -533,6 +540,11 @@ def normalize_planning_constraints(payload: dict[str, Any]) -> list[dict[str, An
             if deduped != value:
                 correlator[key] = deduped
                 edits.append({"path": f"inputs.correlators[{index}].{key}", "old": value, "new": deduped, "note": f"Deduplicated correlator {key} values."})
+    stages = payload.get("stages", {}) if isinstance(payload.get("stages"), dict) else {}
+    review_defaults = stages.get("review", {}).get("defaults", {}) if isinstance(stages.get("review"), dict) else {}
+    if isinstance(review_defaults, dict) and review_defaults.get("literature") is True and "literature_max_papers" not in review_defaults:
+        review_defaults["literature_max_papers"] = 4
+        edits.append({"path": "stages.review.defaults.literature_max_papers", "old": None, "new": 4, "note": "Applied the default literature paper limit."})
     metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
     if str(metadata.get("target_observable", "")).lower() != "da":
         return edits

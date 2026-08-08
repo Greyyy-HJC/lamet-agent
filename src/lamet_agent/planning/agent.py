@@ -194,7 +194,10 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     "required": {"inputs": {"lightcone": ["matching_job_1", "matching_job_2"]}},
                     "minimal_policy": "Do not add allow_order_a, allow_order_1overp, allow_order_ap, fitting_param_xdep, pdep_gev, or fit-control defaults unless the user explicitly requests them.",
                 },
-                "review": {"required": "none"},
+                "review": {
+                    "required": "none",
+                    "optional": {"literature": "true | false", "literature_max_papers": "default 4 when literature=true"},
+                },
             },
             "common_stage_contracts": {
                 "renormalization": {

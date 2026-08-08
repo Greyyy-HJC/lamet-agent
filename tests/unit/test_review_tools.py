@@ -125,10 +125,6 @@ def test_review_appends_deterministic_consistency_sections(tmp_path: Path, monke
         "lamet_agent.stages.review.functions.request_llm_text",
         lambda **kwargs: "# LLM Review",
     )
-    monkeypatch.setattr(
-        "lamet_agent.stages.review.functions.translate_markdown_report",
-        lambda markdown, **kwargs: markdown,
-    )
     manifest = _manifest(matching_zs=0.3)
     manifest._artifacts_directory = tmp_path / "artifacts"
 
@@ -140,22 +136,33 @@ def test_review_appends_deterministic_consistency_sections(tmp_path: Path, monke
     assert "## Manifest Parameter Consistency" in english_text
     assert "`mismatch`" in english_text
     assert "stages.perturbative_matching.jobs[0].params.zs_fm" in english_text
-    assert "## Manifest Parameter Consistency" in chinese_text
+    assert "## Manifest 参数一致性" in chinese_text
     assert "`mismatch`" in chinese_text
+    assert not (tmp_path / "ch" / "review" / "review.md").exists()
 
 
 def test_review_rewrites_stage_svg_links_relative_to_review_dir(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "lamet_agent.stages.review.functions.request_llm_text",
-        lambda **kwargs: "![key](correlator_analysis/ca_HISQa060_X_re.svg)",
-    )
+    prompts = []
+
+    def fake_request_llm_text(**kwargs):
+        prompts.append("\n".join(message["content"] for message in kwargs["messages"]))
+        return "![key](correlator_analysis/ca_HISQa060_X_re.svg)"
+
+    monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
     manifest = _manifest()
     manifest._artifacts_directory = tmp_path / "artifacts"
+    stage_dir = tmp_path / "artifacts" / "correlator_analysis"
+    stage_dir.mkdir(parents=True)
+    for index in range(13):
+        (stage_dir / f"ca_{index:02d}.svg").write_text("<svg/>", encoding="utf-8")
 
     result = write_review_from_manifest(manifest, output_dir=tmp_path / "artifacts")
     text = Path(result["review"]).read_text(encoding="utf-8")
 
     assert "](../correlator_analysis/ca_HISQa060_X_re.svg)" in text
+    assert prompts[0].count('"markdown_path"') == 12
+    assert '"absolute_path"' not in prompts[0]
+    assert '"stage_subpath"' not in prompts[0]
 
 
 def test_review_prompt_avoids_repeating_matching_zs_fm(tmp_path: Path, monkeypatch) -> None:
@@ -166,13 +173,13 @@ def test_review_prompt_avoids_repeating_matching_zs_fm(tmp_path: Path, monkeypat
         return "# LLM Review"
 
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
-    monkeypatch.setattr("lamet_agent.stages.review.functions.translate_markdown_report", lambda markdown, **kwargs: markdown)
-
     write_review_from_manifest(_manifest(), output_dir=tmp_path / "en")
     write_review_from_manifest(_manifest(), report_language="ch", output_dir=tmp_path / "ch")
 
+    assert len(prompts) == 2
     assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[0]
     assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[1]
+    assert "Output Markdown in Simplified Chinese" in prompts[1]
 
 
 def test_review_prompt_omits_literature_context_when_disabled(tmp_path: Path, monkeypatch) -> None:
@@ -183,8 +190,6 @@ def test_review_prompt_omits_literature_context_when_disabled(tmp_path: Path, mo
         return "# LLM Review"
 
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
-    monkeypatch.setattr("lamet_agent.stages.review.functions.translate_markdown_report", lambda markdown, **kwargs: markdown)
-
     write_review_from_manifest(_manifest(), output_dir=tmp_path / "en")
 
     assert "Relevant literature context (background only)" not in prompts[0]
@@ -199,8 +204,6 @@ def test_review_prompt_includes_literature_context_when_enabled(tmp_path: Path, 
         return "# LLM Review"
 
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
-    monkeypatch.setattr("lamet_agent.stages.review.functions.translate_markdown_report", lambda markdown, **kwargs: markdown)
-
     manifest = _manifest()
     manifest.stages["review"].defaults["literature"] = True
     write_review_from_manifest(manifest, output_dir=tmp_path / "en")
@@ -257,16 +260,12 @@ def test_review_literature_ranking_prefers_manifest_anchor_matches(tmp_path: Pat
         lambda *_args, **kwargs: real_connect(db_path, **kwargs),
     )
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
-    monkeypatch.setattr("lamet_agent.stages.review.functions.translate_markdown_report", lambda markdown, **kwargs: markdown)
-
     manifest = _manifest()
     manifest.stages["review"].defaults["literature"] = True
+    manifest.stages["review"].defaults["literature_max_papers"] = 1
     write_review_from_manifest(manifest, output_dir=tmp_path / "en")
 
     prompt = prompts[0]
-    assert "Strongest overlap with manifest anchors: target_observable=pdf, parton=quark, hadron=pion, gfix=CG" in prompt
+    assert '"matched_topics": [' in prompt
     assert "Pion Quark PDF in the Coulomb Gauge with Hybrid-Ratio Matching" in prompt
-    if "Large Momentum Effective Theory Overview" in prompt:
-        assert prompt.index("Pion Quark PDF in the Coulomb Gauge with Hybrid-Ratio Matching") < prompt.index(
-            "Large Momentum Effective Theory Overview"
-        )
+    assert "Large Momentum Effective Theory Overview" not in prompt
