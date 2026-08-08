@@ -469,16 +469,12 @@ def _quark_like_parameters(
     if observable == "pion_quark_quasi_pdf" and sector == "valence":
         fixed.update({"phi2": 0.0, "phi2p": 0.0})
         aliases.update({"A3": ("A1", 1.0), "phi3": ("phi1", -1.0), "A3p": ("A1p", 1.0), "phi3p": ("phi1p", -1.0)})
-    if observable == "pion_quark_quasi_pdf" and sector == "sea":
-        fixed.update({"A1": 0.0, "A3": 0.0, "A1p": 0.0, "A3p": 0.0})
     if observable == "meson_quasi_da" and psi1_class == "light" and psi2_class == "light":
         aliases.update({"A2": ("A1", 1.0), "phi2": ("phi1", -1.0), "A2p": ("A1p", 1.0), "phi2p": ("phi1p", -1.0)})
     if observable == "meson_quasi_da" and psi1_class == "light" and psi2_class == "heavy":
         fixed.update({"A1": 0.0, "phi1": 0.0, "A1p": 0.0, "phi1p": 0.0})
     if observable == "meson_quasi_da" and psi1_class == "heavy" and psi2_class == "light":
         fixed.update({"A2": 0.0, "phi2": 0.0, "A2p": 0.0, "phi2p": 0.0})
-    if observable == "pion_quark_quasi_gpd" and sector == "sea":
-        fixed.update({"A1": 0.0, "A3": 0.0, "A1p": 0.0, "A3p": 0.0})
     return [
         _TailParameter(item.label, fixed[item.label], item.lower, item.upper, fixed=fixed[item.label])
         if item.label in fixed
@@ -2708,18 +2704,17 @@ def run_fourier_transform(
         if target == "da":
             sector = "full"
         if target in {"pdf", "gpd"}:
-            if sector == "valence":
-                part, output_scale, im_flip_for_ft = "re", 2.0, False
-            elif sector == "total":
-                part, output_scale, im_flip_for_ft = "im", 2.0, True
-            elif sector == "full":
-                part, output_scale, im_flip_for_ft = "both", 1.0, False
-            elif sector == "sea":
-                part, output_scale, im_flip_for_ft = "re", 1.0, False
+            part, output_scale, im_flip_for_ft = {
+                "valence": ("re", 2.0, False),
+                "singlet": ("im", 2.0, True),
+                "sea": ("both", 1.0, False),
+                "full": ("both", 1.0, False),
+            }[sector]
         else:
             part, output_scale, im_flip_for_ft = "both", 1.0, False
     else:
-        sector = {"re": "valence", "im": "total", "both": "full"}.get(str(part).lower(), str(part).lower())
+        sector = {"re": "valence", "im": "singlet", "both": "full"}.get(str(part).lower(), str(part).lower())
+    fit_sector = "full" if sector == "sea" else sector
     matrix_element_data = store.get("matrix_element_data")
     if matrix_element_data is None:
         matrix_element_data = store["input"]
@@ -2770,7 +2765,7 @@ def run_fourier_transform(
             sample_error_mode=sample_error_mode,
             Lambda0_gev=float(Lambda0_gev),
             part=part,
-            sector=sector,
+            sector=fit_sector,
             hadron=hadron,
             psi1_flavor_class=psi1_flavor_class,
             psi2_flavor_class=psi2_flavor_class,
@@ -2785,7 +2780,7 @@ def run_fourier_transform(
                 method,
                 range_order,
                 observable,
-                sector=sector,
+                sector=fit_sector,
                 hadron=hadron,
                 psi1_flavor_class=psi1_flavor_class,
                 psi2_flavor_class=psi2_flavor_class,
@@ -2826,7 +2821,7 @@ def run_fourier_transform(
                 posterior_prior_error_scale=range_prior_width,
                 sample_error_mode=sample_error_mode,
                 part=part,
-                sector=sector,
+                sector=fit_sector,
                 hadron=hadron,
                 psi1_flavor_class=psi1_flavor_class,
                 psi2_flavor_class=psi2_flavor_class,
@@ -2864,7 +2859,7 @@ def run_fourier_transform(
                 method,
                 spec["order"],
                 observable,
-                sector=sector,
+                sector=fit_sector,
                 hadron=hadron,
                 psi1_flavor_class=psi1_flavor_class,
                 psi2_flavor_class=psi2_flavor_class,
@@ -2900,120 +2895,32 @@ def run_fourier_transform(
         model_scheme["order"] = spec["order"]
         model_scheme["posterior_prior_error_scale"] = spec["prior_width"]
         schemes.append(model_scheme)
-    if sector == "sea" and target in {"pdf", "gpd"}:
-        total_result = run_fourier_workflow(
-            matrix_element["coord"],
-            matrix_element["re_samples"],
-            matrix_element["im_samples"],
-            y_values,
-            schemes=schemes,
-            method=method,
-            order=order,
-            observable=observable,
-            coord_unit=coord_unit,
-            momentum_gev=momentum_gev,
-            final_momentum_gev=final_momentum_gev,
-            lattice_spacing_fm=lattice_spacing_fm,
-            im_flip_for_ft=True,
-            resample_mode=resample_mode,
-            Lambda0_gev=float(Lambda0_gev),
-            posterior_prior_error_scale=range_prior_width,
-            sample_error_mode=sample_error_mode,
-            part="im",
-            sector=sector,
-            hadron=hadron,
-            psi1_flavor_class=psi1_flavor_class,
-            psi2_flavor_class=psi2_flavor_class,
-            workers=workers,
-        )
-        valence_result = run_fourier_workflow(
-            matrix_element["coord"],
-            matrix_element["re_samples"],
-            matrix_element["im_samples"],
-            y_values,
-            schemes=schemes,
-            method=method,
-            order=order,
-            observable=observable,
-            coord_unit=coord_unit,
-            momentum_gev=momentum_gev,
-            final_momentum_gev=final_momentum_gev,
-            lattice_spacing_fm=lattice_spacing_fm,
-            im_flip_for_ft=False,
-            resample_mode=resample_mode,
-            Lambda0_gev=float(Lambda0_gev),
-            posterior_prior_error_scale=range_prior_width,
-            sample_error_mode=sample_error_mode,
-            part="re",
-            sector=sector,
-            hadron=hadron,
-            psi1_flavor_class=psi1_flavor_class,
-            psi2_flavor_class=psi2_flavor_class,
-            workers=workers,
-        )
-        for sector_result in (total_result, valence_result):
-            sector_result.update(candidate_diagnostics)
-            _apply_sample_fit_model_average(
-                sector_result,
-                resample_mode=resample_mode,
-                sample_error_mode=sample_error_mode,
-                model_average=model_average,
-            )
-            _apply_fourier_output_scale(sector_result, 2.0)
-        result = total_result
-        for key in ("ft_re_samples", "ft_im_samples", "final_ft_re_samples", "final_ft_im_samples", "ft_re_mean", "ft_im_mean"):
-            result[key] = 0.5 * (np.asarray(total_result[key], dtype=float) - np.asarray(valence_result[key], dtype=float))
-        result["ft_re_mean"], result["ft_re_stat_sdev"] = sample_mean_and_sdev(
-            np.asarray(result["final_ft_re_samples"], dtype=float),
-            mode=resample_mode,
-            sample_error_mode=sample_error_mode,
-        )
-        result["ft_im_mean"], result["ft_im_stat_sdev"] = sample_mean_and_sdev(
-            np.asarray(result["final_ft_im_samples"], dtype=float),
-            mode=resample_mode,
-            sample_error_mode=sample_error_mode,
-        )
-        result["ft_re_sys_sdev"] = 0.5 * np.hypot(
-            np.asarray(total_result["ft_re_sys_sdev"], dtype=float),
-            np.asarray(valence_result["ft_re_sys_sdev"], dtype=float),
-        )
-        result["ft_im_sys_sdev"] = 0.5 * np.hypot(
-            np.asarray(total_result["ft_im_sys_sdev"], dtype=float),
-            np.asarray(valence_result["ft_im_sys_sdev"], dtype=float),
-        )
-        for total_scheme, valence_scheme in zip(result["scheme_results"], valence_result["scheme_results"]):
-            for key in ("extended_re_samples", "extended_im_samples"):
-                total_scheme[key] = np.asarray(total_scheme[key], dtype=float) - np.asarray(valence_scheme[key], dtype=float)
-            for key in ("ft_re_samples", "ft_im_samples"):
-                total_scheme[key] = 0.5 * (np.asarray(total_scheme[key], dtype=float) - np.asarray(valence_scheme[key], dtype=float))
-        part, output_scale, im_flip_for_ft = "sea", 1.0, False
-        result["output_scale"] = 1.0
-    else:
-        result = run_fourier_workflow(
-            matrix_element["coord"],
-            matrix_element["re_samples"],
-            matrix_element["im_samples"],
-            y_values,
-            schemes=schemes,
-            method=method,
-            order=order,
-            observable=observable,
-            coord_unit=coord_unit,
-            momentum_gev=momentum_gev,
-            final_momentum_gev=final_momentum_gev,
-            lattice_spacing_fm=lattice_spacing_fm,
-            im_flip_for_ft=im_flip_for_ft,
-            resample_mode=resample_mode,
-            Lambda0_gev=float(Lambda0_gev),
-            posterior_prior_error_scale=range_prior_width,
-            sample_error_mode=sample_error_mode,
-            part=part,
-            sector=sector,
-            hadron=hadron,
-            psi1_flavor_class=psi1_flavor_class,
-            psi2_flavor_class=psi2_flavor_class,
-            workers=workers,
-        )
+    sea_projection = sector == "sea"
+    result = run_fourier_workflow(
+        matrix_element["coord"],
+        matrix_element["re_samples"],
+        matrix_element["im_samples"],
+        -np.asarray(y_values, dtype=float) if sea_projection else y_values,
+        schemes=schemes,
+        method=method,
+        order=order,
+        observable=observable,
+        coord_unit=coord_unit,
+        momentum_gev=momentum_gev,
+        final_momentum_gev=final_momentum_gev,
+        lattice_spacing_fm=lattice_spacing_fm,
+        im_flip_for_ft=im_flip_for_ft,
+        resample_mode=resample_mode,
+        Lambda0_gev=float(Lambda0_gev),
+        posterior_prior_error_scale=range_prior_width,
+        sample_error_mode=sample_error_mode,
+        part=part,
+        sector=fit_sector,
+        hadron=hadron,
+        psi1_flavor_class=psi1_flavor_class,
+        psi2_flavor_class=psi2_flavor_class,
+        workers=workers,
+    )
     result["resample_mode"] = resample_mode
     result["sample_error_mode"] = sample_error_mode
     result["momentum"] = momentum
@@ -3042,14 +2949,19 @@ def run_fourier_transform(
     result.update(candidate_diagnostics)
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
-    if not (sector == "sea" and target in {"pdf", "gpd"}):
-        _apply_sample_fit_model_average(
-            result,
-            resample_mode=resample_mode,
-            sample_error_mode=sample_error_mode,
-            model_average=model_average,
-        )
-        _apply_fourier_output_scale(result, float(output_scale))
+    _apply_sample_fit_model_average(
+        result,
+        resample_mode=resample_mode,
+        sample_error_mode=sample_error_mode,
+        model_average=model_average,
+    )
+    _apply_fourier_output_scale(result, -1.0 if sea_projection else float(output_scale))
+    if sea_projection:
+        result["y_grid"] = np.asarray(y_values, dtype=float)
+        result["output_scale"] = 1.0
+        for scheme_result in result["scheme_results"]:
+            for key in ("ft_re_samples", "ft_im_samples"):
+                scheme_result[key] = -np.asarray(scheme_result[key], dtype=float)
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result, source_ensemble=matrix_element_data.ensemble)
     store[out] = result
     artifact = _artifact_path(save_path, default_name=f"{out}.nc", artifacts_dir=artifacts_dir).with_suffix(".nc")

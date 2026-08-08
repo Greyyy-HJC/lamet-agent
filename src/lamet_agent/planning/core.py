@@ -223,7 +223,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     fit_scope_match = re.search(r"\bfit_scope\s*[:=]?\s*(3pt_ratio\+FH|3pt_ratio|qda_ratio|FH)\b", text, flags=re.I)
     fitting_form_match = re.search(r"\bfitting_form\s*[:=]?\s*(Breit|NonBreit)\b", text, flags=re.I)
     ft_order_match = re.search(r"\b(?:fourier\s+)?order\s*[:=]?\s*(LA|NLA)\b", text, flags=re.I)
-    ft_sector_match = re.search(r"\bsector\s*[:=]?\s*(valence|total|full|sea)\b", text, flags=re.I)
+    ft_sector_match = re.search(r"\bsector\s*[:=]?\s*(sea|valence|singlet|full)\b", text, flags=re.I)
     ft_part_match = re.search(r"\bpart\s*[:=]?\s*(re|im|both)\b", text, flags=re.I)
     ft_coord_unit_match = re.search(r"\bcoord_unit\s*[:=]?\s*(lattice|fm|gev_inv|lambda)\b", text, flags=re.I)
     y_grid_match = re.search(r"\by_grid\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)

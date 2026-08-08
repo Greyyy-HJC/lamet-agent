@@ -426,10 +426,6 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
         constraint_lines.append(
             "- Following arXiv:2601.12189, the fit input for the `valence` sector of `pion_quark_quasi_pdf` imposes $\\phi_2=\\phi'_2=0$, $A_3=A_1$, $\\phi_3=-\\phi_1$, $A'_3=A'_1$, and $\\phi'_3=-\\phi'_1$."
         )
-    if observable == "pion_quark_quasi_pdf" and sector == "sea":
-        constraint_lines.append(
-            "- Following arXiv:2601.12189, the fit input for the `sea` sector of `pion_quark_quasi_pdf` imposes $A_1=A_3=0$; for NLA terms it also imposes $A'_1=A'_3=0$."
-        )
     if observable == "meson_quasi_da" and psi1_class == "light" and psi2_class == "light":
         constraint_lines.append(
             "- Following arXiv:2601.12189, the fit input for `meson_quasi_da` with `psi1_flavor_class=light, psi2_flavor_class=light` imposes $A_2=A_1$, $\\phi_2=-\\phi_1$, $A'_2=A'_1$, and $\\phi'_2=-\\phi'_1$."
@@ -441,10 +437,6 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     if observable == "meson_quasi_da" and psi1_class == "heavy" and psi2_class == "light":
         constraint_lines.append(
             "- Following arXiv:2601.12189, the fit input for `meson_quasi_da` with `psi1_flavor_class=heavy, psi2_flavor_class=light` imposes $A_2=A'_2=0$."
-        )
-    if observable == "pion_quark_quasi_gpd" and sector == "sea":
-        constraint_lines.append(
-            "- Following arXiv:2601.12189, the fit input for the `sea` sector of `pion_quark_quasi_gpd` imposes $A_1=A_3=0$; for NLA terms it also imposes $A'_1=A'_3=0$."
         )
     mapping_lines.extend(constraint_lines)
 
@@ -512,7 +504,7 @@ def _field_definitions(*, language: str) -> list[str]:
         "| Entry | Meaning |",
         "|---|---|",
         "| Observable | Physical matrix element transformed by this stage. |",
-        "| Sector | Requested physics projection; PDF/GPD accept `valence`, `total`, `full`, and `sea`, while DA uses `full`. |",
+        "| Sector | Requested physics projection; PDF/GPD accept `sea`, `valence`, `singlet`, and `full`, while DA uses `full`. |",
         "| Tail method/order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{method}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
         "| Active fitted component | Execution channel resolved from `sector`; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one component. |",
         "| Coordinate unit | `lattice` means $z/a$. The code converts it to $z_{\\rm GeV^{-1}}=(z/a)a_{\\rm fm}\\,5.067731237$ and then $\\lambda=P_z z_{\\rm GeV^{-1}}$. |",
@@ -529,15 +521,17 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     intro = (
         f"This run uses `sector={sector}`, resolved internally to `part={part}`, "
         f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`. "
-        "With the common extended-distribution convention "
+        "With the vector/tensor quark extended-distribution convention "
         "$q_{\\rm ext}(x)=q(x)$ for $x>0$ and $q_{\\rm ext}(-x)=-\\bar q(x)$, "
         "the coordinate-space matrix element obeys "
-        "$h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$."
+        "$h(\\lambda)=\\int dx\\,e^{-ix\\lambda}q_{\\rm ext}(x)$."
     )
     if truncated:
         intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
     if sector == "sea":
-        meaning = "`sea` is a derived projection: the code computes `total=q(x)+\\bar q(x)` and `valence=q(x)-\\bar q(x)` and then returns $(\\mathrm{total}-\\mathrm{valence})/2=\\bar q(x)$."
+        meaning = "`sea` is reconstructed from the full vector/tensor quark distribution as $\\bar q(x)=-q_{\\rm ext}(-x)$, using one joint fit of the real and imaginary matrix-element components; for a nonzero-skewness GPD, the reflected ERBL region remains a quark-antiquark amplitude rather than an antiquark density."
+    elif sector == "singlet":
+        meaning = "`singlet` returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor-singlet distribution additionally sums this combination over quark flavors."
     elif part == "both":
         meaning = (
             "`both` uses the full complex matrix element and reconstructs the full extended quasi-distribution "

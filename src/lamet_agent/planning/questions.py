@@ -28,7 +28,7 @@ def _stage_required_prompt(stage: str, payload: dict[str, Any]) -> str:
             "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
         )
     if stage == "fourier_transform":
-        sectors = "full" if target == "da" else "valence, total, full, sea"
+        sectors = "full" if target == "da" else "sea, valence, singlet, full"
         return (
             "fourier_transform required choices: input must be one renormalized job or artifact; "
             "order options are LA, NLA, or both; sector options are "
@@ -65,7 +65,7 @@ def _stage_optional_prompt(stage: str, payload: dict[str, Any]) -> str:
             "or z_coverage_policy and svdcut for self_renormalization. Reply with values to set, or none."
         )
     if stage == "fourier_transform":
-        sector_text = "sector is fixed to full for DA" if target == "da" else "sector options are valence, total, full, sea"
+        sector_text = "sector is fixed to full for DA" if target == "da" else "sector options are sea, valence, singlet, full"
         return (
             "fourier_transform optional choices: scheme_scan, posterior_prior_error_scale, plot names, x/y limits, "
             f"method, observable, coord_unit override (default fm); {sector_text}. Reply with values to set, or none."

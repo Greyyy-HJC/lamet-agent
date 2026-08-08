@@ -1049,6 +1049,30 @@ def test_fourier_symmetry_guarantee_requires_boolean() -> None:
     ]
 
 
+def test_fourier_sector_options_depend_on_observable() -> None:
+    manifest = _manifest()
+    job = manifest.stages["fourier_transform"].jobs[0]
+    manifest.stages["fourier_transform"].defaults["sector"] = "singlet"
+    assert validate_stage_inputs("fourier_transform", manifest, job) == []
+
+    manifest.metadata.target_observable = "gpd"
+    assert validate_stage_inputs("fourier_transform", manifest, job) == []
+
+    manifest.stages["fourier_transform"].defaults["sector"] = "total"
+    assert validate_stage_inputs("fourier_transform", manifest, job) == [
+        "Fourier sector must be one of ['full', 'sea', 'singlet', 'valence']."
+    ]
+
+    manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
+    job = manifest.stages["fourier_transform"].jobs[0]
+    assert validate_stage_inputs("fourier_transform", manifest, job) == []
+
+    manifest.stages["fourier_transform"].defaults["sector"] = "singlet"
+    assert validate_stage_inputs("fourier_transform", manifest, job) == [
+        "Fourier sector must be one of ['full']."
+    ]
+
+
 def test_prepare_matching_resolves_logical_kernel(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["perturbative_matching"].jobs[0]

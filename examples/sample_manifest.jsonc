@@ -221,7 +221,7 @@
     "fourier_transform": {
       "defaults": {
         "order": ["LA", "NLA"], // tail ansatz candidates: "LA" and/or "NLA"
-        "sector": "valence", // PDF: valence/sea/total/full; DA and most GPD flows use full
+        "sector": "valence", // PDF/GPD: sea/valence/singlet/full; DA: full
         // Lower-level incompatible alternative: omit sector and set
         // "part": "re" // "re", "im", or "both"; sector is preferred when available
         "coord_unit": "fm", // default for renormalized .nc inputs; override with "lattice", "gev_inv", or "lambda" only when needed

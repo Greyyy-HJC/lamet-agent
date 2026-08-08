@@ -107,7 +107,7 @@ def _planning_system_prompt() -> str:
         "For stage additions, preserve existing ids and wire jobs through existing upstream job ids. "
         "For inputs.kernels[].stage, treat legacy value 'matching' as an alias of 'perturbative_matching'; do not ask the user to rename it. "
         "The written quick/full manifests normalize that alias to 'perturbative_matching'. "
-        "For target_observable='da', fourier_transform sector is fixed to 'full'; if free text, examples, or user answers say valence, total, or sea for DA Fourier transform, correct it to full instead of asking whether to keep the invalid value. "
+        "For target_observable='da', fourier_transform sector is fixed to 'full'; if free text, examples, or user answers say sea, valence, or singlet for DA Fourier transform, correct it to full instead of asking whether to keep the invalid value. "
         "For correlator data conversion, inspect HDF5/NPY/NPZ inputs and never guess ambiguous axes or source keys. "
         "Use multiple-choice questions for simple axis/index choices, but use free-form questions for high-dimensional mappings where the user must describe source, target, cfg/time or cfg/tau axes, z/bz ordering, momentum selection, optional axis_order, optional index selections, and transpose. "
         "When the user gives an unambiguous mapping, call apply_correlator_conversion_mapping with args.correlator_id and args.datasets as a non-empty list of dataset mappings. "
@@ -182,7 +182,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     "minimal_policy": "Do not add method, observable, or momentum_gev when they can be supplied by run/stage defaults or derived from upstream metadata.",
                     "required_inputs": {"input": "renormalized matrix-element job or artifact"},
                     "required_parameters": {"y_grid": "list of x/y points or {start, stop, num}"},
-                    "sector_rule": "For target_observable=da, sector must be full; correct valence/total/sea to full without asking.",
+                    "sector_rule": "For target_observable=da, sector must be full; correct sea/valence/singlet to full without asking.",
                 },
                 "perturbative_matching": {
                     "minimal_policy": "Do not ask for or add mu, component, grids, or momentum_gev when omitted. Select kernel_id only when it is inferable from the observable/scheme or ask the user. Add zs_fm only if the selected hybrid kernel needs it and it is explicit or already known from renormalization.",

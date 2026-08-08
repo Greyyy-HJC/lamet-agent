@@ -350,7 +350,7 @@ def test_plot_matched_pdf_honors_explicit_limits(tmp_path: Path) -> None:
         values=[np.array([1.0, 2.0]), np.array([1.1, 2.1])],
         dims=("x",),
         coords={"x": [-1.0, 1.0]},
-        attrs={"sector": "total"},
+        attrs={"sector": "singlet"},
         name="quasi_pdf",
     )
     lightcone = EnsembleData(
