@@ -235,10 +235,13 @@
         // scheme_scan is optional; run_fourier_transform auto-fills missing keys from
         // tail-fit diagnostics (zmin_values, zmax_values, z_ext_max, smooth).
         // Optional overrides: zmin_values, zmax_values, z_ext_max, smooth, max_schemes.
+        // All range values must be in coord_unit (default "fm" for renormalized .nc
+        // inputs). Do NOT use lattice site indices here: convert as z_fm = n * a_fm
+        // (below: n=9..12 and 21..24 with a_fm=0.0574; z_ext_max from n=100).
         "scheme_scan": {
-          "zmin_values": [9.0, 10.0, 11.0, 12.0], // candidate fit starts in coord_unit
-          "zmax_values": [21.0, 22.0, 23.0, 24.0], // candidate fit ends in coord_unit
-          "z_ext_max": 100.0, // extrapolated endpoint in coord_unit
+          "zmin_values": [0.5166, 0.574, 0.6314, 0.6888], // candidate fit starts in coord_unit
+          "zmax_values": [1.2054, 1.2628, 1.3202, 1.3776], // candidate fit ends in coord_unit
+          "z_ext_max": 5.74, // extrapolated endpoint in coord_unit
           "smooth": "linear", // interpolation/smoothing choice
           "model_average": false, // average accepted range schemes when true
           "max_schemes": 200 // cap accepted range combinations

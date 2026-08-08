@@ -933,3 +933,13 @@
   the nearest `zs_fm` grid point.
 - Migrated tracked examples, planning/review/reporting behavior, documentation,
   and unit-test fixtures to the new contracts.
+
+## 2026-08-07 (Fix pion PDF scheme_scan units)
+
+- Converted `fourier_transform.scheme_scan` `zmin_values`/`zmax_values` in `examples/pion_pdf_cg_manifest.json` and `examples/pion_pdf_gi_manifest.json` from lattice indices to fm (`a=0.06`), matching renormalized NetCDF coordinates.
+
+## 2026-08-07 (Document Fourier scheme_scan coord units)
+
+- Audited `examples/` manifests: production DA/sys manifests already omit explicit zmin/zmax (auto-fill); only the annotated sample manifests still used lattice-like ranges under `coord_unit: "fm"`.
+- Converted `scheme_scan` ranges in `examples/sample_manifest.jsonc` and `examples/partial_sample_manifest.jsonc` to fm using `a_fm=0.0574`, and clarified comments.
+- Documented the `coord_unit` requirement for Fourier `scheme_scan` in `README.md`.

@@ -83,10 +83,13 @@
           "stop": 2.0,
           "num": 100
         },
+        // scheme_scan ranges must use coord_unit (here "fm"); convert lattice
+        // indices as z_fm = n * a_fm (a_fm=0.0574 below). Prefer omitting
+        // zmin/zmax/z_ext_max to let the stage auto-fill from the data grid.
         "scheme_scan": {
-          "zmin_values": [9.0, 10.0, 11.0, 12.0],
-          "zmax_values": [21.0, 22.0, 23.0, 24.0],
-          "z_ext_max": 100.0,
+          "zmin_values": [0.5166, 0.574, 0.6314, 0.6888],
+          "zmax_values": [1.2054, 1.2628, 1.3202, 1.3776],
+          "z_ext_max": 5.74,
           "smooth": "linear",
           "model_average": false,
           "max_schemes": 200

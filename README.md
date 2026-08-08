@@ -275,6 +275,18 @@ $z_{\mathrm{fm}}=(z/a)a_{\mathrm{fm}}$ and record `coord_unit: "fm"` plus
 `input_coord_unit: "lattice"`. Hybrid-ratio branch selection and its
 long-distance exponent continue to use $|z_{\mathrm{fm}}|$.
 
+### `fourier_transform.defaults.scheme_scan`
+
+Fourier tail-fit range candidates (`zmin_values`, `zmax_values`, and
+`z_ext_max`) are compared directly against the renormalized coordinate axis, so
+they must use the same `coord_unit` as that axis. Renormalized NetCDF inputs
+default to `coord_unit: "fm"`; do not pass bare lattice site indices such as
+`12` or `24` unless `coord_unit` is explicitly `"lattice"`. Convert lattice
+separations with $z_{\mathrm{fm}}=n\,a_{\mathrm{fm}}$. Omitting the range keys
+lets `run_fourier_transform` auto-fill them from the data grid and tail-fit
+diagnostics; runnable examples such as `pion_pdf_cg_manifest_sys.json` and the
+DA manifests typically keep only `smooth` / `model_average`.
+
 ### Per-job hybrid `zs_fm`
 
 The hybrid switch distance belongs to the data-processing job, not to a global
