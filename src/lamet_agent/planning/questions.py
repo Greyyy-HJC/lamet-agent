@@ -21,7 +21,8 @@ def _stage_required_prompt(stage: str, payload: dict[str, Any]) -> str:
     if stage == "renormalization":
         return (
             "renormalization required choices: scheme options are ratio, hybrid, msbar; "
-            "strategy options are ratio and self_renormalization. The ratio strategy needs target and denominator. "
+            "strategy options are external_denominator and self_renormalization. "
+            "The external_denominator strategy needs target and denominator. "
             "Self-renormalization needs a reference fit input; ratio/msbar apply jobs need target plus zR, "
             "while hybrid apply jobs also need denominator and zs_fm. LambdaQCD_gev and fit parameter d are required. "
             "Reply as a JSON object or key=value pairs, or none to keep the current manifest."

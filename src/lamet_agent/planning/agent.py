@@ -163,10 +163,10 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                 "renormalization": {
                     "required": {
                         "scheme": "ratio | hybrid | msbar",
-                        "strategy": "ratio | self_renormalization",
+                        "strategy": "external_denominator | self_renormalization",
                     },
                     "branches": {
-                        "ratio_strategy": {"inputs": ["target", "denominator"]},
+                        "external_denominator_strategy": {"inputs": ["target", "denominator"]},
                         "self_renormalization": {
                             "fit_inputs": ["reference"],
                             "ratio_or_msbar_apply_inputs": ["target", "zR"],
@@ -202,10 +202,10 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                         "target": "upstream bare matrix-element job",
                         "denominator": "zero-momentum/reference bare matrix-element job",
                     },
-                    "ratio_defaults": {"scheme": "ratio", "strategy": "ratio"},
+                    "ratio_defaults": {"scheme": "ratio", "strategy": "external_denominator"},
                     "hybrid_ratio_strategy_defaults": {
                         "scheme": "hybrid",
-                        "strategy": "ratio",
+                        "strategy": "external_denominator",
                         "zs_fm": "required",
                         "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
                     },
@@ -737,7 +737,7 @@ def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, A
                     "defaults": {
                         "normalization": False,
                         "scheme": "hybrid",
-                        "strategy": "ratio",
+                        "strategy": "external_denominator",
                         "zs_fm": 0.1722,
                         "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
                     },

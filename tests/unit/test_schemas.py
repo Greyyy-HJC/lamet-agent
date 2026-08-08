@@ -359,7 +359,7 @@ def test_manifest_rejects_zs_fm_in_renormalization_scheme_parameters() -> None:
     ]
     payload["stages"] = {
         "renormalization": {
-            "defaults": {"scheme": "hybrid", "strategy": "ratio", "scheme_parameters": {"zs_fm": 0.2}},
+            "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "scheme_parameters": {"zs_fm": 0.2}},
             "jobs": [{"id": "rn", "inputs": {"target": "target", "denominator": "denominator"}}],
         }
     }
@@ -376,7 +376,7 @@ def test_manifest_rejects_zs_fm_in_renormalization_job_scheme_parameters() -> No
     ]
     payload["stages"] = {
         "renormalization": {
-            "defaults": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": 0.2},
+            "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "zs_fm": 0.2},
             "jobs": [
                 {
                     "id": "rn",
@@ -403,7 +403,7 @@ def test_manifest_accepts_flat_zs_fm_defaults_and_job_overrides() -> None:
     ]
     payload["stages"] = {
         "renormalization": {
-            "defaults": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": 0.2},
+            "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "zs_fm": 0.2},
             "jobs": [{"id": "rn", "inputs": {"target": "target", "denominator": "denominator"}}],
         },
         "perturbative_matching": {

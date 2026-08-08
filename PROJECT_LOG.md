@@ -943,3 +943,8 @@
 - Audited `examples/` manifests: production DA/sys manifests already omit explicit zmin/zmax (auto-fill); only the annotated sample manifests still used lattice-like ranges under `coord_unit: "fm"`.
 - Converted `scheme_scan` ranges in `examples/sample_manifest.jsonc` and `examples/partial_sample_manifest.jsonc` to fm using `a_fm=0.0574`, and clarified comments.
 - Documented the `coord_unit` requirement for Fourier `scheme_scan` in `README.md`.
+
+## 2026-08-07 (Rename renormalization strategy ratio → external_denominator)
+
+- Renamed renormalization `strategy` token `ratio` to `external_denominator` across stage validation, tool routing, planning, examples, docs, and tests.
+- Kept physical `scheme` `ratio` and tool name `apply_ratio_scheme_renormalization`; old `strategy: "ratio"` now returns an explicit migration error.

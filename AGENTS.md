@@ -153,7 +153,7 @@ Package modules:
 - Terminal stage tools must place their primary in-memory result in `store["output"]`.
 - Fourier jobs consume role `input`; matching jobs consume role `quasi`. Standard partial-run NetCDF artifacts read discrete `momentum`, `volume`, and `lattice_spacing_fm` from attrs; legacy files may declare the complete triple under `inputs.artifacts`, and physical `momentum_gev` is derived.
 - `inputs.kernels[].stage` must be a full `StageId` (`renormalization` or `perturbative_matching`), not a package shorthand such as `matching`.
-- Renormalization stage params declare both `scheme` (`ratio`, `hybrid`, or `msbar`) and `strategy` (`ratio` or `self_renormalization`); perturbative matching declares only `scheme`, which must match the token in `kernel_id`.
+- Renormalization stage params declare both `scheme` (`ratio`, `hybrid`, or `msbar`) and `strategy` (`external_denominator` or `self_renormalization`); perturbative matching declares only `scheme`, which must match the token in `kernel_id`.
 - Stage params are authoritative for scheme selection; do not add `scheme` to `inputs.kernels[]`.
 - Hybrid `zs_fm` is a flat stage/job parameter under `renormalization` and `perturbative_matching`; do not place it in `inputs.kernels[].kernel_parameters` or renormalization `scheme_parameters`.
 

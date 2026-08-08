@@ -14,11 +14,12 @@ When normalization=true, the runner already divides each bare matrix element by
 its lattice z=0 value before any tool calls.
 
 Physical scheme and execution strategy are independent. scheme is ratio,
-hybrid, or msbar; strategy is ratio or self_renormalization.
+hybrid, or msbar; strategy is external_denominator or self_renormalization.
 
-The ratio strategy uses roles target and denominator. ratio divides them
-pointwise on the complete z grid. hybrid additionally requires flat
-job/defaults parameter zs_fm; m0_gev and delta_m_gev remain in scheme_parameters.
+The external_denominator strategy uses roles target and denominator. ratio
+divides them pointwise on the complete z grid. hybrid additionally requires
+flat job/defaults parameter zs_fm; m0_gev and delta_m_gev remain in
+scheme_parameters.
 The self_renormalization strategy combines a full-z self-renormalization fit with
 short-distance MSbar matching to fix the finite renormalization. It splits into:
 - scheme_parameters.LambdaQCD_gev is required and is used by the
@@ -39,7 +40,7 @@ short-distance MSbar matching to fix the finite renormalization. It splits into:
 """.strip()
 
 TOOL_CATALOG = {
-    "apply_ratio_scheme_renormalization": "ratio strategy: consume target/denominator and apply the ratio or hybrid scheme.",
+    "apply_ratio_scheme_renormalization": "external_denominator strategy: consume target/denominator and apply the ratio or hybrid scheme.",
     "fit_self_renormalization_factor": "self_renormalization fit job: fit zR using scheme_parameters (including required LambdaQCD_gev and d); short-distance MSbar matching fixes m0.",
     "apply_self_renormalization": "self_renormalization apply job: apply the declared ratio, hybrid, or msbar scheme; optional scheme_parameters d/m0_gev remap zR.",
     "plot_self_renormalization_diagnostics": "self_renormalization: fit-job panels, or apply-job zmsbar_compare (+ stage-level discrete_effect once).",
@@ -60,7 +61,7 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
         return ["renormalization.defaults.normalization must be a boolean when provided."]
 
     legacy_schemes = {
-        "hybrid_ratio": "use scheme='hybrid' with strategy='ratio'",
+        "hybrid_ratio": "use scheme='hybrid' with strategy='external_denominator'",
         "hybrid_self_renormalization": "use scheme='ratio' with strategy='self_renormalization'",
         "self_renormalization": "use scheme='ratio' with strategy='self_renormalization'",
     }
@@ -68,15 +69,22 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
         return [f"renormalization scheme {scheme!r} is no longer supported; {legacy_schemes[scheme]}."]
     if scheme not in {"ratio", "hybrid", "msbar"}:
         return [f"Unsupported renormalization scheme: {scheme!r}; use 'ratio', 'hybrid', or 'msbar'."]
-    if strategy not in {"ratio", "self_renormalization"}:
+    if strategy == "ratio":
+        return [
+            "renormalization strategy 'ratio' is no longer supported; "
+            "use strategy='external_denominator'."
+        ]
+    if strategy not in {"external_denominator", "self_renormalization"}:
         return [
             f"Unsupported renormalization strategy: {strategy!r}; "
-            "use 'ratio' or 'self_renormalization'."
+            "use 'external_denominator' or 'self_renormalization'."
         ]
 
-    if strategy == "ratio":
+    if strategy == "external_denominator":
         if scheme == "msbar":
-            return ["renormalization strategy 'ratio' does not implement scheme 'msbar'."]
+            return [
+                "renormalization strategy 'external_denominator' does not implement scheme 'msbar'."
+            ]
         scheme_parameters = params.get("scheme_parameters", {})
         if isinstance(scheme_parameters, dict):
             self_only = sorted(
@@ -84,12 +92,16 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
             )
             if self_only:
                 return [
-                    f"strategy 'ratio' does not accept self-renormalization scheme_parameters: "
+                    "strategy 'external_denominator' does not accept "
+                    "self-renormalization scheme_parameters: "
                     + ", ".join(self_only)
                     + "."
                 ]
         if set(job.inputs) != {"target", "denominator"}:
-            return [f"A {scheme}+ratio renormalization job requires target and denominator inputs."]
+            return [
+                f"A {scheme}+external_denominator renormalization job requires "
+                "target and denominator inputs."
+            ]
         if scheme == "hybrid" and "zs_fm" not in params:
             return ["hybrid scheme requires flat parameter zs_fm in stage defaults or job params."]
         return []

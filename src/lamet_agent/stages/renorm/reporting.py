@@ -74,7 +74,7 @@ def _outputs_table(artifacts: dict[str, Any]) -> list[str]:
 
 def _scheme_table(result: dict[str, Any]) -> list[str]:
     scheme = str(result.get("scheme", "ratio"))
-    strategy = str(result.get("strategy", "ratio"))
+    strategy = str(result.get("strategy", "external_denominator"))
     if strategy == "self_renormalization":
         job_kind = str(
             result.get("job_kind")
@@ -129,7 +129,7 @@ def _scheme_table(result: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _formula_text(*, scheme: str = "ratio", strategy: str = "ratio") -> str:
+def _formula_text(*, scheme: str = "ratio", strategy: str = "external_denominator") -> str:
     if strategy == "self_renormalization" and scheme == "hybrid":
         return r"""
 The self-renormalization strategy first fits the full-range factor $z_R(z,a)$.
@@ -180,7 +180,7 @@ $$
 
 $Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). Lattice-unit targets are converted inside the scheme as $z_{\rm fm}=|z/a|a_{\rm fm}$. The $z=0$ samples are excluded from $z_R$ and $Z_{\overline{\mathrm{MS}}}$ evaluation but passed through unchanged into the complete output, preserving $h^R(0)=1$. `scheme_parameters.LambdaQCD_gev` is the required $\Lambda_{\mathrm{QCD}}$ scale in GeV for the self-renormalization ansatz and is recorded in artifact provenance. The coupling is still derived independently by `alphas_nloop(mu)` and recorded as provenance; a numerical coupling cannot be supplied. The `strict` coverage policy requires the nonzero target to lie within the $z_R$ grid, `intersection` explicitly clips to their overlap, and `extrapolate` automatically extends the long-distance $f_1(z)$ quadratically and rebuilds only the missing $z_R$ points without endpoint freezing. There is no explicit $z_s$ switch; the hybrid character is the combination of full-range self-renormalization and short-distance MSbar finite matching.
 """.strip()
-    if strategy == "ratio" and scheme == "ratio":
+    if strategy == "external_denominator" and scheme == "ratio":
         return r"""
 The ratio scheme acts pointwise on every resampled sample $s$ across the complete coordinate grid:
 
@@ -222,7 +222,7 @@ def build_renorm_stage_report_markdown(
     combinations = {
         (
             str(item.get("result", {}).get("scheme", "ratio")),
-            str(item.get("result", {}).get("strategy", "ratio")),
+            str(item.get("result", {}).get("strategy", "external_denominator")),
         )
         for item in jobs
     }
@@ -281,7 +281,7 @@ def build_renorm_stage_report_markdown(
         plot_path = artifacts.get("renormalized_plot") or "n/a"
         lines.append(
             f"| `{item['job_id']}` | `{result.get('scheme', 'ratio')}` | "
-            f"`{result.get('strategy', 'ratio')}` | "
+            f"`{result.get('strategy', 'external_denominator')}` | "
             f"{key if key is not None else format_report_value(result.get('zs_fm'))} | "
             f"{output_path} | "
             f"{plot_path} |"

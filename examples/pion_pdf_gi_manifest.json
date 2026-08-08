@@ -81,7 +81,7 @@
       "defaults": {
         "normalization": true,
         "scheme": "hybrid",
-        "strategy": "ratio",
+        "strategy": "external_denominator",
         "scheme_parameters": {
           "m0_gev": 0.1232,
           "delta_m_gev": 0.5207366666666666

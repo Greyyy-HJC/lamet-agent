@@ -237,6 +237,17 @@ def test_legacy_self_renormalization_scheme_returns_migration_error() -> None:
     ]
 
 
+def test_legacy_ratio_strategy_returns_migration_error() -> None:
+    manifest = _manifest()
+    manifest.stages["renormalization"].defaults["strategy"] = "ratio"
+    job = manifest.stages["renormalization"].jobs[0]
+
+    assert validate_stage_inputs("renormalization", manifest, job) == [
+        "renormalization strategy 'ratio' is no longer supported; "
+        "use strategy='external_denominator'."
+    ]
+
+
 def test_hybrid_self_fit_rejects_fixed_m0() -> None:
     manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
     job = manifest.stages["renormalization"].jobs[0]
@@ -713,7 +724,7 @@ def test_ratio_schemes_reject_hybrid_self_only_scheme_parameters(key: str) -> No
     manifest.stages["renormalization"].defaults["scheme_parameters"][key] = 0.1
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
-        f"strategy 'ratio' does not accept self-renormalization scheme_parameters: {key}."
+        f"strategy 'external_denominator' does not accept self-renormalization scheme_parameters: {key}."
     ]
 
 
@@ -732,7 +743,7 @@ def test_ratio_strategy_rejects_msbar_scheme() -> None:
     job = manifest.stages["renormalization"].jobs[0]
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
-        "renormalization strategy 'ratio' does not implement scheme 'msbar'."
+        "renormalization strategy 'external_denominator' does not implement scheme 'msbar'."
     ]
 
 

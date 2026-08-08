@@ -455,7 +455,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         denominator = next((job["id"] for job in ca_jobs if job["params"].get("momentum") == "PX0PY0PZ0"), ca_jobs[0]["id"])
         nonzero_jobs = [job for job in ca_jobs if job["id"] != denominator]
         scheme = "hybrid" if "hybrid" in lowered else "ratio" if "ratio" in lowered else None
-        strategy = "self_renormalization" if "self" in lowered else "ratio"
+        strategy = "self_renormalization" if "self" in lowered else "external_denominator"
         rn_defaults = {"scheme": scheme, "strategy": strategy} if scheme else {"strategy": strategy}
         zs_match = re.search(r"zs_fm(?:\s+for\s+[A-Za-z0-9_+-]+)?\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)
         if zs_match:
@@ -847,12 +847,12 @@ def _set_kernel_scheme_from_renorm(payload: dict[str, Any]) -> list[dict[str, An
                 }
             )
         elif legacy in {"ratio", "hybrid", "msbar"} and "strategy" not in defaults:
-            defaults["strategy"] = "ratio"
+            defaults["strategy"] = "external_denominator"
             edits.append(
                 {
                     "path": "stages.renormalization.defaults.strategy",
                     "old": None,
-                    "new": "ratio",
+                    "new": "external_denominator",
                 }
             )
     kernels = inputs.get("kernels")
@@ -1319,18 +1319,25 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                         'Choose "ratio", "hybrid", or "msbar".',
                     )
                 if strategy == "ratio":
+                    add_gap(
+                        "strategy",
+                        f"stages.{stage}.defaults.strategy",
+                        "renormalization strategy 'ratio' is no longer supported.",
+                        'Use strategy "external_denominator".',
+                    )
+                elif strategy == "external_denominator":
                     if scheme == "msbar":
                         add_gap(
                             "strategy",
                             f"stages.{stage}.defaults.strategy",
-                            "strategy ratio does not implement scheme msbar.",
+                            "strategy external_denominator does not implement scheme msbar.",
                             'Use strategy "self_renormalization" or choose another scheme.',
                         )
                     if roles != {"target", "denominator"}:
                         add_gap(
                             "inputs",
                             f"stages.{stage}.jobs[{index}].inputs",
-                            f"{scheme}+ratio requires target and denominator input roles.",
+                            f"{scheme}+external_denominator requires target and denominator input roles.",
                             'Example: {"target": "ca_pz", "denominator": "ca_p0"}.',
                         )
                     if scheme == "hybrid" and "zs_fm" not in params:
@@ -1393,12 +1400,12 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                             f"self_renormalization job {job_id!r} must select a renormalization kernel.",
                             "Use one declared inputs.kernels[].kernel_id.",
                         )
-                elif strategy not in {"ratio", "self_renormalization"}:
+                elif strategy not in {"external_denominator", "self_renormalization"}:
                     add_gap(
                         "strategy",
                         f"stages.{stage}.defaults.strategy",
-                        "renormalization requires strategy ratio or self_renormalization.",
-                        'Choose "ratio" or "self_renormalization".',
+                        "renormalization requires strategy external_denominator or self_renormalization.",
+                        'Choose "external_denominator" or "self_renormalization".',
                     )
             elif stage == "fourier_transform":
                 if roles != {"input"}:

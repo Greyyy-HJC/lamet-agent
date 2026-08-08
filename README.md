@@ -248,11 +248,11 @@ authoritative and cannot be overridden by an LLM tool call.
 
 Renormalization uses two independent stage parameters. `scheme` is the physical
 scheme (`ratio`, `hybrid`, or `msbar`), while `strategy` selects how it is
-implemented (`ratio` or `self_renormalization`). Perturbative matching owns only
+implemented (`external_denominator` or `self_renormalization`). Perturbative matching owns only
 `scheme`; its value must match the scheme token in the selected `kernel_id`.
 Kernel declarations under `inputs.kernels` no longer carry a `scheme` field.
 
-Set `scheme: "ratio"` and `strategy: "ratio"` on a renormalization stage or job
+Set `scheme: "ratio"` and `strategy: "external_denominator"` on a renormalization stage or job
 to divide the target and denominator pointwise on the complete coordinate grid
 for every resampled sample:
 
@@ -260,14 +260,14 @@ $$
 h_s^R(z) = \frac{h_s^{\mathrm{target}}(z)}{h_s^{\mathrm{denominator}}(z)}.
 $$
 
-Ratio-strategy jobs use the same `{target, denominator}` input roles as hybrid
+`external_denominator`-strategy jobs use the same `{target, denominator}` input roles as hybrid
 jobs, but do not require `zs_fm` and do not apply a fixed denominator or a
 long-distance exponential correction. Hybrid-only settings (`zs_fm`,
 `scheme_parameters.m0_gev`, and `scheme_parameters.delta_m_gev`) are ignored if
 they remain in shared defaults. The `normalization` preprocessing described
 above still applies; set it to `false` for a direct ratio of raw bare inputs.
 
-Both ratio and hybrid jobs using the ratio strategy consume lattice-unit `z` coordinates and
+Both ratio and hybrid jobs using the `external_denominator` strategy consume lattice-unit `z` coordinates and
 require a positive finite `lattice_spacing_fm` on the target data. Their
 terminal `EnsembleData`, `store["matrix_element"]`, and NetCDF artifact convert
 the coordinate to signed physical distance as
@@ -496,7 +496,7 @@ stage/job parameter.
 | Parameter | Where | Required? | Meaning |
 |-----------|--------|-----------|---------|
 | `scheme` | stage defaults / job | yes | Physical scheme: `ratio`, `hybrid`, or `msbar`. |
-| `strategy` | stage defaults / job | yes | Execution strategy: `ratio` or `self_renormalization`. |
+| `strategy` | stage defaults / job | yes | Execution strategy: `external_denominator` or `self_renormalization`. |
 | `normalization` | stage defaults / job | no (default `true`) | If `true`, divide bare inputs by lattice $z=0$ before tools. Set `false` when inputs are already $z=0$-normalized (`normalized_at_z0` attr). |
 | `scheme_parameters.LambdaQCD_gev` | fit/apply job | **yes** | $\Lambda_{\mathrm{QCD}}$ in GeV for the self-renormalization ansatz. It has no default, is stored in $z_R$ provenance, and must be explicitly identical on every fit/apply job in the chain. |
 | `scheme_parameters.d` | **fit** job | **yes** | Fixed continuum/discretization coefficient in the $g(z)$ fit and in the initial $z_R$ construction. Never fitted. Use the reference-operator value (e.g. PDF $d_{\mathrm{pdf}}$). |
@@ -509,7 +509,7 @@ stage/job parameter.
 | `kernel_id` | job or unique `inputs.kernels` entry | yes if multiple kernels | `ZMSbar_pdf` or `ZMSbar_da`; choose the conversion factor for the **apply** target. Fit diagnostics compare $m_R$ to `ZMSbar_pdf` regardless. |
 
 Legacy composite values migrate as follows: `hybrid_ratio` becomes
-`scheme: "hybrid", strategy: "ratio"`; `hybrid_self_renormalization` becomes
+`scheme: "hybrid", strategy: "external_denominator"`; `hybrid_self_renormalization` becomes
 `scheme: "ratio", strategy: "self_renormalization"`. The old
 `inputs.kernels[].scheme` field must move to the consuming stage defaults.
 

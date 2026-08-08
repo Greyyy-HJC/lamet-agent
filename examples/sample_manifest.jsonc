@@ -172,7 +172,7 @@
       "defaults": {
         "normalization": true, // optional; divide each bare input by its z=0 value before the scheme
         "scheme": "hybrid", // physical renormalization scheme
-        "strategy": "ratio", // execution strategy; requires target+denominator
+        "strategy": "external_denominator", // execution strategy; requires target+denominator
         // Pointwise alternative: set scheme to "ratio" with the same jobs;
         // zs_fm and scheme_parameters below are then optional and ignored.
         // A full chain must also select a ratio-compatible matching kernel.

@@ -7,7 +7,7 @@ runner has already divided each bare matrix element by its lattice z=0 value.
 
 Follow the scheme and strategy declared in the job parameters:
 
-strategy=ratio (scheme=ratio or hybrid):
+strategy=external_denominator (scheme=ratio or hybrid):
 1. Call apply_ratio_scheme_renormalization without overriding target,
    denominator, scheme, scheme_parameters, or save_path.
    ratio divides target(z) by denominator(z) on the complete grid and ignores

@@ -50,7 +50,7 @@ def _manifest(*, matching_zs: float = 0.2, renorm_zs: float = 0.2) -> AnalysisMa
             },
             "stages": {
                 "renormalization": {
-                    "defaults": {"scheme": "hybrid", "strategy": "ratio", "zs_fm": renorm_zs},
+                    "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "zs_fm": renorm_zs},
                     "jobs": [{"id": "rn", "inputs": {"target": "target", "denominator": "denominator"}}],
                 },
                 "fourier_transform": {

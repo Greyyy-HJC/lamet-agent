@@ -216,7 +216,7 @@ def resolve_job_tools(
     scheme = effective_params.get("scheme")
     strategy = effective_params.get("strategy")
     roles = set(job.inputs)
-    if strategy == "ratio" and scheme in {"ratio", "hybrid"} and roles == {"target", "denominator"}:
+    if strategy == "external_denominator" and scheme in {"ratio", "hybrid"} and roles == {"target", "denominator"}:
         allowed = {
             "apply_ratio_scheme_renormalization",
             "plot_renormalized_matrix_element",
@@ -257,7 +257,7 @@ def required_job_tool_sequence(
     scheme = effective_params.get("scheme")
     strategy = effective_params.get("strategy")
     roles = set(job.inputs)
-    if strategy == "ratio" and scheme in {"ratio", "hybrid"} and roles == {"target", "denominator"}:
+    if strategy == "external_denominator" and scheme in {"ratio", "hybrid"} and roles == {"target", "denominator"}:
         return (
             "apply_ratio_scheme_renormalization",
             "plot_renormalized_matrix_element",

@@ -467,7 +467,7 @@ def apply_ratio_scheme_renormalization(
     target: str = "target_bare_matrix_element",
     denominator: str = "denominator_bare_matrix_element",
     scheme: str = "ratio",
-    strategy: str = "ratio",
+    strategy: str = "external_denominator",
     scheme_parameters: dict[str, float] | None = None,
     out: str = "matrix_element_data",
     save_path: str | None = None,
@@ -476,8 +476,8 @@ def apply_ratio_scheme_renormalization(
     ensemble: str | None = None,
     sample_error_mode: str = "covariance",
 ) -> dict[str, Any]:
-    """Apply the ratio strategy in the ratio or hybrid scheme."""
-    if strategy != "ratio":
+    """Apply the external_denominator strategy in the ratio or hybrid scheme."""
+    if strategy != "external_denominator":
         raise ValueError(f"unsupported renormalization strategy: {strategy!r}")
     if scheme not in {"ratio", "hybrid"}:
         raise ValueError(f"unsupported renormalization scheme: {scheme!r}")
@@ -493,19 +493,19 @@ def apply_ratio_scheme_renormalization(
     lattice_spacing_raw = target_data.attrs.get("lattice_spacing_fm")
     if lattice_spacing_raw in {None, ""}:
         raise ValueError(
-            "ratio-strategy renormalization requires target lattice_spacing_fm "
+            "external_denominator renormalization requires target lattice_spacing_fm "
             "to convert output z coordinates to fm"
         )
     try:
         lattice_spacing_fm = float(lattice_spacing_raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            "ratio-strategy renormalization requires target lattice_spacing_fm "
+            "external_denominator renormalization requires target lattice_spacing_fm "
             "to be a finite positive value"
         ) from exc
     if not np.isfinite(lattice_spacing_fm) or lattice_spacing_fm <= 0.0:
         raise ValueError(
-            "ratio-strategy renormalization requires target lattice_spacing_fm "
+            "external_denominator renormalization requires target lattice_spacing_fm "
             "to be a finite positive value"
         )
     z_output_fm = z_target * lattice_spacing_fm
