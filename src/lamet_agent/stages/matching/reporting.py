@@ -6,7 +6,7 @@ their factorization, their notation, and their source paper -- so every statemen
 derived from the ``kernel_id`` the manifest chose, and the numbers themselves always
 come from ``kernels.py`` alone (nothing here can change a result).
 
-The 25 functions fall into five groups:
+The functions fall into five groups:
 
 1. Reading the kernel_id. ``_split_kernel_id`` breaks
    ``<gauge>_<operator>_<distribution>_<scheme>_<order>`` into its fields;
@@ -249,12 +249,9 @@ def _trapz_norm(
 ) -> float:
     """Integral of ``values`` over the x grid, optionally restricted to ``[lo, hi]``.
 
-    The full-grid integral runs over the whole computed range (here $[-2, 2]$), which spans
-    both the quark ($x>0$) and antiquark ($x<0$) sides. For a quasi-PDF that is symmetric in
-    $x$ that double-counts the distribution, so the full-range integral lands near 2 while the
-    physical one-sided (valence) integral $\\int_0^1$ lands near 1. Callers ask for the window
-    that answers the question they are posing, and the diagnostics report both so neither is
-    mistaken for the other.
+    The window is always passed in by the caller rather than fixed here: which x range
+    carries the normalization is a property of the distribution and of the run (see
+    ``_norm_summary``), not of the trapezoid rule.
     """
     if x_grid.size < 2 or values.size != x_grid.size:
         return float("nan")
@@ -273,6 +270,187 @@ def _trapz_norm(
     # np.trapezoid is the NumPy 2.x name; fall back to np.trapz on older NumPy.
     trapezoid = getattr(np, "trapezoid", None) or np.trapz
     return float(trapezoid(v_sorted, x_sorted))
+
+
+# The diagnostics section reports the integral over the range the job actually matched, and
+# then two notes. It asserts no expected value and names no physics: whether the integral
+# should be 1 is a convention set two stages upstream (whether the matrix element was
+# normalized at z=0), and which combination a sector selects depends on the operator's charge
+# conjugation, which this stage never sees. So the notes say only what is visible here -- how
+# the stored array sits on the axis, and what to check the number against.
+
+
+def _output_scale(data: dict[str, Any]) -> float:
+    """The Fourier stage's ``output_scale``, which says how many times the integral counts.
+
+    The Fourier stage transforms with the extended-distribution convention
+    $h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$ and then multiplies by a projection
+    factor it records as ``output_scale``: 2 for the ``valence`` and ``total`` sectors, whose
+    single-channel (Re or Im) transform mirrors the distribution about $x=0$, and 1 for
+    ``full``/``sea`` and for a DA. So a factor of 2 means the integral over the whole matched
+    range counts one physical side twice, and the one-sided integral is half of it. Reading
+    the factor off the run rather than assuming keeps that statement right for whichever
+    projection the manifest selected, including ones added later.
+
+    The value travels on the data: the Fourier stage writes it into the quasi-PDF's attrs,
+    ``apply_matching`` copies the quasi attrs onto the matched EnsembleData, and the runner
+    spreads those attrs into the job record. A record without it (a hand-built one, or an
+    older artifact) falls back to 1, the unscaled convention.
+    """
+    try:
+        scale = float(data.get("output_scale", 1.0))
+    except (TypeError, ValueError):
+        return 1.0
+    return scale if np.isfinite(scale) and scale > 0.0 else 1.0
+
+
+def _is_even_about_zero(x_grid: np.ndarray, values: np.ndarray) -> bool:
+    """Whether the stored distribution actually repeats itself across $x=0$.
+
+    The mirroring is a property of the projection, not of the physics: a single (Re) channel
+    of $\\int d\\lambda\\,e^{-ix\\lambda}h(\\lambda)$ is even in $x$ whatever the hadron does,
+    so a valence run's array literally holds each side twice (~1e-14 on a real run). But that
+    is worth checking rather than inferring from ``output_scale``, which only records what the
+    Fourier stage intended: a record whose factor and array disagree -- an externally built
+    quasi-distribution, a projection added later that scales without mirroring -- would
+    otherwise be told it has a doubled side it does not have.
+    """
+    if x_grid.size < 3 or float(np.min(x_grid)) >= 0.0 or float(np.max(x_grid)) <= 0.0:
+        return False
+    order = np.argsort(x_grid)
+    x_sorted, v_sorted = x_grid[order], values[order]
+    scale = float(np.max(np.abs(v_sorted))) if v_sorted.size else 0.0
+    if not np.isfinite(scale) or scale <= 0.0:
+        return False
+    # Points whose reflection falls outside the grid clamp to the edge value, so a window
+    # that is not symmetric about 0 fails here too -- which is the honest answer: half of it
+    # has nothing to be compared against.
+    reflected = np.interp(-x_sorted, x_sorted, v_sorted)
+    return bool(np.max(np.abs(v_sorted - reflected)) <= 1e-6 * scale)
+
+
+def _has_interior_gap(x_grid: np.ndarray) -> bool:
+    """True when the grid is missing an interior stretch of points.
+
+    A DA kernel's ``endpoint_cut`` drops the window hugging $x=0$ and $x=1$ from the
+    output, leaving the two endpoints in place but nothing between them and the cut. The
+    trapezoid rule then bridges that hole with a straight line, so the integral over the
+    matched range is part interpolation -- worth saying out loud rather than reporting as
+    if every point in the window were data.
+    """
+    if x_grid.size < 4:
+        return False
+    diffs = np.diff(np.sort(x_grid))
+    median = float(np.median(diffs))
+    return bool(median > 0.0 and float(np.max(diffs)) > 2.0 * median)
+
+
+def _norm_summary(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Integrate the quasi and matched distributions over the range matching produced.
+
+    The window is the light-cone grid's own $[\\min x, \\max x]$ -- what this job actually
+    matched, after any ``endpoint_cut`` -- rather than a fixed $[0, 1]$: a DA lives on
+    $[0, 1]$, a PDF grid runs over both the quark and antiquark sides, and an endpoint cut
+    shortens whichever it is, so any hardcoded window is wrong for some kernel the manifest
+    may select. Both distributions are integrated over that same window so the comparison is
+    like for like, each on its own grid -- an ``endpoint_cut`` leaves the matched PDF on
+    fewer points than the quasi one, which the old same-length check read as "diagnostics
+    not available".
+
+    Both the raw integral and the one-sided one (integral / ``output_scale``) are returned:
+    where the projection mirrors the distribution about $x=0$, the second is the integral
+    over one physical side -- computed as half the full-range integral rather than by masking
+    $x\\ge 0$, which would drop half of the bin straddling $x=0$ (worth ~1% on a 100-point
+    grid, since the distribution peaks right there). Neither is compared against anything
+    here; what they are worth reading against is left to the notes.
+
+    Returns ``None`` when the job record does not carry enough to integrate.
+    """
+    x_grid = np.asarray(data.get("x_grid", []), dtype=float)
+    lc_mean = np.asarray(data.get("lightcone_mean", []), dtype=float)
+    quasi_mean = np.asarray(data.get("quasi_mean", []), dtype=float)
+    quasi_grid = np.asarray(data.get("quasi_x_grid", []), dtype=float)
+    if quasi_grid.size != quasi_mean.size:
+        # Older job records stored no separate quasi grid because the two coincided.
+        quasi_grid = x_grid
+    if x_grid.size < 2 or lc_mean.size != x_grid.size or quasi_mean.size != quasi_grid.size:
+        return None
+    lo, hi = float(np.min(x_grid)), float(np.max(x_grid))
+    quasi_val = _trapz_norm(quasi_grid, quasi_mean, lo=lo, hi=hi)
+    lc_val = _trapz_norm(x_grid, lc_mean, lo=lo, hi=hi)
+    rel = abs(lc_val - quasi_val) / abs(quasi_val) if quasi_val else float("nan")
+    scale = _output_scale(data)
+    return {
+        "lo": lo,
+        "hi": hi,
+        "quasi": quasi_val,
+        "lightcone": lc_val,
+        "rel_change": rel,
+        "scale": scale,
+        "part": str(data.get("part", "") or ""),
+        "unit_quasi": quasi_val / scale,
+        "unit_lightcone": lc_val / scale,
+        "interpolated_gap": _has_interior_gap(x_grid),
+        # Mirroring is claimed only where the stored array really does repeat across x=0 and
+        # the run recorded a factor to divide back out -- both, not either.
+        "mirrored": bool(abs(scale - 1.0) > 1e-9 and _is_even_about_zero(x_grid, lc_mean)),
+    }
+
+
+def _norm_window_text(summary: dict[str, Any]) -> str:
+    """The matched window as a display integral, with the run's own limits."""
+    return f"$\\int_{{{_fmt(summary['lo'])}}}^{{{_fmt(summary['hi'])}}} f\\,dx$"
+
+
+def _symmetry_note(summaries: list[dict[str, Any]]) -> str:
+    """One line on how the stored distribution sits on the axis, and nothing beyond that.
+
+    Deliberately no physics label. Which combination a sector selects is a question about the
+    operator's charge conjugation as much as about the sector name -- the same ``valence``
+    picks out $q-\\bar q$ for an unpolarized kernel and the other combination for a helicity
+    one -- and this stage sees neither. What it can see is the array: whether it repeats
+    itself across $x=0$, checked point by point (``_is_even_about_zero``). That statement is
+    true for any observable, named or not, and needs no mapping to keep in step.
+    """
+    mirrored = [s for s in summaries if s["mirrored"]]
+    if not mirrored:
+        return (
+            "- The matched distribution is stored once over the range above, so the matched "
+            "integral is the whole of it."
+        )
+    scales = {round(float(s["scale"]), 12) for s in mirrored}
+    factor = _fmt(scales.pop()) if len(scales) == 1 else "its recorded factor"
+    note = (
+        f"- The matched distribution is symmetric about $x=0$: it holds each side twice, so "
+        f"`one-sided` is the matched integral divided by ${factor}$."
+    )
+    if len(mirrored) != len(summaries):
+        note += " Rows with no `one-sided` value are stored once instead."
+    return note
+
+
+def _norm_notes(summaries: list[dict[str, Any]], *, interpolated: bool) -> list[str]:
+    """The two things the numbers above cannot say, and nothing else.
+
+    Neither is a verdict. Whether the integral should be 1 is decided two stages upstream, by
+    whether the matrix element was normalized at $z=0$ -- so the report points back at that
+    rather than comparing against 1 itself, which would be right only for the convention it
+    was written for.
+    """
+    if not summaries:
+        return ["- No job carried enough grid and distribution data to integrate."]
+    notes = [_symmetry_note(summaries)]
+    notes.append(
+        "- Check the integral against the normalization fixed at the start of the run: it is "
+        "1 when the matrix element was normalized at $z=0$ (the renormalization stage's "
+        "`normalization`), and otherwise it reproduces whatever constant the input carries."
+    )
+    if interpolated:
+        notes.append(
+            "- One matched grid has an interior gap from `endpoint_cut`; the integral bridges "
+            "it linearly, so that stretch is interpolation rather than matched data."
+        )
+    return notes
 
 
 def _settings_table(data: dict[str, Any], *, language: str) -> list[str]:
@@ -793,30 +971,25 @@ def _scheme_explanation(data: dict[str, Any], *, language: str) -> list[str]:
 
 
 def _diagnostics(data: dict[str, Any], *, language: str) -> list[str]:
-    x_grid = np.asarray(data.get("x_grid", []), dtype=float)
-    quasi_mean = np.asarray(data.get("quasi_mean", []), dtype=float)
-    lc_mean = np.asarray(data.get("lightcone_mean", []), dtype=float)
-    lines: list[str] = []
-
-    if x_grid.size >= 2 and quasi_mean.size == x_grid.size and lc_mean.size == x_grid.size:
-        # The valence-region integral over [0, 1] is the physically meaningful normalization
-        # (~1 for a valence quark). The full-grid integral is reported too, but a symmetric
-        # quasi-PDF double-counts across x>0 and x<0 there, so it lands near 2 and must not be
-        # read as "the norm should be 1".
-        quasi_val = _trapz_norm(x_grid, quasi_mean, lo=0.0, hi=1.0)
-        lc_val = _trapz_norm(x_grid, lc_mean, lo=0.0, hi=1.0)
-        quasi_full = _trapz_norm(x_grid, quasi_mean)
-        lc_full = _trapz_norm(x_grid, lc_mean)
-        rel = abs(lc_val - quasi_val) / abs(quasi_val) if quasi_val not in (0.0, float("nan")) else float("nan")
-        lines.extend(
-            [
-                f"- Valence-region norm $\\int_0^1 f\\,dx$: quasi-PDF ${_fmt(quasi_val)}$, light-cone ${_fmt(lc_val)}$ (the valence-quark number should be near 1).",
-                f"- Relative valence-norm change {_fmt(100 * rel)}%. NLO matching is a perturbative correction and should nearly preserve it.",
-                f"- For reference, the full-grid integral $\\int_{{-2}}^{{2}} f\\,dx$ is quasi ${_fmt(quasi_full)}$, light-cone ${_fmt(lc_full)}$; because the distribution is nearly symmetric under $x\\to-x$ this sums the quark and antiquark sides and lands near twice the valence value -- it must not be read as 'the norm should be 1'.",
-            ]
+    # The integral is taken over the range this job matched (see _norm_summary), so the
+    # numbers hold for a DA on [0, 1] as much as for a PDF grid spanning both signs of x, and
+    # the limits printed are the run's own rather than a hardcoded window. What follows the
+    # numbers is notes, not a verdict -- see _norm_notes.
+    summary = _norm_summary(data)
+    if summary is None:
+        return ["- Matching diagnostics were not available."]
+    lines = [
+        f"- Integral over the matching range {_norm_window_text(summary)}: quasi "
+        f"${_fmt(summary['quasi'])}$, light-cone ${_fmt(summary['lightcone'])}$ -- the range "
+        "the matching actually produced, after any endpoint cut.",
+    ]
+    if summary["mirrored"]:
+        lines.append(
+            f"- One-sided: quasi ${_fmt(summary['unit_quasi'])}$, light-cone "
+            f"${_fmt(summary['unit_lightcone'])}$."
         )
-    else:
-        lines.append("- Matching diagnostics were not available.")
+    lines.append(f"- Relative change from matching: {_fmt(100 * summary['rel_change'])}%.")
+    lines.extend(_norm_notes([summary], interpolated=bool(summary["interpolated_gap"])))
     return lines
 
 
@@ -1003,35 +1176,62 @@ def write_matching_stage_report(
             *_scheme_explanation(first, language=language),
             "",
             "## Diagnostics and Consistency Checks",
-            "| job | $P_z$ | quasi $\\int_0^1$ | matched $\\int_0^1$ | valence-norm change |",
-            "|---|---:|---:|---:|---:|",
         ]
     )
+    # Each job is integrated over the range it matched, so jobs with different endpoint
+    # cuts or grids stay comparable to themselves; the window is printed per row rather
+    # than fixed in the header. The summaries are collected before the table is emitted
+    # because the header depends on them: the one-sided column exists only if some row is
+    # actually mirrored.
+    summaries: list[dict[str, Any]] = []
+    rows: list[tuple[str, dict[str, Any] | None, Any]] = []
+    interpolated = False
     for item in jobs:
         result = item["result"]
-        x_grid = np.asarray(result.get("x_grid", []), dtype=float)
-        quasi_mean = np.asarray(result.get("quasi_mean", []), dtype=float)
-        lc_mean = np.asarray(result.get("lightcone_mean", []), dtype=float)
-        if x_grid.size >= 2 and quasi_mean.size == x_grid.size and lc_mean.size == x_grid.size:
-            # Valence region [0, 1]; the full-grid integral double-counts a symmetric
-            # quasi-PDF across x>0/x<0 and would read ~2 (see _trapz_norm / _diagnostics).
-            quasi_norm = _trapz_norm(x_grid, quasi_mean, lo=0.0, hi=1.0)
-            lc_norm = _trapz_norm(x_grid, lc_mean, lo=0.0, hi=1.0)
-            rel = abs(lc_norm - quasi_norm) / abs(quasi_norm) if quasi_norm != 0.0 else float("nan")
-            lines.append(
-                f"| `{item['job_id']}` | {_fmt(result.get('momentum_gev'))} | {_fmt(quasi_norm)} | "
-                f"{_fmt(lc_norm)} | {_fmt(100 * rel)}% |"
-            )
-        else:
-            lines.append(f"| `{item['job_id']}` | {_fmt(result.get('momentum_gev'))} | n/a | n/a | n/a |")
+        summary = _norm_summary(result)
+        rows.append((str(item["job_id"]), summary, result.get("momentum_gev")))
+        if summary is None:
+            continue
+        summaries.append(summary)
+        interpolated = interpolated or bool(summary["interpolated_gap"])
+    # The one-sided column only says something the `matched` column does not where the
+    # projection mirrors the distribution, so it appears only for the rows that have one.
+    show_one_sided = any(s["mirrored"] for s in summaries)
+    one_sided_header = " one-sided $\\int f\\,dx$ |" if show_one_sided else ""
+    one_sided_align = "---:|" if show_one_sided else ""
     lines.extend(
         [
-            "",
-            "The table compares the quasi-PDF and matched light-cone PDF valence-region norm $\\int_0^1 f\\,dx$ (near 1 for a valence quark) for each momentum. Moderate norm changes are expected from the NLO kernel; a very large norm change usually indicates an x-grid or momentum-convention issue. The full-grid integral over $[-2,2]$ is not used here because a symmetric quasi-PDF double-counts the quark and antiquark sides, landing near 2.",
-            "",
-            "## Figures and Visual Assessment",
+            f"| job | $P_z$ | matching range | quasi $\\int f\\,dx$ | "
+            f"matched $\\int f\\,dx$ |{one_sided_header} change |",
+            f"|---|---:|---|---:|---:|{one_sided_align}---:|",
         ]
     )
+    for job_id, summary, momentum in rows:
+        if summary is None:
+            blanks = " n/a |" * (4 + int(show_one_sided))
+            lines.append(f"| `{job_id}` | {_fmt(momentum)} |{blanks}")
+            continue
+        # A row whose projection does not mirror has no separate one-sided value; the dash
+        # says so rather than repeating the matched integral under a heading it did not earn.
+        one_sided_cell = ""
+        if show_one_sided:
+            mirrored = summary["mirrored"]
+            one_sided_cell = f" {_fmt(summary['unit_lightcone']) if mirrored else '--'} |"
+        lines.append(
+            f"| `{job_id}` | {_fmt(momentum)} | "
+            f"$[{_fmt(summary['lo'])}, {_fmt(summary['hi'])}]$ | "
+            f"{_fmt(summary['quasi'])} | {_fmt(summary['lightcone'])} |{one_sided_cell} "
+            f"{_fmt(100 * summary['rel_change'])}% |"
+        )
+    closing = [
+        "",
+        "Each job is integrated over the x range it actually matched (the `matching range` "
+        "column), after any endpoint cut, rather than over a fixed window.",
+        "",
+        *_norm_notes(summaries, interpolated=interpolated),
+    ]
+    closing.extend(["", "## Figures and Visual Assessment"])
+    lines.extend(closing)
     for item in jobs:
         result = item["result"]
         artifacts = markdown_artifact_paths(
