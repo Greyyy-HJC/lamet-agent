@@ -29,6 +29,8 @@ def _write_bare_netcdf(base: Path, stem: str, values: np.ndarray, *, resample: s
             "momentum": "PX0PY0PZ0",
             "lattice_spacing_fm": "0.1",
             "coord_unit": "lattice",
+            "current_operator": "gTg5_nonlocal",
+            "distribution_type": "helicity",
         },
         name="bare_matrix_element",
     )
@@ -103,6 +105,8 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
     assert data.attrs["coord_unit"] == "fm"
     assert data.attrs["input_coord_unit"] == "lattice"
     assert data.attrs["lattice_spacing_fm"] == "0.1"
+    assert data.attrs["current_operator"] == "gTg5_nonlocal"
+    assert data.attrs["distribution_type"] == "helicity"
     assert np.allclose(store["matrix_element"]["coord"], [0.0, 0.1, 0.4, 0.5])
 
     saved = EnsembleData.from_netcdf(result["artifact"])
@@ -111,6 +115,8 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
     assert np.allclose(saved.coords["z"], [0.0, 0.1, 0.4, 0.5])
     assert saved.attrs["coord_unit"] == "fm"
     assert saved.attrs["input_coord_unit"] == "lattice"
+    assert saved.attrs["current_operator"] == "gTg5_nonlocal"
+    assert saved.attrs["distribution_type"] == "helicity"
 
     plot = plot_renormalized_matrix_element(store, save_path="renorm")
     assert Path(plot["plot"]).is_file()

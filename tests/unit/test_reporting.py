@@ -173,7 +173,13 @@ def test_renorm_stage_report_shows_overlay_after_method(tmp_path: Path) -> None:
 
 
 def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(fourier_reporting, "translate_markdown_report", lambda markdown, **kwargs: markdown)
+    translations = []
+
+    def translate(markdown, **kwargs):
+        translations.append((markdown, kwargs))
+        return markdown
+
+    monkeypatch.setattr(fourier_reporting, "translate_markdown_report", translate)
     path = tmp_path / "ft_report.md"
     write_fourier_stage_report(
         jobs=[
@@ -209,6 +215,47 @@ def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_p
     assert "## HISQa060_X ensemble overview" in text
     assert output.rfind("ft_HISQa060_X_xdep.svg") > output.rfind("ft_p5_xdep.pdf")
     assert "Fourier overlay for ensemble HISQa060_X" in output
+    assert len(translations) == 1
+
+
+@pytest.mark.parametrize(
+    ("distribution_type", "family", "decomposition", "negative_x_relation"),
+    [
+        ("unpolarized", "vector family $H,E$", "$H/E$ decomposition", "$q_{\\rm ext}(-x)=-\\bar q(x)$"),
+        ("helicity", "axial family $\\widetilde H,\\widetilde E$", "$\\widetilde H/\\widetilde E$ decomposition", "$\\Delta q_{\\rm ext}(-x)=+\\Delta\\bar q(x)$"),
+        ("transversity", "tensor family $H_T,E_T,\\widetilde H_T,\\widetilde E_T$", "tensor-GPD decomposition", "$q_{\\rm ext}(-x)=-\\bar q(x)$"),
+    ],
+)
+def test_fourier_gpd_report_records_operator_family_and_projection_limits(
+    distribution_type: str, family: str, decomposition: str, negative_x_relation: str
+) -> None:
+    text = fourier_reporting.build_fourier_report_markdown(
+        result={
+            "target_observable": "gpd",
+            "observable": f"nucleon_quark_{distribution_type}_quasi_gpd",
+            "distribution_type": distribution_type,
+            "current_operator": "operator",
+            "parton": "quark",
+            "hadron": "nucleon",
+            "sector": "sea",
+            "part": "both",
+            "method": "GI",
+            "order": "LA",
+            "y_grid": [-0.5, 0.0, 0.5],
+        }
+    )
+
+    assert family in text
+    assert decomposition in text
+    assert negative_x_relation in text
+    assert "projected quasi-GPD matrix element" in text
+    assert "negative-$x$ DGLAP region" in text
+    assert "ERBL region" in text
+    assert "not a pure sea density" in text
+    assert "Distribution type" in text
+    assert "Current operator" in text
+    assert "Parton" in text
+    assert "Hadron" in text
 
 
 def test_da_fourier_stage_report_documents_symmetry_projection(tmp_path: Path) -> None:
@@ -238,6 +285,8 @@ def test_da_fourier_stage_report_documents_symmetry_projection(tmp_path: Path) -
     assert "discards $\\operatorname{Im}h_{+}$" in text
     assert "e^{-izP_z/2}" in text
     assert "e^{+ix\\lambda}" in text
+    assert "Distribution type" not in text
+    assert "Current operator" not in text
 
 
 def test_matching_stage_report_lists_overlay_last_with_ensemble_description(tmp_path: Path, monkeypatch) -> None:

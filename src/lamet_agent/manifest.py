@@ -114,6 +114,7 @@ class CorrelatorInput(BaseModel):
     source_operator: str = Field(min_length=1)
     sink_operator: str = Field(min_length=1)
     current_operator: str | None = Field(default=None, min_length=1)
+    distribution_type: Literal["unpolarized", "helicity", "transversity"] = "unpolarized"
     bz_direction: BzDirection | None = None
     volume: str
     lattice_spacing_fm: float = Field(gt=0)
@@ -146,8 +147,8 @@ class CorrelatorInput(BaseModel):
                 raise ValueError("bT must not contain duplicates")
             if len(set(self.bz)) != len(self.bz):
                 raise ValueError("bz must not contain duplicates")
-        elif self.current_operator is not None or self.tsep is not None:
-            raise ValueError("current_operator and tsep are only valid for 3pt correlators")
+        elif self.current_operator is not None or self.tsep is not None or "distribution_type" in self.model_fields_set:
+            raise ValueError("current_operator, distribution_type, and tsep are only valid for 3pt correlators")
         return self
 
     @property
@@ -242,6 +243,10 @@ _ARTIFACT_METADATA_FIELDS = (
     "gfix",
     "bz_direction",
     "coord_unit",
+    "observable",
+    "parton",
+    "current_operator",
+    "distribution_type",
 )
 _NETCDF_STORAGE_ATTRS = frozenset({"ensemble", "resample", "gvar_encoding"})
 
@@ -521,19 +526,27 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
             momentum = metadata.get("momentum")
             volume = metadata.get("volume")
             lattice_spacing_fm = metadata.get("lattice_spacing_fm")
-            if momentum is None or volume is None or lattice_spacing_fm is None:
-                return {}
             result = {
-                "momentum": str(momentum),
-                "volume": str(volume),
-                "lattice_spacing_fm": float(lattice_spacing_fm),
-                "momentum_gev": artifact.momentum_gev,
+                key: metadata[key]
+                for key in (
+                    "hadron",
+                    "gfix",
+                    "bz_direction",
+                    "current_operator",
+                    "distribution_type",
+                    "observable",
+                    "parton",
+                )
+                if metadata.get(key) is not None
             }
+            if momentum is None or volume is None or lattice_spacing_fm is None:
+                return result
             result.update(
                 {
-                    key: metadata[key]
-                    for key in ("hadron", "gfix", "bz_direction")
-                    if metadata.get(key) is not None
+                    "momentum": str(momentum),
+                    "volume": str(volume),
+                    "lattice_spacing_fm": float(lattice_spacing_fm),
+                    "momentum_gev": artifact.momentum_gev,
                 }
             )
             return result
@@ -568,6 +581,23 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
                 "hadron": correlator.hadron,
                 "gfix": correlator.gfix,
             }
+            operator = next(
+                (
+                    item
+                    for item in manifest.correlators
+                    if item.correlator_id in candidate.correlator_ids
+                    and item.correlator_type == "3pt"
+                    and momentum in item.momentum
+                ),
+                None,
+            )
+            if operator is not None:
+                result.update(
+                    {
+                        "current_operator": operator.current_operator,
+                        "distribution_type": operator.distribution_type,
+                    }
+                )
             if str(params.get("fitting_form", "Breit")) == "NonBreit":
                 initial = params.get("initial_momentum")
                 initial_source = next(

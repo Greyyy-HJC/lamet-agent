@@ -948,3 +948,20 @@
 
 - Renamed renormalization `strategy` token `ratio` to `external_denominator` across stage validation, tool routing, planning, examples, docs, and tests.
 - Kept physical `scheme` `ratio` and tool name `apply_ratio_scheme_renormalization`; old `strategy: "ratio"` now returns an explicit migration error.
+
+## 2026-08-09 (Distribution-aware PDF/GPD Fourier observables)
+
+- Added the 3pt `distribution_type` contract (`unpolarized`, `helicity`, or
+  `transversity`) and propagated it with `current_operator` through correlator,
+  renormalization, partial-artifact, and Fourier metadata.
+- Replaced the implicit transversity Fourier fallback with explicit/upstream/
+  manifest observable resolution and canonical quark PDF/GPD observable labels.
+- Implemented distribution-aware quark `sea`, `valence`, `singlet`, and `full`
+  projections, including the helicity negative-x convention, while keeping
+  gluon jobs full-only and limiting automatic gluon inference to the existing
+  unpolarized-PDF backend.
+- Updated Fourier reports with operator provenance, GPD-family and ERBL scope,
+  retained ordinary-stage LLM translation for Chinese output, and preserved DA
+  and review-stage language behavior.
+- Synchronized plan-mode defaults, provenance gaps, prompts, examples, and unit
+  coverage without adding a second observable-inference path.

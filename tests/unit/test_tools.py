@@ -991,6 +991,10 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
             "bz_direction": "X",
             "hadron": "pion",
             "gfix": "CG",
+            "observable": "pion_quark_helicity_quasi_pdf",
+            "current_operator": "gTg5_nonlocal",
+            "distribution_type": "helicity",
+            "parton": "quark",
         }
     )
     effective = merge_stage_params(
@@ -1011,12 +1015,47 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     assert args["lattice_spacing_fm"] == kinematics["lattice_spacing_fm"]
     assert args["momentum_gev"] == pytest.approx(kinematics["momentum_gev"])
     assert args["bz_direction"] == source.attrs["bz_direction"]
+    assert args["observable"] == source.attrs["observable"]
+    assert args["current_operator"] == source.attrs["current_operator"]
+    assert args["distribution_type"] == source.attrs["distribution_type"]
+    assert args["parton"] == source.attrs["parton"]
     assert args["psi1_flavor_class"] == "light"
     assert args["psi2_flavor_class"] == "heavy"
     assert args["symmetry_guarantee"] is False
     assert "phase_shift" not in args
     assert args["workers"] == manifest.metadata.workers
     assert args["save_path"] == str(tmp_path / job.id)
+
+    effective["observable"] = "pion_quark_transversity_quasi_pdf"
+    explicit = prepare_tool_args(
+        "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
+        effective_params=effective, artifacts_dir=tmp_path, store={"input": source},
+    )
+    assert explicit["observable"] == "pion_quark_transversity_quasi_pdf"
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("pdf", "pion_quark_unpolarized_quasi_pdf"),
+        ("gpd", "pion_quark_unpolarized_quasi_gpd"),
+    ],
+)
+def test_prepare_fourier_args_infers_observable_from_manifest_metadata(
+    tmp_path: Path, target: str, expected: str
+) -> None:
+    manifest = _manifest()
+    manifest.metadata.target_observable = target
+    job = manifest.stages["fourier_transform"].jobs[0]
+    effective = merge_stage_params(manifest.stages["fourier_transform"].defaults, job.params)
+
+    args = prepare_tool_args(
+        "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
+        effective_params=effective, artifacts_dir=tmp_path, store={"input": SimpleNamespace(attrs={})},
+    )
+
+    assert args["observable"] == expected
+    assert args["distribution_type"] == "unpolarized"
 
 
 def test_prepare_fourier_args_passes_lambda0_gev(tmp_path: Path) -> None:
@@ -1063,6 +1102,13 @@ def test_fourier_sector_options_depend_on_observable() -> None:
         "Fourier sector must be one of ['full', 'sea', 'singlet', 'valence']."
     ]
 
+    manifest.metadata.target_observable = "pdf"
+    manifest.metadata.parton = "gluon"
+    manifest.stages["fourier_transform"].defaults["sector"] = "sea"
+    assert validate_stage_inputs("fourier_transform", manifest, job) == [
+        "Fourier sector must be one of ['full']."
+    ]
+
     manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
     job = manifest.stages["fourier_transform"].jobs[0]
     assert validate_stage_inputs("fourier_transform", manifest, job) == []
@@ -1070,6 +1116,22 @@ def test_fourier_sector_options_depend_on_observable() -> None:
     manifest.stages["fourier_transform"].defaults["sector"] = "singlet"
     assert validate_stage_inputs("fourier_transform", manifest, job) == [
         "Fourier sector must be one of ['full']."
+    ]
+
+
+@pytest.mark.parametrize(("target", "distribution_type"), [("pdf", "helicity"), ("pdf", "transversity"), ("gpd", "unpolarized")])
+def test_fourier_rejects_unsupported_gluon_backend_boundary(target: str, distribution_type: str) -> None:
+    manifest = _manifest()
+    manifest.metadata.target_observable = target
+    manifest.metadata.parton = "gluon"
+    for correlator in manifest.correlators:
+        if correlator.correlator_type == "3pt":
+            correlator.distribution_type = distribution_type
+    manifest.stages["fourier_transform"].defaults["sector"] = "full"
+    job = manifest.stages["fourier_transform"].jobs[0]
+
+    assert validate_stage_inputs("fourier_transform", manifest, job) == [
+        "The Fourier backend currently supports only unpolarized gluon PDF observables."
     ]
 
 

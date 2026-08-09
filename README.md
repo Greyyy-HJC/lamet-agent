@@ -275,6 +275,25 @@ $z_{\mathrm{fm}}=(z/a)a_{\mathrm{fm}}$ and record `coord_unit: "fm"` plus
 `input_coord_unit: "lattice"`. Hybrid-ratio branch selection and its
 long-distance exponent continue to use $|z_{\mathrm{fm}}|$.
 
+### `inputs.correlators[].distribution_type` and Fourier sectors
+
+Every 3pt correlator may declare `distribution_type` as `unpolarized`,
+`helicity`, or `transversity`; the default is `unpolarized`. Correlator and
+renormalization NetCDF outputs preserve it together with `current_operator`, so
+Fourier jobs infer their observable from upstream metadata plus
+`target_observable`, `parton`, and `hadron`. An explicit Fourier `observable`
+still takes precedence, and partial inputs without enough provenance must supply
+one.
+
+Quark PDF/GPD jobs support `sea`, `valence`, `singlet`, and `full`. Helicity
+interchanges the real/imaginary channels used by `valence` and `singlet` and
+uses $\Delta q_{\rm ext}(-x)=+\Delta\bar q(x)$; unpolarized and transversity use
+$q_{\rm ext}(-x)=-\bar q(x)$. Gluon jobs use `full` only and do not inherit
+quark/antiquark sector semantics. The current gluon tail backend supports the
+unpolarized gluon PDF only; gluon helicity, transversity, and GPD operators can
+carry `distribution_type` metadata but are not silently mapped onto that
+backend. DA behavior is unchanged.
+
 ### `fourier_transform.defaults.scheme_scan`
 
 Fourier tail-fit range candidates (`zmin_values`, `zmax_values`, and
@@ -627,6 +646,8 @@ The operator fields are free strings:
 
 - `source_operator` and `sink_operator` are required for both types.
 - `current_operator` is required for 3pt data.
+- `distribution_type` records the 3pt operator family and defaults to
+  `unpolarized`; the other choices are `helicity` and `transversity`.
 - `bz_direction` is required for 3pt data and must be one of `X`, `Y`, `Z`,
   `XY`, `XZ`, `YZ`, or `XYZ`. It records the spatial direction or canonical
   direction set represented by the `bz` separation grid.

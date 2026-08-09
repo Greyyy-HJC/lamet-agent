@@ -77,7 +77,8 @@
     "fourier_transform": {
       "defaults": {
         "order": ["LA", "NLA"],
-        "sector": "valence", // PDF/GPD: "sea", "valence", "singlet", or "full"; DA: "full"
+        "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
+        "observable": "pion_quark_unpolarized_quasi_pdf", // explicit because legacy external .nc inputs may lack provenance attrs
         "coord_unit": "fm", // default for renormalized .nc inputs; override with "lattice", "gev_inv", or "lambda" only when needed
         "posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {
@@ -138,14 +139,13 @@
       ]
     },
     "extrapolation": {
-      // PLACEHOLDER: this stage is not implemented yet. Shown only to illustrate
-      // MERGE POINT (combine multiple momenta for the large-momentum
-      // extrapolation). It accepts no params until it is implemented.
+      // MERGE POINT: combine matched distributions at several momenta for
+      // the large-momentum and continuum extrapolation.
       "defaults": {},
       "jobs": [
         {
           "id": "ex_pdf",
-          "inputs": { "momenta": ["mt_p4", "mt_p5"] },
+          "inputs": { "lightcone": ["mt_p4", "mt_p5"] },
           "params": {}
         }
       ]

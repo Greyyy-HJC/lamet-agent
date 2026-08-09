@@ -610,6 +610,73 @@ def test_text_plan_target_observable_does_not_match_data_path(tmp_path: Path) ->
     payload, _text = load_relaxed_manifest(manifest)
 
     assert payload["metadata"]["target_observable"] == "pdf"
+    assert all("distribution_type" not in item for item in payload["inputs"]["correlators"])
+
+
+@pytest.mark.parametrize(("distribution_type", "stored"), [("unpolarized", False), ("helicity", True), ("transversity", True)])
+def test_text_plan_records_only_nondefault_distribution_type(
+    tmp_path: Path, distribution_type: str, stored: bool
+) -> None:
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion quark PDF manifest from sample_2pt.npy and current_data_path sample_current.npz. "
+        f"distribution_type: {distribution_type}. Use random_seed 1984 and resample_mode jk.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+    three_point = next(item for item in payload["inputs"]["correlators"] if item["correlator_type"] == "3pt")
+
+    assert ("distribution_type" in three_point) is stored
+    if stored:
+        assert three_point["distribution_type"] == distribution_type
+
+
+def test_text_plan_parses_only_explicit_fourier_observable(tmp_path: Path) -> None:
+    (tmp_path / "rn_input.nc").write_text("placeholder", encoding="utf-8")
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a manifest with target_observable: pdf from rn_input.nc. Run fourier_transform with "
+        "fourier observable: nucleon_quark_helicity_quasi_pdf and y_grid [-0.5, 0, 0.5]. "
+        "Use random_seed 1984 and resample_mode jk.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+
+    assert payload["metadata"]["target_observable"] == "pdf"
+    assert payload["stages"]["fourier_transform"]["defaults"]["observable"] == "nucleon_quark_helicity_quasi_pdf"
+    assert not any(gap["parameter"] == "observable" for gap in _stage_parameter_gaps(payload, manifest))
+
+
+def test_external_fourier_input_without_provenance_requires_observable(tmp_path: Path) -> None:
+    (tmp_path / "rn_input.nc").write_text("placeholder", encoding="utf-8")
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a manifest with target_observable: pdf from rn_input.nc. Run fourier_transform with "
+        "y_grid [-0.5, 0, 0.5]. Use random_seed 1984 and resample_mode jk.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+
+    assert any(gap["parameter"] == "observable" for gap in _stage_parameter_gaps(payload, manifest))
+
+
+def test_gluon_text_plan_normalizes_fourier_sector(tmp_path: Path) -> None:
+    (tmp_path / "rn_pz.nc").write_text("placeholder", encoding="utf-8")
+    manifest = tmp_path / "request.txt"
+    manifest.write_text(
+        "Build a pion gluon PDF manifest from rn_pz.nc. Use random_seed 1984 and resample_mode jk. "
+        "Run fourier_transform with "
+        "y_grid [-0.5, 0, 0.5] and sector sea.",
+        encoding="utf-8",
+    )
+
+    payload, _text = load_relaxed_manifest(manifest)
+
+    assert payload["metadata"]["parton"] == "gluon"
+    assert payload["stages"]["fourier_transform"]["defaults"]["sector"] == "full"
 
 
 def test_da_text_plan_normalizes_fourier_sector(tmp_path: Path) -> None:
@@ -768,6 +835,7 @@ def test_stage_parameter_gap_answer_applies_first_gap_path(tmp_path: Path) -> No
             "momentum": "PX1PY0PZ0",
             "volume": "S16T5",
             "lattice_spacing_fm": 0.1,
+            "hadron": "pion",
         }
     ]
     payload["stages"] = {"fourier_transform": {"defaults": {}, "jobs": [{"id": "ft", "inputs": {"input": "rn"}}]}}

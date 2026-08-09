@@ -3143,6 +3143,7 @@ def fit_bare_matrix_grid(
     pt2_bT: int | None = None,
     pt2_bz: int | None = None,
     current_operator: str = "gT_nonlocal",
+    distribution_type: str = "unpolarized",
     bz_direction: str,
     bT: int = 0,
     pt2_window: dict[str, int] | None = None,
@@ -4024,6 +4025,8 @@ def fit_bare_matrix_grid(
             "final_momentum": final_momentum,
             "hadron": hadron,
             "gfix": gfix,
+            "current_operator": current_operator,
+            "distribution_type": distribution_type,
             "workers": workers,
         },
     )

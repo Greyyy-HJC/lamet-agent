@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob, derive_job_kinematics
 from lamet_agent.manifest_params import merge_stage_params
+from lamet_agent.stages.fourier.skills import INFERRED_OBSERVABLES
 
 from .stages import resolve_stage_package
 
@@ -57,7 +58,10 @@ _FOURIER_RUN_KEYS = frozenset(
         "symmetry_guarantee",
         "sector",
         "target_observable",
+        "parton",
         "hadron",
+        "current_operator",
+        "distribution_type",
         "psi1_flavor_class",
         "psi2_flavor_class",
         "Lambda0_gev",
@@ -476,6 +480,7 @@ def prepare_tool_args(
                     "tsep_ls": sorted(int(value) for value in paths_by_tsep),
                     "z_values": first.bz,
                     "current_operator": first.current_operator,
+                    "distribution_type": first.distribution_type,
                     "bz_direction": first.bz_direction,
                     "bT": first.bT[0],
                 }
@@ -743,9 +748,10 @@ def prepare_tool_args(
         if "component" in fourier and "part" not in fourier:
             fourier["part"] = fourier.pop("component")
         source = store.get("input")
-        source_metadata = dict(
+        upstream_metadata = dict(
             source.resolved_metadata if isinstance(source, ArtifactInput) else getattr(source, "attrs", {})
         )
+        source_metadata = dict(upstream_metadata)
         if isinstance(source, ArtifactInput) and source.momentum_gev is not None:
             source_metadata["momentum_gev"] = source.momentum_gev
         source_metadata.update(derive_job_kinematics(manifest, job))
@@ -763,25 +769,27 @@ def prepare_tool_args(
         if "coord_unit" not in fourier and "coord_unit" in source_metadata:
             fourier["coord_unit"] = source_metadata["coord_unit"]
         fourier.setdefault("coord_unit", "fm")
-        for key in ("hadron", "gfix"):
-            if key not in fourier and key in source_metadata:
+        for key in ("hadron", "gfix", "observable", "current_operator", "distribution_type", "parton"):
+            if key not in fourier and key in upstream_metadata:
+                fourier[key] = upstream_metadata[key]
+            elif key not in fourier and key in source_metadata:
                 fourier[key] = source_metadata[key]
         if "method" not in fourier and str(fourier.get("gfix", "")).upper() in {"CG", "GI"}:
             fourier["method"] = str(fourier["gfix"]).upper()
         fourier.setdefault("target_observable", manifest.metadata.target_observable)
+        fourier.setdefault("parton", manifest.metadata.parton)
+        fourier.setdefault("distribution_type", "unpolarized")
         fourier.setdefault("sample_error_mode", manifest.metadata.sample_error_mode)
         if "observable" not in fourier:
             target = manifest.metadata.target_observable
-            parton = manifest.metadata.parton
+            parton = str(fourier["parton"]).lower()
             hadron = str(fourier.get("hadron", "")).lower()
-            if target == "pdf" and hadron == "pion":
-                fourier["observable"] = f"pion_{parton}_quasi_pdf"
-            elif target == "da" and hadron == "pion":
+            hadron = "nucleon" if hadron == "proton" else hadron
+            distribution_type = str(fourier["distribution_type"]).lower()
+            if target == "da" and hadron == "pion":
                 fourier["observable"] = "meson_quasi_da"
-            elif target == "gpd" and hadron == "pion":
-                fourier["observable"] = "pion_quark_quasi_gpd"
-            elif target == "gpd" and hadron in {"proton", "nucleon"}:
-                fourier["observable"] = "nucleon_quark_quasi_gpd"
+            elif (target, parton, hadron, distribution_type) in INFERRED_OBSERVABLES:
+                fourier["observable"] = INFERRED_OBSERVABLES[(target, parton, hadron, distribution_type)]
         if tool_name == "load_renormalized_matrix_element_samples":
             resolved.update({key: fourier[key] for key in _FOURIER_LOAD_KEYS if key in fourier})
             if isinstance(source, ArtifactInput):

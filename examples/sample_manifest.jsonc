@@ -71,6 +71,7 @@
         "source_operator": "g5",
         "sink_operator": "g5",
         "current_operator": "gT_nonlocal", // required only for 3pt; `_nonlocal` records operator locality
+        "distribution_type": "unpolarized", // 3pt operator family: unpolarized, helicity, or transversity
         "bz_direction": "X", // required for 3pt; X/Y/Z or canonical combinations XY/XZ/YZ/XYZ
         "volume": "S48T64",
         "lattice_spacing_fm": 0.0574,
@@ -222,7 +223,7 @@
     "fourier_transform": {
       "defaults": {
         "order": ["LA", "NLA"], // tail ansatz candidates: "LA" and/or "NLA"
-        "sector": "valence", // PDF/GPD: sea/valence/singlet/full; DA: full
+        "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
         // Lower-level incompatible alternative: omit sector and set
         // "part": "re" // "re", "im", or "both"; sector is preferred when available
         "coord_unit": "fm", // default for renormalized .nc inputs; override with "lattice", "gev_inv", or "lambda" only when needed
@@ -249,7 +250,7 @@
         },
         // Usually inferred from manifest metadata or upstream attrs:
         // "method": "CG", // explicit "CG" or "GI" override
-        // "observable": "pion_quark_quasi_pdf",
+        // "observable": "pion_quark_unpolarized_quasi_pdf", // inferred from target, parton, hadron, and 3pt distribution_type
         // "target_observable": "pdf",
         // "hadron": "pion",
         // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class
@@ -329,15 +330,13 @@
       ]
     },
     "extrapolation": {
-      // PLACEHOLDER: this stage is not implemented yet. The structure below only
-      // illustrates MERGE POINT 2 (combine multiple momenta for the
-      // large-momentum extrapolation). It accepts no params until an implementation
-      // derives exact momenta directly from the upstream artifacts.
+      // MERGE POINT 2: combine matched distributions at several momenta for
+      // the large-momentum and continuum extrapolation.
       "defaults": {},
       "jobs": [
         {
           "id": "ex_pdf",
-          "inputs": { "momenta": ["mt_p4", "mt_p5"] },
+          "inputs": { "lightcone": ["mt_p4", "mt_p5"] },
           "params": {}
         }
       ]

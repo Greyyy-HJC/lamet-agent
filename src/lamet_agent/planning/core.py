@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from lamet_agent.core.tools import validate_stage_inputs
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import merge_stage_params
+from lamet_agent.stages.fourier.skills import INFERRED_OBSERVABLES
 
 
 IssueSeverity = Literal["error", "warning", "info"]
@@ -216,6 +217,11 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     source_operator_match = re.search(r"source[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
     sink_operator_match = re.search(r"sink[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
     current_operator_match = re.search(r"current[_\s-]*operator(?:\s+for\s+3pt)?\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
+    distribution_type_match = re.search(
+        r"distribution[_\s-]*type\s*[:=]?\s*(unpolarized|helicity|transversity)\b",
+        text,
+        flags=re.I,
+    )
     source_operator = source_operator_match.group(1) if source_operator_match else "source"
     sink_operator = sink_operator_match.group(1) if sink_operator_match else "sink"
     current_operator = current_operator_match.group(1) if current_operator_match else "current"
@@ -226,6 +232,11 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     ft_sector_match = re.search(r"\bsector\s*[:=]?\s*(sea|valence|singlet|full)\b", text, flags=re.I)
     ft_part_match = re.search(r"\bpart\s*[:=]?\s*(re|im|both)\b", text, flags=re.I)
     ft_coord_unit_match = re.search(r"\bcoord_unit\s*[:=]?\s*(lattice|fm|gev_inv|lambda)\b", text, flags=re.I)
+    ft_observable_match = re.search(
+        r"\b(?:ft|fourier(?:_transform)?)[_\s-]*observable\s*[:=]?\s*([A-Za-z0-9_+-]+)",
+        text,
+        flags=re.I,
+    )
     y_grid_match = re.search(r"\by_grid\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
     scheme_scan_match = re.search(r"\bscheme_scan\s*[:=]?\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", text, flags=re.I)
     quasi_y_match = re.search(r"\bquasi_y_ls\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
@@ -341,6 +352,8 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         }
         if kind == "3pt":
             correlator["current_operator"] = current_operator
+            if distribution_type_match and distribution_type_match.group(1).lower() != "unpolarized":
+                correlator["distribution_type"] = distribution_type_match.group(1).lower()
             stem_tsep = re.search(r"(?:^|_)ts(?:ep)?(?P<tsep>\d+)(?:_|$)", resolved.stem, flags=re.I)
             correlator["tsep"] = [int(parsed.group("tsep"))] if parsed and parsed.group("tsep") else [int(stem_tsep.group("tsep"))] if stem_tsep else explicit_tsep or [1]
             correlator["bT"] = explicit_bT or [0]
@@ -382,6 +395,11 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
                     "source_operator": two_point.get("source_operator", "source"),
                     "sink_operator": two_point.get("sink_operator", "sink"),
                     "current_operator": current_source["current_operator"],
+                    **(
+                        {"distribution_type": distribution_type_match.group(1).lower()}
+                        if distribution_type_match and distribution_type_match.group(1).lower() != "unpolarized"
+                        else {}
+                    ),
                     "momentum": two_point.get("momentum", ["PX0PY0PZ0"]),
                     "volume": two_point.get("volume", "S1T1"),
                     "lattice_spacing_fm": two_point.get("lattice_spacing_fm", 1.0),
@@ -475,11 +493,13 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         if ft_order_match:
             ft_defaults["order"] = ft_order_match.group(1).upper()
         if ft_sector_match:
-            ft_defaults["sector"] = "full" if target_observable == "da" else ft_sector_match.group(1).lower()
+            ft_defaults["sector"] = "full" if target_observable == "da" or parton == "gluon" else ft_sector_match.group(1).lower()
         if ft_part_match:
             ft_defaults["part"] = ft_part_match.group(1).lower()
         if ft_coord_unit_match:
             ft_defaults["coord_unit"] = ft_coord_unit_match.group(1).lower()
+        if ft_observable_match:
+            ft_defaults["observable"] = ft_observable_match.group(1)
         if scheme_scan is not None:
             ft_defaults["scheme_scan"] = scheme_scan
         payload["stages"]["fourier_transform"] = {
@@ -546,7 +566,8 @@ def normalize_planning_constraints(payload: dict[str, Any]) -> list[dict[str, An
         review_defaults["literature_max_papers"] = 4
         edits.append({"path": "stages.review.defaults.literature_max_papers", "old": None, "new": 4, "note": "Applied the default literature paper limit."})
     metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-    if str(metadata.get("target_observable", "")).lower() != "da":
+    force_full = str(metadata.get("target_observable", "")).lower() == "da" or str(metadata.get("parton", "")).lower() == "gluon"
+    if not force_full:
         return edits
     ft_stage = payload.get("stages", {}).get("fourier_transform", {}) if isinstance(payload.get("stages"), dict) else {}
     if not isinstance(ft_stage, dict):
@@ -555,7 +576,7 @@ def normalize_planning_constraints(payload: dict[str, Any]) -> list[dict[str, An
     if isinstance(defaults, dict) and "sector" in defaults and str(defaults.get("sector", "")).lower() != "full":
         old = defaults.get("sector")
         defaults["sector"] = "full"
-        edits.append({"path": "stages.fourier_transform.defaults.sector", "old": old, "new": "full", "note": "DA Fourier sector is fixed to full."})
+        edits.append({"path": "stages.fourier_transform.defaults.sector", "old": old, "new": "full", "note": "DA and gluon Fourier sectors are fixed to full."})
     jobs = ft_stage.get("jobs", [])
     if isinstance(jobs, list):
         for job in jobs:
@@ -563,7 +584,7 @@ def normalize_planning_constraints(payload: dict[str, Any]) -> list[dict[str, An
             if isinstance(params, dict) and "sector" in params and str(params.get("sector", "")).lower() != "full":
                 old = params.get("sector")
                 params["sector"] = "full"
-                edits.append({"path": f"stages.fourier_transform.jobs.{job.get('id', '')}.params.sector", "old": old, "new": "full", "note": "DA Fourier sector is fixed to full."})
+                edits.append({"path": f"stages.fourier_transform.jobs.{job.get('id', '')}.params.sector", "old": old, "new": "full", "note": "DA and gluon Fourier sectors are fixed to full."})
     return edits
 
 
@@ -1249,7 +1270,7 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 if isinstance(candidate, dict) and candidate.get("id"):
                     jobs_by_id[str(candidate["id"])] = (str(stage_id), candidate)
 
-    def has_discrete_kinematics(stage_id: str, candidate: dict[str, Any], seen: set[str]) -> bool:
+    def derived_metadata(stage_id: str, candidate: dict[str, Any], seen: set[str]) -> dict[str, Any]:
         if stage_id == "correlator_analysis":
             config = stages.get(stage_id, {}) if isinstance(stages, dict) else {}
             stage_defaults = config.get("defaults", {}) if isinstance(config, dict) else {}
@@ -1263,22 +1284,43 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 else params.get("momentum")
             )
             ids = set(candidate.get("correlator_ids", []))
-            return any(
-                isinstance(item, dict)
-                and item.get("correlator_id") in ids
-                and item.get("correlator_type") == "2pt"
-                and momentum in _as_list(item.get("momentum"))
-                and item.get("volume") is not None
-                and item.get("lattice_spacing_fm") is not None
-                for item in correlators
+            two_point = next(
+                (
+                    item
+                    for item in correlators
+                    if isinstance(item, dict)
+                    and item.get("correlator_id") in ids
+                    and item.get("correlator_type") == "2pt"
+                    and momentum in _as_list(item.get("momentum"))
+                ),
+                {},
             )
+            three_point = next(
+                (
+                    item
+                    for item in correlators
+                    if isinstance(item, dict)
+                    and item.get("correlator_id") in ids
+                    and item.get("correlator_type") == "3pt"
+                    and momentum in _as_list(item.get("momentum"))
+                ),
+                {},
+            )
+            return {
+                **two_point,
+                **{
+                    key: three_point[key]
+                    for key in ("hadron", "current_operator", "distribution_type")
+                    if three_point.get(key) is not None
+                },
+            }
+        resolved: dict[str, Any] = {}
         for value in (candidate.get("inputs") or {}).values():
             for reference in _as_list(value):
                 reference = str(reference)
                 artifact = artifacts.get(reference)
                 if artifact is not None:
-                    if all(artifact.get(key) is not None for key in ("momentum", "volume", "lattice_spacing_fm")):
-                        return True
+                    artifact_metadata = dict(artifact)
                     if manifest_path is not None:
                         path = _resolve_manifest_path(manifest_path, payload, artifact.get("path"))
                         if path is not None and path.suffix.lower() == ".nc" and path.is_file():
@@ -1288,13 +1330,16 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                                 attrs = read_netcdf_attrs(path)
                             except Exception:
                                 attrs = {}
-                            if all(attrs.get(key) is not None for key in ("momentum", "volume", "lattice_spacing_fm")):
-                                return True
+                            artifact_metadata = {**artifact_metadata, **attrs}
+                    for key, item in artifact_metadata.items():
+                        if item is not None:
+                            resolved.setdefault(key, item)
                 upstream = jobs_by_id.get(reference)
                 if upstream is not None and reference not in seen:
-                    if has_discrete_kinematics(upstream[0], upstream[1], seen | {reference}):
-                        return True
-        return False
+                    for key, item in derived_metadata(upstream[0], upstream[1], seen | {reference}).items():
+                        if item is not None:
+                            resolved.setdefault(key, item)
+        return resolved
 
     gaps: list[dict[str, Any]] = []
     if not isinstance(stages, dict):
@@ -1316,7 +1361,11 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 defaults,
                 job.get("params") if isinstance(job.get("params"), dict) else {},
             )
-            derived_momentum_available = has_discrete_kinematics(stage, job, {job_id})
+            upstream_metadata = derived_metadata(stage, job, {job_id})
+            derived_momentum_available = all(
+                upstream_metadata.get(key) is not None
+                for key in ("momentum", "volume", "lattice_spacing_fm")
+            )
             roles = set(job.get("inputs", {}).keys()) if isinstance(job.get("inputs"), dict) else set()
             def add_gap(parameter: str, path: str, message: str, suggested_fix: str) -> None:
                 gaps.append({"stage": stage, "job_id": job_id, "parameter": parameter, "path": path, "message": message, "suggested_fix": suggested_fix, "question_id": f"stage_params.{stage}.{job_id}"})
@@ -1426,6 +1475,24 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                     add_gap("y_grid", f"stages.{stage}.defaults.y_grid", "fourier_transform requires y_grid.", 'Example: {"start": -1.0, "stop": 1.0, "num": 101}.')
                 if not derived_momentum_available and "momentum_gev" not in params:
                     add_gap("momentum_gev", f"stages.{stage}.defaults.momentum_gev", f"fourier_transform job {job_id!r} has no derivable momentum.", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact.")
+                target = str(metadata.get("target_observable", "pdf")).lower()
+                parton = str(metadata.get("parton", "quark")).lower()
+                hadron = str(params.get("hadron", upstream_metadata.get("hadron", ""))).lower()
+                hadron = "nucleon" if hadron == "proton" else hadron
+                distribution_type = str(
+                    params.get("distribution_type", upstream_metadata.get("distribution_type", "unpolarized"))
+                ).lower()
+                if (
+                    target in {"pdf", "gpd"}
+                    and "observable" not in params
+                    and (target, parton, hadron, distribution_type) not in INFERRED_OBSERVABLES
+                ):
+                    add_gap(
+                        "observable",
+                        f"stages.{stage}.defaults.observable",
+                        f"fourier_transform job {job_id!r} has no derivable observable.",
+                        "Declare observable explicitly, or provide upstream hadron and distribution_type metadata supported by the Fourier backend.",
+                    )
             elif stage == "perturbative_matching":
                 if roles != {"quasi"}:
                     add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "perturbative_matching requires exactly one input role named quasi.", 'Example: {"quasi": "ft_pz"}.')

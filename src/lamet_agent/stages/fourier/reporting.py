@@ -19,22 +19,37 @@ from lamet_agent.core.resampling import sample_mean_and_sdev
 
 OBSERVABLE_TEXT = {
     "pion_quark_quasi_pdf": "pion quark quasi-PDF",
+    "pion_quark_unpolarized_quasi_pdf": "pion quark unpolarized quasi-PDF",
+    "pion_quark_helicity_quasi_pdf": "pion quark helicity quasi-PDF",
+    "pion_quark_transversity_quasi_pdf": "pion quark transversity quasi-PDF",
     "nucleon_quark_unpolarized_quasi_pdf": "nucleon quark unpolarized quasi-PDF",
+    "nucleon_quark_helicity_quasi_pdf": "nucleon quark helicity quasi-PDF",
     "nucleon_quark_transversity_quasi_pdf": "nucleon quark transversity quasi-PDF",
     "pion_gluon_quasi_pdf": "pion gluon quasi-PDF",
+    "pion_gluon_unpolarized_quasi_pdf": "pion gluon unpolarized quasi-PDF",
     "nucleon_gluon_quasi_pdf": "nucleon gluon quasi-PDF",
+    "nucleon_gluon_unpolarized_quasi_pdf": "nucleon gluon unpolarized quasi-PDF",
     "meson_quasi_da": "meson quasi-DA",
     "pion_quark_quasi_gpd": "pion quark quasi-GPD",
+    "pion_quark_unpolarized_quasi_gpd": "pion quark unpolarized quasi-GPD",
+    "pion_quark_helicity_quasi_gpd": "pion quark helicity quasi-GPD",
+    "pion_quark_transversity_quasi_gpd": "pion quark transversity quasi-GPD",
     "nucleon_quark_quasi_gpd": "nucleon quark quasi-GPD",
+    "nucleon_quark_unpolarized_quasi_gpd": "nucleon quark unpolarized quasi-GPD",
+    "nucleon_quark_helicity_quasi_gpd": "nucleon quark helicity quasi-GPD",
+    "nucleon_quark_transversity_quasi_gpd": "nucleon quark transversity quasi-GPD",
 }
 
 FORMULA_REFERENCES = {
     "pion_quark_quasi_pdf": "arXiv:2601.12189 Eqs. (2.1)/(2.2)",
+    "pion_quark_unpolarized_quasi_pdf": "arXiv:2601.12189 Eqs. (2.1)/(2.2)",
     "nucleon_quark_unpolarized_quasi_pdf": "arXiv:2601.12189 Eqs. (2.3)/(2.4)",
     "nucleon_quark_transversity_quasi_pdf": "arXiv:2601.12189 Eqs. (2.5)/(2.6)",
     "meson_quasi_da": "arXiv:2601.12189 Eqs. (2.7)/(2.8)",
     "pion_quark_quasi_gpd": "arXiv:2601.12189 Eqs. (2.9)/(2.10)",
+    "pion_quark_unpolarized_quasi_gpd": "arXiv:2601.12189 Eqs. (2.9)/(2.10)",
     "nucleon_quark_quasi_gpd": "arXiv:2601.12189 Eqs. (2.11)/(2.12)",
+    "nucleon_quark_unpolarized_quasi_gpd": "arXiv:2601.12189 Eqs. (2.11)/(2.12)",
     "nucleon_gluon_quasi_pdf": "arXiv:2601.12189 Appendix F Eqs. (F.6)/(F.7)",
     "pion_gluon_quasi_pdf": "arXiv:2601.12189 Appendix F Eqs. (F.8)/(F.9)",
 }
@@ -135,7 +150,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     if method == "CG":
         implementation_tail += r"\,z^{-n}"
 
-    if observable == "pion_quark_quasi_gpd":
+    if observable == "pion_quark_quasi_gpd" or observable.startswith("pion_quark_") and observable.endswith("_quasi_gpd"):
         if order == "LA":
             article_formula = (
                 r"\tilde{h}^{\rm LA}(z,P^z,P'^z)="
@@ -210,7 +225,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "The article formula is the full $\\pm z$ expression. The lamet-agent fit uses the explicit positive-$z$ branch, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval.",
             "When `method=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$.",
         ]
-    elif observable == "nucleon_quark_quasi_gpd":
+    elif observable == "nucleon_quark_quasi_gpd" or observable.startswith("nucleon_quark_") and observable.endswith("_quasi_gpd"):
         if order == "LA":
             article_formula = (
                 r"\tilde{h}^{\rm LA}(z,P^z,P'^z)="
@@ -274,8 +289,8 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
         "nucleon_quark_unpolarized_quasi_pdf",
         "nucleon_quark_transversity_quasi_pdf",
         "meson_quasi_da",
-    }:
-        if observable == "pion_quark_quasi_pdf":
+    } or "_quark_" in observable and observable.endswith("_quasi_pdf"):
+        if observable == "pion_quark_quasi_pdf" or observable.startswith("pion_quark_"):
             phases_text = (
                 "- In the implementation rewrite, $\\omega_2=0$, $\\omega_1=-P^z$, and $\\omega_3=+P^z$."
             )
@@ -287,7 +302,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             phases_text = (
                 "- In the implementation rewrite, the only retained phase is the central frequency $\\omega_2=0$."
             )
-        if observable == "pion_quark_quasi_pdf":
+        if observable == "pion_quark_quasi_pdf" or observable.startswith("pion_quark_"):
             article_core = (
                 r"A_2 e^{i\phi_2\,{\rm sign}(z)}"
                 r"+A_1 e^{i\phi_1\,{\rm sign}(z)} e^{-i z P^z}"
@@ -352,7 +367,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
                     "or real-part projection; range selection, asymptotic fitting, extension, and "
                     "the ordinary $e^{+ix\\lambda}$ Fourier transform use the input $h^R$ unchanged."
                 )
-    elif observable == "nucleon_gluon_quasi_pdf":
+    elif observable in {"nucleon_gluon_quasi_pdf", "nucleon_gluon_unpolarized_quasi_pdf"}:
         article_formula = (
             (
                 r"\mathrm{Re}\,h^{\rm LA}_{\rm art}(z)=\left[A\,|z|\right]"
@@ -379,7 +394,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
         scope_lines = [
             "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `method=CG` adds the explicit factor $z^{-n}$ shown above.",
         ]
-    elif observable == "pion_gluon_quasi_pdf":
+    elif observable in {"pion_gluon_quasi_pdf", "pion_gluon_unpolarized_quasi_pdf"}:
         article_formula = (
             (
                 r"\mathrm{Re}\,h^{\rm LA}_{\rm art}(z)=\left[A_2\,|z|\right]"
@@ -422,7 +437,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
         ]
 
     constraint_lines = []
-    if observable == "pion_quark_quasi_pdf" and sector == "valence":
+    if observable in {"pion_quark_quasi_pdf", "pion_quark_unpolarized_quasi_pdf"} and sector == "valence":
         constraint_lines.append(
             "- Following arXiv:2601.12189, the fit input for the `valence` sector of `pion_quark_quasi_pdf` imposes $\\phi_2=\\phi'_2=0$, $A_3=A_1$, $\\phi_3=-\\phi_1$, $A'_3=A'_1$, and $\\phi'_3=-\\phi'_1$."
         )
@@ -499,8 +514,8 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
     )
 
 
-def _field_definitions(*, language: str) -> list[str]:
-    return [
+def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
+    lines = [
         "| Entry | Meaning |",
         "|---|---|",
         "| Observable | Physical matrix element transformed by this stage. |",
@@ -510,60 +525,105 @@ def _field_definitions(*, language: str) -> list[str]:
         "| Coordinate unit | `lattice` means $z/a$. The code converts it to $z_{\\rm GeV^{-1}}=(z/a)a_{\\rm fm}\\,5.067731237$ and then $\\lambda=P_z z_{\\rm GeV^{-1}}$. |",
         "| Posterior-prior error scale | The mean fit gives $\\bar p_i\\pm\\sigma_{p_i}$; resampled fits use $p_i=\\bar p_i\\pm s\\sigma_{p_i}$. |",
     ]
+    if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}:
+        lines[3] = "| Sector | Quark PDF/GPD projection: `sea`, `valence`, `singlet`, or `full`; gluon uses `full`. |"
+        lines.insert(3, "| Distribution type | Operator family: `unpolarized`, `helicity`, or `transversity`. |")
+    return lines
 
 
 def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     sector = str(result.get("sector", "full")).lower()
     part = str(result.get("part", "both")).lower()
     scale = float(result.get("output_scale", 1.0))
+    target = str(result.get("target_observable", "pdf")).lower()
+    parton = str(result.get("parton", "quark")).lower()
+    distribution_type = str(result.get("distribution_type", "unpolarized")).lower()
     truncated = str(result.get("short_distance_policy", "full_from_zero")) == "truncate_missing"
     missing = result.get("missing_short_distance_coord", [])
+    if target == "da":
+        intro = (
+            f"This run uses `sector={sector}`, resolved internally to `part={part}`, "
+            f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`. "
+            "With the vector/tensor quark extended-distribution convention "
+            "$q_{\\rm ext}(x)=q(x)$ for $x>0$ and $q_{\\rm ext}(-x)=-\\bar q(x)$, "
+            "the coordinate-space matrix element obeys "
+            "$h(\\lambda)=\\int dx\\,e^{-ix\\lambda}q_{\\rm ext}(x)$."
+        )
+        if truncated:
+            intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
+        if sector == "sea":
+            meaning = "`sea` is reconstructed from the full vector/tensor quark distribution as $\\bar q(x)=-q_{\\rm ext}(-x)$, using one joint fit of the real and imaginary matrix-element components; for a nonzero-skewness GPD, the reflected ERBL region remains a quark-antiquark amplitude rather than an antiquark density."
+        elif sector == "singlet":
+            meaning = "`singlet` returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor-singlet distribution additionally sums this combination over quark flavors."
+        elif part == "both":
+            meaning = (
+                "`both` uses the full complex matrix element and reconstructs the full extended quasi-distribution "
+                "$q_{\\rm ext}(x)$. With `output_scale=1`, this is the unscaled full Fourier result; other scale values "
+                "change only the overall normalization and do not define a new projection by themselves."
+            )
+        elif part == "re":
+            meaning = (
+                "The real part gives the cosine projection "
+                "$\\mathrm{FT}[\\mathrm{Re}\\,h]=[q_{\\rm ext}(x)+q_{\\rm ext}(-x)]/2$, "
+                "which equals $[q(x)-\\bar q(x)]/2$ for $x>0$."
+            )
+            if np.isclose(scale, 2.0):
+                meaning += " Therefore `part=re, output_scale=2` gives the valence combination $q(x)-\\bar q(x)$."
+            elif np.isclose(scale, 1.0):
+                meaning += " Therefore `output_scale=1` gives one half of the valence combination."
+            else:
+                meaning += f" The current scale {_fmt(scale)} returns this real-part projection with that overall normalization."
+        elif part == "im":
+            meaning = (
+                "The imaginary part gives the sine/antisymmetric projection associated with "
+                "$[q_{\\rm ext}(x)-q_{\\rm ext}(-x)]/2$, which corresponds to $[q(x)+\\bar q(x)]/2$ for $x>0$ "
+                "when the sign convention is aligned."
+            )
+            if np.isclose(scale, 2.0):
+                meaning += " Therefore `part=im, output_scale=2` corresponds to a $q(x)+\\bar q(x)$-type combination, with the overall sign set by the imaginary-part and `im_flip_for_ft` convention."
+            elif np.isclose(scale, 1.0):
+                meaning += " Therefore `output_scale=1` gives one half of that combination."
+            else:
+                meaning += f" The current scale {_fmt(scale)} returns this imaginary-part projection with that overall normalization."
+        else:
+            meaning = "This `part` setting is not recognized, so only the numerical output scale is reported."
+        if truncated:
+            meaning += " Because near-zero coordinates are missing, this projection statement applies only to the truncated sum and should not be interpreted as a fully normalized Fourier result or moment."
+        return ["## Sector Physical Interpretation", intro, "", meaning]
     intro = (
         f"This run uses `sector={sector}`, resolved internally to `part={part}`, "
-        f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`. "
-        "With the vector/tensor quark extended-distribution convention "
-        "$q_{\\rm ext}(x)=q(x)$ for $x>0$ and $q_{\\rm ext}(-x)=-\\bar q(x)$, "
-        "the coordinate-space matrix element obeys "
-        "$h(\\lambda)=\\int dx\\,e^{-ix\\lambda}q_{\\rm ext}(x)$."
+        f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`."
     )
+    if parton == "gluon":
+        intro += " Gluon operator families use only the full complex Fourier result; quark/antiquark sector projections are not applied."
+        meaning = "`full` preserves the gluon result without assigning quark `sea`, `valence`, or `singlet` semantics."
+    elif distribution_type == "helicity":
+        intro += " The helicity convention is $\\Delta q_{\\rm ext}(-x)=+\\Delta\\bar q(x)$."
+        meaning = {
+            "sea": "`sea` is reconstructed with one joint fit as $\\Delta\\bar q(x)=+\\Delta q_{\\rm ext}(-x)$.",
+            "valence": "`valence` uses the sine/odd projection and returns $\\Delta q(x)-\\Delta\\bar q(x)$.",
+            "singlet": "`singlet` uses the cosine/even projection and returns the per-flavor C-even combination $\\Delta q(x)+\\Delta\\bar q(x)$; a strict flavor singlet also sums over flavors.",
+            "full": "`full` uses one real/imaginary joint fit and reconstructs the complete extended helicity distribution $\\Delta q_{\\rm ext}(x)$.",
+        }.get(sector, "The selected component is reported without an additional named projection.")
+    else:
+        intro += " The unpolarized/transversity convention is $q_{\\rm ext}(-x)=-\\bar q(x)$."
+        meaning = {
+            "sea": "`sea` is reconstructed with one joint fit as $\\bar q(x)=-q_{\\rm ext}(-x)$.",
+            "valence": "`valence` uses the cosine/even projection and returns $q(x)-\\bar q(x)$.",
+            "singlet": "`singlet` uses the sine/odd projection and returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor singlet also sums over flavors.",
+            "full": "`full` uses one real/imaginary joint fit and reconstructs the complete extended distribution $q_{\\rm ext}(x)$.",
+        }.get(sector, "The selected component is reported without an additional named projection.")
     if truncated:
         intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
-    if sector == "sea":
-        meaning = "`sea` is reconstructed from the full vector/tensor quark distribution as $\\bar q(x)=-q_{\\rm ext}(-x)$, using one joint fit of the real and imaginary matrix-element components; for a nonzero-skewness GPD, the reflected ERBL region remains a quark-antiquark amplitude rather than an antiquark density."
-    elif sector == "singlet":
-        meaning = "`singlet` returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor-singlet distribution additionally sums this combination over quark flavors."
-    elif part == "both":
-        meaning = (
-            "`both` uses the full complex matrix element and reconstructs the full extended quasi-distribution "
-            "$q_{\\rm ext}(x)$. With `output_scale=1`, this is the unscaled full Fourier result; other scale values "
-            "change only the overall normalization and do not define a new projection by themselves."
-        )
-    elif part == "re":
-        meaning = (
-            "The real part gives the cosine projection "
-            "$\\mathrm{FT}[\\mathrm{Re}\\,h]=[q_{\\rm ext}(x)+q_{\\rm ext}(-x)]/2$, "
-            "which equals $[q(x)-\\bar q(x)]/2$ for $x>0$."
-        )
-        if np.isclose(scale, 2.0):
-            meaning += " Therefore `part=re, output_scale=2` gives the valence combination $q(x)-\\bar q(x)$."
-        elif np.isclose(scale, 1.0):
-            meaning += " Therefore `output_scale=1` gives one half of the valence combination."
-        else:
-            meaning += f" The current scale {_fmt(scale)} returns this real-part projection with that overall normalization."
-    elif part == "im":
-        meaning = (
-            "The imaginary part gives the sine/antisymmetric projection associated with "
-            "$[q_{\\rm ext}(x)-q_{\\rm ext}(-x)]/2$, which corresponds to $[q(x)+\\bar q(x)]/2$ for $x>0$ "
-            "when the sign convention is aligned."
-        )
-        if np.isclose(scale, 2.0):
-            meaning += " Therefore `part=im, output_scale=2` corresponds to a $q(x)+\\bar q(x)$-type combination, with the overall sign set by the imaginary-part and `im_flip_for_ft` convention."
-        elif np.isclose(scale, 1.0):
-            meaning += " Therefore `output_scale=1` gives one half of that combination."
-        else:
-            meaning += f" The current scale {_fmt(scale)} returns this imaginary-part projection with that overall normalization."
-    else:
-        meaning = "This `part` setting is not recognized, so only the numerical output scale is reported."
+    if target == "gpd":
+        family, decomposition = {
+            "unpolarized": ("the vector family $H,E$ for a spin-$1/2$ hadron (only $H$ for a spin-0 hadron)", "$H/E$"),
+            "helicity": ("the axial family $\\widetilde H,\\widetilde E$ for a spin-$1/2$ hadron", "$\\widetilde H/\\widetilde E$"),
+            "transversity": ("the tensor family $H_T,E_T,\\widetilde H_T,\\widetilde E_T$ for a spin-$1/2$ hadron", "the tensor-GPD"),
+        }.get(distribution_type, ("the recorded operator family", "the corresponding invariant-GPD"))
+        meaning += f" This run labels {family}, but the input is a projected quasi-GPD matrix element; `distribution_type` alone does not perform {decomposition} decomposition."
+        if sector == "sea":
+            meaning += " The antiquark interpretation applies only in the negative-$x$ DGLAP region; the ERBL region $|x|<|\\xi|$ is a quark-antiquark amplitude, not a pure sea density."
     if truncated:
         meaning += " Because near-zero coordinates are missing, this projection statement applies only to the truncated sum and should not be interpreted as a fully normalized Fourier result or moment."
     return ["## Sector Physical Interpretation", intro, "", meaning]
@@ -752,6 +812,13 @@ def _settings_table(
         ("Extension endpoint", z_ext_text),
         ("Fourier grid", _format_grid(y_grid, language=language)),
     ]
+    if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}:
+        rows[1:1] = [
+            ("Distribution type", f"`{result.get('distribution_type', 'unpolarized')}`"),
+            ("Current operator", f"`{result.get('current_operator', 'not recorded')}`"),
+            ("Parton", f"`{result.get('parton', 'not recorded')}`"),
+            ("Hadron", f"`{result.get('hadron', 'not recorded')}`"),
+        ]
     if observable == "meson_quasi_da":
         rows.insert(2, ("DA flavor classes", f"`psi1={result.get('psi1_flavor_class', 'heavy')}`, `psi2={result.get('psi2_flavor_class', 'heavy')}`"))
         rows.insert(3, ("DA symmetry guarantee", f"`symmetry_guarantee={str(bool(result.get('symmetry_guarantee', False))).lower()}`"))
@@ -761,7 +828,7 @@ def _settings_table(
     return lines
 
 
-def _artifact_field_table(kind: str, *, language: str) -> list[str]:
+def _artifact_field_table(kind: str, *, language: str, target_observable: str = "pdf") -> list[str]:
     if kind == "result":
         rows = [
             ("`values`", "Complex final Fourier samples after fit-model averaging or best-model selection, with dimensions `(resample, x)`."),
@@ -778,6 +845,11 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
             ("attrs `momentum_gev`, `final_momentum_gev`, `lattice_spacing_fm`", "Momentum and lattice-spacing metadata."),
             ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
         ]
+        if target_observable in {"pdf", "gpd"}:
+            rows[-1:] = [
+                ("attrs `observable`, `observable_backend`, `parton`, `hadron`, `current_operator`, `distribution_type`, `sector`", "Resolved observable, numerical tail backend, operator provenance, and physics projection."),
+                ("attrs `method`, `order`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
+            ]
     else:
         rows = [
             ("`values`", "Fit-parameter samples with dimensions `(resample, scheme, parameter)`."),
@@ -797,7 +869,7 @@ def _artifact_field_table(kind: str, *, language: str) -> list[str]:
     return lines
 
 
-def _artifact_help(*, language: str) -> list[str]:
+def _artifact_help(*, language: str, target_observable: str = "pdf") -> list[str]:
     return [
         "## Reading the NetCDF Outputs",
         "`fourier_result.nc` stores complex Fourier-transform samples; `fourier_fit_info.nc` stores large-distance fit-parameter samples. "
@@ -809,10 +881,10 @@ def _artifact_help(*, language: str) -> list[str]:
         "```",
         "",
         "### `fourier_result.nc` Field Reference",
-        *_artifact_field_table("result", language="en"),
+        *_artifact_field_table("result", language="en", target_observable=target_observable),
         "",
         "### `fourier_fit_info.nc` Field Reference",
-        *_artifact_field_table("fit_info", language="en"),
+        *_artifact_field_table("fit_info", language="en", target_observable=target_observable),
     ]
 
 
@@ -862,7 +934,7 @@ def build_fourier_report_markdown(
         *_settings_table(result=result, observable=observable, observable_text=observable_text, method=method, order=order, fit_range_text=fit_range_text, z_ext_max=z_ext_max, y_grid=y_grid, language="en"),
         "",
         "### Field Definitions",
-        *_field_definitions(language="en"),
+        *_field_definitions(result, language="en"),
         "",
         *_projection_text(result, language="en"),
         "",
@@ -886,7 +958,7 @@ def build_fourier_report_markdown(
         "## Output Artifacts",
         *_outputs_table(artifacts, language="en"),
         "",
-        *_artifact_help(language="en"),
+        *_artifact_help(language="en", target_observable=str(result.get("target_observable", ""))),
     ]
     return "\n".join(lines) + "\n"
 
@@ -1036,7 +1108,7 @@ def write_fourier_stage_report(
             ),
             "",
             "### Field Definitions",
-            *_field_definitions(language=language),
+            *_field_definitions(first, language=language),
             "",
             *_projection_text(first, language=language),
             "",
@@ -1149,7 +1221,7 @@ def write_fourier_stage_report(
         label = stem[3:-5] if stem.startswith("ft_") and stem.endswith("_xdep") else stem
         desc = f"Fourier overlay for ensemble {label}"
         lines.append(f"| [{Path(value).name}]({value}) | {desc} |")
-    lines.extend(["", *_artifact_help(language=language)])
+    lines.extend(["", *_artifact_help(language=language, target_observable=str(first.get("target_observable", "")))])
     markdown = "\n".join(lines) + "\n"
     output.write_text(markdown, encoding="utf-8")
     if report_language.lower() == "ch":

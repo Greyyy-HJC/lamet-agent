@@ -285,7 +285,7 @@ def _output_scale(data: dict[str, Any]) -> float:
 
     The Fourier stage transforms with the extended-distribution convention
     $h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$ and then multiplies by a projection
-    factor it records as ``output_scale``: 2 for the ``valence`` and ``total`` sectors, whose
+    factor it records as ``output_scale``: 2 for the ``valence`` and ``singlet`` sectors, whose
     single-channel (Re or Im) transform mirrors the distribution about $x=0$, and 1 for
     ``full``/``sea`` and for a DA. So a factor of 2 means the integral over the whole matched
     range counts one physical side twice, and the one-sided integral is half of it. Reading

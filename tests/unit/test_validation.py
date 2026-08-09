@@ -109,6 +109,23 @@ def test_correlator_accepts_canonical_bz_directions(direction: str) -> None:
     assert CorrelatorInput.model_validate(payload).bz_direction == direction
 
 
+@pytest.mark.parametrize("distribution_type", ["unpolarized", "helicity", "transversity"])
+def test_3pt_correlator_distribution_type(distribution_type: str) -> None:
+    payload = _correlator_payload("3pt")
+    if distribution_type != "unpolarized":
+        payload["distribution_type"] = distribution_type
+
+    assert CorrelatorInput.model_validate(payload).distribution_type == distribution_type
+
+
+def test_correlator_rejects_unknown_distribution_type() -> None:
+    payload = _correlator_payload("3pt")
+    payload["distribution_type"] = "polarized"
+
+    with pytest.raises(ValueError, match="distribution_type"):
+        CorrelatorInput.model_validate(payload)
+
+
 @pytest.mark.parametrize("direction", ["x", "YX", "XX", "XYZW", "longitudinal", ""])
 def test_correlator_rejects_noncanonical_bz_directions(direction: str) -> None:
     payload = _correlator_payload("3pt")
@@ -143,6 +160,10 @@ def test_correlator_rejects_4pt_and_enforces_conditional_fields() -> None:
     extra_current["current_operator"] = "gT_nonlocal"
     with pytest.raises(ValueError, match="only valid for 3pt"):
         CorrelatorInput.model_validate(extra_current)
+    extra_distribution_type = _correlator_payload("2pt")
+    extra_distribution_type["distribution_type"] = "helicity"
+    with pytest.raises(ValueError, match="only valid for 3pt"):
+        CorrelatorInput.model_validate(extra_distribution_type)
     da_like = _correlator_payload("2pt")
     da_like["bz_direction"] = "Z"
     da_like["bT"] = [0]
@@ -232,6 +253,10 @@ def test_partial_artifact_uses_netcdf_attrs_without_materializing_manifest_field
             "hadron": "pion",
             "gfix": "CG",
             "bz_direction": "X",
+            "observable": "pion_quark_helicity_quasi_pdf",
+            "parton": "quark",
+            "current_operator": "gTg5_nonlocal",
+            "distribution_type": "helicity",
         },
     )
     original_bytes = artifact_path.read_bytes()
@@ -255,7 +280,11 @@ def test_partial_artifact_uses_netcdf_attrs_without_materializing_manifest_field
         "path": str(artifact_path),
     }
     assert artifact.resolved_metadata["hadron"] == "pion"
+    assert artifact.resolved_metadata["observable"] == "pion_quark_helicity_quasi_pdf"
+    assert artifact.resolved_metadata["current_operator"] == "gTg5_nonlocal"
+    assert artifact.resolved_metadata["distribution_type"] == "helicity"
     assert kinematics["momentum"] == "PX5PY0PZ0"
+    assert kinematics["observable"] == "pion_quark_helicity_quasi_pdf"
     assert kinematics["momentum_gev"] == pytest.approx(2.250003600391, rel=1e-12)
     assert validate_stage_inputs("fourier_transform", manifest, job) == []
     assert artifact_path.read_bytes() == original_bytes
@@ -292,6 +321,10 @@ def test_partial_artifact_uses_complete_manifest_fallback_for_legacy_netcdf(tmp_
         ("hadron", "proton"),
         ("gfix", "GI"),
         ("bz_direction", "Z"),
+        ("observable", "nucleon_quark_unpolarized_quasi_pdf"),
+        ("parton", "gluon"),
+        ("current_operator", "gT_nonlocal"),
+        ("distribution_type", "transversity"),
     ],
 )
 def test_partial_artifact_rejects_manifest_netcdf_metadata_conflicts(
@@ -307,6 +340,10 @@ def test_partial_artifact_rejects_manifest_netcdf_metadata_conflicts(
         "hadron": "pion",
         "gfix": "CG",
         "bz_direction": "X",
+        "observable": "pion_quark_helicity_quasi_pdf",
+        "parton": "quark",
+        "current_operator": "gTg5_nonlocal",
+        "distribution_type": "helicity",
     }
     _write_partial_artifact(artifact_path, attrs=file_metadata)
     declared = {
