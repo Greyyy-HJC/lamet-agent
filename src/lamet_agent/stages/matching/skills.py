@@ -15,6 +15,11 @@ every quasi-PDF sample. The stage-owned scheme is ratio, hybrid, or msbar and
 must match the token in the exact declared kernel_id. Hybrid kernels use zs_fm
 and momentum_gev to form z_s P_z.
 
+The report integrates quasi and matched over the range this job actually matched and
+states no expected value: whether that integral is 1 depends on whether the matrix
+element was normalized at z=0 upstream. Report the numbers as numbers; a value near 1
+is not a passed check and a value away from 1 is not a failure.
+
 Two grids, both optional and both taken from the manifest. quasi_y_ls is the grid
 the kernel integrates over (its columns); it defaults to the grid the Fourier stage
 produced, must stay inside that grid's range, must not contain zero (the kernels
