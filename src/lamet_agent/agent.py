@@ -326,7 +326,7 @@ def _momentum_label(attrs: dict[str, Any], result: dict[str, Any]) -> str:
         initial = result.get("initial_momentum_gev", attrs.get("initial_momentum_gev"))
         final = result.get("final_momentum_gev", attrs.get("final_momentum_gev"))
         if (t_gev2 is None or xi is None) and initial is not None and final is not None:
-            t_gev2 = -(float(final) - float(initial)) ** 2
+            t_gev2 = (float(final) - float(initial)) ** 2
             denominator = float(initial) + float(final)
             xi = None if denominator == 0.0 else (float(initial) - float(final)) / denominator
         t_text = "n/a" if t_gev2 is None else f"{float(t_gev2):.2f}"

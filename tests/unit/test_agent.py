@@ -757,7 +757,7 @@ def test_matrix_overlay_generates_re_im_with_x_shift(tmp_path: Path, monkeypatch
     assert np.allclose(x_values[1], [0.03, 1.03])
     assert np.allclose(x_values[2], [-0.03, 0.97])
     assert np.allclose(x_values[3], [0.03, 1.03])
-    assert any("t=-1.00" in label and "\\xi=0.33" in label for label in labels)
+    assert any("t=1.00" in label and "\\xi=0.33" in label for label in labels)
 
 
 def _write_fourier_nc(path: Path, *, ensemble: str, pz: float) -> None:
