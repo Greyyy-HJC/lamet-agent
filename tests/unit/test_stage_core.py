@@ -44,7 +44,10 @@ def test_build_job_prompt_includes_job_and_effective_parameters() -> None:
 def test_stage_instructions_load_from_markdown(stage: str, expected: str) -> None:
     instruction = get_stage_instruction(stage)
     assert expected in instruction
-    assert "Stage skill:" in instruction
+    assert instruction.startswith("# ")
+    assert "## Basic Procedure" in instruction
+    assert "## Stage Skill" in instruction
+    assert "## Available Tools" in instruction
 
 
 def test_format_tool_observation_omits_ignored_args_for_llm() -> None:

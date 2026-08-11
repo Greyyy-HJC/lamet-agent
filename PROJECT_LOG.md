@@ -982,3 +982,16 @@
   in distributions, and added coverage for every registered stage.
 - Restored the review-stage instruction to the assembled prompt; its former
   `STAGE_INSTRUCTION` name was not consumed by the Python prompt loader.
+
+## 2026-08-11 (Structure stage prompt Markdown)
+
+- Added consistent stage titles and `Basic Procedure`, `Stage Skill`, and
+  `Available Tools` sections to every stage prompt for easier human review and
+  editing.
+- Added the previously implicit extrapolation tool catalog and covered the
+  shared Markdown structure across all registered stages.
+
+## 2026-08-11 (Mark prompt tool names as code)
+
+- Wrapped stage tool function names in Markdown inline code spans across prompt
+  procedures and tool catalogs for clearer human editing.
