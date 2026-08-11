@@ -239,6 +239,10 @@ def run_workflow(
     typer.echo(json.dumps(_cli_run_summary(result), indent=2))
 
 
-def entrypoint() -> None:
+def main() -> None:
     """Project console script entrypoint."""
     app()
+
+
+if __name__ == "__main__":
+    main()

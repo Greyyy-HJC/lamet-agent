@@ -1,4 +1,4 @@
-"""Stage-local guidance and validation for perturbative-matching jobs."""
+"""Stage-local validation for perturbative-matching jobs."""
 
 from __future__ import annotations
 
@@ -7,39 +7,6 @@ from typing import Any
 from lamet_agent.manifest import AnalysisManifest, StageJob, derive_job_kinematics
 from lamet_agent.manifest_params import merge_stage_params
 from lamet_agent.stages.matching.functions import is_hybrid_kernel, resolve_kernel_id
-
-
-STAGE_SKILL = """
-Perturbative matching applies the selected NLO kernel matrix independently to
-every quasi-PDF sample. The stage-owned scheme is ratio, hybrid, or msbar and
-must match the token in the exact declared kernel_id. Hybrid kernels use zs_fm
-and momentum_gev to form z_s P_z.
-
-The report integrates quasi and matched over the range this job actually matched and
-states no expected value: whether that integral is 1 depends on whether the matrix
-element was normalized at z=0 upstream. Report the numbers as numbers; a value near 1
-is not a passed check and a value away from 1 is not a failure.
-
-Two grids, both optional and both taken from the manifest. quasi_y_ls is the grid
-the kernel integrates over (its columns); it defaults to the grid the Fourier stage
-produced, must stay inside that grid's range, must not contain zero (the kernels
-carry a 1/y measure), and must be uniformly spaced. Setting it to anything else
-linearly interpolates every quasi sample onto it. lc_x_ls is the grid the matched
-PDF comes out on (the kernel's rows); it defaults to the quasi grid and is
-otherwise unconstrained -- it may contain zero and need not be uniform.
-""".strip()
-
-TOOL_CATALOG = {
-    "load_quasi_pdf": "Select the requested real/imaginary component from the job's in-memory or external Fourier input.",
-    "build_matching_kernel": "Build the manifest-selected NLO matching matrix.",
-    "apply_matching": "Apply the kernel sample by sample and write the job NetCDF to store['output'].",
-    "plot_matched_pdf": "Plot quasi and matched PDFs.",
-    "report_matching_result": "Regenerate an optional per-job English/Chinese report; the runner writes one stage report after all matching jobs.",
-}
-
-
-def tool_catalog() -> str:
-    return "\n".join(f"- {name}: {description}" for name, description in TOOL_CATALOG.items())
 
 
 def effective_matching_params(manifest: AnalysisManifest, job: StageJob) -> dict[str, Any]:

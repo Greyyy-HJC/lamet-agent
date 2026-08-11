@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from lamet_agent.cli import app
+from lamet_agent.__main__ import app
 from lamet_agent.planning import (
     PlanAgentState,
     _PlanAgentSession,

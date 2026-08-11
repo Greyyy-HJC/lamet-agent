@@ -972,3 +972,13 @@
   model ids, which reject custom sampling params with HTTP 400.
 - Kept `temperature: 0.0` for GPT-4o-class and DeepSeek models; covered both
   action and text completion request paths in unit tests.
+
+## 2026-08-11 (Move stage prompts to Markdown resources)
+
+- Consolidated each stage's instruction, strategy guidance, and tool catalog in
+  a stage-local `prompts.md`; `skills.py` now retains validation and parameter
+  helpers only.
+- Switched prompt assembly to packaged Markdown resources, included those files
+  in distributions, and added coverage for every registered stage.
+- Restored the review-stage instruction to the assembled prompt; its former
+  `STAGE_INSTRUCTION` name was not consumed by the Python prompt loader.

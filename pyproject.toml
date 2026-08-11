@@ -34,13 +34,14 @@ codex = [
 ]
 
 [project.scripts]
-lamet-agent = "lamet_agent.cli:entrypoint"
-
-[tool.setuptools]
-package-dir = {"" = "src"}
+lamet-agent = "lamet_agent.__main__:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["lamet_agent*"]
+
+[tool.setuptools.package-data]
+"*" = ["prompts.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

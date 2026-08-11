@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lamet_agent.cli import _cli_run_summary, _resolve_llm_config
+from lamet_agent.__main__ import _cli_run_summary, _resolve_llm_config
 
 
 def test_cli_run_summary_omits_actions_and_stage_results() -> None:

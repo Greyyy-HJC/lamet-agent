@@ -18,7 +18,7 @@ from matplotlib.legend import Legend
 
 pytest.importorskip("lsqfit")
 
-from lamet_agent.stages.correlator.skills import TOOL_CATALOG
+from lamet_agent.core.prompting import get_stage_instruction
 from lamet_agent.core.plotting import (
     FIT_LOG_YLIM_BOTTOM_FACTOR,
     FIT_LOG_YLIM_DATA_HIGH_NUM,
@@ -190,7 +190,9 @@ def test_stage_tools_expose_the_four_agentic_tools() -> None:
         "tune_bare_matrix",
         "fit_bare_matrix_grid",
     }
-    assert set(TOOL_CATALOG) == set(STAGE_TOOLS)
+    prompts = get_stage_instruction("correlator_analysis")
+    for tool in STAGE_TOOLS:
+        assert tool in prompts
 
 
 def test_terminal_tool_uses_bz_direction_and_removes_variant() -> None:
@@ -1604,7 +1606,7 @@ def test_tune_qda_ratio_soft_fails_when_no_common_feasible_candidate(
     # z=0 is dropped before fitting under nonlocal_bz0
     assert result["succeeded_counts_by_z"] == {"1": 1, "2": 1}
     assert "narrower tune_z_values" in result["retry_hint"]
-    assert "no_common_feasible_candidate" in TOOL_CATALOG["tune_bare_matrix"]
+    assert "no_common_feasible_candidate" in get_stage_instruction("correlator_analysis")
 
 
 def test_tune_bare_matrix_requires_tune_z_values(tmp_path) -> None:

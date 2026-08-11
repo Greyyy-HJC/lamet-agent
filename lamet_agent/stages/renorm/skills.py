@@ -1,4 +1,4 @@
-"""Stage-local skill guidance and validation for renormalization."""
+"""Stage-local validation for renormalization."""
 
 from __future__ import annotations
 
@@ -6,50 +6,6 @@ import math
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
 from lamet_agent.manifest_params import merge_stage_params
-
-
-STAGE_SKILL = """
-Renormalization consumes bare EnsembleData from the current job store.
-When normalization=true, the runner already divides each bare matrix element by
-its lattice z=0 value before any tool calls.
-
-Physical scheme and execution strategy are independent. scheme is ratio,
-hybrid, or msbar; strategy is external_denominator or self_renormalization.
-
-The external_denominator strategy uses roles target and denominator. ratio
-divides them pointwise on the complete z grid. hybrid additionally requires
-flat job/defaults parameter zs_fm; m0_gev and delta_m_gev remain in
-scheme_parameters.
-The self_renormalization strategy combines a full-z self-renormalization fit with
-short-distance MSbar matching to fix the finite renormalization. It splits into:
-- scheme_parameters.LambdaQCD_gev is required and is used by the
-  self-renormalization ansatz; use one value throughout the fit/apply chain.
-- fit job inputs {reference}: require scheme_parameters.d; fit the reference-operator m0 from
-  short-distance g(z), use one discretization family, and never extrapolate
-  beyond the reference grid. Writes store['output']/store['zR'].
-- ratio/msbar apply inputs are {target, zR}; ratio applies H/(zR*ZMSbar)
-  while msbar applies H/zR.
-- hybrid apply inputs are {target, denominator, zR}; short distances use
-  target/denominator and long distances use target/(zR*ZT), with constant ZT
-  fixed at zs_fm for continuity.
-- Optional scheme_parameters.d / m0_gev remap upstream zR (e.g. PDF-fit factor
-  to DA d/m0).
-  scheme_parameters.z_coverage_policy extrapolates the single-family
-  long-distance f1 by default when the target
-  extends past zR; strict and intersection remain explicit alternatives.
-""".strip()
-
-TOOL_CATALOG = {
-    "apply_ratio_scheme_renormalization": "external_denominator strategy: consume target/denominator and apply the ratio or hybrid scheme.",
-    "fit_self_renormalization_factor": "self_renormalization fit job: fit zR using scheme_parameters (including required LambdaQCD_gev and d); short-distance MSbar matching fixes m0.",
-    "apply_self_renormalization": "self_renormalization apply job: apply the declared ratio, hybrid, or msbar scheme; optional scheme_parameters d/m0_gev remap zR.",
-    "plot_self_renormalization_diagnostics": "self_renormalization: fit-job panels, or apply-job zmsbar_compare (+ stage-level discrete_effect once).",
-    "plot_renormalized_matrix_element": "Plot store['output'] to PDF (apply jobs).",
-}
-
-
-def tool_catalog() -> str:
-    return "\n".join(f"- {name}: {description}" for name, description in TOOL_CATALOG.items())
 
 
 def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str]:

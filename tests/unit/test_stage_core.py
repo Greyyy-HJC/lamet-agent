@@ -1,4 +1,10 @@
-from lamet_agent.core.prompting import build_stage_static_prompt, format_tool_observation
+import pytest
+
+from lamet_agent.core.prompting import (
+    build_stage_static_prompt,
+    format_tool_observation,
+    get_stage_instruction,
+)
 from lamet_agent.manifest import AnalysisManifest
 
 
@@ -22,6 +28,23 @@ def test_build_job_prompt_includes_job_and_effective_parameters() -> None:
     assert "Current job: ca" in static
     assert '"nstate": [2]' in static
     assert "inspect_correlator_scale" in static
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected"),
+    [
+        ("correlator_analysis", "inspect_correlator_scale"),
+        ("renormalization", "apply_self_renormalization"),
+        ("fourier_transform", "run_fourier_transform"),
+        ("perturbative_matching", "build_matching_kernel"),
+        ("extrapolation", "run_systematics_budget"),
+        ("review", "Generate one LLM-written scientific review"),
+    ],
+)
+def test_stage_instructions_load_from_markdown(stage: str, expected: str) -> None:
+    instruction = get_stage_instruction(stage)
+    assert expected in instruction
+    assert "Stage skill:" in instruction
 
 
 def test_format_tool_observation_omits_ignored_args_for_llm() -> None:

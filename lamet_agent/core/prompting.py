@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from importlib import import_module
+from importlib.resources import files
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
 
@@ -26,35 +26,13 @@ ACTION_OUTPUT_HINT = (
 )
 
 
-def _stage_module(stage: str, kind: str):
+def get_stage_instruction(stage: str) -> str:
+    """Resolve one stage instruction from its packaged Markdown resource."""
     package_name = resolve_stage_package(stage)
     if not package_name:
-        return None
-    return import_module(f"lamet_agent.stages.{package_name}.{kind}")
-
-
-def get_stage_instruction(stage: str) -> str:
-    """Resolve one stage instruction text from stage prompt modules."""
-    module = _stage_module(stage, "prompts")
-    if module is None:
         return "Run this stage carefully."
-    return getattr(module, "STAGE_PROMPT", "Run this stage carefully.")
-
-
-def get_stage_skill(stage: str) -> str:
-    """Resolve the stage skill guidance and tool catalog, if available."""
-    module = _stage_module(stage, "skills")
-    if module is None:
-        return ""
-    skill = getattr(module, "STAGE_SKILL", "")
-    catalog_fn = getattr(module, "tool_catalog", None)
-    catalog = catalog_fn() if callable(catalog_fn) else ""
-    parts = []
-    if skill:
-        parts.append(f"Stage skill:\n{skill}")
-    if catalog:
-        parts.append(f"Available tools:\n{catalog}")
-    return "\n\n".join(parts)
+    prompt_file = files(f"lamet_agent.stages.{package_name}").joinpath("prompts.md")
+    return prompt_file.read_text(encoding="utf-8").strip()
 
 
 def build_stage_static_prompt(
@@ -69,7 +47,6 @@ def build_stage_static_prompt(
 ) -> str:
     """Build the static context for one stage job."""
     stage_prompt = get_stage_instruction(stage)
-    stage_skill = get_stage_skill(stage)
     correlators = [
         item.model_dump()
         for item in manifest.correlators
@@ -90,7 +67,6 @@ def build_stage_static_prompt(
         f"Tools allowed for this job: {json.dumps(allowed_tool_names or [])}\n"
         "Do not call tools outside this job-specific list.\n\n"
         f"Stage instruction: {stage_prompt}\n\n"
-        f"{stage_skill}\n\n"
         f"{ACTION_OUTPUT_HINT}\n"
     )
 

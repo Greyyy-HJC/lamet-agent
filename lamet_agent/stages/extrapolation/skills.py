@@ -16,5 +16,3 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     if not value:
         return ["An extrapolation job requires at least one perturbative_matching input."]
     return []
-
-STAGE_SKILL = "Fit matched light-cone distributions to IMF and/or continuum limits."

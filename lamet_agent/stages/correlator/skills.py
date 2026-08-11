@@ -1,73 +1,9 @@
-"""Stage-local skill guidance and validation for correlator analysis."""
+"""Stage-local validation for correlator analysis."""
 
 from __future__ import annotations
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
 from lamet_agent.manifest_params import merge_stage_params
-
-
-STAGE_SKILL = """
-Correlator-analysis physics:
-- Fit the symmetric 2pt correlator only in the first half of the lattice.
-- Form 3pt/2pt ratios after resampling both correlators with shared indices.
-- fit_strategy selects joint (2pt+ratio together), chained (2pt then anchored
-  ratio), or independent (ratio/FH/qda_ratio alone, no 2pt fit).
-- fit_scope selects 3pt_ratio, FH, 3pt_ratio+FH, or qda_ratio. FH is
-  constructed by summing ratio data over tau after pt3_tau_cuts and finite
-  differencing neighboring tsep values.
-- The optional fitting_form selects the default Breit ratio or a NonBreit ratio
-  with initial/final 2pt slices selected by their discrete momentum labels.
-- Tune data windows on sample-average data at multiple representative z values
-  chosen by the agent. fit_bare_matrix_grid then keeps one shared window and
-  either selects one fit function on sample-average data or, when model_average
-  is enabled, averages nstate/prior_width fit functions sample by sample.
-- When manifest windows are omitted, generate bounded 2pt candidates from the
-  first-half resampled signal and 3pt candidates from the available tsep grid.
-  Explicit pt2_windows, pt3_windows, and pt3_tau_cuts remain exact overrides.
-- A shared data window must pass sample-average fits at every tune z the
-  agent selects; a good chi2/dof at only the smallest tune z is not sufficient.
-- Data-window candidates with different pt2/pt3 points should not be ranked by
-  raw logGBF. Choose windows after the Q and n_data > n_params gates, favoring
-  cross-z feasibility, good chi2/dof, and more data points when chi2/dof values
-  are comparable.
-- 3pt/FH bare matrix elements use O00/(2*E0). qda_ratio uses O00/z0 with an
-  ordinary local denominator, or O00/zprime0 when the qDA operator's
-  bz=0 correlator supplies the denominator. Both outputs are invariant under
-  2pt rescaling.
-- qda_ratio uses a nonlocal qDA 2pt numerator and optionally an ordinary
-  local-source/local-sink 2pt denominator. Without the ordinary input, bz=0
-  of the qDA input supplies the denominator and is fit with distinct source
-  and sink overlaps z_n*zprime_n. In that nonlocal_bz0 mode only, z=0 is not
-  fitted (ratio is identically one) and the output NetCDF assigns bare ME=1
-  at z=0; with a local denominator, z=0 is fitted normally. bT and bz are data
-  selectors, never operator name patterns. qda_ratio has no 3pt, tsep,
-  tau_cut, or current insertion.
-""".strip()
-
-TOOL_CATALOG = {
-    "inspect_correlator_scale": "Inspect the selected job's 2pt magnitude.",
-    "tune_ground_state": (
-        "Optionally scan 2pt-only windows and model-average the selected "
-        "ground-state fits."
-    ),
-    "tune_bare_matrix": (
-        "Scan every configured nstate, prior_width, fit strategy, and explicit or automatic fit window "
-        "at LLM-supplied tune_z_values; return cross-z feasibility and "
-        "recommended_robust_index. For qda_ratio, when no shared window works at "
-        "every tune z, returns status='no_common_feasible_candidate' with "
-        "succeeded_counts_by_z and retry_hint instead of raising. For "
-        "nonlocal_bz0, z=0 is dropped from tune_z_values automatically."
-    ),
-    "fit_bare_matrix_grid": (
-        "Apply one shared data window, optionally model-average fit functions per sample, "
-        "and write store['output']; the runner writes one stage report with fit_logs links. "
-        "For nonlocal_bz0 qda_ratio, skips fitting z=0 and assigns bare ME=1 there."
-    ),
-}
-
-
-def tool_catalog() -> str:
-    return "\n".join(f"- {name}: {description}" for name, description in TOOL_CATALOG.items())
 
 
 def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str]:

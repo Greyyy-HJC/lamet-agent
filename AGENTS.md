@@ -97,7 +97,7 @@ Package modules:
 - `src/lamet_agent/core/trace.py`: optional ReAct-style stdout trace (`--verbose`).
 - `src/lamet_agent/core/data.py`: typed ensemble containers and cross-stage data helpers.
 - `src/lamet_agent/core/plotting.py`: shared plotting conventions and helpers.
-- `src/lamet_agent/stages/`: stage packages, each with `functions.py`, `prompts.py`, and `skills.py`:
+- `src/lamet_agent/stages/`: stage packages, each with `functions.py`, `prompts.md`, and `skills.py`:
   - `correlator` (`correlator_analysis`)
   - `renorm` (`renormalization`)
   - `fourier` (`fourier_transform`)
@@ -113,15 +113,15 @@ Package modules:
 1. Add the stage id to `StageId` in `manifest.py`, `STAGE_TO_PACKAGE` in `core/stages.py`, and `STAGE_PARAM_CONTRACTS` in `manifest_params.py`.
 2. Create `src/lamet_agent/stages/<package>/` with:
    - `functions.py`: stage tools and a `STAGE_TOOLS` dict mapping tool names to callables `(store, **kwargs) -> dict`.
-   - `prompts.py`: stage instruction text and action protocol for the LLM.
-   - `skills.py`: `STAGE_SKILL` strategy text, `tool_catalog()`, and `validate_stage_inputs(manifest, job)`.
+   - `prompts.md`: stage instruction text, strategy guidance, and tool catalog for the LLM.
+   - `skills.py`: `validate_stage_inputs(manifest, job)` and related stage-local parameter resolution.
 3. Register tools only through `STAGE_TOOLS`; `core/tools.resolve_stage_tools()` imports them dynamically.
 4. Extend `core/prompting.py` if the new stage needs shared prompt fragments.
 5. Add unit tests under `tests/unit/` and, when appropriate, extend a dedicated example manifest.
 
 ## Stage Package Hygiene
 
-- Keep stage packages centered on `functions.py`, `prompts.py`, and `skills.py`.
+- Keep stage packages centered on `functions.py`, `prompts.md`, and `skills.py`.
 - Put stage tools and their tightly coupled private helpers in `functions.py` instead of creating one-off implementation modules.
 - Add another stage module only for a coherent, independently maintained responsibility that would otherwise obscure the stage contract, such as report generation.
 - Keep dependencies between stage modules one-way; do not introduce circular or bidirectional implementation imports.
