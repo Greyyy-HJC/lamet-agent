@@ -307,8 +307,119 @@ def test_openai_request_targets_openai_endpoint_and_model(monkeypatch) -> None:
 
     assert captured["url"] == "https://api.openai.com/v1/chat/completions"
     assert captured["body"]["model"] == "gpt-4o-mini"
+    assert captured["body"]["temperature"] == 0.0
     assert captured["auth"] == "Bearer sk-test"
     assert action["action"] == "finish"
+
+
+def test_supports_temperature_for_common_model_ids() -> None:
+    assert llm.supports_temperature("gpt-4o-mini")
+    assert llm.supports_temperature("gpt-4o")
+    assert llm.supports_temperature("deepseek-v4-flash")
+    assert not llm.supports_temperature("gpt-5.6-luna")
+    assert not llm.supports_temperature("GPT-5.6-Sol")
+    assert not llm.supports_temperature("o3-mini")
+    assert not llm.supports_temperature("o1-2024-12-17")
+    assert not llm.supports_temperature("o4-mini")
+
+
+def test_post_chat_completion_omits_temperature_for_gpt5(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"choices": [{"message": {"content": "{\"action\":\"finish\",\"reason\":\"done\"}"}}]}
+            ).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+
+    action = llm._post_chat_completion(
+        messages=[{"role": "user", "content": "finish"}],
+        api_key="sk-test",
+        model_name="gpt-5.6-luna",
+        base_url="https://api.openai.com/v1",
+        provider="openai",
+    )
+
+    assert action["action"] == "finish"
+    assert "temperature" not in captured["body"]
+    assert captured["body"]["model"] == "gpt-5.6-luna"
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+
+
+def test_post_chat_text_completion_omits_temperature_for_o_series(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps({"choices": [{"message": {"content": "plain text"}}]}).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+
+    text = llm._post_chat_text_completion(
+        messages=[{"role": "user", "content": "hi"}],
+        api_key="sk-test",
+        model_name="o3-mini",
+        base_url="https://api.openai.com/v1",
+        provider="openai",
+    )
+
+    assert text == "plain text"
+    assert "temperature" not in captured["body"]
+    assert captured["body"]["model"] == "o3-mini"
+
+
+def test_post_chat_completion_keeps_temperature_for_deepseek(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"choices": [{"message": {"content": "{\"action\":\"finish\",\"reason\":\"done\"}"}}]}
+            ).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+
+    llm._post_chat_completion(
+        messages=[{"role": "user", "content": "finish"}],
+        api_key="sk-test",
+        model_name="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
+        provider="deepseek",
+    )
+
+    assert captured["body"]["temperature"] == 0.0
 
 
 def test_parse_api_model_accepts_provider_and_model_id() -> None:

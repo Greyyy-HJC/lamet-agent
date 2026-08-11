@@ -965,3 +965,10 @@
   and review-stage language behavior.
 - Synchronized plan-mode defaults, provenance gaps, prompts, examples, and unit
   coverage without adding a second observable-inference path.
+
+## 2026-08-11 (Omit temperature for OpenAI GPT-5+/o-series)
+
+- Chat Completions requests no longer send `temperature` for GPT-5+ and o-series
+  model ids, which reject custom sampling params with HTTP 400.
+- Kept `temperature: 0.0` for GPT-4o-class and DeepSeek models; covered both
+  action and text completion request paths in unit tests.

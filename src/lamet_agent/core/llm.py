@@ -60,6 +60,39 @@ def provider_config(provider: str) -> dict[str, str] | None:
     return PROVIDERS.get(provider)
 
 
+def supports_temperature(model_name: str) -> bool:
+    """Return whether chat-completions requests may send ``temperature``.
+
+    OpenAI GPT-5+ and o-series reasoning models reject custom sampling params
+    (400). DeepSeek and GPT-4o-class models still accept ``temperature: 0``.
+    """
+    name = model_name.strip().lower()
+    if name.startswith("gpt-5"):
+        return False
+    if name.startswith(("o1", "o3", "o4")):
+        return False
+    return True
+
+
+def _chat_completion_body(
+    *,
+    model_name: str,
+    messages: list[dict[str, str]],
+    response_format: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Build a chat-completions request body, omitting unsupported sampling params."""
+    body: dict[str, Any] = {
+        "model": model_name,
+        "messages": messages,
+        "stream": False,
+    }
+    if response_format is not None:
+        body["response_format"] = response_format
+    if supports_temperature(model_name):
+        body["temperature"] = 0.0
+    return body
+
+
 def parse_api_model(spec: str) -> tuple[str, str]:
     """Parse ``provider/model_id`` or shorthand ``provider`` into provider and model name."""
     text = spec.strip()
@@ -185,13 +218,11 @@ def _post_chat_completion(
     last_parse_error: ValueError | None = None
 
     for parse_attempt in range(3):
-        body = {
-            "model": model_name,
-            "messages": request_messages,
-            "response_format": {"type": "json_object"},
-            "temperature": 0.0,
-            "stream": False,
-        }
+        body = _chat_completion_body(
+            model_name=model_name,
+            messages=request_messages,
+            response_format={"type": "json_object"},
+        )
         request = urllib.request.Request(
             url,
             data=json.dumps(body).encode("utf-8"),
@@ -252,12 +283,7 @@ def _post_chat_text_completion(
 ) -> str:
     url = base_url.rstrip("/") + "/chat/completions"
     label = provider.capitalize()
-    body = {
-        "model": model_name,
-        "messages": messages,
-        "temperature": 0.0,
-        "stream": False,
-    }
+    body = _chat_completion_body(model_name=model_name, messages=messages)
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
