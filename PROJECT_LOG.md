@@ -1015,6 +1015,12 @@
 - Passed all 189 path-adjacent planning, tools, CLI, and schema tests; validated
   every example manifest, checked formal example kernel paths on disk, and built
   a wheel containing the root package and stage Markdown resources.
-- The broader 529-test audit left three failures in untouched correlator-fit,
-  matching-report, and review-ranking behavior; they are unrelated to the
+- A follow-up parent-path audit traced the review-ranking failure to a stale
+  source-layout depth assumption in the literature database lookup. Replaced
+  that fixed `parents[4]` lookup with repository/manifest-root discovery and
+  restored literature injection into the review LLM context.
+- Replaced personal absolute paths in the papers README, harvesting state
+  metadata, and annotated manifests with repository-relative paths.
+- The broader 529-test audit now leaves two failures in untouched
+  correlator-fit and matching-report behavior; they are unrelated to the
   package-layout migration.

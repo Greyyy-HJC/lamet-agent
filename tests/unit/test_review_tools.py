@@ -4,7 +4,11 @@ import sqlite3
 from pathlib import Path
 
 from lamet_agent.manifest import AnalysisManifest
-from lamet_agent.stages.review.functions import hybrid_zs_consistency_checks, write_review_from_manifest
+from lamet_agent.stages.review.functions import (
+    _resolve_literature_db_path,
+    hybrid_zs_consistency_checks,
+    write_review_from_manifest,
+)
 
 
 def _manifest(*, matching_zs: float = 0.2, renorm_zs: float = 0.2) -> AnalysisManifest:
@@ -69,6 +73,19 @@ def _manifest(*, matching_zs: float = 0.2, renorm_zs: float = 0.2) -> AnalysisMa
             },
         }
     )
+
+
+def test_literature_db_fallback_does_not_assume_package_depth(tmp_path: Path, monkeypatch) -> None:
+    repository = tmp_path / "repository"
+    db_path = repository / "papers" / "data" / "lamet_arxiv.sqlite3"
+    db_path.parent.mkdir(parents=True)
+    db_path.touch()
+    module_path = repository / "nested" / "lamet_agent" / "stages" / "review" / "functions.py"
+    monkeypatch.setattr("lamet_agent.stages.review.functions.__file__", str(module_path))
+    manifest = _manifest()
+    manifest._root_directory = tmp_path / "external-run-root"
+
+    assert _resolve_literature_db_path(manifest) == db_path
 
 
 def test_hybrid_zs_consistency_follows_dag_and_job_overrides() -> None:
@@ -224,7 +241,8 @@ def test_review_literature_ranking_prefers_manifest_anchor_matches(tmp_path: Pat
         prompts.append("\n".join(message["content"] for message in kwargs["messages"]))
         return "# LLM Review"
 
-    db_path = tmp_path / "lamet.sqlite3"
+    db_path = tmp_path / "papers" / "data" / "lamet_arxiv.sqlite3"
+    db_path.parent.mkdir(parents=True)
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             "CREATE TABLE papers ("
@@ -254,13 +272,9 @@ def test_review_literature_ranking_prefers_manifest_anchor_matches(tmp_path: Pat
             ],
         )
 
-    real_connect = sqlite3.connect
-    monkeypatch.setattr(
-        "lamet_agent.stages.review.functions.sqlite3.connect",
-        lambda *_args, **kwargs: real_connect(db_path, **kwargs),
-    )
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
     manifest = _manifest()
+    manifest._root_directory = tmp_path
     manifest.stages["review"].defaults["literature"] = True
     manifest.stages["review"].defaults["literature_max_papers"] = 1
     write_review_from_manifest(manifest, output_dir=tmp_path / "en")

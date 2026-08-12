@@ -42,10 +42,10 @@
 
 ## 3. 常用命令
 
-在本目录下运行：
+从仓库根目录进入文章库目录：
 
 ```bash
-cd /Users/zhaodianjun/lamet-agent/papers
+cd papers
 ```
 
 ### 3.1 查看当前库状态

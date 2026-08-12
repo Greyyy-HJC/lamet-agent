@@ -27,7 +27,7 @@
 
   "metadata": {
     "run_id": "sample_run_id",
-    "root_directory": "~/lamet-agent", // paths below resolve from this directory
+    "root_directory": "..", // resolve paths from the repository root
     "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
     "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"

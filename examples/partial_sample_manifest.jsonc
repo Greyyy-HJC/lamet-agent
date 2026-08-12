@@ -26,7 +26,7 @@
   // "defaults": {"literature": true, "literature_max_papers": 4}.
   "metadata": {
     "run_id": "workflow_cg_qpdf_partial_from_fourier",
-    "root_directory": "~/lamet-agent",
+    "root_directory": "..", // resolve paths from the repository root
     "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
     "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"

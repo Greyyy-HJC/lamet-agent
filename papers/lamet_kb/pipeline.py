@@ -19,8 +19,8 @@ def write_state_file(connection, extra: Dict[str, Any]) -> None:
         "last_run_mode": storage.get_state(connection, "last_run_mode"),
         "last_completed_at": storage.get_state(connection, "last_completed_at"),
         "last_jsonl_export": storage.get_state(connection, "last_jsonl_export"),
-        "db_path": str(settings.DB_PATH),
-        "jsonl_path": str(settings.JSONL_PATH),
+        "db_path": str(settings.DB_PATH.relative_to(settings.PROJECT_ROOT)),
+        "jsonl_path": str(settings.JSONL_PATH.relative_to(settings.PROJECT_ROOT)),
     }
     state.update(extra)
     with settings.STATE_PATH.open("w", encoding="utf-8") as handle:

@@ -24,6 +24,18 @@ STAGE_REPORTS = {
     "extrapolation": "extrapolation_report.md",
 }
 
+_LITERATURE_DB_RELATIVE_PATH = Path("papers") / "data" / "lamet_arxiv.sqlite3"
+
+
+def _resolve_literature_db_path(manifest: AnalysisManifest) -> Path:
+    """Find the repository-local literature database without assuming package depth."""
+    candidates = [manifest.root_directory / _LITERATURE_DB_RELATIVE_PATH]
+    candidates.extend(
+        parent / _LITERATURE_DB_RELATIVE_PATH
+        for parent in Path(__file__).resolve().parents
+    )
+    return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+
 
 def _effective_params(manifest: AnalysisManifest, stage: str, job: Any) -> dict[str, Any]:
     return merge_stage_params(manifest.stages[stage].defaults, job.params)
@@ -273,7 +285,7 @@ def write_review_from_manifest(
         ]
         materials.append(item)
     literature_context = []
-    kb_path = Path(__file__).resolve().parents[4] / "papers" / "data" / "lamet_arxiv.sqlite3"
+    kb_path = _resolve_literature_db_path(manifest)
     if use_literature and kb_path.exists():
         manifest_json = manifest.model_dump(mode="json")
         metadata = manifest_json.get("metadata", {})
