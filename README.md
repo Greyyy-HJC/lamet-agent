@@ -36,10 +36,10 @@ hybrid-self-renormalization workflows within the job DAG.
 │   │   └── generate_fake_data.py
 │   ├── sample_manifest.jsonc
 │   └── pion_pdf_cg_manifest.json
-├── src/lamet_agent/
+├── lamet_agent/
 │   ├── __init__.py
+│   ├── __main__.py
 │   ├── agent.py
-│   ├── cli.py
 │   ├── core/
 │   │   ├── llm.py
 │   │   ├── prompting.py
@@ -472,7 +472,7 @@ stage/job parameter.
       {
         "stage": "renormalization",
         "kernel_id": "ZMSbar_da",
-        "kernel_path": "src/lamet_agent/kernels.py",
+        "kernel_path": "lamet_agent/kernels.py",
         "kernel_parameters": { "mu": 2.0 }
       }
     ]
@@ -797,58 +797,59 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 
 ## File Responsibilities
 
-- `src/lamet_agent/manifest.py`
+- `lamet_agent/manifest.py`
   - Defines the `metadata`, source `inputs`, and stage-job schema.
   - Validates ids, ordered job references, and root-relative paths.
-- `src/lamet_agent/core/stages.py`
+- `lamet_agent/core/stages.py`
   - Maps stage IDs to concrete stage packages.
-- `src/lamet_agent/core/data.py`
+- `lamet_agent/core/data.py`
   - Defines typed data containers (`EnsembleInfo`, `EnsembleData`) for resampled
     lattice data.
   - Serializes stage artifacts with `EnsembleData.to_netcdf` /
     `EnsembleData.from_netcdf` (NETCDF4, complex-aware).
   - Provides common data operations (resampling, coordinate transforms, and
     cross-stage arithmetic/alignment helpers).
-- `src/lamet_agent/core/prompting.py`
+- `lamet_agent/core/prompting.py`
   - Stores `SYSTEM_PROMPT` and shared output-format hint.
   - Builds static context once per job; incremental tool observations are
     appended as separate user turns in multi-turn LLM sessions.
-- `src/lamet_agent/core/llm.py`
+- `lamet_agent/core/llm.py`
   - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), `codex`
     (Codex Python SDK), and `api` (OpenAI-compatible HTTP via `PROVIDERS`).
   - `parse_api_model()` splits `provider/model_id` CLI specs; `PROVIDERS` holds each
     provider's base URL, default model, and API-key env var; shared HTTP lives in
     `_post_chat_completion` (add new OpenAI-compatible providers to `PROVIDERS`).
-- `src/lamet_agent/core/tools.py`
+- `lamet_agent/core/tools.py`
   - Resolves a stage's `STAGE_TOOLS` registry for the agent loop.
   - `prepare_tool_args()` / `filter_tool_kwargs()` normalize LLM tool calls
     (manifest paths, plot `save_path` under `artifacts/`).
   - `resolve_plot_save_path()` keeps plots under the manifest's stage artifact directory.
-- `src/lamet_agent/manifest_params.py`
+- `lamet_agent/manifest_params.py`
   - Owns the central `STAGE_PARAM_CONTRACTS` registry and recursively rejects
     unknown `defaults` / `params` keys before DAG execution.
-- `src/lamet_agent/core/trace.py`
+- `lamet_agent/core/trace.py`
   - Optional ReAct-style stdout trace (`--verbose`).
   - Default (non-verbose) runs print a LaMET Agent ASCII banner and one line per
     job (`Stage: … | Job: …`) before stage tool progress output.
-- `src/lamet_agent/core/banner.py`
+- `lamet_agent/core/banner.py`
   - GRID-style startup banner and job header formatting for quiet CLI runs.
-- `src/lamet_agent/core/plotting.py`
+- `lamet_agent/core/plotting.py`
   - Self-contained publication-style plotting (default plot, 2pt fit-on-data).
-- `src/lamet_agent/agent.py`
+- `lamet_agent/agent.py`
   - `run_agent()` executes `metadata.stages`, runs each declared job with an
     isolated store, and registers `store["output"]` under the job id.
-- `src/lamet_agent/cli.py`
-  - Exposes `validate` and `run` commands.
+- `lamet_agent/__main__.py`
+  - Exposes the `plan`, `validate`, and `run` commands and backs both
+    `python -m lamet_agent` and the `lamet-agent` console script.
   - `run` requires `--backend` (`mock`/`external`/`api`/`codex`), accepts
     `--model model_id` (for `codex`) or `--model provider/model_id` (for `api`),
     `--verbose` / `-v` (ReAct-style trace
     to stdout), `--actions-path` (for `external`), and `--api-key-file`/`--base-url`
     (for `api`), plus `--report_language en|ch` to select the single report language
     written for each stage.
-- `src/lamet_agent/kernels.py`
+- `lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
-- `src/lamet_agent/stages/*`
+- `lamet_agent/stages/*`
   - Each stage owns `prompts.md`, `validation.py`, `functions.py`, and, when it
     writes a report, `reporting.py`.
   - `prompts.md` contains the stage instruction, strategy guidance, and tool catalog.

@@ -796,7 +796,7 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
                     {
                         "stage": "renormalization",
                         "kernel_id": "ZMSbar_da",
-                        "kernel_path": "src/lamet_agent/kernels.py",
+                        "kernel_path": "lamet_agent/kernels.py",
                         "kernel_parameters": {"mu": 2.0},
                     }
                 ],

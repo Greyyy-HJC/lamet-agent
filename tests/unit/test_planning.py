@@ -32,8 +32,8 @@ from lamet_agent.stages.correlator.functions import _read_2pt, _read_3pt
 
 
 def _write_kernel(root: Path) -> None:
-    (root / "src" / "lamet_agent").mkdir(parents=True)
-    (root / "src" / "lamet_agent" / "kernels.py").write_text("# test kernel\n", encoding="utf-8")
+    (root / "lamet_agent").mkdir(parents=True)
+    (root / "lamet_agent" / "kernels.py").write_text("# test kernel\n", encoding="utf-8")
 
 
 def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
@@ -69,7 +69,7 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
                 {
                     "stage": "matching",
                     "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
-                    "kernel_path": "src/lamet_agent/kernels.py",
+                    "kernel_path": "lamet_agent/kernels.py",
                     "kernel_parameters": {},
                 }
             ],
@@ -209,7 +209,7 @@ def test_planning_distinguishes_self_renormalization_fit_jobs(tmp_path: Path) ->
     payload["inputs"]["kernels"] = [{
         "stage": "renormalization",
         "kernel_id": "ZMSbar_pdf",
-        "kernel_path": "src/lamet_agent/kernels.py",
+        "kernel_path": "lamet_agent/kernels.py",
         "kernel_parameters": {},
     }]
     payload["stages"]["renormalization"] = {
@@ -858,7 +858,7 @@ def test_stage_parameter_gap_answer_uses_matching_question_id(tmp_path: Path) ->
         {"id": "ft", "stage": "fourier_transform", "path": "ft.nc", "momentum": "PX1PY0PZ0", "volume": "S16T5", "lattice_spacing_fm": 0.1}
     ]
     payload["inputs"]["kernels"] = [
-        {"stage": "perturbative_matching", "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "kernel_path": "src/lamet_agent/kernels.py"}
+        {"stage": "perturbative_matching", "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "kernel_path": "lamet_agent/kernels.py"}
     ]
     payload["stages"] = {
         "renormalization": {"defaults": {"scheme": "hybrid", "strategy": "external_denominator"}, "jobs": [{"id": "rn", "inputs": {"target": "ca_p1", "denominator": "ca_p0"}}]},

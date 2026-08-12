@@ -1003,3 +1003,18 @@
   `prompts.md`.
 - Updated runtime imports, tests, and repository documentation for the new
   module name without changing validation behavior.
+
+## 2026-08-11 (Synchronize root package layout references)
+
+- Updated current documentation and the repository module maps from the former
+  `src/lamet_agent/` layout to the root-level `lamet_agent/` package.
+- Corrected example manifests and unit-test fixtures so `kernel_path` resolves
+  to `lamet_agent/kernels.py` from the repository root.
+- Documented `lamet_agent/__main__.py` as the current CLI implementation and
+  verified the root-package setuptools configuration and editable install.
+- Passed all 189 path-adjacent planning, tools, CLI, and schema tests; validated
+  every example manifest, checked formal example kernel paths on disk, and built
+  a wheel containing the root package and stage Markdown resources.
+- The broader 529-test audit left three failures in untouched correlator-fit,
+  matching-report, and review-ranking behavior; they are unrelated to the
+  package-layout migration.

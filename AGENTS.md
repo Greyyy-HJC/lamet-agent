@@ -30,7 +30,7 @@ Touch only what is required for the current task.
 
 - Do not refactor unrelated files without an explicit request.
 - Preserve existing style and conventions in touched files.
-- Keep reusable logic in `src/lamet_agent/`; keep `examples/` scripts as thin wrappers.
+- Keep reusable logic in `lamet_agent/`; keep `examples/` scripts as thin wrappers.
 - Add comments only where logic is non-obvious.
 
 ## Goal-Driven Execution
@@ -73,9 +73,9 @@ Top-level layout:
 ├── examples/
 │   ├── fake_data/generate_fake_data.py
 │   └── pion_pdf_cg_manifest.json
-├── src/lamet_agent/
+├── lamet_agent/
+│   ├── __main__.py
 │   ├── agent.py
-│   ├── cli.py
 │   ├── kernels.py
 │   ├── manifest.py
 │   ├── core/
@@ -85,19 +85,19 @@ Top-level layout:
 
 Package modules:
 
-- `src/lamet_agent/cli.py`: CLI for `validate` and `run`.
-- `src/lamet_agent/agent.py`: stage/job DAG runner and per-job LLM tool loop.
-- `src/lamet_agent/manifest.py`: `metadata`/`inputs`/`stages` schema, path resolution, and DAG validation.
-- `src/lamet_agent/manifest_params.py`: central `STAGE_PARAM_CONTRACTS` registry and recursive stage `defaults`/job `params` validation.
-- `src/lamet_agent/kernels.py`: built-in matching kernels.
-- `src/lamet_agent/core/stages.py`: stage-id → package routing.
-- `src/lamet_agent/core/tools.py`: resolves `STAGE_TOOLS`, prepares tool args, plot paths under `artifacts/`.
-- `src/lamet_agent/core/llm.py`: `LlmSession` backends (`mock`, `external`, `api`, `codex`); OpenAI-compatible HTTP providers in `PROVIDERS`; `parse_api_model()` for `provider/model_id` CLI specs.
-- `src/lamet_agent/core/prompting.py`: system prompt and per-stage static context assembly.
-- `src/lamet_agent/core/trace.py`: optional ReAct-style stdout trace (`--verbose`).
-- `src/lamet_agent/core/data.py`: typed ensemble containers and cross-stage data helpers.
-- `src/lamet_agent/core/plotting.py`: shared plotting conventions and helpers.
-- `src/lamet_agent/stages/`: stage packages, each with `functions.py`, `prompts.md`, and `validation.py`:
+- `lamet_agent/__main__.py`: CLI for `plan`, `validate`, and `run`.
+- `lamet_agent/agent.py`: stage/job DAG runner and per-job LLM tool loop.
+- `lamet_agent/manifest.py`: `metadata`/`inputs`/`stages` schema, path resolution, and DAG validation.
+- `lamet_agent/manifest_params.py`: central `STAGE_PARAM_CONTRACTS` registry and recursive stage `defaults`/job `params` validation.
+- `lamet_agent/kernels.py`: built-in matching kernels.
+- `lamet_agent/core/stages.py`: stage-id → package routing.
+- `lamet_agent/core/tools.py`: resolves `STAGE_TOOLS`, prepares tool args, plot paths under `artifacts/`.
+- `lamet_agent/core/llm.py`: `LlmSession` backends (`mock`, `external`, `api`, `codex`); OpenAI-compatible HTTP providers in `PROVIDERS`; `parse_api_model()` for `provider/model_id` CLI specs.
+- `lamet_agent/core/prompting.py`: system prompt and per-stage static context assembly.
+- `lamet_agent/core/trace.py`: optional ReAct-style stdout trace (`--verbose`).
+- `lamet_agent/core/data.py`: typed ensemble containers and cross-stage data helpers.
+- `lamet_agent/core/plotting.py`: shared plotting conventions and helpers.
+- `lamet_agent/stages/`: stage packages, each with `functions.py`, `prompts.md`, and `validation.py`:
   - `correlator` (`correlator_analysis`)
   - `renorm` (`renormalization`)
   - `fourier` (`fourier_transform`)
@@ -111,7 +111,7 @@ Package modules:
 ## How To Add A New Stage
 
 1. Add the stage id to `StageId` in `manifest.py`, `STAGE_TO_PACKAGE` in `core/stages.py`, and `STAGE_PARAM_CONTRACTS` in `manifest_params.py`.
-2. Create `src/lamet_agent/stages/<package>/` with:
+2. Create `lamet_agent/stages/<package>/` with:
    - `functions.py`: stage tools and a `STAGE_TOOLS` dict mapping tool names to callables `(store, **kwargs) -> dict`.
    - `prompts.md`: stage instruction text, strategy guidance, and tool catalog for the LLM.
    - `validation.py`: `validate_stage_inputs(manifest, job)` and related stage-local parameter resolution.
@@ -135,7 +135,7 @@ Package modules:
 
 ## How To Integrate Existing Analysis Code
 
-- Land exploratory or legacy code outside `src/lamet_agent/` only when it is not yet ready for the tool-registry contract.
+- Land exploratory or legacy code outside `lamet_agent/` only when it is not yet ready for the tool-registry contract.
 - Prefer thin wrappers that expose fixed Python tools in `stages/<package>/functions.py` over copying large procedural scripts into the agent loop.
 - Keep file-format assumptions localized to the stage that reads them (or to `core/data.py` when shared).
 - Convert legacy conventions at tool boundaries so manifest paths, store keys, and observations stay uniform.
@@ -159,7 +159,7 @@ Package modules:
 
 ## Plotting Conventions
 
-- All stage plots must use `src/lamet_agent/core/plotting.py`.
+- All stage plots must use `lamet_agent/core/plotting.py`.
 - Use `default_plot()` and the exported helpers instead of direct `plt.subplots()` or `plt.figure()` in stage code.
 - Reuse exported style constants (`COLOR_CYCLE`, `ERRORBAR_STYLE`, `FIG_SIZE`, `LEGEND_SETS`) for consistent publication-style output.
 - Correlator plot tools must write PDFs under the job's manifest-controlled stage artifact directory.
