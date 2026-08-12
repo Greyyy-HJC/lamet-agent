@@ -1024,3 +1024,37 @@
 - The broader 529-test audit now leaves two failures in untouched
   correlator-fit and matching-report behavior; they are unrelated to the
   package-layout migration.
+
+## 2026-08-12 (Local path cleanup after root-package move)
+
+- Updated local/gitignored example temp manifests and `runs/` plan
+  manifests so `kernel_path` points at `lamet_agent/kernels.py` instead of
+  the former `src/lamet_agent/kernels.py` layout.
+- Removed the leftover empty `src/` tree and stale `src/lamet_agent.egg-info`
+  from the previous editable install; reinstalled the editable package from
+  the repository root.
+- Revalidated the tracked example manifests; all report `status: valid` with
+  kernel paths resolving under the root package.
+
+## 2026-08-12 (Align local temp manifests with current Fourier params)
+
+- Removed obsolete `phase_shift` from local DA temp manifests and set
+  `symmetry_guarantee` explicitly (`true` for pion DA, `false` for the former
+  `phase_shift=1` J/psi DA case).
+- Renamed `Lambda0` to `Lambda0_gev` in the gluon PDF temp manifest.
+- Corrected `hadron` attrs on the three `data_gi_new_da` NetCDF inputs used by
+  the J/psi DA temp manifest from `pion` to `Jpsi` so artifact metadata matches.
+- Validated all `examples/temp_*.json` manifests successfully.
+
+## 2026-08-12 (Run validation fallback to planning)
+
+- Added automatic interactive-plan fallback when `run` manifest validation
+  fails with an `api`, `codex`, or `mock` backend, including a prominent boxed
+  notice that distinguishes the fallback from normal workflow execution.
+- Reused one CLI planning entry path so direct `plan` commands and `run`
+  fallbacks share backend, model, API-key, base-URL, warning, and error
+  handling.
+- Kept `external` validation failures unchanged and made accepted fallback
+  plans stop after writing quick/full manifests rather than starting a run.
+- Added CLI regression coverage and documented the fallback behavior in the
+  README.

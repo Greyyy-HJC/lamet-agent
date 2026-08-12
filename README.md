@@ -594,6 +594,16 @@ manifest generation before the proposal is shown. On accept it writes
 `<artifacts_directory>/plan_manifests/<stem>.full.json`; the original draft is
 never overwritten.
 
+`run` still performs strict manifest validation before starting any stage. If
+that validation fails with the `api`, `codex`, or `mock` backend, it prints a
+framed fallback notice followed by the validation error and automatically
+enters the same interactive planning loop,
+using the run command's backend, model, API key file, and base URL settings.
+Accepting the fallback plan writes the quick and full manifests and then ends
+the command; run one of those generated manifests explicitly to execute it.
+The `external` backend cannot drive interactive planning, so its validation
+failures continue to exit as CLI errors.
+
 The terminal summary is organized as Missing parameters, Inconsistent settings,
 Suggested modifications, and Data conversions. The quick manifest uses jackknife
 plus mean errors, sets `model_average: false`, and conservatively shrinks

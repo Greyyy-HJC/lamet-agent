@@ -40,6 +40,20 @@ def _cli_run_summary(result: dict) -> dict:
     return {key: result[key] for key in _CLI_SUMMARY_KEYS if key in result}
 
 
+def _render_plan_fallback_notice(error: Exception) -> str:
+    """Render a prominent notice before a failed run enters plan mode."""
+    lines = (
+        "RUN VALIDATION FAILED",
+        "Falling back to interactive PLAN mode.",
+        "No workflow stages will run during this command.",
+        "Accepting the plan only writes quick/full manifests.",
+    )
+    width = max(len(line) for line in lines)
+    border = f"+{'-' * (width + 2)}+"
+    box = [border, *(f"| {line:<{width}} |" for line in lines), border]
+    return "\n".join([*box, "", "Validation error:", str(error)])
+
+
 @app.command("validate")
 def validate_manifest(path: Path) -> None:
     """Validate workflow manifest schema and kernel function references."""
@@ -91,27 +105,15 @@ def _resolve_llm_config(
     return provider, model_name, api_key, resolved_base_url
 
 
-@app.command("plan")
-def plan_workflow(
+def _run_plan_mode(
     manifest: Path,
-    backend: str = typer.Option(
-        ...,
-        "--backend",
-        help="Planning LLM backend: api or codex. mock is available for tests.",
-    ),
-    model: str | None = typer.Option(
-        None,
-        "--model",
-        help="Codex model ID, or API model as provider/model_id (api backend).",
-    ),
-    api_key_file: Path = Path("api.key"),
-    base_url: str | None = typer.Option(
-        None,
-        "--base-url",
-        help="Override the provider API base URL (api backend only).",
-    ),
+    *,
+    backend: str,
+    model: str | None,
+    api_key_file: Path,
+    base_url: str | None,
 ) -> None:
-    """Interactively review and repair a draft manifest before running it."""
+    """Validate planning options and run the interactive planning loop."""
     if backend not in _VALID_PLAN_BACKENDS:
         raise typer.BadParameter(
             f"--backend must be one of {sorted(_VALID_PLAN_BACKENDS)} for plan; external transcripts are not supported."
@@ -142,6 +144,36 @@ def plan_workflow(
         )
     except ValueError as exc:  # pragma: no cover - CLI surface
         raise typer.BadParameter(str(exc)) from exc
+
+
+@app.command("plan")
+def plan_workflow(
+    manifest: Path,
+    backend: str = typer.Option(
+        ...,
+        "--backend",
+        help="Planning LLM backend: api or codex. mock is available for tests.",
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="Codex model ID, or API model as provider/model_id (api backend).",
+    ),
+    api_key_file: Path = Path("api.key"),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        help="Override the provider API base URL (api backend only).",
+    ),
+) -> None:
+    """Interactively review and repair a draft manifest before running it."""
+    _run_plan_mode(
+        manifest,
+        backend=backend,
+        model=model,
+        api_key_file=api_key_file,
+        base_url=base_url,
+    )
 
 
 @app.command("run")
@@ -188,10 +220,23 @@ def run_workflow(
     ``--backend api`` pass ``--model provider/model_id`` (e.g. ``deepseek/deepseek-chat``).
     The API key is read from ``--api-key-file`` (default ``api.key``) or the provider
     environment variable (``DEEPSEEK_API_KEY`` / ``OPENAI_API_KEY``).
+    With a planning-capable backend, manifest validation failures start the
+    interactive planning loop instead of running workflow stages.
     """
     try:
         parsed = validate_manifest_file(manifest)
     except Exception as exc:  # pragma: no cover - CLI surface
+        if backend in _VALID_PLAN_BACKENDS:
+            typer.echo(_render_plan_fallback_notice(exc), err=True)
+            typer.echo(err=True)
+            _run_plan_mode(
+                manifest,
+                backend=backend,
+                model=model,
+                api_key_file=api_key_file,
+                base_url=base_url,
+            )
+            return
         raise typer.BadParameter(str(exc)) from exc
     report_language = report_language.lower()
     if report_language not in {"en", "ch"}:
