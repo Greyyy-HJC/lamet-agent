@@ -14,7 +14,7 @@ from lamet_agent.core.tools import (
 )
 from lamet_agent.manifest import AnalysisManifest, derive_job_kinematics, validate_manifest_file
 from lamet_agent.manifest_params import merge_stage_params
-from lamet_agent.stages.matching.skills import effective_matching_params
+from lamet_agent.stages.matching.validation import effective_matching_params
 
 
 def _manifest():

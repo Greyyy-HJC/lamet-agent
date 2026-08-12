@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from lamet_agent.core.tools import validate_stage_inputs
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import merge_stage_params
-from lamet_agent.stages.fourier.skills import INFERRED_OBSERVABLES
+from lamet_agent.stages.fourier.validation import INFERRED_OBSERVABLES
 
 
 IssueSeverity = Literal["error", "warning", "info"]

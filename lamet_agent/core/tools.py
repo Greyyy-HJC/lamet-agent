@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob, derive_job_kinematics
 from lamet_agent.manifest_params import merge_stage_params
-from lamet_agent.stages.fourier.skills import INFERRED_OBSERVABLES
+from lamet_agent.stages.fourier.validation import INFERRED_OBSERVABLES
 
 from .stages import resolve_stage_package
 
@@ -291,7 +291,7 @@ def validate_stage_inputs(stage: str, manifest: Any, job: StageJob) -> list[str]
     package_name = resolve_stage_package(stage)
     if not package_name:
         return []
-    module = import_module(f"lamet_agent.stages.{package_name}.skills")
+    module = import_module(f"lamet_agent.stages.{package_name}.validation")
     validator = getattr(module, "validate_stage_inputs", None)
     return validator(manifest, job) if callable(validator) else []
 

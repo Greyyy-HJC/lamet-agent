@@ -995,3 +995,11 @@
 
 - Wrapped stage tool function names in Markdown inline code spans across prompt
   procedures and tool catalogs for clearer human editing.
+
+## 2026-08-11 (Rename stage validation modules)
+
+- Renamed each stage-local `skills.py` module to `validation.py` to reflect its
+  remaining responsibility after prompt and strategy text moved to
+  `prompts.md`.
+- Updated runtime imports, tests, and repository documentation for the new
+  module name without changing validation behavior.

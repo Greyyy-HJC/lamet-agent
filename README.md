@@ -52,7 +52,7 @@ hybrid-self-renormalization workflows within the job DAG.
 │   └── stages/
 │       ├── correlator/
 │       │   ├── prompts.md
-│       │   ├── skills.py
+│       │   ├── validation.py
 │       │   └── functions.py
 │       ├── renorm/
 │       ├── fourier/
@@ -849,10 +849,10 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 - `src/lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
 - `src/lamet_agent/stages/*`
-  - Each stage owns `prompts.md`, `skills.py`, `functions.py`, and, when it
+  - Each stage owns `prompts.md`, `validation.py`, `functions.py`, and, when it
     writes a report, `reporting.py`.
   - `prompts.md` contains the stage instruction, strategy guidance, and tool catalog.
-  - `skills.py` performs stage-local input checks and related parameter resolution.
+  - `validation.py` performs stage-local input checks and related parameter resolution.
   - `functions.py` holds the stage tools and a `STAGE_TOOLS` registry.
   - `reporting.py` controls the per-stage report that is generated after the stage
     finishes, so users can track the analysis progress and inspect intermediate

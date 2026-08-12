@@ -125,7 +125,7 @@ def _run_job(
     stage_dir = manifest.artifacts_directory / stage / "sym" if is_systematics_job else manifest.artifacts_directory / stage
     stage_dir.mkdir(parents=True, exist_ok=True)
     if stage == "perturbative_matching":
-        from lamet_agent.stages.matching.skills import effective_matching_params
+        from lamet_agent.stages.matching.validation import effective_matching_params
 
         effective_params = effective_matching_params(manifest, job)
     else:
