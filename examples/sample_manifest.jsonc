@@ -127,7 +127,7 @@
         "fit_scope": ["3pt_ratio"], // "3pt_ratio", "FH", "3pt_ratio+FH", or "qda_ratio"; qda_ratio uses ordinary and nonlocal-qDA 2pt inputs
         "fit_strategy": ["joint"], // "joint" fits 2pt+3pt together; "chained" fits 2pt first
         "svdcut": 1e-06, // covariance SVD cutoff used by nonlinear fits
-        "posterior_prior_error_scale": 3.0, // posterior/prior tension gate
+        "posterior_prior_error_scale": 3.0, // inflate sample-average posterior sdev into the prior for per-sample refits (fit_bare_matrix_grid only); prior_sdev = posterior_sdev * this * prior_width
         "prior_width": [0.5, 1.0, 2.0], // multiplicative prior-width candidates
         "fitting_form": "Breit", // "Breit" uses job momentum; "NonBreit" uses initial+final momentum
         "component": "both", // "both", "re", or "im"

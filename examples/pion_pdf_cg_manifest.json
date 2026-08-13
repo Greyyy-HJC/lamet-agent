@@ -2,12 +2,12 @@
   "metadata": {
     "run_id": "pion_pdf_cg",
     "root_directory": "..",
-    "artifacts_directory": "runs/ds_pdf_complete/artifacts",
+    "artifacts_directory": "runs/pion_pdf_cg/artifacts",
     "target_observable": "pdf",
     "parton": "quark",
     "resample_mode": "jk",
     "sample_error_mode": "covariance",
-    "bs_samples": 400,
+    "bs_samples": 200,
     "bin_size": 1,
     "workers": 8,
     "random_seed": 1984,
@@ -67,7 +67,7 @@
         "fit_scope": ["3pt_ratio"],
         "fit_strategy": ["joint"],
         "svdcut": 1e-6,
-        "posterior_prior_error_scale": 3.0,
+        "posterior_prior_error_scale": 5.0,
         "prior_width": [1.0],
         "component": "re",
         "q_min": 0.05,
@@ -94,16 +94,17 @@
     },
     "fourier_transform": {
       "defaults": {
-        "order": ["LA", "NLA"],
-        "Lambda0_gev": 0.1,
+        "order": ["LA"],
         "sector": "valence",
+        "Lambda0_gev": 0.1,
         "posterior_prior_error_scale": [3.0, 4.0, 5.0],
         "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
         "scheme_scan": {
-          "zmin_values": [0.72, 0.78, 0.84, 0.90],
-          "zmax_values": [1.26, 1.32, 1.38, 1.44],
+          "zmin_values": [0.84, 0.90],
+          "zmax_values": [1.38, 1.44],
+          "z_ext_max": 3.0,
           "smooth": "linear",
-          "model_average": false,
+          "model_average": true,
           "max_schemes": 200
         }
       },
@@ -116,15 +117,15 @@
         "scheme": "hybrid",
         "mu": 2.0,
         "component": "re",
-        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
-        "lc_x_ls": {"start": -2.0, "stop": 2.0, "num": 100}
+        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 200},
+        "lc_x_ls": {"start": 0.0, "stop": 1.0, "num": 50}
       },
       "jobs": [
         {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"zs_fm": 0.1722}}
       ]
     },
     "review": {                                                                                                                      
-      "defaults": {"literature": true, "literature_max_papers": 4},
+      "defaults": {"literature": false, "literature_max_papers": 4},
       "jobs": [
         {"id": "review"}
       ]

@@ -1086,6 +1086,19 @@
   banner, before the first LLM call, and also honors `next_questions` from
   `load_manifest`.
 
+## 2026-08-13 (Partial GI PDF Fourier/matching manifest)
+
+- Added `examples/temp_pdf_gi_manifest.json`, a P0/P4 GI PDF resume that runs only
+  `fourier_transform` and `perturbative_matching`, seeding Fourier from
+  `runs/ds_gi_pdf/artifacts/renormalization/rn_p4.nc`.
+
+## 2026-08-13 (Correlator posterior_prior_error_scale comment)
+
+- Clarified the correlator `posterior_prior_error_scale` comment in
+  `examples/sample_manifest.jsonc`: it inflates sample-average posterior errors
+  into priors for per-sample refits in `fit_bare_matrix_grid`, and is not a
+  posterior/prior tension gate.
+
 ## 2026-08-13 (Validate fails on denser matching grids)
 
 - `validate` still prints the boxed matching-grid warning when `lc_x_ls` is denser

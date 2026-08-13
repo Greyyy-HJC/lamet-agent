@@ -896,6 +896,8 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
   - Runnable P0/P5 correlator and hybrid-ratio renormalization manifest.
 - `examples/pion_pdf_gi_manifest.json`
   - Runnable P0/P4 GI pion PDF workflow.
+- `examples/temp_pdf_gi_manifest.json`
+  - Partial GI pion PDF resume from renormalized `rn_p4.nc` through Fourier and matching.
 - `examples/pion_da_gi_manifest.json`
   - Full GI pion DA workflow from qDA correlator analysis through matching and review.
 - `examples/kaon_da_gi_manifest.json`
