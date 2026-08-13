@@ -1085,3 +1085,9 @@
 - Interactive plan asks unused-stage keep-or-drop questions immediately after the
   banner, before the first LLM call, and also honors `next_questions` from
   `load_manifest`.
+
+## 2026-08-13 (Validate fails on denser matching grids)
+
+- `validate` still prints the boxed matching-grid warning when `lc_x_ls` is denser
+  than the quasi grid, then exits non-zero with `"status": "invalid"`. `run`
+  continues to warn without failing; kernel construction still rejects the density.

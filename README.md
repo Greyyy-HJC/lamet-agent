@@ -166,8 +166,9 @@ silently dropping them when tool arguments are prepared. Typographical errors
 include the closest supported key when one is available. Stage keys under
 `stages` that are missing from `metadata.stages` are also rejected: add them to
 the run list or delete the unused block. Matching jobs whose `lc_x_ls` is denser
-than the quasi grid print a boxed warning on `validate` and `run` without failing
-validation; kernel construction still rejects that density at runtime.
+than the quasi grid print a boxed warning on `validate` and `run`; `validate`
+then fails, while `run` continues and kernel construction still rejects that
+density at runtime.
 Runner-owned settings such as `workers`, `random_seed`, and `sample_error_mode`
 belong under `metadata`; derived quantities such as `momentum_gev` must not be
 written as stage parameters. Full workflows derive them from their upstream

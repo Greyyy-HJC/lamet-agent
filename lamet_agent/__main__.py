@@ -118,12 +118,14 @@ def validate_manifest(path: Path) -> None:
                 "stages": manifest.metadata.stages,
                 "correlator_count": len(manifest.inputs.correlators),
                 "kernel_count": len(manifest.inputs.kernels),
-                "status": "valid",
+                "status": "invalid" if warnings else "valid",
                 "warnings": warnings,
             },
             indent=2,
         )
     )
+    if warnings:
+        raise typer.Exit(code=1)
 
 
 def _resolve_llm_config(

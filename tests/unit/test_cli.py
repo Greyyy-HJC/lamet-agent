@@ -250,16 +250,16 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_validate_prints_matching_grid_warning_and_stays_valid(tmp_path) -> None:
+def test_validate_prints_matching_grid_warning_and_fails(tmp_path) -> None:
     manifest = tmp_path / "matching.json"
     _write_matching_manifest(manifest, denser_lc=True)
 
     result = CliRunner().invoke(app, ["validate", str(manifest)])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code != 0
     assert "WARNING: MATCHING GRID DENSITY" in result.output
     assert "oscillate" in result.output
-    assert '"status": "valid"' in result.output
+    assert '"status": "invalid"' in result.output
     assert "Matching job 'mt'" in result.output
 
 

@@ -48,7 +48,10 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
 
 
 def matching_grid_warnings(manifest: AnalysisManifest) -> list[str]:
-    """Return non-blocking warnings when ``lc_x_ls`` is denser than the quasi grid.
+    """Return matching-grid density issues when ``lc_x_ls`` is denser than the quasi grid.
+
+    ``validate`` prints these as a boxed warning and then fails. ``run`` prints the
+    same warning without failing; kernel construction still rejects the density.
 
     Resolves grids from matching ``quasi_y_ls`` / ``lc_x_ls`` or, if quasi is omitted,
     the upstream Fourier job's ``y_grid``. Jobs whose grids cannot be read from the
