@@ -308,6 +308,38 @@ def C_hybrid(ksi: float, log_scale: float, y: float, zspz: float, eps: float = 1
 DensityFn = Callable[[float, float], float]
 
 
+def _progress(iterable, *, desc: str, leave: bool = True):
+    """Wrap ``iterable`` in tqdm when it is installed; otherwise return it unchanged."""
+    try:
+        from tqdm import tqdm
+    except Exception:
+        return iterable
+    return tqdm(iterable, desc=desc, leave=leave)
+
+
+class _NoOpBar:
+    def update(self, n: int = 1) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+
+def _progress_bar(*, total: int, desc: str):
+    """Manual tqdm bar for multi-loop work; no-ops when tqdm is missing."""
+    try:
+        from tqdm import tqdm
+    except Exception:
+        return _NoOpBar()
+    return tqdm(total=total, desc=desc)
+
+
 def _lo_interp_matrix(x_grid: np.ndarray, y_grid: np.ndarray) -> np.ndarray:
     """LO delta(x - y) as the matrix form of the examples' ``np.interp`` grid move.
 
@@ -388,7 +420,7 @@ def build_matching_matrix(
 
     # 1) Off-diagonal (x != y) regular entries from the density. The tolerance is
     #    relative to |y| -- for a PDF density that is exactly the old |1 - x/y| <= eps.
-    for idx, x_val in enumerate(x_grid):
+    for idx, x_val in enumerate(_progress(x_grid, desc="matching kernel")):
         for idy, y_val in enumerate(y_grid):
             if np.abs(x_val - y_val) <= eps * np.abs(y_val):
                 continue  # the x = y singularity is restored by the plus prescription
@@ -571,49 +603,53 @@ def _build_pdf_matrix(
     nlo_matrix = np.zeros((nx, ny))
 
     # 1) Regular (ksi != 1) coefficients.
-    for idx, x_val in enumerate(x_grid):
-        for idy, y_val in enumerate(y_grid):
-            ksi = x_val / y_val
-            if np.abs(1.0 - ksi) <= eps:
+    with _progress_bar(total=2 * nx, desc="matching kernel") as bar:
+        for idx, x_val in enumerate(x_grid):
+            for idy, y_val in enumerate(y_grid):
+                ksi = x_val / y_val
+                if np.abs(1.0 - ksi) <= eps:
+                    continue
+                log_scale = _pdf_log_scale(y_val, momentum_gev, mu)
+                nlo_matrix[idx, idy] = coeff(ksi, log_scale, y_val) / np.abs(y_val)
+            bar.update(1)
+
+        # 2) Delta terms: one per x row, spread over the two bracketing columns, carrying
+        #    diagonal_extra(L(x)) - int d(ksi) plus_coeff frozen at the delta point.
+        ascending = y_grid[1] > y_grid[0]
+        y_sorted = y_grid if ascending else y_grid[::-1]
+        for idx, x_val in enumerate(x_grid):
+            if np.abs(x_val) <= eps:
+                # x = 0: ksi = x/y is 0 for every column, so the row never crosses the
+                # ksi = 1 plus singularity and needs no delta subtraction. (L(x) and the
+                # d(ksi) = |x| dy / y^2 measure are both singular here; skipping is the
+                # finite, well-defined limit -- the row is pure off-diagonal + LO.)
+                bar.update(1)
                 continue
-            log_scale = _pdf_log_scale(y_val, momentum_gev, mu)
-            nlo_matrix[idx, idy] = coeff(ksi, log_scale, y_val) / np.abs(y_val)
+            pos = int(np.searchsorted(y_sorted, x_val))
+            pos = min(max(pos, 1), ny - 1)
+            w_hi = np.clip((x_val - y_sorted[pos - 1]) / (y_sorted[pos] - y_sorted[pos - 1]), 0.0, 1.0)
+            cols_weights = (
+                ((pos - 1 if ascending else ny - pos), 1.0 - w_hi),
+                ((pos if ascending else ny - 1 - pos), w_hi),
+            )
 
-    # 2) Delta terms: one per x row, spread over the two bracketing columns, carrying
-    #    diagonal_extra(L(x)) - int d(ksi) plus_coeff frozen at the delta point.
-    ascending = y_grid[1] > y_grid[0]
-    y_sorted = y_grid if ascending else y_grid[::-1]
-    for idx, x_val in enumerate(x_grid):
-        if np.abs(x_val) <= eps:
-            # x = 0: ksi = x/y is 0 for every column, so the row never crosses the
-            # ksi = 1 plus singularity and needs no delta subtraction. (L(x) and the
-            # d(ksi) = |x| dy / y^2 measure are both singular here; skipping is the
-            # finite, well-defined limit -- the row is pure off-diagonal + LO.)
-            continue
-        pos = int(np.searchsorted(y_sorted, x_val))
-        pos = min(max(pos, 1), ny - 1)
-        w_hi = np.clip((x_val - y_sorted[pos - 1]) / (y_sorted[pos] - y_sorted[pos - 1]), 0.0, 1.0)
-        cols_weights = (
-            ((pos - 1 if ascending else ny - pos), 1.0 - w_hi),
-            ((pos if ascending else ny - 1 - pos), w_hi),
-        )
+            log_scale = _pdf_log_scale(x_val, momentum_gev, mu)
 
-        log_scale = _pdf_log_scale(x_val, momentum_gev, mu)
+            subtraction = 0.0
+            for y_val in y_grid:
+                ksi = x_val / y_val
+                if np.abs(1.0 - ksi) <= eps:
+                    continue
+                subtraction += plus_coeff(ksi, log_scale, x_val) * np.abs(x_val) * dy / y_val**2
+            for lo, hi in _uncovered_ksi_intervals(x_val, y_grid, dy, eps):
+                subtraction += _integrate(lambda ksi: plus_coeff(ksi, log_scale, x_val), lo, hi)
 
-        subtraction = 0.0
-        for y_val in y_grid:
-            ksi = x_val / y_val
-            if np.abs(1.0 - ksi) <= eps:
-                continue
-            subtraction += plus_coeff(ksi, log_scale, x_val) * np.abs(x_val) * dy / y_val**2
-        for lo, hi in _uncovered_ksi_intervals(x_val, y_grid, dy, eps):
-            subtraction += _integrate(lambda ksi: plus_coeff(ksi, log_scale, x_val), lo, hi)
-
-        delta_entry = -subtraction
-        if diagonal_extra is not None:
-            delta_entry += diagonal_extra(log_scale)
-        for col, weight in cols_weights:
-            nlo_matrix[idx, int(col)] += weight * delta_entry / dy
+            delta_entry = -subtraction
+            if diagonal_extra is not None:
+                delta_entry += diagonal_extra(log_scale)
+            for col, weight in cols_weights:
+                nlo_matrix[idx, int(col)] += weight * delta_entry / dy
+            bar.update(1)
 
     return identity - alpha_s * color_factor / (2.0 * np.pi) * nlo_matrix * dy
 
@@ -1631,7 +1667,7 @@ def _plus_prescription_matrix(
     dy = float(np.abs(np.diff(y)[0]))
     matrix = np.zeros((len(x), len(y)))
     diag_rows = np.abs(x[:, None] - y[None, :]).argmin(axis=0)
-    for idx, x_val in enumerate(x):
+    for idx, x_val in enumerate(_progress(x, desc="matching LRR kernel")):
         for idy, y_val in enumerate(y):
             if np.abs(x_val - y_val) <= eps * np.abs(y_val):
                 continue

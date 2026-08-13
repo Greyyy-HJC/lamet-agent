@@ -1058,3 +1058,30 @@
   plans stop after writing quick/full manifests rather than starting a run.
 - Added CLI regression coverage and documented the fallback behavior in the
   README.
+
+## 2026-08-13 (Matching kernel build progress)
+
+- Added tqdm progress bars on the outer x-grid loops of `build_matching_matrix`,
+  `_build_pdf_matrix`, and `_plus_prescription_matrix`, matching the Fourier
+  stage's optional tqdm wrapper so a matching job is no longer a silent wait.
+- Dropped the per-scheme inner Fourier sample bars (`fourier LA_prior_*` /
+  `fourier NLA_prior_*`); only the outer `fourier schemes` bar remains.
+
+## 2026-08-13 (Validate matching-grid warnings and unused stages)
+
+- `validate` and `run` now print a boxed matching-grid warning when a selected
+  matching job's `lc_x_ls` is denser than the quasi grid (`quasi_y_ls` or the
+  upstream Fourier `y_grid`). Validation still succeeds; kernel construction
+  continues to reject that density at runtime.
+- Unused `stages.*` keys that are missing from `metadata.stages` now fail
+  strict validation. `run` falls back to plan mode, which asks whether to
+  include the stage in the run list or delete the unused block.
+- Removed the leftover `review` block from `examples/pion_pdf_gi_manifest.json`.
+
+## 2026-08-13 (Plan fallback UX)
+
+- CLI validation errors now print the underlying message only, without Pydantic's
+  `input_value` dump or docs URL.
+- Interactive plan asks unused-stage keep-or-drop questions immediately after the
+  banner, before the first LLM call, and also honors `next_questions` from
+  `load_manifest`.

@@ -484,6 +484,13 @@ class AnalysisManifest(BaseModel):
         missing = [stage for stage in self.metadata.stages if stage not in self.stages]
         if missing:
             raise ValueError(f"metadata.stages has no job configuration for: {missing}")
+        unused = [stage for stage in self.stages if stage not in self.metadata.stages]
+        if unused:
+            raise ValueError(
+                f"stages has configuration for unused stages {unused} that are not listed in "
+                "metadata.stages. Add them to metadata.stages to run them, or remove the unused "
+                "stage blocks."
+            )
 
         correlator_ids = [item.correlator_id for item in self.inputs.correlators]
         source_ids = [item.id for item in self.inputs.artifacts]

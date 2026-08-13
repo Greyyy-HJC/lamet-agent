@@ -1431,7 +1431,7 @@ def _run_one_scheme(
         }
 
     positive = z_ext > 0
-    for sample in _progress(range(n_samples), desc=f"fourier {label}", leave=False):
+    for sample in range(n_samples):
         if parallel_fit_results is None:
             sample_y_data = _fit_y_data(
                 re_samples[sample, fit_mask],

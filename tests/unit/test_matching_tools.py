@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from lamet_agent.core.data import EnsembleData
+from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.stages.matching.functions import (
     KERNEL_REGISTRY,
     apply_matching,
@@ -13,6 +14,7 @@ from lamet_agent.stages.matching.functions import (
     plot_matched_pdf,
     resolve_kernel_id,
 )
+from lamet_agent.stages.matching.validation import matching_grid_warnings
 
 
 def _quasi_on(x_grid: np.ndarray, *, n_sample: int = 4) -> EnsembleData:
@@ -241,6 +243,82 @@ def test_lc_grid_denser_than_quasi_is_rejected_rather_than_oscillating() -> None
         lc_x_ls={"start": -1.0, "stop": 1.0, "num": 25},
     )
     assert store["kernel_matrix"].shape == (25, 100)
+
+
+def _matching_grid_payload(
+    *,
+    lc_x_ls: dict | None | object = ...,
+    quasi_y_ls: dict | None | object = ...,
+    y_grid: dict | None | object = ...,
+) -> dict:
+    if lc_x_ls is ...:
+        lc_x_ls = {"start": 0.0, "stop": 1.0, "num": 80}
+    if quasi_y_ls is ...:
+        quasi_y_ls = {"start": -2.0, "stop": 2.0, "num": 400}
+    if y_grid is ...:
+        y_grid = {"start": -2.0, "stop": 2.0, "num": 100}
+    matching_defaults: dict = {"scheme": "ratio"}
+    if quasi_y_ls is not None:
+        matching_defaults["quasi_y_ls"] = quasi_y_ls
+    if lc_x_ls is not None:
+        matching_defaults["lc_x_ls"] = lc_x_ls
+    fourier_defaults: dict = {"order": ["LA"]}
+    if y_grid is not None:
+        fourier_defaults["y_grid"] = y_grid
+    return {
+        "metadata": {
+            "run_id": "demo",
+            "root_directory": ".",
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "random_seed": 1984,
+            "stages": ["fourier_transform", "perturbative_matching"],
+        },
+        "inputs": {
+            "correlators": [],
+            "artifacts": [{"id": "rn", "stage": "renormalization", "path": "rn.nc"}],
+            "kernels": [
+                {
+                    "stage": "perturbative_matching",
+                    "kernel_id": "CG_gt_quark_PDF_ratio_NLO",
+                    "kernel_path": "kernels.py",
+                    "kernel_parameters": {},
+                }
+            ],
+        },
+        "stages": {
+            "fourier_transform": {
+                "defaults": fourier_defaults,
+                "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
+            },
+            "perturbative_matching": {
+                "defaults": matching_defaults,
+                "jobs": [{"id": "mt", "inputs": {"quasi": "ft"}}],
+            },
+        },
+    }
+
+
+def test_matching_grid_warnings_for_denser_lc_grid() -> None:
+    manifest = AnalysisManifest.model_validate(
+        _matching_grid_payload(
+            lc_x_ls={"start": -1.0, "stop": 2.0, "num": 300},
+            quasi_y_ls=None,
+            y_grid={"start": -2.0, "stop": 2.0, "num": 100},
+        )
+    )
+    warnings = matching_grid_warnings(manifest)
+    assert len(warnings) == 1
+    assert "Matching job 'mt'" in warnings[0]
+    assert "oscillate" in warnings[0]
+
+
+def test_matching_grid_warnings_skip_coarser_or_omitted_lc_grid() -> None:
+    gi_like = AnalysisManifest.model_validate(_matching_grid_payload())
+    omitted = AnalysisManifest.model_validate(_matching_grid_payload(lc_x_ls=None))
+    assert matching_grid_warnings(gi_like) == []
+    assert matching_grid_warnings(omitted) == []
 
 
 def test_endpoint_cut_drops_the_da_divergent_window_only_for_da_kernels() -> None:

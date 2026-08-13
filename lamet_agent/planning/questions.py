@@ -135,6 +135,23 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
     canonical_stages = ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"]
     configured_stages = metadata.get("stages", [])
     configured_stage_list = [stage for stage in configured_stages if isinstance(stage, str)] if isinstance(configured_stages, list) else []
+    stages_config = payload.get("stages", {}) if isinstance(payload.get("stages"), dict) else {}
+    unused_stages = [stage for stage in stages_config if isinstance(stage, str) and stage not in configured_stage_list]
+    if unused_stages:
+        stage = unused_stages[0]
+        return [
+            {
+                "question_id": f"stage.unused.{stage}",
+                "prompt": (
+                    f"Stage `{stage}` is configured under stages but is not listed in metadata.stages, "
+                    "so it will not run. Include it in the run, or remove the unused configuration?"
+                ),
+                "choices": [
+                    {"label": "1", "value": "include", "description": f"Include `{stage}` in metadata.stages."},
+                    {"label": "2", "value": "remove", "description": f"Remove unused stages.{stage}."},
+                ],
+            }
+        ]
     if configured_stage_list != canonical_stages and not state.stage_completion_checked:
         return [
             {
@@ -252,6 +269,7 @@ def _manifest_question_id_from_user_input_action(args: dict[str, Any], reason: s
             or question_id.startswith("stage_params.")
             or question_id.startswith("stage_required.")
             or question_id.startswith("stage_optional.")
+            or question_id.startswith("stage.unused.")
         ):
             return question_id
         if _json_pointer_from_question_id(question_id) is not None:

@@ -442,29 +442,41 @@ def load_quasi_pdf(
 # --- build the kernel matrix ------------------------------------------------
 
 
-def _reject_lc_grid_finer_than_quasi(x_ls: np.ndarray, y_ls: np.ndarray) -> None:
-    """Reject a light-cone grid the kernel's plus prescription cannot discretize.
+def lc_finer_than_quasi_message(x_ls: np.ndarray, y_ls: np.ndarray) -> str | None:
+    """Return a message if the light-cone grid is denser than the quasi grid.
 
     ``build_matching_matrix`` restores each y column's x = y singularity by subtracting
     that column's sum onto the *single* x row nearest to y. That spreads evenly only
     while the x rows are no denser than the y columns. Refine x past y and most rows
     never receive a subtraction, so the matched curve alternates between subtracted and
     unsubtracted rows -- a high-frequency oscillation that looks like data but is a
-    discretization artifact. It is silent, hence the guard: the LO term interpolates
-    across grids happily (see ``_lo_interp_matrix``), so nothing else complains.
-
-    Refining the *quasi* grid is not a workaround either -- it is bounded by the Fourier
-    grid. Give the Fourier stage the finer ``y_grid`` instead and let both follow it.
+    discretization artifact.
     """
-    rows_used = np.unique(np.abs(x_ls[:, None] - y_ls[None, :]).argmin(axis=0)).size
-    if rows_used < x_ls.size:
-        raise ValueError(
-            f"lc_x_ls has {x_ls.size} points where the quasi grid has {y_ls.size}, so only "
+    x_grid = np.asarray(x_ls, dtype=float)
+    y_grid = np.asarray(y_ls, dtype=float)
+    if x_grid.size < 1 or y_grid.size < 1:
+        return None
+    rows_used = np.unique(np.abs(x_grid[:, None] - y_grid[None, :]).argmin(axis=0)).size
+    if rows_used < x_grid.size:
+        return (
+            f"lc_x_ls has {x_grid.size} points where the quasi grid has {y_grid.size}, so only "
             f"{rows_used} of them carry the kernel's plus-prescription subtraction and the "
             "matched result would oscillate between subtracted and unsubtracted points. "
             "Give the Fourier stage's y_grid the resolution you want and let lc_x_ls "
             "default to it, or set an lc_x_ls no denser than the quasi grid."
         )
+    return None
+
+
+def _reject_lc_grid_finer_than_quasi(x_ls: np.ndarray, y_ls: np.ndarray) -> None:
+    """Reject a light-cone grid the kernel's plus prescription cannot discretize.
+
+    Refining the *quasi* grid is not a workaround either -- it is bounded by the Fourier
+    grid. Give the Fourier stage the finer ``y_grid`` instead and let both follow it.
+    """
+    message = lc_finer_than_quasi_message(x_ls, y_ls)
+    if message:
+        raise ValueError(message)
 
 
 def build_matching_kernel(

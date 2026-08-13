@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
-from lamet_agent.__main__ import _cli_run_summary, _resolve_llm_config, app
+from lamet_agent.__main__ import _cli_run_summary, _format_cli_error, _resolve_llm_config, app
 
 
 def test_cli_run_summary_omits_actions_and_stage_results() -> None:
@@ -47,6 +48,37 @@ def test_resolve_llm_config_passes_codex_model_name(tmp_path) -> None:
     assert model_name == "test-codex-model"
     assert api_key is None
     assert base_url is None
+
+
+def test_format_cli_error_strips_pydantic_docs_url() -> None:
+    from pydantic import ValidationError
+
+    from lamet_agent.manifest import AnalysisManifest
+
+    payload = {
+        "metadata": {
+            "run_id": "demo",
+            "root_directory": ".",
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "random_seed": 1984,
+            "stages": ["correlator_analysis"],
+        },
+        "inputs": {"correlators": [], "artifacts": [], "kernels": []},
+        "stages": {
+            "correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]},
+            "review": {"defaults": {}, "jobs": [{"id": "review"}]},
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        AnalysisManifest.model_validate(payload)
+
+    formatted = _format_cli_error(exc_info.value)
+    assert "unused stages" in formatted
+    assert "pydantic.dev" not in formatted
+    assert "For further information visit" not in formatted
+    assert "input_value" not in formatted
 
 
 def test_run_validation_failure_falls_back_to_plan(
@@ -168,3 +200,126 @@ def test_run_valid_manifest_does_not_plan(tmp_path, monkeypatch: pytest.MonkeyPa
     assert result.exit_code == 0, result.output
     assert run_calls == [parsed]
     assert '"status": "completed"' in result.output
+
+
+def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bool = False) -> None:
+    matching_defaults = {"scheme": "ratio"}
+    if denser_lc:
+        matching_defaults["lc_x_ls"] = {"start": -1.0, "stop": 2.0, "num": 300}
+    else:
+        matching_defaults["quasi_y_ls"] = {"start": -2.0, "stop": 2.0, "num": 400}
+        matching_defaults["lc_x_ls"] = {"start": 0.0, "stop": 1.0, "num": 80}
+    payload = {
+        "metadata": {
+            "run_id": "demo",
+            "root_directory": str(path.parent),
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "random_seed": 1984,
+            "stages": ["fourier_transform", "perturbative_matching"],
+        },
+        "inputs": {
+            "correlators": [],
+            "artifacts": [{"id": "rn", "stage": "renormalization", "path": "rn.nc"}],
+            "kernels": [
+                {
+                    "stage": "perturbative_matching",
+                    "kernel_id": "CG_gt_quark_PDF_ratio_NLO",
+                    "kernel_path": "kernels.py",
+                    "kernel_parameters": {},
+                }
+            ],
+        },
+        "stages": {
+            "fourier_transform": {
+                "defaults": {"order": ["LA"], "y_grid": {"start": -2.0, "stop": 2.0, "num": 100}},
+                "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
+            },
+            "perturbative_matching": {
+                "defaults": matching_defaults,
+                "jobs": [{"id": "mt", "inputs": {"quasi": "ft"}}],
+            },
+        },
+    }
+    if unused_review:
+        payload["stages"]["review"] = {
+            "defaults": {"literature": False, "literature_max_papers": 4},
+            "jobs": [{"id": "review"}],
+        }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_validate_prints_matching_grid_warning_and_stays_valid(tmp_path) -> None:
+    manifest = tmp_path / "matching.json"
+    _write_matching_manifest(manifest, denser_lc=True)
+
+    result = CliRunner().invoke(app, ["validate", str(manifest)])
+
+    assert result.exit_code == 0, result.output
+    assert "WARNING: MATCHING GRID DENSITY" in result.output
+    assert "oscillate" in result.output
+    assert '"status": "valid"' in result.output
+    assert "Matching job 'mt'" in result.output
+
+
+def test_run_prints_matching_grid_warning_without_planning(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "matching.json"
+    _write_matching_manifest(manifest, denser_lc=True)
+    parsed_holder: list[object] = []
+
+    monkeypatch.setattr(
+        "lamet_agent.__main__.run_interactive_plan",
+        lambda *_args, **_kwargs: pytest.fail("matching-grid warning must not enter plan mode"),
+    )
+    monkeypatch.setattr(
+        "lamet_agent.__main__.run_agent",
+        lambda value, **_kwargs: parsed_holder.append(value) or {"run_id": "demo", "status": "completed"},
+    )
+
+    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "mock"])
+
+    assert result.exit_code == 0, result.output
+    assert "WARNING: MATCHING GRID DENSITY" in result.output
+    assert parsed_holder
+
+
+def test_validate_rejects_unused_stage_configuration(tmp_path) -> None:
+    manifest = tmp_path / "unused.json"
+    _write_matching_manifest(manifest, unused_review=True)
+
+    result = CliRunner().invoke(app, ["validate", str(manifest)])
+
+    assert result.exit_code != 0
+    assert "unused stages" in result.output
+    assert "pydantic.dev" not in result.output
+    assert "For further information visit" not in result.output
+
+
+def test_run_unused_stage_falls_back_to_plan(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "unused.json"
+    _write_matching_manifest(manifest, unused_review=True)
+    calls: list[object] = []
+
+    monkeypatch.setattr(
+        "lamet_agent.__main__.run_interactive_plan",
+        lambda manifest_path, **kwargs: calls.append((manifest_path, kwargs)),
+    )
+    monkeypatch.setattr(
+        "lamet_agent.__main__.run_agent",
+        lambda *_args, **_kwargs: pytest.fail("run_agent must not run after unused-stage validation failure"),
+    )
+
+    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "mock"])
+
+    assert result.exit_code == 0, result.output
+    assert "| RUN VALIDATION FAILED" in result.output
+    assert "unused stages" in result.output
+    assert "pydantic.dev" not in result.output
+    assert "For further information visit" not in result.output
+    assert len(calls) == 1
+    assert calls[0][0] == manifest

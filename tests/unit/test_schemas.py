@@ -239,6 +239,17 @@ def test_manifest_accepts_review_literature_settings() -> None:
     assert manifest.stages["review"].defaults["literature_max_papers"] == 4
 
 
+def test_manifest_rejects_unused_stage_configuration() -> None:
+    payload = _payload()
+    payload["stages"]["review"] = {
+        "defaults": {"literature": False, "literature_max_papers": 4},
+        "jobs": [{"id": "review"}],
+    }
+
+    with pytest.raises(ValidationError, match="unused stages"):
+        AnalysisManifest.model_validate(payload)
+
+
 def test_stage_parameter_contract_fails_closed_when_registry_entry_is_missing(monkeypatch) -> None:
     monkeypatch.delitem(STAGE_PARAM_CONTRACTS, "review")
 

@@ -7,11 +7,11 @@
     "parton": "quark",
     "resample_mode": "jk",
     "sample_error_mode": "covariance",
-    "bs_samples": 400,
+    "bs_samples": 200,
     "bin_size": 1,
     "workers": 8,
     "random_seed": 1984,
-    "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "review"]
+    "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching"]
   },
   "inputs": {
     "correlators": [
@@ -63,6 +63,10 @@
       "defaults": {
         "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}],
         "pt3_tau_cuts": [3, 4],
+        "pt3_windows": [
+          { "tsep_ls": [8, 10, 12], "tau_cut": 3 },
+          { "tsep_ls": [10, 12], "tau_cut": 4 }
+        ],
         "nstate": [2],
         "fit_scope": ["3pt_ratio"],
         "fit_strategy": ["joint"],
@@ -117,16 +121,10 @@
         "mu": 2.0,
         "component": "re",
         "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
-        "lc_x_ls": {"start": -2.0, "stop": 2.0, "num": 100}
+        "lc_x_ls": {"start": 0.0, "stop": 1.0, "num": 100}
       },
       "jobs": [
         {"id": "mt_p4", "inputs": {"quasi": "ft_p4"}, "params": {"zs_fm": 0.1722}}
-      ]
-    },
-    "review": {
-      "defaults": {"literature": true, "literature_max_papers": 4},
-      "jobs": [
-        {"id": "review"}
       ]
     }
   }

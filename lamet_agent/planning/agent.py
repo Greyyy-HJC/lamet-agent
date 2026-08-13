@@ -95,6 +95,8 @@ def _planning_system_prompt() -> str:
         "When multiple items are missing, ask and resolve them one topic at a time, starting with deterministic metadata.required before broader workflow choices. "
         "Prefer Yes/No or multiple-choice questions only when the answer is genuinely binary or enumerable; use free-form questions when the user may need to name a subset, axis meaning, or concrete parameter values. "
         "Keep request_user_input prompts concise: state the file shape, uncertain axes or indices, and exact answer format only. "
+        "If a stage is configured under stages but missing from metadata.stages, ask whether to include it in the run or remove the unused configuration. "
+        "Use question_id 'stage.unused.<stage_id>' with include/remove choices. "
         "If metadata.stages is not the full canonical flow, ask whether the user wants to add extra downstream stages. "
         "Use question_id 'stage.add_remaining'. This question may be free-form when the user may want only a subset, for example: 'only add renormalization and fourier_transform'. "
         "Add only stages whose inputs can be wired unambiguously; otherwise ask another concise question. "
@@ -516,6 +518,52 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
         edits = _ensure_stage_shells(state.candidate_payload, requested)
         state.manifest_edits.extend(edits)
         return {"event": "user_answer_applied" if edits else "user_answer_not_applied", "question_id": question_id, "value": value, "edits": edits, "reason": "stage completion preference recorded for the planning agent."}
+    unused_match = re.fullmatch(r"stage\.unused\.([A-Za-z_][A-Za-z0-9_]*)", question_id)
+    if unused_match:
+        stage = unused_match.group(1)
+        text = str(value).strip().lower()
+        include = text in {"include", "keep", "yes", "y", "add", "1"}
+        remove = text in {"remove", "drop", "no", "n", "delete", "2"}
+        if include:
+            metadata = state.candidate_payload.setdefault("metadata", {})
+            order = metadata.get("stages")
+            if not isinstance(order, list):
+                order = []
+            if stage in order:
+                return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": f"`{stage}` is already listed in metadata.stages."}
+            selected = {item for item in order if isinstance(item, str)} | {stage}
+            new_order = [item for item in _CANONICAL_STAGES if item in selected]
+            new_order.extend(item for item in order if item not in _CANONICAL_STAGES)
+            patches = [
+                {
+                    "op": "replace" if "stages" in metadata else "add",
+                    "path": "/metadata/stages",
+                    "value": new_order,
+                    "note": f"Included unused stage {stage} in metadata.stages.",
+                }
+            ]
+            observation = _run_planning_tool(state, "apply_manifest_patch_to_candidate", {"patches": patches, "allow_incomplete": True})
+            observation["event"] = "user_answer_applied"
+            observation["question_id"] = question_id
+            observation["value"] = value
+            return observation
+        if remove:
+            stages = state.candidate_payload.get("stages")
+            if not isinstance(stages, dict) or stage not in stages:
+                return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": f"`stages.{stage}` is not present."}
+            patches = [
+                {
+                    "op": "remove",
+                    "path": f"/stages/{stage}",
+                    "note": f"Removed unused stage configuration stages.{stage}.",
+                }
+            ]
+            observation = _run_planning_tool(state, "apply_manifest_patch_to_candidate", {"patches": patches, "allow_incomplete": True})
+            observation["event"] = "user_answer_applied"
+            observation["question_id"] = question_id
+            observation["value"] = value
+            return observation
+        return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "unused-stage answer must be include or remove."}
     match = re.fullmatch(r"stage_(required|optional)\.([A-Za-z_][A-Za-z0-9_]*)", question_id)
     if match:
         bucket, stage = match.groups()
@@ -1061,6 +1109,49 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
     return {"tool_name": tool_name, "ok": False, "error": f"Unknown planning tool: {tool_name}"}
 
 
+def _ask_and_apply_plan_question(
+    state: PlanAgentState,
+    session: _PlanAgentSession,
+    question: dict[str, Any],
+    input_func: Callable[[str], str],
+    output_func: Callable[[str], None],
+) -> str | None:
+    """Ask one deterministic planning question and apply the answer. Return ``quit`` to stop."""
+    if not _valid_plan_agent_question(question):
+        return None
+    skip_path = question.get("skip_if_present")
+    if isinstance(skip_path, str) and _get_dotted_path(state.candidate_payload, skip_path) is not None:
+        session.observe({"event": "question_skipped", "reason": f"{skip_path} is already present."})
+        return None
+    answer = _ask_plan_agent_question(question, input_func, output_func)
+    if answer == "quit":
+        return "quit"
+    question_id = str(question.get("question_id"))
+    session.observe({"event": "user_answer", "question_id": question_id, "value": answer})
+    applied = _apply_user_answer_to_candidate(state, question_id, answer)
+    session.observe(applied)
+    return None
+
+
+def _ask_unused_stage_questions(
+    state: PlanAgentState,
+    session: _PlanAgentSession,
+    input_func: Callable[[str], str],
+    output_func: Callable[[str], None],
+) -> str | None:
+    """Resolve unused ``stages.*`` keys before the first LLM call."""
+    while True:
+        questions = _next_questions_for_state(state)
+        if not questions:
+            return None
+        question = questions[0]
+        question_id = str(question.get("question_id") or "")
+        if not question_id.startswith("stage.unused."):
+            return None
+        if _ask_and_apply_plan_question(state, session, question, input_func, output_func) == "quit":
+            return "quit"
+
+
 def run_interactive_plan(
     manifest_path: Path,
     *,
@@ -1102,6 +1193,9 @@ def run_interactive_plan(
         base_url=base_url,
     )
     output_func(BANNER)
+    if _ask_unused_stage_questions(state, session, input_func, output_func) == "quit":
+        output_func("Plan cancelled; no files were written.")
+        return None
 
     for _ in range(60):
         action = session.decide()
@@ -1117,21 +1211,11 @@ def run_interactive_plan(
             observation = _run_planning_tool(state, tool_name, args)
             session.observe(observation)
             next_questions = observation.get("next_questions")
-            if tool_name != "load_manifest" and isinstance(next_questions, list) and next_questions:
+            if isinstance(next_questions, list) and next_questions:
                 question = next_questions[0]
-                if _valid_plan_agent_question(question):
-                    skip_path = question.get("skip_if_present")
-                    if isinstance(skip_path, str) and _get_dotted_path(state.candidate_payload, skip_path) is not None:
-                        session.observe({"event": "question_skipped", "reason": f"{skip_path} is already present."})
-                        continue
-                    answer = _ask_plan_agent_question(question, input_func, output_func)
-                    if answer == "quit":
-                        output_func("Plan cancelled; no files were written.")
-                        return None
-                    question_id = str(question.get("question_id"))
-                    session.observe({"event": "user_answer", "question_id": question_id, "value": answer})
-                    applied = _apply_user_answer_to_candidate(state, question_id, answer)
-                    session.observe(applied)
+                if _ask_and_apply_plan_question(state, session, question, input_func, output_func) == "quit":
+                    output_func("Plan cancelled; no files were written.")
+                    return None
             continue
 
         if action_type == "request_user_input":
@@ -1176,6 +1260,15 @@ def run_interactive_plan(
             if raw_question_id == "stage.add_remaining" and state.stage_completion_checked:
                 session.observe({"event": "question_skipped", "reason": "stage.add_remaining was already answered."})
                 continue
+            unused_match = re.fullmatch(r"stage\.unused\.([A-Za-z_][A-Za-z0-9_]*)", raw_question_id)
+            if unused_match:
+                stage = unused_match.group(1)
+                metadata = state.candidate_payload.get("metadata", {}) if isinstance(state.candidate_payload.get("metadata"), dict) else {}
+                order = metadata.get("stages", []) if isinstance(metadata.get("stages"), list) else []
+                stages = state.candidate_payload.get("stages", {}) if isinstance(state.candidate_payload.get("stages"), dict) else {}
+                if stage in order or stage not in stages:
+                    session.observe({"event": "question_skipped", "reason": f"{raw_question_id} was already resolved."})
+                    continue
             if raw_question_id.startswith("stage_params.") and state.parameter_completion_checked:
                 session.observe({"event": "question_skipped", "reason": f"{raw_question_id} was already answered."})
                 continue

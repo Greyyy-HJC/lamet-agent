@@ -80,7 +80,6 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
                 "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "zs_fm": 0.2},
                 "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
             },
-            "perturbative_matching": {"defaults": {"scheme": "ratio"}, "jobs": []},
         },
     }
 
@@ -131,6 +130,7 @@ def test_check_manifest_draft_reports_scheme_mismatch_and_missing_path(tmp_path:
     root.mkdir()
     _write_kernel(root)
     payload = _minimal_payload(root)
+    payload["stages"]["perturbative_matching"] = {"defaults": {"scheme": "ratio"}, "jobs": []}
     path = tmp_path / "draft.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -403,6 +403,101 @@ def test_stage_control_question_id_is_not_rewritten_to_manifest_path() -> None:
     )
 
     assert question_id == "stage.add_remaining"
+
+
+def test_unused_stage_question_is_asked_before_add_remaining(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["stages"]["review"] = {
+        "defaults": {"literature": False, "literature_max_papers": 4},
+        "jobs": [{"id": "review"}],
+    }
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    question = _next_questions_for_state(state)[0]
+
+    assert question["question_id"] == "stage.unused.review"
+    assert "not listed in metadata.stages" in question["prompt"]
+
+
+def test_unused_stage_include_adds_metadata_stage(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["stages"]["review"] = {
+        "defaults": {"literature": False, "literature_max_papers": 4},
+        "jobs": [{"id": "review"}],
+    }
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    applied = _apply_user_answer_to_candidate(state, "stage.unused.review", "include")
+
+    assert applied["event"] == "user_answer_applied"
+    assert state.candidate_payload["metadata"]["stages"] == [
+        "correlator_analysis",
+        "renormalization",
+        "review",
+    ]
+    assert "review" in state.candidate_payload["stages"]
+
+
+def test_unused_stage_remove_drops_stage_config(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["stages"]["review"] = {
+        "defaults": {"literature": False, "literature_max_papers": 4},
+        "jobs": [{"id": "review"}],
+    }
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    applied = _apply_user_answer_to_candidate(state, "stage.unused.review", "remove")
+
+    assert applied["event"] == "user_answer_applied"
+    assert "review" not in state.candidate_payload["stages"]
+    assert state.candidate_payload["metadata"]["stages"] == ["correlator_analysis", "renormalization"]
+
+
+def test_unused_stage_question_id_is_not_rewritten_to_manifest_path() -> None:
+    question_id = _manifest_question_id_from_user_input_action(
+        {"question_id": "stage.unused.review", "prompt": "Include unused review?"},
+        "metadata.random_seed was skipped earlier.",
+    )
+
+    assert question_id == "stage.unused.review"
+
+
+def test_check_manifest_draft_reports_unused_stage(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["stages"]["review"] = {
+        "defaults": {"literature": False, "literature_max_papers": 4},
+        "jobs": [{"id": "review"}],
+    }
+
+    issues = check_manifest_draft(tmp_path / "draft.json", payload)
+
+    assert any(
+        issue.severity == "error" and issue.manifest_path == "stages.review" and "not listed in `metadata.stages`" in issue.message
+        for issue in issues
+    )
+
+
+def test_plan_asks_unused_stage_before_llm(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["stages"]["review"] = {
+        "defaults": {"literature": False, "literature_max_papers": 4},
+        "jobs": [{"id": "review"}],
+    }
+    manifest = tmp_path / "draft.json"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    outputs: list[str] = []
+
+    result = run_interactive_plan(
+        manifest,
+        backend="mock",
+        input_func=lambda prompt: "q",
+        output_func=outputs.append,
+    )
+
+    assert result is None
+    joined = "\n".join(outputs)
+    assert "not listed in metadata.stages" in joined
+    assert "Plan cancelled" in joined
 
 
 def test_stage_choice_question_id_is_not_rewritten_to_manifest_path() -> None:

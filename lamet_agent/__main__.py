@@ -5,14 +5,17 @@ from __future__ import annotations
 import json
 import os
 import sys
+import textwrap
 from pathlib import Path
 
 import typer
+from pydantic import ValidationError
 
 from .agent import run_agent
 from .core.llm import parse_api_model, provider_config
-from .manifest import validate_manifest_file
+from .manifest import AnalysisManifest, validate_manifest_file
 from .planning import run_interactive_plan
+from .stages.matching.validation import matching_grid_warnings
 
 app = typer.Typer(help="CLI-first scaffold for LaMET analysis workflows.")
 
@@ -40,18 +43,63 @@ def _cli_run_summary(result: dict) -> dict:
     return {key: result[key] for key in _CLI_SUMMARY_KEYS if key in result}
 
 
-def _render_plan_fallback_notice(error: Exception) -> str:
-    """Render a prominent notice before a failed run enters plan mode."""
-    lines = (
-        "RUN VALIDATION FAILED",
-        "Falling back to interactive PLAN mode.",
-        "No workflow stages will run during this command.",
-        "Accepting the plan only writes quick/full manifests.",
-    )
+def _format_cli_error(error: BaseException) -> str:
+    """Return a short CLI error without Pydantic's docs URL or input dump."""
+    if isinstance(error, ValidationError):
+        messages: list[str] = []
+        for item in error.errors():
+            ctx_error = (item.get("ctx") or {}).get("error")
+            if isinstance(ctx_error, BaseException):
+                message = str(ctx_error).strip()
+            else:
+                message = str(item.get("msg") or "").strip()
+                if message.lower().startswith("value error, "):
+                    message = message[len("value error, ") :]
+            if message:
+                messages.append(message)
+        if messages:
+            return "\n".join(messages)
+    return str(error)
+
+
+def _render_boxed_notice(title: str, body_lines: list[str], *, wrap: int = 88) -> str:
+    """Render a framed terminal notice with wrapped body lines."""
+    lines = [title]
+    for item in body_lines:
+        lines.extend(textwrap.wrap(item, width=wrap) or [""])
     width = max(len(line) for line in lines)
     border = f"+{'-' * (width + 2)}+"
     box = [border, *(f"| {line:<{width}} |" for line in lines), border]
-    return "\n".join([*box, "", "Validation error:", str(error)])
+    return "\n".join(box)
+
+
+def _render_plan_fallback_notice(error: Exception) -> str:
+    """Render a prominent notice before a failed run enters plan mode."""
+    box = _render_boxed_notice(
+        "RUN VALIDATION FAILED",
+        [
+            "Falling back to interactive PLAN mode.",
+            "No workflow stages will run during this command.",
+            "Accepting the plan only writes quick/full manifests.",
+        ],
+    )
+    return "\n".join([box, "", "Validation error:", _format_cli_error(error)])
+
+
+def _matching_grid_warnings_for_cli(manifest: object) -> list[str]:
+    """Collect matching-grid warnings for a parsed manifest, if it is strict."""
+    if not isinstance(manifest, AnalysisManifest):
+        return []
+    return matching_grid_warnings(manifest)
+
+
+def _emit_matching_grid_warnings(manifest: object) -> list[str]:
+    """Print boxed matching-grid warnings to stderr and return them."""
+    warnings = _matching_grid_warnings_for_cli(manifest)
+    if warnings:
+        typer.echo(_render_boxed_notice("WARNING: MATCHING GRID DENSITY", warnings), err=True)
+        typer.echo(err=True)
+    return warnings
 
 
 @app.command("validate")
@@ -60,8 +108,9 @@ def validate_manifest(path: Path) -> None:
     try:
         manifest = validate_manifest_file(path)
     except Exception as exc:  # pragma: no cover - CLI surface
-        raise typer.BadParameter(str(exc)) from exc
+        raise typer.BadParameter(_format_cli_error(exc)) from exc
 
+    warnings = _emit_matching_grid_warnings(manifest)
     typer.echo(
         json.dumps(
             {
@@ -70,6 +119,7 @@ def validate_manifest(path: Path) -> None:
                 "correlator_count": len(manifest.inputs.correlators),
                 "kernel_count": len(manifest.inputs.kernels),
                 "status": "valid",
+                "warnings": warnings,
             },
             indent=2,
         )
@@ -237,7 +287,8 @@ def run_workflow(
                 base_url=base_url,
             )
             return
-        raise typer.BadParameter(str(exc)) from exc
+        raise typer.BadParameter(_format_cli_error(exc)) from exc
+    _emit_matching_grid_warnings(parsed)
     report_language = report_language.lower()
     if report_language not in {"en", "ch"}:
         raise typer.BadParameter("--report_language must be 'en' or 'ch'")

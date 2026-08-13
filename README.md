@@ -163,13 +163,18 @@ accepts JSONC for annotated authoring templates.
 Stage `defaults` and job `params` use closed, stage-specific parameter contracts.
 `lamet-agent validate` rejects unknown top-level and nested keys instead of
 silently dropping them when tool arguments are prepared. Typographical errors
-include the closest supported key when one is available. Runner-owned settings
-such as `workers`, `random_seed`, and `sample_error_mode` belong under
-`metadata`; derived quantities such as `momentum_gev` must not be written as
-stage parameters. Full workflows derive them from their upstream correlators,
-while partial workflows read `momentum`, `volume`, and `lattice_spacing_fm`
-from standard `EnsembleData` NetCDF attrs. Legacy artifacts missing those attrs
-may declare the complete triple on `inputs.artifacts[]` as a fallback.
+include the closest supported key when one is available. Stage keys under
+`stages` that are missing from `metadata.stages` are also rejected: add them to
+the run list or delete the unused block. Matching jobs whose `lc_x_ls` is denser
+than the quasi grid print a boxed warning on `validate` and `run` without failing
+validation; kernel construction still rejects that density at runtime.
+Runner-owned settings such as `workers`, `random_seed`, and `sample_error_mode`
+belong under `metadata`; derived quantities such as `momentum_gev` must not be
+written as stage parameters. Full workflows derive them from their upstream
+correlators, while partial workflows read `momentum`, `volume`, and
+`lattice_spacing_fm` from standard `EnsembleData` NetCDF attrs. Legacy artifacts
+missing those attrs may declare the complete triple on `inputs.artifacts[]` as a
+fallback.
 
 ## Manifest Parameter Semantics
 
@@ -631,6 +636,9 @@ cd runs/ds_pdf_complete
 Correlator, artifact, kernel, and artifact-output paths resolve from that root.
 `metadata.stages` is the sole ordered list of stages to execute; partial runs use a
 manifest with a shorter list and source nodes under `inputs.artifacts`.
+Every key under `stages` must appear in that list; leftover stage blocks fail
+`validate`, and `run` falls back to plan mode so the unused stage can be included
+or removed.
 
 `examples/pion_pdf_cg_manifest.json` runs the current P0/P5 workflow through
 correlator analysis, hybrid-ratio renormalization, Fourier transformation, and

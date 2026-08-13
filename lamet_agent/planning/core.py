@@ -15,6 +15,7 @@ from lamet_agent.core.tools import validate_stage_inputs
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import merge_stage_params
 from lamet_agent.stages.fourier.validation import INFERRED_OBSERVABLES
+from lamet_agent.stages.matching.validation import matching_grid_warnings
 
 
 IssueSeverity = Literal["error", "warning", "info"]
@@ -682,6 +683,17 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
     for stage in stage_order_list:
         if stage not in stages:
             issues.append(PlanIssue("error", f"stages.{stage}", f"`metadata.stages` includes `{stage}` but no stage config exists."))
+    if isinstance(stage_order, list):
+        for stage in stages:
+            if stage not in stage_order_list:
+                issues.append(
+                    PlanIssue(
+                        "error",
+                        f"stages.{stage}",
+                        f"`stages.{stage}` is configured but not listed in `metadata.stages`.",
+                        f"Add `{stage}` to `metadata.stages` to run it, or remove `stages.{stage}`.",
+                    )
+                )
 
     correlators = inputs.get("correlators", [])
     if not isinstance(correlators, list):
@@ -845,6 +857,8 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
                         issues.append(PlanIssue("warning", f"stages.{stage}.jobs.{job.id}", message))
                 except Exception as exc:
                     issues.append(PlanIssue("warning", f"stages.{stage}.jobs.{job.id}", f"Stage input check failed: {exc}"))
+        for message in matching_grid_warnings(strict):
+            issues.append(PlanIssue("warning", "stages.perturbative_matching", message))
 
     for gap in _stage_parameter_gaps(payload, manifest_path):
         issues.append(PlanIssue("warning", str(gap["path"]), str(gap["message"]), str(gap["suggested_fix"])))
