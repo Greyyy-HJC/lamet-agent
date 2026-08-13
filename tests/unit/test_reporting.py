@@ -116,9 +116,15 @@ def test_correlator_stage_report_shows_overlay_and_omits_dispersion_from_job_out
     assert "![HISQa060_X ensemble overview](ca_HISQa060_X_re.svg)" in text
     assert text.index("ca_HISQa060_X_re.svg") < text.index("ca_HISQa060_X_im.svg")
     assert "### Automatic Window Scan" in text
-    assert '"tau_cut":2' in text
-    per_job = text.split("### fit_logs", 1)[1].split("### Diagnostic SVGs", 1)[0]
+    assert '"tau_cut":2' not in text
+    assert "Generated candidates" not in text
+    assert "### Artifacts" in text
+    per_job = text.split("### Artifacts", 1)[1].split("### Diagnostic SVGs", 1)[0]
     assert "dispersion_relation" not in per_job
+    assert "ca_p4.pdf" not in per_job
+    assert "ca_p4.svg" not in per_job
+    assert "fit_logs/tuning.log" in per_job
+    assert "![Bare matrix element summary](ca_p4.svg)" in text
 
 
 def test_correlator_qda_report_uses_spectral_ratio_without_3pt_diagnostics(tmp_path: Path) -> None:
@@ -149,6 +155,38 @@ def test_correlator_qda_report_uses_spectral_ratio_without_3pt_diagnostics(tmp_p
     assert "analysis_mode" not in text
     assert "### Diagnostic SVGs" in text
     assert "fit_logs/qda_bz1_qda_ratio_re.svg" in text
+
+
+def test_correlator_stage_report_embeds_sample_quality_svgs(tmp_path: Path) -> None:
+    text = build_correlator_stage_report_markdown(
+        jobs=[
+            {
+                "job_id": "ca_p0",
+                "result": {
+                    "fit_scope": "3pt_ratio",
+                    "fit_strategy": "joint",
+                    "sample_fit_Q": [0.9, 0.01],
+                    "sample_fit_chi2_dof": [0.5, 2.0],
+                },
+                "artifacts": {
+                    "bare_artifact": "ca_p0.nc",
+                    "sample_fit_quality_Q_image": "sample_fit_quality_Q.svg",
+                    "sample_fit_quality_chi2_image": "sample_fit_quality_chi2.svg",
+                    "sample_fit_quality_Q_plot": "sample_fit_quality_Q.pdf",
+                    "sample_fit_quality_chi2_plot": "sample_fit_quality_chi2.pdf",
+                },
+            }
+        ],
+        base_dir=tmp_path,
+    )
+    assert "## Sample Fit Quality" in text
+    assert "![CDF of per-sample $Q$](sample_fit_quality_Q.svg)" in text
+    assert r"![Histogram of per-sample $\chi^2/\mathrm{dof}$](sample_fit_quality_chi2.svg)" in text
+    assert "numerically failed" not in text
+    assert r"q_{\rm min}" not in text
+    assert text.index("## Sample Fit Quality") < text.index("## `ca_p0`")
+    per_job = text.split("### Artifacts", 1)[1].split("### Diagnostic SVGs", 1)[0]
+    assert "sample_fit_quality" not in per_job
 
 
 def test_renorm_stage_report_shows_overlay_after_method(tmp_path: Path) -> None:

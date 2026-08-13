@@ -1104,3 +1104,16 @@
 - `validate` still prints the boxed matching-grid warning when `lc_x_ls` is denser
   than the quasi grid, then exits non-zero with `"status": "invalid"`. `run`
   continues to warn without failing; kernel construction still rejects the density.
+
+## 2026-08-13 (Correlator report trim and sample-quality SVGs)
+
+- Trimmed the correlator stage report: dropped automatic-window candidate JSON
+  dumps, folded the `fit_logs` prose into the artifact table, omitted summary-plot
+  paths from the per-job artifact list, and removed repeated scope/strategy
+  columns from Shared Windows.
+- `fit_bare_matrix_grid` now returns flattened `sample_fit_Q` and
+  `sample_fit_chi2_dof` for selected resampled fits, including low-Q `Bad` samples
+  and omitting only numerical failures.
+- Stage-level `sample_fit_quality_Q.svg` (CDF of $Q$) and
+  `sample_fit_quality_chi2.svg` (histogram of $\chi^2/\mathrm{dof}$) are written
+  after all correlator jobs and embedded in `ca_report.md`.

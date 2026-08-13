@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +18,12 @@ CORRELATOR_ARTIFACT_DESCRIPTIONS = {
     "bare_artifact": "Bare matrix element samples (EnsembleData NetCDF)",
     "summary_plot": "PDF plot of the bare matrix element versus Wilson-line length",
     "summary_plot_image": "SVG companion for Markdown embedding",
-    "tuning_log": "Window tuning and sample-average fit-quality log",
-    "sample_log": "Per-sample and per-z fit-quality log",
+    "tuning_log": "Window selection and sample-average fit-quality log",
+    "sample_log": "Per-sample and per-z fit-quality log, including failures",
+    "sample_fit_quality_Q_plot": "Stage-level PDF of the empirical CDF of per-sample Q",
+    "sample_fit_quality_Q_image": "Stage-level SVG of the empirical CDF of per-sample Q",
+    "sample_fit_quality_chi2_plot": "Stage-level PDF histogram of per-sample chi2/dof",
+    "sample_fit_quality_chi2_image": "Stage-level SVG histogram of per-sample chi2/dof",
     "E0_artifact": "Stage-level dispersion-relation table (NetCDF)",
     "dispersion_relation_plot": "Stage-level dispersion-relation PDF",
     "dispersion_relation_image": "Stage-level dispersion-relation SVG",
@@ -32,10 +35,26 @@ CORRELATOR_ARTIFACT_ORDER = (
     "summary_plot_image",
     "tuning_log",
     "sample_log",
+    "sample_fit_quality_Q_plot",
+    "sample_fit_quality_Q_image",
+    "sample_fit_quality_chi2_plot",
+    "sample_fit_quality_chi2_image",
     "E0_artifact",
     "dispersion_relation_plot",
     "dispersion_relation_image",
 )
+
+_STAGE_ARTIFACT_KEYS = {
+    "sample_fit_quality_Q_plot",
+    "sample_fit_quality_Q_image",
+    "sample_fit_quality_chi2_plot",
+    "sample_fit_quality_chi2_image",
+    "E0_artifact",
+    "dispersion_relation_plot",
+    "dispersion_relation_image",
+}
+
+_JOB_OUTPUT_SKIP_KEYS = _STAGE_ARTIFACT_KEYS | {"summary_plot", "summary_plot_image"}
 
 
 def _job_settings_table(result: dict[str, Any]) -> list[str]:
@@ -64,8 +83,8 @@ def _window_text(result: dict[str, Any]) -> list[str]:
     if not isinstance(specs, list):
         specs = [specs]
     lines = [
-        "| scope | strategy | nstate | pt2 window | pt3 window | n_data | n_params |",
-        "|---|---|---:|---|---|---:|---:|",
+        "| nstate | pt2 window | pt3 window | n_data | n_params |",
+        "|---:|---|---|---:|---:|",
     ]
     for spec in specs:
         if not isinstance(spec, dict):
@@ -76,16 +95,14 @@ def _window_text(result: dict[str, Any]) -> list[str]:
             f"tsep={format_report_list(spec.get('tsep_ls', []))}, tau_cut={spec.get('tau_cut', 'n/a')}",
         )
         lines.append(
-            f"| `{spec.get('fit_scope', spec.get('scope', 'n/a'))}` | "
-            f"`{spec.get('fit_strategy', spec.get('strategy', 'n/a'))}` | "
-            f"{spec.get('nstate', 'n/a')} | "
+            f"| {spec.get('nstate', 'n/a')} | "
             f"{pt2_window} | "
             f"{pt3_window} | "
             f"{spec.get('n_data', 'n/a')} | "
             f"{spec.get('n_params', 'n/a')} |"
         )
     if len(lines) == 2:
-        lines.append("| n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+        lines.append("| n/a | n/a | n/a | n/a | n/a |")
     return lines
 
 
@@ -97,7 +114,6 @@ def _auto_window_scan_text(result: dict[str, Any]) -> list[str]:
         "| channel | source | candidates | stable tmax | fallback |",
         "|---|---|---:|---:|---|",
     ]
-    candidate_lines: list[str] = []
     for scan_key, channel, window_key in (
         ("pt2", "2pt", "pt2_windows"),
         ("pt3", "3pt", "pt3_windows"),
@@ -112,11 +128,6 @@ def _auto_window_scan_text(result: dict[str, Any]) -> list[str]:
             f"{len(windows) if isinstance(windows, list) else 'n/a'} | "
             f"{format_report_value(details.get('stable_tmax'))} | {fallback} |"
         )
-        if isinstance(windows, list) and windows:
-            payload = json.dumps(windows, separators=(",", ":"))
-            candidate_lines.append(f"- Generated candidates `{channel}`: `{payload}`")
-    if candidate_lines:
-        lines.extend(["", *candidate_lines])
     return lines
 
 
@@ -150,7 +161,7 @@ def _format_systematic_error(value: Any) -> str:
 def _outputs_table(artifacts: dict[str, Any]) -> list[str]:
     lines = ["| Artifact | Description |", "|---|---|"]
     for key in CORRELATOR_ARTIFACT_ORDER:
-        if key in {"E0_artifact", "dispersion_relation_plot", "dispersion_relation_image"}:
+        if key in _JOB_OUTPUT_SKIP_KEYS:
             continue
         value = artifacts.get(key)
         if value:
@@ -295,6 +306,22 @@ def build_correlator_stage_report_markdown(
         )
 
     stage_artifacts = markdown_jobs[0][2] if markdown_jobs else {}
+    if stage_artifacts.get("sample_fit_quality_Q_image") or stage_artifacts.get("sample_fit_quality_chi2_image"):
+        lines.extend(
+            [
+                "",
+                "## Sample Fit Quality",
+                "",
+                "Empirical distributions of selected per-sample fit quality over all $z$ values. "
+                "Each job is one series; All pools every recorded sample.",
+            ]
+        )
+        if stage_artifacts.get("sample_fit_quality_Q_image"):
+            lines.extend(["", f"![CDF of per-sample $Q$]({stage_artifacts['sample_fit_quality_Q_image']})"])
+        if stage_artifacts.get("sample_fit_quality_chi2_image"):
+            lines.extend(
+                ["", f"![Histogram of per-sample $\\chi^2/\\mathrm{{dof}}$]({stage_artifacts['sample_fit_quality_chi2_image']})"]
+            )
     if stage_artifacts.get("dispersion_relation_image"):
         lines.extend(
             [
@@ -341,9 +368,7 @@ def build_correlator_stage_report_markdown(
                 "### Per-z Fit Summary",
                 *_z_fit_table(result),
                 "",
-                "### fit_logs",
-                "The `fit_logs` directory contains split logs: the tuning log records window selection and sample-average fit quality, while the sample log records per-sample and per-z fit quality, including failures.",
-                "",
+                "### Artifacts",
                 *_outputs_table(artifacts),
                 "",
                 "### Diagnostic SVGs",

@@ -31,6 +31,8 @@ from lamet_agent.core.plotting import (
     plot_qda_ratio_fit_on_data,
     plot_pt2_fit_on_data,
     plot_pt2_meff_on_data,
+    plot_sample_fit_quality_cdf,
+    plot_sample_fit_quality_chi2,
 )
 from lamet_agent.core.resampling import jackknife
 from lamet_agent.core.resampling import sample_mean_and_sdev
@@ -94,6 +96,8 @@ from lamet_agent.stages.correlator.functions import (
     _window_candidate_key,
     tune_bare_matrix,
     tune_ground_state,
+    write_correlator_sample_quality_artifacts,
+    _append_finite_sample_quality,
 )
 
 
@@ -1301,6 +1305,12 @@ def test_automatic_windows_flow_from_tuning_into_grid_result(tmp_path) -> None:
     assert fitted["shared_window_specs"][0]["tau_cut"] == robust["tau_cut"]
     assert fitted["z_fits"][0]["real_sys_sdev"] is None
     assert fitted["outputs"][0]["real_sys_sdev"] is None
+    q_values = np.asarray(fitted["sample_fit_Q"], dtype=float)
+    chi2_values = np.asarray(fitted["sample_fit_chi2_dof"], dtype=float)
+    assert q_values.size > 0
+    assert q_values.size == chi2_values.size
+    assert np.all(np.isfinite(q_values))
+    assert np.all(np.isfinite(chi2_values))
 
 
 def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
@@ -1363,6 +1373,8 @@ def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
     )
     assert serial["z_fits"][0]["n_failed_samples"] == parallel["z_fits"][0]["n_failed_samples"]
     assert np.allclose(serial["z_fits"][0]["fit_model_weights"], parallel["z_fits"][0]["fit_model_weights"])
+    assert np.allclose(serial["sample_fit_Q"], parallel["sample_fit_Q"])
+    assert np.allclose(serial["sample_fit_chi2_dof"], parallel["sample_fit_chi2_dof"])
     assert parallel["z_fits"][0]["sample0_plot_paths"]
     assert all(Path(path).is_file() for path in parallel["z_fits"][0]["sample0_plot_paths"].values())
     assert all(
@@ -1768,6 +1780,62 @@ def test_plot_qda_ratio_fit_on_data_writes_selected_components(tmp_path: Path) -
     assert (tmp_path / "qda_sample0_qda_ratio_re.svg").is_file()
     assert not (tmp_path / "qda_sample0_qda_ratio_im.pdf").exists()
     figures["re"][0].clear()
+
+
+def test_append_finite_sample_quality_keeps_low_q_and_skips_failures() -> None:
+    q_values: list[float] = []
+    chi2_values: list[float] = []
+    _append_finite_sample_quality(q_values, chi2_values, {"Q": 0.00926524, "chi2_dof": 2.01587, "error": None})
+    _append_finite_sample_quality(q_values, chi2_values, {"error": "overflow"})
+    _append_finite_sample_quality(q_values, chi2_values, {"Q": float("nan"), "chi2_dof": 1.0, "error": None})
+    assert q_values == pytest.approx([0.00926524])
+    assert chi2_values == pytest.approx([2.01587])
+
+
+def test_sample_fit_quality_plots_write_svg(tmp_path: Path) -> None:
+    series = [
+        ("ca_p0", np.array([0.9, 0.8, 0.01, 0.7])),
+        ("ca_p5", np.array([0.6, 0.4, 0.95])),
+    ]
+    q_stem = tmp_path / "sample_fit_quality_Q"
+    chi2_stem = tmp_path / "sample_fit_quality_chi2"
+    fig_q, ax_q = plot_sample_fit_quality_cdf(series, save_path=q_stem)
+    fig_chi2, ax_chi2 = plot_sample_fit_quality_chi2(
+        [("ca_p0", np.array([0.5, 0.6, 2.0])), ("ca_p5", np.array([0.8, 1.1, 5.0]))],
+        save_path=chi2_stem,
+    )
+    chi2_values = np.array([0.5, 0.6, 2.0, 0.8, 1.1, 5.0])
+    n_auto = max(1, int(np.histogram_bin_edges(chi2_values, bins="auto").size - 1))
+    expected_bins = max(1, int(np.round(n_auto * 1.5)))
+    n_vertices = len(ax_chi2.patches[-1].get_xy())
+    assert n_vertices >= 2 * expected_bins
+    xlim = ax_chi2.get_xlim()
+    assert xlim[0] <= float(chi2_values.min())
+    assert xlim[1] >= float(chi2_values.max())
+    assert q_stem.with_suffix(".pdf").is_file()
+    assert q_stem.with_suffix(".svg").is_file()
+    assert chi2_stem.with_suffix(".pdf").is_file()
+    assert chi2_stem.with_suffix(".svg").is_file()
+    assert ax_q.get_xlabel() == "$Q$"
+    assert r"\chi^2" in ax_chi2.get_xlabel()
+    fig_q.clear()
+    fig_chi2.clear()
+
+
+def test_write_correlator_sample_quality_artifacts(tmp_path: Path) -> None:
+    artifacts = write_correlator_sample_quality_artifacts(
+        [
+            {
+                "job_id": "ca_p0",
+                "result": {"sample_fit_Q": [0.9, 0.01], "sample_fit_chi2_dof": [0.5, 2.0]},
+            },
+            {"job_id": "ca_p5", "result": {}},
+        ],
+        tmp_path,
+    )
+    assert Path(artifacts["sample_fit_quality_Q_image"]).is_file()
+    assert Path(artifacts["sample_fit_quality_chi2_image"]).is_file()
+    assert write_correlator_sample_quality_artifacts([{"job_id": "ca_p0", "result": {}}], tmp_path) == {}
 
 
 # --- logging -----------------------------------------------------------------

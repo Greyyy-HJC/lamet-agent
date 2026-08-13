@@ -855,7 +855,10 @@ def run_agent(
             break
         if stage == "correlator_analysis" and stage_job_records:
             from lamet_agent.stages.correlator.reporting import write_correlator_stage_report
-            from lamet_agent.stages.correlator.functions import write_correlator_energy_artifacts
+            from lamet_agent.stages.correlator.functions import (
+                write_correlator_energy_artifacts,
+                write_correlator_sample_quality_artifacts,
+            )
 
             energy_artifacts = write_correlator_energy_artifacts(
                 [
@@ -879,6 +882,12 @@ def run_agent(
             )
             if overlay_artifacts:
                 stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
+            quality_artifacts = write_correlator_sample_quality_artifacts(
+                stage_job_records,
+                manifest.artifacts_directory / stage,
+            )
+            if quality_artifacts:
+                stage_job_records[0].setdefault("artifacts", {}).update(quality_artifacts)
             paths = write_correlator_stage_report(
                 jobs=stage_job_records,
                 path=manifest.artifacts_directory / stage / "ca_report.md",

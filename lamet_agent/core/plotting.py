@@ -1142,3 +1142,118 @@ def plot_fourier_extension_quality(
     if show:
         plt.show()
     return fig, ax
+
+
+def _finite_quality_values(values: np.ndarray) -> np.ndarray:
+    data = np.asarray(values, dtype=float).reshape(-1)
+    return data[np.isfinite(data)]
+
+
+def _save_quality_figure(fig: Figure, save_path: str | Path) -> None:
+    output = Path(save_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    pdf = output if output.suffix.lower() == ".pdf" else output.with_suffix(".pdf")
+    svg = output.with_suffix(".svg")
+    fig.savefig(pdf, bbox_inches="tight", transparent=True)
+    fig.savefig(svg, bbox_inches="tight")
+
+
+def plot_sample_fit_quality_cdf(
+    series: list[tuple[str, np.ndarray]],
+    *,
+    save_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Plot the empirical CDF of per-sample Q for each labeled series plus All."""
+    fig, ax = default_plot()
+    pooled: list[np.ndarray] = []
+    for index, (label, values) in enumerate(series):
+        finite = _finite_quality_values(values)
+        if finite.size == 0:
+            continue
+        pooled.append(finite)
+        ordered = np.sort(finite)
+        cdf = np.arange(1, ordered.size + 1, dtype=float) / ordered.size
+        ax.plot(
+            np.r_[ordered[0], ordered],
+            np.r_[0.0, cdf],
+            drawstyle="steps-post",
+            color=COLOR_CYCLE[index % len(COLOR_CYCLE)],
+            linewidth=1.4,
+            label=label,
+        )
+    if pooled:
+        all_values = np.sort(np.concatenate(pooled))
+        all_cdf = np.arange(1, all_values.size + 1, dtype=float) / all_values.size
+        ax.plot(
+            np.r_[all_values[0], all_values],
+            np.r_[0.0, all_cdf],
+            drawstyle="steps-post",
+            color="0.15",
+            linewidth=2.0,
+            label="All",
+        )
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlabel(r"$Q$", **FONT_SIZE)
+    ax.set_ylabel(r"CDF of $Q$", **FONT_SIZE)
+    ax.set_title("Per-sample fit $Q$", **FONT_SIZE)
+    ax.legend(**LEGEND_SETS)
+    if save_path is not None:
+        _save_quality_figure(fig, save_path)
+    return fig, ax
+
+
+def plot_sample_fit_quality_chi2(
+    series: list[tuple[str, np.ndarray]],
+    *,
+    save_path: str | Path | None = None,
+) -> tuple[Figure, Axes]:
+    """Plot a histogram of per-sample chi2/dof for each labeled series plus All."""
+    fig, ax = default_plot()
+    finite_series: list[tuple[str, np.ndarray]] = []
+    pooled: list[np.ndarray] = []
+    for label, values in series:
+        finite = _finite_quality_values(values)
+        if finite.size == 0:
+            continue
+        finite_series.append((label, finite))
+        pooled.append(finite)
+    bins = None
+    if pooled:
+        pooled_values = np.concatenate(pooled)
+        lo = float(np.min(pooled_values))
+        hi = float(np.max(pooled_values))
+        if hi <= lo:
+            pad = 0.05 if lo == 0.0 else abs(lo) * 0.05
+            lo, hi = lo - pad, hi + pad
+        n_auto = max(1, int(np.histogram_bin_edges(pooled_values, bins="auto").size - 1))
+        n_bins = max(1, int(np.round(n_auto * 1.5)))
+        bins = np.linspace(lo, hi, n_bins + 1)
+    for index, (label, finite) in enumerate(finite_series):
+        ax.hist(
+            finite,
+            bins=bins,
+            histtype="step",
+            color=COLOR_CYCLE[index % len(COLOR_CYCLE)],
+            linewidth=1.4,
+            label=label,
+        )
+    if pooled:
+        ax.hist(
+            np.concatenate(pooled),
+            bins=bins,
+            histtype="step",
+            color="0.15",
+            linewidth=2.0,
+            label="All",
+        )
+        span = float(bins[-1] - bins[0])
+        pad = 0.02 * span if span > 0 else 0.05
+        ax.set_xlim(float(bins[0]) - pad, float(bins[-1]) + pad)
+    ax.set_xlabel(r"$\chi^2/\mathrm{dof}$", **FONT_SIZE)
+    ax.set_ylabel("Counts", **FONT_SIZE)
+    ax.set_title(r"Per-sample fit $\chi^2/\mathrm{dof}$", **FONT_SIZE)
+    ax.legend(**LEGEND_SETS)
+    if save_path is not None:
+        _save_quality_figure(fig, save_path)
+    return fig, ax

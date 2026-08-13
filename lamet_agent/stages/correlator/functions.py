@@ -54,6 +54,8 @@ from lamet_agent.core.plotting import (
     plot_pt2_meff_on_data,
     plot_pt3_ratio_fit_on_data,
     plot_qda_ratio_fit_on_data,
+    plot_sample_fit_quality_cdf,
+    plot_sample_fit_quality_chi2,
 )
 from lamet_agent.core.resampling import (
     resample_config_samples,
@@ -346,6 +348,45 @@ def write_correlator_energy_artifacts(records: list[dict[str, Any]], stage_dir: 
         "dispersion_relation_plot": str(pdf_path),
         "dispersion_relation_image": str(svg_path),
     }
+
+
+def _job_sample_quality_series(
+    jobs: list[dict[str, Any]], key: str
+) -> list[tuple[str, np.ndarray]]:
+    series: list[tuple[str, np.ndarray]] = []
+    for item in jobs:
+        result = item.get("result") if isinstance(item.get("result"), dict) else {}
+        values = np.asarray(result.get(key, []), dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            continue
+        series.append((str(item.get("job_id") or "job"), values))
+    return series
+
+
+def write_correlator_sample_quality_artifacts(
+    jobs: list[dict[str, Any]], stage_dir: Path
+) -> dict[str, str]:
+    """Write stage-level CDF/histogram SVGs of per-sample fit quality."""
+    q_series = _job_sample_quality_series(jobs, "sample_fit_Q")
+    chi2_series = _job_sample_quality_series(jobs, "sample_fit_chi2_dof")
+    if not q_series and not chi2_series:
+        return {}
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    artifacts: dict[str, str] = {}
+    if q_series:
+        q_stem = stage_dir / "sample_fit_quality_Q"
+        fig, _ = plot_sample_fit_quality_cdf(q_series, save_path=q_stem)
+        plt.close(fig)
+        artifacts["sample_fit_quality_Q_plot"] = str(q_stem.with_suffix(".pdf"))
+        artifacts["sample_fit_quality_Q_image"] = str(q_stem.with_suffix(".svg"))
+    if chi2_series:
+        chi2_stem = stage_dir / "sample_fit_quality_chi2"
+        fig, _ = plot_sample_fit_quality_chi2(chi2_series, save_path=chi2_stem)
+        plt.close(fig)
+        artifacts["sample_fit_quality_chi2_plot"] = str(chi2_stem.with_suffix(".pdf"))
+        artifacts["sample_fit_quality_chi2_image"] = str(chi2_stem.with_suffix(".svg"))
+    return artifacts
 
 
 def _pt2_re_fcn_with_suffix(t: np.ndarray, p: dict, Lt: int, nstate: int = 2, suffix: str = "") -> np.ndarray:
@@ -984,6 +1025,32 @@ def _record(fit: lsf.nonlinear_fit, **meta: Any) -> dict[str, Any]:
         fit=fit,
     )
     return record
+
+
+def _selected_record_quality(
+    records: list[dict[str, Any]], weights: np.ndarray
+) -> tuple[float, float]:
+    """Return Q and chi2/dof for the highest-weight (or only) usable record."""
+    primary = records[int(np.argmax(np.asarray(weights, dtype=float)))]
+    return float(primary["Q"]), float(primary["chi2_dof"])
+
+
+def _append_finite_sample_quality(
+    q_values: list[float],
+    chi2_values: list[float],
+    result: dict[str, Any],
+) -> None:
+    """Keep selected-sample Q and chi2/dof when the nonlinear fit returned."""
+    if result.get("error") is not None:
+        return
+    try:
+        q_value = float(result["Q"])
+        chi2_dof = float(result["chi2_dof"])
+    except (KeyError, TypeError, ValueError):
+        return
+    if np.isfinite(q_value) and np.isfinite(chi2_dof):
+        q_values.append(q_value)
+        chi2_values.append(chi2_dof)
 
 
 def select_best(records: list[dict[str, Any]], *, q_min: float = 0.05) -> tuple[int, bool]:
@@ -3065,6 +3132,7 @@ def _fit_correlator_sample_batch(payload: bytes, sample_indices: list[int]) -> l
             candidate_weights = np.zeros(len(context["candidates"]), dtype=float)
             for weight, sample_record in zip(sample_weights, sample_records):
                 candidate_weights[int(sample_record["candidate_index"])] += float(weight)
+            selected_q, selected_chi2_dof = _selected_record_quality(sample_records, sample_weights)
             e0_pairs = [(weight, record) for weight, record in zip(sample_weights, sample_records) if "E0" in record["fit"].p]
             e0_i_pairs = [(weight, record) for weight, record in zip(sample_weights, sample_records) if "E0_i" in record["fit"].p]
             e0_f_pairs = [(weight, record) for weight, record in zip(sample_weights, sample_records) if "E0_f" in record["fit"].p]
@@ -3078,6 +3146,8 @@ def _fit_correlator_sample_batch(payload: bytes, sample_indices: list[int]) -> l
                     "sample": sample_index,
                     "real": float(np.sum(sample_weights * np.asarray(re_vals))),
                     "imag": float(np.sum(sample_weights * np.asarray(im_vals))),
+                    "Q": selected_q,
+                    "chi2_dof": selected_chi2_dof,
                     "E0_lattice": float(sum(weight * float(gv.mean(record["fit"].p["E0"])) for weight, record in e0_pairs) / sum(weight for weight, _record in e0_pairs)) if e0_pairs else float("nan"),
                     "E0_i_lattice": float(sum(weight * float(gv.mean(record["fit"].p["E0_i"])) for weight, record in e0_i_pairs) / sum(weight for weight, _record in e0_i_pairs)) if e0_i_pairs else float("nan"),
                     "E0_f_lattice": float(sum(weight * float(gv.mean(record["fit"].p["E0_f"])) for weight, record in e0_f_pairs) / sum(weight for weight, _record in e0_f_pairs)) if e0_f_pairs else float("nan"),
@@ -3525,6 +3595,8 @@ def fit_bare_matrix_grid(
     tuning_logger.info("shared setting (%s): %s", selection_rule, shared_specs)
     z_records: list[dict[str, Any]] = []
     z_report: list[dict[str, Any]] = []
+    sample_fit_Q: list[float] = []
+    sample_fit_chi2_dof: list[float] = []
     energy_record: dict[str, Any] | None = None
     E0_lattice_samples: list[float] | None = None
     E0_i_lattice_samples: list[float] | None = None
@@ -3746,6 +3818,7 @@ def fit_bare_matrix_grid(
                     failures.append({"sample": sample_index, "error": result["error"]})
                     sample_logger.info("Bad %s z=%s sample=%s: %s", fit_mode, z, sample_index, result["error"])
                     continue
+                _append_finite_sample_quality(sample_fit_Q, sample_fit_chi2_dof, result)
                 real_samples[sample_index] = float(result["real"])
                 imag_samples[sample_index] = float(result["imag"])
                 weight_sums += np.asarray(result["candidate_weights"], dtype=float)
@@ -4095,6 +4168,8 @@ def fit_bare_matrix_grid(
         "z_values": z_list,
         "tune_z": tune_z_value,
         "z_fits": z_report,
+        "sample_fit_Q": sample_fit_Q,
+        "sample_fit_chi2_dof": sample_fit_chi2_dof,
         "sample0_pt2_plot_paths": sample0_pt2_paths,
         "pt2_energies": pt2_energies,
         "momentum_gev": momentum_gev,
@@ -4509,6 +4584,7 @@ def _fit_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[st
             full_weights = np.zeros(len(context["candidates"]), dtype=float)
             for weight, record in zip(weights, records):
                 full_weights[int(record["candidate_index"])] = float(weight)
+            selected_q, selected_chi2_dof = _selected_record_quality(records, weights)
             plot_payload = None
             if sample_index == 0:
                 plot_record = records[int(np.argmax(weights))]
@@ -4526,6 +4602,8 @@ def _fit_sample_batch(payload: bytes, sample_indices: list[int]) -> list[dict[st
                     "sample": int(sample_index),
                     "real": float(np.sum(weights * real_values)),
                     "imag": float(np.sum(weights * imag_values)),
+                    "Q": selected_q,
+                    "chi2_dof": selected_chi2_dof,
                     "candidate_weights": full_weights.tolist(),
                     "logs": logs,
                     "plot_payload": plot_payload,
@@ -5182,6 +5260,8 @@ def fit_qda_ratio_grid(
     executor = ProcessPoolExecutor(max_workers=int(workers)) if workers > 1 else None
     z_records: list[dict[str, Any]] = []
     z_report: list[dict[str, Any]] = []
+    sample_fit_Q: list[float] = []
+    sample_fit_chi2_dof: list[float] = []
     energy_fit = chosen.get("pt2_fit")
     if energy_fit is None and strategy == "independent":
         energy_fit = fit_two_point(
@@ -5408,6 +5488,8 @@ def fit_qda_ratio_grid(
                 [item["imag"] for item in sample_results], dtype=float
             )
             failures = [item for item in sample_results if item["error"] is not None]
+            for item in sample_results:
+                _append_finite_sample_quality(sample_fit_Q, sample_fit_chi2_dof, item)
             if not np.any(np.isfinite(real_samples)):
                 raise ValueError(f"all qda_ratio resampled fits failed for z={z}")
             real_mean, real_sdev = sample_mean_and_sdev(
@@ -5676,6 +5758,8 @@ def fit_qda_ratio_grid(
         "bz": z_list,
         "tune_z": tune_z_value,
         "z_fits": z_report,
+        "sample_fit_Q": sample_fit_Q,
+        "sample_fit_chi2_dof": sample_fit_chi2_dof,
         "pt2_energies": [energy] if energy is not None else [],
         "momentum_gev": momentum_gev,
         "component": part,
