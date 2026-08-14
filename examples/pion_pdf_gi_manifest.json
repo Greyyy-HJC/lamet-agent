@@ -5,10 +5,10 @@
     "artifacts_directory": "runs/pion_pdf_gi/artifacts",
     "target_observable": "pdf",
     "parton": "quark",
-    "resample_mode": "bs",
-    "sample_error_mode": "median",
+    "resample_mode": "jk",
+    "sample_error_mode": "covariance",
     "bs_samples": 200,
-    "bin_size": 5,
+    "bin_size": 1,
     "workers": 8,
     "random_seed": 1984,
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "review"]
@@ -69,7 +69,7 @@
         "fit_scope": ["3pt_ratio"],
         "fit_strategy": ["joint"],
         "svdcut": 1e-6,
-        "posterior_prior_error_scale": 5.0,
+        "posterior_prior_error_scale": 10.0,
         "prior_width": [1.0],
         "component": "re",
         "q_min": 0.05,
@@ -96,17 +96,17 @@
     },
     "fourier_transform": {
       "defaults": {
-        "order": ["LA"],
+        "order": ["LA", "NLA"],
         "sector": "valence",
         "Lambda0_gev": 0.1,
         "posterior_prior_error_scale": [3.0, 4.0, 5.0],
         "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
         "scheme_scan": {
-          "zmin_values": [0.72, 0.78],
-          "zmax_values": [1.08, 1.14],
-          "z_ext_max": 3.0,
+          "zmin_values": [0.54, 0.60, 0.66, 0.72],
+          "zmax_values": [0.96, 1.02, 1.08, 1.14],
+          "z_ext_max": 1.5,
           "smooth": "linear",
-          "model_average": true,
+          "model_average": false,
           "max_schemes": 200
         }
       },
