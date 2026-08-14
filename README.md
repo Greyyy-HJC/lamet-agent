@@ -639,7 +639,15 @@ cd runs/ds_pdf_complete
 ```
 
 `root_directory` resolves relative to the manifest file when it is not absolute.
-Correlator, artifact, kernel, and artifact-output paths resolve from that root.
+For CLI `validate` and `run`, the resolved value must be this `lamet-agent`
+checkout's project root. Correlator data, external artifact, and kernel paths
+resolve from that root and must name existing files; `artifacts_directory` and
+other output paths may be created later and therefore need not exist during
+validation. When one of these path checks fails, `run` with a planning-capable
+backend enters plan mode without running workflow stages, confirms the project
+root first, and then asks for each invalid input path in manifest order. The
+`external` backend reports the path error directly because it cannot plan.
+
 `metadata.stages` is the sole ordered list of stages to execute; partial runs use a
 manifest with a shorter list and source nodes under `inputs.artifacts`.
 Every key under `stages` must appear in that list; leftover stage blocks fail

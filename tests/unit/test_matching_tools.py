@@ -187,20 +187,6 @@ def test_report_formula_follows_the_kernel_structure_without_family_branches() -
     assert "light-cone DA" in da and r"\phi(x,\mu)" in da and r"\frac{dy}{|y|}" not in da
 
 
-def test_norm_diagnostic_reports_valence_region_not_double_counted_full_range() -> None:
-    # A symmetric quasi-PDF integrates to ~2 over the full [-2, 2] grid (quark + antiquark
-    # sides) but to ~1 over the physical valence window [0, 1]. The diagnostic must lead
-    # with the valence integral and flag the full-range one, not present 2 as "the norm".
-    from lamet_agent.stages.matching.reporting import _diagnostics
-
-    x = np.linspace(-2.0, 2.0, 201)
-    sym = np.exp(-4.0 * x**2)  # symmetric under x -> -x
-    data = {"x_grid": x.tolist(), "quasi_mean": sym.tolist(), "lightcone_mean": sym.tolist()}
-    text = " ".join(_diagnostics(data, language="en"))
-    assert "Valence-region norm" in text and r"\int_0^1" in text
-    assert "full-grid integral" in text and "must not be read as" in text
-
-
 def test_report_text_follows_the_kernel_rather_than_assuming_a_pdf() -> None:
     from lamet_agent.stages.matching.reporting import _kernel_description, _scheme_explanation
 

@@ -6,7 +6,12 @@ import json
 import re
 from typing import Any, Callable
 
-from .core import PlanAgentState, _stage_parameter_gaps
+from .core import (
+    PlanAgentState,
+    _manifest_root,
+    _resolve_manifest_path,
+    _stage_parameter_gaps,
+)
 from .conversion import _standard_dataset_paths
 
 
@@ -86,9 +91,64 @@ def _stage_optional_prompt(stage: str, payload: dict[str, Any]) -> str:
     return "review optional choices: literature is true or false; literature_max_papers optionally overrides its default of 4 when literature is true. Reply with values to set, or none."
 
 
+def _next_path_repair_question(state: PlanAgentState) -> dict[str, Any] | None:
+    """Return the next invalid input path to repair after a run fallback."""
+    if state.path_repair_project_root is None:
+        return None
+    expected_root = state.path_repair_project_root.expanduser().resolve()
+    current_root = _manifest_root(state.manifest_path, state.candidate_payload)
+    if current_root != expected_root:
+        return {
+            "question_id": "metadata.root_directory",
+            "prompt": (
+                "metadata.root_directory must be the lamet-agent project root. "
+                f"Use {expected_root}?"
+            ),
+            "choices": [
+                {
+                    "label": "1",
+                    "value": str(expected_root),
+                    "description": f"Set metadata.root_directory to {expected_root}.",
+                }
+            ],
+        }
+
+    inputs = state.candidate_payload.get("inputs")
+    if not isinstance(inputs, dict):
+        return None
+    path_groups = (
+        ("correlators", "data_path", "correlator data"),
+        ("artifacts", "path", "external artifact"),
+        ("kernels", "kernel_path", "kernel"),
+    )
+    for collection, field, label in path_groups:
+        items = inputs.get(collection)
+        if not isinstance(items, list):
+            continue
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            value = item.get(field)
+            resolved = _resolve_manifest_path(state.manifest_path, state.candidate_payload, value)
+            if resolved is not None and resolved.is_file():
+                continue
+            display = str(resolved) if resolved is not None else repr(value)
+            return {
+                "question_id": f"inputs.{collection}.{index}.{field}",
+                "prompt": (
+                    f"The {label} path inputs.{collection}[{index}].{field} is not an existing file: "
+                    f"{display}. Enter the correct path."
+                ),
+            }
+    return None
+
+
 def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
     payload = state.candidate_payload
     metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+    path_question = _next_path_repair_question(state)
+    if path_question is not None:
+        return [path_question]
     missing_metadata = [key for key in ("random_seed", "resample_mode") if key not in metadata]
     if missing_metadata:
         return [

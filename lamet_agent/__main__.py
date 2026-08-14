@@ -13,7 +13,13 @@ from pydantic import ValidationError
 
 from .agent import run_agent
 from .core.llm import parse_api_model, provider_config
-from .manifest import AnalysisManifest, validate_manifest_file
+from .manifest import (
+    AnalysisManifest,
+    ManifestPathError,
+    lamet_agent_project_root,
+    validate_manifest_file,
+    validate_manifest_paths,
+)
 from .planning import run_interactive_plan
 from .stages.matching.validation import matching_grid_warnings
 
@@ -104,9 +110,10 @@ def _emit_matching_grid_warnings(manifest: object) -> list[str]:
 
 @app.command("validate")
 def validate_manifest(path: Path) -> None:
-    """Validate workflow manifest schema and kernel function references."""
+    """Validate workflow manifest schema, input paths, and kernel references."""
     try:
         manifest = validate_manifest_file(path)
+        validate_manifest_paths(manifest)
     except Exception as exc:  # pragma: no cover - CLI surface
         raise typer.BadParameter(_format_cli_error(exc)) from exc
 
@@ -164,6 +171,7 @@ def _run_plan_mode(
     model: str | None,
     api_key_file: Path,
     base_url: str | None,
+    path_repair_project_root: Path | None = None,
 ) -> None:
     """Validate planning options and run the interactive planning loop."""
     if backend not in _VALID_PLAN_BACKENDS:
@@ -193,6 +201,7 @@ def _run_plan_mode(
             api_key=api_key,
             base_url=resolved_base_url,
             output_func=typer.echo,
+            path_repair_project_root=path_repair_project_root,
         )
     except ValueError as exc:  # pragma: no cover - CLI surface
         raise typer.BadParameter(str(exc)) from exc
@@ -277,6 +286,7 @@ def run_workflow(
     """
     try:
         parsed = validate_manifest_file(manifest)
+        validate_manifest_paths(parsed)
     except Exception as exc:  # pragma: no cover - CLI surface
         if backend in _VALID_PLAN_BACKENDS:
             typer.echo(_render_plan_fallback_notice(exc), err=True)
@@ -287,6 +297,9 @@ def run_workflow(
                 model=model,
                 api_key_file=api_key_file,
                 base_url=base_url,
+                path_repair_project_root=(
+                    lamet_agent_project_root() if isinstance(exc, ManifestPathError) else None
+                ),
             )
             return
         raise typer.BadParameter(_format_cli_error(exc)) from exc

@@ -74,6 +74,7 @@ from .questions import (
     _get_dotted_path,
     _json_pointer_from_question_id,
     _manifest_question_id_from_user_input_action,
+    _next_path_repair_question,
     _next_questions_for_state,
     _valid_plan_agent_question,
 )

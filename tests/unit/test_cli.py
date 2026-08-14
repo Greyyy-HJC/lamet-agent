@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -185,6 +186,7 @@ def test_run_valid_manifest_does_not_plan(tmp_path, monkeypatch: pytest.MonkeyPa
     parsed = SimpleNamespace(correlators=[], kernels=[])
     run_calls: list[object] = []
 
+    monkeypatch.setattr("lamet_agent.__main__.validate_manifest_paths", lambda _manifest: None)
     monkeypatch.setattr("lamet_agent.__main__.validate_manifest_file", lambda _manifest: parsed)
     monkeypatch.setattr(
         "lamet_agent.__main__.run_interactive_plan",
@@ -203,6 +205,9 @@ def test_run_valid_manifest_does_not_plan(tmp_path, monkeypatch: pytest.MonkeyPa
 
 
 def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bool = False) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    artifact_path = path.parent / "rn.bin"
+    artifact_path.write_bytes(b"artifact")
     matching_defaults = {"scheme": "ratio"}
     if denser_lc:
         matching_defaults["lc_x_ls"] = {"start": -1.0, "stop": 2.0, "num": 300}
@@ -212,7 +217,7 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
     payload = {
         "metadata": {
             "run_id": "demo",
-            "root_directory": str(path.parent),
+            "root_directory": str(project_root),
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
@@ -221,12 +226,12 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
         },
         "inputs": {
             "correlators": [],
-            "artifacts": [{"id": "rn", "stage": "renormalization", "path": "rn.nc"}],
+            "artifacts": [{"id": "rn", "stage": "renormalization", "path": str(artifact_path)}],
             "kernels": [
                 {
                     "stage": "perturbative_matching",
                     "kernel_id": "CG_gt_quark_PDF_ratio_NLO",
-                    "kernel_path": "kernels.py",
+                    "kernel_path": "lamet_agent/kernels.py",
                     "kernel_parameters": {},
                 }
             ],
@@ -248,6 +253,62 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
             "jobs": [{"id": "review"}],
         }
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_validate_rejects_missing_input_path(tmp_path) -> None:
+    manifest = tmp_path / "missing-artifact.json"
+    _write_matching_manifest(manifest)
+    artifact_path = tmp_path / "rn.bin"
+    artifact_path.unlink()
+
+    result = CliRunner().invoke(app, ["validate", str(manifest)])
+
+    assert result.exit_code != 0
+    assert "inputs.artifacts[0].path does not exist" in result.output
+    assert str(artifact_path) in result.output
+
+
+def test_run_path_failure_enters_path_repair_plan(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "missing-artifact.json"
+    _write_matching_manifest(manifest)
+    (tmp_path / "rn.bin").unlink()
+    calls: list[tuple[object, dict]] = []
+
+    monkeypatch.setattr(
+        "lamet_agent.__main__.run_interactive_plan",
+        lambda manifest_path, **kwargs: calls.append((manifest_path, kwargs)),
+    )
+    monkeypatch.setattr(
+        "lamet_agent.__main__.run_agent",
+        lambda *_args, **_kwargs: pytest.fail("run_agent must not run after path validation failure"),
+    )
+
+    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "mock"])
+
+    assert result.exit_code == 0, result.output
+    assert "inputs.artifacts[0].path does not exist" in result.output
+    assert len(calls) == 1
+    assert calls[0][0] == manifest
+    assert calls[0][1]["path_repair_project_root"] == Path(__file__).resolve().parents[2]
+
+
+def test_run_path_failure_with_external_backend_does_not_plan(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "missing-artifact.json"
+    _write_matching_manifest(manifest)
+    (tmp_path / "rn.bin").unlink()
+    monkeypatch.setattr(
+        "lamet_agent.__main__.run_interactive_plan",
+        lambda *_args, **_kwargs: pytest.fail("external backend must not enter path repair"),
+    )
+
+    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "external"])
+
+    assert result.exit_code != 0
+    assert "inputs.artifacts[0].path does not exist" in result.output
 
 
 def test_validate_prints_matching_grid_warning_and_fails(tmp_path) -> None:

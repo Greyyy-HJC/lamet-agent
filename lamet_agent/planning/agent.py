@@ -1162,6 +1162,7 @@ def run_interactive_plan(
     base_url: str | None = None,
     input_func: Callable[[str], str] = input,
     output_func: Callable[[str], None] = print,
+    path_repair_project_root: Path | None = None,
 ) -> PlanRunResult | None:
     """Run the terminal planning loop under LLM/tool control."""
     payload, manifest_text = load_relaxed_manifest(manifest_path)
@@ -1171,6 +1172,7 @@ def run_interactive_plan(
         manifest_text=manifest_text,
         original_payload=copy.deepcopy(payload),
         candidate_payload=copy.deepcopy(payload),
+        path_repair_project_root=path_repair_project_root,
     )
     state.manifest_edits.extend(initial_edits)
     if manifest_path.suffix.lower() == ".txt" and re.search(

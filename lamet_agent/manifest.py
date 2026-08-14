@@ -31,6 +31,19 @@ _VOLUME_RE = re.compile(r"^S(?P<spatial>[1-9]\d*)T(?P<temporal>[1-9]\d*)$")
 _MOMENTUM_RE = re.compile(r"^PX(?P<px>-?\d+)PY(?P<py>-?\d+)PZ(?P<pz>-?\d+)$")
 
 
+class ManifestPathError(ValueError):
+    """Raised when a CLI manifest references an invalid filesystem path."""
+
+    def __init__(self, issues: list[str]) -> None:
+        self.issues = tuple(issues)
+        super().__init__("\n".join(issues))
+
+
+def lamet_agent_project_root() -> Path:
+    """Return the source checkout root containing the active package."""
+    return Path(__file__).resolve().parents[1]
+
+
 def parse_volume(value: str) -> tuple[int, int]:
     """Return ``(L_s, L_t)`` from a canonical ``S<number>T<number>`` label."""
     match = _VOLUME_RE.fullmatch(value)
@@ -648,6 +661,47 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
 def _resolve_from_root(root: Path, value: str) -> str:
     path = Path(value).expanduser()
     return str(path if path.is_absolute() else (root / path).resolve())
+
+
+def validate_manifest_paths(
+    manifest: AnalysisManifest,
+    *,
+    project_root: Path | None = None,
+) -> None:
+    """Require the CLI manifest root and input paths to reference existing files."""
+    expected_root = (project_root or lamet_agent_project_root()).expanduser().resolve()
+    actual_root = manifest.root_directory.expanduser().resolve()
+    if actual_root != expected_root:
+        raise ManifestPathError(
+            [
+                (
+                    "metadata.root_directory must resolve to the lamet-agent project root: "
+                    f"expected {expected_root}, got {actual_root}"
+                )
+            ]
+        )
+
+    issues: list[str] = []
+
+    def check_file(field: str, value: str) -> None:
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = actual_root / path
+        resolved = path.resolve()
+        if not resolved.exists():
+            issues.append(f"{field} does not exist: {resolved}")
+        elif not resolved.is_file():
+            issues.append(f"{field} is not a file: {resolved}")
+
+    for index, correlator in enumerate(manifest.inputs.correlators):
+        check_file(f"inputs.correlators[{index}].data_path", correlator.data_path)
+    for index, artifact in enumerate(manifest.inputs.artifacts):
+        check_file(f"inputs.artifacts[{index}].path", artifact.path)
+    for index, kernel in enumerate(manifest.inputs.kernels):
+        check_file(f"inputs.kernels[{index}].kernel_path", kernel.kernel_path)
+
+    if issues:
+        raise ManifestPathError(issues)
 
 
 def validate_manifest_file(path: Path) -> AnalysisManifest:

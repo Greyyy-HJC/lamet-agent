@@ -249,6 +249,62 @@ def test_plan_reports_correlator_metadata_question_before_ambiguous_paths(tmp_pa
     assert loaded["next_questions"][0]["question_id"] == "inputs.correlators.0.momentum"
 
 
+def test_run_fallback_plan_repairs_invalid_paths_in_order(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    payload = _minimal_payload(tmp_path / "wrong-root")
+    payload["inputs"]["artifacts"] = [
+        {"id": "external", "stage": "renormalization", "path": "missing-artifact.bin"}
+    ]
+    payload["inputs"]["kernels"][0]["kernel_path"] = "missing-kernel.py"
+    state = PlanAgentState(
+        tmp_path / "draft.json",
+        "",
+        copy.deepcopy(payload),
+        copy.deepcopy(payload),
+        path_repair_project_root=project_root,
+    )
+
+    question = _next_questions_for_state(state)[0]
+    assert question["question_id"] == "metadata.root_directory"
+    assert question["choices"][0]["value"] == str(project_root.resolve())
+
+    applied = _apply_user_answer_to_candidate(
+        state,
+        "metadata.root_directory",
+        str(project_root.resolve()),
+    )
+    assert applied["event"] == "user_answer_applied"
+    assert state.candidate_payload["metadata"]["root_directory"] == str(project_root.resolve())
+    assert _next_questions_for_state(state)[0]["question_id"] == "inputs.correlators.0.data_path"
+
+    (project_root / "correct-data.h5").write_bytes(b"data")
+    _apply_user_answer_to_candidate(
+        state,
+        "inputs.correlators.0.data_path",
+        "correct-data.h5",
+    )
+    assert _next_questions_for_state(state)[0]["question_id"] == "inputs.artifacts.0.path"
+
+    (project_root / "correct-artifact.bin").write_bytes(b"artifact")
+    _apply_user_answer_to_candidate(
+        state,
+        "inputs.artifacts.0.path",
+        "correct-artifact.bin",
+    )
+    assert _next_questions_for_state(state)[0]["question_id"] == "inputs.kernels.0.kernel_path"
+
+    (project_root / "correct-kernel.py").write_text("# kernel\n", encoding="utf-8")
+    _apply_user_answer_to_candidate(
+        state,
+        "inputs.kernels.0.kernel_path",
+        "correct-kernel.py",
+    )
+
+    assert _next_questions_for_state(state)[0]["question_id"] == "stage.add_remaining"
+    assert not (project_root / "artifacts").exists()
+
+
 def test_plan_does_not_write_conversion_control_answers_to_manifest(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     state = PlanAgentState(tmp_path / "draft.json", "", payload, payload)

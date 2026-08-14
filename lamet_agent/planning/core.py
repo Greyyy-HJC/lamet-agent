@@ -115,6 +115,7 @@ class PlanAgentState:
     stage_optional_checked: set[str] = field(default_factory=set)
     parameter_completion_checked: bool = False
     parameter_completion_requested: bool = False
+    path_repair_project_root: Path | None = None
 
 
 def _strip_jsonc(text: str) -> str:

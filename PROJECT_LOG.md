@@ -1167,3 +1167,11 @@
 - Migrated all 128 existing records to the new schema, rebuilt review-topic
   tokens, and added taxonomy regression coverage plus a reusable Codex startup
   task in `lamet_literature/README.md`.
+
+## 2026-08-14 (Manifest input path validation)
+
+- Added CLI path validation that requires `root_directory` to resolve to the
+  active lamet-agent checkout and requires correlator, external artifact, and
+  kernel inputs to be existing files while allowing new artifact output dirs.
+- Routed path failures from planning-capable `run` backends into a path-first
+  plan flow that confirms the root and repairs invalid input paths one at a time.

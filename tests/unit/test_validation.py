@@ -8,6 +8,7 @@ from lamet_agent.manifest import (
     HBAR_C_GEV_FM,
     AnalysisManifest,
     ArtifactInput,
+    ManifestPathError,
     CorrelatorInput,
     derive_job_kinematics,
     parse_momentum,
@@ -15,6 +16,7 @@ from lamet_agent.manifest import (
     resolve_artifact_metadata,
     resolve_manifest_artifact_metadata,
     validate_manifest_file,
+    validate_manifest_paths,
 )
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.tools import validate_stage_inputs
@@ -44,6 +46,102 @@ def _correlator_payload(correlator_type: str = "2pt") -> dict:
             }
         )
     return payload
+
+
+def _path_validation_payload(root_directory: str) -> dict:
+    correlator = _correlator_payload()
+    correlator["data_path"] = "data.h5"
+    return {
+        "metadata": {
+            "run_id": "paths",
+            "root_directory": root_directory,
+            "artifacts_directory": "new-artifacts",
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "random_seed": 1984,
+            "stages": ["correlator_analysis"],
+        },
+        "inputs": {
+            "correlators": [correlator],
+            "artifacts": [
+                {"id": "external", "stage": "renormalization", "path": "external.bin"}
+            ],
+            "kernels": [
+                {
+                    "stage": "perturbative_matching",
+                    "kernel_id": "CG_gt_quark_PDF_ratio_NLO",
+                    "kernel_path": "kernel.py",
+                }
+            ],
+        },
+        "stages": {
+            "correlator_analysis": {
+                "defaults": {},
+                "jobs": [{"id": "ca", "correlator_ids": ["c"]}],
+            }
+        },
+    }
+
+
+def test_validate_manifest_paths_accepts_relative_project_root_and_missing_output_dir(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    examples = root / "examples"
+    examples.mkdir(parents=True)
+    (root / "data.h5").write_bytes(b"data")
+    (root / "external.bin").write_bytes(b"artifact")
+    (root / "kernel.py").write_text("# kernel\n", encoding="utf-8")
+    manifest_path = examples / "manifest.json"
+    manifest_path.write_text(json.dumps(_path_validation_payload("..")), encoding="utf-8")
+
+    manifest = validate_manifest_file(manifest_path)
+    validate_manifest_paths(manifest, project_root=root)
+
+    assert manifest.root_directory == root.resolve()
+    assert not manifest.artifacts_directory.exists()
+
+
+def test_validate_manifest_paths_reports_all_missing_or_non_file_inputs(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "data.h5").mkdir()
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(json.dumps(_path_validation_payload(".")), encoding="utf-8")
+    manifest = validate_manifest_file(manifest_path)
+
+    with pytest.raises(ManifestPathError) as exc_info:
+        validate_manifest_paths(manifest, project_root=root)
+
+    message = str(exc_info.value)
+    assert "inputs.correlators[0].data_path is not a file" in message
+    assert "inputs.artifacts[0].path does not exist" in message
+    assert "inputs.kernels[0].kernel_path does not exist" in message
+
+
+def test_validate_manifest_paths_rejects_wrong_or_missing_project_root(
+    tmp_path: Path,
+) -> None:
+    expected_root = tmp_path / "project"
+    expected_root.mkdir()
+    missing_root = tmp_path / "missing-project"
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(_path_validation_payload(str(missing_root))),
+        encoding="utf-8",
+    )
+    manifest = validate_manifest_file(manifest_path)
+
+    with pytest.raises(ManifestPathError) as exc_info:
+        validate_manifest_paths(manifest, project_root=expected_root)
+
+    assert exc_info.value.issues == (
+        "metadata.root_directory must resolve to the lamet-agent project root: "
+        f"expected {expected_root.resolve()}, got {missing_root.resolve()}",
+    )
 
 
 def test_validate_manifest_resolves_root_relative_source_paths(tmp_path: Path) -> None:
