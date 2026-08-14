@@ -25,6 +25,7 @@ examples/fake_data/data/
 data*/
 artifacts/
 examples/artifacts/
+lamet_literature/arxiv/
 **/temp*
 
 examples/workflow_cg_qpdf_complete_manifest.json

@@ -1117,3 +1117,53 @@
 - Stage-level `sample_fit_quality_Q.svg` (CDF of $Q$) and
   `sample_fit_quality_chi2.svg` (histogram of $\chi^2/\mathrm{dof}$) are written
   after all correlator jobs and embedded in `ca_report.md`.
+## 2026-08-13 (INSPIREHEP-selected arXiv full-text downloader)
+
+- Added `lamet_literature/download_arxiv.py` to extract unique arXiv ids from an
+  INSPIREHEP JSON export, confirm current metadata through the arXiv Atom API,
+  and maintain a resumable local full-text corpus manifest.
+- The downloader prefers official arXiv HTML, falls back to the API-provided PDF
+  when HTML or its conversion is unavailable, and converts the chosen source to
+  Markdown with the repository virtual environment's MarkItDown installation.
+- Added serial three-second request pacing, transient HTTP retries, atomic
+  per-paper outputs, successful-file skipping, PDF/HTML validation, focused unit
+  coverage, setup documentation, and a `literature` dependency extra.
+
+## 2026-08-13 (Simplify arXiv full-text download flow)
+
+- Replaced the downloader helpers, retry layer, status manifest, and arXiv
+  metadata API lookup with one linear `main()` flow.
+- The script now trusts the INSPIREHEP arXiv ids, requests HTML directly, falls
+  back to the corresponding PDF URL, and converts the selected source with
+  MarkItDown.
+
+## 2026-08-13 (Local-model literature tagging)
+
+- Added `lamet_literature/classify_arxiv.py` to classify local arXiv HTML using
+  the OpenAI-compatible model at `127.0.0.1:8080/v1`.
+- Added structured tags for `core`, `secondary`, or `unrelated` relevance,
+  physics topics, workflow stages, systematics, and explicitly reported lattice
+  setup values, plus deterministic `review_topics` tokens.
+- The classifier writes `lamet_literature/arxiv.json` after each paper and
+  resumes by skipping records already present in that file.
+- Classified all 128 INSPIREHEP-selected records with the local
+  `Qwen3.6-35B-A3B` model: 127 records used full ar5iv HTML and one used its
+  downloaded arXiv abstract page.
+- Verified exact INSPIRE id coverage, source-file presence, required tag/setup
+  fields, and review-topic uniqueness; conservatively removed zero or
+  physically invalid setup values and normalized drifting model vocabulary.
+
+## 2026-08-13 (Harden literature tag semantics)
+
+- Replaced free-form classification vocabulary with schema-version-2 controlled
+  tags for kinematic dependence, quark sectors, twist, correlator types, and
+  three-point current type/flavor structure.
+- Kept standard physics abbreviations while separating TMD from the physical
+  observable and restricting flavors to actual quark species; added explicit
+  prompt regressions for arXiv:1810.05043, 2404.14525, and 2412.20461.
+- Reduced long-paper input to a section-aware evidence packet, added focused
+  arXiv-id reruns, strict structured output, atomic writes, and conservative
+  setup-value validation.
+- Migrated all 128 existing records to the new schema, rebuilt review-topic
+  tokens, and added taxonomy regression coverage plus a reusable Codex startup
+  task in `lamet_literature/README.md`.

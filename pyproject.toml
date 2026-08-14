@@ -32,6 +32,10 @@ analysis = [
 codex = [
   "openai-codex>=0.1.0b3",
 ]
+literature = [
+  "beautifulsoup4>=4.12",
+  "requests>=2.31",
+]
 
 [project.scripts]
 lamet-agent = "lamet_agent.__main__:main"

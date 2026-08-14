@@ -58,6 +58,11 @@ hybrid-self-renormalization workflows within the job DAG.
 │       ├── fourier/
 │       ├── matching/
 │       └── extrapolation/
+├── lamet_literature/
+│   ├── README.md
+│   ├── arxiv.py
+│   ├── classify_arxiv.py
+│   └── arxiv.json
 └── tests/unit/
     ├── test_agent.py
     ├── test_stage_core.py
@@ -868,6 +873,12 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
     written for each stage.
 - `lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
+- `lamet_literature/arxiv.py`
+  - Downloads the arXiv HTML selected by the local INSPIREHEP export.
+- `lamet_literature/classify_arxiv.py`
+  - Uses the local OpenAI-compatible model to tag downloaded papers by LaMET
+    physics topic, workflow relevance, systematics, and lattice setup, writing
+    `lamet_literature/arxiv.json` for review retrieval.
 - `lamet_agent/stages/*`
   - Each stage owns `prompts.md`, `validation.py`, `functions.py`, and, when it
     writes a report, `reporting.py`.
