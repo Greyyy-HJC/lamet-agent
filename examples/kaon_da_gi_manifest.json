@@ -1,8 +1,8 @@
 {
   "metadata": {
-    "run_id": "kaon_da_gi",
+    "run_id": "kaon_da_gi_sys",
     "root_directory": "..",
-    "artifacts_directory": "runs/ds_kaon_da_gi/artifacts",
+    "artifacts_directory": "runs/ds_kaon_da_gi_sys/artifacts",
     "target_observable": "da",
     "parton": "quark",
     "resample_mode": "bs",
@@ -312,8 +312,11 @@
           "num": 300
         },
         "scheme_scan": {
-          "model_average": false
-        }
+          "model_average": true
+        },
+        "observable": "meson_quasi_da",
+        "coord_unit": "fm",
+        "zmin_shift": 1
       },
       "jobs": [
         {
@@ -419,7 +422,8 @@
             -1,
             2
           ]
-        }
+        },
+        "r": 1.4142135623730951
       },
       "jobs": [
         {
@@ -427,81 +431,63 @@
           "inputs": {
             "quasi": "ft_a06m130_pz6"
           },
-          "params": {
-            "zs_fm": 0.2
-          }
+          "params": {}
         },
         {
           "id": "mt_a09m130_pz6",
           "inputs": {
             "quasi": "ft_a09m130_pz6"
           },
-          "params": {
-            "zs_fm": 0.2
-          }
+          "params": {}
         },
         {
           "id": "mt_a12m130_pz6",
           "inputs": {
             "quasi": "ft_a12m130_pz6"
           },
-          "params": {
-            "zs_fm": 0.2
-          }
+          "params": {}
         },
         {
           "id": "mt_a06m130_pz8",
           "inputs": {
             "quasi": "ft_a06m130_pz8"
           },
-          "params": {
-            "zs_fm": 0.2
-          }
+          "params": {}
         },
         {
           "id": "mt_a09m130_pz8",
           "inputs": {
             "quasi": "ft_a09m130_pz8"
           },
-          "params": {
-            "zs_fm": 0.2
-          }
+          "params": {}
         },
         {
           "id": "mt_a12m130_pz8",
           "inputs": {
             "quasi": "ft_a12m130_pz8"
           },
-          "params": {
-            "zs_fm": 0.2
-          }
+          "params": {}
         },
         {
           "id": "mt_a06m130_pz10",
           "inputs": {
             "quasi": "ft_a06m130_pz10"
           },
-          "params": {
-            "zs_fm": 0.2
-          }
+          "params": {}
         },
         {
           "id": "mt_a09m130_pz10",
           "inputs": {
             "quasi": "ft_a09m130_pz10"
           },
-          "params": {
-            "zs_fm": 0.2
-          }
+          "params": {}
         },
         {
           "id": "mt_a12m130_pz10",
           "inputs": {
             "quasi": "ft_a12m130_pz10"
           },
-          "params": {
-            "zs_fm": 0.2
-          }
+          "params": {}
         }
       ]
     },
@@ -509,9 +495,12 @@
       "defaults": {
         "allow_order_a": [1],
         "allow_order_1overp": [2, 4],
-        "allow_order_ap": [2, 4],
-        "fitting_param_xdep": [true, true, true],
-        "pdep_gev": [1.5, 2.0, 2.5]
+        "allow_order_ap": [2],
+        "fitting_param_xdep": [false, true, true],
+        "pdep_gev": [1.5, 2.0, 2.5],
+        "allow_order_a_sym": [1, 2],
+        "allow_order_1overp_sym": [2],
+        "allow_order_ap_sym": [2, 4]
       },
       "jobs": [
         {
