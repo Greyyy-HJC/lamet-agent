@@ -147,7 +147,7 @@ def _resolve_llm_config(
     model_name: str | None = None
     api_key: str | None = None
     resolved_base_url: str | None = base_url
-    if api_key_file.exists():
+    if backend == "api" and api_key_file.exists():
         api_key = api_key_file.read_text(encoding="utf-8").strip()
 
     if backend == "api":

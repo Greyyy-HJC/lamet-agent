@@ -286,15 +286,16 @@ $z_{\mathrm{fm}}=(z/a)a_{\mathrm{fm}}$ and record `coord_unit: "fm"` plus
 `input_coord_unit: "lattice"`. Hybrid-ratio branch selection and its
 long-distance exponent continue to use $|z_{\mathrm{fm}}|$.
 
-### `inputs.correlators[].distribution_type` and Fourier sectors
+### `inputs.correlators[].polarization` and Fourier sectors
 
-Every 3pt correlator may declare `distribution_type` as `unpolarized`,
-`helicity`, or `transversity`; the default is `unpolarized`. Correlator and
+Every example 3pt correlator declares `polarization` explicitly as
+`unpolarized`, `helicity`, or `transversity`; the schema default remains
+`unpolarized`. Correlator and
 renormalization NetCDF outputs preserve it together with `current_operator`, so
-Fourier jobs infer their observable from upstream metadata plus
-`target_observable`, `parton`, and `hadron`. An explicit Fourier `observable`
-still takes precedence, and partial inputs without enough provenance must supply
-one.
+Fourier jobs infer the short observable, such as `pion_quark_quasi_pdf`, from
+`target_observable`, `parton`, and upstream `hadron`, while inheriting
+`polarization` separately from the target 3pt. Partial PDF/GPD inputs without
+that provenance must supply both `observable` and `polarization` explicitly.
 
 Quark PDF/GPD jobs support `sea`, `valence`, `singlet`, and `full`. Helicity
 interchanges the real/imaginary channels used by `valence` and `singlet` and
@@ -302,7 +303,7 @@ uses $\Delta q_{\rm ext}(-x)=+\Delta\bar q(x)$; unpolarized and transversity use
 $q_{\rm ext}(-x)=-\bar q(x)$. Gluon jobs use `full` only and do not inherit
 quark/antiquark sector semantics. The current gluon tail backend supports the
 unpolarized gluon PDF only; gluon helicity, transversity, and GPD operators can
-carry `distribution_type` metadata but are not silently mapped onto that
+carry `polarization` metadata but are not silently mapped onto that
 backend. DA behavior is unchanged.
 
 ### `fourier_transform.defaults.scheme_scan`
@@ -678,8 +679,9 @@ The operator fields are free strings:
 
 - `source_operator` and `sink_operator` are required for both types.
 - `current_operator` is required for 3pt data.
-- `distribution_type` records the 3pt operator family and defaults to
-  `unpolarized`; the other choices are `helicity` and `transversity`.
+- `polarization` records the 3pt operator family. Write it explicitly as
+  `unpolarized`, `helicity`, or `transversity`; the schema default is
+  `unpolarized`.
 - `bz_direction` is required for 3pt data and must be one of `X`, `Y`, `Z`,
   `XY`, `XZ`, `YZ`, or `XYZ`. It records the spatial direction or canonical
   direction set represented by the `bz` separation grid.

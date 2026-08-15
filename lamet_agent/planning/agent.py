@@ -111,7 +111,9 @@ def _planning_system_prompt() -> str:
         "The written quick/full manifests normalize that alias to 'perturbative_matching'. "
         "For target_observable='da', fourier_transform sector is fixed to 'full'; if free text, examples, or user answers say sea, valence, or singlet for DA Fourier transform, correct it to full instead of asking whether to keep the invalid value. "
         "For parton='gluon', fourier_transform sector is also fixed to 'full'; quark sea/valence/singlet semantics do not apply. "
-        "A 3pt correlator distribution_type is unpolarized, helicity, or transversity and defaults to unpolarized. Do not ask for it or write the default; preserve an explicitly requested helicity or transversity value. "
+        "Every 3pt correlator must explicitly write polarization as unpolarized, helicity, or transversity; use unpolarized when the user does not specify it. "
+        "Fourier observable uses the short target name without polarization, such as pion_quark_quasi_pdf; keep polarization as a separate parameter. "
+        "When Fourier input has no target 3pt or upstream polarization metadata, require explicit Fourier polarization. "
         "For correlator data conversion, inspect HDF5/NPY/NPZ inputs and never guess ambiguous axes or source keys. "
         "Use multiple-choice questions for simple axis/index choices, but use free-form questions for high-dimensional mappings where the user must describe source, target, cfg/time or cfg/tau axes, z/bz ordering, momentum selection, optional axis_order, optional index selections, and transpose. "
         "When the user gives an unambiguous mapping, call apply_correlator_conversion_mapping with args.correlator_id and args.datasets as a non-empty list of dataset mappings. "
@@ -187,7 +189,7 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                     "required_inputs": {"input": "renormalized matrix-element job or artifact"},
                     "required_parameters": {"y_grid": "list of x/y points or {start, stop, num}"},
                     "sector_rule": "For target_observable=da or parton=gluon, sector must be full; correct sea/valence/singlet to full without asking.",
-                    "distribution_type": "3pt default unpolarized; write only an explicitly requested helicity or transversity value.",
+                    "polarization": "Always write each 3pt polarization explicitly; use unpolarized when unspecified. For external Fourier inputs without this provenance, require an explicit Fourier polarization.",
                 },
                 "perturbative_matching": {
                     "minimal_policy": "Do not ask for or add mu, component, grids, or momentum_gev when omitted. Select kernel_id only when it is inferable from the observable/scheme or ask the user. Add zs_fm only if the selected hybrid kernel needs it and it is explicit or already known from renormalization.",
@@ -708,7 +710,7 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
         "lattice_spacing_fm",
         "volume",
         "current_operator",
-        "distribution_type",
+        "polarization",
         "bz_direction",
         "bT",
         "bz",

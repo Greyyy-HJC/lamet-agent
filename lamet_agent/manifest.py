@@ -127,7 +127,7 @@ class CorrelatorInput(BaseModel):
     source_operator: str = Field(min_length=1)
     sink_operator: str = Field(min_length=1)
     current_operator: str | None = Field(default=None, min_length=1)
-    distribution_type: Literal["unpolarized", "helicity", "transversity"] = "unpolarized"
+    polarization: Literal["unpolarized", "helicity", "transversity"] = "unpolarized"
     bz_direction: BzDirection | None = None
     volume: str
     lattice_spacing_fm: float = Field(gt=0)
@@ -160,8 +160,8 @@ class CorrelatorInput(BaseModel):
                 raise ValueError("bT must not contain duplicates")
             if len(set(self.bz)) != len(self.bz):
                 raise ValueError("bz must not contain duplicates")
-        elif self.current_operator is not None or self.tsep is not None or "distribution_type" in self.model_fields_set:
-            raise ValueError("current_operator, distribution_type, and tsep are only valid for 3pt correlators")
+        elif self.current_operator is not None or self.tsep is not None or "polarization" in self.model_fields_set:
+            raise ValueError("current_operator, polarization, and tsep are only valid for 3pt correlators")
         return self
 
     @property
@@ -259,7 +259,7 @@ _ARTIFACT_METADATA_FIELDS = (
     "observable",
     "parton",
     "current_operator",
-    "distribution_type",
+    "polarization",
 )
 _NETCDF_STORAGE_ATTRS = frozenset({"ensemble", "resample", "gvar_encoding"})
 
@@ -553,7 +553,7 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
                     "gfix",
                     "bz_direction",
                     "current_operator",
-                    "distribution_type",
+                    "polarization",
                     "observable",
                     "parton",
                 )
@@ -615,7 +615,7 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
                 result.update(
                     {
                         "current_operator": operator.current_operator,
-                        "distribution_type": operator.distribution_type,
+                        "polarization": operator.polarization,
                     }
                 )
             if str(params.get("fitting_form", "Breit")) == "NonBreit":

@@ -47,6 +47,7 @@ from lamet_agent.core.resampling import (
     samples_to_gvar,
 )
 from lamet_agent.stages.fourier.reporting import write_fourier_report
+from lamet_agent.stages.fourier.validation import PUBLIC_OBSERVABLES
 
 FM_TO_GEV_INV = 5.067731237
 _FOURIER_SAMPLE_EXECUTOR: ContextVar[ProcessPoolExecutor | None] = ContextVar(
@@ -54,40 +55,18 @@ _FOURIER_SAMPLE_EXECUTOR: ContextVar[ProcessPoolExecutor | None] = ContextVar(
     default=None,
 )
 
-OBSERVABLE_ALIASES = {
-    "pion_quark_unpolarized_quasi_pdf": "pion_quark_unpolarized_quasi_pdf",
-    "pion_quark_helicity_quasi_pdf": "pion_quark_helicity_quasi_pdf",
-    "pion_quark_transversity_quasi_pdf": "pion_quark_transversity_quasi_pdf",
-    "pion_quark_quasi_pdf": "pion_quark_unpolarized_quasi_pdf",
-    "pion_pdf": "pion_quark_unpolarized_quasi_pdf",
-    "nucleon_quark_unpolarized_quasi_pdf": "nucleon_quark_unpolarized_quasi_pdf",
-    "nucleon_quark_helicity_quasi_pdf": "nucleon_quark_helicity_quasi_pdf",
-    "nucleon_unpolarized_pdf": "nucleon_quark_unpolarized_quasi_pdf",
-    "nucleon_helicity_pdf": "nucleon_quark_helicity_quasi_pdf",
-    "helicity_pdf": "nucleon_quark_helicity_quasi_pdf",
-    "unpolarized_pdf": "nucleon_quark_unpolarized_quasi_pdf",
-    "nucleon_quark_transversity_quasi_pdf": "nucleon_quark_transversity_quasi_pdf",
-    "nucleon_transversity_pdf": "nucleon_quark_transversity_quasi_pdf",
-    "transversity_pdf": "nucleon_quark_transversity_quasi_pdf",
-    "pion_gluon_unpolarized_quasi_pdf": "pion_gluon_unpolarized_quasi_pdf",
-    "pion_gluon_quasi_pdf": "pion_gluon_unpolarized_quasi_pdf",
-    "pion_gluon_pdf": "pion_gluon_unpolarized_quasi_pdf",
-    "nucleon_gluon_unpolarized_quasi_pdf": "nucleon_gluon_unpolarized_quasi_pdf",
-    "nucleon_gluon_quasi_pdf": "nucleon_gluon_unpolarized_quasi_pdf",
-    "nucleon_gluon_pdf": "nucleon_gluon_unpolarized_quasi_pdf",
-    "meson_quasi_da": "meson_quasi_da",
-    "quasi_da": "meson_quasi_da",
-    "pion_quark_unpolarized_quasi_gpd": "pion_quark_unpolarized_quasi_gpd",
-    "pion_quark_helicity_quasi_gpd": "pion_quark_helicity_quasi_gpd",
-    "pion_quark_transversity_quasi_gpd": "pion_quark_transversity_quasi_gpd",
-    "pion_quark_quasi_gpd": "pion_quark_unpolarized_quasi_gpd",
-    "pion_gpd": "pion_quark_unpolarized_quasi_gpd",
-    "nucleon_quark_unpolarized_quasi_gpd": "nucleon_quark_unpolarized_quasi_gpd",
-    "nucleon_quark_helicity_quasi_gpd": "nucleon_quark_helicity_quasi_gpd",
-    "nucleon_quark_transversity_quasi_gpd": "nucleon_quark_transversity_quasi_gpd",
-    "nucleon_quark_quasi_gpd": "nucleon_quark_unpolarized_quasi_gpd",
-    "nucleon_gpd": "nucleon_quark_unpolarized_quasi_gpd",
+POLARIZED_OBSERVABLES = {
+    (f"{hadron}_quark_quasi_{target}", polarization): f"{hadron}_quark_{polarization}_quasi_{target}"
+    for hadron in ("pion", "nucleon")
+    for target in ("pdf", "gpd")
+    for polarization in ("unpolarized", "helicity", "transversity")
 }
+POLARIZED_OBSERVABLES.update(
+    {
+        ("pion_gluon_quasi_pdf", "unpolarized"): "pion_gluon_unpolarized_quasi_pdf",
+        ("nucleon_gluon_quasi_pdf", "unpolarized"): "nucleon_gluon_unpolarized_quasi_pdf",
+    }
+)
 
 OBSERVABLE_BACKENDS = {
     "pion_quark_unpolarized_quasi_pdf": "pion_quark_quasi_pdf",
@@ -388,10 +367,10 @@ def _convert_scheme_value(value: float, fit_scale: float) -> float:
 
 def _canonical_observable(observable: str) -> str:
     key = observable.lower().replace("-", "_").replace(" ", "_")
-    if key not in OBSERVABLE_ALIASES:
-        allowed = ", ".join(sorted(set(OBSERVABLE_ALIASES.values())))
+    if key not in PUBLIC_OBSERVABLES and key not in OBSERVABLE_BACKENDS:
+        allowed = ", ".join(sorted(PUBLIC_OBSERVABLES))
         raise ValueError(f"observable must be one of: {allowed}")
-    return OBSERVABLE_ALIASES[key]
+    return key
 
 
 QUARK_LIKE_TERMS = {
@@ -1824,7 +1803,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
                 "observable_backend": str(result.get("observable_backend", "")),
                 "parton": str(result.get("parton", "")),
                 "current_operator": str(result.get("current_operator", "")),
-                "distribution_type": str(result.get("distribution_type", "unpolarized")),
+                "polarization": str(result.get("polarization", "unpolarized")),
             }
         )
     for key in (
@@ -1878,7 +1857,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
     ):
         if key in result:
             attrs[key] = json.dumps(np.asarray(result[key]).tolist())
-    ensemble_label = str(result.get("ensemble", ""))
+    ensemble_label = str(result.get("ensemble") or (source_ensemble.id if source_ensemble is not None else ""))
     return EnsembleData(
         ensemble=EnsembleInfo(
             source_ensemble.series if source_ensemble is not None else "",
@@ -2140,7 +2119,7 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any], source_ens
                     "observable_backend": str(result.get("observable_backend", "")),
                     "parton": str(result.get("parton", "")),
                     "current_operator": str(result.get("current_operator", "")),
-                    "distribution_type": str(result.get("distribution_type", "unpolarized")),
+                    "polarization": str(result.get("polarization", "unpolarized")),
                 }
                 if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}
                 else {}
@@ -2736,7 +2715,7 @@ def run_fourier_transform(
     parton: str = "quark",
     hadron: str | None = None,
     current_operator: str | None = None,
-    distribution_type: str = "unpolarized",
+    polarization: str | None = None,
     psi1_flavor_class: str = "heavy",
     psi2_flavor_class: str = "heavy",
     save_path: str | None = None,
@@ -2755,7 +2734,7 @@ def run_fourier_transform(
     out = "fourier_result"
     sector = None if sector is None else str(sector).strip().lower()
     parton = str(parton or "quark").strip().lower()
-    distribution_type = str(distribution_type or "unpolarized").strip().lower()
+    polarization = str(polarization or "").strip().lower()
     psi1_flavor_class = str(psi1_flavor_class or "heavy").strip().lower()
     psi2_flavor_class = str(psi2_flavor_class or "heavy").strip().lower()
     target = str(target_observable or "").strip().lower()
@@ -2763,15 +2742,22 @@ def run_fourier_transform(
         observable = "meson_quasi_da"
     if not target:
         observable_name = str(observable).strip().lower()
-        target = "da" if observable_name in {"meson_quasi_da", "quasi_da"} else "gpd" if "gpd" in observable_name else "pdf"
+        target = "da" if observable_name == "meson_quasi_da" else "gpd" if "gpd" in observable_name else "pdf"
     if target in {"pdf", "gpd"} and observable is not None:
-        observable = _canonical_observable(str(observable))
-        parton = "gluon" if "_gluon_" in observable else "quark"
-        hadron = "pion" if observable.startswith("pion_") else "nucleon" if observable.startswith("nucleon_") else hadron
-        distribution_type = next(
-            (value for value in ("unpolarized", "helicity", "transversity") if f"_{value}_" in observable),
-            distribution_type,
-        )
+        observable_key = str(observable).lower().replace("-", "_").replace(" ", "_")
+        if observable_key not in PUBLIC_OBSERVABLES:
+            allowed = ", ".join(sorted(PUBLIC_OBSERVABLES))
+            raise ValueError(f"observable must be one of: {allowed}")
+        public_observable = observable_key
+        if not polarization:
+            raise ValueError("polarization is required for PDF/GPD Fourier transforms")
+        if (public_observable, polarization) not in POLARIZED_OBSERVABLES:
+            raise ValueError(f"polarization={polarization!r} is not supported for {public_observable!r}")
+        parton = "gluon" if "_gluon_" in public_observable else "quark"
+        hadron = "pion" if public_observable.startswith("pion_") else "nucleon"
+        observable = POLARIZED_OBSERVABLES[(public_observable, polarization)]
+    else:
+        public_observable = _canonical_observable(str(observable))
     if sector is not None:
         if target == "da":
             sector = "full"
@@ -2779,8 +2765,8 @@ def run_fourier_transform(
             sector, part, output_scale, im_flip_for_ft = "full", "both", 1.0, False
         elif target in {"pdf", "gpd"}:
             part, output_scale, im_flip_for_ft = {
-                "valence": (("im" if distribution_type == "helicity" else "re"), 2.0, False),
-                "singlet": (("re" if distribution_type == "helicity" else "im"), 2.0, False),
+                "valence": (("im" if polarization == "helicity" else "re"), 2.0, False),
+                "singlet": (("re" if polarization == "helicity" else "im"), 2.0, False),
                 "sea": ("both", 1.0, False),
                 "full": ("both", 1.0, False),
             }[sector]
@@ -2789,7 +2775,7 @@ def run_fourier_transform(
     else:
         if parton == "gluon":
             sector, part, output_scale, im_flip_for_ft = "full", "both", 1.0, False
-        elif distribution_type == "helicity" and target in {"pdf", "gpd"}:
+        elif polarization == "helicity" and target in {"pdf", "gpd"}:
             sector = {"re": "singlet", "im": "valence", "both": "full"}.get(str(part).lower(), str(part).lower())
         else:
             sector = {"re": "valence", "im": "singlet", "both": "full"}.get(str(part).lower(), str(part).lower())
@@ -3015,9 +3001,10 @@ def run_fourier_transform(
     result["target_observable"] = target
     if target in {"pdf", "gpd"}:
         result["observable_backend"] = OBSERVABLE_BACKENDS.get(str(result.get("observable", "")), "")
+        result["observable"] = public_observable
         result["parton"] = parton
         result["current_operator"] = current_operator
-        result["distribution_type"] = distribution_type
+        result["polarization"] = polarization
     result["Lambda0_gev"] = float(Lambda0_gev)
     result["posterior_prior_error_scale"] = (
         range_prior_width
@@ -3039,7 +3026,7 @@ def run_fourier_transform(
         sample_error_mode=sample_error_mode,
         model_average=model_average,
     )
-    sea_sign = 1.0 if distribution_type == "helicity" else -1.0
+    sea_sign = 1.0 if polarization == "helicity" else -1.0
     _apply_fourier_output_scale(result, sea_sign if sea_projection else float(output_scale))
     if sea_projection:
         result["y_grid"] = np.asarray(y_values, dtype=float)
@@ -3094,7 +3081,7 @@ def run_fourier_transform(
             {
                 "observable": result.get("observable"),
                 "parton": result.get("parton"),
-                "distribution_type": result.get("distribution_type"),
+                "polarization": result.get("polarization"),
             }
             if target in {"pdf", "gpd"}
             else {}
@@ -3141,7 +3128,7 @@ def summarize_fourier_result(
             {
                 "observable": data.get("observable"),
                 "parton": data.get("parton"),
-                "distribution_type": data.get("distribution_type"),
+                "polarization": data.get("polarization"),
             }
         )
     store[out] = summary

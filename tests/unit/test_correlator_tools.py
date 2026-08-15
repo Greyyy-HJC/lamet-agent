@@ -1328,7 +1328,7 @@ def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
         "ensemble": "toy",
         "momentum": "PX0PY0PZ0",
         "current_operator": "gT_nonlocal",
-        "distribution_type": "helicity",
+        "polarization": "helicity",
         "bz_direction": "Z",
         "pt2_window": {"tmin": 2, "tmax": 10},
         "pt3_window": {"tsep_ls": [6, 8], "tau_cut": 1},
@@ -1364,7 +1364,7 @@ def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
     assert parallel_store["bare_matrix_element_data"].attrs["workers"] == "2"
     assert parallel_store["bare_matrix_element_data"].attrs["bz_direction"] == "Z"
     assert parallel_store["bare_matrix_element_data"].attrs["current_operator"] == "gT_nonlocal"
-    assert parallel_store["bare_matrix_element_data"].attrs["distribution_type"] == "helicity"
+    assert parallel_store["bare_matrix_element_data"].attrs["polarization"] == "helicity"
     assert "variant" not in parallel_store["bare_matrix_element_data"].attrs
     assert np.allclose(
         serial_store["bare_matrix_element_data"].values,

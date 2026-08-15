@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import ssl
@@ -234,16 +235,16 @@ def _post_chat_completion(
         )
         payload = None
         last_error: BaseException | None = None
-        for attempt in range(3):
+        for attempt in range(6):
             try:
                 with urllib.request.urlopen(request, timeout=180) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 break
-            except (TimeoutError, urllib.error.URLError, ssl.SSLError) as exc:
+            except (TimeoutError, urllib.error.URLError, ssl.SSLError, http.client.IncompleteRead) as exc:
                 last_error = exc
-                if attempt == 2:
+                if attempt == 5:
                     raise RuntimeError(
-                        f"{label} API request failed after 3 attempts. "
+                        f"{label} API request failed after 6 attempts. "
                         "This is usually a transient HTTPS/network/proxy issue; retry the command or check network/proxy settings."
                     ) from exc
                 time.sleep(2**attempt)
@@ -294,16 +295,16 @@ def _post_chat_text_completion(
         method="POST",
     )
     last_error: BaseException | None = None
-    for attempt in range(3):
+    for attempt in range(6):
         try:
             with urllib.request.urlopen(request, timeout=180) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return str(payload["choices"][0]["message"]["content"]).strip()
-        except (TimeoutError, urllib.error.URLError, ssl.SSLError) as exc:
+        except (TimeoutError, urllib.error.URLError, ssl.SSLError, http.client.IncompleteRead) as exc:
             last_error = exc
-            if attempt == 2:
+            if attempt == 5:
                 raise RuntimeError(
-                    f"{label} API text request failed after 3 attempts. "
+                    f"{label} API text request failed after 6 attempts. "
                     "Retry the command or check network/proxy settings."
                 ) from exc
             time.sleep(2**attempt)

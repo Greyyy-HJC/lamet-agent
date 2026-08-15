@@ -76,7 +76,7 @@ def _stage_optional_prompt(stage: str, payload: dict[str, Any]) -> str:
         return (
             "fourier_transform optional choices: scheme_scan, posterior_prior_error_scale, plot names, x/y limits, "
             f"method, observable, coord_unit override (default fm); {sector_text}. "
-            "3pt distribution_type defaults to unpolarized; specify helicity or transversity only when needed. Reply with values to set, or none."
+            "Every 3pt records polarization explicitly as unpolarized, helicity, or transversity. Fourier inputs without upstream 3pt provenance also require it. Reply with values to set, or none."
         )
     if stage == "perturbative_matching":
         return (
@@ -165,7 +165,7 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
     if isinstance(correlators, list):
         required_by_kind = {
             "2pt": ["source_operator", "sink_operator", "volume", "lattice_spacing_fm", "momentum"],
-            "3pt": ["source_operator", "sink_operator", "current_operator", "bz_direction", "volume", "lattice_spacing_fm", "momentum", "bT", "bz", "tsep"],
+            "3pt": ["source_operator", "sink_operator", "current_operator", "polarization", "bz_direction", "volume", "lattice_spacing_fm", "momentum", "bT", "bz", "tsep"],
         }
         for index, item in enumerate(correlators):
             if not isinstance(item, dict):
@@ -178,6 +178,7 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
                         "source_operator": "g5",
                         "sink_operator": "g5",
                         "current_operator": "gT_nonlocal",
+                        "polarization": "unpolarized",
                         "bz_direction": "Z",
                         "volume": "S48T64",
                         "lattice_spacing_fm": "0.0574",

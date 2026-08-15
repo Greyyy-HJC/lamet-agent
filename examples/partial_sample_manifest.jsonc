@@ -78,7 +78,8 @@
       "defaults": {
         "order": ["LA", "NLA"],
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
-        "observable": "pion_quark_unpolarized_quasi_pdf", // explicit because legacy external .nc inputs may lack provenance attrs
+        "observable": "pion_quark_quasi_pdf", // explicit because external .nc inputs may lack observable provenance
+        "polarization": "unpolarized", // explicit because no target 3pt supplies polarization provenance
         "coord_unit": "fm", // default for renormalized .nc inputs; override with "lattice", "gev_inv", or "lambda" only when needed
         "posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {

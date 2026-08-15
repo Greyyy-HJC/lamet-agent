@@ -19,25 +19,12 @@ from lamet_agent.core.resampling import sample_mean_and_sdev
 
 OBSERVABLE_TEXT = {
     "pion_quark_quasi_pdf": "pion quark quasi-PDF",
-    "pion_quark_unpolarized_quasi_pdf": "pion quark unpolarized quasi-PDF",
-    "pion_quark_helicity_quasi_pdf": "pion quark helicity quasi-PDF",
-    "pion_quark_transversity_quasi_pdf": "pion quark transversity quasi-PDF",
-    "nucleon_quark_unpolarized_quasi_pdf": "nucleon quark unpolarized quasi-PDF",
-    "nucleon_quark_helicity_quasi_pdf": "nucleon quark helicity quasi-PDF",
-    "nucleon_quark_transversity_quasi_pdf": "nucleon quark transversity quasi-PDF",
+    "nucleon_quark_quasi_pdf": "nucleon quark quasi-PDF",
     "pion_gluon_quasi_pdf": "pion gluon quasi-PDF",
-    "pion_gluon_unpolarized_quasi_pdf": "pion gluon unpolarized quasi-PDF",
     "nucleon_gluon_quasi_pdf": "nucleon gluon quasi-PDF",
-    "nucleon_gluon_unpolarized_quasi_pdf": "nucleon gluon unpolarized quasi-PDF",
     "meson_quasi_da": "meson quasi-DA",
     "pion_quark_quasi_gpd": "pion quark quasi-GPD",
-    "pion_quark_unpolarized_quasi_gpd": "pion quark unpolarized quasi-GPD",
-    "pion_quark_helicity_quasi_gpd": "pion quark helicity quasi-GPD",
-    "pion_quark_transversity_quasi_gpd": "pion quark transversity quasi-GPD",
     "nucleon_quark_quasi_gpd": "nucleon quark quasi-GPD",
-    "nucleon_quark_unpolarized_quasi_gpd": "nucleon quark unpolarized quasi-GPD",
-    "nucleon_quark_helicity_quasi_gpd": "nucleon quark helicity quasi-GPD",
-    "nucleon_quark_transversity_quasi_gpd": "nucleon quark transversity quasi-GPD",
 }
 
 FORMULA_REFERENCES = {
@@ -110,7 +97,7 @@ def _format_grid(y_grid: np.ndarray, *, language: str) -> str:
 def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     method = str(result.get("method", "")).upper()
     order = str(result.get("order", "")).upper()
-    observable = str(result.get("observable", ""))
+    observable = str(result.get("observable_backend", result.get("observable", "")))
     sector = str(result.get("sector", "")).lower()
     psi1_class = str(result.get("psi1_flavor_class", "heavy") or "heavy").lower()
     psi2_class = str(result.get("psi2_flavor_class", "heavy") or "heavy").lower()
@@ -527,7 +514,7 @@ def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
     ]
     if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}:
         lines[3] = "| Sector | Quark PDF/GPD projection: `sea`, `valence`, `singlet`, or `full`; gluon uses `full`. |"
-        lines.insert(3, "| Distribution type | Operator family: `unpolarized`, `helicity`, or `transversity`. |")
+        lines.insert(3, "| Polarization | Operator family: `unpolarized`, `helicity`, or `transversity`. |")
     return lines
 
 
@@ -537,7 +524,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     scale = float(result.get("output_scale", 1.0))
     target = str(result.get("target_observable", "pdf")).lower()
     parton = str(result.get("parton", "quark")).lower()
-    distribution_type = str(result.get("distribution_type", "unpolarized")).lower()
+    polarization = str(result.get("polarization", "unpolarized")).lower()
     truncated = str(result.get("short_distance_policy", "full_from_zero")) == "truncate_missing"
     missing = result.get("missing_short_distance_coord", [])
     if target == "da":
@@ -597,7 +584,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     if parton == "gluon":
         intro += " Gluon operator families use only the full complex Fourier result; quark/antiquark sector projections are not applied."
         meaning = "`full` preserves the gluon result without assigning quark `sea`, `valence`, or `singlet` semantics."
-    elif distribution_type == "helicity":
+    elif polarization == "helicity":
         intro += " The helicity convention is $\\Delta q_{\\rm ext}(-x)=+\\Delta\\bar q(x)$."
         meaning = {
             "sea": "`sea` is reconstructed with one joint fit as $\\Delta\\bar q(x)=+\\Delta q_{\\rm ext}(-x)$.",
@@ -620,8 +607,8 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             "unpolarized": ("the vector family $H,E$ for a spin-$1/2$ hadron (only $H$ for a spin-0 hadron)", "$H/E$"),
             "helicity": ("the axial family $\\widetilde H,\\widetilde E$ for a spin-$1/2$ hadron", "$\\widetilde H/\\widetilde E$"),
             "transversity": ("the tensor family $H_T,E_T,\\widetilde H_T,\\widetilde E_T$ for a spin-$1/2$ hadron", "the tensor-GPD"),
-        }.get(distribution_type, ("the recorded operator family", "the corresponding invariant-GPD"))
-        meaning += f" This run labels {family}, but the input is a projected quasi-GPD matrix element; `distribution_type` alone does not perform {decomposition} decomposition."
+        }.get(polarization, ("the recorded operator family", "the corresponding invariant-GPD"))
+        meaning += f" This run labels {family}, but the input is a projected quasi-GPD matrix element; `polarization` alone does not perform {decomposition} decomposition."
         if sector == "sea":
             meaning += " The antiquark interpretation applies only in the negative-$x$ DGLAP region; the ERBL region $|x|<|\\xi|$ is a quark-antiquark amplitude, not a pure sea density."
     if truncated:
@@ -814,7 +801,7 @@ def _settings_table(
     ]
     if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}:
         rows[1:1] = [
-            ("Distribution type", f"`{result.get('distribution_type', 'unpolarized')}`"),
+            ("Polarization", f"`{result.get('polarization', 'not recorded')}`"),
             ("Current operator", f"`{result.get('current_operator', 'not recorded')}`"),
             ("Parton", f"`{result.get('parton', 'not recorded')}`"),
             ("Hadron", f"`{result.get('hadron', 'not recorded')}`"),
@@ -847,7 +834,7 @@ def _artifact_field_table(kind: str, *, language: str, target_observable: str = 
         ]
         if target_observable in {"pdf", "gpd"}:
             rows[-1:] = [
-                ("attrs `observable`, `observable_backend`, `parton`, `hadron`, `current_operator`, `distribution_type`, `sector`", "Resolved observable, numerical tail backend, operator provenance, and physics projection."),
+                ("attrs `observable`, `observable_backend`, `parton`, `hadron`, `current_operator`, `polarization`, `sector`", "Resolved observable, numerical tail backend, operator provenance, and physics projection."),
                 ("attrs `method`, `order`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
             ]
     else:

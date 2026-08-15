@@ -951,11 +951,12 @@
 
 ## 2026-08-09 (Distribution-aware PDF/GPD Fourier observables)
 
-- Added the 3pt `distribution_type` contract (`unpolarized`, `helicity`, or
+- Added the 3pt `polarization` contract (`unpolarized`, `helicity`, or
   `transversity`) and propagated it with `current_operator` through correlator,
   renormalization, partial-artifact, and Fourier metadata.
-- Replaced the implicit transversity Fourier fallback with explicit/upstream/
-  manifest observable resolution and canonical quark PDF/GPD observable labels.
+- Separated short Fourier observable labels from 3pt polarization provenance;
+  partial PDF/GPD inputs declare both explicitly while full chains inherit
+  polarization from the target 3pt.
 - Implemented distribution-aware quark `sea`, `valence`, `singlet`, and `full`
   projections, including the helicity negative-x convention, while keeping
   gluon jobs full-only and limiting automatic gluon inference to the existing

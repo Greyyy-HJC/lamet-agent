@@ -167,14 +167,14 @@ def run_extrapolation(
         item if isinstance(item, EnsembleData) else EnsembleData.from_netcdf(item.path)
         for item in list(store.get(lightcone, []))
     ]
-    ensembles = {str(data.attrs.get("ensemble") or (data.ensemble.id if data.ensemble else "")) for data in inputs}
+    lattice_spacings = {float(data.attrs["lattice_spacing_fm"]) for data in inputs}
     momenta_gev = {float(data.attrs.get("momentum_gev")) for data in inputs}
     stage_dir = Path(artifacts_dir or ".")
     stem = Path(save_path) if save_path is not None else stage_dir / "extrapolation"
     stem.parent.mkdir(parents=True, exist_ok=True)
     is_systematics = stem.parent.name == "sym"
 
-    if len(ensembles) == 1 and len(momenta_gev) == 1:
+    if len(lattice_spacings) == 1 and len(momenta_gev) == 1:
         warning = "Input from perturbative_matching cannot have only one ensemble and one momentum."
         result = {"out": out, "warning": warning, "mode": "insufficient_input", "n_inputs": len(inputs)}
         store["output"] = result
@@ -191,17 +191,17 @@ def run_extrapolation(
         input_samples.append(values)
     samples = np.asarray(input_samples, dtype=float)
 
-    use_a = len(ensembles) > 1
+    use_a = len(lattice_spacings) > 1
     use_p = any(
         len(
             {
                 float(data.attrs.get("momentum_gev"))
                 for data in inputs
-                if str(data.attrs.get("ensemble") or (data.ensemble.id if data.ensemble else "")) == ensemble
+                if float(data.attrs["lattice_spacing_fm"]) == lattice_spacing
             }
         )
         > 1
-        for ensemble in ensembles
+        for lattice_spacing in lattice_spacings
     )
     mode = "IMF+Continuum Extrapolation" if use_a and use_p else "IMF Extrapolation" if use_p else "Continuum Extrapolation"
 
@@ -336,6 +336,7 @@ def run_extrapolation(
             if len(x) > 1:
                 x_iterator = tqdm(x_iterator, desc="extrapolation x diagnostics", leave=False)
             fit_samples_by_x = [samples[:, :, ix].T for ix in range(len(x))]
+            fit_cov_inv_by_x = []
             for ix in x_iterator:
                 external = [mean_params[ix]]
                 for index in range(len(a_powers)):
@@ -352,8 +353,9 @@ def run_extrapolation(
                 mean_y_data_x = sample_value_with_error(mean_x, fit_samples_x, mode=inputs[0].resample, sample_error_mode=sample_error_mode)
                 residual = gv.mean(mean_y_data_x) - design @ external_array
                 cov = gv.evalcov(mean_y_data_x)
+                fit_cov_inv_by_x.append(np.linalg.pinv(cov))
                 mean_fit_params[ix] = external_array
-                mean_fit_chi2[ix] = float(residual @ np.linalg.pinv(cov) @ residual)
+                mean_fit_chi2[ix] = float(residual @ fit_cov_inv_by_x[ix] @ residual)
                 mean_fit_dof[ix] = max(1, int(n_input - n_param))
                 mean_fit_q[ix] = q_value
                 mean_fit_log_gbf[ix] = log_gbf
@@ -394,17 +396,9 @@ def run_extrapolation(
                     for index in range(len(ap_powers)):
                         external.append(params[internal_labels.index(("ap", index, ix))])
                     external_array = np.asarray(external, dtype=float)
-                    fit_samples_x = fit_samples_by_x[ix]
-                    sample_y_data_x = sample_value_with_error(
-                        samples[:, isample, ix],
-                        fit_samples_x,
-                        mode=inputs[0].resample,
-                        sample_error_mode=sample_error_mode,
-                    )
-                    residual = gv.mean(sample_y_data_x) - design @ external_array
-                    cov = gv.evalcov(sample_y_data_x)
+                    residual = samples[:, isample, ix] - design @ external_array
                     coeff_samples[isample, :, ix] = external_array
-                    fit_chi2[isample, ix] = float(residual @ np.linalg.pinv(cov) @ residual) if item["success"] else mean_fit_chi2[ix]
+                    fit_chi2[isample, ix] = float(residual @ fit_cov_inv_by_x[ix] @ residual) if item["success"] else mean_fit_chi2[ix]
                     fit_dof[isample, ix] = max(1, int(n_input - n_param)) if item["success"] else mean_fit_dof[ix]
                     fit_q[isample, ix] = float(item["q_value"]) if item["success"] else mean_fit_q[ix]
                     fit_log_gbf[isample, ix] = float(item["log_gbf"]) if item["success"] else mean_fit_log_gbf[ix]

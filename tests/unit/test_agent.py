@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import sys
 import types
@@ -225,6 +226,36 @@ def test_deepseek_request_retries_transient_url_error(monkeypatch) -> None:
 
     assert calls["count"] == 2
     assert action["action"] == "finish"
+
+
+def test_deepseek_text_request_retries_incomplete_read(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise http.client.IncompleteRead(b"")
+            return json.dumps({"choices": [{"message": {"content": "translated"}}]}).encode()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", lambda request, timeout: _Response())
+    monkeypatch.setattr(llm.time, "sleep", lambda _seconds: None)
+
+    text = llm._post_chat_text_completion(
+        messages=[{"role": "user", "content": "translate"}],
+        api_key="test-key",
+        model_name="deepseek-chat",
+        base_url="https://api.deepseek.com",
+    )
+
+    assert calls["count"] == 2
+    assert text == "translated"
 
 
 def test_provider_json_parse_error_gets_repair_retry(monkeypatch) -> None:

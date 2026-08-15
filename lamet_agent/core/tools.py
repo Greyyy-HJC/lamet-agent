@@ -61,7 +61,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "parton",
         "hadron",
         "current_operator",
-        "distribution_type",
+        "polarization",
         "psi1_flavor_class",
         "psi2_flavor_class",
         "Lambda0_gev",
@@ -253,6 +253,8 @@ def required_job_tool_sequence(
     effective_params: dict[str, Any],
 ) -> tuple[str, ...]:
     """Return the successful tool order required before a job may finish."""
+    if stage == "perturbative_matching":
+        return ("load_quasi_pdf", "build_matching_kernel", "apply_matching", "plot_matched_pdf")
     if stage == "extrapolation":
         return ("run_systematics_budget",) if effective_params.get("operation") == "systematics_budget" else ("run_extrapolation",)
     if stage != "renormalization":
@@ -480,7 +482,7 @@ def prepare_tool_args(
                     "tsep_ls": sorted(int(value) for value in paths_by_tsep),
                     "z_values": first.bz,
                     "current_operator": first.current_operator,
-                    "distribution_type": first.distribution_type,
+                    "polarization": first.polarization,
                     "bz_direction": first.bz_direction,
                     "bT": first.bT[0],
                 }
@@ -769,7 +771,7 @@ def prepare_tool_args(
         if "coord_unit" not in fourier and "coord_unit" in source_metadata:
             fourier["coord_unit"] = source_metadata["coord_unit"]
         fourier.setdefault("coord_unit", "fm")
-        for key in ("hadron", "gfix", "observable", "current_operator", "distribution_type", "parton"):
+        for key in ("hadron", "gfix", "observable", "current_operator", "polarization", "parton"):
             if key not in fourier and key in upstream_metadata:
                 fourier[key] = upstream_metadata[key]
             elif key not in fourier and key in source_metadata:
@@ -778,18 +780,16 @@ def prepare_tool_args(
             fourier["method"] = str(fourier["gfix"]).upper()
         fourier.setdefault("target_observable", manifest.metadata.target_observable)
         fourier.setdefault("parton", manifest.metadata.parton)
-        fourier.setdefault("distribution_type", "unpolarized")
         fourier.setdefault("sample_error_mode", manifest.metadata.sample_error_mode)
         if "observable" not in fourier:
             target = manifest.metadata.target_observable
             parton = str(fourier["parton"]).lower()
             hadron = str(fourier.get("hadron", "")).lower()
             hadron = "nucleon" if hadron == "proton" else hadron
-            distribution_type = str(fourier["distribution_type"]).lower()
             if target == "da" and hadron == "pion":
                 fourier["observable"] = "meson_quasi_da"
-            elif (target, parton, hadron, distribution_type) in INFERRED_OBSERVABLES:
-                fourier["observable"] = INFERRED_OBSERVABLES[(target, parton, hadron, distribution_type)]
+            elif (target, parton, hadron) in INFERRED_OBSERVABLES:
+                fourier["observable"] = INFERRED_OBSERVABLES[(target, parton, hadron)]
         if tool_name == "load_renormalized_matrix_element_samples":
             resolved.update({key: fourier[key] for key in _FOURIER_LOAD_KEYS if key in fourier})
             if isinstance(source, ArtifactInput):

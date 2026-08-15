@@ -71,7 +71,7 @@
         "source_operator": "g5",
         "sink_operator": "g5",
         "current_operator": "gT_nonlocal", // required only for 3pt; `_nonlocal` records operator locality
-        "distribution_type": "unpolarized", // 3pt operator family: unpolarized, helicity, or transversity
+        "polarization": "unpolarized", // 3pt operator family: unpolarized, helicity, or transversity
         "bz_direction": "X", // required for 3pt; X/Y/Z or canonical combinations XY/XZ/YZ/XYZ
         "volume": "S48T64",
         "lattice_spacing_fm": 0.0574,
@@ -250,7 +250,7 @@
         },
         // Usually inferred from manifest metadata or upstream attrs:
         // "method": "CG", // explicit "CG" or "GI" override
-        // "observable": "pion_quark_unpolarized_quasi_pdf", // inferred from target, parton, hadron, and 3pt distribution_type
+        // "observable": "pion_quark_quasi_pdf", // inferred from target, parton, and hadron; polarization is inherited separately from the target 3pt
         // "target_observable": "pdf",
         // "hadron": "pion",
         // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class

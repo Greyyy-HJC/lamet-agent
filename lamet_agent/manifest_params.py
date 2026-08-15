@@ -149,6 +149,7 @@ STAGE_PARAM_CONTRACTS = {
                 "title": None,
             },
             "posterior_prior_error_scale": None,
+            "polarization": None,
             "psi1_flavor_class": None,
             "psi2_flavor_class": None,
             "re_key": None,
@@ -177,7 +178,10 @@ STAGE_PARAM_CONTRACTS = {
             "zmin_shift": None,
             "y_grid": _GRID_SCHEMA,
         },
-        removed={"Lambda0": "is no longer supported; use Lambda0_gev."},
+        removed={
+            "Lambda0": "is no longer supported; use Lambda0_gev.",
+            "distribution_type": "is no longer supported; use polarization.",
+        },
     ),
     "perturbative_matching": StageParamContract(
         schema={

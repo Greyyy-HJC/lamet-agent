@@ -761,26 +761,23 @@ def test_text_plan_target_observable_does_not_match_data_path(tmp_path: Path) ->
     payload, _text = load_relaxed_manifest(manifest)
 
     assert payload["metadata"]["target_observable"] == "pdf"
-    assert all("distribution_type" not in item for item in payload["inputs"]["correlators"])
+    three_point = next(item for item in payload["inputs"]["correlators"] if item["correlator_type"] == "3pt")
+    assert three_point["polarization"] == "unpolarized"
 
 
-@pytest.mark.parametrize(("distribution_type", "stored"), [("unpolarized", False), ("helicity", True), ("transversity", True)])
-def test_text_plan_records_only_nondefault_distribution_type(
-    tmp_path: Path, distribution_type: str, stored: bool
-) -> None:
+@pytest.mark.parametrize("polarization", ["unpolarized", "helicity", "transversity"])
+def test_text_plan_records_explicit_polarization(tmp_path: Path, polarization: str) -> None:
     manifest = tmp_path / "request.txt"
     manifest.write_text(
         "Build a pion quark PDF manifest from sample_2pt.npy and current_data_path sample_current.npz. "
-        f"distribution_type: {distribution_type}. Use random_seed 1984 and resample_mode jk.",
+        f"polarization: {polarization}. Use random_seed 1984 and resample_mode jk.",
         encoding="utf-8",
     )
 
     payload, _text = load_relaxed_manifest(manifest)
     three_point = next(item for item in payload["inputs"]["correlators"] if item["correlator_type"] == "3pt")
 
-    assert ("distribution_type" in three_point) is stored
-    if stored:
-        assert three_point["distribution_type"] == distribution_type
+    assert three_point["polarization"] == polarization
 
 
 def test_text_plan_parses_only_explicit_fourier_observable(tmp_path: Path) -> None:
@@ -788,7 +785,7 @@ def test_text_plan_parses_only_explicit_fourier_observable(tmp_path: Path) -> No
     manifest = tmp_path / "request.txt"
     manifest.write_text(
         "Build a manifest with target_observable: pdf from rn_input.nc. Run fourier_transform with "
-        "fourier observable: nucleon_quark_helicity_quasi_pdf and y_grid [-0.5, 0, 0.5]. "
+        "fourier observable: nucleon_quark_quasi_pdf, polarization: helicity, and y_grid [-0.5, 0, 0.5]. "
         "Use random_seed 1984 and resample_mode jk.",
         encoding="utf-8",
     )
@@ -796,7 +793,8 @@ def test_text_plan_parses_only_explicit_fourier_observable(tmp_path: Path) -> No
     payload, _text = load_relaxed_manifest(manifest)
 
     assert payload["metadata"]["target_observable"] == "pdf"
-    assert payload["stages"]["fourier_transform"]["defaults"]["observable"] == "nucleon_quark_helicity_quasi_pdf"
+    assert payload["stages"]["fourier_transform"]["defaults"]["observable"] == "nucleon_quark_quasi_pdf"
+    assert payload["stages"]["fourier_transform"]["defaults"]["polarization"] == "helicity"
     assert not any(gap["parameter"] == "observable" for gap in _stage_parameter_gaps(payload, manifest))
 
 
@@ -1168,6 +1166,7 @@ def test_planner_requests_missing_bz_direction_for_3pt() -> None:
                     "source_operator": "g5",
                     "sink_operator": "g5",
                     "current_operator": "gT_nonlocal",
+                    "polarization": "unpolarized",
                     "volume": "S16T32",
                     "lattice_spacing_fm": 0.1,
                     "momentum": ["PX0PY0PZ0"],
@@ -1230,7 +1229,7 @@ def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path)
                     "lattice_spacing_fm": 0.1,
 
 
-                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                    "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                     "bT": [0],
@@ -1367,7 +1366,7 @@ def test_correlator_npz_conversion_with_axis_order_and_index(tmp_path: Path) -> 
             "lattice_spacing_fm": 0.1,
 
 
-            "current_operator": "gT_nonlocal", "bz_direction": "Z",
+            "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
             "bT": [0],
@@ -1629,7 +1628,7 @@ def test_correlator_conversion_mapping_rejects_bad_shapes_and_targets(tmp_path: 
             "lattice_spacing_fm": 0.1,
 
 
-            "current_operator": "gT_nonlocal", "bz_direction": "Z",
+            "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
             "bT": [0],
@@ -1729,7 +1728,7 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
                     "lattice_spacing_fm": 0.1,
 
 
-                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                    "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                     "bT": [0],
@@ -1834,7 +1833,7 @@ def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Pat
                     "lattice_spacing_fm": 0.1,
 
 
-                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                    "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                     "bT": [0],
@@ -1917,7 +1916,7 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
                     "lattice_spacing_fm": 0.1,
 
 
-                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                    "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                     "bT": [0],
@@ -2025,7 +2024,7 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
                     "lattice_spacing_fm": 0.1,
 
 
-                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                    "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                     "bT": [0],
@@ -2136,7 +2135,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
                     "lattice_spacing_fm": 0.1,
 
 
-                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                    "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                     "bT": [0],
@@ -2225,7 +2224,7 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
                     "lattice_spacing_fm": 0.1,
 
 
-                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                    "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                     "bT": [0],
@@ -2432,7 +2431,7 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruct
                     "lattice_spacing_fm": 0.1,
 
 
-                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                    "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                     "bT": [0],
@@ -2464,7 +2463,7 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruct
                     "lattice_spacing_fm": 0.1,
 
 
-                    "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                    "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                     "bT": [0],

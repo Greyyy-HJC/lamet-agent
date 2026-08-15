@@ -69,6 +69,15 @@ def test_resolve_renormalization_job_tools_by_scheme_and_roles() -> None:
     )
 
 
+def test_matching_requires_complete_output_sequence() -> None:
+    manifest = _manifest()
+    job = manifest.stages["perturbative_matching"].jobs[0]
+
+    assert required_job_tool_sequence(
+        "perturbative_matching", job, effective_matching_params(manifest, job)
+    ) == ("load_quasi_pdf", "build_matching_kernel", "apply_matching", "plot_matched_pdf")
+
+
 def test_hybrid_scheme_self_renormalization_routes_denominator_apply_job(tmp_path: Path) -> None:
     manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
     defaults = manifest.stages["renormalization"].defaults
@@ -991,9 +1000,9 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
             "bz_direction": "X",
             "hadron": "pion",
             "gfix": "CG",
-            "observable": "pion_quark_helicity_quasi_pdf",
+            "observable": "pion_quark_quasi_pdf",
             "current_operator": "gTg5_nonlocal",
-            "distribution_type": "helicity",
+            "polarization": "helicity",
             "parton": "quark",
         }
     )
@@ -1017,7 +1026,7 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     assert args["bz_direction"] == source.attrs["bz_direction"]
     assert args["observable"] == source.attrs["observable"]
     assert args["current_operator"] == source.attrs["current_operator"]
-    assert args["distribution_type"] == source.attrs["distribution_type"]
+    assert args["polarization"] == source.attrs["polarization"]
     assert args["parton"] == source.attrs["parton"]
     assert args["psi1_flavor_class"] == "light"
     assert args["psi2_flavor_class"] == "heavy"
@@ -1026,19 +1035,21 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     assert args["workers"] == manifest.metadata.workers
     assert args["save_path"] == str(tmp_path / job.id)
 
-    effective["observable"] = "pion_quark_transversity_quasi_pdf"
+    effective["observable"] = "pion_quark_quasi_pdf"
+    effective["polarization"] = "transversity"
     explicit = prepare_tool_args(
         "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
         effective_params=effective, artifacts_dir=tmp_path, store={"input": source},
     )
-    assert explicit["observable"] == "pion_quark_transversity_quasi_pdf"
+    assert explicit["observable"] == "pion_quark_quasi_pdf"
+    assert explicit["polarization"] == "transversity"
 
 
 @pytest.mark.parametrize(
     ("target", "expected"),
     [
-        ("pdf", "pion_quark_unpolarized_quasi_pdf"),
-        ("gpd", "pion_quark_unpolarized_quasi_gpd"),
+        ("pdf", "pion_quark_quasi_pdf"),
+        ("gpd", "pion_quark_quasi_gpd"),
     ],
 )
 def test_prepare_fourier_args_infers_observable_from_manifest_metadata(
@@ -1055,7 +1066,7 @@ def test_prepare_fourier_args_infers_observable_from_manifest_metadata(
     )
 
     assert args["observable"] == expected
-    assert args["distribution_type"] == "unpolarized"
+    assert args["polarization"] == "unpolarized"
 
 
 def test_prepare_fourier_args_passes_lambda0_gev(tmp_path: Path) -> None:
@@ -1119,14 +1130,14 @@ def test_fourier_sector_options_depend_on_observable() -> None:
     ]
 
 
-@pytest.mark.parametrize(("target", "distribution_type"), [("pdf", "helicity"), ("pdf", "transversity"), ("gpd", "unpolarized")])
-def test_fourier_rejects_unsupported_gluon_backend_boundary(target: str, distribution_type: str) -> None:
+@pytest.mark.parametrize(("target", "polarization"), [("pdf", "helicity"), ("pdf", "transversity"), ("gpd", "unpolarized")])
+def test_fourier_rejects_unsupported_gluon_backend_boundary(target: str, polarization: str) -> None:
     manifest = _manifest()
     manifest.metadata.target_observable = target
     manifest.metadata.parton = "gluon"
     for correlator in manifest.correlators:
         if correlator.correlator_type == "3pt":
-            correlator.distribution_type = distribution_type
+            correlator.polarization = polarization
     manifest.stages["fourier_transform"].defaults["sector"] = "full"
     job = manifest.stages["fourier_transform"].jobs[0]
 

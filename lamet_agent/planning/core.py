@@ -219,8 +219,8 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     source_operator_match = re.search(r"source[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
     sink_operator_match = re.search(r"sink[_\s-]*operator\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
     current_operator_match = re.search(r"current[_\s-]*operator(?:\s+for\s+3pt)?\s*[:=]?\s*([A-Za-z0-9_+-]+)", text, flags=re.I)
-    distribution_type_match = re.search(
-        r"distribution[_\s-]*type\s*[:=]?\s*(unpolarized|helicity|transversity)\b",
+    polarization_match = re.search(
+        r"polarization\s*[:=]?\s*(unpolarized|helicity|transversity)\b",
         text,
         flags=re.I,
     )
@@ -354,8 +354,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         }
         if kind == "3pt":
             correlator["current_operator"] = current_operator
-            if distribution_type_match and distribution_type_match.group(1).lower() != "unpolarized":
-                correlator["distribution_type"] = distribution_type_match.group(1).lower()
+            correlator["polarization"] = polarization_match.group(1).lower() if polarization_match else "unpolarized"
             stem_tsep = re.search(r"(?:^|_)ts(?:ep)?(?P<tsep>\d+)(?:_|$)", resolved.stem, flags=re.I)
             correlator["tsep"] = [int(parsed.group("tsep"))] if parsed and parsed.group("tsep") else [int(stem_tsep.group("tsep"))] if stem_tsep else explicit_tsep or [1]
             correlator["bT"] = explicit_bT or [0]
@@ -397,11 +396,7 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
                     "source_operator": two_point.get("source_operator", "source"),
                     "sink_operator": two_point.get("sink_operator", "sink"),
                     "current_operator": current_source["current_operator"],
-                    **(
-                        {"distribution_type": distribution_type_match.group(1).lower()}
-                        if distribution_type_match and distribution_type_match.group(1).lower() != "unpolarized"
-                        else {}
-                    ),
+                    "polarization": polarization_match.group(1).lower() if polarization_match else "unpolarized",
                     "momentum": two_point.get("momentum", ["PX0PY0PZ0"]),
                     "volume": two_point.get("volume", "S1T1"),
                     "lattice_spacing_fm": two_point.get("lattice_spacing_fm", 1.0),
@@ -502,6 +497,8 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             ft_defaults["coord_unit"] = ft_coord_unit_match.group(1).lower()
         if ft_observable_match:
             ft_defaults["observable"] = ft_observable_match.group(1)
+        if polarization_match and not rn_jobs:
+            ft_defaults["polarization"] = polarization_match.group(1).lower()
         if scheme_scan is not None:
             ft_defaults["scheme_scan"] = scheme_scan
         payload["stages"]["fourier_transform"] = {
@@ -1325,7 +1322,7 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 **two_point,
                 **{
                     key: three_point[key]
-                    for key in ("hadron", "current_operator", "distribution_type")
+                    for key in ("hadron", "current_operator", "polarization")
                     if three_point.get(key) is not None
                 },
             }
@@ -1494,19 +1491,24 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 parton = str(metadata.get("parton", "quark")).lower()
                 hadron = str(params.get("hadron", upstream_metadata.get("hadron", ""))).lower()
                 hadron = "nucleon" if hadron == "proton" else hadron
-                distribution_type = str(
-                    params.get("distribution_type", upstream_metadata.get("distribution_type", "unpolarized"))
-                ).lower()
+                polarization = str(params.get("polarization", upstream_metadata.get("polarization", ""))).lower()
+                if target in {"pdf", "gpd"} and not polarization:
+                    add_gap(
+                        "polarization",
+                        f"stages.{stage}.defaults.polarization",
+                        f"fourier_transform job {job_id!r} has no upstream 3pt polarization metadata.",
+                        "Declare polarization explicitly as unpolarized, helicity, or transversity.",
+                    )
                 if (
                     target in {"pdf", "gpd"}
                     and "observable" not in params
-                    and (target, parton, hadron, distribution_type) not in INFERRED_OBSERVABLES
+                    and (target, parton, hadron) not in INFERRED_OBSERVABLES
                 ):
                     add_gap(
                         "observable",
                         f"stages.{stage}.defaults.observable",
                         f"fourier_transform job {job_id!r} has no derivable observable.",
-                        "Declare observable explicitly, or provide upstream hadron and distribution_type metadata supported by the Fourier backend.",
+                        "Declare observable explicitly, or provide upstream hadron metadata supported by the Fourier backend.",
                     )
             elif stage == "perturbative_matching":
                 if roles != {"quasi"}:

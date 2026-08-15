@@ -257,7 +257,7 @@ def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_p
 
 
 @pytest.mark.parametrize(
-    ("distribution_type", "family", "decomposition", "negative_x_relation"),
+    ("polarization", "family", "decomposition", "negative_x_relation"),
     [
         ("unpolarized", "vector family $H,E$", "$H/E$ decomposition", "$q_{\\rm ext}(-x)=-\\bar q(x)$"),
         ("helicity", "axial family $\\widetilde H,\\widetilde E$", "$\\widetilde H/\\widetilde E$ decomposition", "$\\Delta q_{\\rm ext}(-x)=+\\Delta\\bar q(x)$"),
@@ -265,13 +265,13 @@ def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_p
     ],
 )
 def test_fourier_gpd_report_records_operator_family_and_projection_limits(
-    distribution_type: str, family: str, decomposition: str, negative_x_relation: str
+    polarization: str, family: str, decomposition: str, negative_x_relation: str
 ) -> None:
     text = fourier_reporting.build_fourier_report_markdown(
         result={
             "target_observable": "gpd",
-            "observable": f"nucleon_quark_{distribution_type}_quasi_gpd",
-            "distribution_type": distribution_type,
+            "observable": "nucleon_quark_quasi_gpd",
+            "polarization": polarization,
             "current_operator": "operator",
             "parton": "quark",
             "hadron": "nucleon",
@@ -290,7 +290,7 @@ def test_fourier_gpd_report_records_operator_family_and_projection_limits(
     assert "negative-$x$ DGLAP region" in text
     assert "ERBL region" in text
     assert "not a pure sea density" in text
-    assert "Distribution type" in text
+    assert "Polarization" in text
     assert "Current operator" in text
     assert "Parton" in text
     assert "Hadron" in text
@@ -323,7 +323,7 @@ def test_da_fourier_stage_report_documents_symmetry_projection(tmp_path: Path) -
     assert "discards $\\operatorname{Im}h_{+}$" in text
     assert "e^{-izP_z/2}" in text
     assert "e^{+ix\\lambda}" in text
-    assert "Distribution type" not in text
+    assert "Polarization" not in text
     assert "Current operator" not in text
 
 

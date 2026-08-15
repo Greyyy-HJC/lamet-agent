@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.data import EnsembleData, EnsembleInfo
 from lamet_agent.core.tools import resolve_stage_tools
 from lamet_agent.core.plotting import _band_segment, plot_fourier_artifact, plot_fourier_extension_quality
 from lamet_agent.stages.fourier import functions as fourier_functions
@@ -24,6 +24,22 @@ from lamet_agent.stages.fourier.functions import (
     summarize_fourier_result,
     sum_ft_re_im,
 )
+
+
+def test_fourier_result_preserves_source_ensemble_when_not_explicit() -> None:
+    source = EnsembleInfo("", "a06m130", 1.0, 1.0, 1, 1, 0.0)
+    result = {
+        "final_ft_re_samples": [[1.0, 2.0], [1.1, 2.1]],
+        "final_ft_im_samples": [[0.0, 0.0], [0.0, 0.0]],
+        "y_grid": [0.0, 1.0],
+        "resample_mode": "bootstrap",
+        "ensemble": "",
+    }
+
+    output = fourier_functions.fourier_result_to_ensemble_data(result, source_ensemble=source)
+
+    assert output.ensemble is not None
+    assert output.ensemble.id == "a06m130"
 
 
 def _write_npz(path: Path) -> None:
@@ -164,7 +180,8 @@ def test_da_symmetry_projection_is_optional_and_da_only(
             store,
             y_grid=[0.0],
             target_observable=target,
-            observable="nucleon_quark_unpolarized_quasi_pdf" if target == "pdf" else None,
+            observable="nucleon_quark_quasi_pdf" if target == "pdf" else None,
+            polarization="unpolarized" if target == "pdf" else None,
             sector="full",
             coord_unit="lambda",
             momentum_gev=2.0,
@@ -172,6 +189,24 @@ def test_da_symmetry_projection_is_optional_and_da_only(
         )
 
     assert np.allclose(captured["values"], values)
+
+
+def test_pdf_fourier_requires_separate_polarization_and_short_observable() -> None:
+    with pytest.raises(ValueError, match="polarization is required"):
+        run_fourier_transform(
+            {},
+            y_grid=[0.0],
+            target_observable="pdf",
+            observable="nucleon_quark_quasi_pdf",
+        )
+    with pytest.raises(ValueError, match="observable must be one of"):
+        run_fourier_transform(
+            {},
+            y_grid=[0.0],
+            target_observable="pdf",
+            observable="nucleon_quark_helicity_quasi_pdf",
+            polarization="helicity",
+        )
 
 
 def test_sum_ft_re_im_uses_quadrature_weights_for_nonuniform_grid() -> None:
@@ -319,7 +354,8 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         Lambda0_gev=0.3,
         bz_direction="X",
         artifacts_dir=str(tmp_path / "artifacts"),
@@ -385,7 +421,8 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert not report_path.with_name("report_fourier_CN.md").exists()
     report_text = report_path.read_text(encoding="utf-8")
     assert "# Fourier Transform Analysis Report" in report_text
-    assert "nucleon_quark_unpolarized_quasi_pdf" in report_text
+    assert "nucleon_quark_quasi_pdf" in report_text
+    assert "Polarization" in report_text
     assert "GI" in report_text
     assert "LA" in report_text
     assert "Lambda0_gev" in report_text
@@ -448,7 +485,8 @@ def test_fourier_shift_relabels_range_and_inherits_zs(tmp_path: Path, monkeypatc
         zmin_shift=1,
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         coord_unit="lambda",
         artifacts_dir=str(tmp_path / "artifacts"),
     )
@@ -475,7 +513,8 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
 
@@ -506,7 +545,8 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         scheme_scan={"zmin_values": [1.0], "zmax_values": [6.0], "z_ext_max": 7.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         part="re",
         momentum_gev=2.0,
     )
@@ -533,7 +573,8 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         scheme_scan={"zmin_values": [1.0], "zmax_values": [6.0], "z_ext_max": 7.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         part="im",
         momentum_gev=2.0,
     )
@@ -555,7 +596,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
 
 
 @pytest.mark.parametrize(
-    ("distribution_type", "sector", "part"),
+    ("polarization", "sector", "part"),
     [
         ("unpolarized", "valence", "re"),
         ("unpolarized", "singlet", "im"),
@@ -568,7 +609,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
 def test_fourier_pdf_sector_resolves_projection(
     tmp_path: Path,
     monkeypatch,
-    distribution_type: str,
+    polarization: str,
     sector: str,
     part: str,
 ) -> None:
@@ -584,10 +625,10 @@ def test_fourier_pdf_sector_resolves_projection(
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable=f"nucleon_quark_{distribution_type}_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
         sector=sector,
         target_observable="pdf",
-        distribution_type=distribution_type,
+        polarization=polarization,
         current_operator="test_current",
         parton="quark",
         momentum_gev=2.0,
@@ -599,10 +640,10 @@ def test_fourier_pdf_sector_resolves_projection(
     assert result["part"] == part
     assert result["output_scale"] == 2.0
     assert result["im_flip_for_ft"] is False
-    assert result["distribution_type"] == distribution_type
+    assert result["polarization"] == polarization
     assert artifact.attrs["sector"] == sector
     assert artifact.attrs["part"] == part
-    assert artifact.attrs["distribution_type"] == distribution_type
+    assert artifact.attrs["polarization"] == polarization
     assert artifact.attrs["current_operator"] == "test_current"
     assert artifact.attrs["parton"] == "quark"
 
@@ -620,7 +661,8 @@ def test_explicit_observable_controls_sector_semantics(tmp_path: Path, monkeypat
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_helicity_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="helicity",
         sector="valence",
         target_observable="pdf",
         momentum_gev=2.0,
@@ -628,7 +670,7 @@ def test_explicit_observable_controls_sector_semantics(tmp_path: Path, monkeypat
 
     result = store["fourier_result"]
     assert result["part"] == "im"
-    assert result["distribution_type"] == "helicity"
+    assert result["polarization"] == "helicity"
     assert result["parton"] == "quark"
     assert result["hadron"] == "nucleon"
 
@@ -657,6 +699,7 @@ def test_fourier_gpd_sector_valence_resolves_projection(tmp_path: Path, monkeypa
         sector="valence",
         target_observable="gpd",
         observable="nucleon_quark_quasi_gpd",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
 
@@ -670,9 +713,9 @@ def test_fourier_gpd_sector_valence_resolves_projection(tmp_path: Path, monkeypa
     assert artifact.attrs["part"] == "re"
 
 
-@pytest.mark.parametrize(("distribution_type", "sea_sign"), [("unpolarized", -1.0), ("helicity", 1.0), ("transversity", -1.0)])
+@pytest.mark.parametrize(("polarization", "sea_sign"), [("unpolarized", -1.0), ("helicity", 1.0), ("transversity", -1.0)])
 def test_fourier_pdf_sector_sea_reflects_full_distribution(
-    tmp_path: Path, monkeypatch, distribution_type: str, sea_sign: float
+    tmp_path: Path, monkeypatch, polarization: str, sea_sign: float
 ) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
@@ -689,9 +732,9 @@ def test_fourier_pdf_sector_sea_reflects_full_distribution(
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable=f"nucleon_quark_{distribution_type}_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
         target_observable="pdf",
-        distribution_type=distribution_type,
+        polarization=polarization,
         momentum_gev=2.0,
     )
 
@@ -732,6 +775,7 @@ def test_fourier_gpd_sector_sea_reflects_full_distribution(tmp_path: Path, monke
         order="LA",
         target_observable="gpd",
         observable="pion_quark_quasi_gpd",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
 
@@ -765,7 +809,8 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         part="re",
         output_scale=1.0,
         momentum_gev=2.0,
@@ -781,7 +826,8 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         part="re",
         output_scale=2.0,
         momentum_gev=2.0,
@@ -816,7 +862,8 @@ def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monke
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
 
@@ -910,7 +957,8 @@ def test_fourier_transform_accepts_upstream_ensemble_data(tmp_path: Path, monkey
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
 
@@ -939,6 +987,7 @@ def test_fourier_tool_chain_passes_observable_flag(tmp_path: Path, monkeypatch) 
         method="GI",
         order="NLA",
         observable="pion_quark_quasi_pdf",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
 
@@ -983,6 +1032,7 @@ def test_fourier_pion_pdf_valence_tail_constraints(tmp_path: Path, monkeypatch) 
         method="GI",
         order="NLA",
         observable="pion_quark_quasi_pdf",
+        polarization="unpolarized",
         sector="valence",
         target_observable="pdf",
         momentum_gev=2.0,
@@ -1078,17 +1128,17 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     assert "observable_backend" not in result_data.attrs
     assert "parton" not in result_data.attrs
     assert "current_operator" not in result_data.attrs
-    assert "distribution_type" not in result_data.attrs
+    assert "polarization" not in result_data.attrs
     assert fit_info.attrs["psi1_flavor_class"] == "light"
     assert fit_info.attrs["psi2_flavor_class"] == "light"
     assert fit_info.attrs["symmetry_guarantee"] == "True"
     assert "observable_backend" not in fit_info.attrs
     assert "parton" not in fit_info.attrs
     assert "current_operator" not in fit_info.attrs
-    assert "distribution_type" not in fit_info.attrs
+    assert "polarization" not in fit_info.attrs
     assert "observable" not in run
     assert "parton" not in run
-    assert "distribution_type" not in run
+    assert "polarization" not in run
     assert run["symmetry_guarantee"] is True
     report = report_fourier_result(store, save_path=str(tmp_path / "da_report.md"))
     report_text = Path(report["report"]).read_text(encoding="utf-8")
@@ -1097,7 +1147,7 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     assert "discards $\\operatorname{Im}h_{+}$" in report_text
     assert "e^{-izP_z/2}" in report_text
     assert "phase_shift" not in report_text
-    assert "Distribution type" not in report_text
+    assert "Polarization" not in report_text
     assert "Current operator" not in report_text
 
 
@@ -1166,7 +1216,7 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
             target_observable="pdf",
             parton="gluon",
             sector="sea",
-            distribution_type="unpolarized",
+            polarization="unpolarized",
             current_operator="gluon_operator",
             momentum_gev=2.0,
         )
@@ -1179,7 +1229,7 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
         assert store["fourier_result"]["part"] == "both"
         assert store["fourier_result"]["output_scale"] == 1.0
         assert artifact.attrs["parton"] == "gluon"
-        assert artifact.attrs["distribution_type"] == "unpolarized"
+        assert artifact.attrs["polarization"] == "unpolarized"
         assert artifact.attrs["current_operator"] == "gluon_operator"
 
 
@@ -1267,7 +1317,8 @@ def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypat
         },
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
     summary = summarize_fourier_result(store)
@@ -1299,7 +1350,8 @@ def test_fourier_model_average_false_selects_one_scheme_from_mean_scan(tmp_path:
         },
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
     result = store["fourier_result"]
@@ -1332,6 +1384,7 @@ def test_fourier_model_average_scans_order_and_prior_width_per_sample(tmp_path: 
         order=["LA", "NLA"],
         posterior_prior_error_scale=[2.0, 3.0],
         observable="pion_quark_quasi_pdf",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
 
@@ -1364,7 +1417,8 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
         y_grid={"start": -0.5, "stop": 0.5, "num": 5},
         method="GI",
         order="LA",
-        observable="nucleon_quark_transversity_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="transversity",
         coord_unit="fm",
         momentum_gev=2.0,
     )
@@ -1401,7 +1455,8 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
         scheme_scan={"model_average": False},
         method="GI",
         order="LA",
-        observable="nucleon_quark_transversity_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="transversity",
         coord_unit="fm",
         momentum_gev=2.0,
     )
@@ -1433,6 +1488,7 @@ def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path
         method="GI",
         order="LA",
         observable="pion_quark_quasi_gpd",
+        polarization="unpolarized",
         coord_unit="lattice",
         momentum_gev=0.0,
         final_momentum_gev=0.49,
@@ -1468,6 +1524,7 @@ def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path
         method="CG",
         order="NLA",
         observable="pion_quark_quasi_pdf",
+        polarization="unpolarized",
         part="both",
         momentum_gev=2.0,
     )
@@ -1495,6 +1552,7 @@ def test_fourier_auto_scan_prefers_tail_region_for_lattice_units(tmp_path: Path,
         method="CG",
         order="NLA",
         observable="pion_quark_quasi_pdf",
+        polarization="unpolarized",
         coord_unit="lattice",
         momentum_gev=2.15,
         lattice_spacing_fm=0.0574,
@@ -1531,7 +1589,8 @@ def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) 
         y_grid={"start": -0.5, "stop": 0.5, "num": 5},
         method="GI",
         order="LA",
-        observable="nucleon_quark_transversity_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="transversity",
         coord_unit="fm",
         momentum_gev=2.0,
     )
@@ -1563,7 +1622,8 @@ def test_fourier_auto_zmax_keeps_nearby_zero_compatible_tail(tmp_path: Path, mon
         y_grid={"start": -0.5, "stop": 0.5, "num": 5},
         method="GI",
         order="LA",
-        observable="nucleon_quark_transversity_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="transversity",
         coord_unit="fm",
         momentum_gev=2.0,
     )
@@ -1589,7 +1649,8 @@ def test_fourier_defaults_scheme_scoring_options_for_complete_scan(tmp_path: Pat
         },
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
 
@@ -1609,7 +1670,8 @@ def test_fourier_accepts_compact_y_grid_spec(tmp_path: Path, monkeypatch) -> Non
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         momentum_gev=2.0,
     )
     summary = summarize_fourier_result(store)
@@ -1631,7 +1693,8 @@ def test_fourier_accepts_covariance_sample_error_mode(tmp_path: Path, monkeypatc
         scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0},
         method="GI",
         order="LA",
-        observable="nucleon_quark_unpolarized_quasi_pdf",
+        observable="nucleon_quark_quasi_pdf",
+        polarization="unpolarized",
         sample_error_mode="covariance",
         momentum_gev=2.0,
     )
@@ -1652,13 +1715,13 @@ def test_plot_fourier_artifact_writes_figure(tmp_path: Path) -> None:
         ft_im_stat_sdev=np.array([0.02, 0.01, 0.02]),
         ft_re_sys_sdev=np.array([0.005, 0.005, 0.005]),
         ft_im_sys_sdev=np.array([0.005, 0.005, 0.005]),
-        observable=np.asarray("nucleon_quark_transversity_quasi_pdf"),
+        observable=np.asarray("nucleon_quark_quasi_pdf"),
     )
 
     fig, (ax_re, _ax_im) = plot_fourier_artifact(path, save_path=save_path)
 
     assert save_path.is_file()
-    assert ax_re.get_title() == "FT nucleon quark transversity quasi pdf"
+    assert ax_re.get_title() == "FT nucleon quark quasi pdf"
     fig.clf()
 
 

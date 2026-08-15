@@ -38,7 +38,7 @@
         "source_operator": "g5",
         "sink_operator": "g5",
         "current_operator": "gT_nonlocal",
-        "distribution_type": "unpolarized",
+        "polarization": "unpolarized",
         "bz_direction": "X",
         "volume": "S48T64",
         "lattice_spacing_fm": 0.06,

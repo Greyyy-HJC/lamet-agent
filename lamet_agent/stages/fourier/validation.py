@@ -7,17 +7,17 @@ from lamet_agent.manifest_params import merge_stage_params
 
 
 INFERRED_OBSERVABLES = {
-    (target, "quark", hadron, distribution_type): f"{hadron}_quark_{distribution_type}_quasi_{target}"
+    (target, "quark", hadron): f"{hadron}_quark_quasi_{target}"
     for target in ("pdf", "gpd")
     for hadron in ("pion", "nucleon")
-    for distribution_type in ("unpolarized", "helicity", "transversity")
 }
 INFERRED_OBSERVABLES.update(
     {
-        ("pdf", "gluon", "pion", "unpolarized"): "pion_gluon_unpolarized_quasi_pdf",
-        ("pdf", "gluon", "nucleon", "unpolarized"): "nucleon_gluon_unpolarized_quasi_pdf",
+        ("pdf", "gluon", "pion"): "pion_gluon_quasi_pdf",
+        ("pdf", "gluon", "nucleon"): "nucleon_gluon_quasi_pdf",
     }
 )
+PUBLIC_OBSERVABLES = frozenset({*INFERRED_OBSERVABLES.values(), "meson_quasi_da"})
 
 
 def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str]:
@@ -30,9 +30,15 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
     parton = manifest.metadata.parton
     hadron = str(params.get("hadron", "")).lower()
     hadron = "nucleon" if hadron == "proton" else hadron
-    distribution_type = str(params.get("distribution_type", "unpolarized")).lower()
-    inferred_observable = INFERRED_OBSERVABLES.get((target, parton, hadron, distribution_type))
-    if "observable" not in params and parton == "gluon" and hadron in {"pion", "nucleon"} and inferred_observable is None:
+    polarization = str(params.get("polarization", "")).lower()
+    inferred_observable = INFERRED_OBSERVABLES.get((target, parton, hadron))
+    if "observable" in params:
+        observable = str(params["observable"]).lower().replace("-", "_").replace(" ", "_")
+        if observable not in PUBLIC_OBSERVABLES:
+            return [f"Fourier observable must be one of {sorted(PUBLIC_OBSERVABLES)}."]
+    if target in {"pdf", "gpd"} and not polarization:
+        missing.append("polarization")
+    if parton == "gluon" and (target != "pdf" or polarization not in {"", "unpolarized"}):
         return ["The Fourier backend currently supports only unpolarized gluon PDF observables."]
     if (
         "observable" not in params
