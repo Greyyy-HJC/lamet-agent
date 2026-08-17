@@ -8,17 +8,9 @@ injected into tool calls when omitted. When pt2_windows, pt3_windows, and
 pt3_tau_cuts are absent, the tools generate bounded automatic window candidates
 from the resampled 2pt signal and available tsep grid; explicit windows are exact
 overrides.
-
-fit_strategy selects joint (fit 2pt with ratio), chained (fit 2pt first, then
-anchor the ratio prior), or independent (fit ratio/FH/qda_ratio alone with no
-2pt channel). fit_scope selects exactly one analysis family for a job.
-3pt_ratio, FH, and 3pt_ratio+FH consume 3pt data. qda_ratio constructs
-C_qDA(bz,P,t)/C2(P,t) from a nonlocal qDA 2pt and an optional ordinary
-local-source/local-sink 2pt.
-When the ordinary input is absent, the qDA operator's bz=0 correlator supplies
-C2 and uses the mixed overlap z_n*zprime_n; the extracted matrix element is
-O00/zprime0 instead of O00/z0. qda_ratio has no 3pt data, tsep, tau_cut, or
-current operator.
+Use the injected manifest parameter contract for the authoritative meanings of
+fit_scope, fit_strategy, fitting_form, model_average, and their compatibility
+rules.
 
 1. Call `inspect_correlator_scale` and choose a power-of-ten correlator_rescale that
    puts typical fitted 2pt values in 0.0001..0.01.
@@ -63,17 +55,11 @@ current operator.
 Correlator-analysis physics:
 - Fit the symmetric 2pt correlator only in the first half of the lattice.
 - Form 3pt/2pt ratios after resampling both correlators with shared indices.
-- fit_strategy selects joint (2pt+ratio together), chained (2pt then anchored
-  ratio), or independent (ratio/FH/qda_ratio alone, no 2pt fit).
-- fit_scope selects 3pt_ratio, FH, 3pt_ratio+FH, or qda_ratio. FH is
-  constructed by summing ratio data over tau after pt3_tau_cuts and finite
-  differencing neighboring tsep values.
-- The optional fitting_form selects the default Breit ratio or a NonBreit ratio
-  with initial/final 2pt slices selected by their discrete momentum labels.
+- Construct FH data by summing ratio data over tau after the configured cuts and
+  finite-differencing neighboring source-sink separations.
 - Tune data windows on sample-average data at multiple representative z values
   chosen by the agent. `fit_bare_matrix_grid` then keeps one shared window and
-  either selects one fit function on sample-average data or, when model_average
-  is enabled, averages nstate/prior_width fit functions sample by sample.
+  applies the contract-selected fit-function policy sample by sample.
 - When manifest windows are omitted, generate bounded 2pt candidates from the
   first-half resampled signal and 3pt candidates from the available tsep grid.
   Explicit pt2_windows, pt3_windows, and pt3_tau_cuts remain exact overrides.
@@ -83,18 +69,8 @@ Correlator-analysis physics:
   raw logGBF. Choose windows after the Q and n_data > n_params gates, favoring
   cross-z feasibility, good chi2/dof, and more data points when chi2/dof values
   are comparable.
-- 3pt/FH bare matrix elements use O00/(2*E0). qda_ratio uses O00/z0 with an
-  ordinary local denominator, or O00/zprime0 when the qDA operator's
-  bz=0 correlator supplies the denominator. Both outputs are invariant under
-  2pt rescaling.
-- qda_ratio uses a nonlocal qDA 2pt numerator and optionally an ordinary
-  local-source/local-sink 2pt denominator. Without the ordinary input, bz=0
-  of the qDA input supplies the denominator and is fit with distinct source
-  and sink overlaps z_n*zprime_n. In that nonlocal_bz0 mode only, z=0 is not
-  fitted (ratio is identically one) and the output NetCDF assigns bare ME=1
-  at z=0; with a local denominator, z=0 is fitted normally. bT and bz are data
-  selectors, never operator name patterns. qda_ratio has no 3pt, tsep,
-  tau_cut, or current insertion.
+- Preserve the estimator normalization declared by the contract; all exported
+  bare matrix elements remain invariant under the common 2pt rescaling.
 
 ## Available Tools
 

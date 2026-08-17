@@ -6,6 +6,10 @@ import json
 from importlib.resources import files
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
+from lamet_agent.manifest_params import (
+    MANIFEST_PARAMETER_MAINTENANCE_POLICY,
+    stage_contract_guidance,
+)
 
 from .stages import resolve_stage_package
 
@@ -18,6 +22,8 @@ role names shown in Job inputs. External artifact inputs declared in the manifes
 are pre-loaded into the job store before tools run. The stage's primary result
 must be stored as store['output'] by its terminal tool.
 If required inputs are missing, ask for user input.
+Treat the injected stage parameter contract as authoritative for manifest
+parameter meanings and compatibility; never invent an unsupported parameter.
 """.strip()
 
 ACTION_OUTPUT_HINT = (
@@ -47,6 +53,7 @@ def build_stage_static_prompt(
 ) -> str:
     """Build the static context for one stage job."""
     stage_prompt = get_stage_instruction(stage)
+    parameter_contract = stage_contract_guidance(stage)
     correlators = [
         item.model_dump()
         for item in manifest.correlators
@@ -66,6 +73,8 @@ def build_stage_static_prompt(
         f"Input issues: {json.dumps(input_issues or [])}\n\n"
         f"Tools allowed for this job: {json.dumps(allowed_tool_names or [])}\n"
         "Do not call tools outside this job-specific list.\n\n"
+        f"Manifest parameter contract: {json.dumps(parameter_contract, indent=2)}\n\n"
+        f"Repository maintenance policy: {MANIFEST_PARAMETER_MAINTENANCE_POLICY}\n\n"
         f"Stage instruction: {stage_prompt}\n\n"
         f"{ACTION_OUTPUT_HINT}\n"
     )

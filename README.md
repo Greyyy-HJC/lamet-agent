@@ -207,78 +207,22 @@ that one tree, not independent schemas. The small JSON schemas used by the run
 and planning LLM loops describe agent action-response protocols; they do not
 validate manifests and are deliberately separate.
 
-## Manifest Parameter Semantics
+For a human-readable view generated directly from that authority, run:
 
-Some manifest parameters change both the statistical treatment and the runtime
-substantially. This section records behavior that is not obvious from the field
-name alone.
+```bash
+lamet-agent describe-stage fourier_transform
+lamet-agent describe-stage renormalization
+```
 
-### `correlator_analysis.defaults.fit_scope`
+The output includes accepted shapes, defaults, units, option-specific behavior,
+physical explanations, input-role meanings, and cross-parameter rules. The same
+contract data is injected into both the planning and execution LLM prompts.
 
-Each correlator job selects one analysis family through `fit_scope`:
-`3pt_ratio`, `FH`, `3pt_ratio+FH`, or `qda_ratio`. The old `ratio` and
-`ratio+FH` names are rejected. The first three scopes consume ordinary 2pt and
-3pt inputs. `qda_ratio` consumes one qDA 2pt with a nonlocal operator plus
-explicit `bT` and `bz` metadata, and may also consume one ordinary correlator
-whose source and sink operators are local. Operator names never encode `bT` or
-`bz`; the standard qDA HDF5 path is `source/sink/momentum/bT*/bz*`.
+## Cross-Stage Manifest Semantics
 
-For `qda_ratio`, `inputs.correlators[].momentum` remains a list of available
-momenta, while each correlator-analysis job selects one scalar
-`params.momentum`. The fit constructs the resampled nonlocal ratio and models
-it as a qDA numerator spectral decomposition divided by the selected 2pt
-spectral function. When the ordinary 2pt is omitted, the qDA input must contain
-`bz=0`; that slice supplies the denominator and uses the mixed overlap
-`z_n*zprime_n` rather than `z_n^2`. `fit_strategy: joint` fits the selected 2pt
-and qDA ratio together; `chained` first fits that 2pt and transfers its complete
-widened spectrum to the ratio prior; `independent` fits the ratio alone with no
-2pt channel and no prior 2pt fit. The exported bare matrix element is
-`O00/z0` for the ordinary denominator and `O00/zprime0` for the `bz=0`
-fallback. In the fallback, the `z=0` ratio is identically one because numerator
-and denominator are identical resampled data; correlator tools skip fitting
-that point and assign bare matrix-element samples `1+0j` in the output NetCDF.
-Each fitted nonzero `bz` also writes sample-0 real/imaginary
-fit-on-data PDF and SVG diagnostics under the job's `fit_logs/` directory.
-
-### `correlator_analysis.defaults.model_average`
-
-This boolean controls how `fit_bare_matrix_grid` uses fit-function candidates.
-It does not control whether tuning scans the candidates: `tune_bare_matrix` always
-tests the `nstate`, `prior_width`, `fit_strategy`, and fit-window candidates on
-sample-average data at LLM-supplied `tune_z_values`. When `pt2_windows`,
-`pt3_windows`, and `pt3_tau_cuts` are omitted, the stage generates a bounded
-window scan from the resampled first-half 2pt signal and the available `tsep`
-grid. Explicit window lists are used unchanged. The tool returns the generated
-grid in `auto_window_scan`, cross-z feasibility summaries, and
-`recommended_robust_index`; the agent must pass explicit `tune_z_values` when
-calling `tune_bare_matrix`.
-
-- `false` (recommended production default): use one tuned data window and one
-  sample-average-selected fit-function setting for every `z` and every resampled
-  sample. The agent should provide the selected `pt2_window` and `pt3_window` from
-  a candidate with `feasible_at_all_tune_z=true`; if it does not, the grid tool
-  selects the best usable window on a single representative `tune_z`.
-- `true`: still use one tuned data window, but scan `nstate` and `prior_width`
-  fit-function candidates for each resampled sample and combine successful fits
-  with `logGBF` weights. The default prior-width scan is `[0.5, 1.0, 2.0]`.
-
-The correlator NetCDF artifact stores the weighted resampled bare matrix-element
-samples as usual and records per-`z` uncertainty summaries in attrs:
-`bare_re_stat_sdev` / `bare_im_stat_sdev` from the resampling spread and
-`bare_re_sys_sdev` / `bare_im_sys_sdev` from the fit-function model spread. The
-systematic arrays are zero for the single-model `model_average: false` path.
-
-### `renormalization.defaults.normalization`
-
-When `true` (default), the runner divides every bare `EnsembleData` input in the
-job store by its lattice `z=0` value before any renormalization tool runs. Scheme
-tools such as `apply_ratio_scheme_renormalization` then apply only the declared
-ratio/hybrid prescription. Set `false` to skip this preprocessing and pass raw
-bare matrix elements directly into the scheme.
-
-For example, two `nstate` values and three `prior_width` values produce up to six
-fit-function models inside the fixed data window. The manifest value is
-authoritative and cannot be overridden by an LLM tool call.
+This section keeps only conventions that span the global input schema or more
+than one stage. Individual stage parameter behavior is generated from
+`validation.py` by `describe-stage` and is not intended to be duplicated here.
 
 ### Ratio renormalization
 
@@ -330,18 +274,6 @@ quark/antiquark sector semantics. The current gluon tail backend supports the
 unpolarized gluon PDF only; gluon helicity, transversity, and GPD operators can
 carry `polarization` metadata but are not silently mapped onto that
 backend. DA behavior is unchanged.
-
-### `fourier_transform.defaults.scheme_scan`
-
-Fourier tail-fit range candidates (`zmin_values`, `zmax_values`, and
-`z_ext_max`) are compared directly against the renormalized coordinate axis, so
-they must use the same `coord_unit` as that axis. Renormalized NetCDF inputs
-default to `coord_unit: "fm"`; do not pass bare lattice site indices such as
-`12` or `24` unless `coord_unit` is explicitly `"lattice"`. Convert lattice
-separations with $z_{\mathrm{fm}}=n\,a_{\mathrm{fm}}$. Omitting the range keys
-lets `run_fourier_transform` auto-fill them from the data grid and tail-fit
-diagnostics; runnable examples such as `pion_pdf_cg_manifest_sys.json` and the
-DA manifests typically keep only `smooth` / `model_average`.
 
 ### Per-job hybrid `zs_fm`
 
@@ -549,32 +481,9 @@ stage/job parameter.
 
 ### Parameters
 
-| Parameter | Where | Required? | Meaning |
-|-----------|--------|-----------|---------|
-| `scheme` | stage defaults / job | yes | Physical scheme: `ratio`, `hybrid`, or `msbar`. |
-| `strategy` | stage defaults / job | yes | Execution strategy: `external_denominator` or `self_renormalization`. |
-| `normalization` | stage defaults / job | no (default `true`) | If `true`, divide bare inputs by lattice $z=0$ before tools. Set `false` when inputs are already $z=0$-normalized (`normalized_at_z0` attr). |
-| `scheme_parameters.LambdaQCD_gev` | fit/apply job | **yes** | $\Lambda_{\mathrm{QCD}}$ in GeV for the self-renormalization ansatz. It has no default, is stored in $z_R$ provenance, and must be explicitly identical on every fit/apply job in the chain. |
-| `scheme_parameters.d` | **fit** job | **yes** | Fixed continuum/discretization coefficient in the $g(z)$ fit and in the initial $z_R$ construction. Never fitted. Use the reference-operator value (e.g. PDF $d_{\mathrm{pdf}}$). |
-| `scheme_parameters.m0_gev` | **fit** job | not allowed | The fit determines the **reference-operator** $m_0$ from the first three $g(z)$ points against $\log Z_{\overline{\mathrm{MS}}}^{\mathrm{PDF}}(z)$. This does not restrict the apply-job override below. |
-| `scheme_parameters.d` | **apply** job | no | If set (alone or with `m0_gev`), remap upstream $z_R$ from the fit-job $(d,m_0)$ onto this operator’s $d$ before $H/(z_R Z_{\overline{\mathrm{MS}}})$. Typical DA value: $0.19$. |
-| `scheme_parameters.m0_gev` | **apply** job | no | Target-operator $m_0$ for the same remap. If only one of `d` / `m0_gev` is set, the other is taken from upstream $z_R$ attrs. |
-| `mu` | defaults, job, or `kernel_parameters` | no (tool default `2.0`) | Renormalization scale (GeV) for $Z_{\overline{\mathrm{MS}}}$ and related logs. |
-| `scheme_parameters.svdcut` | defaults / fit job | no (default `1e-12`) | SVD cut for the correlated $g(z)$ and short-distance $m_0$ fits. |
-| `scheme_parameters.z_coverage_policy` | defaults / apply job | no (default `extrapolate`) | `extrapolate` automatically extends the inferred long-distance $f_1(z)$ quadratically and rebuilds missing upper-end $z_R$ points. `strict` rejects uncovered target points; `intersection` explicitly drops them. Reports record input/output ranges and dropped/extrapolated point counts. |
-| `kernel_id` | job or unique `inputs.kernels` entry | yes if multiple kernels | `ZMSbar_pdf` or `ZMSbar_da`; choose the conversion factor for the **apply** target. Fit diagnostics compare $m_R$ to `ZMSbar_pdf` regardless. |
-
-Legacy composite values migrate as follows: `hybrid_ratio` becomes
-`scheme: "hybrid", strategy: "external_denominator"`; `hybrid_self_renormalization` becomes
-`scheme: "ratio", strategy: "self_renormalization"`. The old
-`inputs.kernels[].scheme` field must move to the consuming stage defaults.
-
-The removed parameters `alpha_s`, `order`, `Nf`, `zr_zmax_fm`,
-`f1_extension_zmin_fm`, `zms_kind`, `k`, lowercase `lqcd`, `cf`, and `b0` produce
-explicit migration errors rather than being ignored. Long-distance extension
-is selected by `scheme_parameters.z_coverage_policy: "extrapolate"` and has no numerical knobs.
-Self-renormalization derives the coupling with `alphas_nloop(mu)`; the general
-running helper remains configurable for matching code paths.
+Run `lamet-agent describe-stage renormalization` for the generated parameter
+reference, including fit/apply distinctions, choice behavior, defaults, units,
+coverage policy, linked-chain constraints, and removed-parameter migrations.
 
 Stage defaults and job params recursively merge. Put shared values such as the
 required `LambdaQCD_gev` in defaults; job-level `scheme_parameters` can then
@@ -609,9 +518,13 @@ pip install -e ".[dev,analysis]"
 Validate and run manifest:
 
 ```bash
+lamet-agent describe-stage correlator_analysis
 lamet-agent validate examples/pion_pdf_cg_manifest.json
 lamet-agent run examples/pion_pdf_cg_manifest.json
 ```
+
+`describe-stage` prints the stage-owned parameter and physics reference without
+requiring a manifest.
 
 `validate` now runs stage-local validation after schema, DAG, and path checks.
 Its JSON result includes structured `issues` with stable codes, manifest paths,
@@ -876,8 +789,9 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
     cross-stage arithmetic/alignment helpers).
 - `lamet_agent/core/prompting.py`
   - Stores `SYSTEM_PROMPT` and shared output-format hint.
-  - Builds static context once per job; incremental tool observations are
-    appended as separate user turns in multi-turn LLM sessions.
+  - Builds static context once per job, including the authoritative stage
+    contract; incremental tool observations are appended as separate user turns
+    in multi-turn LLM sessions.
 - `lamet_agent/core/llm.py`
   - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), `codex`
     (Codex Python SDK), and `api` (OpenAI-compatible HTTP via `PROVIDERS`).
@@ -891,8 +805,8 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
   - `resolve_plot_save_path()` keeps plots under the manifest's stage artifact directory.
 - `lamet_agent/manifest_params.py`
   - Defines reusable parameter specs, constraint descriptions, structured stage
-    diagnostics, lazy contract routing, and recursive `defaults` / `params`
-    validation before DAG execution.
+    diagnostics, lazy contract routing, human-facing contract rendering, and
+    recursive `defaults` / `params` validation before DAG execution.
 - `lamet_agent/core/trace.py`
   - Optional ReAct-style stdout trace (`--verbose`).
   - Default (non-verbose) runs print a LaMET Agent ASCII banner and one line per
@@ -905,7 +819,7 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
   - `run_agent()` executes `metadata.stages`, runs each declared job with an
     isolated store, and registers `store["output"]` under the job id.
 - `lamet_agent/__main__.py`
-  - Exposes the `plan`, `validate`, and `run` commands and backs both
+  - Exposes the `describe-stage`, `plan`, `validate`, and `run` commands and backs both
     `python -m lamet_agent` and the `lamet-agent` console script.
   - `run` requires `--backend` (`mock`/`external`/`api`/`codex`), accepts
     `--model model_id` (for `codex`) or `--model provider/model_id` (for `api`),

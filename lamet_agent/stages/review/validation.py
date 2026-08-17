@@ -31,13 +31,18 @@ STAGE_PARAM_CONTRACT = StageParamContract(
     schema={
         "literature": ParameterSpec(
             summary="Enable literature comparison.",
-            physics="External references provide context but do not alter computed observables.",
+            physics="True adds background-only entries from the local LaMET paper library to the evidence package. References provide context and provenance but never alter computed observables or replace workflow evidence.",
             expected=bool,
+            choices=(False, True),
+            choice_descriptions={
+                False: "Synthesize only the completed workflow reports and artifact summaries.",
+                True: "Also retrieve a bounded set of local literature records for background context.",
+            },
             default="false",
         ),
         "literature_max_papers": ParameterSpec(
             summary="Maximum number of literature papers included.",
-            physics="The limit bounds review breadth and runtime only.",
+            physics="The limit bounds the breadth, prompt size, and retrieval runtime of the optional background context; it has no effect when literature is false and never changes numerical results.",
             expected=int,
             default="4",
             validator=_paper_limit,

@@ -12,6 +12,23 @@ from typer.testing import CliRunner
 from lamet_agent.__main__ import _cli_run_summary, _format_cli_error, _resolve_llm_config, app
 
 
+def test_describe_stage_prints_authoritative_human_reference() -> None:
+    result = CliRunner().invoke(app, ["describe-stage", "renormalization"])
+
+    assert result.exit_code == 0, result.output
+    assert "renormalization\n===============\n" in result.output
+    assert "- scheme [required" in result.output
+    assert "Choice behavior:" in result.output
+    assert "Cross-parameter and context rules" in result.output
+
+
+def test_describe_stage_rejects_unknown_stage() -> None:
+    result = CliRunner().invoke(app, ["describe-stage", "unknown"])
+
+    assert result.exit_code != 0
+    assert "unknown stage 'unknown'" in result.output
+
+
 def test_cli_run_summary_omits_actions_and_stage_results() -> None:
     full = {
         "run_id": "demo",

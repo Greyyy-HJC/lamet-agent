@@ -175,13 +175,53 @@ def _check_self_kernel(context: StageValidationContext) -> RuleViolation | None:
     return None
 
 
+def _check_self_lambda_chain(context: StageValidationContext) -> RuleViolation | None:
+    selection = _valid_selection(context)
+    if selection is None or selection[1] != "self_renormalization":
+        return None
+    params_by_job = context.resources.get("params_by_job", {})
+    inputs_by_job = context.resources.get("inputs_by_job", {})
+    related = {context.job_id}
+    roles = set(context.inputs)
+    if roles == {"reference"}:
+        related.update(
+            job_id
+            for job_id, inputs in inputs_by_job.items()
+            if isinstance(inputs, dict) and inputs.get("zR") == context.job_id
+        )
+    else:
+        zR_job = context.inputs.get("zR")
+        if isinstance(zR_job, str) and zR_job in params_by_job:
+            related.add(zR_job)
+    values: dict[str, float] = {}
+    for job_id in related:
+        params = params_by_job.get(job_id, {})
+        scheme_parameters = params.get("scheme_parameters", {}) if isinstance(params, dict) else {}
+        raw = scheme_parameters.get("LambdaQCD_gev") if isinstance(scheme_parameters, dict) else None
+        if not isinstance(raw, bool) and isinstance(raw, (int, float)):
+            values[job_id] = float(raw)
+    if len(values) < 2 or len(set(values.values())) == 1:
+        return None
+    return _violation(
+        context,
+        "Linked self-renormalization fit/apply jobs must use one identical scheme_parameters.LambdaQCD_gev value.",
+        parameter="scheme_parameters.LambdaQCD_gev",
+        cause=f"The linked job values are {values!r}.",
+    )
+
+
 _SCHEME_PARAMETER_FIELDS = {
-    "LambdaQCD_gev": _parameter("QCD scale used in perturbative running.", "It fixes the coupling entering the self-renormalization short-distance ansatz.", expected=float, unit="GeV", validator=_lambda_message),
-    "d": _parameter("Fixed discretization coefficient in the reference fit.", "It separates lattice-spacing artifacts from the extracted linear divergence.", expected=float),
-    "delta_m_gev": _parameter("Hybrid mass-counterterm offset.", "It controls the long-distance exponential factor beyond the hybrid transition.", expected=float, unit="GeV"),
+    "LambdaQCD_gev": _parameter("QCD scale used in perturbative running.", "It fixes the coupling entering the self-renormalization short-distance ansatz and must be explicitly identical along each linked fit/apply zR chain.", expected=float, unit="GeV", validator=_lambda_message),
+    "d": _parameter("Fixed discretization coefficient for a self-renormalization operator.", "A fit job requires the reference-operator value; an apply-job override remaps the upstream zR to a target operator with different lattice artifacts.", expected=float),
+    "delta_m_gev": _parameter("External-hybrid target/denominator mass-gap offset.", "Together with m0_gev it controls the long-distance exponential branch beyond zs_fm; it is not a self-renormalization fit control.", expected=float, unit="GeV"),
     "m0_gev": _parameter("Target-specific residual mass offset for apply jobs.", "Reference fit jobs determine m0 and therefore must not fix it.", expected=float, unit="GeV"),
-    "svdcut": _parameter("Covariance singular-value cut for the reference fit.", "Regularization stabilizes the correlated fit of the renormalization factor.", expected=float),
-    "z_coverage_policy": _parameter("Policy for target coordinates beyond the fitted zR range.", "Strict, intersection, and extrapolate choices make different assumptions about long-distance coverage.", default="extrapolate"),
+    "svdcut": _parameter("Covariance singular-value cut for the reference fit.", "Regularization stabilizes the correlated fit of the renormalization factor.", expected=float, default="1e-12"),
+    "z_coverage_policy": _parameter(
+        "String policy for target coordinates beyond the fitted zR range.",
+        "For self-renormalization, strict requires zR at every nonzero target coordinate; intersection keeps only the target/zR overlap; extrapolate fits the long-distance f1 tail and rebuilds zR only at missing target coordinates.",
+        default="extrapolate",
+        examples=("strict",),
+    ),
 }
 
 
@@ -191,13 +231,53 @@ STAGE_PARAM_CONTRACT = StageParamContract(
     physics="External-denominator and self-renormalization strategies define distinct estimators; their inputs and nuisance parameters cannot be interchanged.",
     planning_notes=("scheme and strategy are independent required choices.", "Keep self-renormalization controls inside scheme_parameters and keep hybrid zs_fm flat."),
     input_roles=("target", "denominator", "reference", "zR"),
+    input_role_descriptions={
+        "target": "Bare matrix element to renormalize.",
+        "denominator": "Bare zero-momentum or scheme denominator used by external-ratio and hybrid jobs.",
+        "reference": "Zero-momentum reference used to fit the self-renormalization factor.",
+        "zR": "Previously fitted self-renormalization factor consumed by an apply job.",
+    },
     schema={
         "ensemble": _parameter("Optional ensemble selector.", "It identifies the lattice ensemble associated with a self-renormalization reference.", expected=str),
         "kernel_id": _parameter("Declared conversion kernel identifier.", "Self-renormalization uses a PDF- or DA-specific MS-bar conversion factor.", expected=str),
-        "mu": _parameter("Renormalization scale.", "The perturbative conversion factor is evaluated at this scale.", expected=float, unit="GeV"),
-        "normalization": _parameter("Normalize the external ratio at zero separation.", "The zero-distance normalization fixes the local-current convention.", expected=bool, default="true", validator=_normalization_message),
-        "scheme": _parameter("Renormalization scheme.", "ratio, hybrid, and msbar define different short-/long-distance treatments.", expected=str, required=True, choices=("ratio", "hybrid", "msbar"), validator=_scheme_message),
-        "strategy": _parameter("Estimator strategy.", "An external denominator forms a direct ratio; self-renormalization fits the Wilson-line divergence.", expected=str, required=True, choices=("external_denominator", "self_renormalization"), validator=_strategy_message),
+        "mu": _parameter("Renormalization scale.", "The perturbative conversion factor and short-distance logarithms are evaluated at this scale; the value may also come from the selected kernel declaration.", expected=float, unit="GeV", default="2.0"),
+        "normalization": _parameter(
+            "Normalize every bare job input by its lattice z=0 value before applying the scheme.",
+            "This fixes the local-current normalization convention upstream of either estimator; false preserves the raw bare normalization.",
+            expected=bool,
+            choices=(False, True),
+            choice_descriptions={
+                False: "Pass raw bare matrix elements directly to the renormalization estimator.",
+                True: "Divide each bare input by its own z=0 sample before any renormalization tool runs.",
+            },
+            default="true",
+            validator=_normalization_message,
+        ),
+        "scheme": _parameter(
+            "Physical renormalization scheme.",
+            "The scheme chooses the short-/long-distance definition of the renormalized matrix element; it is independent of the estimator strategy used to construct the factors.",
+            expected=str,
+            required=True,
+            choices=("ratio", "hybrid", "msbar"),
+            choice_descriptions={
+                "ratio": "Use a ratio prescription over the full nonzero coordinate range.",
+                "hybrid": "Use a ratio below zs_fm and a continuous mass-counterterm branch above it.",
+                "msbar": "Apply the fitted self-renormalization factor directly in the MS-bar definition; external_denominator does not implement this choice.",
+            },
+            validator=_scheme_message,
+        ),
+        "strategy": _parameter(
+            "Estimator used to construct the renormalization factor.",
+            "An external denominator forms a direct sample-by-sample ratio, while self-renormalization fits the Wilson-line divergence on a reference and transfers it to target jobs.",
+            expected=str,
+            required=True,
+            choices=("external_denominator", "self_renormalization"),
+            choice_descriptions={
+                "external_denominator": "Consume target and denominator in one apply job; supported for ratio and hybrid schemes.",
+                "self_renormalization": "Fit zR from a reference job, then consume target and zR in separate apply jobs.",
+            },
+            validator=_strategy_message,
+        ),
         "scheme_parameters": _parameter("Strategy-specific numerical controls.", "These parameters belong to the self-renormalization ansatz and coverage prescription.", expected=dict, schema=_SCHEME_PARAMETER_FIELDS),
         "zs_fm": _parameter("Hybrid transition distance or uncertainty-bearing systematics value.", "Below zs the ratio prescription is used; above it the mass counterterm controls the Wilson line. A string such as '0.17(2)' requests low/high systematics branches before execution.", expected=(float, str), unit="fm"),
     },
@@ -223,13 +303,19 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ConstraintSpec("renorm.external.contract", ("scheme", "strategy", "scheme_parameters", "inputs", "zs_fm"), "external_denominator supports ratio/hybrid, accepts target+denominator, and needs zs_fm for hybrid.", "A direct ratio and a fitted self-renormalization factor are different estimators with different nuisance parameters.", "Choose compatible scheme/strategy values and provide exactly the required input roles.", _check_external),
         ConstraintSpec("renorm.self.contract", ("scheme_parameters", "inputs", "zs_fm"), "self_renormalization requires LambdaQCD_gev; fit and apply jobs have distinct roles and parameters.", "The reference fit determines the divergence and residual mass, while apply jobs transfer that fitted factor to target data.", "Provide reference+d for a fit, or the scheme-specific target/zR roles for apply.", _check_self_parameters),
         ConstraintSpec("renorm.self.kernel", ("kernel_id", "inputs.kernels"), "self_renormalization selects one declared ZMSbar_pdf or ZMSbar_da kernel.", "The conversion factor depends on whether the target is a PDF or DA operator.", "Declare and select the matching renormalization kernel.", _check_self_kernel),
+        ConstraintSpec("renorm.self.lambda_chain", ("scheme_parameters.LambdaQCD_gev", "inputs.zR"), "Linked self-renormalization fit and apply jobs use one LambdaQCD_gev.", "Changing the perturbative running scale between the fitted zR and its application makes the transferred renormalization factor inconsistent.", "Set one explicit LambdaQCD_gev throughout each zR fit/apply chain.", _check_self_lambda_chain),
     ),
 )
 
 
 def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> StageValidationContext:
     """Build the resolved renormalization context consumed by the shared evaluator."""
-    authored = merge_stage_params(manifest.stages["renormalization"].defaults, job.params)
+    stage_config = manifest.stages["renormalization"]
+    authored = merge_stage_params(stage_config.defaults, job.params)
+    params_by_job = {
+        candidate.id: merge_stage_params(stage_config.defaults, candidate.params)
+        for candidate in stage_config.jobs
+    }
     return StageValidationContext(
         stage="renormalization",
         job_id=job.id,
@@ -237,7 +323,11 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
         params=authored,
         inputs=dict(job.inputs),
         metadata=manifest.metadata.model_dump(),
-        resources={"kernels": list(manifest.kernels)},
+        resources={
+            "kernels": list(manifest.kernels),
+            "params_by_job": params_by_job,
+            "inputs_by_job": {candidate.id: dict(candidate.inputs) for candidate in stage_config.jobs},
+        },
         authored_params=authored,
     )
 

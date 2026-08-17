@@ -11,7 +11,6 @@ from pathlib import Path
 import typer
 from pydantic import ValidationError
 
-from .agent import run_agent
 from .core.llm import parse_api_model, provider_config
 from .core.tools import validate_stage_diagnostics
 from .manifest import (
@@ -21,8 +20,8 @@ from .manifest import (
     validate_manifest_file,
     validate_manifest_paths,
 )
+from .manifest_params import STAGE_PARAM_CONTRACTS, render_stage_contract
 from .planning import run_interactive_plan
-from .stages.matching.validation import matching_grid_warnings
 
 app = typer.Typer(help="CLI-first scaffold for LaMET analysis workflows.")
 
@@ -43,6 +42,13 @@ _CLI_SUMMARY_KEYS = (
     "correlators",
     "kernels",
 )
+
+
+def run_agent(*args: object, **kwargs: object) -> dict:
+    """Load the numerical runner only when the run command needs it."""
+    from .agent import run_agent as run_agent_impl
+
+    return run_agent_impl(*args, **kwargs)
 
 
 def _cli_run_summary(result: dict) -> dict:
@@ -97,6 +103,8 @@ def _matching_grid_warnings_for_cli(manifest: object) -> list[str]:
     """Collect matching-grid warnings for a parsed manifest, if it is strict."""
     if not isinstance(manifest, AnalysisManifest):
         return []
+    from .stages.matching.validation import matching_grid_warnings
+
     return matching_grid_warnings(manifest)
 
 
@@ -107,6 +115,15 @@ def _emit_matching_grid_warnings(manifest: object) -> list[str]:
         typer.echo(_render_boxed_notice("WARNING: MATCHING GRID DENSITY", warnings), err=True)
         typer.echo(err=True)
     return warnings
+
+
+@app.command("describe-stage")
+def describe_stage(stage: str) -> None:
+    """Show one stage's manifest parameters, physics, and compatibility rules."""
+    if stage not in STAGE_PARAM_CONTRACTS:
+        choices = ", ".join(STAGE_PARAM_CONTRACTS)
+        raise typer.BadParameter(f"unknown stage {stage!r}; choose one of: {choices}")
+    typer.echo(render_stage_contract(stage))
 
 
 @app.command("validate")

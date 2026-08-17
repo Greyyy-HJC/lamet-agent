@@ -20,15 +20,9 @@ quasi-distribution while preserving every resampled sample.
 
 Fourier transformation extends finite coordinate-space matrix elements with the
 configured asymptotic model, transforms every resampled sample, and preserves
-the sample axis in an EnsembleData(x) output. Fit ranges are selected once from
-sample-average tail-fit diagnostics over the configured zmin/zmax grid. After
-that range is fixed, scheme_scan.model_average controls per-sample averaging
-over fit-model candidates defined by order and posterior_prior_error_scale;
-the method argument is a fixed theory choice and is not scanned.
-For DA only, symmetry_guarantee defaults to true: rotate by exp(+i*z*Pz/2),
-discard the rotated imaginary part, rotate the retained real part back by
-exp(-i*z*Pz/2), then run the ordinary extension and Fourier transform.
-Set it false to use the DA input unchanged. It has no effect for PDF or GPD.
+the sample axis in an EnsembleData(x) output. Use the injected manifest contract
+for the tail-range, model-averaging, coordinate-unit, sector, and DA-symmetry
+definitions; this instruction only determines tool order.
 
 ## Available Tools
 

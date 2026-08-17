@@ -14,7 +14,11 @@ import xarray as xr
 
 from lamet_agent.core.llm import request_llm_text
 from lamet_agent.manifest import AnalysisManifest
-from lamet_agent.manifest_params import merge_stage_params
+from lamet_agent.manifest_params import (
+    MANIFEST_PARAMETER_MAINTENANCE_POLICY,
+    merge_stage_params,
+    stage_contract_guidance,
+)
 
 STAGE_REPORTS = {
     "correlator_analysis": "ca_report.md",
@@ -513,6 +517,8 @@ def write_review_from_manifest(
             )
     lamet_review_rules_en = (
         "You are an expert AI specialized in LaMET lattice numerical analysis. Your task is to generate a fact-grounded Review from the supplied five-step analysis reports and provide Recommended Manifest Changes.\n"
+        + MANIFEST_PARAMETER_MAINTENANCE_POLICY
+        + " Recommend only user-authored parameters declared by the supplied stage contracts; never recommend writing runner-derived kinematics such as momentum_gev into stage defaults or job params.\n"
         + "Domain background: LaMET extracts light-cone PDFs/TMDs/DAs/GPDs from lattice QCD through Fourier reconstruction, perturbative matching, and momentum extrapolation of large-momentum quasi distributions. The standard flow is: Step 1 correlator_analysis usually fits two- and three-point correlators to obtain ground-state spectra, overlap factors, and bare matrix elements h(z,Pz), with diagnostics from fit quality, excited-state gaps, relative overlap errors, and signal-to-noise at z=0 and maximal z; if the manifest or report shows `fit_scope=\"qda_ratio\"`, this step is a nonlocal 2pt z-ratio analysis and must be described as extracting bare matrix elements from nonlocal two-point correlator ratios, without forcing 3pt/2pt ratio, overlap, source-sink separation, tau, or current-insertion diagnostics. Step 2 renormalization removes UV divergences and gives h_R(z), with diagnostics from renormalization constants, error amplification, and window dependence; Step 3 fourier_transform reconstructs quasi distributions from h_R(z), with diagnostics from zmin/zmax, oscillations, x/y-space errors, and the zeroth moment; Step 4 perturbative_matching applies LaMET kernels to obtain light-cone distributions, with diagnostics from positivity, first moment and deviation from 1, intermediate-x errors, and matching order; Step 5 extrapolation performs infinite-momentum or continuum extrapolation, with diagnostics from model reasonableness, fit quality, and stability.\n"
         + "Data extraction rules: read or calculate only from the reports and NetCDF summaries; write 'not provided' when absent. For standard 3pt_ratio Step1, extract fit quality, excited-state gaps, overlap relative errors, and signal-to-noise at z=0 and maximal z. For `fit_scope=\"qda_ratio\"`, extract only nonlocal 2pt z-ratio fit quality, 2pt fit windows, the ordinary local 2pt denominator, z-dependent signal-to-noise, and long-Wilson-line noise behavior; do not treat missing 3pt/overlap/tsep/tau diagnostics as a problem. Step2 extract renormalization constants with errors and statistical-error amplification. Step3 extract zmin/zmax, quasi-distribution error bars, and zeroth moment. Step4 extract matched q(x) error bars, first moment, and deviation from 1. Step5 extract extrapolation model, fit quality, and final total uncertainty. For each stage, write one coherent physics summary of the operation, key result, and quality.\n"
         + (
@@ -536,7 +542,7 @@ def write_review_from_manifest(
         + "`Key figure` must choose one SVG from that stage's `svg` list; if the list contains an ensemble overview figure such as `ca_<ensemble>_*.svg`, `rn_<ensemble>_*.svg`, `ft_<ensemble>_xdep.svg`, or `mt_<ensemble>.svg`, choose that overview figure first, otherwise follow the usual single-job figure selection rule. Embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths or use only the basename. The `markdown_path` usually has the form of a path from the review directory to a sibling stage directory, for example `../correlator_analysis/xxx.svg`; preserve that exact relative path string when embedding the image. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
         + "`Diagnostics` must judge whether the stage is self-consistent and whether it matches a realistic LaMET analysis scenario; it must follow the Diagnostics rules in the system prompt and explicitly distinguish successful execution, manifest-tunable analysis issues, and raw-data or external LQCD limitations that lamet-agent tuning cannot fix. `Recommended Manifest Changes` must use the required field format above; if no trigger is met, state that the current setting is reasonable and no change is justified. "
         + "Recommendations must cite real manifest paths and values such as `stages.<stage>.defaults.<key>`, `stages.<stage>.jobs[].params.<key>`, or `inputs.kernels[].kernel_parameters.<key>`, and state suggested values or ranges with reasons. "
-        + "Prioritize these tunable parameters: for correlator, `pt2_windows`, `nstate`, `fit_scope`, `fit_strategy`, `prior_width`, `svdcut`, and discuss `pt3_tau_cuts` only for three-point fit scopes; for renormalization, `zs_fm`, `scheme_parameters.m0_gev`, `scheme_parameters.delta_m_gev`; for Fourier, `scheme_scan.zmin_values`, `zmax_values`, `z_ext_max`, `smooth`, `order`, `posterior_prior_error_scale`, `y_grid`; for matching, `kernel_id`, `mu`, `momentum_gev`. "
+        + "Use the supplied authoritative stage parameter contracts to choose tunable parameters and explain their physical effect. Recommend only parameters supported by the relevant contract and only when the run evidence triggers a change. "
         + "If `zs_fm` has already been described in the renormalization section, do not repeat the same `zs_fm` discussion in the matching section; discuss it under matching only when the manifest consistency checks show a renormalization/matching mismatch or when there is an independent matching-specific `zs_fm` issue. "
         + "Do not recommend changing lamet-agent source code. You cannot inspect SVG images; the SVG list only records figure paths and provenance. "
         + "Do not infer numerical values or curve shapes from SVG pixels, path geometry, or filenames. Figure-related statements must come from report text and NetCDF summaries. "
@@ -547,6 +553,7 @@ def write_review_from_manifest(
         )
         + f"State missing reports, NetCDF files, or SVG figures explicitly and do not fill in missing numbers. Output Markdown in {'Simplified Chinese' if language == 'ch' else 'English'}.\n\n"
         + f"Manifest JSON:\n```json\n{json.dumps(manifest.model_dump(mode='json'), indent=2)}\n```\n\n"
+        + f"Authoritative stage parameter contracts:\n```json\n{json.dumps({stage: stage_contract_guidance(stage) for stage in manifest.metadata.stages if stage in STAGE_REPORTS}, indent=2)}\n```\n\n"
         + f"Stage materials:\n```json\n{json.dumps(materials, indent=2)}\n```\n\n"
         + (
             f"Relevant literature context (background only):\n```json\n{json.dumps(literature_context, indent=2)}\n```\n\n"

@@ -20,6 +20,7 @@ from lamet_agent.planning import (
     _stage_parameter_gaps,
     _next_questions_for_state,
     _manifest_question_id_from_user_input_action,
+    _planning_system_prompt,
     apply_manifest_json_patches,
     build_repaired_manifests,
     check_manifest_draft,
@@ -31,6 +32,13 @@ from lamet_agent.planning import (
     validate_candidate_payload,
 )
 from lamet_agent.stages.correlator.functions import _read_2pt, _read_3pt
+
+
+def test_planning_prompt_requires_validation_contract_maintenance() -> None:
+    prompt = _planning_system_prompt()
+
+    assert "STAGE_PARAM_CONTRACT in validation.py" in prompt
+    assert "adds, removes, renames, or changes a manifest parameter" in prompt
 
 
 def _write_kernel(root: Path) -> None:

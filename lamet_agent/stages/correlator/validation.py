@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
@@ -58,6 +59,37 @@ def _validate_fit_scope(value: Any) -> str | None:
     return None
 
 
+def _positive_number_message(name: str):
+    def validate(value: Any) -> str | None:
+        values = value if isinstance(value, list) else [value]
+        valid = bool(values) and all(
+            not isinstance(item, bool)
+            and isinstance(item, (int, float))
+            and math.isfinite(float(item))
+            and float(item) > 0.0
+            for item in values
+        )
+        return None if valid else f"{name} must contain only finite positive values."
+
+    return validate
+
+
+def _nstate_message(value: Any) -> str | None:
+    values = value if isinstance(value, list) else [value]
+    valid = bool(values) and all(type(item) is int and item >= 1 for item in values)
+    return None if valid else "nstate must contain only positive integer state counts."
+
+
+def _q_min_message(value: Any) -> str | None:
+    valid = (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and 0.0 <= float(value) <= 1.0
+    )
+    return None if valid else "q_min must be a finite probability between 0 and 1."
+
+
 def _check_scope_compatibility(context: StageValidationContext) -> RuleViolation | None:
     scopes = _scopes(context)
     fitting_form = str(context.params.get("fitting_form", "Breit"))
@@ -83,6 +115,21 @@ def _check_scope_compatibility(context: StageValidationContext) -> RuleViolation
             cause=f"The effective fit scopes are {scopes!r} with NonBreit kinematics.",
         )
     return None
+
+
+def _check_fh_state_count(context: StageValidationContext) -> RuleViolation | None:
+    if not any("FH" in scope for scope in _scopes(context)):
+        return None
+    raw = context.params.get("nstate", [2])
+    values = raw if isinstance(raw, list) else [raw]
+    if not any(type(value) is int and value > 2 for value in values):
+        return None
+    return _violation(
+        context,
+        "FH correlator fits currently support nstate values no larger than 2.",
+        parameter="nstate",
+        cause=f"The effective nstate candidates are {values!r}.",
+    )
 
 
 def _check_qda_inputs(context: StageValidationContext) -> RuleViolation | None:
@@ -286,18 +333,80 @@ STAGE_PARAM_CONTRACT = StageParamContract(
     ),
     job_parameters=("momentum", "initial_momentum", "final_momentum"),
     schema={
-        "component": _parameter("Complex component used in the fit.", "Real and imaginary matrix-element components carry different operator information.", expected=str, choices=("re", "im", "both")),
-        "correlator_rescale": _parameter("Numerical rescaling applied before fitting.", "A common rescaling improves conditioning without changing the recovered physical matrix element.", expected=float),
+        "component": _parameter(
+            "Complex component used in the fit.",
+            "Real and imaginary matrix-element components carry different operator information; fitting both preserves both channels in one job.",
+            expected=str,
+            choices=("re", "im", "both"),
+            choice_descriptions={
+                "re": "Fit only the real component.",
+                "im": "Fit only the imaginary component.",
+                "both": "Fit and export both components.",
+            },
+        ),
+        "correlator_rescale": _parameter("Finite positive numerical rescaling applied before fitting.", "A common rescaling improves conditioning without changing the recovered physical matrix element.", expected=float, validator=_positive_number_message("correlator_rescale")),
         "final_momentum": _parameter("Final-state lattice momentum for NonBreit kinematics.", "The final momentum fixes the outgoing hadron state in a non-forward matrix element.", expected=str),
-        "fit_scope": _parameter("Correlator observable families fitted by the job.", "3pt ratios, FH sums, and qDA ratios encode different estimators and cannot always share one likelihood.", expected=(str, list), items=str, choices=("3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"), default="['3pt_ratio']", validator=_validate_fit_scope, coerce_scalar_to_list=True),
-        "fit_strategy": _parameter("Joint, chained, or independent fit strategy candidates.", "The strategy changes covariance propagation between two- and three-point constraints, not the target matrix element.", expected=(str, list), items=str, choices=("joint", "chained", "independent"), coerce_scalar_to_list=True),
-        "fitting_form": _parameter("Breit or NonBreit kinematic form.", "Breit fits one momentum channel; NonBreit fits distinct initial and final hadron states.", expected=str, choices=("Breit", "NonBreit"), default="Breit"),
+        "fit_scope": _parameter(
+            "Correlator observable families fitted by the job.",
+            "The scope chooses the estimator and required data: ordinary scopes use 2pt/3pt correlators, while qda_ratio uses a nonlocal qDA 2pt numerator and a local or bz=0 denominator.",
+            expected=(str, list),
+            items=str,
+            choices=("3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"),
+            choice_descriptions={
+                "3pt_ratio": "Fit the resampled three-point/two-point ratio.",
+                "FH": "Fit the Feynman-Hellmann estimator formed from summed ratios and neighboring source-sink separations.",
+                "3pt_ratio+FH": "Fit ratio and Feynman-Hellmann channels in one correlated likelihood.",
+                "qda_ratio": "Fit a nonlocal qDA two-point ratio; use O00/z0 with a local denominator or O00/zprime0 with the qDA bz=0 fallback. In fallback mode z=0 is identically one and is not fitted. This exclusive scope has no 3pt, tsep, tau-cut, or current insertion.",
+            },
+            default="['3pt_ratio']",
+            validator=_validate_fit_scope,
+            coerce_scalar_to_list=True,
+        ),
+        "fit_strategy": _parameter(
+            "Joint, chained, or independent fit strategy candidates.",
+            "The strategy changes how spectral information and covariance propagate from the two-point channel into the matrix-element estimator, not the target observable itself.",
+            expected=(str, list),
+            items=str,
+            choices=("joint", "chained", "independent"),
+            choice_descriptions={
+                "joint": "Fit the selected 2pt and ratio/FH/qDA channels together with their shared covariance.",
+                "chained": "Fit the 2pt channel first, then use its widened posterior as the spectral prior for the matrix-element fit.",
+                "independent": "Fit ratio/FH/qDA data without a 2pt likelihood or transferred 2pt prior.",
+            },
+            coerce_scalar_to_list=True,
+        ),
+        "fitting_form": _parameter(
+            "Breit or NonBreit kinematic form.",
+            "Breit uses one momentum channel; NonBreit represents a non-forward matrix element with distinct incoming and outgoing hadron states.",
+            expected=str,
+            choices=("Breit", "NonBreit"),
+            choice_descriptions={
+                "Breit": "Use one scalar momentum for the initial and final state.",
+                "NonBreit": "Use separate initial_momentum and final_momentum channels; FH scopes are not implemented for this form.",
+            },
+            default="Breit",
+        ),
         "initial_momentum": _parameter("Initial-state lattice momentum for NonBreit kinematics.", "The initial momentum fixes the incoming hadron state in a non-forward matrix element.", expected=str),
-        "model_average": _parameter("Average successful fit-model candidates.", "Model averaging propagates fit-window and state-count ambiguity into the matrix-element uncertainty.", expected=bool, default="false"),
+        "model_average": _parameter(
+            "Average successful fit-function candidates inside the selected data window.",
+            "False applies one sample-average-selected nstate/prior-width model to every resample; true combines successful nstate/prior-width fits per sample with log-evidence weights and records their spread as model uncertainty. Data-window selection remains a separate tuning decision.",
+            expected=bool,
+            choices=(False, True),
+            choice_descriptions={
+                False: "Use one tuned fit function for every coordinate and resampled sample.",
+                True: "Average successful fit functions sample by sample after one shared window is fixed.",
+            },
+            default="false",
+        ),
         "momentum": _parameter("Scalar lattice momentum selected by a Breit or qDA job.", "The requested momentum must be present in the selected correlator data.", expected=str),
-        "nstate": _parameter("Spectral state-count candidate or candidates.", "Additional states parameterize excited-state contamination.", expected=(int, list), items=int, coerce_scalar_to_list=True),
-        "posterior_prior_error_scale": _parameter("Posterior/prior width diagnostic threshold.", "This flags parameters whose posterior remains prior dominated.", expected=float),
-        "prior_width": _parameter("Prior-width candidate or candidates.", "Prior-width variation tests the stability of excited-state removal.", expected=(float, list), items=float, coerce_scalar_to_list=True),
+        "nstate": _parameter("Positive spectral state-count candidate or candidates.", "Additional states parameterize excited-state contamination; FH ansatz implementations currently support at most two states.", expected=(int, list), items=int, validator=_nstate_message, coerce_scalar_to_list=True),
+        "posterior_prior_error_scale": _parameter(
+            "Scale used to build per-sample priors from the sample-average posterior.",
+            "The per-sample prior width is the sample-average posterior width multiplied by this scale and the selected prior_width, controlling how strongly noisy resamples are anchored.",
+            expected=float,
+            validator=_positive_number_message("posterior_prior_error_scale"),
+        ),
+        "prior_width": _parameter("Finite positive prior-width candidate or candidates.", "Prior-width variation tests the stability of excited-state removal.", expected=(float, list), items=float, validator=_positive_number_message("prior_width"), coerce_scalar_to_list=True),
         "pt2_windows": ListItems(
             {"tmin": _parameter("First two-point fit time.", "Removing early times suppresses excited states.", expected=int), "tmax": _parameter("Last two-point fit time.", "Late-time reach balances ground-state isolation against noise.", expected=int)},
             summary="Candidate two-point fit windows.",
@@ -309,13 +418,18 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             summary="Candidate three-point fit windows.",
             physics="Each window trades excited-state suppression against the statistical information retained across source-sink separations.",
         ),
-        "q_min": _parameter("Minimum accepted fit p-value.", "The threshold rejects statistically incompatible fit models.", expected=float, default="0.05"),
-        "svdcut": _parameter("Relative covariance singular-value cut.", "Regularization stabilizes inversion of noisy correlated data.", expected=float),
-        "tune_z": _parameter("Coordinate slice used for tuning.", "One representative separation is used to choose fit controls before fitting the full grid.", expected=int),
+        "q_min": _parameter("Minimum accepted fit p-value.", "The threshold rejects statistically incompatible fit models.", expected=float, default="0.05", validator=_q_min_message),
+        "svdcut": _parameter("Finite positive relative covariance singular-value cut.", "Regularization stabilizes inversion of noisy correlated data.", expected=float, validator=_positive_number_message("svdcut")),
+        "tune_z": _parameter(
+            "Fallback coordinate slice used to select a shared window in the grid fit.",
+            "The preferred agent workflow tunes several representative coordinates first; this value selects the single coordinate used only when the final grid tool must choose a window itself.",
+            expected=int,
+        ),
     },
     removed={"variant": "is not a supported correlator_analysis parameter."},
     constraints=(
         ConstraintSpec("correlator.scope.compatibility", ("fit_scope", "fitting_form"), "qDA is exclusive and requires Breit; FH currently requires Breit.", "These estimators use different kinematic and time-dependence models.", "Choose one compatible fit_scope/fitting_form combination.", _check_scope_compatibility),
+        ConstraintSpec("correlator.fh.nstate", ("fit_scope", "nstate"), "FH scopes currently support nstate <= 2.", "The implemented summed-ratio finite-difference ansatz contains ground and first-excited-state terms only.", "Use nstate 1 or 2 for every FH candidate.", _check_fh_state_count),
         ConstraintSpec("correlator.qda.inputs", ("momentum", "correlator_ids"), "A qDA job selects one nonlocal qDA 2pt and at most one matching local 2pt.", "The nonlocal numerator and local or bz=0 denominator must describe the same hadron ensemble.", "Select the required qDA/local correlators with matching momentum and provenance.", _check_qda_inputs),
         ConstraintSpec("correlator.ordinary.inputs", ("momentum", "initial_momentum", "final_momentum", "correlator_ids"), "Ordinary jobs require compatible 2pt/3pt momentum, operator, separation, and provenance metadata.", "A correlated spectral fit is meaningful only when every input represents the same operator and ensemble channel.", "Select compatible correlators or correct the job kinematics.", _check_ordinary_inputs),
     ),

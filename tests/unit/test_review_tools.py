@@ -196,6 +196,9 @@ def test_review_prompt_avoids_repeating_matching_zs_fm(tmp_path: Path, monkeypat
     assert len(prompts) == 2
     assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[0]
     assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[1]
+    assert "Authoritative stage parameter contracts" in prompts[0]
+    assert "never recommend writing runner-derived kinematics such as momentum_gev" in prompts[0]
+    assert "Any repository change that adds, removes, renames, or changes a manifest parameter" in prompts[0]
     assert "Output Markdown in Simplified Chinese" in prompts[1]
 
 

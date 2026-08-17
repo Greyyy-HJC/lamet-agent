@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from lamet_agent.manifest import AnalysisManifest, StageJob
 from lamet_agent.manifest_params import ConstraintSpec, ParameterSpec, RuleViolation, StageParamContract, StageValidationContext, merge_stage_params
 
 
-def _parameter(summary: str, physics: str, **kwargs: Any) -> ParameterSpec:
+def _parameter(summary: str, physics: str, **kwargs: object) -> ParameterSpec:
     return ParameterSpec(summary=summary, physics=physics, **kwargs)
 
 
-def _positive_workers(value: Any) -> str | None:
-    return None if type(value) is int and value >= 1 else "extrapolation workers must be a positive integer."
+def _x_dependence_message(value: object) -> str | None:
+    if isinstance(value, list) and len(value) == 3 and all(type(item) is bool for item in value):
+        return None
+    return "extrapolation fitting_param_xdep must contain exactly three booleans: [a_xdep, p_xdep, include_ap]."
 
 
 def _check_inputs(context: StageValidationContext) -> RuleViolation | None:
@@ -50,18 +50,74 @@ STAGE_PARAM_CONTRACT = StageParamContract(
     physics="The continuum and infinite-momentum limits are inferred by fitting controlled powers of a, aPz, and 1/Pz across compatible ensembles and boosts.",
     planning_notes=("The lightcone role is a non-empty list because the extrapolation needs several lattice spacings and/or momenta.",),
     input_roles=("lightcone", "main"),
+    input_role_descriptions={
+        "lightcone": "A non-empty list of matched light-cone distributions spanning the lattice spacings and/or momenta needed by the limit fit.",
+        "main": "The central extrapolated result consumed by an automatically generated systematics-budget job.",
+    },
     schema={
-        "allow_order_a": _parameter("Candidate powers of lattice spacing.", "These terms parameterize continuum discretization effects.", expected=list, items=int, examples=([2],), coerce_scalar_to_list=True),
-        "allow_order_1overp": _parameter("Candidate inverse-momentum powers.", "These terms parameterize higher-twist finite-momentum corrections.", expected=list, items=int, examples=([2, 4],), coerce_scalar_to_list=True),
-        "allow_order_ap": _parameter("Candidate powers of a times momentum.", "These terms capture boost-enhanced cutoff artifacts.", expected=list, items=int, coerce_scalar_to_list=True),
-        "allow_order_a_sym": _parameter("Symmetric-sector lattice-spacing powers.", "The symmetric x component may have a distinct allowed discretization expansion.", expected=list, items=int),
-        "allow_order_1overp_sym": _parameter("Symmetric-sector inverse-momentum powers.", "The symmetric x component may have a distinct higher-twist expansion.", expected=list, items=int),
-        "allow_order_ap_sym": _parameter("Symmetric-sector aPz powers.", "The symmetric x component may have distinct boost-enhanced cutoff artifacts.", expected=list, items=int),
-        "fitting_param_xdep": _parameter("x dependence assigned to fit coefficients.", "This controls how smoothly systematic coefficients vary across momentum fraction.", expected=list, coerce_scalar_to_list=True),
-        "posterior_prior_error_scale": _parameter("Prior-width scale for extrapolation coefficients.", "The width controls regularization of weakly constrained continuum and momentum corrections.", expected=float),
-        "pdep_gev": _parameter("Reference momentum scales used by the fit ansatz.", "Explicit GeV scales make inverse-momentum coefficients dimensionally consistent.", expected=list, items=float, coerce_scalar_to_list=True),
-        "sample_error_mode": _parameter("Sample-error propagation mode.", "The mode determines how resampled uncertainty is summarized after the joint fit.", expected=str),
-        "workers": _parameter("Parallel fit workers.", "Parallelism changes runtime only.", expected=int, validator=_positive_workers),
+        "allow_order_a": _parameter(
+            "Powers of lattice spacing included in the central fit.",
+            "Terms a^n parameterize continuum discretization effects; they contribute only when the inputs span more than one lattice spacing.",
+            expected=list,
+            items=int,
+            examples=([2],),
+            coerce_scalar_to_list=True,
+        ),
+        "allow_order_1overp": _parameter(
+            "Inverse-momentum powers included in the central fit.",
+            "Terms 1/Pz^n parameterize higher-twist and finite-boost corrections; they contribute only when momenta vary within an ensemble.",
+            expected=list,
+            items=int,
+            examples=([2, 4],),
+            coerce_scalar_to_list=True,
+        ),
+        "allow_order_ap": _parameter(
+            "Powers of the dimensionless aPz combination included in the central fit.",
+            "Terms (a Pz)^n capture boost-enhanced cutoff artifacts and require both lattice-spacing and momentum variation.",
+            expected=list,
+            items=int,
+            coerce_scalar_to_list=True,
+        ),
+        "allow_order_a_sym": _parameter(
+            "Alternative lattice-spacing powers used to generate a systematics branch.",
+            "These values do not enter the central fit directly; manifest expansion clones the job with this a^n model and adds the result to the systematic budget.",
+            expected=list,
+            items=int,
+        ),
+        "allow_order_1overp_sym": _parameter(
+            "Alternative inverse-momentum powers used to generate a systematics branch.",
+            "Manifest expansion clones the central job with this 1/Pz^n model so model-form sensitivity can enter the systematic budget.",
+            expected=list,
+            items=int,
+        ),
+        "allow_order_ap_sym": _parameter(
+            "Alternative aPz powers used to generate a systematics branch.",
+            "Manifest expansion clones the central job with this boost-enhanced cutoff model and includes the difference in the systematic budget.",
+            expected=list,
+            items=int,
+        ),
+        "fitting_param_xdep": _parameter(
+            "Three booleans controlling coefficient dependence on momentum fraction x.",
+            "The entries respectively make the a^n coefficients x-dependent, make the 1/Pz^n coefficients x-dependent, and enable the declared (aPz)^n terms. The default is [false, true, false].",
+            expected=list,
+            items=bool,
+            examples=([False, True, False],),
+            validator=_x_dependence_message,
+        ),
+        "posterior_prior_error_scale": _parameter(
+            "Scale used to build per-sample coefficient priors from the sample-average fit.",
+            "Larger values loosen the resampled fits around the sample-average posterior; smaller values regularize weakly constrained continuum and momentum corrections more strongly.",
+            expected=float,
+            default="3.0",
+        ),
+        "pdep_gev": _parameter(
+            "Physical momenta shown in the momentum-dependence diagnostic plot.",
+            "These values evaluate the fitted finite-momentum curve for presentation only and do not change the extrapolation ansatz or fitted limit.",
+            expected=list,
+            items=float,
+            unit="GeV",
+            coerce_scalar_to_list=True,
+        ),
     },
     removed={
         "lattice_spacing_allow_order": "was replaced by allow_order_a, for example [2].",

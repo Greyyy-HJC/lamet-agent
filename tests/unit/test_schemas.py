@@ -8,6 +8,8 @@ from lamet_agent.manifest_params import (
     STAGE_PARAM_CONTRACTS,
     get_stage_parameter_contract,
     merge_stage_params,
+    render_stage_contract,
+    stage_contract_guidance,
     validate_stage_parameter_mapping,
 )
 
@@ -140,6 +142,18 @@ def test_manifest_accepts_fourier_lambda0_gev() -> None:
 
 
 def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
+    def assert_documented(schema: dict) -> None:
+        for key, spec in schema.items():
+            assert isinstance(spec, (ParameterSpec, ListItems)), key
+            assert spec.summary, key
+            assert spec.physics, key
+            if isinstance(spec, ParameterSpec):
+                assert set(spec.choice_descriptions).issubset(spec.choices), key
+                if spec.schema:
+                    assert_documented(spec.schema)
+            else:
+                assert_documented(spec.schema)
+
     assert STAGE_PARAM_CONTRACTS == {
         "correlator_analysis": "lamet_agent.stages.correlator.validation:STAGE_PARAM_CONTRACT",
         "renormalization": "lamet_agent.stages.renorm.validation:STAGE_PARAM_CONTRACT",
@@ -152,10 +166,8 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
         stage_contract = get_stage_parameter_contract(stage)
         assert stage_contract.summary
         assert stage_contract.physics
-        assert all(
-            isinstance(spec, (ParameterSpec, ListItems))
-            for spec in stage_contract.schema.values()
-        )
+        assert_documented(stage_contract.schema)
+        assert set(stage_contract.input_role_descriptions) == set(stage_contract.input_roles)
 
     contract = get_stage_parameter_contract("fourier_transform")
     sector = contract.schema["sector"]
@@ -174,6 +186,47 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
         and callable(item.check)
         for item in contract.constraints
     )
+
+
+def test_stage_contract_renders_one_human_facing_parameter_reference() -> None:
+    rendered = render_stage_contract("fourier_transform")
+    guidance = stage_contract_guidance("fourier_transform")
+
+    assert rendered.count("- y_grid [") == 1
+    assert "Dimensionless momentum-fraction grid" in rendered
+    assert "Choice behavior:" in rendered
+    assert "Cross-parameter and context rules" in rendered
+    assert guidance["parameters"]["sector"]["choice_descriptions"]["valence"]
+    assert guidance["input_role_descriptions"]["input"].startswith("One renormalized")
+
+
+def test_matching_rejects_component_not_supported_by_runtime() -> None:
+    payload = _payload()
+    payload["metadata"]["stages"] = ["perturbative_matching"]
+    payload["stages"] = {
+        "perturbative_matching": {
+            "defaults": {"component": "both", "scheme": "ratio"},
+            "jobs": [{"id": "mt"}],
+        }
+    }
+
+    with pytest.raises(ValidationError, match=r"component.*\['re', 'im'\]"):
+        AnalysisManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize("parameter", ["workers", "sample_error_mode"])
+def test_extrapolation_rejects_run_wide_settings_as_stage_params(parameter: str) -> None:
+    payload = _payload()
+    payload["metadata"]["stages"] = ["extrapolation"]
+    payload["stages"] = {
+        "extrapolation": {
+            "defaults": {parameter: 2 if parameter == "workers" else "covariance"},
+            "jobs": [{"id": "ex"}],
+        }
+    }
+
+    with pytest.raises(ValidationError, match=rf"metadata\.{parameter}"):
+        AnalysisManifest.model_validate(payload)
 
 
 def test_fourier_parameter_type_error_includes_parameter_physics() -> None:
@@ -378,6 +431,32 @@ def test_manifest_rejects_removed_hybrid_self_parameters(key: str) -> None:
 
     with pytest.raises(ValidationError, match=rf"renormalization\.defaults\.{key}"):
         AnalysisManifest.model_validate(payload)
+
+
+def test_self_renormalization_chain_rejects_mismatched_lambdaqcd() -> None:
+    from lamet_agent.stages.renorm.validation import build_validation_context
+
+    payload = _hybrid_self_payload()
+    payload["inputs"]["artifacts"].append(
+        {"id": "target", "stage": "correlator_analysis", "path": "target.nc"}
+    )
+    payload["stages"]["renormalization"]["jobs"].append(
+        {
+            "id": "apply",
+            "inputs": {"target": "target", "zR": "fit"},
+            "params": {"scheme_parameters": {"LambdaQCD_gev": 0.2}},
+        }
+    )
+    manifest = AnalysisManifest.model_validate(payload)
+    contract = get_stage_parameter_contract("renormalization")
+
+    issues = contract.evaluate(
+        build_validation_context(manifest, manifest.stages["renormalization"].jobs[1])
+    )
+
+    issue = next(item for item in issues if item.code == "renorm.self.lambda_chain")
+    assert "fit/apply jobs" in issue.message
+    assert issue.parameters == ("scheme_parameters.LambdaQCD_gev",)
 
 
 @pytest.mark.parametrize("key", ["LambdaQCD_gev", "d", "m0_gev", "svdcut", "z_coverage_policy"])

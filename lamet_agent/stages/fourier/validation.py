@@ -34,84 +34,6 @@ def _parameter(summary: str, physics: str, **kwargs: Any) -> ParameterSpec:
     return ParameterSpec(summary=summary, physics=physics, **kwargs)
 
 
-_GRID_FIELDS = {
-    "num": _parameter(
-        "Number of uniformly spaced transform points.",
-        "A denser grid changes output sampling, not the information content of the finite coordinate-space data.",
-        expected=int,
-    ),
-    "start": _parameter(
-        "First transform-grid coordinate.",
-        "Together with stop, this selects the quasi-distribution domain represented in the output artifact.",
-        expected=float,
-    ),
-    "step": _parameter(
-        "Positive transform-grid spacing.",
-        "This is an alternative to num; specifying both would make the requested discretization ambiguous.",
-        expected=float,
-    ),
-    "stop": _parameter(
-        "Last transform-grid coordinate.",
-        "Together with start, this selects the quasi-distribution domain represented in the output artifact.",
-        expected=float,
-    ),
-}
-
-_SCHEME_SCAN_FIELDS = {
-    "max_schemes": _parameter(
-        "Maximum number of tail-range candidates.",
-        "This bounds runtime without changing the definition of any individual tail model.",
-        expected=int,
-        default="200",
-    ),
-    "model_average": _parameter(
-        "Whether to average successful tail models per resampled sample.",
-        "Model averaging propagates the spread among declared order and prior-width candidates after the data range is fixed.",
-        expected=bool,
-        default="true",
-    ),
-    "smooth": _parameter(
-        "Interpolation used to join data and the asymptotic tail.",
-        "The join prescription controls how sharply the finite-data region transitions into the fitted long-distance model.",
-        expected=str,
-        default="linear",
-    ),
-    "step": _parameter(
-        "Fallback spacing shared by zmin and zmax scans.",
-        "The spacing uses the same coordinate unit as the renormalized matrix element.",
-        expected=float,
-    ),
-    "z_ext_max": _parameter(
-        "Coordinate through which the fitted tail is extended.",
-        "The extension must control transform truncation and uses the same unit as the input coordinate.",
-        expected=float,
-    ),
-    "zmax_start": _parameter("First maximum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmax_step": _parameter("Maximum-coordinate scan spacing.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmax_stop": _parameter("Last maximum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmax_values": _parameter(
-        "Explicit maximum fit-coordinate candidates.",
-        "Each value truncates the data region used to constrain the long-distance tail.",
-        expected=list,
-        items=float,
-    ),
-    "zmin_start": _parameter("First minimum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmin_step": _parameter("Minimum-coordinate scan spacing.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmin_stop": _parameter("Last minimum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmin_values": _parameter(
-        "Explicit minimum fit-coordinate candidates.",
-        "These values control where the asymptotic ansatz begins to describe the matrix element.",
-        expected=list,
-        items=float,
-    ),
-}
-
-_PLOT_FIELDS = {
-    "save_path": _parameter("Plot file name.", "Plot placement remains inside the job artifact directory.", expected=str),
-    "title": _parameter("Optional plot title.", "This changes presentation only.", expected=str),
-}
-
-
 def _validate_y_grid(value: Any) -> str | None:
     if isinstance(value, list):
         if not value:
@@ -316,6 +238,95 @@ def _check_scheme_scan(context: StageValidationContext) -> RuleViolation | None:
     )
 
 
+_GRID_FIELDS = {
+    "num": _parameter(
+        "Number of uniformly spaced transform points.",
+        "A denser grid changes output sampling, not the information content of the finite coordinate-space data.",
+        expected=int,
+    ),
+    "start": _parameter(
+        "First transform-grid coordinate.",
+        "Together with stop, this selects the quasi-distribution domain represented in the output artifact.",
+        expected=float,
+    ),
+    "step": _parameter(
+        "Positive transform-grid spacing.",
+        "This is an alternative to num; specifying both would make the requested discretization ambiguous.",
+        expected=float,
+    ),
+    "stop": _parameter(
+        "Last transform-grid coordinate.",
+        "Together with start, this selects the quasi-distribution domain represented in the output artifact.",
+        expected=float,
+    ),
+}
+
+
+_SCHEME_SCAN_FIELDS = {
+    "max_schemes": _parameter(
+        "Maximum number of tail-range candidates.",
+        "This bounds runtime without changing the definition of any individual tail model.",
+        expected=int,
+        default="200",
+    ),
+    "model_average": _parameter(
+        "Whether to average successful tail models per resampled sample.",
+        "The fit range is selected once from sample-average diagnostics. False then uses one selected tail model for all resamples; true averages successful order/prior-width models per resample and propagates their spread.",
+        expected=bool,
+        choices=(False, True),
+        choice_descriptions={
+            False: "Use one sample-average-selected tail model after the fit range is fixed.",
+            True: "Average successful order and posterior_prior_error_scale candidates for each resampled sample.",
+        },
+        default="true",
+    ),
+    "smooth": _parameter(
+        "Interpolation used to join data and the asymptotic tail.",
+        "The join prescription controls how sharply the finite-data region transitions into the fitted long-distance model.",
+        expected=str,
+        choices=("linear", "none"),
+        choice_descriptions={
+            "linear": "Linearly blend the measured region into the fitted extension.",
+            "none": "Join the measured data and fitted extension without a smoothing interval.",
+        },
+        default="linear",
+    ),
+    "step": _parameter(
+        "Fallback spacing shared by zmin and zmax scans.",
+        "The spacing uses the same coordinate unit as the renormalized matrix element.",
+        expected=float,
+    ),
+    "z_ext_max": _parameter(
+        "Coordinate through which the fitted tail is extended.",
+        "The extension must control transform truncation and uses the same unit as the input coordinate.",
+        expected=float,
+    ),
+    "zmax_start": _parameter("First maximum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
+    "zmax_step": _parameter("Maximum-coordinate scan spacing.", "Fit-range coordinates use the input coord_unit.", expected=float),
+    "zmax_stop": _parameter("Last maximum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
+    "zmax_values": _parameter(
+        "Explicit maximum fit-coordinate candidates.",
+        "Each value truncates the data region used to constrain the long-distance tail.",
+        expected=list,
+        items=float,
+    ),
+    "zmin_start": _parameter("First minimum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
+    "zmin_step": _parameter("Minimum-coordinate scan spacing.", "Fit-range coordinates use the input coord_unit.", expected=float),
+    "zmin_stop": _parameter("Last minimum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
+    "zmin_values": _parameter(
+        "Explicit minimum fit-coordinate candidates.",
+        "These values control where the asymptotic ansatz begins to describe the matrix element.",
+        expected=list,
+        items=float,
+    ),
+}
+
+_PLOT_FIELDS = {
+    "save_path": _parameter("Plot file name.", "Plot placement remains inside the job artifact directory.", expected=str),
+    "title": _parameter("Optional plot title.", "This changes presentation only.", expected=str),
+}
+
+
 FOURIER_CONSTRAINTS = (
     ConstraintSpec(
         code="fourier.inputs.exactly_one",
@@ -435,6 +446,9 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "and transforms every resampled sample onto a declared momentum-fraction grid."
     ),
     input_roles=("input",),
+    input_role_descriptions={
+        "input": "One renormalized coordinate-space matrix element to extend and Fourier transform.",
+    },
     normalize_draft=_normalize_draft,
     schema={
         "Lambda0_gev": _parameter(
@@ -449,6 +463,11 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "It selects the real, imaginary, or combined transform channel.",
             expected=str,
             choices=("re", "im", "both"),
+            choice_descriptions={
+                "re": "Use the real coordinate-space channel.",
+                "im": "Use the imaginary coordinate-space channel.",
+                "both": "Retain both channels.",
+            },
         ),
         "coord_key": _parameter("NPZ/HDF5 coordinate dataset key.", "This maps an external file layout onto the stage coordinate axis.", expected=str, default="coord"),
         "coord_unit": _parameter(
@@ -456,6 +475,12 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "The runner converts fm, lattice, or inverse-GeV separations to Ioffe time; lambda is already dimensionless Ioffe time.",
             expected=str,
             choices=("fm", "lattice", "gev_inv", "lambda"),
+            choice_descriptions={
+                "fm": "Coordinates are physical distances in femtometers and are multiplied by momentum/(hbar*c).",
+                "lattice": "Coordinates are lattice-site separations and require lattice_spacing_fm plus momentum.",
+                "gev_inv": "Coordinates are inverse-GeV distances and are multiplied by physical momentum.",
+                "lambda": "Coordinates are already dimensionless Ioffe time.",
+            },
             default="fm",
         ),
         "gfix": _parameter("Gauge-link treatment inherited from the input.", "CG and GI select the corresponding tail method when method is omitted.", expected=str),
@@ -479,6 +504,10 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "GI and CG use different asymptotic parameterizations; the choice is fixed theory input and is not model-averaged.",
             expected=str,
             choices=("GI", "CG"),
+            choice_descriptions={
+                "GI": "Use the gauge-invariant asymptotic parameterization.",
+                "CG": "Use the Coulomb-gauge asymptotic parameterization.",
+            },
         ),
         "observable": _parameter(
             "Short public quasi-observable name without polarization.",
@@ -492,6 +521,10 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             expected=(str, list),
             items=str,
             choices=("LA", "NLA"),
+            choice_descriptions={
+                "LA": "Keep the leading asymptotic term.",
+                "NLA": "Include the next asymptotic term as a more flexible model candidate.",
+            },
             default="NLA",
         ),
         "output_scale": _parameter("Final manual multiplicative scale.", "This rescales the transformed distribution and its uncertainties.", expected=float, default="1.0"),
@@ -500,12 +533,22 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "The selected channel controls which coordinate-space component constrains the output when sector is absent.",
             expected=str,
             choices=("re", "im", "both"),
+            choice_descriptions={
+                "re": "Transform the real channel only.",
+                "im": "Transform the imaginary channel only.",
+                "both": "Transform both channels.",
+            },
             default="both",
         ),
         "symmetry_guarantee": _parameter(
             "Apply the DA phase rotation and symmetry projection.",
-            "For DA, this phase rotation enforces the expected rotated-real representation before extension; it has no effect for PDF/GPD.",
+            "For DA, true applies a phase rotation by exp(+i z Pz/2), discards the rotated imaginary part, rotates the retained real part back, and only then extends and transforms the signal. False preserves the DA input unchanged. The setting has no effect for PDF/GPD.",
             expected=bool,
+            choices=(False, True),
+            choice_descriptions={
+                False: "Use the DA matrix element unchanged.",
+                True: "Project the phase-rotated DA matrix element onto its expected real symmetry channel.",
+            },
             default="true",
         ),
         "plot_extension": _parameter(
@@ -520,7 +563,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "plot_fourier": _parameter("Fourier-result plot settings.", "These settings affect presentation only.", expected=dict, schema=_PLOT_FIELDS),
         "posterior_prior_error_scale": _parameter(
             "Prior-width candidate or candidates for tail fits.",
-            "Multiple values define fit-model alternatives whose spread can enter model averaging.",
+            "Each value scales the sample-average posterior width used as the prior for resampled tail fits; multiple values create model candidates whose spread can enter scheme_scan.model_average.",
             expected=(float, list),
             items=float,
             default="3.0",
@@ -530,6 +573,11 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Unpolarized, helicity, and transversity channels use different symmetry relations and sector projections.",
             expected=str,
             choices=("unpolarized", "helicity", "transversity"),
+            choice_descriptions={
+                "unpolarized": "Use the vector/unpolarized symmetry and negative-x convention.",
+                "helicity": "Use the helicity convention, including its distinct quark/antiquark extension.",
+                "transversity": "Use the tensor/transversity symmetry convention.",
+            },
         ),
         "psi1_flavor_class": _parameter("First meson constituent mass class.", "For DA, light/heavy assignments constrain which asymptotic amplitudes are related or vanish.", expected=str, choices=("light", "heavy"), default="heavy"),
         "psi2_flavor_class": _parameter("Second meson constituent mass class.", "For DA, light/heavy assignments constrain which asymptotic amplitudes are related or vanish.", expected=str, choices=("light", "heavy"), default="heavy"),
@@ -546,7 +594,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ),
         "scheme_scan": _parameter(
             "Tail fit-range scan and model-averaging configuration.",
-            "Range variation estimates sensitivity to the finite-distance region used to constrain the asymptotic extension.",
+            "zmin/zmax candidates select the measured coordinate range used to constrain the tail, in coord_unit; z_ext_max controls the subsequent extension. Omitting range keys lets the runtime infer bounded candidates from the data. Range variation estimates the finite-distance systematic.",
             expected=dict,
             schema=_SCHEME_SCAN_FIELDS,
         ),
@@ -555,12 +603,23 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "For quarks it selects the negative-x extension and active complex channel; DA and gluon backends support full only.",
             expected=str,
             choices=("sea", "valence", "singlet", "full"),
+            choice_descriptions={
+                "sea": "Construct the antiquark/sea projection from the negative-x extension.",
+                "valence": "Construct the quark-minus-antiquark projection; the active complex channel depends on polarization.",
+                "singlet": "Construct the quark-plus-antiquark projection; the active complex channel depends on polarization.",
+                "full": "Keep the full signed-x distribution; this is the only supported sector for DA and gluon backends.",
+            },
         ),
         "target_observable": _parameter("Run target override.", "It must agree with metadata.target_observable so validation and execution select the same physics.", expected=str, choices=("pdf", "da", "gpd")),
-        "zmin_shift": _parameter("Legacy tail-window index shift.", "The current planner prefers explicit or automatically inferred scheme_scan ranges.", expected=int, default="0"),
+        "zmin_shift": _parameter(
+            "Symmetric index shift used to generate low/high tail-window systematics branches.",
+            "A nonzero magnitude asks manifest expansion to clone the Fourier job with negative and positive shifts of the automatically selected minimum tail-fit coordinate; the central job uses zero. Prefer explicit scheme_scan ranges when a fixed physical window is intended.",
+            expected=int,
+            default="0",
+        ),
         "y_grid": _parameter(
-            "Momentum-fraction grid for the transformed output.",
-            "The grid declares the momentum-fraction coordinates on which the transformed quasi-distribution is sampled.",
+            "Dimensionless momentum-fraction grid for the transformed quasi-distribution.",
+            "This required grid declares the momentum-fraction coordinates where the Fourier result is sampled. Use an explicit numeric list, or an object with start, stop, and exactly one of num or positive step. Increasing its density refines output discretization but cannot create information absent from the finite coordinate-space signal.",
             expected=(list, dict),
             items=float,
             required=True,

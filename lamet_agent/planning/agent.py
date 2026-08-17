@@ -10,7 +10,12 @@ from typing import Any, Callable
 
 from lamet_agent.core.banner import BANNER
 from lamet_agent.manifest import parse_volume
-from lamet_agent.manifest_params import ParameterSpec, get_stage_parameter_contract, stage_contract_guidance
+from lamet_agent.manifest_params import (
+    MANIFEST_PARAMETER_MAINTENANCE_POLICY,
+    ParameterSpec,
+    get_stage_parameter_contract,
+    stage_contract_guidance,
+)
 
 from .conversion import _dataset_names, _standard_dataset_paths, inspect_correlator_h5_files, plan_correlator_h5_conversions
 from .core import (
@@ -81,6 +86,7 @@ def _planning_system_prompt() -> str:
         "Your first action must be call_tool load_manifest, and you must call check_manifest_draft before asking user input. "
         "When a tool observation includes next_questions, let the controller ask those deterministic questions; do not rewrite them or invent alternate question_id values. "
         "Never claim a manifest edit was applied until a tool observation confirms it. "
+        f"{MANIFEST_PARAMETER_MAINTENANCE_POLICY} "
         "Do not write files; final writes happen only after the user accepts. "
         "All JSON, Python scripts, code blocks, identifiers, manifest summaries, and planned output files must use English ASCII text only. "
         "The user may write free-form instructions in any language, but do not copy non-English prose into generated code blocks or JSON fields unless it is part of an existing file path. "

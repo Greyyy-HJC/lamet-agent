@@ -34,6 +34,7 @@ class ParameterSpec:
     expected: type | tuple[type, ...] | None = None
     items: type | tuple[type, ...] | None = None
     choices: tuple[Any, ...] = ()
+    choice_descriptions: dict[Any, str] = field(default_factory=dict)
     unit: str | None = None
     default: str | None = None
     required: bool = False
@@ -121,6 +122,7 @@ class StageParamContract:
     code_prefix: str = "stage"
     planning_notes: tuple[str, ...] = ()
     input_roles: tuple[str, ...] = ()
+    input_role_descriptions: dict[str, str] = field(default_factory=dict)
     job_parameters: tuple[str, ...] = ()
     normalize_draft: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None
 
@@ -479,14 +481,24 @@ def _parameter_guidance(spec: ParameterSpec) -> dict[str, Any]:
         "physics": spec.physics,
         "required": spec.required,
     }
+    if spec.expected is not None:
+        guidance["accepted_type"] = _expected_type_name(spec.expected)
+    if spec.items is not None:
+        guidance["item_type"] = _expected_type_name(spec.items)
     if spec.unit is not None:
         guidance["unit"] = spec.unit
     if spec.default is not None:
         guidance["default"] = spec.default
     if spec.choices:
         guidance["choices"] = list(spec.choices)
+    if spec.choice_descriptions:
+        guidance["choice_descriptions"] = {
+            str(key): value for key, value in spec.choice_descriptions.items()
+        }
     if spec.examples:
         guidance["examples"] = list(spec.examples)
+    if spec.suggested_fix:
+        guidance["suggested_fix"] = spec.suggested_fix
     if spec.coerce_scalar_to_list:
         guidance["planning_coercion"] = "A scalar answer is stored as a one-item list."
     if spec.schema:
@@ -522,6 +534,7 @@ def stage_contract_guidance(stage: str) -> dict[str, Any]:
         "physics": contract.physics,
         "planning_notes": list(contract.planning_notes),
         "input_roles": list(contract.input_roles),
+        "input_role_descriptions": dict(contract.input_role_descriptions),
         "job_parameters": list(contract.job_parameters),
         "parameters": {
             key: _parameter_guidance(spec) if isinstance(spec, ParameterSpec) else _list_guidance(spec)
@@ -538,7 +551,116 @@ def stage_contract_guidance(stage: str) -> dict[str, Any]:
             }
             for constraint in contract.constraints
         ],
+        "removed_or_renamed_parameters": dict(contract.removed),
     }
+
+
+MANIFEST_PARAMETER_MAINTENANCE_POLICY = (
+    "Treat each stage's STAGE_PARAM_CONTRACT in validation.py as the sole authority "
+    "for manifest stage parameters. Do not invent unsupported parameters or infer new "
+    "meanings for existing ones. Any repository change that adds, removes, renames, or "
+    "changes a manifest parameter must update the corresponding validation.py contract, "
+    "including its human-facing summary, physical explanation, allowed values, and "
+    "affected constraints."
+)
+
+
+def _accepted_value_text(spec: ParameterSpec) -> str:
+    """Return a compact human-facing description of accepted values."""
+    if spec.expected is None:
+        accepted = "value"
+    else:
+        accepted = _expected_type_name(spec.expected)
+    if spec.items is not None:
+        accepted += f" containing {_expected_type_name(spec.items)} values"
+    if spec.choices:
+        accepted += "; choices: " + ", ".join(repr(item) for item in spec.choices)
+    return accepted
+
+
+def _render_parameter_help(
+    lines: list[str],
+    path: str,
+    spec: ParameterSpec | ListItems,
+    *,
+    indent: str = "",
+) -> None:
+    """Append one parameter and its nested fields to contract help text."""
+    if isinstance(spec, ListItems):
+        lines.extend(
+            [
+                f"{indent}- {path} [optional; list of objects]",
+                f"{indent}  Meaning: {spec.summary}",
+                f"{indent}  Physics: {spec.physics}",
+            ]
+        )
+        if spec.examples:
+            lines.append(f"{indent}  Example: {spec.examples[0]!r}")
+        for key, child in spec.schema.items():
+            if isinstance(child, (ParameterSpec, ListItems)):
+                _render_parameter_help(lines, f"{path}[].{key}", child, indent=indent + "  ")
+        return
+
+    attributes = ["required" if spec.required else "optional", _accepted_value_text(spec)]
+    if spec.unit is not None:
+        attributes.append(f"unit: {spec.unit}")
+    if spec.default is not None:
+        attributes.append(f"default: {spec.default}")
+    lines.extend(
+        [
+            f"{indent}- {path} [{'; '.join(attributes)}]",
+            f"{indent}  Meaning: {spec.summary}",
+            f"{indent}  Physics: {spec.physics}",
+        ]
+    )
+    if spec.choice_descriptions:
+        lines.append(f"{indent}  Choice behavior:")
+        for choice in spec.choices:
+            description = spec.choice_descriptions.get(choice)
+            if description:
+                lines.append(f"{indent}    - {choice!r}: {description}")
+    if spec.examples:
+        lines.append(f"{indent}  Example: {spec.examples[0]!r}")
+    if spec.coerce_scalar_to_list:
+        lines.append(f"{indent}  Planning: a scalar answer becomes a one-item list.")
+    if spec.schema:
+        for key, child in spec.schema.items():
+            if isinstance(child, (ParameterSpec, ListItems)):
+                _render_parameter_help(lines, f"{path}.{key}", child, indent=indent + "  ")
+
+
+def render_stage_contract(stage: str) -> str:
+    """Render one stage-owned contract for maintainers and manifest authors."""
+    contract = get_stage_parameter_contract(stage)
+    lines = [stage, "=" * len(stage), "", contract.summary, "", f"Physics: {contract.physics}"]
+    if contract.input_roles:
+        lines.extend(["", "Input roles"])
+        for role in contract.input_roles:
+            description = contract.input_role_descriptions.get(role, "Required upstream role used by this stage.")
+            lines.append(f"- {role}: {description}")
+    if contract.planning_notes:
+        lines.extend(["", "Authoring notes"])
+        lines.extend(f"- {note}" for note in contract.planning_notes)
+    lines.extend(["", "Parameters"])
+    if not contract.schema:
+        lines.append("- This stage has no user-authored stage parameters.")
+    for key, spec in contract.schema.items():
+        if isinstance(spec, (ParameterSpec, ListItems)):
+            _render_parameter_help(lines, key, spec)
+    if contract.constraints:
+        lines.extend(["", "Cross-parameter and context rules"])
+        for constraint in contract.constraints:
+            lines.extend(
+                [
+                    f"- {constraint.code}: {constraint.rule}",
+                    f"  Physics: {constraint.physics}",
+                    f"  Fix: {constraint.suggested_fix}",
+                ]
+            )
+    if contract.removed:
+        lines.extend(["", "Removed or renamed parameters"])
+        lines.extend(f"- {key}: {message}" for key, message in contract.removed.items())
+    return "\n".join(lines)
 
 
 def render_required_planning_prompt(stage: str, gaps: list[dict[str, Any]]) -> str:

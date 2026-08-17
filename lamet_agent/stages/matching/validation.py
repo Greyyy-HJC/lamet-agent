@@ -8,7 +8,6 @@ import numpy as np
 
 from lamet_agent.manifest import AnalysisManifest, StageJob, derive_job_kinematics
 from lamet_agent.manifest_params import ConstraintSpec, ParameterSpec, RuleViolation, StageParamContract, StageValidationContext, merge_stage_params
-from lamet_agent.stages.matching.functions import is_hybrid_kernel, lc_finer_than_quasi_message, resolve_grid_spec, resolve_kernel_id
 
 
 def _parameter(summary: str, physics: str, **kwargs: Any) -> ParameterSpec:
@@ -27,10 +26,30 @@ def _scheme_message(value: Any) -> str | None:
 
 def _grid_message(name: str):
     def validate(value: Any) -> str | None:
+        from lamet_agent.stages.matching.functions import resolve_grid_spec
+
+        if isinstance(value, dict):
+            if not {"start", "stop"}.issubset(value):
+                return f"{name} object requires start and stop."
+            selectors = {key for key in ("num", "step") if key in value}
+            if len(selectors) != 1:
+                return f"{name} object requires exactly one of num or step."
         try:
-            resolve_grid_spec(value, name=name)
+            grid = np.asarray(resolve_grid_spec(value, name=name), dtype=float)
         except (TypeError, ValueError, KeyError) as exc:
             return str(exc)
+        if not np.all(np.isfinite(grid)):
+            return f"{name} must contain only finite values."
+        if name == "quasi_y_ls":
+            if grid.size < 2:
+                return "quasi_y_ls must resolve to at least 2 points."
+            if np.any(np.isclose(grid, 0.0)):
+                return "quasi_y_ls must not contain zero because matching kernels carry a 1/y measure."
+            spacing = np.diff(grid)
+            if not np.allclose(spacing, spacing[0]):
+                return "quasi_y_ls must be uniformly spaced."
+        elif grid.size < 1:
+            return "lc_x_ls must resolve to at least 1 point."
         return None
 
     return validate
@@ -77,6 +96,8 @@ def _check_momentum(context: StageValidationContext) -> RuleViolation | None:
 
 
 def _check_kernel(context: StageValidationContext) -> RuleViolation | None:
+    from lamet_agent.stages.matching.functions import resolve_kernel_id
+
     kernel_id = _effective_kernel_id(context)
     scheme = context.params.get("scheme")
     if kernel_id is None:
@@ -114,6 +135,8 @@ def _check_kernel(context: StageValidationContext) -> RuleViolation | None:
 
 
 def _check_hybrid(context: StageValidationContext) -> RuleViolation | None:
+    from lamet_agent.stages.matching.functions import is_hybrid_kernel
+
     kernel_id = _effective_kernel_id(context)
     if kernel_id is None or not is_hybrid_kernel(str(kernel_id)) or "zs_fm" in context.params:
         return None
@@ -144,17 +167,72 @@ STAGE_PARAM_CONTRACT = StageParamContract(
     physics="The operator, renormalization scheme, momentum, and hybrid transition scale jointly define the perturbative convolution.",
     planning_notes=("kernel_id is inferred when exactly one perturbative_matching kernel is declared.", "momentum_gev is runner-derived from upstream discrete kinematics."),
     input_roles=("quasi",),
+    input_role_descriptions={
+        "quasi": "One Fourier-stage quasi-distribution to be convolved with the perturbative matching kernel.",
+    },
     schema={
-        "component": _parameter("Complex component used by the matching input.", "The selected component must follow the quasi-distribution convention.", expected=str, choices=("re", "im", "both")),
+        "component": _parameter(
+            "Single complex component extracted from the quasi-distribution.",
+            "Matching acts on one real-valued quasi channel at a time; the chosen channel must follow the Fourier observable and sector convention.",
+            expected=str,
+            choices=("re", "im"),
+            choice_descriptions={
+                "re": "Match the real quasi-distribution channel.",
+                "im": "Match the imaginary quasi-distribution channel.",
+            },
+            default="re",
+        ),
         "endpoint_cut": _parameter("Numerical endpoint exclusion.", "The cut regulates finite-grid evaluation near singular convolution endpoints.", expected=float),
         "kernel_id": _parameter("Exact declared matching-kernel identifier.", "The identifier fixes gauge treatment, operator, observable, scheme, and perturbative order; it is inferred when exactly one matching kernel is declared.", expected=str),
-        "lc_x_ls": _parameter("Output light-cone momentum-fraction grid.", "This grid discretizes the matched distribution and must not exceed the information density of the quasi grid.", expected=(list, dict), items=float, schema=_GRID_FIELDS, validator=_grid_message("lc_x_ls")),
+        "lc_x_ls": _parameter(
+            "Output light-cone momentum-fraction grid.",
+            "This grid supplies the kernel rows and may use a different domain or include zero, but it must not be denser than the quasi grid: otherwise some rows miss the plus-prescription subtraction and acquire oscillatory discretization artifacts. It defaults to the quasi grid. Use an explicit numeric list, or an object with start, stop, and exactly one of num or positive step.",
+            expected=(list, dict),
+            items=float,
+            schema=_GRID_FIELDS,
+            validator=_grid_message("lc_x_ls"),
+        ),
         "mu": _parameter("Perturbative matching scale.", "The truncated kernel retains residual dependence on this factorization scale.", expected=float, unit="GeV"),
         "plot": _parameter("Matching plot settings.", "These settings affect presentation only.", expected=dict, schema=_PLOT_FIELDS),
-        "quasi_y_ls": _parameter("Input quasi-distribution grid override.", "It defines the discretized domain integrated by the matching kernel when upstream coordinates are unavailable.", expected=(list, dict), items=float, schema=_GRID_FIELDS, validator=_grid_message("quasi_y_ls")),
-        "r": _parameter("Auxiliary kernel scale ratio.", "This dimensionless control belongs to kernels that expose an additional scale ratio.", expected=float),
-        "scheme": _parameter("Renormalization scheme encoded by kernel_id.", "The stage scheme must equal the ratio, hybrid, or msbar token in the exact kernel name.", expected=str, required=True, choices=("ratio", "hybrid", "msbar"), validator=_scheme_message),
-        "sector": _parameter("Partonic sector projected after matching.", "Sea, valence, singlet, and full projections use different negative-x combinations.", expected=str, choices=("sea", "valence", "singlet", "full")),
+        "quasi_y_ls": _parameter(
+            "Input quasi-distribution integration-grid override.",
+            "This grid supplies the kernel columns and its 1/y integration measure. It must be uniform, exclude zero, and stay within the Fourier grid; setting it interpolates every quasi sample, while omission preserves the upstream grid. Use an explicit numeric list, or an object with start, stop, and exactly one of num or positive step.",
+            expected=(list, dict),
+            items=float,
+            schema=_GRID_FIELDS,
+            validator=_grid_message("quasi_y_ls"),
+        ),
+        "r": _parameter(
+            "Symmetric factorization-scale variation ratio used to generate systematics branches.",
+            "When r differs from 1, manifest expansion keeps the central scale mu and clones matching jobs at mu/r and mu*r so residual perturbative-scale dependence can enter the systematic budget.",
+            expected=float,
+            default="1.0",
+        ),
+        "scheme": _parameter(
+            "Renormalization scheme encoded by kernel_id.",
+            "The stage scheme must equal the ratio, hybrid, or msbar token in the exact kernel name because these kernels contain different perturbative coefficients.",
+            expected=str,
+            required=True,
+            choices=("ratio", "hybrid", "msbar"),
+            choice_descriptions={
+                "ratio": "Use the ratio-scheme matching coefficient.",
+                "hybrid": "Use the hybrid coefficient and the dimensionless transition scale zs_fm * Pz/(hbar*c).",
+                "msbar": "Use the MS-bar-scheme matching coefficient.",
+            },
+            validator=_scheme_message,
+        ),
+        "sector": _parameter(
+            "Partonic sector projected after matching.",
+            "Sea, valence, singlet, and full choices retain different quark/antiquark combinations on the signed-x domain.",
+            expected=str,
+            choices=("sea", "valence", "singlet", "full"),
+            choice_descriptions={
+                "sea": "Retain the sea/antiquark combination.",
+                "valence": "Retain quark minus antiquark.",
+                "singlet": "Retain quark plus antiquark.",
+                "full": "Keep the complete signed-x matched distribution.",
+            },
+        ),
         "xlim": _parameter("Legacy horizontal plot limits.", "This changes presentation only.", expected=list, items=float),
         "ylim": _parameter("Legacy vertical plot limits.", "This changes presentation only.", expected=list, items=float),
         "zs_fm": _parameter("Hybrid transition distance or uncertainty-bearing systematics value.", "Together with hadron momentum it sets the dimensionless Wilson-line scale in a hybrid kernel. Uncertainty strings are expanded into numerical branches before execution.", expected=(float, str), unit="fm"),
@@ -202,6 +280,8 @@ def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str
 
 def matching_grid_warnings(manifest: AnalysisManifest) -> list[str]:
     """Return failures where the light-cone grid is denser than the quasi grid."""
+    from lamet_agent.stages.matching.functions import lc_finer_than_quasi_message, resolve_grid_spec
+
     if "perturbative_matching" not in manifest.metadata.stages:
         return []
     matching = manifest.stages.get("perturbative_matching")

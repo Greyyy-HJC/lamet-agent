@@ -28,6 +28,9 @@ def test_build_job_prompt_includes_job_and_effective_parameters() -> None:
     assert "Current job: ca" in static
     assert '"nstate": [2]' in static
     assert "inspect_correlator_scale" in static
+    assert "Manifest parameter contract:" in static
+    assert "Additional states parameterize excited-state contamination" in static
+    assert "Any repository change that adds, removes, renames, or changes a manifest parameter" in static
 
 
 @pytest.mark.parametrize(

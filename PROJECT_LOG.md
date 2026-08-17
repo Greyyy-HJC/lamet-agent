@@ -1221,3 +1221,24 @@
 - Added stage-wide ownership and plan/validate parity tests, nested-list field
   descriptions, authored-versus-derived parameter tracking, and centralized
   handling of unsupported stage keys.
+
+## 2026-08-17 (Human-facing stage parameter contracts)
+
+- Audited stage prompts, README parameter sections, annotated manifests, review
+  recommendations, and runtime tool behavior against every stage-owned
+  `STAGE_PARAM_CONTRACT`.
+- Added option-specific behavior, input-role descriptions, accepted types,
+  units, examples, removed-parameter migrations, and richer physical
+  explanations to the contract data consumed by planning and validation.
+- Added `lamet-agent describe-stage <stage>` so maintainers can inspect the
+  authoritative parameter tree and cross-parameter rules without duplicating
+  reference tables in README or stage prompts.
+- Injected the same contract into runtime and review LLM prompts and added a
+  shared maintenance policy requiring every manifest parameter change to update
+  the owning `validation.py` explanations and constraints.
+- Corrected drift between documentation and execution for matching components
+  and grids, extrapolation run-wide settings and diagnostic-only momentum
+  points, and systematics-expansion controls; added a linked
+  self-renormalization `LambdaQCD_gev` consistency rule.
+- Verified 573 unit tests pass with one skipped and the five pre-existing
+  numerical, sandbox-multiprocessing, and systematics-expansion tests deselected.

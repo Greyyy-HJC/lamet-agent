@@ -305,8 +305,9 @@
           "num": 100
         },
         // "lc_x_ls" is the grid the matched PDF comes out on (the kernel's
-        // rows). Defaults to the quasi grid; unconstrained otherwise -- it may
-        // contain 0, need not be uniform, and may be coarser or denser.
+        // rows). It may contain 0 and need not be uniform, but must not be
+        // denser than the quasi grid because every row needs the discretized
+        // plus-prescription subtraction.
         "lc_x_ls": {
           "start": -2.0,
           "stop": 2.0,
