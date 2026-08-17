@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from .agent import run_agent
 from .core.llm import parse_api_model, provider_config
+from .core.tools import validate_stage_diagnostics
 from .manifest import (
     AnalysisManifest,
     ManifestPathError,
@@ -115,9 +116,28 @@ def validate_manifest(path: Path) -> None:
         manifest = validate_manifest_file(path)
         validate_manifest_paths(manifest)
     except Exception as exc:  # pragma: no cover - CLI surface
-        raise typer.BadParameter(_format_cli_error(exc)) from exc
+        # Keep long manifest paths and structured validation explanations intact;
+        # Click's BadParameter formatter wraps them in the middle of tokens.
+        typer.echo(_format_cli_error(exc), err=True)
+        raise typer.Exit(code=2) from exc
 
     warnings = _emit_matching_grid_warnings(manifest)
+    issues = []
+    for stage in manifest.metadata.stages:
+        for job in manifest.stages[stage].jobs:
+            for diagnostic in validate_stage_diagnostics(stage, manifest, job):
+                issues.append(
+                    {
+                        "stage": stage,
+                        "job_id": job.id,
+                        "code": diagnostic.code,
+                        "path": diagnostic.path,
+                        "message": diagnostic.message,
+                        "cause": diagnostic.cause,
+                        "physics": diagnostic.physics,
+                        "suggested_fix": diagnostic.suggested_fix,
+                    }
+                )
     typer.echo(
         json.dumps(
             {
@@ -125,13 +145,14 @@ def validate_manifest(path: Path) -> None:
                 "stages": manifest.metadata.stages,
                 "correlator_count": len(manifest.inputs.correlators),
                 "kernel_count": len(manifest.inputs.kernels),
-                "status": "invalid" if warnings else "valid",
+                "status": "invalid" if warnings or issues else "valid",
                 "warnings": warnings,
+                "issues": issues,
             },
             indent=2,
         )
     )
-    if warnings:
+    if warnings or issues:
         raise typer.Exit(code=1)
 
 

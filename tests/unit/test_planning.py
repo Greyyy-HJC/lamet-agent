@@ -9,6 +9,8 @@ import pytest
 from typer.testing import CliRunner
 
 from lamet_agent.__main__ import app
+from lamet_agent.core.tools import validate_stage_diagnostics
+from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.planning import (
     PlanAgentState,
     _PlanAgentSession,
@@ -170,11 +172,142 @@ def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> No
     assert not any(gap["parameter"] in {"order", "coord_unit"} for gap in gaps)
     assert any(gap["parameter"] == "y_grid" for gap in gaps)
     assert any(gap["parameter"] == "momentum_gev" for gap in gaps)
+    y_grid_gap = next(gap for gap in gaps if gap["parameter"] == "y_grid")
+    assert "momentum-fraction coordinates" in y_grid_gap["physics"]
 
     blocked = _run_planning_tool(state, "build_quick_full_candidates", {})
     assert blocked["ok"] is False
     assert "missing parameters" in blocked["error"]
     assert blocked["next_questions"][0]["question_id"] == "stage_params.fourier_transform.ft"
+    assert "Physical reason:" in blocked["next_questions"][0]["prompt"]
+
+
+def test_fourier_plan_and_validate_report_the_same_y_grid_rule(tmp_path: Path) -> None:
+    payload = {
+        "metadata": {
+            "run_id": "same-rule",
+            "root_directory": str(tmp_path),
+            "artifacts_directory": "artifacts",
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "random_seed": 1984,
+            "stages": ["fourier_transform"],
+        },
+        "inputs": {
+            "correlators": [],
+            "artifacts": [
+                {
+                    "id": "rn",
+                    "path": "rn.nc",
+                    "stage": "renormalization",
+                    "momentum": "PX1PY0PZ0",
+                    "volume": "S16T32",
+                    "lattice_spacing_fm": 0.1,
+                    "hadron": "pion",
+                    "polarization": "unpolarized",
+                }
+            ],
+            "kernels": [],
+        },
+        "stages": {
+            "fourier_transform": {
+                "defaults": {},
+                "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
+            }
+        },
+    }
+    manifest = AnalysisManifest.model_validate(payload)
+    job = manifest.stages["fourier_transform"].jobs[0]
+
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+    gaps = _stage_parameter_gaps(payload, tmp_path / "draft.json")
+
+    diagnostic = next(item for item in diagnostics if item.code == "fourier.y_grid.required")
+    gap = next(item for item in gaps if item["code"] == "fourier.y_grid.required")
+    assert gap["message"] == diagnostic.message
+    assert gap["physics"] == diagnostic.physics
+    assert gap["suggested_fix"] == diagnostic.suggested_fix
+
+
+def test_all_stage_planning_gaps_use_the_validation_contract(tmp_path: Path) -> None:
+    cases: list[tuple[str, dict]] = []
+
+    correlator = _minimal_payload(tmp_path)
+    correlator["metadata"]["stages"] = ["correlator_analysis"]
+    correlator["inputs"]["kernels"] = []
+    correlator["stages"] = {"correlator_analysis": correlator["stages"]["correlator_analysis"]}
+    cases.append(("correlator_analysis", correlator))
+
+    renorm = _minimal_payload(tmp_path)
+    renorm["metadata"]["stages"] = ["renormalization"]
+    renorm["inputs"]["correlators"] = []
+    renorm["inputs"]["artifacts"] = [
+        {"id": "target", "stage": "correlator_analysis", "path": "target.nc"},
+        {"id": "denominator", "stage": "correlator_analysis", "path": "denominator.nc"},
+    ]
+    renorm["inputs"]["kernels"] = []
+    renorm["stages"] = {
+        "renormalization": {
+            "defaults": {"scheme": "hybrid", "strategy": "external_denominator"},
+            "jobs": [{"id": "rn", "inputs": {"target": "target", "denominator": "denominator"}}],
+        }
+    }
+    cases.append(("renormalization", renorm))
+
+    matching = _minimal_payload(tmp_path)
+    matching["metadata"]["stages"] = ["perturbative_matching"]
+    matching["inputs"]["correlators"] = []
+    matching["inputs"]["artifacts"] = [{
+        "id": "quasi", "stage": "fourier_transform", "path": "quasi.nc",
+        "momentum": "PX2PY0PZ0", "volume": "S16T32", "lattice_spacing_fm": 0.1,
+    }]
+    matching["inputs"]["kernels"] = [{
+        "stage": "perturbative_matching",
+        "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
+        "kernel_path": "lamet_agent/kernels.py",
+    }]
+    matching["stages"] = {
+        "perturbative_matching": {
+            "defaults": {"scheme": "hybrid"},
+            "jobs": [{"id": "mt", "inputs": {"quasi": "quasi"}}],
+        }
+    }
+    cases.append(("perturbative_matching", matching))
+
+    extrapolation = _minimal_payload(tmp_path)
+    extrapolation["metadata"]["stages"] = ["extrapolation"]
+    extrapolation["inputs"]["correlators"] = []
+    extrapolation["inputs"]["artifacts"] = []
+    extrapolation["inputs"]["kernels"] = []
+    extrapolation["stages"] = {
+        "extrapolation": {
+            "defaults": {},
+            "jobs": [{"id": "ex", "inputs": {"lightcone": []}}],
+        }
+    }
+    cases.append(("extrapolation", extrapolation))
+
+    review = _minimal_payload(tmp_path)
+    review["metadata"]["stages"] = ["review"]
+    review["inputs"]["correlators"] = []
+    review["inputs"]["artifacts"] = []
+    review["inputs"]["kernels"] = []
+    review["stages"] = {
+        "review": {"defaults": {"literature_max_papers": 1}, "jobs": [{"id": "review"}]}
+    }
+    cases.append(("review", review))
+
+    for stage, payload in cases:
+        manifest = AnalysisManifest.model_validate(payload)
+        if stage == "review":
+            payload["stages"][stage]["defaults"]["literature_max_papers"] = 0
+            manifest.stages[stage].defaults["literature_max_papers"] = 0
+        diagnostics = validate_stage_diagnostics(stage, manifest, manifest.stages[stage].jobs[0])
+        gaps = _stage_parameter_gaps(payload, tmp_path / "draft.json")
+        assert {item.code for item in diagnostics} == {
+            item["code"] for item in gaps if item["stage"] == stage
+        }
 
 
 def test_planning_reports_legacy_zs_locations_and_flat_parameter_gaps(tmp_path: Path) -> None:
@@ -724,15 +857,16 @@ def test_combined_metadata_answer_updates_required_fields(tmp_path: Path) -> Non
     assert state.candidate_payload["metadata"]["resample_mode"] == "jk"
 
 
-def test_complete_stage_skips_required_question_and_asks_optional(tmp_path: Path) -> None:
+def test_stage_contract_input_gap_asks_required_before_optional(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
     state.stage_completion_checked = True
 
     question = _next_questions_for_state(state)[0]
 
-    assert question["question_id"] == "stage_optional.correlator_analysis"
-    assert "correlator_analysis" in state.stage_required_checked
+    assert question["question_id"] == "stage_required.correlator_analysis"
+    assert "at least one 3pt correlator" in question["prompt"]
+    assert "correlator_analysis" not in state.stage_required_checked
 
 
 def test_text_plan_reads_metadata_from_free_form_request(tmp_path: Path) -> None:

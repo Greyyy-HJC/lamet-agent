@@ -21,6 +21,7 @@ from .core.tools import (
     required_job_tool_sequence,
     resolve_job_tools,
     resolve_stage_tools,
+    validate_stage_diagnostics,
     validate_stage_inputs,
 )
 from .core.trace import AgentTrace
@@ -612,7 +613,22 @@ def run_agent(
         state.stage_results[stage] = {}
         stage_job_records: list[dict[str, Any]] = []
         for job in manifest.stages[stage].jobs:
-            issues = validate_stage_inputs(stage, manifest, job)
+            concise_issues = validate_stage_inputs(stage, manifest, job)
+            if concise_issues:
+                diagnostics = validate_stage_diagnostics(stage, manifest, job)
+                issues = [
+                    " ".join(
+                        part
+                        for part in (
+                            diagnostic.detailed_message(),
+                            f"Suggested fix: {diagnostic.suggested_fix}" if diagnostic.suggested_fix else "",
+                        )
+                        if part
+                    )
+                    for diagnostic in diagnostics
+                ]
+            else:
+                issues = []
             if issues:
                 state.input_issues.setdefault(stage, {})[job.id] = issues
             if verbose:

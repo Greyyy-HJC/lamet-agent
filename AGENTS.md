@@ -88,7 +88,7 @@ Package modules:
 - `lamet_agent/__main__.py`: CLI for `plan`, `validate`, and `run`.
 - `lamet_agent/agent.py`: stage/job DAG runner and per-job LLM tool loop.
 - `lamet_agent/manifest.py`: `metadata`/`inputs`/`stages` schema, path resolution, and DAG validation.
-- `lamet_agent/manifest_params.py`: central `STAGE_PARAM_CONTRACTS` registry and recursive stage `defaults`/job `params` validation.
+- `lamet_agent/manifest_params.py`: shared parameter-contract types, lazy stage-contract routing, structured diagnostics, and recursive stage `defaults`/job `params` validation.
 - `lamet_agent/kernels.py`: built-in matching kernels.
 - `lamet_agent/core/stages.py`: stage-id → package routing.
 - `lamet_agent/core/tools.py`: resolves `STAGE_TOOLS`, prepares tool args, plot paths under `artifacts/`.
@@ -110,11 +110,11 @@ Package modules:
 
 ## How To Add A New Stage
 
-1. Add the stage id to `StageId` in `manifest.py`, `STAGE_TO_PACKAGE` in `core/stages.py`, and `STAGE_PARAM_CONTRACTS` in `manifest_params.py`.
+1. Add the stage id to `StageId` in `manifest.py`, `STAGE_TO_PACKAGE` in `core/stages.py`, and the lazy route in `STAGE_PARAM_CONTRACTS` in `manifest_params.py`.
 2. Create `lamet_agent/stages/<package>/` with:
    - `functions.py`: stage tools and a `STAGE_TOOLS` dict mapping tool names to callables `(store, **kwargs) -> dict`.
    - `prompts.md`: stage instruction text, strategy guidance, and tool catalog for the LLM.
-   - `validation.py`: `validate_stage_inputs(manifest, job)` and related stage-local parameter resolution.
+   - `validation.py`: the stage-owned executable `STAGE_PARAM_CONTRACT`, parameter and physics descriptions, cross-parameter checks, `build_validation_context(manifest, job)`, planning guidance, and the backward-compatible `validate_stage_inputs(manifest, job)` wrapper.
 3. Register tools only through `STAGE_TOOLS`; `core/tools.resolve_stage_tools()` imports them dynamically.
 4. Extend `core/prompting.py` if the new stage needs shared prompt fragments.
 5. Add unit tests under `tests/unit/` and, when appropriate, extend a dedicated example manifest.
@@ -146,7 +146,9 @@ Package modules:
 - Required top-level fields are `metadata`, `inputs`, and `stages`.
 - `metadata.stages` is the sole execution order; stage selection is not a CLI override.
 - Stage entries contain `defaults` and `jobs`; job `params` recursively merge over defaults. Nested mappings merge by key, while lists and scalar values are replaced by the job value.
-- Stage `defaults` and job `params` reject keys not declared for that stage in `STAGE_PARAM_CONTRACTS`; never add a manifest parameter without adding its consumption path and contract entry together.
+- Stage `defaults` and job `params` reject keys not declared by that stage's parameter contract; never add a manifest parameter without adding its consumption path, type/physics description, and contract entry together. `STAGE_PARAM_CONTRACTS` may route lazily to a contract owned by the stage's `validation.py`.
+- Express intrinsic presence and value rules through `ParameterSpec.required` and `ParameterSpec.validator`, and cross-parameter/contextual rules through executable `ConstraintSpec.check`. Plan and validate must evaluate the same contract rather than maintain separate gap predicates.
+- Keep exactly one authoritative parameter contract per stage. Nested field declarations are part of that contract tree; global `AnalysisManifest` structure and LLM action-response protocols are separate concerns and must not duplicate stage parameter semantics.
 - Correlator jobs group `inputs.correlators` by `correlator_ids`; downstream jobs reference earlier job ids through role-named `inputs`.
 - All ids are globally unique. External partial-run sources are declared in `inputs.artifacts`.
 - Paths resolve from `metadata.root_directory`; default job artifacts are `<artifacts_directory>/<stage>/<job_id>.nc`.

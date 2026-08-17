@@ -19,7 +19,7 @@ from lamet_agent.manifest import (
     validate_manifest_paths,
 )
 from lamet_agent.core.data import EnsembleData
-from lamet_agent.core.tools import validate_stage_inputs
+from lamet_agent.core.tools import validate_stage_diagnostics, validate_stage_inputs
 
 
 def _correlator_payload(correlator_type: str = "2pt") -> dict:
@@ -468,6 +468,37 @@ def test_partial_artifact_missing_kinematics_remains_a_stage_input_issue(tmp_pat
     resolve_manifest_artifact_metadata(manifest)
     job = manifest.stages["fourier_transform"].jobs[0]
 
-    assert validate_stage_inputs("fourier_transform", manifest, job) == [
-        "Fourier job 'ft' is missing parameters: ['momentum_gev', 'polarization']"
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+
+    assert [item.code for item in diagnostics] == [
+        "fourier.kinematics.momentum_required",
+        "fourier.pdf_gpd.polarization_required",
     ]
+    assert "Ioffe time" in diagnostics[0].physics
+    assert "spin channel" in diagnostics[1].cause
+
+
+def test_fourier_conflict_returns_structured_physics_diagnostic() -> None:
+    payload = _partial_fourier_payload(
+        {
+            "id": "rn",
+            "stage": "renormalization",
+            "path": "rn.nc",
+            "momentum": "PX1PY0PZ0",
+            "volume": "S16T32",
+            "lattice_spacing_fm": 0.1,
+            "hadron": "pion",
+            "polarization": "unpolarized",
+        }
+    )
+    payload["stages"]["fourier_transform"]["defaults"]["sector"] = "valence"
+    manifest = AnalysisManifest.model_validate(payload)
+    job = manifest.stages["fourier_transform"].jobs[0]
+
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].code == "fourier.sector.manual_projection_conflict"
+    assert "part" in diagnostics[0].cause
+    assert "negative-x convention" in diagnostics[0].physics
+    assert "remove the manual projection controls" in diagnostics[0].suggested_fix

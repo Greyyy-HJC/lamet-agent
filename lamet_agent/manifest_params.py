@@ -1,11 +1,16 @@
-"""Recursive contracts for user-authored stage manifest parameters."""
+"""Shared evaluator and lazy routing for stage-owned manifest contracts.
+
+The global manifest envelope remains in :mod:`lamet_agent.manifest`; each
+stage's ``validation.py`` is the sole authority for its parameter subtree.
+"""
 
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import get_close_matches
-from typing import Any
+from importlib import import_module
+from typing import Any, Callable
 
 ParamSchema = dict[str, Any]
 
@@ -15,17 +20,113 @@ class ListItems:
     """Apply a nested parameter schema to mapping items in a list."""
 
     schema: ParamSchema
+    summary: str = "List of structured parameter candidates."
+    physics: str = "Each list item defines one candidate evaluated by the stage."
+    examples: tuple[Any, ...] = ()
+
+
+@dataclass(frozen=True)
+class ParameterSpec:
+    """One user-authored parameter's shape and human-facing meaning."""
+
+    summary: str
+    physics: str
+    expected: type | tuple[type, ...] | None = None
+    items: type | tuple[type, ...] | None = None
+    choices: tuple[Any, ...] = ()
+    unit: str | None = None
+    default: str | None = None
+    required: bool = False
+    schema: ParamSchema | None = None
+    examples: tuple[Any, ...] = ()
+    validator: Callable[[Any], str | None] | None = None
+    suggested_fix: str = ""
+    coerce_scalar_to_list: bool = False
+
+
+@dataclass(frozen=True)
+class StageValidationContext:
+    """Resolved job view shared by validation and incomplete-draft planning."""
+
+    stage: str
+    job_id: str
+    job_path: str
+    params: dict[str, Any]
+    inputs: dict[str, Any]
+    metadata: dict[str, Any]
+    resources: dict[str, Any] = field(default_factory=dict)
+    authored_params: dict[str, Any] | None = None
+    parameter_base_path: str | None = None
+
+    def parameter_path(self, parameter: str) -> str:
+        """Return the manifest path for one effective job parameter."""
+        base = self.parameter_base_path or f"{self.job_path}.params"
+        return f"{base}.{parameter}"
+
+
+@dataclass(frozen=True)
+class RuleViolation:
+    """Context-specific evidence that one declared constraint is not satisfied."""
+
+    message: str
+    path: str
+    cause: str
+    parameters: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConstraintSpec:
+    """One executable cross-parameter or contextual rule."""
+
+    code: str
+    parameters: tuple[str, ...]
+    rule: str
+    physics: str
+    suggested_fix: str
+    check: Callable[[StageValidationContext], RuleViolation | list[RuleViolation] | None] | None = None
+
+
+@dataclass(frozen=True)
+class StageValidationIssue:
+    """Structured stage issue suitable for CLI, planning, and LLM feedback."""
+
+    code: str
+    message: str
+    path: str
+    cause: str
+    physics: str
+    suggested_fix: str
+    severity: str = "error"
+    parameters: tuple[str, ...] = ()
+
+    def detailed_message(self) -> str:
+        """Render the issue with its immediate and physical causes."""
+        details = [self.message]
+        if self.cause:
+            details.append(f"Cause: {self.cause}")
+        if self.physics:
+            details.append(f"Physics: {self.physics}")
+        return " ".join(details)
 
 
 @dataclass(frozen=True)
 class StageParamContract:
-    """Allowed parameter shape and path-specific migration messages for a stage."""
+    """Allowed parameter shape, semantics, and migration messages for a stage."""
 
     schema: ParamSchema
     removed: dict[str, str]
+    summary: str = ""
+    physics: str = ""
+    constraints: tuple[ConstraintSpec, ...] = ()
+    code_prefix: str = "stage"
+    planning_notes: tuple[str, ...] = ()
+    input_roles: tuple[str, ...] = ()
+    job_parameters: tuple[str, ...] = ()
+    normalize_draft: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None
 
-
-_GRID_SCHEMA = {"num": None, "start": None, "step": None, "stop": None}
+    def evaluate(self, context: StageValidationContext) -> list[StageValidationIssue]:
+        """Evaluate parameter declarations and executable constraints once."""
+        return evaluate_stage_contract(self, context)
 
 
 def merge_stage_params(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -44,183 +145,12 @@ def merge_stage_params(defaults: dict[str, Any], overrides: dict[str, Any]) -> d
 
 
 STAGE_PARAM_CONTRACTS = {
-    "correlator_analysis": StageParamContract(
-        schema={
-            "component": None,
-            "correlator_rescale": None,
-            "final_momentum": None,
-            "fit_scope": None,
-            "fit_strategy": None,
-            "fitting_form": None,
-            "initial_momentum": None,
-            "model_average": None,
-            "momentum": None,
-            "nstate": None,
-            "posterior_prior_error_scale": None,
-            "prior_width": None,
-            "pt2_windows": ListItems({"tmin": None, "tmax": None}),
-            "pt3_tau_cuts": None,
-            "pt3_windows": ListItems({"tau_cut": None, "tsep_ls": None}),
-            "q_min": None,
-            "svdcut": None,
-            "tune_z": None,
-        },
-        removed={},
-    ),
-    "renormalization": StageParamContract(
-        schema={
-            "ensemble": None,
-            "kernel_id": None,
-            "mu": None,
-            "normalization": None,
-            "scheme": None,
-            "strategy": None,
-            "scheme_parameters": {
-                "LambdaQCD_gev": None,
-                "d": None,
-                "delta_m_gev": None,
-                "m0_gev": None,
-                "svdcut": None,
-                "z_coverage_policy": None,
-            },
-            "zs_fm": None,
-        },
-        removed={
-            "LambdaQCD": (
-                "was renamed; use scheme_parameters.LambdaQCD_gev and specify the value explicitly."
-            ),
-            "d": "belongs to strategy='self_renormalization'; use scheme_parameters.d.",
-            "m0_gev": (
-                "is scheme/strategy-specific; use scheme_parameters.m0_gev."
-            ),
-            "svdcut": (
-                "belongs to strategy='self_renormalization'; use scheme_parameters.svdcut."
-            ),
-            "z_coverage_policy": (
-                "belongs to strategy='self_renormalization'; use scheme_parameters.z_coverage_policy."
-            ),
-            "alpha_s": "is derived from mu by alphas_nloop and cannot be specified.",
-            "Nf": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu).",
-            "order": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu).",
-            "b0": "is an internal hybrid-self-renormalization ansatz constant and cannot be overridden.",
-            "cf": "is an internal hybrid-self-renormalization ansatz constant and cannot be overridden.",
-            "f1_extension_zmin_fm": (
-                "is no longer supported; apply-time extension is automatic with "
-                "z_coverage_policy='extrapolate'."
-            ),
-            "k": "is an internal hybrid-self-renormalization ansatz constant and cannot be overridden.",
-            "lqcd": "was renamed; use scheme_parameters.LambdaQCD_gev and specify the value explicitly.",
-            "scheme_parameters.zs_fm": (
-                "is no longer supported; use flat stages.renormalization.defaults.zs_fm "
-                "or the corresponding jobs[].params.zs_fm."
-            ),
-            "zms_kind": "is no longer supported; select a declared ZMSbar_pdf or ZMSbar_da kernel_id.",
-            "zr_zmax_fm": (
-                "is no longer supported; the target grid determines automatic apply-time extension with "
-                "z_coverage_policy='extrapolate'."
-            ),
-        },
-    ),
-    "fourier_transform": StageParamContract(
-        schema={
-            "Lambda0_gev": None,
-            "component": None,
-            "coord_key": None,
-            "coord_unit": None,
-            "gfix": None,
-            "h5_group": None,
-            "hadron": None,
-            "im_flip_for_ft": None,
-            "im_key": None,
-            "input_format": None,
-            "method": None,
-            "observable": None,
-            "order": None,
-            "output_scale": None,
-            "part": None,
-            "symmetry_guarantee": None,
-            "plot_extension": {
-                "save_path": None,
-                "scheme_index": None,
-                "title": None,
-            },
-            "plot_fourier": {
-                "save_path": None,
-                "title": None,
-            },
-            "posterior_prior_error_scale": None,
-            "polarization": None,
-            "psi1_flavor_class": None,
-            "psi2_flavor_class": None,
-            "re_key": None,
-            "report": {
-                "enabled": None,
-                "report_language": None,
-                "save_path": None,
-            },
-            "scheme_scan": {
-                "max_schemes": None,
-                "model_average": None,
-                "smooth": None,
-                "step": None,
-                "z_ext_max": None,
-                "zmax_start": None,
-                "zmax_step": None,
-                "zmax_stop": None,
-                "zmax_values": None,
-                "zmin_start": None,
-                "zmin_step": None,
-                "zmin_stop": None,
-                "zmin_values": None,
-            },
-            "sector": None,
-            "target_observable": None,
-            "zmin_shift": None,
-            "y_grid": _GRID_SCHEMA,
-        },
-        removed={
-            "Lambda0": "is no longer supported; use Lambda0_gev.",
-            "distribution_type": "is no longer supported; use polarization.",
-        },
-    ),
-    "perturbative_matching": StageParamContract(
-        schema={
-            "component": None,
-            "endpoint_cut": None,
-            "kernel_id": None,
-            "lc_x_ls": _GRID_SCHEMA,
-            "mu": None,
-            "plot": {"xlim": None, "ylim": None},
-            "quasi_y_ls": _GRID_SCHEMA,
-            "r": None,
-            "scheme": None,
-            "sector": None,
-            "xlim": None,
-            "ylim": None,
-            "zs_fm": None,
-        },
-        removed={},
-    ),
-    "extrapolation": StageParamContract(
-        schema={
-            "allow_order_a": None,
-            "allow_order_1overp": None,
-            "allow_order_ap": None,
-            "allow_order_a_sym": None,
-            "allow_order_1overp_sym": None,
-            "allow_order_ap_sym": None,
-            "fitting_param_xdep": None,
-            "posterior_prior_error_scale": None,
-            "pdep_gev": None,
-            "sample_error_mode": None,
-            "workers": None,
-        },
-        removed={
-            "lattice_spacing_allow_order": "was replaced by allow_order_a, for example [2].",
-            "momentum_allow_order": "was replaced by allow_order_1overp, for example [2] or [2, 4].",
-        },
-    ),
-    "review": StageParamContract(schema={"literature": None, "literature_max_papers": None}, removed={}),
+    "correlator_analysis": "lamet_agent.stages.correlator.validation:STAGE_PARAM_CONTRACT",
+    "renormalization": "lamet_agent.stages.renorm.validation:STAGE_PARAM_CONTRACT",
+    "fourier_transform": "lamet_agent.stages.fourier.validation:STAGE_PARAM_CONTRACT",
+    "perturbative_matching": "lamet_agent.stages.matching.validation:STAGE_PARAM_CONTRACT",
+    "extrapolation": "lamet_agent.stages.extrapolation.validation:STAGE_PARAM_CONTRACT",
+    "review": "lamet_agent.stages.review.validation:STAGE_PARAM_CONTRACT",
 }
 
 
@@ -260,78 +190,388 @@ _COMMON_PARAMETER_MESSAGES.update(
 )
 
 
-def _contract_for_stage(stage: str) -> tuple[ParamSchema, dict[str, str]]:
-    contract = STAGE_PARAM_CONTRACTS.get(stage)
-    if contract is None:
+def get_stage_parameter_contract(stage: str) -> StageParamContract:
+    """Resolve one contract, lazily loading stage-owned declarations."""
+    source = STAGE_PARAM_CONTRACTS.get(stage)
+    if source is None:
         raise ValueError(f"Stage {stage!r} must be registered in STAGE_PARAM_CONTRACTS.")
-    return contract.schema, contract.removed
+    if isinstance(source, StageParamContract):
+        return source
+    if not isinstance(source, str) or ":" not in source:
+        raise ValueError(f"Stage {stage!r} has an invalid parameter-contract registration.")
+    module_name, attribute = source.split(":", 1)
+    contract = getattr(import_module(module_name), attribute, None)
+    if not isinstance(contract, StageParamContract):
+        raise ValueError(f"Stage {stage!r} did not provide a StageParamContract at {source!r}.")
+    return contract
 
 
-def _unknown_parameter_message(
+def _expected_type_name(expected: type | tuple[type, ...]) -> str:
+    types = expected if isinstance(expected, tuple) else (expected,)
+    names = []
+    for candidate in types:
+        names.append("number" if candidate is float else candidate.__name__)
+    return " or ".join(names)
+
+
+def _matches_expected(value: Any, expected: type | tuple[type, ...]) -> bool:
+    types = expected if isinstance(expected, tuple) else (expected,)
+    for candidate in types:
+        if candidate is bool and type(value) is bool:
+            return True
+        if candidate is int and type(value) is int:
+            return True
+        if candidate is float and not isinstance(value, bool) and isinstance(value, (int, float)):
+            return True
+        if candidate not in {bool, int, float} and isinstance(value, candidate):
+            return True
+    return False
+
+
+def _validate_parameter_spec(value: Any, spec: ParameterSpec, path: str) -> list[str]:
+    issues: list[str] = []
+    explanation = f" Parameter: {spec.summary} Physics: {spec.physics}"
+    if spec.expected is not None and not _matches_expected(value, spec.expected):
+        return [
+            f"{path} must be {_expected_type_name(spec.expected)}; "
+            f"got {type(value).__name__}.{explanation}"
+        ]
+    values = value if isinstance(value, list) else [value]
+    if spec.items is not None and isinstance(value, list):
+        for index, item in enumerate(value):
+            if not _matches_expected(item, spec.items):
+                issues.append(
+                    f"{path}[{index}] must be {_expected_type_name(spec.items)}; "
+                    f"got {type(item).__name__}.{explanation}"
+                )
+    if spec.choices:
+        for index, item in enumerate(values):
+            if item not in spec.choices:
+                choice_path = f"{path}[{index}]" if isinstance(value, list) else path
+                issues.append(
+                    f"{choice_path} must be one of {list(spec.choices)!r}; "
+                    f"got {item!r}.{explanation}"
+                )
+    return issues
+
+
+def _parameter_suggested_fix(spec: ParameterSpec) -> str:
+    if spec.suggested_fix:
+        return spec.suggested_fix
+    if spec.choices:
+        return f"Choose one of {list(spec.choices)!r}."
+    if spec.examples:
+        return f"For example, use {spec.examples[0]!r}."
+    return "Declare a value consistent with the parameter contract."
+
+
+def _structured_parameter_issues(
     *,
-    key: str,
-    relative_path: str,
-    full_path: str,
-    schema: ParamSchema,
-    removed: dict[str, str],
-) -> str:
-    migration = removed.get(relative_path) or removed.get(key) or _COMMON_PARAMETER_MESSAGES.get(key)
-    if migration:
-        return f"{full_path} {migration}"
-    candidates = [candidate for candidate in schema if candidate != key]
-    matches = get_close_matches(key, candidates, n=1, cutoff=0.72)
-    suggestion = f"; did you mean {matches[0]!r}?" if matches else ""
-    return f"{full_path} is not a supported stage parameter{suggestion}"
-
-
-def _collect_parameter_issues(
+    contract: StageParamContract,
+    context: StageValidationContext,
     value: dict[str, Any],
     schema: ParamSchema,
-    *,
-    full_path: str,
-    relative_path: str,
-    removed: dict[str, str],
-) -> list[str]:
-    issues: list[str] = []
-    for key, item in value.items():
-        item_path = f"{full_path}.{key}"
-        item_relative_path = f"{relative_path}.{key}" if relative_path else key
-        if key not in schema:
+    relative_path: str = "",
+    include_required: bool = True,
+) -> list[StageValidationIssue]:
+    issues: list[StageValidationIssue] = []
+    for key, child_schema in schema.items():
+        if isinstance(child_schema, ListItems):
+            parameter = f"{relative_path}.{key}" if relative_path else key
+            if key not in value:
+                continue
+            item = value[key]
+            path = context.parameter_path(parameter)
+            if not isinstance(item, list):
+                issues.append(
+                    StageValidationIssue(
+                        code=f"{contract.code_prefix}.{parameter}.invalid",
+                        message=f"{path} must be list; got {type(item).__name__}.",
+                        path=path,
+                        cause=f"The effective value is {item!r}.",
+                        physics=child_schema.physics,
+                        suggested_fix="Declare a list of objects matching the documented item fields.",
+                        parameters=(parameter,),
+                    )
+                )
+                continue
+            for index, child in enumerate(item):
+                if isinstance(child, dict):
+                    issues.extend(
+                        _structured_parameter_issues(
+                            contract=contract,
+                            context=context,
+                            value=child,
+                            schema=child_schema.schema,
+                            relative_path=f"{parameter}[{index}]",
+                            include_required=include_required,
+                        )
+                    )
+            continue
+        if not isinstance(child_schema, ParameterSpec):
+            continue
+        parameter = f"{relative_path}.{key}" if relative_path else key
+        path = context.parameter_path(parameter)
+        code_base = f"{contract.code_prefix}.{parameter}"
+        if key not in value:
+            if child_schema.required and include_required:
+                issues.append(
+                    StageValidationIssue(
+                        code=f"{code_base}.required",
+                        message=(
+                            f"{context.stage} job {context.job_id!r} is missing required "
+                            f"parameter {parameter}."
+                        ),
+                        path=path,
+                        cause="The parameter is absent from the effective stage defaults and job params.",
+                        physics=child_schema.physics,
+                        suggested_fix=_parameter_suggested_fix(child_schema),
+                        parameters=(parameter,),
+                    )
+                )
+            continue
+
+        item = value[key]
+        validator_message = (
+            child_schema.validator(item)
+            if child_schema.validator is not None
+            else None
+        )
+        static_messages = (
+            [validator_message]
+            if validator_message
+            else _validate_parameter_spec(item, child_schema, path)
+        )
+        for message in static_messages:
             issues.append(
-                _unknown_parameter_message(
-                    key=key,
-                    relative_path=item_relative_path,
-                    full_path=item_path,
-                    schema=schema,
-                    removed=removed,
+                StageValidationIssue(
+                    code=f"{code_base}.invalid",
+                    message=message,
+                    path=path,
+                    cause=f"The effective value is {item!r}.",
+                    physics=child_schema.physics,
+                    suggested_fix=_parameter_suggested_fix(child_schema),
+                    parameters=(parameter,),
+                )
+            )
+        if child_schema.schema is not None and isinstance(item, dict):
+            issues.extend(
+                _structured_parameter_issues(
+                    contract=contract,
+                    context=context,
+                    value=item,
+                    schema=child_schema.schema,
+                    relative_path=parameter,
+                    include_required=include_required,
+                )
+            )
+    return issues
+
+
+def _structured_unknown_parameter_issues(
+    *,
+    contract: StageParamContract,
+    context: StageValidationContext,
+    value: dict[str, Any],
+    schema: ParamSchema,
+    relative_path: str = "",
+) -> list[StageValidationIssue]:
+    """Report unsupported authored keys without treating runner-derived values as manifest input."""
+    issues: list[StageValidationIssue] = []
+    for key, item in value.items():
+        parameter = f"{relative_path}.{key}" if relative_path else key
+        child_schema = schema.get(key)
+        if key not in schema:
+            migration = (
+                contract.removed.get(parameter)
+                or contract.removed.get(key)
+                or _COMMON_PARAMETER_MESSAGES.get(key)
+            )
+            matches = get_close_matches(key, list(schema), n=1, cutoff=0.72)
+            suggestion = f"; did you mean {matches[0]!r}?" if matches else "."
+            message = f"{key} {migration}" if migration else f"{parameter} is not a supported {context.stage} parameter{suggestion}"
+            issues.append(
+                StageValidationIssue(
+                    code=f"{contract.code_prefix}.{parameter}.unsupported",
+                    message=message,
+                    path=context.parameter_path(parameter),
+                    cause="The key was authored in stage defaults or job params but is absent from this stage contract.",
+                    physics=contract.physics,
+                    suggested_fix="Remove the key or replace it with the contract-supported parameter named in the migration message.",
+                    parameters=(parameter,),
                 )
             )
             continue
-        child_schema = schema[key]
-        if isinstance(child_schema, dict) and isinstance(item, dict):
+        nested_schema = (
+            child_schema.schema
+            if isinstance(child_schema, ParameterSpec)
+            else child_schema
+            if isinstance(child_schema, dict)
+            else None
+        )
+        if nested_schema is not None and isinstance(item, dict):
             issues.extend(
-                _collect_parameter_issues(
-                    item,
-                    child_schema,
-                    full_path=item_path,
-                    relative_path=item_relative_path,
-                    removed=removed,
+                _structured_unknown_parameter_issues(
+                    contract=contract,
+                    context=context,
+                    value=item,
+                    schema=nested_schema,
+                    relative_path=parameter,
                 )
             )
         elif isinstance(child_schema, ListItems) and isinstance(item, list):
             for index, child in enumerate(item):
-                if not isinstance(child, dict):
-                    continue
-                issues.extend(
-                    _collect_parameter_issues(
-                        child,
-                        child_schema.schema,
-                        full_path=f"{item_path}[{index}]",
-                        relative_path=f"{item_relative_path}[]",
-                        removed=removed,
+                if isinstance(child, dict):
+                    issues.extend(
+                        _structured_unknown_parameter_issues(
+                            contract=contract,
+                            context=context,
+                            value=child,
+                            schema=child_schema.schema,
+                            relative_path=f"{parameter}[{index}]",
+                        )
                     )
-                )
     return issues
+
+
+def evaluate_stage_contract(
+    contract: StageParamContract,
+    context: StageValidationContext,
+) -> list[StageValidationIssue]:
+    """Evaluate one stage contract for either a final manifest or a plan draft."""
+    issues = _structured_unknown_parameter_issues(
+        contract=contract,
+        context=context,
+        value=context.authored_params if context.authored_params is not None else context.params,
+        schema=contract.schema,
+    )
+    issues.extend(
+        _structured_parameter_issues(
+            contract=contract,
+            context=context,
+            value=context.params,
+            schema=contract.schema,
+        )
+    )
+    for constraint in contract.constraints:
+        if constraint.check is None:
+            continue
+        result = constraint.check(context)
+        violations = result if isinstance(result, list) else [result] if result is not None else []
+        for violation in violations:
+            issues.append(
+                StageValidationIssue(
+                    code=constraint.code,
+                    message=violation.message,
+                    path=violation.path,
+                    cause=violation.cause,
+                    physics=constraint.physics,
+                    suggested_fix=constraint.suggested_fix,
+                    parameters=violation.parameters or constraint.parameters,
+                )
+            )
+    return issues
+
+
+def _parameter_guidance(spec: ParameterSpec) -> dict[str, Any]:
+    guidance: dict[str, Any] = {
+        "summary": spec.summary,
+        "physics": spec.physics,
+        "required": spec.required,
+    }
+    if spec.unit is not None:
+        guidance["unit"] = spec.unit
+    if spec.default is not None:
+        guidance["default"] = spec.default
+    if spec.choices:
+        guidance["choices"] = list(spec.choices)
+    if spec.examples:
+        guidance["examples"] = list(spec.examples)
+    if spec.coerce_scalar_to_list:
+        guidance["planning_coercion"] = "A scalar answer is stored as a one-item list."
+    if spec.schema:
+        guidance["fields"] = {
+            key: _parameter_guidance(child)
+            for key, child in spec.schema.items()
+            if isinstance(child, ParameterSpec)
+        }
+    return guidance
+
+
+def _list_guidance(spec: ListItems) -> dict[str, Any]:
+    guidance: dict[str, Any] = {
+        "summary": spec.summary,
+        "physics": spec.physics,
+        "required": False,
+        "item_fields": {
+            key: _parameter_guidance(child)
+            for key, child in spec.schema.items()
+            if isinstance(child, ParameterSpec)
+        },
+    }
+    if spec.examples:
+        guidance["examples"] = list(spec.examples)
+    return guidance
+
+
+def stage_contract_guidance(stage: str) -> dict[str, Any]:
+    """Serialize one authoritative stage contract for the planning LLM."""
+    contract = get_stage_parameter_contract(stage)
+    return {
+        "summary": contract.summary,
+        "physics": contract.physics,
+        "planning_notes": list(contract.planning_notes),
+        "input_roles": list(contract.input_roles),
+        "job_parameters": list(contract.job_parameters),
+        "parameters": {
+            key: _parameter_guidance(spec) if isinstance(spec, ParameterSpec) else _list_guidance(spec)
+            for key, spec in contract.schema.items()
+            if isinstance(spec, (ParameterSpec, ListItems))
+        },
+        "constraints": [
+            {
+                "code": constraint.code,
+                "parameters": list(constraint.parameters),
+                "rule": constraint.rule,
+                "physics": constraint.physics,
+                "suggested_fix": constraint.suggested_fix,
+            }
+            for constraint in contract.constraints
+        ],
+    }
+
+
+def render_required_planning_prompt(stage: str, gaps: list[dict[str, Any]]) -> str:
+    """Render current contract violations as one stage-scoped planning prompt."""
+    details = []
+    for gap in gaps:
+        detail = str(gap.get("message", ""))
+        if gap.get("physics"):
+            detail += f" Physical reason: {gap['physics']}"
+        if gap.get("suggested_fix"):
+            detail += f" Suggested fix: {gap['suggested_fix']}"
+        details.append(detail)
+    return (
+        f"{stage} currently violates these declared stage rules: "
+        + " ".join(details)
+        + " Reply as a JSON object or key=value pairs, or none to keep the current manifest."
+    )
+
+
+def render_optional_planning_prompt(stage: str) -> str:
+    """Render optional parameters directly from one stage contract."""
+    contract = get_stage_parameter_contract(stage)
+    optional = [
+        key
+        for key, spec in contract.schema.items()
+        if isinstance(spec, ListItems) or isinstance(spec, ParameterSpec) and not spec.required
+    ]
+    notes = " ".join(contract.planning_notes)
+    parameter_text = ", ".join(optional) if optional else "none"
+    return (
+        f"{stage} optional parameters: {parameter_text}. {notes} "
+        "Reply with values to set, or none."
+    )
 
 
 def validate_stage_parameter_mapping(
@@ -340,12 +580,34 @@ def validate_stage_parameter_mapping(
     *,
     path: str,
 ) -> list[str]:
-    """Return unknown-key issues for one stage defaults or params mapping."""
-    schema, removed = _contract_for_stage(stage)
-    return _collect_parameter_issues(
-        value,
-        schema,
-        full_path=path,
-        relative_path="",
-        removed=removed,
+    """Return shape and value issues for one stage defaults or params mapping."""
+    contract = get_stage_parameter_contract(stage)
+    context = StageValidationContext(
+        stage=stage,
+        job_id="<parameter-mapping>",
+        job_path=path,
+        params=value,
+        inputs={},
+        metadata={},
+        authored_params=value,
+        parameter_base_path=path,
     )
+    issues = _structured_unknown_parameter_issues(
+        contract=contract,
+        context=context,
+        value=value,
+        schema=contract.schema,
+    )
+    issues.extend(
+        _structured_parameter_issues(
+            contract=contract,
+            context=context,
+            value=value,
+            schema=contract.schema,
+            include_required=False,
+        )
+    )
+    return [
+        issue.message if issue.path in issue.message else f"{issue.path} {issue.message}"
+        for issue in issues
+    ]

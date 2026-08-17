@@ -182,6 +182,31 @@ correlators, while partial workflows read `momentum`, `volume`, and
 missing those attrs may declare the complete triple on `inputs.artifacts[]` as a
 fallback.
 
+Every stage owns exactly one typed, executable parameter contract in its
+`validation.py`. The contract contains the complete parameter tree, physical
+explanations, cross-parameter/context constraints, structured diagnostics,
+planning notes, and any deterministic draft normalization. The central
+`STAGE_PARAM_CONTRACTS` mapping contains lazy import routes only.
+
+Final validation and incomplete-draft planning both construct a resolved job
+context and call the same `STAGE_PARAM_CONTRACT.evaluate()`. Required parameters
+such as Fourier `y_grid` are therefore declared once by
+`ParameterSpec.required`; planning only converts the returned issue into a
+question. `ConstraintSpec` similarly owns one executable check together with
+its physical reason and suggested repair. For example, a named Fourier `sector`
+cannot be combined with manual `part`, `output_scale`, or `im_flip_for_ft`: the
+sector already fixes the complex channel, normalization, and negative-$x$
+convention.
+
+There are intentionally two manifest-validation layers, but only one authority
+for each concern. `AnalysisManifest` in `manifest.py` defines the global
+`metadata`/`inputs`/`stages` envelope, source records, paths, ids, and DAG.
+The selected stage contract defines that stage's `defaults` and job `params`
+subtree and semantic behavior. Nested field maps inside a contract are parts of
+that one tree, not independent schemas. The small JSON schemas used by the run
+and planning LLM loops describe agent action-response protocols; they do not
+validate manifests and are deliberately separate.
+
 ## Manifest Parameter Semantics
 
 Some manifest parameters change both the statistical treatment and the runtime
@@ -588,6 +613,12 @@ lamet-agent validate examples/pion_pdf_cg_manifest.json
 lamet-agent run examples/pion_pdf_cg_manifest.json
 ```
 
+`validate` now runs stage-local validation after schema, DAG, and path checks.
+Its JSON result includes structured `issues` with stable codes, manifest paths,
+immediate causes, physical explanations, and suggested fixes. Any issue makes
+the command exit nonzero. The same diagnostics are passed to the planning LLM
+and to the per-job agent context.
+
 Interactively plan a draft manifest before running it:
 
 ```bash
@@ -859,8 +890,9 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
     (manifest paths, plot `save_path` under `artifacts/`).
   - `resolve_plot_save_path()` keeps plots under the manifest's stage artifact directory.
 - `lamet_agent/manifest_params.py`
-  - Owns the central `STAGE_PARAM_CONTRACTS` registry and recursively rejects
-    unknown `defaults` / `params` keys before DAG execution.
+  - Defines reusable parameter specs, constraint descriptions, structured stage
+    diagnostics, lazy contract routing, and recursive `defaults` / `params`
+    validation before DAG execution.
 - `lamet_agent/core/trace.py`
   - Optional ReAct-style stdout trace (`--verbose`).
   - Default (non-verbose) runs print a LaMET Agent ASCII banner and one line per
@@ -893,7 +925,9 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
   - Each stage owns `prompts.md`, `validation.py`, `functions.py`, and, when it
     writes a report, `reporting.py`.
   - `prompts.md` contains the stage instruction, strategy guidance, and tool catalog.
-  - `validation.py` performs stage-local input checks and related parameter resolution.
+  - `validation.py` owns the stage's one executable parameter contract,
+    physical explanations, semantic input checks, planning guidance, and the
+    resolved validation context used by both plan and validate.
   - `functions.py` holds the stage tools and a `STAGE_TOOLS` registry.
   - `reporting.py` controls the per-stage report that is generated after the stage
     finishes, so users can track the analysis progress and inspect intermediate

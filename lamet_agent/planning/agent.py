@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from lamet_agent.core.banner import BANNER
 from lamet_agent.manifest import parse_volume
+from lamet_agent.manifest_params import ParameterSpec, get_stage_parameter_contract, stage_contract_guidance
 
 from .conversion import _dataset_names, _standard_dataset_paths, inspect_correlator_h5_files, plan_correlator_h5_conversions
 from .core import (
@@ -109,11 +110,7 @@ def _planning_system_prompt() -> str:
         "For stage additions, preserve existing ids and wire jobs through existing upstream job ids. "
         "For inputs.kernels[].stage, treat legacy value 'matching' as an alias of 'perturbative_matching'; do not ask the user to rename it. "
         "The written quick/full manifests normalize that alias to 'perturbative_matching'. "
-        "For target_observable='da', fourier_transform sector is fixed to 'full'; if free text, examples, or user answers say sea, valence, or singlet for DA Fourier transform, correct it to full instead of asking whether to keep the invalid value. "
-        "For parton='gluon', fourier_transform sector is also fixed to 'full'; quark sea/valence/singlet semantics do not apply. "
         "Every 3pt correlator must explicitly write polarization as unpolarized, helicity, or transversity; use unpolarized when the user does not specify it. "
-        "Fourier observable uses the short target name without polarization, such as pion_quark_quasi_pdf; keep polarization as a separate parameter. "
-        "When Fourier input has no target 3pt or upstream polarization metadata, require explicit Fourier polarization. "
         "For correlator data conversion, inspect HDF5/NPY/NPZ inputs and never guess ambiguous axes or source keys. "
         "Use multiple-choice questions for simple axis/index choices, but use free-form questions for high-dimensional mappings where the user must describe source, target, cfg/time or cfg/tau axes, z/bz ordering, momentum selection, optional axis_order, optional index selections, and transpose. "
         "When the user gives an unambiguous mapping, call apply_correlator_conversion_mapping with args.correlator_id and args.datasets as a non-empty list of dataset mappings. "
@@ -148,85 +145,15 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
                 "If the manifest contains only a prefix or subset, ask whether to add extra stages before proposing a plan; allow a free-form subset such as only renormalization and fourier_transform."
             ),
             "stage_parameter_guidance": {
-                "correlator_analysis": {
-                    "minimal_policy": "Do not add nstate, prior_width, model_average, fit windows, or fit_strategy unless the user explicitly requests them. Let run/stage defaults and automatic tuning decide them.",
-                    "automatic_windows": (
-                        "Omit pt2_windows, pt3_windows, and pt3_tau_cuts to let the stage "
-                        "generate bounded data-driven candidates. Preserve any explicitly "
-                        "authored window lists exactly."
-                    ),
-                    "options": {
-                        "fit_scope": ["3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"],
-                        "fit_strategy": ["joint", "chained"],
-                        "fitting_form": ["Breit", "NonBreit"],
-                        "component": ["re", "im", "both"],
-                    },
-                    "qda_ratio_inputs": (
-                        "one ordinary 2pt with local source/sink operators and one qDA 2pt "
-                        "with a nonlocal operator plus bT/bz metadata"
-                    ),
-                },
-                "renormalization": {
-                    "required": {
-                        "scheme": "ratio | hybrid | msbar",
-                        "strategy": "external_denominator | self_renormalization",
-                    },
-                    "branches": {
-                        "external_denominator_strategy": {"inputs": ["target", "denominator"]},
-                        "self_renormalization": {
-                            "fit_inputs": ["reference"],
-                            "ratio_or_msbar_apply_inputs": ["target", "zR"],
-                            "hybrid_apply_inputs": ["target", "denominator", "zR"],
-                        },
-                    },
-                    "optional": {
-                        "normalization": True,
-                        "hybrid_scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
-                    },
-                },
-                "fourier_transform": {
-                    "minimal_policy": "Do not add method, observable, or momentum_gev when they can be supplied by run/stage defaults or derived from upstream metadata.",
-                    "required_inputs": {"input": "renormalized matrix-element job or artifact"},
-                    "required_parameters": {"y_grid": "list of x/y points or {start, stop, num}"},
-                    "sector_rule": "For target_observable=da or parton=gluon, sector must be full; correct sea/valence/singlet to full without asking.",
-                    "polarization": "Always write each 3pt polarization explicitly; use unpolarized when unspecified. For external Fourier inputs without this provenance, require an explicit Fourier polarization.",
-                },
-                "perturbative_matching": {
-                    "minimal_policy": "Do not ask for or add mu, component, grids, or momentum_gev when omitted. Select kernel_id only when it is inferable from the observable/scheme or ask the user. Add zs_fm only if the selected hybrid kernel needs it and it is explicit or already known from renormalization.",
-                    "required_inputs": {"quasi": "Fourier transform job or artifact"},
-                    "required": {"scheme": "ratio | hybrid | msbar"},
-                    "options": {"component": ["re", "im"]},
-                },
-                "extrapolation": {
-                    "required": {"inputs": {"lightcone": ["matching_job_1", "matching_job_2"]}},
-                    "minimal_policy": "Do not add allow_order_a, allow_order_1overp, allow_order_ap, fitting_param_xdep, pdep_gev, or fit-control defaults unless the user explicitly requests them.",
-                },
-                "review": {
-                    "required": "none",
-                    "optional": {"literature": "true | false", "literature_max_papers": "default 4 when literature=true"},
-                },
-            },
-            "common_stage_contracts": {
-                "renormalization": {
-                    "ratio_inputs": {
-                        "target": "upstream bare matrix-element job",
-                        "denominator": "zero-momentum/reference bare matrix-element job",
-                    },
-                    "ratio_defaults": {"scheme": "ratio", "strategy": "external_denominator"},
-                    "hybrid_ratio_strategy_defaults": {
-                        "scheme": "hybrid",
-                        "strategy": "external_denominator",
-                        "zs_fm": "required",
-                        "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
-                    },
-                    "self_renormalization_inputs": {
-                        "fit": ["reference"],
-                        "ratio_or_msbar_apply": ["target", "zR"],
-                        "hybrid_apply": ["target", "denominator", "zR"],
-                    },
-                },
-                "fourier_transform": {"inputs": {"input": "renormalized matrix-element job or artifact"}},
-                "perturbative_matching": {"inputs": {"quasi": "Fourier transform job or artifact"}},
+                stage: stage_contract_guidance(stage)
+                for stage in (
+                    "correlator_analysis",
+                    "renormalization",
+                    "fourier_transform",
+                    "perturbative_matching",
+                    "extrapolation",
+                    "review",
+                )
             },
             "correlator_conversion_contract": {
                 "standard_2pt_h5": "source_operator/sink_operator/momentum with dataset shape (Lt, n_cfg)",
@@ -443,15 +370,6 @@ def _parse_json_object(text: str) -> dict[str, Any]:
 
 
 _CANONICAL_STAGES = ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"]
-_STAGE_INPUT_KEYS = {
-    "renormalization": {"target", "denominator", "reference", "zR"},
-    "fourier_transform": {"input"},
-    "perturbative_matching": {"quasi"},
-    "extrapolation": {"lightcone"},
-}
-_JOB_PARAM_KEYS = {
-    "correlator_analysis": {"momentum", "initial_momentum", "final_momentum"},
-}
 
 
 def _parse_stage_subset(text: str) -> list[str]:
@@ -585,6 +503,9 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                     except json.JSONDecodeError:
                         parsed[key] = raw
             if parsed:
+                contract = get_stage_parameter_contract(stage)
+                input_keys = set(contract.input_roles)
+                job_parameter_keys = set(contract.job_parameters)
                 stage_config = state.candidate_payload.setdefault("stages", {}).setdefault(stage, {})
                 defaults_patch = copy.deepcopy(stage_config.get("defaults", {}) if isinstance(stage_config.get("defaults"), dict) else {})
                 jobs = stage_config.setdefault("jobs", [])
@@ -599,20 +520,17 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                     parts = str(key).split(".")
                     if parts[0] == "inputs":
                         parts = parts[1:]
-                    if stage == "extrapolation" and parts[:1] == ["lightcone"]:
-                        parts = ["lightcone"]
-                    if parts[0] in _STAGE_INPUT_KEYS.get(stage, set()):
+                    if parts[0] in input_keys:
                         input_patch[parts[0]] = item_value
                         continue
-                    if parts[0] in _JOB_PARAM_KEYS.get(stage, set()):
+                    if parts[0] in job_parameter_keys:
                         job_param_patch[parts[0]] = item_value
                         continue
                     target = defaults_patch
                     for part in parts[:-1]:
                         target = target.setdefault(part, {})
-                    if stage == "correlator_analysis" and parts[-1] in {"fit_scope", "fit_strategy", "nstate", "prior_width", "pt3_tau_cuts"} and not isinstance(item_value, list):
-                        item_value = [item_value]
-                    if stage == "extrapolation" and parts[-1] in {"allow_order_a", "allow_order_1overp", "allow_order_ap", "fitting_param_xdep", "pdep_gev"} and not isinstance(item_value, list):
+                    parameter_spec = contract.schema.get(parts[-1]) if len(parts) == 1 else None
+                    if isinstance(parameter_spec, ParameterSpec) and parameter_spec.coerce_scalar_to_list and not isinstance(item_value, list):
                         item_value = [item_value]
                     target[parts[-1]] = item_value
                 old = copy.deepcopy(stage_config.get("defaults"))
@@ -993,6 +911,9 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
             for issue in blocking_errors
             if "Field required" not in issue.message and "Missing required" not in issue.message
         ]
+        fatal_structure_error = any("globally unique" in issue.message for issue in blocking_errors)
+        if not allow_incomplete and fatal_structure_error:
+            return {"tool_name": tool_name, "ok": False, "issues": _dataclass_json(issues), "edits": edits}
         if not allow_incomplete and not ok and not incomplete_correlator and not incomplete_stage_params and not incomplete_kernel and non_required_errors:
             return {"tool_name": tool_name, "ok": False, "issues": _dataclass_json(issues), "edits": edits}
         state.candidate_payload = candidate

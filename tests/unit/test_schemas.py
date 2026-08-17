@@ -3,7 +3,10 @@ from pydantic import ValidationError
 
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import (
+    ListItems,
+    ParameterSpec,
     STAGE_PARAM_CONTRACTS,
+    get_stage_parameter_contract,
     merge_stage_params,
     validate_stage_parameter_mapping,
 )
@@ -134,6 +137,56 @@ def test_manifest_rejects_legacy_fourier_lambda0_in_job_params() -> None:
 
 def test_manifest_accepts_fourier_lambda0_gev() -> None:
     AnalysisManifest.model_validate(_fourier_payload())
+
+
+def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
+    assert STAGE_PARAM_CONTRACTS == {
+        "correlator_analysis": "lamet_agent.stages.correlator.validation:STAGE_PARAM_CONTRACT",
+        "renormalization": "lamet_agent.stages.renorm.validation:STAGE_PARAM_CONTRACT",
+        "fourier_transform": "lamet_agent.stages.fourier.validation:STAGE_PARAM_CONTRACT",
+        "perturbative_matching": "lamet_agent.stages.matching.validation:STAGE_PARAM_CONTRACT",
+        "extrapolation": "lamet_agent.stages.extrapolation.validation:STAGE_PARAM_CONTRACT",
+        "review": "lamet_agent.stages.review.validation:STAGE_PARAM_CONTRACT",
+    }
+    for stage in STAGE_PARAM_CONTRACTS:
+        stage_contract = get_stage_parameter_contract(stage)
+        assert stage_contract.summary
+        assert stage_contract.physics
+        assert all(
+            isinstance(spec, (ParameterSpec, ListItems))
+            for spec in stage_contract.schema.values()
+        )
+
+    contract = get_stage_parameter_contract("fourier_transform")
+    sector = contract.schema["sector"]
+    y_grid = contract.schema["y_grid"]
+
+    assert isinstance(sector, ParameterSpec)
+    assert isinstance(y_grid, ParameterSpec)
+    assert y_grid.required is True
+    assert callable(y_grid.validator)
+    assert sector.choices == ("sea", "valence", "singlet", "full")
+    assert "negative-x extension" in sector.physics
+    assert not any(item.code == "fourier.y_grid.required" for item in contract.constraints)
+    assert any(
+        item.code == "fourier.sector.manual_projection_conflict"
+        and "normalization" in item.physics
+        and callable(item.check)
+        for item in contract.constraints
+    )
+
+
+def test_fourier_parameter_type_error_includes_parameter_physics() -> None:
+    payload = _fourier_payload()
+    payload["stages"]["fourier_transform"]["defaults"]["symmetry_guarantee"] = "true"
+
+    with pytest.raises(ValidationError) as exc_info:
+        AnalysisManifest.model_validate(payload)
+
+    message = str(exc_info.value)
+    assert "symmetry_guarantee" in message
+    assert "must be bool" in message
+    assert "DA phase rotation and symmetry projection" in message
 
 
 def test_manifest_rejects_unknown_defaults_and_job_params_together() -> None:

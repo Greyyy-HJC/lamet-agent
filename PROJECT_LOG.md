@@ -1176,3 +1176,48 @@
   kernel inputs to be existing files while allowing new artifact output dirs.
 - Routed path failures from planning-capable `run` backends into a path-first
   plan flow that confirms the root and repairs invalid input paths one at a time.
+
+## 2026-08-16 (Stage-owned Fourier manifest contract)
+
+- Moved the complete Fourier parameter shape out of the central registry and
+  into `stages/fourier/validation.py` as the first lazy-loaded, stage-owned typed
+  contract, including units, defaults, choices, and physical explanations.
+- Centralized Fourier cross-parameter and contextual constraints, structured
+  diagnostics, planning gaps, planning prompts, and deterministic sector
+  normalization in the same validation module.
+- Added generic `ParameterSpec`, `ConstraintSpec`, and `StageValidationIssue`
+  infrastructure; `validate` now emits structured stage issues, while planning
+  and the runtime LLM receive the same physical causes and suggested fixes.
+- Rejected ambiguous Fourier combinations such as a named `sector` together
+  with manual `part`, `output_scale`, or `im_flip_for_ft`, and added focused
+  contract, diagnostic, and planning coverage.
+
+## 2026-08-16 (Executable Fourier contract evaluation)
+
+- Made `ParameterSpec.required` and parameter validators executable and added
+  callable `ConstraintSpec` checks evaluated through a shared resolved job
+  context.
+- Routed both final Fourier validation and incomplete-draft planning through
+  `STAGE_PARAM_CONTRACT.evaluate()`, removing the separate Fourier planning-gap
+  predicates and duplicate `y_grid` requirement text.
+- Changed planning prompts into renderers of the returned structured issues and
+  added a regression asserting that plan and validate report the same code,
+  message, physics explanation, and repair for a missing `y_grid`.
+
+## 2026-08-16 (Stage-wide executable manifest contracts)
+
+- Audited manifest structure, stage parameter validation, planning gaps,
+  planning prompts, draft normalization, and runtime diagnostics to separate
+  their responsibilities and remove duplicated stage rules.
+- Moved correlator, renormalization, matching, extrapolation, and review
+  parameter trees into one executable `STAGE_PARAM_CONTRACT` in each stage's
+  `validation.py`; the central registry now contains lazy routes only.
+- Replaced the planner's per-stage parameter branches, input-role maps, prompt
+  tables, and Fourier-only guidance functions with generic contract evaluation
+  and rendering. Plan and validate now report the same rule codes and physics.
+- Kept the global Pydantic `AnalysisManifest` as the sole structural/DAG schema
+  and documented that run/planning action JSON schemas are separate LLM
+  protocols rather than competing manifest schemas.
+- Added stage-wide ownership and plan/validate parity tests, nested-list field
+  descriptions, authored-versus-derived parameter tracking, and centralized
+  handling of unsupported stage keys.

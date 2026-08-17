@@ -6,6 +6,8 @@ import json
 import re
 from typing import Any, Callable
 
+from lamet_agent.manifest_params import render_optional_planning_prompt, render_required_planning_prompt
+
 from .core import (
     PlanAgentState,
     _manifest_root,
@@ -15,80 +17,21 @@ from .core import (
 from .conversion import _standard_dataset_paths
 
 
-def _stage_required_prompt(stage: str, payload: dict[str, Any]) -> str:
-    target = str(payload.get("metadata", {}).get("target_observable", "pdf")) if isinstance(payload.get("metadata"), dict) else "pdf"
-    if stage == "correlator_analysis":
-        return (
-            "correlator_analysis required choices: fit_scope options are 3pt_ratio, qda_ratio, FH, 3pt_ratio+FH; "
-            "fitting_form options are Breit or NonBreit; NonBreit also needs initial_momentum and final_momentum. "
-            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
-        )
-    if stage == "renormalization":
-        return (
-            "renormalization required choices: scheme options are ratio, hybrid, msbar; "
-            "strategy options are external_denominator and self_renormalization. "
-            "The external_denominator strategy needs target and denominator. "
-            "Self-renormalization needs a reference fit input; ratio/msbar apply jobs need target plus zR, "
-            "while hybrid apply jobs also need denominator and zs_fm. LambdaQCD_gev and fit parameter d are required. "
-            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
-        )
-    if stage == "fourier_transform":
-        parton = str(payload.get("metadata", {}).get("parton", "quark")) if isinstance(payload.get("metadata"), dict) else "quark"
-        sectors = "full" if target == "da" or parton == "gluon" else "sea, valence, singlet, full"
-        return (
-            "fourier_transform required choices: input must be one renormalized job or artifact; "
-            "order options are LA, NLA, or both; sector options are "
-            f"{sectors}; part options are re, im, both. "
-            "y_grid is required and may be a list or {start, stop, num}. "
-            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
-        )
-    if stage == "perturbative_matching":
-        return (
-            "perturbative_matching required choices: quasi input must be one Fourier job or artifact; "
-            "scheme must be ratio, hybrid, or msbar and match kernel_id; component options are re or im; "
-            "hybrid kernels need zs_fm. "
-            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
-        )
-    if stage == "extrapolation":
-        return (
-            "extrapolation required choices: inputs.lightcone must list the matching jobs or artifacts to fit. "
-            "If only one ensemble and one momentum are available the stage cannot run. "
-            "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
-        )
-    return "review has no required parameters. Reply none to continue."
+def _stage_required_prompt(
+    stage: str,
+    payload: dict[str, Any],
+    gaps: list[dict[str, Any]],
+) -> str:
+    del payload
+    return render_required_planning_prompt(
+        stage,
+        [gap for gap in gaps if gap.get("stage") == stage],
+    )
 
 
 def _stage_optional_prompt(stage: str, payload: dict[str, Any]) -> str:
-    target = str(payload.get("metadata", {}).get("target_observable", "pdf")) if isinstance(payload.get("metadata"), dict) else "pdf"
-    if stage == "correlator_analysis":
-        return (
-            "correlator_analysis optional choices: pt2_windows, pt3_windows, pt3_tau_cuts, nstate, prior_width, "
-            "fit_strategy, model_average, component. Reply with values to set, or none to let run/stage decide."
-        )
-    if stage == "renormalization":
-        return (
-            "renormalization optional choices: normalization, scheme_parameters such as m0_gev and delta_m_gev, "
-            "or z_coverage_policy and svdcut for self_renormalization. Reply with values to set, or none."
-        )
-    if stage == "fourier_transform":
-        parton = str(payload.get("metadata", {}).get("parton", "quark")) if isinstance(payload.get("metadata"), dict) else "quark"
-        sector_text = "sector is fixed to full for DA and gluon distributions" if target == "da" or parton == "gluon" else "sector options are sea, valence, singlet, full"
-        return (
-            "fourier_transform optional choices: scheme_scan, posterior_prior_error_scale, plot names, x/y limits, "
-            f"method, observable, coord_unit override (default fm); {sector_text}. "
-            "Every 3pt records polarization explicitly as unpolarized, helicity, or transversity. Fourier inputs without upstream 3pt provenance also require it. Reply with values to set, or none."
-        )
-    if stage == "perturbative_matching":
-        return (
-            "perturbative_matching optional choices: mu, matching grids, x/y limits, sector, plot settings. "
-            "Reply with values to set, or none."
-        )
-    if stage == "extrapolation":
-        return (
-            "extrapolation optional choices: allow_order_a, allow_order_1overp, allow_order_ap, fitting_param_xdep, pdep_gev. "
-            "Reply with values to set, or none."
-        )
-    return "review optional choices: literature is true or false; literature_max_papers optionally overrides its default of 4 when literature is true. Reply with values to set, or none."
+    del payload
+    return render_optional_planning_prompt(stage)
 
 
 def _next_path_repair_question(state: PlanAgentState) -> dict[str, Any] | None:
@@ -224,7 +167,12 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
     gap_stages = {str(gap.get("stage")) for gap in gaps}
     for stage in configured_stage_list:
         if stage not in state.stage_required_checked and stage in gap_stages:
-            return [{"question_id": f"stage_required.{stage}", "prompt": _stage_required_prompt(stage, payload)}]
+            return [
+                {
+                    "question_id": f"stage_required.{stage}",
+                    "prompt": _stage_required_prompt(stage, payload, gaps),
+                }
+            ]
         if stage not in state.stage_required_checked:
             state.stage_required_checked.add(stage)
         if stage not in state.stage_optional_checked:
@@ -232,10 +180,11 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
     if gaps:
         gap = gaps[0]
         if not state.parameter_completion_checked:
+            physics = f" Physical reason: {gap.get('physics')}" if gap.get("physics") else ""
             return [
                 {
                     "question_id": str(gap.get("question_id") or f"stage_params.{gap.get('stage')}.{gap.get('job_id')}"),
-                    "prompt": f"{gap.get('message')} {gap.get('suggested_fix')} Add or adjust this setting before building manifests?",
+                    "prompt": f"{gap.get('message')}{physics} {gap.get('suggested_fix')} Add or adjust this setting before building manifests?",
                     "choices": [
                         {"label": "1", "value": "yes", "description": "Yes, add the missing setting."},
                         {"label": "2", "value": "no", "description": "No, keep the manifest unchanged."},
@@ -243,7 +192,8 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
                 }
             ]
         if state.parameter_completion_requested:
-            return [{"question_id": str(gap.get("path")), "prompt": f"{gap.get('message')} {gap.get('suggested_fix')}"}]
+            physics = f" Physical reason: {gap.get('physics')}" if gap.get("physics") else ""
+            return [{"question_id": str(gap.get("path")), "prompt": f"{gap.get('message')}{physics} {gap.get('suggested_fix')}"}]
     return []
 
 

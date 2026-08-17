@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob, derive_job_kinematics
-from lamet_agent.manifest_params import merge_stage_params
+from lamet_agent.manifest_params import StageValidationIssue, get_stage_parameter_contract, merge_stage_params
 from lamet_agent.stages.fourier.validation import INFERRED_OBSERVABLES
 
 from .stages import resolve_stage_package
@@ -289,13 +289,28 @@ def required_job_tool_sequence(
 
 
 def validate_stage_inputs(stage: str, manifest: Any, job: StageJob) -> list[str]:
-    """Return a stage's input issues via its ``validate_stage_inputs`` helper."""
+    """Return concise messages from the stage's executable contract."""
+    diagnostics = validate_stage_diagnostics(stage, manifest, job)
+    return [issue.message for issue in diagnostics]
+
+
+def validate_stage_diagnostics(
+    stage: str,
+    manifest: Any,
+    job: StageJob,
+) -> list[StageValidationIssue]:
+    """Return structured diagnostics from the stage's executable contract."""
     package_name = resolve_stage_package(stage)
     if not package_name:
         return []
     module = import_module(f"lamet_agent.stages.{package_name}.validation")
-    validator = getattr(module, "validate_stage_inputs", None)
-    return validator(manifest, job) if callable(validator) else []
+    contract = get_stage_parameter_contract(stage)
+    context_builder = getattr(module, "build_validation_context", None)
+    if callable(context_builder):
+        return contract.evaluate(context_builder(manifest, job))
+    raise ValueError(
+        f"Stage {stage!r} must expose STAGE_PARAM_CONTRACT and build_validation_context in its validation module."
+    )
 
 
 def _resolve_one_data_path(value: str, manifest: AnalysisManifest) -> str:

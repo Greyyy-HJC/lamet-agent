@@ -10,6 +10,7 @@ from lamet_agent.core.tools import (
     required_job_tool_sequence,
     resolve_job_tools,
     resolve_plot_save_path,
+    validate_stage_diagnostics,
     validate_stage_inputs,
 )
 from lamet_agent.manifest import AnalysisManifest, derive_job_kinematics, validate_manifest_file
@@ -1094,9 +1095,11 @@ def test_fourier_symmetry_guarantee_requires_boolean() -> None:
     job = manifest.stages["fourier_transform"].jobs[0]
     manifest.stages["fourier_transform"].defaults["symmetry_guarantee"] = "true"
 
-    assert validate_stage_inputs("fourier_transform", manifest, job) == [
-        "Fourier symmetry_guarantee must be a boolean."
-    ]
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+
+    assert [item.code for item in diagnostics] == ["fourier.symmetry_guarantee.invalid"]
+    assert "must be bool" in diagnostics[0].message
+    assert "phase rotation" in diagnostics[0].physics
 
 
 def test_fourier_sector_options_depend_on_observable() -> None:
@@ -1109,9 +1112,9 @@ def test_fourier_sector_options_depend_on_observable() -> None:
     assert validate_stage_inputs("fourier_transform", manifest, job) == []
 
     manifest.stages["fourier_transform"].defaults["sector"] = "total"
-    assert validate_stage_inputs("fourier_transform", manifest, job) == [
-        "Fourier sector must be one of ['full', 'sea', 'singlet', 'valence']."
-    ]
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+    assert [item.code for item in diagnostics] == ["fourier.sector.invalid"]
+    assert "must be one of" in diagnostics[0].message
 
     manifest.metadata.target_observable = "pdf"
     manifest.metadata.parton = "gluon"

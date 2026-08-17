@@ -324,6 +324,19 @@ def test_validate_prints_matching_grid_warning_and_fails(tmp_path) -> None:
     assert "Matching job 'mt'" in result.output
 
 
+def test_validate_reports_structured_fourier_physics_issue(tmp_path) -> None:
+    manifest = tmp_path / "matching.json"
+    _write_matching_manifest(manifest)
+
+    result = CliRunner().invoke(app, ["validate", str(manifest)])
+
+    assert result.exit_code != 0
+    assert '"code": "fourier.kinematics.momentum_required"' in result.output
+    assert '"path": "stages.fourier_transform.jobs.ft.inputs"' in result.output
+    assert "Converting coordinate separation to Ioffe time" in result.output
+    assert "Declare discrete momentum, volume, and lattice_spacing_fm" in result.output
+
+
 def test_run_prints_matching_grid_warning_without_planning(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

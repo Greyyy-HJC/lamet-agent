@@ -11,10 +11,13 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from lamet_agent.core.tools import validate_stage_inputs
-from lamet_agent.manifest import AnalysisManifest
-from lamet_agent.manifest_params import merge_stage_params
-from lamet_agent.stages.fourier.validation import INFERRED_OBSERVABLES
+from lamet_agent.core.tools import validate_stage_diagnostics
+from lamet_agent.manifest import AnalysisManifest, physical_momentum_gev
+from lamet_agent.manifest_params import (
+    StageValidationContext,
+    get_stage_parameter_contract,
+    merge_stage_params,
+)
 from lamet_agent.stages.matching.validation import matching_grid_warnings
 
 
@@ -560,30 +563,13 @@ def normalize_planning_constraints(payload: dict[str, Any]) -> list[dict[str, An
                 correlator[key] = deduped
                 edits.append({"path": f"inputs.correlators[{index}].{key}", "old": value, "new": deduped, "note": f"Deduplicated correlator {key} values."})
     stages = payload.get("stages", {}) if isinstance(payload.get("stages"), dict) else {}
-    review_defaults = stages.get("review", {}).get("defaults", {}) if isinstance(stages.get("review"), dict) else {}
-    if isinstance(review_defaults, dict) and review_defaults.get("literature") is True and "literature_max_papers" not in review_defaults:
-        review_defaults["literature_max_papers"] = 4
-        edits.append({"path": "stages.review.defaults.literature_max_papers", "old": None, "new": 4, "note": "Applied the default literature paper limit."})
-    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-    force_full = str(metadata.get("target_observable", "")).lower() == "da" or str(metadata.get("parton", "")).lower() == "gluon"
-    if not force_full:
-        return edits
-    ft_stage = payload.get("stages", {}).get("fourier_transform", {}) if isinstance(payload.get("stages"), dict) else {}
-    if not isinstance(ft_stage, dict):
-        return edits
-    defaults = ft_stage.get("defaults", {})
-    if isinstance(defaults, dict) and "sector" in defaults and str(defaults.get("sector", "")).lower() != "full":
-        old = defaults.get("sector")
-        defaults["sector"] = "full"
-        edits.append({"path": "stages.fourier_transform.defaults.sector", "old": old, "new": "full", "note": "DA and gluon Fourier sectors are fixed to full."})
-    jobs = ft_stage.get("jobs", [])
-    if isinstance(jobs, list):
-        for job in jobs:
-            params = job.get("params", {}) if isinstance(job, dict) else {}
-            if isinstance(params, dict) and "sector" in params and str(params.get("sector", "")).lower() != "full":
-                old = params.get("sector")
-                params["sector"] = "full"
-                edits.append({"path": f"stages.fourier_transform.jobs.{job.get('id', '')}.params.sector", "old": old, "new": "full", "note": "DA and gluon Fourier sectors are fixed to full."})
+    for stage in stages:
+        try:
+            normalizer = get_stage_parameter_contract(stage).normalize_draft
+        except ValueError:
+            continue
+        if normalizer is not None:
+            edits.extend(normalizer(payload))
     return edits
 
 
@@ -846,20 +832,14 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
     except Exception as exc:
         issues.append(PlanIssue("info", "manifest", f"Strict manifest validation is not yet clean: {exc}"))
     else:
-        for stage in stage_order_list:
-            if stage not in strict.stages:
-                continue
-            for job in strict.stages[stage].jobs:
-                try:
-                    for message in validate_stage_inputs(stage, strict, job):
-                        issues.append(PlanIssue("warning", f"stages.{stage}.jobs.{job.id}", message))
-                except Exception as exc:
-                    issues.append(PlanIssue("warning", f"stages.{stage}.jobs.{job.id}", f"Stage input check failed: {exc}"))
         for message in matching_grid_warnings(strict):
             issues.append(PlanIssue("warning", "stages.perturbative_matching", message))
 
     for gap in _stage_parameter_gaps(payload, manifest_path):
-        issues.append(PlanIssue("warning", str(gap["path"]), str(gap["message"]), str(gap["suggested_fix"])))
+        message = str(gap["message"])
+        if gap.get("physics"):
+            message += f" Physics: {gap['physics']}"
+        issues.append(PlanIssue("warning", str(gap["path"]), message, str(gap["suggested_fix"])))
 
     return issues
 
@@ -1241,8 +1221,15 @@ def _strict_manifest_issues(payload: dict[str, Any], manifest_path: Path | None 
             continue
         for job in strict.stages[stage].jobs:
             try:
-                for message in validate_stage_inputs(stage, strict, job):
-                    issues.append(PlanIssue("error", f"stages.{stage}.jobs.{job.id}", message))
+                for diagnostic in validate_stage_diagnostics(stage, strict, job):
+                    issues.append(
+                        PlanIssue(
+                            "error",
+                            diagnostic.path,
+                            diagnostic.detailed_message(),
+                            diagnostic.suggested_fix or None,
+                        )
+                    )
             except Exception as exc:
                 issues.append(PlanIssue("error", f"stages.{stage}.jobs.{job.id}", f"Stage input check failed: {exc}"))
     return issues
@@ -1255,18 +1242,6 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
     order = metadata.get("stages", []) if isinstance(metadata, dict) else []
     stage_order = [stage for stage in order if isinstance(stage, str)] if isinstance(order, list) else []
     kernels = inputs.get("kernels", []) if isinstance(inputs, dict) else []
-    matching_kernels = [
-        item
-        for item in kernels
-        if isinstance(item, dict) and item.get("stage") in {"matching", "perturbative_matching"} and item.get("kernel_id")
-    ]
-    matching_kernel_ids = [item.get("kernel_id") for item in matching_kernels]
-    renorm_kernels = [
-        item
-        for item in kernels
-        if isinstance(item, dict) and item.get("stage") == "renormalization" and item.get("kernel_id")
-    ]
-    renorm_kernel_ids = [item.get("kernel_id") for item in renorm_kernels]
     correlators = inputs.get("correlators", []) if isinstance(inputs, dict) else []
     artifacts = {
         str(item.get("id")): item
@@ -1365,171 +1340,85 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
         jobs = config.get("jobs", [])
         if not isinstance(jobs, list):
             continue
+        try:
+            contract = get_stage_parameter_contract(stage)
+        except ValueError:
+            continue
         for index, job in enumerate(jobs):
             if not isinstance(job, dict):
                 continue
             job_id = str(job.get("id", index))
-            params = merge_stage_params(
+            authored_params = merge_stage_params(
                 defaults,
                 job.get("params") if isinstance(job.get("params"), dict) else {},
             )
             upstream_metadata = derived_metadata(stage, job, {job_id})
-            derived_momentum_available = all(
+            effective_params = {**upstream_metadata, **authored_params}
+            if all(
                 upstream_metadata.get(key) is not None
                 for key in ("momentum", "volume", "lattice_spacing_fm")
+            ):
+                try:
+                    effective_params["momentum_gev"] = physical_momentum_gev(
+                        str(upstream_metadata["momentum"]),
+                        str(upstream_metadata["volume"]),
+                        float(upstream_metadata["lattice_spacing_fm"]),
+                    )
+                except (TypeError, ValueError):
+                    pass
+            selected_correlators = [
+                item
+                for item in correlators
+                if isinstance(item, dict)
+                and item.get("correlator_id") in set(job.get("correlator_ids", []))
+            ]
+            context = StageValidationContext(
+                stage=stage,
+                job_id=job_id,
+                job_path=f"stages.{stage}.jobs.{job_id}",
+                params=effective_params,
+                inputs=dict(job.get("inputs", {})) if isinstance(job.get("inputs"), dict) else {},
+                metadata=dict(metadata) if isinstance(metadata, dict) else {},
+                resources={
+                    "kernels": list(kernels) if isinstance(kernels, list) else [],
+                    "selected_correlators": selected_correlators,
+                },
+                authored_params=authored_params,
             )
-            roles = set(job.get("inputs", {}).keys()) if isinstance(job.get("inputs"), dict) else set()
-            def add_gap(parameter: str, path: str, message: str, suggested_fix: str) -> None:
-                gaps.append({"stage": stage, "job_id": job_id, "parameter": parameter, "path": path, "message": message, "suggested_fix": suggested_fix, "question_id": f"stage_params.{stage}.{job_id}"})
-            if stage == "renormalization":
-                scheme = params.get("scheme")
-                strategy = params.get("strategy")
-                if scheme not in {"ratio", "hybrid", "msbar"}:
-                    add_gap(
-                        "scheme",
-                        f"stages.{stage}.defaults.scheme",
-                        "renormalization requires scheme ratio, hybrid, or msbar.",
-                        'Choose "ratio", "hybrid", or "msbar".',
-                    )
-                if strategy == "ratio":
-                    add_gap(
-                        "strategy",
-                        f"stages.{stage}.defaults.strategy",
-                        "renormalization strategy 'ratio' is no longer supported.",
-                        'Use strategy "external_denominator".',
-                    )
-                elif strategy == "external_denominator":
-                    if scheme == "msbar":
-                        add_gap(
-                            "strategy",
-                            f"stages.{stage}.defaults.strategy",
-                            "strategy external_denominator does not implement scheme msbar.",
-                            'Use strategy "self_renormalization" or choose another scheme.',
-                        )
-                    if roles != {"target", "denominator"}:
-                        add_gap(
-                            "inputs",
-                            f"stages.{stage}.jobs[{index}].inputs",
-                            f"{scheme}+external_denominator requires target and denominator input roles.",
-                            'Example: {"target": "ca_pz", "denominator": "ca_p0"}.',
-                        )
-                    if scheme == "hybrid" and "zs_fm" not in params:
-                        add_gap(
-                            "zs_fm",
-                            f"stages.{stage}.defaults.zs_fm",
-                            "hybrid scheme requires flat parameter zs_fm.",
-                            'Example: {"zs_fm": 0.2}.',
-                        )
-                elif strategy == "self_renormalization":
-                    scheme_parameters = params.get("scheme_parameters", {})
-                    if not isinstance(scheme_parameters, dict):
-                        scheme_parameters = {}
-                    if "LambdaQCD_gev" not in scheme_parameters:
-                        add_gap(
-                            "LambdaQCD_gev",
-                            f"stages.{stage}.jobs[{index}].params.scheme_parameters.LambdaQCD_gev",
-                            "self_renormalization requires an explicit LambdaQCD_gev value.",
-                            'Example: {"scheme_parameters": {"LambdaQCD_gev": 0.1}}.',
-                        )
-                    if roles == {"reference"}:
-                        if "d" not in scheme_parameters:
-                            add_gap(
-                                "d",
-                                f"stages.{stage}.jobs[{index}].params.scheme_parameters.d",
-                                "self_renormalization fit jobs require fixed parameter d.",
-                                'Example: {"scheme_parameters": {"d": -0.08183}}.',
-                            )
-                    else:
-                        expected = (
-                            {"target", "denominator", "zR"}
-                            if scheme == "hybrid"
-                            else {"target", "zR"}
-                        )
-                        if roles != expected:
-                            add_gap(
-                                "inputs",
-                                f"stages.{stage}.jobs[{index}].inputs",
-                                f"self_renormalization scheme {scheme!r} requires apply roles {sorted(expected)}.",
-                                'Use {"reference": "bare_ref"} for a fit job or the scheme-specific apply roles.',
-                            )
-                    if scheme == "hybrid" and roles != {"reference"} and "zs_fm" not in params:
-                        add_gap(
-                            "zs_fm",
-                            f"stages.{stage}.defaults.zs_fm",
-                            "hybrid scheme requires flat parameter zs_fm.",
-                            'Example: {"zs_fm": 0.2}.',
-                        )
-                    if not renorm_kernel_ids:
-                        add_gap(
-                            "kernel_id",
-                            "inputs.kernels",
-                            "self_renormalization requires a declared renormalization kernel.",
-                            'Declare ZMSbar_pdf or ZMSbar_da with stage "renormalization".',
-                        )
-                    elif len(renorm_kernel_ids) > 1 and "kernel_id" not in params:
-                        add_gap(
-                            "kernel_id",
-                            f"stages.{stage}.defaults.kernel_id",
-                            f"self_renormalization job {job_id!r} must select a renormalization kernel.",
-                            "Use one declared inputs.kernels[].kernel_id.",
-                        )
-                elif strategy not in {"external_denominator", "self_renormalization"}:
-                    add_gap(
-                        "strategy",
-                        f"stages.{stage}.defaults.strategy",
-                        "renormalization requires strategy external_denominator or self_renormalization.",
-                        'Choose "external_denominator" or "self_renormalization".',
-                    )
-            elif stage == "fourier_transform":
-                if roles != {"input"}:
-                    add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "fourier_transform requires exactly one input role named input.", 'Example: {"input": "rn_pz"}.')
-                if "y_grid" not in params:
-                    add_gap("y_grid", f"stages.{stage}.defaults.y_grid", "fourier_transform requires y_grid.", 'Example: {"start": -1.0, "stop": 1.0, "num": 101}.')
-                if not derived_momentum_available and "momentum_gev" not in params:
-                    add_gap("momentum_gev", f"stages.{stage}.defaults.momentum_gev", f"fourier_transform job {job_id!r} has no derivable momentum.", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact.")
-                target = str(metadata.get("target_observable", "pdf")).lower()
-                parton = str(metadata.get("parton", "quark")).lower()
-                hadron = str(params.get("hadron", upstream_metadata.get("hadron", ""))).lower()
-                hadron = "nucleon" if hadron == "proton" else hadron
-                polarization = str(params.get("polarization", upstream_metadata.get("polarization", ""))).lower()
-                if target in {"pdf", "gpd"} and not polarization:
-                    add_gap(
-                        "polarization",
-                        f"stages.{stage}.defaults.polarization",
-                        f"fourier_transform job {job_id!r} has no upstream 3pt polarization metadata.",
-                        "Declare polarization explicitly as unpolarized, helicity, or transversity.",
-                    )
-                if (
-                    target in {"pdf", "gpd"}
-                    and "observable" not in params
-                    and (target, parton, hadron) not in INFERRED_OBSERVABLES
-                ):
-                    add_gap(
-                        "observable",
-                        f"stages.{stage}.defaults.observable",
-                        f"fourier_transform job {job_id!r} has no derivable observable.",
-                        "Declare observable explicitly, or provide upstream hadron metadata supported by the Fourier backend.",
-                    )
-            elif stage == "perturbative_matching":
-                if roles != {"quasi"}:
-                    add_gap("inputs", f"stages.{stage}.jobs[{index}].inputs", "perturbative_matching requires exactly one input role named quasi.", 'Example: {"quasi": "ft_pz"}.')
-                if params.get("scheme") not in {"ratio", "hybrid", "msbar"}:
-                    add_gap(
-                        "scheme",
-                        f"stages.{stage}.defaults.scheme",
-                        "perturbative_matching requires scheme ratio, hybrid, or msbar.",
-                        'Choose the scheme token encoded in kernel_id.',
-                    )
-                if "kernel_id" not in params and len(matching_kernel_ids) != 1:
-                    add_gap("kernel_id", f"stages.{stage}.defaults.kernel_id", f"perturbative_matching job {job_id!r} is missing kernel_id.", "Use one declared inputs.kernels[].kernel_id.")
-                kernel_id = str(params.get("kernel_id") or (matching_kernel_ids[0] if len(matching_kernel_ids) == 1 else ""))
-                if "hybrid" in kernel_id.split("_") and "zs_fm" not in params:
-                    add_gap("zs_fm", f"stages.{stage}.defaults.zs_fm", "hybrid matching requires flat parameter zs_fm.", 'Example: {"zs_fm": 0.2}.')
-                if not derived_momentum_available and "momentum_gev" not in params:
-                    add_gap("momentum_gev", f"stages.{stage}.defaults.momentum_gev", f"perturbative_matching job {job_id!r} has no derivable momentum.", "Declare momentum, volume, and lattice_spacing_fm on the upstream correlator or partial-run artifact.")
-            elif stage == "extrapolation":
-                if "lightcone" not in roles:
-                    add_gap("inputs.lightcone", f"stages.{stage}.jobs[{index}].inputs", "extrapolation requires a lightcone input role.", 'Example: {"lightcone": ["mt_pz1", "mt_pz2"]}.')
+            for diagnostic in contract.evaluate(context):
+                parameter = diagnostic.parameters[0] if diagnostic.parameters else "params"
+                display_parameter = (
+                    "momentum_gev"
+                    if parameter in {"derived.momentum_gev", "momentum_gev"}
+                    else "inputs"
+                    if parameter == "inputs"
+                    else parameter
+                )
+                if parameter == "inputs.kernels":
+                    path = "inputs.kernels"
+                elif parameter == "correlator_ids":
+                    path = f"stages.{stage}.jobs[{index}].correlator_ids"
+                elif parameter.startswith("inputs"):
+                    path = f"stages.{stage}.jobs[{index}].inputs"
+                elif parameter.startswith("derived.") or parameter == "momentum_gev":
+                    path = f"stages.{stage}.jobs[{index}].inputs"
+                elif parameter in contract.job_parameters or "." in parameter:
+                    path = f"stages.{stage}.jobs[{index}].params.{parameter}"
+                else:
+                    path = f"stages.{stage}.defaults.{parameter}"
+                gaps.append(
+                    {
+                        "stage": stage,
+                        "job_id": job_id,
+                        "parameter": display_parameter,
+                        "path": path,
+                        "code": diagnostic.code,
+                        "message": diagnostic.message,
+                        "physics": diagnostic.physics,
+                        "suggested_fix": diagnostic.suggested_fix,
+                        "question_id": f"stage_params.{stage}.{job_id}",
+                    }
+                )
     return gaps
 
 
