@@ -9,11 +9,24 @@ from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.stages.matching.functions import (
     KERNEL_REGISTRY,
     apply_matching,
-    build_matching_kernel,
-    load_quasi_pdf,
+    build_matching_kernel as _build_matching_kernel,
+    load_quasi_pdf as _load_quasi_pdf,
     plot_matched_pdf,
     resolve_kernel_id,
 )
+
+
+def load_quasi_pdf(store, **kwargs):
+    if "quasi_y_ls" not in kwargs:
+        source = store.get("quasi")
+        kwargs["quasi_y_ls"] = list(source.coords["x"])
+    return _load_quasi_pdf(store, **kwargs)
+
+
+def build_matching_kernel(store, **kwargs):
+    kwargs.setdefault("mu", 2.0)
+    kwargs.setdefault("lc_x_ls", np.asarray(store["quasi_y_ls"], dtype=float).tolist())
+    return _build_matching_kernel(store, **kwargs)
 from lamet_agent.stages.matching.validation import matching_grid_warnings
 
 
@@ -38,18 +51,15 @@ def test_kernel_registry_ids_match_kernels_module_function_names() -> None:
     assert all(kernel_id == builder.__name__ for kernel_id, builder in KERNEL_REGISTRY.items())
 
 
-def test_omitted_grids_keep_the_fourier_grid() -> None:
+def test_matching_grids_are_required() -> None:
     native = np.linspace(-2.0, 2.0, 100)
     store = {"quasi": _quasi_on(native)}
 
-    load_quasi_pdf(store, component="re")
-
-    assert np.allclose(store["quasi_y_ls"], native)
-    build_matching_kernel(store, kernel_id="CG_gt_quark_PDF_ratio_NLO", momentum_gev=1.5)
-    apply_matching(store)
-    # Rows and columns both on the Fourier grid, exactly as before the grids opened up.
-    assert store["kernel_matrix"].shape == (100, 100)
-    assert np.allclose(store["lc_x_ls"], native)
+    with pytest.raises(TypeError, match="quasi_y_ls"):
+        _load_quasi_pdf(store, component="re")
+    store["quasi_y_ls"] = native
+    with pytest.raises(TypeError, match="mu"):
+        _build_matching_kernel(store, kernel_id="CG_gt_quark_PDF_ratio_NLO", momentum_gev=1.5)
 
 
 def test_quasi_y_ls_restating_the_fourier_grid_is_lossless() -> None:
@@ -258,6 +268,7 @@ def _matching_grid_payload(
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["fourier_transform", "perturbative_matching"],
         },
@@ -290,7 +301,7 @@ def test_matching_grid_warnings_for_denser_lc_grid() -> None:
     manifest = AnalysisManifest.model_validate(
         _matching_grid_payload(
             lc_x_ls={"start": -1.0, "stop": 2.0, "num": 300},
-            quasi_y_ls=None,
+            quasi_y_ls={"start": -2.0, "stop": 2.0, "num": 100},
             y_grid={"start": -2.0, "stop": 2.0, "num": 100},
         )
     )
@@ -364,6 +375,7 @@ def test_matching_consumes_in_memory_fourier_output_and_writes_primary_netcdf(tm
     store = {"quasi": data}
     loaded = load_quasi_pdf(store, component="re")
     store["kernel_matrix"] = np.eye(2)
+    store["lc_x_ls"] = [-0.5, 0.5]
 
     result = apply_matching(store, save_path=str(tmp_path / "mt_p5"))
 

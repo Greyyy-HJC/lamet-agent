@@ -149,14 +149,14 @@ def run_extrapolation(
     store: dict[str, Any],
     *,
     lightcone: str = "lightcone",
-    allow_order_a: list[int] | None = None,
-    allow_order_1overp: list[int] | None = None,
-    allow_order_ap: list[int] | None = None,
-    fitting_param_xdep: list[bool] | None = None,
+    allow_order_a: list[int],
+    allow_order_1overp: list[int],
+    allow_order_ap: list[int],
+    fitting_param_xdep: list[bool],
     pdep_gev: list[float] | None = None,
-    sample_error_mode: str = "covariance",
-    posterior_prior_error_scale: float = 3.0,
-    workers: int = 1,
+    sample_error_mode: str,
+    posterior_prior_error_scale: float,
+    workers: int,
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     out: str = "extrapolated_distribution",
@@ -205,10 +205,10 @@ def run_extrapolation(
     )
     mode = "IMF+Continuum Extrapolation" if use_a and use_p else "IMF Extrapolation" if use_p else "Continuum Extrapolation"
 
-    allow_order_a = [2] if allow_order_a is None else [int(value) for value in allow_order_a]
-    allow_order_1overp = [2] if allow_order_1overp is None else [int(value) for value in allow_order_1overp]
-    allow_order_ap = [] if allow_order_ap is None else [int(value) for value in allow_order_ap]
-    fitting_param_xdep = [False, True, False] if fitting_param_xdep is None else [bool(value) for value in fitting_param_xdep]
+    allow_order_a = [int(value) for value in allow_order_a]
+    allow_order_1overp = [int(value) for value in allow_order_1overp]
+    allow_order_ap = [int(value) for value in allow_order_ap]
+    fitting_param_xdep = [bool(value) for value in fitting_param_xdep]
     a_xdep = bool(fitting_param_xdep[0]) if fitting_param_xdep else True
     p_xdep = bool(fitting_param_xdep[1]) if len(fitting_param_xdep) > 1 else True
     include_ap = bool(fitting_param_xdep[2]) if len(fitting_param_xdep) > 2 else False

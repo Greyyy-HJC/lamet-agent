@@ -130,6 +130,13 @@ def _standard_dataset_paths(correlator: dict[str, Any]) -> list[str]:
     return []
 
 
+def _conversion_attrs(correlator: dict[str, Any]) -> dict[str, Any]:
+    attrs: dict[str, Any] = {"standard_correlator_hdf5_version": 2}
+    if correlator.get("bz_direction") is not None:
+        attrs["bz_direction"] = correlator["bz_direction"]
+    return attrs
+
+
 def _dataset_names(path: Path) -> dict[str, list[int]]:
     out: dict[str, list[int]] = {}
     suffix = path.suffix.lower()
@@ -235,7 +242,7 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
                         source_file=str(two_point_path),
                         output_file=str(_resolve_manifest_path(manifest_path, payload, item.get("data_path")) or data_dir / f"{item.get('correlator_id')}.h5"),
                         datasets=[],
-                        attrs={"standard_correlator_hdf5_version": 2, "bz_direction": item.get("bz_direction", "z")},
+                        attrs=_conversion_attrs(item),
                         ambiguous=True,
                         reason="Planned 2pt-current composition requires exactly one dataset in the 2pt file and one dataset in the current file.",
                         operation="compose_2pt_current",
@@ -258,7 +265,7 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
                             "target": targets[0],
                         }
                     ],
-                    attrs={"standard_correlator_hdf5_version": 2, "bz_direction": item.get("bz_direction", "z")},
+                    attrs=_conversion_attrs(item),
                     operation="compose_2pt_current",
                 )
             )
@@ -358,11 +365,7 @@ def plan_correlator_h5_conversions(manifest_path: Path, payload: dict[str, Any])
                 output_file=str(output),
                 script_file=str(script),
                 datasets=datasets,
-                attrs=(
-                    {"standard_correlator_hdf5_version": 2, "bz_direction": item["bz_direction"]}
-                    if item.get("correlator_type") == "3pt"
-                    else {"standard_correlator_hdf5_version": 2}
-                ),
+                attrs=_conversion_attrs(item),
                 ambiguous=ambiguous,
                 reason=reason,
             )

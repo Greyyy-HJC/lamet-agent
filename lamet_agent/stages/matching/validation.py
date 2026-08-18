@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from lamet_agent.manifest import AnalysisManifest, StageJob, derive_job_kinematics
-from lamet_agent.manifest_params import ConstraintSpec, ParameterSpec, RuleViolation, StageParamContract, StageValidationContext, merge_stage_params
+from lamet_agent.manifest_params import ConstraintSpec, ParameterSpec, RuleViolation, StageParamContract, StageValidationContext, merge_stage_params, resolve_stage_params
 
 
 def _parameter(summary: str, physics: str, **kwargs: Any) -> ParameterSpec:
@@ -180,25 +180,27 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "re": "Match the real quasi-distribution channel.",
                 "im": "Match the imaginary quasi-distribution channel.",
             },
-            default="re",
+            required=True,
         ),
         "endpoint_cut": _parameter("Numerical endpoint exclusion.", "The cut regulates finite-grid evaluation near singular convolution endpoints.", expected=float),
         "kernel_id": _parameter("Exact declared matching-kernel identifier.", "The identifier fixes gauge treatment, operator, observable, scheme, and perturbative order; it is inferred when exactly one matching kernel is declared.", expected=str),
         "lc_x_ls": _parameter(
             "Output light-cone momentum-fraction grid.",
-            "This grid supplies the kernel rows and may use a different domain or include zero, but it must not be denser than the quasi grid: otherwise some rows miss the plus-prescription subtraction and acquire oscillatory discretization artifacts. It defaults to the quasi grid. Use an explicit numeric list, or an object with start, stop, and exactly one of num or positive step.",
+            "This explicit grid supplies the kernel rows and may use a different domain or include zero, but it must not be denser than the quasi grid: otherwise some rows miss the plus-prescription subtraction and acquire oscillatory discretization artifacts. Use a numeric list, or an object with start, stop, and exactly one of num or positive step.",
             expected=(list, dict),
             items=float,
+            required=True,
             schema=_GRID_FIELDS,
             validator=_grid_message("lc_x_ls"),
         ),
-        "mu": _parameter("Perturbative matching scale.", "The truncated kernel retains residual dependence on this factorization scale.", expected=float, unit="GeV"),
+        "mu": _parameter("Perturbative matching scale.", "The truncated kernel retains residual dependence on this factorization scale.", expected=float, unit="GeV", required=True),
         "plot": _parameter("Matching plot settings.", "These settings affect presentation only.", expected=dict, schema=_PLOT_FIELDS),
         "quasi_y_ls": _parameter(
             "Input quasi-distribution integration-grid override.",
-            "This grid supplies the kernel columns and its 1/y integration measure. It must be uniform, exclude zero, and stay within the Fourier grid; setting it interpolates every quasi sample, while omission preserves the upstream grid. Use an explicit numeric list, or an object with start, stop, and exactly one of num or positive step.",
+            "This explicit grid supplies the kernel columns and its 1/y integration measure. It must be uniform, exclude zero, and stay within the Fourier grid; setting it interpolates every quasi sample. Use a numeric list, or an object with start, stop, and exactly one of num or positive step.",
             expected=(list, dict),
             items=float,
+            required=True,
             schema=_GRID_FIELDS,
             validator=_grid_message("quasi_y_ls"),
         ),
@@ -206,7 +208,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Symmetric factorization-scale variation ratio used to generate systematics branches.",
             "When r differs from 1, manifest expansion keeps the central scale mu and clones matching jobs at mu/r and mu*r so residual perturbative-scale dependence can enter the systematic budget.",
             expected=float,
-            default="1.0",
+            default=1.0,
         ),
         "scheme": _parameter(
             "Renormalization scheme encoded by kernel_id.",
@@ -249,7 +251,8 @@ STAGE_PARAM_CONTRACT = StageParamContract(
 
 def effective_matching_params(manifest: AnalysisManifest, job: StageJob) -> dict[str, Any]:
     """Merge authored params and infer kernel_id when exactly one matching kernel exists."""
-    params = merge_stage_params(manifest.stages["perturbative_matching"].defaults, job.params)
+    stage = manifest.stages["perturbative_matching"]
+    params = resolve_stage_params("perturbative_matching", stage.defaults, job.params)
     if "kernel_id" not in params:
         kernels = [item for item in manifest.kernels if item.stage == "perturbative_matching"]
         if len(kernels) == 1:
@@ -287,17 +290,10 @@ def matching_grid_warnings(manifest: AnalysisManifest) -> list[str]:
     matching = manifest.stages.get("perturbative_matching")
     if matching is None:
         return []
-    fourier = manifest.stages.get("fourier_transform")
-    fourier_jobs = {job.id: job for job in (fourier.jobs if fourier is not None else [])}
     warnings: list[str] = []
     for job in matching.jobs:
-        params = merge_stage_params(matching.defaults, job.params)
+        params = resolve_stage_params("perturbative_matching", matching.defaults, job.params)
         quasi_spec = params.get("quasi_y_ls")
-        if quasi_spec is None:
-            quasi_ref = job.inputs.get("quasi")
-            if isinstance(quasi_ref, str) and quasi_ref in fourier_jobs and fourier is not None:
-                ft_params = merge_stage_params(fourier.defaults, fourier_jobs[quasi_ref].params)
-                quasi_spec = ft_params.get("y_grid")
         if quasi_spec is None or params.get("lc_x_ls") is None:
             continue
         try:

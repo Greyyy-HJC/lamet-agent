@@ -71,11 +71,11 @@ from lamet_agent.stages.correlator.functions import (
     _split_fit_log_paths,
     _vary_prior_width,
     bayesian_average,
-    fit_bare_matrix_grid,
+    fit_bare_matrix_grid as _fit_bare_matrix_grid,
     fit_matrix_element,
     fit_two_point,
     fh_prior,
-    inspect_correlator_scale,
+    inspect_correlator_scale as _inspect_correlator_scale,
     pt2_prior,
     pt2_re_fcn,
     qda_fcn,
@@ -94,11 +94,60 @@ from lamet_agent.stages.correlator.functions import (
     _qda_fit_z_list,
     _summarise_cross_z_feasibility,
     _window_candidate_key,
-    tune_bare_matrix,
-    tune_ground_state,
+    tune_bare_matrix as _tune_bare_matrix,
+    tune_ground_state as _tune_ground_state,
     write_correlator_sample_quality_artifacts,
     _append_finite_sample_quality,
 )
+
+
+_EXPLICIT_CORRELATOR_PARAMS = {
+    "source_operator": "g5",
+    "sink_operator": "g5",
+    "momentum": "PX0PY0PZ0",
+    "fitting_form": "Breit",
+    "current_operator": "gT_nonlocal",
+    "polarization": "unpolarized",
+    "bz_direction": "Z",
+    "bT": 0,
+    "fit_scope": "3pt_ratio",
+    "fit_strategy": "joint",
+    "nstate": 2,
+    "svdcut": 1e-12,
+    "correlator_rescale": 1.0,
+    "resample_mode": "jk",
+    "sample_error_mode": "covariance",
+    "n_boot": None,
+    "seed": 1984,
+    "bin_size": 1,
+    "part": "both",
+    "q_min": 0.05,
+    "model_average": False,
+    "posterior_prior_error_scale": 3.0,
+    "workers": 1,
+}
+
+
+def _call_with_explicit_params(function, store, **kwargs):
+    accepted = inspect.signature(function).parameters
+    explicit = {key: value for key, value in _EXPLICIT_CORRELATOR_PARAMS.items() if key in accepted}
+    return function(store, **{**explicit, **kwargs})
+
+
+def inspect_correlator_scale(store, **kwargs):
+    return _call_with_explicit_params(_inspect_correlator_scale, store, **kwargs)
+
+
+def tune_ground_state(store, **kwargs):
+    return _call_with_explicit_params(_tune_ground_state, store, model_average=True, **kwargs)
+
+
+def tune_bare_matrix(store, **kwargs):
+    return _call_with_explicit_params(_tune_bare_matrix, store, **kwargs)
+
+
+def fit_bare_matrix_grid(store, **kwargs):
+    return _call_with_explicit_params(_fit_bare_matrix_grid, store, **kwargs)
 
 
 # --- toy data builders -------------------------------------------------------
@@ -200,7 +249,7 @@ def test_stage_tools_expose_the_four_agentic_tools() -> None:
 
 
 def test_terminal_tool_uses_bz_direction_and_removes_variant() -> None:
-    parameters = inspect.signature(fit_bare_matrix_grid).parameters
+    parameters = inspect.signature(_fit_bare_matrix_grid).parameters
     assert "bz_direction" in parameters
     assert "reference_z" not in parameters
     assert "variant" not in parameters
@@ -1860,8 +1909,8 @@ def test_log_nonlinear_fit_quality_writes_good_and_bad(tmp_path) -> None:
 
     log_path = tmp_path / "quality.log"
     logger = setup_logger(log_path, logger_name="quality_test_logger")
-    assert log_nonlinear_fit_quality(Fit(0.2), kind="toy", label="good", logger=logger) == "Good"
-    assert log_nonlinear_fit_quality(Fit(0.01), kind="toy", label="bad", logger=logger) == "Bad"
+    assert log_nonlinear_fit_quality(Fit(0.2), kind="toy", label="good", logger=logger, q_min=0.05) == "Good"
+    assert log_nonlinear_fit_quality(Fit(0.01), kind="toy", label="bad", logger=logger, q_min=0.05) == "Bad"
     for handler in logger.handlers:
         handler.flush()
     log_text = log_path.read_text()

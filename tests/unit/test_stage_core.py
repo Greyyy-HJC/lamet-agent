@@ -12,7 +12,7 @@ def _manifest() -> AnalysisManifest:
     return AnalysisManifest.model_validate({
         "metadata": {
             "run_id": "demo", "root_directory": ".", "target_observable": "pdf",
-            "parton": "quark", "resample_mode": "jk", "random_seed": 1984, "stages": ["correlator_analysis"],
+            "parton": "quark", "resample_mode": "jk", "sample_error_mode": "covariance", "random_seed": 1984, "stages": ["correlator_analysis"],
         },
         "inputs": {"correlators": [], "artifacts": [], "kernels": []},
         "stages": {"correlator_analysis": {"defaults": {"nstate": [2]}, "jobs": [{"id": "ca"}]}},

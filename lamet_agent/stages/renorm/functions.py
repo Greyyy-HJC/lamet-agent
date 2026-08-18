@@ -452,17 +452,17 @@ def load_bare_matrix_element_grid(
 def apply_ratio_scheme_renormalization(
     store: dict[str, Any],
     *,
-    target: str = "target_bare_matrix_element",
-    denominator: str = "denominator_bare_matrix_element",
-    scheme: str = "ratio",
-    strategy: str = "external_denominator",
-    scheme_parameters: dict[str, float] | None = None,
+    target: str,
+    denominator: str,
+    scheme: str,
+    strategy: str,
+    scheme_parameters: dict[str, float],
     out: str = "matrix_element_data",
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     job_id: str | None = None,
     ensemble: str | None = None,
-    sample_error_mode: str = "covariance",
+    sample_error_mode: str,
 ) -> dict[str, Any]:
     """Apply the external_denominator strategy in the ratio or hybrid scheme."""
     if strategy != "external_denominator":
@@ -505,10 +505,10 @@ def apply_ratio_scheme_renormalization(
     renorm_values = target_values / denom_values
     hybrid_metadata: dict[str, float] = {}
     if scheme == "hybrid":
-        params = scheme_parameters or {}
+        params = scheme_parameters
         zs_fm = float(params["zs_fm"])
-        m0_gev = float(params.get("m0_gev", 0.0))
-        delta_m_gev = float(params.get("delta_m_gev", 0.0))
+        m0_gev = float(params["m0_gev"])
+        delta_m_gev = float(params["delta_m_gev"])
         zs_lattice = zs_fm / lattice_spacing_fm
         zs_idx = int(np.argmin(np.abs(np.abs(z_denom) - zs_lattice)))
         z_abs_fm = np.abs(z_output_fm)
@@ -580,7 +580,7 @@ def plot_renormalized_matrix_element(
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     title: str | None = None,
-    sample_error_mode: str = "covariance",
+    sample_error_mode: str,
 ) -> dict[str, Any]:
     """Plot sample-averaged renormalized matrix elements to PDF."""
     matrix = _require_matrix_data(store, data)
@@ -693,10 +693,10 @@ def fit_self_renormalization_factor(
     scheme: str = "ratio",
     strategy: str = "self_renormalization",
     kernel_id: str | None = None,
-    mu: float = 2.0,
+    mu: float,
     LambdaQCD_gev: float,
     d: float | None = None,
-    svdcut: float = 1e-12,
+    svdcut: float,
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -995,18 +995,18 @@ def apply_self_renormalization(
     strategy: str = "self_renormalization",
     zs_fm: float | None = None,
     kernel_id: str | None = None,
-    mu: float = 2.0,
+    mu: float,
     LambdaQCD_gev: float,
     d: float | None = None,
     m0_gev: float | None = None,
-    z_coverage_policy: Literal["strict", "intersection", "extrapolate"] = "extrapolate",
+    z_coverage_policy: Literal["strict", "intersection", "extrapolate"],
     out: str = "matrix_element_data",
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     job_id: str | None = None,
     ensemble: str | None = None,
     metadata: dict[str, Any] | None = None,
-    sample_error_mode: str = "covariance",
+    sample_error_mode: str,
 ) -> dict[str, Any]:
     """Apply the self-renormalization strategy in ratio, hybrid, or MSbar scheme.
 
@@ -1361,11 +1361,11 @@ def plot_self_renormalization_diagnostics(
     include_discrete_effect: bool = False,
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
-    sample_error_mode: str = "covariance",
+    sample_error_mode: str,
     kernel_id: str | None = None,
-    mu: float | None = None,
+    mu: float,
     LambdaQCD_gev: float,
-    z_coverage_policy: Literal["strict", "intersection", "extrapolate"] = "extrapolate",
+    z_coverage_policy: Literal["strict", "intersection", "extrapolate"],
 ) -> dict[str, Any]:
     """Plot hybrid-self-renormalization diagnostics.
 
@@ -1389,7 +1389,7 @@ def plot_self_renormalization_diagnostics(
     )
     # Fit-check panels compare mR against ZMSbar_pdf.
     zms_fit_fn = kernels.ZMSbar_pdf
-    mu_val = float(mu if mu is not None else fit_data.get("mu", zR_data.attrs.get("mu", 2.0)))
+    mu_val = float(mu)
     lambdaqcd_gev = _resolve_lambdaqcd(LambdaQCD_gev)
     alpha_s_derived = float(kernels.alphas_nloop(mu_val))
     stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="self_renorm")

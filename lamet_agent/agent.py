@@ -26,7 +26,7 @@ from .core.tools import (
 )
 from .core.trace import AgentTrace
 from .manifest import AnalysisManifest, ArtifactInput, StageJob, resolve_manifest_artifact_metadata
-from .manifest_params import merge_stage_params
+from .manifest_params import resolve_stage_params
 
 # Partial runs reference external artifacts by id; hydrate them before the LLM loop.
 _STAGE_ARTIFACT_LOADERS: dict[str, dict[str, tuple[str, str]]] = {
@@ -130,7 +130,7 @@ def _run_job(
 
         effective_params = effective_matching_params(manifest, job)
     else:
-        effective_params = merge_stage_params(manifest.stages[stage].defaults, job.params)
+        effective_params = resolve_stage_params(stage, manifest.stages[stage].defaults, job.params)
 
     _hydrate_external_artifact_inputs(
         stage,
@@ -149,7 +149,7 @@ def _run_job(
     required_sequence = required_job_tool_sequence(stage, job, effective_params)
     required_index = 0
 
-    if stage == "renormalization" and effective_params.get("normalization", True):
+    if stage == "renormalization" and effective_params.get("normalization") is True:
         from lamet_agent.stages.renorm.functions import normalize_bare_matrix_element_at_z0
 
         for role, value in list(store.items()):

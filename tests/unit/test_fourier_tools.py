@@ -20,10 +20,50 @@ from lamet_agent.stages.fourier.functions import (
     plot_fourier_result,
     report_fourier_result,
     run_fourier_workflow,
-    run_fourier_transform,
+    run_fourier_transform as _run_fourier_transform,
     summarize_fourier_result,
     sum_ft_re_im,
 )
+
+
+_EXPLICIT_FOURIER_PARAMS = {
+    "scheme_scan": {
+        "zmin_values": [1.0],
+        "zmax_values": [2.0],
+        "z_ext_max": 3.0,
+        "smooth": "linear",
+        "model_average": False,
+        "max_schemes": 200,
+    },
+    "zmin_shift": 0,
+    "method": "GI",
+    "order": "NLA",
+    "im_flip_for_ft": False,
+    "symmetry_guarantee": True,
+    "Lambda0_gev": 0.0,
+    "posterior_prior_error_scale": 3.0,
+    "sample_error_mode": "covariance",
+    "part": "both",
+    "output_scale": 1.0,
+    "sector": "full",
+    "target_observable": "da",
+    "parton": "quark",
+    "psi1_flavor_class": "heavy",
+    "psi2_flavor_class": "heavy",
+    "workers": 1,
+}
+
+
+def run_fourier_transform(store, **kwargs):
+    explicit = {**_EXPLICIT_FOURIER_PARAMS, **kwargs}
+    observable = str(kwargs.get("observable") or "").lower()
+    if "target_observable" not in kwargs and observable:
+        explicit["target_observable"] = "gpd" if "gpd" in observable else "pdf" if "pdf" in observable else "da"
+    if "parton" not in kwargs and "gluon" in observable:
+        explicit["parton"] = "gluon"
+    scan = {**_EXPLICIT_FOURIER_PARAMS["scheme_scan"], **explicit["scheme_scan"]}
+    explicit["scheme_scan"] = scan
+    return _run_fourier_transform(store, **explicit)
 
 
 def test_fourier_result_preserves_source_ensemble_when_not_explicit() -> None:
@@ -131,16 +171,18 @@ def test_da_symmetry_projection_runs_before_range_selection(
     }
     captured: dict[str, np.ndarray] = {}
 
-    def capture_scan(**kwargs):
-        captured["values"] = kwargs["re_samples"] + 1j * kwargs["im_samples"]
+    def capture_scan(*args, **kwargs):
+        captured["values"] = args[1] + 1j * args[2]
         raise RuntimeError("captured projected matrix element")
 
-    monkeypatch.setattr(fourier_functions, "_auto_scheme_scan", capture_scan)
+    monkeypatch.setattr(fourier_functions, "fit_tail_quality_for_mean", capture_scan)
+    monkeypatch.setattr(fourier_functions, "_minimum_fit_points_for_parameters", lambda *args, **kwargs: 1)
     with pytest.raises(RuntimeError, match="captured projected matrix element"):
         run_fourier_transform(
             store,
             y_grid=[0.0],
             target_observable="da",
+            order="LA",
             sector="full",
             coord_unit=coord_unit,
             momentum_gev=momentum_gev,
@@ -170,11 +212,12 @@ def test_da_symmetry_projection_is_optional_and_da_only(
     }
     captured: dict[str, np.ndarray] = {}
 
-    def capture_scan(**kwargs):
-        captured["values"] = kwargs["re_samples"] + 1j * kwargs["im_samples"]
+    def capture_scan(*args, **kwargs):
+        captured["values"] = args[1] + 1j * args[2]
         raise RuntimeError("captured unchanged matrix element")
 
-    monkeypatch.setattr(fourier_functions, "_auto_scheme_scan", capture_scan)
+    monkeypatch.setattr(fourier_functions, "fit_tail_quality_for_mean", capture_scan)
+    monkeypatch.setattr(fourier_functions, "_minimum_fit_points_for_parameters", lambda *args, **kwargs: 1)
     with pytest.raises(RuntimeError, match="captured unchanged matrix element"):
         run_fourier_transform(
             store,
@@ -186,6 +229,7 @@ def test_da_symmetry_projection_is_optional_and_da_only(
             coord_unit="lambda",
             momentum_gev=2.0,
             symmetry_guarantee=symmetry_guarantee,
+            order="LA",
         )
 
     assert np.allclose(captured["values"], values)
@@ -548,6 +592,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         observable="nucleon_quark_quasi_pdf",
         polarization="unpolarized",
         part="re",
+        sector="valence",
         momentum_gev=2.0,
     )
     result_re = store["fourier_result"]
@@ -576,6 +621,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         observable="nucleon_quark_quasi_pdf",
         polarization="unpolarized",
         part="im",
+        sector="singlet",
         momentum_gev=2.0,
     )
     result_im = store["fourier_result"]
@@ -796,7 +842,7 @@ def test_fourier_gpd_sector_sea_reflects_full_distribution(tmp_path: Path, monke
     assert np.allclose(sea["final_ft_im_samples"], -full["final_ft_im_samples"])
 
 
-def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, monkeypatch) -> None:
+def test_fourier_sector_owns_output_scale(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
     _write_npz(data_path)
@@ -834,16 +880,16 @@ def test_fourier_output_scale_multiplies_fourier_space_outputs(tmp_path: Path, m
     )
     scaled = scaled_store["fourier_result"]
 
-    assert scaled["output_scale"] == 2.0
-    assert scaled_run["output_scale"] == 2.0
-    assert np.allclose(scaled["ft_re_samples"], 2.0 * base["ft_re_samples"])
-    assert np.allclose(scaled["final_ft_re_samples"], 2.0 * base["final_ft_re_samples"])
-    assert np.allclose(scaled["ft_re_mean"], 2.0 * base["ft_re_mean"])
-    assert np.allclose(scaled["ft_re_stat_sdev"], 2.0 * base["ft_re_stat_sdev"])
-    assert np.allclose(scaled["ft_re_sys_sdev"], 2.0 * base["ft_re_sys_sdev"])
+    assert scaled["output_scale"] == 1.0
+    assert scaled_run["output_scale"] == 1.0
+    assert np.allclose(scaled["ft_re_samples"], base["ft_re_samples"])
+    assert np.allclose(scaled["final_ft_re_samples"], base["final_ft_re_samples"])
+    assert np.allclose(scaled["ft_re_mean"], base["ft_re_mean"])
+    assert np.allclose(scaled["ft_re_stat_sdev"], base["ft_re_stat_sdev"])
+    assert np.allclose(scaled["ft_re_sys_sdev"], base["ft_re_sys_sdev"])
     artifact = EnsembleData.from_netcdf(scaled_run["artifact"])
-    assert np.allclose(np.real(artifact.values), 2.0 * np.real(base_artifact_values))
-    assert float(json.loads(artifact.attrs["output_scale"])) == 2.0
+    assert np.allclose(np.real(artifact.values), np.real(base_artifact_values))
+    assert float(json.loads(artifact.attrs["output_scale"])) == 1.0
 
 
 def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monkeypatch) -> None:
@@ -1400,104 +1446,14 @@ def test_fourier_model_average_scans_order_and_prior_width_per_sample(tmp_path: 
     assert "m" in labels
 
 
-def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    coord = np.linspace(0.0, 1.2, 13)
-    base_re = np.exp(-1.5 * coord)
-    base_im = 0.15 * np.exp(-1.2 * coord)
-    re_samples = np.vstack([base_re, 1.01 * base_re, 0.99 * base_re, 1.02 * base_re])
-    im_samples = np.vstack([base_im, 0.98 * base_im, 1.02 * base_im, 0.99 * base_im])
-    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
-    store = {}
-    load_renormalized_matrix_element_samples(store, path=str(data_path))
-
-    run = run_fourier_transform(
-        store,
-        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
-        method="GI",
-        order="LA",
-        observable="nucleon_quark_quasi_pdf",
-        polarization="transversity",
-        coord_unit="fm",
-        momentum_gev=2.0,
-    )
-
-    auto = run["auto_scheme_scan"]
-    assert auto["auto_generated"] is True
-    assert len(auto["zmin_values"]) == 4
-    assert len(auto["zmax_values"]) == 5
-    assert auto["zmin_values"][0] > 0.0
-    assert auto["zmax_values"] == pytest.approx([0.8, 0.9, 1.0, 1.1, 1.2])
-    assert auto["z_ext_max"] == pytest.approx(1.2 + 8.0 / (5.067731237 * 2.0))
-    assert auto["smooth"] == "linear"
-    assert "y_range" not in auto
-    assert auto["model_average"] is True
-    assert run["n_schemes"] == 1
-    assert len(store["fourier_result"]["candidate_scheme_labels"]) >= 4
+def test_fourier_requires_explicit_scheme_scan():
+    with pytest.raises(TypeError, match="scheme_scan"):
+        _run_fourier_transform({}, y_grid=[0.0], zmin_shift=0, method="GI", order="LA", im_flip_for_ft=False, Lambda0_gev=0.0, posterior_prior_error_scale=3.0, sample_error_mode="covariance", part="both", output_scale=1.0, sector="full", target_observable="da", parton="quark", symmetry_guarantee=True, psi1_flavor_class="heavy", psi2_flavor_class="heavy", workers=1)
 
 
-def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    coord = np.linspace(0.0, 1.2, 13)
-    base_re = np.exp(-1.5 * coord)
-    base_im = 0.15 * np.exp(-1.2 * coord)
-    re_samples = np.vstack([base_re, 1.01 * base_re, 0.99 * base_re, 1.02 * base_re])
-    im_samples = np.vstack([base_im, 0.98 * base_im, 1.02 * base_im, 0.99 * base_im])
-    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
-    store = {}
-    load_renormalized_matrix_element_samples(store, path=str(data_path))
-
-    run = run_fourier_transform(
-        store,
-        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
-        scheme_scan={"model_average": False},
-        method="GI",
-        order="LA",
-        observable="nucleon_quark_quasi_pdf",
-        polarization="transversity",
-        coord_unit="fm",
-        momentum_gev=2.0,
-    )
-
-    auto = run["auto_scheme_scan"]
-    assert "y_range" not in auto
-    assert auto["model_average"] is False
-    assert len(auto["zmin_values"]) == 4
-    assert len(auto["zmax_values"]) == 5
-    assert "z_ext_max" in auto
-    assert auto["smooth"] == "linear"
-
-
-def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    coord = np.linspace(0.0, 10.0, 11)
-    base_re = np.exp(-0.2 * coord)
-    base_im = 0.05 * np.exp(-0.2 * coord)
-    re_samples = np.vstack([base_re, 1.01 * base_re, 0.99 * base_re, 1.02 * base_re])
-    im_samples = np.vstack([base_im, 0.98 * base_im, 1.02 * base_im, 0.99 * base_im])
-    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
-    store = {}
-    load_renormalized_matrix_element_samples(store, path=str(data_path))
-
-    run = run_fourier_transform(
-        store,
-        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
-        method="GI",
-        order="LA",
-        observable="pion_quark_quasi_gpd",
-        polarization="unpolarized",
-        coord_unit="lattice",
-        momentum_gev=0.0,
-        final_momentum_gev=0.49,
-        lattice_spacing_fm=0.105,
-    )
-
-    auto = run["auto_scheme_scan"]
-    expected_ft_scale = 0.105 * 5.067731237 * ((0.0 + 0.49) / 2.0)
-    assert auto["z_ext_max"] == pytest.approx(10.0 + 8.0 / expected_ft_scale)
+def test_fourier_rejects_incomplete_scheme_scan():
+    with pytest.raises(ValueError, match="scheme_scan is incomplete"):
+        _run_fourier_transform({}, y_grid=[0.0], scheme_scan={"model_average": False}, zmin_shift=0, method="GI", order="LA", im_flip_for_ft=False, Lambda0_gev=0.0, posterior_prior_error_scale=3.0, sample_error_mode="covariance", part="both", output_scale=1.0, sector="full", target_observable="da", parton="quark", symmetry_guarantee=True, psi1_flavor_class="heavy", psi2_flavor_class="heavy", workers=1)
 
 
 def test_nonbreit_fourier_scale_uses_average_momentum() -> None:
@@ -1505,156 +1461,20 @@ def test_nonbreit_fourier_scale_uses_average_momentum() -> None:
     assert fourier_functions._ft_scale_momentum(2.0) == pytest.approx(2.0)
 
 
-def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    coord = np.arange(0.0, 25.0)
-    base_re = np.exp(-0.08 * coord) * np.cos(0.15 * coord)
-    base_im = 0.2 * np.exp(-0.08 * coord) * np.sin(0.12 * coord)
-    scales = np.array([0.98, 1.0, 1.02, 1.01])
-    re_samples = scales[:, None] * base_re[None, :]
-    im_samples = scales[:, None] * base_im[None, :]
-    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
-    store = {}
-    load_renormalized_matrix_element_samples(store, path=str(data_path), resample_mode="jk")
-
-    run = run_fourier_transform(
-        store,
-        y_grid={"start": -0.5, "stop": 0.5, "num": 6},
-        method="CG",
-        order="NLA",
-        observable="pion_quark_quasi_pdf",
-        polarization="unpolarized",
-        part="both",
-        momentum_gev=2.0,
-    )
-
-    assert run["n_schemes"] > 0
-    assert min(run["auto_scheme_scan"]["zmin_values"]) > 0.0
-
-
-def test_fourier_auto_scan_prefers_tail_region_for_lattice_units(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    coord = np.arange(0.0, 25.0)
-    base_re = np.exp(-0.08 * coord) * np.cos(0.15 * coord)
-    base_im = 0.2 * np.exp(-0.08 * coord) * np.sin(0.12 * coord)
-    scales = np.array([0.98, 1.0, 1.02, 1.01, 0.99])
-    re_samples = scales[:, None] * base_re[None, :]
-    im_samples = scales[:, None] * base_im[None, :]
-    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
-    store = {}
-    load_renormalized_matrix_element_samples(store, path=str(data_path), resample_mode="jk")
-
-    run = run_fourier_transform(
-        store,
-        y_grid={"start": -0.5, "stop": 0.5, "num": 6},
-        method="CG",
-        order="NLA",
-        observable="pion_quark_quasi_pdf",
-        polarization="unpolarized",
-        coord_unit="lattice",
-        momentum_gev=2.15,
-        lattice_spacing_fm=0.0574,
-        part="both",
-    )
-
-    auto = run["auto_scheme_scan"]
-    assert auto["zmax_values"] == [20.0, 21.0, 22.0, 23.0, 24.0]
-    assert auto["zmin_values"] == [9.0, 10.0, 11.0, 12.0]
-    assert min(auto["zmin_values"]) > 8.0
-
-
-def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    coord = np.linspace(0.0, 1.6, 17)
-    z_fit = coord * 5.067731237
-    tail_re = 0.8 * np.exp(-0.65 * z_fit)
-    tail_im = 0.18 * np.exp(-0.65 * z_fit)
-    contaminated_re = tail_re.copy()
-    contaminated_im = tail_im.copy()
-    short = coord < 0.6
-    contaminated_re[short] += 2.0 * (1.0 - coord[short] / 0.6) ** 2
-    contaminated_im[short] -= 1.0 * (1.0 - coord[short] / 0.6)
-    scales = np.array([0.98, 1.0, 1.02, 1.01])
-    re_samples = scales[:, None] * contaminated_re[None, :]
-    im_samples = scales[:, None] * contaminated_im[None, :]
-    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
-    store = {}
-    load_renormalized_matrix_element_samples(store, path=str(data_path))
-
-    run = run_fourier_transform(
-        store,
-        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
-        method="GI",
-        order="LA",
-        observable="nucleon_quark_quasi_pdf",
-        polarization="transversity",
-        coord_unit="fm",
-        momentum_gev=2.0,
-    )
-
-    auto = run["auto_scheme_scan"]
-    assert len(auto["zmin_values"]) == 4
-    assert min(auto["zmin_values"]) >= 0.5 - 1e-12
-
-
-def test_fourier_auto_zmax_keeps_nearby_zero_compatible_tail(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    coord = np.linspace(0.0, 1.2, 13)
-    base_re = np.exp(-1.5 * coord)
-    base_im = 0.15 * np.exp(-1.2 * coord)
-    base_re[7:] = 0.0
-    base_im[7:] = 0.0
-    scales = np.array([0.98, 1.0, 1.02, 1.01])
-    re_samples = scales[:, None] * base_re[None, :]
-    im_samples = scales[:, None] * base_im[None, :]
-    re_samples[:, 7:] += np.array([[-0.02], [0.02], [-0.015], [0.015]])
-    im_samples[:, 7:] += np.array([[0.015], [-0.015], [0.012], [-0.012]])
-    np.savez(data_path, coord=coord, re_samples=re_samples, im_samples=im_samples)
-    store = {}
-    load_renormalized_matrix_element_samples(store, path=str(data_path))
-
-    run = run_fourier_transform(
-        store,
-        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
-        method="GI",
-        order="LA",
-        observable="nucleon_quark_quasi_pdf",
-        polarization="transversity",
-        coord_unit="fm",
-        momentum_gev=2.0,
-    )
-
-    assert run["auto_scheme_scan"]["zmax_values"] == pytest.approx([0.7, 0.8, 0.9, 1.0, 1.1])
-
-
-def test_fourier_defaults_scheme_scoring_options_for_complete_scan(tmp_path: Path, monkeypatch) -> None:
+def test_fourier_requires_model_average_in_complete_scan(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
     _write_npz(data_path)
     store = {}
     load_renormalized_matrix_element_samples(store, path=str(data_path))
 
-    run_fourier_transform(
-        store,
-        y_grid={"start": -0.5, "stop": 0.5, "num": 5},
-        scheme_scan={
-            "zmin_values": [1.0],
-            "zmax_values": [4.0],
-            "z_ext_max": 5.0,
-            "smooth": "linear",
-        },
-        method="GI",
-        order="LA",
-        observable="nucleon_quark_quasi_pdf",
-        polarization="unpolarized",
-        momentum_gev=2.0,
-    )
-
-    assert len(store["fourier_result"]["fit_model_logGBF"]) == 1
+    with pytest.raises(ValueError, match="model_average"):
+        _run_fourier_transform(
+            store,
+            y_grid={"start": -0.5, "stop": 0.5, "num": 5},
+            scheme_scan={"zmin_values": [1.0], "zmax_values": [4.0], "z_ext_max": 5.0, "smooth": "linear"},
+            **{key: value for key, value in _EXPLICIT_FOURIER_PARAMS.items() if key != "scheme_scan"},
+        )
 
 
 def test_fourier_accepts_compact_y_grid_spec(tmp_path: Path, monkeypatch) -> None:

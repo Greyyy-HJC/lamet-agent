@@ -1053,7 +1053,7 @@ def _append_finite_sample_quality(
         chi2_values.append(chi2_dof)
 
 
-def select_best(records: list[dict[str, Any]], *, q_min: float = 0.05) -> tuple[int, bool]:
+def select_best(records: list[dict[str, Any]], *, q_min: float) -> tuple[int, bool]:
     """Pick max logGBF among Q-passing windows; otherwise the max-Q window."""
     if not records:
         raise ValueError("no fit windows to select from")
@@ -1184,7 +1184,7 @@ def _with_fit_size_metadata(
 def select_data_window(
     records: list[dict[str, Any]],
     *,
-    q_min: float = 0.05,
+    q_min: float,
     chi2_dof_tolerance: float = DATA_WINDOW_CHI2_DOF_TOLERANCE,
 ) -> tuple[int, bool]:
     """Select a data window without comparing raw logGBF across data sets."""
@@ -1904,7 +1904,7 @@ def _plot_sample0_ratio(
     momentum: str,
     z: int,
     fit_label: str,
-    fitting_form: str = "Breit",
+    fitting_form: str,
     part: str = "both",
 ) -> dict[str, str]:
     stem = log_dir / f"{ensemble}_{tag}_{fit_label}_{momentum}_z{z}_sample0"
@@ -2120,13 +2120,13 @@ def inspect_correlator_scale(
     *,
     pt2_path: str,
     pt2_windows: list[dict[str, int]] | None = None,
-    source_operator: str = "g5",
-    sink_operator: str = "g5",
-    momentum: str = "PX0PY0PZ0",
+    source_operator: str,
+    sink_operator: str,
+    momentum: str,
     temporal_extent: int | None = None,
     pt2_bT: int | None = None,
     pt2_bz: int | None = None,
-    nstate: int | list[int] = 2,
+    nstate: int | list[int],
     selectors: dict[str, Any] | None = None,
     out: str = "correlator_scale_inspection",
 ) -> dict[str, Any]:
@@ -2197,21 +2197,21 @@ def tune_ground_state(
     store: dict[str, Any],
     *,
     pt2_path: str,
-    source_operator: str = "g5",
-    sink_operator: str = "g5",
-    momentum: str = "PX0PY0PZ0",
+    source_operator: str,
+    sink_operator: str,
+    momentum: str,
     temporal_extent: int | None = None,
     pt2_windows: list[dict[str, int]] | None = None,
-    nstate: int = 2,
-    svdcut: float = 1e-2,
-    correlator_rescale: float = 1.0,
-    resample_mode: str = "jk",
-    sample_error_mode: str = "covariance",
-    n_boot: int = 200,
-    seed: int | None = 1984,
-    bin_size: int = 1,
+    nstate: int,
+    svdcut: float,
+    correlator_rescale: float,
+    resample_mode: str,
+    sample_error_mode: str,
+    n_boot: int | None,
+    seed: int,
+    bin_size: int | None,
     window_indices: list[int] | None = None,
-    model_average: bool = True,
+    model_average: bool,
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     out: str = "pt2_tune",
@@ -2456,18 +2456,18 @@ def tune_bare_matrix(
     momentum: str | None = None,
     initial_momentum: str | None = None,
     final_momentum: str | None = None,
-    fitting_form: str = "Breit",
+    fitting_form: str,
     tune_z_values: list[int] | None = None,
     z_values: list[int] | None = None,
-    source_operator: str = "g5",
-    sink_operator: str = "g5",
+    source_operator: str,
+    sink_operator: str,
     qda_source_operator: str | None = None,
     qda_sink_operator: str | None = None,
     qda_denominator_mode: str = "local",
     pt2_bT: int | None = None,
     pt2_bz: int | None = None,
-    current_operator: str = "gT_nonlocal",
-    bT: int = 0,
+    current_operator: str | None = None,
+    bT: int,
     temporal_extent: int | None = None,
     pt2_windows: list[dict[str, int]] | None = None,
     pt3_windows: list[dict[str, Any]] | None = None,
@@ -2479,15 +2479,15 @@ def tune_bare_matrix(
     fit_strategy: str | None = None,
     nstate: int | None = None,
     prior_width: float | list[float] | None = None,
-    svdcut: float = 1e-2,
-    correlator_rescale: float = 1.0,
-    resample_mode: str = "jk",
-    sample_error_mode: str = "covariance",
-    n_boot: int = 200,
-    seed: int | None = 1984,
-    bin_size: int = 1,
-    part: str = "both",
-    q_min: float = 0.05,
+    svdcut: float,
+    correlator_rescale: float,
+    resample_mode: str,
+    sample_error_mode: str,
+    n_boot: int | None,
+    seed: int,
+    bin_size: int | None,
+    part: str,
+    q_min: float,
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     out: str = "bare_tune",
@@ -2501,7 +2501,7 @@ def tune_bare_matrix(
     form = _normalise_fitting_form(fitting_form)
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
-    requested_scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["3pt_ratio"])
+    requested_scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else [])
     normalised_scopes = [_normalise_fit_scope(value)[0] for value in requested_scopes]
     if normalised_scopes == ["qda_ratio"]:
         return tune_qda_ratio(
@@ -2602,9 +2602,9 @@ def tune_bare_matrix(
         pt2_f_gv = samples_to_gvar(re_f_samples, mode=mode, sample_error_mode=sample_error_mode)
 
     # resolve the fit-model search first because automatic windows depend on its size
-    strategies = fit_strategies or ([fit_strategy] if fit_strategy is not None else ["joint"])
-    scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else ["3pt_ratio"])
-    states = nstate_values or ([nstate] if nstate is not None else [2])
+    strategies = fit_strategies or ([fit_strategy] if fit_strategy is not None else [])
+    scopes = fit_scope_values or ([fit_scope] if fit_scope is not None else [])
+    states = nstate_values or ([nstate] if nstate is not None else [])
     prior_widths = _normalise_prior_width(prior_width)
     pt2_window_specs, pt2_scan = _resolve_pt2_windows(
         pt2_windows,
@@ -3183,43 +3183,43 @@ def fit_bare_matrix_grid(
     momentum: str | None = None,
     initial_momentum: str | None = None,
     final_momentum: str | None = None,
-    fitting_form: str = "Breit",
+    fitting_form: str,
     hadron: str | None = None,
     gfix: str | None = None,
-    source_operator: str = "g5",
-    sink_operator: str = "g5",
+    source_operator: str,
+    sink_operator: str,
     qda_source_operator: str | None = None,
     qda_sink_operator: str | None = None,
     qda_denominator_mode: str = "local",
     pt2_bT: int | None = None,
     pt2_bz: int | None = None,
-    current_operator: str = "gT_nonlocal",
-    polarization: str = "unpolarized",
+    current_operator: str | None = None,
+    polarization: str | None = None,
     bz_direction: str,
-    bT: int = 0,
+    bT: int,
     pt2_window: dict[str, int] | None = None,
     pt3_window: dict[str, Any] | None = None,
     pt3_tau_cut: int | None = None,
     pt2_windows: list[dict[str, int]] | None = None,
     pt3_windows: list[dict[str, Any]] | None = None,
     pt3_tau_cuts: list[int] | None = None,
-    model_average: bool = False,
+    model_average: bool,
     tune_z: int | None = None,
-    fit_strategy: str = "joint",
-    fit_scope: str = "3pt_ratio",
-    nstate: int | list[int] = 2,
+    fit_strategy: str,
+    fit_scope: str,
+    nstate: int | list[int],
     nstate_values: list[int] | None = None,
     prior_width: float | list[float] | None = None,
-    resample_mode: str = "bs",
-    sample_error_mode: str = "covariance",
-    n_boot: int = 200,
-    seed: int | None = 1984,
-    bin_size: int = 1,
-    svdcut: float = 1e-2,
-    part: str = "both",
-    q_min: float = 0.05,
-    posterior_prior_error_scale: float = 3.0,
-    correlator_rescale: float = 1.0,
+    resample_mode: str,
+    sample_error_mode: str,
+    n_boot: int | None,
+    seed: int,
+    bin_size: int | None,
+    svdcut: float,
+    part: str,
+    q_min: float,
+    posterior_prior_error_scale: float,
+    correlator_rescale: float,
     job_id: str | None = None,
     volume: str | None = None,
     lattice_spacing_fm: float | None = None,
@@ -3232,7 +3232,7 @@ def fit_bare_matrix_grid(
     log_path: str | Path | None = None,
     artifacts_dir: str | Path | None = None,
     out: str = "bare_matrix_grid",
-    workers: int = 1,
+    workers: int,
 ) -> dict[str, Any]:
     """Apply one shared window to all samples and z, then export bare matrix elements.
 
@@ -4871,10 +4871,10 @@ def tune_qda_ratio(
     )
     del pt2_samples
     Lt = int(denominator.shape[1])
-    strategies = fit_strategies or ([fit_strategy] if fit_strategy else ["joint"])
+    strategies = fit_strategies or ([fit_strategy] if fit_strategy else [])
     states = [
         int(value)
-        for value in (nstate_values or ([nstate] if nstate is not None else [2]))
+        for value in (nstate_values or ([nstate] if nstate is not None else []))
     ]
     windows, pt2_scan = _resolve_pt2_windows(
         pt2_windows,

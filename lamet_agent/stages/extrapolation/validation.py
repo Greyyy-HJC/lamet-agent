@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
-from lamet_agent.manifest_params import ConstraintSpec, ParameterSpec, RuleViolation, StageParamContract, StageValidationContext, merge_stage_params
+from lamet_agent.manifest_params import ConstraintSpec, ParameterSpec, RuleViolation, StageParamContract, StageValidationContext, merge_stage_params, resolve_stage_params
 
 
 def _parameter(summary: str, physics: str, **kwargs: object) -> ParameterSpec:
@@ -42,6 +42,22 @@ def _check_inputs(context: StageValidationContext) -> RuleViolation | None:
             ("inputs.lightcone",),
         )
     return None
+
+
+def _check_analysis_parameters(context: StageValidationContext) -> list[RuleViolation] | None:
+    if context.params.get("operation") == "systematics_budget":
+        return None
+    required = ("allow_order_a", "allow_order_1overp", "allow_order_ap", "fitting_param_xdep", "posterior_prior_error_scale")
+    issues: list[RuleViolation] = []
+    for parameter in required:
+        if parameter not in context.params:
+            issues.append(RuleViolation(
+                f"Extrapolation analysis jobs require {parameter}.",
+                context.parameter_path(parameter),
+                f"The central-fit analysis choice {parameter!r} is absent from the effective configuration.",
+                (parameter,),
+            ))
+    return issues or None
 
 
 STAGE_PARAM_CONTRACT = StageParamContract(
@@ -98,7 +114,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ),
         "fitting_param_xdep": _parameter(
             "Three booleans controlling coefficient dependence on momentum fraction x.",
-            "The entries respectively make the a^n coefficients x-dependent, make the 1/Pz^n coefficients x-dependent, and enable the declared (aPz)^n terms. The default is [false, true, false].",
+            "The entries respectively make the a^n coefficients x-dependent, make the 1/Pz^n coefficients x-dependent, and enable the declared (aPz)^n terms.",
             expected=list,
             items=bool,
             examples=([False, True, False],),
@@ -108,7 +124,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Scale used to build per-sample coefficient priors from the sample-average fit.",
             "Larger values loosen the resampled fits around the sample-average posterior; smaller values regularize weakly constrained continuum and momentum corrections more strongly.",
             expected=float,
-            default="3.0",
         ),
         "pdep_gev": _parameter(
             "Physical momenta shown in the momentum-dependence diagnostic plot.",
@@ -132,14 +147,24 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             'Set inputs.lightcone to matching job/artifact ids, or inputs.main on a generated systematics budget job.',
             _check_inputs,
         ),
+        ConstraintSpec(
+            "extrapolation.analysis.parameters_required",
+            ("allow_order_a", "allow_order_1overp", "allow_order_ap", "fitting_param_xdep", "posterior_prior_error_scale"),
+            "Central analysis jobs explicitly declare every extrapolation ansatz choice; generated budget jobs are exempt.",
+            "Omission cannot distinguish a deliberately absent correction from an accidental inherited implementation default.",
+            "Declare all five central-fit parameters; explicit empty order lists are valid.",
+            _check_analysis_parameters,
+        ),
     ),
 )
 
 
 def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> StageValidationContext:
     """Build the resolved extrapolation context consumed by the shared evaluator."""
-    params = merge_stage_params(manifest.stages["extrapolation"].defaults, job.params)
-    authored = {key: value for key, value in params.items() if key != "operation"}
+    stage = manifest.stages["extrapolation"]
+    merged = merge_stage_params(stage.defaults, job.params)
+    params = resolve_stage_params("extrapolation", stage.defaults, job.params)
+    authored = {key: value for key, value in merged.items() if key != "operation"}
     return StageValidationContext(
         stage="extrapolation",
         job_id=job.id,

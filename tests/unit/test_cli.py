@@ -359,6 +359,7 @@ def test_format_cli_error_strips_pydantic_docs_url() -> None:
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
@@ -507,7 +508,12 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
     project_root = Path(__file__).resolve().parents[2]
     artifact_path = path.parent / "rn.bin"
     artifact_path.write_bytes(b"artifact")
-    matching_defaults = {"scheme": "ratio"}
+    matching_defaults = {
+        "scheme": "ratio",
+        "component": "re",
+        "mu": 2.0,
+        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
+    }
     if denser_lc:
         matching_defaults["lc_x_ls"] = {"start": -1.0, "stop": 2.0, "num": 300}
     else:
@@ -520,6 +526,7 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["fourier_transform", "perturbative_matching"],
         },
@@ -537,7 +544,12 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
         },
         "stages": {
             "fourier_transform": {
-                "defaults": {"order": ["LA"], "y_grid": {"start": -2.0, "stop": 2.0, "num": 100}},
+                "defaults": {
+                    "method": "GI", "order": ["LA"], "sector": "valence", "Lambda0_gev": 0.0,
+                    "posterior_prior_error_scale": 3.0,
+                    "scheme_scan": {"zmin_values": [0.1], "zmax_values": [0.8], "z_ext_max": 1.2, "smooth": "linear", "model_average": False},
+                    "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
+                },
                 "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
             },
             "perturbative_matching": {

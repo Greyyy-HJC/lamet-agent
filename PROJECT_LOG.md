@@ -1301,3 +1301,18 @@
   `fitting_param_xdep`, `pdep_gev`, and systematics clones; optional `review`.
 - Synced the same matching/Fourier/extrapolation comments into
   `examples/partial_sample_manifest.jsonc`.
+
+## 2026-08-18 (Required manifest choices and single-source defaults)
+
+- Added typed stage-contract defaults and one shared effective-parameter resolver
+  with `contract < stage defaults < job params` precedence across validation,
+  planning, runtime preparation, review, and systematics expansion.
+- Made analysis choices required across correlator, renormalization, Fourier,
+  matching, extrapolation, run metadata, and 3pt polarization; removed tool and
+  planner fallbacks that silently selected physics values.
+- Retained correlator `svdcut`/`prior_width` and self-renormalization coverage
+  policy/`svdcut` as contract-only defaults, while preserving documented
+  operational defaults and the frozen Fourier derivation behavior.
+- Migrated tracked manifests to explicit matching grids, extrapolation ansatz
+  choices, and complete Fourier scan specifications; frozen DA scan ranges keep
+  the previous generated behavior without runtime auto-completion.

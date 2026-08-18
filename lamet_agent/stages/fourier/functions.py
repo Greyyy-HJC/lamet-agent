@@ -452,8 +452,8 @@ def _quark_like_parameters(
     *,
     sector: str | None = None,
     hadron: str | None = None,
-    psi1_flavor_class: str = "heavy",
-    psi2_flavor_class: str = "heavy",
+    psi1_flavor_class: str | None = None,
+    psi2_flavor_class: str | None = None,
 ) -> list[_TailParameter]:
     observable = _canonical_observable(observable)
     canonical_observable = observable
@@ -1205,7 +1205,7 @@ def _scheme_ranges(scheme: dict[str, Any], coord: np.ndarray) -> tuple[float, fl
     positive = coord[coord > 0]
     zmin = float(scheme.get("zmin", positive[0]))
     zmax = float(scheme.get("zmax", coord[-1]))
-    z_ext_max = float(scheme.get("z_ext_max", zmax))
+    z_ext_max = float(scheme["z_ext_max"])
     return zmin, zmax, z_ext_max
 
 
@@ -1348,7 +1348,7 @@ def _run_one_scheme(
     data_im = _interp_samples(fit_coord, im_samples, z_ext)
 
     trusted_stop = min(zmax_fit, fit_coord[-1])
-    smooth = str(scheme.get("smooth", "linear")).lower()
+    smooth = str(scheme["smooth"]).lower()
     if smooth == "none":
         fit_weight = np.zeros_like(z_ext)
         fit_weight[z_ext > trusted_stop] = 1.0
@@ -2541,8 +2541,8 @@ def _generate_scan_schemes(spec: dict[str, Any]) -> list[dict[str, Any]]:
     zmin_values = _scan_values(spec, "zmin")
     zmax_values = _scan_values(spec, "zmax")
     z_ext_max = float(spec["z_ext_max"])
-    smooth = str(spec.get("smooth", "linear"))
-    max_schemes = int(spec.get("max_schemes", 200))
+    smooth = str(spec["smooth"])
+    max_schemes = int(spec["max_schemes"])
 
     schemes = []
     for zmin in zmin_values:
@@ -2689,10 +2689,10 @@ def run_fourier_transform(
     store: dict[str, Any],
     *,
     y_grid: list[float] | dict[str, Any],
-    scheme_scan: dict[str, Any] | None = None,
-    zmin_shift: int = 0,
-    method: str = "GI",
-    order: str | list[str] = "NLA",
+    scheme_scan: dict[str, Any],
+    zmin_shift: int,
+    method: str,
+    order: str | list[str],
     observable: str | None = None,
     coord_unit: str = "fm",
     momentum: str | None = None,
@@ -2703,40 +2703,49 @@ def run_fourier_transform(
     ensemble: str | None = None,
     lattice_spacing_fm: float | None = None,
     zs_fm: float | None = None,
-    im_flip_for_ft: bool = False,
-    symmetry_guarantee: bool = True,
-    Lambda0_gev: float = 0.0,
-    posterior_prior_error_scale: float | list[float] = 3.0,
-    sample_error_mode: str = "covariance",
-    part: str = "both",
-    output_scale: float = 1.0,
-    sector: str | None = None,
-    target_observable: str | None = None,
-    parton: str = "quark",
+    im_flip_for_ft: bool,
+    symmetry_guarantee: bool | None = None,
+    Lambda0_gev: float,
+    posterior_prior_error_scale: float | list[float],
+    sample_error_mode: str,
+    part: str,
+    output_scale: float,
+    sector: str,
+    target_observable: str,
+    parton: str,
     hadron: str | None = None,
     current_operator: str | None = None,
     polarization: str | None = None,
-    psi1_flavor_class: str = "heavy",
-    psi2_flavor_class: str = "heavy",
+    psi1_flavor_class: str | None = None,
+    psi2_flavor_class: str | None = None,
     save_path: str | None = None,
     plot_fourier: dict[str, Any] | None = None,
     plot_extension: dict[str, Any] | None = None,
     report: dict[str, Any] | None = None,
     artifacts_dir: str | None = None,
-    workers: int = 1,
+    workers: int,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
+    missing_scan = [key for key in ("z_ext_max", "smooth", "model_average", "max_schemes") if key not in scheme_scan]
+    has_zmin = bool(scheme_scan.get("zmin_values")) or all(key in scheme_scan for key in ("zmin_start", "zmin_stop"))
+    has_zmax = bool(scheme_scan.get("zmax_values")) or all(key in scheme_scan for key in ("zmax_start", "zmax_stop"))
+    if not has_zmin:
+        missing_scan.append("zmin_values or zmin_start/zmin_stop")
+    if not has_zmax:
+        missing_scan.append("zmax_values or zmax_start/zmax_stop")
+    if missing_scan:
+        raise ValueError(f"scheme_scan is incomplete; missing: {', '.join(missing_scan)}")
     if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or int(workers) < 1:
         raise ValueError("workers must be a positive integer")
     workers = int(workers)
-    if not isinstance(symmetry_guarantee, bool):
+    if symmetry_guarantee is not None and not isinstance(symmetry_guarantee, bool):
         raise ValueError("symmetry_guarantee must be a boolean")
     out = "fourier_result"
     sector = None if sector is None else str(sector).strip().lower()
-    parton = str(parton or "quark").strip().lower()
+    parton = str(parton).strip().lower()
     polarization = str(polarization or "").strip().lower()
-    psi1_flavor_class = str(psi1_flavor_class or "heavy").strip().lower()
-    psi2_flavor_class = str(psi2_flavor_class or "heavy").strip().lower()
+    psi1_flavor_class = str(psi1_flavor_class or "").strip().lower()
+    psi2_flavor_class = str(psi2_flavor_class or "").strip().lower()
     target = str(target_observable or "").strip().lower()
     if observable is None and target == "da":
         observable = "meson_quasi_da"
@@ -2788,10 +2797,14 @@ def run_fourier_transform(
         upstream_zs = getattr(matrix_element_data, "attrs", {}).get("zs_fm")
         if upstream_zs not in {None, ""}:
             zs_fm = float(upstream_zs)
-    resample_mode = _normalise_resample_mode(getattr(matrix_element_data, "resample", "bootstrap"))
+    resample_mode = _normalise_resample_mode(matrix_element_data.resample)
     sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
     matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
     coord_arr = np.asarray(matrix_element["coord"], dtype=float)
+    if target == "da" and not isinstance(symmetry_guarantee, bool):
+        raise ValueError("DA Fourier transforms require symmetry_guarantee")
+    if target == "da" and (not psi1_flavor_class or not psi2_flavor_class):
+        raise ValueError("DA Fourier transforms require both psi flavor classes")
     if target == "da" and symmetry_guarantee:
         _fit_scale, ft_scale = _coord_scale(
             coord_unit,
@@ -2808,36 +2821,11 @@ def run_fourier_transform(
         matrix_element["re_samples"] = np.real(projected)
         matrix_element["im_samples"] = np.imag(projected)
         matrix_element_data.array.values = projected
-    auto_scheme_scan = None
     range_order = str(order[0] if isinstance(order, list) else order).upper()
     range_prior_width = float(
         posterior_prior_error_scale[0] if isinstance(posterior_prior_error_scale, list) else posterior_prior_error_scale
     )
-    scan_spec = _fill_scheme_defaults(dict(scheme_scan or {}))
-    if not _scan_has_all_range_keys(scan_spec):
-        scan_spec = _auto_scheme_scan(
-            coord=coord_arr,
-            re_samples=np.asarray(matrix_element["re_samples"], dtype=float),
-            im_samples=np.asarray(matrix_element["im_samples"], dtype=float),
-            coord_unit=coord_unit,
-            method=method,
-            order=range_order,
-            observable=observable,
-            momentum_gev=momentum_gev,
-            final_momentum_gev=final_momentum_gev,
-            lattice_spacing_fm=lattice_spacing_fm,
-            resample_mode=resample_mode,
-            sample_error_mode=sample_error_mode,
-            Lambda0_gev=float(Lambda0_gev),
-            part=part,
-            sector=fit_sector,
-            hadron=hadron,
-            psi1_flavor_class=psi1_flavor_class,
-            psi2_flavor_class=psi2_flavor_class,
-            existing=scan_spec,
-        )
-        auto_scheme_scan = scan_spec
-    scheme_scan = scan_spec
+    scheme_scan = dict(scheme_scan)
     schemes = _generate_scan_schemes(scheme_scan)
     required_points = _minimum_fit_points_for_parameters(
         len(
@@ -2863,7 +2851,7 @@ def run_fourier_transform(
     if not schemes:
         raise ValueError("scheme_scan produced no valid zmin/zmax combinations")
     y_values = _resolve_y_grid(y_grid)
-    model_average = bool(scheme_scan.get("model_average", True))
+    model_average = bool(scheme_scan["model_average"])
     candidate_labels = [str(scheme.get("label", f"scheme_{idx}")) for idx, scheme in enumerate(schemes)]
     candidate_qualities = []
     for scheme in schemes:
@@ -3018,8 +3006,6 @@ def run_fourier_transform(
     result["workers"] = int(workers)
     result["ensemble"] = str(ensemble or "")
     result.update(candidate_diagnostics)
-    if auto_scheme_scan is not None:
-        result["auto_scheme_scan"] = auto_scheme_scan
     _apply_sample_fit_model_average(
         result,
         resample_mode=resample_mode,
@@ -3087,7 +3073,7 @@ def run_fourier_transform(
             else {}
         ),
         "symmetry_guarantee": result.get("symmetry_guarantee", False),
-        "auto_scheme_scan": auto_scheme_scan,
+        "auto_scheme_scan": None,
         "Lambda0_gev": result.get("Lambda0_gev", 0.0),
         "workers": int(workers),
     }

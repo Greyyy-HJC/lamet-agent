@@ -16,7 +16,7 @@ from lamet_agent.core.llm import request_llm_text
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import (
     MANIFEST_PARAMETER_MAINTENANCE_POLICY,
-    merge_stage_params,
+    resolve_stage_params,
     stage_contract_guidance,
 )
 
@@ -42,7 +42,7 @@ def _resolve_literature_db_path(manifest: AnalysisManifest) -> Path:
 
 
 def _effective_params(manifest: AnalysisManifest, stage: str, job: Any) -> dict[str, Any]:
-    return merge_stage_params(manifest.stages[stage].defaults, job.params)
+    return resolve_stage_params(stage, manifest.stages[stage].defaults, job.params)
 
 
 def _zs_path(manifest: AnalysisManifest, stage: str, job: Any) -> str:
@@ -238,9 +238,11 @@ def write_review_from_manifest(
     language = "ch" if report_language.lower() == "ch" else "en"
     target = review_dir / ("review_CN.md" if language == "ch" else "review.md")
     consistency_checks = hybrid_zs_consistency_checks(manifest)
-    review_params = merge_stage_params(manifest.stages["review"].defaults, {})
-    use_literature = bool(review_params.get("literature", False))
-    literature_max_papers = int(review_params.get("literature_max_papers", 4))
+    review_stage = manifest.stages["review"]
+    review_job_params = review_stage.jobs[0].params if review_stage.jobs else {}
+    review_params = resolve_stage_params("review", review_stage.defaults, review_job_params)
+    use_literature = bool(review_params["literature"])
+    literature_max_papers = int(review_params["literature_max_papers"])
     materials = []
     stages = [stage for stage in STAGE_REPORTS if (artifacts_dir / stage).is_dir() or stage in manifest.metadata.stages]
     for stage in stages:

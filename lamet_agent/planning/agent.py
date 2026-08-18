@@ -96,7 +96,7 @@ def _planning_system_prompt() -> str:
         + "\n".join(f"- {name}: {description}" for name, description in PLAN_TOOL_CATALOG.items())
         + "\nJSON Patch rules: edits may only target /metadata, /inputs, or /stages; use op add, replace, or remove. "
         "For request_user_input, args.prompt must be a concrete user-facing question and args.question_id must identify the decision. "
-        "Ask exactly one question per request_user_input action; metadata.required may combine random_seed and resample_mode, and stage_required may combine missing fields for that one stage. Never combine unrelated stages or data-axis mappings in one prompt. "
+        "Ask exactly one question per request_user_input action; metadata.required may combine random_seed, resample_mode, and sample_error_mode, and stage_required may combine missing fields for that one stage. Never combine unrelated stages or data-axis mappings in one prompt. "
         "For ordinary manifest fields, ask for exactly one manifest field at a time and set question_id to the exact dotted manifest path, for example metadata.random_seed, inputs.correlators.0.momentum, inputs.correlators.0.source_operator, or inputs.correlators.1.current_operator. "
         "Do not ask for several ordinary manifest fields in one answer; after the user answers one field, let the automatic patch observation update the candidate before asking the next field. "
         "When multiple items are missing, ask and resolve them one topic at a time, starting with deterministic metadata.required before broader workflow choices. "
@@ -275,7 +275,7 @@ class _PlanAgentSession:
                 "reason": "metadata required values are missing.",
                 "args": {
                     "question_id": "metadata.required",
-                    "prompt": 'metadata required choices: random_seed is a positive integer; resample_mode options are jk/jackknife or bs/bootstrap. Example: {"random_seed": 1984, "resample_mode": "jk"}.',
+                    "prompt": 'metadata required choices: random_seed is a positive integer; resample_mode is jk or bs; sample_error_mode is mean, median, or covariance. Example: {"random_seed": 1984, "resample_mode": "jk", "sample_error_mode": "covariance"}.',
                 },
             }
         if phase == "mock_answer":
@@ -457,20 +457,23 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                     continue
                 key, raw = item.split("=", 1)
                 parsed[key.strip()] = raw.strip()
-        seed = parsed.get("random_seed")
-        mode = parsed.get("resample_mode")
-        if seed is None or mode is None:
-            return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "metadata answer must include random_seed and resample_mode."}
+        metadata = state.candidate_payload.get("metadata", {})
+        seed = parsed.get("random_seed", metadata.get("random_seed"))
+        mode = parsed.get("resample_mode", metadata.get("resample_mode"))
+        sample_error_mode = parsed.get("sample_error_mode", metadata.get("sample_error_mode"))
+        if seed is None or mode is None or sample_error_mode is None:
+            return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "metadata answer must include random_seed, resample_mode, and sample_error_mode."}
         mode_text = str(mode).strip().lower()
         mode_value = "jk" if mode_text in {"jk", "jackknife"} else "bs" if mode_text in {"bs", "bootstrap"} else mode_text
         patches = [
             {"op": "add" if _get_dotted_path(state.candidate_payload, "metadata.random_seed") is None else "replace", "path": "/metadata/random_seed", "value": int(seed), "note": "Applied metadata required answer."},
             {"op": "add" if _get_dotted_path(state.candidate_payload, "metadata.resample_mode") is None else "replace", "path": "/metadata/resample_mode", "value": mode_value, "note": "Applied metadata required answer."},
+            {"op": "add" if _get_dotted_path(state.candidate_payload, "metadata.sample_error_mode") is None else "replace", "path": "/metadata/sample_error_mode", "value": str(sample_error_mode).strip().lower(), "note": "Applied metadata required answer."},
         ]
         observation = _run_planning_tool(state, "apply_manifest_patch_to_candidate", {"patches": patches, "allow_incomplete": True})
         observation["event"] = "user_answer_applied"
         observation["question_id"] = question_id
-        observation["value"] = {"random_seed": int(seed), "resample_mode": mode_value}
+        observation["value"] = {"random_seed": int(seed), "resample_mode": mode_value, "sample_error_mode": str(sample_error_mode).strip().lower()}
         return observation
     if question_id == "stage.add_remaining":
         state.stage_completion_checked = True
@@ -616,8 +619,10 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                 observation["event"] = "user_answer_applied"
                 observation["question_id"] = question_id
                 observation["value"] = parsed
+                remaining_stage_gaps = [gap for gap in _stage_parameter_gaps(state.candidate_payload, state.manifest_path) if gap.get("stage") == stage]
                 if bucket == "required":
-                    state.stage_required_checked.add(stage)
+                    if not remaining_stage_gaps:
+                        state.stage_required_checked.add(stage)
                 else:
                     state.stage_optional_checked.add(stage)
                 return observation
@@ -645,7 +650,6 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
             "reason": f"{bucket} stage choices recorded for {stage}.",
         }
     if question_id.startswith("stage_params."):
-        state.parameter_completion_checked = True
         text = str(value).strip()
         state.parameter_completion_requested = text.lower() in {"yes", "y", "true", "1"}
         if text.lower() not in {"yes", "y", "true", "1", "no", "n", "false", "0", "none", "default", "defaults", "keep"}:
@@ -670,7 +674,9 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                     observation["event"] = "user_answer_applied"
                     observation["question_id"] = question_id
                     observation["value"] = parsed
+                    state.parameter_completion_checked = not bool(_stage_parameter_gaps(state.candidate_payload, state.manifest_path))
                     return observation
+        state.parameter_completion_checked = not bool(_stage_parameter_gaps(state.candidate_payload, state.manifest_path))
         return {"event": "user_answer_not_applied", "question_id": question_id, "value": value, "reason": "stage parameter completion preference recorded for the planning agent."}
     match = re.fullmatch(r"inputs\.correlators\.\d+\.([A-Za-z_][A-Za-z0-9_]*)", question_id)
     if match and match.group(1) not in {
@@ -1224,7 +1230,7 @@ def run_interactive_plan(
             prompt_text = f"{args.get('prompt', '')}\n{reason}".lower()
             if raw_question_id == "metadata.required" and all(
                 _get_dotted_path(state.candidate_payload, dotted) is not None
-                for dotted in ("metadata.random_seed", "metadata.resample_mode")
+                for dotted in ("metadata.random_seed", "metadata.resample_mode", "metadata.sample_error_mode")
             ):
                 session.observe({"event": "question_skipped", "reason": "metadata.required was already answered."})
                 continue
@@ -1233,6 +1239,7 @@ def run_interactive_plan(
                 for dotted, patterns in {
                     "metadata.random_seed": ("random_seed", "random seed"),
                     "metadata.resample_mode": ("resample_mode", "resampling mode", "resample mode"),
+                    "metadata.sample_error_mode": ("sample_error_mode", "sample error mode"),
                 }.items():
                     if any(pattern in prompt_text for pattern in patterns) and _get_dotted_path(state.candidate_payload, dotted) is not None:
                         session.observe({"event": "question_skipped", "reason": f"{dotted} is already present."})

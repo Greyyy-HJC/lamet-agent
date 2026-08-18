@@ -62,6 +62,7 @@ def _correlator_manifest() -> AnalysisManifest:
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["correlator_analysis"],
             },
@@ -92,7 +93,7 @@ def _correlator_manifest() -> AnalysisManifest:
                         "lattice_spacing_fm": 0.1,
 
 
-                        "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                        "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
 
 
                         "bT": [0],

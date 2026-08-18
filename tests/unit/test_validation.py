@@ -39,7 +39,7 @@ def _correlator_payload(correlator_type: str = "2pt") -> dict:
     if correlator_type == "3pt":
         payload.update(
             {
-                "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
                 "tsep": [8, 10, 12],
                 "bT": [0],
                 "bz": [0, 1],
@@ -59,6 +59,7 @@ def _path_validation_payload(root_directory: str) -> dict:
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
@@ -151,7 +152,7 @@ def test_validate_manifest_resolves_root_relative_source_paths(tmp_path: Path) -
     payload = {
         "metadata": {
             "run_id": "demo", "root_directory": "..", "artifacts_directory": "runs/artifacts",
-            "target_observable": "pdf", "parton": "quark", "resample_mode": "jk",
+            "target_observable": "pdf", "parton": "quark", "resample_mode": "jk", "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
@@ -210,10 +211,16 @@ def test_correlator_accepts_canonical_bz_directions(direction: str) -> None:
 @pytest.mark.parametrize("polarization", ["unpolarized", "helicity", "transversity"])
 def test_3pt_correlator_polarization(polarization: str) -> None:
     payload = _correlator_payload("3pt")
-    if polarization != "unpolarized":
-        payload["polarization"] = polarization
+    payload["polarization"] = polarization
 
     assert CorrelatorInput.model_validate(payload).polarization == polarization
+
+def test_3pt_correlator_requires_polarization() -> None:
+    payload = _correlator_payload("3pt")
+    payload.pop("polarization")
+    with pytest.raises(ValueError, match="polarization"):
+        CorrelatorInput.model_validate(payload)
+
 
 
 def test_correlator_rejects_unknown_polarization() -> None:
@@ -322,6 +329,7 @@ def _partial_fourier_payload(artifact: dict) -> dict:
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["fourier_transform"],
         },
@@ -329,9 +337,16 @@ def _partial_fourier_payload(artifact: dict) -> dict:
         "stages": {
             "fourier_transform": {
                 "defaults": {
+                    "Lambda0_gev": 0.0,
+                    "method": "CG",
                     "order": "NLA",
-                    "part": "re",
+                    "posterior_prior_error_scale": 3.0,
+                    "sector": "valence",
                     "coord_unit": "lattice",
+                    "scheme_scan": {
+                        "zmin_values": [1.0], "zmax_values": [2.0], "z_ext_max": 3.0,
+                        "smooth": "linear", "model_average": True,
+                    },
                     "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},
                 },
                 "jobs": [{"id": "ft", "inputs": {"input": artifact["id"]}}],
@@ -491,7 +506,7 @@ def test_fourier_conflict_returns_structured_physics_diagnostic() -> None:
             "polarization": "unpolarized",
         }
     )
-    payload["stages"]["fourier_transform"]["defaults"]["sector"] = "valence"
+    payload["stages"]["fourier_transform"]["defaults"]["part"] = "re"
     manifest = AnalysisManifest.model_validate(payload)
     job = manifest.stages["fourier_transform"].jobs[0]
 
