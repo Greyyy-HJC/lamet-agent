@@ -738,6 +738,21 @@ def test_stage_required_answer_updates_stage_defaults(tmp_path: Path) -> None:
     assert state.candidate_payload["stages"]["renormalization"]["defaults"]["zs_fm"] == 0.2
 
 
+def test_single_required_enum_answer_accepts_bare_value(tmp_path: Path) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["stages"]["renormalization"]["defaults"].pop("strategy")
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_required.renormalization",
+        "external_denominator",
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["stages"]["renormalization"]["defaults"]["strategy"] == "external_denominator"
+
+
 def test_stage_required_answer_updates_job_inputs(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     payload["stages"]["renormalization"] = {
@@ -1176,6 +1191,25 @@ def test_stage_parameter_gap_answer_uses_matching_question_id(tmp_path: Path) ->
     assert result["event"] == "user_answer_applied"
     assert state.candidate_payload["stages"]["perturbative_matching"]["defaults"]["zs_fm"] == 0.1722
     assert "zs_fm" not in state.candidate_payload["stages"]["renormalization"]["defaults"]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["strategy=external_denominator", '{"strategy": "external_denominator"}'],
+)
+def test_stage_parameter_gap_answer_extracts_named_value(tmp_path: Path, answer: str) -> None:
+    payload = _minimal_payload(tmp_path)
+    payload["stages"]["renormalization"]["defaults"].pop("strategy")
+    state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
+
+    result = _apply_user_answer_to_candidate(
+        state,
+        "stage_params.renormalization.rn",
+        answer,
+    )
+
+    assert result["event"] == "user_answer_applied"
+    assert state.candidate_payload["stages"]["renormalization"]["defaults"]["strategy"] == "external_denominator"
 
 
 def test_stage_optional_answer_updates_stage_defaults(tmp_path: Path) -> None:

@@ -374,6 +374,44 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _parse_answer_value(text: str) -> Any:
+    """Parse a JSON scalar/container, preserving ordinary strings."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text
+
+
+def _parse_stage_gap_answer(text: str, gap: dict[str, Any]) -> tuple[bool, Any]:
+    """Parse a value for one known stage gap, including ``key=value`` replies."""
+    missing = object()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = missing
+    parameter = str(gap.get("parameter", ""))
+    path_leaf = str(gap.get("path", "")).rsplit(".", 1)[-1]
+    expected_keys = tuple(dict.fromkeys(key for key in (parameter, parameter.rsplit(".", 1)[-1], path_leaf) if key))
+    if parsed is not missing:
+        if isinstance(parsed, dict):
+            for key in expected_keys:
+                if key in parsed:
+                    return True, parsed[key]
+        return True, parsed
+    if "=" not in text:
+        return True, text
+    pairs: dict[str, Any] = {}
+    for item in re.split(r"[,;]\s*", text):
+        if "=" not in item:
+            continue
+        key, raw = item.split("=", 1)
+        pairs[key.strip()] = _parse_answer_value(raw.strip())
+    for key in expected_keys:
+        if key in pairs:
+            return True, pairs[key]
+    return False, None
+
+
 _CANONICAL_STAGES = ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"]
 
 
@@ -507,6 +545,17 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                         parsed[key] = json.loads(raw)
                     except json.JSONDecodeError:
                         parsed[key] = raw
+            if not parsed and bucket == "required":
+                stage_gaps = [
+                    gap
+                    for gap in _stage_parameter_gaps(state.candidate_payload, state.manifest_path)
+                    if gap.get("stage") == stage
+                ]
+                if len(stage_gaps) == 1:
+                    parameter = str(stage_gaps[0].get("parameter", ""))
+                    parameter_spec = get_stage_parameter_contract(stage).schema.get(parameter)
+                    if isinstance(parameter_spec, ParameterSpec) and text in parameter_spec.choices:
+                        parsed = {parameter: text}
             if parsed:
                 contract = get_stage_parameter_contract(stage)
                 input_keys = set(contract.input_roles)
@@ -605,10 +654,14 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                 target_gap = next((gap for gap in gaps if str(gap.get("question_id")) == question_id), gaps[0])
                 pointer = _json_pointer_from_question_id(str(target_gap.get("path")))
                 if pointer is not None:
-                    try:
-                        parsed = json.loads(text)
-                    except json.JSONDecodeError:
-                        parsed = text
+                    parsed_ok, parsed = _parse_stage_gap_answer(text, target_gap)
+                    if not parsed_ok:
+                        return {
+                            "event": "user_answer_not_applied",
+                            "question_id": question_id,
+                            "value": value,
+                            "reason": f"stage parameter answer must name {target_gap.get('parameter')}.",
+                        }
                     observation = _run_planning_tool(
                         state,
                         "apply_manifest_patch_to_candidate",

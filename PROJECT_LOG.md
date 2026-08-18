@@ -1264,3 +1264,13 @@
   questions when the candidate has no missing, invalid, or ambiguous fields.
 - Added a regression check that the complete CG pion PDF example produces no
   planning questions and builds quick/full candidates immediately.
+
+## 2026-08-17 (Plan-mode stage answer parsing)
+
+- Fixed single-parameter stage questions so an allowed bare enum answer is
+  accepted without a redundant format-repair round trip.
+- Fixed concrete stage-gap answers so advertised `key=value` and JSON-object
+  replies extract the named value instead of writing the whole reply into the
+  manifest field.
+- Added planner regressions for bare, `key=value`, and JSON-object
+  renormalization strategy answers.

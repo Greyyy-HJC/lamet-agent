@@ -673,10 +673,17 @@ def render_required_planning_prompt(stage: str, gaps: list[dict[str, Any]]) -> s
         if gap.get("suggested_fix"):
             detail += f" Suggested fix: {gap['suggested_fix']}"
         details.append(detail)
+    answer_format = "Reply as a JSON object or key=value pairs, or none to keep the current manifest."
+    if len(gaps) == 1 and gaps[0].get("parameter"):
+        answer_format = (
+            f"Reply with {gaps[0]['parameter']}=value, a JSON object, or the bare value; "
+            "reply none to keep the current manifest."
+        )
     return (
         f"{stage} currently violates these declared stage rules: "
         + " ".join(details)
-        + " Reply as a JSON object or key=value pairs, or none to keep the current manifest."
+        + " "
+        + answer_format
     )
 
 
