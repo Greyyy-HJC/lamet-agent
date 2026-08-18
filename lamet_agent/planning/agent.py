@@ -30,7 +30,7 @@ from .core import (
     _as_list,
     _dataclass_json,
     _expand_pt2_windows,
-    _expand_tau_cuts,
+    _expand_pt3_windows,
     _get_path_value,
     _merge_revision_edits,
     _planned_manifest_paths,
@@ -327,8 +327,8 @@ class _PlanAgentSession:
             note = self.last_revision or ""
             text = note.lower()
             suppressions = []
-            if ("tau" in text or "pt3_tau_cuts" in text) and ("undo" in text or "revert" in text):
-                suppressions.append("stages.correlator_analysis.defaults.pt3_tau_cuts")
+            if ("tau" in text or "pt3_windows" in text or "pt3_tau_cuts" in text) and ("undo" in text or "revert" in text):
+                suppressions.append("stages.correlator_analysis.defaults.pt3_windows")
             return {
                 "action": "call_tool",
                 "tool_name": "apply_manifest_patch_to_candidate",
@@ -778,7 +778,8 @@ def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, A
                         "scheme": "hybrid",
                         "strategy": "external_denominator",
                         "zs_fm": 0.1722,
-                        "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
+                        "m0_gev": 0.0,
+                        "delta_m_gev": 0.0,
                     },
                     "jobs": renorm_jobs,
                 },
@@ -795,17 +796,17 @@ def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, A
             },
             {
                 "op": "replace",
-                "path": "/stages/correlator_analysis/defaults/pt3_tau_cuts",
-                "value": _expand_tau_cuts(defaults.get("pt3_tau_cuts")),
+                "path": "/stages/correlator_analysis/defaults/pt3_windows",
+                "value": _expand_pt3_windows(defaults.get("pt3_windows")),
                 "note": "LLM expanded the fit-window search.",
             },
         ]
-    if ("tau" in text or "pt3_tau_cuts" in text) and ("undo" in text or "revert" in text):
-        original = _get_path_value(state.original_payload, "stages.correlator_analysis.defaults.pt3_tau_cuts")
+    if ("tau" in text or "pt3_windows" in text or "pt3_tau_cuts" in text) and ("undo" in text or "revert" in text):
+        original = _get_path_value(state.original_payload, "stages.correlator_analysis.defaults.pt3_windows")
         return [
             {
                 "op": "replace",
-                "path": "/stages/correlator_analysis/defaults/pt3_tau_cuts",
+                "path": "/stages/correlator_analysis/defaults/pt3_windows",
                 "value": original,
                 "note": "LLM reverted the tau-cut search.",
             }

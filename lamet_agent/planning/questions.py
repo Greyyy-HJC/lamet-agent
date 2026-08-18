@@ -327,13 +327,4 @@ def _coerce_user_answer_for_manifest_path(question_id: str, value: Any) -> Any:
             return json.loads(value)
         except json.JSONDecodeError:
             return value
-    if question_id.endswith(".scheme_parameters"):
-        if isinstance(value, dict):
-            return value
-        text = str(value).strip()
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            return {"zs_fm": float(text)}
-        return parsed if isinstance(parsed, dict) else {"zs_fm": float(parsed)}
     return value

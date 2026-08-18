@@ -11,7 +11,13 @@
     "bin_size": 1,
     "workers": 8,
     "random_seed": 1984,
-    "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "review"]
+    "stages": [
+      "correlator_analysis",
+      "renormalization",
+      "fourier_transform",
+      "perturbative_matching",
+      "review"
+    ]
   },
   "inputs": {
     "correlators": [
@@ -26,7 +32,10 @@
         "sink_operator": "g5",
         "volume": "S48T64",
         "lattice_spacing_fm": 0.06,
-        "momentum": ["PX0PY0PZ0", "PX5PY0PZ0"]
+        "momentum": [
+          "PX0PY0PZ0",
+          "PX5PY0PZ0"
+        ]
       },
       {
         "correlator_id": "a060_x_3pt",
@@ -42,10 +51,45 @@
         "bz_direction": "X",
         "volume": "S48T64",
         "lattice_spacing_fm": 0.06,
-        "momentum": ["PX0PY0PZ0", "PX5PY0PZ0"],
-        "bT": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": [8, 10, 12]
+        "momentum": [
+          "PX0PY0PZ0",
+          "PX5PY0PZ0"
+        ],
+        "bT": [
+          0
+        ],
+        "bz": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24
+        ],
+        "tsep": [
+          8,
+          10,
+          12
+        ]
       }
     ],
     "artifacts": [],
@@ -61,21 +105,75 @@
   "stages": {
     "correlator_analysis": {
       "defaults": {
-        "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}],
-        "pt3_tau_cuts": [3, 4],
-        "nstate": [2],
-        "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
+        "pt2_windows": [
+          {
+            "tmin": 3,
+            "tmax": 12
+          },
+          {
+            "tmin": 4,
+            "tmax": 12
+          },
+          {
+            "tmin": 5,
+            "tmax": 12
+          }
+        ],
+        "pt3_windows": [
+          {
+            "tsep_ls": [
+              8,
+              10,
+              12
+            ],
+            "tau_cut": 3
+          },
+          {
+            "tsep_ls": [
+              8,
+              10,
+              12
+            ],
+            "tau_cut": 4
+          }
+        ],
+        "nstate": [
+          2
+        ],
+        "fit_scope": [
+          "3pt_ratio"
+        ],
+        "fit_strategy": [
+          "joint"
+        ],
         "fitting_form": "Breit",
-        "svdcut": 1e-6,
+        "svdcut": 1e-06,
         "posterior_prior_error_scale": 10.0,
         "component": "re",
         "q_min": 0.05,
         "model_average": false
       },
       "jobs": [
-        {"id": "ca_p0", "correlator_ids": ["a060_x_2pt", "a060_x_3pt"], "params": {"momentum": "PX0PY0PZ0"}},
-        {"id": "ca_p5", "correlator_ids": ["a060_x_2pt", "a060_x_3pt"], "params": {"momentum": "PX5PY0PZ0"}}
+        {
+          "id": "ca_p0",
+          "correlator_ids": [
+            "a060_x_2pt",
+            "a060_x_3pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ0"
+          }
+        },
+        {
+          "id": "ca_p5",
+          "correlator_ids": [
+            "a060_x_2pt",
+            "a060_x_3pt"
+          ],
+          "params": {
+            "momentum": "PX5PY0PZ0"
+          }
+        }
       ]
     },
     "renormalization": {
@@ -83,26 +181,54 @@
         "normalization": true,
         "scheme": "hybrid",
         "strategy": "external_denominator",
-        "scheme_parameters": {
-          "m0_gev": 0.0,
-          "delta_m_gev": 0.0
-        }
+        "m0_gev": 0.0,
+        "delta_m_gev": 0.0
       },
       "jobs": [
-        {"id": "rn_p5", "inputs": {"target": "ca_p5", "denominator": "ca_p0"}, "params": {"zs_fm": 0.1722}}
+        {
+          "id": "rn_p5",
+          "inputs": {
+            "target": "ca_p5",
+            "denominator": "ca_p0"
+          },
+          "params": {
+            "zs_fm": 0.1722
+          }
+        }
       ]
     },
     "fourier_transform": {
       "defaults": {
-        "order": ["LA", "NLA"],
+        "order": [
+          "LA",
+          "NLA"
+        ],
         "method": "CG",
         "sector": "valence",
         "Lambda0_gev": 0.1,
-        "posterior_prior_error_scale": [3.0, 4.0, 5.0],
-        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
+        "posterior_prior_error_scale": [
+          3.0,
+          4.0,
+          5.0
+        ],
+        "quasi_y_ls": {
+          "start": -2.0,
+          "stop": 2.0,
+          "num": 200
+        },
         "scheme_scan": {
-          "zmin_fm": [0.72, 0.78, 0.84, 0.90],
-          "zmax_fm": [1.26, 1.32, 1.38, 1.44],
+          "zmin_fm": [
+            0.72,
+            0.78,
+            0.84,
+            0.9
+          ],
+          "zmax_fm": [
+            1.26,
+            1.32,
+            1.38,
+            1.44
+          ],
           "zmax_ext_fm": 1.5,
           "smooth": "linear",
           "model_average": false,
@@ -110,7 +236,12 @@
         }
       },
       "jobs": [
-        {"id": "ft_p5", "inputs": {"input": "rn_p5"}}
+        {
+          "id": "ft_p5",
+          "inputs": {
+            "input": "rn_p5"
+          }
+        }
       ]
     },
     "perturbative_matching": {
@@ -118,16 +249,32 @@
         "scheme": "hybrid",
         "mu": 2.0,
         "component": "re",
-        "lc_x_ls": {"start": 0.0, "stop": 1.0}
+        "lc_x_ls": {
+          "start": 0,
+          "stop": 1
+        }
       },
       "jobs": [
-        {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"zs_fm": 0.1722}}
+        {
+          "id": "mt_p5",
+          "inputs": {
+            "quasi": "ft_p5"
+          },
+          "params": {
+            "zs_fm": 0.1722
+          }
+        }
       ]
     },
-    "review": {                                                                                                                      
-      "defaults": {"literature": false, "literature_max_papers": 4},
+    "review": {
+      "defaults": {
+        "literature": false,
+        "literature_max_papers": 4
+      },
       "jobs": [
-        {"id": "review"}
+        {
+          "id": "review"
+        }
       ]
     }
   }

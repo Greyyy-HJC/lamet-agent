@@ -26,11 +26,11 @@ def test_contract_defaults_are_typed_and_resolve_before_authored_values() -> Non
 
     renorm = resolve_stage_params(
         "renormalization",
-        {"scheme_parameters": {"svdcut": 1e-9}},
-        {"scheme_parameters": {"z_coverage_policy": "strict"}},
+        {"svdcut": 1e-9},
+        {"z_coverage_policy": "strict"},
     )
-    assert renorm["scheme_parameters"]["svdcut"] == 1e-9
-    assert renorm["scheme_parameters"]["z_coverage_policy"] == "strict"
+    assert renorm["svdcut"] == 1e-9
+    assert renorm["z_coverage_policy"] == "strict"
 
 
 def test_four_allowed_analysis_defaults_are_injected_by_contract() -> None:
@@ -38,31 +38,27 @@ def test_four_allowed_analysis_defaults_are_injected_by_contract() -> None:
     renorm = resolve_stage_params("renormalization", {}, {})
     assert correlator["svdcut"] == 1e-12
     assert correlator["prior_width"] == [1]
-    assert renorm["scheme_parameters"]["z_coverage_policy"] == "extrapolate"
-    assert renorm["scheme_parameters"]["svdcut"] == 1e-12
+    assert renorm["z_coverage_policy"] == "extrapolate"
+    assert renorm["svdcut"] == 1e-12
 
 
 def test_stage_params_merge_recursively_without_mutating_inputs() -> None:
     defaults = {
-        "scheme_parameters": {"LambdaQCD_gev": 0.1, "d": -0.08},
+        "scheme_scan": {"zmin_fm": [0.5], "smooth": "linear"},
         "order": ["LA", "NLA"],
     }
     overrides = {
-        "scheme_parameters": {"d": 0.19, "m0_gev": -0.094},
+        "scheme_scan": {"smooth": "none"},
         "order": ["NLA"],
     }
 
     merged = merge_stage_params(defaults, overrides)
 
     assert merged == {
-        "scheme_parameters": {
-            "LambdaQCD_gev": 0.1,
-            "d": 0.19,
-            "m0_gev": -0.094,
-        },
+        "scheme_scan": {"zmin_fm": [0.5], "smooth": "none"},
         "order": ["NLA"],
     }
-    assert defaults["scheme_parameters"] == {"LambdaQCD_gev": 0.1, "d": -0.08}
+    assert defaults["scheme_scan"] == {"zmin_fm": [0.5], "smooth": "linear"}
 
 
 def _payload() -> dict:
@@ -123,6 +119,29 @@ def test_manifest_rejects_forward_job_reference() -> None:
     payload = _payload()
     payload["stages"]["correlator_analysis"]["jobs"][0]["inputs"] = {"input": "later"}
     with pytest.raises(ValidationError, match="unavailable upstream"):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_accepts_numeric_renormalization_denominator() -> None:
+    payload = _payload()
+    payload["metadata"]["stages"] = ["renormalization"]
+    payload["inputs"]["artifacts"] = [
+        {"id": "target", "stage": "correlator_analysis", "path": "target.nc"},
+    ]
+    payload["stages"] = {
+        "renormalization": {
+            "defaults": {"scheme": "msbar", "strategy": "external_denominator", "normalization": False},
+            "jobs": [{"id": "rn", "inputs": {"target": "target", "denominator": 1.25}}],
+        }
+    }
+    manifest = AnalysisManifest.model_validate(payload)
+    assert manifest.stages["renormalization"].jobs[0].inputs["denominator"] == 1.25
+
+
+def test_manifest_rejects_nonfinite_job_input_constant() -> None:
+    payload = _payload()
+    payload["stages"]["correlator_analysis"]["jobs"][0]["inputs"] = {"scale": float("nan")}
+    with pytest.raises(ValidationError, match="finite number"):
         AnalysisManifest.model_validate(payload)
 
 
@@ -477,7 +496,7 @@ def _hybrid_self_payload() -> dict:
                 {
                     "id": "fit",
                     "inputs": {"reference": "reference"},
-                    "params": {"scheme_parameters": {"LambdaQCD_gev": 0.12, "d": -0.08183}},
+                    "params": {"LambdaQCD_gev": 0.12, "d": -0.08183},
                 }
             ],
         }
@@ -508,7 +527,7 @@ def test_self_renormalization_chain_allows_mismatched_lambdaqcd() -> None:
         {
             "id": "apply",
             "inputs": {"target": "target", "zR": "fit"},
-            "params": {"scheme_parameters": {"LambdaQCD_gev": 0.2}},
+            "params": {"LambdaQCD_gev": 0.2},
         }
     )
     manifest = AnalysisManifest.model_validate(payload)
@@ -523,29 +542,29 @@ def test_self_renormalization_chain_allows_mismatched_lambdaqcd() -> None:
         manifest.stages["renormalization"].defaults,
         manifest.stages["renormalization"].jobs[1].params,
     )
-    assert apply_params["scheme_parameters"]["LambdaQCD_gev"] == pytest.approx(0.2)
+    assert apply_params["LambdaQCD_gev"] == pytest.approx(0.2)
 
 
-@pytest.mark.parametrize("key", ["LambdaQCD_gev", "d", "m0_gev", "svdcut", "z_coverage_policy"])
-def test_manifest_rejects_flat_hybrid_self_parameters(key: str) -> None:
+def test_manifest_accepts_flat_self_renormalization_parameters() -> None:
     payload = _hybrid_self_payload()
-    payload["stages"]["renormalization"]["defaults"][key] = 0.1
+    payload["stages"]["renormalization"]["defaults"]["LambdaQCD_gev"] = 0.1
+    payload["stages"]["renormalization"]["jobs"][0]["params"]["svdcut"] = 1e-9
+    manifest = AnalysisManifest.model_validate(payload)
+    assert manifest.stages["renormalization"].defaults["LambdaQCD_gev"] == pytest.approx(0.1)
+    assert manifest.stages["renormalization"].jobs[0].params["d"] == pytest.approx(-0.08183)
 
-    with pytest.raises(ValidationError, match=rf"renormalization\.defaults\.{key}"):
+
+def test_manifest_rejects_nested_scheme_parameters() -> None:
+    payload = _hybrid_self_payload()
+    payload["stages"]["renormalization"]["defaults"]["scheme_parameters"] = {"d": -0.08183}
+
+    with pytest.raises(ValidationError, match=r"scheme_parameters"):
         AnalysisManifest.model_validate(payload)
-
-
-def test_manifest_accepts_hybrid_self_scheme_parameters() -> None:
-    manifest = AnalysisManifest.model_validate(_hybrid_self_payload())
-
-    params = manifest.stages["renormalization"].jobs[0].params["scheme_parameters"]
-    assert params["LambdaQCD_gev"] == pytest.approx(0.12)
-    assert params["d"] == pytest.approx(-0.08183)
 
 
 def test_manifest_rejects_legacy_lambdaqcd_name() -> None:
     payload = _hybrid_self_payload()
-    params = payload["stages"]["renormalization"]["jobs"][0]["params"]["scheme_parameters"]
+    params = payload["stages"]["renormalization"]["jobs"][0]["params"]
     params["LambdaQCD"] = params.pop("LambdaQCD_gev")
 
     with pytest.raises(ValidationError, match="LambdaQCD_gev"):
@@ -560,50 +579,6 @@ def test_manifest_rejects_running_parameters_in_renormalization_kernel_parameter
     with pytest.raises(
         ValidationError,
         match=rf"inputs\.kernels\[0\]\.kernel_parameters\.{key}",
-    ):
-        AnalysisManifest.model_validate(payload)
-
-
-def test_manifest_rejects_zs_fm_in_renormalization_scheme_parameters() -> None:
-    payload = _payload()
-    payload["metadata"]["stages"] = ["renormalization"]
-    payload["inputs"]["artifacts"] = [
-        {"id": "target", "stage": "correlator_analysis", "path": "target.nc"},
-        {"id": "denominator", "stage": "correlator_analysis", "path": "denominator.nc"},
-    ]
-    payload["stages"] = {
-        "renormalization": {
-            "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "scheme_parameters": {"zs_fm": 0.2}},
-            "jobs": [{"id": "rn", "inputs": {"target": "target", "denominator": "denominator"}}],
-        }
-    }
-    with pytest.raises(ValidationError, match=r"renormalization\.defaults\.scheme_parameters\.zs_fm"):
-        AnalysisManifest.model_validate(payload)
-
-
-def test_manifest_rejects_zs_fm_in_renormalization_job_scheme_parameters() -> None:
-    payload = _payload()
-    payload["metadata"]["stages"] = ["renormalization"]
-    payload["inputs"]["artifacts"] = [
-        {"id": "target", "stage": "correlator_analysis", "path": "target.nc"},
-        {"id": "denominator", "stage": "correlator_analysis", "path": "denominator.nc"},
-    ]
-    payload["stages"] = {
-        "renormalization": {
-            "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "zs_fm": 0.2},
-            "jobs": [
-                {
-                    "id": "rn",
-                    "inputs": {"target": "target", "denominator": "denominator"},
-                    "params": {"scheme_parameters": {"zs_fm": 0.3}},
-                }
-            ],
-        }
-    }
-
-    with pytest.raises(
-        ValidationError,
-        match=r"renormalization\.jobs\[0\]\.params\.scheme_parameters\.zs_fm",
     ):
         AnalysisManifest.model_validate(payload)
 

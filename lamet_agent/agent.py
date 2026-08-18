@@ -25,7 +25,7 @@ from .core.tools import (
     validate_stage_inputs,
 )
 from .core.trace import AgentTrace
-from .manifest import AnalysisManifest, ArtifactInput, StageJob, resolve_manifest_artifact_metadata
+from .manifest import AnalysisManifest, ArtifactInput, StageJob, is_constant_job_input, resolve_manifest_artifact_metadata
 from .manifest_params import resolve_stage_params
 
 # Partial runs reference external artifacts by id; hydrate them before the LLM loop.
@@ -645,6 +645,8 @@ def run_agent(
                     if missing:
                         raise ValueError(f"job {job.id!r} has upstream jobs without output: {missing}")
                     store[role] = [outputs[ref] for ref in value]
+                elif is_constant_job_input(value):
+                    store[role] = float(value)
                 else:
                     if value not in outputs:
                         raise ValueError(f"job {job.id!r} has an upstream job without output: {value!r}")

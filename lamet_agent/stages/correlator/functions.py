@@ -1773,18 +1773,14 @@ def _resolve_pt2_windows(
 
 
 def _normalise_pt3_windows(
-    windows: list[dict[str, Any]] | None,
+    windows: list[dict[str, Any]],
     *,
     tsep_ls: list[int],
-    tau_cuts: list[int] | None,
 ) -> list[dict[str, Any]]:
-    if windows is not None:
-        return [
-            {"tsep_ls": [int(t) for t in w.get("tsep_ls", tsep_ls)], "tau_cut": int(w["tau_cut"])}
-            for w in windows
-        ]
-    cuts = [int(cut) for cut in (tau_cuts if tau_cuts is not None else [1, 2, 3, 4])]
-    return [{"tsep_ls": list(tsep_ls), "tau_cut": cut} for cut in cuts]
+    return [
+        {"tsep_ls": [int(t) for t in w.get("tsep_ls", tsep_ls)], "tau_cut": int(w["tau_cut"])}
+        for w in windows
+    ]
 
 
 def _auto_pt3_windows(
@@ -1816,7 +1812,7 @@ def _auto_pt3_windows(
     if not windows:
         raise ValueError(
             "automatic pt3 window scan could not leave a non-empty insertion window; "
-            "provide explicit pt3_windows or pt3_tau_cuts"
+            "provide explicit pt3_windows"
         )
     return windows, {
         "source": "automatic",
@@ -1832,22 +1828,13 @@ def _resolve_pt3_windows(
     windows: list[dict[str, Any]] | None,
     *,
     tsep_ls: list[int],
-    tau_cuts: list[int] | None,
     fit_scopes: list[str],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Apply explicit 3pt precedence, otherwise generate automatic candidates."""
+    """Apply explicit 3pt windows, otherwise generate automatic candidates."""
     if windows is not None:
-        resolved = _normalise_pt3_windows(windows, tsep_ls=tsep_ls, tau_cuts=tau_cuts)
+        resolved = _normalise_pt3_windows(windows, tsep_ls=tsep_ls)
         return resolved, {
             "source": "explicit_pt3_windows",
-            "used_fallback": False,
-            "fallback_reason": None,
-            "pt3_windows": resolved,
-        }
-    if tau_cuts is not None:
-        resolved = _normalise_pt3_windows(None, tsep_ls=tsep_ls, tau_cuts=tau_cuts)
-        return resolved, {
-            "source": "explicit_pt3_tau_cuts",
             "used_fallback": False,
             "fallback_reason": None,
             "pt3_windows": resolved,
@@ -2471,7 +2458,6 @@ def tune_bare_matrix(
     temporal_extent: int | None = None,
     pt2_windows: list[dict[str, int]] | None = None,
     pt3_windows: list[dict[str, Any]] | None = None,
-    pt3_tau_cuts: list[int] | None = None,
     fit_scope_values: list[str] | None = None,
     fit_scope: str | None = None,
     fit_strategies: list[str] | None = None,
@@ -2616,7 +2602,6 @@ def tune_bare_matrix(
     pt3_window_specs, pt3_scan = _resolve_pt3_windows(
         pt3_windows,
         tsep_ls=tseps,
-        tau_cuts=pt3_tau_cuts,
         fit_scopes=[str(value) for value in scopes],
     )
     auto_window_scan = {"pt2": pt2_scan, "pt3": pt3_scan}
@@ -3202,7 +3187,6 @@ def fit_bare_matrix_grid(
     pt3_tau_cut: int | None = None,
     pt2_windows: list[dict[str, int]] | None = None,
     pt3_windows: list[dict[str, Any]] | None = None,
-    pt3_tau_cuts: list[int] | None = None,
     model_average: bool,
     tune_z: int | None = None,
     fit_strategy: str,
@@ -3393,7 +3377,6 @@ def fit_bare_matrix_grid(
     pt3_window_specs, pt3_scan = _resolve_pt3_windows(
         effective_pt3_windows,
         tsep_ls=tseps,
-        tau_cuts=pt3_tau_cuts,
         fit_scopes=[scope],
     )
     auto_window_scan = {"pt2": pt2_scan, "pt3": pt3_scan}

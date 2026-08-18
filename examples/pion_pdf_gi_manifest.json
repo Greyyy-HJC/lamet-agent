@@ -137,7 +137,7 @@
         "fit_strategy": [
           "joint"
         ],
-        "svdcut": 0.000001,
+        "svdcut": 1e-06,
         "posterior_prior_error_scale": 10.0,
         "component": "re",
         "q_min": 0.05,
@@ -172,10 +172,8 @@
         "normalization": true,
         "scheme": "hybrid",
         "strategy": "external_denominator",
-        "scheme_parameters": {
-          "m0_gev": 0.1232,
-          "delta_m_gev": 0.5207366666666666
-        }
+        "m0_gev": 0.1232,
+        "delta_m_gev": 0.5207366666666666
       },
       "jobs": [
         {
@@ -206,12 +204,12 @@
         "quasi_y_ls": {
           "start": -2.0,
           "stop": 2.0,
-          "num": 100
+          "num": 200
         },
         "scheme_scan": {
           "zmin_fm": [
             0.54,
-            0.60,
+            0.6,
             0.66,
             0.72
           ],

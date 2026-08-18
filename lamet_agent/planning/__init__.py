@@ -41,7 +41,7 @@ from .core import (
     _as_list,
     _dataclass_json,
     _expand_pt2_windows,
-    _expand_tau_cuts,
+    _expand_pt3_windows,
     _get_path_value,
     _id_counts,
     _json_pointer_display,

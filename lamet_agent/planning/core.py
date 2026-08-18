@@ -830,29 +830,6 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
     renorm_scheme = None
     if isinstance(renorm, dict) and isinstance(renorm.get("defaults"), dict):
         renorm_scheme = renorm["defaults"].get("scheme")
-        nested = renorm["defaults"].get("scheme_parameters")
-        if isinstance(nested, dict) and "zs_fm" in nested:
-            issues.append(
-                PlanIssue(
-                    "error",
-                    "stages.renormalization.defaults.scheme_parameters.zs_fm",
-                    "Renormalization zs_fm must be a flat stage parameter.",
-                    "Move it to stages.renormalization.defaults.zs_fm.",
-                )
-            )
-        jobs = renorm.get("jobs", [])
-        for index, job in enumerate(jobs if isinstance(jobs, list) else []):
-            params = job.get("params") if isinstance(job, dict) else None
-            nested = params.get("scheme_parameters") if isinstance(params, dict) else None
-            if isinstance(nested, dict) and "zs_fm" in nested:
-                issues.append(
-                    PlanIssue(
-                        "error",
-                        f"stages.renormalization.jobs[{index}].params.scheme_parameters.zs_fm",
-                        "Renormalization zs_fm must be a flat job parameter.",
-                        f"Move it to stages.renormalization.jobs[{index}].params.zs_fm.",
-                    )
-                )
     matching = stages.get("perturbative_matching")
     matching_scheme = (
         matching.get("defaults", {}).get("scheme")
@@ -1042,6 +1019,40 @@ def _expand_tau_cuts(value: Any) -> list[int]:
     return sorted(candidates)
 
 
+def _expand_pt3_windows(value: Any) -> list[dict[str, Any]]:
+    windows: list[dict[str, Any]] = []
+    if isinstance(value, list):
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            try:
+                tau_cut = int(item["tau_cut"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            window: dict[str, Any] = {"tau_cut": tau_cut}
+            tsep_ls = item.get("tsep_ls")
+            if isinstance(tsep_ls, list):
+                try:
+                    window["tsep_ls"] = [int(t) for t in tsep_ls]
+                except (TypeError, ValueError):
+                    continue
+            windows.append(window)
+    if not windows:
+        return [{"tau_cut": cut} for cut in _expand_tau_cuts(None)]
+    grouped: dict[tuple[int, ...] | None, list[int]] = {}
+    for window in windows:
+        tsep_key = tuple(window["tsep_ls"]) if "tsep_ls" in window else None
+        grouped.setdefault(tsep_key, []).append(int(window["tau_cut"]))
+    expanded: list[dict[str, Any]] = []
+    for tsep_key, cuts in grouped.items():
+        for cut in _expand_tau_cuts(cuts):
+            item: dict[str, Any] = {"tau_cut": cut}
+            if tsep_key is not None:
+                item["tsep_ls"] = list(tsep_key)
+            expanded.append(item)
+    return expanded
+
+
 def _remove_edit_for_path(edits: list[dict[str, Any]], path: str) -> None:
     edits[:] = [item for item in edits if item.get("path") != path]
 
@@ -1094,7 +1105,7 @@ def _make_quick_variant(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         defaults = config.get("defaults")
         if isinstance(defaults, dict):
-            for key in ("pt2_windows", "pt3_tau_cuts", "nstate", "fit_scope", "fit_strategy", "prior_width", "order"):
+            for key in ("pt2_windows", "pt3_windows", "nstate", "fit_scope", "fit_strategy", "prior_width", "order"):
                 if key in defaults:
                     defaults[key] = _shrink_list(defaults[key])
             scheme_scan = defaults.get("scheme_scan")
@@ -1109,7 +1120,7 @@ def _make_quick_variant(payload: dict[str, Any]) -> dict[str, Any]:
             for job in jobs:
                 if not isinstance(job, dict) or not isinstance(job.get("params"), dict):
                     continue
-                for key in ("pt2_windows", "pt3_tau_cuts", "nstate", "fit_scope", "fit_strategy", "prior_width", "order"):
+                for key in ("pt2_windows", "pt3_windows", "nstate", "fit_scope", "fit_strategy", "prior_width", "order"):
                     if key in job["params"]:
                         job["params"][key] = _shrink_list(job["params"][key])
     return quick

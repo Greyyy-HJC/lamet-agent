@@ -101,7 +101,7 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
         "stages": {
             "correlator_analysis": {"defaults": _required_correlator_defaults(), "jobs": [{"id": "ca", "correlator_ids": ["c2"], "params": {"momentum": "PX0PY0PZ0"}}]},
             "renormalization": {
-                "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "normalization": False, "zs_fm": 0.2, "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0}},
+                "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "normalization": False, "zs_fm": 0.2, "m0_gev": 0.0, "delta_m_gev": 0.0},
                 "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
             },
         },
@@ -349,21 +349,20 @@ def test_all_stage_planning_gaps_use_the_validation_contract(tmp_path: Path) -> 
         }
 
 
-def test_planning_reports_legacy_zs_locations_and_flat_parameter_gaps(tmp_path: Path) -> None:
+def test_planning_reports_legacy_kernel_zs_and_flat_parameter_gaps(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     _write_kernel(root)
     payload = _minimal_payload(root)
     payload["inputs"]["kernels"][0]["kernel_parameters"] = {"zs_fm": 0.2}
-    payload["stages"]["renormalization"]["defaults"].pop("zs_fm")
-    payload["stages"]["renormalization"]["defaults"]["scheme_parameters"] = {"zs_fm": 0.2}
 
     issues = check_manifest_draft(tmp_path / "draft.json", payload)
-    gaps = _stage_parameter_gaps(payload)
-
     issue_paths = {issue.manifest_path for issue in issues}
     assert "inputs.kernels[0].kernel_parameters.zs_fm" in issue_paths
-    assert "stages.renormalization.defaults.scheme_parameters.zs_fm" in issue_paths
+
+    payload["inputs"]["kernels"][0]["kernel_parameters"] = {}
+    payload["stages"]["renormalization"]["defaults"].pop("zs_fm")
+    gaps = _stage_parameter_gaps(payload)
     assert any(gap["path"] == "stages.renormalization.defaults.zs_fm" for gap in gaps)
 
 
@@ -390,7 +389,7 @@ def test_planning_distinguishes_self_renormalization_fit_jobs(tmp_path: Path) ->
             {
                 "id": "rn_fit",
                 "inputs": {"reference": "ca"},
-                "params": {"scheme_parameters": {"LambdaQCD_gev": 0.1, "d": -0.08183}},
+                "params": {"LambdaQCD_gev": 0.1, "d": -0.08183},
             }
         ],
     }
@@ -1983,18 +1982,19 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
     assert full["metadata"]["sample_error_mode"] == "covariance"
     assert full["stages"]["correlator_analysis"]["defaults"]["model_average"] is False
     assert "pt2_windows" not in full["stages"]["correlator_analysis"]["defaults"]
+    assert "pt3_windows" not in full["stages"]["correlator_analysis"]["defaults"]
     assert "pt3_tau_cuts" not in full["stages"]["correlator_analysis"]["defaults"]
 
 
 def test_full_plan_variant_preserves_explicit_correlator_windows(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     explicit_pt2 = [{"tmin": 3, "tmax": 12}, {"tmin": 5, "tmax": 13}]
-    explicit_tau = [2, 4]
+    explicit_pt3 = [{"tsep_ls": [8, 10], "tau_cut": 2}, {"tsep_ls": [8, 10], "tau_cut": 4}]
     payload["stages"] = {
         "correlator_analysis": {
             "defaults": {
                 "pt2_windows": explicit_pt2,
-                "pt3_tau_cuts": explicit_tau,
+                "pt3_windows": explicit_pt3,
                 "nstate": [2],
             },
             "jobs": [],
@@ -2007,7 +2007,7 @@ def test_full_plan_variant_preserves_explicit_correlator_windows(tmp_path: Path)
 
     defaults = full["stages"]["correlator_analysis"]["defaults"]
     assert defaults["pt2_windows"] == explicit_pt2
-    assert defaults["pt3_tau_cuts"] == explicit_tau
+    assert defaults["pt3_windows"] == explicit_pt3
 
 
 def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Path) -> None:
@@ -2381,7 +2381,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
                 "defaults": {
                     **_required_correlator_defaults(),
                     "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}],
-                    "pt3_tau_cuts": [2, 3],
+                    "pt3_windows": [{"tsep_ls": [3], "tau_cut": 2}, {"tsep_ls": [3], "tau_cut": 3}],
                 },
                 "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}],
             }
@@ -2401,7 +2401,12 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     defaults = full["stages"]["correlator_analysis"]["defaults"]
     assert {"tmin": 2, "tmax": 12} in defaults["pt2_windows"]
     assert {"tmin": 6, "tmax": 12} in defaults["pt2_windows"]
-    assert defaults["pt3_tau_cuts"] == [2, 3, 4, 5]
+    assert defaults["pt3_windows"] == [
+        {"tsep_ls": [3], "tau_cut": 2},
+        {"tsep_ls": [3], "tau_cut": 3},
+        {"tsep_ls": [3], "tau_cut": 4},
+        {"tsep_ls": [3], "tau_cut": 5},
+    ]
     assert defaults["model_average"] is False
     assert full["metadata"]["sample_error_mode"] == "covariance"
     assert "Quick manifest changes:" in result.output
@@ -2472,7 +2477,7 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
                 "defaults": {
                     **_required_correlator_defaults(),
                     "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}],
-                    "pt3_tau_cuts": [2, 3],
+                    "pt3_windows": [{"tsep_ls": [3], "tau_cut": 2}, {"tsep_ls": [3], "tau_cut": 3}],
                 },
                 "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}],
             }
@@ -2492,7 +2497,10 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
     assert "LLM reverted the tau-cut search" in result.output
     full = json.loads((root / "artifacts" / "plan_manifests" / "draft.full.json").read_text(encoding="utf-8"))
     defaults = full["stages"]["correlator_analysis"]["defaults"]
-    assert defaults["pt3_tau_cuts"] == [2, 3]
+    assert defaults["pt3_windows"] == [
+        {"tsep_ls": [3], "tau_cut": 2},
+        {"tsep_ls": [3], "tau_cut": 3},
+    ]
     assert {"tmin": 2, "tmax": 12} in defaults["pt2_windows"]
 
 

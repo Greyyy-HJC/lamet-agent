@@ -187,7 +187,7 @@
         "fit_strategy": [
           "independent"
         ],
-        "svdcut": 0.000001,
+        "svdcut": 1e-06,
         "posterior_prior_error_scale": 3.0,
         "fitting_form": "Breit",
         "component": "both",
@@ -411,9 +411,7 @@
         "scheme": "ratio",
         "strategy": "self_renormalization",
         "mu": 2.0,
-        "scheme_parameters": {
-          "LambdaQCD_gev": 0.1
-        }
+        "LambdaQCD_gev": 0.1
       },
       "jobs": [
         {
@@ -422,9 +420,7 @@
             "reference": "pion_zero_momentum_reference"
           },
           "params": {
-            "scheme_parameters": {
-              "d": -0.08183
-            }
+            "d": -0.08183
           }
         },
         {
@@ -434,10 +430,8 @@
             "zR": "rn_zr_fit"
           },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         },
         {
@@ -447,10 +441,8 @@
             "zR": "rn_zr_fit"
           },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         },
         {
@@ -460,10 +452,8 @@
             "zR": "rn_zr_fit"
           },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         },
         {
@@ -473,10 +463,8 @@
             "zR": "rn_zr_fit"
           },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         },
         {
@@ -486,10 +474,8 @@
             "zR": "rn_zr_fit"
           },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         },
         {
@@ -499,10 +485,8 @@
             "zR": "rn_zr_fit"
           },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         },
         {
@@ -512,10 +496,8 @@
             "zR": "rn_zr_fit"
           },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         },
         {
@@ -525,10 +507,8 @@
             "zR": "rn_zr_fit"
           },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         },
         {
@@ -538,10 +518,8 @@
             "zR": "rn_zr_fit"
           },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         }
       ]
