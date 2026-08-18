@@ -273,7 +273,15 @@ renormalization NetCDF outputs preserve it together with `current_operator`, so
 Fourier jobs infer the short observable, such as `pion_quark_quasi_pdf`, from
 `target_observable`, `parton`, and upstream `hadron`, while inheriting
 `polarization` separately from the target 3pt. Partial PDF/GPD inputs without
-that provenance must supply both `observable` and `polarization` explicitly.
+correlator provenance must supply `hadron` and `polarization` in the Fourier
+defaults or job params. `metadata.target_observable` and `metadata.parton` are
+the authoritative remaining inputs to observable inference.
+
+Fourier input coordinates are physical distances in fm. The stage no longer
+accepts a coordinate-unit override; external matrix-element artifacts must use
+the same fm convention. Tail scans use `zmin_fm`, `zmax_fm`, and
+`zmax_ext_fm`, while the fit converts internally to GeV$^{-1}$ and the Fourier
+phase to dimensionless Ioffe time.
 
 Quark PDF/GPD jobs support `sea`, `valence`, `singlet`, and `full`. Helicity
 interchanges the real/imaginary channels used by `valence` and `singlet` and
