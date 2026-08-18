@@ -972,7 +972,7 @@ def test_text_plan_records_explicit_polarization(tmp_path: Path, polarization: s
     assert three_point["polarization"] == polarization
 
 
-def test_text_plan_parses_only_explicit_fourier_observable(tmp_path: Path) -> None:
+def test_text_plan_uses_external_hadron_and_ignores_fourier_observable(tmp_path: Path) -> None:
     (tmp_path / "rn_input.nc").write_text("placeholder", encoding="utf-8")
     manifest = tmp_path / "request.txt"
     manifest.write_text(
@@ -985,12 +985,13 @@ def test_text_plan_parses_only_explicit_fourier_observable(tmp_path: Path) -> No
     payload, _text = load_relaxed_manifest(manifest)
 
     assert payload["metadata"]["target_observable"] == "pdf"
-    assert payload["stages"]["fourier_transform"]["defaults"]["observable"] == "nucleon_quark_quasi_pdf"
+    assert "observable" not in payload["stages"]["fourier_transform"]["defaults"]
+    assert payload["stages"]["fourier_transform"]["defaults"]["hadron"] == "nucleon"
     assert payload["stages"]["fourier_transform"]["defaults"]["polarization"] == "helicity"
-    assert not any(gap["parameter"] == "observable" for gap in _stage_parameter_gaps(payload, manifest))
+    assert not any(gap["parameter"] == "hadron" for gap in _stage_parameter_gaps(payload, manifest))
 
 
-def test_external_fourier_input_without_provenance_requires_observable(tmp_path: Path) -> None:
+def test_external_fourier_input_without_provenance_requires_hadron(tmp_path: Path) -> None:
     (tmp_path / "rn_input.nc").write_text("placeholder", encoding="utf-8")
     manifest = tmp_path / "request.txt"
     manifest.write_text(
@@ -1001,7 +1002,7 @@ def test_external_fourier_input_without_provenance_requires_observable(tmp_path:
 
     payload, _text = load_relaxed_manifest(manifest)
 
-    assert any(gap["parameter"] == "observable" for gap in _stage_parameter_gaps(payload, manifest))
+    assert any(gap["parameter"] == "hadron" for gap in _stage_parameter_gaps(payload, manifest))
 
 
 def test_gluon_text_plan_normalizes_fourier_sector(tmp_path: Path) -> None:
@@ -1050,7 +1051,7 @@ def test_text_plan_omits_default_fourier_coord_unit(tmp_path: Path) -> None:
     assert "coord_unit" not in payload["stages"]["fourier_transform"]["defaults"]
 
 
-def test_text_plan_keeps_explicit_fourier_coord_unit_override(tmp_path: Path) -> None:
+def test_text_plan_ignores_removed_fourier_coord_unit(tmp_path: Path) -> None:
     (tmp_path / "rn_pz.nc").write_text("placeholder", encoding="utf-8")
     manifest = tmp_path / "request.txt"
     manifest.write_text(
@@ -1062,7 +1063,7 @@ def test_text_plan_keeps_explicit_fourier_coord_unit_override(tmp_path: Path) ->
 
     payload, _text = load_relaxed_manifest(manifest)
 
-    assert payload["stages"]["fourier_transform"]["defaults"]["coord_unit"] == "lattice"
+    assert "coord_unit" not in payload["stages"]["fourier_transform"]["defaults"]
 
 
 def test_text_plan_reads_colon_json_stage_defaults(tmp_path: Path) -> None:
@@ -1072,7 +1073,7 @@ def test_text_plan_reads_colon_json_stage_defaults(tmp_path: Path) -> None:
         "Use random_seed 1984 and resample_mode jk. "
         "Run fourier_transform and perturbative_matching. "
         "y_grid: {\"start\": -1.0, \"stop\": 1.0, \"num\": 101}. "
-        "scheme_scan: {\"zmin_values\": [1], \"zmax_values\": [5], \"z_ext_max\": 8}. "
+        "scheme_scan: {\"zmin_fm\": [1], \"zmax_fm\": [5], \"zmax_ext_fm\": 8}. "
         "quasi_y_ls: {\"start\": -1.0, \"stop\": 1.0, \"num\": 100}.",
         encoding="utf-8",
     )
@@ -1080,7 +1081,7 @@ def test_text_plan_reads_colon_json_stage_defaults(tmp_path: Path) -> None:
     payload, _text = load_relaxed_manifest(manifest)
 
     assert payload["stages"]["fourier_transform"]["defaults"]["y_grid"]["num"] == 101
-    assert payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"]["z_ext_max"] == 8
+    assert payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"]["zmax_ext_fm"] == 8
     assert payload["stages"]["perturbative_matching"]["defaults"]["quasi_y_ls"]["num"] == 100
 
 

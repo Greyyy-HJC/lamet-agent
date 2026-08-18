@@ -342,9 +342,8 @@ def _partial_fourier_payload(artifact: dict) -> dict:
                     "order": "NLA",
                     "posterior_prior_error_scale": 3.0,
                     "sector": "valence",
-                    "coord_unit": "lattice",
                     "scheme_scan": {
-                        "zmin_values": [1.0], "zmax_values": [2.0], "z_ext_max": 3.0,
+                        "zmin_fm": [1.0], "zmax_fm": [2.0], "zmax_ext_fm": 3.0,
                         "smooth": "linear", "model_average": True,
                     },
                     "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},

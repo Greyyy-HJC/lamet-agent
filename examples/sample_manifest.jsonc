@@ -263,7 +263,6 @@
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
         // Lower-level incompatible alternative: omit sector and set
         // "part": "re" // "re", "im", or "both"; sector is preferred when available
-        "coord_unit": "fm", // default for renormalized .nc inputs; override with "lattice", "gev_inv", or "lambda" only when needed
         "Lambda0_gev": 0.0, // required fixed extra exponential scale in GeV
         "posterior_prior_error_scale": [2.0, 3.0, 5.0], // tail-fit model candidates
         "y_grid": {
@@ -271,27 +270,22 @@
           "stop": 2.0,
           "num": 100 // alternatively an explicit numeric list, or {start, stop, step} instead of num
         },
-        // scheme_scan must explicitly provide both z ranges, z_ext_max, smooth,
-        // and model_average. max_schemes has a contract default of 200.
-        // *_values cannot mix with the range form zmin_start/stop/step (and zmax_*);
-        // a shared scheme_scan.step can fill both bounds. All range values must be
-        // in coord_unit (default "fm" for renormalized .nc inputs). Do NOT use
-        // lattice site indices here: convert as z_fm = n * a_fm (below: n=9..12
-        // and 21..24 with a_fm=0.0574; z_ext_max from n=100).
+        // scheme_scan is explicit, but the three range fields may be omitted so the stage
+        // auto-fills them from tail-fit diagnostics. Input coordinates and scan values are fixed in fm.
+        // Do NOT use lattice site indices here: convert as z_fm = n * a_fm
+        // (below: n=9..12 and 21..24 with a_fm=0.0574; zmax_ext_fm from n=100).
         "scheme_scan": {
-          "zmin_values": [0.5166, 0.574, 0.6314, 0.6888], // candidate fit starts in coord_unit
-          "zmax_values": [1.2054, 1.2628, 1.3202, 1.3776], // candidate fit ends in coord_unit
-          "z_ext_max": 5.74, // extrapolated endpoint in coord_unit
+          "zmin_fm": [0.5166, 0.574, 0.6314, 0.6888], // candidate fit starts in fm
+          "zmax_fm": [1.2054, 1.2628, 1.3202, 1.3776], // candidate fit ends in fm
+          "zmax_ext_fm": 5.74, // extrapolated endpoint in fm
           "smooth": "linear", // interpolation/smoothing choice: "linear" or "none"
           "model_average": false, // runtime default is true; false uses one selected tail model
           "max_schemes": 200 // cap accepted range combinations
         },
         // Usually inferred from manifest metadata or upstream attrs:
         // "gfix": "CG", // optional; usually inherited from the input
-        // "observable": "pion_quark_quasi_pdf", // inferred from target, parton, and hadron
         // "polarization": "unpolarized", // required for PDF/GPD if upstream 3pt provenance is absent
-        // "target_observable": "pdf",
-        // "hadron": "pion",
+        // "hadron": "pion", // required when no upstream correlator/artifact supplies it
         // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class
         // "psi2_flavor_class": "heavy",
         // "zmin_shift": 1, // optional; clone low/high tail-window systematics (0 = off)

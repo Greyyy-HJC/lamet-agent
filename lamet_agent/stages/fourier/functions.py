@@ -47,7 +47,7 @@ from lamet_agent.core.resampling import (
     samples_to_gvar,
 )
 from lamet_agent.stages.fourier.reporting import write_fourier_report
-from lamet_agent.stages.fourier.validation import PUBLIC_OBSERVABLES
+from lamet_agent.stages.fourier.validation import INFERRED_OBSERVABLES, PUBLIC_OBSERVABLES
 
 FM_TO_GEV_INV = 5.067731237
 _FOURIER_SAMPLE_EXECUTOR: ContextVar[ProcessPoolExecutor | None] = ContextVar(
@@ -334,37 +334,6 @@ def _ft_scale_momentum(momentum_gev: float | None, final_momentum_gev: float | N
     return abs((float(momentum_gev or 0.0) + float(final_momentum_gev)) / 2.0)
 
 
-def _coord_scale(
-    coord_unit: str,
-    *,
-    momentum_gev: float | None,
-    lattice_spacing_fm: float | None,
-    final_momentum_gev: float | None = None,
-) -> tuple[float, float]:
-    """Return ``(fit_scale, ft_scale)`` from input coordinates."""
-    unit = coord_unit.lower()
-    ft_momentum = _ft_scale_momentum(momentum_gev, final_momentum_gev)
-    if unit == "lambda":
-        return 1.0, 1.0
-    if unit == "gev_inv":
-        if ft_momentum == 0.0:
-            raise ValueError("momentum_gev or final_momentum_gev is required when coord_unit='gev_inv'")
-        return 1.0, ft_momentum
-    if unit == "fm":
-        if ft_momentum == 0.0:
-            raise ValueError("momentum_gev or final_momentum_gev is required when coord_unit='fm'")
-        return FM_TO_GEV_INV, FM_TO_GEV_INV * ft_momentum
-    if unit == "lattice":
-        if lattice_spacing_fm is None or ft_momentum == 0.0:
-            raise ValueError("lattice_spacing_fm and momentum_gev or final_momentum_gev are required when coord_unit='lattice'")
-        return float(lattice_spacing_fm) * FM_TO_GEV_INV, float(lattice_spacing_fm) * FM_TO_GEV_INV * ft_momentum
-    raise ValueError("coord_unit must be 'lambda', 'gev_inv', 'fm', or 'lattice'")
-
-
-def _convert_scheme_value(value: float, fit_scale: float) -> float:
-    return float(value) * fit_scale
-
-
 def _canonical_observable(observable: str) -> str:
     key = observable.lower().replace("-", "_").replace(" ", "_")
     if key not in PUBLIC_OBSERVABLES and key not in OBSERVABLE_BACKENDS:
@@ -390,23 +359,6 @@ def _quark_like_term_names(observable: str) -> tuple[str, ...]:
     if backend not in QUARK_LIKE_TERMS:
         raise ValueError(f"unsupported quark-like observable {observable!r}")
     return QUARK_LIKE_TERMS[backend]
-
-
-def _phase_scales(
-    *,
-    coord_unit: str,
-    momentum_gev: float | None,
-    final_momentum_gev: float | None,
-    ft_scale_over_fit_scale: float,
-) -> tuple[float, float | None]:
-    if coord_unit.lower() == "lambda":
-        phase_scale = ft_scale_over_fit_scale
-        if final_momentum_gev is None:
-            return phase_scale, None
-        if momentum_gev is None:
-            raise ValueError("momentum_gev is required with final_momentum_gev when coord_unit='lambda'")
-        return phase_scale, float(final_momentum_gev) / float(momentum_gev)
-    return float(momentum_gev or 0.0), None if final_momentum_gev is None else float(final_momentum_gev)
 
 
 def _quark_like_phase_scales(
@@ -976,10 +928,8 @@ def fit_tail_quality_for_mean(
     method: str,
     order: str,
     observable: str,
-    coord_unit: str,
     momentum_gev: float | None = None,
     final_momentum_gev: float | None = None,
-    lattice_spacing_fm: float | None = None,
     resample_mode: str = "bootstrap",
     Lambda0_gev: float = 0.0,
     posterior_prior_error_scale: float = 3.0,
@@ -1000,17 +950,11 @@ def fit_tail_quality_for_mean(
         raise ValueError("sample arrays must have one value per coordinate point")
 
     observable = _canonical_observable(observable)
-    fit_scale, ft_scale = _coord_scale(coord_unit, momentum_gev=momentum_gev, final_momentum_gev=final_momentum_gev, lattice_spacing_fm=lattice_spacing_fm)
-    fit_coord = coord_arr * fit_scale
-    ft_scale_over_fit_scale = ft_scale / fit_scale
-    phase_scale, phase_prime_scale = _phase_scales(
-        coord_unit=coord_unit,
-        momentum_gev=momentum_gev,
-        final_momentum_gev=final_momentum_gev,
-        ft_scale_over_fit_scale=ft_scale_over_fit_scale,
-    )
-    zmin_fit = _convert_scheme_value(zmin, fit_scale)
-    zmax_fit = _convert_scheme_value(zmax, fit_scale)
+    fit_coord = coord_arr * FM_TO_GEV_INV
+    phase_scale = float(momentum_gev or 0.0)
+    phase_prime_scale = None if final_momentum_gev is None else float(final_momentum_gev)
+    zmin_fit = float(zmin) * FM_TO_GEV_INV
+    zmax_fit = float(zmax) * FM_TO_GEV_INV
     fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
     n_points = int(np.count_nonzero(fit_mask))
     n_params = len(
@@ -1221,7 +1165,6 @@ def _run_one_scheme(
     method: str,
     order: str,
     observable: str,
-    fit_scale: float,
     im_flip_for_ft: bool,
     phase_scale: float,
     phase_prime_scale: float | None,
@@ -1239,9 +1182,9 @@ def _run_one_scheme(
 ) -> dict[str, Any]:
     zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
     label = str(scheme.get("label", f"{method}_{order}_{zmin}_{zmax}"))
-    zmin_fit = _convert_scheme_value(zmin, fit_scale)
-    zmax_fit = _convert_scheme_value(zmax, fit_scale)
-    z_ext_fit_max = _convert_scheme_value(z_ext_max, fit_scale)
+    zmin_fit = zmin * FM_TO_GEV_INV
+    zmax_fit = zmax * FM_TO_GEV_INV
+    z_ext_fit_max = z_ext_max * FM_TO_GEV_INV
 
     if zmin_fit <= 0:
         raise ValueError("zmin must be positive; asymptotic forms are singular at zero")
@@ -1538,10 +1481,8 @@ def run_fourier_workflow(
     method: str = "GI",
     order: str = "NLA",
     observable: str,
-    coord_unit: str = "fm",
     momentum_gev: float | None = None,
     final_momentum_gev: float | None = None,
-    lattice_spacing_fm: float | None = None,
     im_flip_for_ft: bool = False,
     resample_mode: str = "bootstrap",
     Lambda0_gev: float = 0.0,
@@ -1556,7 +1497,7 @@ def run_fourier_workflow(
 ) -> dict[str, Any]:
     """Run asymptotic extension and Fourier transform for resampled data.
 
-    ``schemes`` values are in the same unit as ``coord``. The output keeps
+    ``coord`` and ``schemes`` values are physical distances in fm. The output keeps
     sample information as arrays shaped ``(scheme, sample, y)``.
     """
     if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or int(workers) < 1:
@@ -1572,7 +1513,7 @@ def run_fourier_workflow(
         if np.allclose(coord_diffs, coord_diffs[0], rtol=1e-7, atol=1e-12)
         else float(np.min(coord_diffs))
     )
-    missing_short_distance_coord = np.arange(0.0, coord_arr[0], coord_step).tolist()
+    missing_short_distance_coord = np.arange(0.0, coord_arr[0] - 0.5 * coord_step, coord_step).tolist()
 
     re_mat = _as_sample_matrix("re_samples", re_samples)
     im_mat = _as_sample_matrix("im_samples", im_samples)
@@ -1582,15 +1523,11 @@ def run_fourier_workflow(
         raise ValueError("sample arrays must have one value per coordinate point")
 
     observable = _canonical_observable(observable)
-    fit_scale, ft_scale = _coord_scale(coord_unit, momentum_gev=momentum_gev, final_momentum_gev=final_momentum_gev, lattice_spacing_fm=lattice_spacing_fm)
-    fit_coord = coord_arr * fit_scale
-    ft_scale_over_fit_scale = ft_scale / fit_scale
-    phase_scale, phase_prime_scale = _phase_scales(
-        coord_unit=coord_unit,
-        momentum_gev=momentum_gev,
-        final_momentum_gev=final_momentum_gev,
-        ft_scale_over_fit_scale=ft_scale_over_fit_scale,
-    )
+    fit_coord = coord_arr * FM_TO_GEV_INV
+    ft_scale_over_fit_scale = _ft_scale_momentum(momentum_gev, final_momentum_gev)
+    ft_scale = FM_TO_GEV_INV * ft_scale_over_fit_scale
+    phase_scale = float(momentum_gev or 0.0)
+    phase_prime_scale = None if final_momentum_gev is None else float(final_momentum_gev)
     y_arr = np.asarray(y_grid, dtype=float)
     if y_arr.ndim != 1:
         raise ValueError("y_grid must be one-dimensional")
@@ -1629,7 +1566,6 @@ def run_fourier_workflow(
                     method=method,
                     order=scheme_order,
                     observable=observable,
-                    fit_scale=fit_scale,
                     im_flip_for_ft=im_flip_for_ft,
                     phase_scale=phase_scale,
                     phase_prime_scale=phase_prime_scale,
@@ -1689,8 +1625,8 @@ def run_fourier_workflow(
         "method": method.upper(),
         "order": order.upper() if isinstance(order, str) else ",".join(str(item).upper() for item in order),
         "observable": observable,
-        "coord_unit": coord_unit,
-        "fit_coord_unit": "lambda" if coord_unit.lower() == "lambda" else "gev_inv",
+        "coord_unit": "fm",
+        "fit_coord_unit": "gev_inv",
         "resample_mode": resample_mode,
         "sample_error_mode": sample_error_mode,
         "Lambda0_gev": float(Lambda0_gev),
@@ -2187,23 +2123,6 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any], source_ens
     fit_info_data.to_netcdf(path)
 
 
-def _scan_values(spec: dict[str, Any], key: str) -> list[float]:
-    values_key = f"{key}_values"
-    if values_key in spec:
-        return [float(item) for item in spec[values_key]]
-    start = float(spec[f"{key}_start"])
-    stop = float(spec[f"{key}_stop"])
-    step = float(spec.get(f"{key}_step", spec.get("step", 1.0)))
-    if step <= 0:
-        raise ValueError(f"{key}_step must be positive")
-    values = []
-    current = start
-    while current <= stop + 0.5 * step:
-        values.append(round(current, 12))
-        current += step
-    return values
-
-
 def _positive_grid(coord: np.ndarray) -> np.ndarray:
     positive = np.asarray(coord, dtype=float)
     positive = positive[np.isfinite(positive) & (positive > 0)]
@@ -2233,25 +2152,6 @@ def _last_stable_z_index(
     if np.any(nonzero):
         return min(len(magnitude) - 1, int(np.flatnonzero(nonzero)[-1]) + 5)
     return min(4, len(magnitude) - 1)
-
-
-def _preferred_tail_start(
-    *,
-    coord_unit: str,
-    momentum_gev: float | None,
-    lattice_spacing_fm: float | None,
-) -> float | None:
-    """Return the coordinate closest to z ~= 0.5 fm when unit metadata allows it."""
-    unit = coord_unit.lower()
-    if unit == "fm":
-        return 0.5
-    if unit == "lattice" and lattice_spacing_fm is not None and float(lattice_spacing_fm) > 0:
-        return 0.5 / float(lattice_spacing_fm)
-    if unit == "gev_inv":
-        return 0.5 * FM_TO_GEV_INV
-    if unit == "lambda" and momentum_gev is not None:
-        return 0.5 * FM_TO_GEV_INV * float(momentum_gev)
-    return None
 
 
 def _tail_quality_stable_start(qualities: list[dict[str, Any]]) -> int:
@@ -2284,20 +2184,18 @@ def _tail_quality_stable_start(qualities: list[dict[str, Any]]) -> int:
     return int(np.nanargmin([item["chi2_dof"] if item["tail_fit_success"] else np.inf for item in qualities]))
 
 
-def _pick_four_zmin_values_by_tail_fit(
+def _pick_four_zmin_fm_by_tail_fit(
     positive: np.ndarray,
     *,
-    zmax_values: list[float],
+    zmax_candidates: list[float],
     coord: np.ndarray,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
     method: str,
     order: str,
     observable: str,
-    coord_unit: str,
     momentum_gev: float | None,
     final_momentum_gev: float | None,
-    lattice_spacing_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
     Lambda0_gev: float,
@@ -2324,7 +2222,7 @@ def _pick_four_zmin_values_by_tail_fit(
         ),
         part,
     )
-    for zmax in zmax_values:
+    for zmax in zmax_candidates:
         candidates = positive[positive < float(zmax)]
         candidates = np.asarray(
             [candidate for candidate in candidates if np.count_nonzero((positive >= candidate) & (positive <= zmax)) >= required_points],
@@ -2344,10 +2242,8 @@ def _pick_four_zmin_values_by_tail_fit(
                 method=method,
                 order=order,
                 observable=observable,
-                coord_unit=coord_unit,
                 momentum_gev=momentum_gev,
                 final_momentum_gev=final_momentum_gev,
-                lattice_spacing_fm=lattice_spacing_fm,
                 resample_mode=resample_mode,
                 sample_error_mode=sample_error_mode,
                 Lambda0_gev=Lambda0_gev,
@@ -2365,26 +2261,13 @@ def _pick_four_zmin_values_by_tail_fit(
     if len(stable_starts) >= 4:
         return stable_starts[:4]
     anchor = max(stable_starts) if stable_starts else (float(preferred_zmin) if preferred_zmin is not None else positive[0])
-    candidates = [float(item) for item in positive if item >= anchor and any(item < zmax for zmax in zmax_values)]
+    candidates = [float(item) for item in positive if item >= anchor and any(item < zmax for zmax in zmax_candidates)]
     for candidate in candidates:
         if candidate not in stable_starts:
             stable_starts.append(candidate)
         if len(stable_starts) >= 4:
             break
     return stable_starts[:4]
-
-
-def _default_z_ext_max(
-    coord: np.ndarray,
-    *,
-    coord_unit: str,
-    momentum_gev: float | None,
-    final_momentum_gev: float | None,
-    lattice_spacing_fm: float | None,
-) -> float:
-    """Return the coordinate value whose lambda is eight units past the data."""
-    _fit_scale, ft_scale = _coord_scale(coord_unit, momentum_gev=momentum_gev, final_momentum_gev=final_momentum_gev, lattice_spacing_fm=lattice_spacing_fm)
-    return float(np.max(coord) + 8.0 / ft_scale)
 
 
 def _auto_fill_scheme_scan(
@@ -2395,13 +2278,11 @@ def _auto_fill_scheme_scan(
     re_samples: np.ndarray,
     im_samples: np.ndarray,
     stable_idx: int,
-    coord_unit: str,
     method: str,
     order: str,
     observable: str,
     momentum_gev: float | None,
     final_momentum_gev: float | None,
-    lattice_spacing_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
     Lambda0_gev: float,
@@ -2412,34 +2293,24 @@ def _auto_fill_scheme_scan(
     psi2_flavor_class: str = "heavy",
 ) -> dict[str, Any]:
     """Fill missing scan keys with stable zmax values and tail-fit zmin diagnostics."""
-    if "zmax_values" not in spec and "zmax_start" not in spec:
+    if "zmax_fm" not in spec:
         end_index = int(np.clip(stable_idx, 0, len(positive) - 1))
         start_index = max(0, end_index - 4)
-        spec["zmax_values"] = [float(item) for item in positive[start_index : end_index + 1]]
-    if "zmax_values" in spec:
-        zmax_values = [float(item) for item in spec["zmax_values"]]
-    else:
-        zmax_values = _scan_values(spec, "zmax")
+        spec["zmax_fm"] = [float(item) for item in positive[start_index : end_index + 1]]
+    zmax_candidates = [float(item) for item in spec["zmax_fm"]]
 
-    if "zmin_values" not in spec and "zmin_start" not in spec:
-        preferred_zmin = _preferred_tail_start(
-            coord_unit=coord_unit,
-            momentum_gev=momentum_gev,
-            lattice_spacing_fm=lattice_spacing_fm,
-        )
-        spec["zmin_values"] = _pick_four_zmin_values_by_tail_fit(
+    if "zmin_fm" not in spec:
+        spec["zmin_fm"] = _pick_four_zmin_fm_by_tail_fit(
             positive,
-            zmax_values=zmax_values,
+            zmax_candidates=zmax_candidates,
             coord=coord,
             re_samples=re_samples,
             im_samples=im_samples,
             method=method,
             order=order,
             observable=observable,
-            coord_unit=coord_unit,
             momentum_gev=momentum_gev,
             final_momentum_gev=final_momentum_gev,
-            lattice_spacing_fm=lattice_spacing_fm,
             resample_mode=resample_mode,
             sample_error_mode=sample_error_mode,
             Lambda0_gev=Lambda0_gev,
@@ -2448,15 +2319,11 @@ def _auto_fill_scheme_scan(
             hadron=hadron,
             psi1_flavor_class=psi1_flavor_class,
             psi2_flavor_class=psi2_flavor_class,
-            preferred_zmin=preferred_zmin,
+            preferred_zmin=0.5,
         )
-    if "z_ext_max" not in spec:
-        spec["z_ext_max"] = _default_z_ext_max(
-            coord,
-            coord_unit=coord_unit,
-            momentum_gev=momentum_gev,
-            final_momentum_gev=final_momentum_gev,
-            lattice_spacing_fm=lattice_spacing_fm,
+    if "zmax_ext_fm" not in spec:
+        spec["zmax_ext_fm"] = float(
+            np.max(coord) + 8.0 / (FM_TO_GEV_INV * _ft_scale_momentum(momentum_gev, final_momentum_gev))
         )
     if "smooth" not in spec:
         spec["smooth"] = "linear"
@@ -2466,14 +2333,7 @@ def _auto_fill_scheme_scan(
 def _scan_has_all_range_keys(spec: dict[str, Any] | None) -> bool:
     if spec is None:
         return False
-    has_zmin = "zmin_values" in spec or "zmin_start" in spec
-    has_zmax = "zmax_values" in spec or "zmax_start" in spec
-    return has_zmin and has_zmax and "z_ext_max" in spec and "smooth" in spec
-
-
-def _fill_scheme_defaults(spec: dict[str, Any]) -> dict[str, Any]:
-    spec.setdefault("model_average", True)
-    return spec
+    return all(key in spec for key in ("zmin_fm", "zmax_fm", "zmax_ext_fm", "smooth"))
 
 
 def _auto_scheme_scan(
@@ -2481,13 +2341,11 @@ def _auto_scheme_scan(
     coord: np.ndarray,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
-    coord_unit: str,
     method: str,
     order: str,
     observable: str,
     momentum_gev: float | None,
     final_momentum_gev: float | None,
-    lattice_spacing_fm: float | None,
     resample_mode: str,
     sample_error_mode: str,
     Lambda0_gev: float,
@@ -2517,13 +2375,11 @@ def _auto_scheme_scan(
         re_samples=re_axis0,
         im_samples=im_axis0,
         stable_idx=stable_idx,
-        coord_unit=coord_unit,
         method=method,
         order=order,
         observable=observable,
         momentum_gev=momentum_gev,
         final_momentum_gev=final_momentum_gev,
-        lattice_spacing_fm=lattice_spacing_fm,
         resample_mode=resample_mode,
         sample_error_mode=sample_error_mode,
         Lambda0_gev=Lambda0_gev,
@@ -2538,15 +2394,15 @@ def _auto_scheme_scan(
 
 
 def _generate_scan_schemes(spec: dict[str, Any]) -> list[dict[str, Any]]:
-    zmin_values = _scan_values(spec, "zmin")
-    zmax_values = _scan_values(spec, "zmax")
-    z_ext_max = float(spec["z_ext_max"])
-    smooth = str(spec["smooth"])
-    max_schemes = int(spec["max_schemes"])
+    zmin_candidates = [float(item) for item in spec["zmin_fm"]]
+    zmax_candidates = [float(item) for item in spec["zmax_fm"]]
+    z_ext_max = float(spec["zmax_ext_fm"])
+    smooth = str(spec.get("smooth", "linear"))
+    max_schemes = int(spec.get("max_schemes", 200))
 
     schemes = []
-    for zmin in zmin_values:
-        for zmax in zmax_values:
+    for zmin in zmin_candidates:
+        for zmax in zmax_candidates:
             if zmax <= zmin:
                 continue
             scheme = {
@@ -2693,8 +2549,9 @@ def run_fourier_transform(
     zmin_shift: int,
     method: str,
     order: str | list[str],
-    observable: str | None = None,
-    coord_unit: str = "fm",
+    target_observable: str,
+    parton: str,
+    hadron: str,
     momentum: str | None = None,
     volume: str | None = None,
     bz_direction: str | None = None,
@@ -2711,9 +2568,6 @@ def run_fourier_transform(
     part: str,
     output_scale: float,
     sector: str,
-    target_observable: str,
-    parton: str,
-    hadron: str | None = None,
     current_operator: str | None = None,
     polarization: str | None = None,
     psi1_flavor_class: str | None = None,
@@ -2726,15 +2580,6 @@ def run_fourier_transform(
     workers: int,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
-    missing_scan = [key for key in ("z_ext_max", "smooth", "model_average", "max_schemes") if key not in scheme_scan]
-    has_zmin = bool(scheme_scan.get("zmin_values")) or all(key in scheme_scan for key in ("zmin_start", "zmin_stop"))
-    has_zmax = bool(scheme_scan.get("zmax_values")) or all(key in scheme_scan for key in ("zmax_start", "zmax_stop"))
-    if not has_zmin:
-        missing_scan.append("zmin_values or zmin_start/zmin_stop")
-    if not has_zmax:
-        missing_scan.append("zmax_values or zmax_start/zmax_stop")
-    if missing_scan:
-        raise ValueError(f"scheme_scan is incomplete; missing: {', '.join(missing_scan)}")
     if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or int(workers) < 1:
         raise ValueError("workers must be a positive integer")
     workers = int(workers)
@@ -2743,30 +2588,21 @@ def run_fourier_transform(
     out = "fourier_result"
     sector = None if sector is None else str(sector).strip().lower()
     parton = str(parton).strip().lower()
+    hadron = str(hadron).strip().lower()
     polarization = str(polarization or "").strip().lower()
     psi1_flavor_class = str(psi1_flavor_class or "").strip().lower()
     psi2_flavor_class = str(psi2_flavor_class or "").strip().lower()
-    target = str(target_observable or "").strip().lower()
-    if observable is None and target == "da":
-        observable = "meson_quasi_da"
-    if not target:
-        observable_name = str(observable).strip().lower()
-        target = "da" if observable_name == "meson_quasi_da" else "gpd" if "gpd" in observable_name else "pdf"
-    if target in {"pdf", "gpd"} and observable is not None:
-        observable_key = str(observable).lower().replace("-", "_").replace(" ", "_")
-        if observable_key not in PUBLIC_OBSERVABLES:
-            allowed = ", ".join(sorted(PUBLIC_OBSERVABLES))
-            raise ValueError(f"observable must be one of: {allowed}")
-        public_observable = observable_key
+    target = str(target_observable).strip().lower()
+    if target in {"pdf", "gpd"}:
+        hadron = "nucleon" if hadron == "proton" else hadron
+        public_observable = INFERRED_OBSERVABLES[(target, parton, hadron)]
         if not polarization:
             raise ValueError("polarization is required for PDF/GPD Fourier transforms")
         if (public_observable, polarization) not in POLARIZED_OBSERVABLES:
             raise ValueError(f"polarization={polarization!r} is not supported for {public_observable!r}")
-        parton = "gluon" if "_gluon_" in public_observable else "quark"
-        hadron = "pion" if public_observable.startswith("pion_") else "nucleon"
         observable = POLARIZED_OBSERVABLES[(public_observable, polarization)]
     else:
-        public_observable = _canonical_observable(str(observable))
+        public_observable = observable = "meson_quasi_da"
     if sector is not None:
         if target == "da":
             sector = "full"
@@ -2806,12 +2642,7 @@ def run_fourier_transform(
     if target == "da" and (not psi1_flavor_class or not psi2_flavor_class):
         raise ValueError("DA Fourier transforms require both psi flavor classes")
     if target == "da" and symmetry_guarantee:
-        _fit_scale, ft_scale = _coord_scale(
-            coord_unit,
-            momentum_gev=momentum_gev,
-            final_momentum_gev=final_momentum_gev,
-            lattice_spacing_fm=lattice_spacing_fm,
-        )
+        ft_scale = FM_TO_GEV_INV * _ft_scale_momentum(momentum_gev, final_momentum_gev)
         projected = _project_da_symmetry(
             coord_arr,
             matrix_element["re_samples"],
@@ -2821,11 +2652,34 @@ def run_fourier_transform(
         matrix_element["re_samples"] = np.real(projected)
         matrix_element["im_samples"] = np.imag(projected)
         matrix_element_data.array.values = projected
+    auto_scheme_scan = None
     range_order = str(order[0] if isinstance(order, list) else order).upper()
     range_prior_width = float(
         posterior_prior_error_scale[0] if isinstance(posterior_prior_error_scale, list) else posterior_prior_error_scale
     )
-    scheme_scan = dict(scheme_scan)
+    scan_spec = {"model_average": True, **dict(scheme_scan)}
+    if not _scan_has_all_range_keys(scan_spec):
+        scan_spec = _auto_scheme_scan(
+            coord=coord_arr,
+            re_samples=np.asarray(matrix_element["re_samples"], dtype=float),
+            im_samples=np.asarray(matrix_element["im_samples"], dtype=float),
+            method=method,
+            order=range_order,
+            observable=observable,
+            momentum_gev=momentum_gev,
+            final_momentum_gev=final_momentum_gev,
+            resample_mode=resample_mode,
+            sample_error_mode=sample_error_mode,
+            Lambda0_gev=float(Lambda0_gev),
+            part=part,
+            sector=fit_sector,
+            hadron=hadron,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
+            existing=scan_spec,
+        )
+        auto_scheme_scan = scan_spec
+    scheme_scan = scan_spec
     schemes = _generate_scan_schemes(scheme_scan)
     required_points = _minimum_fit_points_for_parameters(
         len(
@@ -2865,10 +2719,8 @@ def run_fourier_transform(
                 method=method,
                 order=range_order,
                 observable=observable,
-                coord_unit=coord_unit,
                 momentum_gev=momentum_gev,
                 final_momentum_gev=final_momentum_gev,
-                lattice_spacing_fm=lattice_spacing_fm,
                 resample_mode=resample_mode,
                 Lambda0_gev=float(Lambda0_gev),
                 posterior_prior_error_scale=range_prior_width,
@@ -2958,10 +2810,8 @@ def run_fourier_transform(
         method=method,
         order=order,
         observable=observable,
-        coord_unit=coord_unit,
         momentum_gev=momentum_gev,
         final_momentum_gev=final_momentum_gev,
-        lattice_spacing_fm=lattice_spacing_fm,
         im_flip_for_ft=im_flip_for_ft,
         resample_mode=resample_mode,
         Lambda0_gev=float(Lambda0_gev),
@@ -3006,6 +2856,8 @@ def run_fourier_transform(
     result["workers"] = int(workers)
     result["ensemble"] = str(ensemble or "")
     result.update(candidate_diagnostics)
+    if auto_scheme_scan is not None:
+        result["auto_scheme_scan"] = auto_scheme_scan
     _apply_sample_fit_model_average(
         result,
         resample_mode=resample_mode,
@@ -3073,7 +2925,7 @@ def run_fourier_transform(
             else {}
         ),
         "symmetry_guarantee": result.get("symmetry_guarantee", False),
-        "auto_scheme_scan": None,
+        "auto_scheme_scan": auto_scheme_scan,
         "Lambda0_gev": result.get("Lambda0_gev", 0.0),
         "workers": int(workers),
     }
@@ -3170,7 +3022,6 @@ def plot_fourier_extension_quality_result(
         scheme_index=scheme_index,
         component="re",
         momentum_gev=data.get("momentum_gev"),
-        lattice_spacing_fm=data.get("lattice_spacing_fm"),
         save_path=re_output,
         title=title,
     )
@@ -3184,7 +3035,6 @@ def plot_fourier_extension_quality_result(
         scheme_index=scheme_index,
         component="im",
         momentum_gev=data.get("momentum_gev"),
-        lattice_spacing_fm=data.get("lattice_spacing_fm"),
         save_path=im_output,
         title=title,
     )

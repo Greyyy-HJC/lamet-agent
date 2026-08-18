@@ -1079,7 +1079,7 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
                     "defaults": {
                         "order": "NLA",
                         "part": "re",
-                        "coord_unit": "lattice",
+                        "hadron": "pion",
                         "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},
                     },
                         "jobs": [{"id": "ft_p5", "inputs": {"input": "rn_p5"}}],
@@ -1140,7 +1140,7 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
                     "defaults": {
                         "order": "NLA",
                         "part": "re",
-                        "coord_unit": "lattice",
+                        "hadron": "pion",
                         "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},
                     },
                         "jobs": [{"id": "ft_p5", "inputs": {"input": "rn_p5"}}],
@@ -1250,7 +1250,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
             "part": "re",
             "resample_mode": "jackknife",
             "coord_unit": "fm",
-            "fit_coord_unit": "fm",
+            "fit_coord_unit": "gev_inv",
             "momentum_gev": 1.72,
             "Lambda0_gev": 0.0,
             "posterior_prior_error_scale": 3.0,

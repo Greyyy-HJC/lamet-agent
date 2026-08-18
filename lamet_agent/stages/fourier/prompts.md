@@ -9,8 +9,9 @@ quasi-distribution while preserving every resampled sample.
    `load_renormalized_matrix_element_samples` when the input is already in memory.
    Call `run_fourier_transform` directly.
 2. Call `run_fourier_transform` once. Job defaults/params and source metadata supply
-   y_grid, scheme_scan, method, observable, order, sector, coordinate units, lattice
-   spacing, momentum, output paths, and fit controls. Do not override them.
+   y_grid, scheme_scan, method, order, sector, hadron, momentum, output paths, and fit
+   controls. Coordinates and fit ranges are fixed in fm; target and parton come from
+   run metadata, and the tool derives the observable. Do not override them.
 3. The run tool writes the primary NetCDF, fit-info NetCDF, plots, and registers
    store['output']. A single language-selected stage report is written after all Fourier
    jobs finish. Finish by reporting the NetCDF/plot paths plus selected-range
@@ -21,8 +22,9 @@ quasi-distribution while preserving every resampled sample.
 Fourier transformation extends finite coordinate-space matrix elements with the
 configured asymptotic model, transforms every resampled sample, and preserves
 the sample axis in an EnsembleData(x) output. Use the injected manifest contract
-for the tail-range, model-averaging, coordinate-unit, sector, and DA-symmetry
-definitions; this instruction only determines tool order.
+for the tail-range, model-averaging, sector, and DA-symmetry definitions; all
+input and scan coordinates are physical distances in fm. This
+instruction only determines tool order.
 
 ## Available Tools
 

@@ -176,6 +176,35 @@ def test_manifest_accepts_fourier_lambda0_gev() -> None:
     AnalysisManifest.model_validate(_fourier_payload())
 
 
+@pytest.mark.parametrize("parameter", ["coord_unit", "observable", "target_observable"])
+def test_manifest_rejects_removed_fourier_inputs(parameter: str) -> None:
+    payload = _fourier_payload()
+    payload["stages"]["fourier_transform"]["defaults"][parameter] = "fm"
+
+    with pytest.raises(ValidationError, match=parameter):
+        AnalysisManifest.model_validate(payload)
+
+
+@pytest.mark.parametrize("parameter", ["zmin_values", "zmax_values", "z_ext_max"])
+def test_manifest_rejects_removed_fourier_scan_keys(parameter: str) -> None:
+    payload = _fourier_payload()
+    payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"] = {parameter: [0.2]}
+
+    with pytest.raises(ValidationError, match=parameter):
+        AnalysisManifest.model_validate(payload)
+
+
+def test_manifest_accepts_fourier_scan_keys_in_fm() -> None:
+    payload = _fourier_payload()
+    payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"] = {
+        "zmin_fm": [0.2],
+        "zmax_fm": [0.6],
+        "zmax_ext_fm": 1.2,
+    }
+
+    AnalysisManifest.model_validate(payload)
+
+
 def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
     def assert_documented(schema: dict) -> None:
         for key, spec in schema.items():
@@ -330,7 +359,7 @@ def test_manifest_rejects_run_wide_stage_parameter() -> None:
         ),
         (
             "fourier_transform",
-            {"scheme_scan": {"zmin_values": [1.0], "smoth": "linear"}},
+            {"scheme_scan": {"zmin_fm": [1.0], "smoth": "linear"}},
             r"stages\.fourier_transform\.defaults\.scheme_scan\.smoth",
         ),
         (

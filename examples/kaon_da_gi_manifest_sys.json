@@ -1,8 +1,8 @@
 {
   "metadata": {
-    "run_id": "pion_da_gi_sys",
+    "run_id": "kaon_da_gi_sys",
     "root_directory": "..",
-    "artifacts_directory": "runs/ds_pion_da_gi_sys/artifacts",
+    "artifacts_directory": "runs/ds_kaon_da_gi_sys/artifacts",
     "target_observable": "da",
     "parton": "quark",
     "resample_mode": "bs",
@@ -25,9 +25,9 @@
       {
         "correlator_id": "qda_a06m130_2pt",
         "correlator_type": "2pt",
-        "data_path": "data_pion_da_gi/correlators/a06m130/2pt/a06m130_pion_2pt.h5",
+        "data_path": "data_kaon_da_gi/correlators/a06m130/2pt/a06m130_kaon_2pt.h5",
         "ensemble": "a06m130",
-        "hadron": "pion",
+        "hadron": "kaon",
         "gfix": "GI",
         "source_operator": "g5",
         "sink_operator": "gZ5_nonlocal",
@@ -75,9 +75,9 @@
       {
         "correlator_id": "qda_a09m130_2pt",
         "correlator_type": "2pt",
-        "data_path": "data_pion_da_gi/correlators/a09m130/2pt/a09m130_pion_2pt.h5",
+        "data_path": "data_kaon_da_gi/correlators/a09m130/2pt/a09m130_kaon_2pt.h5",
         "ensemble": "a09m130",
-        "hadron": "pion",
+        "hadron": "kaon",
         "gfix": "GI",
         "source_operator": "g5",
         "sink_operator": "gZ5_nonlocal",
@@ -116,9 +116,9 @@
       {
         "correlator_id": "qda_a12m130_2pt",
         "correlator_type": "2pt",
-        "data_path": "data_pion_da_gi/correlators/a12m130/2pt/a12m130_pion_2pt.h5",
+        "data_path": "data_kaon_da_gi/correlators/a12m130/2pt/a12m130_kaon_2pt.h5",
         "ensemble": "a12m130",
-        "hadron": "pion",
+        "hadron": "kaon",
         "gfix": "GI",
         "source_operator": "g5",
         "sink_operator": "gZ5_nonlocal",
@@ -154,7 +154,7 @@
       {
         "id": "pion_zero_momentum_reference",
         "stage": "correlator_analysis",
-        "path": "data_pion_da_gi/correlators/self_renormalization/pion_zero_momentum_reference.nc",
+        "path": "data_kaon_da_gi/correlators/self_renormalization/pion_zero_momentum_reference.nc",
         "hadron": "pion",
         "gfix": "GI"
       }
@@ -553,7 +553,7 @@
           "NLA"
         ],
         "sector": "full",
-        "symmetry_guarantee": true,
+        "symmetry_guarantee": false,
         "posterior_prior_error_scale": [
           2.0,
           3.0,
@@ -579,7 +579,7 @@
           },
           "params": {
             "psi1_flavor_class": "light",
-            "psi2_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
             "scheme_scan": {
               "zmin_fm": [
                 0.5166,
@@ -606,7 +606,7 @@
           },
           "params": {
             "psi1_flavor_class": "light",
-            "psi2_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
             "scheme_scan": {
               "zmin_fm": [
                 0.5292,
@@ -633,7 +633,7 @@
           },
           "params": {
             "psi1_flavor_class": "light",
-            "psi2_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
             "scheme_scan": {
               "zmin_fm": [
                 0.6065,
@@ -660,7 +660,7 @@
           },
           "params": {
             "psi1_flavor_class": "light",
-            "psi2_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
             "scheme_scan": {
               "zmin_fm": [
                 0.5166,
@@ -687,7 +687,7 @@
           },
           "params": {
             "psi1_flavor_class": "light",
-            "psi2_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
             "scheme_scan": {
               "zmin_fm": [
                 0.5292,
@@ -714,7 +714,7 @@
           },
           "params": {
             "psi1_flavor_class": "light",
-            "psi2_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
             "scheme_scan": {
               "zmin_fm": [
                 0.6065,
@@ -741,7 +741,7 @@
           },
           "params": {
             "psi1_flavor_class": "light",
-            "psi2_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
             "scheme_scan": {
               "zmin_fm": [
                 0.5166,
@@ -768,7 +768,7 @@
           },
           "params": {
             "psi1_flavor_class": "light",
-            "psi2_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
             "scheme_scan": {
               "zmin_fm": [
                 0.5292,
@@ -795,7 +795,7 @@
           },
           "params": {
             "psi1_flavor_class": "light",
-            "psi2_flavor_class": "light",
+            "psi2_flavor_class": "heavy",
             "scheme_scan": {
               "zmin_fm": [
                 0.6065,

@@ -1025,10 +1025,10 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
             "bz_direction": "X",
             "hadron": "pion",
             "gfix": "CG",
-            "observable": "pion_quark_quasi_pdf",
+            "observable": "stale_observable",
             "current_operator": "gTg5_nonlocal",
             "polarization": "helicity",
-            "parton": "quark",
+            "parton": "gluon",
         }
     )
     effective = merge_stage_params(
@@ -1049,10 +1049,11 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     assert args["lattice_spacing_fm"] == kinematics["lattice_spacing_fm"]
     assert args["momentum_gev"] == pytest.approx(kinematics["momentum_gev"])
     assert args["bz_direction"] == source.attrs["bz_direction"]
-    assert args["observable"] == source.attrs["observable"]
+    assert "observable" not in args
     assert args["current_operator"] == source.attrs["current_operator"]
     assert args["polarization"] == source.attrs["polarization"]
-    assert args["parton"] == source.attrs["parton"]
+    assert args["target_observable"] == manifest.metadata.target_observable
+    assert args["parton"] == manifest.metadata.parton
     assert args["psi1_flavor_class"] == "light"
     assert args["psi2_flavor_class"] == "heavy"
     assert args["symmetry_guarantee"] is False
@@ -1060,25 +1061,18 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     assert args["workers"] == manifest.metadata.workers
     assert args["save_path"] == str(tmp_path / job.id)
 
-    effective["observable"] = "pion_quark_quasi_pdf"
     effective["polarization"] = "transversity"
     explicit = prepare_tool_args(
         "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
         effective_params=effective, artifacts_dir=tmp_path, store={"input": source},
     )
-    assert explicit["observable"] == "pion_quark_quasi_pdf"
+    assert "observable" not in explicit
     assert explicit["polarization"] == "transversity"
 
 
-@pytest.mark.parametrize(
-    ("target", "expected"),
-    [
-        ("pdf", "pion_quark_quasi_pdf"),
-        ("gpd", "pion_quark_quasi_gpd"),
-    ],
-)
-def test_prepare_fourier_args_infers_observable_from_manifest_metadata(
-    tmp_path: Path, target: str, expected: str
+@pytest.mark.parametrize("target", ["pdf", "gpd"])
+def test_prepare_fourier_args_passes_authoritative_observable_inputs(
+    tmp_path: Path, target: str
 ) -> None:
     manifest = _manifest()
     manifest.metadata.target_observable = target
@@ -1090,7 +1084,10 @@ def test_prepare_fourier_args_infers_observable_from_manifest_metadata(
         effective_params=effective, artifacts_dir=tmp_path, store={"input": SimpleNamespace(attrs={})},
     )
 
-    assert args["observable"] == expected
+    assert "observable" not in args
+    assert args["target_observable"] == target
+    assert args["parton"] == "quark"
+    assert args["hadron"] == "pion"
     assert args["polarization"] == "unpolarized"
 
 
@@ -1166,6 +1163,7 @@ def test_fourier_rejects_unsupported_gluon_backend_boundary(target: str, polariz
         if correlator.correlator_type == "3pt":
             correlator.polarization = polarization
     manifest.stages["fourier_transform"].defaults["sector"] = "full"
+    manifest.stages["fourier_transform"].defaults["hadron"] = "pion"
     job = manifest.stages["fourier_transform"].jobs[0]
 
     assert validate_stage_inputs("fourier_transform", manifest, job) == [

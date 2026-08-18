@@ -64,19 +64,6 @@ FOURIER_ARTIFACT_ORDER = (
 )
 
 
-def _display_unit(unit: Any) -> str:
-    text = str(unit or "not recorded").lower()
-    if text == "gev_inv":
-        return r"$\mathrm{GeV}^{-1}$"
-    if text == "lambda":
-        return r"$\lambda$"
-    if text == "fm":
-        return r"$\mathrm{fm}$"
-    if text == "lattice":
-        return r"$z/a$"
-    return f"`{unit}`"
-
-
 def _format_fit_range(fit_range: Any, *, language: str) -> str:
     if fit_range is None:
         return "not available"
@@ -509,7 +496,7 @@ def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
         "| Sector | Requested physics projection; PDF/GPD accept `sea`, `valence`, `singlet`, and `full`, while DA uses `full`. |",
         "| Tail method/order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{method}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
         "| Active fitted component | Execution channel resolved from `sector`; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one component. |",
-        "| Coordinate unit | `lattice` means $z/a$. The code converts it to $z_{\\rm GeV^{-1}}=(z/a)a_{\\rm fm}\\,5.067731237$ and then $\\lambda=P_z z_{\\rm GeV^{-1}}$. |",
+        "| Coordinate unit | Input coordinates and `scheme_scan` ranges are fixed physical distances in fm; the fit uses $z_{\\rm GeV^{-1}}=z_{\\rm fm}\\,5.067731237$ and $\\lambda=\\bar P^z z_{\\rm GeV^{-1}}$, where $\\bar P^z=(P_i^z+P_f^z)/2$ (and $P_i^z=P_f^z$ for forward kinematics). |",
         "| Posterior-prior error scale | The mean fit gives $\\bar p_i\\pm\\sigma_{p_i}$; resampled fits use $p_i=\\bar p_i\\pm s\\sigma_{p_i}$. |",
     ]
     if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}:
@@ -626,7 +613,7 @@ def _range_selection_table(result: dict[str, Any], *, language: str) -> list[str
     selected = int(result.get("selected_candidate_index", -1))
     title = "### Range Selection Candidates"
     header = (
-        "| # | range label | selected | $Q$ | logGBF | $\\chi^2/{\\rm dof}$ |"
+        "| # | range label [fm] | selected | $Q$ | logGBF | $\\chi^2/{\\rm dof}$ |"
     )
     lines = [title, "", header, "|---:|---|---:|---:|---:|---:|"]
     for idx, label in enumerate(labels):
@@ -653,7 +640,7 @@ def _fit_model_table(result: dict[str, Any], *, language: str) -> list[str]:
     failures = np.asarray(result.get("fit_failures", []), dtype=float)
     title = "### Fit-Model Average Candidates"
     header = (
-        "| # | model | order | prior width | mean sample weight | $Q$ | logGBF | $\\chi^2/{\\rm dof}$ | failures | selected range | $z_{\\rm ext}^{\\rm max}$ | smooth |"
+        "| # | model | order | prior width | mean sample weight | $Q$ | logGBF | $\\chi^2/{\\rm dof}$ | failures | selected range [fm] | $z_{\\rm ext}^{\\rm max}$ [fm] | smooth |"
     )
     lines = [title, "", header, "|---:|---|---|---:|---:|---:|---:|---:|---:|---|---:|---|"]
     for idx, label in enumerate(labels):
@@ -791,12 +778,12 @@ def _settings_table(
         ("Tail method/order", f"`{method}` / `{order}`"),
         ("Active fitted component", f"`{result.get('part', 'both')}`"),
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
-        ("Coordinate unit", f"{_display_unit(result.get('coord_unit', 'not recorded'))}; fit unit {_display_unit(result.get('fit_coord_unit', 'not recorded'))}"),
+        ("Coordinate unit", r"fm input and scan; fit unit $\mathrm{GeV}^{-1}$"),
         ("Decay offset", f"$\\Lambda_0={_fmt(result.get('Lambda0_gev'))}$"),
         ("Output scale", f"$q(x)\\rightarrow {_fmt(result.get('output_scale', 1.0))}\\,q(x)$"),
         ("Short-distance treatment", short_distance_text),
-        ("Best fit range", fit_range_text),
-        ("Extension endpoint", z_ext_text),
+        ("Best fit range [fm]", fit_range_text),
+        ("Extension endpoint [fm]", z_ext_text),
         ("Fourier grid", _format_grid(y_grid, language=language)),
     ]
     if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}:
@@ -1034,6 +1021,17 @@ def write_fourier_stage_report(
     transform_text = _fourier_transform_text(first, language=language)
     all_jobs = jobs + list(systematics_jobs or [])
     use_systematics_table = bool(systematics_jobs)
+    momentum_labels = {}
+    for item in all_jobs:
+        initial = item["result"].get("momentum_gev")
+        final = item["result"].get("final_momentum_gev")
+        momentum_labels[item["job_id"]] = (
+            "n/a"
+            if initial is None
+            else rf"$P^z={float(initial):.2f}$"
+            if final is None
+            else rf"$P_i^z={float(initial):.2f},\ P_f^z={float(final):.2f}$"
+        )
     lines = [
         "# Fourier Transform Stage Report",
         "",
@@ -1041,9 +1039,9 @@ def write_fourier_stage_report(
         "",
         "## Job Summary",
         (
-            "| job | $P_z$ | $z_s$ [fm] | selected range | output | plot |"
+            "| job | momentum [GeV] | $z_s$ [fm] | selected range | output | plot |"
             if use_systematics_table
-            else "| job | $P_z$ | selected range | output | plot |"
+            else "| job | momentum [GeV] | selected range | output | plot |"
         ),
         (
             "|---|---:|---:|---|---|---|"
@@ -1053,19 +1051,18 @@ def write_fourier_stage_report(
     ]
     for item in all_jobs:
         result = item["result"]
-        pz_value = result.get("momentum_gev")
-        pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
+        momentum_text = momentum_labels[item["job_id"]]
         artifacts = artifact_paths(item)
         if use_systematics_table:
             lines.append(
-                f"| `{item['job_id']}` | {pz_text} | {_fmt(result.get('zs_fm'))} | "
+                f"| `{item['job_id']}` | {momentum_text} | {_fmt(result.get('zs_fm'))} | "
                 f"{result.get('selected_range_label', 'n/a')} | "
                 f"{artifacts.get('fourier_artifact', 'n/a')} | "
                 f"{artifacts.get('fourier_plot', 'n/a')} |"
             )
         else:
             lines.append(
-                f"| `{item['job_id']}` | {pz_text} | "
+                f"| `{item['job_id']}` | {momentum_text} | "
                 f"{result.get('selected_range_label', 'n/a')} | "
                 f"{artifacts.get('fourier_artifact', 'n/a')} | "
                 f"{artifacts.get('fourier_plot', 'n/a')} |"
@@ -1109,7 +1106,7 @@ def write_fourier_stage_report(
             ]
         )
     lines.append(
-        "This stage first scans `zmin_values × zmax_values` on the sample-average matrix element, selects the largest-`logGBF` range among candidates passing $Q\\ge0.05$, and falls back to the largest-$Q$ successful range if none passes. The selected range is then fixed; range variation is not part of model averaging."
+        "This stage first scans `zmin_fm × zmax_fm` on the sample-average matrix element, selects the largest-`logGBF` range among candidates passing $Q\\ge0.05$, and falls back to the largest-$Q$ successful range if none passes. The selected range is then fixed; range variation is not part of model averaging."
     )
     lines.append(
         "With `model_average=true`, each resample sample refits the `(order, prior width)` candidates at fixed range and fixed method, then uses that sample's normalized evidence weight $w_{s,m}=\\exp(\\log\\mathrm{GBF}_{s,m}-\\max_n\\log\\mathrm{GBF}_{s,n})/\\sum_k\\exp(\\log\\mathrm{GBF}_{s,k}-\\max_n\\log\\mathrm{GBF}_{s,n})$. With `model_average=false`, each sample selects the largest-`logGBF` candidate after the $Q$ gate."
@@ -1117,14 +1114,13 @@ def write_fourier_stage_report(
     lines.extend(
         [
             "",
-            "| job | $P_z$ | selected range | selected fit range | omitted short z | $\\chi^2/{\\rm dof}$ range | fit failures |",
+            "| job | momentum [GeV] | selected range [fm] | selected fit range [fm] | omitted short z [fm] | $\\chi^2/{\\rm dof}$ range | fit failures |",
             "|---|---:|---|---|---|---:|---:|",
         ]
     )
     for item in jobs:
         result = item["result"]
-        pz_value = result.get("momentum_gev")
-        pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
+        momentum_text = momentum_labels[item["job_id"]]
         schemes = list(result.get("scheme_results", []))
         selected_model = schemes[0] if schemes else {}
         chi2 = np.asarray(result.get("fit_model_chi2_dof", []), dtype=float)
@@ -1132,7 +1128,7 @@ def write_fourier_stage_report(
         chi_text = "n/a" if finite.size == 0 else f"{_fmt(np.min(finite))} to {_fmt(np.max(finite))}"
         missing = result.get("missing_short_distance_coord", [])
         lines.append(
-            f"| `{item['job_id']}` | {pz_text} | "
+            f"| `{item['job_id']}` | {momentum_text} | "
             f"{result.get('selected_range_label', 'n/a')} | "
             f"{_format_fit_range(selected_model.get('fit_range'), language=language)} | "
             f"{missing if missing else 'none'} | "
@@ -1149,12 +1145,11 @@ def write_fourier_stage_report(
     )
     for item in jobs:
         result = item["result"]
-        pz_value = result.get("momentum_gev")
-        pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
+        momentum_text = momentum_labels[item["job_id"]]
         lines.extend(
             [
                 "",
-                f"### `{item['job_id']}`: $P_z={pz_text}$ GeV",
+                f"### `{item['job_id']}`: {momentum_text} GeV",
                 "",
                 *_range_selection_table(result, language=language),
                 "",
@@ -1167,10 +1162,9 @@ def write_fourier_stage_report(
     lines.append("## Figures and Visual Assessment")
     for item in jobs:
         result = item["result"]
-        pz_value = result.get("momentum_gev")
-        pz_text = "n/a" if pz_value is None else f"{float(pz_value):.2f}"
+        momentum_text = momentum_labels[item["job_id"]]
         artifacts = artifact_paths(item)
-        lines.extend(["", f"### `{item['job_id']}`: $P_z={pz_text}$ GeV"])
+        lines.extend(["", f"### `{item['job_id']}`: {momentum_text} GeV"])
         for key, title in (
             ("fourier_plot", "Fourier result"),
             ("extension_plot_re", "Real-part extension"),

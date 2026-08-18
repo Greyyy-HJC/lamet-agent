@@ -755,7 +755,7 @@ def run_agent(
                 stage_job_records.append(
                     {
                         "job_id": job.id,
-                        "result": {**store["fourier_result"], **fourier_attrs},
+                        "result": {**fourier_attrs, **store["fourier_result"]},
                         "summary": store.get("fourier_summary"),
                         "artifacts": {
                             "fourier_artifact": store["fourier_result"].get("artifact"),

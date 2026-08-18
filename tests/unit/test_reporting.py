@@ -225,6 +225,7 @@ def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_p
                 "job_id": "ft_p4",
                 "result": {
                     "momentum_gev": 1.8,
+                    "final_momentum_gev": 2.2,
                     "observable": "pion_quark_quasi_pdf",
                     "method": "LA",
                     "order": 2,
@@ -253,6 +254,7 @@ def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_p
     assert "## HISQa060_X ensemble overview" in text
     assert output.rfind("ft_HISQa060_X_xdep.svg") > output.rfind("ft_p5_xdep.pdf")
     assert "Fourier overlay for ensemble HISQa060_X" in output
+    assert r"$P_i^z=1.80,\ P_f^z=2.20$" in text
     assert len(translations) == 1
 
 
@@ -275,6 +277,8 @@ def test_fourier_gpd_report_records_operator_family_and_projection_limits(
             "current_operator": "operator",
             "parton": "quark",
             "hadron": "nucleon",
+            "momentum_gev": 1.0,
+            "final_momentum_gev": 2.0,
             "sector": "sea",
             "part": "both",
             "method": "GI",
@@ -294,6 +298,7 @@ def test_fourier_gpd_report_records_operator_family_and_projection_limits(
     assert "Current operator" in text
     assert "Parton" in text
     assert "Hadron" in text
+    assert r"\lambda=\bar P^z z_{\rm GeV^{-1}}" in text
 
 
 def test_da_fourier_stage_report_documents_symmetry_projection(tmp_path: Path) -> None:

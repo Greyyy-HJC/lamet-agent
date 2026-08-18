@@ -945,32 +945,6 @@ def _band_segment(
     return x_seg, mean_seg, sdev_seg
 
 
-def _coord_to_lambda(
-    coord: np.ndarray,
-    *,
-    coord_unit: str,
-    momentum_gev: float | None,
-    lattice_spacing_fm: float | None,
-) -> np.ndarray:
-    unit = coord_unit.lower()
-    fm_to_gev_inv = 5.067731237
-    if unit == "lambda":
-        return coord
-    if unit == "gev_inv":
-        if momentum_gev is None:
-            raise ValueError("momentum_gev is required when coord_unit='gev_inv'")
-        return coord * float(momentum_gev)
-    if unit == "fm":
-        if momentum_gev is None:
-            raise ValueError("momentum_gev is required when coord_unit='fm'")
-        return coord * fm_to_gev_inv * float(momentum_gev)
-    if unit == "lattice":
-        if momentum_gev is None or lattice_spacing_fm is None:
-            raise ValueError("momentum_gev and lattice_spacing_fm are required when coord_unit='lattice'")
-        return coord * float(lattice_spacing_fm) * fm_to_gev_inv * float(momentum_gev)
-    raise ValueError("coord_unit must be 'lambda', 'gev_inv', 'fm', or 'lattice'")
-
-
 def plot_fourier_extension_quality(
     coord: np.ndarray,
     samples: np.ndarray,
@@ -979,7 +953,6 @@ def plot_fourier_extension_quality(
     scheme_index: int = 0,
     component: str = "re",
     momentum_gev: float | None = None,
-    lattice_spacing_fm: float | None = None,
     save_path: str | Path | None = None,
     title: str | None = None,
     show: bool = False,
@@ -989,14 +962,17 @@ def plot_fourier_extension_quality(
     if component not in {"re", "im"}:
         raise ValueError("component must be 're' or 'im'")
     scheme = result["scheme_results"][scheme_index]
-    coord_unit = str(result.get("coord_unit", "lambda"))
     if momentum_gev is None:
         momentum_gev = result.get("momentum_gev")
-    if lattice_spacing_fm is None:
-        lattice_spacing_fm = result.get("lattice_spacing_fm")
+    final_momentum_gev = result.get("final_momentum_gev")
+    ft_momentum = abs(
+        float(momentum_gev)
+        if final_momentum_gev is None
+        else (float(momentum_gev) + float(final_momentum_gev)) / 2.0
+    )
 
     coord_arr = np.asarray(coord, dtype=float)
-    lambda_data = _coord_to_lambda(coord_arr, coord_unit=coord_unit, momentum_gev=momentum_gev, lattice_spacing_fm=lattice_spacing_fm)
+    lambda_data = coord_arr * 5.067731237 * ft_momentum
     resample_mode = str(result.get("resample_mode", "bootstrap"))
     sample_error_mode = normalize_sample_error_mode(str(result.get("sample_error_mode", "covariance")), resample_mode=resample_mode)
 
@@ -1026,18 +1002,8 @@ def plot_fourier_extension_quality(
     (data_mean, data_sdev), (ext_mean, ext_sdev) = band_stats
 
     zmin, zmax = scheme["fit_range"]
-    fit_lambda = _coord_to_lambda(
-        np.asarray([zmin, zmax], dtype=float),
-        coord_unit=coord_unit,
-        momentum_gev=momentum_gev,
-        lattice_spacing_fm=lattice_spacing_fm,
-    )
-    ext_endpoint_lambda = _coord_to_lambda(
-        np.asarray([scheme["z_ext_max"]], dtype=float),
-        coord_unit=coord_unit,
-        momentum_gev=momentum_gev,
-        lattice_spacing_fm=lattice_spacing_fm,
-    )[0]
+    fit_lambda = np.asarray([zmin, zmax], dtype=float) * 5.067731237 * ft_momentum
+    ext_endpoint_lambda = float(scheme["z_ext_max"]) * 5.067731237 * ft_momentum
     lambda_ext_plot, ext_mean_plot, ext_sdev_plot = _band_segment(
         lambda_ext,
         ext_mean,
@@ -1045,10 +1011,6 @@ def plot_fourier_extension_quality(
         start=fit_lambda[0],
         stop=ext_endpoint_lambda,
     )
-    z_unit = coord_unit
-    if coord_unit.lower() == "lambda":
-        z_unit = r"\lambda"
-
     apply_plot_style()
     fig, ax = default_plot()
     data_color = "#08306b"
@@ -1096,30 +1058,22 @@ def plot_fourier_extension_quality(
             label="Fit Range" if idx == 0 else None,
         )
 
-    ax.set_xlabel(r"$\lambda = zP^z$", **FONT_SIZE)
+    ax.set_xlabel(r"$\lambda = z\bar P^z$, $\bar P^z=(P_i^z+P_f^z)/2$", **FONT_SIZE)
     component_label = r"\mathrm{Re}" if component == "re" else r"\mathrm{Im}"
     if momentum_gev is None:
         ax.set_ylabel(rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)
+    elif final_momentum_gev is not None:
+        ax.set_ylabel(
+            rf"${component_label}\,\tilde{{h}}^R(\lambda, P_i^z={float(momentum_gev):.2f},\ P_f^z={float(final_momentum_gev):.2f}\,\mathrm{{GeV}})$",
+            **FONT_SIZE,
+        )
     else:
         ax.set_ylabel(
             rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z={float(momentum_gev):.2f}\,\mathrm{{GeV}})$",
             **FONT_SIZE,
         )
     if title is None:
-        if coord_unit.lower() == "lambda" and momentum_gev is None:
-            title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:.2f}\,\lambda$, $z_{{\max}}={zmax:.2f}\,\lambda$"
-        else:
-            unit = coord_unit.lower()
-            if unit == "fm":
-                zmin_fm, zmax_fm = zmin, zmax
-            elif unit == "lattice":
-                zmin_fm, zmax_fm = zmin * float(lattice_spacing_fm), zmax * float(lattice_spacing_fm)
-            elif unit == "gev_inv":
-                zmin_fm, zmax_fm = zmin / 5.067731237, zmax / 5.067731237
-            else:
-                scale = 5.067731237 * float(momentum_gev)
-                zmin_fm, zmax_fm = zmin / scale, zmax / scale
-            title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin_fm:.2f}\,\mathrm{{fm}}$, $z_{{\max}}={zmax_fm:.2f}\,\mathrm{{fm}}$"
+        title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:.2f}\,\mathrm{{fm}}$, $z_{{\max}}={zmax:.2f}\,\mathrm{{fm}}$"
     ax.set_title(title, **FONT_SIZE)
     chi2_values = result.get("fit_model_chi2_dof", [])
     if chi2_values and scheme_index < len(chi2_values):

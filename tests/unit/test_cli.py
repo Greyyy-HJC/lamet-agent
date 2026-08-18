@@ -547,7 +547,7 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
                 "defaults": {
                     "method": "GI", "order": ["LA"], "sector": "valence", "Lambda0_gev": 0.0,
                     "posterior_prior_error_scale": 3.0,
-                    "scheme_scan": {"zmin_values": [0.1], "zmax_values": [0.8], "z_ext_max": 1.2, "smooth": "linear", "model_average": False},
+                    "scheme_scan": {"zmin_fm": [0.1], "zmax_fm": [0.8], "zmax_ext_fm": 1.2, "smooth": "linear", "model_average": False},
                     "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
                 },
                 "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],

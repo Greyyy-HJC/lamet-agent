@@ -63,28 +63,7 @@ def _validate_y_grid(value: Any) -> str | None:
 
 def _validate_scheme_scan(value: Any) -> str | None:
     if not isinstance(value, dict):
-        return "scheme_scan must be an object."
-    missing = [key for key in ("z_ext_max", "smooth", "model_average") if key not in value]
-    if missing:
-        return "scheme_scan requires " + ", ".join(missing) + "."
-    for bound in ("zmin", "zmax"):
-        has_values = f"{bound}_values" in value
-        has_range = any(f"{bound}_{suffix}" in value for suffix in ("start", "stop", "step"))
-        if not has_values and not has_range:
-            return f"scheme_scan requires {bound}_values or a complete {bound}_start/{bound}_stop range."
-        values = value.get(f"{bound}_values")
-        if has_values and (not isinstance(values, list) or not values):
-            return f"scheme_scan {bound}_values must be a non-empty numeric list."
-        if has_values and any(isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(float(item)) for item in values):
-            return f"scheme_scan {bound}_values must be a non-empty numeric list."
-        if has_values and has_range:
-            return f"scheme_scan {bound}_values cannot be combined with {bound}_start/stop/step."
-        if has_range and not {f"{bound}_start", f"{bound}_stop"}.issubset(value):
-            return f"scheme_scan {bound} range requires both {bound}_start and {bound}_stop."
-    for key in ("step", "zmin_step", "zmax_step"):
-        item = value.get(key)
-        if key in value and not isinstance(item, bool) and isinstance(item, (int, float)) and float(item) <= 0.0:
-            return f"scheme_scan {key} must be positive."
+        return None
     if "max_schemes" in value and type(value["max_schemes"]) is int and value["max_schemes"] < 1:
         return "scheme_scan max_schemes must be a positive integer."
     return None
@@ -139,24 +118,19 @@ def _check_polarization(context: StageValidationContext) -> RuleViolation | None
     )
 
 
-def _check_observable(context: StageValidationContext) -> RuleViolation | None:
+def _check_hadron(context: StageValidationContext) -> RuleViolation | None:
     target = str(context.metadata.get("target_observable", "pdf")).lower()
     parton = str(context.metadata.get("parton", "quark")).lower()
     hadron = str(context.params.get("hadron", "")).lower()
     hadron = "nucleon" if hadron == "proton" else hadron
-    if (
-        target not in {"pdf", "gpd"}
-        or (parton == "gluon" and target != "pdf")
-        or "observable" in context.params
-        or (target, parton, hadron) in INFERRED_OBSERVABLES
-    ):
+    if (parton == "gluon" and target != "pdf") or (target == "da" and hadron) or (target, parton, hadron) in INFERRED_OBSERVABLES:
         return None
     return _violation(
         context,
-        message=f"Fourier job {context.job_id!r} has no explicit or derivable observable.",
-        path=context.parameter_path("observable"),
+        message=f"Fourier job {context.job_id!r} has no supported hadron for observable inference.",
+        path=context.parameter_path("hadron"),
         cause=f"No backend is registered for target={target!r}, parton={parton!r}, hadron={hadron!r}.",
-        parameters=("observable",),
+        parameters=("hadron",),
     )
 
 
@@ -171,20 +145,6 @@ def _check_gluon_backend(context: StageValidationContext) -> RuleViolation | Non
         message="The Fourier backend currently supports only unpolarized gluon PDF observables.",
         path=f"{context.job_path}.params",
         cause=f"The effective selection is target={target!r}, parton='gluon', polarization={polarization!r}.",
-    )
-
-
-def _check_target_metadata(context: StageValidationContext) -> RuleViolation | None:
-    if "target_observable" not in context.params:
-        return None
-    target = str(context.metadata.get("target_observable", "")).lower()
-    if str(context.params["target_observable"]).lower() == target:
-        return None
-    return _violation(
-        context,
-        message="Fourier target_observable must agree with metadata.target_observable.",
-        path=context.parameter_path("target_observable"),
-        cause=f"Stage value {context.params['target_observable']!r} conflicts with metadata value {target!r}.",
     )
 
 
@@ -318,31 +278,20 @@ _SCHEME_SCAN_FIELDS = {
             "none": "Join the measured data and fitted extension without a smoothing interval.",
         },
     ),
-    "step": _parameter(
-        "Fallback spacing shared by zmin and zmax scans.",
-        "The spacing uses the same coordinate unit as the renormalized matrix element.",
+    "zmax_ext_fm": _parameter(
+        "Physical distance through which the fitted tail is extended.",
+        "The extension endpoint controls transform truncation and is always expressed in fm.",
         expected=float,
     ),
-    "z_ext_max": _parameter(
-        "Coordinate through which the fitted tail is extended.",
-        "The extension must control transform truncation and uses the same unit as the input coordinate.",
-        expected=float,
-    ),
-    "zmax_start": _parameter("First maximum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmax_step": _parameter("Maximum-coordinate scan spacing.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmax_stop": _parameter("Last maximum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmax_values": _parameter(
-        "Explicit maximum fit-coordinate candidates.",
-        "Each value truncates the data region used to constrain the long-distance tail.",
+    "zmax_fm": _parameter(
+        "Maximum fit-distance candidates in fm.",
+        "Each physical distance truncates the data region used to constrain the long-distance tail.",
         expected=list,
         items=float,
     ),
-    "zmin_start": _parameter("First minimum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmin_step": _parameter("Minimum-coordinate scan spacing.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmin_stop": _parameter("Last minimum fit coordinate.", "Fit-range coordinates use the input coord_unit.", expected=float),
-    "zmin_values": _parameter(
-        "Explicit minimum fit-coordinate candidates.",
-        "These values control where the asymptotic ansatz begins to describe the matrix element.",
+    "zmin_fm": _parameter(
+        "Minimum fit-distance candidates in fm.",
+        "These physical distances control where the asymptotic ansatz begins to describe the matrix element.",
         expected=list,
         items=float,
     ),
@@ -380,12 +329,12 @@ FOURIER_CONSTRAINTS = (
         check=_check_polarization,
     ),
     ConstraintSpec(
-        code="fourier.observable.required",
-        parameters=("observable", "hadron", "metadata.target_observable", "metadata.parton"),
-        rule="The short observable name must be explicit unless it can be inferred from target, parton, and hadron.",
-        physics="The observable selects the asymptotic backend; polarization remains a separate physical label.",
-        suggested_fix="Declare a supported short observable or provide supported upstream hadron metadata.",
-        check=_check_observable,
+        code="fourier.hadron.required",
+        parameters=("hadron", "metadata.target_observable", "metadata.parton"),
+        rule="A supported hadron must be authored or inherited so the short observable can be inferred.",
+        physics="Target, parton, and hadron select the asymptotic backend; polarization remains a separate physical label.",
+        suggested_fix="Declare hadron in Fourier params when upstream provenance cannot supply it.",
+        check=_check_hadron,
     ),
     ConstraintSpec(
         code="fourier.gluon.backend_boundary",
@@ -394,14 +343,6 @@ FOURIER_CONSTRAINTS = (
         physics="Gluon helicity and GPD tails require operator-specific asymptotic formulae that are not implemented by the current backend.",
         suggested_fix="Use target_observable=pdf with polarization=unpolarized, or select a supported quark observable.",
         check=_check_gluon_backend,
-    ),
-    ConstraintSpec(
-        code="fourier.target.metadata_conflict",
-        parameters=("target_observable", "metadata.target_observable"),
-        rule="A stage target_observable override must agree with metadata.target_observable.",
-        physics="A single run target must select the same symmetry and tail backend during planning, validation, and execution.",
-        suggested_fix="Remove the stage override or set it equal to metadata.target_observable.",
-        check=_check_target_metadata,
     ),
     ConstraintSpec(
         code="fourier.sector.compatibility",
@@ -429,10 +370,10 @@ FOURIER_CONSTRAINTS = (
     ),
     ConstraintSpec(
         code="fourier.scheme_scan.coordinates",
-        parameters=("scheme_scan", "coord_unit"),
-        rule="Tail-scan coordinates use coord_unit, and values form is exclusive with start/stop form.",
-        physics="Mixing lattice sites and physical distances changes the fitted long-distance window and therefore the Fourier systematic.",
-        suggested_fix="Use one range representation per bound and express every range value in coord_unit.",
+        parameters=("scheme_scan",),
+        rule="Tail-scan coordinates zmin_fm, zmax_fm, and zmax_ext_fm are physical distances in fm.",
+        physics="A fixed physical-distance convention prevents lattice sites and Ioffe time from being mixed into the fitted long-distance window.",
+        suggested_fix="Express every Fourier fit-range value in fm.",
         check=_check_scheme_scan,
     ),
     ConstraintSpec(
@@ -505,19 +446,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             },
         ),
         "coord_key": _parameter("NPZ/HDF5 coordinate dataset key.", "This maps an external file layout onto the stage coordinate axis.", expected=str, default="coord"),
-        "coord_unit": _parameter(
-            "Unit of the input coordinate axis.",
-            "The runner converts fm, lattice, or inverse-GeV separations to Ioffe time; lambda is already dimensionless Ioffe time.",
-            expected=str,
-            choices=("fm", "lattice", "gev_inv", "lambda"),
-            choice_descriptions={
-                "fm": "Coordinates are physical distances in femtometers and are multiplied by momentum/(hbar*c).",
-                "lattice": "Coordinates are lattice-site separations and require lattice_spacing_fm plus momentum.",
-                "gev_inv": "Coordinates are inverse-GeV distances and are multiplied by physical momentum.",
-                "lambda": "Coordinates are already dimensionless Ioffe time.",
-            },
-            default="fm",
-        ),
         "gfix": _parameter("Gauge-link treatment inherited from the input.", "CG and GI select the corresponding tail method when method is omitted.", expected=str),
         "h5_group": _parameter("HDF5 group containing one momentum channel.", "This is file-layout metadata and does not alter the Fourier prescription.", expected=str),
         "hadron": _parameter("Hadron identity used for observable inference.", "Hadron and parton labels select the public quasi-observable backend.", expected=str),
@@ -544,12 +472,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "GI": "Use the gauge-invariant asymptotic parameterization.",
                 "CG": "Use the Coulomb-gauge asymptotic parameterization.",
             },
-        ),
-        "observable": _parameter(
-            "Short public quasi-observable name without polarization.",
-            "It selects the tail backend; polarization independently selects the physical spin channel.",
-            expected=str,
-            choices=tuple(sorted(PUBLIC_OBSERVABLES)),
         ),
         "order": _parameter(
             "Tail ansatz orders included as fit-model candidates.",
@@ -629,7 +551,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ),
         "scheme_scan": _parameter(
             "Tail fit-range scan and model-averaging configuration.",
-            "zmin/zmax candidates explicitly select the measured coordinate range used to constrain the tail, in coord_unit; z_ext_max controls the subsequent extension. Range variation estimates the finite-distance systematic.",
+            "zmin_fm/zmax_fm select the measured physical-distance range used to constrain the tail; zmax_ext_fm controls the subsequent extension. Omitting range keys lets the runtime infer bounded candidates from the fm coordinate grid. Range variation estimates the finite-distance systematic.",
             expected=dict,
             required=True,
             schema=_SCHEME_SCAN_FIELDS,
@@ -647,7 +569,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "full": "Keep the full signed-x distribution; this is the only supported sector for DA and gluon backends.",
             },
         ),
-        "target_observable": _parameter("Run target override.", "It must agree with metadata.target_observable so validation and execution select the same physics.", expected=str, choices=("pdf", "da", "gpd")),
         "zmin_shift": _parameter(
             "Symmetric index shift used to generate low/high tail-window systematics branches.",
             "A nonzero magnitude asks manifest expansion to clone the Fourier job with negative and positive shifts of the automatically selected minimum tail-fit coordinate; the central job uses zero. Prefer explicit scheme_scan ranges when a fixed physical window is intended.",

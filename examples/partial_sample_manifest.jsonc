@@ -80,22 +80,21 @@
         "order": ["LA", "NLA"],
         "Lambda0_gev": 0.0,
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
-        "observable": "pion_quark_quasi_pdf", // explicit because external .nc inputs may lack observable provenance
+        "hadron": "pion", // explicit because this partial workflow has no correlator provenance
         "polarization": "unpolarized", // explicit because no target 3pt supplies polarization provenance
-        "coord_unit": "fm", // default for renormalized .nc inputs; override with "lattice", "gev_inv", or "lambda" only when needed
         "posterior_prior_error_scale": [2.0, 3.0, 5.0],
         "y_grid": {
           "start": -2.0,
           "stop": 2.0,
           "num": 100
         },
-        // scheme_scan ranges must use coord_unit (here "fm"); convert lattice
-        // indices as z_fm = n * a_fm (a_fm=0.0574 below). All range
-        // keys are explicit because runtime no longer auto-fills scan choices.
+        // Input coordinates and scheme_scan ranges are fixed in fm. Convert lattice
+        // indices as z_fm = n * a_fm (a_fm=0.0574 below), or omit the three
+        // range fields to let the stage auto-fill from the data grid.
         "scheme_scan": {
-          "zmin_values": [0.5166, 0.574, 0.6314, 0.6888],
-          "zmax_values": [1.2054, 1.2628, 1.3202, 1.3776],
-          "z_ext_max": 5.74,
+          "zmin_fm": [0.5166, 0.574, 0.6314, 0.6888],
+          "zmax_fm": [1.2054, 1.2628, 1.3202, 1.3776],
+          "zmax_ext_fm": 5.74,
           "smooth": "linear",
           "model_average": false,
           "max_schemes": 200

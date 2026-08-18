@@ -11,8 +11,6 @@ from typing import Any, Callable
 
 from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob, derive_job_kinematics
 from lamet_agent.manifest_params import StageValidationIssue, get_stage_parameter_contract
-from lamet_agent.stages.fourier.validation import INFERRED_OBSERVABLES
-
 from .stages import resolve_stage_package
 
 _PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid", "plot_matched_pdf"})
@@ -45,8 +43,6 @@ _FOURIER_RUN_KEYS = frozenset(
         "zs_fm",
         "method",
         "order",
-        "observable",
-        "coord_unit",
         "momentum",
         "volume",
         "bz_direction",
@@ -794,26 +790,14 @@ def prepare_tool_args(
         ):
             if key in source_metadata:
                 fourier[key] = source_metadata[key]
-        if "coord_unit" not in fourier and "coord_unit" in source_metadata:
-            fourier["coord_unit"] = source_metadata["coord_unit"]
-        fourier.setdefault("coord_unit", "fm")
-        for key in ("hadron", "gfix", "observable", "current_operator", "polarization", "parton"):
+        for key in ("hadron", "gfix", "current_operator", "polarization"):
             if key not in fourier and key in upstream_metadata:
                 fourier[key] = upstream_metadata[key]
             elif key not in fourier and key in source_metadata:
                 fourier[key] = source_metadata[key]
-        fourier.setdefault("target_observable", manifest.metadata.target_observable)
-        fourier.setdefault("parton", manifest.metadata.parton)
+        fourier["target_observable"] = manifest.metadata.target_observable
+        fourier["parton"] = manifest.metadata.parton
         fourier.setdefault("sample_error_mode", manifest.metadata.sample_error_mode)
-        if "observable" not in fourier:
-            target = manifest.metadata.target_observable
-            parton = str(fourier["parton"]).lower()
-            hadron = str(fourier.get("hadron", "")).lower()
-            hadron = "nucleon" if hadron == "proton" else hadron
-            if target == "da" and hadron == "pion":
-                fourier["observable"] = "meson_quasi_da"
-            elif (target, parton, hadron) in INFERRED_OBSERVABLES:
-                fourier["observable"] = INFERRED_OBSERVABLES[(target, parton, hadron)]
         if tool_name == "load_renormalized_matrix_element_samples":
             resolved.update({key: fourier[key] for key in _FOURIER_LOAD_KEYS if key in fourier})
             if isinstance(source, ArtifactInput):

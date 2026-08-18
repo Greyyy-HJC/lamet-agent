@@ -567,8 +567,6 @@
         "scheme_scan": {
           "model_average": true
         },
-        "observable": "meson_quasi_da",
-        "coord_unit": "fm",
         "zmin_shift": 1,
         "method": "GI",
         "Lambda0_gev": 0.0
@@ -583,20 +581,20 @@
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "light",
             "scheme_scan": {
-              "zmin_values": [
+              "zmin_fm": [
                 0.5166,
                 0.574,
                 0.6314,
                 0.6888
               ],
-              "zmax_values": [
+              "zmax_fm": [
                 0.9758,
                 1.0332,
                 1.0906,
                 1.148,
                 1.2054
               ],
-              "z_ext_max": 2.6617430780552107,
+              "zmax_ext_fm": 2.6617430780552107,
               "smooth": "linear"
             }
           }
@@ -610,20 +608,20 @@
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "light",
             "scheme_scan": {
-              "zmin_values": [
+              "zmin_fm": [
                 0.5292,
                 0.6174,
                 0.7056,
                 0.7938
               ],
-              "zmax_values": [
+              "zmax_fm": [
                 1.1466,
                 1.2348,
                 1.323,
                 1.4112,
                 1.4994
               ],
-              "z_ext_max": 2.6972636409346062,
+              "zmax_ext_fm": 2.6972636409346062,
               "smooth": "linear"
             }
           }
@@ -637,20 +635,20 @@
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "light",
             "scheme_scan": {
-              "zmin_values": [
+              "zmin_fm": [
                 0.6065,
                 0.7278,
                 0.8491,
                 0.9704
               ],
-              "zmax_values": [
+              "zmax_fm": [
                 0.9704,
                 1.0917,
                 1.213,
                 1.3343,
                 1.4556
               ],
-              "z_ext_max": 2.6911515275966646,
+              "zmax_ext_fm": 2.6911515275966646,
               "smooth": "linear"
             }
           }
@@ -664,20 +662,20 @@
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "light",
             "scheme_scan": {
-              "zmin_values": [
+              "zmin_fm": [
                 0.5166,
                 0.574,
                 0.6314,
                 0.6888
               ],
-              "zmax_values": [
+              "zmax_fm": [
                 1.2628,
                 1.3202,
                 1.3776,
                 1.435,
                 1.4924
               ],
-              "z_ext_max": 2.3694073085414082,
+              "zmax_ext_fm": 2.3694073085414082,
               "smooth": "linear"
             }
           }
@@ -691,20 +689,20 @@
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "light",
             "scheme_scan": {
-              "zmin_values": [
+              "zmin_fm": [
                 0.5292,
                 0.6174,
                 0.7056,
                 0.7938
               ],
-              "zmax_values": [
+              "zmax_fm": [
                 1.1466,
                 1.2348,
                 1.323,
                 1.4112,
                 1.4994
               ],
-              "z_ext_max": 2.3977977307009546,
+              "zmax_ext_fm": 2.3977977307009546,
               "smooth": "linear"
             }
           }
@@ -718,20 +716,20 @@
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "light",
             "scheme_scan": {
-              "zmin_values": [
+              "zmin_fm": [
                 0.6065,
                 0.7278,
                 0.8491,
                 0.9704
               ],
-              "zmax_values": [
+              "zmax_fm": [
                 0.9704,
                 1.0917,
                 1.213,
                 1.3343,
                 1.4556
               ],
-              "z_ext_max": 2.3822636456974986,
+              "zmax_ext_fm": 2.3822636456974986,
               "smooth": "linear"
             }
           }
@@ -745,20 +743,20 @@
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "light",
             "scheme_scan": {
-              "zmin_values": [
+              "zmin_fm": [
                 0.5166,
                 0.574,
                 0.6314,
                 0.6888
               ],
-              "zmax_values": [
+              "zmax_fm": [
                 1.2628,
                 1.3202,
                 1.3776,
                 1.435,
                 1.4924
               ],
-              "z_ext_max": 2.1940058468331265,
+              "zmax_ext_fm": 2.1940058468331265,
               "smooth": "linear"
             }
           }
@@ -772,20 +770,20 @@
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "light",
             "scheme_scan": {
-              "zmin_values": [
+              "zmin_fm": [
                 0.5292,
                 0.6174,
                 0.7056,
                 0.7938
               ],
-              "zmax_values": [
+              "zmax_fm": [
                 1.1466,
                 1.2348,
                 1.323,
                 1.4112,
                 1.4994
               ],
-              "z_ext_max": 2.218118184560764,
+              "zmax_ext_fm": 2.218118184560764,
               "smooth": "linear"
             }
           }
@@ -799,20 +797,20 @@
             "psi1_flavor_class": "light",
             "psi2_flavor_class": "light",
             "scheme_scan": {
-              "zmin_values": [
+              "zmin_fm": [
                 0.6065,
                 0.7278,
                 0.8491,
                 0.9704
               ],
-              "zmax_values": [
+              "zmax_fm": [
                 0.9704,
                 1.0917,
                 1.213,
                 1.3343,
                 1.4556
               ],
-              "z_ext_max": 2.196930916557999,
+              "zmax_ext_fm": 2.196930916557999,
               "smooth": "linear"
             }
           }

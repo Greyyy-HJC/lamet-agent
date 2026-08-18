@@ -207,7 +207,17 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     seen_data_paths: set[str] = set()
     ensemble_match = re.search(r"ensemble\s*[:=]?\s*([A-Za-z0-9_.-]+)", text, flags=re.I)
     ensemble = ensemble_match.group(1) if ensemble_match else None
-    hadron = "kaon" if "kaon" in lowered else "jpsi" if "jpsi" in lowered else "pion" if "pion" in lowered else None
+    hadron = (
+        "kaon"
+        if "kaon" in lowered
+        else "jpsi"
+        if "jpsi" in lowered
+        else "nucleon"
+        if "nucleon" in lowered or "proton" in lowered
+        else "pion"
+        if "pion" in lowered
+        else None
+    )
     gfix_match = re.search(r"\b(CG|GI)\b", text, flags=re.I)
     gfix = gfix_match.group(1).upper() if gfix_match else "CG" if "coulomb" in lowered or "coulomb-gauge" in lowered else "GI" if "gauge invariant" in lowered else None
     spacing_match = re.search(r"\blattice_spacing_fm\s*[:=]\s*([0-9]*\.?[0-9]+)", text, flags=re.I) or re.search(r"\blattice\s+spacing\s*[:=]?\s*([0-9]*\.?[0-9]+)\s*(?:fm)?", text, flags=re.I) or re.search(r"(?:^|[,\s])a\s*[:=]\s*([0-9]*\.?[0-9]+)\s*(?:fm)?", text, flags=re.I)
@@ -238,12 +248,6 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     ft_order_match = re.search(r"\b(?:fourier\s+)?order\s*[:=]?\s*(LA|NLA)\b", text, flags=re.I)
     ft_sector_match = re.search(r"\bsector\s*[:=]?\s*(sea|valence|singlet|full)\b", text, flags=re.I)
     ft_part_match = re.search(r"\bpart\s*[:=]?\s*(re|im|both)\b", text, flags=re.I)
-    ft_coord_unit_match = re.search(r"\bcoord_unit\s*[:=]?\s*(lattice|fm|gev_inv|lambda)\b", text, flags=re.I)
-    ft_observable_match = re.search(
-        r"\b(?:ft|fourier(?:_transform)?)[_\s-]*observable\s*[:=]?\s*([A-Za-z0-9_+-]+)",
-        text,
-        flags=re.I,
-    )
     y_grid_match = re.search(r"\by_grid\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
     scheme_scan_match = re.search(r"\bscheme_scan\s*[:=]?\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", text, flags=re.I)
     quasi_y_match = re.search(r"\bquasi_y_ls\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
@@ -548,10 +552,8 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             ft_defaults["sector"] = "full" if target_observable == "da" or parton == "gluon" else ft_sector_match.group(1).lower()
         if ft_part_match:
             ft_defaults["part"] = ft_part_match.group(1).lower()
-        if ft_coord_unit_match:
-            ft_defaults["coord_unit"] = ft_coord_unit_match.group(1).lower()
-        if ft_observable_match:
-            ft_defaults["observable"] = ft_observable_match.group(1)
+        if not correlators and hadron != "hadron":
+            ft_defaults["hadron"] = hadron
         if polarization_match and not rn_jobs:
             ft_defaults["polarization"] = polarization_match.group(1).lower()
         if scheme_scan is not None:
@@ -1107,7 +1109,7 @@ def _make_quick_variant(payload: dict[str, Any]) -> dict[str, Any]:
                     defaults[key] = _shrink_list(defaults[key])
             scheme_scan = defaults.get("scheme_scan")
             if isinstance(scheme_scan, dict):
-                for key in ("zmin_values", "zmax_values", "order", "posterior_prior_error_scale"):
+                for key in ("zmin_fm", "zmax_fm", "order", "posterior_prior_error_scale"):
                     if key in scheme_scan:
                         scheme_scan[key] = _shrink_list(scheme_scan[key])
                 if isinstance(scheme_scan.get("max_schemes"), int):

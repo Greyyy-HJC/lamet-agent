@@ -209,19 +209,19 @@
           "num": 100
         },
         "scheme_scan": {
-          "zmin_values": [
+          "zmin_fm": [
             0.54,
             0.60,
             0.66,
             0.72
           ],
-          "zmax_values": [
+          "zmax_fm": [
             0.96,
             1.02,
             1.08,
             1.14
           ],
-          "z_ext_max": 1.5,
+          "zmax_ext_fm": 1.5,
           "smooth": "linear",
           "model_average": false,
           "max_schemes": 200
