@@ -190,6 +190,20 @@ def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> No
     assert "Physical reason:" in blocked["next_questions"][0]["prompt"]
 
 
+def test_complete_example_builds_without_planning_questions() -> None:
+    manifest_path = Path("examples/pion_pdf_cg_manifest.json")
+    payload, _ = load_relaxed_manifest(manifest_path)
+    state = PlanAgentState(manifest_path, "", payload, copy.deepcopy(payload))
+
+    gaps = _stage_parameter_gaps(payload, manifest_path)
+    loaded = _run_planning_tool(state, "load_manifest", {})
+    built = _run_planning_tool(state, "build_quick_full_candidates", {})
+
+    assert gaps == []
+    assert loaded["next_questions"] == []
+    assert built["ok"] is True
+
+
 def test_fourier_plan_and_validate_report_the_same_y_grid_rule(tmp_path: Path) -> None:
     payload = {
         "metadata": {
@@ -442,7 +456,7 @@ def test_run_fallback_plan_repairs_invalid_paths_in_order(tmp_path: Path) -> Non
         "correct-kernel.py",
     )
 
-    assert _next_questions_for_state(state)[0]["question_id"] == "stage.add_remaining"
+    assert _next_questions_for_state(state)[0]["question_id"] == "stage_required.correlator_analysis"
     assert not (project_root / "artifacts").exists()
 
 
@@ -564,7 +578,7 @@ def test_plan_stage_question_accepts_free_form_subset() -> None:
     assert answer == "I only want renormalization and fourier_transform"
 
 
-def test_plan_stage_subset_answer_adds_requested_stage_shells(tmp_path: Path) -> None:
+def test_explicit_stage_subset_answer_adds_requested_stage_shells(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
     state = PlanAgentState(tmp_path / "draft.json", "", payload, payload)
 
@@ -573,7 +587,7 @@ def test_plan_stage_subset_answer_adds_requested_stage_shells(tmp_path: Path) ->
         "load_manifest",
         {},
     )
-    assert answer["stage_completion_question_required"] is True
+    assert "stage_completion_question_required" not in answer
     applied = _apply_user_answer_to_candidate(state, "stage.add_remaining", "I only want renormalization and fourier_transform")
     assert applied["event"] == "user_answer_applied"
     assert state.stage_completion_checked is True
@@ -2103,7 +2117,7 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr("lamet_agent.planning.request_llm_text", fake_request_llm_text)
     outputs: list[str] = []
-    answers = iter(["none", "none", "a"])
+    answers = iter(["a"])
 
     result = run_interactive_plan(
         manifest,
@@ -2116,6 +2130,8 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
     )
 
     assert result is not None
+    assert "Add extra downstream stages?" not in "\n".join(outputs)
+    assert "optional choices" not in "\n".join(outputs)
     assert "Planner needs user input." not in "\n".join(outputs)
     assert (root / "artifacts" / "plan_manifests" / "draft.full.json").is_file()
 
@@ -2212,7 +2228,7 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
         del kwargs
         return json.dumps(next(actions))
 
-    answers = iter(["1999", "no", "none", "a"])
+    answers = iter(["1999", "a"])
     monkeypatch.setattr("lamet_agent.planning.request_llm_text", fake_request_llm_text)
 
     result = run_interactive_plan(

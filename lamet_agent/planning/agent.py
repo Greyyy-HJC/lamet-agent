@@ -96,7 +96,7 @@ def _planning_system_prompt() -> str:
         + "\n".join(f"- {name}: {description}" for name, description in PLAN_TOOL_CATALOG.items())
         + "\nJSON Patch rules: edits may only target /metadata, /inputs, or /stages; use op add, replace, or remove. "
         "For request_user_input, args.prompt must be a concrete user-facing question and args.question_id must identify the decision. "
-        "Ask exactly one question per request_user_input action; metadata.required may combine random_seed and resample_mode, and stage_required/stage_optional may combine the fields for that one stage. Never combine unrelated stages or data-axis mappings in one prompt. "
+        "Ask exactly one question per request_user_input action; metadata.required may combine random_seed and resample_mode, and stage_required may combine missing fields for that one stage. Never combine unrelated stages or data-axis mappings in one prompt. "
         "For ordinary manifest fields, ask for exactly one manifest field at a time and set question_id to the exact dotted manifest path, for example metadata.random_seed, inputs.correlators.0.momentum, inputs.correlators.0.source_operator, or inputs.correlators.1.current_operator. "
         "Do not ask for several ordinary manifest fields in one answer; after the user answers one field, let the automatic patch observation update the candidate before asking the next field. "
         "When multiple items are missing, ask and resolve them one topic at a time, starting with deterministic metadata.required before broader workflow choices. "
@@ -104,9 +104,8 @@ def _planning_system_prompt() -> str:
         "Keep request_user_input prompts concise: state the file shape, uncertain axes or indices, and exact answer format only. "
         "If a stage is configured under stages but missing from metadata.stages, ask whether to include it in the run or remove the unused configuration. "
         "Use question_id 'stage.unused.<stage_id>' with include/remove choices. "
-        "If metadata.stages is not the full canonical flow, ask whether the user wants to add extra downstream stages. "
-        "Use question_id 'stage.add_remaining'. This question may be free-form when the user may want only a subset, for example: 'only add renormalization and fourier_transform'. "
-        "Add only stages whose inputs can be wired unambiguously; otherwise ask another concise question. "
+        "Treat metadata.stages as the user's complete and authoritative execution scope. A valid partial workflow is complete; never ask to add unlisted stages merely to form a canonical full flow. "
+        "Do not ask the user to review or confirm optional parameters when the current values already satisfy validation. Ask only about fields that are missing, invalid, or genuinely ambiguous. "
         "If a configured stage has missing parameters or missing required input roles, explain which stage/job is incomplete and ask a Yes/No question before patching. "
         "Use list_stage_parameter_gaps for structured missing-parameter details when available. "
         "For that question, use question_id 'stage_params.<stage>.<job_id>' when possible. "
@@ -147,8 +146,8 @@ def _initial_planning_user_prompt(manifest_path: Path, manifest_text: str) -> st
             "manifest_text": manifest_text,
             "stage_ids": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"],
             "stage_completion_policy": (
-                "The canonical full flow is correlator_analysis -> renormalization -> fourier_transform -> perturbative_matching -> extrapolation -> review. "
-                "If the manifest contains only a prefix or subset, ask whether to add extra stages before proposing a plan; allow a free-form subset such as only renormalization and fourier_transform."
+                "metadata.stages is the authoritative execution scope. A validated prefix or subset is already complete; "
+                "do not ask to add other stages unless the user explicitly requested a broader workflow."
             ),
             "stage_parameter_guidance": {
                 stage: stage_contract_guidance(stage)
@@ -760,7 +759,6 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
         quick_path, full_path = _planned_manifest_paths(state.manifest_path, state.candidate_payload)
         state.quick_path = quick_path
         state.full_path = full_path
-        canonical_stages = ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"]
         metadata = state.candidate_payload.get("metadata", {})
         configured_stages = metadata.get("stages", []) if isinstance(metadata, dict) else []
         configured_stage_list = [stage for stage in configured_stages if isinstance(stage, str)] if isinstance(configured_stages, list) else []
@@ -774,10 +772,7 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
             "manifest": manifest,
             "quick_manifest_path": str(quick_path),
             "full_manifest_path": str(full_path),
-            "canonical_stage_flow": canonical_stages,
             "configured_stages": configured_stage_list,
-            "missing_canonical_stages": [stage for stage in canonical_stages if stage not in configured_stage_list],
-            "stage_completion_question_required": configured_stage_list != canonical_stages,
             "stage_parameter_gaps": stage_parameter_gaps,
             "stage_parameter_question_required": bool(stage_parameter_gaps),
             "next_questions": _next_questions_for_state(state),
@@ -934,41 +929,17 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
         state.full = None
         return {"tool_name": tool_name, "ok": True, "candidate_complete": ok, "edits": edits, "issues": _dataclass_json(issues)}
     if tool_name == "build_quick_full_candidates":
-        canonical_stages = ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"]
         metadata = state.candidate_payload.get("metadata", {})
         configured_stages = metadata.get("stages", []) if isinstance(metadata, dict) else []
         configured_stage_list = [stage for stage in configured_stages if isinstance(stage, str)] if isinstance(configured_stages, list) else []
-        original_metadata = state.original_payload.get("metadata", {})
-        original_stages = original_metadata.get("stages", []) if isinstance(original_metadata, dict) else []
-        original_stage_list = [stage for stage in original_stages if isinstance(stage, str)] if isinstance(original_stages, list) else []
-        if configured_stage_list != canonical_stages and not state.stage_completion_checked:
-            return {
-                "tool_name": tool_name,
-                "ok": False,
-                "error": "This manifest is not the full canonical stage flow. Ask the user first with question_id='stage.add_remaining' whether to add extra downstream stages; allow a free-form subset such as renormalization and fourier_transform.",
-                "canonical_stage_flow": canonical_stages,
-                "configured_stages": configured_stage_list,
-                "missing_canonical_stages": [stage for stage in canonical_stages if stage not in configured_stage_list],
-                "next_questions": _next_questions_for_state(state),
-            }
-        if state.stage_completion_requested and configured_stage_list == original_stage_list:
-            return {
-                "tool_name": tool_name,
-                "ok": False,
-                "error": "The user answered yes to adding stages, but metadata.stages has not changed. Patch the requested stages first or ask a follow-up question.",
-                "configured_stages": configured_stage_list,
-                "missing_canonical_stages": [stage for stage in canonical_stages if stage not in configured_stage_list],
-            }
+        parameter_gaps = _stage_parameter_gaps(state.candidate_payload, state.manifest_path)
         missing_stage_choice = next(
             (
                 stage
                 for stage in configured_stage_list
                 if (
-                    stage not in state.stage_optional_checked
-                    or (
-                        stage not in state.stage_required_checked
-                        and any(gap.get("stage") == stage for gap in _stage_parameter_gaps(state.candidate_payload, state.manifest_path))
-                    )
+                    stage not in state.stage_required_checked
+                    and any(gap.get("stage") == stage for gap in parameter_gaps)
                 )
             ),
             None,
@@ -977,11 +948,10 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
             return {
                 "tool_name": tool_name,
                 "ok": False,
-                "error": "Configured stages require required/optional choice questions before building manifests.",
+                "error": "A configured stage has missing or invalid required fields that must be resolved before building manifests.",
                 "stage": missing_stage_choice,
                 "next_questions": _next_questions_for_state(state),
             }
-        parameter_gaps = _stage_parameter_gaps(state.candidate_payload, state.manifest_path)
         if parameter_gaps and not state.parameter_completion_checked:
             return {
                 "tool_name": tool_name,
@@ -1164,6 +1134,35 @@ def run_interactive_plan(
                 session.observe({"event": "question_skipped", "reason": f"{skip_path} is already present."})
                 continue
             raw_question_id = str(args.get("question_id"))
+            if raw_question_id == "stage.add_remaining":
+                session.observe(
+                    {
+                        "event": "question_skipped",
+                        "reason": "metadata.stages is the authoritative execution scope; valid partial workflows do not require additional stages.",
+                    }
+                )
+                continue
+            if raw_question_id.startswith("stage_optional."):
+                session.observe(
+                    {
+                        "event": "question_skipped",
+                        "reason": "Optional stage parameters are not requested when the current manifest already satisfies validation.",
+                    }
+                )
+                continue
+            if (
+                session.last_revision is None
+                and not _next_questions_for_state(state)
+                and not any(conversion.ambiguous for conversion in state.conversions)
+                and not any(issue.severity in {"error", "warning"} for issue in state.issues)
+            ):
+                session.observe(
+                    {
+                        "event": "question_skipped",
+                        "reason": "The candidate has no missing, invalid, or ambiguous fields that require user input.",
+                    }
+                )
+                continue
             if _json_pointer_from_question_id(raw_question_id) is not None:
                 dotted = re.sub(r"\[(\d+)\]", r".\1", "metadata.random_seed" if raw_question_id == "random_seed" else raw_question_id)
                 if _get_dotted_path(state.candidate_payload, dotted) is not None:
@@ -1188,9 +1187,6 @@ def run_interactive_plan(
                         break
                 if skip_existing_metadata:
                     continue
-            if raw_question_id == "stage.add_remaining" and state.stage_completion_checked:
-                session.observe({"event": "question_skipped", "reason": "stage.add_remaining was already answered."})
-                continue
             unused_match = re.fullmatch(r"stage\.unused\.([A-Za-z_][A-Za-z0-9_]*)", raw_question_id)
             if unused_match:
                 stage = unused_match.group(1)

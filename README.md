@@ -550,6 +550,11 @@ manifest generation before the proposal is shown. On accept it writes
 `<artifacts_directory>/plan_manifests/<stem>.full.json`; the original draft is
 never overwritten.
 
+Plan questions are limited to fields that are missing, invalid, or genuinely
+ambiguous. A valid manifest proceeds directly to candidate generation: its
+`metadata.stages` list is treated as the complete requested execution scope,
+and already valid optional stage parameters are not presented for confirmation.
+
 `run` still performs strict manifest validation before starting any stage. If
 that validation fails with the `api`, `codex`, or `mock` backend, it prints a
 framed fallback notice followed by the validation error and automatically

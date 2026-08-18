@@ -1251,3 +1251,16 @@
 - `plan` and `run` print a boxed ``api`` / ``codex`` summary at startup
   (provider, model, base URL, and key source or Codex login — never the key
   itself), then a blank line before the LaMET Agent banner.
+
+## 2026-08-17 (Plan-mode manifest completeness)
+
+- Fixed incomplete-draft kinematic propagation so a correlator job's selected
+  momentum overrides the source correlator's available-momentum list before
+  deriving physical momentum for downstream Fourier and matching contracts.
+- Made `metadata.stages` authoritative during planning instead of requiring a
+  canonical full workflow, and removed automatic confirmation questions for
+  already valid optional stage parameters.
+- Added planner guardrails that skip model-invented stage-expansion and optional
+  questions when the candidate has no missing, invalid, or ambiguous fields.
+- Added a regression check that the complete CG pion PDF example produces no
+  planning questions and builds quick/full candidates immediately.

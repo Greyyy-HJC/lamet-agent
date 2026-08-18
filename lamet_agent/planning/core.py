@@ -1293,8 +1293,10 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 ),
                 {},
             )
+            selected_momentum = {"momentum": momentum} if two_point and momentum is not None else {}
             return {
                 **two_point,
+                **selected_momentum,
                 **{
                     key: three_point[key]
                     for key in ("hadron", "current_operator", "polarization")

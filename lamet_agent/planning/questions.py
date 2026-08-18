@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any, Callable
 
-from lamet_agent.manifest_params import render_optional_planning_prompt, render_required_planning_prompt
+from lamet_agent.manifest_params import render_required_planning_prompt
 
 from .core import (
     PlanAgentState,
@@ -27,11 +27,6 @@ def _stage_required_prompt(
         stage,
         [gap for gap in gaps if gap.get("stage") == stage],
     )
-
-
-def _stage_optional_prompt(stage: str, payload: dict[str, Any]) -> str:
-    del payload
-    return render_optional_planning_prompt(stage)
 
 
 def _next_path_repair_question(state: PlanAgentState) -> dict[str, Any] | None:
@@ -136,7 +131,6 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
                             "prompt": f"The {kind} correlator {label!r} is missing {field_name}. Please provide one value, for example {examples.get(field_name, 'a valid value')}.",
                         }
                     ]
-    canonical_stages = ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"]
     configured_stages = metadata.get("stages", [])
     configured_stage_list = [stage for stage in configured_stages if isinstance(stage, str)] if isinstance(configured_stages, list) else []
     stages_config = payload.get("stages", {}) if isinstance(payload.get("stages"), dict) else {}
@@ -156,13 +150,6 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
                 ],
             }
         ]
-    if configured_stage_list != canonical_stages and not state.stage_completion_checked:
-        return [
-            {
-                "question_id": "stage.add_remaining",
-                "prompt": "This manifest is not a full canonical flow. Which additional stages should be added? Answer none, all, or a subset such as renormalization and fourier_transform.",
-            }
-        ]
     gaps = _stage_parameter_gaps(payload, state.manifest_path)
     gap_stages = {str(gap.get("stage")) for gap in gaps}
     for stage in configured_stage_list:
@@ -175,8 +162,6 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
             ]
         if stage not in state.stage_required_checked:
             state.stage_required_checked.add(stage)
-        if stage not in state.stage_optional_checked:
-            return [{"question_id": f"stage_optional.{stage}", "prompt": _stage_optional_prompt(stage, payload)}]
     if gaps:
         gap = gaps[0]
         if not state.parameter_completion_checked:
