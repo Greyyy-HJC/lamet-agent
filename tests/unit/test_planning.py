@@ -194,10 +194,10 @@ def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> No
     gaps = listed["stage_parameter_gaps"]
     assert any(gap["parameter"] == "order" for gap in gaps)
     assert not any(gap["parameter"] == "coord_unit" for gap in gaps)
-    assert any(gap["parameter"] == "y_grid" for gap in gaps)
+    assert any(gap["parameter"] == "quasi_y_ls" for gap in gaps)
     assert any(gap["parameter"] == "momentum_gev" for gap in gaps)
-    y_grid_gap = next(gap for gap in gaps if gap["parameter"] == "y_grid")
-    assert "momentum-fraction coordinates" in y_grid_gap["physics"]
+    quasi_gap = next(gap for gap in gaps if gap["parameter"] == "quasi_y_ls")
+    assert "momentum-fraction" in quasi_gap["physics"]
 
     blocked = _run_planning_tool(state, "build_quick_full_candidates", {})
     assert blocked["ok"] is False
@@ -220,7 +220,7 @@ def test_complete_example_builds_without_planning_questions() -> None:
     assert built["ok"] is True
 
 
-def test_fourier_plan_and_validate_report_the_same_y_grid_rule(tmp_path: Path) -> None:
+def test_fourier_plan_and_validate_report_the_same_quasi_y_ls_rule(tmp_path: Path) -> None:
     payload = {
         "metadata": {
             "run_id": "same-rule",
@@ -262,8 +262,8 @@ def test_fourier_plan_and_validate_report_the_same_y_grid_rule(tmp_path: Path) -
     diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
     gaps = _stage_parameter_gaps(payload, tmp_path / "draft.json")
 
-    diagnostic = next(item for item in diagnostics if item.code == "fourier.y_grid.required")
-    gap = next(item for item in gaps if item["code"] == "fourier.y_grid.required")
+    diagnostic = next(item for item in diagnostics if item.code == "fourier.quasi_y_ls.required")
+    gap = next(item for item in gaps if item["code"] == "fourier.quasi_y_ls.required")
     assert gap["message"] == diagnostic.message
     assert gap["physics"] == diagnostic.physics
     assert gap["suggested_fix"] == diagnostic.suggested_fix
@@ -1074,15 +1074,17 @@ def test_text_plan_reads_colon_json_stage_defaults(tmp_path: Path) -> None:
         "Run fourier_transform and perturbative_matching. "
         "y_grid: {\"start\": -1.0, \"stop\": 1.0, \"num\": 101}. "
         "scheme_scan: {\"zmin_fm\": [1], \"zmax_fm\": [5], \"zmax_ext_fm\": 8}. "
-        "quasi_y_ls: {\"start\": -1.0, \"stop\": 1.0, \"num\": 100}.",
+        "quasi_y_ls: {\"start\": -1.0, \"stop\": 1.0, \"num\": 100}. "
+        "lc_x_ls: {\"start\": -1.0, \"stop\": 1.0}.",
         encoding="utf-8",
     )
 
     payload, _text = load_relaxed_manifest(manifest)
 
-    assert payload["stages"]["fourier_transform"]["defaults"]["y_grid"]["num"] == 101
+    assert payload["stages"]["fourier_transform"]["defaults"]["quasi_y_ls"]["num"] == 100
     assert payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"]["zmax_ext_fm"] == 8
-    assert payload["stages"]["perturbative_matching"]["defaults"]["quasi_y_ls"]["num"] == 100
+    assert payload["stages"]["perturbative_matching"]["defaults"]["lc_x_ls"] == {"start": -1.0, "stop": 1.0}
+    assert "quasi_y_ls" not in payload["stages"]["perturbative_matching"]["defaults"]
 
 
 def test_text_plan_reads_partial_artifact_fallback_metadata(tmp_path: Path) -> None:
@@ -1185,12 +1187,12 @@ def test_stage_parameter_gap_answer_applies_first_gap_path(tmp_path: Path) -> No
 
     result = _apply_user_answer_to_candidate(
         state,
-        "stage_params.fourier_transform.shared.y_grid",
-        '{"start": -1.0, "stop": 1.0, "num": 101}',
+        "stage_params.fourier_transform.shared.quasi_y_ls",
+        '{"start": -1.0, "stop": 1.0, "num": 100}',
     )
 
     assert result["event"] == "user_answer_applied"
-    assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["y_grid"]["num"] == 101
+    assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["quasi_y_ls"]["num"] == 100
 
 
 def test_stage_parameter_gap_answer_uses_matching_question_id(tmp_path: Path) -> None:
@@ -1246,12 +1248,12 @@ def test_stage_optional_answer_updates_stage_defaults(tmp_path: Path) -> None:
     result = _apply_user_answer_to_candidate(
         state,
         "stage_optional.fourier_transform",
-        '{"y_grid": {"start": -1.0, "stop": 1.0, "num": 5}}',
+        '{"quasi_y_ls": {"start": -1.0, "stop": 1.0, "num": 4}}',
     )
 
     assert result["event"] == "user_answer_applied"
     assert state.stage_optional_checked == {"fourier_transform"}
-    assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["y_grid"]["num"] == 5
+    assert state.candidate_payload["stages"]["fourier_transform"]["defaults"]["quasi_y_ls"]["num"] == 4
 
 
 def test_da_stage_answer_normalizes_fourier_sector(tmp_path: Path) -> None:

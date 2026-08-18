@@ -504,7 +504,7 @@ def test_run_valid_manifest_does_not_plan(tmp_path, monkeypatch: pytest.MonkeyPa
     assert "LLM BACKEND" not in result.output
 
 
-def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bool = False) -> None:
+def _write_matching_manifest(path, *, out_of_range_lc: bool = False, unused_review: bool = False) -> None:
     project_root = Path(__file__).resolve().parents[2]
     artifact_path = path.parent / "rn.bin"
     artifact_path.write_bytes(b"artifact")
@@ -512,13 +512,8 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
         "scheme": "ratio",
         "component": "re",
         "mu": 2.0,
-        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
+        "lc_x_ls": {"start": -3.0, "stop": 3.0} if out_of_range_lc else {"start": 0.0, "stop": 1.0},
     }
-    if denser_lc:
-        matching_defaults["lc_x_ls"] = {"start": -1.0, "stop": 2.0, "num": 300}
-    else:
-        matching_defaults["quasi_y_ls"] = {"start": -2.0, "stop": 2.0, "num": 400}
-        matching_defaults["lc_x_ls"] = {"start": 0.0, "stop": 1.0, "num": 80}
     payload = {
         "metadata": {
             "run_id": "demo",
@@ -548,7 +543,7 @@ def _write_matching_manifest(path, *, denser_lc: bool = False, unused_review: bo
                     "method": "GI", "order": ["LA"], "sector": "valence", "Lambda0_gev": 0.0,
                     "posterior_prior_error_scale": 3.0,
                     "scheme_scan": {"zmin_fm": [0.1], "zmax_fm": [0.8], "zmax_ext_fm": 1.2, "smooth": "linear", "model_average": False},
-                    "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
+                    "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
                 },
                 "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
             },
@@ -622,17 +617,16 @@ def test_run_path_failure_with_external_backend_does_not_plan(
     assert "inputs.artifacts[0].path does not exist" in result.output
 
 
-def test_validate_prints_matching_grid_warning_and_fails(tmp_path) -> None:
+def test_validate_reports_matching_lc_window_outside_fourier_grid(tmp_path) -> None:
     manifest = tmp_path / "matching.json"
-    _write_matching_manifest(manifest, denser_lc=True)
+    _write_matching_manifest(manifest, out_of_range_lc=True)
 
     result = CliRunner().invoke(app, ["validate", str(manifest)])
 
     assert result.exit_code != 0
-    assert "WARNING: MATCHING GRID DENSITY" in result.output
-    assert "oscillate" in result.output
+    assert '"code": "matching.lc_x_ls.window"' in result.output
+    assert "extends beyond" in result.output
     assert '"status": "invalid"' in result.output
-    assert "Matching job 'mt'" in result.output
 
 
 def test_validate_reports_structured_fourier_physics_issue(tmp_path) -> None:
@@ -646,29 +640,6 @@ def test_validate_reports_structured_fourier_physics_issue(tmp_path) -> None:
     assert '"path": "stages.fourier_transform.jobs.ft.inputs"' in result.output
     assert "Converting coordinate separation to Ioffe time" in result.output
     assert "Declare discrete momentum, volume, and lattice_spacing_fm" in result.output
-
-
-def test_run_prints_matching_grid_warning_without_planning(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest = tmp_path / "matching.json"
-    _write_matching_manifest(manifest, denser_lc=True)
-    parsed_holder: list[object] = []
-
-    monkeypatch.setattr(
-        "lamet_agent.__main__.run_interactive_plan",
-        lambda *_args, **_kwargs: pytest.fail("matching-grid warning must not enter plan mode"),
-    )
-    monkeypatch.setattr(
-        "lamet_agent.__main__.run_agent",
-        lambda value, **_kwargs: parsed_holder.append(value) or {"run_id": "demo", "status": "completed"},
-    )
-
-    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "mock"])
-
-    assert result.exit_code == 0, result.output
-    assert "WARNING: MATCHING GRID DENSITY" in result.output
-    assert parsed_holder
 
 
 def test_validate_rejects_unused_stage_configuration(tmp_path) -> None:

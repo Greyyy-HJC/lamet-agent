@@ -37,7 +37,7 @@ _FOURIER_ARTIFACT_TOOLS = frozenset(
 _FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key", "resample_mode"})
 _FOURIER_RUN_KEYS = frozenset(
     {
-        "y_grid",
+        "quasi_y_ls",
         "scheme_scan",
         "zmin_shift",
         "zs_fm",
@@ -71,7 +71,6 @@ _FOURIER_RUN_KEYS = frozenset(
     }
 )
 _MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "momentum_gev", "mu", "zs_fm", "lc_x_ls"})
-_MATCHING_LOAD_KEYS = frozenset({"quasi_y_ls"})
 _MATCHING_APPLY_KEYS = frozenset({"endpoint_cut"})
 
 
@@ -840,7 +839,6 @@ def prepare_tool_args(
             matching["kernel_id"] = resolve_kernel_id(declared_id, matching.get("scheme"))
         if tool_name == "load_quasi_pdf":
             resolved["component"] = matching["component"]
-            resolved.update({key: matching[key] for key in _MATCHING_LOAD_KEYS if key in matching})
             if isinstance(quasi, ArtifactInput):
                 resolved["path"] = quasi.path
             elif "path" not in resolved:

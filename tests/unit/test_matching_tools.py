@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.tools import validate_stage_diagnostics
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.stages.matching.functions import (
     KERNEL_REGISTRY,
@@ -17,17 +18,14 @@ from lamet_agent.stages.matching.functions import (
 
 
 def load_quasi_pdf(store, **kwargs):
-    if "quasi_y_ls" not in kwargs:
-        source = store.get("quasi")
-        kwargs["quasi_y_ls"] = list(source.coords["x"])
     return _load_quasi_pdf(store, **kwargs)
 
 
 def build_matching_kernel(store, **kwargs):
     kwargs.setdefault("mu", 2.0)
-    kwargs.setdefault("lc_x_ls", np.asarray(store["quasi_y_ls"], dtype=float).tolist())
+    y_ls = np.asarray(store["quasi_y_ls"], dtype=float)
+    kwargs.setdefault("lc_x_ls", {"start": float(np.min(y_ls)), "stop": float(np.max(y_ls))})
     return _build_matching_kernel(store, **kwargs)
-from lamet_agent.stages.matching.validation import matching_grid_warnings
 
 
 def _quasi_on(x_grid: np.ndarray, *, n_sample: int = 4) -> EnsembleData:
@@ -54,46 +52,45 @@ def test_kernel_registry_ids_match_kernels_module_function_names() -> None:
 def test_matching_grids_are_required() -> None:
     native = np.linspace(-2.0, 2.0, 100)
     store = {"quasi": _quasi_on(native)}
+    load_quasi_pdf(store, component="re")
 
-    with pytest.raises(TypeError, match="quasi_y_ls"):
-        _load_quasi_pdf(store, component="re")
-    store["quasi_y_ls"] = native
-    with pytest.raises(TypeError, match="mu"):
+    with pytest.raises(TypeError, match="lc_x_ls"):
         _build_matching_kernel(store, kernel_id="CG_gt_quark_PDF_ratio_NLO", momentum_gev=1.5)
+    with pytest.raises(TypeError, match="mu"):
+        _build_matching_kernel(
+            store,
+            kernel_id="CG_gt_quark_PDF_ratio_NLO",
+            momentum_gev=1.5,
+            lc_x_ls={"start": -2.0, "stop": 2.0},
+        )
 
 
-def test_quasi_y_ls_restating_the_fourier_grid_is_lossless() -> None:
+def test_load_quasi_pdf_uses_the_fourier_artifact_x_grid() -> None:
     native = np.linspace(-2.0, 2.0, 100)
     store = {"quasi": _quasi_on(native)}
 
-    load_quasi_pdf(store, component="re", quasi_y_ls={"start": -2.0, "stop": 2.0, "num": 100})
+    load_quasi_pdf(store, component="re")
 
-    # Interpolating onto the points the samples already sit on returns them bit for
-    # bit, which is why load_quasi_pdf needs no special case for this grid.
     assert np.array_equal(store["quasi_ed"].values, _quasi_on(native).values)
     assert np.array_equal(store["quasi_y_ls"], native)
 
 
-def test_quasi_and_lc_grids_decouple_the_kernel_matrix() -> None:
+def test_lc_x_ls_window_slices_the_quasi_nodes() -> None:
     native = np.linspace(-2.0, 2.0, 100)
     store = {"quasi": _quasi_on(native)}
-
-    # The light-cone grid must stay no denser than the quasi grid it integrates over,
-    # so the quasi grid is the fine one here.
-    load_quasi_pdf(store, component="re", quasi_y_ls={"start": -1.5, "stop": 1.5, "num": 150})
+    load_quasi_pdf(store, component="re")
     build_matching_kernel(
         store,
         kernel_id="CG_gt_quark_PDF_ratio_NLO",
         momentum_gev=1.5,
-        lc_x_ls={"start": -1.0, "stop": 1.0, "num": 41},
+        lc_x_ls={"start": -1.0, "stop": 1.0},
     )
     apply_matching(store)
 
-    assert store["kernel_matrix"].shape == (41, 150)  # rows light-cone, columns quasi
-    assert store["lightcone_ed"].values.shape == (4, 41)
-    assert np.allclose(store["lightcone_ed"].coords["x"], np.linspace(-1.0, 1.0, 41))
-    # The light-cone grid is unconstrained, unlike the quasi one: 0 is allowed on it.
-    assert 0.0 in store["lc_x_ls"]
+    expected = native[(native >= -1.0) & (native <= 1.0)]
+    assert store["kernel_matrix"].shape == (expected.size, native.size)
+    assert store["lightcone_ed"].values.shape == (4, expected.size)
+    assert np.allclose(store["lightcone_ed"].coords["x"], expected)
 
 
 def test_formula_cache_does_not_serve_one_kernel_another_kernels_formula() -> None:
@@ -215,52 +212,57 @@ def test_report_text_follows_the_kernel_rather_than_assuming_a_pdf() -> None:
     assert "2602.11283" in pdf_scheme
 
 
-def test_lc_grid_denser_than_quasi_is_rejected_rather_than_oscillating() -> None:
+def test_lc_window_outside_quasi_is_rejected() -> None:
     native = np.linspace(-2.0, 2.0, 100)
     store = {"quasi": _quasi_on(native)}
     load_quasi_pdf(store, component="re")
 
-    # The kernel's plus prescription lands each y column's subtraction on one nearest x
-    # row, so a denser x grid leaves most rows unsubtracted and the matched curve
-    # oscillates point to point. Nothing downstream notices, so this must raise.
-    with pytest.raises(ValueError, match="oscillate"):
+    with pytest.raises(ValueError, match="extends beyond"):
         build_matching_kernel(
             store,
             kernel_id="CG_gt_quark_PDF_ratio_NLO",
             momentum_gev=1.5,
-            lc_x_ls={"start": -1.0, "stop": 2.0, "num": 300},
+            lc_x_ls={"start": -3.0, "stop": 3.0},
         )
 
-    # A grid no denser than the quasi one is fine.
     build_matching_kernel(
         store,
         kernel_id="CG_gt_quark_PDF_ratio_NLO",
         momentum_gev=1.5,
-        lc_x_ls={"start": -1.0, "stop": 1.0, "num": 25},
+        lc_x_ls={"start": -1.0, "stop": 1.0},
     )
-    assert store["kernel_matrix"].shape == (25, 100)
+    expected = native[(native >= -1.0) & (native <= 1.0)]
+    assert store["kernel_matrix"].shape == (expected.size, native.size)
 
 
 def _matching_grid_payload(
     *,
     lc_x_ls: dict | None | object = ...,
     quasi_y_ls: dict | None | object = ...,
-    y_grid: dict | None | object = ...,
 ) -> dict:
     if lc_x_ls is ...:
-        lc_x_ls = {"start": 0.0, "stop": 1.0, "num": 80}
+        lc_x_ls = {"start": 0.0, "stop": 1.0}
     if quasi_y_ls is ...:
-        quasi_y_ls = {"start": -2.0, "stop": 2.0, "num": 400}
-    if y_grid is ...:
-        y_grid = {"start": -2.0, "stop": 2.0, "num": 100}
-    matching_defaults: dict = {"scheme": "ratio"}
-    if quasi_y_ls is not None:
-        matching_defaults["quasi_y_ls"] = quasi_y_ls
+        quasi_y_ls = {"start": -2.0, "stop": 2.0, "num": 100}
+    matching_defaults: dict = {"scheme": "ratio", "component": "re", "mu": 2.0}
     if lc_x_ls is not None:
         matching_defaults["lc_x_ls"] = lc_x_ls
-    fourier_defaults: dict = {"order": ["LA"]}
-    if y_grid is not None:
-        fourier_defaults["y_grid"] = y_grid
+    fourier_defaults: dict = {
+        "order": ["LA"],
+        "method": "GI",
+        "sector": "valence",
+        "Lambda0_gev": 0.0,
+        "posterior_prior_error_scale": 3.0,
+        "scheme_scan": {
+            "zmin_fm": [0.1],
+            "zmax_fm": [0.8],
+            "zmax_ext_fm": 1.2,
+            "smooth": "linear",
+            "model_average": False,
+        },
+    }
+    if quasi_y_ls is not None:
+        fourier_defaults["quasi_y_ls"] = quasi_y_ls
     return {
         "metadata": {
             "run_id": "demo",
@@ -297,25 +299,21 @@ def _matching_grid_payload(
     }
 
 
-def test_matching_grid_warnings_for_denser_lc_grid() -> None:
+def test_matching_rejects_lc_window_outside_fourier_grid() -> None:
     manifest = AnalysisManifest.model_validate(
-        _matching_grid_payload(
-            lc_x_ls={"start": -1.0, "stop": 2.0, "num": 300},
-            quasi_y_ls={"start": -2.0, "stop": 2.0, "num": 100},
-            y_grid={"start": -2.0, "stop": 2.0, "num": 100},
-        )
+        _matching_grid_payload(lc_x_ls={"start": -3.0, "stop": 3.0})
     )
-    warnings = matching_grid_warnings(manifest)
-    assert len(warnings) == 1
-    assert "Matching job 'mt'" in warnings[0]
-    assert "oscillate" in warnings[0]
+    job = manifest.stages["perturbative_matching"].jobs[0]
+    issues = validate_stage_diagnostics("perturbative_matching", manifest, job)
+    assert any(item.code == "matching.lc_x_ls.window" for item in issues)
+    assert any("extends beyond" in item.message for item in issues)
 
 
-def test_matching_grid_warnings_skip_coarser_or_omitted_lc_grid() -> None:
-    gi_like = AnalysisManifest.model_validate(_matching_grid_payload())
-    omitted = AnalysisManifest.model_validate(_matching_grid_payload(lc_x_ls=None))
-    assert matching_grid_warnings(gi_like) == []
-    assert matching_grid_warnings(omitted) == []
+def test_matching_accepts_lc_window_inside_fourier_grid() -> None:
+    manifest = AnalysisManifest.model_validate(_matching_grid_payload())
+    job = manifest.stages["perturbative_matching"].jobs[0]
+    issues = validate_stage_diagnostics("perturbative_matching", manifest, job)
+    assert not any(item.code == "matching.lc_x_ls.window" for item in issues)
 
 
 def test_endpoint_cut_drops_the_da_divergent_window_only_for_da_kernels() -> None:
@@ -347,19 +345,17 @@ def test_endpoint_cut_drops_the_da_divergent_window_only_for_da_kernels() -> Non
 
 
 @pytest.mark.parametrize(
-    ("spec", "message"),
+    ("coords", "message"),
     [
-        ({"start": -2.0, "stop": 2.0, "num": 101}, "must not contain 0"),
-        ({"start": -3.0, "stop": 3.0, "num": 100}, "extends beyond"),
-        ([-1.0, -0.5, -0.1, 0.3, 1.2], "uniformly spaced"),
+        (np.linspace(-2.0, 2.0, 101), "must not contain 0"),
+        (np.array([-1.0, -0.5, -0.1, 0.3, 1.2]), "uniformly spaced"),
     ],
 )
-def test_quasi_y_ls_rejects_grids_the_kernels_cannot_integrate(spec, message: str) -> None:
-    native = np.linspace(-2.0, 2.0, 100)
-    store = {"quasi": _quasi_on(native)}
+def test_load_quasi_pdf_rejects_artifact_grids_kernels_cannot_integrate(coords, message: str) -> None:
+    store = {"quasi": _quasi_on(coords)}
 
     with pytest.raises(ValueError, match=message):
-        load_quasi_pdf(store, component="re", quasi_y_ls=spec)
+        load_quasi_pdf(store, component="re")
 
 
 def test_matching_consumes_in_memory_fourier_output_and_writes_primary_netcdf(tmp_path: Path) -> None:

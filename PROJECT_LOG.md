@@ -1316,3 +1316,15 @@
 - Migrated tracked manifests to explicit matching grids, extrapolation ansatz
   choices, and complete Fourier scan specifications; frozen DA scan ranges keep
   the previous generated behavior without runtime auto-completion.
+
+## 2026-08-18 (Inherit matching grids from Fourier)
+
+- Renamed Fourier `y_grid` to `quasi_y_ls` and required a uniform grid that
+  excludes zero, so the Fourier artifact `x` coordinate can be the matching
+  kernel's integration grid.
+- Removed matching `quasi_y_ls`; `load_quasi_pdf` now stores the artifact `x`
+  grid without interpolation.
+- Restricted matching `lc_x_ls` to `{start, stop}`, slicing the Fourier nodes
+  inside that window at the same spacing. Replaced the denser-grid CLI warning
+  with a hard window check against the upstream Fourier job.
+

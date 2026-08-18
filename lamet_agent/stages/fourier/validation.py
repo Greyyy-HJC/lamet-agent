@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import numpy as np
+
 from lamet_agent.manifest import AnalysisManifest, StageJob, derive_job_kinematics
 from lamet_agent.manifest_params import (
     ConstraintSpec,
@@ -35,30 +37,75 @@ def _parameter(summary: str, physics: str, **kwargs: Any) -> ParameterSpec:
     return ParameterSpec(summary=summary, physics=physics, **kwargs)
 
 
-def _validate_y_grid(value: Any) -> str | None:
+def resolve_grid_spec(spec: list[float] | dict[str, Any], *, name: str = "grid") -> list[float]:
+    """Turn a manifest grid spec into an explicit list of points.
+
+    A spec is either an explicit numeric list or a compact dict: ``{start, stop, num}``
+    (linspace, ``stop`` inclusive) or ``{start, stop, step}`` (arange, ``stop``
+    inclusive). ``name`` only labels error messages.
+    """
+    if isinstance(spec, dict):
+        start = float(spec["start"])
+        stop = float(spec["stop"])
+        if "num" in spec:
+            num = int(spec["num"])
+            if num < 2:
+                raise ValueError(f"{name} num must be at least 2")
+            return np.linspace(start, stop, num).tolist()
+        step = float(spec["step"])
+        if step <= 0:
+            raise ValueError(f"{name} step must be positive")
+        return np.arange(start, stop + 0.5 * step, step).tolist()
+    return [float(item) for item in spec]
+
+
+def quasi_y_ls_error(grid: np.ndarray, *, eps: float = 1e-12) -> str | None:
+    """Return a message if ``grid`` cannot be used as a matching integration grid."""
+    values = np.asarray(grid, dtype=float)
+    if values.ndim != 1 or values.size < 2:
+        return "quasi_y_ls must resolve to at least 2 points."
+    if not np.all(np.isfinite(values)):
+        return "quasi_y_ls must contain only finite values."
+    if np.any(np.abs(values) <= eps):
+        return (
+            "quasi_y_ls must not contain 0: matching kernels carry a 1/y measure, "
+            "so a y = 0 point is singular. With a symmetric {start, stop, num} spec an "
+            "even num avoids the midpoint (num=100 does, num=101 does not)."
+        )
+    spacing = np.diff(values)
+    if not np.allclose(spacing, spacing[0], rtol=0.0, atol=eps):
+        return "quasi_y_ls must be uniformly spaced."
+    return None
+
+
+def _validate_quasi_y_ls(value: Any) -> str | None:
     if isinstance(value, list):
         if not value:
-            return "y_grid must not be empty."
+            return "quasi_y_ls must not be empty."
         if any(isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(float(item)) for item in value):
-            return "y_grid list values must be finite numbers."
-        return None
-    if not isinstance(value, dict):
-        return "y_grid must be a numeric list or an object."
-    if not {"start", "stop"}.issubset(value):
-        return "y_grid object requires start and stop."
-    selectors = {key for key in ("num", "step") if key in value}
-    if len(selectors) != 1:
-        return "y_grid object requires exactly one of num or step."
-    if "num" in value and (type(value["num"]) is not int or value["num"] < 2):
-        return "y_grid num must be an integer of at least 2."
-    if "step" in value and (
-        isinstance(value["step"], bool)
-        or not isinstance(value["step"], (int, float))
-        or not math.isfinite(float(value["step"]))
-        or float(value["step"]) <= 0.0
-    ):
-        return "y_grid step must be a finite positive number."
-    return None
+            return "quasi_y_ls list values must be finite numbers."
+    elif not isinstance(value, dict):
+        return "quasi_y_ls must be a numeric list or an object."
+    else:
+        if not {"start", "stop"}.issubset(value):
+            return "quasi_y_ls object requires start and stop."
+        selectors = {key for key in ("num", "step") if key in value}
+        if len(selectors) != 1:
+            return "quasi_y_ls object requires exactly one of num or step."
+        if "num" in value and (type(value["num"]) is not int or value["num"] < 2):
+            return "quasi_y_ls num must be an integer of at least 2."
+        if "step" in value and (
+            isinstance(value["step"], bool)
+            or not isinstance(value["step"], (int, float))
+            or not math.isfinite(float(value["step"]))
+            or float(value["step"]) <= 0.0
+        ):
+            return "quasi_y_ls step must be a finite positive number."
+    try:
+        grid = np.asarray(resolve_grid_spec(value, name="quasi_y_ls"), dtype=float)
+    except (TypeError, ValueError, KeyError) as exc:
+        return str(exc)
+    return quasi_y_ls_error(grid)
 
 
 def _validate_scheme_scan(value: Any) -> str | None:
@@ -575,21 +622,22 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             expected=int,
             default=0,
         ),
-        "y_grid": _parameter(
+        "quasi_y_ls": _parameter(
             "Dimensionless momentum-fraction grid for the transformed quasi-distribution.",
-            "This required grid declares the momentum-fraction coordinates where the Fourier result is sampled. Use an explicit numeric list, or an object with start, stop, and exactly one of num or positive step. Increasing its density refines output discretization but cannot create information absent from the finite coordinate-space signal.",
+            "This required grid declares the momentum-fraction coordinates of the Fourier output, which matching then uses as its integration measure. It must be uniform and exclude zero because matching kernels carry a 1/y singularity. Use an explicit numeric list, or an object with start, stop, and exactly one of num or positive step. On a symmetric range an even num avoids the midpoint (num=100 does, num=101 does not). Increasing its density refines output discretization but cannot create information absent from the finite coordinate-space signal.",
             expected=(list, dict),
             items=float,
             required=True,
             schema=_GRID_FIELDS,
-            examples=([-1.0, 0.0, 1.0], {"start": -1.0, "stop": 1.0, "num": 101}),
-            validator=_validate_y_grid,
-            suggested_fix='For example, use {"start": -1.0, "stop": 1.0, "num": 101}.',
+            examples=([-1.0, -0.5, 0.5, 1.0], {"start": -2.0, "stop": 2.0, "num": 100}),
+            validator=_validate_quasi_y_ls,
+            suggested_fix='For example, use {"start": -2.0, "stop": 2.0, "num": 100}.',
         ),
     },
     removed={
         "Lambda0": "is no longer supported; use Lambda0_gev.",
         "distribution_type": "is no longer supported; use polarization.",
+        "y_grid": "is no longer supported; use quasi_y_ls.",
     },
     constraints=FOURIER_CONSTRAINTS,
 )

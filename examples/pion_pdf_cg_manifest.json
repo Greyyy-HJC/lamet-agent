@@ -99,7 +99,7 @@
         "sector": "valence",
         "Lambda0_gev": 0.1,
         "posterior_prior_error_scale": [3.0, 4.0, 5.0],
-        "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
+        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
         "scheme_scan": {
           "zmin_fm": [0.72, 0.78, 0.84, 0.90],
           "zmax_fm": [1.26, 1.32, 1.38, 1.44],
@@ -118,8 +118,7 @@
         "scheme": "hybrid",
         "mu": 2.0,
         "component": "re",
-        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 200},
-        "lc_x_ls": {"start": 0.0, "stop": 1.0, "num": 50}
+        "lc_x_ls": {"start": 0.0, "stop": 1.0}
       },
       "jobs": [
         {"id": "mt_p5", "inputs": {"quasi": "ft_p5"}, "params": {"zs_fm": 0.1722}}

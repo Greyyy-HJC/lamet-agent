@@ -203,7 +203,7 @@
           4.0,
           5.0
         ],
-        "y_grid": {
+        "quasi_y_ls": {
           "start": -2.0,
           "stop": 2.0,
           "num": 100
@@ -242,15 +242,9 @@
         "scheme": "hybrid",
         "mu": 2.0,
         "component": "re",
-        "quasi_y_ls": {
-          "start": -2.0,
-          "stop": 2.0,
-          "num": 200
-        },
         "lc_x_ls": {
           "start": 0.0,
-          "stop": 1.0,
-          "num": 50
+          "stop": 1.0
         }
       },
       "jobs": [

@@ -47,7 +47,12 @@ from lamet_agent.core.resampling import (
     samples_to_gvar,
 )
 from lamet_agent.stages.fourier.reporting import write_fourier_report
-from lamet_agent.stages.fourier.validation import INFERRED_OBSERVABLES, PUBLIC_OBSERVABLES
+from lamet_agent.stages.fourier.validation import (
+    INFERRED_OBSERVABLES,
+    PUBLIC_OBSERVABLES,
+    quasi_y_ls_error,
+    resolve_grid_spec,
+)
 
 FM_TO_GEV_INV = 5.067731237
 _FOURIER_SAMPLE_EXECUTOR: ContextVar[ProcessPoolExecutor | None] = ContextVar(
@@ -2420,20 +2425,12 @@ def _generate_scan_schemes(spec: dict[str, Any]) -> list[dict[str, Any]]:
     return schemes
 
 
-def _resolve_y_grid(y_grid: list[float] | dict[str, Any]) -> list[float]:
-    if isinstance(y_grid, dict):
-        start = float(y_grid["start"])
-        stop = float(y_grid["stop"])
-        if "num" in y_grid:
-            num = int(y_grid["num"])
-            if num < 2:
-                raise ValueError("y_grid num must be at least 2")
-            return np.linspace(start, stop, num).tolist()
-        step = float(y_grid["step"])
-        if step <= 0:
-            raise ValueError("y_grid step must be positive")
-        return np.arange(start, stop + 0.5 * step, step).tolist()
-    return [float(item) for item in y_grid]
+def _resolve_quasi_y_ls(quasi_y_ls: list[float] | dict[str, Any]) -> list[float]:
+    grid = np.asarray(resolve_grid_spec(quasi_y_ls, name="quasi_y_ls"), dtype=float)
+    message = quasi_y_ls_error(grid)
+    if message:
+        raise ValueError(message)
+    return grid.tolist()
 
 
 def _fit_model_specs(order: str | Sequence[str], prior_width: float | Sequence[float]) -> list[dict[str, Any]]:
@@ -2544,7 +2541,7 @@ def _apply_fourier_output_scale(result: dict[str, Any], output_scale: float) -> 
 def run_fourier_transform(
     store: dict[str, Any],
     *,
-    y_grid: list[float] | dict[str, Any],
+    quasi_y_ls: list[float] | dict[str, Any],
     scheme_scan: dict[str, Any],
     zmin_shift: int,
     method: str,
@@ -2704,7 +2701,7 @@ def run_fourier_transform(
     ]
     if not schemes:
         raise ValueError("scheme_scan produced no valid zmin/zmax combinations")
-    y_values = _resolve_y_grid(y_grid)
+    y_values = _resolve_quasi_y_ls(quasi_y_ls)
     model_average = bool(scheme_scan["model_average"])
     candidate_labels = [str(scheme.get("label", f"scheme_{idx}")) for idx, scheme in enumerate(schemes)]
     candidate_qualities = []

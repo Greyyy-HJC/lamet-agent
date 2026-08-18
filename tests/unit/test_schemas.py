@@ -176,7 +176,7 @@ def test_manifest_accepts_fourier_lambda0_gev() -> None:
     AnalysisManifest.model_validate(_fourier_payload())
 
 
-@pytest.mark.parametrize("parameter", ["coord_unit", "observable", "target_observable"])
+@pytest.mark.parametrize("parameter", ["coord_unit", "observable", "target_observable", "y_grid"])
 def test_manifest_rejects_removed_fourier_inputs(parameter: str) -> None:
     payload = _fourier_payload()
     payload["stages"]["fourier_transform"]["defaults"][parameter] = "fm"
@@ -235,15 +235,15 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
 
     contract = get_stage_parameter_contract("fourier_transform")
     sector = contract.schema["sector"]
-    y_grid = contract.schema["y_grid"]
+    quasi_y_ls = contract.schema["quasi_y_ls"]
 
     assert isinstance(sector, ParameterSpec)
-    assert isinstance(y_grid, ParameterSpec)
-    assert y_grid.required is True
-    assert callable(y_grid.validator)
+    assert isinstance(quasi_y_ls, ParameterSpec)
+    assert quasi_y_ls.required is True
+    assert callable(quasi_y_ls.validator)
     assert sector.choices == ("sea", "valence", "singlet", "full")
     assert "negative-x extension" in sector.physics
-    assert not any(item.code == "fourier.y_grid.required" for item in contract.constraints)
+    assert not any(item.code == "fourier.quasi_y_ls.required" for item in contract.constraints)
     assert any(
         item.code == "fourier.sector.manual_projection_conflict"
         and "normalization" in item.physics
@@ -256,7 +256,7 @@ def test_stage_contract_renders_one_human_facing_parameter_reference() -> None:
     rendered = render_stage_contract("fourier_transform")
     guidance = stage_contract_guidance("fourier_transform")
 
-    assert rendered.count("- y_grid [") == 1
+    assert rendered.count("- quasi_y_ls [") == 1
     assert "Dimensionless momentum-fraction grid" in rendered
     assert "Choice behavior:" in rendered
     assert "Cross-parameter and context rules" in rendered
@@ -354,8 +354,8 @@ def test_manifest_rejects_run_wide_stage_parameter() -> None:
         ),
         (
             "fourier_transform",
-            {"y_grid": {"start": -1.0, "stop": 1.0, "numm": 10}},
-            r"stages\.fourier_transform\.defaults\.y_grid\.numm",
+            {"quasi_y_ls": {"start": -1.0, "stop": 1.0, "numm": 10}},
+            r"stages\.fourier_transform\.defaults\.quasi_y_ls\.numm",
         ),
         (
             "fourier_transform",

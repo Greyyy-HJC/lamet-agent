@@ -99,24 +99,6 @@ def _render_plan_fallback_notice(error: Exception) -> str:
     return "\n".join([box, "", "Validation error:", _format_cli_error(error)])
 
 
-def _matching_grid_warnings_for_cli(manifest: object) -> list[str]:
-    """Collect matching-grid warnings for a parsed manifest, if it is strict."""
-    if not isinstance(manifest, AnalysisManifest):
-        return []
-    from .stages.matching.validation import matching_grid_warnings
-
-    return matching_grid_warnings(manifest)
-
-
-def _emit_matching_grid_warnings(manifest: object) -> list[str]:
-    """Print boxed matching-grid warnings to stderr and return them."""
-    warnings = _matching_grid_warnings_for_cli(manifest)
-    if warnings:
-        typer.echo(_render_boxed_notice("WARNING: MATCHING GRID DENSITY", warnings), err=True)
-        typer.echo(err=True)
-    return warnings
-
-
 @app.command("describe-stage")
 def describe_stage(stage: str) -> None:
     """Show one stage's manifest parameters, physics, and compatibility rules."""
@@ -138,7 +120,6 @@ def validate_manifest(path: Path) -> None:
         typer.echo(_format_cli_error(exc), err=True)
         raise typer.Exit(code=2) from exc
 
-    warnings = _emit_matching_grid_warnings(manifest)
     issues = []
     for stage in manifest.metadata.stages:
         for job in manifest.stages[stage].jobs:
@@ -162,14 +143,13 @@ def validate_manifest(path: Path) -> None:
                 "stages": manifest.metadata.stages,
                 "correlator_count": len(manifest.inputs.correlators),
                 "kernel_count": len(manifest.inputs.kernels),
-                "status": "invalid" if warnings or issues else "valid",
-                "warnings": warnings,
+                "status": "invalid" if issues else "valid",
                 "issues": issues,
             },
             indent=2,
         )
     )
-    if warnings or issues:
+    if issues:
         raise typer.Exit(code=1)
 
 
@@ -417,7 +397,6 @@ def run_workflow(
             )
             return
         raise typer.BadParameter(_format_cli_error(exc)) from exc
-    _emit_matching_grid_warnings(parsed)
     report_language = report_language.lower()
     if report_language not in {"en", "ch"}:
         raise typer.BadParameter("--report_language must be 'en' or 'ch'")

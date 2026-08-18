@@ -19,7 +19,6 @@ from lamet_agent.manifest_params import (
     merge_stage_params,
     resolve_stage_params,
 )
-from lamet_agent.stages.matching.validation import matching_grid_warnings
 
 
 IssueSeverity = Literal["error", "warning", "info"]
@@ -544,8 +543,9 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
         ft_defaults: dict[str, Any] = {}
         if ft_method_match:
             ft_defaults["method"] = ft_method_match.group(1).upper()
-        if y_grid is not None:
-            ft_defaults["y_grid"] = y_grid
+        ft_grid = quasi_y_ls if quasi_y_ls is not None else y_grid
+        if ft_grid is not None:
+            ft_defaults["quasi_y_ls"] = ft_grid
         if ft_order_match:
             ft_defaults["order"] = ft_order_match.group(1).upper()
         if ft_sector_match:
@@ -579,8 +579,6 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             mt_defaults["scheme"] = scheme
         if component_match:
             mt_defaults["component"] = component_match.group(1).lower()
-        if quasi_y_ls is not None:
-            mt_defaults["quasi_y_ls"] = quasi_y_ls
         if lc_x_ls is not None:
             mt_defaults["lc_x_ls"] = lc_x_ls
         zs_match = re.search(r"zs_fm(?:\s+if[^:]*|\s+for\s+[A-Za-z0-9_+-]+)?\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)
@@ -884,17 +882,9 @@ def check_manifest_draft(manifest_path: Path, payload: dict[str, Any]) -> list[P
         if isinstance(kernel, dict) and kernel.get("stage") == "matching":
             kernel["stage"] = "perturbative_matching"
     try:
-        strict = AnalysisManifest.model_validate(strict_payload)
-        if root is not None:
-            for artifact in strict.inputs.artifacts:
-                resolved = _resolve_manifest_path(manifest_path, payload, artifact.path)
-                if resolved is not None:
-                    artifact.path = resolved.as_posix()
+        AnalysisManifest.model_validate(strict_payload)
     except Exception as exc:
         issues.append(PlanIssue("info", "manifest", f"Strict manifest validation is not yet clean: {exc}"))
-    else:
-        for message in matching_grid_warnings(strict):
-            issues.append(PlanIssue("warning", "stages.perturbative_matching", message))
 
     for gap in _stage_parameter_gaps(payload, manifest_path):
         message = str(gap["message"])

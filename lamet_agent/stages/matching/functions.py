@@ -22,8 +22,9 @@ Design:
 Expected inputs:
 - a quasi-PDF produced by the Fourier stage, passed in memory by job id or loaded
   from an external NetCDF source. It carries the full per-sample quasi-PDF (an
-  ``EnsembleData`` with a leading resampling axis).
-- a momentum grid ``quasi_y_ls`` and the nucleon momentum ``momentum_gev``
+  ``EnsembleData`` with a leading resampling axis) and the integration grid in
+  coord ``x``.
+- the nucleon momentum ``momentum_gev``
 
 Expected outputs:
 - the matching kernel matrix and the matched (light-cone) PDF, both kept as
@@ -46,6 +47,7 @@ from typing import Any, Callable
 import numpy as np
 
 from lamet_agent.core.data import EnsembleData
+from lamet_agent.stages.fourier.validation import quasi_y_ls_error
 from lamet_agent.stages.matching.reporting import FormulaLlm, is_da_kernel, write_matching_report
 
 # All matching kernels live in the self-contained kernels.py.
@@ -270,89 +272,39 @@ def _samples_ensemble_data_from_npz(raw: Any) -> EnsembleData:
     )
 
 
-def resolve_grid_spec(spec: list[float] | dict[str, Any], *, name: str = "grid") -> list[float]:
-    """Turn a manifest grid spec into an explicit list of points.
-
-    A spec is either an explicit numeric list or a compact dict: ``{start, stop, num}``
-    (linspace, ``stop`` inclusive) or ``{start, stop, step}`` (arange, ``stop``
-    inclusive) -- the same shape the Fourier stage's ``y_grid`` takes. ``name`` only
-    labels the error messages, so a caller's manifest key is what the user sees when a
-    spec is malformed.
-
-    Resolution only: a resolved grid still has to satisfy what its consumer requires
-    (see ``_resolve_quasi_y_ls`` and ``_reject_lc_grid_finer_than_quasi``).
-    """
-    if isinstance(spec, dict):
-        start = float(spec["start"])
-        stop = float(spec["stop"])
-        if "num" in spec:
-            num = int(spec["num"])
-            if num < 2:
-                raise ValueError(f"{name} num must be at least 2")
-            return np.linspace(start, stop, num).tolist()
-        step = float(spec["step"])
-        if step <= 0:
-            raise ValueError(f"{name} step must be positive")
-        # +0.5*step keeps `stop` in the grid despite floating-point drift.
-        return np.arange(start, stop + 0.5 * step, step).tolist()
-    return [float(item) for item in spec]
-
-
-def _resolve_quasi_y_ls(spec: list[float] | dict[str, Any], native: np.ndarray, *, eps: float = 1e-12) -> np.ndarray:
-    """Resolve and validate the ``quasi_y_ls`` spec against the grid the data actually has.
-
-    The kernels integrate over the quasi grid with a ``1/y`` measure on a uniform
-    ``dy``, so this enforces up front -- with the manifest key in the message --
-    what ``build_matching_matrix`` in kernels.py would otherwise raise on later:
-    at least 2 points, no point at (or within ``eps`` of) zero, uniform spacing.
-
-    Points outside the data's own range are rejected rather than extrapolated:
-    there is no quasi-PDF out there, so any value would be invented.
-    """
-    grid = np.asarray(resolve_grid_spec(spec, name="quasi_y_ls"), dtype=float)
-    if grid.ndim != 1 or grid.size < 2:
-        raise ValueError("quasi_y_ls must resolve to at least 2 points.")
-    if np.any(np.abs(grid) <= eps):
-        raise ValueError(
-            "quasi_y_ls must not contain 0: the matching kernels carry a 1/y measure, "
-            "so a y = 0 point is singular. With a symmetric {start, stop, num} spec an "
-            "even num avoids the midpoint (num=100 does, num=101 does not)."
+def lc_window_error(quasi: np.ndarray, start: float, stop: float, *, eps: float = 1e-12) -> str | None:
+    """Return a message if ``[start, stop]`` is not a valid window on ``quasi``."""
+    if start > stop:
+        return "lc_x_ls start must be <= stop."
+    y_ls = np.asarray(quasi, dtype=float)
+    if y_ls.size < 1:
+        return "lc_x_ls window contains no quasi-grid points."
+    lo, hi = float(np.min(y_ls)), float(np.max(y_ls))
+    tol = eps + 1e-9 * max(abs(lo), abs(hi), 1.0)
+    if start < lo - tol or stop > hi + tol:
+        return (
+            f"lc_x_ls [{start}, {stop}] extends beyond the quasi-PDF grid [{lo}, {hi}]; "
+            "there is no Fourier data outside that range."
         )
-    step = np.diff(grid)
-    if not np.allclose(step, step[0], rtol=0.0, atol=eps):
-        raise ValueError("quasi_y_ls must be uniformly spaced.")
-    lo, hi = float(np.min(native)), float(np.max(native))
-    tol = eps + 1e-9 * max(abs(lo), abs(hi))
-    if float(np.min(grid)) < lo - tol or float(np.max(grid)) > hi + tol:
-        raise ValueError(
-            f"quasi_y_ls [{float(np.min(grid))}, {float(np.max(grid))}] extends beyond the "
-            f"quasi-PDF's own grid [{lo}, {hi}]; there is no data to interpolate out there. "
-            "Widen the Fourier stage's y_grid instead."
-        )
-    return grid
+    selected = y_ls[(y_ls >= start - tol) & (y_ls <= stop + tol)]
+    if selected.size < 1:
+        return "lc_x_ls window contains no quasi-grid points."
+    return None
 
 
-def _interp_quasi_samples(quasi_ed: EnsembleData, native: np.ndarray, target: np.ndarray) -> EnsembleData:
-    """Interpolate every quasi-PDF sample onto ``target``, preserving the sample axis.
-
-    Interpolating each sample independently (rather than the mean and error) keeps
-    the sample-level correlation structure the rest of the stage relies on. The
-    caller has already checked that ``target`` lies inside ``native``, so the
-    out-of-range behaviour of ``np.interp`` never comes into play.
-    """
-    order = np.argsort(native)  # np.interp needs an increasing x
-    xs = native[order]
-    samples = np.asarray(quasi_ed.values, dtype=float)
-    interpolated = [np.interp(target, xs, row[order]) for row in samples]
-    return EnsembleData(
-        ensemble=quasi_ed.ensemble,
-        resample=quasi_ed.resample,
-        values=interpolated,
-        dims=("x",),
-        coords={"x": target.tolist()},
-        attrs=quasi_ed.attrs,
-        name=quasi_ed.name,
-    )
+def slice_lc_x_ls(quasi: np.ndarray, spec: dict[str, Any], *, eps: float = 1e-12) -> np.ndarray:
+    """Select the Fourier/quasi nodes inside ``spec``'s closed ``[start, stop]`` window."""
+    if not isinstance(spec, dict) or not {"start", "stop"}.issubset(spec):
+        raise ValueError("lc_x_ls must be an object with start and stop.")
+    start = float(spec["start"])
+    stop = float(spec["stop"])
+    y_ls = np.asarray(quasi, dtype=float)
+    message = lc_window_error(y_ls, start, stop, eps=eps)
+    if message:
+        raise ValueError(message)
+    lo, hi = float(np.min(y_ls)), float(np.max(y_ls))
+    tol = eps + 1e-9 * max(abs(lo), abs(hi), 1.0)
+    return y_ls[(y_ls >= start - tol) & (y_ls <= stop + tol)]
 
 
 def load_quasi_pdf(
@@ -360,7 +312,6 @@ def load_quasi_pdf(
     *,
     path: str | None = None,
     component: str,
-    quasi_y_ls: list[float] | dict[str, Any],
     quasi_out: str = "quasi_ed",
     grid_out: str = "quasi_y_ls",
 ) -> dict[str, Any]:
@@ -382,10 +333,8 @@ def load_quasi_pdf(
     ``component`` selects the real (``"re"``) or imaginary (``"im"``) channel of
     the Fourier output; the unpolarized quasi-PDF lives in the real part.
 
-    ``quasi_y_ls`` explicitly sets the quasi-PDF -- the grid the matching
-    integrates *over* (the kernel matrix's columns, hence ``y``). Each sample is linearly interpolated onto that grid. Interpolation error only appears where the grid actually
-    differs: on points the Fourier grid already carries, ``np.interp`` returns the
-    sample unchanged.
+    The kernel integrates over the artifact's own ``x`` coordinate. That grid
+    must be uniform and exclude zero so the matching 1/y measure stays finite.
     """
     if path is None and isinstance(store.get("quasi"), EnsembleData):
         quasi_ed = _component_ensemble_data(store["quasi"], component)
@@ -411,15 +360,11 @@ def load_quasi_pdf(
             "jackknife samples. Re-export the quasi-PDF with its samples."
         )
 
-    # The quasi-PDF's own grid is the EnsembleData's only physical coordinate.
-    native_y_ls = np.asarray(quasi_ed.coords["x"], dtype=float)
+    y_ls = np.asarray(quasi_ed.coords["x"], dtype=float)
+    message = quasi_y_ls_error(y_ls)
+    if message:
+        raise ValueError(message)
 
-    # Interpolate unconditionally; np.interp preserves samples exactly on native nodes.
-    y_ls = _resolve_quasi_y_ls(quasi_y_ls, native_y_ls)
-    quasi_ed = _interp_quasi_samples(quasi_ed, native_y_ls, y_ls)
-
-    # The store is the temporary dict shared by this stage's tools; build/apply
-    # read the data back from here.
     store[grid_out] = y_ls
     store[quasi_out] = quasi_ed
     store["matching_component"] = component
@@ -436,43 +381,6 @@ def load_quasi_pdf(
 # --- build the kernel matrix ------------------------------------------------
 
 
-def lc_finer_than_quasi_message(x_ls: np.ndarray, y_ls: np.ndarray) -> str | None:
-    """Return a message if the light-cone grid is denser than the quasi grid.
-
-    ``build_matching_matrix`` restores each y column's x = y singularity by subtracting
-    that column's sum onto the *single* x row nearest to y. That spreads evenly only
-    while the x rows are no denser than the y columns. Refine x past y and most rows
-    never receive a subtraction, so the matched curve alternates between subtracted and
-    unsubtracted rows -- a high-frequency oscillation that looks like data but is a
-    discretization artifact.
-    """
-    x_grid = np.asarray(x_ls, dtype=float)
-    y_grid = np.asarray(y_ls, dtype=float)
-    if x_grid.size < 1 or y_grid.size < 1:
-        return None
-    rows_used = np.unique(np.abs(x_grid[:, None] - y_grid[None, :]).argmin(axis=0)).size
-    if rows_used < x_grid.size:
-        return (
-            f"lc_x_ls has {x_grid.size} points where the quasi grid has {y_grid.size}, so only "
-            f"{rows_used} of them carry the kernel's plus-prescription subtraction and the "
-            "matched result would oscillate between subtracted and unsubtracted points. "
-            "Give the Fourier stage's y_grid the resolution you want and let lc_x_ls "
-            "default to it, or set an lc_x_ls no denser than the quasi grid."
-        )
-    return None
-
-
-def _reject_lc_grid_finer_than_quasi(x_ls: np.ndarray, y_ls: np.ndarray) -> None:
-    """Reject a light-cone grid the kernel's plus prescription cannot discretize.
-
-    Refining the *quasi* grid is not a workaround either -- it is bounded by the Fourier
-    grid. Give the Fourier stage the finer ``y_grid`` instead and let both follow it.
-    """
-    message = lc_finer_than_quasi_message(x_ls, y_ls)
-    if message:
-        raise ValueError(message)
-
-
 def build_matching_kernel(
     store: dict[str, Any],
     *,
@@ -480,7 +388,7 @@ def build_matching_kernel(
     momentum_gev: float,
     mu: float,
     zs_fm: float | None = None,
-    lc_x_ls: list[float] | dict[str, Any],
+    lc_x_ls: dict[str, Any],
     quasi_grid_key: str = "quasi_y_ls",
     lc_grid_key: str = "lc_x_ls",
     out: str = "kernel_matrix",
@@ -492,11 +400,10 @@ def build_matching_kernel(
     Both ``zs_fm`` and ``momentum_gev`` come from the matching job's effective stage
     parameters. MSbar and ratio kernels ignore ``zs_fm``.
 
-    ``lc_x_ls`` explicitly sets the grid the matched light-cone PDF comes out on (the
-    kernel matrix's rows, hence ``x``), independently of the quasi grid it integrates
-    over (the columns, fixed by load_quasi_pdf). Unlike the quasi grid this one is unconstrained: the
-    kernels only interpolate the LO term onto it, so it may contain 0 and need not be
-    uniform.
+    ``lc_x_ls`` is ``{start, stop}``: the matched light-cone PDF comes out on the
+    Fourier/quasi nodes inside that closed window (the kernel matrix's rows).
+    The convolution still integrates over the full quasi grid (the columns,
+    fixed by load_quasi_pdf).
 
     ``quasi_grid_key``/``lc_grid_key`` name where the two grids live in the store; they
     are keys, not grids.
@@ -515,10 +422,7 @@ def build_matching_kernel(
     # The kernel's columns live on the quasi grid (what it integrates over) and its
     # rows on the explicitly declared light-cone grid (what it produces).
     y_ls = np.asarray(store[quasi_grid_key], dtype=float)
-    x_ls = np.asarray(resolve_grid_spec(lc_x_ls, name="lc_x_ls"), dtype=float)
-    if x_ls.ndim != 1 or x_ls.size < 1:
-        raise ValueError("lc_x_ls must resolve to at least 1 point.")
-    _reject_lc_grid_finer_than_quasi(x_ls, y_ls)
+    x_ls = slice_lc_x_ls(y_ls, lc_x_ls)
     store[lc_grid_key] = x_ls
 
     # Hybrid kernels need the Wilson-line scale zspz = z_s * P_z, built from the

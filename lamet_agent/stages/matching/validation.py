@@ -24,35 +24,18 @@ def _scheme_message(value: Any) -> str | None:
     return "perturbative_matching scheme must be 'ratio', 'hybrid', or 'msbar'."
 
 
-def _grid_message(name: str):
-    def validate(value: Any) -> str | None:
-        from lamet_agent.stages.matching.functions import resolve_grid_spec
-
-        if isinstance(value, dict):
-            if not {"start", "stop"}.issubset(value):
-                return f"{name} object requires start and stop."
-            selectors = {key for key in ("num", "step") if key in value}
-            if len(selectors) != 1:
-                return f"{name} object requires exactly one of num or step."
-        try:
-            grid = np.asarray(resolve_grid_spec(value, name=name), dtype=float)
-        except (TypeError, ValueError, KeyError) as exc:
-            return str(exc)
-        if not np.all(np.isfinite(grid)):
-            return f"{name} must contain only finite values."
-        if name == "quasi_y_ls":
-            if grid.size < 2:
-                return "quasi_y_ls must resolve to at least 2 points."
-            if np.any(np.isclose(grid, 0.0)):
-                return "quasi_y_ls must not contain zero because matching kernels carry a 1/y measure."
-            spacing = np.diff(grid)
-            if not np.allclose(spacing, spacing[0]):
-                return "quasi_y_ls must be uniformly spaced."
-        elif grid.size < 1:
-            return "lc_x_ls must resolve to at least 1 point."
-        return None
-
-    return validate
+def _validate_lc_x_ls(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return "lc_x_ls must be an object with start and stop."
+    if not {"start", "stop"}.issubset(value):
+        return "lc_x_ls object requires start and stop."
+    for key in ("start", "stop"):
+        item = value[key]
+        if isinstance(item, bool) or not isinstance(item, (int, float)) or not np.isfinite(float(item)):
+            return f"lc_x_ls {key} must be a finite number."
+    if float(value["start"]) > float(value["stop"]):
+        return "lc_x_ls start must be <= stop."
+    return None
 
 
 def _violation(context: StageValidationContext, message: str, *, parameter: str, cause: str, path: str | None = None) -> RuleViolation:
@@ -148,11 +131,34 @@ def _check_hybrid(context: StageValidationContext) -> RuleViolation | None:
     )
 
 
-_GRID_FIELDS = {
-    "num": _parameter("Number of uniformly spaced grid points.", "Grid density controls numerical discretization of the convolution.", expected=int),
-    "start": _parameter("First grid coordinate.", "The endpoints define the represented momentum-fraction domain.", expected=float),
-    "step": _parameter("Positive grid spacing.", "This is an alternative to num for a uniform grid.", expected=float),
-    "stop": _parameter("Last grid coordinate.", "The endpoints define the represented momentum-fraction domain.", expected=float),
+def _check_lc_window(context: StageValidationContext) -> RuleViolation | None:
+    from lamet_agent.stages.fourier.validation import resolve_grid_spec
+    from lamet_agent.stages.matching.functions import lc_window_error
+
+    spec = context.params.get("lc_x_ls")
+    quasi_spec = context.resources.get("upstream_quasi_y_ls")
+    if not isinstance(spec, dict) or quasi_spec is None:
+        return None
+    try:
+        y_ls = np.asarray(resolve_grid_spec(quasi_spec, name="quasi_y_ls"), dtype=float)
+        start = float(spec["start"])
+        stop = float(spec["stop"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    message = lc_window_error(y_ls, start, stop)
+    if message is None:
+        return None
+    return _violation(
+        context,
+        message,
+        parameter="lc_x_ls",
+        cause="The matching output window must be a same-spacing subset of the upstream Fourier quasi_y_ls.",
+    )
+
+
+_LC_FIELDS = {
+    "start": _parameter("First light-cone grid coordinate.", "Together with stop, this selects the output window on the Fourier quasi grid.", expected=float),
+    "stop": _parameter("Last light-cone grid coordinate.", "Together with start, this selects the output window on the Fourier quasi grid.", expected=float),
 }
 
 _PLOT_FIELDS = {
@@ -185,25 +191,16 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "endpoint_cut": _parameter("Numerical endpoint exclusion.", "The cut regulates finite-grid evaluation near singular convolution endpoints.", expected=float),
         "kernel_id": _parameter("Exact declared matching-kernel identifier.", "The identifier fixes gauge treatment, operator, observable, scheme, and perturbative order; it is inferred when exactly one matching kernel is declared.", expected=str),
         "lc_x_ls": _parameter(
-            "Output light-cone momentum-fraction grid.",
-            "This explicit grid supplies the kernel rows and may use a different domain or include zero, but it must not be denser than the quasi grid: otherwise some rows miss the plus-prescription subtraction and acquire oscillatory discretization artifacts. Use a numeric list, or an object with start, stop, and exactly one of num or positive step.",
-            expected=(list, dict),
-            items=float,
+            "Output light-cone momentum-fraction window.",
+            "Only start and stop are authored; the matched PDF is sampled on the Fourier quasi_y_ls nodes inside that closed interval, so the kernel rows share the quasi spacing and stay no denser than the integration columns. The convolution still integrates over the full quasi grid. LRR kernels need the full shared grid, so set start and stop to the Fourier endpoints.",
+            expected=dict,
             required=True,
-            schema=_GRID_FIELDS,
-            validator=_grid_message("lc_x_ls"),
+            schema=_LC_FIELDS,
+            validator=_validate_lc_x_ls,
+            suggested_fix='For example, use {"start": -2.0, "stop": 2.0} to match the Fourier quasi_y_ls range.',
         ),
         "mu": _parameter("Perturbative matching scale.", "The truncated kernel retains residual dependence on this factorization scale.", expected=float, unit="GeV", required=True),
         "plot": _parameter("Matching plot settings.", "These settings affect presentation only.", expected=dict, schema=_PLOT_FIELDS),
-        "quasi_y_ls": _parameter(
-            "Input quasi-distribution integration-grid override.",
-            "This explicit grid supplies the kernel columns and its 1/y integration measure. It must be uniform, exclude zero, and stay within the Fourier grid; setting it interpolates every quasi sample. Use a numeric list, or an object with start, stop, and exactly one of num or positive step.",
-            expected=(list, dict),
-            items=float,
-            required=True,
-            schema=_GRID_FIELDS,
-            validator=_grid_message("quasi_y_ls"),
-        ),
         "r": _parameter(
             "Symmetric factorization-scale variation ratio used to generate systematics branches.",
             "When r differs from 1, manifest expansion keeps the central scale mu and clones matching jobs at mu/r and mu*r so residual perturbative-scale dependence can enter the systematic budget.",
@@ -239,12 +236,13 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "ylim": _parameter("Legacy vertical plot limits.", "This changes presentation only.", expected=list, items=float),
         "zs_fm": _parameter("Hybrid transition distance or uncertainty-bearing systematics value.", "Together with hadron momentum it sets the dimensionless Wilson-line scale in a hybrid kernel. Uncertainty strings are expanded into numerical branches before execution.", expected=(float, str), unit="fm"),
     },
-    removed={},
+    removed={"quasi_y_ls": "is no longer supported; matching uses the Fourier artifact x grid. Set the output window with lc_x_ls start and stop."},
     constraints=(
         ConstraintSpec("matching.inputs.exactly_one", ("inputs.quasi",), "Each job consumes exactly one quasi input.", "One convolution maps one quasi-distribution artifact to one light-cone result.", 'Set inputs to {"quasi": "<fourier job or artifact>"}.', _check_input),
         ConstraintSpec("matching.kinematics.momentum_required", ("inputs.quasi", "derived.momentum_gev"), "Physical momentum must be derivable from the upstream source.", "The matching kernel depends explicitly on the finite hadron momentum in GeV.", "Declare discrete momentum, volume, and lattice_spacing_fm on the upstream source or artifact.", _check_momentum),
         ConstraintSpec("matching.kernel.compatibility", ("kernel_id", "scheme", "inputs.kernels"), "kernel_id must be declared, registered, and encode the selected scheme.", "Different operator and scheme kernels are not interchangeable perturbative coefficients.", "Select one declared kernel and set scheme to its encoded token.", _check_kernel),
         ConstraintSpec("matching.hybrid.zs_required", ("kernel_id", "zs_fm"), "Hybrid kernels require flat zs_fm.", "The kernel depends on zs * Pz as a dimensionless transition scale.", "Declare zs_fm in matching defaults or job params.", _check_hybrid),
+        ConstraintSpec("matching.lc_x_ls.window", ("lc_x_ls",), "lc_x_ls start and stop must stay inside the upstream Fourier quasi_y_ls.", "The matched PDF is a same-spacing subset of the Fourier grid; there is no quasi-distribution outside that range.", "Set lc_x_ls start and stop inside the Fourier quasi_y_ls range, or widen the Fourier grid.", _check_lc_window),
     ),
 )
 
@@ -260,6 +258,18 @@ def effective_matching_params(manifest: AnalysisManifest, job: StageJob) -> dict
     return params
 
 
+def _upstream_quasi_y_ls_spec(manifest: AnalysisManifest, job: StageJob) -> Any:
+    quasi_id = job.inputs.get("quasi")
+    fourier = manifest.stages.get("fourier_transform")
+    if fourier is None or not isinstance(quasi_id, str):
+        return None
+    for fourier_job in fourier.jobs:
+        if fourier_job.id == quasi_id:
+            params = resolve_stage_params("fourier_transform", fourier.defaults, fourier_job.params)
+            return params.get("quasi_y_ls")
+    return None
+
+
 def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> StageValidationContext:
     """Build the resolved matching context consumed by the shared evaluator."""
     authored = merge_stage_params(manifest.stages["perturbative_matching"].defaults, job.params)
@@ -271,7 +281,10 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
         params=params,
         inputs=dict(job.inputs),
         metadata=manifest.metadata.model_dump(),
-        resources={"kernels": list(manifest.kernels)},
+        resources={
+            "kernels": list(manifest.kernels),
+            "upstream_quasi_y_ls": _upstream_quasi_y_ls_spec(manifest, job),
+        },
         authored_params=authored,
     )
 
@@ -279,29 +292,3 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
 def validate_stage_inputs(manifest: AnalysisManifest, job: StageJob) -> list[str]:
     """Return backward-compatible concise diagnostics."""
     return [issue.message for issue in STAGE_PARAM_CONTRACT.evaluate(build_validation_context(manifest, job))]
-
-
-def matching_grid_warnings(manifest: AnalysisManifest) -> list[str]:
-    """Return failures where the light-cone grid is denser than the quasi grid."""
-    from lamet_agent.stages.matching.functions import lc_finer_than_quasi_message, resolve_grid_spec
-
-    if "perturbative_matching" not in manifest.metadata.stages:
-        return []
-    matching = manifest.stages.get("perturbative_matching")
-    if matching is None:
-        return []
-    warnings: list[str] = []
-    for job in matching.jobs:
-        params = resolve_stage_params("perturbative_matching", matching.defaults, job.params)
-        quasi_spec = params.get("quasi_y_ls")
-        if quasi_spec is None or params.get("lc_x_ls") is None:
-            continue
-        try:
-            y_ls = np.asarray(resolve_grid_spec(quasi_spec, name="quasi_y_ls"), dtype=float)
-            x_ls = np.asarray(resolve_grid_spec(params["lc_x_ls"], name="lc_x_ls"), dtype=float)
-        except (TypeError, ValueError, KeyError):
-            continue
-        message = lc_finer_than_quasi_message(x_ls, y_ls)
-        if message:
-            warnings.append(f"Matching job {job.id!r}: {message}")
-    return warnings

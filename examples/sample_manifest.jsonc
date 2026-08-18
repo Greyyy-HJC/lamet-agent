@@ -265,8 +265,8 @@
         // "part": "re" // "re", "im", or "both"; sector is preferred when available
         "Lambda0_gev": 0.0, // required fixed extra exponential scale in GeV
         "posterior_prior_error_scale": [2.0, 3.0, 5.0], // tail-fit model candidates
-        "y_grid": {
-          "start": -2.0, // inclusive quasi/light-cone momentum-fraction range
+        "quasi_y_ls": {
+          "start": -2.0, // inclusive quasi momentum-fraction range; even num avoids x=0
           "stop": 2.0,
           "num": 100 // alternatively an explicit numeric list, or {start, stop, step} instead of num
         },
@@ -317,33 +317,11 @@
         "scheme": "hybrid", // must match the ratio/hybrid/msbar token in kernel_id
         "mu": 2.0, // factorization/renormalization scale in GeV
         "component": "re", // select "re" or "im" from the quasi distribution
-        // Both grids are required and accept {start, stop, num},
-        // {start, stop, step}, or an explicit numeric list.
-        //
-        // "quasi_y_ls" is the grid the kernel integrates over (its columns). It is
-        // written out here to match the Fourier y_grid above, which leaves the
-        // numbers unchanged -- interpolating onto points the samples already sit on
-        // returns them exactly. The cost of spelling it out is that the grid now
-        // lives in two places: move y_grid and leave this behind, and matching will
-        // quietly interpolate onto the stale grid rather than follow the new one.
-        //
-        // A quasi_y_ls that departs from the upstream grid must stay inside its range
-        // (there is no data outside it, so it is rejected rather than zero-padded),
-        // must avoid x = 0 (the kernels carry a 1/y measure, so an even num keeps the
-        // midpoint out: num=100 is fine, num=101 is not), and must be uniform.
-        "quasi_y_ls": {
-          "start": -2.0,
-          "stop": 2.0,
-          "num": 100
-        },
-        // "lc_x_ls" is the grid the matched PDF comes out on (the kernel's
-        // rows). It may contain 0 and need not be uniform, but must not be
-        // denser than the quasi grid because every row needs the discretized
-        // plus-prescription subtraction.
+        // Matching integrates over the Fourier artifact's x grid. lc_x_ls only
+        // selects the output window: nodes of that same grid with start <= x <= stop.
         "lc_x_ls": {
           "start": -2.0,
-          "stop": 2.0,
-          "num": 100
+          "stop": 2.0
         }
         // "kernel_id": "CG_gt_quark_PDF_hybrid_NLO" // optional explicit selector; inferred when exactly one matching kernel is declared
         // "endpoint_cut": 0.01, // optional; drop a window around singular convolution endpoints (typical for DA)

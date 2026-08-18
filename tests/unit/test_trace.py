@@ -48,12 +48,12 @@ def test_agent_trace_prints_request_user_input_questions() -> None:
         {
             "action": "request_user_input",
             "reason": "missing fields",
-            "questions": ["fourier job y_grid is required"],
+            "questions": ["fourier job quasi_y_ls is required"],
         }
     )
     text = buffer.getvalue()
     assert "Action: request_user_input" in text
-    assert "fourier job y_grid is required" in text
+    assert "fourier job quasi_y_ls is required" in text
 
 
 def test_run_agent_verbose_prints_trace(capsys) -> None:

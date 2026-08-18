@@ -83,7 +83,7 @@
         "hadron": "pion", // explicit because this partial workflow has no correlator provenance
         "polarization": "unpolarized", // explicit because no target 3pt supplies polarization provenance
         "posterior_prior_error_scale": [2.0, 3.0, 5.0],
-        "y_grid": {
+        "quasi_y_ls": {
           "start": -2.0,
           "stop": 2.0,
           "num": 100
@@ -119,14 +119,9 @@
         "scheme": "hybrid",
         "mu": 2.0,
         "component": "re", // matching consumes one channel: "re" or "im"
-        // Both optional. quasi_y_ls is what the kernel integrates over; it must stay
-        // inside the grid the quasi input actually carries, avoid 0, and be uniform.
-        // Spelled out here to match the upstream Fourier y_grid -- keep the two in
-        // step, since a quasi_y_ls left behind after y_grid moves silently
-        // interpolates onto the stale grid instead of following it.
-        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
-        // lc_x_ls is the output grid; it must not be denser than quasi_y_ls.
-        "lc_x_ls": {"start": -2.0, "stop": 2.0, "num": 100}
+        // Matching integrates over the Fourier artifact x grid. lc_x_ls is only
+        // the output window on that same spacing.
+        "lc_x_ls": {"start": -2.0, "stop": 2.0}
         // "endpoint_cut": 0.01, // optional; drop a window around singular convolution endpoints
         // "r": 1.4142135623730951, // optional; clone jobs at mu/r and mu*r (1.0 = off)
         // "sector": "valence", // optional post-match projection; usually inherit from Fourier

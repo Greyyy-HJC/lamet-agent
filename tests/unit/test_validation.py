@@ -346,7 +346,7 @@ def _partial_fourier_payload(artifact: dict) -> dict:
                         "zmin_fm": [1.0], "zmax_fm": [2.0], "zmax_ext_fm": 3.0,
                         "smooth": "linear", "model_average": True,
                     },
-                    "y_grid": {"start": -1.0, "stop": 1.0, "num": 3},
+                    "quasi_y_ls": {"start": -1.0, "stop": 1.0, "num": 4},
                 },
                 "jobs": [{"id": "ft", "inputs": {"input": artifact["id"]}}],
             }

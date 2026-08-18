@@ -7,7 +7,8 @@ Convert the current job's quasi-PDF into a light-cone PDF sample by sample.
 1. Call `load_quasi_pdf` without a path. It consumes the job's in-memory Fourier
    output (or an external artifact if declared) and selects the manifest component.
 2. Call `build_matching_kernel` without overriding kernel_id, momentum_gev, mu, zs_fm, or lc_x_ls;
-   the framework resolves the logical kernel declaration and scheme.
+   the framework resolves the logical kernel declaration and scheme. `lc_x_ls` is a
+   `{start, stop}` window on the Fourier artifact x grid.
 3. Call `apply_matching` once to produce the matched EnsembleData and primary job
    NetCDF under store['output'].
 4. Call `plot_matched_pdf`, then finish with the NetCDF, PDF, and SVG paths. A single
