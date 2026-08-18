@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob, derive_job_kinematics
-from lamet_agent.manifest_params import StageValidationIssue, get_stage_parameter_contract, merge_stage_params
+from lamet_agent.manifest_params import StageValidationIssue, get_stage_parameter_contract
 from lamet_agent.stages.fourier.validation import INFERRED_OBSERVABLES
 
 from .stages import resolve_stage_package
@@ -116,7 +116,7 @@ def log_nonlinear_fit_quality(
     kind: str = "fit",
     label: str | None = None,
     logger: logging.Logger | None = None,
-    q_min: float = 0.05,
+    q_min: float,
 ) -> str:
     """Log a compact Good/Bad quality line for an lsqfit nonlinear fit."""
     use_logger = logger or logging.getLogger("my_logger")
@@ -386,15 +386,25 @@ def prepare_tool_args(
     artifacts_dir = Path(artifacts_dir)
     store = store or {}
     resolved = resolve_tool_args(args, manifest)
+    stage_tools = {
+        "correlator_analysis": {"inspect_correlator_scale", "tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid"},
+        "renormalization": {"load_bare_matrix_element_grid", "apply_ratio_scheme_renormalization", "apply_self_renormalization", "plot_renormalized_matrix_element", "plot_self_renormalization_diagnostics", "load_bare_matrix_element", "fit_self_renormalization_factor"},
+        "fourier_transform": {"load_renormalized_matrix_element_samples", "run_fourier_transform", "summarize_fourier_result", "plot_fourier_result", "plot_fourier_extension_quality_result", "report_fourier_result"},
+        "perturbative_matching": {"list_kernels", "load_quasi_pdf", "build_matching_kernel", "apply_matching", "plot_matched_pdf", "report_matching_result"},
+        "extrapolation": {"run_extrapolation", "run_systematics_budget"},
+        "review": {"write_review"},
+    }
+    if stage in stage_tools and tool_name not in stage_tools[stage]:
+        return resolved
 
     if stage == "correlator_analysis":
         # The correlator z grid is runner-owned input metadata, not a stage/job
         # parameter. Ignore model-supplied copies and derive it below.
         resolved.pop("z_values", None)
         selected = [item for item in manifest.correlators if item.correlator_id in job.correlator_ids]
-        defaults = merge_stage_params(effective_params, job.params)
-        fitting_form = str(defaults.get("fitting_form", "Breit"))
-        raw_scopes = defaults.get("fit_scope", ["3pt_ratio"])
+        defaults = dict(effective_params)
+        fitting_form = str(defaults["fitting_form"])
+        raw_scopes = defaults["fit_scope"]
         scope_values = raw_scopes if isinstance(raw_scopes, list) else [raw_scopes]
         is_qda = [str(value) for value in scope_values] == ["qda_ratio"]
         pt2_all = [item for item in selected if item.correlator_type == "2pt"]
@@ -449,8 +459,9 @@ def prepare_tool_args(
             if manifest.metadata.bs_samples is None:
                 raise ValueError("metadata.bs_samples is required when metadata.resample_mode is 'bs'")
             defaults["n_boot"] = manifest.metadata.bs_samples
-        if manifest.metadata.bin_size is not None:
-            defaults["bin_size"] = manifest.metadata.bin_size
+        else:
+            defaults["n_boot"] = None
+        defaults["bin_size"] = manifest.metadata.bin_size or 1
         if pt2 is not None:
             defaults.update(
                 {
@@ -791,8 +802,6 @@ def prepare_tool_args(
                 fourier[key] = upstream_metadata[key]
             elif key not in fourier and key in source_metadata:
                 fourier[key] = source_metadata[key]
-        if "method" not in fourier and str(fourier.get("gfix", "")).upper() in {"CG", "GI"}:
-            fourier["method"] = str(fourier["gfix"]).upper()
         fourier.setdefault("target_observable", manifest.metadata.target_observable)
         fourier.setdefault("parton", manifest.metadata.parton)
         fourier.setdefault("sample_error_mode", manifest.metadata.sample_error_mode)
@@ -846,7 +855,7 @@ def prepare_tool_args(
             matching = parameters
             matching["kernel_id"] = resolve_kernel_id(declared_id, matching.get("scheme"))
         if tool_name == "load_quasi_pdf":
-            resolved["component"] = matching.get("component", "re")
+            resolved["component"] = matching["component"]
             resolved.update({key: matching[key] for key in _MATCHING_LOAD_KEYS if key in matching})
             if isinstance(quasi, ArtifactInput):
                 resolved["path"] = quasi.path
@@ -889,10 +898,8 @@ def prepare_tool_args(
                 if key in extrapolation
             }
         )
-        if "sample_error_mode" not in resolved and getattr(manifest.metadata, "sample_error_mode", None):
-            resolved["sample_error_mode"] = manifest.metadata.sample_error_mode
-        if "workers" not in resolved:
-            resolved["workers"] = manifest.metadata.workers
+        resolved["sample_error_mode"] = manifest.metadata.sample_error_mode
+        resolved["workers"] = manifest.metadata.workers
         resolved["save_path"] = str(artifacts_dir / job.id)
         resolved["artifacts_dir"] = str(artifacts_dir)
     if stage == "extrapolation" and tool_name == "run_systematics_budget":

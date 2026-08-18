@@ -12,6 +12,7 @@ from lamet_agent.manifest_params import (
     RuleViolation,
     StageParamContract,
     StageValidationContext,
+    resolve_stage_params,
     merge_stage_params,
 )
 
@@ -62,10 +63,20 @@ def _validate_y_grid(value: Any) -> str | None:
 
 def _validate_scheme_scan(value: Any) -> str | None:
     if not isinstance(value, dict):
-        return None
+        return "scheme_scan must be an object."
+    missing = [key for key in ("z_ext_max", "smooth", "model_average") if key not in value]
+    if missing:
+        return "scheme_scan requires " + ", ".join(missing) + "."
     for bound in ("zmin", "zmax"):
         has_values = f"{bound}_values" in value
         has_range = any(f"{bound}_{suffix}" in value for suffix in ("start", "stop", "step"))
+        if not has_values and not has_range:
+            return f"scheme_scan requires {bound}_values or a complete {bound}_start/{bound}_stop range."
+        values = value.get(f"{bound}_values")
+        if has_values and (not isinstance(values, list) or not values):
+            return f"scheme_scan {bound}_values must be a non-empty numeric list."
+        if has_values and any(isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(float(item)) for item in values):
+            return f"scheme_scan {bound}_values must be a non-empty numeric list."
         if has_values and has_range:
             return f"scheme_scan {bound}_values cannot be combined with {bound}_start/stop/step."
         if has_range and not {f"{bound}_start", f"{bound}_stop"}.issubset(value):
@@ -201,7 +212,7 @@ def _check_sector(context: StageValidationContext) -> RuleViolation | None:
 
 
 def _check_sector_manual_projection(context: StageValidationContext) -> RuleViolation | None:
-    manual = sorted({"part", "output_scale", "im_flip_for_ft"}.intersection(context.params))
+    manual = sorted({"part", "output_scale", "im_flip_for_ft"}.intersection(context.authored_params))
     if "sector" not in context.params or not manual:
         return None
     return _violation(
@@ -213,7 +224,7 @@ def _check_sector_manual_projection(context: StageValidationContext) -> RuleViol
 
 
 def _check_component_part(context: StageValidationContext) -> RuleViolation | None:
-    if "component" not in context.params or "part" not in context.params:
+    if "component" not in context.authored_params or "part" not in context.authored_params:
         return None
     return _violation(
         context,
@@ -236,6 +247,24 @@ def _check_scheme_scan(context: StageValidationContext) -> RuleViolation | None:
         path=context.parameter_path("scheme_scan"),
         cause=f"The effective scheme_scan is {context.params.get('scheme_scan')!r}.",
     )
+
+
+def _check_da_requirements(context: StageValidationContext) -> list[RuleViolation] | None:
+    target = str(context.metadata.get("target_observable", "pdf")).lower()
+    if target != "da":
+        return None
+    required = ("symmetry_guarantee", "psi1_flavor_class", "psi2_flavor_class")
+    issues: list[RuleViolation] = []
+    for parameter in required:
+        if parameter not in context.params:
+            issues.append(_violation(
+                context,
+                message=f"DA Fourier jobs require {parameter}.",
+                path=context.parameter_path(parameter),
+                cause=f"The DA-specific parameter {parameter!r} is absent from the effective configuration.",
+                parameters=(parameter,),
+            ))
+    return issues or None
 
 
 _GRID_FIELDS = {
@@ -267,7 +296,7 @@ _SCHEME_SCAN_FIELDS = {
         "Maximum number of tail-range candidates.",
         "This bounds runtime without changing the definition of any individual tail model.",
         expected=int,
-        default="200",
+        default=200,
     ),
     "model_average": _parameter(
         "Whether to average successful tail models per resampled sample.",
@@ -278,7 +307,6 @@ _SCHEME_SCAN_FIELDS = {
             False: "Use one sample-average-selected tail model after the fit range is fixed.",
             True: "Average successful order and posterior_prior_error_scale candidates for each resampled sample.",
         },
-        default="true",
     ),
     "smooth": _parameter(
         "Interpolation used to join data and the asymptotic tail.",
@@ -289,7 +317,6 @@ _SCHEME_SCAN_FIELDS = {
             "linear": "Linearly blend the measured region into the fitted extension.",
             "none": "Join the measured data and fitted extension without a smoothing interval.",
         },
-        default="linear",
     ),
     "step": _parameter(
         "Fallback spacing shared by zmin and zmax scans.",
@@ -408,6 +435,14 @@ FOURIER_CONSTRAINTS = (
         suggested_fix="Use one range representation per bound and express every range value in coord_unit.",
         check=_check_scheme_scan,
     ),
+    ConstraintSpec(
+        code="fourier.da.required",
+        parameters=("symmetry_guarantee", "psi1_flavor_class", "psi2_flavor_class"),
+        rule="DA jobs require explicit symmetry and constituent flavor-class choices.",
+        physics="DA symmetry projection and unequal-mass asymptotics depend on these analysis choices.",
+        suggested_fix="Declare symmetry_guarantee, psi1_flavor_class, and psi2_flavor_class in stage defaults or job params.",
+        check=_check_da_requirements,
+    ),
 )
 
 
@@ -456,7 +491,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "It shifts the lower prior location of the asymptotic power parameter without changing the perturbative matching scale.",
             expected=float,
             unit="GeV",
-            default="0.0",
+            required=True,
         ),
         "component": _parameter(
             "Legacy alias for part.",
@@ -490,7 +525,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Manual sign flip for the negative-coordinate imaginary part.",
             "This changes the imposed Hermiticity extension and should be used only when no named sector supplies the convention.",
             expected=bool,
-            default="false",
+            default=False,
         ),
         "im_key": _parameter("NPZ/HDF5 imaginary-sample dataset key.", "This maps an external file layout onto complex matrix-element samples.", expected=str, default="im_samples"),
         "input_format": _parameter(
@@ -503,6 +538,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Long-distance tail ansatz family.",
             "GI and CG use different asymptotic parameterizations; the choice is fixed theory input and is not model-averaged.",
             expected=str,
+            required=True,
             choices=("GI", "CG"),
             choice_descriptions={
                 "GI": "Use the gauge-invariant asymptotic parameterization.",
@@ -525,9 +561,9 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "LA": "Keep the leading asymptotic term.",
                 "NLA": "Include the next asymptotic term as a more flexible model candidate.",
             },
-            default="NLA",
+            required=True,
         ),
-        "output_scale": _parameter("Final manual multiplicative scale.", "This rescales the transformed distribution and its uncertainties.", expected=float, default="1.0"),
+        "output_scale": _parameter("Final manual multiplicative scale.", "This rescales the transformed distribution and its uncertainties.", expected=float, default=1.0),
         "part": _parameter(
             "Manual real/imaginary transform channel.",
             "The selected channel controls which coordinate-space component constrains the output when sector is absent.",
@@ -549,7 +585,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 False: "Use the DA matrix element unchanged.",
                 True: "Project the phase-rotated DA matrix element onto its expected real symmetry channel.",
             },
-            default="true",
         ),
         "plot_extension": _parameter(
             "Tail-extension diagnostic plot settings.",
@@ -566,7 +601,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Each value scales the sample-average posterior width used as the prior for resampled tail fits; multiple values create model candidates whose spread can enter scheme_scan.model_average.",
             expected=(float, list),
             items=float,
-            default="3.0",
+            required=True,
         ),
         "polarization": _parameter(
             "Physical spin channel.",
@@ -579,8 +614,8 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "transversity": "Use the tensor/transversity symmetry convention.",
             },
         ),
-        "psi1_flavor_class": _parameter("First meson constituent mass class.", "For DA, light/heavy assignments constrain which asymptotic amplitudes are related or vanish.", expected=str, choices=("light", "heavy"), default="heavy"),
-        "psi2_flavor_class": _parameter("Second meson constituent mass class.", "For DA, light/heavy assignments constrain which asymptotic amplitudes are related or vanish.", expected=str, choices=("light", "heavy"), default="heavy"),
+        "psi1_flavor_class": _parameter("First meson constituent mass class.", "For DA, light/heavy assignments constrain which asymptotic amplitudes are related or vanish.", expected=str, choices=("light", "heavy")),
+        "psi2_flavor_class": _parameter("Second meson constituent mass class.", "For DA, light/heavy assignments constrain which asymptotic amplitudes are related or vanish.", expected=str, choices=("light", "heavy")),
         "re_key": _parameter("NPZ/HDF5 real-sample dataset key.", "This maps an external file layout onto complex matrix-element samples.", expected=str, default="re_samples"),
         "report": _parameter(
             "Optional per-job report settings.",
@@ -594,14 +629,16 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ),
         "scheme_scan": _parameter(
             "Tail fit-range scan and model-averaging configuration.",
-            "zmin/zmax candidates select the measured coordinate range used to constrain the tail, in coord_unit; z_ext_max controls the subsequent extension. Omitting range keys lets the runtime infer bounded candidates from the data. Range variation estimates the finite-distance systematic.",
+            "zmin/zmax candidates explicitly select the measured coordinate range used to constrain the tail, in coord_unit; z_ext_max controls the subsequent extension. Range variation estimates the finite-distance systematic.",
             expected=dict,
+            required=True,
             schema=_SCHEME_SCAN_FIELDS,
         ),
         "sector": _parameter(
             "Partonic projection of a quark PDF/GPD, or full distribution.",
             "For quarks it selects the negative-x extension and active complex channel; DA and gluon backends support full only.",
             expected=str,
+            required=True,
             choices=("sea", "valence", "singlet", "full"),
             choice_descriptions={
                 "sea": "Construct the antiquark/sea projection from the negative-x extension.",
@@ -615,7 +652,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Symmetric index shift used to generate low/high tail-window systematics branches.",
             "A nonzero magnitude asks manifest expansion to clone the Fourier job with negative and positive shifts of the automatically selected minimum tail-fit coordinate; the central job uses zero. Prefer explicit scheme_scan ranges when a fixed physical window is intended.",
             expected=int,
-            default="0",
+            default=0,
         ),
         "y_grid": _parameter(
             "Dimensionless momentum-fraction grid for the transformed quasi-distribution.",
@@ -639,8 +676,10 @@ STAGE_PARAM_CONTRACT = StageParamContract(
 
 def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> StageValidationContext:
     """Build the resolved Fourier context consumed by the shared evaluator."""
-    authored = merge_stage_params(manifest.stages["fourier_transform"].defaults, job.params)
-    params = {**derive_job_kinematics(manifest, job), **authored}
+    stage = manifest.stages["fourier_transform"]
+    authored = merge_stage_params(stage.defaults, job.params)
+    resolved = resolve_stage_params("fourier_transform", stage.defaults, job.params)
+    params = {**derive_job_kinematics(manifest, job), **resolved}
     context = StageValidationContext(
         stage="fourier_transform",
         job_id=job.id,

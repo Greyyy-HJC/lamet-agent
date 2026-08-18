@@ -6,7 +6,7 @@ import math
 from typing import Any
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
-from lamet_agent.manifest_params import ConstraintSpec, ParameterSpec, RuleViolation, StageParamContract, StageValidationContext, merge_stage_params
+from lamet_agent.manifest_params import ConstraintSpec, ParameterSpec, RuleViolation, StageParamContract, StageValidationContext, merge_stage_params, resolve_stage_params
 
 
 def _parameter(summary: str, physics: str, **kwargs: Any) -> ParameterSpec:
@@ -78,9 +78,10 @@ def _check_external(context: StageValidationContext) -> RuleViolation | list[Rul
             parameter="strategy",
             cause="Direct MS-bar conversion requires the fitted self-renormalization factor rather than an external ratio denominator.",
         ))
+    authored_scheme_parameters = context.authored_params.get("scheme_parameters", {})
     scheme_parameters = context.params.get("scheme_parameters", {})
-    if isinstance(scheme_parameters, dict):
-        self_only = sorted({"LambdaQCD_gev", "d", "svdcut", "z_coverage_policy"}.intersection(scheme_parameters))
+    if isinstance(authored_scheme_parameters, dict):
+        self_only = sorted({"LambdaQCD_gev", "d", "svdcut", "z_coverage_policy"}.intersection(authored_scheme_parameters))
         if self_only:
             issues.append(_violation(
                 context,
@@ -96,6 +97,15 @@ def _check_external(context: StageValidationContext) -> RuleViolation | list[Rul
             path=f"{context.job_path}.inputs",
             cause=f"The effective input roles are {sorted(context.inputs)}.",
         ))
+    if scheme == "hybrid" and isinstance(scheme_parameters, dict):
+        for parameter in ("m0_gev", "delta_m_gev"):
+            if parameter not in scheme_parameters:
+                issues.append(_violation(
+                    context,
+                    f"hybrid external_denominator requires scheme_parameters.{parameter}.",
+                    parameter=f"scheme_parameters.{parameter}",
+                    cause="The external hybrid long-distance branch must be specified explicitly.",
+                ))
     if scheme == "hybrid" and "zs_fm" not in context.params:
         issues.append(_violation(
             context,
@@ -115,6 +125,18 @@ def _check_self_parameters(context: StageValidationContext) -> RuleViolation | l
     if not isinstance(scheme_parameters, dict):
         return _violation(context, "self_renormalization scheme_parameters must be an object.", parameter="scheme_parameters", cause=f"The effective value is {scheme_parameters!r}.")
     issues: list[RuleViolation] = []
+    if "mu" not in context.params:
+        kernels = [item for item in context.resources.get("kernels", []) if _kernel_field(item, "stage") == "renormalization"]
+        kernel_id = context.params.get("kernel_id") or (_kernel_field(kernels[0], "kernel_id") if len(kernels) == 1 else None)
+        declaration = next((item for item in kernels if _kernel_field(item, "kernel_id") == kernel_id), None)
+        kernel_parameters = _kernel_field(declaration, "kernel_parameters") if declaration is not None else None
+        if not isinstance(kernel_parameters, dict) or "mu" not in kernel_parameters:
+            issues.append(_violation(
+                context,
+                "self_renormalization requires mu in stage/job params or the selected kernel parameters.",
+                parameter="mu",
+                cause="The perturbative conversion scale is absent from both effective params and the selected kernel declaration.",
+            ))
     if "LambdaQCD_gev" not in scheme_parameters:
         issues.append(_violation(
             context,
@@ -122,7 +144,7 @@ def _check_self_parameters(context: StageValidationContext) -> RuleViolation | l
             parameter="scheme_parameters.LambdaQCD_gev",
             cause="The perturbative running scale is absent from the effective scheme parameters.",
         ))
-    coverage = scheme_parameters.get("z_coverage_policy", "extrapolate")
+    coverage = scheme_parameters.get("z_coverage_policy")
     coverage_message = _coverage_message(coverage)
     if coverage_message is not None:
         issues.append(_violation(
@@ -180,10 +202,11 @@ _SCHEME_PARAMETER_FIELDS = {
     "d": _parameter("Fixed discretization coefficient for a self-renormalization operator.", "A fit job requires the reference-operator value; an apply-job override remaps the upstream zR to a target operator with different lattice artifacts.", expected=float),
     "delta_m_gev": _parameter("External-hybrid target/denominator mass-gap offset.", "Together with m0_gev it controls the long-distance exponential branch beyond zs_fm; it is not a self-renormalization fit control.", expected=float, unit="GeV"),
     "m0_gev": _parameter("Target-specific residual mass offset for apply jobs.", "Reference fit jobs determine m0 and therefore must not fix it.", expected=float, unit="GeV"),
-    "svdcut": _parameter("Covariance singular-value cut for the reference fit.", "Regularization stabilizes the correlated fit of the renormalization factor.", expected=float, default="1e-12"),
+    "svdcut": _parameter("Covariance singular-value cut for the reference fit.", "Regularization stabilizes the correlated fit of the renormalization factor.", expected=float, default=1e-12),
     "z_coverage_policy": _parameter(
         "String policy for target coordinates beyond the fitted zR range.",
         "For self-renormalization, strict requires zR at every nonzero target coordinate; intersection keeps only the target/zR overlap; extrapolate fits the long-distance f1 tail and rebuilds zR only at missing target coordinates.",
+        expected=str,
         default="extrapolate",
         examples=("strict",),
     ),
@@ -205,7 +228,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
     schema={
         "ensemble": _parameter("Optional ensemble selector.", "It identifies the lattice ensemble associated with a self-renormalization reference.", expected=str),
         "kernel_id": _parameter("Declared conversion kernel identifier.", "Self-renormalization uses a PDF- or DA-specific MS-bar conversion factor.", expected=str),
-        "mu": _parameter("Renormalization scale.", "The perturbative conversion factor and short-distance logarithms are evaluated at this scale; the value may also come from the selected kernel declaration.", expected=float, unit="GeV", default="2.0"),
+        "mu": _parameter("Renormalization scale.", "The perturbative conversion factor and short-distance logarithms are evaluated at this scale; the value may also come from the selected kernel declaration.", expected=float, unit="GeV"),
         "normalization": _parameter(
             "Normalize every bare job input by its lattice z=0 value before applying the scheme.",
             "This fixes the local-current normalization convention upstream of either estimator; false preserves the raw bare normalization.",
@@ -215,7 +238,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 False: "Pass raw bare matrix elements directly to the renormalization estimator.",
                 True: "Divide each bare input by its own z=0 sample before any renormalization tool runs.",
             },
-            default="true",
+            required=True,
             validator=_normalization_message,
         ),
         "scheme": _parameter(
@@ -276,11 +299,12 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
     """Build the resolved renormalization context consumed by the shared evaluator."""
     stage_config = manifest.stages["renormalization"]
     authored = merge_stage_params(stage_config.defaults, job.params)
+    params = resolve_stage_params("renormalization", stage_config.defaults, job.params)
     return StageValidationContext(
         stage="renormalization",
         job_id=job.id,
         job_path=f"stages.renormalization.jobs.{job.id}",
-        params=authored,
+        params=params,
         inputs=dict(job.inputs),
         metadata=manifest.metadata.model_dump(),
         resources={"kernels": list(manifest.kernels)},

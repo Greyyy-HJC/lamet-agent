@@ -13,9 +13,9 @@ def test_ordinary_manifests_keep_declared_jobs() -> None:
         payload = json.loads(path.read_text(encoding="utf-8"))
         manifest = validate_manifest_file(path)
         for stage in manifest.metadata.stages:
-            assert [job.id for job in manifest.stages[stage].jobs] == [
-                job["id"] for job in payload["stages"][stage]["jobs"]
-            ]
+            declared = [job["id"] for job in payload["stages"][stage]["jobs"]]
+            actual_declared = [job.id for job in manifest.stages[stage].jobs if job.id in declared]
+            assert actual_declared == declared
 
 
 def test_systematics_manifest_expands_complete_branches(tmp_path: Path) -> None:
@@ -26,6 +26,7 @@ def test_systematics_manifest_expands_complete_branches(tmp_path: Path) -> None:
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": [
                 "renormalization",

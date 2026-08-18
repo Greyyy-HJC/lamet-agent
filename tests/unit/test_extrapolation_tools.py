@@ -30,7 +30,11 @@ def test_extrapolation_detects_continuum_inputs_from_lattice_spacing(tmp_path: P
         {"lightcone": inputs},
         allow_order_a=[1],
         allow_order_1overp=[2],
+        allow_order_ap=[],
         fitting_param_xdep=[True, True, False],
+        sample_error_mode="covariance",
+        posterior_prior_error_scale=3.0,
+        workers=1,
         save_path=str(tmp_path / "extrapolate"),
     )
 

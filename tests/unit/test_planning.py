@@ -46,6 +46,19 @@ def _write_kernel(root: Path) -> None:
     (root / "lamet_agent" / "kernels.py").write_text("# test kernel\n", encoding="utf-8")
 
 
+def _required_correlator_defaults(scope: str = "3pt_ratio") -> dict[str, object]:
+    return {
+        "component": "both",
+        "fit_scope": [scope],
+        "fit_strategy": ["joint"],
+        "fitting_form": "Breit",
+        "model_average": False,
+        "nstate": [2],
+        "posterior_prior_error_scale": 3.0,
+        "q_min": 0.05,
+    }
+
+
 def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
     return {
         "metadata": {
@@ -55,6 +68,7 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis", "renormalization"],
         },
@@ -85,9 +99,9 @@ def _minimal_payload(root: Path, data_path: str = "data/c2.h5") -> dict:
             ],
         },
         "stages": {
-            "correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2"], "params": {"momentum": "PX0PY0PZ0"}}]},
+            "correlator_analysis": {"defaults": _required_correlator_defaults(), "jobs": [{"id": "ca", "correlator_ids": ["c2"], "params": {"momentum": "PX0PY0PZ0"}}]},
             "renormalization": {
-                "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "zs_fm": 0.2},
+                "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "normalization": False, "zs_fm": 0.2, "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0}},
                 "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
             },
         },
@@ -162,6 +176,7 @@ def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> No
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["fourier_transform"],
         },
@@ -177,7 +192,8 @@ def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> No
 
     listed = _run_planning_tool(state, "list_stage_parameter_gaps", {})
     gaps = listed["stage_parameter_gaps"]
-    assert not any(gap["parameter"] in {"order", "coord_unit"} for gap in gaps)
+    assert any(gap["parameter"] == "order" for gap in gaps)
+    assert not any(gap["parameter"] == "coord_unit" for gap in gaps)
     assert any(gap["parameter"] == "y_grid" for gap in gaps)
     assert any(gap["parameter"] == "momentum_gev" for gap in gaps)
     y_grid_gap = next(gap for gap in gaps if gap["parameter"] == "y_grid")
@@ -186,7 +202,7 @@ def test_plan_reports_stage_parameter_gaps_before_building(tmp_path: Path) -> No
     blocked = _run_planning_tool(state, "build_quick_full_candidates", {})
     assert blocked["ok"] is False
     assert "missing parameters" in blocked["error"]
-    assert blocked["next_questions"][0]["question_id"] == "stage_params.fourier_transform.ft"
+    assert blocked["next_questions"][0]["question_id"] == "stage_params.fourier_transform.shared.Lambda0_gev"
     assert "Physical reason:" in blocked["next_questions"][0]["prompt"]
 
 
@@ -213,6 +229,7 @@ def test_fourier_plan_and_validate_report_the_same_y_grid_rule(tmp_path: Path) -
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["fourier_transform"],
         },
@@ -352,7 +369,7 @@ def test_planning_reports_legacy_zs_locations_and_flat_parameter_gaps(tmp_path: 
 
 def test_planning_accepts_ratio_without_hybrid_parameters(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
-    payload["stages"]["renormalization"]["defaults"] = {"scheme": "ratio", "strategy": "external_denominator"}
+    payload["stages"]["renormalization"]["defaults"] = {"scheme": "ratio", "strategy": "external_denominator", "normalization": False}
 
     gaps = _stage_parameter_gaps(payload)
 
@@ -368,7 +385,7 @@ def test_planning_distinguishes_self_renormalization_fit_jobs(tmp_path: Path) ->
         "kernel_parameters": {},
     }]
     payload["stages"]["renormalization"] = {
-        "defaults": {"scheme": "ratio", "strategy": "self_renormalization"},
+        "defaults": {"scheme": "ratio", "strategy": "self_renormalization", "normalization": False, "mu": 2.0},
         "jobs": [
             {
                 "id": "rn_fit",
@@ -540,6 +557,7 @@ def test_plan_requires_patch_after_yes_to_stage_parameter_completion(tmp_path: P
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["fourier_transform"],
         },
@@ -732,7 +750,8 @@ def test_stage_required_answer_updates_stage_defaults(tmp_path: Path) -> None:
     )
 
     assert result["event"] == "user_answer_applied"
-    assert state.stage_required_checked == {"renormalization"}
+    assert state.stage_required_checked == set()
+    assert any(gap["stage"] == "renormalization" for gap in _stage_parameter_gaps(state.candidate_payload))
     assert state.candidate_payload["stages"]["renormalization"]["defaults"]["scheme"] == "hybrid"
     assert state.candidate_payload["stages"]["renormalization"]["defaults"]["strategy"] == "external_denominator"
     assert state.candidate_payload["stages"]["renormalization"]["defaults"]["zs_fm"] == 0.2
@@ -790,6 +809,7 @@ def test_extrapolation_required_answer_updates_lightcone_input(tmp_path: Path) -
 
 def test_stage_required_answer_keeps_list_stage_fields_as_lists(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
+    payload["stages"]["correlator_analysis"]["defaults"].pop("fit_strategy")
     state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
 
     result = _apply_user_answer_to_candidate(
@@ -844,6 +864,7 @@ def test_required_none_does_not_clear_existing_stage_gaps(tmp_path: Path) -> Non
 
 def test_none_manifest_answer_is_not_written_as_string(tmp_path: Path) -> None:
     payload = _minimal_payload(tmp_path)
+    payload["stages"]["correlator_analysis"]["defaults"].pop("component")
     state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
 
     result = _apply_user_answer_to_candidate(state, "stages.correlator_analysis.defaults.component", "none")
@@ -933,7 +954,7 @@ def test_text_plan_target_observable_does_not_match_data_path(tmp_path: Path) ->
 
     assert payload["metadata"]["target_observable"] == "pdf"
     three_point = next(item for item in payload["inputs"]["correlators"] if item["correlator_type"] == "3pt")
-    assert three_point["polarization"] == "unpolarized"
+    assert "polarization" not in three_point
 
 
 @pytest.mark.parametrize("polarization", ["unpolarized", "helicity", "transversity"])
@@ -1138,7 +1159,7 @@ def test_text_plan_reads_correlator_required_choices(tmp_path: Path) -> None:
 
     assert defaults["fit_scope"] == ["qda_ratio"]
     assert defaults["fitting_form"] == "Breit"
-    assert nonlocal_pt2["sink_operator"] == "sink_nonlocal"
+    assert nonlocal_pt2["sink_operator"] == "sink"
     assert nonlocal_pt2["lattice_spacing_fm"] == 0.0574
 
 
@@ -1163,7 +1184,7 @@ def test_stage_parameter_gap_answer_applies_first_gap_path(tmp_path: Path) -> No
 
     result = _apply_user_answer_to_candidate(
         state,
-        "stage_params.fourier_transform.ft",
+        "stage_params.fourier_transform.shared.y_grid",
         '{"start": -1.0, "stop": 1.0, "num": 101}',
     )
 
@@ -1186,7 +1207,7 @@ def test_stage_parameter_gap_answer_uses_matching_question_id(tmp_path: Path) ->
     }
     state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
 
-    result = _apply_user_answer_to_candidate(state, "stage_params.perturbative_matching.mt_p5", "0.1722")
+    result = _apply_user_answer_to_candidate(state, "stage_params.perturbative_matching.shared.zs_fm", "0.1722")
 
     assert result["event"] == "user_answer_applied"
     assert state.candidate_payload["stages"]["perturbative_matching"]["defaults"]["zs_fm"] == 0.1722
@@ -1204,7 +1225,7 @@ def test_stage_parameter_gap_answer_extracts_named_value(tmp_path: Path, answer:
 
     result = _apply_user_answer_to_candidate(
         state,
-        "stage_params.renormalization.rn",
+        "stage_params.renormalization.shared.strategy",
         answer,
     )
 
@@ -1337,7 +1358,7 @@ def test_mock_plan_stage_answer_still_runs_conversions(tmp_path: Path) -> None:
 
 def test_plan_stage_params_question_without_choices_accepts_free_text() -> None:
     answer = _ask_plan_agent_question(
-        {"question_id": "stage_params.fourier_transform.ft", "prompt": "Choose Fourier order."},
+        {"question_id": "stage_params.fourier_transform.shared.Lambda0_gev", "prompt": "Choose Fourier order."},
         input_func=lambda prompt: "LA",
         output_func=lambda text: None,
     )
@@ -1347,7 +1368,7 @@ def test_plan_stage_params_question_without_choices_accepts_free_text() -> None:
 
 def test_planner_requests_missing_bz_direction_for_3pt() -> None:
     payload = {
-        "metadata": {"random_seed": 1984, "resample_mode": "jk", "stages": []},
+        "metadata": {"random_seed": 1984, "resample_mode": "jk", "sample_error_mode": "covariance", "stages": []},
         "inputs": {
             "correlators": [
                 {
@@ -1389,6 +1410,7 @@ def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path)
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
@@ -1430,7 +1452,7 @@ def test_correlator_h5_conversion_outputs_existing_reader_layout(tmp_path: Path)
             "artifacts": [],
             "kernels": [],
         },
-        "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
+        "stages": {"correlator_analysis": {"defaults": _required_correlator_defaults(), "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
     }
     with h5py.File(data_dir / "raw_2pt.h5", "w") as h5f:
         h5f.create_dataset("raw_pt2", data=pt2_cfg_time)
@@ -1614,7 +1636,10 @@ def test_text_plan_composes_2pt_current_into_standard_3pt_h5(tmp_path: Path) -> 
     np.savez(data_dir / "sample_current.npz", current=current)
     request = tmp_path / "request.txt"
     request.write_text(
-        f"Build a DA plan from {data_dir / 'sample_2pt.npy'} and current file {data_dir / 'sample_current.npz'}.",
+        f"Build a DA plan from {data_dir / 'sample_2pt.npy'} and current file {data_dir / 'sample_current.npz'}. "
+        "Use ensemble planned, hadron pion, gfix GI, source_operator source, sink_operator sink, "
+        "current_operator current, polarization unpolarized, volume S4T4, lattice_spacing_fm: 0.1, "
+        "momentum PX0PY0PZ0, bT 0, bz 0, tsep 1, bz_direction Z.",
         encoding="utf-8",
     )
 
@@ -1666,6 +1691,8 @@ def test_text_plan_expands_momentum_tsep_npy_template_into_standard_h5(tmp_path:
         f"The two-point correlator file is {inputs / 'a060_x_p0_2pt.npy'}.\n"
         f"The three-point correlator file is {inputs}/a060_x_p{{mom}}_3pt_ts{{tsep}}.npy, where mom means the momentum and tsep means t-separation.\n"
         "Correlator_analysis, hybrid-ratio renormalization, fourier_transform, perturbative_matching and review are required for the manifest draft.\n"
+        "Use ensemble planned, volume S48T64, lattice_spacing_fm: 0.0574, source_operator source, "
+        "sink_operator sink, current_operator current, polarization unpolarized, bT 0.\n"
         "Review literature: true.\n",
         encoding="utf-8",
     )
@@ -1673,7 +1700,7 @@ def test_text_plan_expands_momentum_tsep_npy_template_into_standard_h5(tmp_path:
     payload, _raw = load_relaxed_manifest(request)
     correlators = payload["inputs"]["correlators"]
     assert payload["metadata"]["stages"] == ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "review"]
-    assert payload["stages"]["review"]["defaults"] == {"literature": True, "literature_max_papers": 4}
+    assert payload["stages"]["review"]["defaults"] == {"literature": True}
     assert {item["correlator_id"] for item in correlators} == {
         "a060_x_p0_2pt",
         "a060_x_p5_2pt",
@@ -1713,12 +1740,15 @@ def test_build_quick_full_candidates_plans_missing_conversions(tmp_path: Path) -
         "Build a pion PDF correlator_analysis manifest from sample_2pt.npy and current_data_path sample_current.npz. "
         "Use ensemble planned, CG, volume S48T64, lattice spacing 0.0574 fm, momentum PX0PY0PZ0, "
         "source operator source, sink operator sink, current operator current, bz_direction Z, bT 0, bz 0, tsep 1. "
+        "polarization unpolarized. "
         "Use plan-only 2pt_current composition. Only correlator_analysis is required.",
         encoding="utf-8",
     )
     payload, _raw = load_relaxed_manifest(request)
     payload["metadata"]["random_seed"] = 1984
     payload["metadata"]["resample_mode"] = "jk"
+    payload["metadata"]["sample_error_mode"] = "covariance"
+    payload["stages"]["correlator_analysis"]["defaults"].update(_required_correlator_defaults())
     state = PlanAgentState(request, request.read_text(encoding="utf-8"), payload, copy.deepcopy(payload))
     state.stage_completion_checked = True
     state.stage_required_checked.add("correlator_analysis")
@@ -1765,7 +1795,8 @@ def test_text_plan_maps_nonlocal_qda_2pt_template_into_standard_h5(tmp_path: Pat
     request = tmp_path / "qda_da.txt"
     request.write_text(
         "Build a GI pion DA qda_ratio correlator_analysis manifest.\n"
-        "Use ensemble planned, volume S48T64, lattice spacing 0.0574 fm, momentum PX0PY0PZ6.\n"
+        "Use ensemble planned, volume S48T64, lattice spacing 0.0574 fm, momentum PX0PY0PZ6, "
+        "source_operator source, sink_operator sink_nonlocal, bT 0, bz_direction Z.\n"
         "The local 2pt file is local_PX0PY0PZ6_2pt.npy.\n"
         "The nonlocal DA 2pt file is nonlocal_PX0PY0PZ6_2pt.npy with axes bz,time,cfg.\n"
         "Use fit_scope qda_ratio. Only correlator_analysis is required.\n",
@@ -1888,6 +1919,7 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
@@ -1929,7 +1961,7 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
             "artifacts": [],
             "kernels": [],
         },
-        "stages": {"correlator_analysis": {"defaults": {"nstate": [2, 3]}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
+        "stages": {"correlator_analysis": {"defaults": {**_required_correlator_defaults(), "nstate": [2, 3]}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
     }
     manifest = tmp_path / "draft.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
@@ -1945,8 +1977,8 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
     quick = json.loads(quick_path.read_text(encoding="utf-8"))
     full = json.loads(full_path.read_text(encoding="utf-8"))
     assert quick["stages"]["correlator_analysis"]["defaults"]["nstate"] == [2]
-    assert "sample_error_mode" not in full["metadata"]
-    assert "model_average" not in full["stages"]["correlator_analysis"]["defaults"]
+    assert full["metadata"]["sample_error_mode"] == "covariance"
+    assert full["stages"]["correlator_analysis"]["defaults"]["model_average"] is False
     assert "pt2_windows" not in full["stages"]["correlator_analysis"]["defaults"]
     assert "pt3_tau_cuts" not in full["stages"]["correlator_analysis"]["defaults"]
 
@@ -2036,7 +2068,7 @@ def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Pat
         },
         "stages": {
             "correlator_analysis": {
-                "defaults": {"nstate": [2, 3], "model_average": True},
+                "defaults": {**_required_correlator_defaults(), "nstate": [2, 3], "model_average": True},
                 "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}],
             }
         },
@@ -2076,6 +2108,7 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
@@ -2117,7 +2150,7 @@ def test_plan_rejects_malformed_llm_user_input_action(tmp_path: Path, monkeypatc
             "artifacts": [],
             "kernels": [],
         },
-        "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
+        "stages": {"correlator_analysis": {"defaults": _required_correlator_defaults(), "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
     }
     manifest = tmp_path / "draft.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
@@ -2187,6 +2220,7 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "stages": ["correlator_analysis"],
         },
         "inputs": {
@@ -2227,7 +2261,7 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
             "artifacts": [],
             "kernels": [],
         },
-        "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
+        "stages": {"correlator_analysis": {"defaults": _required_correlator_defaults(), "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"], "params": {"momentum": "PX0PY0PZ0"}}]}},
     }
     manifest = tmp_path / "draft.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
@@ -2297,6 +2331,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
@@ -2341,6 +2376,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
         "stages": {
             "correlator_analysis": {
                 "defaults": {
+                    **_required_correlator_defaults(),
                     "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}],
                     "pt3_tau_cuts": [2, 3],
                 },
@@ -2363,8 +2399,8 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     assert {"tmin": 2, "tmax": 12} in defaults["pt2_windows"]
     assert {"tmin": 6, "tmax": 12} in defaults["pt2_windows"]
     assert defaults["pt3_tau_cuts"] == [2, 3, 4, 5]
-    assert "model_average" not in defaults
-    assert "sample_error_mode" not in full["metadata"]
+    assert defaults["model_average"] is False
+    assert full["metadata"]["sample_error_mode"] == "covariance"
     assert "Quick manifest changes:" in result.output
     assert "Full manifest changes:" in result.output
 
@@ -2386,6 +2422,7 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
@@ -2430,6 +2467,7 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
         "stages": {
             "correlator_analysis": {
                 "defaults": {
+                    **_required_correlator_defaults(),
                     "pt2_windows": [{"tmin": 3, "tmax": 12}, {"tmin": 4, "tmax": 12}],
                     "pt3_tau_cuts": [2, 3],
                 },
@@ -2593,6 +2631,7 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruct
             "target_observable": "pdf",
             "parton": "quark",
             "resample_mode": "jk",
+            "sample_error_mode": "covariance",
             "random_seed": 1984,
             "stages": ["correlator_analysis"],
         },
@@ -2668,7 +2707,7 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruct
         },
         "stages": {
             "correlator_analysis": {
-                "defaults": {"fit_scope": ["3pt_ratio"]},
+                "defaults": _required_correlator_defaults(),
                 "jobs": [
                     {"id": "ca_p0_fh", "correlator_ids": ["p0_2pt", "p0_3pt"], "params": {"momentum": "PX0PY0PZ0"}},
                     {"id": "ca_p5_fh", "correlator_ids": ["p5_2pt", "p5_3pt"], "params": {"momentum": "PX5PY0PZ0"}},
@@ -2723,7 +2762,8 @@ def test_text_plan_preserves_explicit_gpd_operators(tmp_path: Path) -> None:
     request = tmp_path / "gpd_nonforward.txt"
     request.write_text(
         "Build a pion GPD non-forward correlator_analysis manifest. "
-        "Use source operator g5, sink operator g5, current operator gt. "
+        "Use source operator g5, sink operator g5, current operator gt, polarization unpolarized, "
+        "bT 0, bz 0, bz 1, bz_direction Z. "
         "Files: gpd_PX0PY0PZ0_2pt.npy, gpd_PX1PY0PZ0_2pt.npy, gpd_PX1PY0PZ0_3pt_ts8.npy.",
         encoding="utf-8",
     )

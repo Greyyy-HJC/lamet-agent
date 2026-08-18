@@ -25,7 +25,7 @@ def _demo_manifest() -> AnalysisManifest:
         {
             "metadata": {
                 "run_id": "demo", "root_directory": ".", "target_observable": "pdf",
-                "parton": "quark", "resample_mode": "jk", "random_seed": 1984, "stages": ["correlator_analysis"],
+                "parton": "quark", "resample_mode": "jk", "sample_error_mode": "covariance", "random_seed": 1984, "stages": ["correlator_analysis"],
             },
             "inputs": {"correlators": [], "artifacts": [], "kernels": []},
             "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]}},
@@ -96,6 +96,7 @@ def test_run_agent_stops_on_request_user_input(tmp_path: Path, monkeypatch) -> N
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["correlator_analysis", "review"],
             },
@@ -635,7 +636,7 @@ def test_run_agent_registers_job_output_for_downstream_role(tmp_path: Path, monk
     manifest = AnalysisManifest.model_validate({
         "metadata": {
             "run_id": "dag", "root_directory": ".", "target_observable": "pdf",
-            "parton": "quark", "resample_mode": "jk", "random_seed": 1984,
+            "parton": "quark", "resample_mode": "jk", "sample_error_mode": "covariance", "random_seed": 1984,
             "stages": ["correlator_analysis", "renormalization"],
         },
         "inputs": {"correlators": [], "artifacts": [], "kernels": []},
@@ -1202,6 +1203,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["fourier_transform"],
             },
@@ -1322,11 +1324,12 @@ def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, mon
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["correlator_analysis"],
             },
             "inputs": {"correlators": [], "artifacts": [], "kernels": []},
-            "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca_p4"}]}},
+            "stages": {"correlator_analysis": {"defaults": {"component": "both", "fit_scope": ["3pt_ratio"], "fit_strategy": ["joint"], "fitting_form": "Breit", "model_average": False, "nstate": [2], "posterior_prior_error_scale": 3.0, "q_min": 0.05}, "jobs": [{"id": "ca_p4"}]}},
         }
     )
     manifest._root_directory = tmp_path.resolve()
@@ -1408,6 +1411,7 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["renormalization"],
             },
@@ -1421,7 +1425,7 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
             },
             "stages": {
                 "renormalization": {
-                    "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "zs_fm": 0.3},
+                    "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "normalization": False, "zs_fm": 0.3, "scheme_parameters": {"m0_gev": 0.2, "delta_m_gev": 0.1}},
                     "jobs": [{"id": "rn_p4", "inputs": {"target": "target", "denominator": "denom"}}],
                 },
             },
@@ -1532,6 +1536,7 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["renormalization"],
             },
@@ -1549,6 +1554,7 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
                         "scheme": "hybrid",
                         "strategy": "external_denominator",
                         "zs_fm": 0.3,
+                        "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
                     },
                     "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
                 },

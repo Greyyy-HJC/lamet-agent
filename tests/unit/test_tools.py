@@ -14,12 +14,29 @@ from lamet_agent.core.tools import (
     validate_stage_inputs,
 )
 from lamet_agent.manifest import AnalysisManifest, derive_job_kinematics, validate_manifest_file
-from lamet_agent.manifest_params import merge_stage_params
+from lamet_agent.manifest_params import merge_stage_params, resolve_stage_params
 from lamet_agent.stages.matching.validation import effective_matching_params
 
 
 def _manifest():
     return validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
+
+
+def _required_correlator_defaults(scope: str = "3pt_ratio") -> dict[str, object]:
+    return {
+        "component": "both",
+        "fit_scope": [scope],
+        "fit_strategy": ["joint"],
+        "fitting_form": "Breit",
+        "model_average": False,
+        "nstate": [2],
+        "posterior_prior_error_scale": 3.0,
+        "q_min": 0.05,
+    }
+
+
+def _resolved(manifest: AnalysisManifest, stage: str, job) -> dict[str, object]:
+    return resolve_stage_params(stage, manifest.stages[stage].defaults, job.params)
 
 
 def test_resolve_renormalization_job_tools_by_scheme_and_roles() -> None:
@@ -115,6 +132,7 @@ def test_qda_ratio_correlator_job_uses_unified_tool_contract() -> None:
                 "target_observable": "da",
                 "parton": "quark",
                 "resample_mode": "bs",
+                "sample_error_mode": "covariance",
                 "bs_samples": 8,
                 "random_seed": 1984,
                 "workers": 4,
@@ -157,14 +175,14 @@ def test_qda_ratio_correlator_job_uses_unified_tool_contract() -> None:
             },
             "stages": {
                 "correlator_analysis": {
-                    "defaults": {"fit_scope": ["qda_ratio"], "momentum": "PX0PY0PZ0", "model_average": True},
+                    "defaults": {**_required_correlator_defaults("qda_ratio"), "momentum": "PX0PY0PZ0", "model_average": True},
                     "jobs": [{"id": "ca", "correlator_ids": ["c2_local", "c2_qda"], "params": {}}],
                 }
             },
         }
     )
     job = manifest.stages["correlator_analysis"].jobs[0]
-    params = merge_stage_params(manifest.stages["correlator_analysis"].defaults, job.params)
+    params = _resolved(manifest, "correlator_analysis", job)
     assert validate_stage_inputs("correlator_analysis", manifest, job) == []
     assert set(resolve_job_tools(
         "correlator_analysis",
@@ -299,7 +317,7 @@ def test_resolve_plot_save_path_uses_artifact_directory(tmp_path: Path) -> None:
 def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["correlator_analysis"].jobs[1]
-    effective = manifest.stages["correlator_analysis"].defaults
+    effective = _resolved(manifest, "correlator_analysis", job)
     args = prepare_tool_args(
         "tune_bare_matrix", {}, manifest=manifest, stage="correlator_analysis", job=job,
         effective_params=effective, artifacts_dir=tmp_path,
@@ -325,7 +343,7 @@ def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None
     if manifest.metadata.resample_mode == "bs":
         assert args["n_boot"] == manifest.metadata.bs_samples
     else:
-        assert "n_boot" not in args
+        assert args["n_boot"] is None
 
 
 def test_prepare_correlator_args_injects_bs_samples_for_bootstrap_mode(tmp_path: Path) -> None:
@@ -337,6 +355,7 @@ def test_prepare_correlator_args_injects_bs_samples_for_bootstrap_mode(tmp_path:
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "bs",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "bs_samples": 500,
                 "stages": ["correlator_analysis"],
@@ -346,7 +365,7 @@ def test_prepare_correlator_args_injects_bs_samples_for_bootstrap_mode(tmp_path:
                 "artifacts": [],
                 "kernels": [],
             },
-            "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]}},
+            "stages": {"correlator_analysis": {"defaults": _required_correlator_defaults(), "jobs": [{"id": "ca"}]}},
         }
     )
     args = prepare_tool_args(
@@ -355,7 +374,7 @@ def test_prepare_correlator_args_injects_bs_samples_for_bootstrap_mode(tmp_path:
         manifest=manifest,
         stage="correlator_analysis",
         job=manifest.stages["correlator_analysis"].jobs[0],
-        effective_params={},
+        effective_params=_resolved(manifest, "correlator_analysis", manifest.stages["correlator_analysis"].jobs[0]),
         artifacts_dir=tmp_path,
     )
     assert args["n_boot"] == 500
@@ -369,7 +388,7 @@ def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) 
     args = prepare_tool_args(
         "fit_bare_matrix_grid", {"nstate": 2, "fit_strategy": "joint", "model_average": True},
         manifest=manifest, stage="correlator_analysis", job=job,
-        effective_params=manifest.stages["correlator_analysis"].defaults,
+        effective_params=_resolved(manifest, "correlator_analysis", job),
         artifacts_dir=tmp_path,
     )
     assert args["save_path"] == str(tmp_path / job.id)
@@ -419,7 +438,7 @@ def test_metadata_workers_override_stage_params_for_sample_fit_tools(tmp_path: P
         manifest=manifest,
         stage="correlator_analysis",
         job=correlator_job,
-        effective_params={**manifest.stages["correlator_analysis"].defaults, "workers": 99},
+        effective_params={**_resolved(manifest, "correlator_analysis", correlator_job), "workers": 99},
         artifacts_dir=tmp_path,
     )
     fourier_job = manifest.stages["fourier_transform"].jobs[0]
@@ -442,6 +461,7 @@ def test_metadata_workers_override_stage_params_for_sample_fit_tools(tmp_path: P
                 "target_observable": "da",
                 "parton": "quark",
                 "resample_mode": "bs",
+                "sample_error_mode": "covariance",
                 "bs_samples": 8,
                 "random_seed": 1984,
                 "workers": 3,
@@ -484,7 +504,7 @@ def test_metadata_workers_override_stage_params_for_sample_fit_tools(tmp_path: P
             },
             "stages": {
                 "correlator_analysis": {
-                    "defaults": {"fit_scope": ["qda_ratio"], "momentum": "PX0PY0PZ0"},
+                    "defaults": {**_required_correlator_defaults("qda_ratio"), "momentum": "PX0PY0PZ0"},
                     "jobs": [{"id": "ca", "correlator_ids": ["c2_local", "c2_qda"], "params": {}}],
                 }
             },
@@ -497,7 +517,7 @@ def test_metadata_workers_override_stage_params_for_sample_fit_tools(tmp_path: P
         manifest=da_manifest,
         stage="correlator_analysis",
         job=da_job,
-        effective_params={**da_manifest.stages["correlator_analysis"].defaults, "workers": 99},
+        effective_params={**_resolved(da_manifest, "correlator_analysis", da_job), "workers": 99},
         artifacts_dir=tmp_path,
     )
 
@@ -512,7 +532,7 @@ def test_prepare_correlator_terminal_args_pass_nstate_values_when_not_selected(t
     args = prepare_tool_args(
         "fit_bare_matrix_grid", {"fit_strategy": "joint"},
         manifest=manifest, stage="correlator_analysis", job=job,
-        effective_params=manifest.stages["correlator_analysis"].defaults,
+        effective_params=_resolved(manifest, "correlator_analysis", job),
         artifacts_dir=tmp_path,
     )
     assert args["nstate_values"] == manifest.stages["correlator_analysis"].defaults["nstate"]
@@ -523,7 +543,7 @@ def test_prepare_correlator_model_average_keeps_fit_function_scan(tmp_path: Path
     manifest = _manifest()
     job = manifest.stages["correlator_analysis"].jobs[0]
     effective = {
-        **manifest.stages["correlator_analysis"].defaults,
+        **_resolved(manifest, "correlator_analysis", job),
         "model_average": True,
         "nstate": [2, 3],
         "prior_width": [0.5, 1.0, 2.0],
@@ -551,7 +571,7 @@ def test_prepare_correlator_terminal_args_keep_scalar_fit_scope(tmp_path: Path) 
     args = prepare_tool_args(
         "fit_bare_matrix_grid", {"nstate": 2, "fit_strategy": "joint", "fit_scope": "FH"},
         manifest=manifest, stage="correlator_analysis", job=job,
-        effective_params=manifest.stages["correlator_analysis"].defaults,
+        effective_params=_resolved(manifest, "correlator_analysis", job),
         artifacts_dir=tmp_path,
     )
     assert args["fit_scope"] == "FH"
@@ -567,6 +587,7 @@ def test_prepare_nonbreit_correlator_args_match_initial_final_momenta(tmp_path: 
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["correlator_analysis"],
             },
@@ -594,7 +615,7 @@ def test_prepare_nonbreit_correlator_args_match_initial_final_momenta(tmp_path: 
                         "gfix": "GI",
                         "source_operator": "g5",
                         "sink_operator": "g5",
-                        "current_operator": "gT_nonlocal", "bz_direction": "Z",
+                        "current_operator": "gT_nonlocal", "polarization": "unpolarized", "bz_direction": "Z",
                         "volume": "S16T32",
                         "momentum": ["PX0PY0PZ1"],
                         "lattice_spacing_fm": 0.1,
@@ -607,6 +628,7 @@ def test_prepare_nonbreit_correlator_args_match_initial_final_momenta(tmp_path: 
             "stages": {
                 "correlator_analysis": {
                     "defaults": {
+                        **_required_correlator_defaults(),
                         "fitting_form": "NonBreit",
                         "initial_momentum": "PX0PY0PZ0",
                         "final_momentum": "PX0PY0PZ1",
@@ -625,7 +647,7 @@ def test_prepare_nonbreit_correlator_args_match_initial_final_momenta(tmp_path: 
         manifest=manifest,
         stage="correlator_analysis",
         job=job,
-        effective_params=manifest.stages["correlator_analysis"].defaults,
+        effective_params=_resolved(manifest, "correlator_analysis", job),
         artifacts_dir=tmp_path,
     )
     assert args["pt2_path"].endswith("pt2.h5")
@@ -731,7 +753,7 @@ def test_prepare_ratio_renormalization_args_do_not_require_hybrid_parameters(tmp
 def test_ratio_schemes_reject_hybrid_self_only_scheme_parameters(key: str) -> None:
     manifest = _manifest()
     job = manifest.stages["renormalization"].jobs[0]
-    manifest.stages["renormalization"].defaults["scheme_parameters"][key] = 0.1
+    manifest.stages["renormalization"].defaults["scheme_parameters"][key] = ("strict" if key == "z_coverage_policy" else 0.1)
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
         f"strategy 'external_denominator' does not accept self-renormalization scheme_parameters: {key}."
@@ -796,6 +818,7 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
                 "target_observable": "da",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["renormalization"],
             },
@@ -816,6 +839,7 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
                     "defaults": {
                         "scheme": "ratio",
                         "strategy": "self_renormalization",
+                        "normalization": False,
                         "mu": 2.0,
                         "scheme_parameters": {"LambdaQCD_gev": 0.12},
                     },

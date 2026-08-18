@@ -11,7 +11,13 @@
     "bin_size": 1,
     "workers": 8,
     "random_seed": 1984,
-    "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "review"]
+    "stages": [
+      "correlator_analysis",
+      "renormalization",
+      "fourier_transform",
+      "perturbative_matching",
+      "review"
+    ]
   },
   "inputs": {
     "correlators": [
@@ -26,7 +32,10 @@
         "sink_operator": "g5",
         "volume": "S48T64",
         "lattice_spacing_fm": 0.06,
-        "momentum": ["PX0PY0PZ0", "PX4PY0PZ0"]
+        "momentum": [
+          "PX0PY0PZ0",
+          "PX4PY0PZ0"
+        ]
       },
       {
         "correlator_id": "a060_x_3pt",
@@ -42,10 +51,45 @@
         "bz_direction": "X",
         "volume": "S48T64",
         "lattice_spacing_fm": 0.06,
-        "momentum": ["PX0PY0PZ0", "PX4PY0PZ0"],
-        "bT": [0],
-        "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-        "tsep": [8, 10, 12]
+        "momentum": [
+          "PX0PY0PZ0",
+          "PX4PY0PZ0"
+        ],
+        "bT": [
+          0
+        ],
+        "bz": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24
+        ],
+        "tsep": [
+          8,
+          10,
+          12
+        ]
       }
     ],
     "artifacts": [],
@@ -61,23 +105,66 @@
   "stages": {
     "correlator_analysis": {
       "defaults": {
-        "pt2_windows": [{"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}, {"tmin": 6, "tmax": 12}],
-        "pt3_windows": [
-          { "tsep_ls": [8, 10], "tau_cut": 3 }
+        "pt2_windows": [
+          {
+            "tmin": 4,
+            "tmax": 12
+          },
+          {
+            "tmin": 5,
+            "tmax": 12
+          },
+          {
+            "tmin": 6,
+            "tmax": 12
+          }
         ],
-        "nstate": [2],
-        "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
-        "svdcut": 1e-6,
+        "pt3_windows": [
+          {
+            "tsep_ls": [
+              8,
+              10
+            ],
+            "tau_cut": 3
+          }
+        ],
+        "nstate": [
+          2
+        ],
+        "fit_scope": [
+          "3pt_ratio"
+        ],
+        "fit_strategy": [
+          "joint"
+        ],
+        "svdcut": 0.000001,
         "posterior_prior_error_scale": 10.0,
-        "prior_width": [1.0],
         "component": "re",
         "q_min": 0.05,
-        "model_average": false
+        "model_average": false,
+        "fitting_form": "Breit"
       },
       "jobs": [
-        {"id": "ca_p0", "correlator_ids": ["a060_x_2pt", "a060_x_3pt"], "params": {"momentum": "PX0PY0PZ0"}},
-        {"id": "ca_p4", "correlator_ids": ["a060_x_2pt", "a060_x_3pt"], "params": {"momentum": "PX4PY0PZ0"}}
+        {
+          "id": "ca_p0",
+          "correlator_ids": [
+            "a060_x_2pt",
+            "a060_x_3pt"
+          ],
+          "params": {
+            "momentum": "PX0PY0PZ0"
+          }
+        },
+        {
+          "id": "ca_p4",
+          "correlator_ids": [
+            "a060_x_2pt",
+            "a060_x_3pt"
+          ],
+          "params": {
+            "momentum": "PX4PY0PZ0"
+          }
+        }
       ]
     },
     "renormalization": {
@@ -91,27 +178,63 @@
         }
       },
       "jobs": [
-        {"id": "rn_p4", "inputs": {"target": "ca_p4", "denominator": "ca_p0"}, "params": {"zs_fm": 0.1722}}
+        {
+          "id": "rn_p4",
+          "inputs": {
+            "target": "ca_p4",
+            "denominator": "ca_p0"
+          },
+          "params": {
+            "zs_fm": 0.1722
+          }
+        }
       ]
     },
     "fourier_transform": {
       "defaults": {
-        "order": ["LA", "NLA"],
+        "order": [
+          "LA",
+          "NLA"
+        ],
         "sector": "valence",
         "Lambda0_gev": 0.1,
-        "posterior_prior_error_scale": [3.0, 4.0, 5.0],
-        "y_grid": {"start": -2.0, "stop": 2.0, "num": 100},
+        "posterior_prior_error_scale": [
+          3.0,
+          4.0,
+          5.0
+        ],
+        "y_grid": {
+          "start": -2.0,
+          "stop": 2.0,
+          "num": 100
+        },
         "scheme_scan": {
-          "zmin_values": [0.54, 0.60, 0.66, 0.72],
-          "zmax_values": [0.96, 1.02, 1.08, 1.14],
+          "zmin_values": [
+            0.54,
+            0.60,
+            0.66,
+            0.72
+          ],
+          "zmax_values": [
+            0.96,
+            1.02,
+            1.08,
+            1.14
+          ],
           "z_ext_max": 1.5,
           "smooth": "linear",
           "model_average": false,
           "max_schemes": 200
-        }
+        },
+        "method": "GI"
       },
       "jobs": [
-        {"id": "ft_p4", "inputs": {"input": "rn_p4"}}
+        {
+          "id": "ft_p4",
+          "inputs": {
+            "input": "rn_p4"
+          }
+        }
       ]
     },
     "perturbative_matching": {
@@ -119,17 +242,38 @@
         "scheme": "hybrid",
         "mu": 2.0,
         "component": "re",
-        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 200},
-        "lc_x_ls": {"start": 0.0, "stop": 1.0, "num": 50}
+        "quasi_y_ls": {
+          "start": -2.0,
+          "stop": 2.0,
+          "num": 200
+        },
+        "lc_x_ls": {
+          "start": 0.0,
+          "stop": 1.0,
+          "num": 50
+        }
       },
       "jobs": [
-        {"id": "mt_p4", "inputs": {"quasi": "ft_p4"}, "params": {"zs_fm": 0.1722}}
+        {
+          "id": "mt_p4",
+          "inputs": {
+            "quasi": "ft_p4"
+          },
+          "params": {
+            "zs_fm": 0.1722
+          }
+        }
       ]
     },
     "review": {
-      "defaults": {"literature": false, "literature_max_papers": 4},
+      "defaults": {
+        "literature": false,
+        "literature_max_papers": 4
+      },
       "jobs": [
-        {"id": "review"}
+        {
+          "id": "review"
+        }
       ]
     }
   }

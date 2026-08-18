@@ -359,8 +359,8 @@ def load_quasi_pdf(
     store: dict[str, Any],
     *,
     path: str | None = None,
-    component: str = "re",
-    quasi_y_ls: list[float] | dict[str, Any] | None = None,
+    component: str,
+    quasi_y_ls: list[float] | dict[str, Any],
     quasi_out: str = "quasi_ed",
     grid_out: str = "quasi_y_ls",
 ) -> dict[str, Any]:
@@ -382,10 +382,8 @@ def load_quasi_pdf(
     ``component`` selects the real (``"re"``) or imaginary (``"im"``) channel of
     the Fourier output; the unpolarized quasi-PDF lives in the real part.
 
-    ``quasi_y_ls`` optionally re-grids the quasi-PDF -- the grid the matching
-    integrates *over* (the kernel matrix's columns, hence ``y``). Omit it and the data
-    keeps the grid the Fourier stage produced; supply one and each sample is linearly
-    interpolated onto it. Interpolation error only appears where the grid actually
+    ``quasi_y_ls`` explicitly sets the quasi-PDF -- the grid the matching
+    integrates *over* (the kernel matrix's columns, hence ``y``). Each sample is linearly interpolated onto that grid. Interpolation error only appears where the grid actually
     differs: on points the Fourier grid already carries, ``np.interp`` returns the
     sample unchanged.
     """
@@ -416,13 +414,9 @@ def load_quasi_pdf(
     # The quasi-PDF's own grid is the EnsembleData's only physical coordinate.
     native_y_ls = np.asarray(quasi_ed.coords["x"], dtype=float)
 
-    # Without quasi_y_ls the Fourier grid is used as-is. With it, interpolate --
-    # unconditionally, because np.interp reproduces the samples exactly on nodes it
-    # already has, so a grid that happens to equal the Fourier one needs no special case.
-    y_ls = native_y_ls
-    if quasi_y_ls is not None:
-        y_ls = _resolve_quasi_y_ls(quasi_y_ls, native_y_ls)
-        quasi_ed = _interp_quasi_samples(quasi_ed, native_y_ls, y_ls)
+    # Interpolate unconditionally; np.interp preserves samples exactly on native nodes.
+    y_ls = _resolve_quasi_y_ls(quasi_y_ls, native_y_ls)
+    quasi_ed = _interp_quasi_samples(quasi_ed, native_y_ls, y_ls)
 
     # The store is the temporary dict shared by this stage's tools; build/apply
     # read the data back from here.
@@ -484,9 +478,9 @@ def build_matching_kernel(
     *,
     kernel_id: str,
     momentum_gev: float,
-    mu: float = 2.0,
+    mu: float,
     zs_fm: float | None = None,
-    lc_x_ls: list[float] | dict[str, Any] | None = None,
+    lc_x_ls: list[float] | dict[str, Any],
     quasi_grid_key: str = "quasi_y_ls",
     lc_grid_key: str = "lc_x_ls",
     out: str = "kernel_matrix",
@@ -498,10 +492,9 @@ def build_matching_kernel(
     Both ``zs_fm`` and ``momentum_gev`` come from the matching job's effective stage
     parameters. MSbar and ratio kernels ignore ``zs_fm``.
 
-    ``lc_x_ls`` optionally sets the grid the matched light-cone PDF comes out on (the
+    ``lc_x_ls`` explicitly sets the grid the matched light-cone PDF comes out on (the
     kernel matrix's rows, hence ``x``), independently of the quasi grid it integrates
-    over (the columns, fixed by load_quasi_pdf). Omit it and the light-cone PDF lands
-    on the quasi grid, as before. Unlike the quasi grid this one is unconstrained: the
+    over (the columns, fixed by load_quasi_pdf). Unlike the quasi grid this one is unconstrained: the
     kernels only interpolate the LO term onto it, so it may contain 0 and need not be
     uniform.
 
@@ -520,16 +513,12 @@ def build_matching_kernel(
     builder = KERNEL_REGISTRY[kernel_id]
 
     # The kernel's columns live on the quasi grid (what it integrates over) and its
-    # rows on the light-cone grid (what it produces). They are the same grid unless
-    # lc_x_ls says otherwise.
+    # rows on the explicitly declared light-cone grid (what it produces).
     y_ls = np.asarray(store[quasi_grid_key], dtype=float)
-    if lc_x_ls is None:
-        x_ls = y_ls
-    else:
-        x_ls = np.asarray(resolve_grid_spec(lc_x_ls, name="lc_x_ls"), dtype=float)
-        if x_ls.ndim != 1 or x_ls.size < 1:
-            raise ValueError("lc_x_ls must resolve to at least 1 point.")
-        _reject_lc_grid_finer_than_quasi(x_ls, y_ls)
+    x_ls = np.asarray(resolve_grid_spec(lc_x_ls, name="lc_x_ls"), dtype=float)
+    if x_ls.ndim != 1 or x_ls.size < 1:
+        raise ValueError("lc_x_ls must resolve to at least 1 point.")
+    _reject_lc_grid_finer_than_quasi(x_ls, y_ls)
     store[lc_grid_key] = x_ls
 
     # Hybrid kernels need the Wilson-line scale zspz = z_s * P_z, built from the
@@ -626,7 +615,7 @@ def apply_matching(
     # The kernel rows define the output (light-cone) x grid: build_matching_kernel
     # publishes it, and it falls back to the quasi grid both when the two coincide
     # and when a caller injected a kernel matrix without going through the builder.
-    x_out = np.asarray(store.get(lc_grid_key, store[quasi_grid_key]), dtype=float)
+    x_out = np.asarray(store[lc_grid_key], dtype=float)
     if matrix.shape[0] != x_out.size:
         raise ValueError(
             f"Kernel rows ({matrix.shape[0]}) must match output x grid size ({x_out.size})."
@@ -732,7 +721,7 @@ def plot_matched_pdf(
     # The two curves may live on different grids -- lc_x_ls sets the light-cone one, and an
     # endpoint_cut then drops points from it -- so the light-cone x comes off the data
     # itself rather than the store key, and each curve is drawn on its own coordinate.
-    lc_x_ls = np.asarray(lightcone_ed.coords.get("x", store.get(lc_grid_key, quasi_y_ls)), dtype=float)
+    lc_x_ls = np.asarray(lightcone_ed.coords["x"], dtype=float)
 
     if quasi_y_ls.shape != np.shape(quasi_ed.mean):
         raise ValueError("quasi grid and quasi-PDF must have matching shapes.")
@@ -819,9 +808,9 @@ def report_matching_result(
     *,
     kernel_id: str | None = None,
     momentum_gev: float | None = None,
-    mu: float = 2.0,
+    mu: float,
     zs_fm: float | None = None,
-    component: str | None = None,
+    component: str,
     save_path: str | None = None,
     artifacts_dir: str | None = None,
     report_language: str = "en",

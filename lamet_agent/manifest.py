@@ -11,7 +11,7 @@ from typing import Any, Literal
 import gvar as gv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
-from lamet_agent.manifest_params import merge_stage_params, validate_stage_parameter_mapping
+from lamet_agent.manifest_params import resolve_stage_params, validate_stage_parameter_mapping
 
 
 StageId = Literal[
@@ -72,9 +72,8 @@ class RunMetadata(BaseModel):
     """Settings shared by every job in one run.
 
     Required: run_id, root_directory, target_observable, parton, resample_mode,
-    random_seed, stages.
-    Optional: artifacts_directory (default "artifacts"), sample_error_mode
-    (default "covariance"), workers (default 1), bin_size (default: no
+    sample_error_mode, random_seed, stages.
+    Optional: artifacts_directory (default "artifacts"), workers (default 1), bin_size (default: no
     binning applied before jackknife/bootstrap resampling).
     Conditional: bs_samples is required when resample_mode == "bs" and has no
     default; it is ignored when resample_mode == "jk".
@@ -88,7 +87,7 @@ class RunMetadata(BaseModel):
     target_observable: Literal["pdf", "da", "gpd"]
     parton: Literal["quark", "gluon"]
     resample_mode: Literal["jk", "bs"]
-    sample_error_mode: Literal["mean", "median", "covariance"] = "covariance"
+    sample_error_mode: Literal["mean", "median", "covariance"]
     random_seed: int
     workers: int = Field(default=1, ge=1, strict=True)
     bs_samples: int | None = Field(default=None, gt=0)
@@ -127,7 +126,7 @@ class CorrelatorInput(BaseModel):
     source_operator: str = Field(min_length=1)
     sink_operator: str = Field(min_length=1)
     current_operator: str | None = Field(default=None, min_length=1)
-    polarization: Literal["unpolarized", "helicity", "transversity"] = "unpolarized"
+    polarization: Literal["unpolarized", "helicity", "transversity"] | None = None
     bz_direction: BzDirection | None = None
     volume: str
     lattice_spacing_fm: float = Field(gt=0)
@@ -146,6 +145,8 @@ class CorrelatorInput(BaseModel):
         if self.correlator_type == "3pt":
             if not self.current_operator:
                 raise ValueError("current_operator is required for 3pt correlators")
+            if self.polarization is None:
+                raise ValueError("polarization is required for 3pt correlators")
             if self.bz_direction is None:
                 raise ValueError("bz_direction is required for 3pt correlators")
             if not self.tsep:
@@ -577,10 +578,10 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
 
     def from_job(stage_id: str, candidate: StageJob, seen: set[str]) -> dict[str, Any]:
         if stage_id == "correlator_analysis":
-            params = merge_stage_params(manifest.stages[stage_id].defaults, candidate.params)
+            params = resolve_stage_params(stage_id, manifest.stages[stage_id].defaults, candidate.params)
             momentum = (
                 params.get("final_momentum")
-                if str(params.get("fitting_form", "Breit")) == "NonBreit"
+                if str(params.get("fitting_form")) == "NonBreit"
                 else params.get("momentum")
             )
             selected = [
@@ -618,7 +619,7 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
                         "polarization": operator.polarization,
                     }
                 )
-            if str(params.get("fitting_form", "Breit")) == "NonBreit":
+            if str(params.get("fitting_form")) == "NonBreit":
                 initial = params.get("initial_momentum")
                 initial_source = next(
                     (
@@ -858,7 +859,7 @@ def validate_manifest_file(path: Path) -> AnalysisManifest:
                         matching_jobs.append(clone)
                         variants[key] = clone.id
             if raw_r != 1.0:
-                mu = float(main.params.get("mu", matching.defaults.get("mu", 2.0)))
+                mu = float(resolve_stage_params("perturbative_matching", matching.defaults, main.params)["mu"])
                 low = main.model_copy(deep=True)
                 low.id = f"{main.id}_mu_low"
                 low.params["mu"] = mu / raw_r

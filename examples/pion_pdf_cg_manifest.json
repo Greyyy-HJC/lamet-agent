@@ -66,9 +66,9 @@
         "nstate": [2],
         "fit_scope": ["3pt_ratio"],
         "fit_strategy": ["joint"],
+        "fitting_form": "Breit",
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 10.0,
-        "prior_width": [1.0],
         "component": "re",
         "q_min": 0.05,
         "model_average": false
@@ -95,6 +95,7 @@
     "fourier_transform": {
       "defaults": {
         "order": ["LA", "NLA"],
+        "method": "CG",
         "sector": "valence",
         "Lambda0_gev": 0.1,
         "posterior_prior_error_scale": [3.0, 4.0, 5.0],

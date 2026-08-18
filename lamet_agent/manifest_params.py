@@ -10,9 +10,17 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 from importlib import import_module
+import json
 from typing import Any, Callable
 
 ParamSchema = dict[str, Any]
+
+
+class _NoDefault:
+    """Sentinel distinguishing an absent contract default from ``None``."""
+
+
+NO_DEFAULT = _NoDefault()
 
 
 @dataclass(frozen=True)
@@ -36,7 +44,7 @@ class ParameterSpec:
     choices: tuple[Any, ...] = ()
     choice_descriptions: dict[Any, str] = field(default_factory=dict)
     unit: str | None = None
-    default: str | None = None
+    default: Any = NO_DEFAULT
     required: bool = False
     schema: ParamSchema | None = None
     examples: tuple[Any, ...] = ()
@@ -144,6 +152,36 @@ def merge_stage_params(defaults: dict[str, Any], overrides: dict[str, Any]) -> d
         else:
             merged[key] = deepcopy(value)
     return merged
+
+
+def _schema_defaults(schema: ParamSchema) -> dict[str, Any]:
+    """Materialize typed defaults declared by one parameter-schema tree."""
+    values: dict[str, Any] = {}
+    for key, spec in schema.items():
+        if not isinstance(spec, ParameterSpec):
+            continue
+        nested = _schema_defaults(spec.schema) if spec.schema is not None else {}
+        if spec.default is not NO_DEFAULT:
+            value = deepcopy(spec.default)
+            if nested and isinstance(value, dict):
+                value = merge_stage_params(nested, value)
+            values[key] = value
+        elif nested:
+            values[key] = nested
+    return values
+
+
+def resolve_stage_params(
+    stage: str,
+    defaults: dict[str, Any],
+    overrides: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve contract defaults, stage defaults, and job overrides in order."""
+    contract_defaults = _schema_defaults(get_stage_parameter_contract(stage).schema)
+    return merge_stage_params(
+        merge_stage_params(contract_defaults, defaults),
+        overrides,
+    )
 
 
 STAGE_PARAM_CONTRACTS = {
@@ -487,7 +525,7 @@ def _parameter_guidance(spec: ParameterSpec) -> dict[str, Any]:
         guidance["item_type"] = _expected_type_name(spec.items)
     if spec.unit is not None:
         guidance["unit"] = spec.unit
-    if spec.default is not None:
+    if spec.default is not NO_DEFAULT:
         guidance["default"] = spec.default
     if spec.choices:
         guidance["choices"] = list(spec.choices)
@@ -604,8 +642,8 @@ def _render_parameter_help(
     attributes = ["required" if spec.required else "optional", _accepted_value_text(spec)]
     if spec.unit is not None:
         attributes.append(f"unit: {spec.unit}")
-    if spec.default is not None:
-        attributes.append(f"default: {spec.default}")
+    if spec.default is not NO_DEFAULT:
+        attributes.append(f"default: {json.dumps(spec.default)}")
     lines.extend(
         [
             f"{indent}- {path} [{'; '.join(attributes)}]",

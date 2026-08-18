@@ -141,7 +141,7 @@ def resample_config_samples(
     data: np.ndarray,
     *,
     mode: str,
-    n_boot: int,
+    n_boot: int | None,
     seed: int | None,
     bin_size: int = 1,
     indices: np.ndarray | None = None,

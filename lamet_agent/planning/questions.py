@@ -87,7 +87,7 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
     path_question = _next_path_repair_question(state)
     if path_question is not None:
         return [path_question]
-    missing_metadata = [key for key in ("random_seed", "resample_mode") if key not in metadata]
+    missing_metadata = [key for key in ("random_seed", "resample_mode", "sample_error_mode") if key not in metadata]
     if missing_metadata:
         return [
             {
@@ -95,7 +95,8 @@ def _next_questions_for_state(state: PlanAgentState) -> list[dict[str, Any]]:
                 "prompt": (
                     "metadata required choices: random_seed is a positive integer; "
                     "resample_mode options are jk/jackknife or bs/bootstrap. "
-                    'Reply as JSON or key=value pairs, for example {"random_seed": 1984, "resample_mode": "jk"}.'
+                    "sample_error_mode options are mean, median, or covariance. "
+                    'Reply as JSON or key=value pairs, for example {"random_seed": 1984, "resample_mode": "jk", "sample_error_mode": "covariance"}.'
                 ),
             }
         ]

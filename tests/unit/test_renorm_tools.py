@@ -1,20 +1,66 @@
 from __future__ import annotations
 
+from functools import wraps
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from lamet_agent.core.data import EnsembleData, EnsembleInfo
+from lamet_agent.stages.renorm import functions as renorm_functions
 from lamet_agent.stages.renorm.functions import (
-    apply_ratio_scheme_renormalization,
-    apply_self_renormalization,
+    apply_ratio_scheme_renormalization as _apply_ratio_scheme_renormalization,
+    apply_self_renormalization as _apply_self_renormalization,
     load_bare_matrix_element_grid,
     normalize_bare_matrix_element_at_z0,
-    plot_renormalized_matrix_element,
-    plot_self_renormalization_diagnostics,
+    plot_renormalized_matrix_element as _plot_renormalized_matrix_element,
+    plot_self_renormalization_diagnostics as _plot_self_renormalization_diagnostics,
 )
 from lamet_agent.stages.renorm.reporting import build_renorm_stage_report_markdown
+
+
+def apply_ratio_scheme_renormalization(store, **kwargs):
+    explicit = {
+        "target": "target_bare_matrix_element",
+        "denominator": "denominator_bare_matrix_element",
+        "scheme": "ratio",
+        "strategy": "external_denominator",
+        "scheme_parameters": {},
+        "sample_error_mode": "covariance",
+        **kwargs,
+    }
+    if explicit["scheme"] == "hybrid":
+        explicit["scheme_parameters"] = {"m0_gev": 0.0, "delta_m_gev": 0.0, **explicit["scheme_parameters"]}
+    return _apply_ratio_scheme_renormalization(store, **explicit)
+
+
+def apply_self_renormalization(store, **kwargs):
+    return _apply_self_renormalization(
+        store,
+        **{"mu": 2.0, "z_coverage_policy": "extrapolate", "sample_error_mode": "covariance", **kwargs},
+    )
+
+
+def plot_self_renormalization_diagnostics(store, **kwargs):
+    return _plot_self_renormalization_diagnostics(
+        store,
+        **{"mu": 2.0, "z_coverage_policy": "extrapolate", "sample_error_mode": "covariance", **kwargs},
+    )
+
+
+def plot_renormalized_matrix_element(store, **kwargs):
+    return _plot_renormalized_matrix_element(store, **{"sample_error_mode": "covariance", **kwargs})
+
+
+@pytest.fixture(autouse=True)
+def _explicit_self_fit_contract_params(monkeypatch):
+    raw = renorm_functions.fit_self_renormalization_factor
+
+    @wraps(raw)
+    def explicit_fit(store, **kwargs):
+        return raw(store, **{"mu": 2.0, "svdcut": 1e-12, **kwargs})
+
+    monkeypatch.setattr(renorm_functions, "fit_self_renormalization_factor", explicit_fit)
 
 
 def _write_bare_netcdf(base: Path, stem: str, values: np.ndarray, *, resample: str = "jackknife") -> Path:

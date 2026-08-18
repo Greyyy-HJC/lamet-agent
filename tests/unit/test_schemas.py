@@ -8,10 +8,38 @@ from lamet_agent.manifest_params import (
     STAGE_PARAM_CONTRACTS,
     get_stage_parameter_contract,
     merge_stage_params,
+    resolve_stage_params,
     render_stage_contract,
     stage_contract_guidance,
     validate_stage_parameter_mapping,
 )
+
+
+def test_contract_defaults_are_typed_and_resolve_before_authored_values() -> None:
+    correlator = resolve_stage_params(
+        "correlator_analysis",
+        {"svdcut": 1e-10},
+        {"prior_width": [2.0]},
+    )
+    assert correlator["svdcut"] == 1e-10
+    assert correlator["prior_width"] == [2.0]
+
+    renorm = resolve_stage_params(
+        "renormalization",
+        {"scheme_parameters": {"svdcut": 1e-9}},
+        {"scheme_parameters": {"z_coverage_policy": "strict"}},
+    )
+    assert renorm["scheme_parameters"]["svdcut"] == 1e-9
+    assert renorm["scheme_parameters"]["z_coverage_policy"] == "strict"
+
+
+def test_four_allowed_analysis_defaults_are_injected_by_contract() -> None:
+    correlator = resolve_stage_params("correlator_analysis", {}, {})
+    renorm = resolve_stage_params("renormalization", {}, {})
+    assert correlator["svdcut"] == 1e-12
+    assert correlator["prior_width"] == [1]
+    assert renorm["scheme_parameters"]["z_coverage_policy"] == "extrapolate"
+    assert renorm["scheme_parameters"]["svdcut"] == 1e-12
 
 
 def test_stage_params_merge_recursively_without_mutating_inputs() -> None:
@@ -41,7 +69,7 @@ def _payload() -> dict:
     return {
         "metadata": {
             "run_id": "demo", "root_directory": ".", "target_observable": "pdf",
-            "parton": "quark", "resample_mode": "jk", "random_seed": 1984, "stages": ["correlator_analysis"],
+            "parton": "quark", "resample_mode": "jk", "sample_error_mode": "covariance", "random_seed": 1984, "stages": ["correlator_analysis"],
         },
         "inputs": {"correlators": [], "artifacts": [], "kernels": []},
         "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca"}]}},
@@ -53,6 +81,13 @@ def test_manifest_schema_uses_metadata_inputs_and_stage_jobs() -> None:
     assert manifest.run_id == "demo"
     assert manifest.metadata.workers == 1
     assert manifest.stages["correlator_analysis"].jobs[0].id == "ca"
+
+
+def test_manifest_requires_sample_error_mode() -> None:
+    payload = _payload()
+    payload["metadata"].pop("sample_error_mode")
+    with pytest.raises(ValidationError, match="sample_error_mode"):
+        AnalysisManifest.model_validate(payload)
 
 
 def test_manifest_rejects_removed_correlator_analysis_mode() -> None:

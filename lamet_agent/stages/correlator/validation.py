@@ -14,6 +14,7 @@ from lamet_agent.manifest_params import (
     StageParamContract,
     StageValidationContext,
     merge_stage_params,
+    resolve_stage_params,
 )
 
 
@@ -28,7 +29,7 @@ def _field(item: Any, name: str, default: Any = None) -> Any:
 
 
 def _scopes(context: StageValidationContext) -> list[str]:
-    raw = context.params.get("fit_scope", ["3pt_ratio"])
+    raw = context.params.get("fit_scope", [])
     return [str(item) for item in raw] if isinstance(raw, list) else [str(raw)]
 
 
@@ -92,7 +93,7 @@ def _q_min_message(value: Any) -> str | None:
 
 def _check_scope_compatibility(context: StageValidationContext) -> RuleViolation | None:
     scopes = _scopes(context)
-    fitting_form = str(context.params.get("fitting_form", "Breit"))
+    fitting_form = str(context.params.get("fitting_form", ""))
     if "qda_ratio" in scopes and len(scopes) != 1:
         return _violation(
             context,
@@ -120,7 +121,7 @@ def _check_scope_compatibility(context: StageValidationContext) -> RuleViolation
 def _check_fh_state_count(context: StageValidationContext) -> RuleViolation | None:
     if not any("FH" in scope for scope in _scopes(context)):
         return None
-    raw = context.params.get("nstate", [2])
+    raw = context.params.get("nstate", [])
     values = raw if isinstance(raw, list) else [raw]
     if not any(type(value) is int and value > 2 for value in values):
         return None
@@ -219,7 +220,7 @@ def _ordinary_selection(context: StageValidationContext) -> tuple[list[Any], lis
     selected = _selected(context)
     pt2 = [item for item in selected if _field(item, "correlator_type") == "2pt"]
     pt3 = [item for item in selected if _field(item, "correlator_type") == "3pt"]
-    fitting_form = str(context.params.get("fitting_form", "Breit"))
+    fitting_form = str(context.params.get("fitting_form", ""))
     if fitting_form == "Breit":
         momentum = context.params.get("momentum")
         if not isinstance(momentum, str):
@@ -338,13 +339,14 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Real and imaginary matrix-element components carry different operator information; fitting both preserves both channels in one job.",
             expected=str,
             choices=("re", "im", "both"),
+            required=True,
             choice_descriptions={
                 "re": "Fit only the real component.",
                 "im": "Fit only the imaginary component.",
                 "both": "Fit and export both components.",
             },
         ),
-        "correlator_rescale": _parameter("Finite positive numerical rescaling applied before fitting.", "A common rescaling improves conditioning without changing the recovered physical matrix element.", expected=float, validator=_positive_number_message("correlator_rescale")),
+        "correlator_rescale": _parameter("Finite positive numerical rescaling applied before fitting.", "A common rescaling improves conditioning without changing the recovered physical matrix element.", expected=float, default=1.0, validator=_positive_number_message("correlator_rescale")),
         "final_momentum": _parameter("Final-state lattice momentum for NonBreit kinematics.", "The final momentum fixes the outgoing hadron state in a non-forward matrix element.", expected=str),
         "fit_scope": _parameter(
             "Correlator observable families fitted by the job.",
@@ -358,7 +360,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "3pt_ratio+FH": "Fit ratio and Feynman-Hellmann channels in one correlated likelihood.",
                 "qda_ratio": "Fit a nonlocal qDA two-point ratio; use O00/z0 with a local denominator or O00/zprime0 with the qDA bz=0 fallback. In fallback mode z=0 is identically one and is not fitted. This exclusive scope has no 3pt, tsep, tau-cut, or current insertion.",
             },
-            default="['3pt_ratio']",
+            required=True,
             validator=_validate_fit_scope,
             coerce_scalar_to_list=True,
         ),
@@ -368,6 +370,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             expected=(str, list),
             items=str,
             choices=("joint", "chained", "independent"),
+            required=True,
             choice_descriptions={
                 "joint": "Fit the selected 2pt and ratio/FH/qDA channels together with their shared covariance.",
                 "chained": "Fit the 2pt channel first, then use its widened posterior as the spectral prior for the matrix-element fit.",
@@ -384,7 +387,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "Breit": "Use one scalar momentum for the initial and final state.",
                 "NonBreit": "Use separate initial_momentum and final_momentum channels; FH scopes are not implemented for this form.",
             },
-            default="Breit",
+            required=True,
         ),
         "initial_momentum": _parameter("Initial-state lattice momentum for NonBreit kinematics.", "The initial momentum fixes the incoming hadron state in a non-forward matrix element.", expected=str),
         "model_average": _parameter(
@@ -396,17 +399,18 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 False: "Use one tuned fit function for every coordinate and resampled sample.",
                 True: "Average successful fit functions sample by sample after one shared window is fixed.",
             },
-            default="false",
+            required=True,
         ),
         "momentum": _parameter("Scalar lattice momentum selected by a Breit or qDA job.", "The requested momentum must be present in the selected correlator data.", expected=str),
-        "nstate": _parameter("Positive spectral state-count candidate or candidates.", "Additional states parameterize excited-state contamination; FH ansatz implementations currently support at most two states.", expected=(int, list), items=int, validator=_nstate_message, coerce_scalar_to_list=True),
+        "nstate": _parameter("Positive spectral state-count candidate or candidates.", "Additional states parameterize excited-state contamination; FH ansatz implementations currently support at most two states.", expected=(int, list), items=int, required=True, validator=_nstate_message, coerce_scalar_to_list=True),
         "posterior_prior_error_scale": _parameter(
             "Scale used to build per-sample priors from the sample-average posterior.",
             "The per-sample prior width is the sample-average posterior width multiplied by this scale and the selected prior_width, controlling how strongly noisy resamples are anchored.",
             expected=float,
+            required=True,
             validator=_positive_number_message("posterior_prior_error_scale"),
         ),
-        "prior_width": _parameter("Finite positive prior-width candidate or candidates.", "Prior-width variation tests the stability of excited-state removal.", expected=(float, list), items=float, validator=_positive_number_message("prior_width"), coerce_scalar_to_list=True),
+        "prior_width": _parameter("Finite positive prior-width candidate or candidates.", "Prior-width variation tests the stability of excited-state removal.", expected=(float, list), items=float, default=[1], validator=_positive_number_message("prior_width"), coerce_scalar_to_list=True),
         "pt2_windows": ListItems(
             {"tmin": _parameter("First two-point fit time.", "Removing early times suppresses excited states.", expected=int), "tmax": _parameter("Last two-point fit time.", "Late-time reach balances ground-state isolation against noise.", expected=int)},
             summary="Candidate two-point fit windows.",
@@ -418,8 +422,8 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             summary="Candidate three-point fit windows.",
             physics="Each window trades excited-state suppression against the statistical information retained across source-sink separations.",
         ),
-        "q_min": _parameter("Minimum accepted fit p-value.", "The threshold rejects statistically incompatible fit models.", expected=float, default="0.05", validator=_q_min_message),
-        "svdcut": _parameter("Finite positive relative covariance singular-value cut.", "Regularization stabilizes inversion of noisy correlated data.", expected=float, validator=_positive_number_message("svdcut")),
+        "q_min": _parameter("Minimum accepted fit p-value.", "The threshold rejects statistically incompatible fit models.", expected=float, required=True, validator=_q_min_message),
+        "svdcut": _parameter("Finite positive relative covariance singular-value cut.", "Regularization stabilizes inversion of noisy correlated data.", expected=float, default=1e-12, validator=_positive_number_message("svdcut")),
         "tune_z": _parameter(
             "Fallback coordinate slice used to select a shared window in the grid fit.",
             "The preferred agent workflow tunes several representative coordinates first; this value selects the single coordinate used only when the final grid tool must choose a window itself.",
@@ -438,7 +442,9 @@ STAGE_PARAM_CONTRACT = StageParamContract(
 
 def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> StageValidationContext:
     """Build the resolved correlator context consumed by the shared evaluator."""
-    params = merge_stage_params(manifest.stages["correlator_analysis"].defaults, job.params)
+    stage = manifest.stages["correlator_analysis"]
+    authored_params = merge_stage_params(stage.defaults, job.params)
+    params = resolve_stage_params("correlator_analysis", stage.defaults, job.params)
     selected = [item for item in manifest.correlators if item.correlator_id in job.correlator_ids]
     return StageValidationContext(
         stage="correlator_analysis",
@@ -448,7 +454,7 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
         inputs=dict(job.inputs),
         metadata=manifest.metadata.model_dump(),
         resources={"selected_correlators": selected},
-        authored_params=params,
+        authored_params=authored_params,
     )
 
 

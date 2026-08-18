@@ -148,9 +148,9 @@ options inline (for example `target_observable` is `"pdf"` or `"da"`, and `gfix`
   `random_seed` is required and seeds every jackknife/bootstrap resampling step
   in the run (a job/stage no longer sets its own `seed`). When `resample_mode`
   is `"bs"`, `bs_samples` is required and must be set explicitly (there is no
-  default bootstrap sample count). `sample_error_mode` controls how samples are
-  averaged and how sample-by-sample fits receive errors; it defaults to
-  `"covariance"`. `bin_size` is optional and bins configurations before
+  default bootstrap sample count). `sample_error_mode` is required and controls
+  how samples are averaged and how sample-by-sample fits receive errors.
+  `bin_size` is optional and bins configurations before
   resampling when set (default: no binning). `workers` is an optional positive
   integer controlling sample-fit processes in the correlator and Fourier
   stages; it defaults to `1`, which keeps execution serial.
@@ -190,7 +190,7 @@ planning notes, and any deterministic draft normalization. The central
 
 Final validation and incomplete-draft planning both construct a resolved job
 context and call the same `STAGE_PARAM_CONTRACT.evaluate()`. Required parameters
-such as Fourier `y_grid` are therefore declared once by
+are therefore declared once by
 `ParameterSpec.required`; planning only converts the returned issue into a
 question. `ConstraintSpec` similarly owns one executable check together with
 its physical reason and suggested repair. For example, a named Fourier `sector`
@@ -217,6 +217,15 @@ lamet-agent describe-stage renormalization
 The output includes accepted shapes, defaults, units, option-specific behavior,
 physical explanations, input-role meanings, and cross-parameter rules. The same
 contract data is injected into both the planning and execution LLM prompts.
+
+Parameter labels in `describe-stage` have distinct meanings: `required` fields
+must exist in the effective job configuration; `default` values are typed
+contract defaults; conditional requirements are executable constraints; and
+derived fields come from metadata or upstream inputs and must not be authored as
+stage parameters. Effective values resolve in one order only: contract default,
+then stage `defaults`, then job `params`. Missing analysis choices are never
+selected by `validate` or `run`; `plan` asks for them and may write a shared
+answer into stage `defaults`.
 
 ## Cross-Stage Manifest Semantics
 
@@ -258,8 +267,8 @@ long-distance exponent continue to use $|z_{\mathrm{fm}}|$.
 ### `inputs.correlators[].polarization` and Fourier sectors
 
 Every example 3pt correlator declares `polarization` explicitly as
-`unpolarized`, `helicity`, or `transversity`; the schema default remains
-`unpolarized`. Correlator and
+`unpolarized`, `helicity`, or `transversity`; 3pt inputs have no polarization
+default. Correlator and
 renormalization NetCDF outputs preserve it together with `current_operator`, so
 Fourier jobs infer the short observable, such as `pion_quark_quasi_pdf`, from
 `target_observable`, `parton`, and upstream `hadron`, while inheriting
@@ -304,7 +313,7 @@ configuration for the whole run; stage/job params cannot override them.
   `"jk"`, where resampling has no sample-count parameter): sets the bootstrap
   sample count (the tool-level `n_boot` argument). There is no default; the
   manifest must set this value explicitly for bootstrap runs.
-- `sample_error_mode` (optional, default: `"covariance"`): controls how
+- `sample_error_mode` (required): controls how
   bootstrap/jackknife samples are converted to `gvar` averages and how the same
   ensemble errors are attached to individual sample-by-sample fits. `"mean"`
   uses mean centers with diagonal standard deviations, `"median"` uses

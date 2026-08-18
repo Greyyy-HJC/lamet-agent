@@ -5,21 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from lamet_agent.manifest import AnalysisManifest, StageJob
-from lamet_agent.manifest_params import ParameterSpec, StageParamContract, StageValidationContext, merge_stage_params
+from lamet_agent.manifest_params import ParameterSpec, StageParamContract, StageValidationContext, merge_stage_params, resolve_stage_params
 
 
 def _paper_limit(value: Any) -> str | None:
     return None if type(value) is int and value >= 1 else "review literature_max_papers must be a positive integer."
 
-
-def _normalize_draft(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    stages = payload.get("stages", {}) if isinstance(payload.get("stages"), dict) else {}
-    stage = stages.get("review", {}) if isinstance(stages, dict) else {}
-    defaults = stage.get("defaults", {}) if isinstance(stage, dict) else {}
-    if not isinstance(defaults, dict) or defaults.get("literature") is not True or "literature_max_papers" in defaults:
-        return []
-    defaults["literature_max_papers"] = 4
-    return [{"path": "stages.review.defaults.literature_max_papers", "old": None, "new": 4, "note": "Applied the default literature paper limit."}]
 
 
 STAGE_PARAM_CONTRACT = StageParamContract(
@@ -27,7 +18,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
     summary="Summarize workflow outputs and optionally place them in literature context.",
     physics="Review settings affect evidence gathering and presentation, not the numerical LQCD analysis.",
     planning_notes=("literature_max_papers defaults to 4 when literature is enabled.",),
-    normalize_draft=_normalize_draft,
     schema={
         "literature": ParameterSpec(
             summary="Enable literature comparison.",
@@ -38,13 +28,13 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 False: "Synthesize only the completed workflow reports and artifact summaries.",
                 True: "Also retrieve a bounded set of local literature records for background context.",
             },
-            default="false",
+            default=False,
         ),
         "literature_max_papers": ParameterSpec(
             summary="Maximum number of literature papers included.",
             physics="The limit bounds the breadth, prompt size, and retrieval runtime of the optional background context; it has no effect when literature is false and never changes numerical results.",
             expected=int,
-            default="4",
+            default=4,
             validator=_paper_limit,
         ),
     },
@@ -54,7 +44,9 @@ STAGE_PARAM_CONTRACT = StageParamContract(
 
 def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> StageValidationContext:
     """Build the resolved review context consumed by the shared evaluator."""
-    params = merge_stage_params(manifest.stages["review"].defaults, job.params)
+    stage = manifest.stages["review"]
+    authored = merge_stage_params(stage.defaults, job.params)
+    params = resolve_stage_params("review", stage.defaults, job.params)
     return StageValidationContext(
         stage="review",
         job_id=job.id,
@@ -62,7 +54,7 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
         params=params,
         inputs=dict(job.inputs),
         metadata=manifest.metadata.model_dump(),
-        authored_params=params,
+        authored_params=authored,
     )
 
 

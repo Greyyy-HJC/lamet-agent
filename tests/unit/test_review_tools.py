@@ -20,6 +20,7 @@ def _manifest(*, matching_zs: float = 0.2, renorm_zs: float = 0.2) -> AnalysisMa
                 "target_observable": "pdf",
                 "parton": "quark",
                 "resample_mode": "jk",
+                "sample_error_mode": "covariance",
                 "random_seed": 1984,
                 "stages": ["renormalization", "fourier_transform", "perturbative_matching", "review"],
             },

@@ -58,7 +58,7 @@
         "data_path": "data_pion_pdf_cg/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5", // relative to root_directory; standard path is source/sink/momentum
         "ensemble": "HISQa060_X", // ensemble identifier propagated to artifacts
         "hadron": "pion", // e.g. "pion", "proton", or another stage-supported label
-        "gfix": "CG", // normally "CG" or "GI"; Fourier method is inferred from this
+        "gfix": "CG", // gauge-fixing provenance; Fourier method is declared separately
         "source_operator": "g5", // free non-empty string; gamma labels conventionally start with g
         "sink_operator": "g5", // use a distinct label such as gT5_nonlocal when needed
         "volume": "S48T64", // exact S<Ls>T<Lt> form; Lt must match the HDF5 time axis
@@ -258,21 +258,21 @@
     },
     "fourier_transform": {
       "defaults": {
+        "method": "CG", // required tail parameterization; do not infer it from gfix
         "order": ["LA", "NLA"], // tail ansatz candidates: "LA" and/or "NLA"
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
         // Lower-level incompatible alternative: omit sector and set
         // "part": "re" // "re", "im", or "both"; sector is preferred when available
         "coord_unit": "fm", // default for renormalized .nc inputs; override with "lattice", "gev_inv", or "lambda" only when needed
-        "Lambda0_gev": 0.0, // optional fixed extra exponential scale in GeV
+        "Lambda0_gev": 0.0, // required fixed extra exponential scale in GeV
         "posterior_prior_error_scale": [2.0, 3.0, 5.0], // tail-fit model candidates
         "y_grid": {
           "start": -2.0, // inclusive quasi/light-cone momentum-fraction range
           "stop": 2.0,
           "num": 100 // alternatively an explicit numeric list, or {start, stop, step} instead of num
         },
-        // scheme_scan is optional; run_fourier_transform auto-fills missing keys from
-        // tail-fit diagnostics (zmin_values, zmax_values, z_ext_max, smooth).
-        // Optional overrides: zmin_values, zmax_values, z_ext_max, smooth, max_schemes.
+        // scheme_scan must explicitly provide both z ranges, z_ext_max, smooth,
+        // and model_average. max_schemes has a contract default of 200.
         // *_values cannot mix with the range form zmin_start/stop/step (and zmax_*);
         // a shared scheme_scan.step can fill both bounds. All range values must be
         // in coord_unit (default "fm" for renormalized .nc inputs). Do NOT use
@@ -287,7 +287,6 @@
           "max_schemes": 200 // cap accepted range combinations
         },
         // Usually inferred from manifest metadata or upstream attrs:
-        // "method": "CG", // explicit "CG" or "GI" override; otherwise inferred from gfix
         // "gfix": "CG", // optional; usually inherited from the input
         // "observable": "pion_quark_quasi_pdf", // inferred from target, parton, and hadron
         // "polarization": "unpolarized", // required for PDF/GPD if upstream 3pt provenance is absent
@@ -324,9 +323,7 @@
         "scheme": "hybrid", // must match the ratio/hybrid/msbar token in kernel_id
         "mu": 2.0, // factorization/renormalization scale in GeV
         "component": "re", // select "re" or "im" from the quasi distribution
-        // Both grids are optional and default to the grid the quasi input carries
-        // (the Fourier y_grid); omit them both and matching runs exactly as it did
-        // before these keys existed. Each accepts {start, stop, num},
+        // Both grids are required and accept {start, stop, num},
         // {start, stop, step}, or an explicit numeric list.
         //
         // "quasi_y_ls" is the grid the kernel integrates over (its columns). It is
@@ -335,7 +332,6 @@
         // returns them exactly. The cost of spelling it out is that the grid now
         // lives in two places: move y_grid and leave this behind, and matching will
         // quietly interpolate onto the stale grid rather than follow the new one.
-        // Delete this key to always follow y_grid instead.
         //
         // A quasi_y_ls that departs from the upstream grid must stay inside its range
         // (there is no data outside it, so it is rejected rather than zero-padded),
@@ -380,14 +376,14 @@
       // MERGE POINT 2: combine matched distributions at several momenta for
       // the large-momentum and continuum extrapolation.
       "defaults": {
-        // All optional; omitted values use the runtime defaults noted below.
+        // Central-fit ansatz choices are required; explicit empty order lists are valid.
         // a^n terms apply only when inputs span more than one lattice spacing;
         // 1/Pz^n terms apply when momenta vary within an ensemble.
-        // "allow_order_a": [2], // default [2]
-        // "allow_order_1overp": [2], // default [2]; e.g. [2, 4]
-        // "allow_order_ap": [2], // default []; requires fitting_param_xdep[2]=true
-        // "fitting_param_xdep": [false, true, false], // [a_xdep, p_xdep, include_ap]
-        // "posterior_prior_error_scale": 3.0, // default 3.0
+        "allow_order_a": [2],
+        "allow_order_1overp": [2],
+        "allow_order_ap": [],
+        "fitting_param_xdep": [false, true, false], // [a_xdep, p_xdep, include_ap]
+        "posterior_prior_error_scale": 3.0
         // "pdep_gev": [1.5, 2.0, 2.5], // momenta shown on the p-dependence plot only
         // Systematics-model clones (do not enter the central fit):
         // "allow_order_a_sym": [1, 2],
