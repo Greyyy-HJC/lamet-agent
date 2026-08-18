@@ -1242,3 +1242,12 @@
   self-renormalization `LambdaQCD_gev` consistency rule.
 - Verified 573 unit tests pass with one skipped and the five pre-existing
   numerical, sandbox-multiprocessing, and systematics-expansion tests deselected.
+## 2026-08-17 (API key source is explicit)
+
+- Removed the implicit default `api.key` for `--backend api`. The key now comes
+  from `--api-key-file` (file must exist and be non-empty) or, if that flag is
+  omitted, from `DEEPSEEK_API_KEY` / `OPENAI_API_KEY`. A missing file no longer
+  falls back to the environment.
+- `plan` and `run` print a boxed ``api`` / ``codex`` summary at startup
+  (provider, model, base URL, and key source or Codex login — never the key
+  itself), then a blank line before the LaMET Agent banner.
