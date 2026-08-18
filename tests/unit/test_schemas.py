@@ -433,7 +433,7 @@ def test_manifest_rejects_removed_hybrid_self_parameters(key: str) -> None:
         AnalysisManifest.model_validate(payload)
 
 
-def test_self_renormalization_chain_rejects_mismatched_lambdaqcd() -> None:
+def test_self_renormalization_chain_allows_mismatched_lambdaqcd() -> None:
     from lamet_agent.stages.renorm.validation import build_validation_context
 
     payload = _hybrid_self_payload()
@@ -454,9 +454,12 @@ def test_self_renormalization_chain_rejects_mismatched_lambdaqcd() -> None:
         build_validation_context(manifest, manifest.stages["renormalization"].jobs[1])
     )
 
-    issue = next(item for item in issues if item.code == "renorm.self.lambda_chain")
-    assert "fit/apply jobs" in issue.message
-    assert issue.parameters == ("scheme_parameters.LambdaQCD_gev",)
+    assert not any(item.code == "renorm.self.lambda_chain" for item in issues)
+    apply_params = merge_stage_params(
+        manifest.stages["renormalization"].defaults,
+        manifest.stages["renormalization"].jobs[1].params,
+    )
+    assert apply_params["scheme_parameters"]["LambdaQCD_gev"] == pytest.approx(0.2)
 
 
 @pytest.mark.parametrize("key", ["LambdaQCD_gev", "d", "m0_gev", "svdcut", "z_coverage_policy"])

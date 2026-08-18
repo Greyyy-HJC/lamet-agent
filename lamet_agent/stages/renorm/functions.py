@@ -165,23 +165,11 @@ def _resolve_zmsbar(kernel_id: str | None = None):
     return key, _ZMSBAR_KERNELS[key]
 
 
-def _resolve_lambdaqcd(
-    LambdaQCD_gev: float,
-    *,
-    upstream: str | float | None = None,
-) -> float:
+def _resolve_lambdaqcd(LambdaQCD_gev: float) -> float:
     """Validate the required LambdaQCD ansatz scale in GeV."""
-    upstream_value = None if upstream in {None, ""} else float(upstream)
     value = float(LambdaQCD_gev)
     if not np.isfinite(value) or value <= 0.0:
         raise ValueError("LambdaQCD_gev must be a finite positive value in GeV")
-    if upstream_value is not None and not np.isclose(
-        value, upstream_value, rtol=0.0, atol=1e-12
-    ):
-        raise ValueError(
-            f"LambdaQCD_gev={value} does not match upstream zR LambdaQCD_gev={upstream_value}; "
-            "use one value throughout a hybrid-self-renormalization chain"
-        )
     return value
 
 
@@ -1024,6 +1012,7 @@ def apply_self_renormalization(
 
     Optional ``d`` / ``m0_gev`` remap upstream zR from the fit-job operator
     parameters onto this apply job (e.g. PDF-fit zR → DA ``d``/``m0``).
+    ``LambdaQCD_gev`` is this apply job's scale; it need not match the fit job.
     """
     if scheme not in {"ratio", "hybrid", "msbar"}:
         raise ValueError(f"unsupported renormalization scheme: {scheme!r}")
@@ -1036,10 +1025,7 @@ def apply_self_renormalization(
     zR_data = store[zR]
     if not isinstance(zR_data, EnsembleData):
         raise ValueError(f"store[{zR!r}] does not contain EnsembleData")
-    lambdaqcd_gev = _resolve_lambdaqcd(
-        LambdaQCD_gev,
-        upstream=zR_data.attrs.get("LambdaQCD_gev"),
-    )
+    lambdaqcd_gev = _resolve_lambdaqcd(LambdaQCD_gev)
     resolved_kernel_id, zms_fn = _resolve_zmsbar(kernel_id or zR_data.attrs.get("kernel_id"))
     alpha_s_derived = float(kernels.alphas_nloop(mu))
 
@@ -1404,10 +1390,7 @@ def plot_self_renormalization_diagnostics(
     # Fit-check panels compare mR against ZMSbar_pdf.
     zms_fit_fn = kernels.ZMSbar_pdf
     mu_val = float(mu if mu is not None else fit_data.get("mu", zR_data.attrs.get("mu", 2.0)))
-    lambdaqcd_gev = _resolve_lambdaqcd(
-        LambdaQCD_gev,
-        upstream=fit_data.get("LambdaQCD_gev", zR_data.attrs.get("LambdaQCD_gev")),
-    )
+    lambdaqcd_gev = _resolve_lambdaqcd(LambdaQCD_gev)
     alpha_s_derived = float(kernels.alphas_nloop(mu_val))
     stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="self_renorm")
     plots: dict[str, str] = {}

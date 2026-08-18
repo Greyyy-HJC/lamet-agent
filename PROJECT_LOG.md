@@ -1274,3 +1274,30 @@
   manifest field.
 - Added planner regressions for bare, `key=value`, and JSON-object
   renormalization strategy answers.
+
+## 2026-08-17 (Apply-job LambdaQCD_gev is an override)
+
+- Stopped requiring linked self-renormalization fit and apply jobs to share
+  one `scheme_parameters.LambdaQCD_gev` value.
+- Apply now uses the job's own `LambdaQCD_gev` for remap and long-distance
+  reconstruction. Omit it on apply jobs to inherit the stage-defaults value.
+
+## 2026-08-17 (Sample-manifest self-renorm fit/apply)
+
+- Documented in `examples/sample_manifest.jsonc` that self-renormalization
+  fit vs apply is identified by `inputs` role sets, not job-id names.
+- Completed the commented self-renorm parameter set against the current
+  contract: hybrid apply `{target, denominator, zR}` plus flat `zs_fm`,
+  `ensemble`, `z_coverage_policy` choices, and apply-time `LambdaQCD_gev`
+  inheritance.
+
+## 2026-08-17 (Sample-manifest full parameter audit)
+
+- Audited every stage in `examples/sample_manifest.jsonc` against the current
+  contracts and filled commented optional keys that were missing:
+  correlator `independent` / `tune_z` and qDA 2pt `bz`/`bT`; Fourier
+  `polarization`, `zmin_shift`, scheme-scan range form, and `gfix`; matching
+  `endpoint_cut`, `r`, `sector`, and `plot`; extrapolation `allow_order_*`,
+  `fitting_param_xdep`, `pdep_gev`, and systematics clones; optional `review`.
+- Synced the same matching/Fourier/extrapolation comments into
+  `examples/partial_sample_manifest.jsonc`.

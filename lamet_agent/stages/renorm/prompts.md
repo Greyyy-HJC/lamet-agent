@@ -34,6 +34,8 @@ ratio/msbar inputs are exactly {target, zR}; hybrid inputs are exactly
 1. Call `apply_self_renormalization` with no arguments. The runner binds target,
    zR, kernel_id, d, m0_gev, mu, LambdaQCD_gev, z_coverage_policy, and save_path. Upstream zR is
    already in the store; do not re-fit.
+   This job's LambdaQCD_gev is used for remap and long-distance reconstruction;
+   omit it from apply params to inherit the defaults/fit value.
    Optional scheme_parameters.d / scheme_parameters.m0_gev remap that zR onto this operator (e.g.
    PDF-fit zR → DA d/m0). ratio computes H/(zR*ZMSbar), msbar computes H/zR,
    and hybrid uses target/denominator below zs_fm and target/(zR*ZT) above it,

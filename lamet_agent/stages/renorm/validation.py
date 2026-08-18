@@ -175,43 +175,8 @@ def _check_self_kernel(context: StageValidationContext) -> RuleViolation | None:
     return None
 
 
-def _check_self_lambda_chain(context: StageValidationContext) -> RuleViolation | None:
-    selection = _valid_selection(context)
-    if selection is None or selection[1] != "self_renormalization":
-        return None
-    params_by_job = context.resources.get("params_by_job", {})
-    inputs_by_job = context.resources.get("inputs_by_job", {})
-    related = {context.job_id}
-    roles = set(context.inputs)
-    if roles == {"reference"}:
-        related.update(
-            job_id
-            for job_id, inputs in inputs_by_job.items()
-            if isinstance(inputs, dict) and inputs.get("zR") == context.job_id
-        )
-    else:
-        zR_job = context.inputs.get("zR")
-        if isinstance(zR_job, str) and zR_job in params_by_job:
-            related.add(zR_job)
-    values: dict[str, float] = {}
-    for job_id in related:
-        params = params_by_job.get(job_id, {})
-        scheme_parameters = params.get("scheme_parameters", {}) if isinstance(params, dict) else {}
-        raw = scheme_parameters.get("LambdaQCD_gev") if isinstance(scheme_parameters, dict) else None
-        if not isinstance(raw, bool) and isinstance(raw, (int, float)):
-            values[job_id] = float(raw)
-    if len(values) < 2 or len(set(values.values())) == 1:
-        return None
-    return _violation(
-        context,
-        "Linked self-renormalization fit/apply jobs must use one identical scheme_parameters.LambdaQCD_gev value.",
-        parameter="scheme_parameters.LambdaQCD_gev",
-        cause=f"The linked job values are {values!r}.",
-    )
-
-
 _SCHEME_PARAMETER_FIELDS = {
-    "LambdaQCD_gev": _parameter("QCD scale used in perturbative running.", "It fixes the coupling entering the self-renormalization short-distance ansatz and must be explicitly identical along each linked fit/apply zR chain.", expected=float, unit="GeV", validator=_lambda_message),
+    "LambdaQCD_gev": _parameter("QCD scale used in perturbative running.", "It fixes the coupling entering the self-renormalization short-distance ansatz. Declare it in defaults so fit and apply share one value; an apply-job override is used as-is for remap and long-distance reconstruction.", expected=float, unit="GeV", validator=_lambda_message),
     "d": _parameter("Fixed discretization coefficient for a self-renormalization operator.", "A fit job requires the reference-operator value; an apply-job override remaps the upstream zR to a target operator with different lattice artifacts.", expected=float),
     "delta_m_gev": _parameter("External-hybrid target/denominator mass-gap offset.", "Together with m0_gev it controls the long-distance exponential branch beyond zs_fm; it is not a self-renormalization fit control.", expected=float, unit="GeV"),
     "m0_gev": _parameter("Target-specific residual mass offset for apply jobs.", "Reference fit jobs determine m0 and therefore must not fix it.", expected=float, unit="GeV"),
@@ -303,7 +268,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ConstraintSpec("renorm.external.contract", ("scheme", "strategy", "scheme_parameters", "inputs", "zs_fm"), "external_denominator supports ratio/hybrid, accepts target+denominator, and needs zs_fm for hybrid.", "A direct ratio and a fitted self-renormalization factor are different estimators with different nuisance parameters.", "Choose compatible scheme/strategy values and provide exactly the required input roles.", _check_external),
         ConstraintSpec("renorm.self.contract", ("scheme_parameters", "inputs", "zs_fm"), "self_renormalization requires LambdaQCD_gev; fit and apply jobs have distinct roles and parameters.", "The reference fit determines the divergence and residual mass, while apply jobs transfer that fitted factor to target data.", "Provide reference+d for a fit, or the scheme-specific target/zR roles for apply.", _check_self_parameters),
         ConstraintSpec("renorm.self.kernel", ("kernel_id", "inputs.kernels"), "self_renormalization selects one declared ZMSbar_pdf or ZMSbar_da kernel.", "The conversion factor depends on whether the target is a PDF or DA operator.", "Declare and select the matching renormalization kernel.", _check_self_kernel),
-        ConstraintSpec("renorm.self.lambda_chain", ("scheme_parameters.LambdaQCD_gev", "inputs.zR"), "Linked self-renormalization fit and apply jobs use one LambdaQCD_gev.", "Changing the perturbative running scale between the fitted zR and its application makes the transferred renormalization factor inconsistent.", "Set one explicit LambdaQCD_gev throughout each zR fit/apply chain.", _check_self_lambda_chain),
     ),
 )
 
@@ -312,10 +276,6 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
     """Build the resolved renormalization context consumed by the shared evaluator."""
     stage_config = manifest.stages["renormalization"]
     authored = merge_stage_params(stage_config.defaults, job.params)
-    params_by_job = {
-        candidate.id: merge_stage_params(stage_config.defaults, candidate.params)
-        for candidate in stage_config.jobs
-    }
     return StageValidationContext(
         stage="renormalization",
         job_id=job.id,
@@ -323,11 +283,7 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
         params=authored,
         inputs=dict(job.inputs),
         metadata=manifest.metadata.model_dump(),
-        resources={
-            "kernels": list(manifest.kernels),
-            "params_by_job": params_by_job,
-            "inputs_by_job": {candidate.id: dict(candidate.inputs) for candidate in stage_config.jobs},
-        },
+        resources={"kernels": list(manifest.kernels)},
         authored_params=authored,
     )
 

@@ -98,6 +98,7 @@
           "model_average": false,
           "max_schemes": 200
         }
+        // "zmin_shift": 1, // optional; clone low/high tail-window systematics (0 = off)
       },
       "jobs": [
         {
@@ -125,6 +126,10 @@
         "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},
         // lc_x_ls is the output grid; it must not be denser than quasi_y_ls.
         "lc_x_ls": {"start": -2.0, "stop": 2.0, "num": 100}
+        // "endpoint_cut": 0.01, // optional; drop a window around singular convolution endpoints
+        // "r": 1.4142135623730951, // optional; clone jobs at mu/r and mu*r (1.0 = off)
+        // "sector": "valence", // optional post-match projection; usually inherit from Fourier
+        // "plot": { "xlim": [-2.0, 2.0] } // presentation only
       },
       "jobs": [
         {
@@ -142,7 +147,18 @@
     "extrapolation": {
       // MERGE POINT: combine matched distributions at several momenta for
       // the large-momentum and continuum extrapolation.
-      "defaults": {},
+      "defaults": {
+        // All optional; omitted values use the runtime defaults noted below.
+        // "allow_order_a": [2], // default [2]
+        // "allow_order_1overp": [2], // default [2]
+        // "allow_order_ap": [2], // default []; requires fitting_param_xdep[2]=true
+        // "fitting_param_xdep": [false, true, false], // [a_xdep, p_xdep, include_ap]
+        // "posterior_prior_error_scale": 3.0,
+        // "pdep_gev": [1.5, 2.0, 2.5],
+        // "allow_order_a_sym": [1, 2],
+        // "allow_order_1overp_sym": [2],
+        // "allow_order_ap_sym": [2, 4]
+      },
       "jobs": [
         {
           "id": "ex_pdf",

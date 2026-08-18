@@ -483,11 +483,13 @@ stage/job parameter.
 
 Run `lamet-agent describe-stage renormalization` for the generated parameter
 reference, including fit/apply distinctions, choice behavior, defaults, units,
-coverage policy, linked-chain constraints, and removed-parameter migrations.
+coverage policy, and removed-parameter migrations.
 
 Stage defaults and job params recursively merge. Put shared values such as the
-required `LambdaQCD_gev` in defaults; job-level `scheme_parameters` can then
-override only operator-specific values such as `d` or `m0_gev`.
+required `LambdaQCD_gev` in defaults so fit and apply inherit one value;
+an apply-job `LambdaQCD_gev` override is used as-is. Job-level
+`scheme_parameters` can also override operator-specific values such as `d`
+or `m0_gev`.
 
 Job roles:
 

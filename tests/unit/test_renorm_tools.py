@@ -665,13 +665,14 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
     )
     store = {"target": target, "zR": zR}
 
-    with pytest.raises(ValueError, match="does not match upstream zR LambdaQCD_gev"):
-        apply_self_renormalization(
-            store,
-            kernel_id="ZMSbar_da",
-            LambdaQCD_gev=0.11,
-            save_path=str(tmp_path / "self_mismatch"),
-        )
+    mismatched = apply_self_renormalization(
+        store,
+        kernel_id="ZMSbar_da",
+        LambdaQCD_gev=0.11,
+        save_path=str(tmp_path / "self_mismatch"),
+    )
+    assert mismatched["LambdaQCD_gev"] == pytest.approx(0.11)
+    assert float(store["output"].attrs["LambdaQCD_gev"]) == pytest.approx(0.11)
 
     result = apply_self_renormalization(
         store,
