@@ -591,7 +591,7 @@ lamet-agent run examples/pion_pdf_cg_manifest.json
 Interactively plan a draft manifest before running it:
 
 ```bash
-lamet-agent plan draft_manifest.jsonc --backend api --model deepseek/deepseek-chat
+lamet-agent plan draft_manifest.jsonc --backend api --model deepseek/deepseek-chat --api-key-file api.key
 lamet-agent plan draft_manifest.jsonc --backend codex --model CODEX_MODEL_ID
 ```
 
@@ -792,7 +792,7 @@ Print each agent cycle (prompt, model action, tool observation) while the run
 executes:
 
 ```bash
-lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model deepseek/deepseek-chat --verbose
+lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model deepseek/deepseek-chat --api-key-file api.key --verbose
 ```
 
 Choose the LLM integration with `--backend` (`mock`, `external`, `api`, or `codex`).
@@ -805,17 +805,24 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend codex --model CODEX
 ```
 
 For the `codex` backend, `--model` accepts a Codex model ID and passes it to the
-SDK. Omit `--model` to use the current Codex SDK default.
+SDK. Omit `--model` to use the current Codex SDK default. Startup prints a boxed
+`codex` summary (`model` and `auth=Codex login`) before the LaMET Agent banner.
 
-The `api` backend reads the API key from `--api-key-file` (default `api.key`) or the
-provider environment variable (`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`). Pass
-`--model provider/model_id` (shorthand `provider` uses that provider's default model).
-Override the HTTP endpoint with `--base-url` when needed:
+The `api` backend reads the API key from `--api-key-file` or, if that flag is
+omitted, the provider environment variable (`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`).
+The two sources are not mixed: a missing or empty key file does not fall back to
+the environment. Startup prints a boxed `api` summary (provider, model, base URL,
+and key source — file path or env var name, never the key itself), then a blank
+line before the LaMET Agent banner. Pass `--model provider/model_id`
+(shorthand `provider` uses that provider's default model). Override the HTTP
+endpoint with `--base-url` when needed:
 
 ```bash
-lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model openai/gpt-4o-mini --verbose
+lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model openai/gpt-4o-mini --api-key-file api.key --verbose
 lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model openai/gpt-4o
 ```
+
+The second command works only when `OPENAI_API_KEY` is set in the environment.
 
 Replay a deterministic JSONL action transcript (tests and regression):
 
@@ -877,10 +884,10 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
     `python -m lamet_agent` and the `lamet-agent` console script.
   - `run` requires `--backend` (`mock`/`external`/`api`/`codex`), accepts
     `--model model_id` (for `codex`) or `--model provider/model_id` (for `api`),
-    `--verbose` / `-v` (ReAct-style trace
-    to stdout), `--actions-path` (for `external`), and `--api-key-file`/`--base-url`
-    (for `api`), plus `--report_language en|ch` to select the single report language
-    written for each stage.
+    `--verbose` / `-v` (ReAct-style trace to stdout), `--actions-path` (for
+    `external`), `--api-key-file` or the provider env var plus `--base-url`
+    (for `api`), and `--report_language en|ch` to select the single report
+    language written for each stage.
 - `lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
 - `lamet_literature/arxiv.py`

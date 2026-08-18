@@ -139,16 +139,24 @@ def _resolve_llm_config(
     *,
     backend: str,
     model: str | None,
-    api_key_file: Path,
+    api_key_file: Path | None,
     base_url: str | None,
-) -> tuple[str | None, str | None, str | None, str | None]:
-    """Resolve model and optional OpenAI-compatible API configuration."""
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    """Resolve model and OpenAI-compatible API configuration.
+
+    For ``backend='api'`` the key comes from ``--api-key-file`` (the file must
+    exist and be non-empty) or, if that flag is omitted, from the provider
+    environment variable. The sources are not mixed: a missing or empty key
+    file does not fall back to the environment.
+
+    Returns ``(provider, model_name, api_key, base_url, key_source)``.
+    ``key_source`` is ``file:<path>`` or ``env:<VAR>`` for the api backend.
+    """
     provider: str | None = None
     model_name: str | None = None
     api_key: str | None = None
+    key_source: str | None = None
     resolved_base_url: str | None = base_url
-    if backend == "api" and api_key_file.exists():
-        api_key = api_key_file.read_text(encoding="utf-8").strip()
 
     if backend == "api":
         try:
@@ -157,11 +165,61 @@ def _resolve_llm_config(
             raise typer.BadParameter(str(exc)) from exc
         config = provider_config(provider)
         assert config is not None
-        if not api_key:
-            api_key = os.environ.get(config["key_env"])
+        if api_key_file is not None:
+            if not api_key_file.is_file():
+                raise typer.BadParameter(
+                    f"--api-key-file {str(api_key_file)!r} does not exist. "
+                    "When this flag is set, the api backend does not fall back "
+                    f"to {config['key_env']}."
+                )
+            api_key = api_key_file.read_text(encoding="utf-8").strip()
+            if not api_key:
+                raise typer.BadParameter(
+                    f"--api-key-file {str(api_key_file)!r} is empty."
+                )
+            key_source = f"file:{api_key_file}"
+        else:
+            api_key = (os.environ.get(config["key_env"]) or "").strip()
+            if not api_key:
+                raise typer.BadParameter(
+                    f"backend='api' provider={provider!r} requires --api-key-file "
+                    f"or the {config['key_env']} environment variable."
+                )
+            key_source = f"env:{config['key_env']}"
     elif backend == "codex" and model:
         model_name = model.strip()
-    return provider, model_name, api_key, resolved_base_url
+    return provider, model_name, api_key, resolved_base_url, key_source
+
+
+def _emit_llm_backend_startup(
+    *,
+    backend: str,
+    provider: str | None,
+    model_name: str | None,
+    base_url: str | None,
+    key_source: str | None,
+) -> None:
+    """Print a boxed LLM backend summary, then a blank line before the banner."""
+    if backend == "api":
+        config = provider_config(provider or "")
+        effective_base_url = base_url or (config["base_url"] if config else "")
+        body = [
+            f"backend={backend}",
+            f"provider={provider}",
+            f"model={model_name}",
+            f"base_url={effective_base_url}",
+            f"api_key={key_source}",
+        ]
+    elif backend == "codex":
+        body = [
+            f"backend={backend}",
+            f"model={model_name or 'SDK default'}",
+            "auth=Codex login",
+        ]
+    else:
+        return
+    typer.echo(_render_boxed_notice("LLM BACKEND", body))
+    typer.echo()
 
 
 def _run_plan_mode(
@@ -169,7 +227,7 @@ def _run_plan_mode(
     *,
     backend: str,
     model: str | None,
-    api_key_file: Path,
+    api_key_file: Path | None,
     base_url: str | None,
     path_repair_project_root: Path | None = None,
 ) -> None:
@@ -186,11 +244,18 @@ def _run_plan_mode(
             file=sys.stderr,
         )
 
-    provider, model_name, api_key, resolved_base_url = _resolve_llm_config(
+    provider, model_name, api_key, resolved_base_url, key_source = _resolve_llm_config(
         backend=backend,
         model=model,
         api_key_file=api_key_file,
         base_url=base_url,
+    )
+    _emit_llm_backend_startup(
+        backend=backend,
+        provider=provider,
+        model_name=model_name,
+        base_url=resolved_base_url,
+        key_source=key_source,
     )
     try:
         run_interactive_plan(
@@ -220,7 +285,11 @@ def plan_workflow(
         "--model",
         help="Codex model ID, or API model as provider/model_id (api backend).",
     ),
-    api_key_file: Path = Path("api.key"),
+    api_key_file: Path | None = typer.Option(
+        None,
+        "--api-key-file",
+        help="API key file for --backend api. If omitted, use DEEPSEEK_API_KEY or OPENAI_API_KEY.",
+    ),
     base_url: str | None = typer.Option(
         None,
         "--base-url",
@@ -251,7 +320,11 @@ def run_workflow(
         help="Codex model ID, or API model as provider/model_id (api backend).",
     ),
     actions_path: Path | None = None,
-    api_key_file: Path = Path("api.key"),
+    api_key_file: Path | None = typer.Option(
+        None,
+        "--api-key-file",
+        help="API key file for --backend api. If omitted, use DEEPSEEK_API_KEY or OPENAI_API_KEY.",
+    ),
     base_url: str | None = typer.Option(
         None,
         "--base-url",
@@ -279,8 +352,11 @@ def run_workflow(
     With ``--backend codex`` the loop is driven by the Codex Python SDK and
     ``--model`` optionally selects its model. With
     ``--backend api`` pass ``--model provider/model_id`` (e.g. ``deepseek/deepseek-chat``).
-    The API key is read from ``--api-key-file`` (default ``api.key``) or the provider
-    environment variable (``DEEPSEEK_API_KEY`` / ``OPENAI_API_KEY``).
+    The API key is read from ``--api-key-file`` or, if that flag is omitted, the
+    provider environment variable (``DEEPSEEK_API_KEY`` / ``OPENAI_API_KEY``).
+    Startup prints a boxed ``api`` / ``codex`` summary (provider, model, base URL,
+    and key source or Codex login), never the key itself, then a blank line
+    before the LaMET Agent banner.
     With a planning-capable backend, manifest validation failures start the
     interactive planning loop instead of running workflow stages.
     """
@@ -322,11 +398,18 @@ def run_workflow(
             file=sys.stderr,
         )
 
-    provider, model_name, api_key, resolved_base_url = _resolve_llm_config(
+    provider, model_name, api_key, resolved_base_url, key_source = _resolve_llm_config(
         backend=backend,
         model=model,
         api_key_file=api_key_file,
         base_url=base_url,
+    )
+    _emit_llm_backend_startup(
+        backend=backend,
+        provider=provider,
+        model_name=model_name,
+        base_url=resolved_base_url,
+        key_source=key_source,
     )
 
     try:
