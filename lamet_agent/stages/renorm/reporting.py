@@ -105,13 +105,15 @@ def _scheme_table(result: dict[str, Any]) -> list[str]:
             ("z grid", format_report_list(result.get("z_grid", result.get("z_values", [])))),
             ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
         ]
-    elif scheme == "ratio":
+    elif scheme in {"ratio", "msbar"}:
         rows = [
             ("Scheme", f"`{scheme}`"),
             ("Strategy", f"`{strategy}`"),
             ("z grid", format_report_list(result.get("z_grid", []))),
             ("Resampling", f"{result.get('n_sample', 'n/a')} samples"),
         ]
+        if result.get("denominator_constant") is not None:
+            rows.insert(2, ("Denominator constant", format_report_value(result.get("denominator_constant"))))
     else:
         rows = [
             ("Scheme", f"`{scheme}`"),
@@ -159,7 +161,7 @@ h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)}.
 $$
 
 The $z=0$ point is passed through unchanged. Coverage and optional long-distance
-extension follow the declared `scheme_parameters.z_coverage_policy`.
+extension follow the declared `z_coverage_policy`.
 """.strip()
     if strategy == "self_renormalization" and scheme == "ratio":
         return r"""
@@ -178,17 +180,21 @@ $$
 h^R_s(z)=\frac{h^{\rm tar}_s(z)}{z_R(z,a)\,Z_{\overline{\mathrm{MS}}}(z;\mu)}.
 $$
 
-$Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). Lattice-unit targets are converted inside the scheme as $z_{\rm fm}=|z/a|a_{\rm fm}$. The $z=0$ samples are excluded from $z_R$ and $Z_{\overline{\mathrm{MS}}}$ evaluation but passed through unchanged into the complete output, preserving $h^R(0)=1$. `scheme_parameters.LambdaQCD_gev` is the required $\Lambda_{\mathrm{QCD}}$ scale in GeV for the self-renormalization ansatz and is recorded in artifact provenance. The coupling is still derived independently by `alphas_nloop(mu)` and recorded as provenance; a numerical coupling cannot be supplied. The `strict` coverage policy requires the nonzero target to lie within the $z_R$ grid, `intersection` explicitly clips to their overlap, and `extrapolate` automatically extends the long-distance $f_1(z)$ quadratically and rebuilds only the missing $z_R$ points without endpoint freezing. There is no explicit $z_s$ switch; the hybrid character is the combination of full-range self-renormalization and short-distance MSbar finite matching.
+$Z_{\overline{\mathrm{MS}}}$ comes from the `inputs.kernels` entry with `stage='renormalization'` (`ZMSbar_pdf` or `ZMSbar_da`). Lattice-unit targets are converted inside the scheme as $z_{\rm fm}=|z/a|a_{\rm fm}$. The $z=0$ samples are excluded from $z_R$ and $Z_{\overline{\mathrm{MS}}}$ evaluation but passed through unchanged into the complete output, preserving $h^R(0)=1$. `LambdaQCD_gev` is the required $\Lambda_{\mathrm{QCD}}$ scale in GeV for the self-renormalization ansatz and is recorded in artifact provenance. The coupling is still derived independently by `alphas_nloop(mu)` and recorded as provenance; a numerical coupling cannot be supplied. The `strict` coverage policy requires the nonzero target to lie within the $z_R$ grid, `intersection` explicitly clips to their overlap, and `extrapolate` automatically extends the long-distance $f_1(z)$ quadratically and rebuilds only the missing $z_R$ points without endpoint freezing. There is no explicit $z_s$ switch; the hybrid character is the combination of full-range self-renormalization and short-distance MSbar finite matching.
 """.strip()
-    if strategy == "external_denominator" and scheme == "ratio":
-        return r"""
-The ratio scheme acts pointwise on every resampled sample $s$ across the complete coordinate grid:
+    if strategy == "external_denominator" and scheme in {"ratio", "msbar"}:
+        constant_note = (
+            " The denominator may be a z-dependent reference matrix element or a single finite nonzero constant $C$ applied to every sample and coordinate, $h^R_s(z)=h^{\\rm tar}_s(z)/C$."
+        )
+        scheme_label = "ratio" if scheme == "ratio" else r"$\overline{\mathrm{MS}}$"
+        return rf"""
+The {scheme_label} scheme with the external-denominator strategy acts pointwise on every resampled sample $s$ across the complete coordinate grid:
 
 $$
-h^R_s(z)=\frac{h^{\rm tar}_s(z)}{h^{\rm den}_s(z)}.
+h^R_s(z)=\frac{{h^{{\rm tar}}_s(z)}}{{h^{{\rm den}}_s(z)}}.
 $$
 
-Here $h^{\rm tar}_s(z)$ is the bare target matrix element and $h^{\rm den}_s(z)$ is the reference/denominator matrix element. This scheme has no switching distance, frozen denominator, or long-distance exponential correction. With `normalization=true`, target and denominator are normalized sample by sample by their own $z=0$ values before the tool runs; with `normalization=false`, the raw inputs are divided directly.
+Here $h^{{\rm tar}}_s(z)$ is the bare target matrix element and $h^{{\rm den}}_s(z)$ is the reference/denominator matrix element.{constant_note} This scheme has no switching distance, frozen denominator, or long-distance exponential correction. With `normalization=true`, a matrix-element denominator is normalized sample by sample by its own $z=0$ value before the tool runs, while a numeric constant is used as-is; with `normalization=false`, the raw inputs are divided directly.
 """.strip()
     return r"""
 The hybrid-ratio scheme acts sample by sample on the target and denominator matrix elements. The normalization factor for resampled sample $s$ is
@@ -273,7 +279,9 @@ def build_renorm_stage_report_markdown(
             markdown_jobs.append((item, result, artifacts))
         if result.get("strategy") == "self_renormalization":
             key = result.get("kernel_id")
-        elif result.get("scheme") == "ratio":
+        elif result.get("denominator_constant") is not None:
+            key = result.get("denominator_constant")
+        elif result.get("scheme") in {"ratio", "msbar"}:
             key = "pointwise"
         else:
             key = result.get("zs_fm")

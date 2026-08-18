@@ -30,7 +30,7 @@
   "metadata": {
     "run_id": "sample_run_id",
     "root_directory": "..", // resolve paths from the repository root
-    "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
+    "artifacts_directory": "examples/artifacts", // relative to the root directory; default "artifacts"
     "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs" — shared by correlator and fourier stages
@@ -42,7 +42,8 @@
     // Global stage ORDER only. Which data sets flow through each stage is
     // decided by the jobs declared under "stages", not here. Optional terminal
     // review can be appended as "review" when a review job is also declared with
-    // "defaults": {"literature": true, "literature_max_papers": 4}.
+    // "defaults": {"literature": true, "literature_max_papers": 4}
+    // (literature default false; literature_max_papers default 4).
     "stages": ["correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation"]
   },
   "inputs": {
@@ -95,14 +96,15 @@
     // Duplicate manifest/NetCDF metadata must agree. Optional provenance
     // fields: hadron, gfix, bz_direction, coord_unit, observable, parton,
     // current_operator, polarization. Example:
-    // { "id": "rn_external", "stage": "renormalization", "path": "runs/rn.nc" }
+    // { "id": "rn_external", "stage": "renormalization", "path": "runs/rn.nc",
+    //   "coord_unit": "fm" }
     "artifacts": [],
     "kernels": [
       {
         "stage": "perturbative_matching", // full consuming StageId, not package shorthand
         "kernel_id": "CG_gt_quark_PDF_hybrid_NLO", // exact callable/registry id
         "kernel_path": "lamet_agent/kernels.py", // relative to the root directory
-        "kernel_parameters": {} // fixed kernel-specific values; do not put zs_fm here
+        "kernel_parameters": {} // default {}; fixed kernel-specific values; do not put zs_fm here
       }
       // A self_renormalization strategy also needs a renormalization kernel
       // declaration (keep the matching kernel above when running a full chain):
@@ -118,13 +120,12 @@
     // Each stage: `defaults` shared by its jobs + a `jobs` list (one per data set).
     "correlator_analysis": {
       "defaults": {
-        // Omit pt2_windows, pt3_windows, and pt3_tau_cuts to generate bounded
-        // candidates automatically. Explicit lists are exact overrides:
+        // Omit pt2_windows and pt3_windows to generate bounded candidates
+        // automatically. Explicit lists are exact overrides:
         // "pt2_windows": [
         //   { "tmin": 2, "tmax": 12 },
         //   { "tmin": 3, "tmax": 12 }
         // ],
-        // "pt3_tau_cuts": [2, 3, 4],
         // "pt3_windows": [
         //   { "tsep_ls": [8, 10, 12], "tau_cut": 2 },
         //   { "tsep_ls": [10, 12], "tau_cut": 3 }
@@ -132,15 +133,14 @@
         "nstate": [2], // positive state counts to scan; FH currently supports nstate <= 2
         "fit_scope": ["3pt_ratio"], // "3pt_ratio", "FH", "3pt_ratio+FH", or "qda_ratio"; qda_ratio uses ordinary and nonlocal-qDA 2pt inputs
         "fit_strategy": ["joint"], // "joint" fits 2pt+ratio together; "chained" fits 2pt first; "independent" skips the 2pt likelihood
-        "svdcut": 1e-06, // covariance SVD cutoff used by nonlinear fits
+        "svdcut": 1e-06, // covariance SVD cutoff used by nonlinear fits (contract default 1e-12)
         "posterior_prior_error_scale": 3.0, // inflate sample-average posterior sdev into the prior for per-sample refits (fit_bare_matrix_grid only); prior_sdev = posterior_sdev * this * prior_width
-        "prior_width": [0.5, 1.0, 2.0], // multiplicative prior-width candidates
+        "prior_width": [0.5, 1.0, 2.0], // multiplicative prior-width candidates (contract default [1])
         "fitting_form": "Breit", // "Breit" uses job momentum; "NonBreit" uses initial+final momentum
         "component": "both", // "both", "re", or "im"
         "q_min": 0.05, // minimum q value for a good fit
         "model_average": false, // false: select one model; true: sample-by-sample BMA over nstate/prior_width
-        "correlator_rescale": 1.0 // optional positive scale for numerically tiny correlators; physics output is invariant
-        // "tune_z": 1, // optional fallback z if the grid tool must pick a window itself; the agent normally supplies tune_z_values
+        "correlator_rescale": 1.0 // default 1.0; optional positive scale for numerically tiny correlators; physics output is invariant
       },
       "jobs": [
         {
@@ -179,16 +179,17 @@
     },
     "renormalization": {
       "defaults": {
-        "normalization": true, // optional; divide each bare input by its z=0 value before the scheme
-        "scheme": "hybrid", // physical renormalization scheme
-        "strategy": "external_denominator", // execution strategy; requires target+denominator
-        // Pointwise alternative: set scheme to "ratio" with the same jobs;
-        // zs_fm and scheme_parameters below are then optional and ignored.
-        // A full chain must also select a ratio-compatible matching kernel.
-        "scheme_parameters": {
-          "m0_gev": 0.0, // optional hybrid long-range renormalon slope in GeV
-          "delta_m_gev": 0.0 // optional target-denominator mass gap in GeV; unused by self_renormalization
-        }
+        "normalization": true, // required; divide each bare input by its z=0 value before the scheme
+        "scheme": "hybrid", // physical renormalization scheme, allowed values: "hybrid", "ratio", "msbar"
+        "strategy": "external_denominator", // execution strategy, requires target+denominator; allowed values: "external_denominator", "self_renormalization"; 
+        // Pointwise alternative: set scheme to "ratio" or "msbar" with the same jobs;
+        // zs_fm, m0_gev, and delta_m_gev below are then optional and ignored.
+        // For ratio/msbar, denominator may be a job id or a numeric constant
+        // such as 1.23 (all bare matrix elements divided by that constant).
+        // A full chain must also select a scheme-compatible matching kernel.
+        "zs_fm": 0.1722, // hybrid switch length in fm
+        "m0_gev": 0.0, // optional hybrid long-range renormalon slope in GeV
+        "delta_m_gev": 0.0 // optional target-denominator mass gap in GeV; unused by self_renormalization
         // Self-renormalization alternative: set strategy below and REPLACE the
         // jobs (do not mix with the external_denominator jobs). Fit vs apply is
         // identified by each job's `inputs` ROLE SET, not by job-id naming:
@@ -198,17 +199,15 @@
         // rn_zR_fit are only handles.
         // "strategy": "self_renormalization",
         // Keep scheme "hybrid" (apply still needs zs_fm + denominator) or switch
-        // to "ratio" / "msbar" (no zs_fm; msbar is self_renormalization-only).
-        // Shared defaults for that branch (nested scheme_parameters merge):
+        // to "ratio" / "msbar" (no zs_fm). msbar + external_denominator is the
+        // same pointwise division as ratio; msbar + self_renormalization still
+        // applies the fitted zR factor.
         // The shared normalization field above also applies; set it false when
         // inputs are already normalized at z=0.
         // "kernel_id": "ZMSbar_pdf", // optional with one renorm kernel; required to disambiguate; use ZMSbar_da for DA targets
-        // "mu": 2.0,                 // default 2 GeV; may instead come from kernel_parameters
-        // "ensemble": "HISQa060_X",  // optional metadata override; usually inherited from the data
-        // "scheme_parameters": {
-        //   "LambdaQCD_gev": 0.1 // required on every fit and apply job; omit on apply to inherit this default
-        // },
-        // Hybrid apply jobs still need flat zs_fm (not under scheme_parameters).
+        // "mu": 2.0,                 // typical 2 GeV; no contract default — required here or in kernel_parameters
+        // "LambdaQCD_gev": 0.1,      // required on every fit and apply job; omit on apply to inherit this default
+        // Hybrid apply jobs still need zs_fm.
         // Do not put LambdaQCD_gev / d / svdcut / z_coverage_policy on
         // external_denominator jobs; those keys are rejected there.
       },
@@ -216,13 +215,11 @@
         // MERGE POINT 1: p0 (ca_p0) is the shared denominator for p4 and p5.
         {
           "id": "rn_p4",
-          "inputs": { "target": "ca_p4", "denominator": "ca_p0" },
-          "params": { "zs_fm": 0.1722 } // required flat hybrid switch length in fm; may differ by job
+          "inputs": { "target": "ca_p4", "denominator": "ca_p0" }
         },
         {
           "id": "rn_p5",
-          "inputs": { "target": "ca_p5", "denominator": "ca_p0" },
-          "params": { "zs_fm": 0.1722 }
+          "inputs": { "target": "ca_p5", "denominator": "ca_p0" }
         }
         // No job for p0 -> p0 stops after correlator_analysis.
         // Self-renormalization must replace, not mix with, the jobs above.
@@ -230,29 +227,27 @@
         //
         // Fit job — identified only by inputs exactly {reference}:
         // { "id": "rn_zR_fit", "inputs": { "reference": "ca_p0" },
-        //   "params": { "scheme_parameters": {
+        //   "params": {
         //     "d": -0.08183,  // required reference-operator discretization coefficient
-        //     "svdcut": 1e-12 // optional covariance cut; default 1e-12
-        //   } } },            // do not set m0_gev; the reference m0 is fitted
+        //     "svdcut": 1e-12 // optional covariance cut; contract default 1e-12
+        //   } },              // do not set m0_gev; the reference m0 is fitted
         //
         // Apply job — identified by consuming role zR (the fit job id).
         // ratio/msbar (no zs_fm):
         // { "id": "rn_p4", "inputs": { "target": "ca_p4", "zR": "rn_zR_fit" },
-        //   "params": { "scheme_parameters": {
+        //   "params": {
         //     "d": 0.19,        // optional target-operator d; omit to keep the fitted zR
         //     "m0_gev": -0.094, // optional target-operator m0 remap (cross-operator use)
-        //     "z_coverage_policy": "strict" // optional; default "extrapolate"; also "intersection"
-        //   } } }
-        // hybrid (keep scheme "hybrid"): add denominator and flat zs_fm:
+        //     "z_coverage_policy": "strict" // optional; contract default "extrapolate"; also "intersection"
+        //   } }
+        // hybrid (keep scheme "hybrid"): add denominator and zs_fm:
         // { "id": "rn_p4",
         //   "inputs": { "target": "ca_p4", "denominator": "ca_p0", "zR": "rn_zR_fit" },
         //   "params": {
         //     "zs_fm": 0.1722,
-        //     "scheme_parameters": {
-        //       "d": 0.19,
-        //       "m0_gev": -0.094,
-        //       "z_coverage_policy": "extrapolate"
-        //     }
+        //     "d": 0.19,
+        //     "m0_gev": -0.094,
+        //     "z_coverage_policy": "extrapolate" // contract default "extrapolate"; also "strict" or "intersection"
         //   } }
       ]
     },
@@ -262,13 +257,15 @@
         "order": ["LA", "NLA"], // tail ansatz candidates: "LA" and/or "NLA"
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
         // Lower-level incompatible alternative: omit sector and set
-        // "part": "re" // "re", "im", or "both"; sector is preferred when available
+        // "part": "re" // "re", "im", or "both" (contract default "both"); sector is preferred when available
+        // "component": "both", // legacy alias for part; cannot be set together with part
         "Lambda0_gev": 0.0, // required fixed extra exponential scale in GeV
         "posterior_prior_error_scale": [2.0, 3.0, 5.0], // tail-fit model candidates
         "quasi_y_ls": {
           "start": -2.0, // inclusive quasi momentum-fraction range; even num avoids x=0
           "stop": 2.0,
           "num": 100 // alternatively an explicit numeric list, or {start, stop, step} instead of num
+          // "step": 0.04 // alternative to num; do not set both
         },
         // scheme_scan is explicit, but the three range fields may be omitted so the stage
         // auto-fills them from tail-fit diagnostics. Input coordinates and scan values are fixed in fm.
@@ -278,24 +275,29 @@
           "zmin_fm": [0.5166, 0.574, 0.6314, 0.6888], // candidate fit starts in fm
           "zmax_fm": [1.2054, 1.2628, 1.3202, 1.3776], // candidate fit ends in fm
           "zmax_ext_fm": 5.74, // extrapolated endpoint in fm
-          "smooth": "linear", // interpolation/smoothing choice: "linear" or "none"
-          "model_average": false, // runtime default is true; false uses one selected tail model
-          "max_schemes": 200 // cap accepted range combinations
-        },
+          "smooth": "linear", // "linear" or "none"; runtime default "linear" if the range keys are auto-filled
+          "model_average": false, // runtime default true; false uses one selected tail model
+          "max_schemes": 200 // contract default 200; cap accepted range combinations
+        }
         // Usually inferred from manifest metadata or upstream attrs:
         // "gfix": "CG", // optional; usually inherited from the input
         // "polarization": "unpolarized", // required for PDF/GPD if upstream 3pt provenance is absent
         // "hadron": "pion", // required when no upstream correlator/artifact supplies it
         // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class
         // "psi2_flavor_class": "heavy",
-        // "zmin_shift": 1, // optional; clone low/high tail-window systematics (0 = off)
-        // "im_flip_for_ft": false, // manual imaginary-part sign override; cannot combine with sector
+        // "zmin_shift": 1, // optional; clone low/high tail-window systematics (contract default 0 = off)
+        // "im_flip_for_ft": false, // contract default false; manual imaginary-part sign override; cannot combine with sector
         // "symmetry_guarantee": true, // DA only: project exp(+i*z*Pz/2)h to real, then rotate back
-        // "output_scale": 1.0,      // optional final multiplicative scale; cannot combine with sector
-        // "plot_fourier": { "save_path": "custom_xdep.pdf" },
-        // "plot_extension": { "save_path": "custom_extension_re.pdf", "scheme_index": 0 },
-        // "report": { "enabled": true, "report_language": "en" }
-        // Non-NetCDF partial inputs may also set input_format, h5_group, coord_key, re_key, im_key.
+        // "output_scale": 1.0,      // contract default 1.0; optional final multiplicative scale; cannot combine with sector
+        // "plot_fourier": { "save_path": "custom_xdep.pdf", "title": "quasi PDF" },
+        // "plot_extension": { "save_path": "custom_extension_re.pdf", "title": "tail", "scheme_index": 0 },
+        // "report": { "enabled": true, "report_language": "en", "save_path": "fourier_report.md" }
+        // Non-NetCDF partial inputs (omit for standard EnsembleData .nc sources):
+        // "input_format": "h5", // "nc"/"netcdf"/"npz"/"h5"/"hdf5"
+        // "h5_group": "momentum_PX4PY0PZ0",
+        // "coord_key": "coord", // default "coord"
+        // "re_key": "re_samples", // default "re_samples"
+        // "im_key": "im_samples" // default "im_samples"
         // Do not set momentum_gev/lattice_spacing_fm here for normal workflows;
         // they are derived from upstream momentum+volume+lattice_spacing_fm.
       },
@@ -325,9 +327,10 @@
         }
         // "kernel_id": "CG_gt_quark_PDF_hybrid_NLO" // optional explicit selector; inferred when exactly one matching kernel is declared
         // "endpoint_cut": 0.01, // optional; drop a window around singular convolution endpoints (typical for DA)
-        // "r": 1.4142135623730951, // optional; clone jobs at mu/r and mu*r for scale systematics (1.0 = off)
+        // "r": 1.4142135623730951, // optional; clone jobs at mu/r and mu*r for scale systematics (contract default 1.0 = off)
         // "sector": "valence", // optional post-match projection: sea/valence/singlet/full; usually inherit from Fourier
         // "plot": { "xlim": [-2.0, 2.0], "ylim": [-0.5, 1.5] } // presentation only
+        // "xlim": [-2.0, 2.0], "ylim": [-0.5, 1.5] // legacy aliases of plot.xlim / plot.ylim
         // momentum_gev is derived from the upstream discrete kinematics and
         // should not be hand-written in normal full or partial workflows.
       },

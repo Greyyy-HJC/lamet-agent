@@ -23,16 +23,21 @@
   // elements, run fourier_transform -> perturbative_matching, and reconverge at
   // the extrapolation placeholder (MERGE POINT).
   // An optional review job uses
-  // "defaults": {"literature": true, "literature_max_papers": 4}.
+  // "defaults": {"literature": true, "literature_max_papers": 4}
+  // (literature default false; literature_max_papers default 4).
+  // The full optional-parameter catalog lives in examples/sample_manifest.jsonc.
   "metadata": {
     "run_id": "workflow_cg_qpdf_partial_from_fourier",
     "root_directory": "..", // resolve paths from the repository root
-    "artifacts_directory": "examples/artifacts", // relative to the root directory for storing artifacts
+    "artifacts_directory": "examples/artifacts", // relative to the root directory; default "artifacts"
     "target_observable": "pdf", // "pdf", "da" or "gpd"
     "parton": "quark", // "quark" or "gluon"
     "resample_mode": "jk", // "jk" or "bs"
     "sample_error_mode": "covariance", // "mean", "median", or "covariance"; "median" requires resample_mode "bs"
     "random_seed": 1984, // required; RNG seed for every resampling step in the run
+    "workers": 1, // optional positive integer; sample-fit worker processes (default: 1, serial)
+    // "bs_samples": 500, // REQUIRED when resample_mode is "bs"; no default — must be set explicitly
+    // "bin_size": 1, // optional; bins configurations before jackknife/bootstrap resampling (default: no binning)
     // Only the stages to run, in execution order. correlator_analysis and
     // renormalization are intentionally absent (their products come in as
     // external source nodes below).
@@ -69,7 +74,7 @@
         "stage": "perturbative_matching",
         "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
         "kernel_path": "lamet_agent/kernels.py", // relative to the root directory
-        "kernel_parameters": {}
+        "kernel_parameters": {} // default {}; fixed kernel-specific values; do not put zs_fm here
       }
     ]
   },
@@ -95,11 +100,13 @@
           "zmin_fm": [0.5166, 0.574, 0.6314, 0.6888],
           "zmax_fm": [1.2054, 1.2628, 1.3202, 1.3776],
           "zmax_ext_fm": 5.74,
-          "smooth": "linear",
-          "model_average": false,
-          "max_schemes": 200
+          "smooth": "linear", // "linear" or "none"; runtime default "linear" if the range keys are auto-filled
+          "model_average": false, // runtime default true; false uses one selected tail model
+          "max_schemes": 200 // contract default 200; cap accepted range combinations
         }
-        // "zmin_shift": 1, // optional; clone low/high tail-window systematics (0 = off)
+        // "zmin_shift": 1, // optional; clone low/high tail-window systematics (contract default 0 = off)
+        // "part": "re" // "re", "im", or "both" (contract default "both"); cannot combine with sector
+        // "component": "both", // legacy alias for part; cannot be set together with part
       },
       "jobs": [
         {
@@ -123,9 +130,10 @@
         // the output window on that same spacing.
         "lc_x_ls": {"start": -2.0, "stop": 2.0}
         // "endpoint_cut": 0.01, // optional; drop a window around singular convolution endpoints
-        // "r": 1.4142135623730951, // optional; clone jobs at mu/r and mu*r (1.0 = off)
+        // "r": 1.4142135623730951, // optional; clone jobs at mu/r and mu*r (contract default 1.0 = off)
         // "sector": "valence", // optional post-match projection; usually inherit from Fourier
-        // "plot": { "xlim": [-2.0, 2.0] } // presentation only
+        // "plot": { "xlim": [-2.0, 2.0], "ylim": [-0.5, 1.5] } // presentation only
+        // "xlim": [-2.0, 2.0], "ylim": [-0.5, 1.5] // legacy aliases of plot.xlim / plot.ylim
       },
       "jobs": [
         {

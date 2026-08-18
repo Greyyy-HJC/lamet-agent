@@ -253,6 +253,8 @@ def test_terminal_tool_uses_bz_direction_and_removes_variant() -> None:
     assert "bz_direction" in parameters
     assert "reference_z" not in parameters
     assert "variant" not in parameters
+    assert "pt3_tau_cuts" not in parameters
+    assert "pt3_tau_cuts" not in inspect.signature(_tune_bare_matrix).parameters
 
 
 # --- physics models and fits -------------------------------------------------
@@ -969,17 +971,10 @@ def test_auto_pt2_windows_fall_back_and_explicit_windows_are_exact() -> None:
         _auto_pt2_windows(gv.gvar(np.zeros(8), np.ones(8)), Lt=8, nstate_values=[2])
 
 
-def test_normalise_pt3_windows_expands_tau_cuts() -> None:
-    windows = _normalise_pt3_windows(None, tsep_ls=[6, 8], tau_cuts=[1, 2])
-    assert [w["tau_cut"] for w in windows] == [1, 2]
-    assert windows[0]["tsep_ls"] == [6, 8]
-
-
 def test_normalise_pt3_windows_preserves_explicit_tsep_subsets() -> None:
     windows = _normalise_pt3_windows(
         [{"tsep_ls": [6, 8], "tau_cut": 1}, {"tau_cut": 2}],
         tsep_ls=[6, 8, 10],
-        tau_cuts=[3],
     )
     assert windows == [
         {"tsep_ls": [6, 8], "tau_cut": 1},
@@ -1018,7 +1013,6 @@ def test_auto_pt3_windows_keep_two_tseps_for_fh_and_preserve_precedence() -> Non
     resolved, diagnostics = _resolve_pt3_windows(
         explicit_windows,
         tsep_ls=[6, 8, 10],
-        tau_cuts=[1],
         fit_scopes=["3pt_ratio"],
     )
     assert resolved == explicit_windows
@@ -1027,14 +1021,10 @@ def test_auto_pt3_windows_keep_two_tseps_for_fh_and_preserve_precedence() -> Non
     resolved, diagnostics = _resolve_pt3_windows(
         None,
         tsep_ls=[6, 8, 10],
-        tau_cuts=[2, 3],
         fit_scopes=["3pt_ratio"],
     )
-    assert resolved == [
-        {"tsep_ls": [6, 8, 10], "tau_cut": 2},
-        {"tsep_ls": [6, 8, 10], "tau_cut": 3},
-    ]
-    assert diagnostics["source"] == "explicit_pt3_tau_cuts"
+    assert diagnostics["source"] == "automatic"
+    assert resolved
 
 
 def test_candidate_specs_joint_is_cartesian() -> None:
@@ -1274,7 +1264,7 @@ def test_tune_bare_matrix_returns_ranked_candidates(tmp_path) -> None:
         tune_z_values=[0],
         z_values=[0],
         pt2_windows=[{"tmin": 2, "tmax": 10}],
-        pt3_tau_cuts=[1, 2],
+        pt3_windows=[{"tsep_ls": [6, 8], "tau_cut": 1}, {"tsep_ls": [6, 8], "tau_cut": 2}],
         fit_strategy="joint",
         prior_width=1.0,
         resample_mode="jk",
@@ -1681,7 +1671,7 @@ def test_tune_bare_matrix_requires_tune_z_values(tmp_path) -> None:
             momentum="PX0PY0PZ0",
             z_values=[0],
             pt2_windows=[{"tmin": 2, "tmax": 10}],
-            pt3_tau_cuts=[1],
+            pt3_windows=[{"tsep_ls": [6, 8], "tau_cut": 1}],
             resample_mode="jk",
         )
 
@@ -1698,7 +1688,7 @@ def test_tune_bare_matrix_rejects_invalid_tune_z(tmp_path) -> None:
             tune_z_values=[99],
             z_values=[0, 1],
             pt2_windows=[{"tmin": 2, "tmax": 10}],
-            pt3_tau_cuts=[1],
+            pt3_windows=[{"tsep_ls": [6, 8], "tau_cut": 1}],
             resample_mode="jk",
         )
 

@@ -4,9 +4,9 @@
 
 Analyze only the correlators listed for the current job. Manifest-derived paths,
 selectors, resampling mode, nstate_values, prior_width, and fit_strategies are
-injected into tool calls when omitted. When pt2_windows, pt3_windows, and
-pt3_tau_cuts are absent, the tools generate bounded automatic window candidates
-from the resampled 2pt signal and available tsep grid; explicit windows are exact
+injected into tool calls when omitted. When pt2_windows and pt3_windows are
+absent, the tools generate bounded automatic window candidates from the
+resampled 2pt signal and available tsep grid; explicit windows are exact
 overrides.
 Use the injected manifest parameter contract for the authoritative meanings of
 fit_scope, fit_strategy, fitting_form, model_average, and their compatibility
@@ -62,7 +62,7 @@ Correlator-analysis physics:
   applies the contract-selected fit-function policy sample by sample.
 - When manifest windows are omitted, generate bounded 2pt candidates from the
   first-half resampled signal and 3pt candidates from the available tsep grid.
-  Explicit pt2_windows, pt3_windows, and pt3_tau_cuts remain exact overrides.
+  Explicit pt2_windows and pt3_windows remain exact overrides.
 - A shared data window must pass sample-average fits at every tune z the
   agent selects; a good chi2/dof at only the smallest tune z is not sufficient.
 - Data-window candidates with different pt2/pt3 points should not be ranked by

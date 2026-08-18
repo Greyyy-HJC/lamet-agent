@@ -25,12 +25,12 @@ def apply_ratio_scheme_renormalization(store, **kwargs):
         "denominator": "denominator_bare_matrix_element",
         "scheme": "ratio",
         "strategy": "external_denominator",
-        "scheme_parameters": {},
         "sample_error_mode": "covariance",
         **kwargs,
     }
     if explicit["scheme"] == "hybrid":
-        explicit["scheme_parameters"] = {"m0_gev": 0.0, "delta_m_gev": 0.0, **explicit["scheme_parameters"]}
+        explicit.setdefault("m0_gev", 0.0)
+        explicit.setdefault("delta_m_gev", 0.0)
     return _apply_ratio_scheme_renormalization(store, **explicit)
 
 
@@ -137,7 +137,7 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
     result = apply_ratio_scheme_renormalization(
         store,
         scheme="hybrid",
-        scheme_parameters={"zs_fm": 0.4},
+        zs_fm=0.4,
         save_path="renorm",
     )
 
@@ -189,7 +189,9 @@ def test_ratio_scheme_without_normalization_uses_pure_ratio(tmp_path: Path) -> N
         target="target",
         denominator="denominator",
         scheme="ratio",
-        scheme_parameters={"zs_fm": 0.1, "m0_gev": 9.0, "delta_m_gev": 8.0},
+        zs_fm=0.1,
+        m0_gev=9.0,
+        delta_m_gev=8.0,
         save_path=str(tmp_path / "pure"),
     )
 
@@ -200,6 +202,60 @@ def test_ratio_scheme_without_normalization_uses_pure_ratio(tmp_path: Path) -> N
     assert result["scheme"] == "ratio"
     assert not {"zs_fm", "zs_lattice", "zs_grid", "m0_gev", "delta_m_gev"} & result.keys()
     assert not {"zs_fm", "zs_lattice", "zs_grid", "m0_gev", "delta_m_gev"} & store["output"].attrs.keys()
+
+
+def test_msbar_external_denominator_matches_ratio(tmp_path: Path) -> None:
+    target = np.asarray([[2, 6, 20], [4, 8, 12]], dtype=complex)
+    denom = np.asarray([[1, 2, 10], [2, 8, 3]], dtype=complex)
+    store = {
+        "target": EnsembleData(
+            EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+            values=[target[0], target[1]], dims=("z",), coords={"z": [-1, 0, 5]},
+            attrs={"lattice_spacing_fm": "0.1"}, name="target",
+        ),
+        "denominator": EnsembleData(
+            EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+            values=[denom[0], denom[1]], dims=("z",), coords={"z": [-1, 0, 5]},
+            attrs={"lattice_spacing_fm": "0.1"}, name="denominator",
+        ),
+    }
+
+    result = apply_ratio_scheme_renormalization(
+        store,
+        target="target",
+        denominator="denominator",
+        scheme="msbar",
+        save_path=str(tmp_path / "msbar_ext"),
+    )
+
+    assert np.allclose(store["output"].values, target / denom)
+    assert result["scheme"] == "msbar"
+    assert store["output"].attrs["scheme"] == "msbar"
+    assert "denominator_constant" not in result
+
+
+def test_external_denominator_constant_divides_all_samples(tmp_path: Path) -> None:
+    target = np.asarray([[2, 6, 20], [4, 8, 12]], dtype=complex)
+    store = {
+        "target": EnsembleData(
+            EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+            values=[target[0], target[1]], dims=("z",), coords={"z": [-1, 0, 5]},
+            attrs={"lattice_spacing_fm": "0.1"}, name="target",
+        ),
+        "denominator": 2.0,
+    }
+
+    result = apply_ratio_scheme_renormalization(
+        store,
+        target="target",
+        denominator="denominator",
+        scheme="msbar",
+        save_path=str(tmp_path / "msbar_const"),
+    )
+
+    assert np.allclose(store["output"].values, target / 2.0)
+    assert result["denominator_constant"] == pytest.approx(2.0)
+    assert store["output"].attrs["denominator"] == "2.0"
 
 
 def test_ratio_scheme_uses_preprocessed_z0_normalization(tmp_path: Path) -> None:
@@ -273,7 +329,7 @@ def test_hybrid_scheme_ratio_strategy_uses_physical_switch_and_nearest_grid_poin
     result = apply_ratio_scheme_renormalization(
         store, target="target", denominator="denominator",
         scheme="hybrid",
-        scheme_parameters={"zs_fm": 0.18}, save_path=str(tmp_path / "hybrid"),
+        zs_fm=0.18, save_path=str(tmp_path / "hybrid"),
     )
 
     assert result["zs_grid"] == 3.0
@@ -311,7 +367,9 @@ def test_hybrid_scheme_ratio_strategy_long_range_exponent_uses_physical_distance
         target="target",
         denominator="denominator",
         scheme="hybrid",
-        scheme_parameters={"zs_fm": zs_fm, "m0_gev": m0_gev, "delta_m_gev": delta_m_gev},
+        zs_fm=zs_fm,
+        m0_gev=m0_gev,
+        delta_m_gev=delta_m_gev,
         save_path=str(tmp_path / "exponent"),
     )
 

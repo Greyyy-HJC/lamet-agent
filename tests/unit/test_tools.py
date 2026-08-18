@@ -279,18 +279,18 @@ def test_legacy_ratio_strategy_returns_migration_error() -> None:
 def test_hybrid_self_fit_rejects_fixed_m0() -> None:
     manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
     job = manifest.stages["renormalization"].jobs[0]
-    job.params["scheme_parameters"]["m0_gev"] = -0.094
+    job.params["m0_gev"] = -0.094
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
         "self_renormalization fit jobs determine the reference m0; "
-        "remove scheme_parameters.m0_gev here (apply jobs may override target m0_gev)."
+        "remove m0_gev here (apply jobs may override target m0_gev)."
     ]
 
 
 def test_hybrid_self_rejects_unknown_z_coverage_policy() -> None:
     manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
     job = manifest.stages["renormalization"].jobs[1]
-    job.params["scheme_parameters"]["z_coverage_policy"] = "freeze"
+    job.params["z_coverage_policy"] = "freeze"
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
         "self_renormalization z_coverage_policy must be "
@@ -301,10 +301,10 @@ def test_hybrid_self_rejects_unknown_z_coverage_policy() -> None:
 def test_hybrid_self_requires_explicit_lambdaqcd_gev() -> None:
     manifest = validate_manifest_file(Path("examples/pion_da_gi_manifest.json"))
     job = manifest.stages["renormalization"].jobs[1]
-    manifest.stages["renormalization"].defaults["scheme_parameters"].pop("LambdaQCD_gev")
+    manifest.stages["renormalization"].defaults.pop("LambdaQCD_gev")
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
-        "self_renormalization requires scheme_parameters.LambdaQCD_gev "
+        "self_renormalization requires LambdaQCD_gev "
         "on every fit and apply job."
     ]
 
@@ -420,12 +420,13 @@ def test_correlator_stage_rejects_removed_variant_parameter() -> None:
     ]
 
 
-def test_correlator_stage_allows_tune_z_parameter() -> None:
+def test_correlator_stage_rejects_removed_pt3_tau_cuts() -> None:
     manifest = _manifest()
-    manifest.stages["correlator_analysis"].jobs[0].params["tune_z"] = 2
+    manifest.stages["correlator_analysis"].defaults["pt3_tau_cuts"] = [2, 3]
     job = manifest.stages["correlator_analysis"].jobs[0]
-
-    assert validate_stage_inputs("correlator_analysis", manifest, job) == []
+    assert validate_stage_inputs("correlator_analysis", manifest, job) == [
+        "pt3_tau_cuts was replaced by pt3_windows; declare {tsep_ls, tau_cut} candidates instead of a tau-cut list."
+    ]
 
 
 def test_metadata_workers_override_stage_params_for_sample_fit_tools(tmp_path: Path) -> None:
@@ -694,9 +695,10 @@ def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> N
     assert args["target"] == "target"
     assert args["denominator"] == "denominator"
     assert args["scheme"] == effective["scheme"]
-    assert args["scheme_parameters"]["zs_fm"] == effective["zs_fm"]
-    assert args["scheme_parameters"]["m0_gev"] == effective["scheme_parameters"]["m0_gev"]
-    assert args["scheme_parameters"]["delta_m_gev"] == effective["scheme_parameters"]["delta_m_gev"]
+    assert args["zs_fm"] == effective["zs_fm"]
+    assert args["m0_gev"] == effective["m0_gev"]
+    assert args["delta_m_gev"] == effective["delta_m_gev"]
+    assert "scheme_parameters" not in args
     assert args["save_path"] == str(tmp_path / job.id)
     assert "normalization" not in args
 
@@ -728,7 +730,8 @@ def test_prepare_ratio_renormalization_args_do_not_require_hybrid_parameters(tmp
         {
             **job.params,
             "scheme": "ratio",
-            "scheme_parameters": {"m0_gev": 9.0, "delta_m_gev": 8.0},
+            "m0_gev": 9.0,
+            "delta_m_gev": 8.0,
         },
     )
     effective.pop("zs_fm", None)
@@ -744,19 +747,22 @@ def test_prepare_ratio_renormalization_args_do_not_require_hybrid_parameters(tmp
     )
 
     assert args["scheme"] == "ratio"
-    assert args["scheme_parameters"] == {}
+    assert "scheme_parameters" not in args
+    assert "zs_fm" not in args
+    assert args["m0_gev"] == 9.0
+    assert args["delta_m_gev"] == 8.0
     assert args["target"] == "target"
     assert args["denominator"] == "denominator"
 
 
 @pytest.mark.parametrize("key", ["LambdaQCD_gev", "d", "svdcut", "z_coverage_policy"])
-def test_ratio_schemes_reject_hybrid_self_only_scheme_parameters(key: str) -> None:
+def test_ratio_schemes_reject_hybrid_self_only_parameters(key: str) -> None:
     manifest = _manifest()
     job = manifest.stages["renormalization"].jobs[0]
-    manifest.stages["renormalization"].defaults["scheme_parameters"][key] = ("strict" if key == "z_coverage_policy" else 0.1)
+    manifest.stages["renormalization"].defaults[key] = ("strict" if key == "z_coverage_policy" else 0.1)
 
     assert validate_stage_inputs("renormalization", manifest, job) == [
-        f"strategy 'external_denominator' does not accept self-renormalization scheme_parameters: {key}."
+        f"strategy 'external_denominator' does not accept self-renormalization parameters: {key}."
     ]
 
 
@@ -769,13 +775,59 @@ def test_ratio_renormalization_stage_accepts_target_and_denominator_without_zs()
     assert validate_stage_inputs("renormalization", manifest, job) == []
 
 
-def test_ratio_strategy_rejects_msbar_scheme() -> None:
+def test_msbar_external_denominator_accepts_target_and_denominator() -> None:
     manifest = _manifest()
     manifest.stages["renormalization"].defaults["scheme"] = "msbar"
     job = manifest.stages["renormalization"].jobs[0]
 
+    assert validate_stage_inputs("renormalization", manifest, job) == []
+    params = merge_stage_params(manifest.stages["renormalization"].defaults, job.params)
+    assert required_job_tool_sequence("renormalization", job, params) == (
+        "apply_ratio_scheme_renormalization",
+        "plot_renormalized_matrix_element",
+    )
+
+
+def test_msbar_external_denominator_accepts_numeric_constant() -> None:
+    manifest = _manifest()
+    defaults = manifest.stages["renormalization"].defaults
+    defaults["scheme"] = "msbar"
+    job = manifest.stages["renormalization"].jobs[0]
+    job.inputs["denominator"] = 1.5
+
+    assert validate_stage_inputs("renormalization", manifest, job) == []
+
+
+def test_ratio_external_denominator_accepts_numeric_constant() -> None:
+    manifest = _manifest()
+    defaults = manifest.stages["renormalization"].defaults
+    defaults["scheme"] = "ratio"
+    defaults.pop("zs_fm", None)
+    job = manifest.stages["renormalization"].jobs[0]
+    job.inputs["denominator"] = 2.0
+
+    assert validate_stage_inputs("renormalization", manifest, job) == []
+
+
+def test_hybrid_external_denominator_rejects_numeric_constant() -> None:
+    manifest = _manifest()
+    job = manifest.stages["renormalization"].jobs[0]
+    job.inputs["denominator"] = 1.5
+
     assert validate_stage_inputs("renormalization", manifest, job) == [
-        "renormalization strategy 'external_denominator' does not implement scheme 'msbar'."
+        "hybrid+external_denominator requires a z-dependent denominator job or artifact; "
+        "a constant is only valid for ratio or msbar."
+    ]
+
+
+def test_external_denominator_rejects_zero_constant() -> None:
+    manifest = _manifest()
+    manifest.stages["renormalization"].defaults["scheme"] = "msbar"
+    job = manifest.stages["renormalization"].jobs[0]
+    job.inputs["denominator"] = 0
+
+    assert validate_stage_inputs("renormalization", manifest, job) == [
+        "external_denominator constant must be a finite nonzero value."
     ]
 
 
@@ -841,50 +893,42 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
                         "strategy": "self_renormalization",
                         "normalization": False,
                         "mu": 2.0,
-                        "scheme_parameters": {"LambdaQCD_gev": 0.12},
+                        "LambdaQCD_gev": 0.12,
                     },
                     "jobs": [
                         {
                             "id": "rn_zR_fit",
                             "inputs": {"reference": "bare_pdf_reference"},
                             "params": {
-                                "scheme_parameters": {
-                                    "d": -0.08183,
-                                    "svdcut": 1e-12,
-                                }
+                                "d": -0.08183,
+                                "svdcut": 1e-12,
                             },
                         },
                         {
                             "id": "rn_mom6_a06",
                             "inputs": {"target": "bare_da_mom6_a06", "zR": "rn_zR_fit"},
                             "params": {
-                                "scheme_parameters": {
-                                    "d": 0.19,
-                                    "m0_gev": -0.094,
-                                    "z_coverage_policy": "intersection",
-                                }
+                                "d": 0.19,
+                                "m0_gev": -0.094,
+                                "z_coverage_policy": "intersection",
                             },
                         },
                         {
                             "id": "rn_mom6_a09",
                             "inputs": {"target": "bare_da_mom6_a09", "zR": "rn_zR_fit"},
                             "params": {
-                                "scheme_parameters": {
-                                    "d": 0.19,
-                                    "m0_gev": -0.094,
-                                    "z_coverage_policy": "intersection",
-                                }
+                                "d": 0.19,
+                                "m0_gev": -0.094,
+                                "z_coverage_policy": "intersection",
                             },
                         },
                         {
                             "id": "rn_mom6_a12",
                             "inputs": {"target": "bare_da_mom6_a12", "zR": "rn_zR_fit"},
                             "params": {
-                                "scheme_parameters": {
-                                    "d": 0.19,
-                                    "m0_gev": -0.094,
-                                    "z_coverage_policy": "intersection",
-                                }
+                                "d": 0.19,
+                                "m0_gev": -0.094,
+                                "z_coverage_policy": "intersection",
                             },
                         },
                     ],
@@ -925,8 +969,8 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert "z_coverage_policy" not in fit_args
     assert fit_args["save_path"] == str(tmp_path / "rn_zR_fit")
     # Fit-job params carry required d (PDF); m0_gev omitted → fit.
-    assert fit_effective["scheme_parameters"]["d"] == -0.08183
-    assert "m0_gev" not in fit_effective["scheme_parameters"]
+    assert fit_effective["d"] == -0.08183
+    assert "m0_gev" not in fit_effective
 
     apply_args = prepare_tool_args(
         "apply_self_renormalization",
@@ -1216,7 +1260,7 @@ def test_job_zs_fm_overrides_stage_defaults_for_both_hybrid_stages(tmp_path: Pat
         store={"quasi": object()},
     )
 
-    assert renorm_args["scheme_parameters"]["zs_fm"] == 0.2
+    assert renorm_args["zs_fm"] == 0.2
     assert matching_args["zs_fm"] == 0.4
 
 
@@ -1308,7 +1352,7 @@ def test_hybrid_stage_validators_use_flat_effective_zs_fm() -> None:
 
     manifest.stages["renormalization"].defaults.pop("zs_fm")
     manifest.stages["perturbative_matching"].defaults.pop("zs_fm")
-    assert "flat parameter zs_fm" in validate_stage_inputs("renormalization", manifest, renorm_job)[0]
+    assert "zs_fm" in validate_stage_inputs("renormalization", manifest, renorm_job)[0]
     assert "flat parameter zs_fm" in validate_stage_inputs("perturbative_matching", manifest, matching_job)[0]
 
 

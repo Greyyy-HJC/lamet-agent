@@ -416,7 +416,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             summary="Candidate two-point fit windows.",
             physics="Window variation measures the stability of ground-state isolation against early-time contamination and late-time noise.",
         ),
-        "pt3_tau_cuts": _parameter("Source/sink exclusion candidates for three-point data.", "Larger cuts reduce contact and excited-state effects at the cost of statistics.", expected=(int, list), items=int, coerce_scalar_to_list=True),
         "pt3_windows": ListItems(
             {"tau_cut": _parameter("Source/sink exclusion for one candidate.", "The cut removes time slices closest to source and sink.", expected=int), "tsep_ls": _parameter("Source-sink separations in one fit candidate.", "Several separations resolve excited-state time dependence.", expected=list, items=int)},
             summary="Candidate three-point fit windows.",
@@ -424,13 +423,11 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ),
         "q_min": _parameter("Minimum accepted fit p-value.", "The threshold rejects statistically incompatible fit models.", expected=float, required=True, validator=_q_min_message),
         "svdcut": _parameter("Finite positive relative covariance singular-value cut.", "Regularization stabilizes inversion of noisy correlated data.", expected=float, default=1e-12, validator=_positive_number_message("svdcut")),
-        "tune_z": _parameter(
-            "Fallback coordinate slice used to select a shared window in the grid fit.",
-            "The preferred agent workflow tunes several representative coordinates first; this value selects the single coordinate used only when the final grid tool must choose a window itself.",
-            expected=int,
-        ),
     },
-    removed={"variant": "is not a supported correlator_analysis parameter."},
+    removed={
+        "variant": "is not a supported correlator_analysis parameter.",
+        "pt3_tau_cuts": "was replaced by pt3_windows; declare {tsep_ls, tau_cut} candidates instead of a tau-cut list.",
+    },
     constraints=(
         ConstraintSpec("correlator.scope.compatibility", ("fit_scope", "fitting_form"), "qDA is exclusive and requires Breit; FH currently requires Breit.", "These estimators use different kinematic and time-dependence models.", "Choose one compatible fit_scope/fitting_form combination.", _check_scope_compatibility),
         ConstraintSpec("correlator.fh.nstate", ("fit_scope", "nstate"), "FH scopes currently support nstate <= 2.", "The implemented summed-ratio finite-difference ansatz contains ground and first-excited-state terms only.", "Use nstate 1 or 2 for every FH candidate.", _check_fh_state_count),

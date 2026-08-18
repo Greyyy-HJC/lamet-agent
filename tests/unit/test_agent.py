@@ -1425,7 +1425,7 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
             },
             "stages": {
                 "renormalization": {
-                    "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "normalization": False, "zs_fm": 0.3, "scheme_parameters": {"m0_gev": 0.2, "delta_m_gev": 0.1}},
+                    "defaults": {"scheme": "hybrid", "strategy": "external_denominator", "normalization": False, "zs_fm": 0.3, "m0_gev": 0.2, "delta_m_gev": 0.1},
                     "jobs": [{"id": "rn_p4", "inputs": {"target": "target", "denominator": "denom"}}],
                 },
             },
@@ -1554,7 +1554,8 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
                         "scheme": "hybrid",
                         "strategy": "external_denominator",
                         "zs_fm": 0.3,
-                        "scheme_parameters": {"m0_gev": 0.0, "delta_m_gev": 0.0},
+                        "m0_gev": 0.0,
+                        "delta_m_gev": 0.0,
                     },
                     "jobs": [{"id": "rn", "inputs": {"target": "ca", "denominator": "ca"}}],
                 },

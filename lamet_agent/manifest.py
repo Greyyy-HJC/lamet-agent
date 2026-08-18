@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import gvar as gv
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from lamet_agent.manifest_params import resolve_stage_params, validate_stage_parameter_mapping
 
@@ -364,13 +364,42 @@ class ManifestInputs(BaseModel):
         return getattr(self, key, default)
 
 
+def is_constant_job_input(value: Any) -> bool:
+    """Return True if a job input is a numeric constant rather than an upstream id."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def job_input_refs(value: Any) -> list[str]:
+    """Return upstream id strings from a job input, ignoring numeric constants."""
+    items = value if isinstance(value, list) else [value]
+    return [item for item in items if isinstance(item, str)]
+
+
 class StageJob(BaseModel):
     """One independently executed stage job."""
 
     id: str
     correlator_ids: list[str] = Field(default_factory=list)
-    inputs: dict[str, str | list[str]] = Field(default_factory=dict)
+    inputs: dict[str, str | list[str] | int | float] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("inputs")
+    @classmethod
+    def validate_input_values(cls, value: dict[str, Any]) -> dict[str, Any]:
+        for role, item in value.items():
+            if isinstance(item, list):
+                if not all(isinstance(entry, str) for entry in item):
+                    raise ValueError(f"job input {role!r} lists must contain only upstream ids")
+                continue
+            if isinstance(item, str):
+                continue
+            if not is_constant_job_input(item):
+                raise ValueError(
+                    f"job input {role!r} must be an upstream id, a list of ids, or a numeric constant"
+                )
+            if not math.isfinite(float(item)):
+                raise ValueError(f"job input {role!r} constant must be a finite number")
+        return value
 
 
 class StageConfig(BaseModel):
@@ -465,13 +494,12 @@ class AnalysisManifest(BaseModel):
             if kernel.stage == "renormalization":
                 removed_kernel_parameters = {
                     "LambdaQCD": (
-                        "was renamed; declare stages.renormalization.defaults.scheme_parameters."
-                        "LambdaQCD_gev or jobs[].params.scheme_parameters.LambdaQCD_gev explicitly"
+                        "was renamed; declare stages.renormalization.defaults.LambdaQCD_gev "
+                        "or jobs[].params.LambdaQCD_gev explicitly"
                     ),
                     "LambdaQCD_gev": (
                         "is a hybrid-self-renormalization ansatz parameter; declare it under "
-                        "stages.renormalization.defaults.scheme_parameters or "
-                        "jobs[].params.scheme_parameters"
+                        "stages.renormalization.defaults.LambdaQCD_gev or jobs[].params.LambdaQCD_gev"
                     ),
                     "alpha_s": "is derived from mu by alphas_nloop and cannot be specified",
                     "b0": "is an internal hybrid-self-renormalization ansatz constant",
@@ -479,8 +507,8 @@ class AnalysisManifest(BaseModel):
                     "f1_extension_zmin_fm": "is no longer supported",
                     "k": "is an internal hybrid-self-renormalization ansatz constant",
                     "lqcd": (
-                        "was renamed; use stages.renormalization.defaults.scheme_parameters.LambdaQCD_gev "
-                        "or jobs[].params.scheme_parameters.LambdaQCD_gev"
+                        "was renamed; use stages.renormalization.defaults.LambdaQCD_gev "
+                        "or jobs[].params.LambdaQCD_gev"
                     ),
                     "Nf": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu)",
                     "order": "is not configurable for renormalization; self-renormalization uses alphas_nloop(mu)",
@@ -522,8 +550,7 @@ class AnalysisManifest(BaseModel):
                 if unknown_correlators:
                     raise ValueError(f"job {job.id!r} references unknown correlators: {unknown_correlators}")
                 for value in job.inputs.values():
-                    refs = value if isinstance(value, list) else [value]
-                    unknown = [ref for ref in refs if ref not in known]
+                    unknown = [ref for ref in job_input_refs(value) if ref not in known]
                     if unknown:
                         raise ValueError(f"job {job.id!r} references unavailable upstream ids: {unknown}")
                 known.add(job.id)
@@ -648,7 +675,7 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
 
         for role in ("input", "quasi", "target", "reference", "denominator", "zR"):
             value = candidate.inputs.get(role)
-            references = value if isinstance(value, list) else [value] if value is not None else []
+            references = job_input_refs(value)
             for reference in references:
                 resolved = from_reference(reference, seen)
                 if resolved:

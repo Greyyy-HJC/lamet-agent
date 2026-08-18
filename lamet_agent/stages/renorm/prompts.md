@@ -8,18 +8,20 @@ runner has already divided each bare matrix element by its lattice z=0 value.
 
 Follow the scheme and strategy declared in the job parameters:
 
-strategy=external_denominator (scheme=ratio or hybrid):
+strategy=external_denominator (scheme=ratio, hybrid, or msbar):
 1. Call `apply_ratio_scheme_renormalization` without overriding target,
-   denominator, scheme, scheme_parameters, or save_path.
-   ratio divides target(z) by denominator(z) on the complete grid and ignores
-   hybrid-only parameters. scheme=hybrid uses the declared zs_fm switch.
+   denominator, scheme, zs_fm, m0_gev, delta_m_gev, or save_path.
+   ratio and msbar divide target(z) by denominator(z) on the complete grid and
+   ignore hybrid-only parameters. The denominator may be a store matrix element
+   or a numeric constant applied to every sample. scheme=hybrid uses the
+   declared zs_fm switch and still requires a matrix-element denominator.
 2. Call `plot_renormalized_matrix_element`; it plots store['output'] to the job PDF.
 3. Finish with the NetCDF and PDF paths.
 
 strategy=self_renormalization fit job (inputs exactly {reference}):
 1. Call `fit_self_renormalization_factor` with no arguments. The runner binds
    reference, kernel_id, d, mu, LambdaQCD_gev, svdcut, and save_path.
-   scheme_parameters.d is required and fixed
+   d is required and fixed
    for the gz fit and zR. The reference-operator m0 is fitted from short-distance g(z), and the
    fit never extrapolates outside the reference grid. It writes store['zR'],
    store['output'], and store['self_renorm_fit'], plus the zR NetCDF.
@@ -36,7 +38,7 @@ ratio/msbar inputs are exactly {target, zR}; hybrid inputs are exactly
    already in the store; do not re-fit.
    This job's LambdaQCD_gev is used for remap and long-distance reconstruction;
    omit it from apply params to inherit the defaults/fit value.
-   Optional scheme_parameters.d / scheme_parameters.m0_gev remap that zR onto this operator (e.g.
+   Optional d / m0_gev remap that zR onto this operator (e.g.
    PDF-fit zR → DA d/m0). ratio computes H/(zR*ZMSbar), msbar computes H/zR,
    and hybrid uses target/denominator below zs_fm and target/(zR*ZT) above it,
    with ZT fixed by continuity. It writes store['output'] plus
@@ -63,8 +65,8 @@ for the already validated job.
 
 ## Available Tools
 
-- `apply_ratio_scheme_renormalization`: external_denominator strategy: consume target/denominator and apply the ratio or hybrid scheme.
-- `fit_self_renormalization_factor`: self_renormalization fit job: fit zR using scheme_parameters (including required LambdaQCD_gev and d); short-distance MSbar matching fixes m0.
-- `apply_self_renormalization`: self_renormalization apply job: apply the declared ratio, hybrid, or msbar scheme; optional scheme_parameters d/m0_gev remap zR.
+- `apply_ratio_scheme_renormalization`: external_denominator strategy: consume target/denominator and apply the ratio, hybrid, or msbar scheme. Ratio and msbar accept a job-backed denominator or a numeric constant.
+- `fit_self_renormalization_factor`: self_renormalization fit job: fit zR using required LambdaQCD_gev and d; short-distance MSbar matching fixes m0.
+- `apply_self_renormalization`: self_renormalization apply job: apply the declared ratio, hybrid, or msbar scheme; optional d/m0_gev remap zR.
 - `plot_self_renormalization_diagnostics`: self_renormalization: fit-job panels, or apply-job zmsbar_compare (+ stage-level discrete_effect once).
 - `plot_renormalized_matrix_element`: Plot store['output'] to PDF (apply jobs).

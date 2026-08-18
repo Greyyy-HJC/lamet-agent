@@ -215,7 +215,7 @@ def resolve_job_tools(
     scheme = effective_params.get("scheme")
     strategy = effective_params.get("strategy")
     roles = set(job.inputs)
-    if strategy == "external_denominator" and scheme in {"ratio", "hybrid"} and roles == {"target", "denominator"}:
+    if strategy == "external_denominator" and scheme in {"ratio", "hybrid", "msbar"} and roles == {"target", "denominator"}:
         allowed = {
             "apply_ratio_scheme_renormalization",
             "plot_renormalized_matrix_element",
@@ -258,7 +258,7 @@ def required_job_tool_sequence(
     scheme = effective_params.get("scheme")
     strategy = effective_params.get("strategy")
     roles = set(job.inputs)
-    if strategy == "external_denominator" and scheme in {"ratio", "hybrid"} and roles == {"target", "denominator"}:
+    if strategy == "external_denominator" and scheme in {"ratio", "hybrid", "msbar"} and roles == {"target", "denominator"}:
         return (
             "apply_ratio_scheme_renormalization",
             "plot_renormalized_matrix_element",
@@ -578,9 +578,6 @@ def prepare_tool_args(
             # These job tools have runner-owned contracts. Ignore model-supplied
             # values (including explicit nulls) and rebuild arguments below.
             resolved = {}
-        scheme_parameters = effective_params.get("scheme_parameters")
-        if not isinstance(scheme_parameters, dict):
-            scheme_parameters = {}
         renorm_kernels = [item for item in manifest.kernels if item.stage == "renormalization"]
         kernel_id = effective_params.get("kernel_id")
         kernel_parameters: dict[str, Any] = {}
@@ -592,17 +589,17 @@ def prepare_tool_args(
 
         if tool_name == "apply_ratio_scheme_renormalization":
             for key, value in effective_params.items():
-                if key in {"normalization", "zs_fm", "scheme_parameters"}:
+                if key in {
+                    "normalization",
+                    "LambdaQCD_gev",
+                    "d",
+                    "svdcut",
+                    "z_coverage_policy",
+                    "ensemble",
+                }:
                     continue
                 if key not in resolved or resolved[key] is None:
                     resolved[key] = value
-            if effective_params.get("scheme") == "hybrid":
-                resolved["scheme_parameters"] = {
-                    **scheme_parameters,
-                    "zs_fm": effective_params["zs_fm"],
-                }
-            else:
-                resolved["scheme_parameters"] = {}
             resolved.update(
                 {
                     "target": "target",
@@ -619,7 +616,7 @@ def prepare_tool_args(
             resolved["strategy"] = effective_params["strategy"]
             if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
-            for key, value in {**kernel_parameters, **scheme_parameters}.items():
+            for key, value in kernel_parameters.items():
                 if key in _RENORM_SELF_FIT_PARAM_KEYS:
                     resolved[key] = value
             for key in _RENORM_SELF_FIT_PARAM_KEYS:
@@ -650,8 +647,6 @@ def prepare_tool_args(
             if source_ensemble is not None:
                 source_metadata.setdefault("ensemble", source_ensemble.id)
             source_metadata.update(derive_job_kinematics(manifest, job))
-            if "ensemble" in effective_params:
-                source_metadata["ensemble"] = effective_params["ensemble"]
             resolved.update(
                 {
                     "target": "target",
@@ -673,7 +668,7 @@ def prepare_tool_args(
                 resolved["zs_fm"] = effective_params["zs_fm"]
             if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
-            for key, value in {**kernel_parameters, **scheme_parameters}.items():
+            for key, value in kernel_parameters.items():
                 if key in {"mu", "LambdaQCD_gev", "d", "m0_gev", "z_coverage_policy"}:
                     resolved[key] = value
             for key in ("mu", "d", "m0_gev", "z_coverage_policy", "LambdaQCD_gev"):
@@ -694,7 +689,7 @@ def prepare_tool_args(
                 resolved["target"] = "target"
             if kernel_id is not None:
                 resolved["kernel_id"] = kernel_id
-            for key, value in {**kernel_parameters, **scheme_parameters}.items():
+            for key, value in kernel_parameters.items():
                 if key in {"mu", "LambdaQCD_gev", "z_coverage_policy"}:
                     resolved[key] = value
             for key in ("LambdaQCD_gev", "mu", "z_coverage_policy"):

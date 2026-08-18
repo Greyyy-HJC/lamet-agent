@@ -1328,3 +1328,76 @@
   inside that window at the same spacing. Replaced the denser-grid CLI warning
   with a hard window check against the upstream Fourier job.
 
+## 2026-08-18 (Sample-manifest parameter catalog and defaults)
+
+- Audited `examples/sample_manifest.jsonc` against every stage contract,
+  metadata field, correlator input, artifact provenance key, and kernel field.
+- Documented previously uncommented optional keys: Fourier `component` (legacy
+  `part` alias), plot/report nested `title`/`save_path`, Non-NetCDF
+  `input_format`/`h5_group`/`coord_key`/`re_key`/`im_key`, `quasi_y_ls.step`,
+  matching legacy `xlim`/`ylim`, and artifact `coord_unit`.
+- Annotated contract defaults (`svdcut`, `prior_width`, `correlator_rescale`,
+  `artifacts_directory`, Fourier `part`/`zmin_shift`/`im_flip_for_ft`/
+  `output_scale`/`max_schemes`/file keys, matching `r`, review literature
+  settings) and runtime Fourier `scheme_scan` defaults. Corrected
+  renormalization `normalization` (required) and `mu` (no contract default).
+- Synced overlapping default comments into `examples/partial_sample_manifest.jsonc`.
+
+## 2026-08-18 (Drop correlator `pt3_tau_cuts`)
+
+- Removed `pt3_tau_cuts` from the correlator parameter contract and tool
+  signatures so three-point scan candidates are authored only as `pt3_windows`.
+- Explicit `{tsep_ls, tau_cut}` lists remain exact overrides; omitting
+  `pt3_windows` still generates bounded automatic tsep/tau-cut candidates.
+- Converted `examples/pion_pdf_cg_manifest.json` to equivalent `pt3_windows`,
+  updated planning window expansion/rollback to that key, and reject leftover
+  `pt3_tau_cuts` with a replacement message.
+
+## 2026-08-18 (Drop unused correlator and renormalization manifest keys)
+
+- Removed correlator `tune_z` from the stage contract. Window tuning stays on
+  LLM-supplied `tune_z_values` to `tune_bare_matrix`; `fit_bare_matrix_grid`
+  still defaults to the first job z when it must pick a window itself.
+- Removed renormalization `ensemble` from the stage contract. Output labels
+  inherit from target data or correlator/artifact metadata instead of a
+  stage-parameter override.
+- Dropped the commented sample-manifest entries. Leftover keys are rejected
+  by the existing unknown-parameter check, without a dedicated migration
+  message.
+
+## 2026-08-18 (Allow renormalization `zs_fm` in `scheme_parameters`)
+
+- Hybrid renormalization `zs_fm` may be declared as a flat stage/job parameter
+  or as `scheme_parameters.zs_fm`. Matching `zs_fm` remains flat, and kernel
+  `kernel_parameters.zs_fm` is still rejected.
+- If both renormalization locations are set, the values must agree. Runtime
+  argument binding, review consistency checks, and `zs_fm` systematics
+  expansion read either location.
+- Sample manifest hybrid defaults now group `zs_fm` with the other hybrid
+  scheme parameters.
+
+## 2026-08-18 (Flatten renormalization `scheme_parameters`)
+
+- Removed the nested `scheme_parameters` object. Hybrid `zs_fm`, `m0_gev`,
+  `delta_m_gev` and self-renormalization `LambdaQCD_gev`, `d`, `svdcut`,
+  `z_coverage_policy` are now flat stage/job parameters.
+- Leftover `scheme_parameters` keys are rejected with a migration message.
+  The `apply_ratio_scheme_renormalization` tool still receives a
+  `scheme_parameters` dict assembled from those flat keys.
+
+## 2026-08-18 (Flatten `apply_ratio_scheme_renormalization` arguments)
+
+- Stopped assembling a `scheme_parameters` dict at the tool boundary.
+  `apply_ratio_scheme_renormalization` now takes flat `zs_fm`, `m0_gev`, and
+  `delta_m_gev`, matching the manifest contract. Ratio jobs still ignore those
+  hybrid-only arguments.
+
+## 2026-08-18 (MSbar external_denominator and constant denominators)
+
+- `scheme=msbar` with `strategy=external_denominator` now uses the same
+  pointwise target/denominator division as ratio.
+- The renormalization `denominator` role may be an upstream job or artifact
+  id, or a finite nonzero numeric constant for ratio and msbar. Hybrid still
+  requires a z-dependent matrix-element denominator.
+
+

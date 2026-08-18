@@ -449,14 +449,54 @@ def load_bare_matrix_element_grid(
     }
 
 
+def _is_constant_denominator(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _external_denominator_values(
+    store: dict[str, Any],
+    denominator: str | int | float,
+    target_data: EnsembleData,
+    *,
+    scheme: str,
+) -> tuple[np.ndarray, np.ndarray | None, Any]:
+    """Return ``(denom_values, z_denom_or_None, provenance)`` for an external apply."""
+    raw = store.get(denominator) if isinstance(denominator, str) else denominator
+    if _is_constant_denominator(raw):
+        if scheme == "hybrid":
+            raise ValueError(
+                "hybrid external_denominator requires a matrix-element denominator, not a constant"
+            )
+        constant = float(raw)
+        if not np.isfinite(constant) or constant == 0.0:
+            raise ValueError("external_denominator constant must be a finite nonzero value")
+        target_values = np.asarray(target_data.values, dtype=complex)
+        return np.full(target_values.shape, constant, dtype=complex), None, constant
+    denom_data = raw if isinstance(raw, EnsembleData) else _require_matrix_data(store, str(denominator))
+    if target_data.resample != denom_data.resample:
+        raise ValueError(
+            f"target and denominator resampling must match: {target_data.resample} != {denom_data.resample}"
+        )
+    z_target = np.asarray(target_data.coords["z"], dtype=float)
+    z_denom = np.asarray(denom_data.coords["z"], dtype=float)
+    if z_target.shape != z_denom.shape or not np.allclose(z_target, z_denom, rtol=0.0, atol=1e-10):
+        raise ValueError("target and denominator z grids must match exactly")
+    denom_values = np.asarray(denom_data.values, dtype=complex)
+    if np.asarray(target_data.values).shape != denom_values.shape:
+        raise ValueError("target and denominator sample arrays must have matching shape")
+    return denom_values, z_denom, denominator
+
+
 def apply_ratio_scheme_renormalization(
     store: dict[str, Any],
     *,
     target: str,
-    denominator: str,
+    denominator: str | int | float,
     scheme: str,
     strategy: str,
-    scheme_parameters: dict[str, float],
+    zs_fm: float | None = None,
+    m0_gev: float | None = None,
+    delta_m_gev: float | None = None,
     out: str = "matrix_element_data",
     save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
@@ -464,20 +504,13 @@ def apply_ratio_scheme_renormalization(
     ensemble: str | None = None,
     sample_error_mode: str,
 ) -> dict[str, Any]:
-    """Apply the external_denominator strategy in the ratio or hybrid scheme."""
+    """Apply the external_denominator strategy in the ratio, hybrid, or MSbar scheme."""
     if strategy != "external_denominator":
         raise ValueError(f"unsupported renormalization strategy: {strategy!r}")
-    if scheme not in {"ratio", "hybrid"}:
+    if scheme not in {"ratio", "hybrid", "msbar"}:
         raise ValueError(f"unsupported renormalization scheme: {scheme!r}")
     target_data = _require_matrix_data(store, target)
-    denom_data = _require_matrix_data(store, denominator)
-    if target_data.resample != denom_data.resample:
-        raise ValueError(f"target and denominator resampling must match: {target_data.resample} != {denom_data.resample}")
-
     z_target = np.asarray(target_data.coords["z"], dtype=float)
-    z_denom = np.asarray(denom_data.coords["z"], dtype=float)
-    if z_target.shape != z_denom.shape or not np.allclose(z_target, z_denom, rtol=0.0, atol=1e-10):
-        raise ValueError("target and denominator z grids must match exactly")
     lattice_spacing_raw = target_data.attrs.get("lattice_spacing_fm")
     if lattice_spacing_raw in {None, ""}:
         raise ValueError(
@@ -498,17 +531,20 @@ def apply_ratio_scheme_renormalization(
         )
     z_output_fm = z_target * lattice_spacing_fm
     target_values = np.asarray(target_data.values, dtype=complex)
-    denom_values = np.asarray(denom_data.values, dtype=complex)
-    if target_values.shape != denom_values.shape:
-        raise ValueError("target and denominator sample arrays must have matching shape")
+    denom_values, z_denom, denom_provenance = _external_denominator_values(
+        store, denominator, target_data, scheme=scheme
+    )
 
     renorm_values = target_values / denom_values
     hybrid_metadata: dict[str, float] = {}
     if scheme == "hybrid":
-        params = scheme_parameters
-        zs_fm = float(params["zs_fm"])
-        m0_gev = float(params["m0_gev"])
-        delta_m_gev = float(params["delta_m_gev"])
+        if zs_fm is None or m0_gev is None or delta_m_gev is None:
+            raise ValueError("hybrid scheme requires zs_fm, m0_gev, and delta_m_gev")
+        if z_denom is None:
+            raise ValueError("hybrid scheme requires a z-dependent denominator")
+        zs_fm = float(zs_fm)
+        m0_gev = float(m0_gev)
+        delta_m_gev = float(delta_m_gev)
         zs_lattice = zs_fm / lattice_spacing_fm
         zs_idx = int(np.argmin(np.abs(np.abs(z_denom) - zs_lattice)))
         z_abs_fm = np.abs(z_output_fm)
@@ -529,7 +565,7 @@ def apply_ratio_scheme_renormalization(
         "scheme": scheme,
         "strategy": strategy,
         "target": target,
-        "denominator": denominator,
+        "denominator": denom_provenance,
         "job_id": job_id,
         "sample_error_mode": sample_error_mode,
         "average_method": sample_error_mode,
@@ -570,6 +606,11 @@ def apply_ratio_scheme_renormalization(
         "scheme": scheme,
         "strategy": strategy,
         **hybrid_metadata,
+        **(
+            {"denominator_constant": float(denom_provenance)}
+            if _is_constant_denominator(denom_provenance)
+            else {}
+        ),
     }
 
 

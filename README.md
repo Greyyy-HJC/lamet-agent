@@ -242,22 +242,28 @@ implemented (`external_denominator` or `self_renormalization`). Perturbative mat
 `scheme`; its value must match the scheme token in the selected `kernel_id`.
 Kernel declarations under `inputs.kernels` no longer carry a `scheme` field.
 
-Set `scheme: "ratio"` and `strategy: "external_denominator"` on a renormalization stage or job
-to divide the target and denominator pointwise on the complete coordinate grid
-for every resampled sample:
+Set `scheme: "ratio"` or `scheme: "msbar"` with `strategy: "external_denominator"`
+on a renormalization stage or job to divide the target and denominator pointwise
+on the complete coordinate grid for every resampled sample:
 
 $$
 h_s^R(z) = \frac{h_s^{\mathrm{target}}(z)}{h_s^{\mathrm{denominator}}(z)}.
 $$
 
+The `denominator` role may be an upstream job or artifact id, or a finite
+nonzero numeric constant. A constant $C$ divides every bare target sample as
+$h_s^R(z)=h_s^{\mathrm{target}}(z)/C$ and is not $z=0$-normalized.
+
 `external_denominator`-strategy jobs use the same `{target, denominator}` input roles as hybrid
 jobs, but do not require `zs_fm` and do not apply a fixed denominator or a
 long-distance exponential correction. Hybrid-only settings (`zs_fm`,
-`scheme_parameters.m0_gev`, and `scheme_parameters.delta_m_gev`) are ignored if
-they remain in shared defaults. The `normalization` preprocessing described
-above still applies; set it to `false` for a direct ratio of raw bare inputs.
+`m0_gev`, and `delta_m_gev`) are ignored if
+they remain in shared defaults. Hybrid jobs still require a z-dependent
+matrix-element denominator; a numeric constant is valid only for `ratio` and
+`msbar`. The `normalization` preprocessing described
+above still applies to matrix-element inputs; set it to `false` for a direct ratio of raw bare inputs.
 
-Both ratio and hybrid jobs using the `external_denominator` strategy consume lattice-unit `z` coordinates and
+Ratio, msbar, and hybrid jobs using the `external_denominator` strategy consume lattice-unit `z` coordinates and
 require a positive finite `lattice_spacing_fm` on the target data. Their
 terminal `EnsembleData`, `store["matrix_element"]`, and NetCDF artifact convert
 the coordinate to signed physical distance as
@@ -302,9 +308,7 @@ kernel declaration. Set it as `stages.renormalization.defaults.zs_fm` or
 `stages.perturbative_matching.jobs[].params.zs_fm`. Job values override stage
 defaults, so different data chains may use different switch distances.
 
-Do not place `zs_fm` under `inputs.kernels[].kernel_parameters` or under
-renormalization `scheme_parameters`; manifest validation rejects both legacy
-locations. For a complete in-manifest chain, the review stage follows
+Do not place `zs_fm` under `inputs.kernels[].kernel_parameters`. For a complete in-manifest chain, the review stage follows
 `matching.quasi -> fourier.input -> renormalization job` and reports whether the
 hybrid matching and hybrid-ratio renormalization values agree. Partial runs that
 start from an external artifact are reported as not verifiable rather than as a
@@ -368,7 +372,7 @@ for every retained target sample. By default, apply detects missing
 long-distance points, infers $f_1(z)$ from the
 available $z_R$, fits its long-distance tail quadratically, and rebuilds only
 the missing $z_R$ points. No endpoint is frozen, and no explicit extension
-length or fit boundary is required. `scheme_parameters.z_coverage_policy: "strict"` can require
+length or fit boundary is required. `z_coverage_policy: "strict"` can require
 complete coverage instead, while `intersection` explicitly keeps only the
 target/$z_R$ overlap.
 
@@ -385,7 +389,7 @@ above is used over the full nonzero coordinate range. With `scheme: "msbar"`,
 the apply formula is instead $H_{\mathrm{bare}}/z_R$.
 
 With `scheme: "hybrid"`, apply jobs additionally require a `denominator` input
-and flat `zs_fm`. They use the pointwise target/denominator ratio for
+and `zs_fm`. They use the pointwise target/denominator ratio for
 $|z|\le z_s$ and
 
 $$
@@ -431,11 +435,11 @@ Typical agent tool order:
    `plot_renormalized_matrix_element` → finish.
 
 Same-operator use (zero-momentum PDF → finite-$P_z$ PDF): fit with the PDF
-`scheme_parameters.d` ($m_0$ of the reference operator is fitted), and leave
+`d` ($m_0$ of the reference operator is fitted), and leave
 apply jobs without `d`/`m0_gev`
 overrides. Cross-operator use (PDF reference → DA targets): fit with PDF `d`
 (and do not set `m0_gev` on the fit job); on each apply job set DA `d` and
-`scheme_parameters.m0_gev` so the target operator can use a different finite renormalization and
+`m0_gev` so the target operator can use a different finite renormalization and
 upstream $z_R$ is remapped before division.
 
 ### Manifest shape
@@ -443,10 +447,10 @@ upstream $z_R$ is remapped before division.
 Declare a renormalization kernel with `kernel_id` `ZMSbar_pdf` or `ZMSbar_da`.
 Bare inputs are either upstream
 correlator job ids or `inputs.artifacts` with `stage: "correlator_analysis"`.
-Self-renormalization-specific knobs are grouped under
-`scheme_parameters`; `kernel_id`, `mu`, and the cross-scheme `normalization`
-setting remain outside that object. Hybrid `zs_fm` remains a flat
-stage/job parameter.
+Self-renormalization knobs such as `LambdaQCD_gev`, `d`, `svdcut`, and
+`z_coverage_policy` are flat stage/job parameters, as are hybrid `zs_fm`,
+`m0_gev`, and `delta_m_gev`. `kernel_id`, `mu`, and `normalization` stay at
+the same level.
 
 ```json
 {
@@ -471,24 +475,22 @@ stage/job parameter.
         "scheme": "ratio",
         "strategy": "self_renormalization",
         "mu": 2.0,
-        "scheme_parameters": { "LambdaQCD_gev": 0.1 }
+        "LambdaQCD_gev": 0.1
       },
       "jobs": [
         {
           "id": "rn_zR_fit",
           "inputs": { "reference": "bare_pdf_reference" },
           "params": {
-            "scheme_parameters": { "d": -0.08183 }
+            "d": -0.08183
           }
         },
         {
           "id": "rn_da_a06",
           "inputs": { "target": "bare_da_a06", "zR": "rn_zR_fit" },
           "params": {
-            "scheme_parameters": {
-              "d": 0.19,
-              "m0_gev": -0.094
-            }
+            "d": 0.19,
+            "m0_gev": -0.094
           }
         }
       ]
@@ -506,7 +508,7 @@ coverage policy, and removed-parameter migrations.
 Stage defaults and job params recursively merge. Put shared values such as the
 required `LambdaQCD_gev` in defaults so fit and apply inherit one value;
 an apply-job `LambdaQCD_gev` override is used as-is. Job-level
-`scheme_parameters` can also override operator-specific values such as `d`
+params can also override operator-specific values such as `d`
 or `m0_gev`.
 
 Job roles:
