@@ -114,8 +114,7 @@
         "nstate": [
           2
         ],
-        "lanczos_iterations": 2,
-        "lanczos_precision": 0
+        "lanczos_precision": 100
       },
       "jobs": [
         {

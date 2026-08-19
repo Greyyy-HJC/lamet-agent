@@ -2445,7 +2445,6 @@ def inspect_lanczos_inputs(
     z_values: list[int] | None = None,
     bT: int | None = None,
     temporal_extent: int | None = None,
-    lanczos_iterations: int | None = None,
     lanczos_t0: int | None = None,
     lanczos_time_step: int | None = None,
     out: str = "lanczos_input_inspection",
@@ -2493,7 +2492,6 @@ def inspect_lanczos_inputs(
         plan = plan_twopt_grid(
             source_times=source.shape[1],
             sink_times=sink.shape[1],
-            requested_iterations=lanczos_iterations,
             t0=lanczos_t0,
             time_step=lanczos_time_step,
         )
@@ -2510,7 +2508,6 @@ def inspect_lanczos_inputs(
             list(paths_by_tsep),
             source_times=source.shape[1],
             sink_times=sink.shape[1],
-            requested_iterations=lanczos_iterations,
             t0=lanczos_t0,
             time_step=lanczos_time_step,
         )
@@ -2632,8 +2629,7 @@ def run_lanczos_analysis(
     seed: int | None,
     bin_size: int | None,
     lanczos_inner_samples: int = 200,
-    lanczos_precision: int = 100,
-    lanczos_iterations: int | None = None,
+    lanczos_precision: int = 0,
     lanczos_t0: int | None = None,
     lanczos_time_step: int | None = None,
     workers: int = 1,
@@ -2688,7 +2684,6 @@ def run_lanczos_analysis(
         z_values=z_values,
         bT=bT,
         temporal_extent=temporal_extent,
-        lanczos_iterations=lanczos_iterations,
         lanczos_t0=lanczos_t0,
         lanczos_time_step=lanczos_time_step,
     )

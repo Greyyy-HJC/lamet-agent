@@ -41,6 +41,11 @@ configuration so the nested resampling preserves their correlations.
 Selecting both correlator components runs two separate real-valued Lanczos
 analyses, one for the real part and one for the imaginary part. Independent
 outer resamples are process-parallel according to the manifest worker count.
+The Lanczos order is inferred from the selected input shape and is always the
+largest compatible order; it is not user-authored. Recurrence construction uses
+NumPy double precision when `lanczos_precision=0` and uses explicit decimal
+high precision only for a positive value. Planning and validation print a
+non-blocking warning for the double-precision setting.
 
 这些方案各有各的优缺点，因此需要智能体根据数据的特点，选择合适的分析策略来提取 $g_A$ 的数值。提取了 LQCD 的裸 $g_A$ 之后，还需要进行重整化，才能得到物理的 $g_A^\mathrm{phys} = Z_A g_A$ 数值。即在这一步通过关联函数分析得到的结果，正是下一步重整化的输入。
 

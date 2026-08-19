@@ -99,7 +99,6 @@ def _check_method_parameters(context: StageValidationContext) -> list[RuleViolat
     )
     lanczos_only = (
         "lanczos_inner_samples",
-        "lanczos_iterations",
         "lanczos_precision",
         "lanczos_t0",
         "lanczos_time_step",
@@ -578,14 +577,13 @@ def _check_lanczos_inputs(context: StageValidationContext) -> RuleViolation | No
                 tseps,
                 source_times=min(temporal_extents),
                 sink_times=min(temporal_extents),
-                requested_iterations=context.params.get("lanczos_iterations"),
                 t0=context.params.get("lanczos_t0"),
                 time_step=context.params.get("lanczos_time_step"),
             )
         except ValueError as exc:
             return _violation(
                 context,
-                "The standard tsep/tau 3pt data cannot form the requested Lanczos square.",
+                "The standard tsep/tau 3pt data cannot form a complete Lanczos square.",
                 parameter="correlator_ids",
                 cause=str(exc),
             )
@@ -700,17 +698,11 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             default=200,
             validator=_positive_integer_message("lanczos_inner_samples"),
         ),
-        "lanczos_iterations": _parameter(
-            "Krylov iteration/order m; omitted uses the largest order supported by every selected input.",
-            "After t0 trimming and T**n sampling, iteration m consumes 2m effective C2 moments and a complete m by m effective 3pt block.",
-            expected=int,
-            validator=_positive_integer_message("lanczos_iterations"),
-        ),
         "lanczos_precision": _parameter(
-            "Decimal precision used by the Lanczos recurrence; zero selects NumPy float64.",
-            "Higher precision can stabilize the moment recurrence on noisy data but does not add information to the correlator ensemble.",
+            "Decimal precision used only to construct the Lanczos recurrence matrix; zero selects NumPy double precision.",
+            "Double precision is the default. A positive value must be authored explicitly and constructs the recurrence matrix with that many decimal digits before the downstream eigensystem analysis.",
             expected=int,
-            default=100,
+            default=0,
             validator=_positive_integer_message("lanczos_precision", allow_zero=True),
         ),
         "lanczos_t0": _parameter(
@@ -750,6 +742,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
     removed={
         "variant": "is not a supported correlator_analysis parameter.",
         "pt3_tau_cuts": "was replaced by pt3_windows; declare {tsep_ls, tau_cut} candidates instead of a tau-cut list.",
+        "lanczos_iterations": "is determined automatically from the available 2pt times and complete 3pt square; remove this parameter.",
     },
     constraints=(
         ConstraintSpec("correlator.method.required", ("analysis_method",), "Each analysis method declares a distinct required and allowed parameter set.", "Spectral-fit controls are not inputs to the Lanczos recurrence, while Lanczos sampling controls do not define a ground-state fit.", "Declare the required parameters and remove parameters belonging only to the other analysis_method.", _check_method_parameters),
@@ -757,7 +750,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ConstraintSpec("correlator.fh.nstate", ("fit_scope", "nstate"), "FH scopes currently support nstate <= 2.", "The implemented summed-ratio finite-difference ansatz contains ground and first-excited-state terms only.", "Use nstate 1 or 2 for every FH candidate.", _check_fh_state_count),
         ConstraintSpec("correlator.qda.inputs", ("momentum", "correlator_ids"), "A qDA job selects one nonlocal qDA 2pt and at most one matching local 2pt.", "The nonlocal numerator and local or bz=0 denominator must describe the same hadron ensemble.", "Select the required qDA/local correlators with matching momentum and provenance.", _check_qda_inputs),
         ConstraintSpec("correlator.ordinary.inputs", ("momentum", "initial_momentum", "final_momentum", "correlator_ids"), "Ordinary jobs require compatible 2pt/3pt momentum, operator, separation, and provenance metadata.", "A correlated spectral fit is meaningful only when every input represents the same operator and ensemble channel.", "Select compatible correlators or correct the job kinematics.", _check_ordinary_inputs),
-        ConstraintSpec("correlator.lanczos.inputs", ("analysis_method", "fit_scope", "correlator_ids", "lanczos_t0", "lanczos_time_step"), "Lanczos 3pt jobs use the standard tsep/tau correlators aligned configuration-by-configuration with their source/sink 2pt inputs.", "The internal Ritz rotation needs a complete effective C3 square after t0 trimming and sparse T**n sampling, plus shared resampling indices across all correlators.", "Select matching 2pt/3pt inputs and provide enough arithmetic-sequence tsep values to build the requested square.", _check_lanczos_inputs),
+        ConstraintSpec("correlator.lanczos.inputs", ("analysis_method", "fit_scope", "correlator_ids", "lanczos_t0", "lanczos_time_step"), "Lanczos 3pt jobs use the standard tsep/tau correlators aligned configuration-by-configuration with their source/sink 2pt inputs.", "The internal Ritz rotation needs a complete effective C3 square after t0 trimming and sparse T**n sampling, plus shared resampling indices across all correlators.", "Select matching 2pt/3pt inputs and provide enough arithmetic-sequence tsep values to build a complete square.", _check_lanczos_inputs),
     ),
 )
 

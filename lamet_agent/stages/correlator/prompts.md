@@ -26,9 +26,9 @@ and time axes. `fit_scope=3pt_matrix` has a substantially stricter input
 contract. Before running it, explicitly tell the user all of the following:
 
 - the standard manifest/HDF5 `tsep/tau` input is converted automatically. The
-  inspection selects or checks `t0`, sparse transfer power `T**n`, and order
-  `m`, then uses only points satisfying
-  `tsep=2*t0+n*(s+r)` and `tau=t0+n*r`;
+  inspection selects or checks `t0` and sparse transfer power `T**n`, determines
+  the largest compatible order `m` from the input shape, and then uses only
+  points satisfying `tsep=2*t0+n*(s+r)` and `tau=t0+n*r`;
 - read `point_usage_warning` from `inspect_lanczos_inputs` and explicitly warn
   the user how many standard 3pt points are used and discarded. Do this before
   calling `run_lanczos_analysis`; never imply that every declared point is used;
@@ -36,8 +36,9 @@ contract. Before running it, explicitly tell the user all of the following:
   `C3[c,sigma,tau] = <sink|T^sigma J T^tau|source>_c`, where `tau` is source to
   current, `sigma` is current to sink, and `t_f=sigma+tau`;
 - iteration `m` requires every point in the complete leading `m x m` square.
-  Missing arithmetic-sequence `tsep` values can therefore make a requested
-  order impossible, while extra `tsep` and insertion points are discarded;
+  Missing arithmetic-sequence `tsep` values can therefore reduce the
+  automatically selected order, while extra `tsep` and insertion points are
+  discarded;
 - source 2pt, sink 2pt, and every 3pt z dataset must have identical,
   configuration-by-configuration sample ordering. Every selected effective
   point must be finite and the effective source/sink normalization must be
@@ -52,6 +53,9 @@ contract. Before running it, explicitly tell the user all of the following:
 resampling and an inner bootstrap used for CW filtering/median aggregation.
 Independent outer samples use the manifest `workers` process count and report
 progress while running.
+`lanczos_precision=0` constructs recurrence matrices with NumPy double
+precision; only an explicitly positive decimal digit count enables
+high-precision construction. `plan` and `validate` print a warning for zero.
 For 2pt it writes ordered Ritz energies. For 3pt it writes the ground-state
 matrix element as the terminal z-grid artifact and a second NetCDF containing
 the requested source/sink state matrix.

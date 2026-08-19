@@ -397,7 +397,7 @@ def analyze_twopt(
     n_bootstrap: int,
     *,
     seed: Any = None,
-    precision: int = 100,
+    precision: int = 0,
     max_iterations: int | None = None,
 ) -> list[list[Ritz]]:
     """Return CW-filtered inner-bootstrap Ritz spectra for every iteration."""
@@ -459,7 +459,7 @@ def analyze_threept(
     n_bootstrap: int,
     *,
     seed: Any = None,
-    precision: int = 100,
+    precision: int = 0,
     max_iterations: int | None = None,
 ) -> list[list[np.ndarray]]:
     """Return inner-bootstrap source-to-sink Ritz-basis matrix elements."""

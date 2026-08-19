@@ -684,10 +684,13 @@ Set `analysis_method: "lanczos"` with `fit_scope: ["2pt_spectrum"]` or
 `fit_scope: ["3pt_matrix"]`. The stage uses the oblique-Lanczos/Krylov
 construction of arXiv:2406.20009 and arXiv:2407.21777, nested resampling, Ritz
 state ordering, and Cullum-Willoughby filtering. `nstate` is one positive value
-giving the number of ordered Ritz states to export. `lanczos_iterations` may be
-omitted to use the largest order supported by every input;
-`lanczos_inner_samples` defaults to 200, `lanczos_precision` defaults to 100
-decimal digits through `mpmath` (`0` selects NumPy float64). Optional
+giving the number of ordered Ritz states to export. The Lanczos order is not a
+manifest parameter: it is determined from the input shape and uses the largest
+order supported by every selected input. `lanczos_inner_samples` defaults to
+200. `lanczos_precision` defaults to `0`, which constructs recurrence matrices
+with NumPy double precision; high-precision `mpmath` construction is enabled
+only by explicitly setting a positive decimal digit count. Both `plan` and
+`validate` print a non-blocking warning when the effective value is `0`. Optional
 `lanczos_t0` and `lanczos_time_step` fix the trimming offset and sparse transfer
 power; for ordinary 3pt input they are inferred when omitted, while 2pt-only
 input defaults to `t0=0` and `n=1`.
@@ -714,8 +717,8 @@ C3_eff(s, r) = C3(tsep=2*t0+n*(s+r), tau=t0+n*r)
 where `n` is the sparse transfer power in `T**n`. Order `m` requires all
 `tsep=2*t0+n*k` for `k=0,...,2m-2`, enough 2pt times through
 `2*t0+n*(2m-1)`, and all `m²` selected insertion points. The inspection chooses
-the largest feasible order unless `lanczos_iterations` is set, preferring the
-smallest feasible `t0` and then the smallest `n` when candidates tie.
+the largest feasible order, preferring the smallest feasible `t0` and then the
+smallest `n` when candidates tie.
 
 This conversion normally discards data: insertion times outside the effective
 square, unused source-sink separations, and points excluded by `t0`/`T**n` do
@@ -735,8 +738,8 @@ C3[sigma, tau, configuration]
 ```
 
 Here `tau` is the source-to-current distance, `sigma` is the current-to-sink
-distance, and `t_f = sigma + tau`. A requested order is rejected if the
-available ordinary points cannot produce the complete effective square.
+distance, and `t_f = sigma + tau`. Analysis is rejected if the available
+ordinary points cannot produce any complete effective square.
 
 Source 2pt, sink 2pt, and all 3pt `z` datasets must have the same configuration
 count and identical per-configuration ordering. All selected effective values

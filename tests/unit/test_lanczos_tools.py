@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pytest
+from typer.testing import CliRunner
 
+from lamet_agent.__main__ import app
 from lamet_agent.core.data import EnsembleData
 from lamet_agent.core.tools import (
     prepare_tool_args,
@@ -17,6 +20,7 @@ from lamet_agent.core.tools import (
 )
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import resolve_stage_params
+from lamet_agent.planning.agent import run_interactive_plan
 from lamet_agent.planning.core import _stage_parameter_gaps
 from lamet_agent.stages.correlator import functions as correlator_functions
 from lamet_agent.stages.correlator.functions import (
@@ -161,7 +165,6 @@ def _manifest(
                         "fitting_form": "Breit",
                         "nstate": [2],
                         "lanczos_inner_samples": 4,
-                        "lanczos_iterations": 2,
                     },
                     "jobs": [
                         {
@@ -194,6 +197,8 @@ def test_standard_manifest_contract_and_lanczos_tool_routing(tmp_path: Path) -> 
     params = resolve_stage_params(
         "correlator_analysis", manifest.stages["correlator_analysis"].defaults, job.params
     )
+    assert params["lanczos_precision"] == 0
+    assert "lanczos_iterations" not in params
     manifest.metadata.workers = 3
     assert validate_stage_inputs("correlator_analysis", manifest, job) == []
     assert set(resolve_job_tools("correlator_analysis", job, params, stage_tools=STAGE_TOOLS)) == {
@@ -220,14 +225,86 @@ def test_standard_manifest_contract_and_lanczos_tool_routing(tmp_path: Path) -> 
     assert args["workers"] == 3
 
 
-def test_manifest_validation_rejects_tseps_that_cannot_form_requested_square(
+def test_lanczos_precision_zero_prints_nonblocking_plan_and_validate_warnings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pt2_path, pt3_path, _current = _write_ordinary_h5(tmp_path)
+    manifest = _manifest(pt2_path, pt3_path)
+    manifest.metadata.root_directory = str(Path.cwd())
+    manifest_path = tmp_path / "lanczos.json"
+    manifest_path.write_text(
+        json.dumps(manifest.model_dump(mode="json", exclude_none=True), indent=2),
+        encoding="utf-8",
+    )
+
+    validation = CliRunner().invoke(app, ["validate", str(manifest_path)])
+
+    assert validation.exit_code == 0, validation.output
+    assert '"status": "valid"' in validation.output
+    assert "lanczos_precision=0" in validation.output
+    assert "NumPy double precision" in validation.output
+
+    monkeypatch.setattr(
+        "lamet_agent.planning.agent._PlanAgentSession.decide",
+        lambda _self: {
+            "action": "finish",
+            "reason": "Warning smoke test complete.",
+            "args": {},
+        },
+    )
+    outputs: list[str] = []
+
+    result = run_interactive_plan(
+        manifest_path,
+        backend="mock",
+        output_func=outputs.append,
+    )
+
+    assert result is None
+    assert "lanczos_precision=0" in "\n".join(outputs)
+    assert "NumPy double precision" in "\n".join(outputs)
+
+
+def test_explicit_lanczos_precision_suppresses_double_precision_warning(
     tmp_path: Path,
 ) -> None:
     pt2_path, pt3_path, _current = _write_ordinary_h5(tmp_path)
-    manifest = _manifest(pt2_path, pt3_path, tseps=[4, 8])
+    manifest = _manifest(pt2_path, pt3_path)
+    manifest.metadata.root_directory = str(Path.cwd())
+    manifest.stages["correlator_analysis"].defaults["lanczos_precision"] = 100
+    manifest_path = tmp_path / "lanczos_high_precision.json"
+    manifest_path.write_text(
+        json.dumps(manifest.model_dump(mode="json", exclude_none=True), indent=2),
+        encoding="utf-8",
+    )
+
+    validation = CliRunner().invoke(app, ["validate", str(manifest_path)])
+
+    assert validation.exit_code == 0, validation.output
+    assert "lanczos_precision=0" not in validation.output
+
+
+def test_manifest_rejects_user_authored_lanczos_iterations(tmp_path: Path) -> None:
+    pt2_path, pt3_path, _current = _write_ordinary_h5(tmp_path)
+    manifest = _manifest(pt2_path, pt3_path)
+    manifest.stages["correlator_analysis"].defaults["lanczos_iterations"] = 2
+    job = manifest.stages["correlator_analysis"].jobs[0]
+
+    assert validate_stage_inputs("correlator_analysis", manifest, job) == [
+        "lanczos_iterations is determined automatically from the available 2pt times "
+        "and complete 3pt square; remove this parameter."
+    ]
+
+
+def test_manifest_validation_rejects_tseps_that_cannot_form_complete_square(
+    tmp_path: Path,
+) -> None:
+    pt2_path, pt3_path, _current = _write_ordinary_h5(tmp_path)
+    manifest = _manifest(pt2_path, pt3_path, tseps=[5, 7])
     job = manifest.stages["correlator_analysis"].jobs[0]
     assert validate_stage_inputs("correlator_analysis", manifest, job) == [
-        "The standard tsep/tau 3pt data cannot form the requested Lanczos square."
+        "The standard tsep/tau 3pt data cannot form a complete Lanczos square."
     ]
 
 
@@ -298,7 +375,6 @@ def test_ordinary_tsep_conversion_trims_and_warns_about_discarded_points(
             z_values=[0],
             bT=0,
             temporal_extent=14,
-            lanczos_iterations=2,
         )
     assert inspection["status"] == "valid_with_discarded_points"
     assert inspection["lanczos_t0"] == 2
@@ -358,7 +434,6 @@ def test_ordinary_tsep_conversion_trims_and_warns_about_discarded_points(
             bin_size=1,
             lanczos_inner_samples=4,
             lanczos_precision=0,
-            lanczos_iterations=2,
             workers=2,
             ensemble="toy",
             tag="ordinary",
@@ -409,7 +484,6 @@ def test_lanczos_twopoint_tool_writes_iteration_spectrum(tmp_path: Path) -> None
         bin_size=1,
         lanczos_inner_samples=4,
         lanczos_precision=0,
-        lanczos_iterations=3,
         ensemble="toy",
         tag="spectrum",
         temporal_extent=14,
@@ -417,5 +491,6 @@ def test_lanczos_twopoint_tool_writes_iteration_spectrum(tmp_path: Path) -> None
     )
     assert Path(result["netcdf_path"]).is_file()
     assert isinstance(store["output"], EnsembleData)
+    assert result["iterations"] == 7
     energies = store["output"].array.sel(channel="source", iteration=3).values
     assert energies == pytest.approx(np.tile([0.25, 0.7], (6, 1)))

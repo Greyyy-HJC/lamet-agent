@@ -20,7 +20,11 @@ from .manifest import (
     validate_manifest_file,
     validate_manifest_paths,
 )
-from .manifest_params import STAGE_PARAM_CONTRACTS, render_stage_contract
+from .manifest_params import (
+    STAGE_PARAM_CONTRACTS,
+    render_stage_contract,
+    resolve_stage_params,
+)
 from .planning import run_interactive_plan
 
 app = typer.Typer(help="CLI-first scaffold for LaMET analysis workflows.")
@@ -123,6 +127,23 @@ def validate_manifest(path: Path) -> None:
     issues = []
     for stage in manifest.metadata.stages:
         for job in manifest.stages[stage].jobs:
+            params = resolve_stage_params(
+                stage,
+                manifest.stages[stage].defaults,
+                job.params,
+            )
+            if (
+                stage == "correlator_analysis"
+                and params.get("analysis_method") == "lanczos"
+                and params.get("lanczos_precision") == 0
+            ):
+                typer.echo(
+                    f"Warning: {stage}/{job.id} uses lanczos_precision=0; "
+                    "Lanczos recurrence matrices will use NumPy double precision. "
+                    "Set a positive decimal digit count explicitly to enable "
+                    "high-precision matrix construction.",
+                    err=True,
+                )
             for diagnostic in validate_stage_diagnostics(stage, manifest, job):
                 issues.append(
                     {

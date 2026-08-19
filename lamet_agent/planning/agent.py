@@ -14,6 +14,7 @@ from lamet_agent.manifest_params import (
     MANIFEST_PARAMETER_MAINTENANCE_POLICY,
     ParameterSpec,
     get_stage_parameter_contract,
+    resolve_stage_params,
     stage_contract_guidance,
 )
 
@@ -1154,6 +1155,30 @@ def run_interactive_plan(
         base_url=base_url,
     )
     output_func(BANNER)
+    correlator_stage = payload.get("stages", {}).get("correlator_analysis", {})
+    if isinstance(correlator_stage, dict):
+        defaults = correlator_stage.get("defaults", {})
+        defaults = defaults if isinstance(defaults, dict) else {}
+        jobs = correlator_stage.get("jobs", [])
+        for index, job in enumerate(jobs if isinstance(jobs, list) else []):
+            if not isinstance(job, dict):
+                continue
+            params = resolve_stage_params(
+                "correlator_analysis",
+                defaults,
+                job.get("params") if isinstance(job.get("params"), dict) else {},
+            )
+            if (
+                params.get("analysis_method") == "lanczos"
+                and params.get("lanczos_precision") == 0
+            ):
+                job_id = str(job.get("id", index))
+                output_func(
+                    f"Warning: correlator_analysis/{job_id} uses lanczos_precision=0; "
+                    "Lanczos recurrence matrices will use NumPy double precision. "
+                    "Set a positive decimal digit count explicitly to enable "
+                    "high-precision matrix construction."
+                )
     if _ask_unused_stage_questions(state, session, input_func, output_func) == "quit":
         output_func("Plan cancelled; no files were written.")
         return None

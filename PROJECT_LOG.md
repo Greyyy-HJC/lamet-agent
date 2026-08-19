@@ -1470,3 +1470,9 @@
   paper-fetch timeouts, and limited the report LLM to two 30-second attempts.
   A report-only failure now emits a warning and provenance-only formula note;
   completed matching NetCDF/PDF artifacts remain valid and the run continues.
+- Removed user-authored `lanczos_iterations`; 2pt and 3pt tools now always use
+  the largest compatible order inferred from the selected input shape.
+- Changed the default `lanczos_precision` to `0` (NumPy double-precision
+  recurrence construction). Positive values explicitly enable decimal
+  high-precision construction, the Lanczos example uses 100 digits, and both
+  `plan` and `validate` print a non-blocking warning for the zero setting.
