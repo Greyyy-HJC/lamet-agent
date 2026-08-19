@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from inspect import signature
 from pathlib import Path
 import json
 
@@ -36,7 +37,7 @@ _EXPLICIT_FOURIER_PARAMS = {
         "max_schemes": 200,
     },
     "zmin_shift": 0,
-    "method": "GI",
+    "gfix": "GI",
     "order": "NLA",
     "im_flip_for_ft": False,
     "symmetry_guarantee": True,
@@ -295,7 +296,7 @@ def test_fourier_workflow_omits_missing_short_distance_grid() -> None:
         im_samples,
         [-0.5, 0.0, 0.5],
         schemes=[{"label": "manual", "zmin": 0.08, "zmax": 0.16, "z_ext_max": 0.28, "smooth": "linear"}],
-        method="GI",
+        gfix="GI",
         order="LA",
         observable="meson_quasi_da",
         momentum_gev=2.4,
@@ -326,7 +327,7 @@ def test_fourier_workflow_accepts_nonuniform_input_grid() -> None:
         im_samples,
         [-0.5, 0.0, 0.5],
         schemes=[{"label": "manual", "zmin": 0.08, "zmax": 0.20, "z_ext_max": 0.24, "smooth": "linear"}],
-        method="GI",
+        gfix="GI",
         order="LA",
         observable="meson_quasi_da",
         momentum_gev=2.4,
@@ -351,7 +352,7 @@ def test_fourier_parallel_sample_fits_match_serial() -> None:
     im_samples = np.zeros_like(re_samples)
     kwargs = {
         "schemes": [{"label": "manual", "zmin": 0.08, "zmax": 0.16, "z_ext_max": 0.28, "smooth": "linear"}],
-        "method": "GI",
+        "gfix": "GI",
         "order": "LA",
         "observable": "meson_quasi_da",
         "momentum_gev": 2.4,
@@ -381,6 +382,8 @@ def test_fourier_stage_tools_are_registered() -> None:
     assert "plot_fourier_result" in tools
     assert "plot_fourier_extension_quality_result" in tools
     assert "report_fourier_result" in tools
+    parameters = signature(_run_fourier_transform).parameters
+    assert "gfix" in parameters
 
 
 def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None:
@@ -399,7 +402,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -415,6 +418,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert run["n_samples"] == 3
     assert run["workers"] == 2
     assert store["fourier_result"]["symmetry_guarantee"] is False
+    assert store["fourier_result"]["gfix"] == "GI"
     assert store["fourier_result"]["Lambda0_gev"] == pytest.approx(0.3)
     assert run["Lambda0_gev"] == pytest.approx(0.3)
     assert Path(run["artifact"]).is_file()
@@ -425,6 +429,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert ft_data.dims == ["x"]
     assert ft_data.resample == "bootstrap"
     assert ft_data.attrs["workers"] == "2"
+    assert ft_data.attrs["gfix"] == "GI"
     assert ft_data.attrs["symmetry_guarantee"] == "False"
     assert "phase_shift" not in ft_data.attrs
     assert ft_data.attrs["Lambda0_gev"] == "0.3"
@@ -443,6 +448,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert fit_data.dims == ["scheme", "parameter"]
     assert fit_data.resample == "bootstrap"
     assert fit_data.attrs["Lambda0_gev"] == "0.3"
+    assert fit_data.attrs["gfix"] == "GI"
     assert fit_data.values.shape == (3, 1, 3)
     assert "fit_chi2" in fit_data.attrs
     assert fit_data.coords["parameter"] == ["A2", "phi2", "m"]
@@ -534,7 +540,7 @@ def test_fourier_shift_relabels_range_and_inherits_zs(tmp_path: Path, monkeypatc
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
         zmin_shift=1,
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -564,7 +570,7 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
         store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -598,7 +604,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [6.0], "zmax_ext_fm": 7.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -629,7 +635,7 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [6.0], "zmax_ext_fm": 7.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -684,7 +690,7 @@ def test_fourier_pdf_sector_resolves_projection(
         store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         sector=sector,
         target_observable="pdf",
@@ -720,7 +726,7 @@ def test_metadata_and_hadron_control_sector_semantics(tmp_path: Path, monkeypatc
         store,
         quasi_y_ls=[-0.5, 0.5],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         polarization="helicity",
         sector="valence",
@@ -756,7 +762,7 @@ def test_fourier_gpd_sector_valence_resolves_projection(tmp_path: Path, monkeypa
         store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [7.0], "zmax_ext_fm": 8.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         sector="valence",
         target_observable="gpd",
@@ -793,7 +799,7 @@ def test_fourier_pdf_sector_sea_reflects_full_distribution(
     monkeypatch.setattr(fourier_functions, "run_fourier_workflow", record_workflow)
     common = dict(
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -835,7 +841,7 @@ def test_fourier_gpd_sector_sea_reflects_full_distribution(tmp_path: Path, monke
     )
     common = dict(
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [7.0], "zmax_ext_fm": 8.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="gpd",
         parton="quark",
@@ -872,7 +878,7 @@ def test_fourier_sector_owns_output_scale(tmp_path: Path, monkeypatch) -> None:
         base_store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -891,7 +897,7 @@ def test_fourier_sector_owns_output_scale(tmp_path: Path, monkeypatch) -> None:
         scaled_store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -929,7 +935,7 @@ def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monke
         store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1026,7 +1032,7 @@ def test_fourier_transform_accepts_upstream_ensemble_data(tmp_path: Path, monkey
         store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1057,7 +1063,7 @@ def test_fourier_tool_chain_derives_observable_from_metadata_and_hadron(tmp_path
         store,
         quasi_y_ls=[-0.5, 0.5],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [13.0], "zmax_ext_fm": 15.0},
-        method="GI",
+        gfix="GI",
         order="NLA",
         target_observable="pdf",
         parton="quark",
@@ -1104,7 +1110,7 @@ def test_fourier_pion_pdf_valence_tail_constraints(tmp_path: Path, monkeypatch) 
         store,
         quasi_y_ls=[-0.5, 0.5],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [13.0], "zmax_ext_fm": 15.0},
-        method="GI",
+        gfix="GI",
         order="NLA",
         polarization="unpolarized",
         sector="valence",
@@ -1167,7 +1173,7 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
         store,
         quasi_y_ls=[-0.5, 0.5],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [10.0], "zmax_ext_fm": 13.0},
-        method="GI",
+        gfix="GI",
         order="NLA",
         target_observable="da",
         parton="quark",
@@ -1287,7 +1293,7 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
             store,
             quasi_y_ls=[-0.5, 0.5],
             scheme_scan={"zmin_fm": [1.0], "zmax_fm": [10.0], "zmax_ext_fm": 12.0},
-            method="GI",
+            gfix="GI",
             order=order,
             target_observable="pdf",
             parton="gluon",
@@ -1316,7 +1322,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
     shifted_re, _shifted_im = _asymptotic_values(
         z,
         np.array([1.5, 0.4]),
-        method="GI",
+        gfix="GI",
         order="LA",
         observable="nucleon_gluon_quasi_pdf",
         phase_scale=2.0,
@@ -1329,7 +1335,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
     re, im = _asymptotic_values(
         z,
         np.array([1.5, 0.4]),
-        method="GI",
+        gfix="GI",
         order="LA",
         observable="nucleon_gluon_quasi_pdf",
         phase_scale=2.0,
@@ -1341,7 +1347,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
     re, _im = _asymptotic_values(
         z,
         np.array([1.5, 0.2, 0.4]),
-        method="GI",
+        gfix="GI",
         order="NLA",
         observable="nucleon_gluon_quasi_pdf",
         phase_scale=2.0,
@@ -1352,7 +1358,7 @@ def test_fourier_gluon_observables_use_appendix_f_forms() -> None:
     re, _im = _asymptotic_values(
         z,
         np.array([1.5, 0.2, 0.3, 0.1, 0.4]),
-        method="GI",
+        gfix="GI",
         order="NLA",
         observable="pion_gluon_quasi_pdf",
         phase_scale=2.0,
@@ -1392,7 +1398,7 @@ def test_fourier_scheme_scan_scores_and_model_averages(tmp_path: Path, monkeypat
             "zmax_ext_fm": 5.0,
             "smooth": "linear",
         },
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1427,7 +1433,7 @@ def test_fourier_model_average_false_selects_one_scheme_from_mean_scan(tmp_path:
             "smooth": "linear",
             "model_average": False,
         },
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1461,7 +1467,7 @@ def test_fourier_model_average_scans_order_and_prior_width_per_sample(tmp_path: 
         store,
         quasi_y_ls=[-0.75, -0.25, 0.25, 0.75],
         scheme_scan={"zmin_fm": [1.0, 2.0], "zmax_fm": [10.0, 11.0], "zmax_ext_fm": 13.0},
-        method="GI",
+        gfix="GI",
         order=["LA", "NLA"],
         posterior_prior_error_scale=[2.0, 3.0],
         target_observable="pdf",
@@ -1485,7 +1491,7 @@ def test_fourier_model_average_scans_order_and_prior_width_per_sample(tmp_path: 
 
 def test_fourier_requires_explicit_scheme_scan():
     with pytest.raises(TypeError, match="scheme_scan"):
-        _run_fourier_transform({}, quasi_y_ls=[-0.5, 0.5], zmin_shift=0, method="GI", order="LA", im_flip_for_ft=False, Lambda0_gev=0.0, posterior_prior_error_scale=3.0, sample_error_mode="covariance", part="both", output_scale=1.0, sector="full", target_observable="da", parton="quark", hadron="pion", symmetry_guarantee=True, psi1_flavor_class="heavy", psi2_flavor_class="heavy", workers=1)
+        _run_fourier_transform({}, quasi_y_ls=[-0.5, 0.5], zmin_shift=0, gfix="GI", order="LA", im_flip_for_ft=False, Lambda0_gev=0.0, posterior_prior_error_scale=3.0, sample_error_mode="covariance", part="both", output_scale=1.0, sector="full", target_observable="da", parton="quark", hadron="pion", symmetry_guarantee=True, psi1_flavor_class="heavy", psi2_flavor_class="heavy", workers=1)
 
 
 def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None:
@@ -1504,7 +1510,7 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
         store,
         quasi_y_ls={"start": -0.5, "stop": 0.5, "num": 6},
         scheme_scan={},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1543,7 +1549,7 @@ def test_fourier_auto_completes_partial_scheme_scan(tmp_path: Path, monkeypatch)
         store,
         quasi_y_ls={"start": -0.5, "stop": 0.5, "num": 6},
         scheme_scan={"model_average": False},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1578,7 +1584,7 @@ def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path
         store,
         quasi_y_ls={"start": -0.5, "stop": 0.5, "num": 6},
         scheme_scan={},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="gpd",
         parton="quark",
@@ -1624,7 +1630,7 @@ def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path
         store,
         quasi_y_ls={"start": -0.5, "stop": 0.5, "num": 6},
         scheme_scan={},
-        method="CG",
+        gfix="CG",
         order="NLA",
         target_observable="pdf",
         parton="quark",
@@ -1656,7 +1662,7 @@ def test_fourier_auto_scan_prefers_tail_region_in_fm(tmp_path: Path, monkeypatch
         store,
         quasi_y_ls={"start": -0.5, "stop": 0.5, "num": 6},
         scheme_scan={},
-        method="CG",
+        gfix="CG",
         order="NLA",
         target_observable="pdf",
         parton="quark",
@@ -1695,7 +1701,7 @@ def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) 
         store,
         quasi_y_ls={"start": -0.5, "stop": 0.5, "num": 6},
         scheme_scan={},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1730,7 +1736,7 @@ def test_fourier_auto_zmax_keeps_nearby_zero_compatible_tail(tmp_path: Path, mon
         store,
         quasi_y_ls={"start": -0.5, "stop": 0.5, "num": 6},
         scheme_scan={},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1758,7 +1764,7 @@ def test_fourier_defaults_scheme_scoring_options_for_complete_scan(tmp_path: Pat
             "zmax_ext_fm": 5.0,
             "smooth": "linear",
         },
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1781,7 +1787,7 @@ def test_fourier_accepts_compact_quasi_y_ls_spec(tmp_path: Path, monkeypatch) ->
         store,
         quasi_y_ls={"start": -1.0, "stop": 1.0, "num": 20},
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",
@@ -1813,7 +1819,7 @@ def test_fourier_accepts_covariance_sample_error_mode(tmp_path: Path, monkeypatc
         store,
         quasi_y_ls={"start": -0.5, "stop": 0.5, "num": 6},
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        method="GI",
+        gfix="GI",
         order="LA",
         target_observable="pdf",
         parton="quark",

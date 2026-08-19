@@ -1088,7 +1088,7 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
         "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
         effective_params=effective, artifacts_dir=tmp_path, store={"input": source},
     )
-    assert args["method"] == "CG"
+    assert args["gfix"] == "CG"
     kinematics = derive_job_kinematics(manifest, job)
     assert args["lattice_spacing_fm"] == kinematics["lattice_spacing_fm"]
     assert args["momentum_gev"] == pytest.approx(kinematics["momentum_gev"])

@@ -41,7 +41,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "scheme_scan",
         "zmin_shift",
         "zs_fm",
-        "method",
+        "gfix",
         "order",
         "momentum",
         "volume",

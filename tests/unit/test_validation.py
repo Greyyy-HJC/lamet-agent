@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from lamet_agent.manifest import (
-    HBAR_C_GEV_FM,
     AnalysisManifest,
     ArtifactInput,
     ManifestPathError,
@@ -18,7 +17,7 @@ from lamet_agent.manifest import (
     validate_manifest_file,
     validate_manifest_paths,
 )
-from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.data import EnsembleData, HBAR_C_GEV_FM
 from lamet_agent.core.tools import validate_stage_diagnostics, validate_stage_inputs
 
 
@@ -338,7 +337,7 @@ def _partial_fourier_payload(artifact: dict) -> dict:
             "fourier_transform": {
                 "defaults": {
                     "Lambda0_gev": 0.0,
-                    "method": "CG",
+                    "gfix": "CG",
                     "order": "NLA",
                     "posterior_prior_error_scale": 3.0,
                     "sector": "valence",
@@ -352,6 +351,50 @@ def _partial_fourier_payload(artifact: dict) -> dict:
             }
         },
     }
+
+
+def test_fourier_gfix_inherits_only_from_correlator_provenance() -> None:
+    manifest = validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
+    job = manifest.stages["fourier_transform"].jobs[0]
+
+    assert not any(item.code.startswith("fourier.gfix") for item in validate_stage_diagnostics("fourier_transform", manifest, job))
+
+    manifest.stages["fourier_transform"].defaults["gfix"] = "CG"
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+    assert [item.code for item in diagnostics if item.code.startswith("fourier.gfix")] == [
+        "fourier.gfix.provenance"
+    ]
+
+
+def test_external_fourier_gfix_is_explicit_and_matches_provenance() -> None:
+    artifact = {
+        "id": "rn",
+        "stage": "renormalization",
+        "path": "rn.nc",
+        "momentum": "PX5PY0PZ0",
+        "volume": "S48T64",
+        "lattice_spacing_fm": 0.0574,
+        "hadron": "pion",
+        "gfix": "CG",
+        "polarization": "unpolarized",
+    }
+    payload = _partial_fourier_payload(artifact)
+    payload["stages"]["fourier_transform"]["defaults"].pop("gfix")
+    manifest = AnalysisManifest.model_validate(payload)
+    job = manifest.stages["fourier_transform"].jobs[0]
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+    assert [item.code for item in diagnostics if item.code.startswith("fourier.gfix")] == [
+        "fourier.gfix.required"
+    ]
+
+    manifest.stages["fourier_transform"].defaults["gfix"] = "GI"
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+    assert [item.code for item in diagnostics if item.code.startswith("fourier.gfix")] == [
+        "fourier.gfix.provenance"
+    ]
+
+    manifest.stages["fourier_transform"].defaults["gfix"] = "CG"
+    assert not any(item.code.startswith("fourier.gfix") for item in validate_stage_diagnostics("fourier_transform", manifest, job))
 
 
 def test_partial_artifact_uses_netcdf_attrs_without_materializing_manifest_fields(tmp_path: Path) -> None:

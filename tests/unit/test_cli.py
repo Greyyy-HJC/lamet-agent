@@ -540,7 +540,7 @@ def _write_matching_manifest(path, *, out_of_range_lc: bool = False, unused_revi
         "stages": {
             "fourier_transform": {
                 "defaults": {
-                    "method": "GI", "order": ["LA"], "sector": "valence", "Lambda0_gev": 0.0,
+                    "gfix": "GI", "order": ["LA"], "sector": "valence", "Lambda0_gev": 0.0,
                     "posterior_prior_error_scale": 3.0,
                     "scheme_scan": {"zmin_fm": [0.1], "zmax_fm": [0.8], "zmax_ext_fm": 1.2, "smooth": "linear", "model_average": False},
                     "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 100},

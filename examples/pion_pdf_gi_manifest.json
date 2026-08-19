@@ -223,8 +223,7 @@
           "smooth": "linear",
           "model_average": false,
           "max_schemes": 200
-        },
-        "method": "GI"
+        }
       },
       "jobs": [
         {

@@ -1016,11 +1016,11 @@ def plot_fourier_extension_quality(
     data_color = "#08306b"
     ext_color = "#5c3317"
 
-    method = str(result.get("method", "")).upper()
+    gfix = str(result.get("gfix", "")).upper()
     order = str(result.get("order", "")).upper()
     model_label = "Extrapolation"
-    if method or order:
-        model_label = f"Extrapolation ({'+'.join(item for item in (method, order) if item)})"
+    if gfix or order:
+        model_label = f"Extrapolation ({'+'.join(item for item in (gfix, order) if item)})"
     part = str(result.get("part", "both")).strip().lower()
     draw_model = part in {"both", component} or part not in {"re", "im"}
 

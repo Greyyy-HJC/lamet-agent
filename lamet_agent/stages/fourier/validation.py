@@ -152,6 +152,29 @@ def _check_momentum(context: StageValidationContext) -> RuleViolation | None:
     )
 
 
+def _check_gfix_provenance(context: StageValidationContext) -> RuleViolation | None:
+    source = context.resources.get("gfix_source")
+    inherited = context.resources.get("inherited_gfix")
+    authored = (context.authored_params or {}).get("gfix")
+    if source == "correlator" and authored is not None:
+        return _violation(
+            context,
+            message="Fourier gfix is inherited from correlator provenance and must not be redeclared.",
+            path=context.parameter_path("gfix"),
+            cause=f"The correlator declares gfix={inherited!r}, while Fourier declares {authored!r}.",
+            parameters=("gfix",),
+        )
+    if source == "artifact" and inherited is not None and authored is not None and inherited != authored:
+        return _violation(
+            context,
+            message="Fourier gfix conflicts with the external artifact provenance.",
+            path=context.parameter_path("gfix"),
+            cause=f"The artifact records gfix={inherited!r}, while Fourier declares {authored!r}.",
+            parameters=("gfix",),
+        )
+    return None
+
+
 def _check_polarization(context: StageValidationContext) -> RuleViolation | None:
     target = str(context.metadata.get("target_observable", "pdf")).lower()
     if target not in {"pdf", "gpd"} or str(context.params.get("polarization", "")).lower():
@@ -462,6 +485,14 @@ FOURIER_CONSTRAINTS = (
         check=_check_input_role,
     ),
     ConstraintSpec(
+        code="fourier.gfix.provenance",
+        parameters=("gfix", "inputs.input"),
+        rule="Correlator-backed jobs inherit gfix; external jobs declare it explicitly and agree with artifact provenance.",
+        physics="CG and GI matrix elements use different long-distance tail parameterizations, so the Fourier choice must match the gauge-link construction of its input.",
+        suggested_fix="Remove a redundant correlator-backed gfix, or declare the artifact-compatible CG/GI value for an external input.",
+        check=_check_gfix_provenance,
+    ),
+    ConstraintSpec(
         code="fourier.kinematics.momentum_required",
         parameters=("inputs.input", "derived.momentum_gev"),
         rule="Physical momentum must be derivable from the upstream job or artifact.",
@@ -603,7 +634,17 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             },
         ),
         "coord_key": _parameter("NPZ/HDF5 coordinate dataset key.", "This maps an external file layout onto the stage coordinate axis.", expected=str, default="coord"),
-        "gfix": _parameter("Gauge-link treatment inherited from the input.", "CG and GI select the corresponding tail method when method is omitted.", expected=str),
+        "gfix": _parameter(
+            "Gauge-link treatment and long-distance tail family.",
+            "CG and GI matrix elements use their corresponding asymptotic parameterizations; correlator-backed jobs inherit this value, while external jobs declare it explicitly.",
+            expected=str,
+            required=True,
+            choices=("CG", "GI"),
+            choice_descriptions={
+                "CG": "Use the Coulomb-gauge asymptotic parameterization.",
+                "GI": "Use the gauge-invariant asymptotic parameterization.",
+            },
+        ),
         "h5_group": _parameter("HDF5 group containing one momentum channel.", "This is file-layout metadata and does not alter the Fourier prescription.", expected=str),
         "hadron": _parameter("Hadron identity used for observable inference.", "Hadron and parton labels select the public quasi-observable backend.", expected=str),
         "im_flip_for_ft": _parameter(
@@ -618,17 +659,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "The format changes loading only; all supported formats are normalized to EnsembleData before analysis.",
             expected=str,
             choices=("nc", "netcdf", "npz", "h5", "hdf5"),
-        ),
-        "method": _parameter(
-            "Long-distance tail ansatz family.",
-            "GI and CG use different asymptotic parameterizations; the choice is fixed theory input and is not model-averaged.",
-            expected=str,
-            required=True,
-            choices=("GI", "CG"),
-            choice_descriptions={
-                "GI": "Use the gauge-invariant asymptotic parameterization.",
-                "CG": "Use the Coulomb-gauge asymptotic parameterization.",
-            },
         ),
         "order": _parameter(
             "Tail ansatz orders included as fit-model candidates.",
@@ -758,7 +788,40 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
     stage = manifest.stages["fourier_transform"]
     authored = merge_stage_params(stage.defaults, job.params)
     resolved = resolve_stage_params("fourier_transform", stage.defaults, job.params)
-    params = {**derive_job_kinematics(manifest, job), **resolved}
+    derived = derive_job_kinematics(manifest, job)
+    reference = job.inputs.get("input")
+    jobs = {
+        candidate.id: (stage_id, candidate)
+        for stage_id, config in manifest.stages.items()
+        for candidate in config.jobs
+    }
+    artifacts = {artifact.id for artifact in manifest.inputs.artifacts}
+    seen: set[str] = set()
+    gfix_source = None
+    while isinstance(reference, str) and reference not in seen:
+        if reference in artifacts:
+            gfix_source = "artifact"
+            break
+        found = jobs.get(reference)
+        if found is None:
+            break
+        stage_id, candidate = found
+        if stage_id == "correlator_analysis":
+            gfix_source = "correlator"
+            break
+        seen.add(reference)
+        reference = next(
+            (
+                candidate.inputs[key]
+                for key in ("target", "input", "reference", "quasi")
+                if isinstance(candidate.inputs.get(key), str)
+            ),
+            None,
+        )
+    inherited_gfix = derived.get("gfix")
+    params = {**derived, **resolved}
+    if gfix_source == "artifact" and "gfix" not in authored:
+        params.pop("gfix", None)
     context = StageValidationContext(
         stage="fourier_transform",
         job_id=job.id,
@@ -766,7 +829,11 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
         params=params,
         inputs=dict(job.inputs),
         metadata=manifest.metadata.model_dump(),
-        resources={"z_last_fm": upstream_z_last_fm(manifest, job)},
+        resources={
+            "z_last_fm": upstream_z_last_fm(manifest, job),
+            "gfix_source": gfix_source,
+            "inherited_gfix": inherited_gfix,
+        },
         authored_params=authored,
     )
     return context

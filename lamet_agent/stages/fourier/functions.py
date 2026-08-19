@@ -413,17 +413,17 @@ def _quark_like_phase_scales(
     raise ValueError(f"unsupported observable {observable!r}")
 
 
-def _with_method_tail_parameters(
+def _with_gfix_tail_parameters(
     parameters: list[_TailParameter],
     *,
-    method: str,
+    gfix: str,
     Lambda0_gev: float,
 ) -> list[_TailParameter]:
     parameters = [
         *parameters,
         _TailParameter("m", max(0.5 - float(Lambda0_gev), 0.05), 0.0),
     ]
-    if method.upper() == "CG":
+    if gfix.upper() == "CG":
         parameters.append(_TailParameter("n", 0.5, -2.0, 4.0))
     return parameters
 
@@ -528,7 +528,7 @@ def _observable_parameters(
 
 
 def _param_template(
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     *,
@@ -539,15 +539,15 @@ def _param_template(
     psi2_flavor_class: str = "heavy",
     fit: bool = False,
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
-    method = method.upper()
+    gfix = gfix.upper()
     order = order.upper()
-    if method not in {"GI", "CG"}:
-        raise ValueError("method must be 'GI' or 'CG'")
+    if gfix not in {"GI", "CG"}:
+        raise ValueError("gfix must be 'GI' or 'CG'")
     if order not in {"LA", "NLA"}:
         raise ValueError("order must be 'LA' or 'NLA'")
 
     observable = _canonical_observable(observable)
-    parameters = _with_method_tail_parameters(
+    parameters = _with_gfix_tail_parameters(
         _observable_parameters(
             order,
             observable,
@@ -556,7 +556,7 @@ def _param_template(
             psi1_flavor_class=psi1_flavor_class,
             psi2_flavor_class=psi2_flavor_class,
         ),
-        method=method,
+        gfix=gfix,
         Lambda0_gev=float(Lambda0_gev),
     )
     fit_labels: set[str] = set()
@@ -582,7 +582,7 @@ def _param_template(
 
 
 def _param_labels(
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     *,
@@ -592,14 +592,14 @@ def _param_labels(
     psi2_flavor_class: str = "heavy",
     fit: bool = False,
 ) -> list[str]:
-    method = method.upper()
-    if method not in {"GI", "CG"}:
-        raise ValueError("method must be 'GI' or 'CG'")
+    gfix = gfix.upper()
+    if gfix not in {"GI", "CG"}:
+        raise ValueError("gfix must be 'GI' or 'CG'")
     order = order.upper()
     if order not in {"LA", "NLA"}:
         raise ValueError("order must be 'LA' or 'NLA'")
     observable = _canonical_observable(observable)
-    parameters = _with_method_tail_parameters(
+    parameters = _with_gfix_tail_parameters(
         _observable_parameters(
             order,
             observable,
@@ -608,7 +608,7 @@ def _param_labels(
             psi1_flavor_class=psi1_flavor_class,
             psi2_flavor_class=psi2_flavor_class,
         ),
-        method=method,
+        gfix=gfix,
         Lambda0_gev=0.0,
     )
     if not fit:
@@ -625,11 +625,11 @@ def _decay_tail(
     params: Sequence[Any],
     *,
     lambda_index: int,
-    method: str,
+    gfix: str,
     Lambda0_gev: float,
 ) -> Any:
     tail = gv.exp(-(params[lambda_index] + float(Lambda0_gev)) * z)
-    if method.upper() == "CG":
+    if gfix.upper() == "CG":
         tail = tail * gv.exp(-params[lambda_index + 1] * np.log(z))
     return tail
 
@@ -638,7 +638,7 @@ def _quark_like_asymptotic_values(
     z: np.ndarray,
     params: Sequence[Any],
     *,
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     phase_scale: float,
@@ -670,7 +670,7 @@ def _quark_like_asymptotic_values(
             im = im + params[cursor] * gv.sin(arg) / z
             cursor += 2
 
-    tail = _decay_tail(z, params, lambda_index=cursor, method=method, Lambda0_gev=Lambda0_gev)
+    tail = _decay_tail(z, params, lambda_index=cursor, gfix=gfix, Lambda0_gev=Lambda0_gev)
     return re * tail, im * tail
 
 
@@ -678,7 +678,7 @@ def _nucleon_gluon_asymptotic_values(
     z: np.ndarray,
     params: Sequence[Any],
     *,
-    method: str,
+    gfix: str,
     order: str,
     Lambda0_gev: float,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -690,7 +690,7 @@ def _nucleon_gluon_asymptotic_values(
     if order.upper() == "NLA":
         re = re + params[1]
         lambda_index = 2
-    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method, Lambda0_gev=Lambda0_gev)
+    tail = _decay_tail(z, params, lambda_index=lambda_index, gfix=gfix, Lambda0_gev=Lambda0_gev)
     im = np.zeros_like(z, dtype=object)
     return re * tail, im * tail
 
@@ -699,7 +699,7 @@ def _pion_gluon_asymptotic_values(
     z: np.ndarray,
     params: Sequence[Any],
     *,
-    method: str,
+    gfix: str,
     order: str,
     phase_scale: float,
     Lambda0_gev: float,
@@ -712,7 +712,7 @@ def _pion_gluon_asymptotic_values(
     if order.upper() == "NLA":
         re = re + params[1] + 2.0 * params[2] * gv.cos(params[3] - phase_scale * z)
         lambda_index = 4
-    tail = _decay_tail(z, params, lambda_index=lambda_index, method=method, Lambda0_gev=Lambda0_gev)
+    tail = _decay_tail(z, params, lambda_index=lambda_index, gfix=gfix, Lambda0_gev=Lambda0_gev)
     im = np.zeros_like(z, dtype=object)
     return re * tail, im * tail
 
@@ -721,7 +721,7 @@ def _asymptotic_values(
     z: np.ndarray,
     params: np.ndarray,
     *,
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     phase_scale: float,
@@ -738,7 +738,7 @@ def _asymptotic_values(
         return _nucleon_gluon_asymptotic_values(
             z,
             params,
-            method=method,
+            gfix=gfix,
             order=order,
             Lambda0_gev=Lambda0_gev,
         )
@@ -747,7 +747,7 @@ def _asymptotic_values(
         return _pion_gluon_asymptotic_values(
             z,
             params,
-            method=method,
+            gfix=gfix,
             order=order,
             phase_scale=phase_scale,
             Lambda0_gev=Lambda0_gev,
@@ -756,7 +756,7 @@ def _asymptotic_values(
     return _quark_like_asymptotic_values(
         z,
         params,
-        method=method,
+        gfix=gfix,
         order=order,
         observable=observable,
         phase_scale=phase_scale,
@@ -820,7 +820,7 @@ def _fit_one_sample(
     z_fit: np.ndarray,
     *,
     y_data: np.ndarray,
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     part: str,
@@ -835,7 +835,7 @@ def _fit_one_sample(
     Lambda0_gev: float = 0.0,
 ) -> tuple[np.ndarray, gv.BufferDict | None, gv.BufferDict | None, bool, float, int, float, float]:
     default_p0, _ = _param_template(
-        method,
+        gfix,
         order,
         observable,
         Lambda0_gev=Lambda0_gev,
@@ -845,7 +845,7 @@ def _fit_one_sample(
         psi2_flavor_class=psi2_flavor_class,
     )
     fit_p0, bounds = _param_template(
-        method,
+        gfix,
         order,
         observable,
         Lambda0_gev=Lambda0_gev,
@@ -857,7 +857,7 @@ def _fit_one_sample(
     )
     start = default_p0 if p0 is None else np.asarray(p0, dtype=float)
     fit_labels = _param_labels(
-        method,
+        gfix,
         order,
         observable,
         sector=sector,
@@ -866,7 +866,7 @@ def _fit_one_sample(
         psi2_flavor_class=psi2_flavor_class,
         fit=True,
     )
-    full_items = _with_method_tail_parameters(
+    full_items = _with_gfix_tail_parameters(
         _observable_parameters(
             order.upper(),
             _canonical_observable(observable),
@@ -875,7 +875,7 @@ def _fit_one_sample(
             psi1_flavor_class=psi1_flavor_class,
             psi2_flavor_class=psi2_flavor_class,
         ),
-        method=method.upper(),
+        gfix=gfix.upper(),
         Lambda0_gev=float(Lambda0_gev),
     )
     full_labels = [item.label for item in full_items]
@@ -897,7 +897,7 @@ def _fit_one_sample(
         pred_re, pred_im = _asymptotic_values(
             z,
             params,
-            method=method,
+            gfix=gfix,
             order=order,
             observable=observable,
             phase_scale=phase_scale,
@@ -955,7 +955,7 @@ def fit_tail_quality_for_mean(
     *,
     zmin: float,
     zmax: float,
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     momentum_gev: float | None = None,
@@ -987,7 +987,7 @@ def fit_tail_quality_for_mean(
     n_points = int(np.count_nonzero(fit_mask))
     n_params = len(
         _param_labels(
-            method,
+            gfix,
             order,
             observable,
             sector=sector,
@@ -1032,7 +1032,7 @@ def fit_tail_quality_for_mean(
     mean_params, mean_pmean, mean_psdev, tail_fit_success, chi2, dof, q_value, log_gbf = _fit_one_sample(
         z_fit,
         y_data=y_data,
-        method=method,
+        gfix=gfix,
         order=order,
         observable=observable,
         part=part,
@@ -1048,7 +1048,7 @@ def fit_tail_quality_for_mean(
         mean_params, _mean_pmean, _mean_psdev, tail_fit_success, chi2, dof, q_value, log_gbf = _fit_one_sample(
             z_fit,
             y_data=y_data,
-            method=method,
+            gfix=gfix,
             order=order,
             observable=observable,
             part=part,
@@ -1124,7 +1124,7 @@ def _fit_fourier_sample_batch(payload: bytes, sample_indices: list[int]) -> list
         params, _pmean, _psdev, success, chi2, dof, q_value, log_gbf = _fit_one_sample(
             context["z_fit"],
             y_data=sample_y_data,
-            method=context["method"],
+            gfix=context["gfix"],
             order=context["order"],
             observable=context["observable"],
             part=context["part"],
@@ -1191,7 +1191,7 @@ def _run_one_scheme(
     im_samples: np.ndarray,
     y_grid: np.ndarray,
     scheme: dict[str, Any],
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     im_flip_for_ft: bool,
@@ -1210,7 +1210,7 @@ def _run_one_scheme(
     workers: int = 1,
 ) -> dict[str, Any]:
     zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
-    label = str(scheme.get("label", f"{method}_{order}_{zmin}_{zmax}"))
+    label = str(scheme.get("label", f"{gfix}_{order}_{zmin}_{zmax}"))
     zmin_fit = zmin * FM_TO_GEV_INV
     zmax_fit = zmax * FM_TO_GEV_INV
     z_ext_fit_max = z_ext_max * FM_TO_GEV_INV
@@ -1225,7 +1225,7 @@ def _run_one_scheme(
     fit_mask = _fit_coord_mask(coord, zmin, zmax)
     n_params = len(
         _param_labels(
-            method,
+            gfix,
             order,
             observable,
             sector=sector,
@@ -1236,7 +1236,7 @@ def _run_one_scheme(
     )
     n_fit_params = len(
         _param_labels(
-            method,
+            gfix,
             order,
             observable,
             sector=sector,
@@ -1272,7 +1272,7 @@ def _run_one_scheme(
     mean_params, mean_pmean, mean_psdev, mean_ok, mean_chi2, mean_dof, mean_q, mean_log_gbf = _fit_one_sample(
         z_fit,
         y_data=mean_y_data,
-        method=method,
+        gfix=gfix,
         order=order,
         observable=observable,
         part=part,
@@ -1290,7 +1290,7 @@ def _run_one_scheme(
         mean_params, _mean_pmean, _mean_psdev, mean_ok, mean_chi2, mean_dof, mean_q, mean_log_gbf = _fit_one_sample(
             z_fit,
             y_data=mean_y_data,
-            method=method,
+            gfix=gfix,
             order=order,
             observable=observable,
             part=part,
@@ -1357,7 +1357,7 @@ def _run_one_scheme(
                 "sample_error_mode": sample_error_mode,
                 "resample_mode": resample_mode,
                 "part": part,
-                "method": method,
+                "gfix": gfix,
                 "order": order,
                 "observable": observable,
                 "phase_scale": phase_scale,
@@ -1398,7 +1398,7 @@ def _run_one_scheme(
             params, _sample_pmean, _sample_psdev, tail_fit_success, chi2, dof, q_value, log_gbf = _fit_one_sample(
                 z_fit,
                 y_data=sample_y_data,
-                method=method,
+                gfix=gfix,
                 order=order,
                 observable=observable,
                 part=part,
@@ -1439,7 +1439,7 @@ def _run_one_scheme(
         fit_re[positive], fit_im[positive] = _asymptotic_values(
             z_ext[positive],
             params,
-            method=method,
+            gfix=gfix,
             order=order,
             observable=observable,
             phase_scale=phase_scale,
@@ -1471,7 +1471,7 @@ def _run_one_scheme(
         "fit_im_samples": fit_im_samples,
         "fit_params": fit_params,
         "fit_param_labels": _param_labels(
-            method,
+            gfix,
             order,
             observable,
             sector=sector,
@@ -1507,7 +1507,7 @@ def run_fourier_workflow(
     y_grid: Sequence[float],
     *,
     schemes: list[dict[str, Any]] | None = None,
-    method: str = "GI",
+    gfix: str = "GI",
     order: str = "NLA",
     observable: str,
     momentum_gev: float | None = None,
@@ -1592,7 +1592,7 @@ def run_fourier_workflow(
                     im_samples=im_mat,
                     y_grid=y_arr,
                     scheme=scheme,
-                    method=method,
+                    gfix=gfix,
                     order=scheme_order,
                     observable=observable,
                     im_flip_for_ft=im_flip_for_ft,
@@ -1651,7 +1651,7 @@ def run_fourier_workflow(
             float(item["mean_fit_chi2"]) / max(float(item["mean_fit_dof"]), 1.0) for item in scheme_results
         ],
         "fit_model_logGBF": [float(item.get("mean_fit_logGBF", float("-inf"))) for item in scheme_results],
-        "method": method.upper(),
+        "gfix": gfix.upper(),
         "order": order.upper() if isinstance(order, str) else ",".join(str(item).upper() for item in order),
         "observable": observable,
         "coord_unit": "fm",
@@ -1743,7 +1743,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
         im_samples = np.mean(ft_im, axis=0)
     values = [re_samples[idx] + 1j * im_samples[idx] for idx in range(re_samples.shape[0])]
     attrs = {
-        "method": str(result.get("method", "")),
+        "gfix": str(result.get("gfix", "")),
         "order": str(result.get("order", "")),
         "observable": str(result.get("observable", "")),
         "sector": str(result.get("sector", "")),
@@ -1759,7 +1759,6 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
         "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
         "resample_mode": str(result.get("resample_mode", "")),
         "sample_error_mode": str(result.get("sample_error_mode", "")),
-        "average_method": str(result.get("sample_error_mode", "")),
         "workers": str(result.get("workers", 1)),
     }
     if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}:
@@ -2074,7 +2073,7 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any], source_ens
         dims=("scheme", "parameter"),
         coords={"scheme": scheme_labels.tolist(), "parameter": fit_param_labels},
         attrs={
-            "method": str(result.get("method", "")),
+            "gfix": str(result.get("gfix", "")),
             "order": str(result.get("order", "")),
             "observable": str(result.get("observable", "")),
             "part": str(result.get("part", "both")),
@@ -2094,7 +2093,6 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any], source_ens
             "symmetry_guarantee": str(result.get("symmetry_guarantee", False)),
             "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
             "sample_error_mode": str(result.get("sample_error_mode", "")),
-            "average_method": str(result.get("sample_error_mode", "")),
             "scheme_labels": json.dumps(scheme_labels.tolist()),
             "fit_param_labels": json.dumps(fit_param_labels),
             "fit_param_labels_by_model": json.dumps([item["fit_param_labels"] for item in schemes]),
@@ -2220,7 +2218,7 @@ def _pick_four_zmin_fm_by_tail_fit(
     coord: np.ndarray,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     momentum_gev: float | None,
@@ -2239,7 +2237,7 @@ def _pick_four_zmin_fm_by_tail_fit(
     required_points = _minimum_fit_points_for_parameters(
         len(
             _param_labels(
-                method,
+                gfix,
                 order,
                 observable,
                 sector=sector,
@@ -2269,7 +2267,7 @@ def _pick_four_zmin_fm_by_tail_fit(
                 im_samples,
                 zmin=float(candidate),
                 zmax=float(zmax),
-                method=method,
+                gfix=gfix,
                 order=order,
                 observable=observable,
                 momentum_gev=momentum_gev,
@@ -2308,7 +2306,7 @@ def _auto_fill_scheme_scan(
     re_samples: np.ndarray,
     im_samples: np.ndarray,
     stable_idx: int,
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     momentum_gev: float | None,
@@ -2336,7 +2334,7 @@ def _auto_fill_scheme_scan(
             coord=coord,
             re_samples=re_samples,
             im_samples=im_samples,
-            method=method,
+            gfix=gfix,
             order=order,
             observable=observable,
             momentum_gev=momentum_gev,
@@ -2371,7 +2369,7 @@ def _auto_scheme_scan(
     coord: np.ndarray,
     re_samples: np.ndarray,
     im_samples: np.ndarray,
-    method: str,
+    gfix: str,
     order: str,
     observable: str,
     momentum_gev: float | None,
@@ -2405,7 +2403,7 @@ def _auto_scheme_scan(
         re_samples=re_axis0,
         im_samples=im_axis0,
         stable_idx=stable_idx,
-        method=method,
+        gfix=gfix,
         order=order,
         observable=observable,
         momentum_gev=momentum_gev,
@@ -2569,7 +2567,7 @@ def run_fourier_transform(
     quasi_y_ls: list[float] | dict[str, Any],
     scheme_scan: dict[str, Any],
     zmin_shift: int,
-    method: str,
+    gfix: str,
     order: str | list[str],
     target_observable: str,
     parton: str,
@@ -2605,6 +2603,7 @@ def run_fourier_transform(
     if isinstance(workers, bool) or not isinstance(workers, (int, np.integer)) or int(workers) < 1:
         raise ValueError("workers must be a positive integer")
     workers = int(workers)
+    gfix = str(gfix).upper()
     if symmetry_guarantee is not None and not isinstance(symmetry_guarantee, bool):
         raise ValueError("symmetry_guarantee must be a boolean")
     out = "fourier_result"
@@ -2685,7 +2684,7 @@ def run_fourier_transform(
             coord=coord_arr,
             re_samples=np.asarray(matrix_element["re_samples"], dtype=float),
             im_samples=np.asarray(matrix_element["im_samples"], dtype=float),
-            method=method,
+            gfix=gfix,
             order=range_order,
             observable=observable,
             momentum_gev=momentum_gev,
@@ -2706,7 +2705,7 @@ def run_fourier_transform(
     required_points = _minimum_fit_points_for_parameters(
         len(
             _param_labels(
-                method,
+                gfix,
                 range_order,
                 observable,
                 sector=fit_sector,
@@ -2738,7 +2737,7 @@ def run_fourier_transform(
                 matrix_element["im_samples"],
                 zmin=float(scheme["zmin"]),
                 zmax=float(scheme["zmax"]),
-                method=method,
+                gfix=gfix,
                 order=range_order,
                 observable=observable,
                 momentum_gev=momentum_gev,
@@ -2783,7 +2782,7 @@ def run_fourier_transform(
     for spec in _fit_model_specs(order, posterior_prior_error_scale):
         n_model_params = len(
             _param_labels(
-                method,
+                gfix,
                 spec["order"],
                 observable,
                 sector=fit_sector,
@@ -2829,7 +2828,7 @@ def run_fourier_transform(
         matrix_element["im_samples"],
         -np.asarray(y_values, dtype=float) if sea_projection else y_values,
         schemes=schemes,
-        method=method,
+        gfix=gfix,
         order=order,
         observable=observable,
         momentum_gev=momentum_gev,

@@ -255,10 +255,14 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
     contract = get_stage_parameter_contract("fourier_transform")
     sector = contract.schema["sector"]
     quasi_y_ls = contract.schema["quasi_y_ls"]
+    gfix = contract.schema["gfix"]
 
     assert isinstance(sector, ParameterSpec)
     assert isinstance(quasi_y_ls, ParameterSpec)
     assert quasi_y_ls.required is True
+    assert isinstance(gfix, ParameterSpec)
+    assert gfix.required is True
+    assert gfix.choices == ("CG", "GI")
     assert callable(quasi_y_ls.validator)
     assert sector.choices == ("sea", "valence", "singlet", "full")
     assert "negative-x extension" in sector.physics

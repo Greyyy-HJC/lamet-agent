@@ -59,7 +59,7 @@
         "data_path": "data_pion_pdf_cg/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5", // relative to root_directory; standard path is source/sink/momentum
         "ensemble": "HISQa060_X", // ensemble identifier propagated to artifacts
         "hadron": "pion", // e.g. "pion", "proton", or another stage-supported label
-        "gfix": "CG", // gauge-fixing provenance; Fourier method is declared separately
+        "gfix": "CG", // gauge-fixing provenance inherited by the Fourier stage
         "source_operator": "g5", // free non-empty string; gamma labels conventionally start with g
         "sink_operator": "g5", // use a distinct label such as gT5_nonlocal when needed
         "volume": "S48T64", // exact S<Ls>T<Lt> form; Lt must match the HDF5 time axis
@@ -253,7 +253,6 @@
     },
     "fourier_transform": {
       "defaults": {
-        "method": "CG", // required tail parameterization; do not infer it from gfix
         "order": ["LA", "NLA"], // tail ansatz candidates: "LA" and/or "NLA"
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
         // Lower-level incompatible alternative: omit sector and set
@@ -279,8 +278,7 @@
           "model_average": false, // runtime default true; false uses one selected tail model
           "max_schemes": 200 // contract default 200; cap accepted range combinations
         }
-        // Usually inferred from manifest metadata or upstream attrs:
-        // "gfix": "CG", // optional; usually inherited from the input
+        // This full chain inherits gfix from the selected correlator.
         // "polarization": "unpolarized", // required for PDF/GPD if upstream 3pt provenance is absent
         // "hadron": "pion", // required when no upstream correlator/artifact supplies it
         // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class

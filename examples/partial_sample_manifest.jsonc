@@ -81,7 +81,7 @@
   "stages": {
     "fourier_transform": {
       "defaults": {
-        "method": "CG",
+        "gfix": "CG", // required here because this partial workflow starts from external artifacts
         "order": ["LA", "NLA"],
         "Lambda0_gev": 0.0,
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full

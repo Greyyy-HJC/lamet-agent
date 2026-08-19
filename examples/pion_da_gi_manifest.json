@@ -546,7 +546,6 @@
           "model_average": true
         },
         "zmin_shift": 1,
-        "method": "GI",
         "Lambda0_gev": 0.0
       },
       "jobs": [

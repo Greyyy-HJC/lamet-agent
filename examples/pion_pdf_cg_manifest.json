@@ -203,7 +203,6 @@
           "LA",
           "NLA"
         ],
-        "method": "CG",
         "sector": "valence",
         "Lambda0_gev": 0.1,
         "posterior_prior_error_scale": [

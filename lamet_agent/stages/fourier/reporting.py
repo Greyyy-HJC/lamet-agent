@@ -82,7 +82,7 @@ def _format_grid(y_grid: np.ndarray, *, language: str) -> str:
 
 
 def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
-    method = str(result.get("method", "")).upper()
+    gfix = str(result.get("gfix", "")).upper()
     order = str(result.get("order", "")).upper()
     observable = str(result.get("observable_backend", result.get("observable", "")))
     sector = str(result.get("sector", "")).lower()
@@ -121,7 +121,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     reference = FORMULA_REFERENCES.get(observable, "code-selected LA/NLA formula")
     article_tail = r"\exp[-(m+\Lambda_0)|z|]"
     implementation_tail = r"\exp[-(m+\Lambda_0)z]"
-    if method == "CG":
+    if gfix == "CG":
         implementation_tail += r"\,z^{-n}"
 
     if observable == "pion_quark_quasi_gpd" or observable.startswith("pion_quark_") and observable.endswith("_quasi_gpd"):
@@ -197,7 +197,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             ]
         scope_lines = [
             "The article formula is the full $\\pm z$ expression. The lamet-agent fit uses the explicit positive-$z$ branch, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval.",
-            "When `method=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$.",
+            "When `gfix=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$.",
         ]
     elif observable == "nucleon_quark_quasi_gpd" or observable.startswith("nucleon_quark_") and observable.endswith("_quasi_gpd"):
         if order == "LA":
@@ -256,7 +256,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             ]
         scope_lines = [
             "The article formula is the full $\\pm z$ expression. The lamet-agent fit uses the explicit positive-$z$ branch, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval.",
-            "When `method=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$.",
+            "When `gfix=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$.",
         ]
     elif observable in {
         "pion_quark_quasi_pdf",
@@ -324,7 +324,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
         ]
         scope_lines = [
             "For these forward-like quark observables, the report distinguishes the article formula from the lamet-agent parameterized equivalent rewrite.",
-            "The implementation fits only positive coordinates, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval; `method=CG` adds the explicit factor $z^{-n}$ shown in the implementation formula.",
+            "The implementation fits only positive coordinates, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval; `gfix=CG` adds the explicit factor $z^{-n}$ shown in the implementation formula.",
         ]
         if observable == "meson_quasi_da":
             if symmetry_guarantee:
@@ -366,7 +366,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$; `Lambda0_gev` is the fixed offset, not a hard bound on a fitted $\\Lambda$.",
         ]
         scope_lines = [
-            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `method=CG` adds the explicit factor $z^{-n}$ shown above.",
+            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `gfix=CG` adds the explicit factor $z^{-n}$ shown above.",
         ]
     elif observable in {"pion_gluon_quasi_pdf", "pion_gluon_unpolarized_quasi_pdf"}:
         article_formula = (
@@ -393,7 +393,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$; `Lambda0_gev` is the fixed offset, not a hard bound on a fitted $\\Lambda$.",
         ]
         scope_lines = [
-            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `method=CG` adds the explicit factor $z^{-n}$ shown above.",
+            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `gfix=CG` adds the explicit factor $z^{-n}$ shown above.",
         ]
     else:
         article_formula = rf"h^{{\rm {order}}}_{{\rm art}}(z)=\left[\sum_j A_j e^{{i\phi_j\,{{\rm sign}}(z)}} e^{{i\omega_j z}}\right]{article_tail}."
@@ -494,7 +494,7 @@ def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
         "|---|---|",
         "| Observable | Physical matrix element transformed by this stage. |",
         "| Sector | Requested physics projection; PDF/GPD accept `sea`, `valence`, `singlet`, and `full`, while DA uses `full`. |",
-        "| Tail method/order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{method}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
+        "| Gauge-link treatment / tail order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{gfix}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
         "| Active fitted component | Execution channel resolved from `sector`; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one component. |",
         "| Coordinate unit | Input coordinates and `scheme_scan` ranges are fixed physical distances in fm; the fit uses $z_{\\rm GeV^{-1}}=z_{\\rm fm}/(\\hbar c)$ and $\\lambda=\\bar P^z z_{\\rm GeV^{-1}}$, where $\\bar P^z=(P_i^z+P_f^z)/2$ (and $P_i^z=P_f^z$ for forward kinematics). |",
         "| Posterior-prior error scale | The mean fit gives $\\bar p_i\\pm\\sigma_{p_i}$; resampled fits use $p_i=\\bar p_i\\pm s\\sigma_{p_i}$. |",
@@ -754,7 +754,7 @@ def _settings_table(
     result: dict[str, Any],
     observable: str,
     observable_text: str,
-    method: str,
+    gfix: str,
     order: str,
     fit_range_text: str,
     z_ext_max: Any,
@@ -775,7 +775,7 @@ def _settings_table(
     rows = [
         ("Observable", f"`{observable}` ({observable_text})"),
         ("Sector", f"`{result.get('sector', 'full')}`"),
-        ("Tail method/order", f"`{method}` / `{order}`"),
+        ("Gauge-link treatment / tail order", f"`{gfix}` / `{order}`"),
         ("Active fitted component", f"`{result.get('part', 'both')}`"),
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
         ("Coordinate unit", r"fm input and scan; fit unit $\mathrm{GeV}^{-1}$"),
@@ -817,12 +817,12 @@ def _artifact_field_table(kind: str, *, language: str, target_observable: str = 
             ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging."),
             ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection."),
             ("attrs `momentum_gev`, `final_momentum_gev`, `lattice_spacing_fm`", "Momentum and lattice-spacing metadata."),
-            ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
+            ("attrs `sector`, `gfix`, `order`, `observable`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, gauge-link treatment, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
         ]
         if target_observable in {"pdf", "gpd"}:
             rows[-1:] = [
                 ("attrs `observable`, `observable_backend`, `parton`, `hadron`, `current_operator`, `polarization`, `sector`", "Resolved observable, numerical tail backend, operator provenance, and physics projection."),
-                ("attrs `method`, `order`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
+                ("attrs `gfix`, `order`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Gauge-link treatment, formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
             ]
     else:
         rows = [
@@ -887,7 +887,7 @@ def build_fourier_report_markdown(
     artifacts = artifacts or {}
     observable = str(result.get("observable", ""))
     observable_text = OBSERVABLE_TEXT.get(observable, observable or "not recorded")
-    method = str(result.get("method", "not recorded"))
+    gfix = str(result.get("gfix", "not recorded"))
     order = str(result.get("order", "not recorded"))
     y_grid = np.asarray(result.get("y_grid", []), dtype=float)
     schemes = list(result.get("scheme_results", []))
@@ -896,7 +896,7 @@ def build_fourier_report_markdown(
     z_ext_max = selected_model.get("z_ext_max", "not available")
 
     title = "# Fourier Transform Analysis Report"
-    abstract = f"This report summarizes the Fourier transform for `{observable}` ({observable_text}) using `{method}` / `{order}` large-distance extrapolation."
+    abstract = f"This report summarizes the Fourier transform for `{observable}` ({observable_text}) using `{gfix}` / `{order}` large-distance extrapolation."
     transform_text = _fourier_transform_text(result, language="en")
     lines = [
         title,
@@ -905,7 +905,7 @@ def build_fourier_report_markdown(
         abstract,
         "",
         "## Analysis Setup",
-        *_settings_table(result=result, observable=observable, observable_text=observable_text, method=method, order=order, fit_range_text=fit_range_text, z_ext_max=z_ext_max, y_grid=y_grid, language="en"),
+        *_settings_table(result=result, observable=observable, observable_text=observable_text, gfix=gfix, order=order, fit_range_text=fit_range_text, z_ext_max=z_ext_max, y_grid=y_grid, language="en"),
         "",
         "### Field Definitions",
         *_field_definitions(result, language="en"),
@@ -915,7 +915,7 @@ def build_fourier_report_markdown(
         "## Large-Distance Extrapolation",
         _tail_formula_text(result, language="en"),
         "",
-        "## Fourier Transform Method",
+        "## Fourier Transform Setup",
         transform_text,
         "",
         "## Fit Quality and Model Diagnostics",
@@ -1005,7 +1005,7 @@ def write_fourier_stage_report(
 
     observable = str(first.get("observable", ""))
     observable_text = OBSERVABLE_TEXT.get(observable, observable or "not recorded")
-    method = str(first.get("method", "not recorded"))
+    gfix = str(first.get("gfix", "not recorded"))
     order = str(first.get("order", "not recorded"))
     y_grid = np.asarray(first.get("y_grid", []), dtype=float)
     z_ext_values = []
@@ -1083,7 +1083,7 @@ def write_fourier_stage_report(
                 result=first,
                 observable=observable,
                 observable_text=observable_text,
-                method=method,
+                gfix=gfix,
                 order=order,
                 fit_range_text=fit_range_text,
                 z_ext_max=z_ext_max,
@@ -1099,7 +1099,7 @@ def write_fourier_stage_report(
             "## Large-Distance Extrapolation",
             _tail_formula_text(first, language=language),
             "",
-            "## Fourier Transform Method",
+            "## Fourier Transform Setup",
             transform_text,
             "",
             "## Fit Quality and Model Diagnostics",
@@ -1109,7 +1109,7 @@ def write_fourier_stage_report(
         "This stage first scans `zmin_fm × zmax_fm` on the sample-average matrix element, selects the largest-`logGBF` range among candidates passing $Q\\ge0.05$, and falls back to the largest-$Q$ successful range if none passes. The selected range is then fixed; range variation is not part of model averaging."
     )
     lines.append(
-        "With `model_average=true`, each resample sample refits the `(order, prior width)` candidates at fixed range and fixed method, then uses that sample's normalized evidence weight $w_{s,m}=\\exp(\\log\\mathrm{GBF}_{s,m}-\\max_n\\log\\mathrm{GBF}_{s,n})/\\sum_k\\exp(\\log\\mathrm{GBF}_{s,k}-\\max_n\\log\\mathrm{GBF}_{s,n})$. With `model_average=false`, each sample selects the largest-`logGBF` candidate after the $Q$ gate."
+        "With `model_average=true`, each resample sample refits the `(order, prior width)` candidates at fixed range and fixed gfix, then uses that sample's normalized evidence weight $w_{s,m}=\\exp(\\log\\mathrm{GBF}_{s,m}-\\max_n\\log\\mathrm{GBF}_{s,n})/\\sum_k\\exp(\\log\\mathrm{GBF}_{s,k}-\\max_n\\log\\mathrm{GBF}_{s,n})$. With `model_average=false`, each sample selects the largest-`logGBF` candidate after the $Q$ gate."
     )
     lines.extend(
         [
@@ -1140,7 +1140,7 @@ def write_fourier_stage_report(
         [
             "",
             "- The `range grid` denotes range candidates, not the model-averaging space; the model candidates are `(order, prior width)` at fixed range.",
-            "- `method` is a fixed theory input from the manifest and is not model averaged.",
+            "- `gfix` is inherited from correlator provenance or declared for an external input, and is not model averaged.",
         ]
     )
     for item in jobs:

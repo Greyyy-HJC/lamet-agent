@@ -1245,7 +1245,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
     def fake_run_fourier_transform(store, **kwargs):
         store["fourier_result"] = {
             "observable": "pion_quark_quasi_pdf",
-            "method": "GI",
+            "gfix": "GI",
             "order": "LA",
             "part": "re",
             "resample_mode": "jackknife",

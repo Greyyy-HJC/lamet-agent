@@ -709,7 +709,7 @@
 ## 2026-07-17 (Automatic apply-time zR extension)
 
 - Added default apply-time long-distance extension for hybrid self-renormalization: when the target exceeds the fitted ``z_R`` grid, infer the single-family ``f1(z)``, fit its derived long-distance tail quadratically, and rebuild only the missing upper-end ``z_R`` points.
-- Kept ``strict`` and ``intersection`` as explicit alternatives while requiring no user-supplied extension length or fit boundary; artifacts and reports record the source range, extrapolated-point count, tail boundary, and method.
+- Kept ``strict`` and ``intersection`` as explicit alternatives while requiring no user-supplied extension length or fit boundary; artifacts and reports record the source range, extrapolated-point count, tail boundary, and tail prescription.
 - Clarified that the fit job determines the reference-operator ``m0``, while apply jobs continue to accept ``m0_gev`` and ``d`` overrides for the target operator.
 - Restored all 18 pion/kaon DA outputs to 600 samples by 25 points, verified them exactly against the direct extrapolated formula, and removed tests and documentation for the retired partial pion-PDF manifest.
 - Expanded the annotated sample manifest with every supported hybrid-self optional parameter, fit/apply scope, defaults, target-``m0`` override semantics, and coverage-policy choices.
@@ -1428,4 +1428,9 @@
 - `plot_fourier_extension_quality` now labels \(\lambda=z P^z\) for forward
   jobs and \(\lambda=z\bar P^z\) only when `final_momentum_gev` is present.
 
+## 2026-08-19 (Fourier gfix provenance)
 
+- Standardized the Fourier gauge-fixing and tail-family parameter as `gfix`.
+- Correlator-backed jobs inherit `gfix`; external jobs declare it explicitly and
+  are checked against artifact provenance. Numerical tail helpers, results,
+  reports, plots, and NetCDF metadata use the same name.

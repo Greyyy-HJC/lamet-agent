@@ -9,9 +9,11 @@ quasi-distribution while preserving every resampled sample.
    `load_renormalized_matrix_element_samples` when the input is already in memory.
    Call `run_fourier_transform` directly.
 2. Call `run_fourier_transform` once. Job defaults/params and source metadata supply
-   quasi_y_ls, scheme_scan, method, order, sector, hadron, momentum, output paths, and fit
-   controls. Coordinates and fit ranges are fixed in fm; target and parton come from
-   run metadata, and the tool derives the observable. Do not override them.
+   quasi_y_ls, scheme_scan, gfix, order, sector, hadron, momentum, output paths, and fit
+   controls. Correlator-backed jobs inherit `gfix`; jobs reading an external artifact
+   declare it in Fourier defaults or job params. Coordinates and fit ranges are fixed
+   in fm; target and parton come from run metadata, and the tool derives the observable.
+   Do not override them.
 3. The run tool writes the primary NetCDF, fit-info NetCDF, plots, and registers
    store['output']. A single language-selected stage report is written after all Fourier
    jobs finish. Finish by reporting the NetCDF/plot paths plus selected-range

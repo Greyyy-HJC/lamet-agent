@@ -249,7 +249,7 @@ def _matching_grid_payload(
         matching_defaults["lc_x_ls"] = lc_x_ls
     fourier_defaults: dict = {
         "order": ["LA"],
-        "method": "GI",
+        "gfix": "GI",
         "sector": "valence",
         "Lambda0_gev": 0.0,
         "posterior_prior_error_scale": 3.0,

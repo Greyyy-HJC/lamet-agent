@@ -41,6 +41,62 @@ def test_planning_prompt_requires_validation_contract_maintenance() -> None:
     assert "adds, removes, renames, or changes a manifest parameter" in prompt
 
 
+def test_plan_gfix_gap_matches_external_fourier_provenance() -> None:
+    full = json.loads(Path("examples/pion_pdf_cg_manifest.json").read_text(encoding="utf-8"))
+    assert not any(gap["parameter"] == "gfix" for gap in _stage_parameter_gaps(full))
+
+    payload = {
+        "metadata": {
+            "run_id": "partial",
+            "root_directory": ".",
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "sample_error_mode": "covariance",
+            "random_seed": 1984,
+            "stages": ["fourier_transform"],
+        },
+        "inputs": {
+            "correlators": [],
+            "artifacts": [{
+                "id": "rn",
+                "stage": "renormalization",
+                "path": "rn.nc",
+                "momentum": "PX5PY0PZ0",
+                "volume": "S48T64",
+                "lattice_spacing_fm": 0.0574,
+                "hadron": "pion",
+                "gfix": "CG",
+                "polarization": "unpolarized",
+            }],
+            "kernels": [],
+        },
+        "stages": {
+            "fourier_transform": {
+                "defaults": {
+                    "Lambda0_gev": 0.0,
+                    "order": "LA",
+                    "posterior_prior_error_scale": 3.0,
+                    "quasi_y_ls": {"start": -1.0, "stop": 1.0, "num": 4},
+                    "scheme_scan": {"zmin_fm": [0.1], "zmax_fm": [0.8], "zmax_ext_fm": 1.2},
+                    "sector": "valence",
+                },
+                "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
+            }
+        },
+    }
+
+    gaps = _stage_parameter_gaps(payload)
+    assert [gap["code"] for gap in gaps if gap["parameter"] == "gfix"] == ["fourier.gfix.required"]
+
+    payload["stages"]["fourier_transform"]["defaults"]["gfix"] = "GI"
+    gaps = _stage_parameter_gaps(payload)
+    assert [gap["code"] for gap in gaps if gap["parameter"] == "gfix"] == ["fourier.gfix.provenance"]
+
+    payload["stages"]["fourier_transform"]["defaults"]["gfix"] = "CG"
+    assert not any(gap["parameter"] == "gfix" for gap in _stage_parameter_gaps(payload))
+
+
 def _write_kernel(root: Path) -> None:
     (root / "lamet_agent").mkdir(parents=True)
     (root / "lamet_agent" / "kernels.py").write_text("# test kernel\n", encoding="utf-8")

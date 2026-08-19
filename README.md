@@ -638,6 +638,13 @@ Legacy files may use a complete manifest kinematic triple as a fallback. When a
 supported field is present in both places, the values must agree or validation
 fails before stage execution.
 
+Fourier transformation uses `gfix` as its single CG/GI gauge-link and tail-family
+parameter. A full in-manifest correlator chain inherits `gfix` from the selected
+correlator and rejects a duplicate Fourier declaration. A partial run that starts
+from an external artifact declares `gfix` in Fourier defaults or job params; when
+the artifact also records `gfix`, the two values must agree. Only `gfix` is used
+throughout the Fourier manifest, numerical workflow, and artifact provenance.
+
 ## Standard Correlator HDF5 Format
 
 Each standard correlator file contains one ensemble and one correlator type. A
