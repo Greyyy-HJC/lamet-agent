@@ -763,8 +763,6 @@ def prepare_tool_args(
             resolved["artifacts_dir"] = str(artifacts_dir)
     if stage == "fourier_transform":
         fourier = dict(effective_params)
-        if "component" in fourier and "part" not in fourier:
-            fourier["part"] = fourier.pop("component")
         source = store.get("input")
         upstream_metadata = dict(
             source.resolved_metadata if isinstance(source, ArtifactInput) else getattr(source, "attrs", {})

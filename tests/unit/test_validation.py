@@ -561,6 +561,30 @@ def test_fourier_conflict_returns_structured_physics_diagnostic() -> None:
     assert "remove the manual projection controls" in diagnostics[0].suggested_fix
 
 
+def test_fourier_manual_projection_is_valid_without_sector() -> None:
+    payload = _partial_fourier_payload(
+        {
+            "id": "rn",
+            "stage": "renormalization",
+            "path": "rn.nc",
+            "momentum": "PX1PY0PZ0",
+            "volume": "S16T32",
+            "lattice_spacing_fm": 0.1,
+            "hadron": "pion",
+            "polarization": "unpolarized",
+        }
+    )
+    defaults = payload["stages"]["fourier_transform"]["defaults"]
+    defaults.pop("sector")
+    defaults.update({"part": "im", "output_scale": 1.5, "im_flip_for_ft": True})
+    manifest = AnalysisManifest.model_validate(payload)
+    job = manifest.stages["fourier_transform"].jobs[0]
+
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+
+    assert not any(item.code.startswith("fourier.sector") for item in diagnostics)
+
+
 def _pion_pdf_fourier_job():
     manifest = validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
     job = manifest.stages["fourier_transform"].jobs[0]

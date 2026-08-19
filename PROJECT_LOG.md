@@ -1332,8 +1332,8 @@
 
 - Audited `examples/sample_manifest.jsonc` against every stage contract,
   metadata field, correlator input, artifact provenance key, and kernel field.
-- Documented previously uncommented optional keys: Fourier `component` (legacy
-  `part` alias), plot/report nested `title`/`save_path`, Non-NetCDF
+- Documented previously uncommented optional keys: Fourier plot/report nested
+  `title`/`save_path`, Non-NetCDF
   `input_format`/`h5_group`/`coord_key`/`re_key`/`im_key`, `quasi_y_ls.step`,
   matching legacy `xlim`/`ylim`, and artifact `coord_unit`.
 - Annotated contract defaults (`svdcut`, `prior_width`, `correlator_rescale`,
@@ -1434,3 +1434,11 @@
 - Correlator-backed jobs inherit `gfix`; external jobs declare it explicitly and
   are checked against artifact provenance. Numerical tail helpers, results,
   reports, plots, and NetCDF metadata use the same name.
+
+## 2026-08-19 (Fourier projection controls)
+
+- Removed the obsolete Fourier channel alias and standardized the transform
+  channel as `part` throughout validation, execution, plotting, reports, and examples.
+- Made `sector` optional so advanced jobs may instead declare `part`,
+  `output_scale`, and `im_flip_for_ft`; named sectors still resolve and own all
+  three controls.

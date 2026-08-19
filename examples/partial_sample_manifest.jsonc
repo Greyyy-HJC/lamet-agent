@@ -106,7 +106,6 @@
         }
         // "zmin_shift": 1, // optional; clone low/high tail-window systematics (contract default 0 = off)
         // "part": "re" // "re", "im", or "both" (contract default "both"); cannot combine with sector
-        // "component": "both", // legacy alias for part; cannot be set together with part
       },
       "jobs": [
         {

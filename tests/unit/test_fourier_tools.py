@@ -46,7 +46,7 @@ _EXPLICIT_FOURIER_PARAMS = {
     "sample_error_mode": "covariance",
     "part": "both",
     "output_scale": 1.0,
-    "sector": "full",
+    "sector": None,
     "target_observable": "da",
     "parton": "quark",
     "hadron": "pion",
@@ -481,7 +481,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "GI" in report_text
     assert "LA" in report_text
     assert "Lambda0_gev" in report_text
-    assert "Active fitted component" in report_text
+    assert "Active fitted part" in report_text
     assert "fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together" in report_text
     assert "Model Diagnostics" in report_text
     assert "q(x)=\\frac{\\Delta\\lambda}{2\\pi}" in report_text
@@ -504,7 +504,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert (tmp_path / "report_fourier_ch.md").exists()
     report_cn_text = report_cn_path.read_text(encoding="utf-8")
     assert "# Fourier Transform Analysis Report" in report_cn_text
-    assert "Active fitted component" in report_cn_text
+    assert "Active fitted part" in report_cn_text
     assert "fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together" in report_cn_text
     assert "Figures and Visual Assessment" in report_cn_text
     assert "Lambda0_gev" in report_cn_text
@@ -517,7 +517,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         store["matrix_element"]["coord"],
         store["matrix_element"]["re_samples"],
         data,
-        component="re",
+        part="re",
     )
     labels = [text.get_text() for text in ax.get_legend().get_texts()]
     assert "Extension Endpoint" not in labels
@@ -611,20 +611,24 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         hadron="nucleon",
         polarization="unpolarized",
         part="re",
-        sector="valence",
+        output_scale=1.5,
+        im_flip_for_ft=True,
         momentum_gev=2.0,
     )
     result_re = store["fourier_result"]
     assert result_re["part"] == "re"
+    assert result_re["sector"] == "manual"
+    assert result_re["output_scale"] == 1.5
+    assert result_re["im_flip_for_ft"] is True
     assert np.allclose(result_re["ft_im_samples"], 0.0)
     assert np.allclose(result_re["scheme_results"][0]["extended_im_samples"], 0.0)
     artifact_re = EnsembleData.from_netcdf(run_re["artifact"])
     assert artifact_re.attrs["part"] == "re"
-    fig_re, ax_re = plot_fourier_extension_quality(coord, re_samples, result_re, component="re")
+    fig_re, ax_re = plot_fourier_extension_quality(coord, re_samples, result_re, part="re")
     assert len(ax_re.collections) == 2
     assert len(ax_re.lines) == 4
     fig_re.clf()
-    fig_im_inactive, ax_im_inactive = plot_fourier_extension_quality(coord, im_samples, result_re, component="im")
+    fig_im_inactive, ax_im_inactive = plot_fourier_extension_quality(coord, im_samples, result_re, part="im")
     assert len(ax_im_inactive.collections) == 1
     assert len(ax_im_inactive.lines) == 3
     fig_im_inactive.clf()
@@ -642,21 +646,21 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         hadron="nucleon",
         polarization="unpolarized",
         part="im",
-        sector="singlet",
         momentum_gev=2.0,
     )
     result_im = store["fourier_result"]
     assert result_im["part"] == "im"
+    assert result_im["sector"] == "manual"
     assert np.allclose(result_im["scheme_results"][0]["extended_re_samples"], 0.0)
     assert np.all(np.isfinite(result_im["ft_re_samples"]))
     assert np.all(np.isfinite(result_im["ft_im_samples"]))
     artifact_im = EnsembleData.from_netcdf(run_im["artifact"])
     assert artifact_im.attrs["part"] == "im"
-    fig_re_inactive, ax_re_inactive = plot_fourier_extension_quality(coord, re_samples, result_im, component="re")
+    fig_re_inactive, ax_re_inactive = plot_fourier_extension_quality(coord, re_samples, result_im, part="re")
     assert len(ax_re_inactive.collections) == 1
     assert len(ax_re_inactive.lines) == 3
     fig_re_inactive.clf()
-    fig_im, ax_im = plot_fourier_extension_quality(coord, im_samples, result_im, component="im")
+    fig_im, ax_im = plot_fourier_extension_quality(coord, im_samples, result_im, part="im")
     assert len(ax_im.collections) == 2
     assert len(ax_im.lines) == 4
     fig_im.clf()
@@ -884,6 +888,7 @@ def test_fourier_sector_owns_output_scale(tmp_path: Path, monkeypatch) -> None:
         parton="quark",
         hadron="nucleon",
         polarization="unpolarized",
+        sector="full",
         part="re",
         output_scale=1.0,
         momentum_gev=2.0,
@@ -903,6 +908,7 @@ def test_fourier_sector_owns_output_scale(tmp_path: Path, monkeypatch) -> None:
         parton="quark",
         hadron="nucleon",
         polarization="unpolarized",
+        sector="full",
         part="re",
         output_scale=2.0,
         momentum_gev=2.0,
@@ -1160,7 +1166,7 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     original_extension_plot = fourier_functions.plot_fourier_extension_quality
 
     def capture_extension_plot(coord_values, sample_values, result, **kwargs):
-        plotted_samples[str(kwargs["component"])] = np.asarray(sample_values).copy()
+        plotted_samples[str(kwargs["part"])] = np.asarray(sample_values).copy()
         return original_extension_plot(coord_values, sample_values, result, **kwargs)
 
     monkeypatch.setattr(
@@ -1599,7 +1605,7 @@ def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path
     assert auto["zmax_ext_fm"] == pytest.approx(1.05 + 8.0 / expected_ft_scale)
     scheme = store["fourier_result"]["scheme_results"][0]
     assert np.allclose(scheme["lambda_ext"], np.asarray(scheme["z_ext"]) * 0.245)
-    fig, ax = plot_fourier_extension_quality(coord, re_samples, store["fourier_result"], component="re")
+    fig, ax = plot_fourier_extension_quality(coord, re_samples, store["fourier_result"], part="re")
     assert ax.get_xlabel() == r"$\lambda = z\bar P^z$, $\bar P^z=(P_i^z+P_f^z)/2$"
     assert r"P_i^z=0.00,\ P_f^z=0.49" in ax.get_ylabel()
     fig.clf()

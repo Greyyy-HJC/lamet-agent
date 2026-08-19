@@ -257,7 +257,6 @@
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
         // Lower-level incompatible alternative: omit sector and set
         // "part": "re" // "re", "im", or "both" (contract default "both"); sector is preferred when available
-        // "component": "both", // legacy alias for part; cannot be set together with part
         "Lambda0_gev": 0.0, // required fixed extra exponential scale in GeV
         "posterior_prior_error_scale": [2.0, 3.0, 5.0], // tail-fit model candidates
         "quasi_y_ls": {

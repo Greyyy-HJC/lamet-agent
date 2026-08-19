@@ -495,7 +495,7 @@ def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
         "| Observable | Physical matrix element transformed by this stage. |",
         "| Sector | Requested physics projection; PDF/GPD accept `sea`, `valence`, `singlet`, and `full`, while DA uses `full`. |",
         "| Gauge-link treatment / tail order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{gfix}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
-        "| Active fitted component | Execution channel resolved from `sector`; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one component. |",
+        "| Active fitted part | Execution channel resolved from `sector`, or supplied manually when `sector` is omitted; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one channel. |",
         "| Coordinate unit | Input coordinates and `scheme_scan` ranges are fixed physical distances in fm; the fit uses $z_{\\rm GeV^{-1}}=z_{\\rm fm}/(\\hbar c)$ and $\\lambda=\\bar P^z z_{\\rm GeV^{-1}}$, where $\\bar P^z=(P_i^z+P_f^z)/2$ (and $P_i^z=P_f^z$ for forward kinematics). |",
         "| Posterior-prior error scale | The mean fit gives $\\bar p_i\\pm\\sigma_{p_i}$; resampled fits use $p_i=\\bar p_i\\pm s\\sigma_{p_i}$. |",
     ]
@@ -526,7 +526,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
         if truncated:
             intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
         if sector == "sea":
-            meaning = "`sea` is reconstructed from the full vector/tensor quark distribution as $\\bar q(x)=-q_{\\rm ext}(-x)$, using one joint fit of the real and imaginary matrix-element components; for a nonzero-skewness GPD, the reflected ERBL region remains a quark-antiquark amplitude rather than an antiquark density."
+            meaning = "`sea` is reconstructed from the full vector/tensor quark distribution as $\\bar q(x)=-q_{\\rm ext}(-x)$, using one joint fit of the real and imaginary matrix-element channels; for a nonzero-skewness GPD, the reflected ERBL region remains a quark-antiquark amplitude rather than an antiquark density."
         elif sector == "singlet":
             meaning = "`singlet` returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor-singlet distribution additionally sums this combination over quark flavors."
         elif part == "both":
@@ -568,7 +568,13 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
         f"This run uses `sector={sector}`, resolved internally to `part={part}`, "
         f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`."
     )
-    if parton == "gluon":
+    if sector == "manual":
+        intro = (
+            f"This run omits a named sector and directly uses `part={part}`, "
+            f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`."
+        )
+        meaning = "The reported result is a manual real/imaginary projection; these numerical controls do not assign a named `sea`, `valence`, `singlet`, or `full` interpretation by themselves."
+    elif parton == "gluon":
         intro += " Gluon operator families use only the full complex Fourier result; quark/antiquark sector projections are not applied."
         meaning = "`full` preserves the gluon result without assigning quark `sea`, `valence`, or `singlet` semantics."
     elif polarization == "helicity":
@@ -578,7 +584,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             "valence": "`valence` uses the sine/odd projection and returns $\\Delta q(x)-\\Delta\\bar q(x)$.",
             "singlet": "`singlet` uses the cosine/even projection and returns the per-flavor C-even combination $\\Delta q(x)+\\Delta\\bar q(x)$; a strict flavor singlet also sums over flavors.",
             "full": "`full` uses one real/imaginary joint fit and reconstructs the complete extended helicity distribution $\\Delta q_{\\rm ext}(x)$.",
-        }.get(sector, "The selected component is reported without an additional named projection.")
+        }.get(sector, "The selected part is reported without an additional named projection.")
     else:
         intro += " The unpolarized/transversity convention is $q_{\\rm ext}(-x)=-\\bar q(x)$."
         meaning = {
@@ -586,7 +592,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             "valence": "`valence` uses the cosine/even projection and returns $q(x)-\\bar q(x)$.",
             "singlet": "`singlet` uses the sine/odd projection and returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor singlet also sums over flavors.",
             "full": "`full` uses one real/imaginary joint fit and reconstructs the complete extended distribution $q_{\\rm ext}(x)$.",
-        }.get(sector, "The selected component is reported without an additional named projection.")
+        }.get(sector, "The selected part is reported without an additional named projection.")
     if truncated:
         intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
     if target == "gpd":
@@ -776,7 +782,7 @@ def _settings_table(
         ("Observable", f"`{observable}` ({observable_text})"),
         ("Sector", f"`{result.get('sector', 'full')}`"),
         ("Gauge-link treatment / tail order", f"`{gfix}` / `{order}`"),
-        ("Active fitted component", f"`{result.get('part', 'both')}`"),
+        ("Active fitted part", f"`{result.get('part', 'both')}`"),
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
         ("Coordinate unit", r"fm input and scan; fit unit $\mathrm{GeV}^{-1}$"),
         ("Decay offset", f"$\\Lambda_0={_fmt(result.get('Lambda0_gev'))}$"),

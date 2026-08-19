@@ -253,20 +253,6 @@ def _check_sector_manual_projection(context: StageValidationContext) -> RuleViol
     )
 
 
-def _check_component_part(context: StageValidationContext) -> RuleViolation | None:
-    if "component" not in context.authored_params or "part" not in context.authored_params:
-        return None
-    return _violation(
-        context,
-        message="Fourier component and part cannot both be set.",
-        path=f"{context.job_path}.params",
-        cause=(
-            f"component={context.params['component']!r} and part={context.params['part']!r} "
-            "select the same channel."
-        ),
-    )
-
-
 def _check_scheme_scan(context: StageValidationContext) -> RuleViolation | None:
     message = _validate_scheme_scan(context.params.get("scheme_scan"))
     if message is None:
@@ -541,14 +527,6 @@ FOURIER_CONSTRAINTS = (
         check=_check_sector_manual_projection,
     ),
     ConstraintSpec(
-        code="fourier.component_part.conflict",
-        parameters=("component", "part"),
-        rule="component and part are aliases and cannot both be set.",
-        physics="Both fields select the same real/imaginary transform channel; two values have no independent physical meaning.",
-        suggested_fix="Keep part and remove component, or keep component as the legacy alias.",
-        check=_check_component_part,
-    ),
-    ConstraintSpec(
         code="fourier.scheme_scan.coordinates",
         parameters=("scheme_scan",),
         rule="Tail-scan coordinates zmin_fm, zmax_fm, and zmax_ext_fm are physical distances in fm.",
@@ -622,17 +600,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             unit="GeV",
             required=True,
         ),
-        "component": _parameter(
-            "Legacy alias for part.",
-            "It selects the real, imaginary, or combined transform channel.",
-            expected=str,
-            choices=("re", "im", "both"),
-            choice_descriptions={
-                "re": "Use the real coordinate-space channel.",
-                "im": "Use the imaginary coordinate-space channel.",
-                "both": "Retain both channels.",
-            },
-        ),
         "coord_key": _parameter("NPZ/HDF5 coordinate dataset key.", "This maps an external file layout onto the stage coordinate axis.", expected=str, default="coord"),
         "gfix": _parameter(
             "Gauge-link treatment and long-distance tail family.",
@@ -675,7 +642,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "output_scale": _parameter("Final manual multiplicative scale.", "This rescales the transformed distribution and its uncertainties.", expected=float, default=1.0),
         "part": _parameter(
             "Manual real/imaginary transform channel.",
-            "The selected channel controls which coordinate-space component constrains the output when sector is absent.",
+            "The selected part controls which coordinate-space channel constrains the output when sector is absent.",
             expected=str,
             choices=("re", "im", "both"),
             choice_descriptions={
@@ -747,7 +714,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Partonic projection of a quark PDF/GPD, or full distribution.",
             "For quarks it selects the negative-x extension and active complex channel; DA and gluon backends support full only.",
             expected=str,
-            required=True,
             choices=("sea", "valence", "singlet", "full"),
             choice_descriptions={
                 "sea": "Construct the antiquark/sea projection from the negative-x extension.",

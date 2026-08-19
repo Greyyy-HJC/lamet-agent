@@ -951,16 +951,16 @@ def plot_fourier_extension_quality(
     result: dict[str, Any],
     *,
     scheme_index: int = 0,
-    component: str = "re",
+    part: str = "re",
     momentum_gev: float | None = None,
     save_path: str | Path | None = None,
     title: str | None = None,
     show: bool = False,
 ) -> tuple[Figure, Axes]:
     """Plot coordinate-space data against the fitted long-distance extrapolation."""
-    component = component.lower()
-    if component not in {"re", "im"}:
-        raise ValueError("component must be 're' or 'im'")
+    part = part.lower()
+    if part not in {"re", "im"}:
+        raise ValueError("part must be 're' or 'im'")
     scheme = result["scheme_results"][scheme_index]
     if momentum_gev is None:
         momentum_gev = result.get("momentum_gev")
@@ -977,7 +977,7 @@ def plot_fourier_extension_quality(
     sample_error_mode = normalize_sample_error_mode(str(result.get("sample_error_mode", "covariance")), resample_mode=resample_mode)
 
     lambda_ext = np.asarray(scheme["lambda_ext"], dtype=float)
-    model_key = "extended_re_samples" if component == "re" else "extended_im_samples"
+    model_key = "extended_re_samples" if part == "re" else "extended_im_samples"
     mode = resample_mode.strip().lower()
     band_stats = []
     for sample_values in (samples, scheme[model_key]):
@@ -1021,8 +1021,8 @@ def plot_fourier_extension_quality(
     model_label = "Extrapolation"
     if gfix or order:
         model_label = f"Extrapolation ({'+'.join(item for item in (gfix, order) if item)})"
-    part = str(result.get("part", "both")).strip().lower()
-    draw_model = part in {"both", component} or part not in {"re", "im"}
+    fitted_part = str(result.get("part", "both")).strip().lower()
+    draw_model = fitted_part in {"both", part} or fitted_part not in {"re", "im"}
 
     ax.fill_between(
         lambda_data,
@@ -1062,17 +1062,17 @@ def plot_fourier_extension_quality(
         ax.set_xlabel(r"$\lambda = z\bar P^z$, $\bar P^z=(P_i^z+P_f^z)/2$", **FONT_SIZE)
     else:
         ax.set_xlabel(r"$\lambda = z P^z$", **FONT_SIZE)
-    component_label = r"\mathrm{Re}" if component == "re" else r"\mathrm{Im}"
+    part_label = r"\mathrm{Re}" if part == "re" else r"\mathrm{Im}"
     if momentum_gev is None:
-        ax.set_ylabel(rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)
+        ax.set_ylabel(rf"${part_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)
     elif final_momentum_gev is not None:
         ax.set_ylabel(
-            rf"${component_label}\,\tilde{{h}}^R(\lambda, P_i^z={float(momentum_gev):.2f},\ P_f^z={float(final_momentum_gev):.2f}\,\mathrm{{GeV}})$",
+            rf"${part_label}\,\tilde{{h}}^R(\lambda, P_i^z={float(momentum_gev):.2f},\ P_f^z={float(final_momentum_gev):.2f}\,\mathrm{{GeV}})$",
             **FONT_SIZE,
         )
     else:
         ax.set_ylabel(
-            rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z={float(momentum_gev):.2f}\,\mathrm{{GeV}})$",
+            rf"${part_label}\,\tilde{{h}}^R(\lambda, P^z={float(momentum_gev):.2f}\,\mathrm{{GeV}})$",
             **FONT_SIZE,
         )
     if title is None:

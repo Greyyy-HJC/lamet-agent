@@ -9,8 +9,10 @@ quasi-distribution while preserving every resampled sample.
    `load_renormalized_matrix_element_samples` when the input is already in memory.
    Call `run_fourier_transform` directly.
 2. Call `run_fourier_transform` once. Job defaults/params and source metadata supply
-   quasi_y_ls, scheme_scan, gfix, order, sector, hadron, momentum, output paths, and fit
-   controls. Correlator-backed jobs inherit `gfix`; jobs reading an external artifact
+   quasi_y_ls, scheme_scan, gfix, order, hadron, momentum, output paths, and fit
+   controls. A named `sector` resolves the projection automatically; without it,
+   `part`, `output_scale`, and `im_flip_for_ft` define the manual projection.
+   Correlator-backed jobs inherit `gfix`; jobs reading an external artifact
    declare it in Fourier defaults or job params. Coordinates and fit ranges are fixed
    in fm; target and parton come from run metadata, and the tool derives the observable.
    Do not override them.

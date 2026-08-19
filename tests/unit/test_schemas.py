@@ -195,7 +195,7 @@ def test_manifest_accepts_fourier_lambda0_gev() -> None:
     AnalysisManifest.model_validate(_fourier_payload())
 
 
-@pytest.mark.parametrize("parameter", ["coord_unit", "observable", "target_observable", "y_grid"])
+@pytest.mark.parametrize("parameter", ["component", "coord_unit", "observable", "target_observable", "y_grid"])
 def test_manifest_rejects_removed_fourier_inputs(parameter: str) -> None:
     payload = _fourier_payload()
     payload["stages"]["fourier_transform"]["defaults"][parameter] = "fm"
@@ -258,6 +258,8 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
     gfix = contract.schema["gfix"]
 
     assert isinstance(sector, ParameterSpec)
+    assert sector.required is False
+    assert "component" not in contract.schema
     assert isinstance(quasi_y_ls, ParameterSpec)
     assert quasi_y_ls.required is True
     assert isinstance(gfix, ParameterSpec)

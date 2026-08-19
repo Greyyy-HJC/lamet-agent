@@ -2587,7 +2587,7 @@ def run_fourier_transform(
     sample_error_mode: str,
     part: str,
     output_scale: float,
-    sector: str,
+    sector: str | None = None,
     current_operator: str | None = None,
     polarization: str | None = None,
     psi1_flavor_class: str | None = None,
@@ -2639,12 +2639,10 @@ def run_fourier_transform(
         else:
             part, output_scale, im_flip_for_ft = "both", 1.0, False
     else:
-        if parton == "gluon":
+        if target == "da" or parton == "gluon":
             sector, part, output_scale, im_flip_for_ft = "full", "both", 1.0, False
-        elif polarization == "helicity" and target in {"pdf", "gpd"}:
-            sector = {"re": "singlet", "im": "valence", "both": "full"}.get(str(part).lower(), str(part).lower())
         else:
-            sector = {"re": "valence", "im": "singlet", "both": "full"}.get(str(part).lower(), str(part).lower())
+            sector = "manual"
     fit_sector = "full" if sector == "sea" else sector
     matrix_element_data = store.get("matrix_element_data")
     if matrix_element_data is None:
@@ -3041,7 +3039,7 @@ def plot_fourier_extension_quality_result(
         matrix_element["re_samples"],
         data,
         scheme_index=scheme_index,
-        component="re",
+        part="re",
         momentum_gev=data.get("momentum_gev"),
         save_path=re_output,
         title=title,
@@ -3054,7 +3052,7 @@ def plot_fourier_extension_quality_result(
         matrix_element["im_samples"],
         data,
         scheme_index=scheme_index,
-        component="im",
+        part="im",
         momentum_gev=data.get("momentum_gev"),
         save_path=im_output,
         title=title,
