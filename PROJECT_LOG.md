@@ -1400,4 +1400,32 @@
   id, or a finite nonzero numeric constant for ratio and msbar. Hybrid still
   requires a z-dependent matrix-element denominator.
 
+## 2026-08-18 (Snap z-grid windows, unify ħc, HISQa060_X a=0.06)
+
+- Fourier `scheme_scan` `zmin_fm`/`zmax_fm` snap onto the nearest positive
+  coordinate before inclusive masks, so a one-ulp fencepost cannot drop a
+  lattice site. `zmax_ext_fm` stays a continuous extension endpoint.
+- Hybrid short/long membership uses the same nearest site as the frozen
+  denominator (`|z| <= |z[zs_idx]|`). The long-range exponent still uses
+  physical `(z_fm - zs_fm) / ħc`.
+- Validate adds `fourier.scheme_scan.grid_range`: authored `zmin_fm`/`zmax_fm`
+  must lie in `(0, z_last_fm + 0.5 a]` when upstream `bz` is known. Partial
+  artifacts without `bz` skip the range check. `zs_fm ≈ n·a` is not an error.
+- Single ħc source: `HBAR_C_GEV_FM = GEV_FM = 0.1973269804` in `core/data.py`.
+  Fourier `FM_TO_GEV_INV` is `1/HBAR_C_GEV_FM`.
+- HISQa060_X sample/partial manifests and the README HDF5 snippet use
+  `lattice_spacing_fm=0.06`. Sample `scheme_scan` is `n*0.06`; `zs_fm` stays
+  `0.1722`.
+
+## 2026-08-18 (HISQa060_X zs_fm is 0.18)
+
+- Authored hybrid `zs_fm` for `a=0.06` ensembles is `0.18` (`n=3`), not
+  `0.1722`. Updated sample/partial/GI manifests and the planning-stage
+  renormalization default. `pion_pdf_cg` already used `0.18`.
+
+## 2026-08-18 (Fourier \(\lambda\) xlabel follows kinematics)
+
+- `plot_fourier_extension_quality` now labels \(\lambda=z P^z\) for forward
+  jobs and \(\lambda=z\bar P^z\) only when `final_momentum_gev` is present.
+
 

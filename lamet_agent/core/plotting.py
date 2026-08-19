@@ -32,7 +32,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
-from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.data import EnsembleData, HBAR_C_GEV_FM
 from lamet_agent.core.resampling import normalize_sample_error_mode, samples_to_gvar
 
 # Publication-oriented palette and styles copied from LaMETLat plot_settings.
@@ -972,7 +972,7 @@ def plot_fourier_extension_quality(
     )
 
     coord_arr = np.asarray(coord, dtype=float)
-    lambda_data = coord_arr * 5.067731237 * ft_momentum
+    lambda_data = coord_arr * (1.0 / HBAR_C_GEV_FM) * ft_momentum
     resample_mode = str(result.get("resample_mode", "bootstrap"))
     sample_error_mode = normalize_sample_error_mode(str(result.get("sample_error_mode", "covariance")), resample_mode=resample_mode)
 
@@ -1002,8 +1002,8 @@ def plot_fourier_extension_quality(
     (data_mean, data_sdev), (ext_mean, ext_sdev) = band_stats
 
     zmin, zmax = scheme["fit_range"]
-    fit_lambda = np.asarray([zmin, zmax], dtype=float) * 5.067731237 * ft_momentum
-    ext_endpoint_lambda = float(scheme["z_ext_max"]) * 5.067731237 * ft_momentum
+    fit_lambda = np.asarray([zmin, zmax], dtype=float) * (1.0 / HBAR_C_GEV_FM) * ft_momentum
+    ext_endpoint_lambda = float(scheme["z_ext_max"]) * (1.0 / HBAR_C_GEV_FM) * ft_momentum
     lambda_ext_plot, ext_mean_plot, ext_sdev_plot = _band_segment(
         lambda_ext,
         ext_mean,
@@ -1058,7 +1058,10 @@ def plot_fourier_extension_quality(
             label="Fit Range" if idx == 0 else None,
         )
 
-    ax.set_xlabel(r"$\lambda = z\bar P^z$, $\bar P^z=(P_i^z+P_f^z)/2$", **FONT_SIZE)
+    if final_momentum_gev is not None:
+        ax.set_xlabel(r"$\lambda = z\bar P^z$, $\bar P^z=(P_i^z+P_f^z)/2$", **FONT_SIZE)
+    else:
+        ax.set_xlabel(r"$\lambda = z P^z$", **FONT_SIZE)
     component_label = r"\mathrm{Re}" if component == "re" else r"\mathrm{Im}"
     if momentum_gev is None:
         ax.set_ylabel(rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)

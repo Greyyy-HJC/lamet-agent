@@ -54,7 +54,7 @@
         "path": "examples/artifacts/a060_x_p4_renormalized_matrix_elements.nc", // relative to root_directory
         "momentum": "PX4PY0PZ0",
         "volume": "S48T64",
-        "lattice_spacing_fm": 0.0574,
+        "lattice_spacing_fm": 0.06,
         "hadron": "pion",
         "gfix": "CG"
       },
@@ -64,7 +64,7 @@
         "path": "examples/artifacts/a060_x_p5_renormalized_matrix_elements.nc",
         "momentum": "PX5PY0PZ0",
         "volume": "S48T64",
-        "lattice_spacing_fm": 0.0574,
+        "lattice_spacing_fm": 0.06,
         "hadron": "pion",
         "gfix": "CG"
       }
@@ -94,12 +94,12 @@
           "num": 100
         },
         // Input coordinates and scheme_scan ranges are fixed in fm. Convert lattice
-        // indices as z_fm = n * a_fm (a_fm=0.0574 below), or omit the three
+        // indices as z_fm = n * a_fm (a_fm=0.06 below), or omit the three
         // range fields to let the stage auto-fill from the data grid.
         "scheme_scan": {
-          "zmin_fm": [0.5166, 0.574, 0.6314, 0.6888],
-          "zmax_fm": [1.2054, 1.2628, 1.3202, 1.3776],
-          "zmax_ext_fm": 5.74,
+          "zmin_fm": [0.54, 0.6, 0.66, 0.72],
+          "zmax_fm": [1.26, 1.32, 1.38, 1.44],
+          "zmax_ext_fm": 6.0,
           "smooth": "linear", // "linear" or "none"; runtime default "linear" if the range keys are auto-filled
           "model_average": false, // runtime default true; false uses one selected tail model
           "max_schemes": 200 // contract default 200; cap accepted range combinations
@@ -139,12 +139,12 @@
         {
           "id": "mt_p4",
           "inputs": { "quasi": "ft_p4" }, // from here on, internal job-id references
-          "params": { "zs_fm": 0.1722 }
+          "params": { "zs_fm": 0.18 }
         },
         {
           "id": "mt_p5",
           "inputs": { "quasi": "ft_p5" },
-          "params": { "zs_fm": 0.1722 }
+          "params": { "zs_fm": 0.18 }
         }
       ]
     },

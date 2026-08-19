@@ -777,7 +777,7 @@ def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, A
                         "normalization": False,
                         "scheme": "hybrid",
                         "strategy": "external_denominator",
-                        "zs_fm": 0.1722,
+                        "zs_fm": 0.18,
                         "m0_gev": 0.0,
                         "delta_m_gev": 0.0,
                     },

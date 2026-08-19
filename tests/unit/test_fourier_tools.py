@@ -99,6 +99,39 @@ def _write_h5(path: Path) -> None:
         group.create_dataset("Im", data=im_samples)
 
 
+def test_fit_coord_mask_includes_site_when_zmin_is_one_ulp_above() -> None:
+    lattice_spacing_fm = 0.06
+    coord = np.arange(0.0, 25.0) * lattice_spacing_fm
+    zmin = np.nextafter(9.0 * lattice_spacing_fm, np.inf)
+    zmax = 12.0 * lattice_spacing_fm
+
+    assert not (coord[9] >= zmin)
+    mask = fourier_functions._fit_coord_mask(coord, zmin, zmax)
+
+    assert bool(mask[9])
+    assert not bool(mask[8])
+    assert bool(mask[12])
+    assert not bool(mask[13])
+    assert not bool(mask[0])
+
+
+def test_scheme_ranges_snaps_zmin_zmax_but_not_zmax_ext() -> None:
+    lattice_spacing_fm = 0.06
+    coord = np.arange(0.0, 13.0) * lattice_spacing_fm
+    zmin = np.nextafter(9.0 * lattice_spacing_fm, np.inf)
+    zmax = np.nextafter(12.0 * lattice_spacing_fm, np.inf)
+    z_ext_max = 6.0
+
+    snapped_min, snapped_max, ext = fourier_functions._scheme_ranges(
+        {"zmin": zmin, "zmax": zmax, "z_ext_max": z_ext_max},
+        coord,
+    )
+
+    assert snapped_min == pytest.approx(9.0 * lattice_spacing_fm)
+    assert snapped_max == pytest.approx(12.0 * lattice_spacing_fm)
+    assert ext == z_ext_max
+
+
 def test_fourier_band_segment_inserts_exact_range_edges() -> None:
     x, mean, sdev = _band_segment(
         np.array([0.0, 1.0, 2.0, 3.0]),
@@ -482,6 +515,8 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     )
     labels = [text.get_text() for text in ax.get_legend().get_texts()]
     assert "Extension Endpoint" not in labels
+    assert ax.get_xlabel() == r"$\lambda = z P^z$"
+    assert r"\bar P^z" not in ax.get_xlabel()
     assert r"\mathrm{Re}\,\tilde{h}^R" in ax.get_ylabel()
     fig.clf()
 
@@ -1484,7 +1519,7 @@ def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None
     assert len(auto["zmax_fm"]) == 5
     assert auto["zmin_fm"][0] > 0.0
     assert auto["zmax_fm"] == pytest.approx([0.8, 0.9, 1.0, 1.1, 1.2])
-    assert auto["zmax_ext_fm"] == pytest.approx(1.2 + 8.0 / (5.067731237 * 2.0))
+    assert auto["zmax_ext_fm"] == pytest.approx(1.2 + 8.0 / (fourier_functions.FM_TO_GEV_INV * 2.0))
     assert auto["smooth"] == "linear"
     assert "y_range" not in auto
     assert auto["model_average"] is True
@@ -1554,12 +1589,12 @@ def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path
     )
 
     auto = run["auto_scheme_scan"]
-    expected_ft_scale = 5.067731237 * ((0.0 + 0.49) / 2.0)
+    expected_ft_scale = fourier_functions.FM_TO_GEV_INV * ((0.0 + 0.49) / 2.0)
     assert auto["zmax_ext_fm"] == pytest.approx(1.05 + 8.0 / expected_ft_scale)
     scheme = store["fourier_result"]["scheme_results"][0]
     assert np.allclose(scheme["lambda_ext"], np.asarray(scheme["z_ext"]) * 0.245)
     fig, ax = plot_fourier_extension_quality(coord, re_samples, store["fourier_result"], component="re")
-    assert r"\bar P^z" in ax.get_xlabel()
+    assert ax.get_xlabel() == r"$\lambda = z\bar P^z$, $\bar P^z=(P_i^z+P_f^z)/2$"
     assert r"P_i^z=0.00,\ P_f^z=0.49" in ax.get_ylabel()
     fig.clf()
 
@@ -1641,7 +1676,7 @@ def test_fourier_auto_zmin_uses_tail_fit_stability(tmp_path: Path, monkeypatch) 
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
     coord = np.linspace(0.0, 1.6, 17)
-    z_fit = coord * 5.067731237
+    z_fit = coord * fourier_functions.FM_TO_GEV_INV
     tail_re = 0.8 * np.exp(-0.65 * z_fit)
     tail_im = 0.18 * np.exp(-0.65 * z_fit)
     contaminated_re = tail_re.copy()

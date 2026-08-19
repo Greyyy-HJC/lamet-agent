@@ -63,7 +63,7 @@
         "source_operator": "g5", // free non-empty string; gamma labels conventionally start with g
         "sink_operator": "g5", // use a distinct label such as gT5_nonlocal when needed
         "volume": "S48T64", // exact S<Ls>T<Lt> form; Lt must match the HDF5 time axis
-        "lattice_spacing_fm": 0.0574, // positive lattice spacing in fm
+        "lattice_spacing_fm": 0.06, // positive lattice spacing in fm
         "momentum": ["PX0PY0PZ0", "PX4PY0PZ0", "PX5PY0PZ0"] // non-empty unique list of PXnPYnPZn labels
       },
       {
@@ -79,7 +79,7 @@
         "polarization": "unpolarized", // 3pt operator family: unpolarized, helicity, or transversity
         "bz_direction": "X", // required for 3pt; X/Y/Z or canonical combinations XY/XZ/YZ/XYZ
         "volume": "S48T64",
-        "lattice_spacing_fm": 0.0574,
+        "lattice_spacing_fm": 0.06,
         "momentum": ["PX0PY0PZ0", "PX4PY0PZ0", "PX5PY0PZ0"], // all momentum groups present in this file
         "bT": [0], // nonlocal-current separations in transverse directions, in lattice sites; fitting currently supports exactly one value
         "bz": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24], // nonlocal-current separations along bz_direction, normally longitudinal to momentum, in lattice sites
@@ -187,7 +187,7 @@
         // For ratio/msbar, denominator may be a job id or a numeric constant
         // such as 1.23 (all bare matrix elements divided by that constant).
         // A full chain must also select a scheme-compatible matching kernel.
-        "zs_fm": 0.1722, // hybrid switch length in fm
+        "zs_fm": 0.18, // hybrid switch length in fm (3 * 0.06)
         "m0_gev": 0.0, // optional hybrid long-range renormalon slope in GeV
         "delta_m_gev": 0.0 // optional target-denominator mass gap in GeV; unused by self_renormalization
         // Self-renormalization alternative: set strategy below and REPLACE the
@@ -244,7 +244,7 @@
         // { "id": "rn_p4",
         //   "inputs": { "target": "ca_p4", "denominator": "ca_p0", "zR": "rn_zR_fit" },
         //   "params": {
-        //     "zs_fm": 0.1722,
+        //     "zs_fm": 0.18,
         //     "d": 0.19,
         //     "m0_gev": -0.094,
         //     "z_coverage_policy": "extrapolate" // contract default "extrapolate"; also "strict" or "intersection"
@@ -270,11 +270,11 @@
         // scheme_scan is explicit, but the three range fields may be omitted so the stage
         // auto-fills them from tail-fit diagnostics. Input coordinates and scan values are fixed in fm.
         // Do NOT use lattice site indices here: convert as z_fm = n * a_fm
-        // (below: n=9..12 and 21..24 with a_fm=0.0574; zmax_ext_fm from n=100).
+        // (below: n=9..12 and 21..24 with a_fm=0.06; zmax_ext_fm from n=100).
         "scheme_scan": {
-          "zmin_fm": [0.5166, 0.574, 0.6314, 0.6888], // candidate fit starts in fm
-          "zmax_fm": [1.2054, 1.2628, 1.3202, 1.3776], // candidate fit ends in fm
-          "zmax_ext_fm": 5.74, // extrapolated endpoint in fm
+          "zmin_fm": [0.54, 0.6, 0.66, 0.72], // candidate fit starts in fm
+          "zmax_fm": [1.26, 1.32, 1.38, 1.44], // candidate fit ends in fm
+          "zmax_ext_fm": 6.0, // extrapolated endpoint in fm
           "smooth": "linear", // "linear" or "none"; runtime default "linear" if the range keys are auto-filled
           "model_average": false, // runtime default true; false uses one selected tail model
           "max_schemes": 200 // contract default 200; cap accepted range combinations
@@ -338,12 +338,12 @@
         {
           "id": "mt_p4",
           "inputs": { "quasi": "ft_p4" },
-          "params": { "zs_fm": 0.1722 } // required for hybrid kernels; ignored by ratio/MSbar kernels
+          "params": { "zs_fm": 0.18 } // required for hybrid kernels; ignored by ratio/MSbar kernels
         },
         {
           "id": "mt_p5",
           "inputs": { "quasi": "ft_p5" },
-          "params": { "zs_fm": 0.1722 }
+          "params": { "zs_fm": 0.18 }
         }
       ]
     },

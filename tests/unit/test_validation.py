@@ -516,3 +516,94 @@ def test_fourier_conflict_returns_structured_physics_diagnostic() -> None:
     assert "part" in diagnostics[0].cause
     assert "negative-x convention" in diagnostics[0].physics
     assert "remove the manual projection controls" in diagnostics[0].suggested_fix
+
+
+def _pion_pdf_fourier_job():
+    manifest = validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
+    job = manifest.stages["fourier_transform"].jobs[0]
+    return manifest, job
+
+
+def test_fourier_scheme_scan_rejects_lattice_site_indices_as_fm() -> None:
+    manifest, job = _pion_pdf_fourier_job()
+    manifest.stages["fourier_transform"].defaults["scheme_scan"]["zmin_fm"] = [9]
+
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+    range_issues = [item for item in diagnostics if item.code == "fourier.scheme_scan.grid_range"]
+
+    assert range_issues
+    assert "n * lattice_spacing_fm" in range_issues[0].message
+
+
+def test_fourier_scheme_scan_accepts_sample_like_fm_windows() -> None:
+    manifest, job = _pion_pdf_fourier_job()
+    scan = manifest.stages["fourier_transform"].defaults["scheme_scan"]
+    scan["zmin_fm"] = [0.54, 0.60, 0.66, 0.72]
+    scan["zmax_fm"] = [1.26, 1.32, 1.38, 1.44]
+    scan["zmax_ext_fm"] = 6.0
+
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+
+    assert not any(item.code == "fourier.scheme_scan.grid_range" for item in diagnostics)
+
+
+def test_fourier_scheme_scan_does_not_flag_zs_near_lattice_site() -> None:
+    manifest, job = _pion_pdf_fourier_job()
+    defaults = manifest.stages["renormalization"].defaults
+    rn_job = manifest.stages["renormalization"].jobs[0]
+    zs_fm = rn_job.params.get("zs_fm", defaults.get("zs_fm"))
+    assert zs_fm == pytest.approx(0.18)
+
+    ft_diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+    rn_diagnostics = validate_stage_diagnostics("renormalization", manifest, rn_job)
+
+    assert not any(item.code == "fourier.scheme_scan.grid_range" for item in ft_diagnostics)
+    assert not any("zs" in item.code.lower() for item in rn_diagnostics)
+
+
+def test_fourier_scheme_scan_skips_grid_range_when_bz_unknown() -> None:
+    payload = _partial_fourier_payload(
+        {
+            "id": "rn",
+            "stage": "renormalization",
+            "path": "rn.nc",
+            "momentum": "PX1PY0PZ0",
+            "volume": "S16T32",
+            "lattice_spacing_fm": 0.06,
+            "hadron": "pion",
+            "polarization": "unpolarized",
+        }
+    )
+    payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"]["zmin_fm"] = [9]
+    payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"]["zmax_fm"] = [1.2]
+    payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"]["zmax_ext_fm"] = 3.0
+    manifest = AnalysisManifest.model_validate(payload)
+    job = manifest.stages["fourier_transform"].jobs[0]
+
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+
+    assert not any(item.code == "fourier.scheme_scan.grid_range" for item in diagnostics)
+
+
+def test_fourier_scheme_scan_rejects_zmax_ext_below_zmax() -> None:
+    payload = _partial_fourier_payload(
+        {
+            "id": "rn",
+            "stage": "renormalization",
+            "path": "rn.nc",
+            "momentum": "PX1PY0PZ0",
+            "volume": "S16T32",
+            "lattice_spacing_fm": 0.06,
+            "hadron": "pion",
+            "polarization": "unpolarized",
+        }
+    )
+    payload["stages"]["fourier_transform"]["defaults"]["scheme_scan"]["zmax_ext_fm"] = 1.0
+    manifest = AnalysisManifest.model_validate(payload)
+    job = manifest.stages["fourier_transform"].jobs[0]
+
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, job)
+    range_issues = [item for item in diagnostics if item.code == "fourier.scheme_scan.grid_range"]
+
+    assert range_issues
+    assert "zmax_ext_fm" in range_issues[0].message

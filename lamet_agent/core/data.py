@@ -20,7 +20,8 @@ ResampleType = Literal["raw", "jackknife", "bootstrap", "gvar"]
 RESAMPLE_TYPE_VALUES = get_args(ResampleType)
 RESAMPLE_DIM = "resample"
 
-HBAR_C_GEV_FM = 0.197327  # hbar * c in GeV fm
+HBAR_C_GEV_FM = 0.1973269804  # hbar * c in GeV fm
+GEV_FM = HBAR_C_GEV_FM  # alias used by kernels and z[fm] conversions
 
 
 def read_netcdf_attrs(path: Union[str, Path]) -> Dict[str, Any]:

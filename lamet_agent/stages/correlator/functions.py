@@ -41,8 +41,7 @@ import xarray as xr
 
 np.seterr(over="ignore")
 
-from lamet_agent.core.data import EnsembleData, EnsembleInfo
-from lamet_agent.manifest import HBAR_C_GEV_FM
+from lamet_agent.core.data import EnsembleData, EnsembleInfo, HBAR_C_GEV_FM
 from lamet_agent.core.plotting import (
     COLOR_CYCLE,
     ERRORBAR_STYLE,

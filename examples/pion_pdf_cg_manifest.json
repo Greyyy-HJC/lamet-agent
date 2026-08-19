@@ -192,7 +192,7 @@
             "denominator": "ca_p0"
           },
           "params": {
-            "zs_fm": 0.1722
+            "zs_fm": 0.18
           }
         }
       ]
@@ -261,7 +261,7 @@
             "quasi": "ft_p5"
           },
           "params": {
-            "zs_fm": 0.1722
+            "zs_fm": 0.18
           }
         }
       ]

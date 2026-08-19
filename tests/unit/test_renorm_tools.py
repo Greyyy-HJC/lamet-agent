@@ -342,7 +342,7 @@ def test_hybrid_scheme_ratio_strategy_uses_physical_switch_and_nearest_grid_poin
 
 def test_hybrid_scheme_ratio_strategy_long_range_exponent_uses_physical_distance(tmp_path: Path) -> None:
     """Long-range exponent uses (m0_gev + delta_m_gev) * (z_fm - zs_fm) / GEV_FM."""
-    from lamet_agent.stages.renorm.functions import GEV_FM
+    from lamet_agent.core.data import GEV_FM
 
     z = [0, 1, 2, 3, 4, 5]
     lattice_spacing_fm = 0.1
@@ -377,6 +377,43 @@ def test_hybrid_scheme_ratio_strategy_long_range_exponent_uses_physical_distance
     expected_exp = np.exp((m0_gev + delta_m_gev) * (z4_fm - zs_fm) / GEV_FM)
     assert np.allclose(store["output"].values[:, 4], expected_exp)
     assert np.allclose(store["output"].coords["z"], np.asarray(z) * lattice_spacing_fm)
+
+
+def test_hybrid_scheme_a06_zs_fm_freezes_at_site_three(tmp_path: Path) -> None:
+    from lamet_agent.core.data import GEV_FM
+
+    z = list(range(6))
+    lattice_spacing_fm = 0.06
+    zs_fm = 0.18
+    m0_gev = 1.0
+    target = EnsembleData(
+        EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+        values=[np.full(6, 2.0), np.full(6, 4.0)], dims=("z",), coords={"z": z},
+        attrs={"lattice_spacing_fm": str(lattice_spacing_fm)}, name="target",
+    )
+    denominator_values = np.asarray([[1, 2, 3, 4, 5, 6], [2, 4, 6, 8, 10, 12]], dtype=complex)
+    denominator = EnsembleData(
+        EnsembleInfo("", "E", 1, 1, 1, 1, 0), "jackknife",
+        values=list(denominator_values), dims=("z",), coords={"z": z}, name="denominator",
+    )
+    store = {"target": target, "denominator": denominator}
+    _prepare_renorm_inputs(store)
+
+    result = apply_ratio_scheme_renormalization(
+        store, target="target", denominator="denominator",
+        scheme="hybrid",
+        zs_fm=zs_fm,
+        m0_gev=m0_gev,
+        delta_m_gev=0.0,
+        save_path=str(tmp_path / "hybrid_snap"),
+    )
+
+    assert result["zs_grid"] == 3.0
+    assert result["zs_lattice"] == pytest.approx(3.0)
+    assert np.allclose(store["output"].values[:, 3], [0.25, 0.25])
+    z4_fm = 4.0 * lattice_spacing_fm
+    expected_long = np.exp(m0_gev * (z4_fm - zs_fm) / GEV_FM) * 0.25
+    assert np.allclose(store["output"].values[:, 4], expected_long)
 
 
 @pytest.mark.parametrize("lattice_spacing_fm", [None, "", "not-a-number", "nan", "0", "-0.1"])
@@ -916,6 +953,63 @@ def test_hybrid_scheme_self_renormalization_uses_per_sample_zt_for_continuity(tm
     assert np.allclose(target_values[:, 1] / (zr_values[1] * zt), expected[:, 1])
     assert result["zs_grid_fm"] == str(0.2)
     assert store["output"].attrs["strategy"] == "self_renormalization"
+
+
+def test_hybrid_self_renormalization_a06_zs_fm_freezes_at_site_three(
+    tmp_path: Path,
+) -> None:
+    z = np.asarray([0.06, 0.12, 0.18, 0.24])
+    spacing = 0.06
+    zs_fm = 0.18
+    zr_values = np.asarray([0.8, 0.6, 0.5, 0.25])
+    zR = EnsembleData(
+        EnsembleInfo("", "E", spacing, spacing, 1, 1, 0),
+        "bootstrap",
+        [np.asarray(zr_values[None, :], dtype=complex)],
+        dims=("a", "z"),
+        coords={"a": [spacing], "z": z.tolist()},
+        attrs={"kernel_id": "ZMSbar_pdf", "LambdaQCD_gev": "0.1", "m0_gev": "0.0", "d": "0.0"},
+        name="zR",
+    )
+    target_values = np.asarray([[2.0, 4.0, 8.0, 16.0], [3.0, 6.0, 12.0, 24.0]], dtype=complex)
+    denominator_values = np.asarray([[1.0, 2.0, 4.0, 8.0], [1.5, 3.0, 6.0, 12.0]], dtype=complex)
+    ensemble = EnsembleInfo("", "E", spacing, spacing, 1, 1, 0)
+    target = EnsembleData(
+        ensemble,
+        "jackknife",
+        list(target_values),
+        dims=("z",),
+        coords={"z": z.tolist()},
+        attrs={"lattice_spacing_fm": str(spacing)},
+        name="target",
+    )
+    denominator = EnsembleData(
+        ensemble,
+        "jackknife",
+        list(denominator_values),
+        dims=("z",),
+        coords={"z": z.tolist()},
+        attrs={"lattice_spacing_fm": str(spacing)},
+        name="denominator",
+    )
+    store = {"target": target, "denominator": denominator, "zR": zR}
+
+    result = apply_self_renormalization(
+        store,
+        denominator="denominator",
+        scheme="hybrid",
+        zs_fm=zs_fm,
+        LambdaQCD_gev=0.1,
+        z_coverage_policy="strict",
+        save_path=str(tmp_path / "hybrid_self_snap"),
+    )
+
+    switch = 2
+    zt = denominator_values[:, switch] / zr_values[switch]
+    expected = target_values / denominator_values
+    expected[:, 3] = target_values[:, 3] / (zr_values[3] * zt)
+    assert np.allclose(store["output"].values, expected)
+    assert result["zs_grid_fm"] == str(0.18)
 
 
 def test_hybrid_self_converts_lattice_z_and_preserves_normalized_z0(

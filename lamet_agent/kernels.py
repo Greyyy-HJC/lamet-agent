@@ -44,11 +44,10 @@ from typing import Any, Callable, Final
 
 import numpy as np
 
+from lamet_agent.core.data import GEV_FM
+
 
 # --- physical constants & running coupling ----------------------------------
-
-# Conversion factor: 1 fm^{-1} = 0.1973269631 GeV
-GEV_FM: Final[float] = 0.1973269631
 CF: Final[float] = 4.0 / 3.0
 NF: Final[int] = 3
 CA: Final[float] = 3.0

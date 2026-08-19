@@ -1209,10 +1209,10 @@ def test_stage_parameter_gap_answer_uses_matching_question_id(tmp_path: Path) ->
     }
     state = PlanAgentState(tmp_path / "draft.json", "", payload, copy.deepcopy(payload))
 
-    result = _apply_user_answer_to_candidate(state, "stage_params.perturbative_matching.shared.zs_fm", "0.1722")
+    result = _apply_user_answer_to_candidate(state, "stage_params.perturbative_matching.shared.zs_fm", "0.18")
 
     assert result["event"] == "user_answer_applied"
-    assert state.candidate_payload["stages"]["perturbative_matching"]["defaults"]["zs_fm"] == 0.1722
+    assert state.candidate_payload["stages"]["perturbative_matching"]["defaults"]["zs_fm"] == 0.18
     assert "zs_fm" not in state.candidate_payload["stages"]["renormalization"]["defaults"]
 
 

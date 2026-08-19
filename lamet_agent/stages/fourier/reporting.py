@@ -496,7 +496,7 @@ def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
         "| Sector | Requested physics projection; PDF/GPD accept `sea`, `valence`, `singlet`, and `full`, while DA uses `full`. |",
         "| Tail method/order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{method}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
         "| Active fitted component | Execution channel resolved from `sector`; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one component. |",
-        "| Coordinate unit | Input coordinates and `scheme_scan` ranges are fixed physical distances in fm; the fit uses $z_{\\rm GeV^{-1}}=z_{\\rm fm}\\,5.067731237$ and $\\lambda=\\bar P^z z_{\\rm GeV^{-1}}$, where $\\bar P^z=(P_i^z+P_f^z)/2$ (and $P_i^z=P_f^z$ for forward kinematics). |",
+        "| Coordinate unit | Input coordinates and `scheme_scan` ranges are fixed physical distances in fm; the fit uses $z_{\\rm GeV^{-1}}=z_{\\rm fm}/(\\hbar c)$ and $\\lambda=\\bar P^z z_{\\rm GeV^{-1}}$, where $\\bar P^z=(P_i^z+P_f^z)/2$ (and $P_i^z=P_f^z$ for forward kinematics). |",
         "| Posterior-prior error scale | The mean fit gives $\\bar p_i\\pm\\sigma_{p_i}$; resampled fits use $p_i=\\bar p_i\\pm s\\sigma_{p_i}$. |",
     ]
     if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}:

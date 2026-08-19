@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from lamet_agent.manifest import AnalysisManifest, StageJob, derive_job_kinematics
+from lamet_agent.manifest import AnalysisManifest, StageJob, derive_job_kinematics, job_input_refs
 from lamet_agent.manifest_params import (
     ConstraintSpec,
     ParameterSpec,
@@ -256,6 +256,108 @@ def _check_scheme_scan(context: StageValidationContext) -> RuleViolation | None:
     )
 
 
+def _float_list(value: Any) -> list[float] | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return [float(value)]
+    if isinstance(value, list) and value and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in value):
+        return [float(item) for item in value]
+    return None
+
+
+def _bz_max_for_correlator_job(manifest: AnalysisManifest, job: StageJob) -> int | None:
+    values: list[int] = []
+    for correlator in manifest.correlators:
+        if correlator.correlator_id not in job.correlator_ids:
+            continue
+        if correlator.bz:
+            values.extend(int(item) for item in correlator.bz)
+    return max(values) if values else None
+
+
+def upstream_z_last_fm(manifest: AnalysisManifest, job: StageJob) -> float | None:
+    """Return max(bz)*a from an upstream correlator, or None when the z grid is unknown."""
+    jobs = {
+        candidate.id: (stage_id, candidate)
+        for stage_id, config in manifest.stages.items()
+        for candidate in config.jobs
+    }
+    artifacts = {artifact.id for artifact in manifest.inputs.artifacts}
+
+    def from_job(stage_id: str, candidate: StageJob, seen: set[str]) -> float | None:
+        if stage_id == "correlator_analysis":
+            spacing = derive_job_kinematics(manifest, candidate).get("lattice_spacing_fm")
+            bz_max = _bz_max_for_correlator_job(manifest, candidate)
+            if spacing is None or bz_max is None:
+                return None
+            return float(bz_max) * float(spacing)
+        for role in ("input", "quasi", "target", "reference", "denominator"):
+            for reference in job_input_refs(candidate.inputs.get(role)):
+                if reference in seen or reference in artifacts:
+                    continue
+                found = jobs.get(reference)
+                if found is None:
+                    continue
+                resolved = from_job(*found, seen | {reference})
+                if resolved is not None:
+                    return resolved
+        return None
+
+    stage = next((stage_id for stage_id, config in manifest.stages.items() if job in config.jobs), None)
+    if stage is None:
+        return None
+    return from_job(stage, job, {job.id})
+
+
+def _check_scheme_scan_grid_range(context: StageValidationContext) -> list[RuleViolation] | None:
+    spec = context.params.get("scheme_scan")
+    if not isinstance(spec, dict):
+        return None
+    issues: list[RuleViolation] = []
+    zmin_values = _float_list(spec["zmin_fm"]) if "zmin_fm" in spec else None
+    zmax_values = _float_list(spec["zmax_fm"]) if "zmax_fm" in spec else None
+    zmax_ext = spec.get("zmax_ext_fm")
+    if (
+        zmax_values
+        and isinstance(zmax_ext, (int, float))
+        and not isinstance(zmax_ext, bool)
+        and float(zmax_ext) < max(zmax_values)
+    ):
+        issues.append(
+            _violation(
+                context,
+                message="scheme_scan zmax_ext_fm must be greater than or equal to every zmax_fm candidate.",
+                path=context.parameter_path("scheme_scan.zmax_ext_fm"),
+                cause=f"zmax_ext_fm={float(zmax_ext)} is below max(zmax_fm)={max(zmax_values)}.",
+                parameters=("scheme_scan",),
+            )
+        )
+    z_last = context.resources.get("z_last_fm")
+    spacing = context.params.get("lattice_spacing_fm")
+    if z_last is not None and spacing is not None:
+        upper = float(z_last) + 0.5 * float(spacing)
+        for key, values in (("zmin_fm", zmin_values), ("zmax_fm", zmax_values)):
+            if not values:
+                continue
+            for item in values:
+                if item <= 0.0 or item > upper:
+                    issues.append(
+                        _violation(
+                            context,
+                            message=(
+                                f"scheme_scan {key}={item} lies outside the available z grid "
+                                f"(0, {float(z_last)} fm]. If this was a lattice-site index, convert with "
+                                "n * lattice_spacing_fm."
+                            ),
+                            path=context.parameter_path(f"scheme_scan.{key}"),
+                            cause=f"Available z ends at {float(z_last)} fm (max bz * lattice_spacing_fm).",
+                            parameters=("scheme_scan",),
+                        )
+                    )
+    return issues or None
+
+
 def _check_da_requirements(context: StageValidationContext) -> list[RuleViolation] | None:
     target = str(context.metadata.get("target_observable", "pdf")).lower()
     if target != "da":
@@ -422,6 +524,14 @@ FOURIER_CONSTRAINTS = (
         physics="A fixed physical-distance convention prevents lattice sites and Ioffe time from being mixed into the fitted long-distance window.",
         suggested_fix="Express every Fourier fit-range value in fm.",
         check=_check_scheme_scan,
+    ),
+    ConstraintSpec(
+        code="fourier.scheme_scan.grid_range",
+        parameters=("scheme_scan",),
+        rule="Authored zmin_fm and zmax_fm must lie on the available coordinate grid, and zmax_ext_fm must be at least the largest zmax_fm.",
+        physics="Tail windows are physical distances on the measured z grid; a lattice-site index written in fm falls far outside that grid.",
+        suggested_fix="Convert lattice indices with n * lattice_spacing_fm, or omit the range keys and let the stage auto-fill from the data.",
+        check=_check_scheme_scan_grid_range,
     ),
     ConstraintSpec(
         code="fourier.da.required",
@@ -656,6 +766,7 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
         params=params,
         inputs=dict(job.inputs),
         metadata=manifest.metadata.model_dump(),
+        resources={"z_last_fm": upstream_z_last_fm(manifest, job)},
         authored_params=authored,
     )
     return context

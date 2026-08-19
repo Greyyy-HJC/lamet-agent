@@ -37,12 +37,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from lamet_agent import kernels
-from lamet_agent.core.data import EnsembleData, EnsembleInfo
+from lamet_agent.core.data import EnsembleData, EnsembleInfo, GEV_FM
 from lamet_agent.core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FONT_SIZE, LEGEND_SETS, default_plot
 from lamet_agent.core.resampling import sample_mean_and_sdev
 from lamet_agent.core.tools import resolve_plot_save_path
 
-GEV_FM = 0.1973269631
 SELF_RENORM_K = 3.320
 SELF_RENORM_CF = 4.0 / 3.0
 SELF_RENORM_B0 = 11.0 - 2.0 / 3.0 * 3.0
@@ -551,7 +550,8 @@ def apply_ratio_scheme_renormalization(
         mass_scale = (delta_m_gev + m0_gev) / GEV_FM
         exponent = np.exp(mass_scale * (z_abs_fm - zs_fm))
         long = exponent[None, :] * target_values / denom_values[:, zs_idx : zs_idx + 1]
-        renorm_values = np.where(z_abs_fm[None, :] <= zs_fm, renorm_values, long)
+        short_mask = np.abs(z_target) <= np.abs(z_denom[zs_idx])
+        renorm_values = np.where(short_mask[None, :], renorm_values, long)
         hybrid_metadata = {
             "zs_fm": zs_fm,
             "zs_lattice": zs_lattice,
@@ -1258,7 +1258,7 @@ def apply_self_renormalization(
             raise ValueError("hybrid+self_renormalization produced zero Z_T at the switch point")
         short_values = target_values / denominator_values
         long_values = target_values / (zr_on_target[None, :] * zt[:, None])
-        short_mask = np.abs(z_target) <= float(zs_fm)
+        short_mask = np.abs(z_target) <= np.abs(z_target[switch_position])
         renorm_nonzero = np.where(short_mask[None, :], short_values, long_values)
         hybrid_metadata = {
             "denominator": str(denominator),

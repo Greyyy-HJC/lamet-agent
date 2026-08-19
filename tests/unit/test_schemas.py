@@ -269,6 +269,10 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
         and callable(item.check)
         for item in contract.constraints
     )
+    assert any(
+        item.code == "fourier.scheme_scan.grid_range" and callable(item.check)
+        for item in contract.constraints
+    )
 
 
 def test_stage_contract_renders_one_human_facing_parameter_reference() -> None:

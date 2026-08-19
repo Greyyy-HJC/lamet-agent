@@ -35,7 +35,7 @@ matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 
-from lamet_agent.core.data import EnsembleData, EnsembleInfo
+from lamet_agent.core.data import EnsembleData, EnsembleInfo, HBAR_C_GEV_FM
 from lamet_agent.core.plotting import plot_fourier_artifact, plot_fourier_extension_quality
 from lamet_agent.core.resampling import (
     normalize_resample_mode,
@@ -54,7 +54,7 @@ from lamet_agent.stages.fourier.validation import (
     resolve_grid_spec,
 )
 
-FM_TO_GEV_INV = 5.067731237
+FM_TO_GEV_INV = 1.0 / HBAR_C_GEV_FM
 _FOURIER_SAMPLE_EXECUTOR: ContextVar[ProcessPoolExecutor | None] = ContextVar(
     "fourier_sample_executor",
     default=None,
@@ -159,6 +159,31 @@ def _minimum_fit_points_for_parameters(n_params: int, part: str) -> int:
     channel_count = max(_n_fit_channels(part), 1)
     from_parameters = int(np.ceil(float(n_params) / float(channel_count)))
     return max(from_parameters, 2)
+
+
+def _nearest_positive_coord(coord: np.ndarray, target: float) -> float:
+    """Return the nearest strictly positive coordinate to ``target``."""
+    positive = np.asarray(coord, dtype=float)
+    positive = positive[np.isfinite(positive) & (positive > 0)]
+    if positive.size == 0:
+        raise ValueError("z grid has no positive coordinates to snap onto")
+    return float(positive[int(np.argmin(np.abs(positive - float(target))))])
+
+
+def _snap_fit_interval(coord: np.ndarray, zmin: float, zmax: float) -> tuple[float, float]:
+    """Snap a fit window onto existing positive coordinates so inclusive masks cannot drop a site."""
+    zmin_snap = _nearest_positive_coord(coord, zmin)
+    zmax_snap = _nearest_positive_coord(coord, zmax)
+    if zmax_snap < zmin_snap:
+        zmin_snap, zmax_snap = zmax_snap, zmin_snap
+    return zmin_snap, zmax_snap
+
+
+def _fit_coord_mask(coord: np.ndarray, zmin: float, zmax: float) -> np.ndarray:
+    """Inclusive mask on ``coord`` after snapping ``zmin``/``zmax`` onto the grid."""
+    coord_arr = np.asarray(coord, dtype=float)
+    zmin_snap, zmax_snap = _snap_fit_interval(coord_arr, zmin, zmax)
+    return (coord_arr >= zmin_snap) & (coord_arr <= zmax_snap) & (coord_arr > 0)
 
 
 def _fit_y_data(
@@ -958,9 +983,7 @@ def fit_tail_quality_for_mean(
     fit_coord = coord_arr * FM_TO_GEV_INV
     phase_scale = float(momentum_gev or 0.0)
     phase_prime_scale = None if final_momentum_gev is None else float(final_momentum_gev)
-    zmin_fit = float(zmin) * FM_TO_GEV_INV
-    zmax_fit = float(zmax) * FM_TO_GEV_INV
-    fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
+    fit_mask = _fit_coord_mask(coord_arr, zmin, zmax)
     n_points = int(np.count_nonzero(fit_mask))
     n_params = len(
         _param_labels(
@@ -1154,6 +1177,7 @@ def _scheme_ranges(scheme: dict[str, Any], coord: np.ndarray) -> tuple[float, fl
     positive = coord[coord > 0]
     zmin = float(scheme.get("zmin", positive[0]))
     zmax = float(scheme.get("zmax", coord[-1]))
+    zmin, zmax = _snap_fit_interval(coord, zmin, zmax)
     z_ext_max = float(scheme["z_ext_max"])
     return zmin, zmax, z_ext_max
 
@@ -1198,7 +1222,7 @@ def _run_one_scheme(
     if z_ext_fit_max < zmax_fit:
         raise ValueError("z_ext_max must be >= zmax")
 
-    fit_mask = (fit_coord >= zmin_fit) & (fit_coord <= zmax_fit) & (fit_coord > 0)
+    fit_mask = _fit_coord_mask(coord, zmin, zmax)
     n_params = len(
         _param_labels(
             method,
@@ -2228,9 +2252,10 @@ def _pick_four_zmin_fm_by_tail_fit(
         part,
     )
     for zmax in zmax_candidates:
-        candidates = positive[positive < float(zmax)]
+        zmax_snap = _nearest_positive_coord(positive, zmax)
+        candidates = positive[positive < zmax_snap]
         candidates = np.asarray(
-            [candidate for candidate in candidates if np.count_nonzero((positive >= candidate) & (positive <= zmax)) >= required_points],
+            [candidate for candidate in candidates if int(np.count_nonzero(_fit_coord_mask(positive, candidate, zmax))) >= required_points],
             dtype=float,
         )
         if preferred_zmin is not None:
@@ -2696,7 +2721,7 @@ def run_fourier_transform(
     schemes = [
         scheme
         for scheme in schemes
-        if np.count_nonzero((coord_arr >= float(scheme["zmin"])) & (coord_arr <= float(scheme["zmax"])) & (coord_arr > 0))
+        if np.count_nonzero(_fit_coord_mask(coord_arr, float(scheme["zmin"]), float(scheme["zmax"])))
         >= required_points
     ]
     if not schemes:
@@ -2769,7 +2794,7 @@ def run_fourier_transform(
             )
         )
         n_model_points = np.count_nonzero(
-            (coord_arr >= float(selected_range["zmin"])) & (coord_arr <= float(selected_range["zmax"])) & (coord_arr > 0)
+            _fit_coord_mask(coord_arr, float(selected_range["zmin"]), float(selected_range["zmax"]))
         )
         if n_model_points >= _minimum_fit_points_for_parameters(n_model_params, part):
             fit_model_specs.append(spec)

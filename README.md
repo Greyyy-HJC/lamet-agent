@@ -698,7 +698,7 @@ A minimal shared-input declaration is:
         "source_operator": "g5",
         "sink_operator": "g5",
         "volume": "S48T64",
-        "lattice_spacing_fm": 0.0574,
+        "lattice_spacing_fm": 0.06,
         "momentum": ["PX0PY0PZ0", "PX5PY0PZ0"]
       },
       {
@@ -713,7 +713,7 @@ A minimal shared-input declaration is:
         "current_operator": "gT_nonlocal",
         "bz_direction": "X",
         "volume": "S48T64",
-        "lattice_spacing_fm": 0.0574,
+        "lattice_spacing_fm": 0.06,
         "momentum": ["PX0PY0PZ0", "PX5PY0PZ0"],
         "tsep": [8, 10, 12],
         "bT": [0],

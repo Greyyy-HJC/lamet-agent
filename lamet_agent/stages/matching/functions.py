@@ -46,7 +46,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from lamet_agent.core.data import EnsembleData
+from lamet_agent.core.data import EnsembleData, GEV_FM
 from lamet_agent.stages.fourier.validation import quasi_y_ls_error
 from lamet_agent.stages.matching.reporting import FormulaLlm, is_da_kernel, write_matching_report
 
@@ -220,7 +220,6 @@ def resolve_kernel_id(kernel_id: str, scheme: str | None = None) -> str:
 # nothing ensemble-specific is hardcoded here. GEV_FM is the only constant -- the
 # physical hbar*c used to make zspz dimensionless:
 #     zspz = zs_fm * momentum_gev / GEV_FM
-GEV_FM = 0.1973269631  # hbar*c in GeV*fm
 
 
 # Each tool below follows the same pattern: take this stage's shared store, do

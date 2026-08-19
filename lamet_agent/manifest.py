@@ -11,6 +11,7 @@ from typing import Any, Literal
 import gvar as gv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
+from lamet_agent.core.data import HBAR_C_GEV_FM
 from lamet_agent.manifest_params import resolve_stage_params, validate_stage_parameter_mapping
 
 
@@ -26,7 +27,6 @@ BzDirection = Literal["X", "Y", "Z", "XY", "XZ", "YZ", "XYZ"]
 CoordUnit = Literal["lattice", "fm", "gev_inv", "lambda"]
 
 
-HBAR_C_GEV_FM = 0.1973269804
 _VOLUME_RE = re.compile(r"^S(?P<spatial>[1-9]\d*)T(?P<temporal>[1-9]\d*)$")
 _MOMENTUM_RE = re.compile(r"^PX(?P<px>-?\d+)PY(?P<py>-?\d+)PZ(?P<pz>-?\d+)$")
 
