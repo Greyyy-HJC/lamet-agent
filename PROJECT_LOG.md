@@ -1428,4 +1428,45 @@
 - `plot_fourier_extension_quality` now labels \(\lambda=z P^z\) for forward
   jobs and \(\lambda=z\bar P^z\) only when `final_momentum_gev` is present.
 
+## 2026-08-19 (Lanczos 2pt/3pt correlator analysis)
 
+- Added `analysis_method: lanczos` to `correlator_analysis`, with
+  `2pt_spectrum` and `3pt_matrix` scopes, oblique-Lanczos transfer-matrix
+  recurrence, Ritz/Hermitian and Cullum-Willoughby filtering, nested outer/inner
+  resampling, and optional mpmath recurrence precision.
+- Kept the shared 3pt manifest/HDF5 convention used by spectral fits. Lanczos
+  converts standard `tsep/tau` points internally using data-driven `t0`
+  trimming and sparse `T**n` sampling; no public dense layout was added.
+- Manifest validation now checks whether declared ordinary `tsep` values can
+  supply the requested complete square. Runtime inspection reports the exact
+  2pt indices, selected `tsep` values, used points, and per-`tsep` discarded
+  insertion times.
+- Added a mandatory point-usage warning to inspection and run observations so
+  users are told that not every declared 3pt point contributes to Lanczos.
+- Added `inspect_lanczos_inputs` and `run_lanczos_analysis`. The 3pt terminal
+  output is a downstream-compatible ground-state bare-matrix-element z grid;
+  a companion NetCDF preserves the requested Ritz-state matrix.
+- Added exact two-state recovery, standard-layout routing, trimming,
+  point-loss, matrix-recovery, strict-input, and artifact tests, plus README and
+  stage-prompt usage guidance.
+- Split `component: both` into explicit real and imaginary Lanczos calls while
+  preserving common resampling seeds and exporting both state-matrix channels.
+- Made the correlator parameter contract method-aware: Lanczos-only and
+  spectral-fit-only settings are mutually rejected by both planning and final
+  validation. Added a separate pion CG Lanczos manifest while preserving the
+  original spectral-fit manifest; the two examples use independent run and
+  artifact directories.
+- Injected `metadata.workers` into Lanczos jobs and process-parallelized the
+  independent outer bootstrap/jackknife samples. Added resampling progress plus
+  quiet-mode LLM/tool activity messages.
+- Bounded OpenAI-compatible HTTP retries to three 60-second attempts. On the
+  109-sample, 25-z pion CG input, an 8-worker, 200-inner-sample real-component
+  Lanczos job completed in about 26 seconds in the local benchmark; matching
+  serial and parallel seeded runs agreed exactly.
+- Diagnosed the silent pause after `plot_matched_pdf` as matching-stage report
+  generation: it synchronously fetched the cited arXiv paper and made an
+  untraced report-only LLM request after the numerical job had finished.
+- Added visible matching-report start/completion messages, reduced best-effort
+  paper-fetch timeouts, and limited the report LLM to two 30-second attempts.
+  A report-only failure now emits a warning and provenance-only formula note;
+  completed matching NetCDF/PDF artifacts remain valid and the run continues.

@@ -12,6 +12,52 @@ Use the injected manifest parameter contract for the authoritative meanings of
 fit_scope, fit_strategy, fitting_form, model_average, and their compatibility
 rules.
 
+Branch on the injected `analysis_method` before calling any tool:
+
+- `spectral_fit`: follow the spectral-fit procedure below.
+- `lanczos`: call `inspect_lanczos_inputs`, report its input-contract findings,
+  then call `run_lanczos_analysis`. Do not call spectral-fit tuning tools for a
+  Lanczos job.
+
+## Lanczos Procedure and Mandatory 3pt Contract
+
+Lanczos `fit_scope=2pt_spectrum` consumes real 2pt signals with configuration
+and time axes. `fit_scope=3pt_matrix` has a substantially stricter input
+contract. Before running it, explicitly tell the user all of the following:
+
+- the standard manifest/HDF5 `tsep/tau` input is converted automatically. The
+  inspection selects or checks `t0`, sparse transfer power `T**n`, and order
+  `m`, then uses only points satisfying
+  `tsep=2*t0+n*(s+r)` and `tau=t0+n*r`;
+- read `point_usage_warning` from `inspect_lanczos_inputs` and explicitly warn
+  the user how many standard 3pt points are used and discarded. Do this before
+  calling `run_lanczos_analysis`; never imply that every declared point is used;
+- the resulting effective values mean
+  `C3[c,sigma,tau] = <sink|T^sigma J T^tau|source>_c`, where `tau` is source to
+  current, `sigma` is current to sink, and `t_f=sigma+tau`;
+- iteration `m` requires every point in the complete leading `m x m` square.
+  Missing arithmetic-sequence `tsep` values can therefore make a requested
+  order impossible, while extra `tsep` and insertion points are discarded;
+- source 2pt, sink 2pt, and every 3pt z dataset must have identical,
+  configuration-by-configuration sample ordering. Every selected effective
+  point must be finite and the effective source/sink normalization must be
+  positive;
+- inputs must already select the desired real signal component. The tool uses
+  `component=re`, `im`, or `both` to analyze real-valued components separately;
+  `both` executes the full analysis twice, once with `Re C3` and once with
+  `Im C3`, rather than passing a complex signal through one recurrence. It does
+  not perform parity, phase, or polarization projection.
+
+`run_lanczos_analysis` performs outer manifest-selected bootstrap/jackknife
+resampling and an inner bootstrap used for CW filtering/median aggregation.
+Independent outer samples use the manifest `workers` process count and report
+progress while running.
+For 2pt it writes ordered Ritz energies. For 3pt it writes the ground-state
+matrix element as the terminal z-grid artifact and a second NetCDF containing
+the requested source/sink state matrix.
+
+## Spectral-Fit Procedure
+
 1. Call `inspect_correlator_scale` and choose a power-of-ten correlator_rescale that
    puts typical fitted 2pt values in 0.0001..0.01.
 2. Call `tune_bare_matrix` with that scale and required tune_z_values. Choose
@@ -75,6 +121,11 @@ Correlator-analysis physics:
 ## Available Tools
 
 - `inspect_correlator_scale`: Inspect the selected job's 2pt magnitude.
+- `inspect_lanczos_inputs`: Plan t0 trimming and sparse T**n sampling, convert
+  the standard 3pt coordinates internally, and report the point-loss, normalization,
+  square-grid, and configuration-alignment contract.
+- `run_lanczos_analysis`: Run nested-resampled oblique Lanczos analysis and
+  write the terminal 2pt spectrum or 3pt matrix-element artifacts.
 - `tune_ground_state`: Optionally scan 2pt-only windows and model-average the
   selected ground-state fits.
 - `tune_bare_matrix`: Scan every configured nstate, prior_width, fit strategy, and explicit or automatic fit window

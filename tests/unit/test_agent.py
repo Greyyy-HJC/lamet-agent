@@ -259,6 +259,27 @@ def test_deepseek_text_request_retries_incomplete_read(monkeypatch) -> None:
     assert text == "translated"
 
 
+def test_api_request_has_bounded_attempts_and_timeout(monkeypatch) -> None:
+    timeouts: list[int] = []
+
+    def fake_urlopen(request, timeout):
+        timeouts.append(timeout)
+        raise TimeoutError("provider did not respond")
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(llm.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(RuntimeError, match="after 3 attempts with a 60-second timeout"):
+        llm._post_chat_completion(
+            messages=[{"role": "user", "content": "finish"}],
+            api_key="test-key",
+            model_name="deepseek-chat",
+            base_url="https://api.deepseek.com",
+        )
+
+    assert timeouts == [60, 60, 60]
+
+
 def test_provider_json_parse_error_gets_repair_retry(monkeypatch) -> None:
     calls = {"count": 0}
     bodies: list[dict] = []

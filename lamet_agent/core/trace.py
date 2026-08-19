@@ -133,16 +133,53 @@ class AgentTrace:
 
     def llm_call_begin(self, *, backend: str, model_spec: str | None = None) -> None:
         if backend == "external":
-            self._write("Loading next action from transcript...")
+            message = "Loading next action from transcript..."
         elif backend == "mock":
-            self._write("Resolving mock action...")
+            message = "Resolving mock action..."
         elif model_spec:
-            self._write(f"Calling LLM ({model_spec})...")
+            message = f"Calling LLM ({model_spec})..."
         else:
-            self._write(f"Calling LLM ({backend})...")
+            message = f"Calling LLM ({backend})..."
+        self._write(message)
+        if not self.enabled:
+            self._write_quiet(message)
 
     def llm_call_end(self) -> None:
-        self._write("LLM response received.")
+        message = "LLM response received."
+        self._write(message)
+        if not self.enabled:
+            self._write_quiet(message)
+
+    def tool_call_begin(self, tool_name: str) -> None:
+        """Show long-running tool activity in both verbose and quiet modes."""
+        message = f"Running tool: {tool_name}..."
+        self._write(message)
+        if not self.enabled:
+            self._write_quiet(message)
+
+    def tool_call_end(self, tool_name: str, *, succeeded: bool) -> None:
+        """Show whether a tool returned, without dumping its full observation."""
+        status = "completed" if succeeded else "failed"
+        message = f"Tool {status}: {tool_name}."
+        self._write(message)
+        if not self.enabled:
+            self._write_quiet(message)
+
+    def report_begin(self, stage: str, *, detail: str | None = None) -> None:
+        """Show report generation that happens outside the visible tool loop."""
+        suffix = f" ({detail})" if detail else ""
+        message = f"Writing stage report: {stage}{suffix}..."
+        self._write(message)
+        if not self.enabled:
+            self._write_quiet(message)
+
+    def report_end(self, stage: str, *, succeeded: bool) -> None:
+        """Show whether out-of-loop stage report generation returned."""
+        status = "completed" if succeeded else "failed"
+        message = f"Stage report {status}: {stage}."
+        self._write(message)
+        if not self.enabled:
+            self._write_quiet(message)
 
     def prompt_delta(self, observation: dict[str, Any]) -> None:
         """Print a compact note for the incremental user turn."""

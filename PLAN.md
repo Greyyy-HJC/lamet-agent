@@ -28,6 +28,20 @@ $$R(t, \tau) = \frac{C_\mathrm{3pt}(t, \tau)}{C_\mathrm{2pt}(t)}$$
 - 使用 Lanczos 算法构造 T-matrix，然后做本征分解得到能谱，进一步用本征矢量得到矩阵元的数值，参考文献：https://arxiv.org/pdf/2406.20009，https://arxiv.org/pdf/2407.21777，https://arxiv.org/pdf/2412.04444。
 - 此外还有 model averaging, GEVP 等方案。
 
+The implemented Lanczos matrix-element path uses
+$C_\mathrm{3pt}(\sigma,\tau)=\langle\psi_\mathrm{snk}|T^\sigma J
+T^\tau|\psi_\mathrm{src}\rangle$. Ordinary $(t_f,\tau)$ correlators are
+converted automatically by choosing $t_0$ and sparse $T^n$ moments:
+$C_2^\mathrm{eff}(r)=C_2(2t_0+nr)$ and
+$C_3^\mathrm{eff}(s,r)=C_3(2t_0+n(s+r),t_0+nr)$. Iteration $m$ requires the
+complete leading $m\times m$ square, so only a subset of declared 3pt points may
+be usable. The selected and discarded counts must be reported to the user.
+Source 2pt, sink 2pt, and 3pt data must also be aligned configuration by
+configuration so the nested resampling preserves their correlations.
+Selecting both correlator components runs two separate real-valued Lanczos
+analyses, one for the real part and one for the imaginary part. Independent
+outer resamples are process-parallel according to the manifest worker count.
+
 这些方案各有各的优缺点，因此需要智能体根据数据的特点，选择合适的分析策略来提取 $g_A$ 的数值。提取了 LQCD 的裸 $g_A$ 之后，还需要进行重整化，才能得到物理的 $g_A^\mathrm{phys} = Z_A g_A$ 数值。即在这一步通过关联函数分析得到的结果，正是下一步重整化的输入。
 
 有时，重整化也可能需要从数据中直接计算得到。例如在 $J/\psi$ 辐射衰变到赝标量介子的过程中，会需要引入矢量流耦合末态光子，此时就需要 $c\bar{c}$ 介子矢量流重整化系数 $Z_V$。这个数值可以直接根据电荷归一化条件，从 $J/\psi$ 或者 $\eta_c$ 的三点关联函数中提取矢量流矩阵元，进而直接得到 $Z_V$ 的数值，而不需要单独进行重整化公式输入。此时，可以直接要求智能体输出矩阵元，之后手动根据电荷归一化条件进行计算。

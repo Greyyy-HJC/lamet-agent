@@ -36,8 +36,9 @@ The functions fall into five groups:
    kernel each render themselves with no ``if is_da``/``if is_lrr`` in this module, and a new
    kernel needs no change here. Division of labour: the code is authoritative for WHICH
    terms exist, the paper for how they are WRITTEN, and the cross-check reports where the
-   two disagree. ``FormulaLlm`` carries the run's LLM config down from the CLI; this section
-   raises rather than invent a formula offline.
+   two disagree. ``FormulaLlm`` carries the run's LLM config down from the CLI. If this
+   report-only request fails, the report records that failure without changing or
+   discarding the already-computed numerical result.
 
 5. Assembly and writing: ``build_matching_report_markdown`` orders the sections,
    ``write_matching_report`` writes one job's file, and ``write_matching_stage_report``
@@ -56,6 +57,7 @@ import ssl
 import tarfile
 import urllib.error
 import urllib.request
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -558,6 +560,10 @@ def _field_definitions(*, language: str) -> list[str]:
 _FORMULA_CACHE: dict[tuple[str, str], tuple[str, bool]] = {}
 # Paper text fetched once per source (local path or arXiv id).
 _PAPER_CACHE: dict[str, str | None] = {}
+_PAPER_SOURCE_TIMEOUT_SECONDS = 10
+_PAPER_HTML_TIMEOUT_SECONDS = 3
+_REPORT_LLM_TIMEOUT_SECONDS = 30
+_REPORT_LLM_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -669,7 +675,7 @@ def _fetch_arxiv_source(arxiv_id: str) -> str | None:
     url = f"https://arxiv.org/e-print/{arxiv_id}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "lamet-agent/1.0"})
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=_PAPER_SOURCE_TIMEOUT_SECONDS) as resp:
             raw = resp.read()
     except (TimeoutError, urllib.error.URLError, ssl.SSLError, ValueError):
         return None
@@ -750,7 +756,7 @@ def _fetch_paper_text(paper_arxiv_id: str, *, max_chars: int = 80_000) -> str | 
         ):
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "lamet-agent/1.0"})
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=_PAPER_HTML_TIMEOUT_SECONDS) as resp:
                     text = _strip_html(resp.read().decode("utf-8", errors="replace"))
                 break
             except (TimeoutError, urllib.error.URLError, ssl.SSLError, ValueError):
@@ -852,8 +858,8 @@ def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tu
     three-way split is the point (see the section comment above) -- the code is
     authoritative for which terms are present, the paper for how they are written, and
     the cross-check is what turns "the model saw both" into something a reader can rely
-    on. The report stores no hand-written formula; this raises on any LLM failure
-    (formula generation is required, no offline fallback). The boolean reports whether
+    on. The report stores no hand-written formula; this helper raises on LLM failure so
+    its caller can emit an explicit provenance-only fallback. The boolean reports whether
     the paper text actually reached the prompt, which decides whether the cross-check
     could run at all.
     """
@@ -888,6 +894,8 @@ def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tu
         model_name=model_name,
         base_url=base_url,
         messages=[{"role": "user", "content": prompt}],
+        request_timeout_seconds=_REPORT_LLM_TIMEOUT_SECONDS,
+        request_attempts=_REPORT_LLM_ATTEMPTS,
     ).strip()
     if not text:
         raise RuntimeError("LLM returned an empty matching formula.")
@@ -918,7 +926,23 @@ def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaL
     # the source paper together with the kernels.py code which produced the number
     # (no formula is hardcoded). A short note records the provenance so a reader
     # knows it was machine-derived and from which sources.
-    generated, paper_used = _llm_kernel_formula(kernel_id, language="en", llm=llm)
+    try:
+        generated, paper_used = _llm_kernel_formula(kernel_id, language="en", llm=llm)
+    except (RuntimeError, ValueError) as exc:
+        warnings.warn(
+            "Matching report formula generation failed; the numerical matching output "
+            "is complete and unaffected. Writing a provenance-only fallback. "
+            f"Cause: {exc}",
+            UserWarning,
+            stacklevel=2,
+        )
+        generated = (
+            "The explicit coefficient narrative was not generated because the report-only "
+            "LLM request failed. The numerical matching matrix and output artifact were "
+            "computed before report generation and are unaffected. Consult the cited "
+            "equations and the selected implementation in `lamet_agent/kernels.py`."
+        )
+        paper_used = False
     source_en = (
         f"arXiv:{paper_arxiv_id} together with the `kernels.py` implementation"
         if paper_used

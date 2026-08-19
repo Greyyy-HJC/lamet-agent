@@ -56,6 +56,27 @@ def test_agent_trace_prints_request_user_input_questions() -> None:
     assert "fourier job quasi_y_ls is required" in text
 
 
+def test_quiet_trace_shows_llm_and_tool_progress() -> None:
+    buffer = io.StringIO()
+    trace = AgentTrace(enabled=False, quiet_ui=True, emit=buffer.write)
+    trace.llm_call_begin(backend="api", model_spec="deepseek/deepseek-v4-flash")
+    trace.llm_call_end()
+    trace.tool_call_begin("run_lanczos_analysis")
+    trace.tool_call_end("run_lanczos_analysis", succeeded=True)
+    trace.report_begin(
+        "perturbative_matching",
+        detail="cited-paper lookup and report-only LLM formula",
+    )
+    trace.report_end("perturbative_matching", succeeded=True)
+    text = buffer.getvalue()
+    assert "Calling LLM (deepseek/deepseek-v4-flash)..." in text
+    assert "LLM response received." in text
+    assert "Running tool: run_lanczos_analysis..." in text
+    assert "Tool completed: run_lanczos_analysis." in text
+    assert "Writing stage report: perturbative_matching" in text
+    assert "Stage report completed: perturbative_matching." in text
+
+
 def test_run_agent_verbose_prints_trace(capsys) -> None:
     manifest = AnalysisManifest.model_validate(
         {

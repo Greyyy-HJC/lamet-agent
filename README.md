@@ -35,7 +35,8 @@ hybrid-self-renormalization workflows within the job DAG.
 │   ├── fake_data/
 │   │   └── generate_fake_data.py
 │   ├── sample_manifest.jsonc
-│   └── pion_pdf_cg_manifest.json
+│   ├── pion_pdf_cg_manifest.json
+│   └── pion_pdf_cg_lanczos_manifest.json
 ├── lamet_agent/
 │   ├── __init__.py
 │   ├── __main__.py
@@ -155,8 +156,10 @@ options inline (for example `target_observable` is `"pdf"` or `"da"`, and `gfix`
   integer controlling sample-fit processes in the correlator and Fourier
   stages; it defaults to `1`, which keeps execution serial.
 - `inputs`: the `correlators` (each with its operator labels, `volume`,
-  `lattice_spacing_fm`, momentum list, and for `3pt` the `bz_direction`, `tsep`, `bT`, and `bz`
-  lists), external `artifacts`, and `kernels`.
+  `lattice_spacing_fm`, momentum list, and for ordinary `3pt` the
+  `bz_direction`, `tsep`, `bT`, and `bz`; Lanczos uses this same layout and
+  converts it internally), external `artifacts`,
+  and `kernels`.
 - `stages`: `defaults` plus a `jobs` list. A job's `params` recursively merge
   over defaults; nested mappings merge by key, while lists and scalars are
   replaced by the job value. Later jobs reference earlier job ids through
@@ -336,10 +339,11 @@ configuration for the whole run; stage/job params cannot override them.
 - `bin_size` (optional, default: no binning): when set, configurations are
   averaged into bins of this size before jackknife/bootstrap resampling.
 - `workers` (optional, default: `1`): maximum number of worker processes used
-  for independent sample fits in `correlator_analysis` and `fourier_transform`.
-  Sample-average tuning, stage/job execution, correlator `z` scans, Fourier
-  extrapolation, and Fourier summation remain serial. Active sample batches are
-  capped by the number of samples.
+  for independent sample fits in `correlator_analysis` and `fourier_transform`,
+  including outer Lanczos bootstrap/jackknife samples. Sample-average tuning,
+  stage/job execution, correlator `z` scans, Fourier extrapolation, and Fourier
+  summation remain serial. Active sample batches are capped by the number of
+  samples.
 
 Each worker process may otherwise inherit native BLAS threading. For multi-core
 runs, avoid oversubscription by setting the relevant library thread counts when
@@ -628,7 +632,11 @@ or removed.
 
 `examples/pion_pdf_cg_manifest.json` runs the current P0/P5 workflow through
 correlator analysis, hybrid-ratio renormalization, Fourier transformation, and
-perturbative matching. For a standard `EnsembleData` NetCDF source, an
+perturbative matching using spectral fits. The parallel
+`examples/pion_pdf_cg_lanczos_manifest.json` workflow selects Lanczos analysis
+and writes to its own `runs/pion_pdf_cg_lanczos/` directory so results from the
+two methods can be compared without overwriting one another. For a standard
+`EnsembleData` NetCDF source, an
 `inputs.artifacts[]` entry only
 needs `id`, `stage`, and `path`: the runner reads the discrete kinematic triple
 `momentum`, `volume`, and `lattice_spacing_fm`, plus provenance such as `hadron`,
@@ -669,6 +677,85 @@ Datasets use these paths and axis orders:
   `<source>/<nonlocal_sink>_bT<bT>_bz<bz>/<momentum>` layout.
 - 3pt: `<source_operator>/<sink_operator>/<current_operator>/<momentum>/tsep<tsep>/bT<bT>/bz<bz>`,
   shape `(tsep + 1, n_cfg)`.
+
+### Lanczos 2pt/3pt analysis
+
+Set `analysis_method: "lanczos"` with `fit_scope: ["2pt_spectrum"]` or
+`fit_scope: ["3pt_matrix"]`. The stage uses the oblique-Lanczos/Krylov
+construction of arXiv:2406.20009 and arXiv:2407.21777, nested resampling, Ritz
+state ordering, and Cullum-Willoughby filtering. `nstate` is one positive value
+giving the number of ordered Ritz states to export. `lanczos_iterations` may be
+omitted to use the largest order supported by every input;
+`lanczos_inner_samples` defaults to 200, `lanczos_precision` defaults to 100
+decimal digits through `mpmath` (`0` selects NumPy float64). Optional
+`lanczos_t0` and `lanczos_time_step` fix the trimming offset and sparse transfer
+power; for ordinary 3pt input they are inferred when omitted, while 2pt-only
+input defaults to `t0=0` and `n=1`.
+
+The correlator parameter contract is method-specific. Lanczos jobs reject
+spectral-fit settings such as `fit_strategy`, fit windows, `svdcut`, and
+`model_average`; spectral-fit jobs reject every `lanczos_*` setting. The same
+constraint is evaluated by both `plan` and `validate`.
+
+Lanczos 3pt analysis has a much stricter effective grid than spectral fitting,
+but the ordinary manifest and HDF5 `tsep_tau` convention is accepted directly:
+
+```text
+<source>/<sink>/<current>/<momentum>/tsep<tsep>/bT<bT>/bz<bz>
+```
+
+The stage automatically converts the declared ordinary points using
+
+```text
+C2_eff(r)    = C2(2*t0 + n*r)
+C3_eff(s, r) = C3(tsep=2*t0+n*(s+r), tau=t0+n*r)
+```
+
+where `n` is the sparse transfer power in `T**n`. Order `m` requires all
+`tsep=2*t0+n*k` for `k=0,...,2m-2`, enough 2pt times through
+`2*t0+n*(2m-1)`, and all `m²` selected insertion points. The inspection chooses
+the largest feasible order unless `lanczos_iterations` is set, preferring the
+smallest feasible `t0` and then the smallest `n` when candidates tie.
+
+This conversion normally discards data: insertion times outside the effective
+square, unused source-sink separations, and points excluded by `t0`/`T**n` do
+not enter the Lanczos estimator. `inspect_lanczos_inputs` returns a
+`point_usage_warning`, selected and discarded point counts, selected `tsep`
+values, and per-`tsep` discarded `tau` values. Counts are reported per `z`, with
+aggregate all-`z` counts in the inspection. The agent must show this warning
+to the user before running the 3pt analysis; users must not assume every
+declared 3pt point was used.
+
+No separate dense 3pt input convention is exposed. The effective square exists
+only inside the Lanczos tool, with definition
+
+```text
+C3[sigma, tau, configuration]
+    = <sink | T**sigma J T**tau | source>_configuration .
+```
+
+Here `tau` is the source-to-current distance, `sigma` is the current-to-sink
+distance, and `t_f = sigma + tau`. A requested order is rejected if the
+available ordinary points cannot produce the complete effective square.
+
+Source 2pt, sink 2pt, and all 3pt `z` datasets must have the same configuration
+count and identical per-configuration ordering. All selected effective values
+must be finite, and the ensemble-average effective source/sink normalization
+must be positive. Do not pre-normalize: the tool normalizes by `C2(2*t0)` and
+`sqrt(C2_snk(2*t0) C2_src(2*t0))`. Inputs must already represent the desired
+parity, phase, polarization, and real signal convention;
+`component: "re"`, `"im"`, or `"both"` only selects real-valued components for
+separate Lanczos analyses. In particular, `both` runs the complete real-valued
+outer/inner analysis once on `Re C3` and once on `Im C3`; it does not send one
+complex correlator through a single recurrence. Outer samples are distributed
+across `metadata.workers`, and the CLI displays progress for the long-running
+resampling loop.
+
+For `3pt_matrix`, the terminal artifact remains a complex ground-state
+bare-matrix-element `z` grid suitable for downstream stages. A companion
+`*_state_matrices.nc` stores the requested final-state × initial-state Ritz
+matrix. For `2pt_spectrum`, the terminal artifact stores energy by channel,
+iteration, and ordered state.
 
 There is no `source_sink`, `bz_direction`, or `eta` path layer. The manifest is
 authoritative for `bz_direction`; an HDF5 root attr with the same name is
@@ -786,12 +873,23 @@ the environment. Startup prints a boxed `api` summary (provider, model, base URL
 and key source — file path or env var name, never the key itself), then a blank
 line before the LaMET Agent banner. Pass `--model provider/model_id`
 (shorthand `provider` uses that provider's default model). Override the HTTP
-endpoint with `--base-url` when needed:
+endpoint with `--base-url` when needed. Quiet runs still print LLM/tool start
+and completion messages. A provider request is attempted at most three times
+with a 60-second timeout per attempt, so an unreachable API fails explicitly
+instead of appearing silent for many minutes:
 
 ```bash
 lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model openai/gpt-4o-mini --api-key-file api.key --verbose
 lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model openai/gpt-4o
 ```
+
+After numerical perturbative matching completes, its stage report performs a
+best-effort cited-paper lookup and a separate LLM call for the human-readable
+kernel formula. The CLI labels this report phase explicitly. Paper lookup is
+bounded to short requests, and the report-only LLM call uses at most two
+30-second attempts. Failure writes a provenance-only formula note while keeping
+the completed numerical matching artifacts and allowing the workflow to
+continue.
 
 The second command works only when `OPENAI_API_KEY` is set in the environment.
 
@@ -880,8 +978,8 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
   - `reporting.py` controls the per-stage report that is generated after the stage
     finishes, so users can track the analysis progress and inspect intermediate
     results.
-  - `stages/correlator/` is the first worked example and exposes four agentic
-    tools (requires the `analysis` optional dependencies):
+  - `stages/correlator/` is the first worked example and exposes spectral-fit
+    and Lanczos agentic tools (requires the `analysis` optional dependencies):
     `inspect_correlator_scale` (choose a `correlator_rescale`), `tune_ground_state`
     (2pt-only window scan + model average), `tune_bare_matrix` (scan bare-matrix fit
     windows on sample-average data for one representative z), and
@@ -889,14 +987,18 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
     resampled sample, then export a bare-matrix NetCDF artifact, fit-on-data PDFs,
     and split logs). The agent tunes once on sample-average data, then applies the
     same data window everywhere; `model_average=true` BMA-combines fit-function
-    candidates within that fixed window.
+    candidates within that fixed window. `inspect_lanczos_inputs` plans the
+    internal Lanczos grid from standard 3pt data and reports point loss, and
+    `run_lanczos_analysis` writes the Ritz spectrum or matrix-element artifacts.
 - `examples/fake_data/generate_fake_data.py`
   - Generates fake correlator-style datasets used for local testing.
 - `examples/sample_manifest.jsonc`
   - Annotated reference manifest (JSONC). Copy it, drop the `//` comments, and save
     as `.json` to author a real run.
 - `examples/pion_pdf_cg_manifest.json`
-  - Runnable P0/P5 correlator and hybrid-ratio renormalization manifest.
+  - Runnable P0/P5 spectral-fit correlator and hybrid-ratio renormalization manifest.
+- `examples/pion_pdf_cg_lanczos_manifest.json`
+  - Runnable P0/P5 Lanczos counterpart with an independent run/artifact directory.
 - `examples/pion_pdf_gi_manifest.json`
   - Runnable P0/P4 GI pion PDF workflow.
 - `examples/temp_pdf_gi_manifest.json`

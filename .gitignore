@@ -22,6 +22,7 @@ runs/
 temp/
 examples/fake_data/data/
 **/api.key
+**/oai.key
 data*/
 artifacts/
 examples/artifacts/

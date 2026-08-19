@@ -19,11 +19,14 @@ from lamet_agent.stages.matching.validation import effective_matching_params
 
 
 def _manifest():
-    return validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
+    manifest = validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
+    manifest.stages["correlator_analysis"].defaults = _required_correlator_defaults()
+    return manifest
 
 
 def _required_correlator_defaults(scope: str = "3pt_ratio") -> dict[str, object]:
     return {
+        "analysis_method": "spectral_fit",
         "component": "both",
         "fit_scope": [scope],
         "fit_strategy": ["joint"],
@@ -242,7 +245,7 @@ def test_qda_ratio_correlator_job_uses_unified_tool_contract() -> None:
 
 
 def test_3pt_ratio_correlator_job_keeps_default_tool_routing() -> None:
-    manifest = validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
+    manifest = _manifest()
     job = manifest.stages["correlator_analysis"].jobs[0]
     params = merge_stage_params(manifest.stages["correlator_analysis"].defaults, job.params)
     tools = {
@@ -675,7 +678,8 @@ def test_correlator_fit_scope_accepts_public_names_and_rejects_old_names() -> No
         assert validate_stage_inputs("correlator_analysis", manifest, job) == []
     manifest.stages["correlator_analysis"].defaults["fit_scope"] = ["ratio"]
     assert validate_stage_inputs("correlator_analysis", manifest, job) == [
-        "fit_scope must contain only '3pt_ratio', 'FH', '3pt_ratio+FH', or 'qda_ratio'."
+        "fit_scope must contain only '3pt_ratio', 'FH', '3pt_ratio+FH', "
+        "'qda_ratio', '2pt_spectrum', or '3pt_matrix'."
     ]
     manifest.stages["correlator_analysis"].defaults["fit_scope"] = ["qda_ratio", "3pt_ratio"]
     assert validate_stage_inputs("correlator_analysis", manifest, job) == [

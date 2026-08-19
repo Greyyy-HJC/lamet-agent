@@ -209,6 +209,11 @@ def resolve_job_tools(
 ) -> dict[str, Callable[..., dict[str, Any]]]:
     """Return only the stage tools that are valid for the current job contract."""
     tools = dict(stage_tools if stage_tools is not None else resolve_stage_tools(stage))
+    if stage == "correlator_analysis":
+        lanczos_tools = {"inspect_lanczos_inputs", "run_lanczos_analysis"}
+        if effective_params.get("analysis_method") == "lanczos":
+            return {name: tool for name, tool in tools.items() if name in lanczos_tools}
+        return {name: tool for name, tool in tools.items() if name not in lanczos_tools}
     if stage != "renormalization":
         return tools
 
@@ -248,6 +253,8 @@ def required_job_tool_sequence(
     effective_params: dict[str, Any],
 ) -> tuple[str, ...]:
     """Return the successful tool order required before a job may finish."""
+    if stage == "correlator_analysis" and effective_params.get("analysis_method") == "lanczos":
+        return ("inspect_lanczos_inputs", "run_lanczos_analysis")
     if stage == "perturbative_matching":
         return ("load_quasi_pdf", "build_matching_kernel", "apply_matching", "plot_matched_pdf")
     if stage == "extrapolation":
@@ -340,7 +347,7 @@ def resolve_tool_args(args: dict[str, Any], manifest: AnalysisManifest) -> dict[
     if manifest.root_directory is None and (manifest.manifest_dir is None or manifest.project_root is None):
         return args
     resolved = dict(args)
-    for key in ("path", "pt2_path", "pt3_paths", "netcdf_path", "target_netcdf_path", "denominator_netcdf_path"):
+    for key in ("path", "pt2_path", "pt2_out_path", "pt3_paths", "netcdf_path", "target_netcdf_path", "denominator_netcdf_path"):
         if key in resolved:
             resolved[key] = _resolve_path_container(resolved[key], manifest)
     return resolved
@@ -382,7 +389,7 @@ def prepare_tool_args(
     store = store or {}
     resolved = resolve_tool_args(args, manifest)
     stage_tools = {
-        "correlator_analysis": {"inspect_correlator_scale", "tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid"},
+        "correlator_analysis": {"inspect_correlator_scale", "inspect_lanczos_inputs", "run_lanczos_analysis", "tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid"},
         "renormalization": {"load_bare_matrix_element_grid", "apply_ratio_scheme_renormalization", "apply_self_renormalization", "plot_renormalized_matrix_element", "plot_self_renormalization_diagnostics", "load_bare_matrix_element", "fit_self_renormalization_factor"},
         "fourier_transform": {"load_renormalized_matrix_element_samples", "run_fourier_transform", "summarize_fourier_result", "plot_fourier_result", "plot_fourier_extension_quality_result", "report_fourier_result"},
         "perturbative_matching": {"list_kernels", "load_quasi_pdf", "build_matching_kernel", "apply_matching", "plot_matched_pdf", "report_matching_result"},
@@ -561,6 +568,16 @@ def prepare_tool_args(
                     if pt2 is not None and selected_momentum is not None
                     else None
                 )
+        elif tool_name == "run_lanczos_analysis":
+            defaults["save_path"] = str(artifacts_dir / job.id)
+            defaults["job_id"] = job.id
+            defaults["workers"] = manifest.metadata.workers
+            defaults["lattice_spacing_fm"] = pt2.lattice_spacing_fm if pt2 is not None else None
+            defaults["momentum_gev"] = (
+                pt2.momentum_gev(selected_momentum)
+                if pt2 is not None and selected_momentum is not None
+                else None
+            )
         for key, value in defaults.items():
             if key not in resolved or resolved[key] is None:
                 resolved[key] = value

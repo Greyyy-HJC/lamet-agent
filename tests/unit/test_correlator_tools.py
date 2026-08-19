@@ -236,9 +236,11 @@ def _write_fake_correlators(
 # --- registry ----------------------------------------------------------------
 
 
-def test_stage_tools_expose_the_four_agentic_tools() -> None:
+def test_stage_tools_expose_spectral_fit_and_lanczos_tools() -> None:
     assert set(STAGE_TOOLS) == {
         "inspect_correlator_scale",
+        "inspect_lanczos_inputs",
+        "run_lanczos_analysis",
         "tune_ground_state",
         "tune_bare_matrix",
         "fit_bare_matrix_grid",

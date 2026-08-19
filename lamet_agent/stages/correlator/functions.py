@@ -1,7 +1,8 @@
 """Correlator-analysis stage tools.
 
 Purpose:
-- provide one agentic tool set for 2pt ground-state, 3pt/FH, and qDA-ratio analysis
+- provide one agentic tool set for spectral-fit and Lanczos/Krylov analysis of
+  2pt, 3pt/FH, and qDA correlators
 - the agent drives strategy: inspect the 2pt scale, tune one shared fit setting on
   sample-average data, then apply that setting to every bootstrap/jackknife sample
 
@@ -25,9 +26,10 @@ Example usage:
 
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 import json
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -57,10 +59,19 @@ from lamet_agent.core.plotting import (
     plot_sample_fit_quality_chi2,
 )
 from lamet_agent.core.resampling import (
+    bin_data,
     resample_config_samples,
     sample_mean_and_sdev,
     sample_value_with_error,
     samples_to_gvar,
+)
+from lamet_agent.stages.correlator.lanczos import (
+    analyze_threept as analyze_threept_lanczos,
+    analyze_twopt as analyze_twopt_lanczos,
+    median_threept_matrix,
+    median_twopt_energies,
+    plan_tsep_tau_conversion,
+    plan_twopt_grid,
 )
 from lamet_agent.core.tools import (
     log_nonlinear_fit_quality,
@@ -1612,6 +1623,66 @@ def _normalise_pt3_paths(pt3_paths: dict[str, str] | list[str], *, tsep_ls: list
     return {int(tsep): str(path) for tsep, path in zip(tsep_ls, pt3_paths)}
 
 
+def _lanczos_tsep_paths(
+    *,
+    pt3_paths: dict[str, str] | list[str] | None,
+    tsep_ls: list[int] | None,
+) -> dict[int, str]:
+    """Resolve ordinary 3pt files without changing the existing path contract."""
+    tseps = [int(value) for value in (tsep_ls or [])]
+    if pt3_paths is not None:
+        if isinstance(pt3_paths, dict):
+            resolved = {int(key): str(value) for key, value in pt3_paths.items()}
+            if tseps:
+                resolved = {tsep: resolved[tsep] for tsep in tseps if tsep in resolved}
+            return resolved
+        if not tseps:
+            raise ValueError("ordinary Lanczos pt3_paths lists require tsep_ls")
+        return _normalise_pt3_paths(pt3_paths, tsep_ls=tseps)
+    raise ValueError("Lanczos 3pt input requires the standard pt3_paths and tsep_ls")
+
+
+def _read_lanczos_effective_3pt(
+    *,
+    plan: dict[str, Any],
+    paths_by_tsep: dict[int, str],
+    source_operator: str,
+    sink_operator: str,
+    current_operator: str,
+    momentum: str,
+    bT: int,
+    bz: int,
+) -> tuple[np.ndarray, list[int]]:
+    """Convert ordinary ``(tsep, tau)`` input to the effective Lanczos square."""
+    iterations = int(plan["iterations"])
+    if not paths_by_tsep:
+        raise ValueError("ordinary Lanczos conversion has no tsep-indexed 3pt paths")
+    slices: dict[int, np.ndarray] = {}
+    for tsep in plan["selected_tseps"]:
+        if int(tsep) not in paths_by_tsep:
+            raise ValueError(f"ordinary Lanczos conversion is missing a path for tsep={tsep}")
+        slices[int(tsep)] = _read_3pt(
+            paths_by_tsep[int(tsep)],
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            current_operator=current_operator,
+            momentum=momentum,
+            bT=bT,
+            bz=bz,
+            tsep=int(tsep),
+        )
+    n_cfg = next(iter(slices.values())).shape[0]
+    if any(value.shape[0] != n_cfg for value in slices.values()):
+        raise ValueError("ordinary Lanczos 3pt tsep slices have different configuration counts")
+    dtype = np.result_type(*(value.dtype for value in slices.values()))
+    effective = np.empty((n_cfg, iterations, iterations), dtype=dtype)
+    for point in plan["used_points"]:
+        effective[:, int(point["sigma_index"]), int(point["tau_index"])] = slices[
+            int(point["tsep"])
+        ][:, int(point["tau"])]
+    return effective, [int(value) for value in plan["selected_tseps"]]
+
+
 # --- window grids ------------------------------------------------------------
 
 DEFAULT_MAX_PT2_WINDOWS = 6
@@ -2176,7 +2247,820 @@ def inspect_correlator_scale(
     return result
 
 
-# --- tool 2: tune the 2pt ground state (2pt-only path) ----------------------
+def _lanczos_scope(value: str | list[str]) -> str:
+    values = value if isinstance(value, list) else [value]
+    if len(values) != 1 or values[0] not in {"2pt_spectrum", "3pt_matrix"}:
+        raise ValueError(
+            "Lanczos fit_scope must be exactly one of '2pt_spectrum' or '3pt_matrix'"
+        )
+    return str(values[0])
+
+
+def _lanczos_state_count(value: int | list[int]) -> int:
+    values = value if isinstance(value, list) else [value]
+    if len(values) != 1 or type(values[0]) is not int or values[0] < 1:
+        raise ValueError("Lanczos nstate must be one positive integer")
+    return int(values[0])
+
+
+def _validate_lanczos_c2(data: np.ndarray, *, label: str) -> None:
+    if data.ndim != 2 or data.shape[1] < 2:
+        raise ValueError(f"Lanczos {label} 2pt data must have shape (configuration, time>=2)")
+    if not np.all(np.isfinite(data)):
+        raise ValueError(f"Lanczos {label} 2pt data contain NaN or Inf")
+    c0 = float(np.mean(np.real(data[:, 0])))
+    if c0 <= 0.0:
+        raise ValueError(
+            f"Lanczos {label} 2pt normalization requires ensemble-average C(0)>0; got {c0}"
+        )
+
+
+def _lanczos_outer_indices(
+    n_cfg: int, *, mode: str, n_boot: int | None, seed: int | None
+) -> list[np.ndarray]:
+    if n_cfg < 2:
+        raise ValueError("Lanczos outer resampling requires at least two configurations/bins")
+    if mode == "bs":
+        if n_boot is None or int(n_boot) < 1:
+            raise ValueError("Lanczos bootstrap mode requires a positive metadata.bs_samples")
+        rng = np.random.default_rng(seed)
+        return [rng.integers(0, n_cfg, n_cfg) for _ in range(int(n_boot))]
+    base = np.arange(n_cfg)
+    return [np.delete(base, index) for index in range(n_cfg)]
+
+
+def _lanczos_progress(iterable: Any, *, total: int, description: str) -> Any:
+    """Show progress for potentially long outer Lanczos resampling loops."""
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        return iterable
+    return tqdm(iterable, total=total, desc=description, leave=False)
+
+
+def _lanczos_twopt_outer_result(
+    outer: int,
+    indices: np.ndarray,
+    channels: list[tuple[str, np.ndarray]],
+    *,
+    inner_samples: int,
+    seed: int,
+    precision: int,
+    iterations: int,
+    max_states: int,
+    time_step: int,
+) -> tuple[int, np.ndarray]:
+    """Analyze every 2pt channel for one outer resample."""
+    values = np.full((len(channels), iterations, max_states), np.nan, dtype=float)
+    for channel, (_label, data) in enumerate(channels):
+        inner = analyze_twopt_lanczos(
+            data[indices],
+            inner_samples,
+            seed=np.random.SeedSequence([seed, outer, channel]),
+            precision=precision,
+            max_iterations=iterations,
+        )
+        energies = median_twopt_energies(
+            inner, max_states=max_states, time_step=time_step
+        )
+        values[channel, : energies.shape[0]] = energies
+    return outer, values
+
+
+def _lanczos_twopt_outer_batch(
+    batch: list[tuple[int, np.ndarray]],
+    channels: list[tuple[str, np.ndarray]],
+    inner_samples: int,
+    seed: int,
+    precision: int,
+    iterations: int,
+    max_states: int,
+    time_step: int,
+) -> list[tuple[int, np.ndarray]]:
+    """Process a batch of independent outer 2pt resamples in one worker."""
+    return [
+        _lanczos_twopt_outer_result(
+            outer,
+            indices,
+            channels,
+            inner_samples=inner_samples,
+            seed=seed,
+            precision=precision,
+            iterations=iterations,
+            max_states=max_states,
+            time_step=time_step,
+        )
+        for outer, indices in batch
+    ]
+
+
+def _lanczos_threept_outer_result(
+    outer: int,
+    indices: np.ndarray,
+    c3_by_z: list[np.ndarray],
+    sink: np.ndarray,
+    source: np.ndarray,
+    parts: list[str],
+    *,
+    inner_samples: int,
+    seed: int,
+    precision: int,
+    iterations: int,
+    max_states: int,
+) -> tuple[int, np.ndarray]:
+    """Analyze every z and requested real component for one outer resample."""
+    values = np.full(
+        (len(c3_by_z), len(parts), max_states, max_states),
+        np.nan,
+        dtype=float,
+    )
+    for z_index, c3 in enumerate(c3_by_z):
+        for part_index, component in enumerate(parts):
+            # ``both`` deliberately reaches this call twice: one separate
+            # real-valued Lanczos analysis for Re C3 and one for Im C3.
+            signal = np.real(c3) if component == "re" else np.imag(c3)
+            inner = analyze_threept_lanczos(
+                signal[indices],
+                sink[indices],
+                source[indices],
+                inner_samples,
+                seed=np.random.SeedSequence([seed, outer]),
+                precision=precision,
+                max_iterations=iterations,
+            )
+            values[z_index, part_index] = median_threept_matrix(
+                inner,
+                iteration=iterations,
+                max_states=max_states,
+            )
+    return outer, values
+
+
+def _lanczos_threept_outer_batch(
+    batch: list[tuple[int, np.ndarray]],
+    c3_by_z: list[np.ndarray],
+    sink: np.ndarray,
+    source: np.ndarray,
+    parts: list[str],
+    inner_samples: int,
+    seed: int,
+    precision: int,
+    iterations: int,
+    max_states: int,
+) -> list[tuple[int, np.ndarray]]:
+    """Process a batch of independent outer 3pt resamples in one worker."""
+    return [
+        _lanczos_threept_outer_result(
+            outer,
+            indices,
+            c3_by_z,
+            sink,
+            source,
+            parts,
+            inner_samples=inner_samples,
+            seed=seed,
+            precision=precision,
+            iterations=iterations,
+            max_states=max_states,
+        )
+        for outer, indices in batch
+    ]
+
+
+def inspect_lanczos_inputs(
+    store: dict[str, Any],
+    *,
+    pt2_path: str,
+    pt2_out_path: str | None = None,
+    pt3_paths: dict[str, str] | list[str] | None = None,
+    tsep_ls: list[int] | None = None,
+    source_operator: str,
+    sink_operator: str,
+    current_operator: str | None = None,
+    momentum: str | None = None,
+    initial_momentum: str | None = None,
+    final_momentum: str | None = None,
+    fitting_form: str,
+    fit_scope: str | list[str],
+    z_values: list[int] | None = None,
+    bT: int | None = None,
+    temporal_extent: int | None = None,
+    lanczos_iterations: int | None = None,
+    lanczos_t0: int | None = None,
+    lanczos_time_step: int | None = None,
+    out: str = "lanczos_input_inspection",
+) -> dict[str, Any]:
+    """Validate and plan automatic conversion to the strict Lanczos time grid."""
+    scope = _lanczos_scope(fit_scope)
+    form = _normalise_fitting_form(fitting_form)
+    if form == "Breit":
+        if momentum is None:
+            raise ValueError("momentum is required for Breit Lanczos analysis")
+        source_momentum = sink_momentum = momentum
+    else:
+        if initial_momentum is None or final_momentum is None:
+            raise ValueError(
+                "initial_momentum and final_momentum are required for NonBreit Lanczos analysis"
+            )
+        source_momentum, sink_momentum = initial_momentum, final_momentum
+
+    source = _read_2pt(
+        pt2_path,
+        source_operator=source_operator,
+        sink_operator=sink_operator,
+        momentum=source_momentum,
+        temporal_extent=temporal_extent,
+    )
+    sink = (
+        source
+        if form == "Breit" and (pt2_out_path is None or pt2_out_path == pt2_path)
+        else _read_2pt(
+            pt2_out_path or pt2_path,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            momentum=sink_momentum,
+            temporal_extent=temporal_extent,
+        )
+    )
+    if source.shape[0] != sink.shape[0]:
+        raise ValueError(
+            f"Lanczos source/sink 2pt configuration counts differ: {source.shape[0]} != {sink.shape[0]}"
+        )
+
+    paths_by_tsep: dict[int, str] = {}
+    three_point_shapes: dict[str, Any] = {}
+    if scope == "2pt_spectrum":
+        plan = plan_twopt_grid(
+            source_times=source.shape[1],
+            sink_times=sink.shape[1],
+            requested_iterations=lanczos_iterations,
+            t0=lanczos_t0,
+            time_step=lanczos_time_step,
+        )
+    else:
+        if current_operator is None or bT is None or not z_values:
+            raise ValueError(
+                "Lanczos 3pt inspection requires current_operator, bT, and z_values"
+            )
+        paths_by_tsep = _lanczos_tsep_paths(
+            pt3_paths=pt3_paths,
+            tsep_ls=tsep_ls,
+        )
+        plan = plan_tsep_tau_conversion(
+            list(paths_by_tsep),
+            source_times=source.shape[1],
+            sink_times=sink.shape[1],
+            requested_iterations=lanczos_iterations,
+            t0=lanczos_t0,
+            time_step=lanczos_time_step,
+        )
+
+    c2_indices = 2 * int(plan["t0"]) + int(plan["time_step"]) * np.arange(
+        2 * int(plan["iterations"]), dtype=int
+    )
+    _validate_lanczos_c2(source[:, c2_indices], label="source effective")
+    _validate_lanczos_c2(sink[:, c2_indices], label="sink effective")
+    result: dict[str, Any] = {
+        "out": out,
+        "status": "valid",
+        "fit_scope": scope,
+        "n_cfg": int(source.shape[0]),
+        "source_2pt_shape": list(source.shape),
+        "sink_2pt_shape": list(sink.shape),
+        "source_2pt_indices": c2_indices.tolist(),
+        "sink_2pt_indices": c2_indices.tolist(),
+        "max_2pt_iterations": int(plan["max_iterations"]),
+        "max_iterations": int(plan["max_iterations"]),
+        "iterations": int(plan["iterations"]),
+        "lanczos_t0": int(plan["t0"]),
+        "lanczos_time_step": int(plan["time_step"]),
+        "sampling_plan": plan,
+        "normalization": (
+            "C2_eff(r)=C2(2*t0+n*r), normalized by C2_eff(0); "
+            "do not pre-normalize the input"
+        ),
+    }
+    if scope == "3pt_matrix":
+        assert current_operator is not None and bT is not None and z_values
+        for z in z_values:
+            c3, selected_tseps = _read_lanczos_effective_3pt(
+                plan=plan,
+                paths_by_tsep=paths_by_tsep,
+                source_operator=source_operator,
+                sink_operator=sink_operator,
+                current_operator=current_operator,
+                momentum=sink_momentum,
+                bT=bT,
+                bz=int(z),
+            )
+            if not np.all(np.isfinite(c3)):
+                raise ValueError(f"effective Lanczos 3pt data contain NaN or Inf for z={z}")
+            if c3.shape[0] != source.shape[0]:
+                raise ValueError(
+                    f"Lanczos 3pt n_cfg mismatch for z={z}: {c3.shape[0]} != {source.shape[0]}"
+                )
+            three_point_shapes[str(z)] = {
+                "ordinary_tsep_shapes": {
+                    str(tsep): [int(source.shape[0]), int(tsep) + 1]
+                    for tsep in selected_tseps
+                },
+                "effective_shape": list(c3.shape),
+            }
+        point_warning = str(plan["warning"])
+        if int(plan["discarded_point_count"]) > 0:
+            warnings.warn(point_warning, UserWarning, stacklevel=2)
+        result.update(
+            {
+                "status": (
+                    "valid_with_discarded_points"
+                    if int(plan["discarded_point_count"]) > 0
+                    else "valid"
+                ),
+                "input_three_point_convention": "tsep_tau",
+                "effective_grid": "internal Lanczos (sigma,tau) square",
+                "three_point_shapes": three_point_shapes,
+                "point_usage_warning": point_warning,
+                "point_usage": {
+                    "z_count": len(z_values),
+                    "used_per_z": int(plan["used_point_count"]),
+                    "discarded_per_z": int(plan["discarded_point_count"]),
+                    "used_all_z": int(plan["used_point_count"]) * len(z_values),
+                    "discarded_all_z": int(plan["discarded_point_count"]) * len(z_values),
+                },
+                "warnings": [point_warning] if int(plan["discarded_point_count"]) > 0 else [],
+                "required_three_point_definition": (
+                    "C3[configuration,sigma,tau] = <sink|T^sigma J T^tau|source>"
+                ),
+                "required_grid": (
+                    "The effective data must form a complete m x m square. Ordinary "
+                    "(tsep,tau) input is converted automatically with sigma=tsep-tau, "
+                    "tsep=2*t0+n*(s+r), and tau=t0+n*r; points outside that square are discarded."
+                ),
+                "configuration_alignment": (
+                    "The same configuration index must identify the same sample in source 2pt, "
+                    "sink 2pt, and every 3pt z dataset."
+                ),
+            }
+        )
+    store[out] = result
+    return result
+
+
+def run_lanczos_analysis(
+    store: dict[str, Any],
+    *,
+    pt2_path: str,
+    pt2_out_path: str | None = None,
+    pt3_paths: dict[str, str] | list[str] | None = None,
+    tsep_ls: list[int] | None = None,
+    source_operator: str,
+    sink_operator: str,
+    current_operator: str | None = None,
+    momentum: str | None = None,
+    initial_momentum: str | None = None,
+    final_momentum: str | None = None,
+    fitting_form: str,
+    fit_scope: str | list[str],
+    nstate: int | list[int],
+    z_values: list[int] | None = None,
+    bT: int | None = None,
+    bz_direction: str | None = None,
+    part: str,
+    resample_mode: str,
+    sample_error_mode: str,
+    n_boot: int | None,
+    seed: int | None,
+    bin_size: int | None,
+    lanczos_inner_samples: int = 200,
+    lanczos_precision: int = 100,
+    lanczos_iterations: int | None = None,
+    lanczos_t0: int | None = None,
+    lanczos_time_step: int | None = None,
+    workers: int = 1,
+    ensemble: str = "",
+    tag: str = "",
+    hadron: str | None = None,
+    gfix: str | None = None,
+    volume: str | None = None,
+    lattice_spacing_fm: float | None = None,
+    momentum_gev: float | None = None,
+    temporal_extent: int | None = None,
+    job_id: str | None = None,
+    save_path: str | None = None,
+    artifacts_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Run nested-resampled Lanczos extraction and write the terminal artifact."""
+    scope = _lanczos_scope(fit_scope)
+    max_states = _lanczos_state_count(nstate)
+    mode = _check_mode(resample_mode)
+    if type(lanczos_inner_samples) is not int or lanczos_inner_samples < 1:
+        raise ValueError("lanczos_inner_samples must be a positive integer")
+    if type(lanczos_precision) is not int or lanczos_precision < 0:
+        raise ValueError("lanczos_precision must be a nonnegative integer")
+    if lanczos_t0 is not None and (type(lanczos_t0) is not int or lanczos_t0 < 0):
+        raise ValueError("lanczos_t0 must be a nonnegative integer")
+    if lanczos_time_step is not None and (
+        type(lanczos_time_step) is not int or lanczos_time_step < 1
+    ):
+        raise ValueError("lanczos_time_step must be a positive integer")
+    if (
+        isinstance(workers, bool)
+        or not isinstance(workers, (int, np.integer))
+        or workers < 1
+    ):
+        raise ValueError("workers must be a positive integer")
+    workers = int(workers)
+
+    inspection = inspect_lanczos_inputs(
+        store,
+        pt2_path=pt2_path,
+        pt2_out_path=pt2_out_path,
+        pt3_paths=pt3_paths,
+        tsep_ls=tsep_ls,
+        source_operator=source_operator,
+        sink_operator=sink_operator,
+        current_operator=current_operator,
+        momentum=momentum,
+        initial_momentum=initial_momentum,
+        final_momentum=final_momentum,
+        fitting_form=fitting_form,
+        fit_scope=scope,
+        z_values=z_values,
+        bT=bT,
+        temporal_extent=temporal_extent,
+        lanczos_iterations=lanczos_iterations,
+        lanczos_t0=lanczos_t0,
+        lanczos_time_step=lanczos_time_step,
+    )
+    form = _normalise_fitting_form(fitting_form)
+    source_momentum = momentum if form == "Breit" else initial_momentum
+    sink_momentum = momentum if form == "Breit" else final_momentum
+    source = np.real(
+        _read_2pt(
+            pt2_path,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            momentum=str(source_momentum),
+            temporal_extent=temporal_extent,
+        )
+    )
+    sink = (
+        source
+        if form == "Breit" and (pt2_out_path is None or pt2_out_path == pt2_path)
+        else np.real(
+            _read_2pt(
+                pt2_out_path or pt2_path,
+                source_operator=source_operator,
+                sink_operator=sink_operator,
+                momentum=str(sink_momentum),
+                temporal_extent=temporal_extent,
+            )
+        )
+    )
+    plan = inspection["sampling_plan"]
+    requested_iterations = int(plan["iterations"])
+    selected_t0 = int(plan["t0"])
+    selected_time_step = int(plan["time_step"])
+    c2_indices = 2 * selected_t0 + selected_time_step * np.arange(
+        2 * requested_iterations, dtype=int
+    )
+    source = source[:, c2_indices]
+    sink = sink[:, c2_indices]
+    effective_bin = int(bin_size or 1)
+    source = bin_data(source, effective_bin, axis=0)
+    sink = bin_data(sink, effective_bin, axis=0)
+    outer_indices = _lanczos_outer_indices(
+        source.shape[0], mode=mode, n_boot=n_boot, seed=seed
+    )
+    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    resolved_save = resolve_plot_save_path(
+        save_path,
+        artifacts_dir=out_dir,
+        default_stem=f"{tag or 'correlator'}_lanczos",
+    )
+    resample_label = {"bs": "bootstrap", "jk": "jackknife"}[mode]
+    attrs = {
+        "analysis_method": "lanczos",
+        "fit_scope": scope,
+        "ensemble": ensemble,
+        "tag": tag,
+        "job_id": job_id,
+        "hadron": hadron,
+        "gfix": gfix,
+        "volume": volume,
+        "lattice_spacing_fm": lattice_spacing_fm,
+        "momentum": sink_momentum,
+        "momentum_gev": momentum_gev,
+        "fitting_form": form,
+        "nstate": max_states,
+        "lanczos_iterations": requested_iterations,
+        "lanczos_inner_samples": lanczos_inner_samples,
+        "lanczos_precision": lanczos_precision,
+        "lanczos_t0": selected_t0,
+        "lanczos_time_step": selected_time_step,
+        "workers": workers,
+        "sample_error_mode": sample_error_mode,
+    }
+
+    if scope == "2pt_spectrum":
+        channels = [("source", source)]
+        if form == "NonBreit" or not np.array_equal(source, sink):
+            channels.append(("sink", sink))
+        outer_values = np.full(
+            (len(outer_indices), len(channels), requested_iterations, max_states),
+            np.nan,
+            dtype=float,
+        )
+        outer_tasks = list(enumerate(outer_indices))
+        if workers == 1:
+            iterator = _lanczos_progress(
+                outer_tasks,
+                total=len(outer_tasks),
+                description=f"Lanczos 2pt {tag or ensemble}",
+            )
+            for outer, indices in iterator:
+                result_outer, values = _lanczos_twopt_outer_result(
+                    outer,
+                    indices,
+                    channels,
+                    inner_samples=lanczos_inner_samples,
+                    seed=int(seed or 0),
+                    precision=lanczos_precision,
+                    iterations=requested_iterations,
+                    max_states=max_states,
+                    time_step=selected_time_step,
+                )
+                outer_values[result_outer] = values
+        else:
+            batches = [
+                [(int(outer), indices) for outer, indices in batch]
+                for batch in np.array_split(
+                    np.asarray(outer_tasks, dtype=object),
+                    min(workers, len(outer_tasks)),
+                )
+                if len(batch)
+            ]
+            with ProcessPoolExecutor(max_workers=min(workers, len(batches))) as executor:
+                futures = [
+                    executor.submit(
+                        _lanczos_twopt_outer_batch,
+                        batch,
+                        channels,
+                        lanczos_inner_samples,
+                        int(seed or 0),
+                        lanczos_precision,
+                        requested_iterations,
+                        max_states,
+                        selected_time_step,
+                    )
+                    for batch in batches
+                ]
+                iterator = _lanczos_progress(
+                    as_completed(futures),
+                    total=len(futures),
+                    description=f"Lanczos 2pt {tag or ensemble} ({workers} workers)",
+                )
+                for future in iterator:
+                    for result_outer, values in future.result():
+                        outer_values[result_outer] = values
+        output_data = EnsembleData(
+            ensemble=EnsembleInfo("", ensemble, 1.0, 1.0, 1, 1, 0.0),
+            resample=resample_label,
+            values=[value for value in outer_values],
+            dims=("channel", "iteration", "state"),
+            coords={
+                "channel": [label for label, _data in channels],
+                "iteration": list(range(1, requested_iterations + 1)),
+                "state": list(range(max_states)),
+            },
+            attrs={key: str(value) for key, value in attrs.items() if value is not None},
+            name="lanczos_energy",
+        )
+        artifact_path = f"{resolved_save}.nc"
+        output_data.to_netcdf(artifact_path)
+        figure, axis = default_plot()
+        for channel, (label, _data) in enumerate(channels):
+            samples = outer_values[:, channel, :, 0]
+            center = np.nanmedian(samples, axis=0)
+            error = np.nanstd(samples, axis=0, ddof=1) if len(samples) > 1 else np.zeros_like(center)
+            axis.errorbar(
+                np.arange(1, requested_iterations + 1),
+                center,
+                error,
+                label=f"{label} ground state",
+                color=COLOR_CYCLE[channel % len(COLOR_CYCLE)],
+                **ERRORBAR_STYLE,
+            )
+        axis.set_xlabel("Lanczos iteration m", **FONT_SIZE)
+        axis.set_ylabel("Energy (lattice units)", **FONT_SIZE)
+        axis.set_title(f"{ensemble} Lanczos spectrum", **FONT_SIZE)
+        axis.legend(**LEGEND_SETS)
+        figure.tight_layout()
+        pdf_path, svg_path = f"{resolved_save}.pdf", f"{resolved_save}.svg"
+        figure.savefig(pdf_path, bbox_inches="tight", transparent=True)
+        figure.savefig(svg_path, bbox_inches="tight")
+        plt.close(figure)
+        store["output"] = output_data
+        store["lanczos_spectrum"] = output_data
+        return {
+            "artifact": artifact_path,
+            "netcdf_path": artifact_path,
+            "plot_pdf": pdf_path,
+            "plot_svg": svg_path,
+            "analysis_method": "lanczos",
+            "fit_scope": scope,
+            "n_samples": len(outer_indices),
+            "iterations": requested_iterations,
+            "states": max_states,
+        }
+
+    assert current_operator is not None and bT is not None
+    z_list = [int(value) for value in (z_values or [])]
+    parts = _parts(part)
+    paths_by_tsep = _lanczos_tsep_paths(
+        pt3_paths=pt3_paths,
+        tsep_ls=tsep_ls,
+    )
+    c3_by_z = []
+    for z in z_list:
+        effective_c3, _selected_tseps = _read_lanczos_effective_3pt(
+            plan=plan,
+            paths_by_tsep=paths_by_tsep,
+            source_operator=source_operator,
+            sink_operator=sink_operator,
+            current_operator=current_operator,
+            momentum=str(sink_momentum),
+            bT=bT,
+            bz=z,
+        )
+        c3_by_z.append(
+            bin_data(
+                effective_c3,
+                effective_bin,
+                axis=0,
+            )
+        )
+    matrices = np.full(
+        (len(outer_indices), len(z_list), len(parts), max_states, max_states),
+        np.nan,
+        dtype=float,
+    )
+    outer_tasks = list(enumerate(outer_indices))
+    if workers == 1:
+        iterator = _lanczos_progress(
+            outer_tasks,
+            total=len(outer_tasks),
+            description=f"Lanczos 3pt {tag or ensemble}",
+        )
+        for outer, indices in iterator:
+            result_outer, values = _lanczos_threept_outer_result(
+                outer,
+                indices,
+                c3_by_z,
+                sink,
+                source,
+                parts,
+                inner_samples=lanczos_inner_samples,
+                seed=int(seed or 0),
+                precision=lanczos_precision,
+                iterations=requested_iterations,
+                max_states=max_states,
+            )
+            matrices[result_outer] = values
+    else:
+        batches = [
+            [(int(outer), indices) for outer, indices in batch]
+            for batch in np.array_split(
+                np.asarray(outer_tasks, dtype=object),
+                min(workers, len(outer_tasks)),
+            )
+            if len(batch)
+        ]
+        with ProcessPoolExecutor(max_workers=min(workers, len(batches))) as executor:
+            futures = [
+                executor.submit(
+                    _lanczos_threept_outer_batch,
+                    batch,
+                    c3_by_z,
+                    sink,
+                    source,
+                    parts,
+                    lanczos_inner_samples,
+                    int(seed or 0),
+                    lanczos_precision,
+                    requested_iterations,
+                    max_states,
+                )
+                for batch in batches
+            ]
+            iterator = _lanczos_progress(
+                as_completed(futures),
+                total=len(futures),
+                description=f"Lanczos 3pt {tag or ensemble} ({workers} workers)",
+            )
+            for future in iterator:
+                for result_outer, values in future.result():
+                    matrices[result_outer] = values
+    real_ground = np.zeros((len(outer_indices), len(z_list)), dtype=float)
+    imag_ground = np.zeros_like(real_ground)
+    if "re" in parts:
+        real_ground = matrices[:, :, parts.index("re"), 0, 0]
+    if "im" in parts:
+        imag_ground = matrices[:, :, parts.index("im"), 0, 0]
+    ground = real_ground + 1j * imag_ground
+    output_data = EnsembleData(
+        ensemble=EnsembleInfo("", ensemble, 1.0, 1.0, 1, 1, 0.0),
+        resample=resample_label,
+        values=[value for value in ground],
+        dims=("z",),
+        coords={"z": z_list},
+        attrs={
+            **{key: str(value) for key, value in attrs.items() if value is not None},
+            "part": part,
+            "component": part,
+            "bz_direction": str(bz_direction),
+            "bT": str(bT),
+            "current_operator": current_operator,
+            "input_three_point_convention": "tsep_tau",
+            "effective_lanczos_grid": "sigma_tau",
+            "standard_3pt_points_used_per_z": str(plan["used_point_count"]),
+            "standard_3pt_points_discarded_per_z": str(plan["discarded_point_count"]),
+            "coord_unit": "lattice",
+            "three_point_definition": "C3[configuration,sigma,tau]=<sink|T^sigma J T^tau|source>",
+        },
+        name="bare_matrix_element",
+    )
+    artifact_path = f"{resolved_save}.nc"
+    output_data.to_netcdf(artifact_path)
+    details_path = f"{resolved_save}_state_matrices.nc"
+    details = xr.DataArray(
+        matrices,
+        dims=("sample", "z", "component", "final_state", "initial_state"),
+        coords={
+            "sample": np.arange(len(outer_indices)),
+            "z": z_list,
+            "component": list(parts),
+            "final_state": np.arange(max_states),
+            "initial_state": np.arange(max_states),
+        },
+        name="lanczos_matrix_element",
+        attrs={key: str(value) for key, value in attrs.items() if value is not None},
+    )
+    details.to_netcdf(details_path)
+    figure, axis = default_plot()
+    if "re" in parts:
+        axis.errorbar(
+            z_list,
+            np.nanmedian(real_ground, axis=0),
+            np.nanstd(real_ground, axis=0, ddof=1),
+            label="Re",
+            color=COLOR_CYCLE[0],
+            **ERRORBAR_STYLE,
+        )
+    if "im" in parts:
+        axis.errorbar(
+            z_list,
+            np.nanmedian(imag_ground, axis=0),
+            np.nanstd(imag_ground, axis=0, ddof=1),
+            label="Im",
+            color=COLOR_CYCLE[1],
+            marker="s",
+            **ERRORBAR_STYLE,
+        )
+    axis.set_xlabel(r"$z/a$", **FONT_SIZE)
+    axis.set_ylabel(r"Lanczos $\langle 0_{\rm snk}|J|0_{\rm src}\rangle$", **FONT_SIZE)
+    axis.set_title(f"{ensemble} Lanczos matrix element", **FONT_SIZE)
+    axis.legend(**LEGEND_SETS)
+    figure.tight_layout()
+    pdf_path, svg_path = f"{resolved_save}.pdf", f"{resolved_save}.svg"
+    figure.savefig(pdf_path, bbox_inches="tight", transparent=True)
+    figure.savefig(svg_path, bbox_inches="tight")
+    plt.close(figure)
+    store["output"] = output_data
+    store["bare_matrix_element_data"] = output_data
+    store["bare_matrix_element_netcdf"] = artifact_path
+    store["lanczos_state_matrices"] = details
+    return {
+        "artifact": artifact_path,
+        "netcdf_path": artifact_path,
+        "state_matrix_netcdf": details_path,
+        "plot_pdf": pdf_path,
+        "plot_svg": svg_path,
+        "analysis_method": "lanczos",
+        "fit_scope": scope,
+        "n_samples": len(outer_indices),
+        "iterations": requested_iterations,
+        "states": max_states,
+        "z_values": z_list,
+        "input_contract": inspection["required_grid"],
+        "point_usage_warning": inspection["point_usage_warning"],
+        "point_usage": inspection["point_usage"],
+        "sampling_plan": plan,
+    }
+
+
+# --- spectral-fit tool 2: tune the 2pt ground state -------------------------
 
 
 def tune_ground_state(
@@ -5758,6 +6642,8 @@ def fit_qda_ratio_grid(
 
 STAGE_TOOLS: dict[str, Callable[..., dict[str, Any]]] = {
     "inspect_correlator_scale": inspect_correlator_scale,
+    "inspect_lanczos_inputs": inspect_lanczos_inputs,
+    "run_lanczos_analysis": run_lanczos_analysis,
     "tune_ground_state": tune_ground_state,
     "tune_bare_matrix": tune_bare_matrix,
     "fit_bare_matrix_grid": fit_bare_matrix_grid,

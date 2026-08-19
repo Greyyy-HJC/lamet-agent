@@ -103,6 +103,8 @@ def test_formula_cache_does_not_serve_one_kernel_another_kernels_formula() -> No
 
     def fake_request(*_args, **kwargs):
         prompt = "".join(m["content"] for m in kwargs["messages"])
+        assert kwargs["request_timeout_seconds"] == 30
+        assert kwargs["request_attempts"] == 2
         kernel = "GI" if "def C_ratio_gi" in prompt else "CG"
         calls.append(kernel)
         return f"formula for {kernel}"
@@ -125,6 +127,25 @@ def test_formula_cache_does_not_serve_one_kernel_another_kernels_formula() -> No
     finally:
         monkey.undo()
         reporting._FORMULA_CACHE.clear()
+
+
+def test_matching_formula_failure_keeps_numerical_report_available(monkeypatch) -> None:
+    from lamet_agent.stages.matching import reporting
+
+    def fail_formula(*_args, **_kwargs):
+        raise RuntimeError("provider timeout")
+
+    monkeypatch.setattr(reporting, "_llm_kernel_formula", fail_formula)
+
+    with pytest.warns(UserWarning, match="numerical matching output is complete"):
+        text = reporting._matching_formula_text(
+            {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO"},
+            language="en",
+            llm=reporting.FormulaLlm(),
+        )
+
+    assert "report-only LLM request failed" in text
+    assert "numerical matching matrix and output artifact" in text
 
 
 def test_formula_llm_preserves_codex_model_name() -> None:

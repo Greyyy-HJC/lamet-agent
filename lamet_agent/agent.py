@@ -254,6 +254,7 @@ def _run_job(
                 args["api_key"] = api_key
                 args["base_url"] = base_url
             call_args, dropped_args = filter_tool_kwargs(tool, args)
+            trace.tool_call_begin(tool_name)
             try:
                 result = tool(store, **call_args)
                 observation = {"tool_name": tool_name, "result": result}
@@ -261,6 +262,7 @@ def _run_job(
                     observation["ignored_args"] = dropped_args
             except (ValueError, TypeError, FileNotFoundError) as exc:
                 observation = {"tool_name": tool_name, "error": str(exc)}
+            trace.tool_call_end(tool_name, succeeded=observation.get("result") is not None)
         if observation.get("result") is not None and tool_name == expected:
             required_index += 1
         observations.append(observation)
@@ -977,16 +979,25 @@ def run_agent(
             overlay_artifacts = _write_matching_overlay_artifacts(main_job_records, manifest.artifacts_directory / stage)
             if overlay_artifacts and main_job_records:
                 main_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
-            paths = write_matching_stage_report(
-                jobs=main_job_records,
-                systematics_jobs=sym_job_records,
-                path=manifest.artifacts_directory / stage / "matching_report.md",
-                report_language=report_language,
-                llm=FormulaLlm(
-                    backend=backend, provider=provider, api_key=api_key,
-                    model_name=model_name, base_url=base_url,
-                ),
+            trace.report_begin(
+                stage,
+                detail="cited-paper lookup and report-only LLM formula",
             )
+            try:
+                paths = write_matching_stage_report(
+                    jobs=main_job_records,
+                    systematics_jobs=sym_job_records,
+                    path=manifest.artifacts_directory / stage / "matching_report.md",
+                    report_language=report_language,
+                    llm=FormulaLlm(
+                        backend=backend, provider=provider, api_key=api_key,
+                        model_name=model_name, base_url=base_url,
+                    ),
+                )
+            except Exception:
+                trace.report_end(stage, succeeded=False)
+                raise
+            trace.report_end(stage, succeeded=True)
             stage_reports[stage] = {"report": str(paths["report"])}
         if stage == "extrapolation" and stage_job_records:
             from lamet_agent.stages.extrapolation.reporting import write_extrapolation_stage_report

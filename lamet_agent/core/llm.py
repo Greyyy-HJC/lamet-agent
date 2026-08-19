@@ -39,6 +39,9 @@ _SYSTEM_PROMPT = (
     "exactly one JSON object matching this shape: " + json.dumps(ACTION_SCHEMA)
 )
 
+_API_REQUEST_TIMEOUT_SECONDS = 60
+_API_REQUEST_ATTEMPTS = 3
+
 # OpenAI-compatible chat-completions providers. DeepSeek and OpenAI share the same
 # request/response shape, so they only differ by base URL, default model, and the
 # environment variable used to read the API key.
@@ -235,16 +238,19 @@ def _post_chat_completion(
         )
         payload = None
         last_error: BaseException | None = None
-        for attempt in range(6):
+        for attempt in range(_API_REQUEST_ATTEMPTS):
             try:
-                with urllib.request.urlopen(request, timeout=180) as response:
+                with urllib.request.urlopen(
+                    request, timeout=_API_REQUEST_TIMEOUT_SECONDS
+                ) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 break
             except (TimeoutError, urllib.error.URLError, ssl.SSLError, http.client.IncompleteRead) as exc:
                 last_error = exc
-                if attempt == 5:
+                if attempt == _API_REQUEST_ATTEMPTS - 1:
                     raise RuntimeError(
-                        f"{label} API request failed after 6 attempts. "
+                        f"{label} API request failed after {_API_REQUEST_ATTEMPTS} attempts "
+                        f"with a {_API_REQUEST_TIMEOUT_SECONDS}-second timeout per attempt. "
                         "This is usually a transient HTTPS/network/proxy issue; retry the command or check network/proxy settings."
                     ) from exc
                 time.sleep(2**attempt)
@@ -281,7 +287,13 @@ def _post_chat_text_completion(
     model_name: str,
     base_url: str,
     provider: str = "deepseek",
+    request_timeout_seconds: int = _API_REQUEST_TIMEOUT_SECONDS,
+    request_attempts: int = _API_REQUEST_ATTEMPTS,
 ) -> str:
+    if type(request_timeout_seconds) is not int or request_timeout_seconds < 1:
+        raise ValueError("request_timeout_seconds must be a positive integer")
+    if type(request_attempts) is not int or request_attempts < 1:
+        raise ValueError("request_attempts must be a positive integer")
     url = base_url.rstrip("/") + "/chat/completions"
     label = provider.capitalize()
     body = _chat_completion_body(model_name=model_name, messages=messages)
@@ -295,16 +307,19 @@ def _post_chat_text_completion(
         method="POST",
     )
     last_error: BaseException | None = None
-    for attempt in range(6):
+    for attempt in range(request_attempts):
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
+            with urllib.request.urlopen(
+                request, timeout=request_timeout_seconds
+            ) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return str(payload["choices"][0]["message"]["content"]).strip()
         except (TimeoutError, urllib.error.URLError, ssl.SSLError, http.client.IncompleteRead) as exc:
             last_error = exc
-            if attempt == 5:
+            if attempt == request_attempts - 1:
                 raise RuntimeError(
-                    f"{label} API text request failed after 6 attempts. "
+                    f"{label} API text request failed after {request_attempts} attempts "
+                    f"with a {request_timeout_seconds}-second timeout per attempt. "
                     "Retry the command or check network/proxy settings."
                 ) from exc
             time.sleep(2**attempt)
@@ -319,6 +334,8 @@ def request_llm_text(
     provider: str | None = None,
     model_name: str | None = None,
     base_url: str | None = None,
+    request_timeout_seconds: int = _API_REQUEST_TIMEOUT_SECONDS,
+    request_attempts: int = _API_REQUEST_ATTEMPTS,
 ) -> str:
     """Return free-form text from the configured LLM backend."""
     if backend == "api":
@@ -335,6 +352,8 @@ def request_llm_text(
             model_name=model_name or config["default_model"],
             base_url=base_url or config["base_url"],
             provider=provider,
+            request_timeout_seconds=request_timeout_seconds,
+            request_attempts=request_attempts,
         )
     if backend == "codex":
         try:
