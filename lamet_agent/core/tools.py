@@ -75,7 +75,9 @@ _FOURIER_RUN_KEYS = frozenset(
         "report",
     }
 )
-_MATCHING_KERNEL_KEYS = frozenset({"kernel_id", "momentum_gev", "mu", "zs_fm", "lc_x_ls"})
+_MATCHING_KERNEL_KEYS = frozenset(
+    {"kernel_id", "momentum_gev", "mu", "zs_fm", "lc_x_ls", "rgr_kappa", "rgr_mu_min_gev"}
+)
 _MATCHING_APPLY_KEYS = frozenset({"endpoint_cut"})
 
 

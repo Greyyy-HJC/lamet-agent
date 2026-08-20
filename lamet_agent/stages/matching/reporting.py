@@ -37,7 +37,12 @@ The functions fall into five groups:
    kernel needs no change here. Division of labour: the code is authoritative for WHICH
    terms exist, the paper for how they are WRITTEN, and the cross-check reports where the
    two disagree. ``FormulaLlm`` carries the run's LLM config down from the CLI; this section
-   raises rather than invent a formula offline.
+   raises rather than invent a formula offline. Because that generation costs a paper
+   download plus a ~27k-token prompt, and cannot change while the kernel does not, the
+   result is cached on disk: ``formulas/`` ships inside the wheel (fill it with
+   ``lamet-agent precompute-formulas``) and the user cache directory catches the rest. The
+   cache file header digests the kernel's own source, so an edited kernel misses, is
+   regenerated rather than served a stale formula, and overwrites its own file.
 
 5. Assembly and writing: ``build_matching_report_markdown`` orders the sections,
    ``write_matching_report`` writes one job's file, and ``write_matching_stage_report``
@@ -47,6 +52,7 @@ The functions fall into five groups:
 from __future__ import annotations
 
 import gzip
+import hashlib
 import html
 import inspect
 import io
@@ -56,6 +62,7 @@ import ssl
 import tarfile
 import urllib.error
 import urllib.request
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -560,6 +567,111 @@ _FORMULA_CACHE: dict[tuple[str, str], tuple[str, bool]] = {}
 _PAPER_CACHE: dict[str, str | None] = {}
 
 
+# --- formula disk cache ------------------------------------------------------
+# The in-process caches above die with the process, so every fresh run re-downloaded the
+# paper and re-billed a ~27k-token prompt to regenerate a formula that cannot have
+# changed. These two directories persist it across runs:
+#
+#   1. ``_BUNDLED_FORMULA_DIR`` ships inside the wheel (checked into git, populated by
+#      ``lamet-agent precompute-formulas``), so a user's very first run is already a hit.
+#   2. the user cache directory catches everything the wheel does not cover -- a kernel
+#      someone added locally -- and is the only one ever written at run time.
+#
+# Each file HEADER carries a digest of the kernel's own source together with its paper tag,
+# which is what makes shipping the text safe: edit a kernel by one sign and the digest no
+# longer matches, so the stale formula is not served and the section is regenerated (and
+# re-cross-checked against the paper) instead of silently going out of date. The digest
+# deliberately excludes the paper text -- it must be computable *before* the network call,
+# or looking up the cache would cost the download it is meant to avoid. The trade-off is
+# that a new arXiv version of an unchanged paper is not noticed; delete the file (or point
+# LAMET_FORMULA_CACHE_DIR elsewhere) to force a refresh.
+_BUNDLED_FORMULA_DIR = Path(__file__).resolve().parent / "formulas"
+_FORMULA_FILE_HEADER = "<!-- lamet-agent formula cache"
+
+
+def user_formula_dir() -> Path | None:
+    """Return the writable formula cache directory, or None when caching is disabled.
+
+    ``LAMET_FORMULA_CACHE_DIR`` overrides the location; setting it to an empty string
+    turns the writable layer off entirely (useful while iterating on a kernel, and what
+    the tests use to stay hermetic).
+    """
+    override = os.environ.get("LAMET_FORMULA_CACHE_DIR")
+    if override is not None:
+        return Path(override).expanduser() if override.strip() else None
+    root = os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")
+    return Path(root).expanduser() / "lamet-agent" / "formulas"
+
+
+def formula_cache_filename(kernel_id: str, language: str) -> str:
+    """Return the cache file name for one kernel: one stable name, forever.
+
+    The digest lives in the file's header rather than its name, so editing a kernel
+    overwrites its formula in place instead of dropping a second file beside the first and
+    leaving the first behind as an orphan. One kernel is always exactly one file, and git
+    shows an edit as a modification -- readable as a diff -- rather than an add plus a
+    delete.
+    """
+    return f"{kernel_id}.{language}.md"
+
+
+def formula_digest(kernel_id: str, language: str) -> str:
+    """Return the fingerprint deciding whether a cached formula still fits the kernel.
+
+    Covers the kernel's own source together with its paper tag, and deliberately not the
+    paper text: it has to be computable *before* the network call, or looking up the cache
+    would cost the download it exists to avoid.
+    """
+    source = _kernel_source(kernel_id)
+    arxiv_id, equations = _kernel_reference(kernel_id)
+    return hashlib.sha256(
+        "\0".join([kernel_id, language, arxiv_id, equations, source]).encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def _read_formula_file(path: Path) -> tuple[str, bool, str] | None:
+    """Return ``(markdown, paper_used, digest)`` from a cache file, or None if unusable.
+
+    Whether the digest still matches the kernel is the caller's decision -- prune only
+    needs to know the file is one of ours, while a lookup needs the comparison.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    header, _, body = raw.partition("\n")
+    if not header.startswith(_FORMULA_FILE_HEADER) or not body.strip():
+        return None  # not one of ours, or truncated: regenerate rather than trust it
+    found = re.search(r"digest=([0-9a-f]+)", header)
+    return body.strip(), "paper_used=true" in header, found.group(1) if found else ""
+
+
+def _write_formula_file(
+    path: Path,
+    *,
+    kernel_id: str,
+    arxiv_id: str,
+    equations: str,
+    digest: str,
+    markdown: str,
+    paper_used: bool,
+) -> None:
+    """Persist one formula, overwriting any earlier version of the same kernel.
+
+    Best-effort: a read-only cache dir must not fail the run.
+    """
+    header = (
+        f"{_FORMULA_FILE_HEADER}; kernel={kernel_id}; arxiv={arxiv_id or 'none'}; "
+        f"equations={equations or 'none'}; digest={digest}; "
+        f"paper_used={'true' if paper_used else 'false'} -->"
+    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{header}\n{markdown.strip()}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 @dataclass(frozen=True)
 class FormulaLlm:
     """The LLM the report uses to write the kernel's closed form.
@@ -863,6 +975,23 @@ def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tu
     if cache_key in _FORMULA_CACHE:
         return _FORMULA_CACHE[cache_key]
 
+    # Disk layers before the network: bundled (shipped in the wheel) then the user cache.
+    # A hit here also means an unconfigured LLM is fine -- ``llm.resolved()`` below is only
+    # reached when a formula genuinely has to be generated, so a --backend mock run can
+    # still render a full matching report from the shipped formulas.
+    filename = formula_cache_filename(kernel_id, language)
+    digest = formula_digest(kernel_id, language)
+    writable_dir = user_formula_dir()
+    for directory in (_BUNDLED_FORMULA_DIR, writable_dir):
+        if directory is None:
+            continue
+        cached = _read_formula_file(directory / filename)
+        # A file whose digest has moved on describes a kernel that no longer exists in
+        # this form; it is overwritten below rather than served.
+        if cached is not None and cached[2] == digest:
+            _FORMULA_CACHE[cache_key] = cached[:2]
+            return cached[:2]
+
     backend, provider, api_key, model_name, base_url = llm.resolved()
     structure = _kernel_structure(kernel_id)
     source = _kernel_source(kernel_id)
@@ -892,8 +1021,87 @@ def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tu
     if not text:
         raise RuntimeError("LLM returned an empty matching formula.")
     result = (text, paper_text is not None)
+    if writable_dir is not None:
+        _write_formula_file(
+            writable_dir / filename,
+            kernel_id=kernel_id,
+            arxiv_id=paper_arxiv_id,
+            equations=equations,
+            digest=digest,
+            markdown=text,
+            paper_used=paper_text is not None,
+        )
     _FORMULA_CACHE[cache_key] = result
     return result
+
+
+def precompute_kernel_formulas(
+    kernel_ids: Iterable[str],
+    *,
+    llm: FormulaLlm,
+    language: str = "en",
+    prune: bool = False,
+) -> dict[str, Any]:
+    """Fill the bundled formula directory so an installed wheel needs no LLM at run time.
+
+    Run from ``lamet-agent precompute-formulas`` before cutting a release, and after adding
+    or editing a kernel. Only missing entries are generated -- an already-current file is a
+    digest hit and costs nothing -- so re-running it after touching one kernel regenerates
+    that kernel alone. An edited kernel
+    overwrites its own file, so ``prune`` is only about kernels renamed or deleted
+    outright -- nothing accumulates from ordinary edits.
+    """
+    directory = _BUNDLED_FORMULA_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    wanted: dict[str, str] = {}
+    generated: list[str] = []
+    skipped: list[str] = []
+    for kernel_id in kernel_ids:
+        filename = formula_cache_filename(kernel_id, language)
+        wanted[filename] = kernel_id
+        current = _read_formula_file(directory / filename)
+        if current is not None and current[2] == formula_digest(kernel_id, language):
+            skipped.append(kernel_id)
+            continue
+        # Bypass both the in-process cache and the user cache: this must write the file
+        # the wheel will ship, from a real generation, not copy whatever happens to be
+        # lying around in ~/.cache.
+        _FORMULA_CACHE.pop((kernel_id, language), None)
+        env_key = "LAMET_FORMULA_CACHE_DIR"
+        previous = os.environ.get(env_key)
+        os.environ[env_key] = ""
+        try:
+            markdown, paper_used = _llm_kernel_formula(kernel_id, language=language, llm=llm)
+        finally:
+            if previous is None:
+                os.environ.pop(env_key, None)
+            else:
+                os.environ[env_key] = previous
+        arxiv_id, equations = _kernel_reference(kernel_id)
+        _write_formula_file(
+            directory / filename,
+            kernel_id=kernel_id,
+            arxiv_id=arxiv_id,
+            equations=equations,
+            digest=formula_digest(kernel_id, language),
+            markdown=markdown,
+            paper_used=paper_used,
+        )
+        generated.append(kernel_id)
+    pruned: list[str] = []
+    if prune:
+        for path in sorted(directory.glob("*.md")):
+            # Only ever delete files this module wrote: the header check keeps the
+            # directory's README (and anything else a human put here) out of the sweep.
+            if path.name not in wanted and _read_formula_file(path) is not None:
+                path.unlink()
+                pruned.append(path.name)
+    return {
+        "directory": str(directory),
+        "generated": generated,
+        "up_to_date": skipped,
+        "pruned": pruned,
+    }
 
 
 def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaLlm) -> str:
@@ -935,6 +1143,9 @@ def _matching_formula_text(data: dict[str, Any], *, language: str, llm: FormulaL
     parts.append(
         "After discretization this is a matrix product (applied to every resampling sample independently, then the statistics are rebuilt):\n\n"
         f"$$\n{discrete}\n$$\n\n"
+        f"$K$ is built directly as the NLO-truncated inverse (the LO term minus the NLO correction), so nothing is "
+        f"numerically inverted. Its rows live on the {result_name}'s output grid and its columns on the "
+        f"{source_name}'s input grid, so it is square only when the two grids coincide.\n\n"
     )
     if extra_structure:
         parts.append(

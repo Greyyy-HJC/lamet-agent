@@ -44,8 +44,11 @@ lamet-agent = "lamet_agent.__main__:main"
 where = ["."]
 include = ["lamet_agent*"]
 
+# `formulas/*.md` are the precomputed matching formulas: shipping them means the matching
+# report's formula section renders with no arXiv download and no LLM call, even on a
+# user's very first run. Regenerate with `lamet-agent precompute-formulas`.
 [tool.setuptools.package-data]
-"*" = ["prompts.md"]
+"*" = ["prompts.md", "formulas/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

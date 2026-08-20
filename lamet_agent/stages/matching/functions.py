@@ -44,6 +44,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+import inspect
+
 import numpy as np
 
 from lamet_agent.core.data import EnsembleData, GEV_FM
@@ -53,6 +55,16 @@ from lamet_agent.stages.matching.reporting import FormulaLlm, is_da_kernel, writ
 
 # All matching kernels live in the self-contained kernels.py.
 from lamet_agent.kernels import (
+    CG_gt_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gz_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gtg5_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gzg5_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gtgpg5_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gt_quark_PDF_msbar_RGR_im_NLO,
+    CG_gz_quark_PDF_msbar_RGR_im_NLO,
+    CG_gtg5_quark_PDF_msbar_RGR_im_NLO,
+    CG_gzg5_quark_PDF_msbar_RGR_im_NLO,
+    CG_gtgpg5_quark_PDF_msbar_RGR_im_NLO,
     CG_gt_quark_PDF_hybrid_NLO,
     CG_gt_quark_PDF_msbar_NLO,
     CG_gt_quark_PDF_ratio_NLO,
@@ -124,6 +136,18 @@ KERNEL_REGISTRY: dict[str, Callable[..., np.ndarray]] = {
     "CG_gt_quark_PDF_msbar_NLO": CG_gt_quark_PDF_msbar_NLO,
     "CG_gt_quark_PDF_ratio_NLO": CG_gt_quark_PDF_ratio_NLO,
     "CG_gt_quark_PDF_hybrid_NLO": CG_gt_quark_PDF_hybrid_NLO,
+    # CG + RGR (small-x log resummation). Split by polarization, not by operator: the
+    # fixed-order hybrid coefficient is shared but the two-loop DGLAP kernel is not.
+    "CG_gt_quark_PDF_hybrid_RGR_re_NLO": CG_gt_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gz_quark_PDF_hybrid_RGR_re_NLO": CG_gz_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gtg5_quark_PDF_hybrid_RGR_re_NLO": CG_gtg5_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gzg5_quark_PDF_hybrid_RGR_re_NLO": CG_gzg5_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gtgpg5_quark_PDF_hybrid_RGR_re_NLO": CG_gtgpg5_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gt_quark_PDF_msbar_RGR_im_NLO": CG_gt_quark_PDF_msbar_RGR_im_NLO,
+    "CG_gz_quark_PDF_msbar_RGR_im_NLO": CG_gz_quark_PDF_msbar_RGR_im_NLO,
+    "CG_gtg5_quark_PDF_msbar_RGR_im_NLO": CG_gtg5_quark_PDF_msbar_RGR_im_NLO,
+    "CG_gzg5_quark_PDF_msbar_RGR_im_NLO": CG_gzg5_quark_PDF_msbar_RGR_im_NLO,
+    "CG_gtgpg5_quark_PDF_msbar_RGR_im_NLO": CG_gtgpg5_quark_PDF_msbar_RGR_im_NLO,
     # helicity gamma^t gamma5
     "CG_gtg5_quark_PDF_msbar_NLO": CG_gtg5_quark_PDF_msbar_NLO,
     "CG_gtg5_quark_PDF_ratio_NLO": CG_gtg5_quark_PDF_ratio_NLO,
@@ -388,6 +412,8 @@ def build_matching_kernel(
     momentum_gev: float,
     mu: float,
     zs_fm: float | None = None,
+    rgr_kappa: float | None = None,
+    rgr_mu_min_gev: float | None = None,
     lc_x_ls: dict[str, Any],
     quasi_grid_key: str = "quasi_y_ls",
     lc_grid_key: str = "lc_x_ls",
@@ -440,6 +466,26 @@ def build_matching_kernel(
         zspz = float(zs_fm) * momentum_gev / GEV_FM
         builder_kwargs["zspz"] = zspz
 
+    # RGR kernels match each row at its own scale mu0 = 2 * kappa * x * P^z and drop rows
+    # whose mu0 falls below rgr_mu_min_gev. The two are not independent: the surviving window
+    # is x >= rgr_mu_min_gev / (2 * kappa * P^z), so varying kappa for the systematic budget
+    # moves x_min with it. Only forwarded to builders that declare them, so a fixed-order
+    # kernel is unaffected by their presence in the manifest.
+    # They apply to RGR and to nothing else: a fixed-order or LRR kernel has no per-row
+    # scale to vary, so it simply does not take them. Rather than reject such a job, the
+    # parameters go inert -- which is what a manifest author means by leaving them in a
+    # stage default while only some jobs select an RGR kernel. The names that were dropped
+    # are recorded below so the trace still shows they had no effect.
+    accepted = inspect.signature(builder).parameters
+    ignored: list[str] = []
+    for name, value in (("kappa", rgr_kappa), ("mu_min", rgr_mu_min_gev)):
+        if value is None:
+            continue
+        if name in accepted:
+            builder_kwargs[name] = float(value)
+        else:
+            ignored.append(name)
+
     # Build the already-discretized kernel matrix, typically shaped (len(x_ls), len(y_ls)).
     matrix = builder(x_ls, **builder_kwargs)
     if matrix.ndim != 2:
@@ -454,7 +500,10 @@ def build_matching_kernel(
         )
 
     store[out] = matrix  # apply_matching reads it back under this name
-    store["matching_kernel_info"] = {"kernel_id": kernel_id, "momentum_gev": momentum_gev, "mu": mu, "zspz": zspz}
+    store["matching_kernel_info"] = {
+        "kernel_id": kernel_id, "momentum_gev": momentum_gev, "mu": mu, "zspz": zspz,
+        **({"ignored_params": ignored} if ignored else {}),
+    }
     return {
         "out": out,
         "kernel_id": kernel_id,
