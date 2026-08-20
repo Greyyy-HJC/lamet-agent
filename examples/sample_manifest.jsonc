@@ -287,9 +287,9 @@
         // "im_flip_for_ft": false, // contract default false; manual imaginary-part sign override; cannot combine with sector
         // "symmetry_guarantee": true, // DA only: project exp(+i*z*Pz/2)h to real, then rotate back
         // "output_scale": 1.0,      // contract default 1.0; optional final multiplicative scale; cannot combine with sector
-        // "plot_fourier": { "save_path": "custom_xdep.pdf", "title": "quasi PDF" },
-        // "plot_extension": { "save_path": "custom_extension_re.pdf", "title": "tail", "scheme_index": 0 },
-        // "report": { "enabled": true, "report_language": "en", "save_path": "fourier_report.md" }
+        // "plot_fourier": { "title": "quasi PDF" },
+        // "plot_extension": { "title": "tail", "scheme_index": 0 },
+        // "report": { "enabled": true, "report_language": "en" }
         // Non-NetCDF partial inputs (omit for standard EnsembleData .nc sources):
         // "input_format": "h5", // "nc"/"netcdf"/"npz"/"h5"/"hdf5"
         // "h5_group": "momentum_PX4PY0PZ0",

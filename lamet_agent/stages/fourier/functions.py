@@ -37,6 +37,7 @@ import numpy as np
 
 from lamet_agent.core.data import EnsembleData, EnsembleInfo, HBAR_C_GEV_FM
 from lamet_agent.core.plotting import plot_fourier_artifact, plot_fourier_extension_quality
+from lamet_agent.core.tools import stage_artifact_stem
 from lamet_agent.core.resampling import (
     normalize_resample_mode,
     normalize_sample_error_mode,
@@ -2086,23 +2087,6 @@ def _infer_h5_group(path: str, group_names: list[str]) -> str:
     raise ValueError("h5_group is required when the HDF5 file has multiple groups and no pz can be inferred")
 
 
-def _artifact_path(raw: str | None, *, default_name: str, artifacts_dir: str | Path | None = None) -> Path:
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if raw:
-        path = Path(raw).expanduser()
-        if path.is_absolute():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            return path
-        if path.parent != Path("."):
-            if artifacts_dir is not None:
-                return out_dir / path.name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            return path
-        return out_dir / path
-    return out_dir / default_name
-
-
 def _svg_companion_path(path: Path) -> Path:
     """Return an SVG companion path for Markdown image embedding."""
     return path.with_suffix(".svg")
@@ -2696,11 +2680,11 @@ def run_fourier_transform(
     hermitian_partner_id: str | None = None,
     psi1_flavor_class: str | None = None,
     psi2_flavor_class: str | None = None,
-    save_path: str | None = None,
     plot_fourier: dict[str, Any] | None = None,
     plot_extension: dict[str, Any] | None = None,
     report: dict[str, Any] | None = None,
     artifacts_dir: str | None = None,
+    job_id: str | None = None,
     workers: int,
 ) -> dict[str, Any]:
     """Run local extrapolation and Fourier transform for loaded samples."""
@@ -3135,23 +3119,27 @@ def run_fourier_transform(
                     scheme_result[key] = -np.asarray(scheme_result[key], dtype=float)
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result, source_ensemble=matrix_element_data.ensemble)
     store[out] = result
-    artifact = _artifact_path(save_path, default_name=f"{out}.nc", artifacts_dir=artifacts_dir).with_suffix(".nc")
-    fit_info_artifact = _artifact_path(None, default_name=f"{artifact.stem}_fit_info.nc", artifacts_dir=artifacts_dir)
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="fourier_result")
+    artifact = stem.with_suffix(".nc")
+    fit_info_artifact = stem.with_name(f"{stem.name}_fit_info.nc")
     store["fourier_result_data"].to_netcdf(artifact)
     _save_fourier_fit_info_netcdf(fit_info_artifact, result, source_ensemble=matrix_element_data.ensemble)
     result["artifact"] = str(artifact)
     result["fit_info_artifact"] = str(fit_info_artifact)
     summary = summarize_fourier_result(store)
     plot_kwargs = dict(plot_fourier or {})
+    plot_kwargs.pop("save_path", None)
     plot_kwargs.setdefault("artifact_path", str(artifact))
     extension_kwargs = dict(plot_extension or {})
-    plot = plot_fourier_result(store, artifacts_dir=artifacts_dir, **plot_kwargs)
-    extension_plot = plot_fourier_extension_quality_result(store, artifacts_dir=artifacts_dir, **extension_kwargs)
+    extension_kwargs.pop("save_path", None)
+    plot = plot_fourier_result(store, artifacts_dir=artifacts_dir, job_id=job_id, **plot_kwargs)
+    extension_plot = plot_fourier_extension_quality_result(store, artifacts_dir=artifacts_dir, job_id=job_id, **extension_kwargs)
     report_result = {}
     if isinstance(report, dict) and report.get("enabled"):
         report_kwargs = dict(report)
         report_kwargs.pop("enabled", None)
-        report_result = report_fourier_result(store, artifacts_dir=artifacts_dir, **report_kwargs)
+        report_kwargs.pop("save_path", None)
+        report_result = report_fourier_result(store, artifacts_dir=artifacts_dir, job_id=job_id, **report_kwargs)
     store["output"] = store["fourier_result_data"]
     return {
         "out": out,
@@ -3247,15 +3235,14 @@ def plot_fourier_result(
     store: dict[str, Any],
     *,
     artifact_path: str | None = None,
-    save_path: str | None = None,
     title: str | None = None,
     artifacts_dir: str | None = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """Plot the Fourier-stage artifact and store the figure path."""
-    source = artifact_path
-    if source is None:
-        source = str(_artifact_path(None, default_name="fourier_result.nc", artifacts_dir=artifacts_dir))
-    output = _artifact_path(save_path, default_name="fourier_xdep.pdf", artifacts_dir=artifacts_dir)
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="fourier_result")
+    source = artifact_path or str(stem.with_suffix(".nc"))
+    output = stem.with_name(f"{stem.name}_xdep.pdf")
     if title is not None and title.strip().lower() in {"fourier result", "fourier transform"}:
         title = None
     fig, _ = plot_fourier_artifact(source, save_path=output, title=title)
@@ -3271,9 +3258,9 @@ def plot_fourier_extension_quality_result(
     store: dict[str, Any],
     *,
     scheme_index: int | None = None,
-    save_path: str | None = None,
     title: str | None = None,
     artifacts_dir: str | None = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """Plot data and smoothed real-part extension for one Fourier scheme."""
     matrix_element = ensemble_data_to_legacy_arrays(store["matrix_element_data"])
@@ -3282,9 +3269,9 @@ def plot_fourier_extension_quality_result(
         scheme_index = 0
     if title is not None and title.strip().lower() in {"fourier extension quality", "lambda extrapolation"}:
         title = None
-    re_output = _artifact_path(save_path, default_name="fourier_re.pdf", artifacts_dir=artifacts_dir)
-    im_stem = f"{re_output.stem[:-3]}_im" if re_output.stem.endswith("_re") else f"{re_output.stem}_im"
-    im_output = re_output.with_name(f"{im_stem}.pdf")
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="fourier")
+    re_output = stem.with_name(f"{stem.name}_re.pdf")
+    im_output = stem.with_name(f"{stem.name}_im.pdf")
     target_re = data.get("plot_target_re_samples", matrix_element["re_samples"])
     target_im = data.get("plot_target_im_samples", matrix_element["im_samples"])
     partner_re = data.get("plot_partner_re_samples")
@@ -3332,8 +3319,8 @@ def plot_fourier_extension_quality_result(
 def report_fourier_result(
     store: dict[str, Any],
     *,
-    save_path: str | None = None,
     artifacts_dir: str | None = None,
+    job_id: str | None = None,
     report_language: str = "en",
     backend: str = "",
     provider: str | None = None,
@@ -3343,10 +3330,10 @@ def report_fourier_result(
 ) -> dict[str, Any]:
     """Write a Markdown report explaining the Fourier-stage computation."""
     data = store["fourier_result"]
-    output = _artifact_path(save_path, default_name="report_fourier.md", artifacts_dir=artifacts_dir)
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="fourier")
+    output = stem.with_name(f"{stem.name}_report.md")
     artifacts = {
-        "fourier_artifact": data.get("artifact")
-        or str(_artifact_path(None, default_name="fourier_result.nc", artifacts_dir=artifacts_dir)),
+        "fourier_artifact": data.get("artifact") or str(stem.with_suffix(".nc")),
         "fit_info_artifact": data.get("fit_info_artifact"),
     }
     if isinstance(store.get("fourier_plot"), dict):

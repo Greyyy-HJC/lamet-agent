@@ -138,7 +138,7 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
         store,
         scheme="hybrid",
         zs_fm=0.4,
-        save_path="renorm",
+        artifacts_dir=tmp_path, job_id="renorm",
     )
 
     assert Path(result["artifact"]).is_file()
@@ -164,7 +164,7 @@ def test_ratio_scheme_preserves_samples_writes_netcdf_and_plot(tmp_path: Path, m
     assert saved.attrs["current_operator"] == "gTg5_nonlocal"
     assert saved.attrs["polarization"] == "helicity"
 
-    plot = plot_renormalized_matrix_element(store, save_path="renorm")
+    plot = plot_renormalized_matrix_element(store, artifacts_dir=tmp_path, job_id="renorm")
     assert Path(plot["plot"]).is_file()
 
 
@@ -192,7 +192,7 @@ def test_ratio_scheme_without_normalization_uses_pure_ratio(tmp_path: Path) -> N
         zs_fm=0.1,
         m0_gev=9.0,
         delta_m_gev=8.0,
-        save_path=str(tmp_path / "pure"),
+        artifacts_dir=tmp_path, job_id="pure",
     )
 
     assert np.allclose(store["output"].values, target / denom)
@@ -225,7 +225,7 @@ def test_msbar_external_denominator_matches_ratio(tmp_path: Path) -> None:
         target="target",
         denominator="denominator",
         scheme="msbar",
-        save_path=str(tmp_path / "msbar_ext"),
+        artifacts_dir=tmp_path, job_id="msbar_ext",
     )
 
     assert np.allclose(store["output"].values, target / denom)
@@ -250,7 +250,7 @@ def test_external_denominator_constant_divides_all_samples(tmp_path: Path) -> No
         target="target",
         denominator="denominator",
         scheme="msbar",
-        save_path=str(tmp_path / "msbar_const"),
+        artifacts_dir=tmp_path, job_id="msbar_const",
     )
 
     assert np.allclose(store["output"].values, target / 2.0)
@@ -280,7 +280,7 @@ def test_ratio_scheme_uses_preprocessed_z0_normalization(tmp_path: Path) -> None
         target="target",
         denominator="denominator",
         scheme="ratio",
-        save_path=str(tmp_path / "normalized"),
+        artifacts_dir=tmp_path, job_id="normalized",
     )
 
     expected = (target / target[:, :1]) / (denom / denom[:, :1])
@@ -329,7 +329,7 @@ def test_hybrid_scheme_ratio_strategy_uses_physical_switch_and_nearest_grid_poin
     result = apply_ratio_scheme_renormalization(
         store, target="target", denominator="denominator",
         scheme="hybrid",
-        zs_fm=0.18, save_path=str(tmp_path / "hybrid"),
+        zs_fm=0.18, artifacts_dir=tmp_path, job_id="hybrid",
     )
 
     assert result["zs_grid"] == 3.0
@@ -370,7 +370,7 @@ def test_hybrid_scheme_ratio_strategy_long_range_exponent_uses_physical_distance
         zs_fm=zs_fm,
         m0_gev=m0_gev,
         delta_m_gev=delta_m_gev,
-        save_path=str(tmp_path / "exponent"),
+        artifacts_dir=tmp_path, job_id="exponent",
     )
 
     z4_fm = 4 * lattice_spacing_fm
@@ -405,7 +405,7 @@ def test_hybrid_scheme_a06_zs_fm_freezes_at_site_three(tmp_path: Path) -> None:
         zs_fm=zs_fm,
         m0_gev=m0_gev,
         delta_m_gev=0.0,
-        save_path=str(tmp_path / "hybrid_snap"),
+        artifacts_dir=tmp_path, job_id="hybrid_snap",
     )
 
     assert result["zs_grid"] == 3.0
@@ -446,7 +446,7 @@ def test_ratio_scheme_requires_positive_finite_lattice_spacing(
             target="target",
             denominator="denominator",
             scheme="ratio",
-            save_path=str(tmp_path / "invalid-spacing"),
+            artifacts_dir=tmp_path, job_id="invalid-spacing",
         )
 
 
@@ -486,7 +486,7 @@ def test_fit_self_renormalization_respects_normalized_at_z0_attr(normalized: boo
     try:
         monkeypatch.setattr(lsf, "nonlinear_fit", fake_nonlinear_fit)
         fit_self_renormalization_factor(
-            store, LambdaQCD_gev=0.1, d=0.19, save_path=str(tmp_path / "zR")
+            store, LambdaQCD_gev=0.1, d=0.19, artifacts_dir=tmp_path, job_id="zR"
         )
     finally:
         monkeypatch.undo()
@@ -513,7 +513,7 @@ def test_fit_self_renormalization_requires_d(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="requires d"):
         fit_self_renormalization_factor(
-            {"reference": reference}, LambdaQCD_gev=0.1, save_path=str(tmp_path / "zR")
+            {"reference": reference}, LambdaQCD_gev=0.1, artifacts_dir=tmp_path, job_id="zR"
         )
 
 
@@ -556,7 +556,7 @@ def test_fit_self_renormalization_fits_m0_when_omitted(tmp_path: Path) -> None:
             kernel_id="ZMSbar_da",
             LambdaQCD_gev=0.1,
             d=0.19,
-            save_path=str(tmp_path / "rn_zR_fit"),
+            artifacts_dir=tmp_path, job_id="rn_zR_fit",
         )
     finally:
         monkeypatch.undo()
@@ -591,7 +591,7 @@ def test_fit_self_renormalization_rejects_fixed_m0(tmp_path: Path) -> None:
             LambdaQCD_gev=0.1,
             m0_gev=-0.094,
             d=0.19,
-            save_path=str(tmp_path / "rn_zR_fit"),
+            artifacts_dir=tmp_path, job_id="rn_zR_fit",
         )
 
 
@@ -636,7 +636,7 @@ def test_fit_self_renormalization_uses_d_in_gz_fit(tmp_path: Path) -> None:
             kernel_id="ZMSbar_da",
             LambdaQCD_gev=0.1,
             d=0.19,
-            save_path=str(tmp_path / "rn_zR_fit"),
+            artifacts_dir=tmp_path, job_id="rn_zR_fit",
         )
     finally:
         monkeypatch.undo()
@@ -686,7 +686,7 @@ def test_fit_self_renormalization_forwards_svdcut_override(tmp_path: Path) -> No
             LambdaQCD_gev=0.12,
             d=0.19,
             svdcut=1e-8,
-            save_path=str(tmp_path / "rn_zR_fit"),
+            artifacts_dir=tmp_path, job_id="rn_zR_fit",
         )
     finally:
         monkeypatch.undo()
@@ -737,7 +737,7 @@ def test_fit_self_renormalization_uses_single_f1_without_extension(tmp_path: Pat
         kernel_id="ZMSbar_da",
         LambdaQCD_gev=0.1,
         d=-0.08183,
-        save_path=str(tmp_path / "zr"),
+        artifacts_dir=tmp_path, job_id="zr",
     )
 
     assert any(key.startswith("f1") for key in captured_priors[0])
@@ -769,7 +769,7 @@ def test_fit_self_renormalization_rejects_discretization_groups(tmp_path: Path) 
             {"reference": reference},
             LambdaQCD_gev=0.1,
             d=-0.08183,
-            save_path=str(tmp_path / "zr"),
+            artifacts_dir=tmp_path, job_id="zr",
         )
 
 
@@ -810,7 +810,7 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
         store,
         kernel_id="ZMSbar_da",
         LambdaQCD_gev=0.11,
-        save_path=str(tmp_path / "self_mismatch"),
+        artifacts_dir=tmp_path, job_id="self_mismatch",
     )
     assert mismatched["LambdaQCD_gev"] == pytest.approx(0.11)
     assert float(store["output"].attrs["LambdaQCD_gev"]) == pytest.approx(0.11)
@@ -829,7 +829,7 @@ def test_apply_self_renormalization_divides_by_zr_times_zmsbar(tmp_path: Path) -
             "hadron": "pion",
             "gfix": "GI",
         },
-        save_path=str(tmp_path / "self"),
+        artifacts_dir=tmp_path, job_id="self",
     )
 
     zms = kernels.ZMSbar_da(z, mu=2.0)
@@ -892,7 +892,7 @@ def test_self_renormalization_msbar_scheme_divides_only_by_zr(tmp_path: Path) ->
         scheme="msbar",
         LambdaQCD_gev=0.1,
         z_coverage_policy="strict",
-        save_path=str(tmp_path / "msbar"),
+        artifacts_dir=tmp_path, job_id="msbar",
     )
 
     assert result["scheme"] == "msbar"
@@ -943,7 +943,7 @@ def test_hybrid_scheme_self_renormalization_uses_per_sample_zt_for_continuity(tm
         zs_fm=0.2,
         LambdaQCD_gev=0.1,
         z_coverage_policy="strict",
-        save_path=str(tmp_path / "hybrid_self"),
+        artifacts_dir=tmp_path, job_id="hybrid_self",
     )
 
     zt = denominator_values[:, 1] / zr_values[1]
@@ -1001,7 +1001,7 @@ def test_hybrid_self_renormalization_a06_zs_fm_freezes_at_site_three(
         zs_fm=zs_fm,
         LambdaQCD_gev=0.1,
         z_coverage_policy="strict",
-        save_path=str(tmp_path / "hybrid_self_snap"),
+        artifacts_dir=tmp_path, job_id="hybrid_self_snap",
     )
 
     switch = 2
@@ -1056,7 +1056,7 @@ def test_hybrid_self_converts_lattice_z_and_preserves_normalized_z0(
         kernel_id="ZMSbar_da",
         LambdaQCD_gev=0.1,
         z_coverage_policy="strict",
-        save_path=str(tmp_path / "lattice_target"),
+        artifacts_dir=tmp_path, job_id="lattice_target",
     )
 
     expected_nonzero = target_values[:, 1:] / (
@@ -1080,8 +1080,7 @@ def test_hybrid_self_converts_lattice_z_and_preserves_normalized_z0(
         mode="apply",
         LambdaQCD_gev=0.1,
         z_coverage_policy="strict",
-        save_path=str(tmp_path / "lattice_target_diag"),
-        artifacts_dir=tmp_path,
+        artifacts_dir=tmp_path, job_id="lattice_target_diag",
     )
     assert diagnostic["n_z_dropped"] == 0
     assert diagnostic["n_z_zero_skipped"] == 1
@@ -1187,7 +1186,7 @@ def test_apply_self_renormalization_remaps_d_and_m0(tmp_path: Path) -> None:
         LambdaQCD_gev=0.1,
         d=d_da,
         m0_gev=m0_da,
-        save_path=str(tmp_path / "self_remap"),
+        artifacts_dir=tmp_path, job_id="self_remap",
     )
 
     zr_remapped = _remap_zr_values(
@@ -1248,7 +1247,7 @@ def test_apply_self_renormalization_rejects_uncovered_target(
             kernel_id="ZMSbar_da",
             LambdaQCD_gev=0.1,
             z_coverage_policy="strict",
-            save_path=str(tmp_path / "uncovered"),
+            artifacts_dir=tmp_path, job_id="uncovered",
         )
 
 
@@ -1280,7 +1279,7 @@ def test_apply_self_renormalization_intersects_target_z_grid(tmp_path: Path) -> 
         kernel_id="ZMSbar_da",
         LambdaQCD_gev=0.1,
         z_coverage_policy="intersection",
-        save_path=str(tmp_path / "intersection"),
+        artifacts_dir=tmp_path, job_id="intersection",
     )
 
     assert store["output"].coords["z"] == [0.06, 0.12]
@@ -1297,8 +1296,7 @@ def test_apply_self_renormalization_intersects_target_z_grid(tmp_path: Path) -> 
         mode="apply",
         LambdaQCD_gev=0.1,
         z_coverage_policy="intersection",
-        save_path=str(tmp_path / "intersection_diag"),
-        artifacts_dir=tmp_path,
+        artifacts_dir=tmp_path, job_id="intersection_diag",
     )
     assert diagnostic["n_z_dropped"] == 1
     assert diagnostic["z_coverage_policy"] == "intersection"
@@ -1350,7 +1348,7 @@ def test_apply_self_renormalization_extrapolates_long_distance_f1(tmp_path: Path
         store,
         kernel_id="ZMSbar_da",
         LambdaQCD_gev=0.1,
-        save_path=str(tmp_path / "extrapolate"),
+        artifacts_dir=tmp_path, job_id="extrapolate",
     )
 
     zr_expected = _self_renorm_zr_from_f1(
@@ -1376,8 +1374,7 @@ def test_apply_self_renormalization_extrapolates_long_distance_f1(tmp_path: Path
         store,
         mode="apply",
         LambdaQCD_gev=0.1,
-        save_path=str(tmp_path / "extrapolate_diag"),
-        artifacts_dir=tmp_path,
+        artifacts_dir=tmp_path, job_id="extrapolate_diag",
     )
     assert diagnostic["n_z_extrapolated"] == 5
     assert diagnostic["z_extrapolation_method"] == "quadratic_f1_tail"
@@ -1470,8 +1467,7 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
     fit_result = plot_self_renormalization_diagnostics(
         store,
         mode="fit",
-        save_path=str(tmp_path / "rn_zR_fit"),
-        artifacts_dir=tmp_path,
+        artifacts_dir=tmp_path, job_id="rn_zR_fit",
         kernel_id="ZMSbar_da",
         mu=2.0,
         LambdaQCD_gev=0.1,
@@ -1489,8 +1485,7 @@ def test_plot_self_renormalization_diagnostics_fit_and_apply_modes(tmp_path: Pat
         mode="apply",
         sibling_artifacts=[str(sibling_a), str(sibling_b), str(sibling_c), str(sibling_d)],
         include_discrete_effect=True,
-        save_path=str(tmp_path / "rn_mom6_a12"),
-        artifacts_dir=tmp_path,
+        artifacts_dir=tmp_path, job_id="rn_mom6_a12",
         kernel_id="ZMSbar_da",
         mu=2.0,
         LambdaQCD_gev=0.1,

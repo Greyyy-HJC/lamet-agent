@@ -490,7 +490,6 @@ _SCHEME_SCAN_FIELDS = {
 }
 
 _PLOT_FIELDS = {
-    "save_path": _parameter("Plot file name.", "Plot placement remains inside the job artifact directory.", expected=str),
     "title": _parameter("Optional plot title.", "This changes presentation only.", expected=str),
 }
 
@@ -764,7 +763,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             schema={
                 "enabled": _parameter("Enable the optional per-job report.", "This affects reporting only.", expected=bool),
                 "report_language": _parameter("Report language.", "This affects reporting only.", expected=str, choices=("en", "ch")),
-                "save_path": _parameter("Report file name.", "Report placement remains inside the job artifact directory.", expected=str),
             },
         ),
         "scheme_scan": _parameter(
@@ -808,6 +806,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "Lambda0": "is no longer supported; use Lambda0_gev.",
         "distribution_type": "is no longer supported; use polarization.",
         "y_grid": "is no longer supported; use quasi_y_ls.",
+        "save_path": "is no longer supported; stage tools write under the job artifact directory.",
     },
     constraints=FOURIER_CONSTRAINTS,
 )

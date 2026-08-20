@@ -857,8 +857,8 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 - `lamet_agent/core/tools.py`
   - Resolves a stage's `STAGE_TOOLS` registry for the agent loop.
   - `prepare_tool_args()` / `filter_tool_kwargs()` normalize LLM tool calls
-    (manifest paths, plot `save_path` under `artifacts/`).
-  - `resolve_plot_save_path()` keeps plots under the manifest's stage artifact directory.
+    (manifest input paths; outputs always under the job's stage artifact directory).
+  - `stage_artifact_stem()` names job files inside that stage directory.
 - `lamet_agent/manifest_params.py`
   - Defines reusable parameter specs, constraint descriptions, structured stage
     diagnostics, lazy contract routing, human-facing contract rendering, and

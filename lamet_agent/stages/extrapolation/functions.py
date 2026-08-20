@@ -17,6 +17,7 @@ import xarray as xr
 from lamet_agent.core.data import EnsembleData, EnsembleInfo
 from lamet_agent.core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FONT_SIZE, default_plot
 from lamet_agent.core.resampling import sample_mean_and_sdev, sample_value_with_error
+from lamet_agent.core.tools import stage_artifact_stem
 
 
 def _scaled_prior(pmean: gv.BufferDict, psdev: gv.BufferDict, scale: float) -> gv.BufferDict:
@@ -157,8 +158,8 @@ def run_extrapolation(
     sample_error_mode: str,
     posterior_prior_error_scale: float,
     workers: int,
-    save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
+    job_id: str | None = None,
     out: str = "extrapolated_distribution",
 ) -> dict[str, Any]:
     """Fit matched light-cone data to the IMF and/or continuum limit."""
@@ -169,9 +170,7 @@ def run_extrapolation(
     ]
     lattice_spacings = {float(data.attrs["lattice_spacing_fm"]) for data in inputs}
     momenta_gev = {float(data.attrs.get("momentum_gev")) for data in inputs}
-    stage_dir = Path(artifacts_dir or ".")
-    stem = Path(save_path) if save_path is not None else stage_dir / "extrapolation"
-    stem.parent.mkdir(parents=True, exist_ok=True)
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="extrapolation")
     is_systematics = stem.parent.name == "sym"
 
     if len(lattice_spacings) == 1 and len(momenta_gev) == 1:
@@ -629,14 +628,12 @@ def run_systematics_budget(
     lambda_extrapolation: str = "lambda_extrapolation",
     lamet_scale: str = "lamet_scale",
     other_extrapolations: str = "other_extrapolations",
-    save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
+    job_id: str | None = None,
     out: str = "systematics_budget",
 ) -> dict[str, Any]:
     """Build a Fig.10-style systematic-error budget from extrapolated outputs."""
-    stage_dir = Path(artifacts_dir or ".")
-    stem = Path(save_path) if save_path is not None else stage_dir / "systematics_budget"
-    stem.parent.mkdir(parents=True, exist_ok=True)
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="systematics_budget")
     main_data = store[main]
     x = np.asarray(main_data.coords["x"], dtype=float)
     main_mean = np.asarray(main_data.mean, dtype=float)

@@ -1473,3 +1473,10 @@
   and the conjugated partner-derived branch at negative lambda, with separate
   fit diagnostics. Fourier plots and overlays use GPD notation and display the
   NonBreit initial/final momenta and skewness.
+
+## 2026-08-20 (Lock run outputs under artifacts_directory)
+
+- Removed STAGE_TOOL `save_path`, `log_dir`, `log_path`, and review `output_dir`.
+  Run-mode files now use only harness-injected `artifacts_dir` and `job_id`.
+- Replaced `resolve_plot_save_path` with basename-only `stage_artifact_stem` so
+  LLM or manifest paths cannot write outside `metadata.artifacts_directory`.

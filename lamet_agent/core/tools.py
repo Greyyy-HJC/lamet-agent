@@ -13,27 +13,28 @@ from lamet_agent.manifest import AnalysisManifest, ArtifactInput, StageJob, deri
 from lamet_agent.manifest_params import StageValidationIssue, get_stage_parameter_contract
 from .stages import resolve_stage_package
 
-_PLOT_TOOLS = frozenset({"tune_ground_state", "tune_bare_matrix", "fit_bare_matrix_grid", "plot_matched_pdf"})
-_RENORM_ARTIFACT_TOOLS = frozenset(
+_WRITING_TOOLS = frozenset(
     {
+        "tune_ground_state",
+        "tune_bare_matrix",
+        "fit_bare_matrix_grid",
         "apply_ratio_scheme_renormalization",
         "apply_self_renormalization",
         "fit_self_renormalization_factor",
         "plot_renormalized_matrix_element",
         "plot_self_renormalization_diagnostics",
-        "load_bare_matrix_element_grid",
-        "load_bare_matrix_element",
-    }
-)
-_RENORM_SELF_FIT_PARAM_KEYS = frozenset({"LambdaQCD_gev", "d", "kernel_id", "mu", "svdcut"})
-_FOURIER_ARTIFACT_TOOLS = frozenset(
-    {
         "run_fourier_transform",
         "plot_fourier_result",
         "plot_fourier_extension_quality_result",
         "report_fourier_result",
+        "apply_matching",
+        "plot_matched_pdf",
+        "report_matching_result",
+        "run_extrapolation",
+        "run_systematics_budget",
     }
 )
+_RENORM_SELF_FIT_PARAM_KEYS = frozenset({"LambdaQCD_gev", "d", "kernel_id", "mu", "svdcut"})
 _FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key", "resample_mode"})
 _FOURIER_RUN_KEYS = frozenset(
     {
@@ -142,57 +143,39 @@ def log_nonlinear_fit_quality(
         use_logger.info(*message)
     return status
 
-def resolve_plot_save_path(
-    raw: str | None,
+def stage_artifact_stem(
+    artifacts_dir: str | Path,
     *,
-    artifacts_dir: Path,
-    default_stem: str = "fit_on_data",
-    root_directory: Path | None = None,
-) -> str:
-    """Resolve output stems.
+    job_id: str | None = None,
+    default_stem: str,
+) -> Path:
+    """Return ``artifacts_dir / basename`` for a job-owned output stem.
 
-    Defaults go under ``artifacts_dir``. Explicit relative paths are resolved
-    against ``root_directory`` when the manifest declares one; otherwise they
-    preserve the historical behavior of writing under ``artifacts_dir``.
+    ``job_id`` and ``default_stem`` are reduced to a single path name so callers
+    cannot redirect writes outside ``artifacts_dir``.
     """
-    if raw:
-        if root_directory is None:
-            stem = Path(raw).name
-            for suffix in (".png", ".pdf", ".svg"):
-                if stem.lower().endswith(suffix):
-                    stem = stem[: -len(suffix)]
-                    break
-            if not stem:
-                stem = default_stem
-            return str(artifacts_dir / stem)
-
-        stem_path = Path(raw).expanduser()
-        stem_text = str(stem_path)
-        for suffix in (".png", ".pdf", ".svg"):
-            if stem_text.lower().endswith(suffix):
-                stem_text = stem_text[: -len(suffix)]
-                break
-        stem_path = Path(stem_text)
-        if str(stem_path) in {"", "."}:
-            stem_path = Path(default_stem)
-        if stem_path.is_absolute():
-            return str(stem_path)
-        if root_directory is not None:
-            return str((root_directory / stem_path).resolve())
-    else:
+    if artifacts_dir is None:
+        raise ValueError("artifacts_dir is required")
+    out_dir = Path(artifacts_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    raw = job_id if job_id not in {None, ""} else default_stem
+    stem = Path(str(raw)).name
+    if not stem or stem in {".", ".."}:
         stem = default_stem
-    return str(artifacts_dir / stem)
+    return out_dir / stem
 
 
-def _manifest_root(manifest: AnalysisManifest) -> Path | None:
-    root = manifest.root_directory
-    return Path(root).expanduser().resolve() if root is not None else None
-
-
-def _run_scoped_plot_stem(manifest: AnalysisManifest, stem: str) -> str:
-    """Prefix default plot stems with the run id so adjacent runs do not collide."""
-    run_id = Path(str(manifest.run_id)).name or "run"
-    return f"{run_id}_{stem}"
+def _strip_output_path_overrides(resolved: dict[str, Any]) -> dict[str, Any]:
+    """Drop LLM/manifest keys that used to choose an output location."""
+    for key in ("save_path", "log_dir", "log_path", "output_dir"):
+        resolved.pop(key, None)
+    for key in ("plot_fourier", "plot_extension", "report"):
+        nested = resolved.get(key)
+        if isinstance(nested, dict) and "save_path" in nested:
+            nested = dict(nested)
+            nested.pop("save_path", None)
+            resolved[key] = nested
+    return resolved
 
 
 def resolve_stage_tools(stage: str) -> dict[str, Callable[..., dict[str, Any]]]:
@@ -381,7 +364,7 @@ def prepare_tool_args(
     artifacts_dir: Path,
     store: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Resolve paths and force plot output under ``artifacts_dir``."""
+    """Resolve input paths and force writes under ``artifacts_dir``."""
     artifacts_dir = Path(artifacts_dir)
     store = store or {}
     resolved = resolve_tool_args(args, manifest)
@@ -545,7 +528,6 @@ def prepare_tool_args(
                     "tsep_ls": [int(t) for t in resolved.get("tsep_ls", defaults.get("tsep_ls", []))],
                     "tau_cut": int(resolved["tau_cut"]),
                 }
-            defaults["save_path"] = str(artifacts_dir / job.id)
             defaults["job_id"] = job.id
             defaults["workers"] = manifest.metadata.workers
             defaults["lattice_spacing_fm"] = pt2.lattice_spacing_fm if pt2 is not None else None
@@ -608,14 +590,12 @@ def prepare_tool_args(
                 {
                     "target": "target",
                     "denominator": "denominator",
-                    "save_path": str(artifacts_dir / job.id),
                     "job_id": job.id,
                     "sample_error_mode": manifest.metadata.sample_error_mode,
                 }
             )
         elif tool_name == "fit_self_renormalization_factor":
             resolved["reference"] = "reference"
-            resolved["save_path"] = str(artifacts_dir / job.id)
             resolved["scheme"] = effective_params["scheme"]
             resolved["strategy"] = effective_params["strategy"]
             if kernel_id is not None:
@@ -657,7 +637,6 @@ def prepare_tool_args(
                     "zR": "zR",
                     "scheme": effective_params["scheme"],
                     "strategy": effective_params["strategy"],
-                    "save_path": str(artifacts_dir / job.id),
                     "job_id": job.id,
                     "sample_error_mode": manifest.metadata.sample_error_mode,
                     "metadata": {
@@ -685,7 +664,6 @@ def prepare_tool_args(
                     "zR": "zR",
                     "fit": "self_renorm_fit",
                     "mode": "fit" if is_fit_job else "apply",
-                    "save_path": str(artifacts_dir / job.id),
                     "sample_error_mode": manifest.metadata.sample_error_mode,
                 }
             )
@@ -759,12 +737,9 @@ def prepare_tool_args(
             resolved.update(
                 {
                     "data": "output",
-                    "save_path": str(artifacts_dir / job.id),
                     "sample_error_mode": manifest.metadata.sample_error_mode,
                 }
             )
-        if tool_name in _RENORM_ARTIFACT_TOOLS:
-            resolved["artifacts_dir"] = str(artifacts_dir)
     if stage == "fourier_transform":
         fourier = dict(effective_params)
         source = store.get("input")
@@ -815,11 +790,6 @@ def prepare_tool_args(
         elif tool_name == "run_fourier_transform":
             resolved.update({key: fourier[key] for key in _FOURIER_RUN_KEYS if key in fourier})
             resolved["workers"] = manifest.metadata.workers
-            resolved["save_path"] = str(artifacts_dir / job.id)
-            resolved.setdefault("plot_fourier", {"save_path": f"{job.id}_xdep.pdf"})
-            resolved.setdefault("plot_extension", {"save_path": f"{job.id}_re.pdf"})
-        if tool_name in _FOURIER_ARTIFACT_TOOLS:
-            resolved["artifacts_dir"] = str(artifacts_dir)
 
     if stage == "perturbative_matching":
         from lamet_agent.stages.matching.functions import resolve_kernel_id
@@ -853,10 +823,8 @@ def prepare_tool_args(
         elif tool_name == "build_matching_kernel":
             resolved.update({key: matching[key] for key in _MATCHING_KERNEL_KEYS if key in matching})
         elif tool_name == "apply_matching":
-            resolved.update({"save_path": str(artifacts_dir / job.id), "artifacts_dir": str(artifacts_dir)})
             resolved.update({key: matching[key] for key in _MATCHING_APPLY_KEYS if key in matching})
         elif tool_name == "plot_matched_pdf":
-            resolved.update({"save_path": str(artifacts_dir / job.id), "artifacts_dir": str(artifacts_dir)})
             plot = matching.get("plot", {})
             if isinstance(plot, dict):
                 resolved.update({key: plot[key] for key in ("xlim", "ylim") if key in plot})
@@ -865,7 +833,6 @@ def prepare_tool_args(
                 resolved["sector"] = matching["sector"]
         elif tool_name == "report_matching_result":
             resolved.update({key: matching[key] for key in ("kernel_id", "momentum_gev", "mu", "zs_fm", "component") if key in matching})
-            resolved.update({"save_path": f"{job.id}_report.md", "artifacts_dir": str(artifacts_dir)})
     if stage == "extrapolation" and tool_name == "run_extrapolation":
         extrapolation = dict(effective_params)
         resolved["lightcone"] = "lightcone"
@@ -887,45 +854,12 @@ def prepare_tool_args(
         )
         resolved["sample_error_mode"] = manifest.metadata.sample_error_mode
         resolved["workers"] = manifest.metadata.workers
-        resolved["save_path"] = str(artifacts_dir / job.id)
-        resolved["artifacts_dir"] = str(artifacts_dir)
     if stage == "extrapolation" and tool_name == "run_systematics_budget":
         for key in ("main", "zs", "lambda_extrapolation", "lamet_scale", "other_extrapolations"):
             if key in job.inputs:
                 resolved[key] = key
-        resolved["save_path"] = str(artifacts_dir / job.id)
+    resolved = _strip_output_path_overrides(resolved)
+    if tool_name in _WRITING_TOOLS:
         resolved["artifacts_dir"] = str(artifacts_dir)
-    if tool_name in _RENORM_ARTIFACT_TOOLS:
-        raw_save = resolved.get("save_path")
-        if isinstance(raw_save, str) or raw_save is None:
-            stem = "renormalized_matrix_element"
-            default_stem = _run_scoped_plot_stem(manifest, stem)
-            resolved["save_path"] = resolve_plot_save_path(
-                raw_save if isinstance(raw_save, str) else None,
-                artifacts_dir=artifacts_dir,
-                default_stem=default_stem,
-                root_directory=_manifest_root(manifest),
-            )
-        resolved["artifacts_dir"] = str(artifacts_dir)
-    if tool_name in _PLOT_TOOLS:
-        raw_save = resolved.get("save_path")
-        if raw_save is None and tool_name == "fit_bare_matrix_grid":
-            grid = manifest.metadata.get("correlator_grid", {})
-            if isinstance(grid, dict) and isinstance(grid.get("save_path"), str):
-                raw_save = grid["save_path"]
-        if isinstance(raw_save, str) or raw_save is None:
-            if tool_name == "fit_bare_matrix_grid":
-                stem = "bare_matrix_elements"
-            elif tool_name == "plot_matched_pdf":
-                stem = "matched_pdf"
-            else:
-                stem = "fit_on_data"
-            default_stem = _run_scoped_plot_stem(manifest, stem)
-            resolved["save_path"] = resolve_plot_save_path(
-                raw_save if isinstance(raw_save, str) else None,
-                artifacts_dir=artifacts_dir,
-                default_stem=default_stem,
-                root_directory=_manifest_root(manifest),
-            )
-        resolved["artifacts_dir"] = str(artifacts_dir)
+        resolved["job_id"] = job.id
     return resolved

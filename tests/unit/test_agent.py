@@ -736,7 +736,9 @@ def test_self_renorm_apply_job_rejects_fit_tool_then_recovers(tmp_path: Path, mo
     assert fit_called is False
     assert apply_kwargs["target"] == "target"
     assert apply_kwargs["zR"] == "zR"
-    assert apply_kwargs["save_path"] is not None
+    assert apply_kwargs["artifacts_dir"] == str(tmp_path / "renormalization")
+    assert apply_kwargs["job_id"] == job.id
+    assert "save_path" not in apply_kwargs
     assert "order" not in apply_kwargs
     assert "Nf" not in apply_kwargs
     assert observations[0]["tool_name"] == "fit_self_renormalization_factor"

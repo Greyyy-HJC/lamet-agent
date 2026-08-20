@@ -9,7 +9,7 @@ from lamet_agent.core.tools import validate_stage_diagnostics
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.stages.matching.functions import (
     KERNEL_REGISTRY,
-    apply_matching,
+    apply_matching as _apply_matching,
     build_matching_kernel as _build_matching_kernel,
     load_quasi_pdf as _load_quasi_pdf,
     plot_matched_pdf,
@@ -19,6 +19,11 @@ from lamet_agent.stages.matching.functions import (
 
 def load_quasi_pdf(store, **kwargs):
     return _load_quasi_pdf(store, **kwargs)
+
+
+def apply_matching(store, **kwargs):
+    kwargs.setdefault("artifacts_dir", tempfile.mkdtemp())
+    return _apply_matching(store, **kwargs)
 
 
 def build_matching_kernel(store, **kwargs):
@@ -326,7 +331,7 @@ def test_endpoint_cut_drops_the_da_divergent_window_only_for_da_kernels() -> Non
         store = {"quasi": _quasi_on(native)}
         load_quasi_pdf(store, component="re")
         build_matching_kernel(store, kernel_id=kernel_id, momentum_gev=2.4, zs_fm=0.2)
-        result = apply_matching(store, save_path=str(Path(tempfile.mkdtemp()) / "mt"), endpoint_cut=cut)
+        result = apply_matching(store, artifacts_dir=Path(tempfile.mkdtemp()), job_id="mt", endpoint_cut=cut)
         return result["endpoint_points_dropped"], np.asarray(store["lightcone_ed"].coords["x"])
 
     def in_window(x: np.ndarray) -> list[float]:
@@ -373,7 +378,7 @@ def test_matching_consumes_in_memory_fourier_output_and_writes_primary_netcdf(tm
     store["kernel_matrix"] = np.eye(2)
     store["lc_x_ls"] = [-0.5, 0.5]
 
-    result = apply_matching(store, save_path=str(tmp_path / "mt_p5"))
+    result = apply_matching(store, artifacts_dir=tmp_path, job_id="mt_p5")
 
     assert loaded["n_sample"] == 2
     assert store["output"] is store["lightcone_ed"]
@@ -404,7 +409,7 @@ def test_plot_matched_pdf_writes_pdf_and_svg(tmp_path: Path) -> None:
     )
     store = {"quasi_y_ls": np.array([0.0, 1.0]), "quasi_ed": quasi, "lightcone_ed": lightcone}
 
-    result = plot_matched_pdf(store, save_path=str(tmp_path / "matched_pdf"))
+    result = plot_matched_pdf(store, artifacts_dir=tmp_path, job_id="matched_pdf")
 
     assert Path(result["path"]).is_file()
     assert Path(result["plot_image"]).is_file()
@@ -437,7 +442,7 @@ def test_plot_matched_pdf_honors_explicit_limits(tmp_path: Path) -> None:
 
     result = plot_matched_pdf(
         store,
-        save_path=str(tmp_path / "matched_pdf"),
+        artifacts_dir=tmp_path, job_id="matched_pdf",
         ylim=[-0.2, 2.5],
     )
 

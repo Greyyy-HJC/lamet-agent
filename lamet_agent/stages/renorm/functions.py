@@ -40,7 +40,7 @@ from lamet_agent import kernels
 from lamet_agent.core.data import EnsembleData, EnsembleInfo, GEV_FM
 from lamet_agent.core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FONT_SIZE, LEGEND_SETS, default_plot
 from lamet_agent.core.resampling import sample_mean_and_sdev
-from lamet_agent.core.tools import resolve_plot_save_path
+from lamet_agent.core.tools import stage_artifact_stem
 
 SELF_RENORM_K = 3.320
 SELF_RENORM_CF = 4.0 / 3.0
@@ -149,12 +149,6 @@ def _z_index(z_values: np.ndarray, target: float, *, label: str) -> int:
     if matches.size == 0:
         raise ValueError(f"{label} z={target} is not present in coordinate grid")
     return int(matches[0])
-
-
-def _artifact_stem(raw: str | None, *, artifacts_dir: str | Path | None, default_stem: str) -> Path:
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return Path(resolve_plot_save_path(raw, artifacts_dir=out_dir, default_stem=default_stem))
 
 
 def _resolve_zmsbar(kernel_id: str | None = None):
@@ -497,7 +491,6 @@ def apply_ratio_scheme_renormalization(
     m0_gev: float | None = None,
     delta_m_gev: float | None = None,
     out: str = "matrix_element_data",
-    save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     job_id: str | None = None,
     ensemble: str | None = None,
@@ -593,7 +586,7 @@ def apply_ratio_scheme_renormalization(
         "strategy": strategy,
     }
 
-    stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="renormalized_matrix_element")
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="renormalized_matrix_element")
     artifact = stem.with_suffix(".nc")
     result.to_netcdf(artifact)
     store["matrix_element_netcdf"] = str(artifact)
@@ -618,8 +611,8 @@ def plot_renormalized_matrix_element(
     store: dict[str, Any],
     *,
     data: str = "matrix_element_data",
-    save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
+    job_id: str | None = None,
     title: str | None = None,
     sample_error_mode: str,
 ) -> dict[str, Any]:
@@ -648,7 +641,7 @@ def plot_renormalized_matrix_element(
     ax.set_title(title, **FONT_SIZE)
     ax.legend(**LEGEND_SETS)
     fig.tight_layout()
-    stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="renormalized_matrix_element")
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="renormalized_matrix_element")
     plot_path = stem.with_suffix(".pdf")
     svg_path = stem.with_suffix(".svg")
     fig.savefig(plot_path, bbox_inches="tight", transparent=True)
@@ -738,8 +731,8 @@ def fit_self_renormalization_factor(
     LambdaQCD_gev: float,
     d: float | None = None,
     svdcut: float,
-    save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """Fit the zR factor for the self-renormalization strategy.
 
@@ -946,7 +939,7 @@ def fit_self_renormalization_factor(
     store[out] = zR
     store["output"] = zR
 
-    stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="zR")
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="zR")
     artifact = stem.with_suffix(".nc")
     zR.to_netcdf(artifact)
     store["zR_netcdf"] = str(artifact)
@@ -1042,7 +1035,6 @@ def apply_self_renormalization(
     m0_gev: float | None = None,
     z_coverage_policy: Literal["strict", "intersection", "extrapolate"],
     out: str = "matrix_element_data",
-    save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
     job_id: str | None = None,
     ensemble: str | None = None,
@@ -1346,7 +1338,7 @@ def apply_self_renormalization(
         "strategy": strategy,
     }
 
-    stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="renormalized_matrix_element")
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="renormalized_matrix_element")
     artifact = stem.with_suffix(".nc")
     result.to_netcdf(artifact)
     store["matrix_element_netcdf"] = str(artifact)
@@ -1400,8 +1392,8 @@ def plot_self_renormalization_diagnostics(
     fit: str = "self_renorm_fit",
     sibling_artifacts: list[str] | None = None,
     include_discrete_effect: bool = False,
-    save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
+    job_id: str | None = None,
     sample_error_mode: str,
     kernel_id: str | None = None,
     mu: float,
@@ -1433,7 +1425,7 @@ def plot_self_renormalization_diagnostics(
     mu_val = float(mu)
     lambdaqcd_gev = _resolve_lambdaqcd(LambdaQCD_gev)
     alpha_s_derived = float(kernels.alphas_nloop(mu_val))
-    stem = _artifact_stem(save_path, artifacts_dir=artifacts_dir, default_stem="self_renorm")
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="self_renorm")
     plots: dict[str, str] = {}
 
     if mode == "fit":

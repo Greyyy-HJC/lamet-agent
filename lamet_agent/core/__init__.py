@@ -6,12 +6,12 @@ from .prompting import (
     build_stage_static_prompt,
     format_tool_observation,
 )
-from .tools import resolve_plot_save_path
+from .tools import stage_artifact_stem
 
 __all__ = [
     "ACTION_OUTPUT_HINT",
     "SYSTEM_PROMPT",
     "build_stage_static_prompt",
     "format_tool_observation",
-    "resolve_plot_save_path",
+    "stage_artifact_stem",
 ]

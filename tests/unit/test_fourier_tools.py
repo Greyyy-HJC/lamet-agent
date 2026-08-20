@@ -3,6 +3,7 @@ from __future__ import annotations
 from inspect import signature
 from pathlib import Path
 import json
+import tempfile
 
 import numpy as np
 import pytest
@@ -58,6 +59,7 @@ _EXPLICIT_FOURIER_PARAMS = {
 
 def run_fourier_transform(store, **kwargs):
     explicit = {**_EXPLICIT_FOURIER_PARAMS, **kwargs}
+    explicit.setdefault("artifacts_dir", tempfile.mkdtemp())
     return _run_fourier_transform(store, **explicit)
 
 
@@ -563,18 +565,19 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert summary["fit_info_artifact"] == run["fit_info_artifact"]
     assert summary["Lambda0_gev"] == pytest.approx(0.3)
 
-    plot = plot_fourier_result(store)
+    artifacts = tmp_path / "artifacts"
+    plot = plot_fourier_result(store, artifacts_dir=artifacts)
     assert Path(plot["plot"]).is_file()
 
-    extension_plot = plot_fourier_extension_quality_result(store)
+    extension_plot = plot_fourier_extension_quality_result(store, artifacts_dir=artifacts)
     assert Path(extension_plot["plot_re"]).is_file()
     assert Path(extension_plot["plot_im"]).is_file()
 
-    report = report_fourier_result(store)
+    report = report_fourier_result(store, artifacts_dir=artifacts)
     report_path = Path(report["report"])
     assert report_path.is_file()
     assert "report_cn" not in report
-    assert not report_path.with_name("report_fourier_CN.md").exists()
+    assert not report_path.with_name("fourier_report_CN.md").exists()
     report_text = report_path.read_text(encoding="utf-8")
     assert "# Fourier Transform Analysis Report" in report_text
     assert "nucleon_quark_quasi_pdf" in report_text
@@ -587,7 +590,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "Model Diagnostics" in report_text
     assert "q(x)=\\frac{\\Delta\\lambda}{2\\pi}" in report_text
     assert "![Fourier result]" in report_text
-    assert "fourier_xdep.svg" in report_text
+    assert "fourier_result_xdep.svg" in report_text
     assert "Reading the NetCDF Outputs" in report_text
     assert "fourier_result.nc" in report_text
     assert "fourier_fit_info.nc" in report_text
@@ -596,13 +599,13 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr("lamet_agent.stages.fourier.reporting.translate_markdown_report", lambda markdown, **kwargs: markdown)
     report_cn = report_fourier_result(
         store,
-        save_path=str(tmp_path / "report_fourier_ch.md"),
+        artifacts_dir=tmp_path, job_id="report_fourier_ch",
         report_language="ch",
     )
     report_cn_path = Path(report_cn["report"])
-    assert report_cn_path.name == "report_fourier_ch_CN.md"
+    assert report_cn_path.name == "report_fourier_ch_report_CN.md"
     assert report_cn_path.is_file()
-    assert (tmp_path / "report_fourier_ch.md").exists()
+    assert (tmp_path / "report_fourier_ch_report.md").exists()
     report_cn_text = report_cn_path.read_text(encoding="utf-8")
     assert "# Fourier Transform Analysis Report" in report_cn_text
     assert "Active fitted part" in report_cn_text
@@ -612,7 +615,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "Reading the NetCDF Outputs" in report_cn_text
     assert "fourier_result.nc" in report_cn_text
     assert "fourier_fit_info.nc" in report_cn_text
-    assert "fourier_xdep.svg" in report_cn_text
+    assert "fourier_result_xdep.svg" in report_cn_text
     data = store["fourier_result"]
     fig, ax = plot_fourier_extension_quality(
         store["matrix_element"]["coord"],
@@ -1494,7 +1497,7 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     assert "parton" not in run
     assert "polarization" not in run
     assert run["symmetry_guarantee"] is True
-    report = report_fourier_result(store, save_path=str(tmp_path / "da_report.md"))
+    report = report_fourier_result(store, artifacts_dir=tmp_path, job_id="da_report")
     report_text = Path(report["report"]).read_text(encoding="utf-8")
     assert "### Scope and Equivalence" in report_text
     assert "`symmetry_guarantee=true`" in report_text

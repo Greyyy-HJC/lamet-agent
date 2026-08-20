@@ -9,7 +9,7 @@ from lamet_agent.core.tools import (
     prepare_tool_args,
     required_job_tool_sequence,
     resolve_job_tools,
-    resolve_plot_save_path,
+    stage_artifact_stem,
     validate_stage_diagnostics,
     validate_stage_inputs,
 )
@@ -309,9 +309,43 @@ def test_hybrid_self_requires_explicit_lambdaqcd_gev() -> None:
     ]
 
 
-def test_resolve_plot_save_path_uses_artifact_directory(tmp_path: Path) -> None:
-    assert resolve_plot_save_path("elsewhere/fit.png", artifacts_dir=tmp_path) == str(tmp_path / "fit")
-    assert resolve_plot_save_path(None, artifacts_dir=tmp_path) == str(tmp_path / "fit_on_data")
+def test_stage_artifact_stem_uses_basename_only(tmp_path: Path) -> None:
+    assert stage_artifact_stem(tmp_path, job_id="elsewhere/fit.png", default_stem="fit_on_data") == tmp_path / "fit.png"
+    assert stage_artifact_stem(tmp_path, job_id="../escape/job", default_stem="default") == tmp_path / "job"
+    assert stage_artifact_stem(tmp_path, job_id=None, default_stem="fit_on_data") == tmp_path / "fit_on_data"
+    with pytest.raises(ValueError, match="artifacts_dir is required"):
+        stage_artifact_stem(None, default_stem="fit_on_data")  # type: ignore[arg-type]
+
+
+def test_prepare_tool_args_drops_llm_output_path_overrides(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["fourier_transform"].jobs[0]
+    effective = merge_stage_params(manifest.stages["fourier_transform"].defaults, job.params)
+    args = prepare_tool_args(
+        "run_fourier_transform",
+        {
+            "save_path": "/tmp/escape.nc",
+            "output_dir": "/tmp/out",
+            "log_dir": "/tmp/logs",
+            "plot_fourier": {"save_path": "/tmp/plot.pdf", "enabled": True},
+            "plot_extension": {"save_path": "/tmp/ext.pdf"},
+            "report": {"save_path": "/tmp/report.md", "enabled": True},
+        },
+        manifest=manifest,
+        stage="fourier_transform",
+        job=job,
+        effective_params=effective,
+        artifacts_dir=tmp_path,
+        store={"input": SimpleNamespace(attrs={})},
+    )
+    assert args["artifacts_dir"] == str(tmp_path)
+    assert args["job_id"] == job.id
+    assert "save_path" not in args
+    assert "output_dir" not in args
+    assert "log_dir" not in args
+    assert "save_path" not in args.get("plot_fourier", {})
+    assert "save_path" not in args.get("plot_extension", {})
+    assert "save_path" not in args.get("report", {})
 
 
 def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None:
@@ -391,8 +425,9 @@ def test_prepare_correlator_terminal_args_use_job_artifact_path(tmp_path: Path) 
         effective_params=_resolved(manifest, "correlator_analysis", job),
         artifacts_dir=tmp_path,
     )
-    assert args["save_path"] == str(tmp_path / job.id)
+    assert args["artifacts_dir"] == str(tmp_path)
     assert args["job_id"] == job.id
+    assert "save_path" not in args
     kinematics = derive_job_kinematics(manifest, job)
     assert args["lattice_spacing_fm"] == kinematics["lattice_spacing_fm"]
     if manifest.stages["correlator_analysis"].defaults.get("model_average", False):
@@ -699,7 +734,9 @@ def test_prepare_renormalization_args_bind_roles_and_scheme(tmp_path: Path) -> N
     assert args["m0_gev"] == effective["m0_gev"]
     assert args["delta_m_gev"] == effective["delta_m_gev"]
     assert "scheme_parameters" not in args
-    assert args["save_path"] == str(tmp_path / job.id)
+    assert args["artifacts_dir"] == str(tmp_path)
+    assert args["job_id"] == job.id
+    assert "save_path" not in args
     assert "normalization" not in args
 
 
@@ -967,7 +1004,9 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert "Nf" not in fit_args
     assert fit_args["svdcut"] == 1e-12
     assert "z_coverage_policy" not in fit_args
-    assert fit_args["save_path"] == str(tmp_path / "rn_zR_fit")
+    assert fit_args["artifacts_dir"] == str(tmp_path)
+    assert fit_args["job_id"] == "rn_zR_fit"
+    assert "save_path" not in fit_args
     # Fit-job params carry required d (PDF); m0_gev omitted → fit.
     assert fit_effective["d"] == -0.08183
     assert "m0_gev" not in fit_effective
@@ -1005,7 +1044,9 @@ def test_prepare_self_renormalization_args_bind_kernel_and_roles(tmp_path: Path)
     assert apply_args["metadata"]["momentum_gev"] == pytest.approx(
         derive_job_kinematics(manifest, apply_job)["momentum_gev"]
     )
-    assert apply_args["save_path"] == str(tmp_path / "rn_mom6_a06")
+    assert apply_args["artifacts_dir"] == str(tmp_path)
+    assert apply_args["job_id"] == "rn_mom6_a06"
+    assert "save_path" not in apply_args
 
     fit_diag = prepare_tool_args(
         "plot_self_renormalization_diagnostics",
@@ -1103,7 +1144,9 @@ def test_prepare_fourier_args_from_job_and_upstream_metadata(tmp_path: Path) -> 
     assert args["symmetry_guarantee"] is False
     assert "phase_shift" not in args
     assert args["workers"] == manifest.metadata.workers
-    assert args["save_path"] == str(tmp_path / job.id)
+    assert args["artifacts_dir"] == str(tmp_path)
+    assert args["job_id"] == job.id
+    assert "save_path" not in args
 
     effective["polarization"] = "transversity"
     explicit = prepare_tool_args(
