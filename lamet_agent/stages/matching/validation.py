@@ -207,6 +207,29 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             expected=float,
             default=1.0,
         ),
+        "rgr_kappa": _parameter(
+            "Scale-variation factor on the RGR per-row matching scale.",
+            "RGR matches each light-cone x at its own scale mu0(x) = 2 * kappa * x * P^z before "
+            "evolving to mu, so kappa varies where the fixed-order kernel is evaluated. It is the "
+            "RGR counterpart of r (which varies mu itself) and belongs to the systematic budget; "
+            "the source notebook scans 0.71, 1.0 and 1.4. It applies to RGR kernels only and goes inert "
+            "on any other kernel, which has no per-row scale to vary. It carries "
+            "no contract default on purpose: a default would be materialised into every matching job "
+            "in the stage, including fixed-order ones that cannot accept it. Unset means the kernel's "
+            "own default (1.0).",
+            expected=float,
+        ),
+        "rgr_mu_min_gev": _parameter(
+            "Perturbative floor on the RGR per-row scale.",
+            "Rows whose own scale mu0(x) falls below this are zeroed rather than reported, which "
+            "is how the paper's x_min (set by alpha_s(2xP^z) ~ 1) enters the matrix. It is NOT "
+            "independent of rgr_kappa: the surviving window is x >= rgr_mu_min_gev / (2 * kappa * "
+            "P^z), so a kappa scan also moves x_min. It applies to RGR kernels only and goes inert on "
+            "any other kernel; unset means the "
+            "kernel's own default (0.6 GeV). See rgr_kappa on why there is no contract default.",
+            expected=float,
+            unit="GeV",
+        ),
         "scheme": _parameter(
             "Renormalization scheme encoded by kernel_id.",
             "The stage scheme must equal the ratio, hybrid, or msbar token in the exact kernel name because these kernels contain different perturbative coefficients.",

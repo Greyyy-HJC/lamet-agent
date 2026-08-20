@@ -836,8 +836,13 @@ def test_matching_scheme_must_match_kernel_id() -> None:
     manifest.stages["perturbative_matching"].defaults["scheme"] = "ratio"
     job = manifest.stages["perturbative_matching"].jobs[0]
 
+    # Read the id from the manifest rather than pinning it: which kernel the example selects
+    # is free to change, and what this test is about is the scheme/kernel_id consistency check.
+    kernel_id = next(
+        k.kernel_id for k in manifest.inputs.kernels if k.stage == "perturbative_matching"
+    )
     assert validate_stage_inputs("perturbative_matching", manifest, job) == [
-        "Matching scheme 'ratio' does not match kernel_id 'CG_gt_quark_PDF_hybrid_NLO', "
+        f"Matching scheme 'ratio' does not match kernel_id '{kernel_id}', "
         "which encodes scheme 'hybrid'."
     ]
 

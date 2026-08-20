@@ -93,7 +93,7 @@ def test_lc_x_ls_window_slices_the_quasi_nodes() -> None:
     assert np.allclose(store["lightcone_ed"].coords["x"], expected)
 
 
-def test_formula_cache_does_not_serve_one_kernel_another_kernels_formula() -> None:
+def test_formula_cache_does_not_serve_one_kernel_another_kernels_formula(tmp_path) -> None:
     from lamet_agent.stages.matching import reporting
 
     # CG_gt_... and GI_gt_... share an operator and a scheme but are different kernels
@@ -110,6 +110,11 @@ def test_formula_cache_does_not_serve_one_kernel_another_kernels_formula() -> No
     monkey = pytest.MonkeyPatch()
     monkey.setattr(reporting, "request_llm_text", fake_request)
     monkey.setattr(reporting, "_fetch_paper_text", lambda *_a, **_k: "paper latex")
+    # Both disk layers have to be neutralized, or the assertion below counts a hit on a
+    # shipped/leftover formula instead of the call it means to count: the bundled
+    # directory is redirected somewhere empty, and the writable one is switched off.
+    monkey.setattr(reporting, "_BUNDLED_FORMULA_DIR", tmp_path / "bundled")
+    monkey.setenv("LAMET_FORMULA_CACHE_DIR", "")
     reporting._FORMULA_CACHE.clear()
     try:
         llm = reporting.FormulaLlm(backend="api", provider="deepseek", api_key="k", model_name="m")
@@ -122,6 +127,84 @@ def test_formula_cache_does_not_serve_one_kernel_another_kernels_formula() -> No
         # The cache still has to work: the same kernel twice is one call.
         again, _ = reporting._llm_kernel_formula("CG_gt_quark_PDF_hybrid_NLO", language="en", llm=llm)
         assert again == "formula for CG" and calls == ["CG", "GI"]
+    finally:
+        monkey.undo()
+        reporting._FORMULA_CACHE.clear()
+
+
+def test_formula_disk_cache_outlives_the_process_and_then_needs_no_llm(tmp_path) -> None:
+    # The whole point of the disk layer: the second run of `lamet-agent` must not repeat
+    # the paper download and the ~27k-token prompt. Simulate a fresh process by clearing
+    # the in-process cache, then make any LLM call an error -- a hit is the only way through.
+    from lamet_agent.stages.matching import reporting
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(reporting, "_BUNDLED_FORMULA_DIR", tmp_path / "bundled")
+    monkey.setenv("LAMET_FORMULA_CACHE_DIR", str(tmp_path / "user"))
+    monkey.setattr(reporting, "_fetch_paper_text", lambda *_a, **_k: "paper latex")
+    monkey.setattr(reporting, "request_llm_text", lambda *_a, **_k: "generated formula")
+    reporting._FORMULA_CACHE.clear()
+    llm = reporting.FormulaLlm(backend="api", provider="deepseek", api_key="k", model_name="m")
+    try:
+        first, paper_used = reporting._llm_kernel_formula(
+            "CG_gt_quark_PDF_hybrid_NLO", language="en", llm=llm
+        )
+        assert (first, paper_used) == ("generated formula", True)
+        assert (tmp_path / "user" / "CG_gt_quark_PDF_hybrid_NLO.en.md").exists()
+
+        reporting._FORMULA_CACHE.clear()  # a new process starts here
+
+        def explode(*_args, **_kwargs):
+            raise AssertionError("a cached formula must not be regenerated")
+
+        monkey.setattr(reporting, "request_llm_text", explode)
+        monkey.setattr(reporting, "_fetch_paper_text", explode)
+        second, second_paper_used = reporting._llm_kernel_formula(
+            "CG_gt_quark_PDF_hybrid_NLO", language="en", llm=llm
+        )
+        # The provenance flag has to survive too, or the report would credit the paper for
+        # a formula derived from the code alone (or the other way round).
+        assert (second, second_paper_used) == ("generated formula", True)
+    finally:
+        monkey.undo()
+        reporting._FORMULA_CACHE.clear()
+
+
+def test_editing_a_kernel_invalidates_its_cached_formula(tmp_path) -> None:
+    # This is what makes shipping the formulas safe. The cached text is keyed by a digest
+    # of the kernel's own source, so flipping one sign in kernels.py must miss the cache
+    # rather than serve a formula that no longer describes the code.
+    from lamet_agent.stages.matching import reporting
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(reporting, "_BUNDLED_FORMULA_DIR", tmp_path / "bundled")
+    monkey.setenv("LAMET_FORMULA_CACHE_DIR", str(tmp_path / "user"))
+    monkey.setattr(reporting, "_fetch_paper_text", lambda *_a, **_k: "paper latex")
+    calls: list[str] = []
+
+    def fake_request(*_args, **kwargs):
+        calls.append("call")
+        return f"formula v{len(calls)}"
+
+    monkey.setattr(reporting, "request_llm_text", fake_request)
+    reporting._FORMULA_CACHE.clear()
+    llm = reporting.FormulaLlm(backend="api", provider="deepseek", api_key="k", model_name="m")
+    try:
+        real_source = reporting._kernel_source("CG_gt_quark_PDF_hybrid_NLO")
+        first, _ = reporting._llm_kernel_formula("CG_gt_quark_PDF_hybrid_NLO", language="en", llm=llm)
+        assert first == "formula v1" and len(calls) == 1
+
+        # Same kernel_id, one character of its implementation changed.
+        monkey.setattr(reporting, "_kernel_source", lambda _kid: real_source + "  # edited")
+        reporting._FORMULA_CACHE.clear()
+        second, _ = reporting._llm_kernel_formula("CG_gt_quark_PDF_hybrid_NLO", language="en", llm=llm)
+        assert second == "formula v2", "an edited kernel must not reuse the old formula"
+        assert len(calls) == 2
+        # ...overwriting its own file rather than dropping a second one beside it: one
+        # kernel is one file, so ordinary editing does not silt up the cache directory.
+        files = list((tmp_path / "user").glob("CG_gt_quark_PDF_hybrid_NLO.en*.md"))
+        assert [f.name for f in files] == ["CG_gt_quark_PDF_hybrid_NLO.en.md"]
+        assert "formula v2" in files[0].read_text(encoding="utf-8")
     finally:
         monkey.undo()
         reporting._FORMULA_CACHE.clear()
@@ -522,11 +605,374 @@ def test_lrr_kernel_registered_square_and_finite() -> None:
         assert KERNEL_REGISTRY[kid].__name__ == kid
 
 
-def test_lrr_kernel_rejects_a_distinct_lightcone_grid() -> None:
-    """The matrix exponential needs a square matrix, so lc and quasi grids must coincide."""
-    import lamet_agent.kernels as K
+def test_rgr_alpha_s_running_reproduces_the_reference_points() -> None:
+    # The whole RGR construction rides on alpha_s(mu), so pin it: the notebook starts from
+    # alpha_s(m_Z) = 0.1179 and runs down with two-loop beta, switching nf at m_b and m_c.
+    from lamet_agent import kernels as K
 
-    x = np.linspace(-2.0, 2.0, 60)
-    x = x[np.abs(x) > 1e-6]
-    with pytest.raises(ValueError, match="square grid|matching grids"):
-        K.GI_gt_quark_PDF_hybrid_LRR_NLO(x, momentum_gev=1.9, zspz=1.0, quasi_y_ls=x[::2])
+    assert K._alpha_s(K._M_Z) == pytest.approx(0.1179, abs=1e-6)
+    # Monotonically growing towards the infrared, and in the right ballpark at the scales
+    # this analysis actually uses.
+    scales = [91.1876, 10.0, 4.18, 2.0, 1.27, 0.8]
+    values = [K._alpha_s(m) for m in scales]
+    assert all(a < b for a, b in zip(values, values[1:])), values
+    assert K._alpha_s(2.0) == pytest.approx(0.30, abs=0.03)
+
+
+def test_rgr_dglap_matrix_conserves_number_and_is_polarization_dependent() -> None:
+    # The plus prescription is implemented as a diagonal subtraction of the column sums,
+    # which is exactly what makes each column integrate to zero -- lose that and the
+    # evolution stops conserving the quark number.
+    import numpy as np
+
+    from lamet_agent import kernels as K
+
+    x = np.linspace(0.02, 1.0, 40)
+    lo, nlo = K._dglap_evolution_matrices(x, K._p_nlo_full_unpolarized)
+    assert np.abs(lo.sum(axis=0)).max() < 1e-12
+    assert np.abs(nlo.sum(axis=0)).max() < 1e-10
+
+    # RGR is not operator universal the way LRR is: the three polarizations carry three
+    # different two-loop splitting functions, which is why gamma^t and gamma^t gamma5 need
+    # separate RGR kernels even though they share one fixed-order coefficient.
+    nu = np.array([0.2, 0.5, 0.8])
+    unpol = K._p_nlo_full_unpolarized(nu)
+    assert not np.allclose(unpol, K._p_nlo_full_helicity(nu))
+    assert not np.allclose(unpol, K._p_nlo_transversity(nu))
+    # Support is 0 <= nu < 1; outside it every splitting function is identically zero.
+    outside = np.array([-0.3, 1.5])
+    for fn in (K._p_qq_lo, K._p_nlo_full_unpolarized, K._p_nlo_full_helicity, K._p_nlo_transversity):
+        assert np.all(fn(outside) == 0.0)
+
+
+def test_rgr_kernel_zeroes_rows_below_the_perturbative_cutoff() -> None:
+    # The paper fixes x_min by alpha_s(2 x P^z) ~ 1. In the matrix that shows up as whole
+    # rows of zeros: a row whose own scale mu0(x) = 2 kappa x P^z is below the cutoff has no
+    # number to report, and reporting one anyway would be the actual error.
+    import numpy as np
+
+    from lamet_agent import kernels as K
+
+    momentum, mu_min, kappa = 3.04, 0.6, 1.0
+    x = np.linspace(-1.0, 1.0, 41) + 1.0 / 40  # offset keeps 0 off the quasi grid
+    matrix = K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(
+        x, momentum_gev=momentum, mu=2.0, quasi_y_ls=x, zspz=3.7
+    )
+    assert np.isfinite(matrix).all()
+
+    alive = np.abs(matrix).sum(axis=1) > 0
+    expected = (2.0 * kappa * x * momentum) >= mu_min
+    assert np.array_equal(alive, expected)
+    # Negative x can never clear the cutoff, so the whole antiquark half stays zero.
+    assert not alive[x < 0].any()
+
+
+def test_rgr_reduces_to_the_fixed_order_row_when_no_evolution_is_needed() -> None:
+    # Sanity anchor for the evolution: when a row's own scale already equals the target mu,
+    # the evolution operator is the identity and RGR must hand back that row of the plain
+    # fixed-order matrix. Any scale-setting or ordering slip breaks this.
+    import numpy as np
+
+    from lamet_agent import kernels as K
+
+    momentum, zspz = 3.04, 3.7
+    x = np.linspace(-1.0, 1.0, 41) + 1.0 / 40
+    index = int(np.argmax(x > 0.3))
+    mu = 2.0 * float(x[index]) * momentum  # this row's mu0 is the target scale exactly
+
+    rgr = K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(x, momentum_gev=momentum, mu=mu, quasi_y_ls=x, zspz=zspz)
+    fixed = K.CG_gt_quark_PDF_hybrid_NLO(x, momentum_gev=momentum, mu=mu, quasi_y_ls=x, zspz=zspz)
+    np.testing.assert_allclose(rgr[index], fixed[index], atol=1e-10)
+
+
+def test_rgr_kernels_are_registered_and_declare_their_resummation() -> None:
+    # A new kernel must be reachable from a manifest and must tell the report that it is not
+    # a plain fixed-order coefficient -- otherwise the formula section would document it as
+    # one, which is precisely the kind of silent wrongness the structure declaration exists
+    # to prevent.
+    from lamet_agent.stages.matching.functions import KERNEL_REGISTRY, is_hybrid_kernel
+
+    ids = sorted(k for k in KERNEL_REGISTRY if "RGR" in k.split("_"))
+    # Five operators x two channels. The real part rides on the hybrid fixed order and the
+    # imaginary part on MSbar, because the paper renormalizes the two parts differently.
+    assert len(ids) == 10, ids
+    assert sum(1 for k in ids if k.endswith("_re_NLO")) == 5, ids
+    for kernel_id in ids:
+        builder = KERNEL_REGISTRY[kernel_id]
+        channel = "re" if kernel_id.endswith("_re_NLO") else "im"
+        scheme = "hybrid" if channel == "re" else "msbar"
+        assert scheme in kernel_id.split("_"), kernel_id
+        assert is_hybrid_kernel(kernel_id) == (channel == "re"), kernel_id
+        # The tag names where the RESUMMATION is derived (arXiv:2209.01236, appendix "A
+        # Method Solving RG Equation"), not where the fixed order comes from -- the same
+        # convention the LRR kernels follow. arXiv:2602.11283 only restates the procedure
+        # in prose and has no numbered equation to cite.
+        assert builder.arxiv_id == "2209.01236", kernel_id
+        assert "RG Equation" in builder.equations, kernel_id
+        structure = builder.matching_structure
+        assert structure["extra_structure"], kernel_id
+        assert "small-x" in structure["extra_note"] or "SMALL-x" in structure["extra_note"]
+
+
+def test_rgr_helicity_does_not_reuse_the_unpolarized_splitting_function() -> None:
+    # arXiv:2602.11283: the real part gives the VALENCE channel for the unpolarized PDF but
+    # the FULL channel for helicity, "since the helicity quasi-distribution is even under
+    # charge conjugation". Valence and full are the two C-parity non-singlet combinations,
+    # and those differ from two loops on -- so the `re` kernels of the two polarizations
+    # must carry different two-loop kernels even though they share one fixed-order
+    # coefficient. Reusing one for the other is a silent physics error, not a refactor.
+    import numpy as np
+
+    from lamet_agent import kernels as K
+
+    nu = np.linspace(0.05, 0.95, 19)
+    unpolarized = K._p_nlo_full_unpolarized(nu)
+    helicity = K._p_nlo_full_helicity(nu)
+    assert not np.allclose(unpolarized, helicity)
+
+    # The whole difference is the C-parity structure: 16 CF (CF - CA/2) [...] plus the
+    # accompanying nf piece. At one loop the two combinations are identical, which is why
+    # only the NLO kernel is polarization dependent here.
+    assert np.allclose(K._p_qq_lo(nu), K._p_qq_lo(nu))
+    difference = helicity - unpolarized
+    assert np.all(np.abs(difference) > 0)
+
+    # And the two RGR kernels really do propagate that difference into the matrix.
+    x = np.linspace(-1.0, 1.0, 41) + 1.0 / 40
+    kwargs = dict(momentum_gev=3.04, mu=2.0, quasi_y_ls=x, zspz=3.7)
+    unpol_matrix = K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(x, **kwargs)
+    heli_matrix = K.CG_gtg5_quark_PDF_hybrid_RGR_re_NLO(x, **kwargs)
+    assert not np.allclose(unpol_matrix, heli_matrix)
+    # The fixed order IS shared, so any difference has to come from the evolution alone.
+    assert np.allclose(
+        K.CG_gt_quark_PDF_hybrid_NLO(x, **kwargs), K.CG_gtg5_quark_PDF_hybrid_NLO(x, **kwargs)
+    )
+
+
+def test_rgr_channels_pair_the_scheme_and_the_c_parity_the_notebook_labelled() -> None:
+    # CG_RGR_kernels.nb labels its own output: it exports
+    # `matching_scale<c>_{valence|full}_<tag>_rgr_...csv`, and those labels -- not guesswork
+    # -- fix which splitting function belongs to which channel. Combined with the paper
+    # ("the real and imaginary parts ... correspond to the valence and full quark channels
+    # respectively", and the helicity quasi-distribution being C-even) this pins the table
+    # below. The pairing is invisible in the output if wrong, so assert it directly.
+    import numpy as np
+
+    from lamet_agent import kernels as K
+
+    x = np.linspace(-1.0, 1.0, 41) + 1.0 / 40
+    hybrid = dict(momentum_gev=3.04, mu=2.0, quasi_y_ls=x, zspz=3.7)
+    msbar = dict(momentum_gev=3.04, mu=2.0, quasi_y_ls=x)
+
+    # Unpolarized and helicity take OPPOSITE C-parity in the same channel, so their real
+    # parts must differ even though their hybrid fixed order is one and the same function.
+    assert np.allclose(
+        K.CG_gt_quark_PDF_hybrid_NLO(x, **hybrid), K.CG_gtg5_quark_PDF_hybrid_NLO(x, **hybrid)
+    )
+    assert not np.allclose(
+        K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(x, **hybrid),
+        K.CG_gtg5_quark_PDF_hybrid_RGR_re_NLO(x, **hybrid),
+    )
+
+    # gamma^z shares gamma^t's hybrid coefficient but has its own MSbar one (Eq. 2.15 adds
+    # 2(1-ksi)_+), so the two agree in the real channel and must not in the imaginary one.
+    assert np.allclose(
+        K.CG_gz_quark_PDF_hybrid_RGR_re_NLO(x, **hybrid),
+        K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(x, **hybrid),
+    )
+    assert not np.allclose(
+        K.CG_gz_quark_PDF_msbar_RGR_im_NLO(x, **msbar),
+        K.CG_gt_quark_PDF_msbar_RGR_im_NLO(x, **msbar),
+    )
+
+    # The valence kernel is shared: the notebook produces the valence exports of BOTH
+    # polarizations with one splitting function.
+    nu = np.linspace(0.05, 0.95, 19)
+    assert np.allclose(K._p_nlo_valence(nu), K._p_nlo_full_unpolarized(nu) + K._c_parity_term(nu))
+
+    # Transversity has one evolution kernel and one fixed order across schemes, so its two
+    # channels coincide numerically; they stay separate ids so a manifest names what it ran.
+    assert np.allclose(
+        K.CG_gtgpg5_quark_PDF_hybrid_RGR_re_NLO(x, **hybrid),
+        K.CG_gtgpg5_quark_PDF_msbar_RGR_im_NLO(x, **msbar),
+    )
+
+
+def test_rgr_kappa_and_mu_min_move_x_min_together() -> None:
+    # kappa and mu_min are not independent knobs: the cutoff is applied to mu0(x) = 2 kappa
+    # x P^z, so the surviving window is x >= mu_min / (2 kappa P^z). A kappa scan for the
+    # systematic budget therefore also moves x_min, and the three variants of a scan do not
+    # share an x range -- worth pinning, because comparing them as if they did is a mistake
+    # the numbers alone will not reveal.
+    import numpy as np
+
+    from lamet_agent import kernels as K
+
+    momentum = 3.04
+    x = np.linspace(-1.0, 1.0, 41) + 1.0 / 40
+    base = dict(momentum_gev=momentum, mu=2.0, quasi_y_ls=x, zspz=3.7)
+
+    def live_window(**overrides):
+        matrix = K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(x, **base, **overrides)
+        alive = np.abs(matrix).sum(axis=1) > 0
+        return alive.sum(), x[alive].min()
+
+    for kappa, mu_min in [(0.71, 0.6), (1.0, 0.6), (1.4, 0.6), (1.0, 0.4), (1.0, 1.0)]:
+        count, x_min = live_window(kappa=kappa, mu_min=mu_min)
+        predicted = mu_min / (2.0 * kappa * momentum)
+        # The first surviving grid point is the first one at or above the predicted x_min.
+        assert x_min >= predicted
+        assert x[x < x_min].max() < predicted
+        assert count > 0
+
+    # Raising kappa lowers x_min; raising mu_min raises it.
+    assert live_window(kappa=1.4)[1] < live_window(kappa=0.71)[1]
+    assert live_window(mu_min=1.0)[1] > live_window(mu_min=0.4)[1]
+
+    # kappa is not only a cutoff: it also changes where the fixed order is evaluated, so the
+    # rows that survive both settings are still different numbers.
+    central = K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(x, **base, kappa=1.0)
+    varied = K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(x, **base, kappa=1.4)
+    shared = (np.abs(central).sum(axis=1) > 0) & (np.abs(varied).sum(axis=1) > 0)
+    assert shared.any()
+    assert not np.allclose(central[shared], varied[shared])
+
+
+def test_rgr_parameters_go_inert_on_a_kernel_that_has_no_per_row_scale() -> None:
+    # kappa and mu_min mean something only to RGR: a fixed-order kernel has no per-row scale
+    # to vary. Such a job runs unchanged rather than failing, so a stage default can carry
+    # the parameters while only some jobs select an RGR kernel. The kernel matrix must be
+    # bit-identical to the one built without them, and the trace records what was dropped.
+    import numpy as np
+
+    from lamet_agent.stages.matching.functions import build_matching_kernel
+
+    y = np.linspace(-1.0, 1.0, 41) + 1.0 / 40
+    args = dict(
+        kernel_id="CG_gt_quark_PDF_hybrid_NLO",
+        momentum_gev=3.04,
+        mu=2.0,
+        zs_fm=0.18,
+        lc_x_ls={"start": 0.0, "stop": 1.0},
+    )
+    plain: dict = {"quasi_y_ls": y}
+    build_matching_kernel(plain, **args)
+
+    with_rgr: dict = {"quasi_y_ls": y}
+    build_matching_kernel(with_rgr, **args, rgr_kappa=1.4, rgr_mu_min_gev=0.9)
+
+    np.testing.assert_array_equal(plain["kernel_matrix"], with_rgr["kernel_matrix"])
+    assert "ignored_params" not in plain["matching_kernel_info"]
+    assert with_rgr["matching_kernel_info"]["ignored_params"] == ["kappa", "mu_min"]
+
+    # An RGR kernel does read them, so the same parameters are not inert everywhere.
+    used: dict = {"quasi_y_ls": y}
+    build_matching_kernel(
+        used,
+        kernel_id="CG_gt_quark_PDF_hybrid_RGR_re_NLO",
+        momentum_gev=3.04, mu=2.0, zs_fm=0.18,
+        lc_x_ls={"start": 0.0, "stop": 1.0},
+        rgr_kappa=1.4, rgr_mu_min_gev=0.9,
+    )
+    assert "ignored_params" not in used["matching_kernel_info"]
+
+
+
+def test_rgr_evolution_operator_keeps_the_notebook_factor_ordering() -> None:
+    # The per-step factors do not commute (alpha_s differs between steps), and the source
+    # notebook composes them with `Dot @@ Table[...]`, i.e. the EARLIEST step leftmost.
+    # Reversing the product changes the operator by only ~1e-6, which reads as rounding --
+    # so pin the ordering rather than trusting a smoke test to notice.
+    import numpy as np
+    from scipy.linalg import expm
+
+    from lamet_agent import kernels as K
+
+    x = np.linspace(0.025, 1.0, 20)
+    evo_lo, evo_nlo = K._dglap_evolution_matrices(x, K._p_nlo_valence)
+    mu_i, mu_f, steps = 4.0, 2.0, 20
+
+    t0, t1 = np.log(mu_i**2), np.log(mu_f**2)
+    dt = (t1 - t0) / steps
+    expected = np.eye(x.size)
+    for index in range(steps):
+        a = K._alpha_s(float(np.exp((t0 + dt * (index + 0.5)) / 2.0))) / (4.0 * np.pi)
+        expected = expected @ expm((a * evo_lo + a**2 * evo_nlo) * dt)
+
+    operator = K._evolution_operator(mu_i, mu_f, evo_lo, evo_nlo, steps)
+    np.testing.assert_allclose(operator, expected, rtol=1e-12, atol=1e-14)
+
+    # The reversed product is genuinely a different matrix, so the assertion above has teeth.
+    reversed_product = np.eye(x.size)
+    for index in range(steps):
+        a = K._alpha_s(float(np.exp((t0 + dt * (index + 0.5)) / 2.0))) / (4.0 * np.pi)
+        reversed_product = expm((a * evo_lo + a**2 * evo_nlo) * dt) @ reversed_product
+    assert not np.allclose(operator, reversed_product, rtol=1e-9, atol=0.0)
+
+
+def test_lrr_accepts_a_light_cone_window_and_narrowing_it_only_selects_rows() -> None:
+    # Two things at once, because they are the same requirement seen from both ends.
+    #
+    # 1) LRR works with lc_x_ls narrower than the quasi grid. C_z is both ADDED to the
+    #    (nx, ny) fixed-order matrix and EXPONENTIATED, and only the second use needs a
+    #    square matrix, so it is built twice -- (nx, ny) for the sum and (ny, ny) for the
+    #    exponent. Which of the two is square is not a choice: LRR.nb writes the exponential
+    #    on the RIGHT, so it contracts the left factor's column -- the quasi -- index.
+    # 2) Narrowing the window SELECTS rows without changing them. Row x is
+    #    f(x) = int dy K(x, y) f~(y): it cannot depend on which other output points were
+    #    requested. That holds only because the plus-prescription subtraction is summed over
+    #    the full quasi grid rather than over the rows that happen to be present.
+    import numpy as np
+
+    from lamet_agent import kernels as K
+
+    y = np.linspace(-2.0, 2.0, 121) + 2.0 / 120
+    x = y[(y > 0) & (y <= 1.0)]
+    rows = np.flatnonzero(np.isin(y, x))
+    kwargs = dict(momentum_gev=3.04, mu=2.0, zspz=2.77)
+
+    with K._quiet_progress():
+        narrow = K.GI_gt_quark_PDF_hybrid_LRR_NLO(x, quasi_y_ls=y, **kwargs)
+        square = K.GI_gt_quark_PDF_hybrid_LRR_NLO(y, quasi_y_ls=y, **kwargs)
+        fixed_narrow = K.GI_gt_quark_PDF_hybrid_NLO(x, quasi_y_ls=y, **kwargs)
+        fixed_square = K.GI_gt_quark_PDF_hybrid_NLO(y, quasi_y_ls=y, **kwargs)
+
+    assert narrow.shape == (x.size, y.size)
+    assert np.isfinite(narrow).all()
+    np.testing.assert_allclose(square[rows], narrow, rtol=0.0, atol=1e-12)
+    # The fixed-order kernel carries the same guarantee -- it shares the plus prescription.
+    np.testing.assert_allclose(fixed_square[rows], fixed_narrow, rtol=0.0, atol=1e-12)
+
+
+def test_rgr_rows_are_coupled_through_dglap_unlike_the_matching_kernel() -> None:
+    # LRR and the fixed order gained the guarantee that narrowing lc_x_ls only SELECTS rows.
+    # RGR deliberately does not, and the difference is physical rather than a discretization
+    # artifact: DGLAP is non-local in x -- evolving f(x) draws on f(x/z) for z < 1, i.e. on
+    # LARGER x -- so the evolution operator genuinely couples the rows of whatever window it
+    # is built on. That is why the paper stresses the evolution is "closed for x in
+    # [x_min, 1]" and why the source notebook builds it on (0, 1] rather than on the full
+    # Fourier range: the window IS part of the physics setup here, and lc_x_ls should be set
+    # to the physical range, not used to crop a result after the fact.
+    import numpy as np
+
+    from lamet_agent import kernels as K
+
+    y = np.linspace(-2.0, 2.0, 121) + 2.0 / 120
+    x = y[(y > 0) & (y <= 1.0)]
+    rows = np.flatnonzero(np.isin(y, x))
+    kwargs = dict(momentum_gev=3.04, mu=2.0, zspz=2.77)
+
+    with K._quiet_progress():
+        narrow = K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(x, quasi_y_ls=y, **kwargs)
+        square = K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(y, quasi_y_ls=y, **kwargs)
+
+    live = np.abs(narrow).sum(axis=1) > 0
+    assert live.any()
+    assert not np.allclose(square[rows][live], narrow[live])
+
+    # The fixed order the two share does obey row selection, so the difference above comes
+    # from the evolution operator alone -- not from the matching kernel underneath it.
+    with K._quiet_progress():
+        fixed_narrow = K.CG_gt_quark_PDF_hybrid_NLO(x, quasi_y_ls=y, **kwargs)
+        fixed_square = K.CG_gt_quark_PDF_hybrid_NLO(y, quasi_y_ls=y, **kwargs)
+    np.testing.assert_allclose(fixed_square[rows], fixed_narrow, rtol=0.0, atol=1e-12)
