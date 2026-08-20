@@ -16,6 +16,11 @@ quasi-distribution while preserving every resampled sample.
    declare it in Fourier defaults or job params. Coordinates and fit ranges are fixed
    in fm; target and parton come from run metadata, and the tool derives the observable.
    Do not override them.
+   For GPD, `bilocal_anchor` records the bilocal layout (default `mid_at_0`),
+   and a nonforward job consumes the exchanged-momentum `hermitian_partner` flow.
+   PDF and DA jobs do not use either GPD-only setting. GPD sector outputs are
+   projected from the full complex paired Fourier result, not from a pre-fit
+   real/imaginary channel selection.
 3. The run tool writes the primary NetCDF, fit-info NetCDF, plots, and registers
    store['output']. A single language-selected stage report is written after all Fourier
    jobs finish. Finish by reporting the NetCDF/plot paths plus selected-range

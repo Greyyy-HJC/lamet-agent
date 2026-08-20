@@ -585,6 +585,72 @@ def test_fourier_manual_projection_is_valid_without_sector() -> None:
     assert not any(item.code.startswith("fourier.sector") for item in diagnostics)
 
 
+@pytest.mark.parametrize("target", ["pdf", "da"])
+def test_bilocal_anchor_is_gpd_only(target: str) -> None:
+    artifact = {
+        "id": "rn",
+        "stage": "renormalization",
+        "path": "rn.nc",
+        "momentum": "PX0PY0PZ2",
+        "volume": "S24T72",
+        "lattice_spacing_fm": 0.1,
+        "hadron": "pion",
+        "polarization": "unpolarized",
+    }
+    payload = _partial_fourier_payload(artifact)
+    payload["metadata"]["target_observable"] = target
+    payload["stages"]["fourier_transform"]["defaults"]["bilocal_anchor"] = "barpsi_at_0"
+    if target == "da":
+        payload["stages"]["fourier_transform"]["defaults"].update(
+            {"sector": "full", "symmetry_guarantee": False, "psi1_flavor_class": "heavy", "psi2_flavor_class": "heavy"}
+        )
+    manifest = AnalysisManifest.model_validate(payload)
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, manifest.stages["fourier_transform"].jobs[0])
+
+    assert any(item.message == "bilocal_anchor is only valid for GPD Fourier transforms." for item in diagnostics)
+
+
+def test_nonforward_gpd_requires_exchanged_hermitian_partner() -> None:
+    target = {
+        "id": "rn_m",
+        "stage": "renormalization",
+        "path": "rn_m.nc",
+        "momentum": "PX0PY0PZ3",
+        "initial_momentum": "PX0PY0PZ2",
+        "final_momentum": "PX0PY0PZ3",
+        "volume": "S24T72",
+        "lattice_spacing_fm": 0.1,
+        "hadron": "pion",
+        "polarization": "unpolarized",
+    }
+    partner = {
+        **target,
+        "id": "rn_p",
+        "path": "rn_p.nc",
+        "momentum": "PX0PY0PZ2",
+        "initial_momentum": "PX0PY0PZ3",
+        "final_momentum": "PX0PY0PZ2",
+    }
+    payload = _partial_fourier_payload(target)
+    payload["metadata"]["target_observable"] = "gpd"
+    payload["inputs"]["artifacts"].append(partner)
+    payload["stages"]["fourier_transform"]["defaults"]["bilocal_anchor"] = "psi_at_0"
+    job = payload["stages"]["fourier_transform"]["jobs"][0]
+    manifest = AnalysisManifest.model_validate(payload)
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, manifest.stages["fourier_transform"].jobs[0])
+    assert any("hermitian_partner" in item.message for item in diagnostics)
+
+    job["inputs"]["hermitian_partner"] = "rn_p"
+    manifest = AnalysisManifest.model_validate(payload)
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, manifest.stages["fourier_transform"].jobs[0])
+    assert not any(item.code == "fourier.inputs.observable_contract" for item in diagnostics)
+
+    payload["inputs"]["artifacts"][1]["initial_momentum"] = "PX0PY0PZ1"
+    manifest = AnalysisManifest.model_validate(payload)
+    diagnostics = validate_stage_diagnostics("fourier_transform", manifest, manifest.stages["fourier_transform"].jobs[0])
+    assert any("exchange the initial and final momenta" in item.message for item in diagnostics)
+
+
 def _pion_pdf_fourier_job():
     manifest = validate_manifest_file(Path("examples/pion_pdf_cg_manifest.json"))
     job = manifest.stages["fourier_transform"].jobs[0]

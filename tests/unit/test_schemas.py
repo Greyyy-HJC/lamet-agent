@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import (
     ListItems,
+    NO_DEFAULT,
     ParameterSpec,
     STAGE_PARAM_CONTRACTS,
     get_stage_parameter_contract,
@@ -256,6 +257,7 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
     sector = contract.schema["sector"]
     quasi_y_ls = contract.schema["quasi_y_ls"]
     gfix = contract.schema["gfix"]
+    bilocal_anchor = contract.schema["bilocal_anchor"]
 
     assert isinstance(sector, ParameterSpec)
     assert sector.required is False
@@ -265,6 +267,9 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
     assert isinstance(gfix, ParameterSpec)
     assert gfix.required is True
     assert gfix.choices == ("CG", "GI")
+    assert isinstance(bilocal_anchor, ParameterSpec)
+    assert bilocal_anchor.choices == ("mid_at_0", "barpsi_at_0", "psi_at_0")
+    assert bilocal_anchor.default is NO_DEFAULT
     assert callable(quasi_y_ls.validator)
     assert sector.choices == ("sea", "valence", "singlet", "full")
     assert "negative-x extension" in sector.physics

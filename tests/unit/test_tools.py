@@ -1135,6 +1135,32 @@ def test_prepare_fourier_args_passes_authoritative_observable_inputs(
     assert args["polarization"] == "unpolarized"
 
 
+def test_prepare_fourier_args_defaults_bilocal_anchor_only_for_gpd(tmp_path: Path) -> None:
+    manifest = _manifest()
+    job = manifest.stages["fourier_transform"].jobs[0]
+    effective = merge_stage_params(manifest.stages["fourier_transform"].defaults, job.params)
+
+    pdf_args = prepare_tool_args(
+        "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
+        effective_params=effective, artifacts_dir=tmp_path, store={"input": SimpleNamespace(attrs={})},
+    )
+    assert "bilocal_anchor" not in pdf_args
+
+    manifest.metadata.target_observable = "gpd"
+    gpd_args = prepare_tool_args(
+        "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
+        effective_params=effective, artifacts_dir=tmp_path, store={"input": SimpleNamespace(attrs={})},
+    )
+    assert gpd_args["bilocal_anchor"] == "mid_at_0"
+
+    effective["bilocal_anchor"] = "psi_at_0"
+    explicit = prepare_tool_args(
+        "run_fourier_transform", {}, manifest=manifest, stage="fourier_transform", job=job,
+        effective_params=effective, artifacts_dir=tmp_path, store={"input": SimpleNamespace(attrs={})},
+    )
+    assert explicit["bilocal_anchor"] == "psi_at_0"
+
+
 def test_prepare_fourier_args_passes_lambda0_gev(tmp_path: Path) -> None:
     manifest = _manifest()
     job = manifest.stages["fourier_transform"].jobs[0]

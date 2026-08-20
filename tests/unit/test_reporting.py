@@ -281,6 +281,11 @@ def test_fourier_gpd_report_records_operator_family_and_projection_limits(
             "final_momentum_gev": 2.0,
             "sector": "sea",
             "part": "both",
+            "bilocal_anchor": "barpsi_at_0",
+            "hermitian_partner_id": "rn_reverse",
+            "gpd_completion_mode": "paired_flow",
+            "delta_momentum_gev": 1.0,
+            "phase_momentum_source": "signed_discrete_momentum",
             "gfix": "GI",
             "order": "LA",
             "y_grid": [-0.5, 0.0, 0.5],
@@ -298,6 +303,10 @@ def test_fourier_gpd_report_records_operator_family_and_projection_limits(
     assert "Current operator" in text
     assert "Parton" in text
     assert "Hadron" in text
+    assert "`barpsi_at_0`" in text
+    assert "`paired_flow`; partner `rn_reverse`" in text
+    assert r"\Delta P_z=1" in text
+    assert r"h_{fi}^{\rm mid}(-z)=h_{if}^{\rm mid}(z)^*" in text
     assert r"\lambda=\bar P^z z_{\rm GeV^{-1}}" in text
 
 

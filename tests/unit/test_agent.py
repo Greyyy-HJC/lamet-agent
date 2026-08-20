@@ -788,7 +788,7 @@ def test_self_renorm_job_fails_when_required_tool_never_succeeds(tmp_path: Path,
         )
 
 
-def _write_renorm_nc(path: Path) -> None:
+def _write_renorm_nc(path: Path, *, scale: float = 1.0) -> None:
     coord = np.arange(0.0, 5.0)
     base_re = np.exp(-0.45 * coord)
     base_im = 0.1 * np.exp(-0.45 * coord)
@@ -796,9 +796,9 @@ def _write_renorm_nc(path: Path) -> None:
         ensemble=None,
         resample="jackknife",
         values=[
-            base_re + 1j * base_im,
-            1.01 * base_re + 0.98j * base_im,
-            0.99 * base_re + 1.02j * base_im,
+            scale * (base_re + 1j * base_im),
+            scale * (1.01 * base_re + 0.98j * base_im),
+            scale * (0.99 * base_re + 1.02j * base_im),
         ],
         dims=("z",),
         coords={"z": coord.tolist()},
@@ -900,7 +900,13 @@ def test_matrix_overlay_generates_re_im_with_x_shift(tmp_path: Path, monkeypatch
     assert np.allclose(x_values[1], [0.03, 1.03])
     assert np.allclose(x_values[2], [-0.03, 0.97])
     assert np.allclose(x_values[3], [0.03, 1.03])
-    assert any("t=1.00" in label and "\\xi=0.33" in label for label in labels)
+    assert any(
+        "P_i^z=2.00" in label
+        and "P_f^z=1.00" in label
+        and "t=1.00" in label
+        and "\\xi=0.33" in label
+        for label in labels
+    )
 
 
 def _write_fourier_nc(path: Path, *, ensemble: str, pz: float) -> None:
@@ -1106,6 +1112,86 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
     assert store["matrix_element_data"].dims == ["z"]
     assert store["input"].attrs["momentum"] == "PX5PY0PZ0"
     assert store["input"].attrs["hadron"] == "pion"
+
+
+def test_hydrate_external_gpd_input_and_partner_from_distinct_files(tmp_path: Path) -> None:
+    target_path = tmp_path / "rn_2to3.nc"
+    partner_path = tmp_path / "rn_3to2.nc"
+    _write_renorm_nc(target_path)
+    _write_renorm_nc(partner_path, scale=2.0)
+    artifacts = [
+        {
+            "id": "rn_2to3",
+            "stage": "renormalization",
+            "path": str(target_path),
+            "momentum": "PX0PY0PZ3",
+            "initial_momentum": "PX0PY0PZ2",
+            "final_momentum": "PX0PY0PZ3",
+            "volume": "S48T64",
+            "lattice_spacing_fm": 0.0574,
+        },
+        {
+            "id": "rn_3to2",
+            "stage": "renormalization",
+            "path": str(partner_path),
+            "momentum": "PX0PY0PZ2",
+            "initial_momentum": "PX0PY0PZ3",
+            "final_momentum": "PX0PY0PZ2",
+            "volume": "S48T64",
+            "lattice_spacing_fm": 0.0574,
+        },
+    ]
+    manifest = AnalysisManifest.model_validate(
+        {
+            "metadata": {
+                "run_id": "partial_gpd",
+                "root_directory": str(tmp_path),
+                "target_observable": "gpd",
+                "parton": "quark",
+                "resample_mode": "jk",
+                "sample_error_mode": "covariance",
+                "random_seed": 1984,
+                "stages": ["fourier_transform"],
+            },
+            "inputs": {"correlators": [], "artifacts": artifacts, "kernels": []},
+            "stages": {
+                "fourier_transform": {
+                    "defaults": {
+                        "order": "LA",
+                        "sector": "full",
+                        "hadron": "pion",
+                        "polarization": "unpolarized",
+                        "quasi_y_ls": {"start": -1.0, "stop": 1.0, "num": 4},
+                    },
+                    "jobs": [
+                        {
+                            "id": "ft_2to3",
+                            "inputs": {"input": "rn_2to3", "hermitian_partner": "rn_3to2"},
+                        }
+                    ],
+                }
+            },
+        }
+    )
+    job = manifest.stages["fourier_transform"].jobs[0]
+    effective_params = merge_stage_params(manifest.stages["fourier_transform"].defaults, job.params)
+    store = {
+        "input": manifest.inputs.artifacts[0],
+        "hermitian_partner": manifest.inputs.artifacts[1],
+    }
+
+    _hydrate_external_artifact_inputs(
+        "fourier_transform",
+        job,
+        manifest,
+        store,
+        effective_params=effective_params,
+        artifacts_dir=tmp_path / "artifacts" / "fourier_transform",
+    )
+
+    assert np.allclose(store["hermitian_partner"].values, 2.0 * store["input"].values)
+    assert store["input"].attrs["initial_momentum"] == "PX0PY0PZ2"
+    assert store["hermitian_partner"].attrs["initial_momentum"] == "PX0PY0PZ3"
 
 
 def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path, monkeypatch) -> None:

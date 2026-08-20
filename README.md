@@ -290,14 +290,29 @@ the same fm convention. Tail scans use `zmin_fm`, `zmax_fm`, and
 `zmax_ext_fm`, while the fit converts internally to GeV$^{-1}$ and the Fourier
 phase to dimensionless Ioffe time.
 
-Quark PDF/GPD jobs support `sea`, `valence`, `singlet`, and `full`. Helicity
-interchanges the real/imaginary channels used by `valence` and `singlet` and
-uses $\Delta q_{\rm ext}(-x)=+\Delta\bar q(x)$; unpolarized and transversity use
+Quark PDF/GPD jobs support `sea`, `valence`, `singlet`, and `full`. For PDF,
+helicity interchanges the real/imaginary channels used by `valence` and
+`singlet`. For GPD, every named sector first fits and reconstructs the full
+complex paired matrix element and performs the Fourier transform; the sector is
+then formed sample by sample from $H(y,\xi)$ and $H(-y,\xi)$. Helicity uses
+$\Delta q_{\rm ext}(-x)=+\Delta\bar q(x)$; unpolarized and transversity use
 $q_{\rm ext}(-x)=-\bar q(x)$. Gluon jobs use `full` only and do not inherit
 quark/antiquark sector semantics. The current gluon tail backend supports the
 unpolarized gluon PDF only; gluon helicity, transversity, and GPD operators can
 carry `polarization` metadata but are not silently mapped onto that
 backend. DA behavior is unchanged.
+
+GPD Fourier jobs may declare the GPD-only parameter `bilocal_anchor` to state
+which point of the bilocal operator is fixed at the origin. Its allowed values
+are `mid_at_0` for
+$\bar\psi(-z/2)\Gamma W(-z/2,z/2)\psi(z/2)$,
+`barpsi_at_0` for $\bar\psi(0)\Gamma W(0,z)\psi(z)$, and `psi_at_0` for
+$\bar\psi(z)\Gamma W(z,0)\psi(0)$. The runtime default is `mid_at_0`; PDF and DA
+manifests must omit this parameter. A nonforward GPD Fourier job also supplies
+`inputs.hermitian_partner`, whose initial and final momenta exchange those of
+`inputs.input`. The two flows reconstruct the negative-$z$ branch through
+$h_{fi}(-z)=h_{if}(z)^*$ for the currently supported Hermitian-current phase
+$\eta_\Gamma=+1$.
 
 ### Per-job hybrid `zs_fm`
 

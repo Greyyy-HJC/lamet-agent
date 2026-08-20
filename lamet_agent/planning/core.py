@@ -1356,10 +1356,19 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 {},
             )
             selected_momentum = {"momentum": momentum} if two_point and momentum is not None else {}
+            nonbreit_momenta = (
+                {
+                    "initial_momentum": params.get("initial_momentum"),
+                    "final_momentum": params.get("final_momentum"),
+                }
+                if str(params.get("fitting_form")) == "NonBreit"
+                else {}
+            )
             return {
                 **two_point,
                 "_gfix_source": "correlator",
                 **selected_momentum,
+                **nonbreit_momenta,
                 **{
                     key: three_point[key]
                     for key in ("hadron", "current_operator", "polarization")
@@ -1367,7 +1376,12 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 },
             }
         resolved: dict[str, Any] = {}
-        for value in (candidate.get("inputs") or {}).values():
+        candidate_inputs = candidate.get("inputs") or {}
+        ordered_roles = ("input", "quasi", "target", "reference", "denominator", "zR")
+        for value in (
+            [candidate_inputs[role] for role in ordered_roles if role in candidate_inputs]
+            + [value for role, value in candidate_inputs.items() if role not in ordered_roles]
+        ):
             for reference in _as_list(value):
                 reference = str(reference)
                 artifact = artifacts.get(reference)
@@ -1446,6 +1460,15 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                 if isinstance(item, dict)
                 and item.get("correlator_id") in set(job.get("correlator_ids", []))
             ]
+            partner_kinematics = {}
+            if stage == "fourier_transform" and isinstance(job.get("inputs"), dict):
+                partner_reference = job["inputs"].get("hermitian_partner")
+                if isinstance(partner_reference, str):
+                    partner_kinematics = derived_metadata(
+                        stage,
+                        {"inputs": {"input": partner_reference}},
+                        {job_id},
+                    )
             context = StageValidationContext(
                 stage=stage,
                 job_id=job_id,
@@ -1458,6 +1481,7 @@ def _stage_parameter_gaps(payload: dict[str, Any], manifest_path: Path | None = 
                     "selected_correlators": selected_correlators,
                     "gfix_source": gfix_source,
                     "inherited_gfix": inherited_gfix,
+                    "partner_kinematics": partner_kinematics,
                 },
                 authored_params=authored_params,
             )

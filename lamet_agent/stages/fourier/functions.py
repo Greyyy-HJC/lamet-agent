@@ -46,6 +46,7 @@ from lamet_agent.core.resampling import (
     sample_value_with_error,
     samples_to_gvar,
 )
+from lamet_agent.manifest import parse_momentum, parse_volume
 from lamet_agent.stages.fourier.reporting import write_fourier_report
 from lamet_agent.stages.fourier.validation import (
     INFERRED_OBSERVABLES,
@@ -315,14 +316,39 @@ def _project_da_symmetry(
     return np.real(rotated) * np.conjugate(phase)
 
 
-def complete_z_negative(lam_ls, re_ls, im_ls, *, im_flip_for_ft=False):
-    """Complete the negative-z branch using Re even and Im odd symmetry."""
+def complete_z_negative(
+    lam_ls,
+    re_ls,
+    im_ls,
+    *,
+    partner_re_ls=None,
+    partner_im_ls=None,
+    im_flip_for_ft=False,
+):
+    """Complete negative z from the same flow or an exchanged GPD flow."""
     lam = np.asarray(lam_ls)
     re = np.asarray(re_ls)
     im = np.asarray(im_ls)
 
     if im_flip_for_ft:
         im = -im
+
+    if partner_re_ls is not None and partner_im_ls is not None:
+        partner_re = np.asarray(partner_re_ls)
+        partner_im = np.asarray(partner_im_ls)
+        if np.isclose(lam[0], 0.0):
+            re = re.copy()
+            im = im.copy()
+            re[0] = 0.5 * (re[0] + partner_re[0])
+            im[0] = 0.5 * (im[0] - partner_im[0])
+            lam_full = np.concatenate([-lam[::-1][:-1], lam])
+            re_full = np.concatenate([partner_re[::-1][:-1], re])
+            im_full = np.concatenate([-partner_im[::-1][:-1], im])
+        else:
+            lam_full = np.concatenate([-lam[::-1], lam])
+            re_full = np.concatenate([partner_re[::-1], re])
+            im_full = np.concatenate([-partner_im[::-1], im])
+        return lam_full, re_full, im_full
 
     if np.isclose(lam[0], 0.0):
         lam_full = np.concatenate([-lam[::-1][:-1], lam])
@@ -1208,6 +1234,7 @@ def _run_one_scheme(
     psi2_flavor_class: str = "heavy",
     executor: ProcessPoolExecutor | None = None,
     workers: int = 1,
+    complete_ft: bool = True,
 ) -> dict[str, Any]:
     zmin, zmax, z_ext_max = _scheme_ranges(scheme, coord)
     label = str(scheme.get("label", f"{gfix}_{order}_{zmin}_{zmax}"))
@@ -1454,13 +1481,14 @@ def _run_one_scheme(
         ext_im_sample = fit_weight * fit_im + (1.0 - fit_weight) * data_im[sample]
         ext_re[sample], ext_im[sample] = _zero_inactive_channel(ext_re_sample, ext_im_sample, part)
 
-        lam_full, re_full, im_full = complete_z_negative(
-            lambda_ext,
-            ext_re[sample],
-            ext_im[sample],
-            im_flip_for_ft=im_flip_for_ft,
-        )
-        ft_re[sample], ft_im[sample] = sum_ft_re_im(lam_full, re_full, im_full, y_grid)
+        if complete_ft:
+            lam_full, re_full, im_full = complete_z_negative(
+                lambda_ext,
+                ext_re[sample],
+                ext_im[sample],
+                im_flip_for_ft=im_flip_for_ft,
+            )
+            ft_re[sample], ft_im[sample] = sum_ft_re_im(lam_full, re_full, im_full, y_grid)
 
     return {
         "label": label,
@@ -1522,6 +1550,9 @@ def run_fourier_workflow(
     hadron: str | None = None,
     psi1_flavor_class: str = "heavy",
     psi2_flavor_class: str = "heavy",
+    partner_re_samples=None,
+    partner_im_samples=None,
+    delta_momentum_gev: float = 0.0,
     workers: int = 1,
 ) -> dict[str, Any]:
     """Run asymptotic extension and Fourier transform for resampled data.
@@ -1550,6 +1581,9 @@ def run_fourier_workflow(
         raise ValueError("re_samples and im_samples must have the same shape")
     if re_mat.shape[1] != len(coord_arr):
         raise ValueError("sample arrays must have one value per coordinate point")
+    partner_re_mat = None if partner_re_samples is None else _as_sample_matrix("partner_re_samples", partner_re_samples)
+    partner_im_mat = None if partner_im_samples is None else _as_sample_matrix("partner_im_samples", partner_im_samples)
+    paired = partner_re_mat is not None and partner_im_mat is not None
 
     observable = _canonical_observable(observable)
     fit_coord = coord_arr * FM_TO_GEV_INV
@@ -1583,21 +1617,48 @@ def run_fourier_workflow(
         for scheme in _progress(schemes, desc="fourier schemes"):
             scheme_order = str(scheme.get("order", order)).upper()
             scheme_prior_width = float(scheme.get("posterior_prior_error_scale", posterior_prior_error_scale))
-            scheme_results.append(
-                _run_one_scheme(
+            primary = _run_one_scheme(
+                coord=coord_arr,
+                fit_coord=fit_coord,
+                ft_scale_over_fit_scale=ft_scale_over_fit_scale,
+                re_samples=re_mat,
+                im_samples=im_mat,
+                y_grid=y_arr,
+                scheme=scheme,
+                gfix=gfix,
+                order=scheme_order,
+                observable=observable,
+                im_flip_for_ft=im_flip_for_ft,
+                phase_scale=phase_scale,
+                phase_prime_scale=phase_prime_scale,
+                resample_mode=resample_mode,
+                Lambda0_gev=Lambda0_gev,
+                posterior_prior_error_scale=scheme_prior_width,
+                sample_error_mode=sample_error_mode,
+                part=part,
+                sector=sector,
+                hadron=hadron,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
+                executor=sample_executor,
+                workers=workers,
+                complete_ft=not paired,
+            )
+            if paired:
+                partner = _run_one_scheme(
                     coord=coord_arr,
                     fit_coord=fit_coord,
                     ft_scale_over_fit_scale=ft_scale_over_fit_scale,
-                    re_samples=re_mat,
-                    im_samples=im_mat,
+                    re_samples=partner_re_mat,
+                    im_samples=partner_im_mat,
                     y_grid=y_arr,
                     scheme=scheme,
                     gfix=gfix,
                     order=scheme_order,
                     observable=observable,
-                    im_flip_for_ft=im_flip_for_ft,
-                    phase_scale=phase_scale,
-                    phase_prime_scale=phase_prime_scale,
+                    im_flip_for_ft=False,
+                    phase_scale=float(final_momentum_gev or 0.0),
+                    phase_prime_scale=float(momentum_gev or 0.0),
                     resample_mode=resample_mode,
                     Lambda0_gev=Lambda0_gev,
                     posterior_prior_error_scale=scheme_prior_width,
@@ -1609,10 +1670,49 @@ def run_fourier_workflow(
                     psi2_flavor_class=psi2_flavor_class,
                     executor=sample_executor,
                     workers=workers,
+                    complete_ft=False,
                 )
-            )
-            scheme_results[-1]["order"] = scheme_order
-            scheme_results[-1]["posterior_prior_error_scale"] = scheme_prior_width
+                phase = np.exp(-0.5j * float(delta_momentum_gev) * primary["z_ext"])[None, :]
+                target_centered = (
+                    primary["extended_re_samples"] + 1j * primary["extended_im_samples"]
+                ) * phase
+                partner_centered = (
+                    partner["extended_re_samples"] + 1j * partner["extended_im_samples"]
+                ) * np.conjugate(phase)
+                primary["extended_re_samples"] = np.real(target_centered)
+                primary["extended_im_samples"] = np.imag(target_centered)
+                primary["partner_extended_re_samples"] = np.real(partner_centered)
+                primary["partner_extended_im_samples"] = np.imag(partner_centered)
+                for sample in range(re_mat.shape[0]):
+                    lam_full, re_full, im_full = complete_z_negative(
+                        primary["lambda_ext"],
+                        np.real(target_centered[sample]),
+                        np.imag(target_centered[sample]),
+                        partner_re_ls=np.real(partner_centered[sample]),
+                        partner_im_ls=np.imag(partner_centered[sample]),
+                    )
+                    primary["ft_re_samples"][sample], primary["ft_im_samples"][sample] = sum_ft_re_im(
+                        lam_full, re_full, im_full, y_arr
+                    )
+                primary["tail_fit_success_samples"] &= partner["tail_fit_success_samples"]
+                primary["fit_log_gbf"] += partner["fit_log_gbf"]
+                primary["target_fit_chi2"] = primary["fit_chi2"].copy()
+                primary["target_fit_dof"] = primary["fit_dof"].copy()
+                primary["fit_chi2"] += partner["fit_chi2"]
+                primary["fit_dof"] += partner["fit_dof"]
+                primary["fit_q"] = np.minimum(primary["fit_q"], partner["fit_q"])
+                primary["mean_fit_chi2"] += partner["mean_fit_chi2"]
+                primary["mean_fit_dof"] += partner["mean_fit_dof"]
+                primary["mean_fit_q"] = min(primary["mean_fit_q"], partner["mean_fit_q"])
+                primary["mean_fit_logGBF"] += partner["mean_fit_logGBF"]
+                primary["fit_failures"] += partner["fit_failures"]
+                primary["partner_fit_chi2"] = partner["fit_chi2"]
+                primary["partner_fit_dof"] = partner["fit_dof"]
+                primary["partner_fit_q"] = partner["fit_q"]
+                primary["partner_fit_log_gbf"] = partner["fit_log_gbf"]
+            primary["order"] = scheme_order
+            primary["posterior_prior_error_scale"] = scheme_prior_width
+            scheme_results.append(primary)
     finally:
         if owned_executor is not None:
             owned_executor.shutdown()
@@ -1770,8 +1870,22 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
                 "polarization": str(result.get("polarization", "unpolarized")),
             }
         )
+    if str(result.get("target_observable", "")).lower() == "gpd":
+        attrs.update(
+            {
+                "bilocal_anchor": str(result.get("bilocal_anchor", "mid_at_0")),
+                "hermitian_partner_id": str(result.get("hermitian_partner_id", "")),
+                "hermiticity_phase": float(result.get("hermiticity_phase", 1.0)),
+                "gpd_completion_mode": str(result.get("gpd_completion_mode", "single_flow")),
+                "delta_momentum_gev": float(result.get("delta_momentum_gev", 0.0)),
+                "phase_momentum_source": str(result.get("phase_momentum_source", "")),
+                "sector_projection_mode": str(result.get("sector_projection_mode", "full_complex")),
+            }
+        )
     for key in (
         "momentum",
+        "initial_momentum",
+        "final_momentum",
         "volume",
         "bz_direction",
         "ensemble",
@@ -1853,33 +1967,6 @@ def load_renormalized_matrix_element_samples(
     resample_mode: str = "bootstrap",
 ) -> dict[str, Any]:
     """Load renormalized coordinate-space matrix-element samples from NPZ or HDF5."""
-    existing = store.get("matrix_element_data")
-    if isinstance(existing, EnsembleData):
-        legacy = ensemble_data_to_legacy_arrays(existing)
-        out = "matrix_element"
-        stored = store.get(out, {})
-        fmt = stored.get("input_format", "nc") if isinstance(stored, dict) else "nc"
-        group_name = stored.get("h5_group") if isinstance(stored, dict) else None
-        store[out] = {
-            **legacy,
-            "path": str(path),
-            "input_format": fmt,
-            "resample_mode": existing.resample,
-        }
-        if group_name is not None:
-            store[out]["h5_group"] = group_name
-        return {
-            "out": out,
-            "data": "matrix_element_data",
-            "input_format": fmt,
-            "h5_group": group_name,
-            "resample_mode": existing.resample,
-            "n_coord": int(len(legacy["coord"])),
-            "n_sample": int(legacy["re_samples"].shape[0]),
-            "re_shape": list(legacy["re_samples"].shape),
-            "im_shape": list(legacy["im_samples"].shape),
-        }
-
     matrix_element_data, fmt, group_name = _load_matrix_element_data(
         path=path,
         input_format=input_format,
@@ -2086,6 +2173,19 @@ def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any], source_ens
                     "polarization": str(result.get("polarization", "unpolarized")),
                 }
                 if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}
+                else {}
+            ),
+            **(
+                {
+                    "bilocal_anchor": str(result.get("bilocal_anchor", "mid_at_0")),
+                    "hermitian_partner_id": str(result.get("hermitian_partner_id", "")),
+                    "hermiticity_phase": float(result.get("hermiticity_phase", 1.0)),
+                    "gpd_completion_mode": str(result.get("gpd_completion_mode", "single_flow")),
+                    "delta_momentum_gev": float(result.get("delta_momentum_gev", 0.0)),
+                    "phase_momentum_source": str(result.get("phase_momentum_source", "")),
+                    "sector_projection_mode": str(result.get("sector_projection_mode", "full_complex")),
+                }
+                if str(result.get("target_observable", "")).lower() == "gpd"
                 else {}
             ),
             "psi1_flavor_class": str(result.get("psi1_flavor_class", "heavy")),
@@ -2573,6 +2673,8 @@ def run_fourier_transform(
     parton: str,
     hadron: str,
     momentum: str | None = None,
+    initial_momentum: str | None = None,
+    final_momentum: str | None = None,
     volume: str | None = None,
     bz_direction: str | None = None,
     momentum_gev: float | None = None,
@@ -2590,6 +2692,8 @@ def run_fourier_transform(
     sector: str | None = None,
     current_operator: str | None = None,
     polarization: str | None = None,
+    bilocal_anchor: str | None = None,
+    hermitian_partner_id: str | None = None,
     psi1_flavor_class: str | None = None,
     psi2_flavor_class: str | None = None,
     save_path: str | None = None,
@@ -2614,6 +2718,8 @@ def run_fourier_transform(
     psi1_flavor_class = str(psi1_flavor_class or "").strip().lower()
     psi2_flavor_class = str(psi2_flavor_class or "").strip().lower()
     target = str(target_observable).strip().lower()
+    if target == "gpd":
+        bilocal_anchor = str(bilocal_anchor or "mid_at_0")
     if target in {"pdf", "gpd"}:
         hadron = "nucleon" if hadron == "proton" else hadron
         public_observable = INFERRED_OBSERVABLES[(target, parton, hadron)]
@@ -2629,7 +2735,9 @@ def run_fourier_transform(
             sector = "full"
         if parton == "gluon":
             sector, part, output_scale, im_flip_for_ft = "full", "both", 1.0, False
-        elif target in {"pdf", "gpd"}:
+        elif target == "gpd":
+            part, output_scale, im_flip_for_ft = "both", 1.0, False
+        elif target == "pdf":
             part, output_scale, im_flip_for_ft = {
                 "valence": (("im" if polarization == "helicity" else "re"), 2.0, False),
                 "singlet": (("re" if polarization == "helicity" else "im"), 2.0, False),
@@ -2643,11 +2751,11 @@ def run_fourier_transform(
             sector, part, output_scale, im_flip_for_ft = "full", "both", 1.0, False
         else:
             sector = "manual"
-    fit_sector = "full" if sector == "sea" else sector
-    matrix_element_data = store.get("matrix_element_data")
-    if matrix_element_data is None:
-        matrix_element_data = store["input"]
-        store["matrix_element_data"] = matrix_element_data
+    fit_sector = "full" if target == "gpd" or sector == "sea" else sector
+    matrix_element_data = store.get("input")
+    if not isinstance(matrix_element_data, EnsembleData):
+        matrix_element_data = store["matrix_element_data"]
+    store["matrix_element_data"] = matrix_element_data
     if zs_fm is None:
         upstream_zs = getattr(matrix_element_data, "attrs", {}).get("zs_fm")
         if upstream_zs not in {None, ""}:
@@ -2656,6 +2764,48 @@ def run_fourier_transform(
     sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
     matrix_element = ensemble_data_to_legacy_arrays(matrix_element_data)
     coord_arr = np.asarray(matrix_element["coord"], dtype=float)
+    partner_data = store.get("hermitian_partner") if target == "gpd" else None
+    partner_matrix = ensemble_data_to_legacy_arrays(partner_data) if isinstance(partner_data, EnsembleData) else None
+    delta_momentum_gev = float(final_momentum_gev or 0.0) - float(momentum_gev or 0.0)
+    phase_momentum_source = "physical_magnitude_fallback"
+    if initial_momentum and final_momentum and volume and lattice_spacing_fm and bz_direction:
+        initial_components = parse_momentum(initial_momentum)
+        final_components = parse_momentum(final_momentum)
+        spatial_extent, _ = parse_volume(volume)
+        momentum_unit = 2.0 * np.pi * HBAR_C_GEV_FM / (spatial_extent * float(lattice_spacing_fm))
+        axes = {"X": 0, "Y": 1, "Z": 2}
+        delta_momentum_gev = momentum_unit * sum(
+            final_components[axes[axis]] - initial_components[axes[axis]] for axis in str(bz_direction)
+        )
+        phase_momentum_source = "signed_discrete_momentum"
+    partner_re_samples = None
+    partner_im_samples = None
+    target_mid_samples = None
+    partner_mid_samples = None
+    if target == "gpd":
+        target_raw = np.asarray(matrix_element["re_samples"]) + 1j * np.asarray(matrix_element["im_samples"])
+        partner_raw = (
+            np.asarray(partner_matrix["re_samples"]) + 1j * np.asarray(partner_matrix["im_samples"])
+            if partner_matrix is not None
+            else None
+        )
+        phase = np.exp(0.5j * delta_momentum_gev * coord_arr * FM_TO_GEV_INV)[None, :]
+        if bilocal_anchor == "mid_at_0":
+            target_endpoint = target_raw * phase
+            partner_endpoint = partner_raw * np.conjugate(phase) if partner_raw is not None else None
+        elif bilocal_anchor == "barpsi_at_0":
+            target_endpoint = target_raw
+            partner_endpoint = partner_raw
+        else:
+            target_endpoint = np.conjugate(partner_raw) if partner_raw is not None else np.conjugate(target_raw)
+            partner_endpoint = np.conjugate(target_raw) if partner_raw is not None else None
+        matrix_element["re_samples"] = np.real(target_endpoint)
+        matrix_element["im_samples"] = np.imag(target_endpoint)
+        if partner_endpoint is not None:
+            partner_re_samples = np.real(partner_endpoint)
+            partner_im_samples = np.imag(partner_endpoint)
+        target_mid_samples = target_endpoint * np.conjugate(phase)
+        partner_mid_samples = partner_endpoint * phase if partner_endpoint is not None else None
     if target == "da" and not isinstance(symmetry_guarantee, bool):
         raise ValueError("DA Fourier transforms require symmetry_guarantee")
     if target == "da" and (not psi1_flavor_class or not psi2_flavor_class):
@@ -2697,6 +2847,29 @@ def run_fourier_transform(
             psi2_flavor_class=psi2_flavor_class,
             existing=scan_spec,
         )
+        if partner_re_samples is not None and partner_im_samples is not None:
+            partner_scan = _auto_scheme_scan(
+                coord=coord_arr,
+                re_samples=np.asarray(partner_re_samples, dtype=float),
+                im_samples=np.asarray(partner_im_samples, dtype=float),
+                gfix=gfix,
+                order=range_order,
+                observable=observable,
+                momentum_gev=final_momentum_gev,
+                final_momentum_gev=momentum_gev,
+                resample_mode=resample_mode,
+                sample_error_mode=sample_error_mode,
+                Lambda0_gev=float(Lambda0_gev),
+                part=part,
+                sector=fit_sector,
+                hadron=hadron,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
+                existing={"model_average": True, **dict(scheme_scan)},
+            )
+            scan_spec["zmin_fm"] = sorted(set(scan_spec["zmin_fm"]) | set(partner_scan["zmin_fm"]))
+            scan_spec["zmax_fm"] = sorted(set(scan_spec["zmax_fm"]) | set(partner_scan["zmax_fm"]))
+            scan_spec["zmax_ext_fm"] = max(float(scan_spec["zmax_ext_fm"]), float(partner_scan["zmax_ext_fm"]))
         auto_scheme_scan = scan_spec
     scheme_scan = scan_spec
     schemes = _generate_scan_schemes(scheme_scan)
@@ -2728,8 +2901,7 @@ def run_fourier_transform(
     candidate_labels = [str(scheme.get("label", f"scheme_{idx}")) for idx, scheme in enumerate(schemes)]
     candidate_qualities = []
     for scheme in schemes:
-        candidate_qualities.append(
-            fit_tail_quality_for_mean(
+        quality = fit_tail_quality_for_mean(
                 matrix_element["coord"],
                 matrix_element["re_samples"],
                 matrix_element["im_samples"],
@@ -2750,7 +2922,36 @@ def run_fourier_transform(
                 psi1_flavor_class=psi1_flavor_class,
                 psi2_flavor_class=psi2_flavor_class,
             )
-        )
+        if partner_re_samples is not None and partner_im_samples is not None:
+            partner_quality = fit_tail_quality_for_mean(
+                matrix_element["coord"],
+                partner_re_samples,
+                partner_im_samples,
+                zmin=float(scheme["zmin"]),
+                zmax=float(scheme["zmax"]),
+                gfix=gfix,
+                order=range_order,
+                observable=observable,
+                momentum_gev=final_momentum_gev,
+                final_momentum_gev=momentum_gev,
+                resample_mode=resample_mode,
+                Lambda0_gev=float(Lambda0_gev),
+                posterior_prior_error_scale=range_prior_width,
+                sample_error_mode=sample_error_mode,
+                part=part,
+                sector=fit_sector,
+                hadron=hadron,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
+            )
+            quality = {
+                **quality,
+                "tail_fit_success": bool(quality["tail_fit_success"] and partner_quality["tail_fit_success"]),
+                "chi2_dof": max(float(quality["chi2_dof"]), float(partner_quality["chi2_dof"])),
+                "q_value": min(float(quality["q_value"]), float(partner_quality["q_value"])),
+                "logGBF": float(quality["logGBF"]) + float(partner_quality["logGBF"]),
+            }
+        candidate_qualities.append(quality)
     candidate_chi2 = [float(item["chi2_dof"]) for item in candidate_qualities]
     candidate_q = [float(item["q_value"]) for item in candidate_qualities]
     candidate_log_gbf = [float(item["logGBF"]) for item in candidate_qualities]
@@ -2819,12 +3020,15 @@ def run_fourier_transform(
         model_scheme["order"] = spec["order"]
         model_scheme["posterior_prior_error_scale"] = spec["prior_width"]
         schemes.append(model_scheme)
-    sea_projection = sector == "sea"
+    gpd_sector_projection = target == "gpd" and sector in {"sea", "valence", "singlet"}
+    requested_y = np.asarray(y_values, dtype=float)
+    workflow_y = np.sort(np.unique(np.concatenate([requested_y, -requested_y]))) if gpd_sector_projection else requested_y
+    sea_projection = target != "gpd" and sector == "sea"
     result = run_fourier_workflow(
         matrix_element["coord"],
         matrix_element["re_samples"],
         matrix_element["im_samples"],
-        -np.asarray(y_values, dtype=float) if sea_projection else y_values,
+        -requested_y if sea_projection else workflow_y,
         schemes=schemes,
         gfix=gfix,
         order=order,
@@ -2841,11 +3045,16 @@ def run_fourier_transform(
         hadron=hadron,
         psi1_flavor_class=psi1_flavor_class,
         psi2_flavor_class=psi2_flavor_class,
+        partner_re_samples=partner_re_samples,
+        partner_im_samples=partner_im_samples,
+        delta_momentum_gev=delta_momentum_gev,
         workers=workers,
     )
     result["resample_mode"] = resample_mode
     result["sample_error_mode"] = sample_error_mode
     result["momentum"] = momentum
+    result["initial_momentum"] = initial_momentum
+    result["final_momentum"] = final_momentum
     result["volume"] = volume
     result["bz_direction"] = bz_direction
     result["momentum_gev"] = momentum_gev
@@ -2856,6 +3065,19 @@ def run_fourier_transform(
     result["symmetry_guarantee"] = bool(target == "da" and symmetry_guarantee)
     result["sector"] = sector
     result["target_observable"] = target
+    if target == "gpd":
+        result["bilocal_anchor"] = bilocal_anchor
+        result["hermitian_partner_id"] = hermitian_partner_id or ""
+        result["hermiticity_phase"] = 1.0
+        result["gpd_completion_mode"] = "paired_flow" if partner_matrix is not None else "single_flow"
+        result["delta_momentum_gev"] = delta_momentum_gev
+        result["phase_momentum_source"] = phase_momentum_source
+        result["sector_projection_mode"] = "full_complex"
+        result["plot_target_re_samples"] = np.real(target_mid_samples)
+        result["plot_target_im_samples"] = np.imag(target_mid_samples)
+        if partner_mid_samples is not None:
+            result["plot_partner_re_samples"] = np.real(partner_mid_samples)
+            result["plot_partner_im_samples"] = np.imag(partner_mid_samples)
     if target in {"pdf", "gpd"}:
         result["observable_backend"] = OBSERVABLE_BACKENDS.get(str(result.get("observable", "")), "")
         result["observable"] = public_observable
@@ -2875,6 +3097,25 @@ def run_fourier_transform(
     result["workers"] = int(workers)
     result["ensemble"] = str(ensemble or "")
     result.update(candidate_diagnostics)
+    if gpd_sector_projection:
+        evaluated_y = np.asarray(result["y_grid"], dtype=float)
+        direct = np.asarray([int(np.argmin(np.abs(evaluated_y - value))) for value in requested_y], dtype=int)
+        reflected = np.asarray([int(np.argmin(np.abs(evaluated_y + value))) for value in requested_y], dtype=int)
+        sea_sign = 1.0 if polarization == "helicity" else -1.0
+        for scheme_result in result["scheme_results"]:
+            full = np.asarray(scheme_result["ft_re_samples"]) + 1j * np.asarray(scheme_result["ft_im_samples"])
+            if sector == "sea":
+                projected = sea_sign * full[:, reflected]
+            elif sector == "valence":
+                projected = full[:, direct] - sea_sign * full[:, reflected]
+            else:
+                projected = full[:, direct] + sea_sign * full[:, reflected]
+            scheme_result["ft_re_samples"] = np.real(projected)
+            scheme_result["ft_im_samples"] = np.imag(projected)
+        result["y_grid"] = requested_y
+        result["ft_re_samples"] = np.asarray([item["ft_re_samples"] for item in result["scheme_results"]])
+        result["ft_im_samples"] = np.asarray([item["ft_im_samples"] for item in result["scheme_results"]])
+        result["sector_projection_mode"] = "post_ft_signed_y"
     if auto_scheme_scan is not None:
         result["auto_scheme_scan"] = auto_scheme_scan
     _apply_sample_fit_model_average(
@@ -2934,6 +3175,8 @@ def run_fourier_transform(
         "selected_range_label": result.get("selected_range_label"),
         "output_scale": result.get("output_scale", 1.0),
         "sector": result.get("sector", sector),
+        "bilocal_anchor": result.get("bilocal_anchor"),
+        "hermitian_partner_id": result.get("hermitian_partner_id"),
         **(
             {
                 "observable": result.get("observable"),
@@ -2988,6 +3231,14 @@ def summarize_fourier_result(
                 "polarization": data.get("polarization"),
             }
         )
+    if str(data.get("target_observable", "")).lower() == "gpd":
+        summary.update(
+            {
+                "bilocal_anchor": data.get("bilocal_anchor", "mid_at_0"),
+                "hermitian_partner_id": data.get("hermitian_partner_id", ""),
+                "gpd_completion_mode": data.get("gpd_completion_mode", "single_flow"),
+            }
+        )
     store[out] = summary
     return {"out": out, **summary}
 
@@ -3034,12 +3285,17 @@ def plot_fourier_extension_quality_result(
     re_output = _artifact_path(save_path, default_name="fourier_re.pdf", artifacts_dir=artifacts_dir)
     im_stem = f"{re_output.stem[:-3]}_im" if re_output.stem.endswith("_re") else f"{re_output.stem}_im"
     im_output = re_output.with_name(f"{im_stem}.pdf")
+    target_re = data.get("plot_target_re_samples", matrix_element["re_samples"])
+    target_im = data.get("plot_target_im_samples", matrix_element["im_samples"])
+    partner_re = data.get("plot_partner_re_samples")
+    partner_im = data.get("plot_partner_im_samples")
     fig, _ = plot_fourier_extension_quality(
         matrix_element["coord"],
-        matrix_element["re_samples"],
+        target_re,
         data,
         scheme_index=scheme_index,
         part="re",
+        partner_samples=partner_re,
         momentum_gev=data.get("momentum_gev"),
         save_path=re_output,
         title=title,
@@ -3049,10 +3305,11 @@ def plot_fourier_extension_quality_result(
     plt.close(fig)
     fig, _ = plot_fourier_extension_quality(
         matrix_element["coord"],
-        matrix_element["im_samples"],
+        target_im,
         data,
         scheme_index=scheme_index,
         part="im",
+        partner_samples=partner_im,
         momentum_gev=data.get("momentum_gev"),
         save_path=im_output,
         title=title,

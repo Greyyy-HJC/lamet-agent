@@ -581,6 +581,8 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
                     "hadron",
                     "gfix",
                     "bz_direction",
+                    "initial_momentum",
+                    "final_momentum",
                     "current_operator",
                     "polarization",
                     "observable",

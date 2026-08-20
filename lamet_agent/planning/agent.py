@@ -602,10 +602,10 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
                 for job in jobs:
                     if not isinstance(job, dict):
                         continue
-                    if input_patch:
+                    if input_patch and len(jobs) == 1:
                         before = copy.deepcopy(job.get("inputs"))
-                        job["inputs"] = copy.deepcopy(input_patch)
-                        edits.append({"path": f"stages.{stage}.jobs.{job.get('id', '')}.inputs", "old": before, "new": copy.deepcopy(input_patch), "note": f"Applied {bucket} stage input choices."})
+                        job["inputs"] = {**(before or {}), **copy.deepcopy(input_patch)}
+                        edits.append({"path": f"stages.{stage}.jobs.{job.get('id', '')}.inputs", "old": before, "new": copy.deepcopy(job["inputs"]), "note": f"Applied {bucket} stage input choices."})
                     if job_param_patch:
                         params = job.setdefault("params", {})
                         before = copy.deepcopy(params)

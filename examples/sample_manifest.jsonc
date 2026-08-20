@@ -280,6 +280,7 @@
         // This full chain inherits gfix from the selected correlator.
         // "polarization": "unpolarized", // required for PDF/GPD if upstream 3pt provenance is absent
         // "hadron": "pion", // required when no upstream correlator/artifact supplies it
+        // "bilocal_anchor": "mid_at_0", // GPD only: mid_at_0/barpsi_at_0/psi_at_0; omitted GPD default is mid_at_0
         // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class
         // "psi2_flavor_class": "heavy",
         // "zmin_shift": 1, // optional; clone low/high tail-window systematics (contract default 0 = off)
@@ -309,6 +310,10 @@
           "inputs": { "input": "rn_p5" },
           "params": {}
         }
+        // Nonforward GPD example (the partner must exchange initial/final momenta):
+        // { "id": "ft_gpd_nonbreit",
+        //   "inputs": { "input": "rn_gpd_2to3", "hermitian_partner": "rn_gpd_3to2" },
+        //   "params": { "bilocal_anchor": "mid_at_0" } }
       ]
     },
     "perturbative_matching": {

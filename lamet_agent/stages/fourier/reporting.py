@@ -577,6 +577,25 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     elif parton == "gluon":
         intro += " Gluon operator families use only the full complex Fourier result; quark/antiquark sector projections are not applied."
         meaning = "`full` preserves the gluon result without assigning quark `sea`, `valence`, or `singlet` semantics."
+    elif target == "gpd":
+        sign = "+" if polarization == "helicity" else "-"
+        negative_y_relation = (
+            "$\\Delta q_{\\rm ext}(-x)=+\\Delta\\bar q(x)$"
+            if polarization == "helicity"
+            else "$q_{\\rm ext}(-x)=-\\bar q(x)$"
+        )
+        intro += (
+            " GPD sectors are constructed after the full complex paired reconstruction and Fourier transform; "
+            "no real or imaginary coordinate-space channel is discarded before fitting. "
+            f"The signed-extension convention is {negative_y_relation}."
+        )
+        meaning = {
+            "sea": f"`sea` returns $\\bar H(y,\\xi)={sign}H(-y,\\xi)$.",
+            "valence": f"`valence` returns $H(y,\\xi){'-' if sign == '+' else '+'}H(-y,\\xi)$.",
+            "singlet": f"`singlet` returns $H(y,\\xi){'+' if sign == '+' else '-'}H(-y,\\xi)$ per flavor; a strict flavor singlet also sums over flavors.",
+            "full": "`full` preserves the complete complex $H(y,\\xi)$ reconstructed from the paired flows.",
+        }.get(sector, "The selected part is reported without an additional named projection.")
+        meaning += " The upper sign is the helicity convention; unpolarized and transversity use the lower sign."
     elif polarization == "helicity":
         intro += " The helicity convention is $\\Delta q_{\\rm ext}(-x)=+\\Delta\\bar q(x)$."
         meaning = {
@@ -602,6 +621,18 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             "transversity": ("the tensor family $H_T,E_T,\\widetilde H_T,\\widetilde E_T$ for a spin-$1/2$ hadron", "the tensor-GPD"),
         }.get(polarization, ("the recorded operator family", "the corresponding invariant-GPD"))
         meaning += f" This run labels {family}, but the input is a projected quasi-GPD matrix element; `polarization` alone does not perform {decomposition} decomposition."
+        anchor = str(result.get("bilocal_anchor", "mid_at_0"))
+        completion = str(result.get("gpd_completion_mode", "single_flow"))
+        partner = str(result.get("hermitian_partner_id", ""))
+        meaning += (
+            f" The input uses `bilocal_anchor={anchor}` and is converted to the centered convention with "
+            "$h_{fi}^{\\rm mid}(z)=e^{-i(P_f^z-P_i^z)z/2}h_{fi}^{\\bar\\psi@0}(z)$."
+        )
+        if completion == "paired_flow":
+            meaning += (
+                f" Its negative-$z$ branch is reconstructed from the exchanged-flow partner `{partner}` through "
+                "$h_{fi}^{\\rm mid}(-z)=h_{if}^{\\rm mid}(z)^*$ for the supported Hermitian current phase $\\eta_\\Gamma=+1$."
+            )
         if sector == "sea":
             meaning += " The antiquark interpretation applies only in the negative-$x$ DGLAP region; the ERBL region $|x|<|\\xi|$ is a quark-antiquark amplitude, not a pure sea density."
     if truncated:
@@ -799,6 +830,16 @@ def _settings_table(
             ("Parton", f"`{result.get('parton', 'not recorded')}`"),
             ("Hadron", f"`{result.get('hadron', 'not recorded')}`"),
         ]
+    if str(result.get("target_observable", "")).lower() == "gpd":
+        partner = str(result.get("hermitian_partner_id", "")) or "not used"
+        rows[1:1] = [
+            ("Bilocal anchor", f"`{result.get('bilocal_anchor', 'mid_at_0')}`"),
+            ("Negative-z completion", f"`{result.get('gpd_completion_mode', 'single_flow')}`; partner `{partner}`"),
+            (
+                "Signed momentum transfer",
+                f"$\\Delta P_z={_fmt(result.get('delta_momentum_gev'))}$ GeV from `{result.get('phase_momentum_source', 'not recorded')}`",
+            ),
+        ]
     if observable == "meson_quasi_da":
         rows.insert(2, ("DA flavor classes", f"`psi1={result.get('psi1_flavor_class', 'heavy')}`, `psi2={result.get('psi2_flavor_class', 'heavy')}`"))
         rows.insert(3, ("DA symmetry guarantee", f"`symmetry_guarantee={str(bool(result.get('symmetry_guarantee', False))).lower()}`"))
@@ -830,6 +871,13 @@ def _artifact_field_table(kind: str, *, language: str, target_observable: str = 
                 ("attrs `observable`, `observable_backend`, `parton`, `hadron`, `current_operator`, `polarization`, `sector`", "Resolved observable, numerical tail backend, operator provenance, and physics projection."),
                 ("attrs `gfix`, `order`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Gauge-link treatment, formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
             ]
+        if target_observable == "gpd":
+            rows.extend(
+                [
+                    ("attrs `bilocal_anchor`, `delta_momentum_gev`, `phase_momentum_source`", "Authored bilocal layout and the signed momentum transfer used to convert it to the centered convention."),
+                    ("attrs `hermitian_partner_id`, `hermiticity_phase`, `gpd_completion_mode`", "Exchanged-flow provenance and the Hermiticity convention used to reconstruct negative z."),
+                ]
+            )
     else:
         rows = [
             ("`values`", "Fit-parameter samples with dimensions `(resample, scheme, parameter)`."),
@@ -842,6 +890,10 @@ def _artifact_field_table(kind: str, *, language: str, target_observable: str = 
             ("attrs `fit_model_*`", "Per-sample weights and diagnostics for fixed-range fit-model averaging."),
             ("attrs `candidate_scheme_*`, `selection_mode`", "Range-scan diagnostics and the two-stage selection mode."),
         ]
+        if target_observable == "gpd":
+            rows.append(
+                ("attrs `bilocal_anchor`, `delta_momentum_gev`, `phase_momentum_source`, `hermitian_partner_id`, `hermiticity_phase`, `gpd_completion_mode`", "GPD bilocal-layout conversion and exchanged-flow completion provenance shared with the Fourier result.")
+            )
     header = "| Field | Meaning |"
     lines = [header, "|---|---|"]
     for field, description in rows:

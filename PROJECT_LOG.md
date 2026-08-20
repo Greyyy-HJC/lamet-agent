@@ -1442,3 +1442,34 @@
 - Made `sector` optional so advanced jobs may instead declare `part`,
   `output_scale`, and `im_flip_for_ft`; named sectors still resolve and own all
   three controls.
+
+## 2026-08-20 (GPD bilocal anchor and paired-flow completion)
+
+- Added the GPD-only Fourier parameter `bilocal_anchor` with
+  `mid_at_0`, `barpsi_at_0`, and `psi_at_0`; omitted GPD values resolve to
+  `mid_at_0`, while PDF and DA manifests reject the parameter.
+- Nonforward GPD Fourier jobs now require a `hermitian_partner` with exchanged
+  initial/final momenta. The two positive-distance flows are converted to the
+  centered convention and reconstruct negative distance with
+  `h_fi(-z) = h_if(z)^*` for the supported Hermitian-current phase.
+- Recorded the bilocal layout, signed discrete momentum transfer, phase source,
+  partner id, and completion mode in Fourier NetCDF outputs and reports.
+
+## 2026-08-20 (Paired GPD planning, sectors, and Fourier diagnostics)
+
+- Plan mode now propagates NonBreit initial/final momenta through correlator and
+  artifact chains, validates the exchanged-flow partner, preserves existing
+  single-job inputs, and never broadcasts one partner answer across multiple
+  GPD jobs. Planning normalization removes GPD-only fields from PDF and DA.
+- GPD `sea`, `valence`, and `singlet` now fit both coordinate-space channels,
+  reconstruct the full paired midpoint matrix element, transform the union of
+  requested `y` and `-y`, and project each resampled Fourier sample afterward.
+  No pre-fit channel deletion or factor-of-two normalization is retained for
+  named GPD sectors; PDF and DA numerical paths are unchanged.
+- Paired range candidates are scored with both target and partner fits, so
+  exchanging the two flows leaves range selection and fit-model weights
+  unchanged.
+- GPD extension plots now show the centered target branch at positive lambda
+  and the conjugated partner-derived branch at negative lambda, with separate
+  fit diagnostics. Fourier plots and overlays use GPD notation and display the
+  NonBreit initial/final momenta and skewness.
