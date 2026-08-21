@@ -549,8 +549,10 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             ft_defaults["order"] = ft_order_match.group(1).upper()
         if ft_sector_match:
             ft_defaults["sector"] = "full" if target_observable == "da" or parton == "gluon" else ft_sector_match.group(1).lower()
-        if ft_part_match:
-            ft_defaults["part"] = ft_part_match.group(1).lower()
+        if component_match:
+            ft_defaults["component"] = component_match.group(1).lower()
+        elif ft_part_match:
+            ft_defaults["component"] = ft_part_match.group(1).lower()
         if not correlators and hadron != "hadron":
             ft_defaults["hadron"] = hadron
         if polarization_match and not rn_jobs:
@@ -576,8 +578,6 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             mt_defaults["kernel_id"] = kernel_id
         if scheme is not None:
             mt_defaults["scheme"] = scheme
-        if component_match:
-            mt_defaults["component"] = component_match.group(1).lower()
         if lc_x_ls is not None:
             mt_defaults["lc_x_ls"] = lc_x_ls
         zs_match = re.search(r"zs_fm(?:\s+if[^:]*|\s+for\s+[A-Za-z0-9_+-]+)?\s*[:=]?\s*([0-9]*\.?[0-9]+)", lowered)

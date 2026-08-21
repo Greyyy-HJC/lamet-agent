@@ -548,7 +548,7 @@ def test_fourier_conflict_returns_structured_physics_diagnostic() -> None:
             "polarization": "unpolarized",
         }
     )
-    payload["stages"]["fourier_transform"]["defaults"]["part"] = "re"
+    payload["stages"]["fourier_transform"]["defaults"]["component"] = "re"
     manifest = AnalysisManifest.model_validate(payload)
     job = manifest.stages["fourier_transform"].jobs[0]
 
@@ -556,7 +556,7 @@ def test_fourier_conflict_returns_structured_physics_diagnostic() -> None:
 
     assert len(diagnostics) == 1
     assert diagnostics[0].code == "fourier.sector.manual_projection_conflict"
-    assert "part" in diagnostics[0].cause
+    assert "component" in diagnostics[0].cause
     assert "negative-x convention" in diagnostics[0].physics
     assert "remove the manual projection controls" in diagnostics[0].suggested_fix
 
@@ -576,7 +576,7 @@ def test_fourier_manual_projection_is_valid_without_sector() -> None:
     )
     defaults = payload["stages"]["fourier_transform"]["defaults"]
     defaults.pop("sector")
-    defaults.update({"part": "im", "output_scale": 1.5, "im_flip_for_ft": True})
+    defaults.update({"component": "im", "output_scale": 1.5, "im_flip_for_ft": True})
     manifest = AnalysisManifest.model_validate(payload)
     job = manifest.stages["fourier_transform"].jobs[0]
 

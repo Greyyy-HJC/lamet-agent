@@ -5,7 +5,7 @@
 Convert the current job's quasi-PDF into a light-cone PDF sample by sample.
 
 1. Call `load_quasi_pdf` without a path. It consumes the job's in-memory Fourier
-   output (or an external artifact if declared) and selects the manifest component.
+   output (or an external artifact if declared) and uses the Fourier artifact channel.
 2. Call `build_matching_kernel` without overriding kernel_id, momentum_gev, mu, zs_fm, or lc_x_ls;
    the framework resolves the logical kernel declaration and scheme. `lc_x_ls` is a
    `{start, stop}` window on the Fourier artifact x grid.
@@ -19,7 +19,7 @@ Convert the current job's quasi-PDF into a light-cone PDF sample by sample.
 
 Perturbative matching applies the selected NLO kernel matrix independently to
 every quasi-PDF sample. Use the injected manifest contract for the authoritative
-scheme, kernel, hybrid-scale, component, sector, and grid definitions.
+scheme, kernel, hybrid-scale, sector, and grid definitions.
 
 The report integrates quasi and matched over the range this job actually matched and
 states no expected value: whether that integral is 1 depends on whether the matrix
@@ -28,7 +28,7 @@ is not a passed check and a value away from 1 is not a failure.
 
 ## Available Tools
 
-- `load_quasi_pdf`: Select the requested real/imaginary component from the job's in-memory or external Fourier input.
+- `load_quasi_pdf`: Load the job's in-memory or external Fourier input and take the recorded real/imaginary channel.
 - `build_matching_kernel`: Build the manifest-selected NLO matching matrix.
 - `apply_matching`: Apply the kernel sample by sample and write the job NetCDF to store['output'].
 - `plot_matched_pdf`: Plot quasi and matched PDFs.

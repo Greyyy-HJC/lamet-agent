@@ -346,9 +346,9 @@ def test_prepare_tool_args_drops_llm_output_path_overrides(tmp_path: Path) -> No
     assert "save_path" not in args
     assert "output_dir" not in args
     assert "log_dir" not in args
-    assert "save_path" not in args.get("plot_fourier", {})
-    assert "save_path" not in args.get("plot_extension", {})
-    assert "save_path" not in args.get("report", {})
+    assert "plot_fourier" not in args
+    assert "plot_extension" not in args
+    assert "report" not in args
 
 
 def test_prepare_correlator_tuning_args_from_job_sources(tmp_path: Path) -> None:
@@ -1340,18 +1340,6 @@ def test_job_zs_fm_overrides_stage_defaults_for_both_hybrid_stages(tmp_path: Pat
 
     assert renorm_args["zs_fm"] == 0.2
     assert matching_args["zs_fm"] == 0.4
-
-
-def test_prepare_matching_plot_limits(tmp_path: Path) -> None:
-    manifest = _manifest()
-    job = manifest.stages["perturbative_matching"].jobs[0]
-    effective = {**effective_matching_params(manifest, job), "plot": {"xlim": [-1.0, 2.0], "ylim": [-0.2, 2.5]}}
-    args = prepare_tool_args(
-        "plot_matched_pdf", {}, manifest=manifest, stage="perturbative_matching", job=job,
-        effective_params=effective, artifacts_dir=tmp_path, store={"quasi": object()},
-    )
-    assert args["xlim"] == [-1.0, 2.0]
-    assert args["ylim"] == [-0.2, 2.5]
 
 
 def test_new_downstream_job_validators_accept_full_manifest() -> None:

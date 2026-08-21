@@ -342,11 +342,11 @@ def _is_even_about_zero(x_grid: np.ndarray, values: np.ndarray) -> bool:
 def _has_interior_gap(x_grid: np.ndarray) -> bool:
     """True when the grid is missing an interior stretch of points.
 
-    A DA kernel's ``endpoint_cut`` drops the window hugging $x=0$ and $x=1$ from the
-    output, leaving the two endpoints in place but nothing between them and the cut. The
-    trapezoid rule then bridges that hole with a straight line, so the integral over the
-    matched range is part interpolation -- worth saying out loud rather than reporting as
-    if every point in the window were data.
+    A non-uniform output grid can leave the two endpoints in place but nothing
+    between them and the rest of the window. The trapezoid rule then bridges that
+    hole with a straight line, so the integral over the matched range is part
+    interpolation -- worth saying out loud rather than reporting as if every point
+    in the window were data.
     """
     if x_grid.size < 4:
         return False
@@ -359,13 +359,11 @@ def _norm_summary(data: dict[str, Any]) -> dict[str, Any] | None:
     """Integrate the quasi and matched distributions over the range matching produced.
 
     The window is the light-cone grid's own $[\\min x, \\max x]$ -- what this job actually
-    matched, after any ``endpoint_cut`` -- rather than a fixed $[0, 1]$: a DA lives on
-    $[0, 1]$, a PDF grid runs over both the quark and antiquark sides, and an endpoint cut
-    shortens whichever it is, so any hardcoded window is wrong for some kernel the manifest
+    matched -- rather than a fixed $[0, 1]$: a DA lives on
+    $[0, 1]$, a PDF grid runs over both the quark and antiquark sides, and a narrower
+    ``lc_x_ls`` window shortens whichever it is, so any hardcoded window is wrong for some kernel the manifest
     may select. Both distributions are integrated over that same window so the comparison is
-    like for like, each on its own grid -- an ``endpoint_cut`` leaves the matched PDF on
-    fewer points than the quasi one, which the old same-length check read as "diagnostics
-    not available".
+    like for like, each on its own grid.
 
     Both the raw integral and the one-sided one (integral / ``output_scale``) are returned:
     where the projection mirrors the distribution about $x=0$, the second is the integral
@@ -397,7 +395,7 @@ def _norm_summary(data: dict[str, Any]) -> dict[str, Any] | None:
         "lightcone": lc_val,
         "rel_change": rel,
         "scale": scale,
-        "part": str(data.get("part", "") or ""),
+        "part": str(data.get("component", data.get("part", "")) or ""),
         "unit_quasi": quasi_val / scale,
         "unit_lightcone": lc_val / scale,
         "interpolated_gap": _has_interior_gap(x_grid),
@@ -457,7 +455,7 @@ def _norm_notes(summaries: list[dict[str, Any]], *, interpolated: bool) -> list[
     )
     if interpolated:
         notes.append(
-            "- One matched grid has an interior gap from `endpoint_cut`; the integral bridges "
+            "- One matched grid has an interior gap; the integral bridges "
             "it linearly, so that stretch is interpolation rather than matched data."
         )
     return notes

@@ -105,7 +105,7 @@
           "max_schemes": 200 // contract default 200; cap accepted range combinations
         }
         // "zmin_shift": 1, // optional; clone low/high tail-window systematics (contract default 0 = off)
-        // "part": "re" // "re", "im", or "both" (contract default "both"); cannot combine with sector
+        // "component": "re" // "re", "im", or "both" (contract default "both"); cannot combine with sector
       },
       "jobs": [
         {
@@ -124,15 +124,14 @@
       "defaults": {
         "scheme": "hybrid",
         "mu": 2.0,
-        "component": "re", // matching consumes one channel: "re" or "im"
         // Matching integrates over the Fourier artifact x grid. lc_x_ls is only
-        // the output window on that same spacing.
+        // the output window on that same spacing. The consumed channel comes from
+        // the Fourier artifact attrs.
         "lc_x_ls": {"start": -2.0, "stop": 2.0}
-        // "endpoint_cut": 0.01, // optional; drop a window around singular convolution endpoints
         // "r": 1.4142135623730951, // optional; clone jobs at mu/r and mu*r (contract default 1.0 = off)
+        // "rgr_kappa": 1.0, // RGR kernels only; no contract default — unset uses the kernel default 1.0
+        // "rgr_mu_min_gev": 0.6, // RGR kernels only; no contract default — unset uses the kernel default 0.6 GeV
         // "sector": "valence", // optional post-match projection; usually inherit from Fourier
-        // "plot": { "xlim": [-2.0, 2.0], "ylim": [-0.5, 1.5] } // presentation only
-        // "xlim": [-2.0, 2.0], "ylim": [-0.5, 1.5] // legacy aliases of plot.xlim / plot.ylim
       },
       "jobs": [
         {

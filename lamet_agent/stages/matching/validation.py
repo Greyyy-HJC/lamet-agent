@@ -161,11 +161,6 @@ _LC_FIELDS = {
     "stop": _parameter("Last light-cone grid coordinate.", "Together with start, this selects the output window on the Fourier quasi grid.", expected=float),
 }
 
-_PLOT_FIELDS = {
-    "xlim": _parameter("Horizontal plot limits.", "This changes presentation only.", expected=list, items=float),
-    "ylim": _parameter("Vertical plot limits.", "This changes presentation only.", expected=list, items=float),
-}
-
 
 STAGE_PARAM_CONTRACT = StageParamContract(
     code_prefix="matching",
@@ -177,18 +172,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "quasi": "One Fourier-stage quasi-distribution to be convolved with the perturbative matching kernel.",
     },
     schema={
-        "component": _parameter(
-            "Single complex component extracted from the quasi-distribution.",
-            "Matching acts on one real-valued quasi channel at a time; the chosen channel must follow the Fourier observable and sector convention.",
-            expected=str,
-            choices=("re", "im"),
-            choice_descriptions={
-                "re": "Match the real quasi-distribution channel.",
-                "im": "Match the imaginary quasi-distribution channel.",
-            },
-            required=True,
-        ),
-        "endpoint_cut": _parameter("Numerical endpoint exclusion.", "The cut regulates finite-grid evaluation near singular convolution endpoints.", expected=float),
         "kernel_id": _parameter("Exact declared matching-kernel identifier.", "The identifier fixes gauge treatment, operator, observable, scheme, and perturbative order; it is inferred when exactly one matching kernel is declared.", expected=str),
         "lc_x_ls": _parameter(
             "Output light-cone momentum-fraction window.",
@@ -200,7 +183,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             suggested_fix='For example, use {"start": -2.0, "stop": 2.0} to match the Fourier quasi_y_ls range.',
         ),
         "mu": _parameter("Perturbative matching scale.", "The truncated kernel retains residual dependence on this factorization scale.", expected=float, unit="GeV", required=True),
-        "plot": _parameter("Matching plot settings.", "These settings affect presentation only.", expected=dict, schema=_PLOT_FIELDS),
         "r": _parameter(
             "Symmetric factorization-scale variation ratio used to generate systematics branches.",
             "When r differs from 1, manifest expansion keeps the central scale mu and clones matching jobs at mu/r and mu*r so residual perturbative-scale dependence can enter the systematic budget.",
@@ -255,11 +237,16 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "full": "Keep the complete signed-x matched distribution.",
             },
         ),
-        "xlim": _parameter("Legacy horizontal plot limits.", "This changes presentation only.", expected=list, items=float),
-        "ylim": _parameter("Legacy vertical plot limits.", "This changes presentation only.", expected=list, items=float),
         "zs_fm": _parameter("Hybrid transition distance or uncertainty-bearing systematics value.", "Together with hadron momentum it sets the dimensionless Wilson-line scale in a hybrid kernel. Uncertainty strings are expanded into numerical branches before execution.", expected=(float, str), unit="fm"),
     },
-    removed={"quasi_y_ls": "is no longer supported; matching uses the Fourier artifact x grid. Set the output window with lc_x_ls start and stop."},
+    removed={
+        "component": "is no longer supported; matching uses the Fourier artifact channel recorded on attrs component.",
+        "endpoint_cut": "is no longer supported; matching keeps the full light-cone grid produced by the kernel.",
+        "plot": "is no longer supported; matching plots use automatic axis limits.",
+        "quasi_y_ls": "is no longer supported; matching uses the Fourier artifact x grid. Set the output window with lc_x_ls start and stop.",
+        "xlim": "is no longer supported; matching plots use automatic axis limits.",
+        "ylim": "is no longer supported; matching plots use automatic axis limits.",
+    },
     constraints=(
         ConstraintSpec("matching.inputs.exactly_one", ("inputs.quasi",), "Each job consumes exactly one quasi input.", "One convolution maps one quasi-distribution artifact to one light-cone result.", 'Set inputs to {"quasi": "<fourier job or artifact>"}.', _check_input),
         ConstraintSpec("matching.kinematics.momentum_required", ("inputs.quasi", "derived.momentum_gev"), "Physical momentum must be derivable from the upstream source.", "The matching kernel depends explicitly on the finite hadron momentum in GeV.", "Declare discrete momentum, volume, and lattice_spacing_fm on the upstream source or artifact.", _check_momentum),

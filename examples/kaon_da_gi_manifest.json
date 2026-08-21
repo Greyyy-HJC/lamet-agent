@@ -798,14 +798,6 @@
       "defaults": {
         "scheme": "ratio",
         "mu": 2.0,
-        "component": "re",
-        "endpoint_cut": 0.01,
-        "plot": {
-          "xlim": [
-            -1,
-            2
-          ]
-        },
         "r": 1.4142135623730951,
         "lc_x_ls": {
           "start": -1,

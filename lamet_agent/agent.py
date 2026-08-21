@@ -776,7 +776,6 @@ def run_agent(
                         "summary": store.get("fourier_summary"),
                         "artifacts": {
                             "fourier_artifact": store["fourier_result"].get("artifact"),
-                            "fit_info_artifact": store["fourier_result"].get("fit_info_artifact"),
                             "fourier_plot": store.get("fourier_plot", {}).get("plot"),
                             "fourier_plot_image": store.get("fourier_plot", {}).get("plot_image"),
                             "extension_plot_re": store.get("fourier_extension_plot", {}).get("plot_re"),

@@ -201,7 +201,7 @@ are therefore declared once by
 `ParameterSpec.required`; planning only converts the returned issue into a
 question. `ConstraintSpec` similarly owns one executable check together with
 its physical reason and suggested repair. For example, a named Fourier `sector`
-cannot be combined with manual `part`, `output_scale`, or `im_flip_for_ft`: the
+cannot be combined with manual `component`, `output_scale`, or `im_flip_for_ft`: the
 sector already fixes the complex channel, normalization, and negative-$x$
 convention.
 
