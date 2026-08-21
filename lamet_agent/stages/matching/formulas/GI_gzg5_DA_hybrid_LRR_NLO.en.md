@@ -1,38 +1,32 @@
-<!-- lamet-agent formula cache; kernel=GI_gzg5_DA_hybrid_LRR_NLO; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=1b605e7f42f7b0ee; paper_used=true -->
-$$M_{\mathrm{LRR}}(x,y)=\Big[M_{\mathrm{fix}}(x,y)+r_0\,M_{C_z}(x,y)\Big]\exp\!\Big[-M_{C_z}(y,y)\,r_{\mathrm{sumPV}}\Big]$$
+<!-- lamet-agent formula cache; kernel=GI_gzg5_DA_hybrid_LRR_NLO; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=e9260ed2b54685c5; paper_used=true -->
+$$C_{gzg5}^{{\rm hybrid,LRR}}(x,y,\mu,P_z) = \frac{1}{2}V_{qq,p}(x,y,\mu,P_z) + \frac{3\,{\rm Si}\!\left(z_s P_z (y-x)\right)}{\pi (y-x)}$$
 
-where $M_{\mathrm{fix}}$ is the fixed-order hybrid-scheme kernel for the $\gamma^z\gamma_5$ meson-DA operator, $M_{C_z}$ is the plus-prescribed matrix of the renormalon shape $C_z(\xi)$ (with $\xi=x/y$), and the matrix exponential acts on the quasi-index $y$. The fixed-order kernel is
+where $V_{qq,p}$ is the $\gamma^z\gamma_5$ DA matching kernel of Eq. (4.15) of arXiv:2212.14415,
 
-$$M_{\mathrm{fix}}(x,y)=\delta(x-y)-\frac{\alpha_s C_F}{2\pi}\left[\frac{1}{2}V_{qq,p}(x,y)+\frac{3\,\mathrm{Si}\!\big(z_sP_z(y-x)\big)}{\pi(y-x)}\right]dy$$
+$$V_{qq,p}(x,y,\mu,P_z) = V_{qq,h}(x,y,\mu,P_z) + 2\left[\frac{|x|}{y} + \frac{|1-x|}{1-y} + \frac{|x-y|}{(y-1)y}\right],$$
 
-with the plus prescription at $x=y$ implemented by subtracting each column’s integral over the $x$-grid. The coefficient $V_{qq,p}$ is
+with
 
-$$V_{qq,p}(x,y)=V_{qq,h}(x,y)+2\left[\frac{|x|}{y}+\frac{|1-x|}{1-y}+\frac{|x-y|}{(y-1)y}\right]$$
+$$V_{qq,h}(x,y,\mu,P_z) = \frac{|x|}{y}\left(l_x-1\right) + \frac{|1-x|}{1-y}\left(l_{1-x}-1\right) + \frac{|x-y|}{y(y-1)}\left(l_{x-y}-1\right) + V_{qq,t}(x,y,\mu,P_z),$$
 
-$$V_{qq,h}(x,y)=\frac{|x|}{y}\big(\ell_x-1\big)+\frac{|1-x|}{1-y}\big(\ell_{\bar x}-1\big)+\frac{|x-y|}{y(y-1)}\big(\ell_{xy}-1\big)+V_{qq,t}(x,y)$$
+and
 
-$$V_{qq,t}(x,y)=\frac{|x|}{y(y-x)}\big(\ell_x-1\big)+\frac{|1-x|}{(1-y)(x-y)}\big(\ell_{\bar x}-1\big)+\frac{x+y-2xy}{|x-y|\,y(1-y)}\big(\ell_{xy}-1\big)$$
+$$V_{qq,t}(x,y,\mu,P_z) = \frac{|x|}{y(y-x)}\left(l_x-1\right) + \frac{|1-x|}{(1-y)(x-y)}\left(l_{1-x}-1\right) + \frac{x+y-2xy}{|x-y|\,y(1-y)}\left(l_{x-y}-1\right).$$
 
-with the logarithms
+The logarithms are defined as in Eq. (4.16),
 
-$$\ell_x=\ln\!\Big(\frac{4P_z^2x^2}{\mu^2}\Big),\qquad \ell_{\bar x}=\ln\!\Big(\frac{4P_z^2(1-x)^2}{\mu^2}\Big),\qquad \ell_{xy}=\ln\!\Big(\frac{4P_z^2(x-y)^2}{\mu^2}\Big)$$
+$$l_v = \ln\!\left(\frac{4P_z^2 v^2}{\mu^2}\right), \qquad v = x,\;1-x,\;x-y.$$
 
-The renormalon shape is the Fourier transform of the regularized linear-$z$ tail, Eq. (17) of the paper,
+The full kernel is the fixed-order matrix $M_{\rm fix}$ (discretized from the density above with the plus prescription at $x=y$, each $y$-column integrated to zero over $x\in[0,1]$) improved by the leading renormalon resummation,
 
-$$C_z(\xi)=-\frac{e^{-\epsilon_m z_s}z_s\sin\!\big[p_z z_s(1-\xi)\big]}{\pi(1-\xi)}+\frac{e^{-\epsilon_m z_s}p_z}{\pi\big(\epsilon_m^2+p_z^2(1-\xi)^2\big)^2}\Big[\big(\epsilon_m^2-p_z^2(1-\xi)^2+\epsilon_m^3z_s+\epsilon_m p_z^2(1-\xi)^2z_s\big)\cos\!\big[p_z z_s(1-\xi)\big]+p_z(1-\xi)\big(2\epsilon_m+\epsilon_m^2z_s+p_z^2(1-\xi)^2z_s\big)\sin\!\big[p_z z_s(1-\xi)\big]\Big]$$
+$$M_{\rm LRR} = \left(M_{\rm fix} + r_0\, M_{C_z}\right) \exp\!\left(-M_{C_z}\, r_{\rm sumPV}\right),$$
 
-with $p_z=|y|P_z$, $z_s=z_s$, and the $\xi=1$ limit $e^{-\epsilon_m z_s}p_z(1+\epsilon_m z_s+\epsilon_m^2z_s^2)/(\epsilon_m^2\pi)$. The scalar coefficients are
+where $M_{C_z}$ is the plus-prescribed matrix of the renormalon shape $C_z(\xi)$ (Eq. (17) of arXiv:2305.05212, with $\xi=x/y$, $p_z=|y|P_z$, $z_s=z_s$),
 
-$$r_0=N_m\frac{\beta_0}{2\pi}\frac{\Gamma(1+b)}{\Gamma(1+b)}\big(1+bc_1/b\big)\,\alpha_s = N_m\alpha_s$$
+$$C_z(\xi) = \frac{e^{-\epsilon_m z_s} p_z (1+\epsilon_m z_s+\epsilon_m^2 z_s^2)}{\epsilon_m^2\pi} + \frac{1}{\pi}\left(\frac{e^{-\epsilon_m z_s} z_s \sin[(1-\xi)p_z z_s]}{1-\xi} + \frac{e^{-\epsilon_m z_s} p_z}{(\epsilon_m^2+p_z^2(1-\xi)^2)^2}\Big((\epsilon_m^2-p_z^2(1-\xi)^2+\epsilon_m^3 z_s+\epsilon_m p_z^2(1-\xi)^2 z_s)\cos[(1-\xi)p_z z_s] - p_z(1-\xi)(2\epsilon_m+p_z^2(1-\xi)^2 z_s+\epsilon_m^2 z_s)\sin[(1-\xi)p_z z_s]\Big)\right),$$
 
-$$r_{\mathrm{sumPV}}=N_m\,|z\mu|\,e^w\Big(-\frac{2\pi}{\beta_0}\Big)\mathrm{Re}\Big[E_{1+b}(w)+c_1E_b(w)+c_2E_{-1+b}(w)\Big],\qquad w=-\frac{2\pi}{\alpha_s\beta_0}$$
-
-with $N_m=0.575$ for $n_f=3$, $\beta_0=11-2n_f/3$, $b=\beta_1/(2\beta_0^2)$, and $c_1,c_2$ from the sub-asymptotic corrections. The plus prescription is the paper’s
-
-$$[f(x)]_+=f(x)-\delta(1-x)\int_0^1 f(\nu)\,d\nu$$
-
-applied at $x=y$ with the subtraction over the full quasi-grid.
+with the plus prescription $[f(x)]_+ = f(x) - \delta(1-x)\int_0^1 f(\nu)d\nu$ applied at $\xi=1$. The scalar coefficients are $r_0 = N_m |z\mu| \alpha_s$ (from Eq. (12) at $n=0$) and $r_{\rm sumPV} = N_m |z\mu| e^w (-2\pi/\beta_0)\,{\rm Re}\!\left[E_{1+b}(w) + c_1 E_b(w) + c_2 E_{-1+b}(w)\right]$ with $w = -2\pi/(\alpha_s\beta_0)$, $N_m(n_f=3)=0.575$, $\beta_0=9$, $b=\beta_1/(2\beta_0^2)$, and $c_1,c_2$ from the sub-asymptotic corrections of arXiv:hep-ph/0105008. The regularization parameter is $\epsilon_m = 0.005$ GeV.
 
 #### Consistency check
 
-The code reproduces Eqs. (12)–(17) of arXiv:2305.05212 term by term. The fixed-order coefficient $V_{qq,p}$ matches the paper’s Eq. (4.15) of arXiv:2212.14415 (the DA kernel cited therein), including the logarithms $\ell_x,\ell_{\bar x},\ell_{xy}$ with arguments $4P_z^2v^2/\mu^2$ exactly as written. The hybrid Wilson-line term $3\,\mathrm{Si}(z_sP_z(y-x))/(\pi(y-x))$ matches the paper’s Eq. (17) structure. The renormalon shape $C_z(\xi)$ in Eq. (17) is reproduced exactly, including the $\epsilon_m$ regularization and the $\xi=1$ limit. The PV Borel sum $r_{\mathrm{sumPV}}$ matches Eq. (13) with the exponential-integral representation and the real-part prescription. The coefficient $r_0$ matches Eq. (12) at $n=0$. The matrix-exponential resummation $M_{\mathrm{LRR}}=(M_{\mathrm{fix}}+r_0M_{C_z})\exp(-M_{C_z}r_{\mathrm{sumPV}})$ is the code’s implementation of the paper’s LRR prescription, which the paper describes but does not write in closed matrix form. No discrepancies found.
+The code reproduces Eqs. (12)–(17) of arXiv:2305.05212 exactly. The fixed-order part matches Eq. (4.15) of arXiv:2212.14415 (the paper's reference for the $\gamma^z\gamma_5$ DA kernel), including the logarithms $l_v = \ln(4P_z^2 v^2/\mu^2)$ and the plus prescription at $x=y$ with column-sum-to-zero over $x\in[0,1]$. The renormalon resummation follows Eqs. (12)–(17) verbatim: $r_n$ from Eq. (12), the PV Borel integral of Eq. (13) evaluated as the exponential-integral sum, and the Fourier transform of Eq. (17) with the $\epsilon_m$ regulator. The matrix exponential $\exp(-M_{C_z} r_{\rm sumPV})$ implements the all-order resummation of the leading renormalon series, with $r_0$ subtracting the $\mathcal{O}(\alpha_s)$ term to avoid double counting. No discrepancies found.

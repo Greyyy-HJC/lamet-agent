@@ -1,12 +1,24 @@
-<!-- lamet-agent formula cache; kernel=GI_gz_quark_PDF_hybrid_NLO; arxiv=2604.00143; equations=Eqs. (C6)-(C8); digest=b0d0fb641f3c6199; paper_used=true -->
-$$C_{\mathrm{hybrid}}^{g_z}(\xi,L,y,z_sP_z) = \left[\, \frac{1+\xi^2}{1-\xi}\left(L+\ln\frac{4\xi(1-\xi)}{1}\right) - 1 + 1 \,\right]^{(-\infty,\infty)}_{+(1)} + \frac{3}{2}\left[\, -\frac{1}{|1-\xi|} + \frac{2\,\mathrm{Si}\big((1-\xi)|y|z_sP_z\big)}{\pi(1-\xi)} \,\right]^{(-\infty,\infty)}_{+(1)}$$
+<!-- lamet-agent formula cache; kernel=GI_gz_quark_PDF_hybrid_NLO; arxiv=2604.00143; equations=Eqs. (C6)-(C8); digest=b16784b124346018; paper_used=true -->
+$$C_{\rm hybrid}^{g_z}(\xi,y,\mu,P_z,z_s) = C_{\rm ratio}^{g_z}(\xi,L) + \Delta C_{\rm hybrid}(\xi,y,z_sP_z)$$
 
-where $\xi=x/y$, $L=\ln(4y^2P_z^2/\mu^2)$, and the plus-prescription is defined as in the paper:
+with $\xi=x/y$ and $L=\ln(4y^2P_z^2/\mu^2)$. The ratio-scheme coefficient is
 
-$$\int_{-\infty}^{\infty} d\xi\, [g(\xi)]^{D}_{+(x_0)}\, f(\xi) = \int_D d\xi\, g(\xi)\big(f(\xi)-f(x_0)\big)$$
+$$C_{\rm ratio}^{g_z}(\xi,L) = \frac{1+\xi^2}{1-\xi}\Bigl[L+\ln(4\xi(1-\xi))-1\Bigr]_+^{(0,1)} + 1 + \frac{3}{2}\frac{1}{|1-\xi|} + \theta(\xi>1)\Bigl[\frac{1+\xi^2}{1-\xi}\ln\frac{\xi}{\xi-1}+1\Bigr] + \theta(\xi<0)\Bigl[-\frac{1+\xi^2}{1-\xi}\ln\frac{|\xi|}{|\xi-1|}-1\Bigr] + 2(1-\xi)\theta(0<\xi<1)$$
 
-with $D=(-\infty,\infty)$ and $x_0=1$. The first bracket combines the ratio-scheme coefficient of Eq. (C7) (with the $\gamma^z$ shift $2(1-\xi)$ included) and the second is the hybrid correction of Eq. (C8) with strength $3/2$. The LO $\delta(1-\xi)$ term is implicit in the discretization's identity matrix.
+where the plus-prescription is defined as in the paper:
+
+$$\int_0^1 d\xi\,[g(\xi)]^{(0,1)}_{+(1)}\,\varphi(\xi) = \int_0^1 d\xi\,g(\xi)\bigl(\varphi(\xi)-\varphi(1)\bigr)$$
+
+The hybrid correction is
+
+$$\Delta C_{\rm hybrid}(\xi,y,z_sP_z) = \frac{3}{2}\Bigl[-\frac{1}{|1-\xi|} + \frac{2\,{\rm Si}\bigl((1-\xi)|y|z_sP_z\bigr)}{\pi(1-\xi)}\Bigr]$$
+
+where ${\rm Si}(z)=\int_0^z dt\,\sin t/t$ is the sine integral. The full coefficient is
+
+$$C_{\rm hybrid}^{g_z}(\xi,y,\mu,P_z,z_s) = \delta(1-\xi) + \frac{\alpha_s C_F}{2\pi}\Bigl[C_{\rm ratio}^{g_z}(\xi,L) + \Delta C_{\rm hybrid}(\xi,y,z_sP_z)\Bigr]$$
+
+with the $\delta(1-\xi)$ term implicit in the plus-prescription.
 
 #### Consistency check
 
-The code reproduces Eqs. (C6)–(C8) of arXiv:2604.00143 term by term. The regular coefficient matches Eq. (C7) exactly: the splitting function $(1+\xi^2)/(1-\xi)$, the log $\ln(4\xi(1-\xi))$ combined with $L$, the constant $-1$, and the $+1$ from the $\gamma^z$ shift. The hybrid correction of Eq. (C8) is reproduced with the correct prefactor $3/2$, the $-1/|1-\xi|$ term, and the sine-integral term $\mathrm{Si}((1-\xi)|y|z_sP_z)/(\pi(1-\xi))$. The plus-prescription domain $(-\infty,\infty)$ and subtraction point $x_0=1$ match the paper's notation. The only discrepancy is that the code omits the $\delta C_M$ (leading-renormalon/mass) term and the NNLO piece of Eq. (C6), which the code explicitly states are not implemented (NLO only). No other discrepancies found.
+The code reproduces Eqs. (C6)–(C8) of arXiv:2604.00143 term by term. The regular coefficient matches: the splitting function $(1+\xi^2)/(1-\xi)$, the log $L+\ln(4\xi(1-\xi))$ inside $[0,1]$, the $\ln(\xi/(\xi-1))$ branches outside, the constant $+1$, and the $2(1-\xi)$ shift for $\gamma^z$ vs $\gamma^t$ are all present with correct signs and arguments. The plus-prescription is implemented as the paper's $[g]^{(0,1)}_{+(1)}$ with the subtraction at $\xi=1$ over $[0,1]$. The hybrid correction matches Eq. (C8): the prefactor $3/2$, the $-1/|1-\xi|$ term, and the sine-integral term $2\,{\rm Si}((1-\xi)|y|z_sP_z)/(\pi(1-\xi))$ are all correct. The code omits the $\delta C_M$ (leading-renormalon/mass) term and the NNLO piece of Eq. (C6), as documented in its docstring — this is a deliberate NLO-only truncation, not a discrepancy. No other disagreements found.

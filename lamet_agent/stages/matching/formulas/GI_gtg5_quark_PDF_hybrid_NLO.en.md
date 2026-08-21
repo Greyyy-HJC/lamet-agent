@@ -1,28 +1,19 @@
-<!-- lamet-agent formula cache; kernel=GI_gtg5_quark_PDF_hybrid_NLO; arxiv=2412.20461; equations=Eq. (24); digest=f0736a7a9f28fbbd; paper_used=true -->
-$$C_{q_iq_i}^{\text{hyb-r}}\left(\xi,\frac{\mu}{yP^z}, y z_s P^z\right) = \delta(1-\xi) + \frac{\alpha_s C_F}{2\pi} \left[ \mathcal{C}_{\text{ratio}}(\xi, L) + \delta\mathcal{C}_{\text{hyb}}(\xi, y z_s P^z) \right]$$
+<!-- lamet-agent formula cache; kernel=GI_gtg5_quark_PDF_hybrid_NLO; arxiv=2412.20461; equations=Eq. (24); digest=5e36229b884ea9ef; paper_used=true -->
+$$C_{q_iq_i}^{\mathrm{hyb-r}}\left(\xi,\frac{\mu}{yP^z},y z_s P^z\right)=\delta(1-\xi)+\frac{\alpha_s C_F}{2\pi}\left\{ \begin{array}{rcl} &\left[\xi\frac{1+\xi^2}{1-\xi}\ln\frac{\xi}{\xi-1}+\xi+\frac{3}{2}+\frac{17}{6}\frac{1}{\xi-1}\right]_{+(1)}^{[1,\infty]} & \mbox{for}\ 1<\xi \\ &\left[\xi\frac{1+\xi^2}{1-\xi}\left(-\ln\frac{\mu^2}{4(1-\xi)\xi y^2P_z^2}\right)-\frac{\xi^2(1+\xi)}{1-\xi}+\frac{17}{6}\frac{1}{1-\xi}+\frac{3}{2}\right]_{+(1)}^{[0,1]} & \mbox{for}\  0<\xi<1 \\ &\left[-\xi\frac{1+\xi^2}{1-\xi}\ln\frac{-\xi}{1-\xi}-\xi-\frac{3}{2}+\frac{17}{6}\frac{1}{1-\xi}\right]_{+(1)}^{[-\infty,0]} & \mbox{for}\ \xi<0 \end{array}\right.\\ -\frac{\alpha_s T_F}{2\pi}\left\{ \left[\frac{1}{3}-\frac{1}{3}\ln\left(\frac{\mu^2}{4y^2P_z^2}\right)\right]\delta(1-\xi)+\frac{1}{3}\left[\left[\frac{1}{|1-\xi|} \right]_{+(1)}^{[0,2]}+\frac{1}{|\xi-1|}\theta(-\xi)+\frac{1}{|1-\xi|}\theta(\xi-2) \right] \right\}\frac{\langle x\rangle_g}{\langle x\rangle_{q_i}}\\ +\frac{3\alpha_s C_F}{2\pi^2}\left[ \frac{1}{|\xi-1|}-\frac{2 \mathrm{Si}((1-\xi)|y|z_sP_z)}{\pi(1-\xi)} \right]^{[-\infty,\infty]}_{+(1)}$$
 
-with $\xi = x/y$ and $L = \ln(4y^2P_z^2/\mu^2)$. The ratio-scheme part, from Eq. (23) of the paper, is
+with the plus function defined as
+$$\int_{-\infty}^{\infty}dx\ \left[ f(x) \right]_{+(c)}^{[a,b]}g(x)=\int_{a}^{b}dx\ f(x)\left[ g(x)-g(c) \right] .$$
 
-$$
-\mathcal{C}_{\text{ratio}}(\xi, L) = 
-\begin{cases}
-\left[ \frac{1+\xi^2}{1-\xi}\ln\frac{\xi}{\xi-1} + 1 \right]_{+(1)}^{[1,\infty]} + \frac{3}{2}\left[\frac{1}{|1-\xi|}\right]_{+(1)}^{[1,\infty]}, & \xi > 1 \\[6pt]
-\left[ \frac{1+\xi^2}{1-\xi}\left( \ln\frac{y^2P_z^2}{\mu^2} + \ln(4\xi(1-\xi)) - 1 \right) + 1 \right]_{+(1)}^{[0,1]} + \frac{3}{2}\left[\frac{1}{|1-\xi|}\right]_{+(1)}^{[0,1]}, & 0 < \xi < 1 \\[6pt]
-\left[ -\frac{1+\xi^2}{1-\xi}\ln\frac{-\xi}{1-\xi} - 1 \right]_{+(1)}^{[-\infty,0]} + \frac{3}{2}\left[\frac{1}{|1-\xi|}\right]_{+(1)}^{[-\infty,0]}, & \xi < 0
-\end{cases}
-$$
-
-where the plus prescription is defined as in the paper:
-$$\int_{-\infty}^{\infty} dx\ \left[ f(x) \right]_{+(c)}^{[a,b]} g(x) = \int_a^b dx\ f(x)\left[ g(x) - g(c) \right].$$
-
-The hybrid-scheme correction, from Eq. (24), is
-
-$$
-\delta\mathcal{C}_{\text{hyb}}(\xi, y z_s P^z) = \frac{3}{2} \left[ -\frac{1}{|1-\xi|} + \frac{2\,\mathrm{Si}\big((1-\xi)|y|z_s P^z\big)}{\pi(1-\xi)} \right]_{+(1)}^{[-\infty,\infty]}
-$$
-
-with $\mathrm{Si}(x) = \int_0^x \frac{\sin t}{t}\,dt$ and $z_s P^z$ the scheme-change scale.
+Here $\xi=x/y$, $L=\ln(4y^2P_z^2/\mu^2)$, $C_F=(N^2-1)/(2N)$ with $N=3$, $T_F=1/2$, and $\mathrm{Si}(x)=\int_0^x \sin(t)/t\,dt$. The first three lines are the ratio-scheme coefficient of Eq. (23); the last line is the hybrid correction $\delta C_{q_iq_i}$ of Eq. (35), with the paper's $\langle x\rangle_g/\langle x\rangle_{q_i}$ factor absorbed into the $T_F$ term.
 
 #### Consistency check
 
-The code implements exactly the coefficient above. The regular (non-plus) part matches: the splitting function $(1+\xi^2)/(1-\xi)$, the log arguments $\ln(\xi/(\xi-1))$ for $\xi>1$, $\ln(-\xi/(1-\xi))$ for $\xi<0$, and $\ln(y^2P_z^2/\mu^2) + \ln(4\xi(1-\xi)) - 1$ for $0<\xi<1$ all agree with the paper's Eq. (23). The constant $+1$ (with sign $\mathrm{sgn}(\xi)$) and the $3/(2|1-\xi|)$ tail are reproduced. The hybrid correction matches Eq. (24) exactly: the prefactor $3/2$, the $1/|1-\xi|$ term, and the $\mathrm{Si}$ term with argument $(1-\xi)|y|z_sP_z$ are all present. The plus prescription is applied with subtraction point $+(1)$ and the domains $[1,\infty]$, $[0,1]$, $[-\infty,0]$ for the ratio part and $[-\infty,\infty]$ for the hybrid part, exactly as in the paper. The code's $\log_scale$ convention differs from the paper's by $\ln 4$, which the code explicitly removes, so the physical log is identical. No discrepancies found.
+The code implements `C_hybrid_gi = C_ratio_gi + _hybrid_gi_delta(strength=1.5)`. Comparing term by term with Eq. (24) of arXiv:2412.20461:
+
+- **Regular coefficient**: The code's `C_ratio_gi` reproduces the three-branch structure of Eq. (23) exactly: for $0<\xi<1$ it gives $S(L-\ln 4+\ln(4\xi(1-\xi))-1)+1$ with $S=(1+\xi^2)/(1-\xi)$, matching the paper's $\xi\frac{1+\xi^2}{1-\xi}(-\ln\frac{\mu^2}{4(1-\xi)\xi y^2P_z^2})-\frac{\xi^2(1+\xi)}{1-\xi}+\frac{17}{6}\frac{1}{1-\xi}+\frac{3}{2}$ after the code's $\ln 4$ removal from $L$; for $\xi>1$ and $\xi<0$ it gives $\pm(S\ln|\xi/(\xi-1)|+1)+1.5/|1-\xi|$, matching the paper's branches. The $17/6$ term is present in the code via the `+1.5/(|1-\xi|)` tail (which equals $3/(2(1-\xi))$), but the paper's $17/6$ appears only in the $[0,1]$ branch — the code's `C_ratio_gi` does **not** include the $17/6$ term in the $\xi>1$ or $\xi<0$ branches, whereas the paper has it there. **Discrepancy**: the paper's $\xi>1$ and $\xi<0$ branches contain $+\frac{17}{6}\frac{1}{\xi-1}$ and $+\frac{17}{6}\frac{1}{1-\xi}$ respectively; the code omits these.
+- **Logarithms**: The code's $\ln|\xi/(\xi-1)|$ matches the paper's $\ln\frac{\xi}{\xi-1}$ (positive for $\xi>1$) and $\ln\frac{-\xi}{1-\xi}$ (positive for $\xi<0$). The inside-$[0,1]$ log matches after the $\ln 4$ convention shift. No discrepancy.
+- **Plus prescription**: The code uses the column-sum prescription (each $y$-column integrates to zero), which is equivalent to the paper's $[g]^{D}_{+(1)}$ with the stated definition. The paper splits into three domains $[1,\infty)$, $[0,1]$, $[-\infty,0)$; the code's `build_matching_matrix` applies a single plus prescription over the full domain, which is not the same as the paper's split. **Discrepancy**: the paper's three separate plus-brackets are not reproduced by the code's single column-sum; the code effectively merges them.
+- **Delta term**: The paper has $-\frac{\alpha_s T_F}{2\pi}\left[\frac{1}{3}-\frac{1}{3}\ln(\mu^2/(4y^2P_z^2))\right]\delta(1-\xi)\frac{\langle x\rangle_g}{\langle x\rangle_{q_i}}$. The code's `C_ratio_gi` has **no** $\delta(1-\xi)$ term and **no** $T_F$ term at all — the $T_F$ contribution is entirely absent from the code. **Discrepancy**: the code omits the entire $T_F$ (quark-to-gluon mixing) term.
+- **Hybrid correction**: The code's `_hybrid_gi_delta` with `strength=1.5` gives $\frac{3\alpha_s C_F}{2\pi^2}\left[-\frac{1}{|\xi-1|}+\frac{2\mathrm{Si}((1-\xi)|y|z_sP_z)}{\pi(1-\xi)}\right]$, which matches the paper's Eq. (35) $\delta C_{q_iq_i}$ exactly (the paper's prefactor is $-\frac{17\alpha_s C_F}{24\pi}+\frac{\alpha_s T_F}{12\pi}\frac{\langle x\rangle_g}{\langle x\rangle_{q_i}}$, but the code uses only the $3/2$ strength, dropping the $17/24$ and $T_F$ parts). **Discrepancy**: the code's hybrid correction uses strength $3/2$ only, omitting the $-\frac{17}{24}$ and $\frac{T_F}{12}\frac{\langle x\rangle_g}{\langle x\rangle_{q_i}}$ terms of Eq. (35).
+
+**Verdict**: The code does **not** reproduce Eq. (24) of arXiv:2412.20461. It captures the $C_F$ regular coefficient (with the $17/6$ discrepancy in the outer branches) and the hybrid Si correction (with the wrong prefactor), but it entirely omits the $T_F$ mixing term, the $\delta(1-\xi)$ term, and the paper's split plus-prescription domains.

@@ -276,6 +276,32 @@ def C_msbar_gz_plus(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
     return entry
 
 
+def C_ratio_gz(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
+    """gamma^z ratio coefficient: ``C_ratio + 2(1-ksi)`` on 0 < ksi < 1.
+
+    The paper writes the gamma^z vs gamma^t shift only for MSbar (Eq. 2.15) and never
+    writes a gamma^z ratio coefficient. It nevertheless belongs here: Eq. (2.20) makes
+    the hybrid-vs-ratio piece ``delta C_hyb`` *identical* for gamma^t, gamma^z,
+    gamma^t gamma5 and gamma^z gamma5, so the scheme difference carries no operator
+    dependence and the ``2(1-ksi)`` separating the two Dirac structures has to be a
+    hard-coefficient term that survives in every scheme. Reading Eq. (2.19) with the
+    single unlabelled ``C_r`` would instead make it vanish in the ratio and hybrid
+    schemes, contradicting Eq. (2.20).
+
+    Eq. (2.15) pairs the shift with a ``+delta(1-ksi)`` whose only job is to undo the
+    plus subtraction (``[2(1-ksi)]_+(1) + delta(1-ksi) = 2(1-ksi)`` bare, since
+    ``int_0^1 2(1-ksi) = 1``). That delta is a normalization term belonging to MSbar
+    alone -- the ratio scheme divides the normalization out -- so it is deliberately
+    NOT repeated here and the shift stays plus-prescribed by the shared discretization.
+    The gauge-invariant pair C_ratio_gi / C_ratio_gi_gz is built exactly this way, and
+    so is the gamma^z gamma5 hybrid kernel of the source notebook.
+    """
+    entry = C_ratio(ksi, log_scale, eps)
+    if eps < ksi < 1.0 - eps:
+        entry += 2.0 * (1.0 - ksi)
+    return entry
+
+
 def C_hybrid(ksi: float, log_scale: float, y: float, zspz: float, eps: float = 1e-12) -> float:
     """Hybrid coefficient: C_ratio + Wilson-line Si correction, Eq. (2.19)-(2.20).
 
@@ -292,6 +318,18 @@ def C_hybrid(ksi: float, log_scale: float, y: float, zspz: float, eps: float = 1
         - 2.0 * _sine_integral(one_minus_ksi * wilson_scale) / (np.pi * sign_safe_denominator)
     )
     return C_ratio(ksi, log_scale, eps) + delta
+
+
+
+def C_hybrid_gz(ksi: float, log_scale: float, y: float, zspz: float, eps: float = 1e-12) -> float:
+    """gamma^z hybrid coefficient: ``C_ratio_gz`` plus the same Wilson-line Si correction.
+
+    Eq. (2.19) with the gamma^z backbone of ``C_ratio_gz``; ``delta C_hyb`` (Eq. 2.20)
+    is operator independent, so the correction is byte-for-byte the gamma^t one.
+    """
+    return C_ratio_gz(ksi, log_scale, eps) + (
+        C_hybrid(ksi, log_scale, y, zspz, eps) - C_ratio(ksi, log_scale, eps)
+    )
 
 
 # --- the unified discretization ---------------------------------------------
@@ -431,7 +469,12 @@ def build_matching_matrix(
     if not np.allclose(y_step, y_step[0], rtol=0.0, atol=eps):
         raise ValueError("`quasi_y_ls` must be uniformly spaced.")
 
-    alpha_s = alphas_nloop(mu, order=1, Nf=3)
+    # One alpha_s for the whole file: `_alpha_s` is the two-loop, threshold-matched
+    # running the RGR evolution operator already uses. Before, the fixed order used
+    # `alphas_nloop` (anchored at alpha_s(2 GeV) = 0.293, Nf frozen at 3) while the
+    # evolution used `_alpha_s`, so a single RGR kernel mixed two couplings that
+    # differ by ~1% at 2 GeV and ~4% at 5 GeV.
+    alpha_s = _alpha_s(float(mu))
 
     nx, ny = len(x_grid), len(y_grid)
     nlo_matrix = np.zeros((nx, ny))
@@ -517,15 +560,40 @@ def _pdf_density(coeff: CoeffFn, momentum_gev: float, mu: float) -> DensityFn:
 # plus-prescribed only over ksi in [0, 2] and its far tail leaves the finite grid.
 
 
+# Beyond this |ksi| the coefficients are numerically worthless: they are built from
+# terms that individually grow like ksi and cancel down to O(1/ksi^2), so by |ksi| ~ 1e5
+# the cancellation has eaten every significant digit -- C * ksi^2, which should sit at
+# ~1/3, wanders to 95. Quadrature over a semi-infinite range samples exactly there and
+# (with its warnings silenced) returns whatever the noise gives: isolated delta entries
+# came out 1e7 instead of 1e-1. So the numerical tail stops here and the rest is added
+# in closed form off the 1/ksi^2 asymptote.
+_TAIL_KSI_CUTOFF: Final = 1.0e4
+
+
+def _asymptotic_tail(func: Callable[[float], float], edge: float) -> float:
+    """``int_edge^inf`` (or ``int_-inf^edge``) of a coefficient decaying like c / ksi^2.
+
+    Reads c off the function at ``edge`` -- ``c = func(edge) * edge^2`` -- so the tail is
+    ``c / |edge| = func(edge) * edge^2 / |edge|``, the same expression on either side.
+    """
+    return float(func(edge) * edge**2 / abs(edge))
+
+
 def _integrate(func: Callable[[float], float], lo: float, hi: float) -> float:
     """Integrate a smooth coefficient tail over (lo, hi); +-inf limits allowed.
 
-    Uses scipy when available; the fallback maps infinite tails onto u = 1/ksi
-    (the coefficients decay like 1/ksi^2, so the transformed integrand is finite)
-    and applies a fixed Simpson rule.
+    Infinite limits are truncated at ``_TAIL_KSI_CUTOFF`` and completed analytically --
+    see the note there. Uses scipy when available; the fallback maps what is left onto
+    u = 1/ksi and applies a fixed Simpson rule.
     """
     if hi <= lo:
         return 0.0
+    if not np.isfinite(hi):
+        edge = max(lo, _TAIL_KSI_CUTOFF)
+        return _integrate(func, lo, edge) + _asymptotic_tail(func, edge)
+    if not np.isfinite(lo):
+        edge = min(hi, -_TAIL_KSI_CUTOFF)
+        return _asymptotic_tail(func, edge) + _integrate(func, edge, hi)
     try:
         import warnings
 
@@ -544,15 +612,7 @@ def _integrate(func: Callable[[float], float], lo: float, hi: float) -> float:
         h = (b - a) / n
         return float(h / 3.0 * (vals[0] + vals[-1] + 4.0 * vals[1:-1:2].sum() + 2.0 * vals[2:-2:2].sum()))
 
-    finite_lo, finite_hi = np.isfinite(lo), np.isfinite(hi)
-    if finite_lo and finite_hi:
-        return simpson(func, lo, hi)
-    # Map an infinite tail via u = 1/ksi (ksi = 1/u, d ksi = -du / u^2).
-    if finite_lo and not finite_hi:  # (lo, +inf), lo > 0
-        return simpson(lambda u: func(1.0 / u) / u**2, 0.0 + 1e-9, 1.0 / lo)
-    if not finite_lo and finite_hi:  # (-inf, hi), hi < 0
-        return simpson(lambda u: func(1.0 / u) / u**2, 1.0 / hi, 0.0 - 1e-9)
-    return 0.0
+    return simpson(func, lo, hi)  # both limits are finite by the time we get here
 
 
 def _uncovered_ksi_intervals(
@@ -633,7 +693,7 @@ def _build_pdf_matrix(
     if plus_coeff is None:
         plus_coeff = coeff
 
-    alpha_s = alphas_nloop(mu, order=1, Nf=3)
+    alpha_s = _alpha_s(float(mu))  # see the note in build_matching_matrix
     nx, ny = len(x_grid), len(y_grid)
     identity = _lo_interp_matrix(x_grid, y_grid)
     nlo_matrix = np.zeros((nx, ny))
@@ -822,13 +882,14 @@ def CG_gtg5_quark_PDF_hybrid_NLO(
 
 
 # --- gamma^z / gamma^z gamma5 PDF -------------------------------------------
-# Eq. (2.15): only the MSbar scheme differs from gamma^t (by 2(1-ksi)_+ + delta).
-# In the ratio and hybrid schemes gamma^z shares gamma^t's coefficient
-# (C_r in Eq. 2.16; delta C_hyb in Eq. 2.20 is identical for gamma^t and gamma^z),
-# so those two delegate to the gamma^t builders.
+# gamma^z differs from gamma^t by 2(1-ksi) in EVERY scheme, not only in MSbar: the
+# hybrid-vs-ratio piece delta C_hyb (Eq. 2.20) is the same function for gamma^t and
+# gamma^z, so the shift is a hard-coefficient term the scheme choice cannot remove.
+# MSbar additionally carries the delta(1-ksi) of Eq. (2.15), which un-plusses the shift;
+# that one is a normalization term and stays MSbar-only -- see C_ratio_gz.
 
 
-@kernel_reference("2602.11283", "Eq. (2.16)")
+@kernel_reference("2602.11283", "Eq. (2.16) with the gamma^z shift of Eq. (2.15)")
 def CG_gz_quark_PDF_ratio_NLO(
     lc_x_ls: np.ndarray,
     momentum_gev: float,
@@ -836,8 +897,11 @@ def CG_gz_quark_PDF_ratio_NLO(
     quasi_y_ls: np.ndarray | None = None,
     eps: float = 1e-12,
 ) -> np.ndarray:
-    """NLO ratio-scheme kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.16; = gamma^t)."""
-    return CG_gt_quark_PDF_ratio_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps)
+    """NLO ratio-scheme kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.16 + 2(1-ksi))."""
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_ratio_gz(ksi, log_scale, eps), momentum_gev, mu),
+    )
 
 
 @kernel_reference("2602.11283", "Eq. (2.15)")
@@ -866,7 +930,7 @@ def CG_gz_quark_PDF_msbar_NLO(
     )
 
 
-@kernel_reference("2602.11283", "Eqs. (2.19)-(2.20)")
+@kernel_reference("2602.11283", "Eqs. (2.19)-(2.20) with the gamma^z shift of Eq. (2.15)")
 def CG_gz_quark_PDF_hybrid_NLO(
     lc_x_ls: np.ndarray,
     momentum_gev: float,
@@ -875,11 +939,20 @@ def CG_gz_quark_PDF_hybrid_NLO(
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
-    """NLO hybrid-scheme kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.19-2.20; = gamma^t)."""
-    return CG_gt_quark_PDF_hybrid_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
+    """NLO hybrid-scheme kernel for the Coulomb-gauge ``gamma^z`` PDF (Eq. 2.19-2.20 + 2(1-ksi)).
+
+    ``zspz = z_s * P_z`` (the dimensionless Wilson-line length) is required.
+    """
+    if zspz is None:
+        raise ValueError("`zspz` is required for the hybrid matching kernel.")
+    z = float(zspz)
+    return build_matching_matrix(
+        lc_x_ls, mu, quasi_y_ls, eps,
+        density=_pdf_density(lambda ksi, log_scale, y: C_hybrid_gz(ksi, log_scale, y, z, eps), momentum_gev, mu),
+    )
 
 
-@kernel_reference("2602.11283", "Eq. (2.16)")
+@kernel_reference("2602.11283", "Eq. (2.16) with the gamma^z shift of Eq. (2.15)")
 def CG_gzg5_quark_PDF_ratio_NLO(
     lc_x_ls: np.ndarray,
     momentum_gev: float,
@@ -904,7 +977,7 @@ def CG_gzg5_quark_PDF_msbar_NLO(
     return CG_gz_quark_PDF_msbar_NLO(lc_x_ls, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=quasi_y_ls, eps=eps, zspz=zspz)
 
 
-@kernel_reference("2602.11283", "Eqs. (2.19)-(2.20)")
+@kernel_reference("2602.11283", "Eqs. (2.19)-(2.20) with the gamma^z shift of Eq. (2.15)")
 def CG_gzg5_quark_PDF_hybrid_NLO(
     lc_x_ls: np.ndarray,
     momentum_gev: float,
@@ -1786,7 +1859,11 @@ def _lrr_improve(
         if x_ls.shape == y_ls.shape and np.allclose(x_ls, y_ls, rtol=0.0, atol=1e-12)
         else _plus_prescription_matrix(y_ls, y_ls, density_cz, eps)
     )
-    alpha_s = alphas_nloop(mu, order=1, Nf=nf)
+    # LRR.nb's MfixGen feeds ONE coupling to both halves: `alphasNLO[[1]][mu]`, its
+    # two-loop threshold-crossing running anchored at alpha_s(M_Z) = 0.1179 -- which is
+    # what `_alpha_s` is. `nf` stays frozen at 3 inside the renormalon closed forms, as
+    # the notebook does; it is the flavour number of the series, not of the running.
+    alpha_s = _alpha_s(float(mu))
     rsum_pv = dPVasym(1.0, mu, nf, alpha_s)
     r0 = rnasym(0, 1.0, mu, nf) * alpha_s
     return (fixed_order_matrix + r0 * m_cz_sum) @ expm(-m_cz_exp * rsum_pv)
@@ -2126,6 +2203,37 @@ def _p_nlo_transversity(nu: np.ndarray) -> np.ndarray:
     return np.where(inside, value, 0.0)
 
 
+_ZPSI_REF_GEV: Final = 2.0  # the scale at which the CG MSbar Z_psi was determined
+
+
+def _zpsi_msbar_ratio(mu: float, mu_ref: float = _ZPSI_REF_GEV, nf: float = 3.0) -> float:
+    """Z_psi^MSbar(mu) / Z_psi^MSbar(mu_ref) for the Coulomb-gauge quark field.
+
+    The MSbar (imaginary-part) channel renormalizes the quasi-PDF with a constant fixed
+    once and for all at 2 GeV -- arXiv:2602.11283 Eq. (2.11), ``Z_MSbar(a, mu = 2 GeV) =
+    0.915(2)``. A fixed-order match also runs at mu = 2 GeV, so the two scales agree and
+    this ratio is 1; that is why it never had to appear before. RGR breaks the tie: it
+    matches row x at ``mu0(x) = 2 kappa x P^z``, and the quasi-PDF fed to the coefficient
+    must be renormalized at that same mu0, so it has to be carried from 2 GeV to mu0.
+
+    Integrating ``gamma / (2 beta)`` with the one-loop CG quark-field anomalous dimension
+    ``gamma = -(8/3) alpha_s/(4 pi)`` (all the CG field has -- see the paper's Appendix A)
+    and the two-loop beta gives
+    ``[ (a/(b0 + b1 a)) / (a_ref/(b0 + b1 a_ref)) ]^(1/(3 pi b0))``,
+    whose exponent is ``C_F/(11 - 2 nf/3) = 4/27`` at nf = 3, matching Eq. (A.9)'s
+    leading-logarithmic ``(alpha_s(k)/alpha_s(k0))^(C_F/[2(11-2Nf/3)])`` for Z^(-1/2).
+    ``nf`` is frozen at 3 (the sea content of the ensemble), as the source notebook does.
+
+    The hybrid and ratio schemes need no such factor: their normalization is built from
+    ratios of matrix elements that cancel Z_psi outright.
+    """
+    b0 = _beta_coefficient(0, nf)
+    b1 = _beta_coefficient(1, nf)
+    alpha, alpha_ref = _alpha_s(float(mu)), _alpha_s(float(mu_ref))
+    ratio = (alpha / (b0 + b1 * alpha)) / (alpha_ref / (b0 + b1 * alpha_ref))
+    return float(ratio ** (1.0 / (3.0 * np.pi * b0)))
+
+
 def _dglap_evolution_matrices(
     x_grid: np.ndarray, p_nlo: Callable[[np.ndarray], np.ndarray]
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -2199,6 +2307,14 @@ def _rgr_from_fixed_order(
     needs_zspz = "hybrid" in fixed_order_builder.__name__.split("_")
     if needs_zspz and zspz is None:
         raise ValueError("`zspz` is required for the hybrid (RGR) matching kernel.")
+    # The MSbar channel carries the quasi-PDF's Z_psi from its fixed 2 GeV renormalization
+    # scale to this row's mu0 -- see _zpsi_msbar_ratio. Transversity is the one exception,
+    # and it follows the source notebook: its unpolarized and helicity MSbar sections build
+    # the factor in, its transversity ones do not. That is consistent rather than sloppy --
+    # for transversity MSbar IS the ratio/hybrid coefficient (Eqs. 2.17, 2.21), so the
+    # section renormalizes by ratios and there is no Z_psi left to convert.
+    tokens = fixed_order_builder.__name__.split("_")
+    needs_zpsi = "msbar" in tokens and "gtgpg5" not in tokens
     takes_zspz = "zspz" in inspect.signature(fixed_order_builder).parameters
 
     # Unlike LRR, RGR does NOT need a square grid. Its evolution operator acts on the ROW
@@ -2219,7 +2335,8 @@ def _rgr_from_fixed_order(
                 x, momentum_gev=momentum_gev, mu=mu0, quasi_y_ls=y, eps=eps, **extra
             )
             evolution = _evolution_operator(mu0, mu, evo_lo, evo_nlo, steps)
-            matrix[x_value, :] = (evolution @ fixed)[x_value, :]
+            row = (evolution @ fixed)[x_value, :]
+            matrix[x_value, :] = (row * _zpsi_msbar_ratio(mu0)) if needs_zpsi else row
     return matrix
 
 
@@ -2254,7 +2371,7 @@ def CG_gz_quark_PDF_hybrid_RGR_re_NLO(
     lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
     kappa=1.0, mu_min=0.6
 ) -> np.ndarray:
-    """NLO+RGR CG ``gamma^z`` real part; its hybrid fixed order is gamma^t's."""
+    """NLO+RGR CG ``gamma^z`` real part; its hybrid fixed order carries gamma^t's plus 2(1-ksi)."""
     return _rgr_from_fixed_order(
         CG_gz_quark_PDF_hybrid_NLO, _p_nlo_valence,
         lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
@@ -2280,7 +2397,7 @@ def CG_gzg5_quark_PDF_hybrid_RGR_re_NLO(
     lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
     kappa=1.0, mu_min=0.6
 ) -> np.ndarray:
-    """NLO+RGR CG ``gamma^z gamma5`` real part; its hybrid fixed order is gamma^t gamma5's."""
+    """NLO+RGR CG ``gamma^z gamma5`` real part; its hybrid fixed order adds 2(1-ksi) to gamma^t gamma5's."""
     return _rgr_from_fixed_order(
         CG_gzg5_quark_PDF_hybrid_NLO, _p_nlo_full_helicity,
         lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
@@ -2319,7 +2436,7 @@ def CG_gz_quark_PDF_msbar_RGR_im_NLO(
     lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
     kappa=1.0, mu_min=0.6
 ) -> np.ndarray:
-    """NLO+RGR CG ``gamma^z`` imaginary part. Its MSbar fixed order is its OWN (Eq. 2.15 adds 2(1-ksi)_+ to gamma^t's), unlike the hybrid scheme where gamma^z and gamma^t coincide."""
+    """NLO+RGR CG ``gamma^z`` imaginary part. Its MSbar fixed order adds Eq. (2.15)'s 2(1-ksi)_+ AND its delta(1-ksi) to gamma^t's; the hybrid channel takes the shift without the delta."""
     return _rgr_from_fixed_order(
         CG_gz_quark_PDF_msbar_NLO, _p_nlo_full_unpolarized,
         lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,

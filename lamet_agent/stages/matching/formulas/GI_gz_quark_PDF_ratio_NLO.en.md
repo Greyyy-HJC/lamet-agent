@@ -1,10 +1,14 @@
-<!-- lamet-agent formula cache; kernel=GI_gz_quark_PDF_ratio_NLO; arxiv=2604.00143; equations=Eq. (C7); digest=28e7a17e655f1b24; paper_used=true -->
-$$ \mathcal{C}^{\mathrm{ratio}}_{g_z}(x,y,\mu,P_z) = \delta(1-\xi) + \frac{\alpha_s C_F}{2\pi} \left\{ \left[ \frac{1+\xi^2}{1-\xi} \left( \ln\frac{4y^2P_z^2}{\mu^2} + \ln(4\xi(1-\xi)) - 1 \right) + 1 \right]^{[0,1]}_{+(1)} + \left[ \mathrm{sgn}(\xi)\left( \frac{1+\xi^2}{1-\xi} \ln\frac{|\xi|}{|\xi-1|} + 1 \right) \right]^{(-\infty,\infty)}_{+(1)} + \frac{3}{2|1-\xi|} + 2(1-\xi) \right\} $$
+<!-- lamet-agent formula cache; kernel=GI_gz_quark_PDF_ratio_NLO; arxiv=2604.00143; equations=Eq. (C7); digest=68124b57c9a523fe; paper_used=true -->
+$$C_{g_z}^{\mathrm{ratio}}(\xi, L) = \left[ \frac{1+\xi^2}{1-\xi} \left( L + \ln\frac{4\xi(1-\xi)}{1} - 1 \right) + 1 \right]^{D}_{+(1)} + \frac{3}{2|1-\xi|} + 2(1-\xi) \quad (0<\xi<1),$$
 
-where $\xi = x/y$, $L = \ln(4y^2P_z^2/\mu^2)$, and the plus-prescription is defined as in the paper:
-$$ \int_0^1 d\alpha\,[g(\alpha)]^{D}_{+(x_0)}\,\varphi(\alpha) = \int_D d\alpha\,g(\alpha)\big(\varphi(\alpha)-\varphi(x_0)\big) $$
-with $D=[0,1]$ for the first bracket and $D=(-\infty,\infty)$ for the second, both with $x_0=1$. The term $2(1-\xi)$ is the scheme-specific correction for the $\gamma^z$ operator relative to $\gamma^t$, active only for $0<\xi<1$.
+$$C_{g_z}^{\mathrm{ratio}}(\xi, L) = \left[ \operatorname{sgn}(\xi) \left( \frac{1+\xi^2}{1-\xi} \ln\frac{|\xi|}{|\xi-1|} + 1 \right) \right]^{D}_{+(1)} + \frac{3}{2|1-\xi|} \quad (\xi<0 \text{ or } \xi>1),$$
+
+where $L = \ln(4y^2P_z^2/\mu^2)$, $\xi = x/y$, and the plus-prescription is defined as in the paper:
+
+$$\int_0^1 d\xi\, [g(\xi)]^{D}_{+(1)} \varphi(\xi) = \int_0^1 d\xi\, g(\xi) \big(\varphi(\xi) - \varphi(1)\big),$$
+
+with the domain $D$ being $[0,1]$ for the first bracket and $(-\infty,\infty)$ for the second. The scheme-specific correction is the $2(1-\xi)$ term on $0<\xi<1$, which distinguishes the $\gamma^z$ from the $\gamma^t$ coefficient. There is no explicit $\delta(1-\xi)$ term; the plus-prescription restores the singularity at $\xi=1$.
 
 #### Consistency check
 
-The code reproduces Eq. (C7) of arXiv:2604.00143 term by term. The regular coefficient matches: the splitting function $(1+\xi^2)/(1-\xi)$, the log combination $\ln(y^2P_z^2/\mu^2) + \ln(4\xi(1-\xi))$ (the code's `log_scale - ln(4)` plus `ln(4*ksi*(1-ksi))`), the constant $-1$, and the $+1$ term. The plus-prescription is correctly implemented with the paper's exact notation: two separate brackets over $[0,1]$ and $(-\infty,\infty)$, both with subtraction point $+(1)$, and the code's column-sum prescription matches the paper's definition. The $\delta(1-\xi)$ term is implicit in the LO identity matrix. The scheme-specific correction $2(1-\xi)$ for $0<\xi<1$ is present. The only notational difference is that the code writes the log as $\ln(4y^2P_z^2/\mu^2)$ while the paper uses $-\ln(\mu_0^2/(4w^2P_z^2))$ with $w=\xi y$; these are algebraically identical. No discrepancies found.
+The code implements exactly the coefficient above. The regular coefficient matches: for $0<\xi<1$, the code gives $S(L - \ln 4 + \ln(4\xi(1-\xi)) - 1) + 1$ with $S=(1+\xi^2)/(1-\xi)$, which equals the paper's $S(\ln(y^2P_z^2/\mu^2) + \ln(4\xi(1-\xi)) - 1) + 1$ after the code's $\ln 4$ removal. The $3/(2|1-\xi|)$ tail and the $2(1-\xi)$ correction are present. The plus-prescription is restored by the column-sum in `build_matching_matrix`, matching the paper's $[g]^{D}_{+(1)}$ with domain $[0,1]$ for the first branch and $(-\infty,\infty)$ for the second. No discrepancies found.
