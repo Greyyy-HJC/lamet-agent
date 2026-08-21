@@ -74,8 +74,9 @@ hybrid-self-renormalization workflows within the job DAG.
 ## Intermediate Data (NetCDF)
 
 Stage-to-stage artifacts are **`EnsembleData` NetCDF files** written under the
-manifest's `artifacts_directory` as `<stage>/<job_id>.nc`. Each file stores one resampled
-array plus its lattice metadata:
+manifest's `artifacts_directory` as `<number>_<stage>/<job_id>.nc`. Stage numbers
+are fixed by the workflow order, independent of which stages a partial run selects.
+Each file stores one resampled array plus its lattice metadata:
 
 - **Leading dimension** `resample`: bootstrap, jackknife, or raw sample index (length 1
   for `resample='gvar'`).
@@ -88,10 +89,12 @@ Typical artifact chain (paths are relative to `artifacts/` unless noted):
 
 | Stage | Example artifact |
 | --- | --- |
-| `correlator_analysis` | `correlator_analysis/ca_p5.nc` |
-| `renormalization` | `renormalization/rn_p5.nc` |
-| `fourier_transform` | `fourier_results/fourier_result.nc`, `fourier_results/fourier_fit_info.nc` |
-| `perturbative_matching` | `matching_results/quasi_pdf.nc` |
+| `correlator_analysis` | `1_correlator_analysis/ca_p5.nc` |
+| `renormalization` | `2_renormalization/rn_p5.nc` |
+| `fourier_transform` | `3_fourier_transform/ft_p5.nc` |
+| `perturbative_matching` | `4_perturbative_matching/mt_p5.nc` |
+| `extrapolation` | `5_extrapolation/ex_main.nc` |
+| `review` | `6_review/review.md` |
 
 Within one run, downstream inputs resolve job ids to in-memory primary outputs.
 `inputs.artifacts` provides equivalent source nodes for partial workflows.
@@ -109,8 +112,8 @@ Use the typed helpers in `core/data.py`:
 ```python
 from lamet_agent.core.data import EnsembleData
 
-data.to_netcdf("artifacts/fourier_results/fourier_result.nc")
-reload = EnsembleData.from_netcdf("artifacts/fourier_results/fourier_result.nc")
+data.to_netcdf("artifacts/3_fourier_transform/ft_p5.nc")
+reload = EnsembleData.from_netcdf("artifacts/3_fourier_transform/ft_p5.nc")
 ```
 
 Complex arrays round-trip natively (`auto_complex=True`); you do not need to split real
@@ -540,10 +543,10 @@ Job roles:
 
 ### Outputs
 
-- Fit job: `<artifacts>/renormalization/<fit_job_id>.nc` ($z_R$ on exactly the
+- Fit job: `<artifacts>/2_renormalization/<fit_job_id>.nc` ($z_R$ on exactly the
   reference grid), plus fit panels
   (`*_fit_lnM_vs_inv_a`, `*_fit_mR_zmsbar`, `*_fit_m_over_zR`, `*_fit_f1`).
-- Apply job: `<artifacts>/renormalization/<apply_job_id>.nc` (renormalized ME),
+- Apply job: `<artifacts>/2_renormalization/<apply_job_id>.nc` (renormalized ME),
   ME plot, `*_zmsbar_compare`; the last apply job with sibling NetCDFs present
   writes one stage-level `discrete_effect_<momentum>_re/im` pair per momentum,
   with only the corresponding lattice spacings overlaid in each figure.
@@ -936,7 +939,7 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
   - Defines the `metadata`, source `inputs`, and stage-job schema.
   - Validates ids, ordered job references, and root-relative paths.
 - `lamet_agent/core/stages.py`
-  - Maps stage IDs to concrete stage packages.
+  - Maps stage IDs to concrete stage packages and fixed numbered artifact directories.
 - `lamet_agent/core/data.py`
   - Defines typed data containers (`EnsembleInfo`, `EnsembleData`) for resampled
     lattice data.

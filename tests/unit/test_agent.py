@@ -757,7 +757,7 @@ def test_self_renorm_apply_job_rejects_fit_tool_then_recovers(tmp_path: Path, mo
     assert fit_called is False
     assert apply_kwargs["target"] == "target"
     assert apply_kwargs["zR"] == "zR"
-    assert apply_kwargs["artifacts_dir"] == str(tmp_path / "renormalization")
+    assert apply_kwargs["artifacts_dir"] == str(tmp_path / "2_renormalization")
     assert apply_kwargs["job_id"] == job.id
     assert "save_path" not in apply_kwargs
     assert "order" not in apply_kwargs
@@ -1417,6 +1417,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
 
     report_path = Path(result["stage_reports"]["fourier_transform"]["report"])
     assert report_path.exists()
+    assert report_path.parent.name == "3_fourier_transform"
     assert "report_cn" not in result["stage_reports"]["fourier_transform"]
     assert not report_path.with_name("ft_report_CN.md").exists()
     report_text = report_path.read_text(encoding="utf-8")
@@ -1502,6 +1503,7 @@ def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, mon
 
     report_path = Path(result["stage_reports"]["correlator_analysis"]["report"])
     assert report_path.exists()
+    assert report_path.parent.name == "1_correlator_analysis"
     assert report_path.name == "ca_report_CN.md"
     assert "report_cn" not in result["stage_reports"]["correlator_analysis"]
     assert report_path.with_name("ca_report.md").exists()
@@ -1603,6 +1605,7 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
 
     report_path = Path(result["stage_reports"]["renormalization"]["report"])
     assert report_path.exists()
+    assert report_path.parent.name == "2_renormalization"
     assert "report_cn" not in result["stage_reports"]["renormalization"]
     assert not report_path.with_name("renorm_report_CN.md").exists()
     report_text = report_path.read_text(encoding="utf-8")

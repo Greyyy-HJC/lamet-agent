@@ -15,6 +15,7 @@ from .core.data import EnsembleData
 from .core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FIG_SIZE, FONT_SIZE, LABEL_SIZE, LEGEND_SETS, apply_plot_style, default_plot
 from .core.prompting import build_stage_static_prompt
 from .core.resampling import sample_mean_and_sdev
+from .core.stages import resolve_stage_artifacts_directory
 from .core.tools import (
     filter_tool_kwargs,
     prepare_tool_args,
@@ -126,7 +127,8 @@ def _run_job(
         or job.id == "ex_other"
         or job.id.endswith(("_zs_low", "_zs_high", "_lambda_low", "_lambda_high", "_mu_low", "_mu_high", "_a_sym", "_p_sym", "_ap_sym", "_budget"))
     )
-    stage_dir = manifest.artifacts_directory / stage / "sym" if is_systematics_job else manifest.artifacts_directory / stage
+    artifact_stage_dir = resolve_stage_artifacts_directory(manifest.artifacts_directory, stage)
+    stage_dir = artifact_stage_dir / "sym" if is_systematics_job else artifact_stage_dir
     stage_dir.mkdir(parents=True, exist_ok=True)
     if stage == "perturbative_matching":
         from lamet_agent.stages.matching.validation import effective_matching_params
@@ -622,6 +624,7 @@ def run_agent(
             model_spec=model_spec,
         )
     for stage in selected:
+        artifact_stage_dir = resolve_stage_artifacts_directory(manifest.artifacts_directory, stage)
         state.stage_results[stage] = {}
         stage_job_records: list[dict[str, Any]] = []
         for job in manifest.stages[stage].jobs:
@@ -897,14 +900,14 @@ def run_agent(
                     for energy in (record.get("result", {}).get("pt2_energies") or [])
                     if isinstance(energy, dict)
                 ],
-                manifest.artifacts_directory / stage,
+                artifact_stage_dir,
             )
             if energy_artifacts:
                 for record in stage_job_records:
                     record.setdefault("artifacts", {}).update(energy_artifacts)
             overlay_artifacts = _write_matrix_overlay_artifacts(
                 stage_job_records,
-                manifest.artifacts_directory / stage,
+                artifact_stage_dir,
                 artifact_key="bare_artifact",
                 prefix="ca",
                 title_suffix="bare matrix elements",
@@ -914,13 +917,13 @@ def run_agent(
                 stage_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             quality_artifacts = write_correlator_sample_quality_artifacts(
                 stage_job_records,
-                manifest.artifacts_directory / stage,
+                artifact_stage_dir,
             )
             if quality_artifacts:
                 stage_job_records[0].setdefault("artifacts", {}).update(quality_artifacts)
             paths = write_correlator_stage_report(
                 jobs=stage_job_records,
-                path=manifest.artifacts_directory / stage / "ca_report.md",
+                path=artifact_stage_dir / "ca_report.md",
                 report_language=report_language,
                 backend=backend,
                 provider=provider,
@@ -940,7 +943,7 @@ def run_agent(
                 ]
             overlay_artifacts = _write_matrix_overlay_artifacts(
                 main_job_records,
-                manifest.artifacts_directory / stage,
+                artifact_stage_dir,
                 artifact_key="renormalized_artifact",
                 prefix="rn",
                 title_suffix="renormalized matrix elements",
@@ -952,7 +955,7 @@ def run_agent(
             paths = write_renorm_stage_report(
                 jobs=main_job_records,
                 systematics_jobs=sym_job_records,
-                path=manifest.artifacts_directory / stage / "renorm_report.md",
+                path=artifact_stage_dir / "renorm_report.md",
                 report_language=report_language,
                 backend=backend,
                 provider=provider,
@@ -966,13 +969,13 @@ def run_agent(
 
             main_job_records = [record for record in stage_job_records if not record.get("is_systematics")]
             sym_job_records = [record for record in stage_job_records if record.get("is_systematics")]
-            overlay_artifacts = _write_fourier_overlay_artifacts(main_job_records, manifest.artifacts_directory / stage)
+            overlay_artifacts = _write_fourier_overlay_artifacts(main_job_records, artifact_stage_dir)
             if overlay_artifacts and main_job_records:
                 main_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             paths = write_fourier_stage_report(
                 jobs=main_job_records,
                 systematics_jobs=sym_job_records,
-                path=manifest.artifacts_directory / stage / "ft_report.md",
+                path=artifact_stage_dir / "ft_report.md",
                 report_language=report_language,
                 backend=backend,
                 provider=provider,
@@ -986,7 +989,7 @@ def run_agent(
 
             main_job_records = [record for record in stage_job_records if not record.get("is_systematics")]
             sym_job_records = [record for record in stage_job_records if record.get("is_systematics")]
-            overlay_artifacts = _write_matching_overlay_artifacts(main_job_records, manifest.artifacts_directory / stage)
+            overlay_artifacts = _write_matching_overlay_artifacts(main_job_records, artifact_stage_dir)
             if overlay_artifacts and main_job_records:
                 main_job_records[0].setdefault("artifacts", {}).update(overlay_artifacts)
             trace.report_begin(
@@ -997,7 +1000,7 @@ def run_agent(
                 paths = write_matching_stage_report(
                     jobs=main_job_records,
                     systematics_jobs=sym_job_records,
-                    path=manifest.artifacts_directory / stage / "matching_report.md",
+                    path=artifact_stage_dir / "matching_report.md",
                     report_language=report_language,
                     llm=FormulaLlm(
                         backend=backend, provider=provider, api_key=api_key,
@@ -1017,7 +1020,7 @@ def run_agent(
             paths = write_extrapolation_stage_report(
                 jobs=main_job_records,
                 systematics_jobs=sym_job_records,
-                path=manifest.artifacts_directory / stage / "extrapolation_report.md",
+                path=artifact_stage_dir / "extrapolation_report.md",
                 report_language=report_language,
                 backend=backend,
                 provider=provider,

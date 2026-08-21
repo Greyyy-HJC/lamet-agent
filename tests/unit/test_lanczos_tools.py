@@ -192,6 +192,7 @@ def test_exact_lanczos_recovers_two_state_spectrum_and_matrix() -> None:
 
 def test_standard_manifest_contract_and_lanczos_tool_routing(tmp_path: Path) -> None:
     pt2_path, pt3_path, _current = _write_ordinary_h5(tmp_path)
+    artifact_stage_dir = tmp_path / "artifacts" / "1_correlator_analysis"
     manifest = _manifest(pt2_path, pt3_path)
     job = manifest.stages["correlator_analysis"].jobs[0]
     params = resolve_stage_params(
@@ -216,13 +217,13 @@ def test_standard_manifest_contract_and_lanczos_tool_routing(tmp_path: Path) -> 
         stage="correlator_analysis",
         job=job,
         effective_params=params,
-        artifacts_dir=tmp_path / "artifacts",
+        artifacts_dir=artifact_stage_dir,
     )
     assert args["pt3_paths"] == {str(tsep): pt3_path for tsep in (4, 6, 8, 12)}
     assert args["tsep_ls"] == [4, 6, 8, 12]
     assert args["z_values"] == [0]
     assert "save_path" not in args
-    assert args["artifacts_dir"] == str(tmp_path / "artifacts")
+    assert args["artifacts_dir"] == str(artifact_stage_dir)
     assert args["job_id"] == "matrix"
     assert args["workers"] == 3
 
@@ -361,6 +362,7 @@ def test_ordinary_tsep_conversion_trims_and_warns_about_discarded_points(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pt2_path, pt3_path, current = _write_ordinary_h5(tmp_path)
+    artifact_stage_dir = tmp_path / "artifacts" / "1_correlator_analysis"
     paths = {str(tsep): pt3_path for tsep in (4, 6, 8, 12)}
     with pytest.warns(UserWarning, match="uses 4 of 34"):
         inspection = inspect_lanczos_inputs(
@@ -440,7 +442,7 @@ def test_ordinary_tsep_conversion_trims_and_warns_about_discarded_points(
             ensemble="toy",
             tag="ordinary",
             temporal_extent=14,
-            artifacts_dir=tmp_path / "artifacts",
+            artifacts_dir=artifact_stage_dir,
         )
     output = EnsembleData.from_netcdf(result["netcdf_path"])
     assert output.array.values[:, 0] == pytest.approx(np.full(6, current[0, 0]))
@@ -448,6 +450,8 @@ def test_ordinary_tsep_conversion_trims_and_warns_about_discarded_points(
     assert worker_counts == [2]
     assert result["sampling_plan"]["discarded_point_count"] == 30
     assert Path(result["state_matrix_netcdf"]).is_file()
+    for key in ("artifact", "netcdf_path", "state_matrix_netcdf", "plot_pdf", "plot_svg"):
+        assert Path(result[key]).parent == artifact_stage_dir
 
 
 def test_tsep_conversion_plan_uses_t0_and_sparse_transfer_power() -> None:
@@ -468,6 +472,7 @@ def test_tsep_conversion_plan_uses_t0_and_sparse_transfer_power() -> None:
 
 def test_lanczos_twopoint_tool_writes_iteration_spectrum(tmp_path: Path) -> None:
     pt2_path, _pt3_path, _current = _write_ordinary_h5(tmp_path)
+    artifact_stage_dir = tmp_path / "artifacts" / "1_correlator_analysis"
     store: dict = {}
     result = run_lanczos_analysis(
         store,
@@ -489,10 +494,12 @@ def test_lanczos_twopoint_tool_writes_iteration_spectrum(tmp_path: Path) -> None
         ensemble="toy",
         tag="spectrum",
         temporal_extent=14,
-        artifacts_dir=tmp_path / "artifacts",
+        artifacts_dir=artifact_stage_dir,
     )
     assert Path(result["netcdf_path"]).is_file()
     assert isinstance(store["output"], EnsembleData)
     assert result["iterations"] == 7
+    for key in ("artifact", "netcdf_path", "plot_pdf", "plot_svg"):
+        assert Path(result[key]).parent == artifact_stage_dir
     energies = store["output"].array.sel(channel="source", iteration=3).values
     assert energies == pytest.approx(np.tile([0.25, 0.7], (6, 1)))

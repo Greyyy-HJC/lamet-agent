@@ -153,14 +153,14 @@ def test_review_appends_deterministic_consistency_sections(tmp_path: Path, monke
     chinese_path = Path(chinese["review"])
     english_text = english_path.read_text(encoding="utf-8")
     chinese_text = chinese_path.read_text(encoding="utf-8")
-    assert english_path == tmp_path / "artifacts" / "review" / "review.md"
-    assert chinese_path == tmp_path / "artifacts" / "review" / "review_CN.md"
+    assert english_path == tmp_path / "artifacts" / "6_review" / "review.md"
+    assert chinese_path == tmp_path / "artifacts" / "6_review" / "review_CN.md"
     assert "## Manifest Parameter Consistency" in english_text
     assert "`mismatch`" in english_text
     assert "stages.perturbative_matching.jobs[0].params.zs_fm" in english_text
     assert "## Manifest 参数一致性" in chinese_text
     assert "`mismatch`" in chinese_text
-    assert not (tmp_path / "ch" / "review" / "review.md").exists()
+    assert not (tmp_path / "ch" / "6_review" / "review.md").exists()
 
 
 def test_review_rewrites_stage_svg_links_relative_to_review_dir(tmp_path: Path, monkeypatch) -> None:
@@ -173,7 +173,7 @@ def test_review_rewrites_stage_svg_links_relative_to_review_dir(tmp_path: Path, 
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
     manifest = _manifest()
     manifest._artifacts_directory = tmp_path / "artifacts"
-    stage_dir = tmp_path / "artifacts" / "correlator_analysis"
+    stage_dir = tmp_path / "artifacts" / "1_correlator_analysis"
     stage_dir.mkdir(parents=True)
     for index in range(13):
         (stage_dir / f"ca_{index:02d}.svg").write_text("<svg/>", encoding="utf-8")
@@ -181,8 +181,9 @@ def test_review_rewrites_stage_svg_links_relative_to_review_dir(tmp_path: Path, 
     result = write_review_from_manifest(manifest)
     text = Path(result["review"]).read_text(encoding="utf-8")
 
-    assert "](../correlator_analysis/ca_HISQa060_X_re.svg)" in text
+    assert "](../1_correlator_analysis/ca_HISQa060_X_re.svg)" in text
     assert prompts[0].count('"markdown_path"') == 12
+    assert '"markdown_path": "../1_correlator_analysis/ca_00.svg"' in prompts[0]
     assert '"absolute_path"' not in prompts[0]
     assert '"stage_subpath"' not in prompts[0]
 
@@ -244,7 +245,7 @@ def test_review_prompt_includes_literature_context_when_enabled(tmp_path: Path, 
     assert "Literature context rules:" in prompts[0]
     assert "append one short paragraph at the end of that stage's Diagnostics subsection" in prompts[0]
     assert "may cite the most relevant retrieved paper(s) as qualitative background" in prompts[0]
-    assert "for example `../correlator_analysis/xxx.svg`" in prompts[0]
+    assert "for example `../1_correlator_analysis/xxx.svg`" in prompts[0]
     assert "must not turn literature into a separate evidence chain or into numerical validation for this run" in prompts[0]
     assert "Prefer papers whose `matched_topics` overlap most directly" in prompts[0]
 

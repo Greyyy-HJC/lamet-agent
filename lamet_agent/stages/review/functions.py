@@ -13,6 +13,7 @@ import numpy as np
 import xarray as xr
 
 from lamet_agent.core.llm import request_llm_text
+from lamet_agent.core.stages import resolve_stage_artifacts_directory, stage_artifact_directory_name
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import (
     MANIFEST_PARAMETER_MAINTENANCE_POLICY,
@@ -232,7 +233,7 @@ def write_review_from_manifest(
 ) -> dict[str, Any]:
     """Ask the configured LLM to write the final review from reports and NetCDF summaries."""
     artifacts_dir = manifest.artifacts_directory
-    review_dir = artifacts_dir / "review"
+    review_dir = resolve_stage_artifacts_directory(artifacts_dir, "review")
     review_dir.mkdir(parents=True, exist_ok=True)
     language = "ch" if report_language.lower() == "ch" else "en"
     target = review_dir / ("review_CN.md" if language == "ch" else "review.md")
@@ -243,10 +244,15 @@ def write_review_from_manifest(
     use_literature = bool(review_params["literature"])
     literature_max_papers = int(review_params["literature_max_papers"])
     materials = []
-    stages = [stage for stage in STAGE_REPORTS if (artifacts_dir / stage).is_dir() or stage in manifest.metadata.stages]
+    stages = [
+        stage
+        for stage in STAGE_REPORTS
+        if resolve_stage_artifacts_directory(artifacts_dir, stage).is_dir()
+        or stage in manifest.metadata.stages
+    ]
     for stage in stages:
         en_name = STAGE_REPORTS[stage]
-        stage_dir = artifacts_dir / stage
+        stage_dir = resolve_stage_artifacts_directory(artifacts_dir, stage)
         report_path = stage_dir / en_name
         item: dict[str, Any] = {
             "stage": stage,
@@ -285,7 +291,7 @@ def write_review_from_manifest(
         svg_paths = sorted(stage_dir.rglob("*.svg"))
         svg_paths.sort(key=lambda path: (path.name not in item["report_text"], str(path)))
         item["svg"] = [
-            {"markdown_path": os.path.relpath(path, review_dir)}
+            {"markdown_path": Path(os.path.relpath(path, review_dir)).as_posix()}
             for path in svg_paths[:12]
         ]
         materials.append(item)
@@ -535,12 +541,12 @@ def write_review_from_manifest(
     )
     system = lamet_review_rules_en + "Write a detailed scientific review using only the supplied stage reports, NetCDF summaries, SVG file lists, and manifest. Do not invent unreported numbers; when settings or outputs do not match a realistic LaMET analysis scenario, give executable manifest-level recommendations."
     user = (
-        f"Generate the complete `{target.name}` body directly in {'Simplified Chinese' if language == 'ch' else 'English'}. Follow the order in Stage materials; these stages come from stage subdirectories under `root_directory/artifacts_directory/<stage>` plus stages declared in the manifest. For example, correlator diagnostics are also collected from the `correlator_analysis/fit_logs` subdirectory. "
+        f"Generate the complete `{target.name}` body directly in {'Simplified Chinese' if language == 'ch' else 'English'}. Follow the order in Stage materials; these stages come from fixed numbered subdirectories under `root_directory/artifacts_directory/<number>_<stage>` plus stages declared in the manifest. For example, correlator diagnostics are also collected from the `1_correlator_analysis/fit_logs` subdirectory. "
         + "Return normal Markdown only; do not wrap the whole answer in a fenced code block. "
         + "Write one level-2 section for each stage with available material, and include `Physical Summary`, `Key figure`, `Diagnostics`, and `Recommended Manifest Changes` subsections. "
         + ("Use `物理总结`, `关键图像`, `诊断`, and `Manifest 修改建议` as the corresponding subsection headings. " if language == "ch" else "")
         + "`Physical Summary` must follow the publication-style prose rules in the system prompt rather than report-like listing, and may only use numerical values supplied by the reports and NetCDF summaries. "
-        + "`Key figure` must choose one SVG from that stage's `svg` list; if the list contains an ensemble overview figure such as `ca_<ensemble>_*.svg`, `rn_<ensemble>_*.svg`, `ft_<ensemble>_xdep.svg`, or `mt_<ensemble>.svg`, choose that overview figure first, otherwise follow the usual single-job figure selection rule. Embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths or use only the basename. The `markdown_path` usually has the form of a path from the review directory to a sibling stage directory, for example `../correlator_analysis/xxx.svg`; preserve that exact relative path string when embedding the image. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
+        + "`Key figure` must choose one SVG from that stage's `svg` list; if the list contains an ensemble overview figure such as `ca_<ensemble>_*.svg`, `rn_<ensemble>_*.svg`, `ft_<ensemble>_xdep.svg`, or `mt_<ensemble>.svg`, choose that overview figure first, otherwise follow the usual single-job figure selection rule. Embed it with Markdown image syntax. You must copy the chosen entry's `markdown_path` exactly as `![description](markdown_path)`; do not invent paths or use only the basename. The `markdown_path` usually has the form of a path from the review directory to a sibling stage directory, for example `../1_correlator_analysis/xxx.svg`; preserve that exact relative path string when embedding the image. Then give a detailed explanation below the figure stating why it was selected and how it helps assess the stage; if no SVG exists, say that no embeddable SVG was generated. "
         + "`Diagnostics` must judge whether the stage is self-consistent and whether it matches a realistic LaMET analysis scenario; it must follow the Diagnostics rules in the system prompt and explicitly distinguish successful execution, manifest-tunable analysis issues, and raw-data or external LQCD limitations that lamet-agent tuning cannot fix. `Recommended Manifest Changes` must use the required field format above; if no trigger is met, state that the current setting is reasonable and no change is justified. "
         + "Recommendations must cite real manifest paths and values such as `stages.<stage>.defaults.<key>`, `stages.<stage>.jobs[].params.<key>`, or `inputs.kernels[].kernel_parameters.<key>`, and state suggested values or ranges with reasons. "
         + "Use the supplied authoritative stage parameter contracts to choose tunable parameters and explain their physical effect. Recommend only parameters supported by the relevant contract and only when the run evidence triggers a change. "
@@ -578,7 +584,10 @@ def write_review_from_manifest(
             review = "\n".join(lines[1:-1]).strip()
     output = review + "\n\n" + _format_manifest_consistency(consistency_checks, language) + "\n"
     for stage in STAGE_REPORTS:
-        output = output.replace(f"]({stage}/", f"](../{stage}/").replace(f"](./{stage}/", f"](../{stage}/")
+        directory_name = stage_artifact_directory_name(stage)
+        for candidate in (stage, directory_name):
+            output = output.replace(f"]({candidate}/", f"](../{directory_name}/")
+            output = output.replace(f"](./{candidate}/", f"](../{directory_name}/")
     target.write_text(output, encoding="utf-8")
     return {"review": str(target), "artifact": str(target), "n_stages": len(materials)}
 

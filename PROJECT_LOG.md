@@ -1539,3 +1539,13 @@
   when an uncached report LLM request fails.
 - Kept long API-key source paths intact in CLI notices and normalized generated
   Markdown artifact links to forward slashes on Windows.
+
+## 2026-08-21 (Numbered stage artifact directories)
+
+- Added one fixed artifact-directory mapping for the six workflow stages:
+  `1_correlator_analysis` through `6_review`.
+- Routed job tools, systematics subdirectories, stage reports, overlays, review
+  material discovery, and review figure links through the numbered directories.
+- Added Lanczos regressions that require every NetCDF and plot artifact to stay
+  inside `1_correlator_analysis`, plus routing and review coverage for the new
+  layout.

@@ -151,7 +151,7 @@ Package modules:
 - Keep exactly one authoritative parameter contract per stage. Nested field declarations are part of that contract tree; global `AnalysisManifest` structure and LLM action-response protocols are separate concerns and must not duplicate stage parameter semantics.
 - Correlator jobs group `inputs.correlators` by `correlator_ids`; downstream jobs reference earlier job ids through role-named `inputs`.
 - All ids are globally unique. External partial-run sources are declared in `inputs.artifacts`.
-- Paths resolve from `metadata.root_directory`; default job artifacts are `<artifacts_directory>/<stage>/<job_id>.nc`.
+- Paths resolve from `metadata.root_directory`; default job artifacts are `<artifacts_directory>/<number>_<stage>/<job_id>.nc`, using the fixed stage numbers defined in `core/stages.py`.
 - Terminal stage tools must place their primary in-memory result in `store["output"]`.
 - Fourier jobs consume role `input`; matching jobs consume role `quasi`. Standard partial-run NetCDF artifacts read discrete `momentum`, `volume`, and `lattice_spacing_fm` from attrs; legacy files may declare the complete triple under `inputs.artifacts`, and physical `momentum_gev` is derived.
 - `inputs.kernels[].stage` must be a full `StageId` (`renormalization` or `perturbative_matching`), not a package shorthand such as `matching`.

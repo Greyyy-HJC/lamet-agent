@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from lamet_agent.core.prompting import (
@@ -5,6 +7,7 @@ from lamet_agent.core.prompting import (
     format_tool_observation,
     get_stage_instruction,
 )
+from lamet_agent.core.stages import resolve_stage_artifacts_directory, stage_artifact_directory_name
 from lamet_agent.manifest import AnalysisManifest
 
 
@@ -58,3 +61,24 @@ def test_format_tool_observation_omits_ignored_args_for_llm() -> None:
     text = format_tool_observation(observation)
     assert "ignored_args" not in text
     assert "payload" not in text
+
+
+@pytest.mark.parametrize(
+    ("stage", "directory_name"),
+    [
+        ("correlator_analysis", "1_correlator_analysis"),
+        ("renormalization", "2_renormalization"),
+        ("fourier_transform", "3_fourier_transform"),
+        ("perturbative_matching", "4_perturbative_matching"),
+        ("extrapolation", "5_extrapolation"),
+        ("review", "6_review"),
+    ],
+)
+def test_stage_artifact_directories_have_fixed_numbers(stage: str, directory_name: str) -> None:
+    assert stage_artifact_directory_name(stage) == directory_name
+    assert resolve_stage_artifacts_directory("artifacts", stage) == Path("artifacts") / directory_name
+
+
+def test_stage_artifact_directory_rejects_unknown_stage() -> None:
+    with pytest.raises(ValueError, match="unknown stage id"):
+        stage_artifact_directory_name("unknown")
