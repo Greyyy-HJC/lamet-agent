@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import textwrap
 from pathlib import Path
 
 import typer
 from pydantic import ValidationError
 
-from .core.llm import parse_api_model, provider_config
+from .core.llm import resolve_llm_provider, validate_api_model
 from .core.tools import validate_stage_diagnostics
 from .manifest import (
     AnalysisManifest,
@@ -29,13 +28,11 @@ from .planning import run_interactive_plan
 
 app = typer.Typer(help="CLI-first scaffold for LaMET analysis workflows.")
 
-_VALID_BACKENDS = frozenset({"mock", "external", "api", "codex"})
-_VALID_PLAN_BACKENDS = frozenset({"api", "codex", "mock"})
-
 _CLI_SUMMARY_KEYS = (
     "run_id",
     "status",
-    "backend",
+    "provider",
+    "provider_type",
     "model",
     "stages",
     "completed_stages",
@@ -184,40 +181,37 @@ def validate_manifest(path: Path) -> None:
 
 def _resolve_llm_config(
     *,
-    backend: str,
+    provider: str,
     model: str | None,
     api_key_file: Path | None,
-    base_url: str | None,
-) -> tuple[str | None, str | None, str | None, str | None, str | None]:
-    """Resolve model and OpenAI-compatible API configuration.
+) -> tuple[str, str, str | None, str | None, str | None, str | None]:
+    """Resolve the provider type, model, and API authentication configuration.
 
-    For ``backend='api'`` the key comes from ``--api-key-file`` (the file must
+    For API providers the key comes from ``--api-key-file`` (the file must
     exist and be non-empty) or, if that flag is omitted, from the provider
     environment variable. The sources are not mixed: a missing or empty key
     file does not fall back to the environment.
 
-    Returns ``(provider, model_name, api_key, base_url, key_source)``.
-    ``key_source`` is ``file:<path>`` or ``env:<VAR>`` for the api backend.
+    Returns ``(provider_type, provider, model_name, api_key, base_url, key_source)``.
     """
-    provider: str | None = None
-    model_name: str | None = None
+    try:
+        resolved = resolve_llm_provider(provider, model)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
     api_key: str | None = None
     key_source: str | None = None
-    resolved_base_url: str | None = base_url
-
-    if backend == "api":
-        try:
-            provider, model_name = parse_api_model(model or "")
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-        config = provider_config(provider)
-        assert config is not None
+    if resolved.kind == "api":
         if api_key_file is not None:
             if not api_key_file.is_file():
+                fallback = (
+                    f"does not fall back to {resolved.key_env}"
+                    if resolved.key_env is not None
+                    else "has no registered API-key environment variable"
+                )
                 raise typer.BadParameter(
                     f"--api-key-file {str(api_key_file)!r} does not exist. "
-                    "When this flag is set, the api backend does not fall back "
-                    f"to {config['key_env']}."
+                    f"This provider {fallback}."
                 )
             api_key = api_key_file.read_text(encoding="utf-8").strip()
             if not api_key:
@@ -226,80 +220,78 @@ def _resolve_llm_config(
                 )
             key_source = f"file:{api_key_file}"
         else:
-            api_key = (os.environ.get(config["key_env"]) or "").strip()
+            if resolved.key_env is None:
+                raise typer.BadParameter(
+                    "A custom OpenAI-compatible API URL requires --api-key-file."
+                )
+            api_key = (os.environ.get(resolved.key_env) or "").strip()
             if not api_key:
                 raise typer.BadParameter(
-                    f"backend='api' provider={provider!r} requires --api-key-file "
-                    f"or the {config['key_env']} environment variable."
+                    f"API provider {provider!r} requires --api-key-file "
+                    f"or the {resolved.key_env} environment variable."
                 )
-            key_source = f"env:{config['key_env']}"
-    elif backend == "codex" and model:
-        model_name = model.strip()
-    return provider, model_name, api_key, resolved_base_url, key_source
+            key_source = f"env:{resolved.key_env}"
+        try:
+            resolved = validate_api_model(resolved, api_key=api_key)
+        except (RuntimeError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    return (
+        resolved.kind,
+        resolved.provider,
+        resolved.model_name,
+        api_key,
+        resolved.base_url,
+        key_source,
+    )
 
 
-def _emit_llm_backend_startup(
+def _emit_llm_provider_startup(
     *,
-    backend: str,
-    provider: str | None,
+    provider_type: str,
+    provider: str,
     model_name: str | None,
     base_url: str | None,
     key_source: str | None,
 ) -> None:
-    """Print a boxed LLM backend summary, then a blank line before the banner."""
-    if backend == "api":
-        config = provider_config(provider or "")
-        effective_base_url = base_url or (config["base_url"] if config else "")
+    """Print a boxed LLM provider summary, then a blank line before the banner."""
+    if provider_type == "api":
         body = [
-            f"backend={backend}",
+            f"type={provider_type}",
             f"provider={provider}",
             f"model={model_name}",
-            f"base_url={effective_base_url}",
+            f"base_url={base_url}",
             f"api_key={key_source}",
         ]
-    elif backend == "codex":
+    elif provider_type == "cli":
         body = [
-            f"backend={backend}",
+            f"type={provider_type}",
+            f"provider={provider}",
             f"model={model_name or 'SDK default'}",
             "auth=Codex login",
         ]
     else:
         return
-    typer.echo(_render_boxed_notice("LLM BACKEND", body))
+    typer.echo(_render_boxed_notice("LLM PROVIDER", body))
     typer.echo()
 
 
 def _run_plan_mode(
     manifest: Path,
     *,
-    backend: str,
+    provider: str,
     model: str | None,
     api_key_file: Path | None,
-    base_url: str | None,
     path_repair_project_root: Path | None = None,
 ) -> None:
     """Validate planning options and run the interactive planning loop."""
-    if backend not in _VALID_PLAN_BACKENDS:
-        raise typer.BadParameter(
-            f"--backend must be one of {sorted(_VALID_PLAN_BACKENDS)} for plan; external transcripts are not supported."
-        )
-    if backend == "api" and not model:
-        raise typer.BadParameter("backend='api' requires --model provider/model_id.")
-    if backend == "mock" and model:
-        print(
-            f"warning: --model is ignored for backend={backend!r}.",
-            file=sys.stderr,
-        )
-
-    provider, model_name, api_key, resolved_base_url, key_source = _resolve_llm_config(
-        backend=backend,
+    backend, resolved_provider, model_name, api_key, resolved_base_url, key_source = _resolve_llm_config(
+        provider=provider,
         model=model,
         api_key_file=api_key_file,
-        base_url=base_url,
     )
-    _emit_llm_backend_startup(
-        backend=backend,
-        provider=provider,
+    _emit_llm_provider_startup(
+        provider_type=backend,
+        provider=resolved_provider,
         model_name=model_name,
         base_url=resolved_base_url,
         key_source=key_source,
@@ -308,7 +300,7 @@ def _run_plan_mode(
         run_interactive_plan(
             manifest,
             backend=backend,
-            provider=provider,
+            provider=resolved_provider,
             model_name=model_name,
             api_key=api_key,
             base_url=resolved_base_url,
@@ -322,60 +314,48 @@ def _run_plan_mode(
 @app.command("plan")
 def plan_workflow(
     manifest: Path,
-    backend: str = typer.Option(
+    provider: str = typer.Option(
         ...,
-        "--backend",
-        help="Planning LLM backend: api or codex. mock is available for tests.",
+        "--provider",
+        help="Registered agent CLI/API provider, or an OpenAI-compatible API URL.",
     ),
     model: str | None = typer.Option(
         None,
         "--model",
-        help="Codex model ID, or API model as provider/model_id (api backend).",
+        help="Model ID override. Required for non-loopback custom URLs; inferred when loopback /models returns exactly one ID.",
     ),
     api_key_file: Path | None = typer.Option(
         None,
         "--api-key-file",
-        help="API key file for --backend api. If omitted, use DEEPSEEK_API_KEY or OPENAI_API_KEY.",
-    ),
-    base_url: str | None = typer.Option(
-        None,
-        "--base-url",
-        help="Override the provider API base URL (api backend only).",
+        help="API key file. Required for a custom URL; registered APIs may use their configured environment variable.",
     ),
 ) -> None:
     """Interactively review and repair a draft manifest before running it."""
     _run_plan_mode(
         manifest,
-        backend=backend,
+        provider=provider,
         model=model,
         api_key_file=api_key_file,
-        base_url=base_url,
     )
 
 
 @app.command("run")
 def run_workflow(
     manifest: Path,
-    backend: str = typer.Option(
+    provider: str = typer.Option(
         ...,
-        "--backend",
-        help="LLM backend: mock, external, api, or codex.",
+        "--provider",
+        help="Registered agent CLI/API provider, or an OpenAI-compatible API URL.",
     ),
     model: str | None = typer.Option(
         None,
         "--model",
-        help="Codex model ID, or API model as provider/model_id (api backend).",
+        help="Model ID override. Required for non-loopback custom URLs; inferred when loopback /models returns exactly one ID.",
     ),
-    actions_path: Path | None = None,
     api_key_file: Path | None = typer.Option(
         None,
         "--api-key-file",
-        help="API key file for --backend api. If omitted, use DEEPSEEK_API_KEY or OPENAI_API_KEY.",
-    ),
-    base_url: str | None = typer.Option(
-        None,
-        "--base-url",
-        help="Override the provider API base URL (api backend only).",
+        help="API key file. Required for a custom URL; registered APIs may use their configured environment variable.",
     ),
     verbose: bool = typer.Option(
         False,
@@ -396,63 +376,49 @@ def run_workflow(
 ) -> None:
     """Run the staged agent loop.
 
-    With ``--backend codex`` the loop is driven by the Codex Python SDK and
-    ``--model`` optionally selects its model. With
-    ``--backend api`` pass ``--model provider/model_id`` (e.g. ``deepseek/deepseek-chat``).
+    With ``--provider codex`` the loop is driven by the Codex Python SDK and
+    ``--model`` optionally selects its model. Registered API providers supply a
+    default URL and model; ``--model`` overrides only the model ID. A custom
+    OpenAI-compatible API URL passed to ``--provider`` normally requires
+    ``--model``. A loopback API may omit it when ``/models`` returns one ID.
+    Every API model is checked against ``BASE_URL/models`` before execution.
     The API key is read from ``--api-key-file`` or, if that flag is omitted, the
-    provider environment variable (``DEEPSEEK_API_KEY`` / ``OPENAI_API_KEY``).
-    Startup prints a boxed ``api`` / ``codex`` summary (provider, model, base URL,
+    registered provider's configured environment variable. Custom URLs require
+    ``--api-key-file`` because they have no registered key environment variable.
+    Startup prints a boxed ``api`` / ``cli`` summary (provider, model, base URL,
     and key source or Codex login), never the key itself, then a blank line
     before the LaMET Agent banner.
-    With a planning-capable backend, manifest validation failures start the
+    Manifest validation failures start the
     interactive planning loop instead of running workflow stages.
     """
     try:
         parsed = validate_manifest_file(manifest)
         validate_manifest_paths(parsed)
     except Exception as exc:  # pragma: no cover - CLI surface
-        if backend in _VALID_PLAN_BACKENDS:
-            typer.echo(_render_plan_fallback_notice(exc), err=True)
-            typer.echo(err=True)
-            _run_plan_mode(
-                manifest,
-                backend=backend,
-                model=model,
-                api_key_file=api_key_file,
-                base_url=base_url,
-                path_repair_project_root=(
-                    lamet_agent_project_root() if isinstance(exc, ManifestPathError) else None
-                ),
-            )
-            return
-        raise typer.BadParameter(_format_cli_error(exc)) from exc
+        typer.echo(_render_plan_fallback_notice(exc), err=True)
+        typer.echo(err=True)
+        _run_plan_mode(
+            manifest,
+            provider=provider,
+            model=model,
+            api_key_file=api_key_file,
+            path_repair_project_root=(
+                lamet_agent_project_root() if isinstance(exc, ManifestPathError) else None
+            ),
+        )
+        return
     report_language = report_language.lower()
     if report_language not in {"en", "ch"}:
         raise typer.BadParameter("--report_language must be 'en' or 'ch'")
 
-    if backend not in _VALID_BACKENDS:
-        raise typer.BadParameter(
-            f"--backend must be one of {sorted(_VALID_BACKENDS)}; got {backend!r}."
-        )
-    if backend == "external" and actions_path is None:
-        raise typer.BadParameter("backend='external' requires --actions-path.")
-    if backend == "api" and not model:
-        raise typer.BadParameter("backend='api' requires --model provider/model_id.")
-    if backend in {"mock", "external"} and model:
-        print(
-            f"warning: --model is ignored for backend={backend!r}.",
-            file=sys.stderr,
-        )
-
-    provider, model_name, api_key, resolved_base_url, key_source = _resolve_llm_config(
-        backend=backend,
+    backend, resolved_provider, model_name, api_key, resolved_base_url, key_source = _resolve_llm_config(
+        provider=provider,
         model=model,
         api_key_file=api_key_file,
-        base_url=base_url,
     )
-    _emit_llm_backend_startup(
-        backend=backend,
-        provider=provider,
+    _emit_llm_provider_startup(
+        provider_type=backend,
+        provider=resolved_provider,
         model_name=model_name,
         base_url=resolved_base_url,
         key_source=key_source,
@@ -462,8 +428,7 @@ def run_workflow(
         result = run_agent(
             parsed,
             backend=backend,
-            actions_path=actions_path,
-            provider=provider,
+            provider=resolved_provider,
             model_name=model_name,
             api_key=api_key,
             base_url=resolved_base_url,
@@ -481,25 +446,20 @@ def run_workflow(
 
 @app.command("precompute-formulas")
 def precompute_formulas(
-    backend: str = typer.Option(
-        "api",
-        "--backend",
-        help="LLM backend used to generate the formulas: api or codex.",
+    provider: str = typer.Option(
+        "openai",
+        "--provider",
+        help="Registered agent CLI/API provider, or an OpenAI-compatible API URL.",
     ),
     model: str | None = typer.Option(
         None,
         "--model",
-        help="Codex model ID, or API model as provider/model_id (api backend).",
+        help="Model ID override. Required for non-loopback custom URLs; inferred when loopback /models returns exactly one ID.",
     ),
     api_key_file: Path | None = typer.Option(
         None,
         "--api-key-file",
-        help="Read the API key from this file instead of the provider environment variable.",
-    ),
-    base_url: str | None = typer.Option(
-        None,
-        "--base-url",
-        help="Override the provider API base URL (api backend only).",
+        help="API key file. Required for a custom URL; registered APIs may use their configured environment variable.",
     ),
     kernel: list[str] = typer.Option(
         [],
@@ -526,11 +486,6 @@ def precompute_formulas(
     from .stages.matching.functions import KERNEL_REGISTRY
     from .stages.matching.reporting import FormulaLlm, precompute_kernel_formulas
 
-    if backend not in {"api", "codex"}:
-        raise typer.BadParameter("--backend must be 'api' or 'codex' to generate formulas.")
-    if backend == "api" and not model:
-        raise typer.BadParameter("backend='api' requires --model provider/model_id.")
-
     unknown = sorted(set(kernel) - set(KERNEL_REGISTRY))
     if unknown:
         raise typer.BadParameter(
@@ -538,18 +493,17 @@ def precompute_formulas(
         )
     kernel_ids = sorted(kernel) if kernel else sorted(KERNEL_REGISTRY)
 
-    provider, model_name, api_key, resolved_base_url, _key_source = _resolve_llm_config(
-        backend=backend,
+    backend, resolved_provider, model_name, api_key, resolved_base_url, _key_source = _resolve_llm_config(
+        provider=provider,
         model=model,
         api_key_file=api_key_file,
-        base_url=base_url,
     )
     try:
         result = precompute_kernel_formulas(
             kernel_ids,
             llm=FormulaLlm(
                 backend=backend,
-                provider=provider,
+                provider=resolved_provider,
                 model_name=model_name,
                 api_key=api_key,
                 base_url=resolved_base_url,

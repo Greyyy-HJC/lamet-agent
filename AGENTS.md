@@ -92,7 +92,7 @@ Package modules:
 - `lamet_agent/kernels.py`: built-in matching kernels.
 - `lamet_agent/core/stages.py`: stage-id → package routing.
 - `lamet_agent/core/tools.py`: resolves `STAGE_TOOLS`, prepares tool args, plot paths under `artifacts/`.
-- `lamet_agent/core/llm.py`: `LlmSession` backends (`mock`, `external`, `api`, `codex`); OpenAI-compatible HTTP providers in `PROVIDERS`; `parse_api_model()` for `provider/model_id` CLI specs.
+- `lamet_agent/core/llm.py`: resolves registered agent CLIs and registered/custom OpenAI-compatible APIs into `cli` or `api` `LlmSession` implementations; `_OPENAI_COMPATIBLE_API` owns preset URLs, API-key environment variables, and default models; API model IDs are discovered and validated through `BASE_URL/models`.
 - `lamet_agent/core/prompting.py`: system prompt and per-stage static context assembly.
 - `lamet_agent/core/trace.py`: optional ReAct-style stdout trace (`--verbose`).
 - `lamet_agent/core/data.py`: typed ensemble containers and cross-stage data helpers.

@@ -14,7 +14,7 @@ paper, and written back over the same file.
 Do not edit these by hand. Regenerate after adding or changing a kernel:
 
 ```
-lamet-agent precompute-formulas --backend api --model deepseek/deepseek-chat --prune
+lamet-agent precompute-formulas --provider deepseek --prune
 ```
 
 Anything not covered here is generated at run time into `~/.cache/lamet-agent/formulas`

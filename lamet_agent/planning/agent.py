@@ -30,9 +30,6 @@ from .core import (
     normalize_planning_constraints,
     _as_list,
     _dataclass_json,
-    _expand_pt2_windows,
-    _expand_pt3_windows,
-    _get_path_value,
     _merge_revision_edits,
     _planned_manifest_paths,
     _set_path_value,
@@ -215,38 +212,14 @@ class _PlanAgentSession:
             {"role": "system", "content": _planning_system_prompt()},
             {"role": "user", "content": _initial_planning_user_prompt(manifest_path, manifest_text)},
         ]
-        self.mock_phase = "load"
         self.last_revision: str | None = None
 
     def observe(self, observation: dict[str, Any]) -> None:
         self.messages.append({"role": "user", "content": json.dumps({"observation": observation}, ensure_ascii=False, indent=2)})
         if observation.get("event") == "user_revision":
             self.last_revision = str(observation.get("text", ""))
-            self.mock_phase = "mock_revision"
-        elif observation.get("event") == "user_answer":
-            if observation.get("question_id") == "stage.add_remaining":
-                self.mock_phase = "conversions"
-            elif observation.get("question_id") == "metadata.required":
-                self.mock_phase = "conversions"
-            elif str(observation.get("question_id", "")).startswith(("stage_required.", "stage_optional.")):
-                self.mock_phase = "conversions"
-            elif str(observation.get("question_id", "")).startswith("stage_params."):
-                value = str(observation.get("value", "")).strip().lower()
-                self.mock_phase = "blocked" if value in {"no", "n", "false", "0"} else "build"
-            else:
-                self.mock_phase = "mock_answer"
-        elif observation.get("event") == "question_skipped":
-            self.mock_phase = "conversions"
-        elif "not the full canonical stage flow" in str(observation.get("error", "")):
-            self.mock_phase = "stage_completion"
-        elif "still have missing parameters or input roles" in str(observation.get("error", "")):
-            self.mock_phase = "blocked"
-        elif "missing parameters or input roles" in str(observation.get("error", "")):
-            self.mock_phase = "parameter_completion"
 
     def decide(self) -> dict[str, Any]:
-        if self.backend == "mock":
-            return self._mock_decide()
         from lamet_agent import planning as planning_api
 
         text = planning_api.request_llm_text(
@@ -260,105 +233,6 @@ class _PlanAgentSession:
         action = _parse_json_object(text)
         self.messages.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
         return action
-
-    def _mock_decide(self) -> dict[str, Any]:
-        phase = self.mock_phase
-        if phase == "load":
-            self.mock_phase = "check"
-            return {"action": "call_tool", "tool_name": "load_manifest", "args": {}, "reason": "Inspect the draft manifest."}
-        if phase == "check":
-            self.mock_phase = "maybe_seed"
-            return {"action": "call_tool", "tool_name": "check_manifest_draft", "args": {}, "reason": "Find deterministic manifest issues."}
-        if phase == "maybe_seed":
-            self.mock_phase = "conversions"
-            return {
-                "action": "request_user_input",
-                "reason": "metadata required values are missing.",
-                "args": {
-                    "question_id": "metadata.required",
-                    "prompt": 'metadata required choices: random_seed is a positive integer; resample_mode is jk or bs; sample_error_mode is mean, median, or covariance. Example: {"random_seed": 1984, "resample_mode": "jk", "sample_error_mode": "covariance"}.',
-                },
-            }
-        if phase == "mock_answer":
-            self.mock_phase = "conversions"
-            value = self._latest_user_answer()
-            return {
-                "action": "call_tool",
-                "tool_name": "apply_manifest_patch_to_candidate",
-                "args": {"patches": [{"op": "add", "path": "/metadata/random_seed", "value": int(value)}]},
-                "reason": "Apply the user-selected random seed.",
-            }
-        if phase == "conversions":
-            self.mock_phase = "inspect"
-            return {"action": "call_tool", "tool_name": "plan_correlator_h5_conversions", "args": {}, "reason": "Plan any correlator data conversions."}
-        if phase == "inspect":
-            self.mock_phase = "build"
-            return {"action": "call_tool", "tool_name": "inspect_correlator_h5_files", "args": {}, "reason": "Inspect correlator data inputs."}
-        if phase == "build":
-            self.mock_phase = "propose"
-            return {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build quick and full manifest candidates."}
-        if phase == "stage_completion":
-            return {
-                "action": "request_user_input",
-                "reason": "The manifest is not the full canonical stage flow.",
-                "args": {
-                    "question_id": "stage.add_remaining",
-                    "prompt": "This manifest is not a full canonical flow. Add extra downstream stages?",
-                    "choices": [
-                        {"label": "1", "value": "yes", "description": "Yes, add downstream stages when inputs can be wired unambiguously."},
-                        {"label": "2", "value": "no", "description": "No, keep the manifest as a partial workflow."},
-                    ],
-                },
-            }
-        if phase == "parameter_completion":
-            return {
-                "action": "request_user_input",
-                "reason": "A configured stage is missing required parameters or input roles.",
-                "args": {
-                    "question_id": "stage_params.missing",
-                    "prompt": "A configured stage is missing required parameters. Add them before building manifests?",
-                    "choices": [
-                        {"label": "1", "value": "yes", "description": "Yes, add the missing parameters using explicit values or examples."},
-                        {"label": "2", "value": "no", "description": "No, keep the manifest unchanged."},
-                    ],
-                },
-            }
-        if phase == "mock_revision":
-            self.mock_phase = "build"
-            note = self.last_revision or ""
-            text = note.lower()
-            suppressions = []
-            if ("tau" in text or "pt3_windows" in text or "pt3_tau_cuts" in text) and ("undo" in text or "revert" in text):
-                suppressions.append("stages.correlator_analysis.defaults.pt3_windows")
-            return {
-                "action": "call_tool",
-                "tool_name": "apply_manifest_patch_to_candidate",
-                "args": {
-                    "patches": "__mock_revision__",
-                    "revision": note,
-                    "suppress_full_expansions": suppressions,
-                },
-                "reason": "Apply the user's revision as candidate manifest patches.",
-            }
-        if phase == "blocked":
-            self.mock_phase = "done"
-            return {
-                "action": "finish",
-                "reason": "Configured stages still have missing parameters or input roles. No manifest files were written.",
-                "args": {"error": True},
-            }
-        self.mock_phase = "done"
-        return {"action": "propose_plan", "reason": "Present the latest validated candidate.", "args": {"summary": "Mock planning summary."}}
-
-    def _latest_user_answer(self) -> Any:
-        for message in reversed(self.messages):
-            try:
-                observation = json.loads(message["content"]).get("observation", {})
-            except Exception:
-                continue
-            if observation.get("event") == "user_answer":
-                return observation.get("value")
-        return 1984
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:
@@ -740,81 +614,6 @@ def _apply_user_answer_to_candidate(state: PlanAgentState, question_id: str, val
     return observation
 
 
-def _mock_revision_patches(state: PlanAgentState, note: str) -> list[dict[str, Any]]:
-    """Return deterministic mock patches so tests can exercise the agent patch path."""
-    text = note.lower()
-    payload = state.candidate_payload
-    if "renormalization" in text:
-        stages = payload.get("stages", {})
-        metadata = payload.get("metadata", {})
-        order = list(metadata.get("stages", [])) if isinstance(metadata, dict) and isinstance(metadata.get("stages"), list) else []
-        jobs = stages.get("correlator_analysis", {}).get("jobs", []) if isinstance(stages, dict) else []
-        denominator = None
-        targets: list[str] = []
-        for job in jobs if isinstance(jobs, list) else []:
-            if not isinstance(job, dict) or not isinstance(job.get("id"), str):
-                continue
-            job_id = job["id"]
-            if "p0" in job_id:
-                denominator = job_id
-            elif re.search(r"p[1-9]", job_id):
-                targets.append(job_id)
-        denominator = denominator or (jobs[0]["id"] if isinstance(jobs, list) and jobs and isinstance(jobs[0], dict) else "ca")
-        targets = targets or [job["id"] for job in jobs[1:] if isinstance(job, dict) and isinstance(job.get("id"), str)]
-        renorm_jobs = [
-            {"id": target.replace("ca_", "rn_", 1) if target.startswith("ca_") else f"rn_{target}", "inputs": {"target": target, "denominator": denominator}}
-            for target in targets
-        ]
-        if "renormalization" not in order:
-            index = order.index("correlator_analysis") + 1 if "correlator_analysis" in order else len(order)
-            order.insert(index, "renormalization")
-        return [
-            {"op": "replace", "path": "/metadata/stages", "value": order},
-            {
-                "op": "add",
-                "path": "/stages/renormalization",
-                "value": {
-                    "defaults": {
-                        "normalization": False,
-                        "scheme": "hybrid",
-                        "strategy": "external_denominator",
-                        "zs_fm": 0.18,
-                        "m0_gev": 0.0,
-                        "delta_m_gev": 0.0,
-                    },
-                    "jobs": renorm_jobs,
-                },
-            },
-        ]
-    if ("fit window" in text or "window" in text) and ("search" in text or "scan" in text):
-        defaults = payload.get("stages", {}).get("correlator_analysis", {}).get("defaults", {})
-        return [
-            {
-                "op": "replace",
-                "path": "/stages/correlator_analysis/defaults/pt2_windows",
-                "value": _expand_pt2_windows(defaults.get("pt2_windows")),
-                "note": "LLM expanded the fit-window search.",
-            },
-            {
-                "op": "replace",
-                "path": "/stages/correlator_analysis/defaults/pt3_windows",
-                "value": _expand_pt3_windows(defaults.get("pt3_windows")),
-                "note": "LLM expanded the fit-window search.",
-            },
-        ]
-    if ("tau" in text or "pt3_windows" in text or "pt3_tau_cuts" in text) and ("undo" in text or "revert" in text):
-        original = _get_path_value(state.original_payload, "stages.correlator_analysis.defaults.pt3_windows")
-        return [
-            {
-                "op": "replace",
-                "path": "/stages/correlator_analysis/defaults/pt3_windows",
-                "value": original,
-                "note": "LLM reverted the tau-cut search.",
-            }
-        ]
-    return []
-
-
 def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     if tool_name == "load_manifest":
         quick_path, full_path = _planned_manifest_paths(state.manifest_path, state.candidate_payload)
@@ -949,8 +748,6 @@ def _run_planning_tool(state: PlanAgentState, tool_name: str, args: dict[str, An
         return {"tool_name": tool_name, "ok": ok, "issues": _dataclass_json(issues)}
     if tool_name == "apply_manifest_patch_to_candidate":
         patches = args.get("patches", [])
-        if patches == "__mock_revision__":
-            patches = _mock_revision_patches(state, str(args.get("revision") or ""))
         if not isinstance(patches, list):
             return {"tool_name": tool_name, "ok": False, "error": "patches must be a list of JSON Patch objects."}
         try:

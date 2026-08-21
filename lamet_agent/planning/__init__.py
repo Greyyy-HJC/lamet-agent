@@ -10,7 +10,6 @@ from .agent import (
     _PlanAgentSession,
     _apply_user_answer_to_candidate,
     _initial_planning_user_prompt,
-    _mock_revision_patches,
     _parse_json_object,
     _planning_system_prompt,
     _run_planning_tool,

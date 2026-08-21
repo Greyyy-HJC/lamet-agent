@@ -20,6 +20,25 @@ from lamet_agent.manifest import AnalysisManifest, validate_manifest_file
 from lamet_agent.manifest_params import merge_stage_params
 
 
+class _ScriptedSession:
+    """Test-only LLM boundary that replays action JSONL."""
+
+    def __init__(self, path: Path) -> None:
+        self._actions = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def begin_stage(self, static_user: str) -> None:
+        pass
+
+    def decide(self, *, last_observation: dict | None) -> dict:
+        if self._actions:
+            return self._actions.pop(0)
+        return {"action": "finish", "reason": "Test action transcript exhausted."}
+
+
 def _demo_manifest() -> AnalysisManifest:
     return AnalysisManifest.model_validate(
         {
@@ -80,7 +99,9 @@ def test_run_agent_uses_manifest_stage_order(tmp_path: Path, monkeypatch) -> Non
         lambda stage: {"mark_done": mark_done},
     )
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
-    result = run_agent(_demo_manifest(), backend="external", actions_path=transcript)
+    result = run_agent(
+        _demo_manifest(), backend="test", session=_ScriptedSession(transcript)
+    )
 
     assert result["status"] == "completed"
     assert result["completed_stages"] == ["correlator_analysis"]
@@ -130,7 +151,7 @@ def test_run_agent_stops_on_request_user_input(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", lambda stage: {})
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
 
-    result = run_agent(manifest, backend="external", actions_path=transcript)
+    result = run_agent(manifest, backend="test", session=_ScriptedSession(transcript))
 
     assert result["status"] == "waiting_for_user_input"
     assert result["pending_user_input"] == {
@@ -151,7 +172,9 @@ def test_run_agent_raises_when_job_finishes_without_output(tmp_path: Path, monke
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
 
     with pytest.raises(ValueError, match="finished without store\\['output'\\]"):
-        run_agent(_demo_manifest(), backend="external", actions_path=transcript)
+        run_agent(
+            _demo_manifest(), backend="test", session=_ScriptedSession(transcript)
+        )
 
 
 def test_run_agent_reports_explicit_codex_model(monkeypatch) -> None:
@@ -188,7 +211,8 @@ def test_run_agent_reports_explicit_codex_model(monkeypatch) -> None:
 
     result = run_agent(
         _demo_manifest(),
-        backend="codex",
+        backend="cli",
+        provider="codex",
         model_name="test-codex-model",
     )
 
@@ -269,7 +293,7 @@ def test_api_request_has_bounded_attempts_and_timeout(monkeypatch) -> None:
     monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(llm.time, "sleep", lambda _seconds: None)
 
-    with pytest.raises(RuntimeError, match="after 3 attempts with a 60-second timeout"):
+    with pytest.raises(RuntimeError, match="after 6 attempts with a 180-second timeout"):
         llm._post_chat_completion(
             messages=[{"role": "user", "content": "finish"}],
             api_key="test-key",
@@ -277,7 +301,132 @@ def test_api_request_has_bounded_attempts_and_timeout(monkeypatch) -> None:
             base_url="https://api.deepseek.com",
         )
 
-    assert timeouts == [60, 60, 60]
+    assert timeouts == [180, 180, 180, 180, 180, 180]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:8000/v1/chat/completions",
+        "http://model.localhost:8000/v1/chat/completions",
+        "http://127.0.0.1:8000/v1/chat/completions",
+        "http://[::1]:8000/v1/chat/completions",
+    ],
+)
+def test_local_url_detection_covers_loopback_hosts(url: str) -> None:
+    assert llm._is_local_url(url)
+
+
+def test_local_action_request_does_not_pass_timeout(monkeypatch) -> None:
+    calls: list[tuple[tuple, dict]] = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"action":"finish","reason":"done"}'
+                            }
+                        }
+                    ]
+                }
+            ).encode()
+
+    def fake_urlopen(request, *args, **kwargs):
+        calls.append((args, kwargs))
+        return _Response()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+
+    action = llm._post_chat_completion(
+        messages=[{"role": "user", "content": "finish"}],
+        api_key="test-key",
+        model_name="local-model",
+        base_url="http://localhost:8000/v1",
+    )
+
+    assert action["action"] == "finish"
+    assert calls == [((), {})]
+
+
+def test_local_text_request_does_not_pass_timeout(monkeypatch) -> None:
+    calls: list[tuple[tuple, dict]] = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"choices": [{"message": {"content": "local response"}}]}
+            ).encode()
+
+    def fake_urlopen(request, *args, **kwargs):
+        calls.append((args, kwargs))
+        return _Response()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+
+    text = llm._post_chat_text_completion(
+        messages=[{"role": "user", "content": "translate"}],
+        api_key="test-key",
+        model_name="local-model",
+        base_url="http://127.0.0.1:8000/v1",
+    )
+
+    assert text == "local response"
+    assert calls == [((), {})]
+
+
+def test_local_model_list_request_does_not_pass_timeout(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"object": "list", "data": [{"id": "complex/local-model:latest"}]}
+            ).encode()
+
+    def fake_urlopen(request, *args, **kwargs):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["auth"] = request.headers.get("Authorization")
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return _Response()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+
+    models = llm.list_available_models(
+        base_url="http://localhost:11434/v1/",
+        api_key="local-key",
+    )
+
+    assert models == ["complex/local-model:latest"]
+    assert captured == {
+        "url": "http://localhost:11434/v1/models",
+        "method": "GET",
+        "auth": "Bearer local-key",
+        "args": (),
+        "kwargs": {},
+    }
 
 
 def test_provider_json_parse_error_gets_repair_retry(monkeypatch) -> None:
@@ -319,13 +468,33 @@ def test_provider_json_parse_error_gets_repair_retry(monkeypatch) -> None:
     assert "not valid JSON" in bodies[1]["messages"][-1]["content"]
 
 
-def test_provider_config_exposes_deepseek_and_openai() -> None:
-    assert llm.provider_config("deepseek")["base_url"] == "https://api.deepseek.com"
-    openai = llm.provider_config("openai")
-    assert openai["base_url"] == "https://api.openai.com/v1"
-    assert openai["default_model"] == "gpt-4o-mini"
-    assert openai["key_env"] == "OPENAI_API_KEY"
-    assert llm.provider_config("mock") is None
+@pytest.mark.parametrize(
+    ("provider", "base_url", "key_env", "default_model"),
+    [
+        ("openai", "https://api.openai.com/v1/", "OPENAI_API_KEY", "gpt-5.6-luna"),
+        ("anthropic", "https://api.anthropic.com/v1/", "ANTHROPIC_API_KEY", "claude-haiku-4-5"),
+        ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY", "gemini-3.7-flash"),
+        ("grok", "https://api.x.ai/v1", "GROK_API_KEY", "grok-4.6"),
+        ("deepseek", "https://api.deepseek.com/", "DEEPSEEK_API_KEY", "deepseek-v4-flash"),
+    ],
+)
+def test_resolve_llm_provider_uses_registered_api_defaults(
+    provider: str, base_url: str, key_env: str, default_model: str
+) -> None:
+    resolved = llm.resolve_llm_provider(provider)
+
+    assert resolved.kind == "api"
+    assert resolved.base_url == base_url
+    assert resolved.key_env == key_env
+    assert resolved.model_name == default_model
+
+
+def test_resolve_llm_provider_registers_codex_as_cli() -> None:
+    resolved = llm.resolve_llm_provider("codex", "test-codex-model")
+
+    assert resolved.kind == "cli"
+    assert resolved.provider == "codex"
+    assert resolved.model_name == "test-codex-model"
 
 
 def test_openai_request_targets_openai_endpoint_and_model(monkeypatch) -> None:
@@ -359,8 +528,8 @@ def test_openai_request_targets_openai_endpoint_and_model(monkeypatch) -> None:
     )
 
     assert captured["url"] == "https://api.openai.com/v1/chat/completions"
-    assert captured["body"]["model"] == "gpt-4o-mini"
-    assert captured["body"]["temperature"] == 0.0
+    assert captured["body"]["model"] == "gpt-5.6-luna"
+    assert "temperature" not in captured["body"]
     assert captured["auth"] == "Bearer sk-test"
     assert action["action"] == "finish"
 
@@ -475,36 +644,83 @@ def test_post_chat_completion_keeps_temperature_for_deepseek(monkeypatch) -> Non
     assert captured["body"]["temperature"] == 0.0
 
 
-def test_parse_api_model_accepts_provider_and_model_id() -> None:
-    assert llm.parse_api_model("deepseek/deepseek-chat") == ("deepseek", "deepseek-chat")
-    assert llm.parse_api_model("openai/gpt-4o-mini") == ("openai", "gpt-4o-mini")
+def test_resolve_llm_provider_custom_url_requires_model() -> None:
+    with pytest.raises(ValueError, match="custom.*requires --model"):
+        llm.resolve_llm_provider("https://llm.example.test/v1")
+
+    resolved = llm.resolve_llm_provider(
+        "http://localhost:8000/v1", "local-model"
+    )
+    assert resolved.kind == "api"
+    assert resolved.provider == "http://localhost:8000/v1"
+    assert resolved.base_url == "http://localhost:8000/v1"
+    assert resolved.key_env is None
+    assert resolved.model_name == "local-model"
 
 
-def test_parse_api_model_provider_shorthand_uses_default_model() -> None:
-    assert llm.parse_api_model("openai") == ("openai", "gpt-4o-mini")
-    assert llm.parse_api_model("deepseek") == ("deepseek", "deepseek-v4-flash")
+def test_local_provider_can_defer_model_selection() -> None:
+    resolved = llm.resolve_llm_provider("http://localhost:11434/v1")
+
+    assert resolved.kind == "api"
+    assert resolved.model_name is None
 
 
-def test_parse_api_model_rejects_unknown_provider() -> None:
-    import pytest
+def test_validate_api_model_infers_single_local_model(monkeypatch) -> None:
+    monkeypatch.setattr(
+        llm,
+        "list_available_models",
+        lambda **_kwargs: ["registry/very-complex-local-model:q4_k_m"],
+    )
+    resolved = llm.resolve_llm_provider("http://localhost:11434/v1")
 
-    with pytest.raises(ValueError, match="Unknown API provider"):
-        llm.parse_api_model("unknown/foo")
+    validated = llm.validate_api_model(resolved, api_key="local-key")
+
+    assert validated.model_name == "registry/very-complex-local-model:q4_k_m"
+
+
+def test_validate_api_model_rejects_missing_model_with_available_list(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        llm,
+        "list_available_models",
+        lambda **_kwargs: ["model-a", "model-b"],
+    )
+    resolved = llm.resolve_llm_provider("http://127.0.0.1:8000/v1")
+
+    with pytest.raises(ValueError, match="model-a, model-b"):
+        llm.validate_api_model(resolved, api_key="local-key")
+
+
+def test_validate_api_model_rejects_unavailable_model_with_available_list(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        llm,
+        "list_available_models",
+        lambda **_kwargs: ["model-a", "model-b"],
+    )
+    resolved = llm.resolve_llm_provider("openai", "missing-model")
+
+    with pytest.raises(ValueError, match="missing-model.*model-a, model-b"):
+        llm.validate_api_model(resolved, api_key="test-key")
+
+
+@pytest.mark.parametrize("provider", ["unknown", "mock", "external", "api"])
+def test_resolve_llm_provider_rejects_unknown_name(provider: str) -> None:
+    with pytest.raises(ValueError, match="Unknown provider"):
+        llm.resolve_llm_provider(provider)
 
 
 def test_make_llm_session_unknown_backend_raises() -> None:
-    import pytest
-
-    with pytest.raises(ValueError, match="Unknown LLM backend"):
-        llm.make_llm_session("deeepseek", None)
+    with pytest.raises(ValueError, match="Unknown LLM provider kind"):
+        llm.make_llm_session("deeepseek")
 
 
 def test_make_llm_session_api_requires_key() -> None:
-    import pytest
-
     with pytest.raises(ValueError, match="openai"):
-        llm.make_llm_session("api", None, api_key=None, provider="openai")
-    session = llm.make_llm_session("api", None, api_key="sk-test", provider="openai")
+        llm.make_llm_session("api", api_key=None, provider="openai")
+    session = llm.make_llm_session("api", api_key="sk-test", provider="openai")
     assert hasattr(session, "decide")
 
 
@@ -521,7 +737,9 @@ def test_make_llm_session_codex_uses_codex_decide(monkeypatch) -> None:
 
     monkeypatch.setattr(llm, "_codex_decide", fake_codex_decide)
 
-    session = llm.make_llm_session("codex", model_name="test-codex-model")
+    session = llm.make_llm_session(
+        "cli", provider="codex", model_name="test-codex-model"
+    )
     session.begin_stage("stage prompt")
     action = session.decide(last_observation={"tool_name": "inspect", "result": {"ok": True}})
 
@@ -609,7 +827,8 @@ def test_request_llm_text_passes_codex_model_to_thread(monkeypatch) -> None:
     )
 
     response = llm.request_llm_text(
-        backend="codex",
+        backend="cli",
+        provider="codex",
         messages=[
             {"role": "system", "content": "system instructions"},
             {"role": "user", "content": "planning prompt"},
@@ -669,8 +888,8 @@ def test_run_agent_registers_job_output_for_downstream_role(tmp_path: Path, monk
 
     result = run_agent(
         manifest,
-        backend="external",
-        actions_path=transcript,
+        backend="test",
+        session=_ScriptedSession(transcript),
     )
 
     assert result["status"] == "completed"
@@ -747,7 +966,7 @@ def test_self_renorm_apply_job_rejects_fit_tool_then_recovers(tmp_path: Path, mo
         ScriptedSession(),
         input_issues=[],
         max_tool_steps=7,
-        backend="external",
+        backend="test",
         model_spec=None,
         trace=AgentTrace(enabled=False),
         store={"target": "bare", "zR": "factor"},
@@ -803,7 +1022,7 @@ def test_self_renorm_job_fails_when_required_tool_never_succeeds(tmp_path: Path,
             RetryingSession(),
             input_issues=[],
             max_tool_steps=2,
-            backend="external",
+            backend="test",
             model_spec=None,
             trace=AgentTrace(enabled=False),
             store={"target": "bare", "zR": "factor"},
@@ -1292,7 +1511,7 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
     monkeypatch.setattr("lamet_agent.agent.resolve_stage_tools", fake_resolve)
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
 
-    result = run_agent(manifest, backend="external", actions_path=transcript)
+    result = run_agent(manifest, backend="test", session=_ScriptedSession(transcript))
 
     assert result["status"] == "completed"
     assert observed["input_type"] == "EnsembleData"
@@ -1412,7 +1631,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
     monkeypatch.setattr("lamet_agent.agent._hydrate_external_artifact_inputs", lambda *args, **kwargs: None)
 
-    result = run_agent(manifest, backend="external", actions_path=transcript)
+    result = run_agent(manifest, backend="test", session=_ScriptedSession(transcript))
 
     report_path = Path(result["stage_reports"]["fourier_transform"]["report"])
     assert report_path.exists()
@@ -1498,7 +1717,12 @@ def test_run_agent_writes_correlator_stage_report_after_jobs(tmp_path: Path, mon
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
     monkeypatch.setattr("lamet_agent.stages.correlator.reporting.translate_markdown_report", lambda markdown, **kwargs: "# translated correlator report\n\nca_p4.nc")
 
-    result = run_agent(manifest, backend="external", actions_path=transcript, report_language="ch")
+    result = run_agent(
+        manifest,
+        backend="test",
+        session=_ScriptedSession(transcript),
+        report_language="ch",
+    )
 
     report_path = Path(result["stage_reports"]["correlator_analysis"]["report"])
     assert report_path.exists()
@@ -1600,7 +1824,7 @@ def test_run_agent_writes_renorm_stage_report_after_jobs(tmp_path: Path, monkeyp
     )
     monkeypatch.setattr("lamet_agent.agent.validate_stage_inputs", lambda stage, manifest, job: [])
 
-    result = run_agent(manifest, backend="external", actions_path=transcript)
+    result = run_agent(manifest, backend="test", session=_ScriptedSession(transcript))
 
     report_path = Path(result["stage_reports"]["renormalization"]["report"])
     assert report_path.exists()
@@ -1702,7 +1926,7 @@ def test_run_job_applies_renormalization_normalization_to_store(tmp_path: Path) 
         _FinishSession(),
         input_issues=[],
         max_tool_steps=3,
-        backend="external",
+        backend="test",
         model_spec=None,
         trace=AgentTrace(enabled=False),
         store=store,

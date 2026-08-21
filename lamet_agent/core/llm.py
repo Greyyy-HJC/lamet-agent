@@ -1,15 +1,17 @@
-"""LLM session backends for the staged agent loop."""
+"""LLM provider resolution and sessions for the staged agent loop."""
 
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import re
 import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from pathlib import Path
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from .prompting import format_tool_observation
@@ -26,42 +28,174 @@ ACTION_SCHEMA = {
     "additionalProperties": True,
 }
 
-_MOCK_TOOL_ACTION: dict[str, Any] = {
-    "action": "call_tool",
-    "tool_name": "mock_tool",
-    "args": {"note": "Replace with real tool execution."},
-    "reason": "Scaffold mode: deterministic mock action.",
-}
-
 _SYSTEM_PROMPT = (
     "You are the decision layer of a LaMET analysis agent. Decide the single "
     "next action only. Do NOT run shell commands or edit files. Reply with "
     "exactly one JSON object matching this shape: " + json.dumps(ACTION_SCHEMA)
 )
 
-_API_REQUEST_TIMEOUT_SECONDS = 60
-_API_REQUEST_ATTEMPTS = 3
+_API_REQUEST_TIMEOUT_SECONDS = 180
+_API_REQUEST_ATTEMPTS = 6
 
-# OpenAI-compatible chat-completions providers. DeepSeek and OpenAI share the same
-# request/response shape, so they only differ by base URL, default model, and the
-# environment variable used to read the API key.
-PROVIDERS: dict[str, dict[str, str]] = {
-    "deepseek": {
-        "base_url": "https://api.deepseek.com",
-        "default_model": "deepseek-v4-flash",
-        "key_env": "DEEPSEEK_API_KEY",
-    },
-    "openai": {
-        "base_url": "https://api.openai.com/v1",
-        "default_model": "gpt-4o-mini",
-        "key_env": "OPENAI_API_KEY",
-    },
+_OPENAI_COMPATIBLE_API = {
+    "openai": ("https://api.openai.com/v1/", "OPENAI_API_KEY", "gpt-5.6-luna"),
+    "anthropic": ("https://api.anthropic.com/v1/", "ANTHROPIC_API_KEY", "claude-haiku-4-5"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY", "gemini-3.7-flash"),
+    "grok": ("https://api.x.ai/v1", "GROK_API_KEY", "grok-4.6"),
+    "deepseek": ("https://api.deepseek.com/", "DEEPSEEK_API_KEY", "deepseek-v4-flash"),
 }
 
+_AGENT_CLI = frozenset({"codex"})
 
-def provider_config(provider: str) -> dict[str, str] | None:
-    """Return the OpenAI-compatible provider config for a provider name, if any."""
-    return PROVIDERS.get(provider)
+
+@dataclass(frozen=True)
+class ResolvedLlmProvider:
+    """Normalized CLI or OpenAI-compatible API provider configuration."""
+
+    kind: str
+    provider: str
+    model_name: str | None
+    base_url: str | None = None
+    key_env: str | None = None
+
+
+def _is_http_url(value: str) -> bool:
+    parsed = urllib.parse.urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _is_local_url(value: str) -> bool:
+    hostname = urllib.parse.urlparse(value).hostname
+    if hostname is None:
+        return False
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_unspecified
+
+
+def _urlopen(request: urllib.request.Request, *, timeout: int):
+    """Open local endpoints without a timeout and bound all remote requests."""
+    if _is_local_url(request.full_url):
+        return urllib.request.urlopen(request)
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
+def list_available_models(*, base_url: str, api_key: str) -> list[str]:
+    """Return model IDs from an OpenAI-compatible ``GET /models`` endpoint."""
+    url = base_url.rstrip("/") + "/models"
+    request = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {api_key}"},
+        method="GET",
+    )
+    last_error: BaseException | None = None
+    for attempt in range(_API_REQUEST_ATTEMPTS):
+        try:
+            with _urlopen(request, timeout=_API_REQUEST_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            data = payload.get("data")
+            if not isinstance(data, list):
+                raise ValueError(
+                    f"Model-list endpoint {url!r} returned no OpenAI-compatible 'data' list."
+                )
+            return sorted(
+                {
+                    str(item["id"])
+                    for item in data
+                    if isinstance(item, dict) and item.get("id")
+                }
+            )
+        except (TimeoutError, urllib.error.URLError, ssl.SSLError, http.client.IncompleteRead) as exc:
+            last_error = exc
+            if attempt == _API_REQUEST_ATTEMPTS - 1:
+                timeout_detail = (
+                    "without a request timeout"
+                    if _is_local_url(url)
+                    else f"with a {_API_REQUEST_TIMEOUT_SECONDS}-second timeout per attempt"
+                )
+                raise RuntimeError(
+                    f"Model-list request to {url!r} failed after "
+                    f"{_API_REQUEST_ATTEMPTS} attempts {timeout_detail}."
+                ) from exc
+            time.sleep(2**attempt)
+    raise RuntimeError(f"Model-list request to {url!r} failed.") from last_error
+
+
+def validate_api_model(
+    resolved: ResolvedLlmProvider,
+    *,
+    api_key: str,
+) -> ResolvedLlmProvider:
+    """Validate or infer an API model against the provider's ``/models`` list."""
+    if resolved.kind != "api" or resolved.base_url is None:
+        raise ValueError("Model-list validation requires an API provider.")
+    available = list_available_models(base_url=resolved.base_url, api_key=api_key)
+    available_text = ", ".join(available) if available else "(none)"
+    model_name = resolved.model_name
+    if model_name is None:
+        if _is_local_url(resolved.base_url) and len(available) == 1:
+            return replace(resolved, model_name=available[0])
+        raise ValueError(
+            "--model is required because the local provider did not return exactly "
+            f"one model. Available models: {available_text}"
+        )
+    if model_name not in available:
+        raise ValueError(
+            f"Model {model_name!r} is not available from {resolved.base_url!r}. "
+            f"Available models: {available_text}"
+        )
+    return resolved
+
+
+def resolve_llm_provider(
+    provider: str,
+    model_name: str | None = None,
+) -> ResolvedLlmProvider:
+    """Resolve a registered CLI, registered API, or custom API URL."""
+    name = provider.strip()
+    selected_model = model_name.strip() if model_name and model_name.strip() else None
+    if not name:
+        raise ValueError("--provider must not be empty.")
+
+    if name in _AGENT_CLI:
+        return ResolvedLlmProvider(
+            kind="cli",
+            provider=name,
+            model_name=selected_model,
+        )
+
+    api_config = _OPENAI_COMPATIBLE_API.get(name)
+    if api_config is not None:
+        base_url, key_env, default_model = api_config
+        return ResolvedLlmProvider(
+            kind="api",
+            provider=name,
+            model_name=selected_model or default_model,
+            base_url=base_url,
+            key_env=key_env,
+        )
+
+    if _is_http_url(name):
+        if selected_model is None and not _is_local_url(name):
+            raise ValueError(
+                "A custom OpenAI-compatible API URL passed to --provider requires --model."
+            )
+        return ResolvedLlmProvider(
+            kind="api",
+            provider=name,
+            model_name=selected_model,
+            base_url=name,
+        )
+
+    registered = sorted([*_AGENT_CLI, *_OPENAI_COMPATIBLE_API])
+    raise ValueError(
+        f"Unknown provider {name!r}; use one of {registered} or an HTTP(S) "
+        "OpenAI-compatible API URL."
+    )
 
 
 def supports_temperature(model_name: str) -> bool:
@@ -97,39 +231,6 @@ def _chat_completion_body(
     return body
 
 
-def parse_api_model(spec: str) -> tuple[str, str]:
-    """Parse ``provider/model_id`` or shorthand ``provider`` into provider and model name."""
-    text = spec.strip()
-    if not text:
-        raise ValueError(
-            "API model spec must be non-empty, e.g. 'deepseek/deepseek-v4-flash' or 'openai/gpt-4o-mini'."
-        )
-    if "/" in text:
-        provider, model_name = text.split("/", 1)
-        provider = provider.strip()
-        model_name = model_name.strip()
-        if not provider or not model_name:
-            raise ValueError(
-                f"Invalid API model spec {spec!r}; use 'provider/model_id', e.g. 'deepseek/deepseek-v4-flash'."
-            )
-    else:
-        provider = text
-        model_name = ""
-    config = provider_config(provider)
-    if config is None:
-        raise ValueError(
-            f"Unknown API provider {provider!r}; use one of {sorted(PROVIDERS)}."
-        )
-    if not model_name:
-        model_name = config["default_model"]
-    return provider, model_name
-
-
-def format_api_model_spec(provider: str, model_name: str) -> str:
-    """Return the canonical provider/model_id string for trace and run summaries."""
-    return f"{provider}/{model_name}"
-
-
 def _codex_decide(
     messages: list[dict],
     *,
@@ -139,8 +240,8 @@ def _codex_decide(
         from openai_codex import Codex, Sandbox
     except ImportError as exc:
         raise RuntimeError(
-            "backend='codex' requires the openai-codex Python SDK. "
-            "Install the project's codex extra before using this backend."
+            "provider='codex' requires the openai-codex Python SDK. "
+            "Install the project's codex extra before using this provider."
         ) from exc
 
     system_parts = [m["content"] for m in messages if m.get("role") == "system"]
@@ -217,6 +318,12 @@ def _post_chat_completion(
     provider: str = "deepseek",
 ) -> dict[str, Any]:
     url = base_url.rstrip("/") + "/chat/completions"
+    local_url = _is_local_url(url)
+    timeout_detail = (
+        "without a request timeout"
+        if local_url
+        else f"with a {_API_REQUEST_TIMEOUT_SECONDS}-second timeout per attempt"
+    )
     request_messages = [{"role": "system", "content": _SYSTEM_PROMPT}, *messages]
     label = provider.capitalize()
     last_parse_error: ValueError | None = None
@@ -240,7 +347,7 @@ def _post_chat_completion(
         last_error: BaseException | None = None
         for attempt in range(_API_REQUEST_ATTEMPTS):
             try:
-                with urllib.request.urlopen(
+                with _urlopen(
                     request, timeout=_API_REQUEST_TIMEOUT_SECONDS
                 ) as response:
                     payload = json.loads(response.read().decode("utf-8"))
@@ -250,7 +357,7 @@ def _post_chat_completion(
                 if attempt == _API_REQUEST_ATTEMPTS - 1:
                     raise RuntimeError(
                         f"{label} API request failed after {_API_REQUEST_ATTEMPTS} attempts "
-                        f"with a {_API_REQUEST_TIMEOUT_SECONDS}-second timeout per attempt. "
+                        f"{timeout_detail}. "
                         "This is usually a transient HTTPS/network/proxy issue; retry the command or check network/proxy settings."
                     ) from exc
                 time.sleep(2**attempt)
@@ -295,6 +402,12 @@ def _post_chat_text_completion(
     if type(request_attempts) is not int or request_attempts < 1:
         raise ValueError("request_attempts must be a positive integer")
     url = base_url.rstrip("/") + "/chat/completions"
+    local_url = _is_local_url(url)
+    timeout_detail = (
+        "without a request timeout"
+        if local_url
+        else f"with a {request_timeout_seconds}-second timeout per attempt"
+    )
     label = provider.capitalize()
     body = _chat_completion_body(model_name=model_name, messages=messages)
     request = urllib.request.Request(
@@ -309,9 +422,7 @@ def _post_chat_text_completion(
     last_error: BaseException | None = None
     for attempt in range(request_attempts):
         try:
-            with urllib.request.urlopen(
-                request, timeout=request_timeout_seconds
-            ) as response:
+            with _urlopen(request, timeout=request_timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return str(payload["choices"][0]["message"]["content"]).strip()
         except (TimeoutError, urllib.error.URLError, ssl.SSLError, http.client.IncompleteRead) as exc:
@@ -319,7 +430,7 @@ def _post_chat_text_completion(
             if attempt == request_attempts - 1:
                 raise RuntimeError(
                     f"{label} API text request failed after {request_attempts} attempts "
-                    f"with a {request_timeout_seconds}-second timeout per attempt. "
+                    f"{timeout_detail}. "
                     "Retry the command or check network/proxy settings."
                 ) from exc
             time.sleep(2**attempt)
@@ -337,44 +448,51 @@ def request_llm_text(
     request_timeout_seconds: int = _API_REQUEST_TIMEOUT_SECONDS,
     request_attempts: int = _API_REQUEST_ATTEMPTS,
 ) -> str:
-    """Return free-form text from the configured LLM backend."""
+    """Return free-form text from the configured LLM provider."""
     if backend == "api":
         if not provider:
-            raise ValueError("backend='api' requires a provider.")
-        config = provider_config(provider)
-        if config is None:
-            raise ValueError(f"Unknown API provider {provider!r}; use one of {sorted(PROVIDERS)}.")
+            raise ValueError("API requests require a provider.")
+        resolved = resolve_llm_provider(provider, model_name)
+        if resolved.kind != "api":
+            raise ValueError(f"provider={provider!r} is registered as a CLI, not an API.")
         if not api_key:
-            raise ValueError(f"backend='api' provider={provider!r} requires an API key.")
+            raise ValueError(f"API provider {provider!r} requires an API key.")
         return _post_chat_text_completion(
             messages=messages,
             api_key=api_key,
-            model_name=model_name or config["default_model"],
-            base_url=base_url or config["base_url"],
-            provider=provider,
+            model_name=resolved.model_name or "",
+            base_url=resolved.base_url or "",
+            provider=resolved.provider,
             request_timeout_seconds=request_timeout_seconds,
             request_attempts=request_attempts,
         )
-    if backend == "codex":
+    if backend == "cli":
+        if not provider:
+            raise ValueError("CLI requests require a provider.")
+        resolved = resolve_llm_provider(provider, model_name)
+        if resolved.kind != "cli":
+            raise ValueError(f"provider={provider!r} is registered as an API, not a CLI.")
+        if resolved.provider != "codex":
+            raise ValueError(f"Unsupported agent CLI provider {resolved.provider!r}.")
         try:
             from openai_codex import Codex, Sandbox
         except ImportError as exc:
             raise RuntimeError(
-                "backend='codex' requires the openai-codex Python SDK. "
-                "Install the project's codex extra before using this backend."
+                "provider='codex' requires the openai-codex Python SDK. "
+                "Install the project's codex extra before using this provider."
             ) from exc
         with Codex() as codex:
             thread = codex.thread_start(
                 developer_instructions=messages[0]["content"] if messages else "",
                 sandbox=Sandbox.read_only,
                 ephemeral=True,
-                model=model_name,
+                model=resolved.model_name,
             )
             result = thread.run("\n\n".join(item["content"] for item in messages[1:]), sandbox=Sandbox.read_only)
         if not result.final_response:
             raise RuntimeError(f"Codex returned no final response: {result}")
         return result.final_response.strip()
-    raise ValueError(f"backend={backend!r} cannot generate free-form LLM text.")
+    raise ValueError(f"Unknown LLM provider kind {backend!r}; use 'cli' or 'api'.")
 
 
 def _request_llm_action(
@@ -386,69 +504,35 @@ def _request_llm_action(
     model_name: str | None = None,
     base_url: str | None = None,
 ) -> dict[str, Any]:
-    """Return one structured agent action from the configured LLM backend."""
-    if backend == "mock":
-        return dict(_MOCK_TOOL_ACTION)
-    if backend == "codex":
+    """Return one structured agent action from the configured LLM provider."""
+    if backend == "cli":
+        if not provider:
+            raise ValueError("CLI requests require a provider.")
+        resolved = resolve_llm_provider(provider, model_name)
+        if resolved.kind != "cli":
+            raise ValueError(f"provider={provider!r} is registered as an API, not a CLI.")
+        if resolved.provider != "codex":
+            raise ValueError(f"Unsupported agent CLI provider {resolved.provider!r}.")
         return _codex_decide(
             [{"role": "system", "content": _SYSTEM_PROMPT}, *messages],
-            model_name=model_name,
+            model_name=resolved.model_name,
         )
     if backend == "api":
         if not provider:
-            raise ValueError("backend='api' requires a provider.")
-        config = provider_config(provider)
-        if config is None:
-            raise ValueError(
-                f"Unknown API provider {provider!r}; use one of {sorted(PROVIDERS)}."
-            )
+            raise ValueError("API requests require a provider.")
+        resolved = resolve_llm_provider(provider, model_name)
+        if resolved.kind != "api":
+            raise ValueError(f"provider={provider!r} is registered as a CLI, not an API.")
         if not api_key:
-            raise ValueError(f"backend='api' provider={provider!r} requires an API key.")
+            raise ValueError(f"API provider {provider!r} requires an API key.")
         return _post_chat_completion(
             messages=messages,
             api_key=api_key,
-            model_name=model_name or config["default_model"],
-            base_url=base_url or config["base_url"],
-            provider=provider,
+            model_name=resolved.model_name or "",
+            base_url=resolved.base_url or "",
+            provider=resolved.provider,
         )
-    raise ValueError(
-        f"Unknown LLM backend {backend!r}; use one of mock, external, api, codex."
-    )
-
-
-def _mock_session() -> LlmSession:
-    """Return a session that emits one call_tool then finishes each stage."""
-    state = {"emitted_tool": False}
-
-    class _MockSession:
-        def begin_stage(self, static_user: str) -> None:
-            state["emitted_tool"] = False
-
-        def decide(self, *, last_observation: dict[str, Any] | None) -> dict[str, Any]:
-            if not state["emitted_tool"]:
-                state["emitted_tool"] = True
-                return dict(_MOCK_TOOL_ACTION)
-            state["emitted_tool"] = False
-            return {"action": "finish", "reason": "Scaffold mode: mock stage complete."}
-
-    return _MockSession()
-
-
-def _external_session(actions_path: str | Path) -> LlmSession:
-    """Return a session that replays a JSONL action transcript in order."""
-    lines = Path(actions_path).read_text(encoding="utf-8").splitlines()
-    queue = [json.loads(line) for line in lines if line.strip()]
-
-    class _ExternalSession:
-        def begin_stage(self, static_user: str) -> None:
-            pass
-
-        def decide(self, *, last_observation: dict[str, Any] | None) -> dict[str, Any]:
-            if queue:
-                return queue.pop(0)
-            return {"action": "finish", "reason": "External transcript exhausted."}
-
-    return _ExternalSession()
+    raise ValueError(f"Unknown LLM provider kind {backend!r}; use 'cli' or 'api'.")
 
 
 def _codex_session(model_name: str | None = None) -> LlmSession:
@@ -470,8 +554,9 @@ def _codex_session(model_name: str | None = None) -> LlmSession:
                     }
                 )
             action = _request_llm_action(
-                backend="codex",
+                backend="cli",
                 messages=self._messages,
+                provider="codex",
                 model_name=model_name,
             )
             self._messages.append(
@@ -523,44 +608,34 @@ def _openai_compatible_session(
 
 def make_llm_session(
     backend: str,
-    actions_path: str | Path | None = None,
     *,
     api_key: str | None = None,
     provider: str | None = None,
     model_name: str | None = None,
     base_url: str | None = None,
 ) -> LlmSession:
-    """Build an LLM session for mock, external, api, or codex backends.
-
-    ``backend`` selects the integration (``mock``/``external``/``api``/``codex``).
-    For ``api``, pass ``provider`` and ``model_name``; ``base_url`` overrides the
-    provider default when given. For ``codex``, ``model_name`` optionally selects
-    the Codex model; omitting it preserves the SDK default.
-    """
-    if backend == "mock":
-        return _mock_session()
-    if backend == "external":
-        if actions_path is None:
-            raise ValueError("backend='external' requires an actions_path transcript.")
-        return _external_session(actions_path)
-    if backend == "codex":
-        return _codex_session(model_name)
+    """Build an LLM session for a registered CLI or compatible API provider."""
+    if backend == "cli":
+        if not provider:
+            raise ValueError("CLI sessions require a provider.")
+        resolved = resolve_llm_provider(provider, model_name)
+        if resolved.kind != "cli":
+            raise ValueError(f"provider={provider!r} is registered as an API, not a CLI.")
+        if resolved.provider == "codex":
+            return _codex_session(resolved.model_name)
+        raise ValueError(f"Unsupported agent CLI provider {resolved.provider!r}.")
     if backend == "api":
         if not provider:
-            raise ValueError("backend='api' requires a provider.")
-        config = provider_config(provider)
-        if config is None:
-            raise ValueError(
-                f"Unknown API provider {provider!r}; use one of {sorted(PROVIDERS)}."
-            )
+            raise ValueError("API sessions require a provider.")
+        resolved = resolve_llm_provider(provider, model_name)
+        if resolved.kind != "api":
+            raise ValueError(f"provider={provider!r} is registered as a CLI, not an API.")
         if not api_key:
-            raise ValueError(f"backend='api' provider={provider!r} requires an API key.")
+            raise ValueError(f"API provider {provider!r} requires an API key.")
         return _openai_compatible_session(
-            provider,
+            resolved.provider,
             api_key,
-            model_name or config["default_model"],
-            base_url or config["base_url"],
+            resolved.model_name or "",
+            resolved.base_url or "",
         )
-    raise ValueError(
-        f"Unknown LLM backend {backend!r}; use one of mock, external, api, codex."
-    )
+    raise ValueError(f"Unknown LLM provider kind {backend!r}; use 'cli' or 'api'.")

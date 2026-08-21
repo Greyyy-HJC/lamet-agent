@@ -9,14 +9,26 @@ from lamet_agent.core.trace import AgentTrace
 from lamet_agent.manifest import AnalysisManifest
 
 
+class _InputSession:
+    def begin_stage(self, static_user: str) -> None:
+        pass
+
+    def decide(self, *, last_observation: dict | None) -> dict:
+        return {
+            "action": "request_user_input",
+            "reason": "Test-only pause.",
+            "args": {"prompt": "Continue?"},
+        }
+
+
 def test_agent_trace_emits_cycle_sections() -> None:
     buffer = io.StringIO()
     trace = AgentTrace(enabled=True, emit=buffer.write)
-    trace.run_begin(run_id="demo", backend="mock", stages=["correlator_analysis"])
+    trace.run_begin(run_id="demo", backend="cli", stages=["correlator_analysis"])
     trace.stage_begin("correlator_analysis")
     trace.stage_context("static stage context")
     trace.cycle_begin(1)
-    trace.llm_call_begin(backend="mock")
+    trace.llm_call_begin(backend="cli")
     trace.llm_call_end()
     trace.model_output(
         {
@@ -96,7 +108,7 @@ def test_run_agent_verbose_prints_trace(capsys) -> None:
             "stages": {"correlator_analysis": {"defaults": {}, "jobs": [{"id": "ca", "correlator_ids": ["c2", "c3"]}]}},
         }
     )
-    run_agent(manifest, backend="mock", verbose=True)
+    run_agent(manifest, backend="test", verbose=True, session=_InputSession())
     out = capsys.readouterr().out
     assert "Agent run: demo" in out
     assert "Cycle 1" in out

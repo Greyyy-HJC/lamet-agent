@@ -73,7 +73,7 @@ from typing import Any
 import numpy as np
 
 from lamet_agent import kernels
-from lamet_agent.core.llm import PROVIDERS, provider_config, request_llm_text
+from lamet_agent.core.llm import request_llm_text, resolve_llm_provider
 from lamet_agent.core.reporting import (
     format_report_list as _fmt_list,
     format_report_value as _fmt,
@@ -553,8 +553,8 @@ def _field_definitions(*, language: str) -> list[str]:
 # Nothing in this section names a kernel or a paper. The manifest picks a kernel_id,
 # the kernel carries its own @kernel_reference (arXiv id + equations), and
 # _kernel_reference reads it back -- so a kernel from a new paper needs no change here.
-# See kernels.py. Provider configs (base_url / default_model / key_env) come from
-# ``core.llm.PROVIDERS`` so this module stays in sync with the rest of the agent.
+# See kernels.py. Provider configuration comes from ``core.llm`` so this module stays
+# in sync with the rest of the agent.
 
 # Generating a formula is a network round-trip; memoize so the per-job and the
 # stage-level report reuse one call per kernel and language. The key is the kernel_id
@@ -568,8 +568,6 @@ _FORMULA_CACHE: dict[tuple[str, str], tuple[str, bool]] = {}
 _PAPER_CACHE: dict[str, str | None] = {}
 _PAPER_SOURCE_TIMEOUT_SECONDS = 10
 _PAPER_HTML_TIMEOUT_SECONDS = 3
-_REPORT_LLM_TIMEOUT_SECONDS = 30
-_REPORT_LLM_ATTEMPTS = 2
 
 
 # --- formula disk cache ------------------------------------------------------
@@ -682,7 +680,7 @@ class FormulaLlm:
     """The LLM the report uses to write the kernel's closed form.
 
     Passed in explicitly, exactly like the review stage's tool arguments: the run's
-    ``--backend`` and the provider/key/model the CLI already resolved are handed down as
+    ``--provider`` selection and its key/model the CLI already resolved are handed down as
     parameters. Reading them back out of the environment would mean the report could
     silently use a different model, or a different key, from the run itself.
     """
@@ -695,35 +693,32 @@ class FormulaLlm:
 
     def resolved(self) -> tuple[str, str | None, str | None, str | None, str | None]:
         """Validate and fill provider defaults, returning what request_llm_text needs."""
-        if self.backend == "codex":
-            return "codex", None, None, self.model_name, None
-        if self.backend != "api":
-            raise RuntimeError(
-                f"The matching report's formula section needs an LLM, but this run used "
-                f"backend={self.backend!r}. Run with --backend api (plus --model "
-                f"provider/model_id) or --backend codex."
-            )
         if not self.provider:
             raise RuntimeError(
-                "The matching report's formula section needs --model provider/model_id "
-                f"(one of {sorted(PROVIDERS)})."
+                "The matching report's formula section needs an LLM provider."
             )
-        config = provider_config(self.provider)
-        if config is None:
+        try:
+            resolved = resolve_llm_provider(self.provider, self.model_name)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if resolved.kind != self.backend:
             raise RuntimeError(
-                f"Unknown provider {self.provider!r}; use one of {sorted(PROVIDERS)}."
+                f"Provider {self.provider!r} resolves to {resolved.kind!r}, not "
+                f"the configured provider type {self.backend!r}."
             )
+        if resolved.kind == "cli":
+            return "cli", resolved.provider, None, resolved.model_name, None
         if not self.api_key:
             raise RuntimeError(
                 f"The matching report's formula section needs an API key for "
-                f"provider={self.provider!r} (--api-key-file, or {config['key_env']})."
+                f"provider={self.provider!r} (--api-key-file, or {resolved.key_env})."
             )
         return (
             "api",
-            self.provider,
+            resolved.provider,
             self.api_key,
-            self.model_name or config["default_model"],
-            self.base_url or config["base_url"],
+            resolved.model_name,
+            resolved.base_url,
         )
 
 
@@ -982,8 +977,8 @@ def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tu
 
     # Disk layers before the network: bundled (shipped in the wheel) then the user cache.
     # A hit here also means an unconfigured LLM is fine -- ``llm.resolved()`` below is only
-    # reached when a formula genuinely has to be generated, so a --backend mock run can
-    # still render a full matching report from the shipped formulas.
+    # reached when a formula genuinely has to be generated, so cached formulas do not
+    # require an additional LLM request.
     filename = formula_cache_filename(kernel_id, language)
     digest = formula_digest(kernel_id, language)
     writable_dir = user_formula_dir()
@@ -1013,8 +1008,7 @@ def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tu
         equations=equations,
     )
     # Reuse the shared LLM client (retries + error handling live in core.llm) instead
-    # of a second hand-rolled HTTP call. The backend follows the run's --backend; the
-    # api-only fields are empty strings under codex and ignored by that backend.
+    # of a second hand-rolled HTTP call. API-only fields are ignored by CLI providers.
     text = request_llm_text(
         backend=backend,
         provider=provider,
@@ -1022,8 +1016,6 @@ def _llm_kernel_formula(kernel_id: str, *, language: str, llm: FormulaLlm) -> tu
         model_name=model_name,
         base_url=base_url,
         messages=[{"role": "user", "content": prompt}],
-        request_timeout_seconds=_REPORT_LLM_TIMEOUT_SECONDS,
-        request_attempts=_REPORT_LLM_ATTEMPTS,
     ).strip()
     if not text:
         raise RuntimeError("LLM returned an empty matching formula.")

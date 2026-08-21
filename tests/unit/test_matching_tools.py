@@ -108,8 +108,8 @@ def test_formula_cache_does_not_serve_one_kernel_another_kernels_formula(tmp_pat
 
     def fake_request(*_args, **kwargs):
         prompt = "".join(m["content"] for m in kwargs["messages"])
-        assert kwargs["request_timeout_seconds"] == 30
-        assert kwargs["request_attempts"] == 2
+        assert "request_timeout_seconds" not in kwargs
+        assert "request_attempts" not in kwargs
         kernel = "GI" if "def C_ratio_gi" in prompt else "CG"
         calls.append(kernel)
         return f"formula for {kernel}"
@@ -240,9 +240,10 @@ def test_formula_llm_preserves_codex_model_name() -> None:
     from lamet_agent.stages.matching.reporting import FormulaLlm
 
     assert FormulaLlm(
-        backend="codex",
+        backend="cli",
+        provider="codex",
         model_name="test-codex-model",
-    ).resolved() == ("codex", None, None, "test-codex-model", None)
+    ).resolved() == ("cli", "codex", None, "test-codex-model", None)
 
 
 def test_kernel_source_carries_what_the_kernel_actually_calls() -> None:

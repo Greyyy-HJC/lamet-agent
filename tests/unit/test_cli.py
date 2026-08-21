@@ -11,6 +11,21 @@ import typer
 from typer.testing import CliRunner
 
 from lamet_agent.__main__ import _cli_run_summary, _format_cli_error, _resolve_llm_config, app
+from lamet_agent.core import llm
+
+
+@pytest.fixture(autouse=True)
+def _stub_available_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        llm,
+        "list_available_models",
+        lambda **_kwargs: [
+            "gpt-5.6-luna",
+            "gpt-4o-mini",
+            "deepseek-v4-flash",
+            "local-model",
+        ],
+    )
 
 
 def test_describe_stage_prints_authoritative_human_reference() -> None:
@@ -34,7 +49,8 @@ def test_cli_run_summary_omits_actions_and_stage_results() -> None:
     full = {
         "run_id": "demo",
         "status": "completed",
-        "backend": "mock",
+        "provider": "codex",
+        "provider_type": "cli",
         "stages": ["correlator_analysis"],
         "completed_stages": ["correlator_analysis"],
         "input_issues": {},
@@ -56,14 +72,14 @@ def test_cli_run_summary_omits_actions_and_stage_results() -> None:
 
 
 def test_resolve_llm_config_passes_codex_model_name() -> None:
-    provider, model_name, api_key, base_url, key_source = _resolve_llm_config(
-        backend="codex",
+    provider_type, provider, model_name, api_key, base_url, key_source = _resolve_llm_config(
+        provider="codex",
         model="test-codex-model",
         api_key_file=None,
-        base_url=None,
     )
 
-    assert provider is None
+    assert provider_type == "cli"
+    assert provider == "codex"
     assert model_name == "test-codex-model"
     assert api_key is None
     assert base_url is None
@@ -74,17 +90,17 @@ def test_resolve_llm_config_api_reads_key_file(tmp_path) -> None:
     key_file = tmp_path / "openai.key"
     key_file.write_text("sk-from-file\n", encoding="utf-8")
 
-    provider, model_name, api_key, base_url, key_source = _resolve_llm_config(
-        backend="api",
-        model="openai/gpt-4o-mini",
+    provider_type, provider, model_name, api_key, base_url, key_source = _resolve_llm_config(
+        provider="openai",
+        model="gpt-4o-mini",
         api_key_file=key_file,
-        base_url=None,
     )
 
+    assert provider_type == "api"
     assert provider == "openai"
     assert model_name == "gpt-4o-mini"
     assert api_key == "sk-from-file"
-    assert base_url is None
+    assert base_url == "https://api.openai.com/v1/"
     assert key_source == f"file:{key_file}"
 
 
@@ -95,11 +111,10 @@ def test_resolve_llm_config_api_file_does_not_fall_back_to_env(
     key_file.write_text("sk-from-file\n", encoding="utf-8")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
 
-    _provider, _model_name, api_key, _base_url, key_source = _resolve_llm_config(
-        backend="api",
-        model="openai/gpt-4o-mini",
+    _provider_type, _provider, _model_name, api_key, _base_url, key_source = _resolve_llm_config(
+        provider="openai",
+        model="gpt-4o-mini",
         api_key_file=key_file,
-        base_url=None,
     )
 
     assert api_key == "sk-from-file"
@@ -113,10 +128,9 @@ def test_resolve_llm_config_api_missing_file_does_not_use_env(
 
     with pytest.raises(typer.BadParameter, match="does not exist"):
         _resolve_llm_config(
-            backend="api",
-            model="openai/gpt-4o-mini",
+            provider="openai",
+            model="gpt-4o-mini",
             api_key_file=tmp_path / "missing.key",
-            base_url=None,
         )
 
 
@@ -126,10 +140,9 @@ def test_resolve_llm_config_api_rejects_empty_file(tmp_path) -> None:
 
     with pytest.raises(typer.BadParameter, match="is empty"):
         _resolve_llm_config(
-            backend="api",
-            model="deepseek/deepseek-v4-flash",
+            provider="deepseek",
+            model="deepseek-v4-flash",
             api_key_file=key_file,
-            base_url=None,
         )
 
 
@@ -137,17 +150,17 @@ def test_resolve_llm_config_api_uses_provider_env(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-from-env")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    provider, model_name, api_key, base_url, key_source = _resolve_llm_config(
-        backend="api",
-        model="deepseek/deepseek-v4-flash",
+    provider_type, provider, model_name, api_key, base_url, key_source = _resolve_llm_config(
+        provider="deepseek",
+        model=None,
         api_key_file=None,
-        base_url=None,
     )
 
+    assert provider_type == "api"
     assert provider == "deepseek"
     assert model_name == "deepseek-v4-flash"
     assert api_key == "sk-from-env"
-    assert base_url is None
+    assert base_url == "https://api.deepseek.com/"
     assert key_source == "env:DEEPSEEK_API_KEY"
 
 
@@ -159,10 +172,9 @@ def test_resolve_llm_config_api_requires_matching_provider_env(
 
     with pytest.raises(typer.BadParameter, match="DEEPSEEK_API_KEY"):
         _resolve_llm_config(
-            backend="api",
-            model="deepseek/deepseek-v4-flash",
+            provider="deepseek",
+            model=None,
             api_key_file=None,
-            base_url=None,
         )
 
 
@@ -174,10 +186,86 @@ def test_resolve_llm_config_api_requires_key_file_or_env(
 
     with pytest.raises(typer.BadParameter, match="OPENAI_API_KEY"):
         _resolve_llm_config(
-            backend="api",
-            model="openai/gpt-4o-mini",
+            provider="openai",
+            model=None,
             api_key_file=None,
-            base_url=None,
+        )
+
+
+def test_resolve_llm_config_custom_url_requires_model() -> None:
+    with pytest.raises(typer.BadParameter, match="requires --model"):
+        _resolve_llm_config(
+            provider="https://llm.example.test/v1",
+            model=None,
+            api_key_file=None,
+        )
+
+
+def test_resolve_llm_config_custom_url_requires_key_file(tmp_path: Path) -> None:
+    with pytest.raises(typer.BadParameter, match="custom.*requires --api-key-file"):
+        _resolve_llm_config(
+            provider="https://llm.example.test/v1",
+            model="local-model",
+            api_key_file=None,
+        )
+
+    key_file = tmp_path / "custom.key"
+    key_file.write_text("custom-key\n", encoding="utf-8")
+    provider_type, provider, model, api_key, base_url, key_source = (
+        _resolve_llm_config(
+            provider="https://llm.example.test/v1",
+            model="local-model",
+            api_key_file=key_file,
+        )
+    )
+    assert provider_type == "api"
+    assert provider == base_url == "https://llm.example.test/v1"
+    assert model == "local-model"
+    assert api_key == "custom-key"
+    assert key_source == f"file:{key_file}"
+
+
+def test_resolve_llm_config_infers_single_loopback_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key_file = tmp_path / "local.key"
+    key_file.write_text("local-key\n", encoding="utf-8")
+    monkeypatch.setattr(
+        llm,
+        "list_available_models",
+        lambda **_kwargs: ["registry/complex-local-model:q4_k_m"],
+    )
+
+    provider_type, provider, model, api_key, base_url, _key_source = (
+        _resolve_llm_config(
+            provider="http://localhost:11434/v1",
+            model=None,
+            api_key_file=key_file,
+        )
+    )
+
+    assert provider_type == "api"
+    assert provider == base_url == "http://localhost:11434/v1"
+    assert model == "registry/complex-local-model:q4_k_m"
+    assert api_key == "local-key"
+
+
+def test_resolve_llm_config_rejects_unavailable_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key_file = tmp_path / "api.key"
+    key_file.write_text("api-key\n", encoding="utf-8")
+    monkeypatch.setattr(
+        llm,
+        "list_available_models",
+        lambda **_kwargs: ["model-a", "model-b"],
+    )
+
+    with pytest.raises(typer.BadParameter, match="model-a, model-b"):
+        _resolve_llm_config(
+            provider="https://llm.example.test/v1",
+            model="missing-model",
+            api_key_file=key_file,
         )
 
 
@@ -212,21 +300,23 @@ def test_run_api_prints_env_key_source(
 
     result = CliRunner().invoke(
         app,
-        ["run", str(manifest), "--backend", "api", "--model", "openai/gpt-4o-mini"],
+        ["run", str(manifest), "--provider", "openai"],
     )
 
     text = _cli_combined_output(result)
     assert result.exit_code == 0, result.output
-    assert "LLM BACKEND" in text
-    assert "backend=api" in text
+    assert "LLM PROVIDER" in text
+    assert "type=api" in text
     assert "provider=openai" in text
-    assert "model=gpt-4o-mini" in text
-    assert "base_url=https://api.openai.com/v1" in text
+    assert "model=gpt-5.6-luna" in text
+    assert "base_url=https://api.openai.com/v1/" in text
     assert "api_key=env:OPENAI_API_KEY" in text
     assert "sk-test" not in text
     assert captured["api_key"] == "sk-test"
     assert captured["provider"] == "openai"
-    assert "\n\n" in text[text.index("LLM BACKEND"):]
+    assert captured["backend"] == "api"
+    assert captured["model_name"] == "gpt-5.6-luna"
+    assert "\n\n" in text[text.index("LLM PROVIDER"):]
 
 
 def test_run_api_prints_file_key_source(
@@ -250,10 +340,10 @@ def test_run_api_prints_file_key_source(
         [
             "run",
             str(manifest),
-            "--backend",
-            "api",
+            "--provider",
+            "openai",
             "--model",
-            "openai/gpt-4o-mini",
+            "gpt-4o-mini",
             "--api-key-file",
             str(key_file),
         ],
@@ -261,12 +351,12 @@ def test_run_api_prints_file_key_source(
 
     text = _cli_combined_output(result)
     assert result.exit_code == 0, result.output
-    assert "LLM BACKEND" in text
-    assert "backend=api" in text
+    assert "LLM PROVIDER" in text
+    assert "type=api" in text
     assert f"api_key=file:{key_file}" in text
     assert "sk-file-key" not in text
     assert "sk-should-not-be-used" not in text
-    assert "\n\n" in text[text.index("LLM BACKEND"):]
+    assert "\n\n" in text[text.index("LLM PROVIDER"):]
 
 
 def test_run_codex_prints_backend(
@@ -286,18 +376,21 @@ def test_run_codex_prints_backend(
 
     result = CliRunner().invoke(
         app,
-        ["run", str(manifest), "--backend", "codex", "--model", "test-codex-model"],
+        ["run", str(manifest), "--provider", "codex", "--model", "test-codex-model"],
     )
 
     text = _cli_combined_output(result)
     assert result.exit_code == 0, result.output
-    assert "LLM BACKEND" in text
-    assert "backend=codex" in text
+    assert "LLM PROVIDER" in text
+    assert "type=cli" in text
+    assert "provider=codex" in text
     assert "model=test-codex-model" in text
     assert "auth=Codex login" in text
     assert "api_key=" not in text
     assert captured["model_name"] == "test-codex-model"
-    assert "\n\n" in text[text.index("LLM BACKEND"):]
+    assert captured["backend"] == "cli"
+    assert captured["provider"] == "codex"
+    assert "\n\n" in text[text.index("LLM PROVIDER"):]
 
 
 def test_run_codex_prints_sdk_default_when_model_omitted(
@@ -313,11 +406,11 @@ def test_run_codex_prints_sdk_default_when_model_omitted(
         lambda value, **_kwargs: {"run_id": "demo", "status": "completed"},
     )
 
-    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "codex"])
+    result = CliRunner().invoke(app, ["run", str(manifest), "--provider", "codex"])
 
     text = _cli_combined_output(result)
     assert result.exit_code == 0, result.output
-    assert "backend=codex" in text
+    assert "type=cli" in text
     assert "model=SDK default" in text
 
 
@@ -338,7 +431,7 @@ def test_run_api_missing_key_fails_before_agent(
 
     result = CliRunner().invoke(
         app,
-        ["run", str(manifest), "--backend", "api", "--model", "openai/gpt-4o-mini"],
+        ["run", str(manifest), "--provider", "openai"],
     )
 
     text = _cli_combined_output(result)
@@ -399,7 +492,7 @@ def test_run_validation_failure_falls_back_to_plan(
         lambda *_args, **_kwargs: pytest.fail("run_agent must not run after validation failure"),
     )
 
-    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "mock"])
+    result = CliRunner().invoke(app, ["run", str(manifest), "--provider", "codex"])
 
     assert result.exit_code == 0, result.output
     assert "| RUN VALIDATION FAILED" in result.output
@@ -410,8 +503,8 @@ def test_run_validation_failure_falls_back_to_plan(
     assert len(calls) == 1
     manifest_path, kwargs = calls[0]
     assert manifest_path == manifest
-    assert kwargs["backend"] == "mock"
-    assert kwargs["provider"] is None
+    assert kwargs["backend"] == "cli"
+    assert kwargs["provider"] == "codex"
     assert kwargs["model_name"] is None
     assert kwargs["api_key"] is None
     assert kwargs["base_url"] is None
@@ -441,25 +534,23 @@ def test_run_validation_fallback_forwards_codex_config(
         [
             "run",
             str(manifest),
-            "--backend",
+            "--provider",
             "codex",
             "--model",
             "test-codex-model",
-            "--base-url",
-            "https://example.invalid/v1",
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert "LLM BACKEND" in _cli_combined_output(result)
-    assert "backend=codex" in _cli_combined_output(result)
-    assert calls[0]["backend"] == "codex"
-    assert calls[0]["provider"] is None
+    assert "LLM PROVIDER" in _cli_combined_output(result)
+    assert "type=cli" in _cli_combined_output(result)
+    assert calls[0]["backend"] == "cli"
+    assert calls[0]["provider"] == "codex"
     assert calls[0]["model_name"] == "test-codex-model"
-    assert calls[0]["base_url"] == "https://example.invalid/v1"
+    assert calls[0]["base_url"] is None
 
 
-def test_run_validation_failure_with_external_backend_does_not_plan(
+def test_run_validation_failure_with_unknown_provider_does_not_plan(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest = tmp_path / "draft.json"
@@ -470,14 +561,13 @@ def test_run_validation_failure_with_external_backend_does_not_plan(
     )
     monkeypatch.setattr(
         "lamet_agent.__main__.run_interactive_plan",
-        lambda *_args, **_kwargs: pytest.fail("external backend must not enter plan mode"),
+        lambda *_args, **_kwargs: pytest.fail("unknown provider must not enter plan mode"),
     )
 
-    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "external"])
+    result = CliRunner().invoke(app, ["run", str(manifest), "--provider", "unknown"])
 
     assert result.exit_code != 0
-    assert "invalid external manifest" in result.output
-    assert "falling back" not in result.output
+    assert "Unknown provider" in result.output
 
 
 def test_run_valid_manifest_does_not_plan(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -496,12 +586,12 @@ def test_run_valid_manifest_does_not_plan(tmp_path, monkeypatch: pytest.MonkeyPa
         lambda value, **_kwargs: run_calls.append(value) or {"run_id": "demo", "status": "completed"},
     )
 
-    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "mock"])
+    result = CliRunner().invoke(app, ["run", str(manifest), "--provider", "codex"])
 
     assert result.exit_code == 0, result.output
     assert run_calls == [parsed]
     assert '"status": "completed"' in result.output
-    assert "LLM BACKEND" not in result.output
+    assert "LLM PROVIDER" in result.output
 
 
 def _write_matching_manifest(path, *, out_of_range_lc: bool = False, unused_review: bool = False) -> None:
@@ -590,7 +680,7 @@ def test_run_path_failure_enters_path_repair_plan(
         lambda *_args, **_kwargs: pytest.fail("run_agent must not run after path validation failure"),
     )
 
-    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "mock"])
+    result = CliRunner().invoke(app, ["run", str(manifest), "--provider", "codex"])
 
     assert result.exit_code == 0, result.output
     assert "inputs.artifacts[0].path does not exist" in result.output
@@ -599,7 +689,7 @@ def test_run_path_failure_enters_path_repair_plan(
     assert calls[0][1]["path_repair_project_root"] == Path(__file__).resolve().parents[2]
 
 
-def test_run_path_failure_with_external_backend_does_not_plan(
+def test_run_path_failure_with_unknown_provider_does_not_plan(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest = tmp_path / "missing-artifact.json"
@@ -607,13 +697,13 @@ def test_run_path_failure_with_external_backend_does_not_plan(
     (tmp_path / "rn.bin").unlink()
     monkeypatch.setattr(
         "lamet_agent.__main__.run_interactive_plan",
-        lambda *_args, **_kwargs: pytest.fail("external backend must not enter path repair"),
+        lambda *_args, **_kwargs: pytest.fail("unknown provider must not enter path repair"),
     )
 
-    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "external"])
+    result = CliRunner().invoke(app, ["run", str(manifest), "--provider", "unknown"])
 
     assert result.exit_code != 0
-    assert "inputs.artifacts[0].path does not exist" in result.output
+    assert "Unknown provider" in result.output
 
 
 def test_validate_reports_matching_lc_window_outside_fourier_grid(tmp_path) -> None:
@@ -669,7 +759,7 @@ def test_run_unused_stage_falls_back_to_plan(
         lambda *_args, **_kwargs: pytest.fail("run_agent must not run after unused-stage validation failure"),
     )
 
-    result = CliRunner().invoke(app, ["run", str(manifest), "--backend", "mock"])
+    result = CliRunner().invoke(app, ["run", str(manifest), "--provider", "codex"])
 
     assert result.exit_code == 0, result.output
     assert "| RUN VALIDATION FAILED" in result.output

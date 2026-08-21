@@ -260,7 +260,8 @@ def test_lanczos_precision_zero_prints_nonblocking_plan_and_validate_warnings(
 
     result = run_interactive_plan(
         manifest_path,
-        backend="mock",
+        backend="cli",
+        provider="codex",
         output_func=outputs.append,
     )
 

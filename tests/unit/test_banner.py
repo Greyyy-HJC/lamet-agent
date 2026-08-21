@@ -10,6 +10,18 @@ from lamet_agent.core.trace import AgentTrace
 from lamet_agent.manifest import AnalysisManifest
 
 
+class _InputSession:
+    def begin_stage(self, static_user: str) -> None:
+        pass
+
+    def decide(self, *, last_observation: dict | None) -> dict:
+        return {
+            "action": "request_user_input",
+            "reason": "Test-only pause.",
+            "args": {"prompt": "Continue?"},
+        }
+
+
 def test_banner_contains_lamet_agent() -> None:
     assert BANNER
     assert "LLLL" in BANNER
@@ -29,13 +41,13 @@ def test_agent_trace_quiet_ui_emits_banner_and_job_header() -> None:
     trace = AgentTrace(enabled=False, quiet_ui=True, emit=buffer.write)
     trace.run_banner(
         run_id="demo",
-        backend="mock",
+        backend="cli",
         stages=["correlator_analysis", "renormalization"],
     )
     trace.job_begin("correlator_analysis", "ca", input_issues=["missing field"])
     text = buffer.getvalue()
     assert "LLLL" in text
-    assert "Run: demo  backend=mock" in text
+    assert "Run: demo  backend=cli" in text
     assert "Stages: correlator_analysis, renormalization" in text
     assert "Stage: correlator_analysis  |  Job: ca" in text
     assert "Input issues: ['missing field']" in text
@@ -46,7 +58,7 @@ def test_agent_trace_quiet_ui_emits_banner_and_job_header() -> None:
 def test_agent_trace_verbose_does_not_emit_quiet_ui() -> None:
     buffer = io.StringIO()
     trace = AgentTrace(enabled=True, quiet_ui=False, emit=buffer.write)
-    trace.run_banner(run_id="demo", backend="mock", stages=["correlator_analysis"])
+    trace.run_banner(run_id="demo", backend="cli", stages=["correlator_analysis"])
     trace.job_begin("correlator_analysis", "ca")
     text = buffer.getvalue()
     assert "LLLL" not in text
@@ -115,17 +127,21 @@ def _correlator_manifest() -> AnalysisManifest:
 
 
 def test_run_agent_quiet_ui_prints_banner_and_jobs(capsys) -> None:
-    run_agent(_correlator_manifest(), backend="mock", verbose=False)
+    run_agent(
+        _correlator_manifest(), backend="test", verbose=False, session=_InputSession()
+    )
     out = capsys.readouterr().out
     assert "LLLL" in out
-    assert "Run: demo  backend=mock" in out
+    assert "Run: demo  backend=test" in out
     assert "Stage: correlator_analysis  |  Job: ca" in out
     assert "Cycle 1" not in out
     assert "[Model output]" not in out
 
 
 def test_run_agent_verbose_does_not_print_banner(capsys) -> None:
-    run_agent(_correlator_manifest(), backend="mock", verbose=True)
+    run_agent(
+        _correlator_manifest(), backend="test", verbose=True, session=_InputSession()
+    )
     out = capsys.readouterr().out
     assert "LLLL" not in out
     assert "Stage: correlator_analysis  |  Job: ca" not in out

@@ -1590,3 +1590,29 @@
 - Added Lanczos regressions that require every NetCDF and plot artifact to stay
   inside `1_correlator_analysis`, plus routing and review coverage for the new
   layout.
+
+## 2026-08-21 (Provider-first LLM selection)
+
+- Replaced the public `--backend` selector with `--provider`: registered agent
+  CLIs resolve to `cli`, registered OpenAI-compatible providers use their preset
+  URL, API-key environment variable, and default model, and HTTP(S) provider
+  values register as custom APIs that require `--model` and `--api-key-file`.
+- Registered `codex` as the first agent CLI provider, made `--model` a plain
+  model ID, and removed the obsolete `PROVIDERS`, provider/model parser,
+  `--base-url`, transcript `external` mode, and public/internal `mock` mode.
+- Moved deterministic planning and agent responses into test-only API/session
+  boundary stubs; updated CLI, reporting, provider-resolution, and planning
+  coverage. The full unit suite passes.
+- Disabled HTTP request timeouts for loopback provider URLs while retaining the
+  bounded remote-provider timeout and retry behavior.
+- Added OpenAI-compatible `GET BASE_URL/models` discovery before CLI execution.
+  Selected/default models must appear in the returned IDs; errors print the
+  available list, while a loopback API returning exactly one model may infer it
+  when `--model` is omitted.
+
+## 2026-08-21 (Restore remote LLM request window)
+
+- Restored remote OpenAI-compatible requests to six attempts with a 180-second
+  timeout per attempt, including long review and matching-report generation.
+- Kept loopback provider URLs timeout-free and retained the short, independent
+  timeout policy for best-effort matching-paper downloads.

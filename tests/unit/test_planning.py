@@ -16,6 +16,9 @@ from lamet_agent.planning import (
     _PlanAgentSession,
     _ask_plan_agent_question,
     _apply_user_answer_to_candidate,
+    _expand_pt2_windows,
+    _expand_pt3_windows,
+    _get_path_value,
     _run_planning_tool,
     _stage_parameter_gaps,
     _next_questions_for_state,
@@ -33,6 +36,267 @@ from lamet_agent.planning import (
 )
 from lamet_agent.planning.core import normalize_planning_constraints
 from lamet_agent.stages.correlator.functions import _read_2pt, _read_3pt
+
+
+class _PlanningApiStub:
+    """Test-only OpenAI-compatible response stub for the planning loop."""
+
+    def __init__(self) -> None:
+        self._state: dict[int, dict[str, object]] = {}
+
+    @staticmethod
+    def _latest_observation(messages: list[dict[str, str]]) -> dict:
+        try:
+            payload = json.loads(messages[-1]["content"])
+        except (IndexError, KeyError, json.JSONDecodeError):
+            return {}
+        observation = payload.get("observation", {})
+        return observation if isinstance(observation, dict) else {}
+
+    @staticmethod
+    def _latest_user_answer(messages: list[dict[str, str]]) -> object:
+        for message in reversed(messages):
+            try:
+                observation = json.loads(message["content"]).get("observation", {})
+            except (KeyError, json.JSONDecodeError):
+                continue
+            if observation.get("event") == "user_answer":
+                return observation.get("value")
+        return 1984
+
+    @staticmethod
+    def _revision_patches(payload: dict, original: dict, note: str) -> list[dict]:
+        text = note.lower()
+        if "renormalization" in text:
+            stages = payload.get("stages", {})
+            metadata = payload.get("metadata", {})
+            order = list(metadata.get("stages", []))
+            jobs = stages.get("correlator_analysis", {}).get("jobs", [])
+            denominator = next(
+                (job["id"] for job in jobs if "p0" in str(job.get("id", ""))),
+                jobs[0]["id"] if jobs else "ca",
+            )
+            targets = [
+                job["id"]
+                for job in jobs
+                if job.get("id") != denominator and "p" in str(job.get("id", ""))
+            ]
+            renorm_jobs = [
+                {
+                    "id": target.replace("ca_", "rn_", 1)
+                    if target.startswith("ca_")
+                    else f"rn_{target}",
+                    "inputs": {"target": target, "denominator": denominator},
+                }
+                for target in targets
+            ]
+            if "renormalization" not in order:
+                index = (
+                    order.index("correlator_analysis") + 1
+                    if "correlator_analysis" in order
+                    else len(order)
+                )
+                order.insert(index, "renormalization")
+            return [
+                {"op": "replace", "path": "/metadata/stages", "value": order},
+                {
+                    "op": "add",
+                    "path": "/stages/renormalization",
+                    "value": {
+                        "defaults": {
+                            "normalization": False,
+                            "scheme": "hybrid",
+                            "strategy": "external_denominator",
+                            "zs_fm": 0.18,
+                            "m0_gev": 0.0,
+                            "delta_m_gev": 0.0,
+                        },
+                        "jobs": renorm_jobs,
+                    },
+                },
+            ]
+        if ("fit window" in text or "window" in text) and (
+            "search" in text or "scan" in text
+        ):
+            defaults = payload.get("stages", {}).get("correlator_analysis", {}).get(
+                "defaults", {}
+            )
+            return [
+                {
+                    "op": "replace",
+                    "path": "/stages/correlator_analysis/defaults/pt2_windows",
+                    "value": _expand_pt2_windows(defaults.get("pt2_windows")),
+                    "note": "LLM expanded the fit-window search.",
+                },
+                {
+                    "op": "replace",
+                    "path": "/stages/correlator_analysis/defaults/pt3_windows",
+                    "value": _expand_pt3_windows(defaults.get("pt3_windows")),
+                    "note": "LLM expanded the fit-window search.",
+                },
+            ]
+        if ("tau" in text or "pt3_windows" in text or "pt3_tau_cuts" in text) and (
+            "undo" in text or "revert" in text
+        ):
+            return [
+                {
+                    "op": "replace",
+                    "path": "/stages/correlator_analysis/defaults/pt3_windows",
+                    "value": _get_path_value(
+                        original, "stages.correlator_analysis.defaults.pt3_windows"
+                    ),
+                    "note": "LLM reverted the tau-cut search.",
+                }
+            ]
+        return []
+
+    def __call__(self, *, messages: list[dict[str, str]], **_kwargs: object) -> str:
+        key = id(messages)
+        state = self._state.setdefault(
+            key,
+            {
+                "phase": "load",
+                "seen": 0,
+                "payload": {},
+                "original": {},
+                "revision": "",
+            },
+        )
+        if len(messages) != state["seen"]:
+            observation = self._latest_observation(messages)
+            if observation.get("tool_name") == "load_manifest":
+                manifest = copy.deepcopy(observation.get("manifest", {}))
+                state["payload"] = manifest
+                state["original"] = copy.deepcopy(manifest)
+            candidate = observation.get("candidate_manifest")
+            if isinstance(candidate, dict):
+                state["payload"] = copy.deepcopy(candidate)
+            event = observation.get("event")
+            error = str(observation.get("error", ""))
+            if event == "user_revision":
+                state["revision"] = str(observation.get("text", ""))
+                state["phase"] = "revision"
+            elif event == "user_answer":
+                question_id = str(observation.get("question_id", ""))
+                if question_id.startswith("stage_params."):
+                    value = str(observation.get("value", "")).strip().lower()
+                    state["phase"] = "blocked" if value in {"no", "n", "false", "0"} else "build"
+                elif question_id in {"stage.add_remaining", "metadata.required"} or question_id.startswith(
+                    ("stage_required.", "stage_optional.")
+                ):
+                    state["phase"] = "conversions"
+                else:
+                    state["phase"] = "answer"
+            elif event == "question_skipped":
+                state["phase"] = "conversions"
+            elif "not the full canonical stage flow" in error:
+                state["phase"] = "stage_completion"
+            elif "still have missing parameters or input roles" in error:
+                state["phase"] = "blocked"
+            elif "missing parameters or input roles" in error:
+                state["phase"] = "parameter_completion"
+            state["seen"] = len(messages)
+
+        phase = str(state["phase"])
+        if phase == "load":
+            state["phase"] = "check"
+            action = {"action": "call_tool", "tool_name": "load_manifest", "args": {}, "reason": "Inspect draft."}
+        elif phase == "check":
+            state["phase"] = "maybe_seed"
+            action = {"action": "call_tool", "tool_name": "check_manifest_draft", "args": {}, "reason": "Check draft."}
+        elif phase == "maybe_seed":
+            state["phase"] = "conversions"
+            action = {
+                "action": "request_user_input",
+                "reason": "metadata required values are missing.",
+                "args": {
+                    "question_id": "metadata.required",
+                    "prompt": "metadata required choices: random_seed, resample_mode, and sample_error_mode.",
+                },
+            }
+        elif phase == "answer":
+            state["phase"] = "conversions"
+            action = {
+                "action": "call_tool",
+                "tool_name": "apply_manifest_patch_to_candidate",
+                "args": {
+                    "patches": [
+                        {
+                            "op": "add",
+                            "path": "/metadata/random_seed",
+                            "value": int(self._latest_user_answer(messages)),
+                        }
+                    ]
+                },
+                "reason": "Apply user answer.",
+            }
+        elif phase == "conversions":
+            state["phase"] = "inspect"
+            action = {"action": "call_tool", "tool_name": "plan_correlator_h5_conversions", "args": {}, "reason": "Plan conversions."}
+        elif phase == "inspect":
+            state["phase"] = "build"
+            action = {"action": "call_tool", "tool_name": "inspect_correlator_h5_files", "args": {}, "reason": "Inspect inputs."}
+        elif phase == "build":
+            state["phase"] = "propose"
+            action = {"action": "call_tool", "tool_name": "build_quick_full_candidates", "args": {}, "reason": "Build candidates."}
+        elif phase == "stage_completion":
+            action = {
+                "action": "request_user_input",
+                "reason": "The manifest is not the full canonical stage flow.",
+                "args": {
+                    "question_id": "stage.add_remaining",
+                    "prompt": "Add extra downstream stages?",
+                    "choices": [
+                        {"label": "1", "value": "yes", "description": "Add stages."},
+                        {"label": "2", "value": "no", "description": "Keep partial."},
+                    ],
+                },
+            }
+        elif phase == "parameter_completion":
+            action = {
+                "action": "request_user_input",
+                "reason": "A configured stage is missing required parameters.",
+                "args": {
+                    "question_id": "stage_params.missing",
+                    "prompt": "Add missing parameters?",
+                    "choices": [
+                        {"label": "1", "value": "yes", "description": "Add them."},
+                        {"label": "2", "value": "no", "description": "Leave unchanged."},
+                    ],
+                },
+            }
+        elif phase == "revision":
+            note = str(state["revision"])
+            state["phase"] = "build"
+            action = {
+                "action": "call_tool",
+                "tool_name": "apply_manifest_patch_to_candidate",
+                "args": {
+                    "patches": self._revision_patches(
+                        state["payload"], state["original"], note
+                    ),
+                    "suppress_full_expansions": [
+                        "stages.correlator_analysis.defaults.pt3_windows"
+                    ]
+                    if "revert" in note.lower() or "undo" in note.lower()
+                    else [],
+                },
+                "reason": "Apply revision.",
+            }
+        elif phase == "blocked":
+            state["phase"] = "done"
+            action = {"action": "finish", "reason": "Missing parameters.", "args": {"error": True}}
+        else:
+            state["phase"] = "done"
+            action = {"action": "propose_plan", "reason": "Present candidate.", "args": {"summary": "Test planning summary."}}
+        return json.dumps(action)
+
+
+@pytest.fixture
+def planning_api_stub(monkeypatch: pytest.MonkeyPatch) -> _PlanningApiStub:
+    stub = _PlanningApiStub()
+    monkeypatch.setattr("lamet_agent.planning.request_llm_text", stub)
+    return stub
 
 
 def test_planning_prompt_requires_validation_contract_maintenance() -> None:
@@ -1000,7 +1264,8 @@ def test_plan_asks_unused_stage_before_llm(tmp_path: Path) -> None:
 
     result = run_interactive_plan(
         manifest,
-        backend="mock",
+        backend="cli",
+        provider="codex",
         input_func=lambda prompt: "q",
         output_func=outputs.append,
     )
@@ -1623,13 +1888,15 @@ def test_manifest_confirmation_answer_is_not_applied(tmp_path: Path) -> None:
     assert state.candidate_payload == payload
 
 
-def test_mock_plan_stage_answer_still_runs_conversions(tmp_path: Path) -> None:
+def test_plan_api_answer_still_runs_conversions(
+    tmp_path: Path, planning_api_stub: _PlanningApiStub
+) -> None:
     session = _PlanAgentSession(
-        backend="mock",
+        backend="cli",
         manifest_path=tmp_path / "request.txt",
         manifest_text="",
         api_key=None,
-        provider=None,
+        provider="codex",
         model_name=None,
         base_url=None,
     )
@@ -2187,7 +2454,9 @@ def test_correlator_conversion_mapping_rejects_bad_shapes_and_targets(tmp_path: 
     assert bad_tau["ok"] is False
 
 
-def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) -> None:
+def test_cli_plan_accept_writes_quick_and_full_manifests(
+    tmp_path: Path, planning_api_stub: _PlanningApiStub
+) -> None:
     h5py = pytest.importorskip("h5py")
     root = tmp_path / "repo"
     data_dir = root / "data"
@@ -2252,7 +2521,7 @@ def test_cli_plan_mock_accept_writes_quick_and_full_manifests(tmp_path: Path) ->
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nnone\nnone\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--provider", "codex"], input="2\nnone\nnone\na\n")
 
     assert result.exit_code == 0, result.output
     quick_path = root / "artifacts" / "plan_manifests" / "draft.quick.json"
@@ -2293,7 +2562,9 @@ def test_full_plan_variant_preserves_explicit_correlator_windows(tmp_path: Path)
     assert defaults["pt3_windows"] == explicit_pt3
 
 
-def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Path) -> None:
+def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(
+    tmp_path: Path, planning_api_stub: _PlanningApiStub
+) -> None:
     h5py = pytest.importorskip("h5py")
     root = tmp_path / "repo"
     data_dir = root / "data"
@@ -2363,7 +2634,7 @@ def test_cli_plan_asks_missing_random_seed_once_and_applies_answer(tmp_path: Pat
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="random_seed=1984, resample_mode=bs\nnone\nnone\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--provider", "codex"], input="random_seed=1984, resample_mode=bs\nnone\nnone\na\n")
 
     assert result.exit_code == 0, result.output
     assert "metadata required choices" in result.output
@@ -2600,7 +2871,9 @@ def test_plan_applies_manifest_path_user_answer_without_llm_patch(tmp_path: Path
     assert full["metadata"]["random_seed"] == 1999
 
 
-def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
+def test_cli_plan_revision_expands_fit_window_search(
+    tmp_path: Path, planning_api_stub: _PlanningApiStub
+) -> None:
     h5py = pytest.importorskip("h5py")
     root = tmp_path / "repo"
     data_dir = root / "data"
@@ -2674,7 +2947,7 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nnone\nnone\nr\nPlease broaden the fit window search.\n2\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--provider", "codex"], input="2\nnone\nnone\nr\nPlease broaden the fit window search.\n2\na\n")
 
     assert result.exit_code == 0, result.output
     assert "LLM expanded the fit-window search" in result.output
@@ -2696,7 +2969,9 @@ def test_cli_plan_revision_expands_fit_window_search(tmp_path: Path) -> None:
     assert "Full manifest changes:" in result.output
 
 
-def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) -> None:
+def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(
+    tmp_path: Path, planning_api_stub: _PlanningApiStub
+) -> None:
     h5py = pytest.importorskip("h5py")
     root = tmp_path / "repo"
     data_dir = root / "data"
@@ -2772,7 +3047,7 @@ def test_cli_plan_revision_can_revert_tau_cuts_after_broadening(tmp_path: Path) 
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["plan", str(manifest), "--backend", "mock"],
+        ["plan", str(manifest), "--provider", "codex"],
         input="2\nnone\nnone\nr\nPlease broaden the fit window search.\nr\nPlease revert the tau cuts.\na\n",
     )
 
@@ -2904,7 +3179,9 @@ def test_correlator_manifest_answer_invalidates_planned_conversions(tmp_path: Pa
     assert state.conversions == []
 
 
-def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruction(tmp_path: Path) -> None:
+def test_cli_plan_revision_adds_renormalization_stage_from_english_instruction(
+    tmp_path: Path, planning_api_stub: _PlanningApiStub
+) -> None:
     h5py = pytest.importorskip("h5py")
     root = tmp_path / "repo"
     data_dir = root / "data"
@@ -3013,7 +3290,7 @@ def test_cli_plan_mock_revision_adds_renormalization_stage_from_english_instruct
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(app, ["plan", str(manifest), "--backend", "mock"], input="2\nnone\nnone\nr\nPlease add the renormalization stage.\nnone\nnone\na\n")
+    result = runner.invoke(app, ["plan", str(manifest), "--provider", "codex"], input="2\nnone\nnone\nr\nPlease add the renormalization stage.\nnone\nnone\na\n")
 
     assert result.exit_code == 0, result.output
     full = json.loads((root / "artifacts" / "plan_manifests" / "draft.full.json").read_text(encoding="utf-8"))

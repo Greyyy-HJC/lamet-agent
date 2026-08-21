@@ -377,7 +377,7 @@ def test_matching_stage_report_lists_overlay_last_with_ensemble_description(tmp_
         ],
         path=path,
         report_language="ch",
-        llm=matching_reporting.FormulaLlm(backend="codex"),
+        llm=matching_reporting.FormulaLlm(backend="cli", provider="codex"),
     )
     assert path.exists()
     text = path.with_name("matching_report_CN.md").read_text(encoding="utf-8")

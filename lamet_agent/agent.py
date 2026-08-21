@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from .core.llm import LlmSession, format_api_model_spec, make_llm_session
+from .core.llm import LlmSession, make_llm_session
 from .core.data import EnsembleData
 from .core.plotting import COLOR_CYCLE, ERRORBAR_STYLE, FIG_SIZE, FONT_SIZE, LABEL_SIZE, LEGEND_SETS, apply_plot_style, default_plot
 from .core.prompting import build_stage_static_prompt
@@ -577,7 +577,6 @@ def run_agent(
     manifest: AnalysisManifest,
     *,
     backend: str,
-    actions_path: str | Path | None = None,
     provider: str | None = None,
     model_name: str | None = None,
     api_key: str | None = None,
@@ -585,29 +584,25 @@ def run_agent(
     max_tool_steps: int = 40,
     verbose: bool = False,
     report_language: str = "en",
+    session: LlmSession | None = None,
 ) -> dict[str, Any]:
     """Execute the manifest's ordered stages and per-stage jobs."""
     report_language = _normalize_report_language(report_language)
     resolve_manifest_artifact_metadata(manifest)
     selected = list(manifest.metadata.stages)
     state = AgentState(run_id=manifest.run_id)
-    session = make_llm_session(
-        backend,
-        actions_path,
-        api_key=api_key,
-        provider=provider,
-        model_name=model_name,
-        base_url=base_url,
-    )
+    if session is None:
+        session = make_llm_session(
+            backend,
+            api_key=api_key,
+            provider=provider,
+            model_name=model_name,
+            base_url=base_url,
+        )
     trace = AgentTrace(enabled=verbose, quiet_ui=not verbose)
     outputs: dict[str, Any] = {item.id: item for item in manifest.inputs.artifacts}
     stage_reports: dict[str, dict[str, str]] = {}
-    if backend == "api" and provider and model_name:
-        model_spec = format_api_model_spec(provider, model_name)
-    elif backend == "codex":
-        model_spec = model_name
-    else:
-        model_spec = None
+    model_spec = model_name
 
     if verbose:
         trace.run_begin(
@@ -1035,7 +1030,8 @@ def run_agent(
     result: dict[str, Any] = {
         "run_id": manifest.run_id,
         "status": status,
-        "backend": backend,
+        "provider": provider,
+        "provider_type": backend,
         "stages": selected,
         "completed_stages": state.completed_stages,
         "input_issues": state.input_issues,

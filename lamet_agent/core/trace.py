@@ -8,7 +8,7 @@ Purpose:
 Example usage:
 - from lamet_agent.core.trace import AgentTrace
 - trace = AgentTrace(quiet_ui=True)
-- trace.run_banner(run_id="demo", backend="mock", stages=["correlator_analysis"])
+- trace.run_banner(run_id="demo", backend="cli", stages=["correlator_analysis"])
 - trace.job_begin("correlator_analysis", "ca")
 """
 
@@ -132,11 +132,7 @@ class AgentTrace:
         self._write("-" * 40)
 
     def llm_call_begin(self, *, backend: str, model_spec: str | None = None) -> None:
-        if backend == "external":
-            message = "Loading next action from transcript..."
-        elif backend == "mock":
-            message = "Resolving mock action..."
-        elif model_spec:
+        if model_spec:
             message = f"Calling LLM ({model_spec})..."
         else:
             message = f"Calling LLM ({backend})..."

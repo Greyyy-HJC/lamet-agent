@@ -564,7 +564,7 @@ Validate and run manifest:
 ```bash
 lamet-agent describe-stage correlator_analysis
 lamet-agent validate examples/pion_pdf_cg_manifest.json
-lamet-agent run examples/pion_pdf_cg_manifest.json
+lamet-agent run examples/pion_pdf_cg_manifest.json --provider codex
 ```
 
 `describe-stage` prints the stage-owned parameter and physics reference without
@@ -579,12 +579,12 @@ and to the per-job agent context.
 Interactively plan a draft manifest before running it:
 
 ```bash
-lamet-agent plan draft_manifest.jsonc --backend api --model deepseek/deepseek-chat --api-key-file api.key
-lamet-agent plan draft_manifest.jsonc --backend codex --model CODEX_MODEL_ID
+lamet-agent plan draft_manifest.jsonc --provider deepseek --api-key-file api.key
+lamet-agent plan draft_manifest.jsonc --provider codex --model CODEX_MODEL_ID
 ```
 
 `plan` accepts incomplete JSON/JSONC manifests and runs an LLM-controlled
-planning loop. The configured backend chooses planning actions such as checking
+planning loop. The configured provider chooses planning actions such as checking
 the manifest, inspecting HDF5 inputs, asking terminal questions, applying
 validated JSON Patch edits to the in-memory candidate, and proposing the next
 writable plan. Python guardrails apply every manifest mutation to a candidate
@@ -600,14 +600,11 @@ ambiguous. A valid manifest proceeds directly to candidate generation: its
 and already valid optional stage parameters are not presented for confirmation.
 
 `run` still performs strict manifest validation before starting any stage. If
-that validation fails with the `api`, `codex`, or `mock` backend, it prints a
-framed fallback notice followed by the validation error and automatically
-enters the same interactive planning loop,
-using the run command's backend, model, API key file, and base URL settings.
+that validation fails, it prints a framed fallback notice followed by the
+validation error and automatically enters the same interactive planning loop,
+using the run command's provider, model, and API key settings.
 Accepting the fallback plan writes the quick and full manifests and then ends
 the command; run one of those generated manifests explicitly to execute it.
-The `external` backend cannot drive interactive planning, so its validation
-failures continue to exit as CLI errors.
 
 The terminal summary is organized as Missing parameters, Inconsistent settings,
 Suggested modifications, and Data conversions. The quick manifest uses jackknife
@@ -637,10 +634,9 @@ For CLI `validate` and `run`, the resolved value must be this `lamet-agent`
 checkout's project root. Correlator data, external artifact, and kernel paths
 resolve from that root and must name existing files; `artifacts_directory` and
 other output paths may be created later and therefore need not exist during
-validation. When one of these path checks fails, `run` with a planning-capable
-backend enters plan mode without running workflow stages, confirms the project
-root first, and then asks for each invalid input path in manifest order. The
-`external` backend reports the path error directly because it cannot plan.
+validation. When one of these path checks fails, `run` enters plan mode without
+running workflow stages, confirms the project root first, and then asks for each
+invalid input path in manifest order.
 
 `metadata.stages` is the sole ordered list of stages to execute; partial runs use a
 manifest with a shorter list and source nodes under `inputs.artifacts`.
@@ -878,60 +874,63 @@ Print each agent cycle (prompt, model action, tool observation) while the run
 executes:
 
 ```bash
-lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model deepseek/deepseek-chat --api-key-file api.key --verbose
+lamet-agent run examples/pion_pdf_cg_manifest.json --provider deepseek --api-key-file api.key --verbose
 ```
 
-Choose the LLM integration with `--backend` (`mock`, `external`, `api`, or `codex`).
+Choose the LLM integration with `--provider`. Resolution is ordered:
+
+1. Registered agent CLI (`codex` today) → internal `cli` provider type.
+2. Registered OpenAI-compatible API (`openai`, `anthropic`, `gemini`, `grok`, or
+   `deepseek`) → its preset URL, API-key environment variable, and default model.
+3. HTTP(S) URL → custom OpenAI-compatible API; `--api-key-file` is required and
+   non-loopback URLs also require `--model`. A loopback URL may omit `--model`
+   when its `/models` endpoint returns exactly one model ID.
+
 `codex` uses the Codex Python SDK and the current Codex login, so install the optional
 extra first:
 
 ```bash
 python -m pip install -e ".[codex]"
-lamet-agent run examples/pion_pdf_cg_manifest.json --backend codex --model CODEX_MODEL_ID --verbose
+lamet-agent run examples/pion_pdf_cg_manifest.json --provider codex --model CODEX_MODEL_ID --verbose
 ```
 
-For the `codex` backend, `--model` accepts a Codex model ID and passes it to the
+For the `codex` provider, `--model` accepts a Codex model ID and passes it to the
 SDK. Omit `--model` to use the current Codex SDK default. Startup prints a boxed
-`codex` summary (`model` and `auth=Codex login`) before the LaMET Agent banner.
+CLI provider summary before the LaMET Agent banner. Registering CLI providers separately
+keeps room for agent tools such as Copilot CLI without treating them as HTTP APIs.
 
-The `api` backend reads the API key from `--api-key-file` or, if that flag is
-omitted, the provider environment variable (`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`).
+Registered API providers read the API key from `--api-key-file` or, if that flag is
+omitted, their configured environment variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY`, `GROK_API_KEY`, or `DEEPSEEK_API_KEY`).
 The two sources are not mixed: a missing or empty key file does not fall back to
-the environment. Startup prints a boxed `api` summary (provider, model, base URL,
+the environment. Startup prints a boxed API provider summary (provider, model, base URL,
 and key source — file path or env var name, never the key itself), then a blank
-line before the LaMET Agent banner. Pass `--model provider/model_id`
-(shorthand `provider` uses that provider's default model). Override the HTTP
-endpoint with `--base-url` when needed. Quiet runs still print LLM/tool start
-and completion messages. A provider request is attempted at most three times
-with a 60-second timeout per attempt, so an unreachable API fails explicitly
-instead of appearing silent for many minutes:
+line before the LaMET Agent banner. `--model` is a plain model ID and overrides the
+registered default; it no longer contains the provider name. Before execution,
+every API provider is queried at `BASE_URL/models`. If the selected/default model
+is absent, the command exits and prints all available model IDs. Quiet runs still print LLM/tool start
+and completion messages. A provider request is attempted at most six times
+with a 180-second timeout per attempt, so an unreachable API fails explicitly
+instead of appearing silent for many minutes. Loopback URLs (`localhost`,
+`*.localhost`, `127.0.0.1`, and `::1`) are opened without a timeout so local
+inference is not cut off:
 
 ```bash
-lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model openai/gpt-4o-mini --api-key-file api.key --verbose
-lamet-agent run examples/pion_pdf_cg_manifest.json --backend api --model openai/gpt-4o
+lamet-agent run examples/pion_pdf_cg_manifest.json --provider openai --api-key-file api.key --verbose
+lamet-agent run examples/pion_pdf_cg_manifest.json --provider openai --model gpt-5.6-sol
+lamet-agent run examples/pion_pdf_cg_manifest.json --provider https://llm.example/v1 --model local-model --api-key-file api.key
 ```
 
 After numerical perturbative matching completes, its stage report performs a
 best-effort cited-paper lookup and a separate LLM call for the human-readable
 kernel formula. The CLI labels this report phase explicitly. Paper lookup is
-bounded to short requests, and the report-only LLM call uses at most two
-30-second attempts. Failure writes a provenance-only formula note while keeping
+bounded to short requests, while the report-only LLM call uses the shared
+remote-provider timeout and retry policy. Failure writes a provenance-only formula note while keeping
 the completed numerical matching artifacts and allowing the workflow to
 continue.
 
 The second command works only when `OPENAI_API_KEY` is set in the environment.
-
-Replay a deterministic JSONL action transcript (tests and regression):
-
-```bash
-lamet-agent run examples/pion_pdf_cg_manifest.json --backend external --actions-path actions.jsonl
-```
-
-Run the agent loop without a real LLM (dev/test smoke only):
-
-```bash
-lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
-```
+The custom URL command deliberately has no environment-variable fallback.
 
 ## File Responsibilities
 
@@ -953,11 +952,11 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
     contract; incremental tool observations are appended as separate user turns
     in multi-turn LLM sessions.
 - `lamet_agent/core/llm.py`
-  - Pluggable `LlmSession` backends: `mock`, `external` (JSONL transcript), `codex`
-    (Codex Python SDK), and `api` (OpenAI-compatible HTTP via `PROVIDERS`).
-  - `parse_api_model()` splits `provider/model_id` CLI specs; `PROVIDERS` holds each
-    provider's base URL, default model, and API-key env var; shared HTTP lives in
-    `_post_chat_completion` (add new OpenAI-compatible providers to `PROVIDERS`).
+  - Resolves registered agent CLIs, registered OpenAI-compatible APIs, and custom
+    OpenAI-compatible API URLs into `cli` or `api` sessions.
+  - `_OPENAI_COMPATIBLE_API` holds each registered API's URL, unchanged API-key
+    environment variable, and default model; shared HTTP lives in
+    `_post_chat_completion`.
 - `lamet_agent/core/tools.py`
   - Resolves a stage's `STAGE_TOOLS` registry for the agent loop.
   - `prepare_tool_args()` / `filter_tool_kwargs()` normalize LLM tool calls
@@ -981,12 +980,9 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 - `lamet_agent/__main__.py`
   - Exposes the `describe-stage`, `plan`, `validate`, and `run` commands and backs both
     `python -m lamet_agent` and the `lamet-agent` console script.
-  - `run` requires `--backend` (`mock`/`external`/`api`/`codex`), accepts
-    `--model model_id` (for `codex`) or `--model provider/model_id` (for `api`),
-    `--verbose` / `-v` (ReAct-style trace to stdout), `--actions-path` (for
-    `external`), `--api-key-file` or the provider env var plus `--base-url`
-    (for `api`), and `--report_language en|ch` to select the single report
-    language written for each stage.
+  - `run` requires `--provider`, accepts a plain `--model model_id` override,
+    `--api-key-file` (or a registered API provider's configured environment
+    variable), `--verbose` / `-v`, and `--report_language en|ch`.
 - `lamet_agent/kernels.py`
   - Built-in kernel function examples for smoke tests.
 - `lamet_literature/arxiv.py`
@@ -1044,7 +1040,7 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 
 ## Agent Workflow
 
-1. CLI receives a manifest path and runtime options (`--backend`, `--verbose`).
+1. CLI receives a manifest path and runtime options (`--provider`, `--verbose`).
 2. `manifest.py` validates source ids, job ids, ordered dependencies, and paths.
 3. `agent.py` executes the ordered `metadata.stages` list.
 4. For each stage job:
@@ -1060,11 +1056,11 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
   - After the stage finishes, the stage's `reporting.py` emits one report in the
     selected language so users can track analysis progress and inspect that stage's
     intermediate results.
-5. Session backends: `mock` (deterministic scaffold), `external` (JSONL
-   transcript replay via `--actions-path`), `codex` (Codex Python SDK), or `api`
-   (OpenAI-compatible chat-completions providers in `core/llm.py` via
-   `--model provider/model_id`). The `codex` backend accepts an optional Codex
-   model ID through the same `--model` option.
+5. Provider resolution selects either a registered agent CLI or an
+   OpenAI-compatible API. Registered APIs provide their URL and default model;
+   custom URL providers require a key file and normally a model. Loopback APIs
+   may infer their model when `/models` returns exactly one ID. `--model` always
+   contains only the model ID and is validated against that endpoint.
 6. The run ends with a compact JSON summary on stdout (`run_id`, `status`,
    `summary`, manifest paths, etc.). By default, stdout first shows a LaMET Agent
    banner and one line per job (`Stage: … | Job: …`) before stage tool progress
@@ -1076,4 +1072,4 @@ lamet-agent run examples/pion_pdf_cg_manifest.json --backend mock
 
 - `validate` already enforces schema + kernel import checks.
 - `run` executes the stage loop and collects structured actions.
-- Real provider API wiring lives in `core/llm.py` (DeepSeek today).
+- Real provider API and agent CLI wiring lives in `core/llm.py`.
