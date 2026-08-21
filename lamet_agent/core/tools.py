@@ -53,7 +53,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "final_momentum_gev",
         "lattice_spacing_fm",
         "im_flip_for_ft",
-        "symmetry_guarantee",
+        "phase_transfer_da",
         "sector",
         "target_observable",
         "parton",
@@ -63,7 +63,7 @@ _FOURIER_RUN_KEYS = frozenset(
         "psi1_flavor_class",
         "psi2_flavor_class",
         "Lambda0_gev",
-        "bilocal_anchor",
+        "phase_transfer_gpd",
         "initial_momentum",
         "final_momentum",
         "hermitian_partner_id",
@@ -780,11 +780,11 @@ def prepare_tool_args(
         fourier["target_observable"] = manifest.metadata.target_observable
         fourier["parton"] = manifest.metadata.parton
         if manifest.metadata.target_observable == "gpd":
-            fourier.setdefault("bilocal_anchor", "mid_at_0")
+            fourier.setdefault("phase_transfer_gpd", "mid_at_0")
             if "hermitian_partner" in job.inputs:
                 fourier["hermitian_partner_id"] = str(job.inputs["hermitian_partner"])
         else:
-            fourier.pop("bilocal_anchor", None)
+            fourier.pop("phase_transfer_gpd", None)
         fourier.setdefault("sample_error_mode", manifest.metadata.sample_error_mode)
         if tool_name == "load_renormalized_matrix_element_samples":
             resolved.update({key: fourier[key] for key in _FOURIER_LOAD_KEYS if key in fourier})

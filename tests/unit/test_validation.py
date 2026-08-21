@@ -586,7 +586,7 @@ def test_fourier_manual_projection_is_valid_without_sector() -> None:
 
 
 @pytest.mark.parametrize("target", ["pdf", "da"])
-def test_bilocal_anchor_is_gpd_only(target: str) -> None:
+def test_phase_transfer_gpd_is_gpd_only(target: str) -> None:
     artifact = {
         "id": "rn",
         "stage": "renormalization",
@@ -599,15 +599,15 @@ def test_bilocal_anchor_is_gpd_only(target: str) -> None:
     }
     payload = _partial_fourier_payload(artifact)
     payload["metadata"]["target_observable"] = target
-    payload["stages"]["fourier_transform"]["defaults"]["bilocal_anchor"] = "barpsi_at_0"
+    payload["stages"]["fourier_transform"]["defaults"]["phase_transfer_gpd"] = "barpsi_at_0"
     if target == "da":
         payload["stages"]["fourier_transform"]["defaults"].update(
-            {"sector": "full", "symmetry_guarantee": False, "psi1_flavor_class": "heavy", "psi2_flavor_class": "heavy"}
+            {"sector": "full", "phase_transfer_da": False, "psi1_flavor_class": "heavy", "psi2_flavor_class": "heavy"}
         )
     manifest = AnalysisManifest.model_validate(payload)
     diagnostics = validate_stage_diagnostics("fourier_transform", manifest, manifest.stages["fourier_transform"].jobs[0])
 
-    assert any(item.message == "bilocal_anchor is only valid for GPD Fourier transforms." for item in diagnostics)
+    assert any(item.message == "phase_transfer_gpd is only valid for GPD Fourier transforms." for item in diagnostics)
 
 
 def test_nonforward_gpd_requires_exchanged_hermitian_partner() -> None:
@@ -634,7 +634,7 @@ def test_nonforward_gpd_requires_exchanged_hermitian_partner() -> None:
     payload = _partial_fourier_payload(target)
     payload["metadata"]["target_observable"] = "gpd"
     payload["inputs"]["artifacts"].append(partner)
-    payload["stages"]["fourier_transform"]["defaults"]["bilocal_anchor"] = "psi_at_0"
+    payload["stages"]["fourier_transform"]["defaults"]["phase_transfer_gpd"] = "psi_at_0"
     job = payload["stages"]["fourier_transform"]["jobs"][0]
     manifest = AnalysisManifest.model_validate(payload)
     diagnostics = validate_stage_diagnostics("fourier_transform", manifest, manifest.stages["fourier_transform"].jobs[0])

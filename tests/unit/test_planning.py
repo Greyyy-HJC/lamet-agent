@@ -747,12 +747,12 @@ def test_plan_normalization_removes_gpd_only_fields_from_other_observables(targe
         "metadata": {"target_observable": target},
         "stages": {
             "fourier_transform": {
-                "defaults": {"bilocal_anchor": "mid_at_0"},
+                "defaults": {"phase_transfer_gpd": "mid_at_0"},
                 "jobs": [
                     {
                         "id": "ft",
                         "inputs": {"input": "rn", "hermitian_partner": "rn_reverse"},
-                        "params": {"bilocal_anchor": "barpsi_at_0"},
+                        "params": {"phase_transfer_gpd": "barpsi_at_0"},
                     }
                 ],
             }
@@ -762,8 +762,8 @@ def test_plan_normalization_removes_gpd_only_fields_from_other_observables(targe
     normalize_planning_constraints(payload)
 
     stage = payload["stages"]["fourier_transform"]
-    assert "bilocal_anchor" not in stage["defaults"]
-    assert "bilocal_anchor" not in stage["jobs"][0]["params"]
+    assert "phase_transfer_gpd" not in stage["defaults"]
+    assert "phase_transfer_gpd" not in stage["jobs"][0]["params"]
     assert "hermitian_partner" not in stage["jobs"][0]["inputs"]
 
 
@@ -1558,7 +1558,7 @@ def test_gluon_text_plan_normalizes_fourier_sector(tmp_path: Path) -> None:
     manifest.write_text(
         "Build a pion gluon PDF manifest from rn_pz.nc. Use random_seed 1984 and resample_mode jk. "
         "Run fourier_transform with "
-        "y_grid [-0.5, 0, 0.5] and sector sea.",
+        "y_grid [-0.5, 0, 0.5] and sector valence.",
         encoding="utf-8",
     )
 
@@ -1566,6 +1566,26 @@ def test_gluon_text_plan_normalizes_fourier_sector(tmp_path: Path) -> None:
 
     assert payload["metadata"]["parton"] == "gluon"
     assert payload["stages"]["fourier_transform"]["defaults"]["sector"] == "full"
+
+
+def test_text_plan_parses_fourier_phase_transfer_fields(tmp_path: Path) -> None:
+    (tmp_path / "rn_pz.nc").write_text("placeholder", encoding="utf-8")
+    da_request = tmp_path / "da.txt"
+    da_request.write_text(
+        "Build a pion DA fourier_transform manifest from rn_pz.nc with phase_transfer_da: true.",
+        encoding="utf-8",
+    )
+    gpd_request = tmp_path / "gpd.txt"
+    gpd_request.write_text(
+        "Build a pion GPD fourier_transform manifest from rn_pz.nc with phase_transfer_gpd: psi_at_0.",
+        encoding="utf-8",
+    )
+
+    da_payload, _ = load_relaxed_manifest(da_request)
+    gpd_payload, _ = load_relaxed_manifest(gpd_request)
+
+    assert da_payload["stages"]["fourier_transform"]["defaults"]["phase_transfer_da"] is True
+    assert gpd_payload["stages"]["fourier_transform"]["defaults"]["phase_transfer_gpd"] == "psi_at_0"
 
 
 def test_da_text_plan_normalizes_fourier_sector(tmp_path: Path) -> None:

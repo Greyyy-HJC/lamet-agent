@@ -296,7 +296,7 @@ the same fm convention. Tail scans use `zmin_fm`, `zmax_fm`, and
 `zmax_ext_fm`, while the fit converts internally to GeV$^{-1}$ and the Fourier
 phase to dimensionless Ioffe time.
 
-Quark PDF/GPD jobs support `sea`, `valence`, `singlet`, and `full`. For PDF,
+Quark PDF/GPD jobs support `valence`, `singlet`, and `full`. For PDF,
 helicity interchanges the real/imaginary channels used by `valence` and
 `singlet`. For GPD, every named sector first fits and reconstructs the full
 complex paired matrix element and performs the Fourier transform; the sector is
@@ -308,7 +308,7 @@ unpolarized gluon PDF only; gluon helicity, transversity, and GPD operators can
 carry `polarization` metadata but are not silently mapped onto that
 backend. DA behavior is unchanged.
 
-GPD Fourier jobs may declare the GPD-only parameter `bilocal_anchor` to state
+GPD Fourier jobs may declare the GPD-only parameter `phase_transfer_gpd` to state
 which point of the bilocal operator is fixed at the origin. Its allowed values
 are `mid_at_0` for
 $\bar\psi(-z/2)\Gamma W(-z/2,z/2)\psi(z/2)$,

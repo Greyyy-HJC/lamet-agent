@@ -129,8 +129,8 @@ def _sample_sdev(samples, *, resample_mode: str = "bootstrap", sample_error_mode
     return np.asarray(gv.sdev(_sample_gvar(samples, resample_mode=resample_mode)), dtype=float)
 
 
-def _normalise_part(value: str | None) -> str:
-    part = "both" if value is None else str(value).strip().lower()
+def _normalise_component(value: str | None) -> str:
+    component = "both" if value is None else str(value).strip().lower()
     aliases = {
         "both": "both",
         "re": "re",
@@ -139,26 +139,26 @@ def _normalise_part(value: str | None) -> str:
         "imag": "im",
         "imaginary": "im",
     }
-    if part not in aliases:
-        raise ValueError("part must be 'both', 're', or 'im'")
-    return aliases[part]
+    if component not in aliases:
+        raise ValueError("component must be 'both', 're', or 'im'")
+    return aliases[component]
 
 
-def _uses_re(part: str) -> bool:
-    return _normalise_part(part) in {"both", "re"}
+def _uses_re(component: str) -> bool:
+    return _normalise_component(component) in {"both", "re"}
 
 
-def _uses_im(part: str) -> bool:
-    return _normalise_part(part) in {"both", "im"}
+def _uses_im(component: str) -> bool:
+    return _normalise_component(component) in {"both", "im"}
 
 
-def _n_fit_channels(part: str) -> int:
-    return int(_uses_re(part)) + int(_uses_im(part))
+def _n_fit_channels(component: str) -> int:
+    return int(_uses_re(component)) + int(_uses_im(component))
 
 
-def _minimum_fit_points_for_parameters(n_params: int, part: str) -> int:
+def _minimum_fit_points_for_parameters(n_params: int, component: str) -> int:
     """Minimum coordinate points needed to provide at least n_params data values."""
-    channel_count = max(_n_fit_channels(part), 1)
+    channel_count = max(_n_fit_channels(component), 1)
     from_parameters = int(np.ceil(float(n_params) / float(channel_count)))
     return max(from_parameters, 2)
 
@@ -194,27 +194,27 @@ def _fit_y_data(
     *,
     sample_error_mode: str,
     resample_mode: str,
-    part: str = "both",
+    component: str = "both",
     re_fit_samples: np.ndarray | None = None,
     im_fit_samples: np.ndarray | None = None,
     sigma_re: np.ndarray | None = None,
     sigma_im: np.ndarray | None = None,
 ) -> np.ndarray:
     error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
-    part = _normalise_part(part)
+    component = _normalise_component(component)
     blocks = []
     centers = []
     floor_errors = []
-    if _uses_re(part):
+    if _uses_re(component):
         if re_fit_samples is None:
-            raise ValueError("sample error construction requires re_fit_samples for part='re' or 'both'")
+            raise ValueError("sample error construction requires re_fit_samples for component='re' or 'both'")
         blocks.append(np.asarray(re_fit_samples, dtype=float))
         centers.append(np.asarray(re_fit, dtype=float))
         if sigma_re is not None:
             floor_errors.append(np.asarray(sigma_re, dtype=float))
-    if _uses_im(part):
+    if _uses_im(component):
         if im_fit_samples is None:
-            raise ValueError("sample error construction requires im_fit_samples for part='im' or 'both'")
+            raise ValueError("sample error construction requires im_fit_samples for component='im' or 'both'")
         blocks.append(np.asarray(im_fit_samples, dtype=float))
         centers.append(np.asarray(im_fit, dtype=float))
         if sigma_im is not None:
@@ -230,20 +230,20 @@ def _fit_y_data(
     return recenter_sample_values(center, template)
 
 
-def _select_fit_prediction(pred_re: np.ndarray, pred_im: np.ndarray, part: str) -> np.ndarray:
-    part = _normalise_part(part)
-    if part == "re":
+def _select_fit_prediction(pred_re: np.ndarray, pred_im: np.ndarray, component: str) -> np.ndarray:
+    component = _normalise_component(component)
+    if component == "re":
         return pred_re
-    if part == "im":
+    if component == "im":
         return pred_im
     return np.concatenate([pred_re, pred_im])
 
 
-def _zero_inactive_channel(re_values: np.ndarray, im_values: np.ndarray, part: str) -> tuple[np.ndarray, np.ndarray]:
-    part = _normalise_part(part)
-    if part == "re":
+def _zero_inactive_channel(re_values: np.ndarray, im_values: np.ndarray, component: str) -> tuple[np.ndarray, np.ndarray]:
+    component = _normalise_component(component)
+    if component == "re":
         return re_values, np.zeros_like(im_values, dtype=float)
-    if part == "im":
+    if component == "im":
         return np.zeros_like(re_values, dtype=float), im_values
     return re_values, im_values
 
@@ -850,7 +850,7 @@ def _fit_one_sample(
     gfix: str,
     order: str,
     observable: str,
-    part: str,
+    component: str,
     phase_scale: float,
     phase_prime_scale: float | None = None,
     sector: str | None = None,
@@ -931,9 +931,9 @@ def _fit_one_sample(
             phase_prime_scale=phase_prime_scale,
             Lambda0_gev=Lambda0_gev,
         )
-        return _select_fit_prediction(pred_re, pred_im, part)
+        return _select_fit_prediction(pred_re, pred_im, component)
 
-    dof = max(1, _n_fit_channels(part) * len(z_fit) - len(fit_p0))
+    dof = max(1, _n_fit_channels(component) * len(z_fit) - len(fit_p0))
     try:
         fit_prior = prior
         if fit_prior is None:
@@ -991,7 +991,7 @@ def fit_tail_quality_for_mean(
     Lambda0_gev: float = 0.0,
     posterior_prior_error_scale: float = 3.0,
     sample_error_mode: str = "covariance",
-    part: str = "both",
+    component: str = "both",
     sector: str | None = None,
     hadron: str | None = None,
     psi1_flavor_class: str = "heavy",
@@ -1024,9 +1024,9 @@ def fit_tail_quality_for_mean(
             fit=True,
         )
     )
-    required_points = _minimum_fit_points_for_parameters(n_params, part)
+    required_points = _minimum_fit_points_for_parameters(n_params, component)
     if n_points < required_points:
-        dof = max(1, _n_fit_channels(part) * n_points - n_params)
+        dof = max(1, _n_fit_channels(component) * n_points - n_params)
         return {
             "tail_fit_success": False,
             "chi2": float("inf"),
@@ -1049,7 +1049,7 @@ def fit_tail_quality_for_mean(
         mean_im,
         sample_error_mode=sample_error_mode,
         resample_mode=resample_mode,
-        part=part,
+        component=component,
         re_fit_samples=re_mat[:, fit_mask],
         im_fit_samples=im_mat[:, fit_mask],
         sigma_re=sigma_re,
@@ -1062,7 +1062,7 @@ def fit_tail_quality_for_mean(
         gfix=gfix,
         order=order,
         observable=observable,
-        part=part,
+        component=component,
         phase_scale=phase_scale,
         phase_prime_scale=phase_prime_scale,
         sector=sector,
@@ -1078,7 +1078,7 @@ def fit_tail_quality_for_mean(
             gfix=gfix,
             order=order,
             observable=observable,
-            part=part,
+            component=component,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
             sector=sector,
@@ -1142,7 +1142,7 @@ def _fit_fourier_sample_batch(payload: bytes, sample_indices: list[int]) -> list
             context["im_fit_samples"][sample],
             sample_error_mode=context["sample_error_mode"],
             resample_mode=context["resample_mode"],
-            part=context["part"],
+            component=context["component"],
             re_fit_samples=context["re_fit_samples"],
             im_fit_samples=context["im_fit_samples"],
             sigma_re=context["sigma_re"],
@@ -1154,7 +1154,7 @@ def _fit_fourier_sample_batch(payload: bytes, sample_indices: list[int]) -> list
             gfix=context["gfix"],
             order=context["order"],
             observable=context["observable"],
-            part=context["part"],
+            component=context["component"],
             phase_scale=context["phase_scale"],
             phase_prime_scale=context["phase_prime_scale"],
             sector=context["sector"],
@@ -1228,7 +1228,7 @@ def _run_one_scheme(
     Lambda0_gev: float,
     posterior_prior_error_scale: float,
     sample_error_mode: str,
-    part: str,
+    component: str,
     sector: str | None,
     hadron: str | None,
     psi1_flavor_class: str = "heavy",
@@ -1274,7 +1274,7 @@ def _run_one_scheme(
             fit=True,
         )
     )
-    required_points = _minimum_fit_points_for_parameters(n_fit_params, part)
+    required_points = _minimum_fit_points_for_parameters(n_fit_params, component)
     if np.count_nonzero(fit_mask) < required_points:
         raise ValueError("fit range has too few points for the selected asymptotic form")
 
@@ -1291,7 +1291,7 @@ def _run_one_scheme(
         mean_im,
         sample_error_mode=sample_error_mode,
         resample_mode=resample_mode,
-        part=part,
+        component=component,
         re_fit_samples=re_samples[:, fit_mask],
         im_fit_samples=im_samples[:, fit_mask],
         sigma_re=sigma_re,
@@ -1303,7 +1303,7 @@ def _run_one_scheme(
         gfix=gfix,
         order=order,
         observable=observable,
-        part=part,
+        component=component,
         phase_scale=phase_scale,
         phase_prime_scale=phase_prime_scale,
         sector=sector,
@@ -1321,7 +1321,7 @@ def _run_one_scheme(
             gfix=gfix,
             order=order,
             observable=observable,
-            part=part,
+            component=component,
             phase_scale=phase_scale,
             phase_prime_scale=phase_prime_scale,
             sector=sector,
@@ -1384,7 +1384,7 @@ def _run_one_scheme(
                 "sigma_im": sigma_im,
                 "sample_error_mode": sample_error_mode,
                 "resample_mode": resample_mode,
-                "part": part,
+                "component": component,
                 "gfix": gfix,
                 "order": order,
                 "observable": observable,
@@ -1417,7 +1417,7 @@ def _run_one_scheme(
                 im_samples[sample, fit_mask],
                 sample_error_mode=sample_error_mode,
                 resample_mode=resample_mode,
-                part=part,
+                component=component,
                 re_fit_samples=re_samples[:, fit_mask],
                 im_fit_samples=im_samples[:, fit_mask],
                 sigma_re=sigma_re,
@@ -1429,7 +1429,7 @@ def _run_one_scheme(
                 gfix=gfix,
                 order=order,
                 observable=observable,
-                part=part,
+                component=component,
                 phase_scale=phase_scale,
                 phase_prime_scale=phase_prime_scale,
                 sector=sector,
@@ -1475,12 +1475,12 @@ def _run_one_scheme(
             Lambda0_gev=Lambda0_gev,
         )
 
-        fit_re, fit_im = _zero_inactive_channel(fit_re, fit_im, part)
+        fit_re, fit_im = _zero_inactive_channel(fit_re, fit_im, component)
         fit_re_samples[sample] = fit_re
         fit_im_samples[sample] = fit_im
         ext_re_sample = fit_weight * fit_re + (1.0 - fit_weight) * data_re[sample]
         ext_im_sample = fit_weight * fit_im + (1.0 - fit_weight) * data_im[sample]
-        ext_re[sample], ext_im[sample] = _zero_inactive_channel(ext_re_sample, ext_im_sample, part)
+        ext_re[sample], ext_im[sample] = _zero_inactive_channel(ext_re_sample, ext_im_sample, component)
 
         if complete_ft:
             lam_full, re_full, im_full = complete_z_negative(
@@ -1546,7 +1546,7 @@ def run_fourier_workflow(
     Lambda0_gev: float = 0.0,
     posterior_prior_error_scale: float = 3.0,
     sample_error_mode: str = "covariance",
-    part: str = "both",
+    component: str = "both",
     sector: str | None = None,
     hadron: str | None = None,
     psi1_flavor_class: str = "heavy",
@@ -1567,7 +1567,7 @@ def run_fourier_workflow(
     coord_arr = np.asarray(coord, dtype=float)
     resample_mode = _normalise_resample_mode(resample_mode)
     sample_error_mode = normalize_sample_error_mode(sample_error_mode, resample_mode=resample_mode)
-    part = _normalise_part(part)
+    component = _normalise_component(component)
     coord_diffs = np.diff(coord_arr)
     coord_step = (
         _uniform_step(coord_arr)
@@ -1636,7 +1636,7 @@ def run_fourier_workflow(
                 Lambda0_gev=Lambda0_gev,
                 posterior_prior_error_scale=scheme_prior_width,
                 sample_error_mode=sample_error_mode,
-                part=part,
+                component=component,
                 sector=sector,
                 hadron=hadron,
                 psi1_flavor_class=psi1_flavor_class,
@@ -1664,7 +1664,7 @@ def run_fourier_workflow(
                     Lambda0_gev=Lambda0_gev,
                     posterior_prior_error_scale=scheme_prior_width,
                     sample_error_mode=sample_error_mode,
-                    part=part,
+                    component=component,
                     sector=sector,
                     hadron=hadron,
                     psi1_flavor_class=psi1_flavor_class,
@@ -1761,7 +1761,7 @@ def run_fourier_workflow(
         "sample_error_mode": sample_error_mode,
         "Lambda0_gev": float(Lambda0_gev),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
-        "component": part,
+        "component": component,
         "hadron": hadron,
         "psi1_flavor_class": str(psi1_flavor_class or "heavy").lower(),
         "psi2_flavor_class": str(psi2_flavor_class or "heavy").lower(),
@@ -1854,9 +1854,9 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
         "psi2_flavor_class": str(result.get("psi2_flavor_class", "heavy")),
         "coord_unit": str(result.get("coord_unit", "")),
         "fit_coord_unit": str(result.get("fit_coord_unit", "")),
-        "component": str(result.get("component", result.get("part", "both"))),
+        "component": str(result.get("component", "both")),
         "im_flip_for_ft": str(result.get("im_flip_for_ft", "")),
-        "symmetry_guarantee": str(result.get("symmetry_guarantee", False)),
+        "phase_transfer_da": str(result.get("phase_transfer_da", False)),
         "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
         "resample_mode": str(result.get("resample_mode", "")),
         "sample_error_mode": str(result.get("sample_error_mode", "")),
@@ -1874,7 +1874,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
     if str(result.get("target_observable", "")).lower() == "gpd":
         attrs.update(
             {
-                "bilocal_anchor": str(result.get("bilocal_anchor", "mid_at_0")),
+                "phase_transfer_gpd": str(result.get("phase_transfer_gpd", "mid_at_0")),
                 "hermitian_partner_id": str(result.get("hermitian_partner_id", "")),
                 "hermiticity_phase": float(result.get("hermiticity_phase", 1.0)),
                 "gpd_completion_mode": str(result.get("gpd_completion_mode", "single_flow")),
@@ -2168,7 +2168,7 @@ def _pick_four_zmin_fm_by_tail_fit(
     resample_mode: str,
     sample_error_mode: str,
     Lambda0_gev: float,
-    part: str,
+    component: str,
     sector: str | None,
     hadron: str | None,
     preferred_zmin: float | None,
@@ -2189,7 +2189,7 @@ def _pick_four_zmin_fm_by_tail_fit(
                 fit=True,
             )
         ),
-        part,
+        component,
     )
     for zmax in zmax_candidates:
         zmax_snap = _nearest_positive_coord(positive, zmax)
@@ -2217,7 +2217,7 @@ def _pick_four_zmin_fm_by_tail_fit(
                 resample_mode=resample_mode,
                 sample_error_mode=sample_error_mode,
                 Lambda0_gev=Lambda0_gev,
-                part=part,
+                component=component,
                 sector=sector,
                 hadron=hadron,
                 psi1_flavor_class=psi1_flavor_class,
@@ -2256,7 +2256,7 @@ def _auto_fill_scheme_scan(
     resample_mode: str,
     sample_error_mode: str,
     Lambda0_gev: float,
-    part: str,
+    component: str,
     sector: str | None,
     hadron: str | None,
     psi1_flavor_class: str = "heavy",
@@ -2284,7 +2284,7 @@ def _auto_fill_scheme_scan(
             resample_mode=resample_mode,
             sample_error_mode=sample_error_mode,
             Lambda0_gev=Lambda0_gev,
-            part=part,
+            component=component,
             sector=sector,
             hadron=hadron,
             psi1_flavor_class=psi1_flavor_class,
@@ -2319,7 +2319,7 @@ def _auto_scheme_scan(
     resample_mode: str,
     sample_error_mode: str,
     Lambda0_gev: float,
-    part: str,
+    component: str,
     sector: str | None,
     hadron: str | None,
     psi1_flavor_class: str = "heavy",
@@ -2353,7 +2353,7 @@ def _auto_scheme_scan(
         resample_mode=resample_mode,
         sample_error_mode=sample_error_mode,
         Lambda0_gev=Lambda0_gev,
-        part=part,
+        component=component,
         sector=sector,
         hadron=hadron,
         psi1_flavor_class=psi1_flavor_class,
@@ -2525,7 +2525,7 @@ def run_fourier_transform(
     lattice_spacing_fm: float | None = None,
     zs_fm: float | None = None,
     im_flip_for_ft: bool,
-    symmetry_guarantee: bool | None = None,
+    phase_transfer_da: bool | None = None,
     Lambda0_gev: float,
     posterior_prior_error_scale: float | list[float],
     sample_error_mode: str,
@@ -2534,7 +2534,7 @@ def run_fourier_transform(
     sector: str | None = None,
     current_operator: str | None = None,
     polarization: str | None = None,
-    bilocal_anchor: str | None = None,
+    phase_transfer_gpd: str | None = None,
     hermitian_partner_id: str | None = None,
     psi1_flavor_class: str | None = None,
     psi2_flavor_class: str | None = None,
@@ -2547,10 +2547,10 @@ def run_fourier_transform(
         raise ValueError("workers must be a positive integer")
     workers = int(workers)
     gfix = str(gfix).upper()
-    if symmetry_guarantee is not None and not isinstance(symmetry_guarantee, bool):
-        raise ValueError("symmetry_guarantee must be a boolean")
+    if phase_transfer_da is not None and not isinstance(phase_transfer_da, bool):
+        raise ValueError("phase_transfer_da must be a boolean")
     out = "fourier_result"
-    part = str(component)
+    component = str(component)
     sector = None if sector is None else str(sector).strip().lower()
     parton = str(parton).strip().lower()
     hadron = str(hadron).strip().lower()
@@ -2559,7 +2559,7 @@ def run_fourier_transform(
     psi2_flavor_class = str(psi2_flavor_class or "").strip().lower()
     target = str(target_observable).strip().lower()
     if target == "gpd":
-        bilocal_anchor = str(bilocal_anchor or "mid_at_0")
+        phase_transfer_gpd = str(phase_transfer_gpd or "mid_at_0")
     if target in {"pdf", "gpd"}:
         hadron = "nucleon" if hadron == "proton" else hadron
         public_observable = INFERRED_OBSERVABLES[(target, parton, hadron)]
@@ -2574,24 +2574,23 @@ def run_fourier_transform(
         if target == "da":
             sector = "full"
         if parton == "gluon":
-            sector, part, output_scale, im_flip_for_ft = "full", "both", 1.0, False
+            sector, component, output_scale, im_flip_for_ft = "full", "both", 1.0, False
         elif target == "gpd":
-            part, output_scale, im_flip_for_ft = "both", 1.0, False
+            component, output_scale, im_flip_for_ft = "both", 1.0, False
         elif target == "pdf":
-            part, output_scale, im_flip_for_ft = {
+            component, output_scale, im_flip_for_ft = {
                 "valence": (("im" if polarization == "helicity" else "re"), 2.0, False),
                 "singlet": (("re" if polarization == "helicity" else "im"), 2.0, False),
-                "sea": ("both", 1.0, False),
                 "full": ("both", 1.0, False),
             }[sector]
         else:
-            part, output_scale, im_flip_for_ft = "both", 1.0, False
+            component, output_scale, im_flip_for_ft = "both", 1.0, False
     else:
         if target == "da" or parton == "gluon":
-            sector, part, output_scale, im_flip_for_ft = "full", "both", 1.0, False
+            sector, component, output_scale, im_flip_for_ft = "full", "both", 1.0, False
         else:
             sector = "manual"
-    fit_sector = "full" if target == "gpd" or sector == "sea" else sector
+    fit_sector = "full" if target == "gpd" else sector
     matrix_element_data = store.get("input")
     if not isinstance(matrix_element_data, EnsembleData):
         matrix_element_data = store["matrix_element_data"]
@@ -2609,13 +2608,13 @@ def run_fourier_transform(
     delta_momentum_gev = float(final_momentum_gev or 0.0) - float(momentum_gev or 0.0)
     phase_momentum_source = "physical_magnitude_fallback"
     if initial_momentum and final_momentum and volume and lattice_spacing_fm and bz_direction:
-        initial_components = parse_momentum(initial_momentum)
-        final_components = parse_momentum(final_momentum)
+        initial_parts = parse_momentum(initial_momentum)
+        final_parts = parse_momentum(final_momentum)
         spatial_extent, _ = parse_volume(volume)
         momentum_unit = 2.0 * np.pi * HBAR_C_GEV_FM / (spatial_extent * float(lattice_spacing_fm))
         axes = {"X": 0, "Y": 1, "Z": 2}
         delta_momentum_gev = momentum_unit * sum(
-            final_components[axes[axis]] - initial_components[axes[axis]] for axis in str(bz_direction)
+            final_parts[axes[axis]] - initial_parts[axes[axis]] for axis in str(bz_direction)
         )
         phase_momentum_source = "signed_discrete_momentum"
     partner_re_samples = None
@@ -2630,10 +2629,10 @@ def run_fourier_transform(
             else None
         )
         phase = np.exp(0.5j * delta_momentum_gev * coord_arr * FM_TO_GEV_INV)[None, :]
-        if bilocal_anchor == "mid_at_0":
+        if phase_transfer_gpd == "mid_at_0":
             target_endpoint = target_raw * phase
             partner_endpoint = partner_raw * np.conjugate(phase) if partner_raw is not None else None
-        elif bilocal_anchor == "barpsi_at_0":
+        elif phase_transfer_gpd == "barpsi_at_0":
             target_endpoint = target_raw
             partner_endpoint = partner_raw
         else:
@@ -2646,11 +2645,11 @@ def run_fourier_transform(
             partner_im_samples = np.imag(partner_endpoint)
         target_mid_samples = target_endpoint * np.conjugate(phase)
         partner_mid_samples = partner_endpoint * phase if partner_endpoint is not None else None
-    if target == "da" and not isinstance(symmetry_guarantee, bool):
-        raise ValueError("DA Fourier transforms require symmetry_guarantee")
+    if target == "da" and not isinstance(phase_transfer_da, bool):
+        raise ValueError("DA Fourier transforms require phase_transfer_da")
     if target == "da" and (not psi1_flavor_class or not psi2_flavor_class):
         raise ValueError("DA Fourier transforms require both psi flavor classes")
-    if target == "da" and symmetry_guarantee:
+    if target == "da" and phase_transfer_da:
         ft_scale = FM_TO_GEV_INV * _ft_scale_momentum(momentum_gev, final_momentum_gev)
         projected = _project_da_symmetry(
             coord_arr,
@@ -2680,7 +2679,7 @@ def run_fourier_transform(
             resample_mode=resample_mode,
             sample_error_mode=sample_error_mode,
             Lambda0_gev=float(Lambda0_gev),
-            part=part,
+            component=component,
             sector=fit_sector,
             hadron=hadron,
             psi1_flavor_class=psi1_flavor_class,
@@ -2700,7 +2699,7 @@ def run_fourier_transform(
                 resample_mode=resample_mode,
                 sample_error_mode=sample_error_mode,
                 Lambda0_gev=float(Lambda0_gev),
-                part=part,
+                component=component,
                 sector=fit_sector,
                 hadron=hadron,
                 psi1_flavor_class=psi1_flavor_class,
@@ -2726,7 +2725,7 @@ def run_fourier_transform(
                 fit=True,
             )
         ),
-        part,
+        component,
     )
     schemes = [
         scheme
@@ -2756,7 +2755,7 @@ def run_fourier_transform(
                 Lambda0_gev=float(Lambda0_gev),
                 posterior_prior_error_scale=range_prior_width,
                 sample_error_mode=sample_error_mode,
-                part=part,
+                component=component,
                 sector=fit_sector,
                 hadron=hadron,
                 psi1_flavor_class=psi1_flavor_class,
@@ -2778,7 +2777,7 @@ def run_fourier_transform(
                 Lambda0_gev=float(Lambda0_gev),
                 posterior_prior_error_scale=range_prior_width,
                 sample_error_mode=sample_error_mode,
-                part=part,
+                component=component,
                 sector=fit_sector,
                 hadron=hadron,
                 psi1_flavor_class=psi1_flavor_class,
@@ -2834,7 +2833,7 @@ def run_fourier_transform(
         n_model_points = np.count_nonzero(
             _fit_coord_mask(coord_arr, float(selected_range["zmin"]), float(selected_range["zmax"]))
         )
-        if n_model_points >= _minimum_fit_points_for_parameters(n_model_params, part):
+        if n_model_points >= _minimum_fit_points_for_parameters(n_model_params, component):
             fit_model_specs.append(spec)
     if not fit_model_specs:
         fit_model_specs = [_fit_model_specs(range_order, range_prior_width)[0]]
@@ -2860,15 +2859,14 @@ def run_fourier_transform(
         model_scheme["order"] = spec["order"]
         model_scheme["posterior_prior_error_scale"] = spec["prior_width"]
         schemes.append(model_scheme)
-    gpd_sector_projection = target == "gpd" and sector in {"sea", "valence", "singlet"}
+    gpd_sector_projection = target == "gpd" and sector in {"valence", "singlet"}
     requested_y = np.asarray(y_values, dtype=float)
     workflow_y = np.sort(np.unique(np.concatenate([requested_y, -requested_y]))) if gpd_sector_projection else requested_y
-    sea_projection = target != "gpd" and sector == "sea"
     result = run_fourier_workflow(
         matrix_element["coord"],
         matrix_element["re_samples"],
         matrix_element["im_samples"],
-        -requested_y if sea_projection else workflow_y,
+        workflow_y,
         schemes=schemes,
         gfix=gfix,
         order=order,
@@ -2880,7 +2878,7 @@ def run_fourier_transform(
         Lambda0_gev=float(Lambda0_gev),
         posterior_prior_error_scale=range_prior_width,
         sample_error_mode=sample_error_mode,
-        part=part,
+        component=component,
         sector=fit_sector,
         hadron=hadron,
         psi1_flavor_class=psi1_flavor_class,
@@ -2902,11 +2900,11 @@ def run_fourier_transform(
     result["lattice_spacing_fm"] = lattice_spacing_fm
     result["zs_fm"] = zs_fm
     result["im_flip_for_ft"] = bool(im_flip_for_ft)
-    result["symmetry_guarantee"] = bool(target == "da" and symmetry_guarantee)
+    result["phase_transfer_da"] = bool(target == "da" and phase_transfer_da)
     result["sector"] = sector
     result["target_observable"] = target
     if target == "gpd":
-        result["bilocal_anchor"] = bilocal_anchor
+        result["phase_transfer_gpd"] = phase_transfer_gpd
         result["hermitian_partner_id"] = hermitian_partner_id or ""
         result["hermiticity_phase"] = 1.0
         result["gpd_completion_mode"] = "paired_flow" if partner_matrix is not None else "single_flow"
@@ -2930,7 +2928,7 @@ def run_fourier_transform(
         if len(candidate_diagnostics["fit_model_prior_widths"]) == 1
         else candidate_diagnostics["fit_model_prior_widths"]
     )
-    result["component"] = str(part)
+    result["component"] = str(component)
     result["hadron"] = hadron
     result["psi1_flavor_class"] = psi1_flavor_class
     result["psi2_flavor_class"] = psi2_flavor_class
@@ -2941,15 +2939,13 @@ def run_fourier_transform(
         evaluated_y = np.asarray(result["y_grid"], dtype=float)
         direct = np.asarray([int(np.argmin(np.abs(evaluated_y - value))) for value in requested_y], dtype=int)
         reflected = np.asarray([int(np.argmin(np.abs(evaluated_y + value))) for value in requested_y], dtype=int)
-        sea_sign = 1.0 if polarization == "helicity" else -1.0
+        negative_x_sign = 1.0 if polarization == "helicity" else -1.0
         for scheme_result in result["scheme_results"]:
             full = np.asarray(scheme_result["ft_re_samples"]) + 1j * np.asarray(scheme_result["ft_im_samples"])
-            if sector == "sea":
-                projected = sea_sign * full[:, reflected]
-            elif sector == "valence":
-                projected = full[:, direct] - sea_sign * full[:, reflected]
+            if sector == "valence":
+                projected = full[:, direct] - negative_x_sign * full[:, reflected]
             else:
-                projected = full[:, direct] + sea_sign * full[:, reflected]
+                projected = full[:, direct] + negative_x_sign * full[:, reflected]
             scheme_result["ft_re_samples"] = np.real(projected)
             scheme_result["ft_im_samples"] = np.imag(projected)
         result["y_grid"] = requested_y
@@ -2964,15 +2960,7 @@ def run_fourier_transform(
         sample_error_mode=sample_error_mode,
         model_average=model_average,
     )
-    sea_sign = 1.0 if polarization == "helicity" else -1.0
-    _apply_fourier_output_scale(result, sea_sign if sea_projection else float(output_scale))
-    if sea_projection:
-        result["y_grid"] = np.asarray(y_values, dtype=float)
-        result["output_scale"] = 1.0
-        if sea_sign < 0:
-            for scheme_result in result["scheme_results"]:
-                for key in ("ft_re_samples", "ft_im_samples"):
-                    scheme_result[key] = -np.asarray(scheme_result[key], dtype=float)
+    _apply_fourier_output_scale(result, float(output_scale))
     store["fourier_result_data"] = fourier_result_to_ensemble_data(result, source_ensemble=matrix_element_data.ensemble)
     store[out] = result
     stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="fourier_result")
@@ -3003,7 +2991,7 @@ def run_fourier_transform(
         "selected_range_label": result.get("selected_range_label"),
         "output_scale": result.get("output_scale", 1.0),
         "sector": result.get("sector", sector),
-        "bilocal_anchor": result.get("bilocal_anchor"),
+        "phase_transfer_gpd": result.get("phase_transfer_gpd"),
         "hermitian_partner_id": result.get("hermitian_partner_id"),
         **(
             {
@@ -3014,7 +3002,7 @@ def run_fourier_transform(
             if target in {"pdf", "gpd"}
             else {}
         ),
-        "symmetry_guarantee": result.get("symmetry_guarantee", False),
+        "phase_transfer_da": result.get("phase_transfer_da", False),
         "auto_scheme_scan": auto_scheme_scan,
         "Lambda0_gev": result.get("Lambda0_gev", 0.0),
         "workers": int(workers),
@@ -3046,9 +3034,9 @@ def summarize_fourier_result(
         "selected_range_label": data.get("selected_range_label"),
         "selected_fit_range": data.get("selected_fit_range"),
         "output_scale": data.get("output_scale", 1.0),
-        "symmetry_guarantee": data.get("symmetry_guarantee", False),
+        "phase_transfer_da": data.get("phase_transfer_da", False),
         "Lambda0_gev": data.get("Lambda0_gev", 0.0),
-        "sector": data.get("sector", data.get("component", data.get("part", "full"))),
+        "sector": data.get("sector", data.get("component", "full")),
     }
     if str(data.get("target_observable", "")).lower() in {"pdf", "gpd"}:
         summary.update(
@@ -3061,7 +3049,7 @@ def summarize_fourier_result(
     if str(data.get("target_observable", "")).lower() == "gpd":
         summary.update(
             {
-                "bilocal_anchor": data.get("bilocal_anchor", "mid_at_0"),
+                "phase_transfer_gpd": data.get("phase_transfer_gpd", "mid_at_0"),
                 "hermitian_partner_id": data.get("hermitian_partner_id", ""),
                 "gpd_completion_mode": data.get("gpd_completion_mode", "single_flow"),
             }
@@ -3120,7 +3108,7 @@ def plot_fourier_extension_quality_result(
         target_re,
         data,
         scheme_index=scheme_index,
-        part="re",
+        component="re",
         partner_samples=partner_re,
         momentum_gev=data.get("momentum_gev"),
         save_path=re_output,
@@ -3134,7 +3122,7 @@ def plot_fourier_extension_quality_result(
         target_im,
         data,
         scheme_index=scheme_index,
-        part="im",
+        component="im",
         partner_samples=partner_im,
         momentum_gev=data.get("momentum_gev"),
         save_path=im_output,

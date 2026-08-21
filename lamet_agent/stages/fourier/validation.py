@@ -145,14 +145,14 @@ def _check_input_role(context: StageValidationContext) -> RuleViolation | list[R
                 parameters=("inputs.input", "inputs.hermitian_partner"),
             )
         )
-    if target != "gpd" and "bilocal_anchor" in (context.authored_params or {}):
+    if target != "gpd" and "phase_transfer_gpd" in (context.authored_params or {}):
         issues.append(
             _violation(
                 context,
-                message="bilocal_anchor is only valid for GPD Fourier transforms.",
-                path=context.parameter_path("bilocal_anchor"),
+                message="phase_transfer_gpd is only valid for GPD Fourier transforms.",
+                path=context.parameter_path("phase_transfer_gpd"),
                 cause=f"The run target_observable is {target!r}.",
-                parameters=("bilocal_anchor", "metadata.target_observable"),
+                parameters=("phase_transfer_gpd", "metadata.target_observable"),
             )
         )
     partner = context.resources.get("partner_kinematics", {})
@@ -256,14 +256,14 @@ def _check_sector(context: StageValidationContext) -> RuleViolation | None:
     if "sector" not in context.params:
         return None
     sector = str(context.params["sector"]).lower()
-    if sector not in {"sea", "valence", "singlet", "full"}:
+    if sector not in {"valence", "singlet", "full"}:
         return None
     target = str(context.metadata.get("target_observable", "pdf")).lower()
     parton = str(context.metadata.get("parton", "quark")).lower()
     allowed = (
         {"full"}
         if parton == "gluon" or target == "da"
-        else {"sea", "valence", "singlet", "full"}
+        else {"valence", "singlet", "full"}
     )
     if sector in allowed:
         return None
@@ -405,7 +405,7 @@ def _check_da_requirements(context: StageValidationContext) -> list[RuleViolatio
     target = str(context.metadata.get("target_observable", "pdf")).lower()
     if target != "da":
         return None
-    required = ("symmetry_guarantee", "psi1_flavor_class", "psi2_flavor_class")
+    required = ("phase_transfer_da", "psi1_flavor_class", "psi2_flavor_class")
     issues: list[RuleViolation] = []
     for parameter in required:
         if parameter not in context.params:
@@ -492,7 +492,7 @@ _SCHEME_SCAN_FIELDS = {
 FOURIER_CONSTRAINTS = (
     ConstraintSpec(
         code="fourier.inputs.observable_contract",
-        parameters=("inputs.input", "inputs.hermitian_partner", "bilocal_anchor"),
+        parameters=("inputs.input", "inputs.hermitian_partner", "phase_transfer_gpd"),
         rule="PDF, DA, and forward GPD jobs use input; nonforward GPD jobs also use the exchanged-flow hermitian_partner.",
         physics="Nonforward GPD Hermiticity relates the negative-z branch to the flow with exchanged initial and final momenta.",
         suggested_fix='Use {"input": "<flow>", "hermitian_partner": "<exchanged flow>"} for a nonforward GPD job.',
@@ -541,7 +541,7 @@ FOURIER_CONSTRAINTS = (
     ConstraintSpec(
         code="fourier.sector.compatibility",
         parameters=("sector", "metadata.target_observable", "metadata.parton"),
-        rule="DA and gluon jobs use sector=full; quark PDF/GPD jobs also support sea, valence, and singlet.",
+        rule="DA and gluon jobs use sector=full; quark PDF/GPD jobs also support valence and singlet.",
         physics="Quark/antiquark sector projections do not apply to the current DA or gluon transform backends.",
         suggested_fix="Use sector=full for DA/gluon, or choose a supported quark PDF/GPD sector.",
         check=_check_sector,
@@ -572,10 +572,10 @@ FOURIER_CONSTRAINTS = (
     ),
     ConstraintSpec(
         code="fourier.da.required",
-        parameters=("symmetry_guarantee", "psi1_flavor_class", "psi2_flavor_class"),
+        parameters=("phase_transfer_da", "psi1_flavor_class", "psi2_flavor_class"),
         rule="DA jobs require explicit symmetry and constituent flavor-class choices.",
         physics="DA symmetry projection and unequal-mass asymptotics depend on these analysis choices.",
-        suggested_fix="Declare symmetry_guarantee, psi1_flavor_class, and psi2_flavor_class in stage defaults or job params.",
+        suggested_fix="Declare phase_transfer_da, psi1_flavor_class, and psi2_flavor_class in stage defaults or job params.",
         check=_check_da_requirements,
     ),
 )
@@ -592,16 +592,16 @@ def _normalize_draft(payload: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     edits: list[dict[str, Any]] = []
     defaults = stage.get("defaults", {})
-    if target != "gpd" and isinstance(defaults, dict) and "bilocal_anchor" in defaults:
-        old = defaults.pop("bilocal_anchor")
-        edits.append({"path": "stages.fourier_transform.defaults.bilocal_anchor", "old": old, "new": None, "note": "Removed the GPD-only bilocal anchor."})
+    if target != "gpd" and isinstance(defaults, dict) and "phase_transfer_gpd" in defaults:
+        old = defaults.pop("phase_transfer_gpd")
+        edits.append({"path": "stages.fourier_transform.defaults.phase_transfer_gpd", "old": old, "new": None, "note": "Removed the GPD-only bilocal anchor."})
     jobs = stage.get("jobs", [])
     if target != "gpd" and isinstance(jobs, list):
         for job in jobs:
             params = job.get("params", {}) if isinstance(job, dict) else {}
-            if isinstance(params, dict) and "bilocal_anchor" in params:
-                old = params.pop("bilocal_anchor")
-                edits.append({"path": f"stages.fourier_transform.jobs.{job.get('id', '')}.params.bilocal_anchor", "old": old, "new": None, "note": "Removed the GPD-only bilocal anchor."})
+            if isinstance(params, dict) and "phase_transfer_gpd" in params:
+                old = params.pop("phase_transfer_gpd")
+                edits.append({"path": f"stages.fourier_transform.jobs.{job.get('id', '')}.params.phase_transfer_gpd", "old": old, "new": None, "note": "Removed the GPD-only bilocal anchor."})
             inputs = job.get("inputs", {}) if isinstance(job, dict) else {}
             if isinstance(inputs, dict) and "hermitian_partner" in inputs:
                 old = inputs.pop("hermitian_partner")
@@ -630,7 +630,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "and transforms every resampled sample onto a declared momentum-fraction grid."
     ),
     planning_notes=(
-        "Only GPD jobs author bilocal_anchor; an omitted GPD value resolves to mid_at_0 without materializing a PDF/DA parameter.",
+        "Only GPD jobs author phase_transfer_gpd; an omitted GPD value resolves to mid_at_0 without materializing a PDF/DA parameter.",
         "Each nonforward GPD job uses a job-specific hermitian_partner whose initial and final momenta exchange those of input.",
     ),
     input_roles=("input", "hermitian_partner"),
@@ -647,7 +647,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             unit="GeV",
             required=True,
         ),
-        "bilocal_anchor": _parameter(
+        "phase_transfer_gpd": _parameter(
             "Location fixed at the origin in a GPD bilocal operator.",
             "mid_at_0 uses the centered bilocal; barpsi_at_0 fixes the barred field; psi_at_0 fixes the unbarred field and reverses the canonical separation.",
             expected=str,
@@ -701,7 +701,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             required=True,
         ),
         "output_scale": _parameter("Final manual multiplicative scale.", "This rescales the transformed distribution and its uncertainties.", expected=float, default=1.0),
-        "symmetry_guarantee": _parameter(
+        "phase_transfer_da": _parameter(
             "Apply the DA phase rotation and symmetry projection.",
             "For DA, true applies a phase rotation by exp(+i z Pz/2), discards the rotated imaginary part, rotates the retained real part back, and only then extends and transforms the signal. False preserves the DA input unchanged. The setting has no effect for PDF/GPD.",
             expected=bool,
@@ -742,9 +742,8 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "Partonic projection of a quark PDF/GPD, or full distribution.",
             "PDF sectors select the negative-x extension and active complex channel. GPD sectors are projected sample by sample from the full complex result after the paired Fourier transform. DA and gluon backends support full only.",
             expected=str,
-            choices=("sea", "valence", "singlet", "full"),
+            choices=("valence", "singlet", "full"),
             choice_descriptions={
-                "sea": "Construct the antiquark/sea projection from the negative momentum-fraction branch.",
                 "valence": "Construct the quark-minus-antiquark projection; GPD keeps both complex channels through the transform.",
                 "singlet": "Construct the quark-plus-antiquark projection; GPD keeps both complex channels through the transform.",
                 "full": "Keep the full signed-x distribution; this is the only supported sector for DA and gluon backends.",
@@ -775,7 +774,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "h5_group": "is no longer supported; use a standard EnsembleData NetCDF artifact.",
         "im_key": "is no longer supported; use a standard EnsembleData NetCDF artifact.",
         "input_format": "is no longer supported; use a standard EnsembleData NetCDF artifact.",
-        "part": "is no longer supported; use component.",
         "plot_extension": "is no longer supported; Fourier plots use the job artifact directory.",
         "plot_fourier": "is no longer supported; Fourier plots use the job artifact directory.",
         "re_key": "is no longer supported; use a standard EnsembleData NetCDF artifact.",

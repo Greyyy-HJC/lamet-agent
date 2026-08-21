@@ -244,8 +244,9 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
     fit_scope_match = re.search(r"\bfit_scope\s*[:=]?\s*(3pt_ratio\+FH|3pt_ratio|qda_ratio|FH)\b", text, flags=re.I)
     fitting_form_match = re.search(r"\bfitting_form\s*[:=]?\s*(Breit|NonBreit)\b", text, flags=re.I)
     ft_order_match = re.search(r"\b(?:fourier\s+)?order\s*[:=]?\s*(LA|NLA)\b", text, flags=re.I)
-    ft_sector_match = re.search(r"\bsector\s*[:=]?\s*(sea|valence|singlet|full)\b", text, flags=re.I)
-    ft_part_match = re.search(r"\bpart\s*[:=]?\s*(re|im|both)\b", text, flags=re.I)
+    ft_sector_match = re.search(r"\bsector\s*[:=]?\s*(valence|singlet|full)\b", text, flags=re.I)
+    phase_transfer_da_match = re.search(r"\bphase_transfer_da\s*[:=]?\s*(true|false)\b", text, flags=re.I)
+    phase_transfer_gpd_match = re.search(r"\bphase_transfer_gpd\s*[:=]?\s*(mid_at_0|barpsi_at_0|psi_at_0)\b", text, flags=re.I)
     y_grid_match = re.search(r"\by_grid\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
     scheme_scan_match = re.search(r"\bscheme_scan\s*[:=]?\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", text, flags=re.I)
     quasi_y_match = re.search(r"\bquasi_y_ls\s*[:=]?\s*(\{[^{}]*\})", text, flags=re.I)
@@ -549,10 +550,12 @@ def draft_manifest_from_text(path: Path, text: str) -> dict[str, Any]:
             ft_defaults["order"] = ft_order_match.group(1).upper()
         if ft_sector_match:
             ft_defaults["sector"] = "full" if target_observable == "da" or parton == "gluon" else ft_sector_match.group(1).lower()
+        if phase_transfer_da_match:
+            ft_defaults["phase_transfer_da"] = phase_transfer_da_match.group(1).lower() == "true"
+        if phase_transfer_gpd_match:
+            ft_defaults["phase_transfer_gpd"] = phase_transfer_gpd_match.group(1).lower()
         if component_match:
             ft_defaults["component"] = component_match.group(1).lower()
-        elif ft_part_match:
-            ft_defaults["component"] = ft_part_match.group(1).lower()
         if not correlators and hadron != "hadron":
             ft_defaults["hadron"] = hadron
         if polarization_match and not rn_jobs:

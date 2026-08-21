@@ -297,7 +297,7 @@ def _output_scale(data: dict[str, Any]) -> float:
     $h(\\lambda)=\\int dx\\,e^{ix\\lambda}q_{\\rm ext}(x)$ and then multiplies by a projection
     factor it records as ``output_scale``: 2 for the ``valence`` and ``singlet`` sectors, whose
     single-channel (Re or Im) transform mirrors the distribution about $x=0$, and 1 for
-    ``full``/``sea`` and for a DA. So a factor of 2 means the integral over the whole matched
+    ``full`` and for a DA. So a factor of 2 means the integral over the whole matched
     range counts one physical side twice, and the one-sided integral is half of it. Reading
     the factor off the run rather than assuming keeps that statement right for whichever
     projection the manifest selected, including ones added later.
@@ -395,7 +395,6 @@ def _norm_summary(data: dict[str, Any]) -> dict[str, Any] | None:
         "lightcone": lc_val,
         "rel_change": rel,
         "scale": scale,
-        "part": str(data.get("component", data.get("part", "")) or ""),
         "unit_quasi": quasi_val / scale,
         "unit_lightcone": lc_val / scale,
         "interpolated_gap": _has_interior_gap(x_grid),

@@ -19,7 +19,7 @@ Convert the current job's quasi-PDF into a light-cone PDF sample by sample.
 
 Perturbative matching applies the selected NLO kernel matrix independently to
 every quasi-PDF sample. Use the injected manifest contract for the authoritative
-scheme, kernel, hybrid-scale, sector, and grid definitions.
+scheme, kernel, hybrid-scale, and grid definitions.
 
 The report integrates quasi and matched over the range this job actually matched and
 states no expected value: whether that integral is 1 depends on whether the matrix

@@ -84,7 +84,7 @@
         "gfix": "CG", // required here because this partial workflow starts from external artifacts
         "order": ["LA", "NLA"],
         "Lambda0_gev": 0.0,
-        "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
+        "sector": "valence", // quark PDF/GPD: valence/singlet/full; gluon and DA: full
         "hadron": "pion", // explicit because this partial workflow has no correlator provenance
         "polarization": "unpolarized", // explicit because no target 3pt supplies polarization provenance
         "posterior_prior_error_scale": [2.0, 3.0, 5.0],
@@ -131,7 +131,6 @@
         // "r": 1.4142135623730951, // optional; clone jobs at mu/r and mu*r (contract default 1.0 = off)
         // "rgr_kappa": 1.0, // RGR kernels only; no contract default — unset uses the kernel default 1.0
         // "rgr_mu_min_gev": 0.6, // RGR kernels only; no contract default — unset uses the kernel default 0.6 GeV
-        // "sector": "valence", // optional post-match projection; usually inherit from Fourier
       },
       "jobs": [
         {

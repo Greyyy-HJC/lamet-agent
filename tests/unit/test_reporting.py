@@ -279,9 +279,9 @@ def test_fourier_gpd_report_records_operator_family_and_projection_limits(
             "hadron": "nucleon",
             "momentum_gev": 1.0,
             "final_momentum_gev": 2.0,
-            "sector": "sea",
+            "sector": "valence",
             "component": "both",
-            "bilocal_anchor": "barpsi_at_0",
+            "phase_transfer_gpd": "barpsi_at_0",
             "hermitian_partner_id": "rn_reverse",
             "gpd_completion_mode": "paired_flow",
             "delta_momentum_gev": 1.0,
@@ -296,9 +296,6 @@ def test_fourier_gpd_report_records_operator_family_and_projection_limits(
     assert decomposition in text
     assert negative_x_relation in text
     assert "projected quasi-GPD matrix element" in text
-    assert "negative-$x$ DGLAP region" in text
-    assert "ERBL region" in text
-    assert "not a pure sea density" in text
     assert "Polarization" in text
     assert "Current operator" in text
     assert "Parton" in text
@@ -323,7 +320,7 @@ def test_da_fourier_stage_report_documents_symmetry_projection(tmp_path: Path) -
                     "gfix": "GI",
                     "order": "NLA",
                     "component": "both",
-                    "symmetry_guarantee": True,
+                    "phase_transfer_da": True,
                 },
                 "artifacts": {},
             }

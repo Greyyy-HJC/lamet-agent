@@ -166,7 +166,6 @@
           "LA",
           "NLA"
         ],
-        "method": "CG",
         "sector": "valence",
         "Lambda0_gev": 0.1,
         "posterior_prior_error_scale": [
@@ -211,7 +210,6 @@
       "defaults": {
         "scheme": "hybrid",
         "mu": 2.0,
-        "component": "re",
         "lc_x_ls": {
           "start": 0,
           "stop": 1

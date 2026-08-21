@@ -864,7 +864,7 @@ def plot_fourier_artifact(
         momentum_gev = float(pz_raw) if pz_raw is not None and np.isfinite(float(pz_raw)) else None
         final_raw = ft_data.attrs.get("final_momentum_gev")
         final_momentum_gev = float(final_raw) if final_raw not in {None, ""} and np.isfinite(float(final_raw)) else None
-        bilocal_anchor = str(ft_data.attrs.get("bilocal_anchor", ""))
+        phase_transfer_gpd = str(ft_data.attrs.get("phase_transfer_gpd", ""))
         sector = str(ft_data.attrs.get("sector", "full"))
         completion_mode = str(ft_data.attrs.get("gpd_completion_mode", ""))
     except ValueError:
@@ -880,7 +880,7 @@ def plot_fourier_artifact(
         target_observable = ""
         momentum_gev = float(data["momentum_gev"]) if "momentum_gev" in data and np.isfinite(data["momentum_gev"]) else None
         final_momentum_gev = None
-        bilocal_anchor = ""
+        phase_transfer_gpd = ""
         sector = "full"
         completion_mode = ""
     re_total = np.sqrt(re_stat**2 + re_sys**2)
@@ -895,7 +895,7 @@ def plot_fourier_artifact(
         denominator = momentum_gev + final_momentum_gev
         xi = np.nan if denominator == 0.0 else (momentum_gev - final_momentum_gev) / denominator
         legend_label = rf"$P_i^z={momentum_gev:.2f},\ P_f^z={final_momentum_gev:.2f}\,\mathrm{{GeV}},\ \xi={xi:.3g}$"
-        default_title += f" ({sector}, {bilocal_anchor or 'mid_at_0'}, {completion_mode or 'paired_flow'})"
+        default_title += f" ({sector}, {phase_transfer_gpd or 'mid_at_0'}, {completion_mode or 'paired_flow'})"
     else:
         legend_label = rf"$P_z={float(momentum_gev):.2f}\,\mathrm{{GeV}}$" if momentum_gev is not None else r"$P_z$"
 
@@ -969,7 +969,7 @@ def plot_fourier_extension_quality(
     result: dict[str, Any],
     *,
     scheme_index: int = 0,
-    part: str = "re",
+    component: str = "re",
     partner_samples: np.ndarray | None = None,
     momentum_gev: float | None = None,
     save_path: str | Path | None = None,
@@ -977,9 +977,9 @@ def plot_fourier_extension_quality(
     show: bool = False,
 ) -> tuple[Figure, Axes]:
     """Plot coordinate-space data against the fitted long-distance extrapolation."""
-    part = part.lower()
-    if part not in {"re", "im"}:
-        raise ValueError("part must be 're' or 'im'")
+    component = component.lower()
+    if component not in {"re", "im"}:
+        raise ValueError("component must be 're' or 'im'")
     scheme = result["scheme_results"][scheme_index]
     if momentum_gev is None:
         momentum_gev = result.get("momentum_gev")
@@ -996,15 +996,15 @@ def plot_fourier_extension_quality(
     sample_error_mode = normalize_sample_error_mode(str(result.get("sample_error_mode", "covariance")), resample_mode=resample_mode)
 
     lambda_ext = np.asarray(scheme["lambda_ext"], dtype=float)
-    model_key = "extended_re_samples" if part == "re" else "extended_im_samples"
-    partner_model_key = "partner_extended_re_samples" if part == "re" else "partner_extended_im_samples"
+    model_key = "extended_re_samples" if component == "re" else "extended_im_samples"
+    partner_model_key = "partner_extended_re_samples" if component == "re" else "partner_extended_im_samples"
     paired = partner_samples is not None and partner_model_key in scheme
     if paired:
         target_data = np.asarray(samples, dtype=float).copy()
         partner_data = np.asarray(partner_samples, dtype=float)
         target_model = np.asarray(scheme[model_key], dtype=float).copy()
         partner_model = np.asarray(scheme[partner_model_key], dtype=float)
-        partner_sign = 1.0 if part == "re" else -1.0
+        partner_sign = 1.0 if component == "re" else -1.0
         if np.isclose(coord_arr[0], 0.0):
             target_data[:, 0] = 0.5 * (target_data[:, 0] + partner_sign * partner_data[:, 0])
             samples = np.concatenate([partner_sign * partner_data[:, ::-1][:, :-1], target_data], axis=1)
@@ -1064,8 +1064,8 @@ def plot_fourier_extension_quality(
     model_label = "Extrapolation"
     if gfix or order:
         model_label = f"Extrapolation ({'+'.join(item for item in (gfix, order) if item)})"
-    fitted_part = str(result.get("component", result.get("part", "both"))).strip().lower()
-    draw_model = fitted_part in {"both", part} or fitted_part not in {"re", "im"}
+    fitted_component = str(result.get("component", "both")).strip().lower()
+    draw_model = fitted_component in {"both", component} or fitted_component not in {"re", "im"}
 
     ax.fill_between(
         lambda_data,
@@ -1106,17 +1106,17 @@ def plot_fourier_extension_quality(
         ax.set_xlabel(r"$\lambda = z\bar P^z$, $\bar P^z=(P_i^z+P_f^z)/2$", **FONT_SIZE)
     else:
         ax.set_xlabel(r"$\lambda = z P^z$", **FONT_SIZE)
-    part_label = r"\mathrm{Re}" if part == "re" else r"\mathrm{Im}"
+    component_label = r"\mathrm{Re}" if component == "re" else r"\mathrm{Im}"
     if momentum_gev is None:
-        ax.set_ylabel(rf"${part_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)
+        ax.set_ylabel(rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)
     elif final_momentum_gev is not None:
         ax.set_ylabel(
-            rf"${part_label}\,\tilde{{h}}^R(\lambda, P_i^z={float(momentum_gev):.2f},\ P_f^z={float(final_momentum_gev):.2f}\,\mathrm{{GeV}})$",
+            rf"${component_label}\,\tilde{{h}}^R(\lambda, P_i^z={float(momentum_gev):.2f},\ P_f^z={float(final_momentum_gev):.2f}\,\mathrm{{GeV}})$",
             **FONT_SIZE,
         )
     else:
         ax.set_ylabel(
-            rf"${part_label}\,\tilde{{h}}^R(\lambda, P^z={float(momentum_gev):.2f}\,\mathrm{{GeV}})$",
+            rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z={float(momentum_gev):.2f}\,\mathrm{{GeV}})$",
             **FONT_SIZE,
         )
     if title is None:

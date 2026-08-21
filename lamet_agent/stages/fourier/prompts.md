@@ -16,7 +16,7 @@ quasi-distribution while preserving every resampled sample.
    declare it in Fourier defaults or job params. Coordinates and fit ranges are fixed
    in fm; target and parton come from run metadata, and the tool derives the observable.
    Do not override them.
-   For GPD, `bilocal_anchor` records the bilocal layout (default `mid_at_0`),
+   For GPD, `phase_transfer_gpd` records the bilocal layout (default `mid_at_0`),
    and a nonforward job consumes the exchanged-momentum `hermitian_partner` flow.
    PDF and DA jobs do not use either GPD-only setting. GPD sector outputs are
    projected from the full complex paired Fourier result, not from a pre-fit

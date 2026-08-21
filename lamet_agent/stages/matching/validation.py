@@ -225,18 +225,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             },
             validator=_scheme_message,
         ),
-        "sector": _parameter(
-            "Partonic sector projected after matching.",
-            "Sea, valence, singlet, and full choices retain different quark/antiquark combinations on the signed-x domain.",
-            expected=str,
-            choices=("sea", "valence", "singlet", "full"),
-            choice_descriptions={
-                "sea": "Retain the sea/antiquark combination.",
-                "valence": "Retain quark minus antiquark.",
-                "singlet": "Retain quark plus antiquark.",
-                "full": "Keep the complete signed-x matched distribution.",
-            },
-        ),
         "zs_fm": _parameter("Hybrid transition distance or uncertainty-bearing systematics value.", "Together with hadron momentum it sets the dimensionless Wilson-line scale in a hybrid kernel. Uncertainty strings are expanded into numerical branches before execution.", expected=(float, str), unit="fm"),
     },
     removed={

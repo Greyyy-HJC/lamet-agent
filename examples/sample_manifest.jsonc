@@ -254,7 +254,7 @@
     "fourier_transform": {
       "defaults": {
         "order": ["LA", "NLA"], // required; no contract default; tail ansatz candidates: "LA" and/or "NLA"
-        "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
+        "sector": "valence", // quark PDF/GPD: valence/singlet/full; gluon and DA: full
         // Lower-level incompatible alternative: omit sector and set
         // "component": "re" // "re", "im", or "both" (contract default "both"); sector is preferred when available
         "Lambda0_gev": 0.0, // required; no contract default; fixed extra exponential scale in GeV
@@ -280,12 +280,12 @@
         // This full chain inherits gfix from the selected correlator.
         // "polarization": "unpolarized", // required for PDF/GPD if upstream 3pt provenance is absent
         // "hadron": "pion", // required when no upstream correlator/artifact supplies it
-        // "bilocal_anchor": "mid_at_0", // GPD only: mid_at_0/barpsi_at_0/psi_at_0; omitted GPD default is mid_at_0
+        // "phase_transfer_gpd": "mid_at_0", // GPD only: mid_at_0/barpsi_at_0/psi_at_0; omitted GPD default is mid_at_0
         // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class
         // "psi2_flavor_class": "heavy",
         // "zmin_shift": 1, // optional; clone low/high tail-window systematics (contract default 0 = off)
         // "im_flip_for_ft": false, // contract default false; manual imaginary-part sign override; cannot combine with sector
-        // "symmetry_guarantee": true, // DA only: project exp(+i*z*Pz/2)h to real, then rotate back
+        // "phase_transfer_da": true, // DA only: project exp(+i*z*Pz/2)h to real, then rotate back
         // "output_scale": 1.0,      // contract default 1.0; optional final multiplicative scale; cannot combine with sector
         // Do not set momentum_gev/lattice_spacing_fm here for normal workflows;
         // they are derived from upstream momentum+volume+lattice_spacing_fm.
@@ -304,7 +304,7 @@
         // Nonforward GPD example (the partner must exchange initial/final momenta):
         // { "id": "ft_gpd_nonbreit",
         //   "inputs": { "input": "rn_gpd_2to3", "hermitian_partner": "rn_gpd_3to2" },
-        //   "params": { "bilocal_anchor": "mid_at_0" } }
+        //   "params": { "phase_transfer_gpd": "mid_at_0" } }
       ]
     },
     "perturbative_matching": {
@@ -321,7 +321,6 @@
         // "r": 1.4142135623730951, // optional; clone jobs at mu/r and mu*r for scale systematics (contract default 1.0 = off)
         // "rgr_kappa": 1.0, // RGR kernels only; no contract default — unset uses the kernel default 1.0; inert on fixed-order kernels
         // "rgr_mu_min_gev": 0.6, // RGR kernels only; no contract default — unset uses the kernel default 0.6 GeV; inert on fixed-order kernels
-        // "sector": "valence", // optional post-match projection: sea/valence/singlet/full; usually inherit from Fourier
         // momentum_gev is derived from the upstream discrete kinematics and
         // should not be hand-written in normal full or partial workflows.
       },

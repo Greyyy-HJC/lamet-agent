@@ -264,7 +264,7 @@ def list_kernels(store: dict[str, Any]) -> dict[str, Any]:
 
 def _quasi_channel(data: EnsembleData) -> str:
     """Return the Fourier channel matching should consume from a (possibly complex) artifact."""
-    token = str(data.attrs.get("component", data.attrs.get("part", "re"))).strip().lower()
+    token = str(data.attrs.get("component", "re")).strip().lower()
     if token in {"im", "imag", "imaginary"}:
         return "im"
     return "re"
@@ -274,7 +274,7 @@ def _real_quasi(data: EnsembleData) -> EnsembleData:
     """Return the real-valued quasi channel matching consumes.
 
     Fourier artifacts stay complex; the physical channel is recorded on
-    ``attrs['component']`` (or legacy ``part``). ``im`` selects the imaginary
+    ``attrs['component']``. ``im`` selects the imaginary
     part; anything else, including ``both`` and a missing attr, uses the real
     part. Already-real arrays are returned unchanged.
     """

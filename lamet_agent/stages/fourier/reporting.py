@@ -86,7 +86,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     sector = str(result.get("sector", "")).lower()
     psi1_class = str(result.get("psi1_flavor_class", "heavy") or "heavy").lower()
     psi2_class = str(result.get("psi2_flavor_class", "heavy") or "heavy").lower()
-    symmetry_guarantee = bool(result.get("symmetry_guarantee", False))
+    phase_transfer_da = bool(result.get("phase_transfer_da", False))
     orders = [item.strip().upper() for item in order.split(",") if item.strip()]
     if len(orders) > 1:
         article_lines = []
@@ -325,9 +325,9 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "The implementation fits only positive coordinates, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval; `gfix=CG` adds the explicit factor $z^{-n}$ shown in the implementation formula.",
         ]
         if observable == "meson_quasi_da":
-            if symmetry_guarantee:
+            if phase_transfer_da:
                 scope_lines.append(
-                    "With `symmetry_guarantee=true`, lamet-agent forms "
+                    "With `phase_transfer_da=true`, lamet-agent forms "
                     "$h_{+}(z)=e^{+izP_z/2}h^R(z)$, discards $\\operatorname{Im}h_{+}$, "
                     "and rotates back as $h_{\\rm proj}(z)=e^{-izP_z/2}\\operatorname{Re}h_{+}(z)$. "
                     "Range selection, asymptotic fitting, extension plots, negative-$z$ completion, "
@@ -335,7 +335,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
                 )
             else:
                 scope_lines.append(
-                    "With `symmetry_guarantee=false`, lamet-agent applies no DA phase rotation "
+                    "With `phase_transfer_da=false`, lamet-agent applies no DA phase rotation "
                     "or real-part projection; range selection, asymptotic fitting, extension, and "
                     "the ordinary $e^{+ix\\lambda}$ Fourier transform use the input $h^R$ unchanged."
                 )
@@ -439,13 +439,13 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
 
 
 def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
-    part = str(result.get("component", result.get("part", "both"))).lower()
+    component = str(result.get("component", "both")).lower()
     phase = "x\\lambda"
     rotation = ""
     if str(result.get("target_observable", "")).lower() == "da":
-        if bool(result.get("symmetry_guarantee", False)):
+        if bool(result.get("phase_transfer_da", False)):
             rotation = (
-                "For `target_observable=da` with `symmetry_guarantee=true`, before range selection "
+                "For `target_observable=da` with `phase_transfer_da=true`, before range selection "
                 "and large-distance fitting, lamet-agent computes $h_{+}=e^{+i\\lambda/2}h^R$, "
                 "sets $\\operatorname{Im}h_{+}=0$, and defines "
                 "$h_{\\rm proj}=e^{-i\\lambda/2}\\operatorname{Re}h_{+}$. The extrapolation and "
@@ -453,11 +453,11 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
             )
         else:
             rotation = (
-                "For `target_observable=da` with `symmetry_guarantee=false`, the input matrix "
+                "For `target_observable=da` with `phase_transfer_da=false`, the input matrix "
                 "element is not phase-rotated or projected before extrapolation.\n\n"
             )
     convention = rotation + f"This stage uses the $e^{{+i{phase}}}$ Fourier convention, i.e. $q(x)=\\frac{{\\Delta\\lambda}}{{2\\pi}}\\sum_\\lambda e^{{+i{phase}}}h(\\lambda)$; the corresponding real/imaginary decomposition is shown below."
-    if part == "re":
+    if component == "re":
         return (
             f"{convention}\n\n"
             "$$\n"
@@ -465,7 +465,7 @@ def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
             f"\\cos({phase})\\,\\mathrm{{Re}}\\,h(\\lambda).\n"
             "$$"
         )
-    if part == "im":
+    if component == "im":
         return (
             f"{convention}\n\n"
             "$$\n"
@@ -491,21 +491,21 @@ def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
         "| Entry | Meaning |",
         "|---|---|",
         "| Observable | Physical matrix element transformed by this stage. |",
-        "| Sector | Requested physics projection; PDF/GPD accept `sea`, `valence`, `singlet`, and `full`, while DA uses `full`. |",
+        "| Sector | Requested physics projection; quark PDF/GPD accept `valence`, `singlet`, and `full`, while DA and gluon use `full`. |",
         "| Gauge-link treatment / tail order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{gfix}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
         "| Active fitted component | Execution channel resolved from `sector`, or supplied manually when `sector` is omitted; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one channel. |",
         "| Coordinate unit | Input coordinates and `scheme_scan` ranges are fixed physical distances in fm; the fit uses $z_{\\rm GeV^{-1}}=z_{\\rm fm}/(\\hbar c)$ and $\\lambda=\\bar P^z z_{\\rm GeV^{-1}}$, where $\\bar P^z=(P_i^z+P_f^z)/2$ (and $P_i^z=P_f^z$ for forward kinematics). |",
         "| Posterior-prior error scale | The mean fit gives $\\bar p_i\\pm\\sigma_{p_i}$; resampled fits use $p_i=\\bar p_i\\pm s\\sigma_{p_i}$. |",
     ]
     if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}:
-        lines[3] = "| Sector | Quark PDF/GPD projection: `sea`, `valence`, `singlet`, or `full`; gluon uses `full`. |"
+        lines[3] = "| Sector | Quark PDF/GPD projection: `valence`, `singlet`, or `full`; gluon uses `full`. |"
         lines.insert(3, "| Polarization | Operator family: `unpolarized`, `helicity`, or `transversity`. |")
     return lines
 
 
 def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     sector = str(result.get("sector", "full")).lower()
-    part = str(result.get("component", result.get("part", "both"))).lower()
+    component = str(result.get("component", "both")).lower()
     scale = float(result.get("output_scale", 1.0))
     target = str(result.get("target_observable", "pdf")).lower()
     parton = str(result.get("parton", "quark")).lower()
@@ -514,67 +514,32 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     missing = result.get("missing_short_distance_coord", [])
     if target == "da":
         intro = (
-            f"This run uses `sector={sector}`, resolved internally to `component={part}`, "
+            f"This run uses `sector={sector}`, resolved internally to `component={component}`, "
             f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`. "
-            "With the vector/tensor quark extended-distribution convention "
-            "$q_{\\rm ext}(x)=q(x)$ for $x>0$ and $q_{\\rm ext}(-x)=-\\bar q(x)$, "
-            "the coordinate-space matrix element obeys "
-            "$h(\\lambda)=\\int dx\\,e^{-ix\\lambda}q_{\\rm ext}(x)$."
+            f"The DA phase-transfer setting is `phase_transfer_da={str(bool(result.get('phase_transfer_da', False))).lower()}`."
         )
-        if truncated:
-            intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
-        if sector == "sea":
-            meaning = "`sea` is reconstructed from the full vector/tensor quark distribution as $\\bar q(x)=-q_{\\rm ext}(-x)$, using one joint fit of the real and imaginary matrix-element channels; for a nonzero-skewness GPD, the reflected ERBL region remains a quark-antiquark amplitude rather than an antiquark density."
-        elif sector == "singlet":
-            meaning = "`singlet` returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor-singlet distribution additionally sums this combination over quark flavors."
-        elif part == "both":
-            meaning = (
-                "`both` uses the full complex matrix element and reconstructs the full extended quasi-distribution "
-                "$q_{\\rm ext}(x)$. With `output_scale=1`, this is the unscaled full Fourier result; other scale values "
-                "change only the overall normalization and do not define a new projection by themselves."
-            )
-        elif part == "re":
-            meaning = (
-                "The real part gives the cosine projection "
-                "$\\mathrm{FT}[\\mathrm{Re}\\,h]=[q_{\\rm ext}(x)+q_{\\rm ext}(-x)]/2$, "
-                "which equals $[q(x)-\\bar q(x)]/2$ for $x>0$."
-            )
-            if np.isclose(scale, 2.0):
-                meaning += " Therefore `component=re, output_scale=2` gives the valence combination $q(x)-\\bar q(x)$."
-            elif np.isclose(scale, 1.0):
-                meaning += " Therefore `output_scale=1` gives one half of the valence combination."
-            else:
-                meaning += f" The current scale {_fmt(scale)} returns this real-part projection with that overall normalization."
-        elif part == "im":
-            meaning = (
-                "The imaginary part gives the sine/antisymmetric projection associated with "
-                "$[q_{\\rm ext}(x)-q_{\\rm ext}(-x)]/2$, which corresponds to $[q(x)+\\bar q(x)]/2$ for $x>0$ "
-                "when the sign convention is aligned."
-            )
-            if np.isclose(scale, 2.0):
-                meaning += " Therefore `component=im, output_scale=2` corresponds to a $q(x)+\\bar q(x)$-type combination, with the overall sign set by the imaginary-part and `im_flip_for_ft` convention."
-            elif np.isclose(scale, 1.0):
-                meaning += " Therefore `output_scale=1` gives one half of that combination."
-            else:
-                meaning += f" The current scale {_fmt(scale)} returns this imaginary-part projection with that overall normalization."
+        meaning = "`full` preserves the complete quasi-DA reconstructed from the coordinate-space matrix element."
+        if bool(result.get("phase_transfer_da", False)):
+            meaning += " The input is rotated by $e^{+izP_z/2}$, projected onto the real channel, and rotated back before extension and Fourier transformation."
         else:
-            meaning = "This `component` setting is not recognized, so only the numerical output scale is reported."
+            meaning += " No DA phase rotation or symmetry projection is applied."
         if truncated:
+            intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum."
             meaning += " Because near-zero coordinates are missing, this projection statement applies only to the truncated sum and should not be interpreted as a fully normalized Fourier result or moment."
         return ["## Sector Physical Interpretation", intro, "", meaning]
     intro = (
-        f"This run uses `sector={sector}`, resolved internally to `component={part}`, "
+        f"This run uses `sector={sector}`, resolved internally to `component={component}`, "
         f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`."
     )
     if sector == "manual":
         intro = (
-            f"This run omits a named sector and directly uses `component={part}`, "
+            f"This run omits a named sector and directly uses `component={component}`, "
             f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`."
         )
-        meaning = "The reported result is a manual real/imaginary projection; these numerical controls do not assign a named `sea`, `valence`, `singlet`, or `full` interpretation by themselves."
+        meaning = "The reported result is a manual real/imaginary projection; these numerical controls do not assign a named `valence`, `singlet`, or `full` interpretation by themselves."
     elif parton == "gluon":
         intro += " Gluon operator families use only the full complex Fourier result; quark/antiquark sector projections are not applied."
-        meaning = "`full` preserves the gluon result without assigning quark `sea`, `valence`, or `singlet` semantics."
+        meaning = "`full` preserves the gluon result without assigning quark `valence` or `singlet` semantics."
     elif target == "gpd":
         sign = "+" if polarization == "helicity" else "-"
         negative_y_relation = (
@@ -588,28 +553,25 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             f"The signed-extension convention is {negative_y_relation}."
         )
         meaning = {
-            "sea": f"`sea` returns $\\bar H(y,\\xi)={sign}H(-y,\\xi)$.",
             "valence": f"`valence` returns $H(y,\\xi){'-' if sign == '+' else '+'}H(-y,\\xi)$.",
             "singlet": f"`singlet` returns $H(y,\\xi){'+' if sign == '+' else '-'}H(-y,\\xi)$ per flavor; a strict flavor singlet also sums over flavors.",
             "full": "`full` preserves the complete complex $H(y,\\xi)$ reconstructed from the paired flows.",
-        }.get(sector, "The selected part is reported without an additional named projection.")
+        }.get(sector, "The selected component is reported without an additional named projection.")
         meaning += " The upper sign is the helicity convention; unpolarized and transversity use the lower sign."
     elif polarization == "helicity":
         intro += " The helicity convention is $\\Delta q_{\\rm ext}(-x)=+\\Delta\\bar q(x)$."
         meaning = {
-            "sea": "`sea` is reconstructed with one joint fit as $\\Delta\\bar q(x)=+\\Delta q_{\\rm ext}(-x)$.",
             "valence": "`valence` uses the sine/odd projection and returns $\\Delta q(x)-\\Delta\\bar q(x)$.",
             "singlet": "`singlet` uses the cosine/even projection and returns the per-flavor C-even combination $\\Delta q(x)+\\Delta\\bar q(x)$; a strict flavor singlet also sums over flavors.",
             "full": "`full` uses one real/imaginary joint fit and reconstructs the complete extended helicity distribution $\\Delta q_{\\rm ext}(x)$.",
-        }.get(sector, "The selected part is reported without an additional named projection.")
+        }.get(sector, "The selected component is reported without an additional named projection.")
     else:
         intro += " The unpolarized/transversity convention is $q_{\\rm ext}(-x)=-\\bar q(x)$."
         meaning = {
-            "sea": "`sea` is reconstructed with one joint fit as $\\bar q(x)=-q_{\\rm ext}(-x)$.",
             "valence": "`valence` uses the cosine/even projection and returns $q(x)-\\bar q(x)$.",
             "singlet": "`singlet` uses the sine/odd projection and returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor singlet also sums over flavors.",
             "full": "`full` uses one real/imaginary joint fit and reconstructs the complete extended distribution $q_{\\rm ext}(x)$.",
-        }.get(sector, "The selected part is reported without an additional named projection.")
+        }.get(sector, "The selected component is reported without an additional named projection.")
     if truncated:
         intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
     if target == "gpd":
@@ -619,11 +581,11 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             "transversity": ("the tensor family $H_T,E_T,\\widetilde H_T,\\widetilde E_T$ for a spin-$1/2$ hadron", "the tensor-GPD"),
         }.get(polarization, ("the recorded operator family", "the corresponding invariant-GPD"))
         meaning += f" This run labels {family}, but the input is a projected quasi-GPD matrix element; `polarization` alone does not perform {decomposition} decomposition."
-        anchor = str(result.get("bilocal_anchor", "mid_at_0"))
+        anchor = str(result.get("phase_transfer_gpd", "mid_at_0"))
         completion = str(result.get("gpd_completion_mode", "single_flow"))
         partner = str(result.get("hermitian_partner_id", ""))
         meaning += (
-            f" The input uses `bilocal_anchor={anchor}` and is converted to the centered convention with "
+            f" The input uses `phase_transfer_gpd={anchor}` and is converted to the centered convention with "
             "$h_{fi}^{\\rm mid}(z)=e^{-i(P_f^z-P_i^z)z/2}h_{fi}^{\\bar\\psi@0}(z)$."
         )
         if completion == "paired_flow":
@@ -631,8 +593,6 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
                 f" Its negative-$z$ branch is reconstructed from the exchanged-flow partner `{partner}` through "
                 "$h_{fi}^{\\rm mid}(-z)=h_{if}^{\\rm mid}(z)^*$ for the supported Hermitian current phase $\\eta_\\Gamma=+1$."
             )
-        if sector == "sea":
-            meaning += " The antiquark interpretation applies only in the negative-$x$ DGLAP region; the ERBL region $|x|<|\\xi|$ is a quark-antiquark amplitude, not a pure sea density."
     if truncated:
         meaning += " Because near-zero coordinates are missing, this projection statement applies only to the truncated sum and should not be interpreted as a fully normalized Fourier result or moment."
     return ["## Sector Physical Interpretation", intro, "", meaning]
@@ -811,7 +771,7 @@ def _settings_table(
         ("Observable", f"`{observable}` ({observable_text})"),
         ("Sector", f"`{result.get('sector', 'full')}`"),
         ("Gauge-link treatment / tail order", f"`{gfix}` / `{order}`"),
-        ("Active fitted component", f"`{result.get('component', result.get('part', 'both'))}`"),
+        ("Active fitted component", f"`{result.get('component', 'both')}`"),
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
         ("Coordinate unit", r"fm input and scan; fit unit $\mathrm{GeV}^{-1}$"),
         ("Decay offset", f"$\\Lambda_0={_fmt(result.get('Lambda0_gev'))}$"),
@@ -831,7 +791,7 @@ def _settings_table(
     if str(result.get("target_observable", "")).lower() == "gpd":
         partner = str(result.get("hermitian_partner_id", "")) or "not used"
         rows[1:1] = [
-            ("Bilocal anchor", f"`{result.get('bilocal_anchor', 'mid_at_0')}`"),
+            ("Bilocal anchor", f"`{result.get('phase_transfer_gpd', 'mid_at_0')}`"),
             ("Negative-z completion", f"`{result.get('gpd_completion_mode', 'single_flow')}`; partner `{partner}`"),
             (
                 "Signed momentum transfer",
@@ -840,7 +800,7 @@ def _settings_table(
         ]
     if observable == "meson_quasi_da":
         rows.insert(2, ("DA flavor classes", f"`psi1={result.get('psi1_flavor_class', 'heavy')}`, `psi2={result.get('psi2_flavor_class', 'heavy')}`"))
-        rows.insert(3, ("DA symmetry guarantee", f"`symmetry_guarantee={str(bool(result.get('symmetry_guarantee', False))).lower()}`"))
+        rows.insert(3, ("DA symmetry guarantee", f"`phase_transfer_da={str(bool(result.get('phase_transfer_da', False))).lower()}`"))
     header = "| Quantity | Value |"
     lines = [header, "|---|---|"]
     lines.extend(f"| {name} | {value} |" for name, value in rows)
@@ -861,17 +821,17 @@ def _artifact_field_table(*, language: str, target_observable: str = "pdf") -> l
         ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging."),
         ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection."),
         ("attrs `momentum_gev`, `final_momentum_gev`, `lattice_spacing_fm`", "Momentum and lattice-spacing metadata."),
-        ("attrs `sector`, `gfix`, `order`, `observable`, `component`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, gauge-link treatment, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
+        ("attrs `sector`, `gfix`, `order`, `observable`, `component`, `output_scale`, `phase_transfer_da`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, gauge-link treatment, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
     ]
     if target_observable in {"pdf", "gpd"}:
         rows[-1:] = [
             ("attrs `observable`, `observable_backend`, `parton`, `hadron`, `current_operator`, `polarization`, `sector`", "Resolved observable, numerical tail backend, operator provenance, and physics projection."),
-            ("attrs `gfix`, `order`, `component`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Gauge-link treatment, formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
+            ("attrs `gfix`, `order`, `component`, `output_scale`, `phase_transfer_da`, `psi1_flavor_class`, `psi2_flavor_class`", "Gauge-link treatment, formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
         ]
     if target_observable == "gpd":
         rows.extend(
             [
-                ("attrs `bilocal_anchor`, `delta_momentum_gev`, `phase_momentum_source`", "Authored bilocal layout and the signed momentum transfer used to convert it to the centered convention."),
+                ("attrs `phase_transfer_gpd`, `delta_momentum_gev`, `phase_momentum_source`", "Authored bilocal layout and the signed momentum transfer used to convert it to the centered convention."),
                 ("attrs `hermitian_partner_id`, `hermiticity_phase`, `gpd_completion_mode`", "Exchanged-flow provenance and the Hermiticity convention used to reconstruct negative z."),
             ]
         )

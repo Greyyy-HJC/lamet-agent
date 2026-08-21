@@ -531,7 +531,7 @@
           "NLA"
         ],
         "sector": "full",
-        "symmetry_guarantee": false,
+        "phase_transfer_da": false,
         "posterior_prior_error_scale": [
           2.0,
           3.0,

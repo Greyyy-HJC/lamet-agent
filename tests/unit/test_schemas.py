@@ -257,7 +257,7 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
     sector = contract.schema["sector"]
     quasi_y_ls = contract.schema["quasi_y_ls"]
     gfix = contract.schema["gfix"]
-    bilocal_anchor = contract.schema["bilocal_anchor"]
+    phase_transfer_gpd = contract.schema["phase_transfer_gpd"]
 
     assert isinstance(sector, ParameterSpec)
     assert sector.required is False
@@ -271,11 +271,11 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
     assert isinstance(gfix, ParameterSpec)
     assert gfix.required is True
     assert gfix.choices == ("CG", "GI")
-    assert isinstance(bilocal_anchor, ParameterSpec)
-    assert bilocal_anchor.choices == ("mid_at_0", "barpsi_at_0", "psi_at_0")
-    assert bilocal_anchor.default is NO_DEFAULT
+    assert isinstance(phase_transfer_gpd, ParameterSpec)
+    assert phase_transfer_gpd.choices == ("mid_at_0", "barpsi_at_0", "psi_at_0")
+    assert phase_transfer_gpd.default is NO_DEFAULT
     assert callable(quasi_y_ls.validator)
-    assert sector.choices == ("sea", "valence", "singlet", "full")
+    assert sector.choices == ("valence", "singlet", "full")
     assert "negative-x extension" in sector.physics
     assert not any(item.code == "fourier.quasi_y_ls.required" for item in contract.constraints)
     assert any(
@@ -343,13 +343,13 @@ def test_extrapolation_rejects_run_wide_settings_as_stage_params(parameter: str)
 
 def test_fourier_parameter_type_error_includes_parameter_physics() -> None:
     payload = _fourier_payload()
-    payload["stages"]["fourier_transform"]["defaults"]["symmetry_guarantee"] = "true"
+    payload["stages"]["fourier_transform"]["defaults"]["phase_transfer_da"] = "true"
 
     with pytest.raises(ValidationError) as exc_info:
         AnalysisManifest.model_validate(payload)
 
     message = str(exc_info.value)
-    assert "symmetry_guarantee" in message
+    assert "phase_transfer_da" in message
     assert "must be bool" in message
     assert "DA phase rotation and symmetry projection" in message
 

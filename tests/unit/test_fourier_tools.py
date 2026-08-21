@@ -41,7 +41,7 @@ _EXPLICIT_FOURIER_PARAMS = {
     "gfix": "GI",
     "order": "NLA",
     "im_flip_for_ft": False,
-    "symmetry_guarantee": True,
+    "phase_transfer_da": True,
     "Lambda0_gev": 0.0,
     "posterior_prior_error_scale": 3.0,
     "sample_error_mode": "covariance",
@@ -170,7 +170,7 @@ def test_complete_z_negative_uses_exchanged_flow_and_averages_zero() -> None:
     assert np.allclose(im, [-5.0, -4.0, -1.0, 2.0, 3.0])
 
 
-def test_gpd_bilocal_anchors_produce_the_same_endpoint_fit_input(monkeypatch) -> None:
+def test_gpd_phase_transfer_gpd_values_produce_the_same_endpoint_fit_input(monkeypatch) -> None:
     coord = 0.1 * np.arange(12.0)
     n_sample = 3
     target_mid = np.vstack(
@@ -228,7 +228,7 @@ def test_gpd_bilocal_anchors_produce_the_same_endpoint_fit_input(monkeypatch) ->
             raise CapturedEndpoint
 
         monkeypatch.setattr(fourier_functions, "run_fourier_workflow", capture_workflow)
-        kwargs = {} if anchor is None else {"bilocal_anchor": anchor}
+        kwargs = {} if anchor is None else {"phase_transfer_gpd": anchor}
         with pytest.raises(CapturedEndpoint):
             run_fourier_transform(
                 {"input": target_data, "hermitian_partner": partner_data},
@@ -315,9 +315,9 @@ def test_da_symmetry_projection_runs_before_range_selection(monkeypatch) -> None
     assert np.allclose(np.imag(captured["values"] * phase), 0.0)
 
 
-@pytest.mark.parametrize(("target", "symmetry_guarantee"), [("da", False), ("pdf", True)])
+@pytest.mark.parametrize(("target", "phase_transfer_da"), [("da", False), ("pdf", True)])
 def test_da_symmetry_projection_is_optional_and_da_only(
-    monkeypatch, target: str, symmetry_guarantee: bool
+    monkeypatch, target: str, phase_transfer_da: bool
 ) -> None:
     coord = np.array([0.0, 1.0, 2.0])
     values = np.array([[1.0 + 0.2j, 0.8 + 0.1j, 0.6 - 0.1j]])
@@ -348,7 +348,7 @@ def test_da_symmetry_projection_is_optional_and_da_only(
             polarization="unpolarized" if target == "pdf" else None,
             sector="full",
             momentum_gev=2.0,
-            symmetry_guarantee=symmetry_guarantee,
+            phase_transfer_da=phase_transfer_da,
             order="LA",
         )
 
@@ -405,7 +405,7 @@ def test_fourier_workflow_omits_missing_short_distance_grid() -> None:
         momentum_gev=2.4,
         resample_mode="jackknife",
         sample_error_mode="mean",
-        part="re",
+        component="re",
         sector="valence",
         hadron="pion",
         psi1_flavor_class="light",
@@ -436,7 +436,7 @@ def test_fourier_workflow_accepts_nonuniform_input_grid() -> None:
         momentum_gev=2.4,
         resample_mode="jackknife",
         sample_error_mode="mean",
-        part="re",
+        component="re",
         sector="valence",
         hadron="pion",
         psi1_flavor_class="light",
@@ -461,7 +461,7 @@ def test_fourier_parallel_sample_fits_match_serial() -> None:
         "momentum_gev": 2.4,
         "resample_mode": "jackknife",
         "sample_error_mode": "mean",
-        "part": "re",
+        "component": "re",
         "sector": "valence",
         "hadron": "pion",
         "psi1_flavor_class": "light",
@@ -520,7 +520,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert run["n_schemes"] == 1
     assert run["n_samples"] == 3
     assert run["workers"] == 2
-    assert store["fourier_result"]["symmetry_guarantee"] is False
+    assert store["fourier_result"]["phase_transfer_da"] is False
     assert store["fourier_result"]["gfix"] == "GI"
     assert store["fourier_result"]["Lambda0_gev"] == pytest.approx(0.3)
     assert run["Lambda0_gev"] == pytest.approx(0.3)
@@ -533,7 +533,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert ft_data.resample == "bootstrap"
     assert ft_data.attrs["workers"] == "2"
     assert ft_data.attrs["gfix"] == "GI"
-    assert ft_data.attrs["symmetry_guarantee"] == "False"
+    assert ft_data.attrs["phase_transfer_da"] == "False"
     assert "phase_shift" not in ft_data.attrs
     assert ft_data.attrs["Lambda0_gev"] == "0.3"
     assert ft_data.attrs["bz_direction"] == "X"
@@ -614,7 +614,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
         store["matrix_element"]["coord"],
         store["matrix_element"]["re_samples"],
         data,
-        part="re",
+        component="re",
     )
     labels = [text.get_text() for text in ax.get_legend().get_texts()]
     assert "Extension Endpoint" not in labels
@@ -683,7 +683,7 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
     assert EnsembleData.from_netcdf(run["artifact"]).attrs["Lambda0_gev"] == "0.0"
 
 
-def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) -> None:
+def test_fourier_component_selects_active_fit_channel(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     coord = np.arange(0.0, 7.0)
     base_re = np.exp(-0.35 * coord)
@@ -719,11 +719,11 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     assert np.allclose(result_re["scheme_results"][0]["extended_im_samples"], 0.0)
     artifact_re = EnsembleData.from_netcdf(run_re["artifact"])
     assert artifact_re.attrs["component"] == "re"
-    fig_re, ax_re = plot_fourier_extension_quality(coord, re_samples, result_re, part="re")
+    fig_re, ax_re = plot_fourier_extension_quality(coord, re_samples, result_re, component="re")
     assert len(ax_re.collections) == 2
     assert len(ax_re.lines) == 4
     fig_re.clf()
-    fig_im_inactive, ax_im_inactive = plot_fourier_extension_quality(coord, im_samples, result_re, part="im")
+    fig_im_inactive, ax_im_inactive = plot_fourier_extension_quality(coord, im_samples, result_re, component="im")
     assert len(ax_im_inactive.collections) == 1
     assert len(ax_im_inactive.lines) == 3
     fig_im_inactive.clf()
@@ -751,18 +751,18 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
     assert np.all(np.isfinite(result_im["ft_im_samples"]))
     artifact_im = EnsembleData.from_netcdf(run_im["artifact"])
     assert artifact_im.attrs["component"] == "im"
-    fig_re_inactive, ax_re_inactive = plot_fourier_extension_quality(coord, re_samples, result_im, part="re")
+    fig_re_inactive, ax_re_inactive = plot_fourier_extension_quality(coord, re_samples, result_im, component="re")
     assert len(ax_re_inactive.collections) == 1
     assert len(ax_re_inactive.lines) == 3
     fig_re_inactive.clf()
-    fig_im, ax_im = plot_fourier_extension_quality(coord, im_samples, result_im, part="im")
+    fig_im, ax_im = plot_fourier_extension_quality(coord, im_samples, result_im, component="im")
     assert len(ax_im.collections) == 2
     assert len(ax_im.lines) == 4
     fig_im.clf()
 
 
 @pytest.mark.parametrize(
-    ("polarization", "sector", "part"),
+    ("polarization", "sector", "component"),
     [
         ("unpolarized", "valence", "re"),
         ("unpolarized", "singlet", "im"),
@@ -777,7 +777,7 @@ def test_fourier_pdf_sector_resolves_projection(
     monkeypatch,
     polarization: str,
     sector: str,
-    part: str,
+    component: str,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     data_path = tmp_path / "matrix_element.npz"
@@ -803,12 +803,12 @@ def test_fourier_pdf_sector_resolves_projection(
     result = store["fourier_result"]
     artifact = EnsembleData.from_netcdf(run["artifact"])
     assert result["sector"] == sector
-    assert result["component"] == part
+    assert result["component"] == component
     assert result["output_scale"] == 2.0
     assert result["im_flip_for_ft"] is False
     assert result["polarization"] == polarization
     assert artifact.attrs["sector"] == sector
-    assert artifact.attrs["component"] == part
+    assert artifact.attrs["component"] == component
     assert artifact.attrs["polarization"] == polarization
     assert artifact.attrs["current_operator"] == "test_current"
     assert artifact.attrs["parton"] == "quark"
@@ -882,7 +882,7 @@ def test_fourier_gpd_sector_valence_resolves_projection(tmp_path: Path, monkeypa
     assert artifact.attrs["component"] == "both"
 
 
-@pytest.mark.parametrize("sector", ["full", "sea", "valence", "singlet"])
+@pytest.mark.parametrize("sector", ["full", "valence", "singlet"])
 def test_nonforward_gpd_paired_flows_are_conjugate_and_record_anchor(
     tmp_path: Path, monkeypatch, sector: str
 ) -> None:
@@ -915,7 +915,7 @@ def test_nonforward_gpd_paired_flows_are_conjugate_and_record_anchor(
         "volume": "S24T72",
         "lattice_spacing_fm": 0.1,
         "bz_direction": "Z",
-        "bilocal_anchor": "barpsi_at_0",
+        "phase_transfer_gpd": "barpsi_at_0",
     }
 
     target_data = fourier_functions.matrix_element_to_ensemble_data(
@@ -971,96 +971,11 @@ def test_nonforward_gpd_paired_flows_are_conjugate_and_record_anchor(
         reverse_store["fourier_result"]["fit_model_weights"],
     )
     artifact = EnsembleData.from_netcdf(forward["artifact"])
-    assert artifact.attrs["bilocal_anchor"] == "barpsi_at_0"
+    assert artifact.attrs["phase_transfer_gpd"] == "barpsi_at_0"
     assert artifact.attrs["hermitian_partner_id"] == "rn_reverse"
     assert artifact.attrs["gpd_completion_mode"] == "paired_flow"
     assert float(artifact.attrs["delta_momentum_gev"]) == pytest.approx(momentum_unit)
-    assert reverse["bilocal_anchor"] == "barpsi_at_0"
-
-
-@pytest.mark.parametrize(("polarization", "sea_sign"), [("unpolarized", -1.0), ("helicity", 1.0), ("transversity", -1.0)])
-def test_fourier_pdf_sector_sea_reflects_full_distribution(
-    tmp_path: Path, monkeypatch, polarization: str, sea_sign: float
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    _write_npz(data_path)
-    workflow_parts = []
-    run_workflow = fourier_functions.run_fourier_workflow
-
-    def record_workflow(*args, **kwargs):
-        workflow_parts.append(kwargs["part"])
-        return run_workflow(*args, **kwargs)
-
-    monkeypatch.setattr(fourier_functions, "run_fourier_workflow", record_workflow)
-    common = dict(
-        scheme_scan={"zmin_fm": [1.0], "zmax_fm": [4.0], "zmax_ext_fm": 5.0},
-        gfix="GI",
-        order="LA",
-        target_observable="pdf",
-        parton="quark",
-        hadron="nucleon",
-        polarization=polarization,
-        momentum_gev=2.0,
-    )
-
-    full_store = {}
-    load_renormalized_matrix_element_samples(full_store, path=str(data_path))
-    run_fourier_transform(full_store, sector="full", quasi_y_ls=[0.75, 0.25, -0.25, -0.75], **common)
-
-    sea_store = {}
-    load_renormalized_matrix_element_samples(sea_store, path=str(data_path))
-    run_fourier_transform(sea_store, sector="sea", quasi_y_ls=[-0.75, -0.25, 0.25, 0.75], **common)
-
-    full = full_store["fourier_result"]
-    sea = sea_store["fourier_result"]
-    assert workflow_parts == ["both", "both"]
-    assert full["component"] == "both"
-    assert sea["sector"] == "sea"
-    assert sea["component"] == "both"
-    assert sea["output_scale"] == 1.0
-    assert np.allclose(sea["final_ft_re_samples"], sea_sign * full["final_ft_re_samples"])
-    assert np.allclose(sea["final_ft_im_samples"], sea_sign * full["final_ft_im_samples"])
-
-
-def test_fourier_gpd_sector_sea_reflects_full_distribution(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_path = tmp_path / "matrix_element.npz"
-    coord = np.arange(0.0, 12.0)
-    base_re = np.exp(-0.35 * coord)
-    base_im = 0.1 * np.exp(-0.35 * coord)
-    np.savez(
-        data_path,
-        coord=coord,
-        re_samples=np.vstack([base_re, 1.01 * base_re, 0.99 * base_re]),
-        im_samples=np.vstack([base_im, 0.98 * base_im, 1.02 * base_im]),
-    )
-    common = dict(
-        scheme_scan={"zmin_fm": [1.0], "zmax_fm": [7.0], "zmax_ext_fm": 8.0},
-        gfix="GI",
-        order="LA",
-        target_observable="gpd",
-        parton="quark",
-        hadron="pion",
-        polarization="unpolarized",
-        momentum_gev=2.0,
-    )
-
-    full_store = {}
-    load_renormalized_matrix_element_samples(full_store, path=str(data_path))
-    run_fourier_transform(full_store, sector="full", quasi_y_ls=[0.75, 0.25, -0.25, -0.75], **common)
-
-    sea_store = {}
-    load_renormalized_matrix_element_samples(sea_store, path=str(data_path))
-    run_fourier_transform(sea_store, sector="sea", quasi_y_ls=[-0.75, -0.25, 0.25, 0.75], **common)
-
-    full = full_store["fourier_result"]
-    sea = sea_store["fourier_result"]
-    assert sea["sector"] == "sea"
-    assert sea["component"] == "both"
-    assert sea["output_scale"] == 1.0
-    assert np.allclose(sea["final_ft_re_samples"], -full["final_ft_re_samples"])
-    assert np.allclose(sea["final_ft_im_samples"], -full["final_ft_im_samples"])
+    assert reverse["phase_transfer_gpd"] == "barpsi_at_0"
 
 
 def test_fourier_gpd_sectors_project_full_complex_samples_on_asymmetric_y_grid(
@@ -1105,8 +1020,8 @@ def test_fourier_gpd_sectors_project_full_complex_samples_on_asymmetric_y_grid(
     direct = [int(np.flatnonzero(np.isclose(full_y, value))[0]) for value in requested_y]
     reflected = [int(np.flatnonzero(np.isclose(full_y, -value))[0]) for value in requested_y]
 
-    for polarization, sea_sign in (("unpolarized", -1.0), ("helicity", 1.0)):
-        for sector in ("sea", "valence", "singlet"):
+    for polarization, negative_x_sign in (("unpolarized", -1.0), ("helicity", 1.0)):
+        for sector in ("valence", "singlet"):
             store = {}
             load_renormalized_matrix_element_samples(store, path=str(data_path))
             run_fourier_transform(
@@ -1122,9 +1037,8 @@ def test_fourier_gpd_sectors_project_full_complex_samples_on_asymmetric_y_grid(
                 + 1j * np.asarray(store["fourier_result"]["final_ft_im_samples"])
             )
             expected = {
-                "sea": sea_sign * full[:, reflected],
-                "valence": full[:, direct] - sea_sign * full[:, reflected],
-                "singlet": full[:, direct] + sea_sign * full[:, reflected],
+                "valence": full[:, direct] - negative_x_sign * full[:, reflected],
+                "singlet": full[:, direct] + negative_x_sign * full[:, reflected],
             }[sector]
             assert np.allclose(store["fourier_result"]["y_grid"], requested_y)
             assert np.allclose(projected, expected)
@@ -1423,7 +1337,7 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     original_extension_plot = fourier_functions.plot_fourier_extension_quality
 
     def capture_extension_plot(coord_values, sample_values, result, **kwargs):
-        plotted_samples[str(kwargs["part"])] = np.asarray(sample_values).copy()
+        plotted_samples[str(kwargs["component"])] = np.asarray(sample_values).copy()
         return original_extension_plot(coord_values, sample_values, result, **kwargs)
 
     monkeypatch.setattr(
@@ -1469,7 +1383,7 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     result_data = EnsembleData.from_netcdf(run["artifact"])
     assert result_data.attrs["psi1_flavor_class"] == "light"
     assert result_data.attrs["psi2_flavor_class"] == "light"
-    assert result_data.attrs["symmetry_guarantee"] == "True"
+    assert result_data.attrs["phase_transfer_da"] == "True"
     assert "observable_backend" not in result_data.attrs
     assert "parton" not in result_data.attrs
     assert "current_operator" not in result_data.attrs
@@ -1477,11 +1391,11 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     assert "observable" not in run
     assert "parton" not in run
     assert "polarization" not in run
-    assert run["symmetry_guarantee"] is True
+    assert run["phase_transfer_da"] is True
     report = report_fourier_result(store, artifacts_dir=tmp_path, job_id="da_report")
     report_text = Path(report["report"]).read_text(encoding="utf-8")
     assert "### Scope and Equivalence" in report_text
-    assert "`symmetry_guarantee=true`" in report_text
+    assert "`phase_transfer_da=true`" in report_text
     assert "discards $\\operatorname{Im}h_{+}$" in report_text
     assert "e^{-izP_z/2}" in report_text
     assert "phase_shift" not in report_text
@@ -1553,7 +1467,7 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
             target_observable="pdf",
             parton="gluon",
             hadron="pion" if observable.startswith("pion_") else "nucleon",
-            sector="sea",
+            sector="valence",
             polarization="unpolarized",
             current_operator="gluon_operator",
             momentum_gev=2.0,
@@ -1745,7 +1659,7 @@ def test_fourier_model_average_scans_order_and_prior_width_per_sample(tmp_path: 
 
 def test_fourier_requires_explicit_scheme_scan():
     with pytest.raises(TypeError, match="scheme_scan"):
-        _run_fourier_transform({}, quasi_y_ls=[-0.5, 0.5], zmin_shift=0, gfix="GI", order="LA", im_flip_for_ft=False, Lambda0_gev=0.0, posterior_prior_error_scale=3.0, sample_error_mode="covariance", component="both", output_scale=1.0, sector="full", target_observable="da", parton="quark", hadron="pion", symmetry_guarantee=True, psi1_flavor_class="heavy", psi2_flavor_class="heavy", workers=1)
+        _run_fourier_transform({}, quasi_y_ls=[-0.5, 0.5], zmin_shift=0, gfix="GI", order="LA", im_flip_for_ft=False, Lambda0_gev=0.0, posterior_prior_error_scale=3.0, sample_error_mode="covariance", component="both", output_scale=1.0, sector="full", target_observable="da", parton="quark", hadron="pion", phase_transfer_da=True, psi1_flavor_class="heavy", psi2_flavor_class="heavy", workers=1)
 
 
 def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None:
@@ -1853,21 +1767,21 @@ def test_fourier_gpd_auto_scheme_uses_nonzero_second_momentum_for_scale(tmp_path
     assert auto["zmax_ext_fm"] == pytest.approx(1.05 + 8.0 / expected_ft_scale)
     scheme = store["fourier_result"]["scheme_results"][0]
     assert np.allclose(scheme["lambda_ext"], np.asarray(scheme["z_ext"]) * 0.245)
-    fig, ax = plot_fourier_extension_quality(coord, re_samples, store["fourier_result"], part="re")
+    fig, ax = plot_fourier_extension_quality(coord, re_samples, store["fourier_result"], component="re")
     assert ax.get_xlabel() == r"$\lambda = z\bar P^z$, $\bar P^z=(P_i^z+P_f^z)/2$"
     assert r"P_i^z=0.00,\ P_f^z=0.49" in ax.get_ylabel()
     fig.clf()
 
 
 @pytest.mark.parametrize(
-    ("part", "target", "partner", "expected"),
+    ("component", "target", "partner", "expected"),
     [
         ("re", [2.0, 3.0, 4.0], [4.0, 5.0, 6.0], [6.0, 5.0, 3.0, 3.0, 4.0]),
         ("im", [1.0, 2.0, 3.0], [3.0, 4.0, 5.0], [-5.0, -4.0, -1.0, 2.0, 3.0]),
     ],
 )
 def test_paired_extension_plot_uses_one_midpoint_convention_and_signed_branches(
-    part: str, target: list[float], partner: list[float], expected: list[float]
+    component: str, target: list[float], partner: list[float], expected: list[float]
 ) -> None:
     target_samples = np.vstack([target, target])
     partner_samples = np.vstack([partner, partner])
@@ -1882,8 +1796,8 @@ def test_paired_extension_plot_uses_one_midpoint_convention_and_signed_branches(
         "scheme_results": [
             {
                 "lambda_ext": np.asarray([0.0, 1.0, 2.0]),
-                f"extended_{part}_samples": target_samples,
-                f"partner_extended_{part}_samples": partner_samples,
+                f"extended_{component}_samples": target_samples,
+                f"partner_extended_{component}_samples": partner_samples,
                 "fit_range": (1.0, 2.0),
                 "z_ext_max": 2.0,
                 "target_fit_chi2": np.asarray([2.0, 2.0]),
@@ -1898,7 +1812,7 @@ def test_paired_extension_plot_uses_one_midpoint_convention_and_signed_branches(
         np.asarray([0.0, 1.0, 2.0]),
         target_samples,
         result,
-        part=part,
+        component=component,
         partner_samples=partner_samples,
     )
 
@@ -2178,7 +2092,7 @@ def test_plot_fourier_gpd_artifact_labels_paired_nonbreit_kinematics(tmp_path: P
             "observable": "pion_quark_quasi_gpd",
             "momentum_gev": "1.0",
             "final_momentum_gev": "2.0",
-            "bilocal_anchor": "mid_at_0",
+            "phase_transfer_gpd": "mid_at_0",
             "sector": "valence",
             "gpd_completion_mode": "paired_flow",
             "ft_re_mean": json.dumps([0.205, 0.295, 0.195]),
