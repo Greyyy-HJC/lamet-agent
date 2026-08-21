@@ -276,7 +276,7 @@ def _check_sector(context: StageValidationContext) -> RuleViolation | None:
 
 
 def _check_sector_manual_projection(context: StageValidationContext) -> RuleViolation | None:
-    manual = sorted({"part", "output_scale", "im_flip_for_ft"}.intersection(context.authored_params))
+    manual = sorted({"component", "output_scale", "im_flip_for_ft"}.intersection(context.authored_params))
     if "sector" not in context.params or not manual:
         return None
     return _violation(
@@ -489,11 +489,6 @@ _SCHEME_SCAN_FIELDS = {
     ),
 }
 
-_PLOT_FIELDS = {
-    "title": _parameter("Optional plot title.", "This changes presentation only.", expected=str),
-}
-
-
 FOURIER_CONSTRAINTS = (
     ConstraintSpec(
         code="fourier.inputs.observable_contract",
@@ -553,8 +548,8 @@ FOURIER_CONSTRAINTS = (
     ),
     ConstraintSpec(
         code="fourier.sector.manual_projection_conflict",
-        parameters=("sector", "part", "output_scale", "im_flip_for_ft"),
-        rule="sector cannot be combined with manual part, output_scale, or im_flip_for_ft controls.",
+        parameters=("sector", "component", "output_scale", "im_flip_for_ft"),
+        rule="sector cannot be combined with manual component, output_scale, or im_flip_for_ft controls.",
         physics="A named sector already determines the active real/imaginary channel, normalization, and negative-x convention.",
         suggested_fix="Prefer sector and remove the manual projection controls, or omit sector and configure the manual controls explicitly.",
         check=_check_sector_manual_projection,
@@ -663,7 +658,18 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "psi_at_0": "Use barpsi(z) Gamma W(z,0) psi(0).",
             },
         ),
-        "coord_key": _parameter("NPZ/HDF5 coordinate dataset key.", "This maps an external file layout onto the stage coordinate axis.", expected=str, default="coord"),
+        "component": _parameter(
+            "Manual real/imaginary transform channel.",
+            "The selected component controls which coordinate-space channel constrains the output when sector is absent.",
+            expected=str,
+            choices=("re", "im", "both"),
+            choice_descriptions={
+                "re": "Transform the real channel only.",
+                "im": "Transform the imaginary channel only.",
+                "both": "Transform both channels.",
+            },
+            default="both",
+        ),
         "gfix": _parameter(
             "Gauge-link treatment and long-distance tail family.",
             "CG and GI matrix elements use their corresponding asymptotic parameterizations; correlator-backed jobs inherit this value, while external jobs declare it explicitly.",
@@ -675,20 +681,12 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 "GI": "Use the gauge-invariant asymptotic parameterization.",
             },
         ),
-        "h5_group": _parameter("HDF5 group containing one momentum channel.", "This is file-layout metadata and does not alter the Fourier prescription.", expected=str),
         "hadron": _parameter("Hadron identity used for observable inference.", "Hadron and parton labels select the public quasi-observable backend.", expected=str),
         "im_flip_for_ft": _parameter(
             "Manual sign flip for the negative-coordinate imaginary part.",
             "This changes the imposed Hermiticity extension and should be used only when no named sector supplies the convention.",
             expected=bool,
             default=False,
-        ),
-        "im_key": _parameter("NPZ/HDF5 imaginary-sample dataset key.", "This maps an external file layout onto complex matrix-element samples.", expected=str, default="im_samples"),
-        "input_format": _parameter(
-            "External matrix-element file format.",
-            "The format changes loading only; all supported formats are normalized to EnsembleData before analysis.",
-            expected=str,
-            choices=("nc", "netcdf", "npz", "h5", "hdf5"),
         ),
         "order": _parameter(
             "Tail ansatz orders included as fit-model candidates.",
@@ -703,18 +701,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             required=True,
         ),
         "output_scale": _parameter("Final manual multiplicative scale.", "This rescales the transformed distribution and its uncertainties.", expected=float, default=1.0),
-        "part": _parameter(
-            "Manual real/imaginary transform channel.",
-            "The selected part controls which coordinate-space channel constrains the output when sector is absent.",
-            expected=str,
-            choices=("re", "im", "both"),
-            choice_descriptions={
-                "re": "Transform the real channel only.",
-                "im": "Transform the imaginary channel only.",
-                "both": "Transform both channels.",
-            },
-            default="both",
-        ),
         "symmetry_guarantee": _parameter(
             "Apply the DA phase rotation and symmetry projection.",
             "For DA, true applies a phase rotation by exp(+i z Pz/2), discards the rotated imaginary part, rotates the retained real part back, and only then extends and transforms the signal. False preserves the DA input unchanged. The setting has no effect for PDF/GPD.",
@@ -725,16 +711,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
                 True: "Project the phase-rotated DA matrix element onto its expected real symmetry channel.",
             },
         ),
-        "plot_extension": _parameter(
-            "Tail-extension diagnostic plot settings.",
-            "These settings affect presentation only.",
-            expected=dict,
-            schema={
-                **_PLOT_FIELDS,
-                "scheme_index": _parameter("Candidate index shown in the diagnostic.", "This selects presentation of one fitted range.", expected=int),
-            },
-        ),
-        "plot_fourier": _parameter("Fourier-result plot settings.", "These settings affect presentation only.", expected=dict, schema=_PLOT_FIELDS),
         "posterior_prior_error_scale": _parameter(
             "Prior-width candidate or candidates for tail fits.",
             "Each value scales the sample-average posterior width used as the prior for resampled tail fits; multiple values create model candidates whose spread can enter scheme_scan.model_average.",
@@ -755,16 +731,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ),
         "psi1_flavor_class": _parameter("First meson constituent mass class.", "For DA, light/heavy assignments constrain which asymptotic amplitudes are related or vanish.", expected=str, choices=("light", "heavy")),
         "psi2_flavor_class": _parameter("Second meson constituent mass class.", "For DA, light/heavy assignments constrain which asymptotic amplitudes are related or vanish.", expected=str, choices=("light", "heavy")),
-        "re_key": _parameter("NPZ/HDF5 real-sample dataset key.", "This maps an external file layout onto complex matrix-element samples.", expected=str, default="re_samples"),
-        "report": _parameter(
-            "Optional per-job report settings.",
-            "Reporting summarizes diagnostics but does not alter numerical results.",
-            expected=dict,
-            schema={
-                "enabled": _parameter("Enable the optional per-job report.", "This affects reporting only.", expected=bool),
-                "report_language": _parameter("Report language.", "This affects reporting only.", expected=str, choices=("en", "ch")),
-            },
-        ),
         "scheme_scan": _parameter(
             "Tail fit-range scan and model-averaging configuration.",
             "zmin_fm/zmax_fm select the measured physical-distance range used to constrain the tail; zmax_ext_fm controls the subsequent extension. Omitting range keys lets the runtime infer bounded candidates from the fm coordinate grid. Range variation estimates the finite-distance systematic.",
@@ -804,9 +770,18 @@ STAGE_PARAM_CONTRACT = StageParamContract(
     },
     removed={
         "Lambda0": "is no longer supported; use Lambda0_gev.",
+        "coord_key": "is no longer supported; use a standard EnsembleData NetCDF artifact.",
         "distribution_type": "is no longer supported; use polarization.",
-        "y_grid": "is no longer supported; use quasi_y_ls.",
+        "h5_group": "is no longer supported; use a standard EnsembleData NetCDF artifact.",
+        "im_key": "is no longer supported; use a standard EnsembleData NetCDF artifact.",
+        "input_format": "is no longer supported; use a standard EnsembleData NetCDF artifact.",
+        "part": "is no longer supported; use component.",
+        "plot_extension": "is no longer supported; Fourier plots use the job artifact directory.",
+        "plot_fourier": "is no longer supported; Fourier plots use the job artifact directory.",
+        "re_key": "is no longer supported; use a standard EnsembleData NetCDF artifact.",
+        "report": "is no longer supported; the runner writes one stage report after all Fourier jobs.",
         "save_path": "is no longer supported; stage tools write under the job artifact directory.",
+        "y_grid": "is no longer supported; use quasi_y_ls.",
     },
     constraints=FOURIER_CONSTRAINTS,
 )

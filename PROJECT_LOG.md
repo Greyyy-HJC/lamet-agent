@@ -1480,3 +1480,44 @@
   Run-mode files now use only harness-injected `artifacts_dir` and `job_id`.
 - Replaced `resolve_plot_save_path` with basename-only `stage_artifact_stem` so
   LLM or manifest paths cannot write outside `metadata.artifacts_directory`.
+
+## 2026-08-20 (Sample-manifest parameter catalog audit)
+
+- Re-audited `examples/sample_manifest.jsonc` against every metadata, correlator,
+  artifact, kernel, and stage-contract key. The only missing catalog entries were
+  matching `rgr_kappa` and `rgr_mu_min_gev` (no contract default; kernel defaults
+  1.0 and 0.6 GeV; inert on fixed-order kernels).
+- Annotated required fields that have no contract default, and corrected hybrid
+  `m0_gev`/`delta_m_gev` comments that previously called them optional under
+  `hybrid+external_denominator`.
+- Synced the RGR comments into `examples/partial_sample_manifest.jsonc`.
+
+## 2026-08-20 (Fourier param cleanup)
+
+- Removed Fourier contract parameters `plot_fourier`, `plot_extension`, `report`,
+  `input_format`, `h5_group`, `coord_key`, `re_key`, and `im_key`. Plots still
+  write under the job artifact directory; the runner still writes one stage
+  report after all Fourier jobs. Non-NetCDF files can still be loaded by suffix
+  with hardcoded dataset keys, but manifests can no longer override layout.
+- Renamed the Fourier manual-projection parameter `part` to `component` (`re`,
+  `im`, or `both`), matching correlator naming. Old `part` keys are rejected
+  with a migration message; NetCDF readers still accept a legacy `part` attr.
+
+## 2026-08-20 (Matching param cleanup)
+
+- Removed matching contract parameters `component`, `endpoint_cut`, `plot`,
+  `xlim`, and `ylim`. Matching now consumes the Fourier artifact channel
+  recorded on `attrs['component']` (`im` selects imaginary, otherwise real),
+  keeps the full light-cone grid produced by the kernel, and plots with
+  automatic axis limits from the data range.
+- Dropped those keys from example manifests, sample JSONC comments, planning
+  text-to-manifest copying, and tool argument injection. Authored leftovers
+  are rejected with migration messages.
+
+## 2026-08-20 (Drop Fourier fit-info NetCDF)
+
+- Stopped writing `fourier_fit_info.nc`. Fourier jobs now emit only the primary
+  result NetCDF plus plots; tail-fit parameters remain in memory on
+  `scheme_results` and in the Markdown report.
+- Removed the fit-info artifact from stage reports, prompts, README, and the
+  agent artifact record. Extrapolation still writes its own `_fit_info.nc`.

@@ -89,7 +89,7 @@ Typical artifact chain (paths are relative to `artifacts/` unless noted):
 | --- | --- |
 | `correlator_analysis` | `correlator_analysis/ca_p5.nc` |
 | `renormalization` | `renormalization/rn_p5.nc` |
-| `fourier_transform` | `fourier_results/fourier_result.nc`, `fourier_results/fourier_fit_info.nc` |
+| `fourier_transform` | `fourier_results/fourier_result.nc` |
 | `perturbative_matching` | `matching_results/quasi_pdf.nc` |
 
 Within one run, downstream inputs resolve job ids to in-memory primary outputs.
@@ -195,7 +195,7 @@ are therefore declared once by
 `ParameterSpec.required`; planning only converts the returned issue into a
 question. `ConstraintSpec` similarly owns one executable check together with
 its physical reason and suggested repair. For example, a named Fourier `sector`
-cannot be combined with manual `part`, `output_scale`, or `im_flip_for_ft`: the
+cannot be combined with manual `component`, `output_scale`, or `im_flip_for_ft`: the
 sector already fixes the complex channel, normalization, and negative-$x$
 convention.
 

@@ -51,7 +51,7 @@ import numpy as np
 from lamet_agent.core.data import EnsembleData, GEV_FM
 from lamet_agent.core.tools import stage_artifact_stem
 from lamet_agent.stages.fourier.validation import quasi_y_ls_error
-from lamet_agent.stages.matching.reporting import FormulaLlm, is_da_kernel, write_matching_report
+from lamet_agent.stages.matching.reporting import FormulaLlm, write_matching_report
 
 # All matching kernels live in the self-contained kernels.py.
 from lamet_agent.kernels import (
@@ -262,13 +262,25 @@ def list_kernels(store: dict[str, Any]) -> dict[str, Any]:
 # --- load the quasi-PDF from the previous (Fourier) stage --------------------
 
 
-def _component_ensemble_data(data: EnsembleData, component: str) -> EnsembleData:
-    """Return the real or imaginary channel of a (possibly complex) EnsembleData."""
-    if component == "re":
-        return data.real
-    if component == "im":
-        return data.imag
-    raise ValueError(f"component must be 're' or 'im', got '{component}'.")
+def _quasi_channel(data: EnsembleData) -> str:
+    """Return the Fourier channel matching should consume from a (possibly complex) artifact."""
+    token = str(data.attrs.get("component", data.attrs.get("part", "re"))).strip().lower()
+    if token in {"im", "imag", "imaginary"}:
+        return "im"
+    return "re"
+
+
+def _real_quasi(data: EnsembleData) -> EnsembleData:
+    """Return the real-valued quasi channel matching consumes.
+
+    Fourier artifacts stay complex; the physical channel is recorded on
+    ``attrs['component']`` (or legacy ``part``). ``im`` selects the imaginary
+    part; anything else, including ``both`` and a missing attr, uses the real
+    part. Already-real arrays are returned unchanged.
+    """
+    if not np.iscomplexobj(np.asarray(data.values)):
+        return data
+    return data.imag if _quasi_channel(data) == "im" else data.real
 
 
 def _samples_ensemble_data_from_npz(raw: Any) -> EnsembleData:
@@ -335,7 +347,6 @@ def load_quasi_pdf(
     store: dict[str, Any],
     *,
     path: str | None = None,
-    component: str,
     quasi_out: str = "quasi_ed",
     grid_out: str = "quasi_y_ls",
 ) -> dict[str, Any]:
@@ -354,18 +365,22 @@ def load_quasi_pdf(
     - a simple hand-made npz with ``x_ls`` and a 2D ``quasi_samples`` array
       (shape ``(n_sample, n_x)``) plus an optional ``resample`` string.
 
-    ``component`` selects the real (``"re"``) or imaginary (``"im"``) channel of
-    the Fourier output; the unpolarized quasi-PDF lives in the real part.
+    Complex Fourier artifacts keep both channels; matching consumes the channel
+    recorded on ``attrs['component']`` (``im`` selects imaginary, otherwise real).
 
     The kernel integrates over the artifact's own ``x`` coordinate. That grid
     must be uniform and exclude zero so the matching 1/y measure stays finite.
     """
+    component = "re"
     if path is None and isinstance(store.get("quasi"), EnsembleData):
-        quasi_ed = _component_ensemble_data(store["quasi"], component)
+        source = store["quasi"]
+        component = _quasi_channel(source)
+        quasi_ed = _real_quasi(source)
     elif path is not None:
         try:
             data = EnsembleData.from_netcdf(path) if Path(path).suffix.lower() == ".nc" else EnsembleData.load_npz(path)[0]
-            quasi_ed = _component_ensemble_data(data, component)
+            component = _quasi_channel(data)
+            quasi_ed = _real_quasi(data)
         except ValueError:
             raw = np.load(path, allow_pickle=False)
             if "quasi_samples" not in raw or "x_ls" not in raw:
@@ -528,7 +543,6 @@ def apply_matching(
     out: str = "lightcone_ed",
     artifacts_dir: str | None = None,
     job_id: str | None = None,
-    endpoint_cut: float | None = None,
 ) -> dict[str, Any]:
     """Apply the matching kernel sample by sample: ``lightcone_i = K @ quasi_i``.
 
@@ -537,9 +551,6 @@ def apply_matching(
     The matched samples are stored as an ``EnsembleData`` (same resampling mode
     as the input) under ``store[out]``; its mean/error/covariance can be rebuilt
     from the samples by any downstream stage.
-
-    ``endpoint_cut`` drops the DA's divergent endpoint window from the output; it is
-    ignored for PDF kernels, which have no such divergence.
     """
     if kernel not in store:
         raise ValueError(f"Kernel '{kernel}' not in store; run build_matching_kernel first.")
@@ -574,23 +585,6 @@ def apply_matching(
             f"Kernel rows ({matrix.shape[0]}) must match output x grid size ({x_out.size})."
         )
 
-    # A DA kernel's V(x, y) has 1/y and 1/(1-y) poles, and the NLO integral convolves them
-    # with the *quasi*-DA, which -- unlike the light-cone DA -- does not vanish at x = 0, 1.
-    # So int dy V(x,y) quasi(y) is log divergent at the endpoints: the matched value on the
-    # grid points hugging 0 and 1 does not converge under refinement (it runs away), it is
-    # not a discretization artifact one can grid away. `endpoint_cut` drops that window from
-    # the output rather than shipping numbers the matching cannot produce.
-    kernel_id = str((store.get("matching_kernel_info") or {}).get("kernel_id", ""))
-    cut = float(endpoint_cut or 0.0)
-    dropped = 0
-    if cut > 0.0 and is_da_kernel(kernel_id):
-        inside_left = (x_out > 0.0) & (x_out < cut)
-        inside_right = (x_out > 1.0 - cut) & (x_out < 1.0)
-        keep = ~(inside_left | inside_right)
-        dropped = int((~keep).sum())
-        x_out = x_out[keep]
-        lightcone_samples = lightcone_samples[:, keep]
-
     attrs = dict(quasi_ed.attrs)
     for key in ("kernel_id", "mu", "zspz"):
         value = (store.get("matching_kernel_info") or {}).get(key)
@@ -607,9 +601,8 @@ def apply_matching(
     )
     store[out] = lightcone_ed
     # The runner's stage record reports the *matched* PDF, and reads its grid from
-    # store["x_ls"] (see agent.py). Publish the light-cone grid there -- post-cut, so it
-    # always has the same length as the PDF beside it -- rather than the quasi grid the
-    # two used to share.
+    # store["x_ls"] (see agent.py). Publish the light-cone grid there rather than
+    # the quasi grid the two used to share.
     store["x_ls"] = x_out
     stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="matched_pdf")
     artifact = stem.with_suffix(".nc")
@@ -624,8 +617,6 @@ def apply_matching(
         "resample": lightcone_ed.resample,
         "n_sample": int(lightcone_ed.n_sample),
         "n_points": int(x_out.size),
-        "endpoint_cut": cut or None,
-        "endpoint_points_dropped": dropped,
         "artifact": str(artifact),
         "mean_sample": [float(v) for v in np.asarray(lightcone_ed.mean)[:3]],
     }
@@ -643,9 +634,6 @@ def plot_matched_pdf(
     lightcone: str = "lightcone_ed",
     artifacts_dir: str | None = None,
     job_id: str | None = None,
-    xlim: list[float] | tuple[float, float] | None = None,
-    ylim: list[float] | tuple[float, float] | None = None,
-    sector: str | None = None,
 ) -> dict[str, Any]:
     """Plot quasi vs matched (light-cone) PDF and save a PDF artifact.
 
@@ -667,10 +655,10 @@ def plot_matched_pdf(
     quasi_y_ls = np.asarray(store[quasi_grid_key], dtype=float)
     quasi_ed: EnsembleData = store[quasi]
     lightcone_ed: EnsembleData = store[lightcone]
-    # The two curves may live on different grids -- lc_x_ls sets the light-cone one, and an
-    # endpoint_cut then drops points from it -- so the light-cone x comes off the data
-    # itself rather than the store key, and each curve is drawn on its own coordinate.
-    lc_x_ls = np.asarray(lightcone_ed.coords["x"], dtype=float)
+    # The two curves may live on different grids -- lc_x_ls sets the light-cone one --
+    # so the light-cone x comes off the data itself rather than the store key, and each
+    # curve is drawn on its own coordinate.
+    lc_x_ls = np.asarray(lightcone_ed.coords.get("x", store.get(lc_grid_key, [])), dtype=float)
 
     if quasi_y_ls.shape != np.shape(quasi_ed.mean):
         raise ValueError("quasi grid and quasi-PDF must have matching shapes.")
@@ -696,8 +684,6 @@ def plot_matched_pdf(
         sdev = np.asarray(data.sdev, dtype=float)
         plot_min = min(plot_min, float(np.min(mean - sdev)))
         plot_max = max(plot_max, float(np.max(mean + sdev)))
-        # A cut endpoint window leaves a gap in x; splitting on it stops the line from
-        # drawing a straight chord across the hole it was supposed to remove.
         gaps = np.flatnonzero(np.diff(x) > 1.5 * np.min(np.diff(x))) + 1 if x.size > 2 else []
         for xs, ms, ss in zip(np.split(x, gaps), np.split(mean, gaps), np.split(sdev, gaps)):
             ax.fill_between(xs, ms - ss, ms + ss, color=color, alpha=0.32, linewidth=0, label=label)
@@ -709,9 +695,9 @@ def plot_matched_pdf(
     _band(lightcone_ed, lc_x_ls, label="light-cone", color=ORANGE)
     ax.set_xlabel(r"$x$", **FONT_SIZE)
     ax.set_ylabel(r"$f(x)$", **FONT_SIZE)
-    sector_name = str(sector or quasi_ed.attrs.get("sector", "")).lower()
-    x_limits = ((-0.01, 1.01) if sector_name == "valence" else (-1.01, 1.01)) if xlim is None else (float(xlim[0]), float(xlim[1]))
-    y_limits = (plot_min - 0.2, plot_max + 1.0) if ylim is None else (float(ylim[0]), float(ylim[1]))
+    x_all = np.concatenate([quasi_y_ls, lc_x_ls]) if lc_x_ls.size else quasi_y_ls
+    x_limits = (float(np.min(x_all)) - 0.01, float(np.max(x_all)) + 0.01)
+    y_limits = (plot_min - 0.2, plot_max + 1.0)
     ax.set_xlim(*x_limits)
     ax.set_ylim(*y_limits)
     ax.legend(**LEGEND_SETS)
@@ -742,7 +728,6 @@ def report_matching_result(
     momentum_gev: float | None = None,
     mu: float,
     zs_fm: float | None = None,
-    component: str,
     artifacts_dir: str | None = None,
     job_id: str | None = None,
     report_language: str = "en",
@@ -765,8 +750,7 @@ def report_matching_result(
     quasi_ed: EnsembleData = store["quasi_ed"]
     lightcone_ed: EnsembleData = store["lightcone_ed"]
     # The report describes the matched light-cone PDF, so its grid comes off that data
-    # rather than lc_x_ls: an endpoint_cut leaves the PDF on fewer points than the grid
-    # it was built on.
+    # rather than lc_x_ls when the two grids differ.
     quasi_x_ls = np.asarray(store["quasi_y_ls"], dtype=float)
     x_ls = np.asarray(lightcone_ed.coords.get("x", store["quasi_y_ls"]), dtype=float)
 
@@ -781,7 +765,7 @@ def report_matching_result(
         "momentum_gev": momentum_gev,
         "mu": mu,
         "zspz": zspz,
-        "component": component,
+        "component": store.get("matching_component") or quasi_ed.attrs.get("component", "re"),
         "source": "job input",
         "resample": lightcone_ed.resample,
         "n_sample": int(lightcone_ed.n_sample),

@@ -1064,7 +1064,7 @@ def plot_fourier_extension_quality(
     model_label = "Extrapolation"
     if gfix or order:
         model_label = f"Extrapolation ({'+'.join(item for item in (gfix, order) if item)})"
-    fitted_part = str(result.get("part", "both")).strip().lower()
+    fitted_part = str(result.get("component", result.get("part", "both"))).strip().lower()
     draw_model = fitted_part in {"both", part} or fitted_part not in {"re", "im"}
 
     ax.fill_between(

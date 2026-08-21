@@ -1086,7 +1086,7 @@ def test_hydrate_external_artifact_inputs_loads_fourier_input(tmp_path: Path) ->
                 "fourier_transform": {
                     "defaults": {
                         "order": "NLA",
-                        "part": "re",
+                        "component": "re",
                         "hadron": "pion",
                         "quasi_y_ls": {"start": -1.0, "stop": 1.0, "num": 4},
                     },
@@ -1227,7 +1227,7 @@ def test_run_agent_hydrates_partial_fourier_artifact_before_tools(tmp_path: Path
                 "fourier_transform": {
                     "defaults": {
                         "order": "NLA",
-                        "part": "re",
+                        "component": "re",
                         "hadron": "pion",
                         "quasi_y_ls": {"start": -1.0, "stop": 1.0, "num": 4},
                     },
@@ -1335,7 +1335,7 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
             "observable": "pion_quark_quasi_pdf",
             "gfix": "GI",
             "order": "LA",
-            "part": "re",
+            "component": "re",
             "resample_mode": "jackknife",
             "coord_unit": "fm",
             "fit_coord_unit": "gev_inv",
@@ -1362,7 +1362,6 @@ def test_run_agent_writes_fourier_stage_report_after_jobs(tmp_path: Path, monkey
                 }
             ],
             "artifact": str(tmp_path / "fourier_result.nc"),
-            "fit_info_artifact": str(tmp_path / "fourier_fit_info.nc"),
         }
         store["fourier_summary"] = {"out": "fourier_summary"}
         store["fourier_plot"] = {"plot": str(tmp_path / "fourier_xdep.pdf")}

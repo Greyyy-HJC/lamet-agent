@@ -45,7 +45,7 @@ _EXPLICIT_FOURIER_PARAMS = {
     "Lambda0_gev": 0.0,
     "posterior_prior_error_scale": 3.0,
     "sample_error_mode": "covariance",
-    "part": "both",
+    "component": "both",
     "output_scale": 1.0,
     "sector": None,
     "target_observable": "da",
@@ -527,7 +527,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert Path(run["artifact"]).is_file()
     assert Path(run["artifact"]).parent == tmp_path / "artifacts"
     assert Path(run["artifact"]).suffix == ".nc"
-    assert Path(run["fit_info_artifact"]).suffix == ".nc"
+    assert not Path(run["artifact"]).with_name("fourier_result_fit_info.nc").exists()
     ft_data = EnsembleData.from_netcdf(run["artifact"])
     assert ft_data.dims == ["x"]
     assert ft_data.resample == "bootstrap"
@@ -539,22 +539,16 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert ft_data.attrs["bz_direction"] == "X"
     assert ft_data.values.shape == (3, 4)
     assert "ft_re_mean" in ft_data.attrs
-    assert Path(run["fit_info_artifact"]).is_file()
     assert Path(run["plot"]).is_file()
     assert Path(run["plot"]).with_suffix(".svg").is_file()
     assert Path(run["plot_re"]).is_file()
     assert Path(run["plot_re"]).with_suffix(".svg").is_file()
     assert Path(run["plot_im"]).is_file()
     assert Path(run["plot_im"]).with_suffix(".svg").is_file()
-    assert run["report"] is None
-    fit_data = EnsembleData.from_netcdf(run["fit_info_artifact"])
-    assert fit_data.dims == ["scheme", "parameter"]
-    assert fit_data.resample == "bootstrap"
-    assert fit_data.attrs["Lambda0_gev"] == "0.3"
-    assert fit_data.attrs["gfix"] == "GI"
-    assert fit_data.values.shape == (3, 1, 3)
-    assert "fit_chi2" in fit_data.attrs
-    assert fit_data.coords["parameter"] == ["A2", "phi2", "m"]
+    scheme = store["fourier_result"]["scheme_results"][0]
+    assert scheme["fit_param_labels"] == ["A2", "phi2", "m"]
+    assert np.asarray(scheme["fit_params"]).shape == (3, 3)
+    assert "fit_chi2" in scheme
 
     summary = summarize_fourier_result(store)
     assert summary["out"] == "fourier_summary"
@@ -562,7 +556,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert summary["selected_range_label"] == "zmin_1_zmax_4"
     assert summary["fit_model_labels"] == ["LA_prior_3"]
     assert summary["fit_model_mean_weights"] == [1.0]
-    assert summary["fit_info_artifact"] == run["fit_info_artifact"]
+    assert "fit_info_artifact" not in summary
     assert summary["Lambda0_gev"] == pytest.approx(0.3)
 
     artifacts = tmp_path / "artifacts"
@@ -585,7 +579,7 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "GI" in report_text
     assert "LA" in report_text
     assert "Lambda0_gev" in report_text
-    assert "Active fitted part" in report_text
+    assert "Active fitted component" in report_text
     assert "fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together" in report_text
     assert "Model Diagnostics" in report_text
     assert "q(x)=\\frac{\\Delta\\lambda}{2\\pi}" in report_text
@@ -593,9 +587,8 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert "fourier_result_xdep.svg" in report_text
     assert "Reading the NetCDF Outputs" in report_text
     assert "fourier_result.nc" in report_text
-    assert "fourier_fit_info.nc" in report_text
+    assert "fourier_fit_info.nc" not in report_text
     assert Path(run["artifact"]).name in report_text
-    assert Path(run["fit_info_artifact"]).name in report_text
     monkeypatch.setattr("lamet_agent.stages.fourier.reporting.translate_markdown_report", lambda markdown, **kwargs: markdown)
     report_cn = report_fourier_result(
         store,
@@ -608,13 +601,13 @@ def test_fourier_tool_chain_writes_artifact(tmp_path: Path, monkeypatch) -> None
     assert (tmp_path / "report_fourier_ch_report.md").exists()
     report_cn_text = report_cn_path.read_text(encoding="utf-8")
     assert "# Fourier Transform Analysis Report" in report_cn_text
-    assert "Active fitted part" in report_cn_text
+    assert "Active fitted component" in report_cn_text
     assert "fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together" in report_cn_text
     assert "Figures and Visual Assessment" in report_cn_text
     assert "Lambda0_gev" in report_cn_text
     assert "Reading the NetCDF Outputs" in report_cn_text
     assert "fourier_result.nc" in report_cn_text
-    assert "fourier_fit_info.nc" in report_cn_text
+    assert "fourier_fit_info.nc" not in report_cn_text
     assert "fourier_result_xdep.svg" in report_cn_text
     data = store["fourier_result"]
     fig, ax = plot_fourier_extension_quality(
@@ -687,9 +680,7 @@ def test_fourier_tool_chain_accepts_h5_input(tmp_path: Path, monkeypatch) -> Non
     assert run["n_samples"] == 3
     assert store["fourier_result"]["Lambda0_gev"] == 0.0
     assert Path(run["artifact"]).is_file()
-    assert Path(run["fit_info_artifact"]).is_file()
     assert EnsembleData.from_netcdf(run["artifact"]).attrs["Lambda0_gev"] == "0.0"
-    assert EnsembleData.from_netcdf(run["fit_info_artifact"]).attrs["Lambda0_gev"] == "0.0"
 
 
 def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) -> None:
@@ -714,20 +705,20 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         parton="quark",
         hadron="nucleon",
         polarization="unpolarized",
-        part="re",
+        component="re",
         output_scale=1.5,
         im_flip_for_ft=True,
         momentum_gev=2.0,
     )
     result_re = store["fourier_result"]
-    assert result_re["part"] == "re"
+    assert result_re["component"] == "re"
     assert result_re["sector"] == "manual"
     assert result_re["output_scale"] == 1.5
     assert result_re["im_flip_for_ft"] is True
     assert np.allclose(result_re["ft_im_samples"], 0.0)
     assert np.allclose(result_re["scheme_results"][0]["extended_im_samples"], 0.0)
     artifact_re = EnsembleData.from_netcdf(run_re["artifact"])
-    assert artifact_re.attrs["part"] == "re"
+    assert artifact_re.attrs["component"] == "re"
     fig_re, ax_re = plot_fourier_extension_quality(coord, re_samples, result_re, part="re")
     assert len(ax_re.collections) == 2
     assert len(ax_re.lines) == 4
@@ -749,17 +740,17 @@ def test_fourier_part_selects_active_fit_channel(tmp_path: Path, monkeypatch) ->
         parton="quark",
         hadron="nucleon",
         polarization="unpolarized",
-        part="im",
+        component="im",
         momentum_gev=2.0,
     )
     result_im = store["fourier_result"]
-    assert result_im["part"] == "im"
+    assert result_im["component"] == "im"
     assert result_im["sector"] == "manual"
     assert np.allclose(result_im["scheme_results"][0]["extended_re_samples"], 0.0)
     assert np.all(np.isfinite(result_im["ft_re_samples"]))
     assert np.all(np.isfinite(result_im["ft_im_samples"]))
     artifact_im = EnsembleData.from_netcdf(run_im["artifact"])
-    assert artifact_im.attrs["part"] == "im"
+    assert artifact_im.attrs["component"] == "im"
     fig_re_inactive, ax_re_inactive = plot_fourier_extension_quality(coord, re_samples, result_im, part="re")
     assert len(ax_re_inactive.collections) == 1
     assert len(ax_re_inactive.lines) == 3
@@ -812,12 +803,12 @@ def test_fourier_pdf_sector_resolves_projection(
     result = store["fourier_result"]
     artifact = EnsembleData.from_netcdf(run["artifact"])
     assert result["sector"] == sector
-    assert result["part"] == part
+    assert result["component"] == part
     assert result["output_scale"] == 2.0
     assert result["im_flip_for_ft"] is False
     assert result["polarization"] == polarization
     assert artifact.attrs["sector"] == sector
-    assert artifact.attrs["part"] == part
+    assert artifact.attrs["component"] == part
     assert artifact.attrs["polarization"] == polarization
     assert artifact.attrs["current_operator"] == "test_current"
     assert artifact.attrs["parton"] == "quark"
@@ -845,7 +836,7 @@ def test_metadata_and_hadron_control_sector_semantics(tmp_path: Path, monkeypatc
     )
 
     result = store["fourier_result"]
-    assert result["part"] == "im"
+    assert result["component"] == "im"
     assert result["polarization"] == "helicity"
     assert result["parton"] == "quark"
     assert result["hadron"] == "nucleon"
@@ -883,12 +874,12 @@ def test_fourier_gpd_sector_valence_resolves_projection(tmp_path: Path, monkeypa
     result = store["fourier_result"]
     artifact = EnsembleData.from_netcdf(run["artifact"])
     assert result["sector"] == "valence"
-    assert result["part"] == "both"
+    assert result["component"] == "both"
     assert result["sector_projection_mode"] == "post_ft_signed_y"
     assert result["output_scale"] == 1.0
     assert result["im_flip_for_ft"] is False
     assert artifact.attrs["sector"] == "valence"
-    assert artifact.attrs["part"] == "both"
+    assert artifact.attrs["component"] == "both"
 
 
 @pytest.mark.parametrize("sector", ["full", "sea", "valence", "singlet"])
@@ -1024,9 +1015,9 @@ def test_fourier_pdf_sector_sea_reflects_full_distribution(
     full = full_store["fourier_result"]
     sea = sea_store["fourier_result"]
     assert workflow_parts == ["both", "both"]
-    assert full["part"] == "both"
+    assert full["component"] == "both"
     assert sea["sector"] == "sea"
-    assert sea["part"] == "both"
+    assert sea["component"] == "both"
     assert sea["output_scale"] == 1.0
     assert np.allclose(sea["final_ft_re_samples"], sea_sign * full["final_ft_re_samples"])
     assert np.allclose(sea["final_ft_im_samples"], sea_sign * full["final_ft_im_samples"])
@@ -1066,7 +1057,7 @@ def test_fourier_gpd_sector_sea_reflects_full_distribution(tmp_path: Path, monke
     full = full_store["fourier_result"]
     sea = sea_store["fourier_result"]
     assert sea["sector"] == "sea"
-    assert sea["part"] == "both"
+    assert sea["component"] == "both"
     assert sea["output_scale"] == 1.0
     assert np.allclose(sea["final_ft_re_samples"], -full["final_ft_re_samples"])
     assert np.allclose(sea["final_ft_im_samples"], -full["final_ft_im_samples"])
@@ -1157,7 +1148,7 @@ def test_fourier_sector_owns_output_scale(tmp_path: Path, monkeypatch) -> None:
         hadron="nucleon",
         polarization="unpolarized",
         sector="full",
-        part="re",
+        component="re",
         output_scale=1.0,
         momentum_gev=2.0,
     )
@@ -1177,7 +1168,7 @@ def test_fourier_sector_owns_output_scale(tmp_path: Path, monkeypatch) -> None:
         hadron="nucleon",
         polarization="unpolarized",
         sector="full",
-        part="re",
+        component="re",
         output_scale=2.0,
         momentum_gev=2.0,
     )
@@ -1219,11 +1210,9 @@ def test_fourier_tool_chain_preserves_jackknife_resampling(tmp_path: Path, monke
     )
 
     ft_data = EnsembleData.from_netcdf(run["artifact"])
-    fit_data = EnsembleData.from_netcdf(run["fit_info_artifact"])
     assert store["fourier_result"]["resample_mode"] == "jackknife"
     assert store["fourier_result_data"].resample == "jackknife"
     assert ft_data.resample == "jackknife"
-    assert fit_data.resample == "jackknife"
 
 
 def test_fourier_loader_accepts_ensemble_data_npz(tmp_path: Path) -> None:
@@ -1346,8 +1335,8 @@ def test_fourier_tool_chain_derives_observable_from_metadata_and_hadron(tmp_path
         momentum_gev=2.0,
     )
 
-    fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
-    assert json.loads(fit_info.attrs["fit_param_labels"]) == [
+    scheme = store["fourier_result"]["scheme_results"][0]
+    assert scheme["fit_param_labels"] == [
         "A2",
         "phi2",
         "A1",
@@ -1362,7 +1351,7 @@ def test_fourier_tool_chain_derives_observable_from_metadata_and_hadron(tmp_path
         "phi3p",
         "m",
     ]
-    assert np.asarray(json.loads(fit_info.attrs["fit_params"])).shape == (1, 3, 13)
+    assert np.asarray(scheme["fit_params"]).shape == (3, 13)
 
 
 def test_fourier_pion_pdf_valence_tail_constraints(tmp_path: Path, monkeypatch) -> None:
@@ -1380,7 +1369,7 @@ def test_fourier_pion_pdf_valence_tail_constraints(tmp_path: Path, monkeypatch) 
     store = {}
     load_renormalized_matrix_element_samples(store, path=str(data_path))
 
-    run = run_fourier_transform(
+    run_fourier_transform(
         store,
         quasi_y_ls=[-0.5, 0.5],
         scheme_scan={"zmin_fm": [1.0], "zmax_fm": [13.0], "zmax_ext_fm": 15.0},
@@ -1394,9 +1383,9 @@ def test_fourier_pion_pdf_valence_tail_constraints(tmp_path: Path, monkeypatch) 
         momentum_gev=2.0,
     )
 
-    fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
-    labels = json.loads(fit_info.attrs["fit_param_labels"])
-    params = np.asarray(json.loads(fit_info.attrs["fit_params"]))[0]
+    scheme = store["fourier_result"]["scheme_results"][0]
+    labels = scheme["fit_param_labels"]
+    params = np.asarray(scheme["fit_params"])
     idx = {label: labels.index(label) for label in labels}
     assert np.allclose(params[:, idx["phi2"]], 0.0)
     assert np.allclose(params[:, idx["phi2p"]], 0.0)
@@ -1470,9 +1459,8 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     assert float(np.max(scheme_result["lambda_ext"])) == pytest.approx(13.0)
     assert scheme_result["extended_re_samples"].shape[1] > original_values.shape[1]
 
-    fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
-    labels = json.loads(fit_info.attrs["fit_param_labels"])
-    params = np.asarray(json.loads(fit_info.attrs["fit_params"]))[0]
+    labels = scheme_result["fit_param_labels"]
+    params = np.asarray(scheme_result["fit_params"])
     idx = {label: labels.index(label) for label in labels}
     assert np.allclose(params[:, idx["A2"]], params[:, idx["A1"]])
     assert np.allclose(params[:, idx["A2p"]], params[:, idx["A1p"]])
@@ -1486,13 +1474,6 @@ def test_fourier_meson_da_pion_tail_constraints(tmp_path: Path, monkeypatch) -> 
     assert "parton" not in result_data.attrs
     assert "current_operator" not in result_data.attrs
     assert "polarization" not in result_data.attrs
-    assert fit_info.attrs["psi1_flavor_class"] == "light"
-    assert fit_info.attrs["psi2_flavor_class"] == "light"
-    assert fit_info.attrs["symmetry_guarantee"] == "True"
-    assert "observable_backend" not in fit_info.attrs
-    assert "parton" not in fit_info.attrs
-    assert "current_operator" not in fit_info.attrs
-    assert "polarization" not in fit_info.attrs
     assert "observable" not in run
     assert "parton" not in run
     assert "polarization" not in run
@@ -1578,12 +1559,12 @@ def test_fourier_tool_chain_accepts_gluon_observables(tmp_path: Path, monkeypatc
             momentum_gev=2.0,
         )
 
-        fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
+        scheme = store["fourier_result"]["scheme_results"][0]
         artifact = EnsembleData.from_netcdf(run["artifact"])
-        assert json.loads(fit_info.attrs["fit_param_labels"]) == expected_labels
-        assert np.asarray(json.loads(fit_info.attrs["fit_params"])).shape == (1, 3, len(expected_labels))
+        assert scheme["fit_param_labels"] == expected_labels
+        assert np.asarray(scheme["fit_params"]).shape == (3, len(expected_labels))
         assert store["fourier_result"]["sector"] == "full"
-        assert store["fourier_result"]["part"] == "both"
+        assert store["fourier_result"]["component"] == "both"
         assert store["fourier_result"]["output_scale"] == 1.0
         assert artifact.attrs["parton"] == "gluon"
         assert artifact.attrs["polarization"] == "unpolarized"
@@ -1757,15 +1738,14 @@ def test_fourier_model_average_scans_order_and_prior_width_per_sample(tmp_path: 
     assert weights.shape == (len(result["fit_model_labels"]), 3)
     assert np.allclose(np.sum(weights, axis=0), 1.0)
     assert result["selected_range_label"] in result["candidate_scheme_labels"]
-    fit_info = EnsembleData.from_netcdf(run["fit_info_artifact"])
-    labels = json.loads(fit_info.attrs["fit_param_labels"])
+    labels = [label for item in result["scheme_results"] for label in item["fit_param_labels"]]
     assert "A2" in labels
     assert "m" in labels
 
 
 def test_fourier_requires_explicit_scheme_scan():
     with pytest.raises(TypeError, match="scheme_scan"):
-        _run_fourier_transform({}, quasi_y_ls=[-0.5, 0.5], zmin_shift=0, gfix="GI", order="LA", im_flip_for_ft=False, Lambda0_gev=0.0, posterior_prior_error_scale=3.0, sample_error_mode="covariance", part="both", output_scale=1.0, sector="full", target_observable="da", parton="quark", hadron="pion", symmetry_guarantee=True, psi1_flavor_class="heavy", psi2_flavor_class="heavy", workers=1)
+        _run_fourier_transform({}, quasi_y_ls=[-0.5, 0.5], zmin_shift=0, gfix="GI", order="LA", im_flip_for_ft=False, Lambda0_gev=0.0, posterior_prior_error_scale=3.0, sample_error_mode="covariance", component="both", output_scale=1.0, sector="full", target_observable="da", parton="quark", hadron="pion", symmetry_guarantee=True, psi1_flavor_class="heavy", psi2_flavor_class="heavy", workers=1)
 
 
 def test_fourier_auto_generates_scheme_scan(tmp_path: Path, monkeypatch) -> None:
@@ -1896,7 +1876,7 @@ def test_paired_extension_plot_uses_one_midpoint_convention_and_signed_branches(
         "final_momentum_gev": fourier_functions.HBAR_C_GEV_FM,
         "resample_mode": "raw",
         "sample_error_mode": "covariance",
-        "part": "both",
+        "component": "both",
         "gfix": "GI",
         "order": "LA",
         "scheme_results": [
@@ -1961,7 +1941,7 @@ def test_fourier_auto_scan_counts_real_and_imaginary_fit_channels(tmp_path: Path
         parton="quark",
         hadron="pion",
         polarization="unpolarized",
-        part="both",
+        component="both",
         momentum_gev=2.0,
     )
 
@@ -1994,7 +1974,7 @@ def test_fourier_auto_scan_prefers_tail_region_in_fm(tmp_path: Path, monkeypatch
         hadron="pion",
         polarization="unpolarized",
         momentum_gev=2.15,
-        part="both",
+        component="both",
     )
 
     auto = run["auto_scheme_scan"]

@@ -57,7 +57,7 @@ def test_kernel_registry_ids_match_kernels_module_function_names() -> None:
 def test_matching_grids_are_required() -> None:
     native = np.linspace(-2.0, 2.0, 100)
     store = {"quasi": _quasi_on(native)}
-    load_quasi_pdf(store, component="re")
+    load_quasi_pdf(store)
 
     with pytest.raises(TypeError, match="lc_x_ls"):
         _build_matching_kernel(store, kernel_id="CG_gt_quark_PDF_ratio_NLO", momentum_gev=1.5)
@@ -74,7 +74,7 @@ def test_load_quasi_pdf_uses_the_fourier_artifact_x_grid() -> None:
     native = np.linspace(-2.0, 2.0, 100)
     store = {"quasi": _quasi_on(native)}
 
-    load_quasi_pdf(store, component="re")
+    load_quasi_pdf(store)
 
     assert np.array_equal(store["quasi_ed"].values, _quasi_on(native).values)
     assert np.array_equal(store["quasi_y_ls"], native)
@@ -83,7 +83,7 @@ def test_load_quasi_pdf_uses_the_fourier_artifact_x_grid() -> None:
 def test_lc_x_ls_window_slices_the_quasi_nodes() -> None:
     native = np.linspace(-2.0, 2.0, 100)
     store = {"quasi": _quasi_on(native)}
-    load_quasi_pdf(store, component="re")
+    load_quasi_pdf(store)
     build_matching_kernel(
         store,
         kernel_id="CG_gt_quark_PDF_ratio_NLO",
@@ -303,7 +303,7 @@ def test_report_text_follows_the_kernel_rather_than_assuming_a_pdf() -> None:
 def test_lc_window_outside_quasi_is_rejected() -> None:
     native = np.linspace(-2.0, 2.0, 100)
     store = {"quasi": _quasi_on(native)}
-    load_quasi_pdf(store, component="re")
+    load_quasi_pdf(store)
 
     with pytest.raises(ValueError, match="extends beyond"):
         build_matching_kernel(
@@ -332,7 +332,7 @@ def _matching_grid_payload(
         lc_x_ls = {"start": 0.0, "stop": 1.0}
     if quasi_y_ls is ...:
         quasi_y_ls = {"start": -2.0, "stop": 2.0, "num": 100}
-    matching_defaults: dict = {"scheme": "ratio", "component": "re", "mu": 2.0}
+    matching_defaults: dict = {"scheme": "ratio", "mu": 2.0}
     if lc_x_ls is not None:
         matching_defaults["lc_x_ls"] = lc_x_ls
     fourier_defaults: dict = {
@@ -404,34 +404,6 @@ def test_matching_accepts_lc_window_inside_fourier_grid() -> None:
     assert not any(item.code == "matching.lc_x_ls.window" for item in issues)
 
 
-def test_endpoint_cut_drops_the_da_divergent_window_only_for_da_kernels() -> None:
-    # Fine enough that points land inside 0.01 of x = 0 and x = 1; on a coarser grid the
-    # cut has nothing to remove and would pass vacuously. The resolution has to come from
-    # the quasi grid itself -- a denser light-cone grid is rejected, not a workaround.
-    native = np.linspace(-1.0, 2.0, 300)
-
-    def matched(kernel_id: str, cut: float | None) -> tuple[int, np.ndarray]:
-        store = {"quasi": _quasi_on(native)}
-        load_quasi_pdf(store, component="re")
-        build_matching_kernel(store, kernel_id=kernel_id, momentum_gev=2.4, zs_fm=0.2)
-        result = apply_matching(store, artifacts_dir=Path(tempfile.mkdtemp()), job_id="mt", endpoint_cut=cut)
-        return result["endpoint_points_dropped"], np.asarray(store["lightcone_ed"].coords["x"])
-
-    def in_window(x: np.ndarray) -> list[float]:
-        return [float(v) for v in x if (0.0 < v < 0.01) or (0.99 < v < 1.0)]
-
-    dropped, x = matched("GI_gzg5_DA_hybrid_NLO", 0.01)
-    assert dropped == 2 and in_window(x) == []
-
-    # Without the cut the divergent points ship, so the cut is what removes them.
-    dropped, x = matched("GI_gzg5_DA_hybrid_NLO", None)
-    assert dropped == 0 and len(in_window(x)) == 2
-
-    # A PDF kernel has no endpoint divergence, so the cut must not touch its grid.
-    dropped, x = matched("CG_gt_quark_PDF_hybrid_NLO", 0.01)
-    assert dropped == 0 and len(in_window(x)) == 2
-
-
 @pytest.mark.parametrize(
     ("coords", "message"),
     [
@@ -443,7 +415,7 @@ def test_load_quasi_pdf_rejects_artifact_grids_kernels_cannot_integrate(coords, 
     store = {"quasi": _quasi_on(coords)}
 
     with pytest.raises(ValueError, match=message):
-        load_quasi_pdf(store, component="re")
+        load_quasi_pdf(store)
 
 
 def test_matching_consumes_in_memory_fourier_output_and_writes_primary_netcdf(tmp_path: Path) -> None:
@@ -457,7 +429,7 @@ def test_matching_consumes_in_memory_fourier_output_and_writes_primary_netcdf(tm
         name="fourier_transform",
     )
     store = {"quasi": data}
-    loaded = load_quasi_pdf(store, component="re")
+    loaded = load_quasi_pdf(store)
     store["kernel_matrix"] = np.eye(2)
     store["lc_x_ls"] = [-0.5, 0.5]
 
@@ -503,34 +475,22 @@ def test_plot_matched_pdf_writes_pdf_and_svg(tmp_path: Path) -> None:
     assert store["matching_plot"] == result
 
 
-def test_plot_matched_pdf_honors_explicit_limits(tmp_path: Path) -> None:
-    quasi = EnsembleData(
+def test_load_quasi_pdf_uses_fourier_artifact_channel() -> None:
+    data = EnsembleData(
         ensemble=None,
-        resample="bootstrap",
-        values=[np.array([1.0, 2.0]), np.array([1.1, 2.1])],
+        resample="jackknife",
+        values=[np.array([1 + 2j, 3 + 4j]), np.array([1.1 + 2.1j, 3.1 + 4.1j])],
         dims=("x",),
-        coords={"x": [-1.0, 1.0]},
-        attrs={"sector": "singlet"},
-        name="quasi_pdf",
+        coords={"x": [-0.5, 0.5]},
+        attrs={"component": "im"},
+        name="fourier_transform",
     )
-    lightcone = EnsembleData(
-        ensemble=None,
-        resample="bootstrap",
-        values=[np.array([0.9, 1.8]), np.array([1.0, 1.9])],
-        dims=("x",),
-        coords={"x": [-1.0, 1.0]},
-        name="lightcone_pdf",
-    )
-    store = {"quasi_y_ls": np.array([-1.0, 1.0]), "quasi_ed": quasi, "lightcone_ed": lightcone}
+    store = {"quasi": data}
 
-    result = plot_matched_pdf(
-        store,
-        artifacts_dir=tmp_path, job_id="matched_pdf",
-        ylim=[-0.2, 2.5],
-    )
+    loaded = load_quasi_pdf(store)
 
-    assert result["xlim"] == [-1.01, 1.01]
-    assert result["ylim"] == [-0.2, 2.5]
+    assert loaded["component"] == "im"
+    assert np.allclose(store["quasi_ed"].values, [[2.0, 4.0], [2.1, 4.1]])
 
 
 # --- leading-renormalon resummation (LRR), arXiv:2305.05212 -------------------

@@ -43,7 +43,6 @@ FORMULA_REFERENCES = {
 
 FOURIER_ARTIFACT_DESCRIPTIONS = {
     "fourier_artifact": "Fourier result samples and diagnostics",
-    "fit_info_artifact": "Tail-fit parameters and fit-quality diagnostics",
     "fourier_plot": "PDF plot of the Fourier-space result",
     "fourier_plot_image": "SVG companion for Markdown embedding",
     "extension_plot_re": "PDF plot of real-part extension quality",
@@ -54,7 +53,6 @@ FOURIER_ARTIFACT_DESCRIPTIONS = {
 
 FOURIER_ARTIFACT_ORDER = (
     "fourier_artifact",
-    "fit_info_artifact",
     "fourier_plot",
     "fourier_plot_image",
     "extension_plot_re",
@@ -441,7 +439,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
 
 
 def _fourier_transform_text(result: dict[str, Any], *, language: str) -> str:
-    part = str(result.get("part", "both")).lower()
+    part = str(result.get("component", result.get("part", "both"))).lower()
     phase = "x\\lambda"
     rotation = ""
     if str(result.get("target_observable", "")).lower() == "da":
@@ -495,7 +493,7 @@ def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
         "| Observable | Physical matrix element transformed by this stage. |",
         "| Sector | Requested physics projection; PDF/GPD accept `sea`, `valence`, `singlet`, and `full`, while DA uses `full`. |",
         "| Gauge-link treatment / tail order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{gfix}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
-        "| Active fitted part | Execution channel resolved from `sector`, or supplied manually when `sector` is omitted; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one channel. |",
+        "| Active fitted component | Execution channel resolved from `sector`, or supplied manually when `sector` is omitted; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one channel. |",
         "| Coordinate unit | Input coordinates and `scheme_scan` ranges are fixed physical distances in fm; the fit uses $z_{\\rm GeV^{-1}}=z_{\\rm fm}/(\\hbar c)$ and $\\lambda=\\bar P^z z_{\\rm GeV^{-1}}$, where $\\bar P^z=(P_i^z+P_f^z)/2$ (and $P_i^z=P_f^z$ for forward kinematics). |",
         "| Posterior-prior error scale | The mean fit gives $\\bar p_i\\pm\\sigma_{p_i}$; resampled fits use $p_i=\\bar p_i\\pm s\\sigma_{p_i}$. |",
     ]
@@ -507,7 +505,7 @@ def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
 
 def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     sector = str(result.get("sector", "full")).lower()
-    part = str(result.get("part", "both")).lower()
+    part = str(result.get("component", result.get("part", "both"))).lower()
     scale = float(result.get("output_scale", 1.0))
     target = str(result.get("target_observable", "pdf")).lower()
     parton = str(result.get("parton", "quark")).lower()
@@ -516,7 +514,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
     missing = result.get("missing_short_distance_coord", [])
     if target == "da":
         intro = (
-            f"This run uses `sector={sector}`, resolved internally to `part={part}`, "
+            f"This run uses `sector={sector}`, resolved internally to `component={part}`, "
             f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`. "
             "With the vector/tensor quark extended-distribution convention "
             "$q_{\\rm ext}(x)=q(x)$ for $x>0$ and $q_{\\rm ext}(-x)=-\\bar q(x)$, "
@@ -542,7 +540,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
                 "which equals $[q(x)-\\bar q(x)]/2$ for $x>0$."
             )
             if np.isclose(scale, 2.0):
-                meaning += " Therefore `part=re, output_scale=2` gives the valence combination $q(x)-\\bar q(x)$."
+                meaning += " Therefore `component=re, output_scale=2` gives the valence combination $q(x)-\\bar q(x)$."
             elif np.isclose(scale, 1.0):
                 meaning += " Therefore `output_scale=1` gives one half of the valence combination."
             else:
@@ -554,23 +552,23 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
                 "when the sign convention is aligned."
             )
             if np.isclose(scale, 2.0):
-                meaning += " Therefore `part=im, output_scale=2` corresponds to a $q(x)+\\bar q(x)$-type combination, with the overall sign set by the imaginary-part and `im_flip_for_ft` convention."
+                meaning += " Therefore `component=im, output_scale=2` corresponds to a $q(x)+\\bar q(x)$-type combination, with the overall sign set by the imaginary-part and `im_flip_for_ft` convention."
             elif np.isclose(scale, 1.0):
                 meaning += " Therefore `output_scale=1` gives one half of that combination."
             else:
                 meaning += f" The current scale {_fmt(scale)} returns this imaginary-part projection with that overall normalization."
         else:
-            meaning = "This `part` setting is not recognized, so only the numerical output scale is reported."
+            meaning = "This `component` setting is not recognized, so only the numerical output scale is reported."
         if truncated:
             meaning += " Because near-zero coordinates are missing, this projection statement applies only to the truncated sum and should not be interpreted as a fully normalized Fourier result or moment."
         return ["## Sector Physical Interpretation", intro, "", meaning]
     intro = (
-        f"This run uses `sector={sector}`, resolved internally to `part={part}`, "
+        f"This run uses `sector={sector}`, resolved internally to `component={part}`, "
         f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`."
     )
     if sector == "manual":
         intro = (
-            f"This run omits a named sector and directly uses `part={part}`, "
+            f"This run omits a named sector and directly uses `component={part}`, "
             f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`."
         )
         meaning = "The reported result is a manual real/imaginary projection; these numerical controls do not assign a named `sea`, `valence`, `singlet`, or `full` interpretation by themselves."
@@ -813,7 +811,7 @@ def _settings_table(
         ("Observable", f"`{observable}` ({observable_text})"),
         ("Sector", f"`{result.get('sector', 'full')}`"),
         ("Gauge-link treatment / tail order", f"`{gfix}` / `{order}`"),
-        ("Active fitted part", f"`{result.get('part', 'both')}`"),
+        ("Active fitted component", f"`{result.get('component', result.get('part', 'both'))}`"),
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
         ("Coordinate unit", r"fm input and scan; fit unit $\mathrm{GeV}^{-1}$"),
         ("Decay offset", f"$\\Lambda_0={_fmt(result.get('Lambda0_gev'))}$"),
@@ -849,51 +847,34 @@ def _settings_table(
     return lines
 
 
-def _artifact_field_table(kind: str, *, language: str, target_observable: str = "pdf") -> list[str]:
-    if kind == "result":
-        rows = [
-            ("`values`", "Complex final Fourier samples after fit-model averaging or best-model selection, with dimensions `(resample, x)`."),
-            ("coordinate `x`", "Fourier momentum-fraction grid."),
-            ("attr `resample`", "Resampling mode recorded by `EnsembleData`."),
-            ("attr `ft_re_mean` / `ft_im_mean`", "Final real/imaginary central values after fit-model averaging or best-model selection."),
-            ("attr `ft_re_stat_sdev` / `ft_im_stat_sdev`", "Statistical standard deviations from bootstrap/jackknife samples."),
-            ("attr `ft_re_sys_sdev` / `ft_im_sys_sdev`", "Weighted spread among fit-model candidates at fixed selected range."),
-            ("attr `scheme_labels`", "Fit-model labels at the selected range."),
-            ("attr `fit_failures`", "Number of failed resampled tail fits in each fit model."),
-            ("attrs `fit_model_*`", "Per-sample fit-model weights and diagnostics for `(order, prior width)` candidates."),
-            ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging."),
-            ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection."),
-            ("attrs `momentum_gev`, `final_momentum_gev`, `lattice_spacing_fm`", "Momentum and lattice-spacing metadata."),
-            ("attrs `sector`, `gfix`, `order`, `observable`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, gauge-link treatment, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
+def _artifact_field_table(*, language: str, target_observable: str = "pdf") -> list[str]:
+    rows = [
+        ("`values`", "Complex final Fourier samples after fit-model averaging or best-model selection, with dimensions `(resample, x)`."),
+        ("coordinate `x`", "Fourier momentum-fraction grid."),
+        ("attr `resample`", "Resampling mode recorded by `EnsembleData`."),
+        ("attr `ft_re_mean` / `ft_im_mean`", "Final real/imaginary central values after fit-model averaging or best-model selection."),
+        ("attr `ft_re_stat_sdev` / `ft_im_stat_sdev`", "Statistical standard deviations from bootstrap/jackknife samples."),
+        ("attr `ft_re_sys_sdev` / `ft_im_sys_sdev`", "Weighted spread among fit-model candidates at fixed selected range."),
+        ("attr `scheme_labels`", "Fit-model labels at the selected range."),
+        ("attr `fit_failures`", "Number of failed resampled tail fits in each fit model."),
+        ("attrs `fit_model_*`", "Per-sample fit-model weights and diagnostics for `(order, prior width)` candidates."),
+        ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging."),
+        ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection."),
+        ("attrs `momentum_gev`, `final_momentum_gev`, `lattice_spacing_fm`", "Momentum and lattice-spacing metadata."),
+        ("attrs `sector`, `gfix`, `order`, `observable`, `component`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, gauge-link treatment, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
+    ]
+    if target_observable in {"pdf", "gpd"}:
+        rows[-1:] = [
+            ("attrs `observable`, `observable_backend`, `parton`, `hadron`, `current_operator`, `polarization`, `sector`", "Resolved observable, numerical tail backend, operator provenance, and physics projection."),
+            ("attrs `gfix`, `order`, `component`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Gauge-link treatment, formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
         ]
-        if target_observable in {"pdf", "gpd"}:
-            rows[-1:] = [
-                ("attrs `observable`, `observable_backend`, `parton`, `hadron`, `current_operator`, `polarization`, `sector`", "Resolved observable, numerical tail backend, operator provenance, and physics projection."),
-                ("attrs `gfix`, `order`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Gauge-link treatment, formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
+    if target_observable == "gpd":
+        rows.extend(
+            [
+                ("attrs `bilocal_anchor`, `delta_momentum_gev`, `phase_momentum_source`", "Authored bilocal layout and the signed momentum transfer used to convert it to the centered convention."),
+                ("attrs `hermitian_partner_id`, `hermiticity_phase`, `gpd_completion_mode`", "Exchanged-flow provenance and the Hermiticity convention used to reconstruct negative z."),
             ]
-        if target_observable == "gpd":
-            rows.extend(
-                [
-                    ("attrs `bilocal_anchor`, `delta_momentum_gev`, `phase_momentum_source`", "Authored bilocal layout and the signed momentum transfer used to convert it to the centered convention."),
-                    ("attrs `hermitian_partner_id`, `hermiticity_phase`, `gpd_completion_mode`", "Exchanged-flow provenance and the Hermiticity convention used to reconstruct negative z."),
-                ]
-            )
-    else:
-        rows = [
-            ("`values`", "Fit-parameter samples with dimensions `(resample, scheme, parameter)`."),
-            ("coordinates `scheme`, `parameter`", "Scheme labels and fitted parameter names."),
-            ("attr `fit_params`", "Tail-fit parameters for every scheme and resample."),
-            ("attr `fit_param_center` / `fit_param_sdev`", "Sample mean and statistical standard deviation of fit parameters."),
-            ("attrs `fit_chi2`, `fit_dof`, `fit_q`, `fit_chi2_dof`", "Per-resample fit quality diagnostics."),
-            ("attrs `fit_chi2_center`, `fit_chi2_dof_center`, `fit_q_center`", "Sample-averaged fit quality diagnostics for each scheme."),
-            ("attrs `mean_fit_params`, `mean_fit_chi2`, `mean_fit_dof`, `mean_fit_q`, `mean_fit_log_gbf`", "Initial sample-average fit results used to seed resampled fits."),
-            ("attrs `fit_model_*`", "Per-sample weights and diagnostics for fixed-range fit-model averaging."),
-            ("attrs `candidate_scheme_*`, `selection_mode`", "Range-scan diagnostics and the two-stage selection mode."),
-        ]
-        if target_observable == "gpd":
-            rows.append(
-                ("attrs `bilocal_anchor`, `delta_momentum_gev`, `phase_momentum_source`, `hermitian_partner_id`, `hermiticity_phase`, `gpd_completion_mode`", "GPD bilocal-layout conversion and exchanged-flow completion provenance shared with the Fourier result.")
-            )
+        )
     header = "| Field | Meaning |"
     lines = [header, "|---|---|"]
     for field, description in rows:
@@ -904,8 +885,8 @@ def _artifact_field_table(kind: str, *, language: str, target_observable: str = 
 def _artifact_help(*, language: str, target_observable: str = "pdf") -> list[str]:
     return [
         "## Reading the NetCDF Outputs",
-        "`fourier_result.nc` stores complex Fourier-transform samples; `fourier_fit_info.nc` stores large-distance fit-parameter samples. "
-        "Both files can be read with `EnsembleData.from_netcdf`; diagnostics are stored in `data.attrs`.",
+        "`fourier_result.nc` stores complex Fourier-transform samples. "
+        "Read it with `EnsembleData.from_netcdf`; diagnostics are stored in `data.attrs`.",
         "```python",
         "from lamet_agent.core.data import EnsembleData",
         "data = EnsembleData.from_netcdf('fourier_result.nc')",
@@ -913,10 +894,7 @@ def _artifact_help(*, language: str, target_observable: str = "pdf") -> list[str
         "```",
         "",
         "### `fourier_result.nc` Field Reference",
-        *_artifact_field_table("result", language="en", target_observable=target_observable),
-        "",
-        "### `fourier_fit_info.nc` Field Reference",
-        *_artifact_field_table("fit_info", language="en", target_observable=target_observable),
+        *_artifact_field_table(language="en", target_observable=target_observable),
     ]
 
 

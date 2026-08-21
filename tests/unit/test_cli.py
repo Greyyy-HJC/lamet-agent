@@ -510,7 +510,6 @@ def _write_matching_manifest(path, *, out_of_range_lc: bool = False, unused_revi
     artifact_path.write_bytes(b"artifact")
     matching_defaults = {
         "scheme": "ratio",
-        "component": "re",
         "mu": 2.0,
         "lc_x_ls": {"start": -3.0, "stop": 3.0} if out_of_range_lc else {"start": 0.0, "stop": 1.0},
     }

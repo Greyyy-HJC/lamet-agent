@@ -786,7 +786,7 @@ def test_plan_normalizes_legacy_matching_kernel_stage(tmp_path: Path) -> None:
     payload["inputs"]["kernels"][0]["stage"] = "matching"
     payload["stages"] = {
         "perturbative_matching": {
-            "defaults": {"mu": 2.0, "component": "re"},
+            "defaults": {"mu": 2.0},
             "jobs": [{"id": "mt", "inputs": {"quasi": "ft"}}],
         }
     }
@@ -817,7 +817,7 @@ def test_plan_strict_validation_rejects_handwritten_matching_momentum_gev(tmp_pa
     payload["inputs"]["kernels"][0]["stage"] = "perturbative_matching"
     payload["stages"] = {
         "perturbative_matching": {
-            "defaults": {"momentum_gev": 2.15, "mu": 2.0, "component": "re"},
+            "defaults": {"momentum_gev": 2.15, "mu": 2.0},
             "jobs": [{"id": "mt", "inputs": {"quasi": "ft"}}],
         }
     }

@@ -1761,7 +1761,7 @@ def run_fourier_workflow(
         "sample_error_mode": sample_error_mode,
         "Lambda0_gev": float(Lambda0_gev),
         "posterior_prior_error_scale": float(posterior_prior_error_scale),
-        "part": part,
+        "component": part,
         "hadron": hadron,
         "psi1_flavor_class": str(psi1_flavor_class or "heavy").lower(),
         "psi2_flavor_class": str(psi2_flavor_class or "heavy").lower(),
@@ -1854,7 +1854,7 @@ def fourier_result_to_ensemble_data(result: dict[str, Any], source_ensemble: Ens
         "psi2_flavor_class": str(result.get("psi2_flavor_class", "heavy")),
         "coord_unit": str(result.get("coord_unit", "")),
         "fit_coord_unit": str(result.get("fit_coord_unit", "")),
-        "part": str(result.get("part", "both")),
+        "component": str(result.get("component", result.get("part", "both"))),
         "im_flip_for_ft": str(result.get("im_flip_for_ft", "")),
         "symmetry_guarantee": str(result.get("symmetry_guarantee", False)),
         "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
@@ -2090,148 +2090,6 @@ def _infer_h5_group(path: str, group_names: list[str]) -> str:
 def _svg_companion_path(path: Path) -> Path:
     """Return an SVG companion path for Markdown image embedding."""
     return path.with_suffix(".svg")
-
-
-def _save_fourier_fit_info_netcdf(path: Path, result: dict[str, Any], source_ensemble: EnsembleInfo | None = None) -> None:
-    schemes = result["scheme_results"]
-    fit_param_labels = []
-    for item in schemes:
-        for label in item["fit_param_labels"]:
-            if label not in fit_param_labels:
-                fit_param_labels.append(label)
-    fit_params = np.full((len(schemes), schemes[0]["fit_params"].shape[0], len(fit_param_labels)), np.nan, dtype=float)
-    mean_fit_params = np.full((len(schemes), len(fit_param_labels)), np.nan, dtype=float)
-    for idx, item in enumerate(schemes):
-        item_params = np.asarray(item["fit_params"], dtype=float)
-        item_mean_params = np.asarray(item["mean_fit_params"], dtype=float)
-        for local_idx, label in enumerate(item["fit_param_labels"]):
-            global_idx = fit_param_labels.index(label)
-            fit_params[idx, :, global_idx] = item_params[:, local_idx]
-            mean_fit_params[idx, global_idx] = item_mean_params[local_idx]
-    fit_chi2 = np.asarray([item["fit_chi2"] for item in schemes], dtype=float)
-    fit_dof = np.asarray([item["fit_dof"] for item in schemes], dtype=int)
-    fit_q = np.asarray([item["fit_q"] for item in schemes], dtype=float)
-    fit_log_gbf = np.asarray([item["fit_log_gbf"] for item in schemes], dtype=float)
-    mean_fit_chi2 = np.asarray([item["mean_fit_chi2"] for item in schemes], dtype=float)
-    mean_fit_dof = np.asarray([item["mean_fit_dof"] for item in schemes], dtype=int)
-    mean_fit_q = np.asarray([item["mean_fit_q"] for item in schemes], dtype=float)
-
-    resample_mode = _normalise_resample_mode(str(result.get("resample_mode", "bootstrap")))
-    sample_error_mode = normalize_sample_error_mode(str(result.get("sample_error_mode", "covariance")), resample_mode=resample_mode)
-    fit_chi2_dof = fit_chi2 / np.maximum(fit_dof, 1)
-    if fit_params.shape[1] < 2:
-        fit_param_sdev = np.zeros((fit_params.shape[0], fit_params.shape[2]), dtype=float)
-    else:
-        fit_param_sdev = np.asarray(
-            [_sample_sdev(item, resample_mode=resample_mode, sample_error_mode=sample_error_mode) for item in fit_params]
-        )
-
-    scheme_labels = np.asarray(result["scheme_labels"])
-    param_samples = np.moveaxis(fit_params, 1, 0)
-    ensemble_label = str(result.get("ensemble", ""))
-    fit_info_data = EnsembleData(
-        ensemble=EnsembleInfo(
-            source_ensemble.series if source_ensemble is not None else "",
-            ensemble_label,
-            source_ensemble.a_s if source_ensemble is not None else float(result.get("lattice_spacing_fm") or 1.0),
-            source_ensemble.a_t if source_ensemble is not None else float(result.get("lattice_spacing_fm") or 1.0),
-            source_ensemble.L_s if source_ensemble is not None else 1,
-            source_ensemble.L_t if source_ensemble is not None else 1,
-            source_ensemble.m_pi if source_ensemble is not None else 0.0,
-        ),
-        resample=resample_mode,
-        values=[param_samples[idx] for idx in range(param_samples.shape[0])],
-        dims=("scheme", "parameter"),
-        coords={"scheme": scheme_labels.tolist(), "parameter": fit_param_labels},
-        attrs={
-            "gfix": str(result.get("gfix", "")),
-            "order": str(result.get("order", "")),
-            "observable": str(result.get("observable", "")),
-            "part": str(result.get("part", "both")),
-            "hadron": str(result.get("hadron", "")),
-            **(
-                {
-                    "observable_backend": str(result.get("observable_backend", "")),
-                    "parton": str(result.get("parton", "")),
-                    "current_operator": str(result.get("current_operator", "")),
-                    "polarization": str(result.get("polarization", "unpolarized")),
-                }
-                if str(result.get("target_observable", "")).lower() in {"pdf", "gpd"}
-                else {}
-            ),
-            **(
-                {
-                    "bilocal_anchor": str(result.get("bilocal_anchor", "mid_at_0")),
-                    "hermitian_partner_id": str(result.get("hermitian_partner_id", "")),
-                    "hermiticity_phase": float(result.get("hermiticity_phase", 1.0)),
-                    "gpd_completion_mode": str(result.get("gpd_completion_mode", "single_flow")),
-                    "delta_momentum_gev": float(result.get("delta_momentum_gev", 0.0)),
-                    "phase_momentum_source": str(result.get("phase_momentum_source", "")),
-                    "sector_projection_mode": str(result.get("sector_projection_mode", "full_complex")),
-                }
-                if str(result.get("target_observable", "")).lower() == "gpd"
-                else {}
-            ),
-            "psi1_flavor_class": str(result.get("psi1_flavor_class", "heavy")),
-            "psi2_flavor_class": str(result.get("psi2_flavor_class", "heavy")),
-            "symmetry_guarantee": str(result.get("symmetry_guarantee", False)),
-            "Lambda0_gev": str(result.get("Lambda0_gev", 0.0)),
-            "sample_error_mode": str(result.get("sample_error_mode", "")),
-            "scheme_labels": json.dumps(scheme_labels.tolist()),
-            "fit_param_labels": json.dumps(fit_param_labels),
-            "fit_param_labels_by_model": json.dumps([item["fit_param_labels"] for item in schemes]),
-            "fit_params": json.dumps(fit_params.tolist()),
-            "fit_param_center": json.dumps(np.mean(fit_params, axis=1).tolist()),
-            "fit_param_sdev": json.dumps(fit_param_sdev.tolist()),
-            "fit_chi2": json.dumps(fit_chi2.tolist()),
-            "fit_dof": json.dumps(fit_dof.tolist()),
-            "fit_q": json.dumps(fit_q.tolist()),
-            "fit_log_gbf": json.dumps(fit_log_gbf.tolist()),
-            "fit_chi2_dof": json.dumps(fit_chi2_dof.tolist()),
-            "fit_chi2_center": json.dumps(np.mean(fit_chi2, axis=1).tolist()),
-            "fit_chi2_dof_center": json.dumps(np.mean(fit_chi2_dof, axis=1).tolist()),
-            "fit_q_center": json.dumps(np.mean(fit_q, axis=1).tolist()),
-            "mean_fit_params": json.dumps(mean_fit_params.tolist()),
-            "mean_fit_chi2": json.dumps(mean_fit_chi2.tolist()),
-            "mean_fit_dof": json.dumps(mean_fit_dof.tolist()),
-            "mean_fit_q": json.dumps(mean_fit_q.tolist()),
-            "mean_fit_log_gbf": json.dumps(np.asarray(result.get("fit_model_logGBF", []), dtype=float).tolist()),
-            "fit_model_labels": json.dumps(np.asarray(result.get("fit_model_labels", [])).tolist()),
-            "fit_model_orders": json.dumps(np.asarray(result.get("fit_model_orders", [])).tolist()),
-            "fit_model_prior_widths": json.dumps(
-                np.asarray(result.get("fit_model_prior_widths", []), dtype=float).tolist()
-            ),
-            "fit_model_weights": json.dumps(np.asarray(result.get("fit_model_weights", []), dtype=float).tolist()),
-            "fit_model_mean_weights": json.dumps(
-                np.asarray(result.get("fit_model_mean_weights", []), dtype=float).tolist()
-            ),
-            "fit_model_q": json.dumps(np.asarray(result.get("fit_model_q", []), dtype=float).tolist()),
-            "fit_model_chi2_dof": json.dumps(
-                np.asarray(result.get("fit_model_chi2_dof", []), dtype=float).tolist()
-            ),
-            "fit_model_log_gbf": json.dumps(np.asarray(result.get("fit_model_logGBF", []), dtype=float).tolist()),
-            "best_fit_model_index_by_sample": json.dumps(
-                np.asarray(result.get("best_fit_model_index_by_sample", []), dtype=int).tolist()
-            ),
-            "candidate_scheme_labels": json.dumps(np.asarray(result.get("candidate_scheme_labels", [])).tolist()),
-            "candidate_scheme_fit_chi2_dof": json.dumps(
-                np.asarray(result.get("candidate_scheme_fit_chi2_dof", []), dtype=float).tolist()
-            ),
-            "candidate_scheme_q": json.dumps(
-                np.asarray(result.get("candidate_scheme_q", []), dtype=float).tolist()
-            ),
-            "candidate_scheme_log_gbf": json.dumps(
-                np.asarray(result.get("candidate_scheme_logGBF", []), dtype=float).tolist()
-            ),
-            "selected_candidate_index": json.dumps(
-                np.asarray(result.get("selected_candidate_index", -1), dtype=int).tolist()
-            ),
-            "selected_candidate_label": str(result.get("selected_candidate_label", "")),
-            "selection_mode": str(result.get("selection_mode", "")),
-        },
-        name="fourier_fit_parameters",
-    )
-    fit_info_data.to_netcdf(path)
 
 
 def _positive_grid(coord: np.ndarray) -> np.ndarray:
@@ -2671,7 +2529,7 @@ def run_fourier_transform(
     Lambda0_gev: float,
     posterior_prior_error_scale: float | list[float],
     sample_error_mode: str,
-    part: str,
+    component: str,
     output_scale: float,
     sector: str | None = None,
     current_operator: str | None = None,
@@ -2680,9 +2538,6 @@ def run_fourier_transform(
     hermitian_partner_id: str | None = None,
     psi1_flavor_class: str | None = None,
     psi2_flavor_class: str | None = None,
-    plot_fourier: dict[str, Any] | None = None,
-    plot_extension: dict[str, Any] | None = None,
-    report: dict[str, Any] | None = None,
     artifacts_dir: str | None = None,
     job_id: str | None = None,
     workers: int,
@@ -2695,6 +2550,7 @@ def run_fourier_transform(
     if symmetry_guarantee is not None and not isinstance(symmetry_guarantee, bool):
         raise ValueError("symmetry_guarantee must be a boolean")
     out = "fourier_result"
+    part = str(component)
     sector = None if sector is None else str(sector).strip().lower()
     parton = str(parton).strip().lower()
     hadron = str(hadron).strip().lower()
@@ -3074,7 +2930,7 @@ def run_fourier_transform(
         if len(candidate_diagnostics["fit_model_prior_widths"]) == 1
         else candidate_diagnostics["fit_model_prior_widths"]
     )
-    result["part"] = str(part)
+    result["component"] = str(part)
     result["hadron"] = hadron
     result["psi1_flavor_class"] = psi1_flavor_class
     result["psi2_flavor_class"] = psi2_flavor_class
@@ -3121,30 +2977,15 @@ def run_fourier_transform(
     store[out] = result
     stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="fourier_result")
     artifact = stem.with_suffix(".nc")
-    fit_info_artifact = stem.with_name(f"{stem.name}_fit_info.nc")
     store["fourier_result_data"].to_netcdf(artifact)
-    _save_fourier_fit_info_netcdf(fit_info_artifact, result, source_ensemble=matrix_element_data.ensemble)
     result["artifact"] = str(artifact)
-    result["fit_info_artifact"] = str(fit_info_artifact)
     summary = summarize_fourier_result(store)
-    plot_kwargs = dict(plot_fourier or {})
-    plot_kwargs.pop("save_path", None)
-    plot_kwargs.setdefault("artifact_path", str(artifact))
-    extension_kwargs = dict(plot_extension or {})
-    extension_kwargs.pop("save_path", None)
-    plot = plot_fourier_result(store, artifacts_dir=artifacts_dir, job_id=job_id, **plot_kwargs)
-    extension_plot = plot_fourier_extension_quality_result(store, artifacts_dir=artifacts_dir, job_id=job_id, **extension_kwargs)
-    report_result = {}
-    if isinstance(report, dict) and report.get("enabled"):
-        report_kwargs = dict(report)
-        report_kwargs.pop("enabled", None)
-        report_kwargs.pop("save_path", None)
-        report_result = report_fourier_result(store, artifacts_dir=artifacts_dir, job_id=job_id, **report_kwargs)
+    plot = plot_fourier_result(store, artifacts_dir=artifacts_dir, job_id=job_id, artifact_path=str(artifact))
+    extension_plot = plot_fourier_extension_quality_result(store, artifacts_dir=artifacts_dir, job_id=job_id)
     store["output"] = store["fourier_result_data"]
     return {
         "out": out,
         "artifact": str(artifact),
-        "fit_info_artifact": str(fit_info_artifact),
         "summary": summary["out"],
         "plot": plot["plot"],
         "plot_image": plot.get("plot_image"),
@@ -3152,7 +2993,6 @@ def run_fourier_transform(
         "plot_re_image": extension_plot.get("plot_re_image"),
         "plot_im": extension_plot["plot_im"],
         "plot_im_image": extension_plot.get("plot_im_image"),
-        "report": report_result.get("report"),
         "n_schemes": int(result["ft_re_samples"].shape[0]),
         "n_samples": int(np.asarray(result["final_ft_re_samples"]).shape[0]),
         "n_y": int(np.asarray(result["final_ft_re_samples"]).shape[1]),
@@ -3205,11 +3045,10 @@ def summarize_fourier_result(
         "fit_model_logGBF": list(data.get("fit_model_logGBF", [])),
         "selected_range_label": data.get("selected_range_label"),
         "selected_fit_range": data.get("selected_fit_range"),
-        "fit_info_artifact": data.get("fit_info_artifact"),
         "output_scale": data.get("output_scale", 1.0),
         "symmetry_guarantee": data.get("symmetry_guarantee", False),
         "Lambda0_gev": data.get("Lambda0_gev", 0.0),
-        "sector": data.get("sector", data.get("part", "full")),
+        "sector": data.get("sector", data.get("component", data.get("part", "full"))),
     }
     if str(data.get("target_observable", "")).lower() in {"pdf", "gpd"}:
         summary.update(
@@ -3334,7 +3173,6 @@ def report_fourier_result(
     output = stem.with_name(f"{stem.name}_report.md")
     artifacts = {
         "fourier_artifact": data.get("artifact") or str(stem.with_suffix(".nc")),
-        "fit_info_artifact": data.get("fit_info_artifact"),
     }
     if isinstance(store.get("fourier_plot"), dict):
         artifacts["fourier_plot"] = store["fourier_plot"].get("plot")
@@ -3360,7 +3198,6 @@ def report_fourier_result(
     report = {
         "report": str(paths["report"]),
         "source": artifacts.get("fourier_artifact"),
-        "fit_info_artifact": artifacts.get("fit_info_artifact"),
     }
     store["fourier_report"] = report
     return report

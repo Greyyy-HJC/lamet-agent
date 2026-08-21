@@ -196,7 +196,7 @@ def test_manifest_accepts_fourier_lambda0_gev() -> None:
     AnalysisManifest.model_validate(_fourier_payload())
 
 
-@pytest.mark.parametrize("parameter", ["component", "coord_unit", "observable", "target_observable", "y_grid"])
+@pytest.mark.parametrize("parameter", ["part", "coord_unit", "observable", "target_observable", "y_grid"])
 def test_manifest_rejects_removed_fourier_inputs(parameter: str) -> None:
     payload = _fourier_payload()
     payload["stages"]["fourier_transform"]["defaults"][parameter] = "fm"
@@ -261,7 +261,11 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
 
     assert isinstance(sector, ParameterSpec)
     assert sector.required is False
-    assert "component" not in contract.schema
+    component = contract.schema["component"]
+    assert isinstance(component, ParameterSpec)
+    assert component.choices == ("re", "im", "both")
+    assert component.default == "both"
+    assert "part" not in contract.schema
     assert isinstance(quasi_y_ls, ParameterSpec)
     assert quasi_y_ls.required is True
     assert isinstance(gfix, ParameterSpec)
@@ -298,17 +302,27 @@ def test_stage_contract_renders_one_human_facing_parameter_reference() -> None:
     assert guidance["input_role_descriptions"]["input"].startswith("One renormalized")
 
 
-def test_matching_rejects_component_not_supported_by_runtime() -> None:
+@pytest.mark.parametrize(
+    ("parameter", "value"),
+    [
+        ("component", "re"),
+        ("endpoint_cut", 0.01),
+        ("plot", {"xlim": [-1.0, 1.0], "ylim": [-0.2, 1.0]}),
+        ("xlim", [-1.0, 1.0]),
+        ("ylim", [-0.2, 1.0]),
+    ],
+)
+def test_matching_rejects_removed_parameters(parameter: str, value: object) -> None:
     payload = _payload()
     payload["metadata"]["stages"] = ["perturbative_matching"]
     payload["stages"] = {
         "perturbative_matching": {
-            "defaults": {"component": "both", "scheme": "ratio"},
+            "defaults": {parameter: value, "scheme": "ratio"},
             "jobs": [{"id": "mt"}],
         }
     }
 
-    with pytest.raises(ValidationError, match=r"component.*\['re', 'im'\]"):
+    with pytest.raises(ValidationError, match=rf"{parameter} is no longer supported"):
         AnalysisManifest.model_validate(payload)
 
 
@@ -398,8 +412,8 @@ def test_manifest_rejects_run_wide_stage_parameter() -> None:
         ),
         (
             "perturbative_matching",
-            {"plot": {"xlim": [-1.0, 1.0], "ylimm": [-0.2, 1.0]}},
-            r"stages\.perturbative_matching\.defaults\.plot\.ylimm",
+            {"lc_x_ls": {"start": -1.0, "stop": 1.0, "numm": 10}},
+            r"stages\.perturbative_matching\.defaults\.lc_x_ls\.numm",
         ),
     ],
 )

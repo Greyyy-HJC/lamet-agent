@@ -35,7 +35,7 @@ _WRITING_TOOLS = frozenset(
     }
 )
 _RENORM_SELF_FIT_PARAM_KEYS = frozenset({"LambdaQCD_gev", "d", "kernel_id", "mu", "svdcut"})
-_FOURIER_LOAD_KEYS = frozenset({"input_format", "h5_group", "coord_key", "re_key", "im_key", "resample_mode"})
+_FOURIER_LOAD_KEYS = frozenset({"resample_mode"})
 _FOURIER_RUN_KEYS = frozenset(
     {
         "quasi_y_ls",
@@ -68,17 +68,13 @@ _FOURIER_RUN_KEYS = frozenset(
         "hermitian_partner_id",
         "posterior_prior_error_scale",
         "sample_error_mode",
-        "part",
+        "component",
         "output_scale",
-        "plot_fourier",
-        "plot_extension",
-        "report",
     }
 )
 _MATCHING_KERNEL_KEYS = frozenset(
     {"kernel_id", "momentum_gev", "mu", "zs_fm", "lc_x_ls", "rgr_kappa", "rgr_mu_min_gev"}
 )
-_MATCHING_APPLY_KEYS = frozenset({"endpoint_cut"})
 
 
 def setup_logger(
@@ -169,14 +165,8 @@ def stage_artifact_stem(
 
 def _strip_output_path_overrides(resolved: dict[str, Any]) -> dict[str, Any]:
     """Drop LLM/manifest keys that used to choose an output location."""
-    for key in ("save_path", "log_dir", "log_path", "output_dir"):
+    for key in ("save_path", "log_dir", "log_path", "output_dir", "plot_fourier", "plot_extension", "report"):
         resolved.pop(key, None)
-    for key in ("plot_fourier", "plot_extension", "report"):
-        nested = resolved.get(key)
-        if isinstance(nested, dict) and "save_path" in nested:
-            nested = dict(nested)
-            nested.pop("save_path", None)
-            resolved[key] = nested
     return resolved
 
 
@@ -815,7 +805,6 @@ def prepare_tool_args(
             matching = parameters
             matching["kernel_id"] = resolve_kernel_id(declared_id, matching.get("scheme"))
         if tool_name == "load_quasi_pdf":
-            resolved["component"] = matching["component"]
             if isinstance(quasi, ArtifactInput):
                 resolved["path"] = quasi.path
             elif "path" not in resolved:
@@ -824,17 +813,8 @@ def prepare_tool_args(
                     resolved["path"] = artifact_path
         elif tool_name == "build_matching_kernel":
             resolved.update({key: matching[key] for key in _MATCHING_KERNEL_KEYS if key in matching})
-        elif tool_name == "apply_matching":
-            resolved.update({key: matching[key] for key in _MATCHING_APPLY_KEYS if key in matching})
-        elif tool_name == "plot_matched_pdf":
-            plot = matching.get("plot", {})
-            if isinstance(plot, dict):
-                resolved.update({key: plot[key] for key in ("xlim", "ylim") if key in plot})
-            resolved.update({key: matching[key] for key in ("xlim", "ylim") if key in matching})
-            if "sector" in matching:
-                resolved["sector"] = matching["sector"]
         elif tool_name == "report_matching_result":
-            resolved.update({key: matching[key] for key in ("kernel_id", "momentum_gev", "mu", "zs_fm", "component") if key in matching})
+            resolved.update({key: matching[key] for key in ("kernel_id", "momentum_gev", "mu", "zs_fm") if key in matching})
     if stage == "extrapolation" and tool_name == "run_extrapolation":
         extrapolation = dict(effective_params)
         resolved["lightcone"] = "lightcone"

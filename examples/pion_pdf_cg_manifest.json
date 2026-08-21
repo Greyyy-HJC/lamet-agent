@@ -24,7 +24,7 @@
       {
         "correlator_id": "a060_x_2pt",
         "correlator_type": "2pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5",
+        "data_path": "data_pion_pdf_cg/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
@@ -40,7 +40,7 @@
       {
         "correlator_id": "a060_x_3pt",
         "correlator_type": "3pt",
-        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_free_3pt.h5",
+        "data_path": "data_pion_pdf_cg/correlators/HISQa060_X/3pt/HISQa060_X_free_3pt.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
@@ -247,7 +247,6 @@
       "defaults": {
         "scheme": "hybrid",
         "mu": 2.0,
-        "component": "re",
         "lc_x_ls": {
           "start": 0,
           "stop": 1
