@@ -39,6 +39,9 @@ discretization (loop + plus prescription + LO delta) is shared.
 
 from __future__ import annotations
 
+import contextlib
+import functools
+import inspect
 import types
 from typing import Any, Callable, Final
 
@@ -307,8 +310,28 @@ def C_hybrid(ksi: float, log_scale: float, y: float, zspz: float, eps: float = 1
 DensityFn = Callable[[float, float], float]
 
 
+# RGR calls a fixed-order builder once per output row, so the builder's own bar would
+# print a fresh line for every x. ``_quiet_progress`` lets a caller that is already showing
+# its own bar silence the inner ones.
+_PROGRESS_SILENCED = False
+
+
+@contextlib.contextmanager
+def _quiet_progress():
+    """Suppress the progress bars of nested kernel builds for the duration of the block."""
+    global _PROGRESS_SILENCED
+    previous = _PROGRESS_SILENCED
+    _PROGRESS_SILENCED = True
+    try:
+        yield
+    finally:
+        _PROGRESS_SILENCED = previous
+
+
 def _progress(iterable, *, desc: str, leave: bool = True):
     """Wrap ``iterable`` in tqdm when it is installed; otherwise return it unchanged."""
+    if _PROGRESS_SILENCED:
+        return iterable
     try:
         from tqdm import tqdm
     except Exception:
@@ -331,7 +354,9 @@ class _NoOpBar:
 
 
 def _progress_bar(*, total: int, desc: str):
-    """Manual tqdm bar for multi-loop work; no-ops when tqdm is missing."""
+    """Manual tqdm bar for multi-loop work; no-ops when tqdm is missing or silenced."""
+    if _PROGRESS_SILENCED:
+        return _NoOpBar()
     try:
         from tqdm import tqdm
     except Exception:
@@ -414,8 +439,13 @@ def build_matching_matrix(
     # the same np.interp(..., left=0, right=0) trick the examples use to move a curve
     # between grids. Collapses to the identity when the grids coincide.
     identity = _lo_interp_matrix(x_grid, y_grid)
-    # For each y column, the x row closest to that y point carries the plus-function.
-    diag_rows = np.abs(x_grid[:, None] - y_grid[None, :]).argmin(axis=0)
+    # For each y column, the x row sitting ON that y point carries the plus-function. A
+    # column whose y is outside the requested light-cone window has no such row and so gets
+    # no subtraction here -- in the full-grid matrix that subtraction lives on a row this
+    # window does not contain.
+    offsets = np.abs(x_grid[:, None] - y_grid[None, :])
+    diag_rows = offsets.argmin(axis=0)
+    has_diag = offsets[diag_rows, np.arange(ny)] <= eps * np.maximum(np.abs(y_grid), 1.0)
 
     # 1) Off-diagonal (x != y) regular entries from the density. The tolerance is
     #    relative to |y| -- for a PDF density that is exactly the old |1 - x/y| <= eps.
@@ -427,8 +457,15 @@ def build_matching_matrix(
 
     # 2) Plus-prescription: make every y column integrate to zero, then add the
     #    optional finite scheme-conversion term on that column's nearest x row.
+    # The subtraction is the density integrated over the FULL convolution domain, so it is
+    # summed on the quasi grid -- not over whichever output rows were asked for. Narrowing
+    # lc_x_ls then selects rows without altering them, and the square case is unchanged
+    # because there the two sums are the same numbers.
+    column_totals = _column_plus_totals(y_grid, density, eps)
     for idy, diag_row in enumerate(diag_rows):
-        nlo_matrix[int(diag_row), idy] -= np.sum(nlo_matrix[:, idy])
+        if not has_diag[idy]:
+            continue
+        nlo_matrix[int(diag_row), idy] -= column_totals[idy]
         if diagonal_extra is not None:
             nlo_matrix[int(diag_row), idy] += diagonal_extra(float(y_grid[idy])) / dy
 
@@ -1651,6 +1688,28 @@ def C_z_lrr(
     return float(term1 + term2)
 
 
+def _column_plus_totals(y_grid: np.ndarray, density: DensityFn, eps: float) -> np.ndarray:
+    """Column-wise plus-prescription subtraction, summed over the FULL quasi grid.
+
+    ``LRR.nb``'s ``SubMGen`` puts ``-Sum[..., {k != i}]`` on each column's diagonal, with k
+    running over the whole grid -- it has only one grid, so the question never arises there.
+    Once the light-cone output window is narrower than the quasi grid, summing over the rows
+    that happen to be present would shrink the subtraction and change every retained row.
+    Summing on the quasi grid instead keeps each row a property of its own x, so narrowing
+    lc_x_ls selects rows rather than altering them, and reproduces the square case exactly.
+    """
+    y = np.asarray(y_grid, dtype=float)
+    totals = np.zeros(y.size)
+    for idy, y_val in enumerate(y):
+        column = 0.0
+        for y_row in y:
+            if np.abs(y_row - y_val) <= eps * np.abs(y_val):
+                continue
+            column += density(float(y_row), float(y_val))
+        totals[idy] = column
+    return totals
+
+
 def _plus_prescription_matrix(
     x_grid: np.ndarray, y_grid: np.ndarray, density: DensityFn, eps: float
 ) -> np.ndarray:
@@ -1665,14 +1724,18 @@ def _plus_prescription_matrix(
     y = np.asarray(y_grid, dtype=float)
     dy = float(np.abs(np.diff(y)[0]))
     matrix = np.zeros((len(x), len(y)))
-    diag_rows = np.abs(x[:, None] - y[None, :]).argmin(axis=0)
+    offsets = np.abs(x[:, None] - y[None, :])
+    diag_rows = offsets.argmin(axis=0)
+    has_diag = offsets[diag_rows, np.arange(len(y))] <= eps * np.maximum(np.abs(y), 1.0)
     for idx, x_val in enumerate(_progress(x, desc="matching LRR kernel")):
         for idy, y_val in enumerate(y):
             if np.abs(x_val - y_val) <= eps * np.abs(y_val):
                 continue
             matrix[idx, idy] = density(x_val, y_val)
+    column_totals = _column_plus_totals(y, density, eps)
     for idy, diag_row in enumerate(diag_rows):
-        matrix[int(diag_row), idy] -= np.sum(matrix[:, idy])
+        if has_diag[idy]:
+            matrix[int(diag_row), idy] -= column_totals[idy]
     return matrix * dy
 
 
@@ -1705,25 +1768,28 @@ def _lrr_improve(
             return 0.0
         return C_z_lrr(x / y, y, momentum_gev, zspz, eps_m, eps) / np.abs(y)
 
-    m_cz = _plus_prescription_matrix(x_ls, y_ls, density_cz, eps)
+    # C_z plays two roles, and they need different shapes once the light-cone and quasi
+    # grids differ: it is ADDED to the (nx, ny) fixed-order matrix, and it is EXPONENTIATED,
+    # which needs a square matrix. The exponential multiplies from the right, so it contracts
+    # the column (quasi) index -- hence (ny, ny) there and (nx, ny) in the sum, giving
+    # (nx, ny) @ (ny, ny) = (nx, ny).
+    #
+    # Which grid the exponent belongs on is fixed by the notebook, not chosen here. LRR.nb
+    # writes ``(... + r0 MCz) . MatrixExp[-MCz rsumPV]`` -- the exponential multiplies from
+    # the RIGHT, so it contracts the left factor's column index, and the column index is the
+    # quasi one. A (nx, nx) exponent could only multiply from the left, which is the other
+    # side from what the source writes. With equal grids the distinction is invisible, which
+    # is why it has to be read off the ordering rather than off the shapes.
+    m_cz_sum = _plus_prescription_matrix(x_ls, y_ls, density_cz, eps)
+    m_cz_exp = (
+        m_cz_sum
+        if x_ls.shape == y_ls.shape and np.allclose(x_ls, y_ls, rtol=0.0, atol=1e-12)
+        else _plus_prescription_matrix(y_ls, y_ls, density_cz, eps)
+    )
     alpha_s = alphas_nloop(mu, order=1, Nf=nf)
     rsum_pv = dPVasym(1.0, mu, nf, alpha_s)
     r0 = rnasym(0, 1.0, mu, nf) * alpha_s
-    return (fixed_order_matrix + r0 * m_cz) @ expm(-m_cz * rsum_pv)
-
-
-def _require_square_grid(lc_x_ls: np.ndarray, quasi_y_ls: np.ndarray | None) -> np.ndarray:
-    """Return the shared grid, rejecting distinct lc/quasi grids the matrix exponential can't take."""
-    x = np.asarray(lc_x_ls, dtype=float)
-    if quasi_y_ls is None:
-        return x
-    y = np.asarray(quasi_y_ls, dtype=float)
-    if x.shape != y.shape or not np.allclose(x, y, rtol=0.0, atol=1e-12):
-        raise ValueError(
-            "LRR kernels resum via a matrix exponential and so need lc_x_ls == quasi_y_ls "
-            "(a single square grid); pass matching grids or leave lc_x_ls unset."
-        )
-    return x
+    return (fixed_order_matrix + r0 * m_cz_sum) @ expm(-m_cz_exp * rsum_pv)
 
 
 def _lrr_from_fixed_order(
@@ -1746,9 +1812,10 @@ def _lrr_from_fixed_order(
     """
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid (LRR) matching kernel.")
-    x = _require_square_grid(lc_x_ls, quasi_y_ls)
-    m_fix = fixed_order_builder(x, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=x, eps=eps, zspz=zspz)
-    return _lrr_improve(m_fix, x, x, momentum_gev, mu, float(zspz), eps, restrict_unit_interval=restrict_unit_interval)
+    x = np.asarray(lc_x_ls, dtype=float)
+    y = x if quasi_y_ls is None else np.asarray(quasi_y_ls, dtype=float)
+    m_fix = fixed_order_builder(x, momentum_gev=momentum_gev, mu=mu, quasi_y_ls=y, eps=eps, zspz=zspz)
+    return _lrr_improve(m_fix, x, y, momentum_gev, mu, float(zspz), eps, restrict_unit_interval=restrict_unit_interval)
 
 
 @kernel_reference("2305.05212", "Eqs. (12)-(17)")
@@ -1824,6 +1891,481 @@ def GI_gzg5_DA_hybrid_LRR_NLO(
     )
 
 
+# --- RGR: resummation of the small-x logarithm (arXiv:2602.11283) -------------
+# Tagged with arXiv:2209.01236, the paper the RGR procedure is DERIVED in (its appendix
+# "A Method Solving RG Equation"), following the same convention as the LRR kernels: the
+# tag names the resummation's source, not the fixed order's. arXiv:2602.11283 -- where the
+# fixed-order hybrid coefficient comes from -- only restates the procedure in prose, with
+# no numbered equation to cite. Its "Renormalization group evolution" subsubsection says:
+#
+#   The matching coefficient carries ln(mu^2/(2 y P^z)^2). Because y is the convolution
+#   variable, those logs cannot be resummed as they stand; the physical logs after the
+#   convolution are ln(mu^2/(2 x P^z)^2), which blow up at SMALL x. So: for each x, match
+#   the quasi-PDF at that x's own natural scale mu0(x) = 2 kappa x P^z (kappa ~ 1), then
+#   DGLAP-evolve the result to the fixed MSbar scale mu. Two-loop DGLAP makes it NLL.
+#   Where alpha_s(2 x P^z) >~ 1 perturbation theory is gone, which is what fixes x_min --
+#   rows below ``mu_min`` are zeroed rather than reported as a number.
+#
+# Transcribed from CG_RGR_kernels.nb (whose section titles say "Threshold Resummation";
+# that is a misnomer -- the paper explicitly postpones threshold resummation, and the
+# notebook's ``fNloInvMatrixRgr`` is this small-x RGR).
+#
+# The ``re`` in the id is the quasi-PDF channel this kernel matches. arXiv:2602.11283
+# renormalizes the two parts in two different schemes and states what each one measures:
+# "the real and imaginary parts ... correspond to the valence and full quark channels ...
+# respectively". So ``re`` and ``im`` differ in BOTH their fixed-order kernel (hybrid vs
+# MSbar) and their two-loop DGLAP kernel, because valence and full are the two C-parity
+# non-singlet combinations and P_NS^+ != P_NS^- from two loops on.
+#
+# The trap: which C-parity ``re`` picks up DEPENDS ON THE POLARIZATION, because the
+# quasi-distributions themselves have different charge-conjugation properties. The same
+# paper: "the full helicity distribution is obtained from the real part ..., since the
+# helicity quasi-distribution is even under charge conjugation."
+#
+#                    re (hybrid)              im (MSbar)
+#   unpolarized      valence  (C-odd)         full     (C-even)
+#   helicity         full     (C-even)        valence  (C-odd)
+#
+# That flip is why the helicity RGR kernel below does NOT reuse the unpolarized splitting
+# function even though the two share one fixed-order coefficient. (It is also why one
+# splitting function serves unpolarized-im and helicity-im alike: the two-loop identity
+# Delta P_NS^{+-} = P_NS^{-+} makes those two the same function.)
+#
+# The scheme token already implies the channel (hybrid = re, MSbar = im), but naming it is
+# what lets the combined channel exist as ``reim`` -- ``re+im`` cannot be a Python name.
+#
+# Unlike LRR, RGR is NOT operator universal: the two-loop DGLAP splitting function differs
+# between unpolarized, helicity and transversity, so gamma^t and gamma^t gamma5 -- which
+# SHARE one fixed-order hybrid coefficient -- need separate RGR kernels.
+
+_ALPHAS_MZ: Final = 0.1179
+_M_Z: Final = 91.1876
+_M_B: Final = 4.18
+_M_C: Final = 1.27
+_RUNNING_STEPS: Final = 100  # nPoints in the notebook
+_BETA_ORDER: Final = 2  # orderDefault: two-loop beta
+# constantRules = {CF -> 4/3, CA -> 3, NF -> 4, TF -> 1/2}. NF here is the flavour number
+# inside the splitting functions, fixed at 4; the running alpha_s switches nf at the
+# thresholds independently, exactly as the notebook does.
+_SPLIT_CF: Final = 4.0 / 3.0
+_SPLIT_CA: Final = 3.0
+_SPLIT_NF: Final = 4.0
+
+
+def _beta_coefficient(index: int, nf: float) -> float:
+    """``betaCoeff[index][nf]`` of the notebook (index 0 = one loop)."""
+    if index == 0:
+        return (33.0 - 2.0 * nf) / (12.0 * np.pi)
+    if index == 1:
+        return (153.0 - 19.0 * nf) / (24.0 * np.pi**2)
+    if index == 2:
+        return (2857.0 - (5033.0 / 9.0) * nf + (325.0 / 27.0) * nf**2) / (128.0 * np.pi**3)
+    if index == 3:
+        return (29243.0 - 6946.3 * nf + 405.089 * nf**2 + 1.49931 * nf**3) / (4.0 * np.pi) ** 4
+    raise ValueError(f"beta coefficient index {index} is not tabulated.")
+
+
+def _beta(nf: float, alpha: float, order: int) -> float:
+    """``beta[nf, alpha, order] = -Sum[betaCoeff[i-1][nf] alpha^(i+1), {i, 1, order}]``."""
+    return -sum(_beta_coefficient(i - 1, nf) * alpha ** (i + 1) for i in range(1, order + 1))
+
+
+def _run_alpha(nf: float, mu_from: float, mu_to: float, alpha_from: float, order: int) -> float:
+    """Evolve alpha_s from ``mu_from`` to ``mu_to`` at fixed ``nf`` (RK4 in t = ln mu^2).
+
+    The notebook's ``running``: ``nPoints`` Runge-Kutta steps of size
+    ``(Log[mu_to^2] - Log[mu_from^2]) / nPoints``. beta carries all the scale dependence
+    through alpha itself, so the step needs no explicit t.
+    """
+    step = (np.log(mu_to**2) - np.log(mu_from**2)) / _RUNNING_STEPS
+    alpha = float(alpha_from)
+    for _ in range(_RUNNING_STEPS):
+        k1 = _beta(nf, alpha, order)
+        k2 = _beta(nf, alpha + step * k1 / 2.0, order)
+        k3 = _beta(nf, alpha + step * k2 / 2.0, order)
+        k4 = _beta(nf, alpha + step * k3, order)
+        alpha = alpha + step / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+    return alpha
+
+
+@functools.lru_cache(maxsize=4096)
+def _alpha_s(mu: float) -> float:
+    """alpha_s(mu) in MSbar, run down from alpha_s(m_Z) with nf thresholds at m_b and m_c.
+
+    The threshold chain is the notebook's: nf=5 from m_Z, nf=4 below m_b, nf=3 below m_c,
+    each leg starting from the previous leg's endpoint so alpha_s stays continuous.
+
+    One deliberate difference from the source: the notebook evaluates alpha_s through a cubic
+    ``Interpolation`` over a precomputed mu grid, whose knots carry a kink where nf changes.
+    Cubic interpolation smooths that kink, so notebook values within a narrow window above
+    m_c are pulled by the nf=3 branch -- at mu = 1.279 the two differ by 5e-5 relative, while
+    everywhere else they agree to 1e-9. Switching nf exactly at the threshold, as here, is the
+    more accurate of the two; the residual shows up as a ~1e-6 difference in an evolution
+    operator whose range crosses m_c, far below any statistical error in a lattice analysis.
+    """
+    if mu <= 0.0:
+        raise ValueError("alpha_s needs a positive scale.")
+    if mu >= _M_B:
+        return _run_alpha(5.0, _M_Z, mu, _ALPHAS_MZ, _BETA_ORDER)
+    alpha_mb = _run_alpha(5.0, _M_Z, _M_B, _ALPHAS_MZ, _BETA_ORDER)
+    if mu >= _M_C:
+        return _run_alpha(4.0, _M_B, mu, alpha_mb, _BETA_ORDER)
+    alpha_mc = _run_alpha(4.0, _M_B, _M_C, alpha_mb, _BETA_ORDER)
+    return _run_alpha(3.0, _M_C, mu, alpha_mc, _BETA_ORDER)
+
+
+def _dilog(z: np.ndarray) -> np.ndarray:
+    """``PolyLog[2, z]`` for real z < 1, via ``scipy.special.spence(1 - z)``."""
+    from scipy.special import spence
+
+    return spence(1.0 - np.asarray(z, dtype=float))
+
+
+def _p_qq_lo(nu: np.ndarray) -> np.ndarray:
+    """``PLL``: the LO non-singlet splitting function, zero outside 0 <= nu < 1."""
+    nu = np.asarray(nu, dtype=float)
+    inside = (nu >= 0.0) & (nu < 1.0)
+    safe = np.where(inside, nu, 0.0)
+    value = 2.0 * _SPLIT_CF * (1.0 + safe**2) / np.where(inside, 1.0 - safe, 1.0)
+    return np.where(inside, value, 0.0)
+
+
+def _p_nlo_full_unpolarized(nu: np.ndarray) -> np.ndarray:
+    """Two-loop non-singlet kernel for the FULL (q + qbar)/2 unpolarized channel.
+
+    The base of the three variants the notebook defines; the other two add structures to
+    it. Transcribed term by term from CG_RGR_kernels.nb.
+    """
+    nu = np.asarray(nu, dtype=float)
+    inside = (nu >= 0.0) & (nu < 1.0)
+    v = np.where(inside, np.clip(nu, 1e-300, None), 0.5)  # placeholder off-support
+    ln, ln1m, ln1p = np.log(v), np.log1p(-v), np.log1p(v)
+    z2 = np.pi**2 / 6.0
+    a = (1.0 + v**2) / (1.0 - v)
+    b = (1.0 + v**2) / (1.0 + v)
+    cf, ca, nf = _SPLIT_CF, _SPLIT_CA, _SPLIT_NF
+    value = (
+        4.0 * ca * cf * (a * (67.0 / 18.0 - z2 + (11.0 / 6.0) * ln + ln**2 / 2.0)
+                         + b * (z2 + 2.0 * (ln * ln1p + _dilog(-v)) - ln**2 / 2.0)
+                         + (14.0 / 3.0) * (1.0 - v))
+        - 4.0 * cf * nf * (a * (5.0 / 9.0 + (1.0 / 3.0) * ln) + (2.0 / 3.0) * (1.0 - v))
+        # The two PolyLog[2, nu] inside the CF^2 bracket cancel in the notebook; both are
+        # kept so the transcription stays literally comparable to the source.
+        + 4.0 * cf**2 * (2.0 * a * ((-ln * ln1m - _dilog(v)) - 0.75 * ln + _dilog(v))
+                         - 2.0 * b * (z2 + 2.0 * (ln * ln1p + _dilog(-v)) - ln**2 / 2.0)
+                         - (1.0 - v) * (1.0 - 1.5 * ln) - ln - (1.0 + v) * ln**2 / 2.0)
+    )
+    return np.where(inside, value, 0.0)
+
+
+def _c_parity_term(nu: np.ndarray) -> np.ndarray:
+    """The ``16 CF (CF - CA/2)`` structure that separates the two non-singlet combinations.
+
+    It is what turns the full-channel kernel into the valence one -- the two combinations
+    are identical at one loop and first differ here, at two.
+    """
+    nu = np.asarray(nu, dtype=float)
+    inside = (nu >= 0.0) & (nu < 1.0)
+    v = np.where(inside, np.clip(nu, 1e-300, None), 0.5)
+    ln, ln1p = np.log(v), np.log1p(v)
+    z2 = np.pi**2 / 6.0
+    b = (1.0 + v**2) / (1.0 + v)
+    cf, ca = _SPLIT_CF, _SPLIT_CA
+    value = 16.0 * cf * (cf - ca / 2.0) * (
+        b * (z2 + 2.0 * (ln * ln1p + _dilog(-v)) - ln**2 / 2.0)
+        - 2.0 * (1.0 - v) - (1.0 + v) * ln
+    )
+    return np.where(inside, value, 0.0)
+
+
+def _p_nlo_valence(nu: np.ndarray) -> np.ndarray:
+    """Two-loop non-singlet kernel for the VALENCE (q - qbar)/2 channel.
+
+    The notebook uses this one variant for the valence channel of BOTH the unpolarized and
+    the helicity PDF (its ``*_valence_unp_*`` and ``*_valence_helicity_*`` exports are
+    produced with it), so it is shared here too rather than duplicated per polarization.
+    """
+    return _p_nlo_full_unpolarized(nu) + _c_parity_term(nu)
+
+
+def _p_nlo_full_helicity(nu: np.ndarray) -> np.ndarray:
+    """Two-loop non-singlet kernel for the FULL (q + qbar)/2 helicity channel.
+
+    The valence kernel plus one more nf structure, exactly as the notebook writes it.
+    """
+    nu = np.asarray(nu, dtype=float)
+    inside = (nu >= 0.0) & (nu < 1.0)
+    v = np.where(inside, np.clip(nu, 1e-300, None), 0.5)
+    ln = np.log(v)
+    extra = 4.0 * _SPLIT_CF * _SPLIT_NF * (
+        -(1.0 - 3.0 * v) * ln + 1.0 - v - 2.0 * (1.0 + v) * ln**2 / 2.0
+    )
+    return _p_nlo_valence(nu) + np.where(inside, extra, 0.0)
+
+
+def _p_nlo_transversity(nu: np.ndarray) -> np.ndarray:
+    """Two-loop transversity kernel: a different function, built on 4 nu/(1 - nu).
+
+    The notebook defines ONE transversity variant and uses it for both the valence and the
+    full exports, so the transversity RGR kernel does not split by channel here either.
+    """
+    nu = np.asarray(nu, dtype=float)
+    inside = (nu >= 0.0) & (nu < 1.0)
+    v = np.where(inside, np.clip(nu, 1e-300, None), 0.5)
+    ln, ln1m, ln1p = np.log(v), np.log1p(-v), np.log1p(v)
+    cf, ca, nf = _SPLIT_CF, _SPLIT_CA, _SPLIT_NF
+    q = (4.0 * v) / (1.0 - v)
+    value = (
+        ca * cf * (-2.0 * (1.0 - v) + q * (ln**2 + (11.0 / 3.0) * ln + 67.0 / 9.0 - np.pi**2 / 3.0))
+        - cf * (nf / 2.0) * ((4.0 / 3.0) * q * (ln + 5.0 / 3.0))
+        + cf**2 * (4.0 * (1.0 - v) - q * (3.0 * ln + 4.0 * ln * ln1m))
+        + 4.0 * (cf**2 - ca * cf / 2.0) * (-(1.0 - v)
+                                           + ((4.0 * v) / (1.0 + v))
+                                           * (ln**2 / 2.0 - np.pi**2 / 6.0 - 2.0 * _dilog(-v) - 2.0 * ln * ln1p))
+    )
+    return np.where(inside, value, 0.0)
+
+
+def _dglap_evolution_matrices(
+    x_grid: np.ndarray, p_nlo: Callable[[np.ndarray], np.ndarray]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Discretize the LO and NLO DGLAP kernels with their plus prescription.
+
+    ``evoMatrix{LO,NLO} = dx (P + Diag(-ColumnSum P))`` with ``P[i, j] = P(x_i / y_j)/|y_j|``.
+    The diagonal subtraction is the plus prescription in matrix form: it makes each column
+    integrate to zero, which is what keeps the evolution number conserving.
+    """
+    x = np.asarray(x_grid, dtype=float)
+    dx = float(np.mean(np.diff(x))) if x.size > 1 else 1.0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = x[:, None] / np.where(np.abs(x[None, :]) > 0, x[None, :], np.nan)
+        weight = 1.0 / np.abs(np.where(np.abs(x[None, :]) > 0, x[None, :], np.nan))
+    lo = np.nan_to_num(_p_qq_lo(ratio) * weight)
+    nlo = np.nan_to_num(p_nlo(ratio) * weight)
+    return (
+        dx * (lo - np.diag(lo.sum(axis=0))),
+        dx * (nlo - np.diag(nlo.sum(axis=0))),
+    )
+
+
+def _evolution_operator(
+    mu_initial: float, mu_final: float, evo_lo: np.ndarray, evo_nlo: np.ndarray, steps: int
+) -> np.ndarray:
+    """``evolutionFull``: the ordered product of matrix exponentials over ln mu^2.
+
+    Each factor is ``MatrixExp[evoMatrix(mu) * dlnmu2]`` evaluated at the midpoint of its
+    step, with ``evoMatrix(mu) = (as/4pi) evoLO + (as/4pi)^2 evoNLO``.
+    """
+    from scipy.linalg import expm
+
+    t0, t1 = np.log(mu_initial**2), np.log(mu_final**2)
+    dt = (t1 - t0) / steps
+    # Ordering matters: the factors do not commute (alpha_s differs between steps). The
+    # notebook composes them with ``Dot @@ Table[...]``, i.e. the EARLIEST step sits
+    # leftmost, so the product grows on the right. Reversing this changes the matrix at the
+    # 1e-6 level -- small enough to look like rounding and be missed.
+    operator = np.eye(evo_lo.shape[0])
+    for index in range(steps):
+        mu_mid = float(np.exp((t0 + dt * (index + 0.5)) / 2.0))
+        a = _alpha_s(mu_mid) / (4.0 * np.pi)
+        operator = operator @ expm((a * evo_lo + a**2 * evo_nlo) * dt)
+    return operator
+
+
+def _rgr_from_fixed_order(
+    fixed_order_builder: Callable[..., np.ndarray],
+    p_nlo: Callable[[np.ndarray], np.ndarray],
+    lc_x_ls: np.ndarray,
+    momentum_gev: float,
+    mu: float,
+    quasi_y_ls: np.ndarray | None,
+    eps: float,
+    zspz: float | None,
+    *,
+    kappa: float = 1.0,
+    mu_min: float = 0.6,
+    steps: int = 20,
+) -> np.ndarray:
+    """Shared body of the RGR kernels: match at each x's own scale, then evolve to ``mu``.
+
+    Row ``i`` is built at ``mu0 = 2 kappa x_i P^z`` and evolved to ``mu``; rows whose own
+    scale falls below ``mu_min`` are zeroed, which is how the paper's ``x_min`` shows up in
+    the matrix. ``kappa`` is the scale-variation knob (the notebook scans 0.71 / 1 / 1.4) and
+    belongs to the systematics budget, not to the central value.
+    """
+    # Only the hybrid fixed orders carry a Wilson-line scale. The MSbar builders (the
+    # imaginary part's) accept a ``zspz`` argument for signature uniformity but ignore it,
+    # so the requirement follows the SCHEME in the builder's name rather than its signature.
+    needs_zspz = "hybrid" in fixed_order_builder.__name__.split("_")
+    if needs_zspz and zspz is None:
+        raise ValueError("`zspz` is required for the hybrid (RGR) matching kernel.")
+    takes_zspz = "zspz" in inspect.signature(fixed_order_builder).parameters
+
+    # Unlike LRR, RGR does NOT need a square grid. Its evolution operator acts on the ROW
+    # (light-cone) index alone -- (nx, nx) @ (nx, ny) -> (nx, ny) -- so the columns stay on
+    # whatever quasi grid the Fourier stage produced. Demanding lc_x_ls == quasi_y_ls here
+    # would reject the ordinary configuration where lc_x_ls narrows the output window.
+    x = np.asarray(lc_x_ls, dtype=float)
+    y = x if quasi_y_ls is None else np.asarray(quasi_y_ls, dtype=float)
+    evo_lo, evo_nlo = _dglap_evolution_matrices(x, p_nlo)
+    matrix = np.zeros((x.size, y.size), dtype=float)
+    with _quiet_progress():  # one bar for the rows, not one per fixed-order rebuild
+        for index, x_value in enumerate(_progress(range(x.size), desc="RGR matching kernel")):
+            mu0 = 2.0 * kappa * float(x[x_value]) * float(momentum_gev)
+            if not np.isfinite(mu0) or mu0 < mu_min:
+                continue  # alpha_s(2 x P^z) is out of perturbative control: nothing to report
+            extra = {"zspz": zspz} if takes_zspz else {}
+            fixed = fixed_order_builder(
+                x, momentum_gev=momentum_gev, mu=mu0, quasi_y_ls=y, eps=eps, **extra
+            )
+            evolution = _evolution_operator(mu0, mu, evo_lo, evo_nlo, steps)
+            matrix[x_value, :] = (evolution @ fixed)[x_value, :]
+    return matrix
+
+
+# Channel assignment, read off the notebook's own export file names
+# (``matching_scale<c>_{valence|full}_<tag>_rgr_...csv``) and confirmed by arXiv:2602.11283:
+#
+#                   re  = hybrid fixed order      im  = MSbar fixed order
+#   unpolarized     valence  -> _p_nlo_valence    full     -> _p_nlo_full_unpolarized
+#   helicity        full     -> _p_nlo_full_...   valence  -> _p_nlo_valence
+#   transversity    valence  -> _p_nlo_transv.    full     -> _p_nlo_transv. (one variant)
+#
+# The polarizations do NOT line up: the unpolarized quasi-distribution is C-odd so its real
+# part is the valence channel, while the helicity one is C-even so ITS real part is the full
+# channel. Transversity follows the unpolarized. Getting this backwards is silent -- the
+# matrix stays finite and the report reads normally -- which is why the table is written out.
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gt_quark_PDF_hybrid_RGR_re_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG ``gamma^t`` real part: hybrid fixed order, valence two-loop evolution."""
+    return _rgr_from_fixed_order(
+        CG_gt_quark_PDF_hybrid_NLO, _p_nlo_valence,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gz_quark_PDF_hybrid_RGR_re_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG ``gamma^z`` real part; its hybrid fixed order is gamma^t's."""
+    return _rgr_from_fixed_order(
+        CG_gz_quark_PDF_hybrid_NLO, _p_nlo_valence,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gtg5_quark_PDF_hybrid_RGR_re_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG helicity real part: the FULL channel, because the helicity quasi-distribution is C-even."""
+    return _rgr_from_fixed_order(
+        CG_gtg5_quark_PDF_hybrid_NLO, _p_nlo_full_helicity,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gzg5_quark_PDF_hybrid_RGR_re_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG ``gamma^z gamma5`` real part; its hybrid fixed order is gamma^t gamma5's."""
+    return _rgr_from_fixed_order(
+        CG_gzg5_quark_PDF_hybrid_NLO, _p_nlo_full_helicity,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gtgpg5_quark_PDF_hybrid_RGR_re_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG transversity real part: transversity fixed order and transversity evolution."""
+    return _rgr_from_fixed_order(
+        CG_gtgpg5_quark_PDF_hybrid_NLO, _p_nlo_transversity,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gt_quark_PDF_msbar_RGR_im_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG ``gamma^t`` imaginary part: MSbar fixed order, full-channel two-loop evolution."""
+    return _rgr_from_fixed_order(
+        CG_gt_quark_PDF_msbar_NLO, _p_nlo_full_unpolarized,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gz_quark_PDF_msbar_RGR_im_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG ``gamma^z`` imaginary part. Its MSbar fixed order is its OWN (Eq. 2.15 adds 2(1-ksi)_+ to gamma^t's), unlike the hybrid scheme where gamma^z and gamma^t coincide."""
+    return _rgr_from_fixed_order(
+        CG_gz_quark_PDF_msbar_NLO, _p_nlo_full_unpolarized,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gtg5_quark_PDF_msbar_RGR_im_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG helicity imaginary part: the VALENCE channel, mirroring the real part's C-parity flip."""
+    return _rgr_from_fixed_order(
+        CG_gtg5_quark_PDF_msbar_NLO, _p_nlo_valence,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gzg5_quark_PDF_msbar_RGR_im_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG ``gamma^z gamma5`` imaginary part; its MSbar fixed order follows gamma^z's."""
+    return _rgr_from_fixed_order(
+        CG_gzg5_quark_PDF_msbar_NLO, _p_nlo_valence,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
+@kernel_reference("2209.01236", "App. 'A Method Solving RG Equation' (Eq. matchingRGI)")
+def CG_gtgpg5_quark_PDF_msbar_RGR_im_NLO(
+    lc_x_ls, momentum_gev, mu=2.0, quasi_y_ls=None, eps=1e-12, zspz=None,
+    kappa=1.0, mu_min=0.6
+) -> np.ndarray:
+    """NLO+RGR CG transversity imaginary part. The notebook defines a single transversity evolution kernel and uses it for both channels, and transversity's MSbar/hybrid/ratio fixed orders coincide, so this equals the real-part kernel numerically; it exists as its own id so a manifest names the channel it actually matched."""
+    return _rgr_from_fixed_order(
+        CG_gtgpg5_quark_PDF_msbar_NLO, _p_nlo_transversity,
+        lc_x_ls, momentum_gev, mu, quasi_y_ls, eps, zspz,
+        kappa=kappa, mu_min=mu_min,
+    )
+
+
 # --- self-describing structure for the matching report -----------------------
 # A kernel declares HOW its factorization should be rendered, exactly as it declares its
 # paper via ``@kernel_reference``. The report reads ``fn.matching_structure`` and renders
@@ -1891,6 +2433,27 @@ _DA_STRUCTURE: dict[str, Any] = {
 # Leading-renormalon resummation: an add-on any fixed-order kernel can carry. It does not
 # replace the base factorization -- it wraps the fixed-order matrix in an all-orders
 # matrix exponential -- so it is merged onto whichever base (PDF or DA) applies.
+_RGR_EXTRA: dict[str, Any] = {
+    "extra_structure": (
+        r"M_{\mathrm{RGR}}\big|_{x} = \Big[\mathcal{E}\big(\mu_0(x)\to\mu\big)\,"
+        r"M_{\mathrm{fix}}\big(\mu_0(x)\big)\Big]_{x},\qquad \mu_0(x)=2\kappa xP^z,"
+        r"\qquad \mathcal{E}=\prod \exp\!\big[\big(\tfrac{\alpha_s}{4\pi}P^{(0)}"
+        r"+\big(\tfrac{\alpha_s}{4\pi}\big)^2P^{(1)}\big)\,\mathrm{d}\ln\mu^2\big]"
+    ),
+    "extra_note": (
+        "- This kernel does NOT stop at fixed order, and its resummation is NOT a renormalon "
+        "one: it resums the SMALL-x logarithm $\\ln(\\mu^2/(2xP^z)^2)$. Each row $x$ is built "
+        "from the fixed-order matrix evaluated at that row's own scale $\\mu_0(x)=2\\kappa xP^z$ "
+        "and then DGLAP-evolved to $\\mu$ by a path-ordered matrix exponential of the two-loop "
+        "(NLL) non-singlet splitting function. Rows whose $\\mu_0(x)$ falls below the "
+        "perturbative cutoff are set to zero -- that cutoff is the paper's $x_{\\rm min}$. "
+        "Document the per-row scale, the evolution operator, and the cutoff, and state which "
+        "polarization's splitting function the code uses. Do NOT present it as a plain "
+        "fixed-order coefficient, and do NOT describe it as threshold resummation.\n"
+    ),
+}
+
+
 _LRR_EXTRA: dict[str, Any] = {
     "extra_structure": (
         r"M_{\mathrm{LRR}}=\left(M_{\mathrm{fix}}+r_0\,M_{C_z}\right)"
@@ -1920,6 +2483,8 @@ def _default_matching_structure(kernel_id: str) -> dict[str, Any]:
     base = dict(_DA_STRUCTURE if any(p in {"DA", "qDA", "gDA"} for p in parts) else _PDF_STRUCTURE)
     if "LRR" in parts:
         base.update(_LRR_EXTRA)
+    if "RGR" in parts:
+        base.update(_RGR_EXTRA)
     return base
 
 

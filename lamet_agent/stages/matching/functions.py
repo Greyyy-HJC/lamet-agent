@@ -44,14 +44,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+import inspect
+
 import numpy as np
 
 from lamet_agent.core.data import EnsembleData, GEV_FM
+from lamet_agent.core.tools import stage_artifact_stem
 from lamet_agent.stages.fourier.validation import quasi_y_ls_error
 from lamet_agent.stages.matching.reporting import FormulaLlm, is_da_kernel, write_matching_report
 
 # All matching kernels live in the self-contained kernels.py.
 from lamet_agent.kernels import (
+    CG_gt_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gz_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gtg5_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gzg5_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gtgpg5_quark_PDF_hybrid_RGR_re_NLO,
+    CG_gt_quark_PDF_msbar_RGR_im_NLO,
+    CG_gz_quark_PDF_msbar_RGR_im_NLO,
+    CG_gtg5_quark_PDF_msbar_RGR_im_NLO,
+    CG_gzg5_quark_PDF_msbar_RGR_im_NLO,
+    CG_gtgpg5_quark_PDF_msbar_RGR_im_NLO,
     CG_gt_quark_PDF_hybrid_NLO,
     CG_gt_quark_PDF_msbar_NLO,
     CG_gt_quark_PDF_ratio_NLO,
@@ -123,6 +136,18 @@ KERNEL_REGISTRY: dict[str, Callable[..., np.ndarray]] = {
     "CG_gt_quark_PDF_msbar_NLO": CG_gt_quark_PDF_msbar_NLO,
     "CG_gt_quark_PDF_ratio_NLO": CG_gt_quark_PDF_ratio_NLO,
     "CG_gt_quark_PDF_hybrid_NLO": CG_gt_quark_PDF_hybrid_NLO,
+    # CG + RGR (small-x log resummation). Split by polarization, not by operator: the
+    # fixed-order hybrid coefficient is shared but the two-loop DGLAP kernel is not.
+    "CG_gt_quark_PDF_hybrid_RGR_re_NLO": CG_gt_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gz_quark_PDF_hybrid_RGR_re_NLO": CG_gz_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gtg5_quark_PDF_hybrid_RGR_re_NLO": CG_gtg5_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gzg5_quark_PDF_hybrid_RGR_re_NLO": CG_gzg5_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gtgpg5_quark_PDF_hybrid_RGR_re_NLO": CG_gtgpg5_quark_PDF_hybrid_RGR_re_NLO,
+    "CG_gt_quark_PDF_msbar_RGR_im_NLO": CG_gt_quark_PDF_msbar_RGR_im_NLO,
+    "CG_gz_quark_PDF_msbar_RGR_im_NLO": CG_gz_quark_PDF_msbar_RGR_im_NLO,
+    "CG_gtg5_quark_PDF_msbar_RGR_im_NLO": CG_gtg5_quark_PDF_msbar_RGR_im_NLO,
+    "CG_gzg5_quark_PDF_msbar_RGR_im_NLO": CG_gzg5_quark_PDF_msbar_RGR_im_NLO,
+    "CG_gtgpg5_quark_PDF_msbar_RGR_im_NLO": CG_gtgpg5_quark_PDF_msbar_RGR_im_NLO,
     # helicity gamma^t gamma5
     "CG_gtg5_quark_PDF_msbar_NLO": CG_gtg5_quark_PDF_msbar_NLO,
     "CG_gtg5_quark_PDF_ratio_NLO": CG_gtg5_quark_PDF_ratio_NLO,
@@ -387,6 +412,8 @@ def build_matching_kernel(
     momentum_gev: float,
     mu: float,
     zs_fm: float | None = None,
+    rgr_kappa: float | None = None,
+    rgr_mu_min_gev: float | None = None,
     lc_x_ls: dict[str, Any],
     quasi_grid_key: str = "quasi_y_ls",
     lc_grid_key: str = "lc_x_ls",
@@ -439,6 +466,26 @@ def build_matching_kernel(
         zspz = float(zs_fm) * momentum_gev / GEV_FM
         builder_kwargs["zspz"] = zspz
 
+    # RGR kernels match each row at its own scale mu0 = 2 * kappa * x * P^z and drop rows
+    # whose mu0 falls below rgr_mu_min_gev. The two are not independent: the surviving window
+    # is x >= rgr_mu_min_gev / (2 * kappa * P^z), so varying kappa for the systematic budget
+    # moves x_min with it. Only forwarded to builders that declare them, so a fixed-order
+    # kernel is unaffected by their presence in the manifest.
+    # They apply to RGR and to nothing else: a fixed-order or LRR kernel has no per-row
+    # scale to vary, so it simply does not take them. Rather than reject such a job, the
+    # parameters go inert -- which is what a manifest author means by leaving them in a
+    # stage default while only some jobs select an RGR kernel. The names that were dropped
+    # are recorded below so the trace still shows they had no effect.
+    accepted = inspect.signature(builder).parameters
+    ignored: list[str] = []
+    for name, value in (("kappa", rgr_kappa), ("mu_min", rgr_mu_min_gev)):
+        if value is None:
+            continue
+        if name in accepted:
+            builder_kwargs[name] = float(value)
+        else:
+            ignored.append(name)
+
     # Build the already-discretized kernel matrix, typically shaped (len(x_ls), len(y_ls)).
     matrix = builder(x_ls, **builder_kwargs)
     if matrix.ndim != 2:
@@ -453,7 +500,10 @@ def build_matching_kernel(
         )
 
     store[out] = matrix  # apply_matching reads it back under this name
-    store["matching_kernel_info"] = {"kernel_id": kernel_id, "momentum_gev": momentum_gev, "mu": mu, "zspz": zspz}
+    store["matching_kernel_info"] = {
+        "kernel_id": kernel_id, "momentum_gev": momentum_gev, "mu": mu, "zspz": zspz,
+        **({"ignored_params": ignored} if ignored else {}),
+    }
     return {
         "out": out,
         "kernel_id": kernel_id,
@@ -476,8 +526,8 @@ def apply_matching(
     quasi_grid_key: str = "quasi_y_ls",
     lc_grid_key: str = "lc_x_ls",
     out: str = "lightcone_ed",
-    save_path: str | None = None,
     artifacts_dir: str | None = None,
+    job_id: str | None = None,
     endpoint_cut: float | None = None,
 ) -> dict[str, Any]:
     """Apply the matching kernel sample by sample: ``lightcone_i = K @ quasi_i``.
@@ -561,9 +611,8 @@ def apply_matching(
     # always has the same length as the PDF beside it -- rather than the quasi grid the
     # two used to share.
     store["x_ls"] = x_out
-    output = Path(save_path) if save_path is not None else Path(artifacts_dir or "artifacts") / "matched_pdf"
-    artifact = output.with_suffix(".nc")
-    artifact.parent.mkdir(parents=True, exist_ok=True)
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="matched_pdf")
+    artifact = stem.with_suffix(".nc")
     lightcone_ed.to_netcdf(artifact)
     store["output"] = lightcone_ed
     store["matching_artifact"] = str(artifact)
@@ -592,8 +641,8 @@ def plot_matched_pdf(
     lc_grid_key: str = "lc_x_ls",
     quasi: str = "quasi_ed",
     lightcone: str = "lightcone_ed",
-    save_path: str | None = None,
     artifacts_dir: str | None = None,
+    job_id: str | None = None,
     xlim: list[float] | tuple[float, float] | None = None,
     ylim: list[float] | tuple[float, float] | None = None,
     sector: str | None = None,
@@ -601,9 +650,6 @@ def plot_matched_pdf(
     """Plot quasi vs matched (light-cone) PDF and save a PDF artifact.
 
     Both PDFs are ``EnsembleData``; the band is their sample-built mean +/- error.
-
-    ``save_path``/``artifacts_dir`` are injected by the harness for plot tools
-    (add ``plot_matched_pdf`` to ``_PLOT_TOOLS`` in core/tools.py).
     """
     if quasi_grid_key not in store:
         raise ValueError(f"Quasi grid '{quasi_grid_key}' not in store.")
@@ -631,12 +677,8 @@ def plot_matched_pdf(
     if lc_x_ls.shape != np.shape(lightcone_ed.mean):
         raise ValueError("light-cone PDF and its x coordinate must have matching shapes.")
 
-    # If the harness did not pass save_path, default to artifacts/matched_pdf.pdf.
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
-    resolved_save = Path(save_path) if save_path is not None else out_dir / "matched_pdf"
-    if resolved_save.suffix.lower() != ".pdf":
-        resolved_save = resolved_save.with_suffix(".pdf")
-    resolved_save.parent.mkdir(parents=True, exist_ok=True)
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="matched_pdf")
+    resolved_save = stem.with_suffix(".pdf")
 
     # Plot the quasi- and matched light-cone PDFs as a continuous line plus an
     # error band (fill_between) showing the gvar +/-1 sigma interval, rather than
@@ -693,19 +735,6 @@ def plot_matched_pdf(
 # --- reporting --------------------------------------------------------------
 
 
-def _report_path(raw: str | None, *, default_name: str, artifacts_dir: str | None = None) -> Path:
-    """Resolve the report output path under ``artifacts_dir`` (mirrors the Fourier stage)."""
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if raw:
-        path = Path(raw).expanduser()
-        if path.is_absolute():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            return path
-        return out_dir / path
-    return out_dir / default_name
-
-
 def report_matching_result(
     store: dict[str, Any],
     *,
@@ -714,8 +743,8 @@ def report_matching_result(
     mu: float,
     zs_fm: float | None = None,
     component: str,
-    save_path: str | None = None,
     artifacts_dir: str | None = None,
+    job_id: str | None = None,
     report_language: str = "en",
     backend: str = "",
     provider: str | None = None,
@@ -770,7 +799,8 @@ def report_matching_result(
         artifacts["matched_plot"] = store["matching_plot"].get("path")
         artifacts["matched_plot_image"] = store["matching_plot"].get("plot_image")
 
-    output = _report_path(save_path, default_name="report_matching.md", artifacts_dir=artifacts_dir)
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="matching")
+    output = stem.with_name(f"{stem.name}_report.md")
     # The LLM that writes the formula section is the run's own -- the agent injects the
     # resolved backend/provider/key here, exactly as it does for the review stage's tool.
     llm = FormulaLlm(backend=backend or "api", provider=provider, api_key=api_key,

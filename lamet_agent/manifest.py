@@ -11,7 +11,6 @@ from typing import Any, Literal
 import gvar as gv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from lamet_agent.core.data import HBAR_C_GEV_FM
 from lamet_agent.manifest_params import resolve_stage_params, validate_stage_parameter_mapping
 
 
@@ -62,6 +61,8 @@ def parse_momentum(value: str) -> tuple[int, int, int]:
 
 def physical_momentum_gev(momentum: str, volume: str, lattice_spacing_fm: float) -> float:
     """Return the magnitude of a lattice momentum in GeV."""
+    from lamet_agent.core.data import HBAR_C_GEV_FM
+
     spatial, _temporal = parse_volume(volume)
     components = parse_momentum(momentum)
     norm = math.sqrt(sum(component * component for component in components))
@@ -580,6 +581,8 @@ def derive_job_kinematics(manifest: AnalysisManifest, job: StageJob) -> dict[str
                     "hadron",
                     "gfix",
                     "bz_direction",
+                    "initial_momentum",
+                    "final_momentum",
                     "current_operator",
                     "polarization",
                     "observable",

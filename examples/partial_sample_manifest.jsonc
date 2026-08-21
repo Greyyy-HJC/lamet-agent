@@ -81,7 +81,7 @@
   "stages": {
     "fourier_transform": {
       "defaults": {
-        "method": "CG",
+        "gfix": "CG", // required here because this partial workflow starts from external artifacts
         "order": ["LA", "NLA"],
         "Lambda0_gev": 0.0,
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
@@ -106,7 +106,6 @@
         }
         // "zmin_shift": 1, // optional; clone low/high tail-window systematics (contract default 0 = off)
         // "part": "re" // "re", "im", or "both" (contract default "both"); cannot combine with sector
-        // "component": "both", // legacy alias for part; cannot be set together with part
       },
       "jobs": [
         {

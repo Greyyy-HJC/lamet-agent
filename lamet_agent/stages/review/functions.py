@@ -229,10 +229,9 @@ def write_review_from_manifest(
     model_name: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    output_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Ask the configured LLM to write the final review from reports and NetCDF summaries."""
-    artifacts_dir = Path(output_dir) if output_dir is not None else manifest.artifacts_directory
+    artifacts_dir = manifest.artifacts_directory
     review_dir = artifacts_dir / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
     language = "ch" if report_language.lower() == "ch" else "en"
@@ -584,9 +583,26 @@ def write_review_from_manifest(
     return {"review": str(target), "artifact": str(target), "n_stages": len(materials)}
 
 
-def write_review(store: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+def write_review(
+    store: dict[str, Any],
+    *,
+    report_language: str = "en",
+    backend: str = "",
+    provider: str | None = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, Any]:
     """Tool wrapper: write review from ``store['manifest']``."""
-    result = write_review_from_manifest(store["manifest"], **kwargs)
+    result = write_review_from_manifest(
+        store["manifest"],
+        report_language=report_language,
+        backend=backend,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url,
+    )
     store["output"] = result["review"]
     return result
 

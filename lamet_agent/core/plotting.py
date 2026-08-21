@@ -859,8 +859,14 @@ def plot_fourier_artifact(
         re_sys = np.asarray(extra.get("ft_re_sys_sdev", 0.0), dtype=float)
         im_sys = np.asarray(extra.get("ft_im_sys_sdev", 0.0), dtype=float)
         observable = str(extra["observable"]) if "observable" in extra else ft_data.attrs.get("observable", "")
+        target_observable = str(ft_data.attrs.get("target_observable", ""))
         pz_raw = extra.get("momentum_gev", ft_data.attrs.get("momentum_gev"))
         momentum_gev = float(pz_raw) if pz_raw is not None and np.isfinite(float(pz_raw)) else None
+        final_raw = ft_data.attrs.get("final_momentum_gev")
+        final_momentum_gev = float(final_raw) if final_raw not in {None, ""} and np.isfinite(float(final_raw)) else None
+        bilocal_anchor = str(ft_data.attrs.get("bilocal_anchor", ""))
+        sector = str(ft_data.attrs.get("sector", "full"))
+        completion_mode = str(ft_data.attrs.get("gpd_completion_mode", ""))
     except ValueError:
         data = np.load(path)
         k = np.asarray(data["y_grid"], dtype=float)
@@ -871,7 +877,12 @@ def plot_fourier_artifact(
         re_sys = np.asarray(data["ft_re_sys_sdev"], dtype=float) if "ft_re_sys_sdev" in data else 0.0
         im_sys = np.asarray(data["ft_im_sys_sdev"], dtype=float) if "ft_im_sys_sdev" in data else 0.0
         observable = str(data["observable"]) if "observable" in data else ""
+        target_observable = ""
         momentum_gev = float(data["momentum_gev"]) if "momentum_gev" in data and np.isfinite(data["momentum_gev"]) else None
+        final_momentum_gev = None
+        bilocal_anchor = ""
+        sector = "full"
+        completion_mode = ""
     re_total = np.sqrt(re_stat**2 + re_sys**2)
     im_total = np.sqrt(im_stat**2 + im_sys**2)
     roundoff_floor = 1e-14
@@ -880,7 +891,13 @@ def plot_fourier_artifact(
     re_total = np.where(re_total < roundoff_floor, 0.0, re_total)
     im_total = np.where(im_total < roundoff_floor, 0.0, im_total)
     default_title = "FT" if not observable else "FT " + observable.replace("_", " ")
-    legend_label = rf"$P_z={float(momentum_gev):.2f}\,\mathrm{{GeV}}$" if momentum_gev is not None else r"$P_z$"
+    if target_observable == "gpd" and momentum_gev is not None and final_momentum_gev is not None:
+        denominator = momentum_gev + final_momentum_gev
+        xi = np.nan if denominator == 0.0 else (momentum_gev - final_momentum_gev) / denominator
+        legend_label = rf"$P_i^z={momentum_gev:.2f},\ P_f^z={final_momentum_gev:.2f}\,\mathrm{{GeV}},\ \xi={xi:.3g}$"
+        default_title += f" ({sector}, {bilocal_anchor or 'mid_at_0'}, {completion_mode or 'paired_flow'})"
+    else:
+        legend_label = rf"$P_z={float(momentum_gev):.2f}\,\mathrm{{GeV}}$" if momentum_gev is not None else r"$P_z$"
 
     apply_plot_style()
     fig, (ax_re, ax_im) = plt.subplots(
@@ -905,11 +922,12 @@ def plot_fourier_artifact(
     ax_im.plot(k, im, color=COLOR_CYCLE[1], linewidth=0.9, alpha=0.65)
     ax_re.set_xlim(-2.0, 2.0)
     ax_im.set_xlim(-2.0, 2.0)
-    ax_re.set_ylabel(r"$\mathrm{Re}\,\tilde{q}(x)$", **FONT_SIZE)
-    ax_im.set_ylabel(r"$\mathrm{Im}\,\tilde{q}(x)$", **FONT_SIZE)
+    distribution = r"\widetilde H(y,\xi,t)" if target_observable == "gpd" else r"\tilde q(x)"
+    ax_re.set_ylabel(rf"$\mathrm{{Re}}\,{distribution}$", **FONT_SIZE)
+    ax_im.set_ylabel(rf"$\mathrm{{Im}}\,{distribution}$", **FONT_SIZE)
     ax_re.yaxis.set_label_coords(-0.11, 0.5)
     ax_im.yaxis.set_label_coords(-0.11, 0.5)
-    ax_im.set_xlabel(r"$x$", **FONT_SIZE)
+    ax_im.set_xlabel(r"$y$" if target_observable == "gpd" else r"$x$", **FONT_SIZE)
     ax_re.legend(**LEGEND_SETS)
     ax_im.legend(**LEGEND_SETS)
     ax_re.set_title(default_title if title is None else title, **FONT_SIZE)
@@ -951,16 +969,17 @@ def plot_fourier_extension_quality(
     result: dict[str, Any],
     *,
     scheme_index: int = 0,
-    component: str = "re",
+    part: str = "re",
+    partner_samples: np.ndarray | None = None,
     momentum_gev: float | None = None,
     save_path: str | Path | None = None,
     title: str | None = None,
     show: bool = False,
 ) -> tuple[Figure, Axes]:
     """Plot coordinate-space data against the fitted long-distance extrapolation."""
-    component = component.lower()
-    if component not in {"re", "im"}:
-        raise ValueError("component must be 're' or 'im'")
+    part = part.lower()
+    if part not in {"re", "im"}:
+        raise ValueError("part must be 're' or 'im'")
     scheme = result["scheme_results"][scheme_index]
     if momentum_gev is None:
         momentum_gev = result.get("momentum_gev")
@@ -977,10 +996,34 @@ def plot_fourier_extension_quality(
     sample_error_mode = normalize_sample_error_mode(str(result.get("sample_error_mode", "covariance")), resample_mode=resample_mode)
 
     lambda_ext = np.asarray(scheme["lambda_ext"], dtype=float)
-    model_key = "extended_re_samples" if component == "re" else "extended_im_samples"
+    model_key = "extended_re_samples" if part == "re" else "extended_im_samples"
+    partner_model_key = "partner_extended_re_samples" if part == "re" else "partner_extended_im_samples"
+    paired = partner_samples is not None and partner_model_key in scheme
+    if paired:
+        target_data = np.asarray(samples, dtype=float).copy()
+        partner_data = np.asarray(partner_samples, dtype=float)
+        target_model = np.asarray(scheme[model_key], dtype=float).copy()
+        partner_model = np.asarray(scheme[partner_model_key], dtype=float)
+        partner_sign = 1.0 if part == "re" else -1.0
+        if np.isclose(coord_arr[0], 0.0):
+            target_data[:, 0] = 0.5 * (target_data[:, 0] + partner_sign * partner_data[:, 0])
+            samples = np.concatenate([partner_sign * partner_data[:, ::-1][:, :-1], target_data], axis=1)
+            lambda_data = np.concatenate([-lambda_data[::-1][:-1], lambda_data])
+        else:
+            samples = np.concatenate([partner_sign * partner_data[:, ::-1], target_data], axis=1)
+            lambda_data = np.concatenate([-lambda_data[::-1], lambda_data])
+        if np.isclose(lambda_ext[0], 0.0):
+            target_model[:, 0] = 0.5 * (target_model[:, 0] + partner_sign * partner_model[:, 0])
+            scheme_model = np.concatenate([partner_sign * partner_model[:, ::-1][:, :-1], target_model], axis=1)
+            lambda_ext = np.concatenate([-lambda_ext[::-1][:-1], lambda_ext])
+        else:
+            scheme_model = np.concatenate([partner_sign * partner_model[:, ::-1], target_model], axis=1)
+            lambda_ext = np.concatenate([-lambda_ext[::-1], lambda_ext])
+    else:
+        scheme_model = scheme[model_key]
     mode = resample_mode.strip().lower()
     band_stats = []
-    for sample_values in (samples, scheme[model_key]):
+    for sample_values in (samples, scheme_model):
         arr = np.asarray(sample_values, dtype=float)
         if arr.shape[0] < 2:
             mean = np.mean(arr, axis=0)
@@ -1008,7 +1051,7 @@ def plot_fourier_extension_quality(
         lambda_ext,
         ext_mean,
         ext_sdev,
-        start=fit_lambda[0],
+        start=-ext_endpoint_lambda if paired else fit_lambda[0],
         stop=ext_endpoint_lambda,
     )
     apply_plot_style()
@@ -1016,13 +1059,13 @@ def plot_fourier_extension_quality(
     data_color = "#08306b"
     ext_color = "#5c3317"
 
-    method = str(result.get("method", "")).upper()
+    gfix = str(result.get("gfix", "")).upper()
     order = str(result.get("order", "")).upper()
     model_label = "Extrapolation"
-    if method or order:
-        model_label = f"Extrapolation ({'+'.join(item for item in (method, order) if item)})"
-    part = str(result.get("part", "both")).strip().lower()
-    draw_model = part in {"both", component} or part not in {"re", "im"}
+    if gfix or order:
+        model_label = f"Extrapolation ({'+'.join(item for item in (gfix, order) if item)})"
+    fitted_part = str(result.get("part", "both")).strip().lower()
+    draw_model = fitted_part in {"both", part} or fitted_part not in {"re", "im"}
 
     ax.fill_between(
         lambda_data,
@@ -1031,7 +1074,7 @@ def plot_fourier_extension_quality(
         color=data_color,
         alpha=0.68,
         linewidth=0,
-        label="Lattice Data",
+        label="Lattice Data (target + partner)" if paired else "Lattice Data",
         zorder=1,
     )
     ax.plot(lambda_data, data_mean, color=data_color, linewidth=1.35, alpha=0.98, zorder=3)
@@ -1048,7 +1091,8 @@ def plot_fourier_extension_quality(
         )
         ax.plot(lambda_ext_plot, ext_mean_plot, color=ext_color, linewidth=1.45, alpha=0.98, zorder=4)
 
-    for idx, value in enumerate(fit_lambda):
+    fit_boundaries = np.concatenate([-fit_lambda[::-1], fit_lambda]) if paired else fit_lambda
+    for idx, value in enumerate(fit_boundaries):
         ax.axvline(
             value,
             color="black",
@@ -1062,28 +1106,37 @@ def plot_fourier_extension_quality(
         ax.set_xlabel(r"$\lambda = z\bar P^z$, $\bar P^z=(P_i^z+P_f^z)/2$", **FONT_SIZE)
     else:
         ax.set_xlabel(r"$\lambda = z P^z$", **FONT_SIZE)
-    component_label = r"\mathrm{Re}" if component == "re" else r"\mathrm{Im}"
+    part_label = r"\mathrm{Re}" if part == "re" else r"\mathrm{Im}"
     if momentum_gev is None:
-        ax.set_ylabel(rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)
+        ax.set_ylabel(rf"${part_label}\,\tilde{{h}}^R(\lambda, P^z)$", **FONT_SIZE)
     elif final_momentum_gev is not None:
         ax.set_ylabel(
-            rf"${component_label}\,\tilde{{h}}^R(\lambda, P_i^z={float(momentum_gev):.2f},\ P_f^z={float(final_momentum_gev):.2f}\,\mathrm{{GeV}})$",
+            rf"${part_label}\,\tilde{{h}}^R(\lambda, P_i^z={float(momentum_gev):.2f},\ P_f^z={float(final_momentum_gev):.2f}\,\mathrm{{GeV}})$",
             **FONT_SIZE,
         )
     else:
         ax.set_ylabel(
-            rf"${component_label}\,\tilde{{h}}^R(\lambda, P^z={float(momentum_gev):.2f}\,\mathrm{{GeV}})$",
+            rf"${part_label}\,\tilde{{h}}^R(\lambda, P^z={float(momentum_gev):.2f}\,\mathrm{{GeV}})$",
             **FONT_SIZE,
         )
     if title is None:
-        title = rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:.2f}\,\mathrm{{fm}}$, $z_{{\max}}={zmax:.2f}\,\mathrm{{fm}}$"
+        prefix = "Paired midpoint " if paired else ""
+        title = prefix + rf"$\lambda$-extrapolation: $z_{{\min}}={zmin:.2f}\,\mathrm{{fm}}$, $z_{{\max}}={zmax:.2f}\,\mathrm{{fm}}$"
     ax.set_title(title, **FONT_SIZE)
     chi2_values = result.get("fit_model_chi2_dof", [])
-    if chi2_values and scheme_index < len(chi2_values):
+    if paired and "target_fit_chi2" in scheme and "partner_fit_chi2" in scheme:
+        target_chi2 = float(np.mean(scheme["target_fit_chi2"])) / max(float(np.mean(scheme["target_fit_dof"])), 1.0)
+        partner_chi2 = float(np.mean(scheme["partner_fit_chi2"])) / max(float(np.mean(scheme["partner_fit_dof"])), 1.0)
+        annotation = rf"target $\chi^2/\mathrm{{dof}}={target_chi2:.3g}$" + "\n" + rf"partner $\chi^2/\mathrm{{dof}}={partner_chi2:.3g}$"
+    elif chi2_values and scheme_index < len(chi2_values):
+        annotation = rf"$\chi^2/\mathrm{{dof}}={float(chi2_values[scheme_index]):.3g}$"
+    else:
+        annotation = ""
+    if annotation:
         ax.text(
             0.03,
             0.95,
-            rf"$\chi^2/\mathrm{{dof}}={float(chi2_values[scheme_index]):.3g}$",
+            annotation,
             transform=ax.transAxes,
             ha="left",
             va="top",

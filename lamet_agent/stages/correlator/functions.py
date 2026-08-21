@@ -75,8 +75,8 @@ from lamet_agent.stages.correlator.lanczos import (
 )
 from lamet_agent.core.tools import (
     log_nonlinear_fit_quality,
-    resolve_plot_save_path,
     setup_logger,
+    stage_artifact_stem,
 )
 
 # 2pt ground-state posteriors anchor the chained 3pt prior with widened errors.
@@ -2642,7 +2642,6 @@ def run_lanczos_analysis(
     momentum_gev: float | None = None,
     temporal_extent: int | None = None,
     job_id: str | None = None,
-    save_path: str | None = None,
     artifacts_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run nested-resampled Lanczos extraction and write the terminal artifact."""
@@ -2727,11 +2726,9 @@ def run_lanczos_analysis(
     outer_indices = _lanczos_outer_indices(
         source.shape[0], mode=mode, n_boot=n_boot, seed=seed
     )
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    resolved_save = resolve_plot_save_path(
-        save_path,
-        artifacts_dir=out_dir,
+    resolved_save = stage_artifact_stem(
+        artifacts_dir,
+        job_id=job_id,
         default_stem=f"{tag or 'correlator'}_lanczos",
     )
     resample_label = {"bs": "bootstrap", "jk": "jackknife"}[mode]
@@ -3077,7 +3074,7 @@ def tune_ground_state(
     bin_size: int | None,
     window_indices: list[int] | None = None,
     model_average: bool,
-    save_path: str | None = None,
+    job_id: str | None = None,
     artifacts_dir: str | Path | None = None,
     out: str = "pt2_tune",
 ) -> dict[str, Any]:
@@ -3089,7 +3086,7 @@ def tune_ground_state(
     # validate agent-facing settings and load the resampled 2pt ensemble
     mode = _check_mode(resample_mode)
     scale = _check_rescale(correlator_rescale)
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
+    resolved_save = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem="pt2_tune")
 
     pt2_complex = _read_2pt(
         pt2_path,
@@ -3140,7 +3137,7 @@ def tune_ground_state(
          "label": f"t=[{rec['tmin']},{rec['tmax']})", "color": COLOR_CYCLE[i % len(COLOR_CYCLE)]}
         for i, rec in enumerate(chosen)
     ]
-    resolved_save = resolve_plot_save_path(save_path, artifacts_dir=out_dir, default_stem="pt2_tune")
+
     tune_tmax = max((rec["tmax"] for rec in chosen), default=0)
     meff_t_max = max(Lt // 4, tune_tmax)
     figures = plot_pt2_fit_on_data(
@@ -3352,8 +3349,6 @@ def tune_bare_matrix(
     bin_size: int | None,
     part: str,
     q_min: float,
-    save_path: str | None = None,
-    artifacts_dir: str | Path | None = None,
     out: str = "bare_tune",
 ) -> dict[str, Any]:
     """Scan bare-matrix fit windows on sample-average data at multiple tune z values.
@@ -4089,9 +4084,6 @@ def fit_bare_matrix_grid(
     initial_momentum_gev: float | None = None,
     final_momentum_gev: float | None = None,
     temporal_extent: int | None = None,
-    save_path: str | None = None,
-    log_dir: str | Path | None = None,
-    log_path: str | Path | None = None,
     artifacts_dir: str | Path | None = None,
     out: str = "bare_matrix_grid",
     workers: int,
@@ -4171,9 +4163,6 @@ def fit_bare_matrix_grid(
             lattice_spacing_fm=lattice_spacing_fm,
             momentum_gev=momentum_gev,
             temporal_extent=temporal_extent,
-            save_path=save_path,
-            log_dir=log_dir,
-            log_path=log_path,
             artifacts_dir=artifacts_dir,
             workers=workers,
         )
@@ -4187,18 +4176,11 @@ def fit_bare_matrix_grid(
     scale = _check_rescale(correlator_rescale)
     mode = _check_mode(resample_mode)
     fitted_parts = _parts(part)
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
-    fit_log_dir = Path(log_dir) if log_dir is not None else out_dir / "fit_logs"
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem=tag or "bare_matrix_elements")
+    fit_log_dir = stem.parent / "fit_logs"
     fit_log_dir.mkdir(parents=True, exist_ok=True)
-    if log_path is not None:
-        base_log_path = Path(log_path)
-        log_suffix = base_log_path.suffix or ".log"
-        tuning_log_path = base_log_path.with_name(f"{base_log_path.stem}_tuning{log_suffix}")
-        sample_log_path = base_log_path.with_name(f"{base_log_path.stem}_samples{log_suffix}")
-    else:
-        log_stem = f"{ensemble}_{tag}_{three_point_momentum}_bT{bT}_{fit_mode}"
-        tuning_log_path = fit_log_dir / f"{log_stem}_tuning.log"
-        sample_log_path = fit_log_dir / f"{log_stem}_samples.log"
+    log_stem = f"{ensemble}_{tag}_{three_point_momentum}_bT{bT}_{fit_mode}"
+    tuning_log_path, sample_log_path = _split_fit_log_paths(log_dir=fit_log_dir, log_stem=log_stem)
     tuning_logger = setup_logger(tuning_log_path, logger_name="correlator_tuning_logger")
     sample_logger = setup_logger(sample_log_path, logger_name="correlator_sample_logger")
     tuning_logger.info("Starting %s bare matrix grid fit (model_average=%s)", fit_mode, model_average)
@@ -4794,12 +4776,7 @@ def fit_bare_matrix_grid(
         p_label = "n/a" if momentum_gev is None else f"{float(momentum_gev):.2f}"
         plot_title = rf"{ensemble} $p={p_label}\,\mathrm{{GeV}}$ bare matrix elements"
     # assemble the terminal artifact, summary plot, and JSON-safe observation
-    out_dir.mkdir(parents=True, exist_ok=True)
-    resolved_save = resolve_plot_save_path(
-        save_path,
-        artifacts_dir=out_dir,
-        default_stem="bare_matrix_elements",
-    )
+    resolved_save = str(stem)
     summary_z: list[int] = []
     real_means: list[float] = []
     real_errors: list[float] = []
@@ -5047,18 +5024,10 @@ def fit_bare_matrix_grid(
 
 def _split_fit_log_paths(
     *,
-    log_path: str | Path | None,
     log_dir: Path,
     log_stem: str,
 ) -> tuple[Path, Path]:
     """Return the standard tuning and per-sample fit-log paths."""
-    if log_path is not None:
-        base_log_path = Path(log_path)
-        log_suffix = base_log_path.suffix or ".log"
-        return (
-            base_log_path.with_name(f"{base_log_path.stem}_tuning{log_suffix}"),
-            base_log_path.with_name(f"{base_log_path.stem}_samples{log_suffix}"),
-        )
     return (
         log_dir / f"{log_stem}_tuning.log",
         log_dir / f"{log_stem}_samples.log",
@@ -5985,9 +5954,6 @@ def fit_qda_ratio_grid(
     lattice_spacing_fm: float | None,
     momentum_gev: float | None,
     temporal_extent: int | None,
-    save_path: str | None,
-    log_dir: str | Path | None,
-    log_path: str | Path | None,
     artifacts_dir: str | Path | None,
     workers: int,
 ) -> dict[str, Any]:
@@ -6017,11 +5983,10 @@ def fit_qda_ratio_grid(
         raise ValueError("tune_z must be present in the qda_ratio bz grid")
     if skipped_z0_fit and tune_z_value == 0:
         tune_z_value = fit_z_list[0]
-    out_dir = Path(artifacts_dir) if artifacts_dir is not None else Path.cwd() / "artifacts"
-    fit_log_dir = Path(log_dir) if log_dir is not None else out_dir / "fit_logs"
+    stem = stage_artifact_stem(artifacts_dir, job_id=job_id, default_stem=tag or "qda_ratio")
+    fit_log_dir = stem.parent / "fit_logs"
     fit_log_dir.mkdir(parents=True, exist_ok=True)
     tuning_log_path, sample_log_path = _split_fit_log_paths(
-        log_path=log_path,
         log_dir=fit_log_dir,
         log_stem=f"{ensemble}_{tag}_{momentum}_{strategy}_qda_ratio",
     )
@@ -6031,9 +5996,7 @@ def fit_qda_ratio_grid(
     sample_logger = setup_logger(
         sample_log_path, logger_name="qda_ratio_sample_logger"
     )
-    resolved_save = resolve_plot_save_path(
-        save_path, artifacts_dir=out_dir, default_stem=tag or "qda_ratio"
-    )
+    resolved_save = str(stem)
     denominator, pt2_samples, denominator_samples, indices, pt2_gv = _load_denominator(
         pt2_path=pt2_path,
         source_operator=source_operator,

@@ -127,17 +127,51 @@ def _violation(
     return RuleViolation(message=message, path=path, cause=cause, parameters=parameters)
 
 
-def _check_input_role(context: StageValidationContext) -> RuleViolation | None:
+def _check_input_role(context: StageValidationContext) -> RuleViolation | list[RuleViolation] | None:
     roles = set(context.inputs)
-    if roles == {"input"}:
-        return None
-    return _violation(
-        context,
-        message="A fourier_transform job requires exactly one input role named input.",
-        path=f"{context.job_path}.inputs",
-        cause=f"The effective input roles are {sorted(roles)}.",
-        parameters=("inputs.input",),
-    )
+    target = str(context.metadata.get("target_observable", "pdf")).lower()
+    initial = context.params.get("initial_momentum")
+    final = context.params.get("final_momentum")
+    nonforward_gpd = target == "gpd" and initial is not None and final is not None and initial != final
+    expected = {"input", "hermitian_partner"} if nonforward_gpd else {"input"}
+    issues = []
+    if roles != expected:
+        issues.append(
+            _violation(
+                context,
+                message=f"A {target.upper()} Fourier job requires input roles {sorted(expected)}.",
+                path=f"{context.job_path}.inputs",
+                cause=f"The effective input roles are {sorted(roles)}.",
+                parameters=("inputs.input", "inputs.hermitian_partner"),
+            )
+        )
+    if target != "gpd" and "bilocal_anchor" in (context.authored_params or {}):
+        issues.append(
+            _violation(
+                context,
+                message="bilocal_anchor is only valid for GPD Fourier transforms.",
+                path=context.parameter_path("bilocal_anchor"),
+                cause=f"The run target_observable is {target!r}.",
+                parameters=("bilocal_anchor", "metadata.target_observable"),
+            )
+        )
+    partner = context.resources.get("partner_kinematics", {})
+    if nonforward_gpd and "hermitian_partner" in roles and (
+        partner.get("initial_momentum") != final or partner.get("final_momentum") != initial
+    ):
+        issues.append(
+            _violation(
+                context,
+                message="The GPD hermitian_partner must exchange the initial and final momenta.",
+                path=f"{context.job_path}.inputs.hermitian_partner",
+                cause=(
+                    f"The target flow is {initial}->{final}, while the partner flow is "
+                    f"{partner.get('initial_momentum')}->{partner.get('final_momentum')}."
+                ),
+                parameters=("inputs.hermitian_partner",),
+            )
+        )
+    return issues
 
 
 def _check_momentum(context: StageValidationContext) -> RuleViolation | None:
@@ -150,6 +184,29 @@ def _check_momentum(context: StageValidationContext) -> RuleViolation | None:
         cause="The upstream source does not provide a complete momentum, volume, and lattice-spacing triple.",
         parameters=("momentum_gev",),
     )
+
+
+def _check_gfix_provenance(context: StageValidationContext) -> RuleViolation | None:
+    source = context.resources.get("gfix_source")
+    inherited = context.resources.get("inherited_gfix")
+    authored = (context.authored_params or {}).get("gfix")
+    if source == "correlator" and authored is not None:
+        return _violation(
+            context,
+            message="Fourier gfix is inherited from correlator provenance and must not be redeclared.",
+            path=context.parameter_path("gfix"),
+            cause=f"The correlator declares gfix={inherited!r}, while Fourier declares {authored!r}.",
+            parameters=("gfix",),
+        )
+    if source == "artifact" and inherited is not None and authored is not None and inherited != authored:
+        return _violation(
+            context,
+            message="Fourier gfix conflicts with the external artifact provenance.",
+            path=context.parameter_path("gfix"),
+            cause=f"The artifact records gfix={inherited!r}, while Fourier declares {authored!r}.",
+            parameters=("gfix",),
+        )
+    return None
 
 
 def _check_polarization(context: StageValidationContext) -> RuleViolation | None:
@@ -227,20 +284,6 @@ def _check_sector_manual_projection(context: StageValidationContext) -> RuleViol
         message="Fourier sector cannot be combined with manual projection controls.",
         path=f"{context.job_path}.params",
         cause=f"sector is set together with {manual}.",
-    )
-
-
-def _check_component_part(context: StageValidationContext) -> RuleViolation | None:
-    if "component" not in context.authored_params or "part" not in context.authored_params:
-        return None
-    return _violation(
-        context,
-        message="Fourier component and part cannot both be set.",
-        path=f"{context.job_path}.params",
-        cause=(
-            f"component={context.params['component']!r} and part={context.params['part']!r} "
-            "select the same channel."
-        ),
     )
 
 
@@ -447,19 +490,26 @@ _SCHEME_SCAN_FIELDS = {
 }
 
 _PLOT_FIELDS = {
-    "save_path": _parameter("Plot file name.", "Plot placement remains inside the job artifact directory.", expected=str),
     "title": _parameter("Optional plot title.", "This changes presentation only.", expected=str),
 }
 
 
 FOURIER_CONSTRAINTS = (
     ConstraintSpec(
-        code="fourier.inputs.exactly_one",
-        parameters=("inputs.input",),
-        rule="Each job has exactly one input role named input.",
-        physics="A Fourier job transforms one renormalized coordinate-space matrix element into one quasi-distribution.",
-        suggested_fix='Set job inputs to {"input": "<renormalization job or artifact>"}.',
+        code="fourier.inputs.observable_contract",
+        parameters=("inputs.input", "inputs.hermitian_partner", "bilocal_anchor"),
+        rule="PDF, DA, and forward GPD jobs use input; nonforward GPD jobs also use the exchanged-flow hermitian_partner.",
+        physics="Nonforward GPD Hermiticity relates the negative-z branch to the flow with exchanged initial and final momenta.",
+        suggested_fix='Use {"input": "<flow>", "hermitian_partner": "<exchanged flow>"} for a nonforward GPD job.',
         check=_check_input_role,
+    ),
+    ConstraintSpec(
+        code="fourier.gfix.provenance",
+        parameters=("gfix", "inputs.input"),
+        rule="Correlator-backed jobs inherit gfix; external jobs declare it explicitly and agree with artifact provenance.",
+        physics="CG and GI matrix elements use different long-distance tail parameterizations, so the Fourier choice must match the gauge-link construction of its input.",
+        suggested_fix="Remove a redundant correlator-backed gfix, or declare the artifact-compatible CG/GI value for an external input.",
+        check=_check_gfix_provenance,
     ),
     ConstraintSpec(
         code="fourier.kinematics.momentum_required",
@@ -510,14 +560,6 @@ FOURIER_CONSTRAINTS = (
         check=_check_sector_manual_projection,
     ),
     ConstraintSpec(
-        code="fourier.component_part.conflict",
-        parameters=("component", "part"),
-        rule="component and part are aliases and cannot both be set.",
-        physics="Both fields select the same real/imaginary transform channel; two values have no independent physical meaning.",
-        suggested_fix="Keep part and remove component, or keep component as the legacy alias.",
-        check=_check_component_part,
-    ),
-    ConstraintSpec(
         code="fourier.scheme_scan.coordinates",
         parameters=("scheme_scan",),
         rule="Tail-scan coordinates zmin_fm, zmax_fm, and zmax_ext_fm are physical distances in fm.",
@@ -547,20 +589,34 @@ FOURIER_CONSTRAINTS = (
 def _normalize_draft(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize deterministic Fourier constraints in a mutable planning draft."""
     metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-    force_full = str(metadata.get("target_observable", "")).lower() == "da" or str(metadata.get("parton", "")).lower() == "gluon"
-    if not force_full:
-        return []
+    target = str(metadata.get("target_observable", "")).lower()
+    force_full = target == "da" or str(metadata.get("parton", "")).lower() == "gluon"
     stages = payload.get("stages", {}) if isinstance(payload.get("stages"), dict) else {}
     stage = stages.get("fourier_transform", {}) if isinstance(stages, dict) else {}
     if not isinstance(stage, dict):
         return []
     edits: list[dict[str, Any]] = []
     defaults = stage.get("defaults", {})
+    if target != "gpd" and isinstance(defaults, dict) and "bilocal_anchor" in defaults:
+        old = defaults.pop("bilocal_anchor")
+        edits.append({"path": "stages.fourier_transform.defaults.bilocal_anchor", "old": old, "new": None, "note": "Removed the GPD-only bilocal anchor."})
+    jobs = stage.get("jobs", [])
+    if target != "gpd" and isinstance(jobs, list):
+        for job in jobs:
+            params = job.get("params", {}) if isinstance(job, dict) else {}
+            if isinstance(params, dict) and "bilocal_anchor" in params:
+                old = params.pop("bilocal_anchor")
+                edits.append({"path": f"stages.fourier_transform.jobs.{job.get('id', '')}.params.bilocal_anchor", "old": old, "new": None, "note": "Removed the GPD-only bilocal anchor."})
+            inputs = job.get("inputs", {}) if isinstance(job, dict) else {}
+            if isinstance(inputs, dict) and "hermitian_partner" in inputs:
+                old = inputs.pop("hermitian_partner")
+                edits.append({"path": f"stages.fourier_transform.jobs.{job.get('id', '')}.inputs.hermitian_partner", "old": old, "new": None, "note": "Removed the GPD-only Hermitian partner."})
+    if not force_full:
+        return edits
     if isinstance(defaults, dict) and "sector" in defaults and str(defaults.get("sector", "")).lower() != "full":
         old = defaults.get("sector")
         defaults["sector"] = "full"
         edits.append({"path": "stages.fourier_transform.defaults.sector", "old": old, "new": "full", "note": "DA and gluon Fourier sectors are fixed to full."})
-    jobs = stage.get("jobs", [])
     if isinstance(jobs, list):
         for job in jobs:
             params = job.get("params", {}) if isinstance(job, dict) else {}
@@ -578,9 +634,14 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "The stage fits the long-distance coordinate-space tail, extends the finite lattice signal, "
         "and transforms every resampled sample onto a declared momentum-fraction grid."
     ),
-    input_roles=("input",),
+    planning_notes=(
+        "Only GPD jobs author bilocal_anchor; an omitted GPD value resolves to mid_at_0 without materializing a PDF/DA parameter.",
+        "Each nonforward GPD job uses a job-specific hermitian_partner whose initial and final momenta exchange those of input.",
+    ),
+    input_roles=("input", "hermitian_partner"),
     input_role_descriptions={
         "input": "One renormalized coordinate-space matrix element to extend and Fourier transform.",
+        "hermitian_partner": "The GPD matrix element with exchanged initial and final momenta used to reconstruct negative z.",
     },
     normalize_draft=_normalize_draft,
     schema={
@@ -591,19 +652,29 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             unit="GeV",
             required=True,
         ),
-        "component": _parameter(
-            "Legacy alias for part.",
-            "It selects the real, imaginary, or combined transform channel.",
+        "bilocal_anchor": _parameter(
+            "Location fixed at the origin in a GPD bilocal operator.",
+            "mid_at_0 uses the centered bilocal; barpsi_at_0 fixes the barred field; psi_at_0 fixes the unbarred field and reverses the canonical separation.",
             expected=str,
-            choices=("re", "im", "both"),
+            choices=("mid_at_0", "barpsi_at_0", "psi_at_0"),
             choice_descriptions={
-                "re": "Use the real coordinate-space channel.",
-                "im": "Use the imaginary coordinate-space channel.",
-                "both": "Retain both channels.",
+                "mid_at_0": "Use barpsi(-z/2) Gamma W psi(z/2).",
+                "barpsi_at_0": "Use barpsi(0) Gamma W(0,z) psi(z).",
+                "psi_at_0": "Use barpsi(z) Gamma W(z,0) psi(0).",
             },
         ),
         "coord_key": _parameter("NPZ/HDF5 coordinate dataset key.", "This maps an external file layout onto the stage coordinate axis.", expected=str, default="coord"),
-        "gfix": _parameter("Gauge-link treatment inherited from the input.", "CG and GI select the corresponding tail method when method is omitted.", expected=str),
+        "gfix": _parameter(
+            "Gauge-link treatment and long-distance tail family.",
+            "CG and GI matrix elements use their corresponding asymptotic parameterizations; correlator-backed jobs inherit this value, while external jobs declare it explicitly.",
+            expected=str,
+            required=True,
+            choices=("CG", "GI"),
+            choice_descriptions={
+                "CG": "Use the Coulomb-gauge asymptotic parameterization.",
+                "GI": "Use the gauge-invariant asymptotic parameterization.",
+            },
+        ),
         "h5_group": _parameter("HDF5 group containing one momentum channel.", "This is file-layout metadata and does not alter the Fourier prescription.", expected=str),
         "hadron": _parameter("Hadron identity used for observable inference.", "Hadron and parton labels select the public quasi-observable backend.", expected=str),
         "im_flip_for_ft": _parameter(
@@ -618,17 +689,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             "The format changes loading only; all supported formats are normalized to EnsembleData before analysis.",
             expected=str,
             choices=("nc", "netcdf", "npz", "h5", "hdf5"),
-        ),
-        "method": _parameter(
-            "Long-distance tail ansatz family.",
-            "GI and CG use different asymptotic parameterizations; the choice is fixed theory input and is not model-averaged.",
-            expected=str,
-            required=True,
-            choices=("GI", "CG"),
-            choice_descriptions={
-                "GI": "Use the gauge-invariant asymptotic parameterization.",
-                "CG": "Use the Coulomb-gauge asymptotic parameterization.",
-            },
         ),
         "order": _parameter(
             "Tail ansatz orders included as fit-model candidates.",
@@ -645,7 +705,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "output_scale": _parameter("Final manual multiplicative scale.", "This rescales the transformed distribution and its uncertainties.", expected=float, default=1.0),
         "part": _parameter(
             "Manual real/imaginary transform channel.",
-            "The selected channel controls which coordinate-space component constrains the output when sector is absent.",
+            "The selected part controls which coordinate-space channel constrains the output when sector is absent.",
             expected=str,
             choices=("re", "im", "both"),
             choice_descriptions={
@@ -703,7 +763,6 @@ STAGE_PARAM_CONTRACT = StageParamContract(
             schema={
                 "enabled": _parameter("Enable the optional per-job report.", "This affects reporting only.", expected=bool),
                 "report_language": _parameter("Report language.", "This affects reporting only.", expected=str, choices=("en", "ch")),
-                "save_path": _parameter("Report file name.", "Report placement remains inside the job artifact directory.", expected=str),
             },
         ),
         "scheme_scan": _parameter(
@@ -715,14 +774,13 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         ),
         "sector": _parameter(
             "Partonic projection of a quark PDF/GPD, or full distribution.",
-            "For quarks it selects the negative-x extension and active complex channel; DA and gluon backends support full only.",
+            "PDF sectors select the negative-x extension and active complex channel. GPD sectors are projected sample by sample from the full complex result after the paired Fourier transform. DA and gluon backends support full only.",
             expected=str,
-            required=True,
             choices=("sea", "valence", "singlet", "full"),
             choice_descriptions={
-                "sea": "Construct the antiquark/sea projection from the negative-x extension.",
-                "valence": "Construct the quark-minus-antiquark projection; the active complex channel depends on polarization.",
-                "singlet": "Construct the quark-plus-antiquark projection; the active complex channel depends on polarization.",
+                "sea": "Construct the antiquark/sea projection from the negative momentum-fraction branch.",
+                "valence": "Construct the quark-minus-antiquark projection; GPD keeps both complex channels through the transform.",
+                "singlet": "Construct the quark-plus-antiquark projection; GPD keeps both complex channels through the transform.",
                 "full": "Keep the full signed-x distribution; this is the only supported sector for DA and gluon backends.",
             },
         ),
@@ -748,6 +806,7 @@ STAGE_PARAM_CONTRACT = StageParamContract(
         "Lambda0": "is no longer supported; use Lambda0_gev.",
         "distribution_type": "is no longer supported; use polarization.",
         "y_grid": "is no longer supported; use quasi_y_ls.",
+        "save_path": "is no longer supported; stage tools write under the job artifact directory.",
     },
     constraints=FOURIER_CONSTRAINTS,
 )
@@ -758,7 +817,55 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
     stage = manifest.stages["fourier_transform"]
     authored = merge_stage_params(stage.defaults, job.params)
     resolved = resolve_stage_params("fourier_transform", stage.defaults, job.params)
-    params = {**derive_job_kinematics(manifest, job), **resolved}
+    derived = derive_job_kinematics(manifest, job)
+    reference = job.inputs.get("input")
+    jobs = {
+        candidate.id: (stage_id, candidate)
+        for stage_id, config in manifest.stages.items()
+        for candidate in config.jobs
+    }
+    artifacts = {artifact.id for artifact in manifest.inputs.artifacts}
+    seen: set[str] = set()
+    gfix_source = None
+    while isinstance(reference, str) and reference not in seen:
+        if reference in artifacts:
+            gfix_source = "artifact"
+            break
+        found = jobs.get(reference)
+        if found is None:
+            break
+        stage_id, candidate = found
+        if stage_id == "correlator_analysis":
+            gfix_source = "correlator"
+            break
+        seen.add(reference)
+        reference = next(
+            (
+                candidate.inputs[key]
+                for key in ("target", "input", "reference", "quasi")
+                if isinstance(candidate.inputs.get(key), str)
+            ),
+            None,
+        )
+    inherited_gfix = derived.get("gfix")
+    params = {**derived, **resolved}
+    if gfix_source == "artifact" and "gfix" not in authored:
+        params.pop("gfix", None)
+    partner_kinematics = {}
+    partner_reference = job.inputs.get("hermitian_partner")
+    if isinstance(partner_reference, str):
+        partner_artifact = next(
+            (artifact for artifact in manifest.inputs.artifacts if artifact.id == partner_reference),
+            None,
+        )
+        if partner_artifact is not None:
+            partner_kinematics = {
+                key: partner_artifact.resolved_metadata[key]
+                for key in ("initial_momentum", "final_momentum")
+                if partner_artifact.resolved_metadata.get(key) is not None
+            }
+        elif partner_reference in jobs:
+            partner_kinematics = derive_job_kinematics(manifest, jobs[partner_reference][1])
     context = StageValidationContext(
         stage="fourier_transform",
         job_id=job.id,
@@ -766,7 +873,12 @@ def build_validation_context(manifest: AnalysisManifest, job: StageJob) -> Stage
         params=params,
         inputs=dict(job.inputs),
         metadata=manifest.metadata.model_dump(),
-        resources={"z_last_fm": upstream_z_last_fm(manifest, job)},
+        resources={
+            "z_last_fm": upstream_z_last_fm(manifest, job),
+            "gfix_source": gfix_source,
+            "inherited_gfix": inherited_gfix,
+            "partner_kinematics": partner_kinematics,
+        },
         authored_params=authored,
     )
     return context

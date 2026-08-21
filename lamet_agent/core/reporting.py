@@ -101,7 +101,11 @@ def markdown_artifact_paths(
             output[key] = None
             continue
         path = Path(str(value))
-        output[key] = os.path.relpath(path, base_dir) if path.is_absolute() else str(value)
+        output[key] = (
+            Path(os.path.relpath(path, base_dir)).as_posix()
+            if path.is_absolute()
+            else str(value)
+        )
     for key in list_path_keys:
         values = output.get(key)
         if values is None:
@@ -111,6 +115,10 @@ def markdown_artifact_paths(
             if not value:
                 continue
             path = Path(str(value))
-            relative_paths.append(os.path.relpath(path, base_dir) if path.is_absolute() else str(value))
+            relative_paths.append(
+                Path(os.path.relpath(path, base_dir)).as_posix()
+                if path.is_absolute()
+                else str(value)
+            )
         output[key] = relative_paths
     return output

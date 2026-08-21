@@ -31,6 +31,7 @@ from lamet_agent.planning import (
     run_interactive_plan,
     validate_candidate_payload,
 )
+from lamet_agent.planning.core import normalize_planning_constraints
 from lamet_agent.stages.correlator.functions import _read_2pt, _read_3pt
 
 
@@ -39,6 +40,62 @@ def test_planning_prompt_requires_validation_contract_maintenance() -> None:
 
     assert "STAGE_PARAM_CONTRACT in validation.py" in prompt
     assert "adds, removes, renames, or changes a manifest parameter" in prompt
+
+
+def test_plan_gfix_gap_matches_external_fourier_provenance() -> None:
+    full = json.loads(Path("examples/pion_pdf_cg_manifest.json").read_text(encoding="utf-8"))
+    assert not any(gap["parameter"] == "gfix" for gap in _stage_parameter_gaps(full))
+
+    payload = {
+        "metadata": {
+            "run_id": "partial",
+            "root_directory": ".",
+            "target_observable": "pdf",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "sample_error_mode": "covariance",
+            "random_seed": 1984,
+            "stages": ["fourier_transform"],
+        },
+        "inputs": {
+            "correlators": [],
+            "artifacts": [{
+                "id": "rn",
+                "stage": "renormalization",
+                "path": "rn.nc",
+                "momentum": "PX5PY0PZ0",
+                "volume": "S48T64",
+                "lattice_spacing_fm": 0.0574,
+                "hadron": "pion",
+                "gfix": "CG",
+                "polarization": "unpolarized",
+            }],
+            "kernels": [],
+        },
+        "stages": {
+            "fourier_transform": {
+                "defaults": {
+                    "Lambda0_gev": 0.0,
+                    "order": "LA",
+                    "posterior_prior_error_scale": 3.0,
+                    "quasi_y_ls": {"start": -1.0, "stop": 1.0, "num": 4},
+                    "scheme_scan": {"zmin_fm": [0.1], "zmax_fm": [0.8], "zmax_ext_fm": 1.2},
+                    "sector": "valence",
+                },
+                "jobs": [{"id": "ft", "inputs": {"input": "rn"}}],
+            }
+        },
+    }
+
+    gaps = _stage_parameter_gaps(payload)
+    assert [gap["code"] for gap in gaps if gap["parameter"] == "gfix"] == ["fourier.gfix.required"]
+
+    payload["stages"]["fourier_transform"]["defaults"]["gfix"] = "GI"
+    gaps = _stage_parameter_gaps(payload)
+    assert [gap["code"] for gap in gaps if gap["parameter"] == "gfix"] == ["fourier.gfix.provenance"]
+
+    payload["stages"]["fourier_transform"]["defaults"]["gfix"] = "CG"
+    assert not any(gap["parameter"] == "gfix" for gap in _stage_parameter_gaps(payload))
 
 
 def _write_kernel(root: Path) -> None:
@@ -218,6 +275,232 @@ def test_complete_example_builds_without_planning_questions() -> None:
     assert gaps == []
     assert loaded["next_questions"] == []
     assert built["ok"] is True
+
+
+def test_plan_nonbreit_gpd_propagates_exchanged_flow_through_upstream_jobs() -> None:
+    correlators = [
+        {
+            "correlator_id": "c2_p2",
+            "correlator_type": "2pt",
+            "momentum": "PX0PY0PZ2",
+            "volume": "S24T72",
+            "lattice_spacing_fm": 0.1,
+            "hadron": "pion",
+            "gfix": "GI",
+        },
+        {
+            "correlator_id": "c2_p3",
+            "correlator_type": "2pt",
+            "momentum": "PX0PY0PZ3",
+            "volume": "S24T72",
+            "lattice_spacing_fm": 0.1,
+            "hadron": "pion",
+            "gfix": "GI",
+        },
+        {
+            "correlator_id": "c3_2to3",
+            "correlator_type": "3pt",
+            "momentum": "PX0PY0PZ3",
+            "hadron": "pion",
+            "current_operator": "gt",
+            "polarization": "unpolarized",
+        },
+        {
+            "correlator_id": "c3_3to2",
+            "correlator_type": "3pt",
+            "momentum": "PX0PY0PZ2",
+            "hadron": "pion",
+            "current_operator": "gt",
+            "polarization": "unpolarized",
+        },
+    ]
+    payload = {
+        "metadata": {
+            "run_id": "paired-plan",
+            "root_directory": ".",
+            "target_observable": "gpd",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "sample_error_mode": "covariance",
+            "random_seed": 1984,
+            "stages": ["correlator_analysis", "renormalization", "fourier_transform"],
+        },
+        "inputs": {"correlators": correlators, "artifacts": [], "kernels": []},
+        "stages": {
+            "correlator_analysis": {
+                "defaults": {},
+                "jobs": [
+                    {
+                        "id": "ca_2to3",
+                        "correlator_ids": ["c2_p2", "c2_p3", "c3_2to3"],
+                        "params": {
+                            "fitting_form": "NonBreit",
+                            "initial_momentum": "PX0PY0PZ2",
+                            "final_momentum": "PX0PY0PZ3",
+                        },
+                    },
+                    {
+                        "id": "ca_3to2",
+                        "correlator_ids": ["c2_p2", "c2_p3", "c3_3to2"],
+                        "params": {
+                            "fitting_form": "NonBreit",
+                            "initial_momentum": "PX0PY0PZ3",
+                            "final_momentum": "PX0PY0PZ2",
+                        },
+                    },
+                ],
+            },
+            "renormalization": {
+                "defaults": {},
+                "jobs": [
+                    {"id": "rn_2to3", "inputs": {"target": "ca_2to3"}},
+                    {"id": "rn_3to2", "inputs": {"target": "ca_3to2"}},
+                ],
+            },
+            "fourier_transform": {
+                "defaults": {},
+                "jobs": [
+                    {
+                        "id": "ft_2to3",
+                        "inputs": {"input": "rn_2to3", "hermitian_partner": "rn_3to2"},
+                    }
+                ],
+            },
+        },
+    }
+
+    gaps = _stage_parameter_gaps(payload)
+    assert not any(gap["code"] == "fourier.inputs.observable_contract" for gap in gaps)
+
+    payload["stages"]["correlator_analysis"]["jobs"][1]["params"]["initial_momentum"] = "PX0PY0PZ1"
+    gaps = _stage_parameter_gaps(payload)
+    assert any(
+        gap["code"] == "fourier.inputs.observable_contract"
+        and "exchange the initial and final momenta" in gap["message"]
+        for gap in gaps
+    )
+
+
+def test_plan_partial_gpd_artifact_checks_partner_kinematics() -> None:
+    target = {
+        "id": "rn_2to3",
+        "stage": "renormalization",
+        "path": "rn_2to3.nc",
+        "momentum": "PX0PY0PZ2",
+        "initial_momentum": "PX0PY0PZ2",
+        "final_momentum": "PX0PY0PZ3",
+        "volume": "S24T72",
+        "lattice_spacing_fm": 0.1,
+        "hadron": "pion",
+        "gfix": "GI",
+        "polarization": "unpolarized",
+    }
+    partner = {
+        **target,
+        "id": "rn_3to2",
+        "path": "rn_3to2.nc",
+        "initial_momentum": "PX0PY0PZ3",
+        "final_momentum": "PX0PY0PZ2",
+    }
+    payload = {
+        "metadata": {
+            "run_id": "partial-paired-plan",
+            "root_directory": ".",
+            "target_observable": "gpd",
+            "parton": "quark",
+            "resample_mode": "jk",
+            "sample_error_mode": "covariance",
+            "random_seed": 1984,
+            "stages": ["fourier_transform"],
+        },
+        "inputs": {"correlators": [], "artifacts": [target, partner], "kernels": []},
+        "stages": {
+            "fourier_transform": {
+                "defaults": {},
+                "jobs": [
+                    {
+                        "id": "ft_2to3",
+                        "inputs": {"input": "rn_2to3", "hermitian_partner": "rn_3to2"},
+                    }
+                ],
+            }
+        },
+    }
+
+    assert not any(
+        gap["code"] == "fourier.inputs.observable_contract"
+        for gap in _stage_parameter_gaps(payload)
+    )
+    payload["inputs"]["artifacts"][1].pop("initial_momentum")
+    assert any(
+        gap["code"] == "fourier.inputs.observable_contract"
+        for gap in _stage_parameter_gaps(payload)
+    )
+
+
+def test_plan_input_answer_preserves_single_job_input_and_never_broadcasts_partner() -> None:
+    payload = {
+        "metadata": {"target_observable": "gpd", "stages": ["fourier_transform"]},
+        "inputs": {"correlators": [], "artifacts": [], "kernels": []},
+        "stages": {
+            "fourier_transform": {
+                "defaults": {},
+                "jobs": [{"id": "ft_2to3", "inputs": {"input": "rn_2to3"}}],
+            }
+        },
+    }
+    state = PlanAgentState(Path("draft.json"), "", payload, copy.deepcopy(payload))
+    _apply_user_answer_to_candidate(
+        state,
+        "stage_required.fourier_transform",
+        json.dumps({"hermitian_partner": "rn_3to2"}),
+    )
+    assert state.candidate_payload["stages"]["fourier_transform"]["jobs"][0]["inputs"] == {
+        "input": "rn_2to3",
+        "hermitian_partner": "rn_3to2",
+    }
+
+    payload["stages"]["fourier_transform"]["jobs"].append(
+        {"id": "ft_3to2", "inputs": {"input": "rn_3to2"}}
+    )
+    state = PlanAgentState(Path("draft.json"), "", payload, copy.deepcopy(payload))
+    _apply_user_answer_to_candidate(
+        state,
+        "stage_required.fourier_transform",
+        json.dumps({"hermitian_partner": "rn_3to2"}),
+    )
+    assert state.candidate_payload["stages"]["fourier_transform"]["jobs"][0]["inputs"] == {
+        "input": "rn_2to3"
+    }
+    assert state.candidate_payload["stages"]["fourier_transform"]["jobs"][1]["inputs"] == {
+        "input": "rn_3to2"
+    }
+
+
+@pytest.mark.parametrize("target", ["pdf", "da"])
+def test_plan_normalization_removes_gpd_only_fields_from_other_observables(target: str) -> None:
+    payload = {
+        "metadata": {"target_observable": target},
+        "stages": {
+            "fourier_transform": {
+                "defaults": {"bilocal_anchor": "mid_at_0"},
+                "jobs": [
+                    {
+                        "id": "ft",
+                        "inputs": {"input": "rn", "hermitian_partner": "rn_reverse"},
+                        "params": {"bilocal_anchor": "barpsi_at_0"},
+                    }
+                ],
+            }
+        },
+    }
+
+    normalize_planning_constraints(payload)
+
+    stage = payload["stages"]["fourier_transform"]
+    assert "bilocal_anchor" not in stage["defaults"]
+    assert "bilocal_anchor" not in stage["jobs"][0]["params"]
+    assert "hermitian_partner" not in stage["jobs"][0]["inputs"]
 
 
 def test_fourier_plan_and_validate_report_the_same_quasi_y_ls_rule(tmp_path: Path) -> None:

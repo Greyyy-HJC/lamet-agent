@@ -35,7 +35,7 @@ def test_extrapolation_detects_continuum_inputs_from_lattice_spacing(tmp_path: P
         sample_error_mode="covariance",
         posterior_prior_error_scale=3.0,
         workers=1,
-        save_path=str(tmp_path / "extrapolate"),
+        artifacts_dir=tmp_path, job_id="extrapolate",
     )
 
     output = xr.load_dataset(result["artifact"])
@@ -69,7 +69,7 @@ def test_systematics_budget_combines_extrapolated_branches(tmp_path: Path) -> No
     )
     store = {"main": main, "zs": [low, high]}
 
-    result = run_systematics_budget(store, save_path=str(tmp_path / "ex_budget"))
+    result = run_systematics_budget(store, artifacts_dir=tmp_path, job_id="ex_budget")
 
     final = xr.load_dataset(result["final_artifact"])
     expected_systematic = np.full(3, 0.5)

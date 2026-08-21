@@ -709,7 +709,7 @@
 ## 2026-07-17 (Automatic apply-time zR extension)
 
 - Added default apply-time long-distance extension for hybrid self-renormalization: when the target exceeds the fitted ``z_R`` grid, infer the single-family ``f1(z)``, fit its derived long-distance tail quadratically, and rebuild only the missing upper-end ``z_R`` points.
-- Kept ``strict`` and ``intersection`` as explicit alternatives while requiring no user-supplied extension length or fit boundary; artifacts and reports record the source range, extrapolated-point count, tail boundary, and method.
+- Kept ``strict`` and ``intersection`` as explicit alternatives while requiring no user-supplied extension length or fit boundary; artifacts and reports record the source range, extrapolated-point count, tail boundary, and tail prescription.
 - Clarified that the fit job determines the reference-operator ``m0``, while apply jobs continue to accept ``m0_gev`` and ``d`` overrides for the target operator.
 - Restored all 18 pion/kaon DA outputs to 600 samples by 25 points, verified them exactly against the direct extrapolated formula, and removed tests and documentation for the retired partial pion-PDF manifest.
 - Expanded the annotated sample manifest with every supported hybrid-self optional parameter, fit/apply scope, defaults, target-``m0`` override semantics, and coverage-policy choices.
@@ -1332,8 +1332,8 @@
 
 - Audited `examples/sample_manifest.jsonc` against every stage contract,
   metadata field, correlator input, artifact provenance key, and kernel field.
-- Documented previously uncommented optional keys: Fourier `component` (legacy
-  `part` alias), plot/report nested `title`/`save_path`, Non-NetCDF
+- Documented previously uncommented optional keys: Fourier plot/report nested
+  `title`/`save_path`, Non-NetCDF
   `input_format`/`h5_group`/`coord_key`/`re_key`/`im_key`, `quasi_y_ls.step`,
   matching legacy `xlim`/`ylim`, and artifact `coord_unit`.
 - Annotated contract defaults (`svdcut`, `prior_width`, `correlator_rescale`,
@@ -1476,3 +1476,66 @@
   recurrence construction). Positive values explicitly enable decimal
   high-precision construction, the Lanczos example uses 100 digits, and both
   `plan` and `validate` print a non-blocking warning for the zero setting.
+
+## 2026-08-19 (Fourier gfix provenance)
+
+- Standardized the Fourier gauge-fixing and tail-family parameter as `gfix`.
+- Correlator-backed jobs inherit `gfix`; external jobs declare it explicitly and
+  are checked against artifact provenance. Numerical tail helpers, results,
+  reports, plots, and NetCDF metadata use the same name.
+
+## 2026-08-19 (Fourier projection controls)
+
+- Removed the obsolete Fourier channel alias and standardized the transform
+  channel as `part` throughout validation, execution, plotting, reports, and examples.
+- Made `sector` optional so advanced jobs may instead declare `part`,
+  `output_scale`, and `im_flip_for_ft`; named sectors still resolve and own all
+  three controls.
+
+## 2026-08-20 (GPD bilocal anchor and paired-flow completion)
+
+- Added the GPD-only Fourier parameter `bilocal_anchor` with
+  `mid_at_0`, `barpsi_at_0`, and `psi_at_0`; omitted GPD values resolve to
+  `mid_at_0`, while PDF and DA manifests reject the parameter.
+- Nonforward GPD Fourier jobs now require a `hermitian_partner` with exchanged
+  initial/final momenta. The two positive-distance flows are converted to the
+  centered convention and reconstruct negative distance with
+  `h_fi(-z) = h_if(z)^*` for the supported Hermitian-current phase.
+- Recorded the bilocal layout, signed discrete momentum transfer, phase source,
+  partner id, and completion mode in Fourier NetCDF outputs and reports.
+
+## 2026-08-20 (Paired GPD planning, sectors, and Fourier diagnostics)
+
+- Plan mode now propagates NonBreit initial/final momenta through correlator and
+  artifact chains, validates the exchanged-flow partner, preserves existing
+  single-job inputs, and never broadcasts one partner answer across multiple
+  GPD jobs. Planning normalization removes GPD-only fields from PDF and DA.
+- GPD `sea`, `valence`, and `singlet` now fit both coordinate-space channels,
+  reconstruct the full paired midpoint matrix element, transform the union of
+  requested `y` and `-y`, and project each resampled Fourier sample afterward.
+  No pre-fit channel deletion or factor-of-two normalization is retained for
+  named GPD sectors; PDF and DA numerical paths are unchanged.
+- Paired range candidates are scored with both target and partner fits, so
+  exchanging the two flows leaves range selection and fit-model weights
+  unchanged.
+- GPD extension plots now show the centered target branch at positive lambda
+  and the conjugated partner-derived branch at negative lambda, with separate
+  fit diagnostics. Fourier plots and overlays use GPD notation and display the
+  NonBreit initial/final momenta and skewness.
+
+## 2026-08-20 (Lock run outputs under artifacts_directory)
+
+- Removed STAGE_TOOL `save_path`, `log_dir`, `log_path`, and review `output_dir`.
+  Run-mode files now use only harness-injected `artifacts_dir` and `job_id`.
+- Replaced `resolve_plot_save_path` with basename-only `stage_artifact_stem` so
+  LLM or manifest paths cannot write outside `metadata.artifacts_directory`.
+
+## 2026-08-21 (Lanczos/main merge compatibility)
+
+- Migrated the Lanczos terminal tool from the removed `save_path` interface to
+  the runner-owned `artifacts_dir`/`job_id` contract and `stage_artifact_stem`.
+- Preserved both digest-validated matching-formula disk caching and the
+  provenance-only fallback that keeps completed numerical outputs available
+  when an uncached report LLM request fails.
+- Kept long API-key source paths intact in CLI notices and normalized generated
+  Markdown artifact links to forward slashes on Windows.

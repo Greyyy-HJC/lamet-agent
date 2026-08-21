@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import tempfile
 from pathlib import Path
 
 import matplotlib
@@ -131,7 +132,10 @@ _EXPLICIT_CORRELATOR_PARAMS = {
 def _call_with_explicit_params(function, store, **kwargs):
     accepted = inspect.signature(function).parameters
     explicit = {key: value for key, value in _EXPLICIT_CORRELATOR_PARAMS.items() if key in accepted}
-    return function(store, **{**explicit, **kwargs})
+    merged = {**explicit, **kwargs}
+    if "artifacts_dir" in accepted:
+        merged.setdefault("artifacts_dir", Path(tempfile.mkdtemp()))
+    return function(store, **merged)
 
 
 def inspect_correlator_scale(store, **kwargs):
@@ -1271,7 +1275,6 @@ def test_tune_bare_matrix_returns_ranked_candidates(tmp_path) -> None:
         prior_width=1.0,
         resample_mode="jk",
         svdcut=1e-6,
-        artifacts_dir=tmp_path / "artifacts",
     )
     assert result["candidates"]
     assert "O00_re_over_2E0" in result["candidates"][0]
@@ -1339,7 +1342,6 @@ def test_automatic_windows_flow_from_tuning_into_grid_result(tmp_path) -> None:
         sample_error_mode="mean",
         svdcut=1e-6,
         artifacts_dir=tmp_path / "artifacts",
-        save_path=str(tmp_path / "artifacts" / "bare"),
     )
     assert fitted["auto_window_scan"] == scan
     assert fitted["shared_window_specs"][0]["tmin"] == robust["tmin"]
@@ -1387,7 +1389,6 @@ def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
         serial_store,
         tag="serial",
         artifacts_dir=tmp_path / "serial",
-        save_path=str(tmp_path / "serial" / "bare"),
         workers=1,
         **common,
     )
@@ -1395,7 +1396,6 @@ def test_correlator_parallel_sample_fits_match_serial(tmp_path) -> None:
         parallel_store,
         tag="parallel",
         artifacts_dir=tmp_path / "parallel",
-        save_path=str(tmp_path / "parallel" / "bare"),
         workers=2,
         **common,
     )
@@ -1431,7 +1431,6 @@ def test_sample0_plot_paths_include_ensemble_and_tag(tmp_path) -> None:
         tsep_ls=(6, 8),
         z_values=(0,),
     )
-    fit_logs = tmp_path / "fit_logs"
     common = {
         "pt2_path": pt2_path,
         "pt3_paths": pt3_paths,
@@ -1449,7 +1448,6 @@ def test_sample0_plot_paths_include_ensemble_and_tag(tmp_path) -> None:
         "sample_error_mode": "mean",
         "svdcut": 1e-6,
         "artifacts_dir": tmp_path / "artifacts",
-        "log_dir": str(fit_logs),
         "workers": 1,
     }
     paths_by_ensemble: dict[str, set[str]] = {}
@@ -1458,7 +1456,7 @@ def test_sample0_plot_paths_include_ensemble_and_tag(tmp_path) -> None:
             {},
             ensemble=ensemble,
             tag=tag,
-            save_path=str(tmp_path / "artifacts" / f"{tag}_bare"),
+            job_id=f"{tag}_bare",
             **common,
         )
         plot_paths = result["z_fits"][0]["sample0_plot_paths"]
@@ -1912,15 +1910,13 @@ def test_log_nonlinear_fit_quality_writes_good_and_bad(tmp_path) -> None:
 
 def test_qda_fit_logs_split_tuning_and_all_sample_records(tmp_path: Path) -> None:
     tuning_path, sample_path = _split_fit_log_paths(
-        log_path=tmp_path / "qda.log",
         log_dir=tmp_path,
-        log_stem="unused",
+        log_stem="qda",
     )
     assert tuning_path.name == "qda_tuning.log"
     assert sample_path.name == "qda_samples.log"
     assert tuning_path != sample_path
     default_tuning_path, default_sample_path = _split_fit_log_paths(
-        log_path=None,
         log_dir=tmp_path,
         log_stem="ensemble_job_PX0PY0PZ6_joint_qda_ratio",
     )

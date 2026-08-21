@@ -82,7 +82,7 @@ def _format_grid(y_grid: np.ndarray, *, language: str) -> str:
 
 
 def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
-    method = str(result.get("method", "")).upper()
+    gfix = str(result.get("gfix", "")).upper()
     order = str(result.get("order", "")).upper()
     observable = str(result.get("observable_backend", result.get("observable", "")))
     sector = str(result.get("sector", "")).lower()
@@ -121,7 +121,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
     reference = FORMULA_REFERENCES.get(observable, "code-selected LA/NLA formula")
     article_tail = r"\exp[-(m+\Lambda_0)|z|]"
     implementation_tail = r"\exp[-(m+\Lambda_0)z]"
-    if method == "CG":
+    if gfix == "CG":
         implementation_tail += r"\,z^{-n}"
 
     if observable == "pion_quark_quasi_gpd" or observable.startswith("pion_quark_") and observable.endswith("_quasi_gpd"):
@@ -197,7 +197,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             ]
         scope_lines = [
             "The article formula is the full $\\pm z$ expression. The lamet-agent fit uses the explicit positive-$z$ branch, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval.",
-            "When `method=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$.",
+            "When `gfix=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$.",
         ]
     elif observable == "nucleon_quark_quasi_gpd" or observable.startswith("nucleon_quark_") and observable.endswith("_quasi_gpd"):
         if order == "LA":
@@ -256,7 +256,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             ]
         scope_lines = [
             "The article formula is the full $\\pm z$ expression. The lamet-agent fit uses the explicit positive-$z$ branch, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval.",
-            "When `method=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$.",
+            "When `gfix=CG`, the implementation multiplies the positive-$z$ branch by the extra factor $z^{-n}$.",
         ]
     elif observable in {
         "pion_quark_quasi_pdf",
@@ -324,7 +324,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
         ]
         scope_lines = [
             "For these forward-like quark observables, the report distinguishes the article formula from the lamet-agent parameterized equivalent rewrite.",
-            "The implementation fits only positive coordinates, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval; `method=CG` adds the explicit factor $z^{-n}$ shown in the implementation formula.",
+            "The implementation fits only positive coordinates, so ${\\rm sign}(z)=1$ and $|z|=z$ on the fitted interval; `gfix=CG` adds the explicit factor $z^{-n}$ shown in the implementation formula.",
         ]
         if observable == "meson_quasi_da":
             if symmetry_guarantee:
@@ -366,7 +366,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$; `Lambda0_gev` is the fixed offset, not a hard bound on a fitted $\\Lambda$.",
         ]
         scope_lines = [
-            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `method=CG` adds the explicit factor $z^{-n}$ shown above.",
+            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `gfix=CG` adds the explicit factor $z^{-n}$ shown above.",
         ]
     elif observable in {"pion_gluon_quasi_pdf", "pion_gluon_unpolarized_quasi_pdf"}:
         article_formula = (
@@ -393,7 +393,7 @@ def _tail_formula_text(result: dict[str, Any], *, language: str) -> str:
             "- $m$ is the fitted non-negative offset in the common decay rate $m+\\Lambda_0$; `Lambda0_gev` is the fixed offset, not a hard bound on a fitted $\\Lambda$.",
         ]
         scope_lines = [
-            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `method=CG` adds the explicit factor $z^{-n}$ shown above.",
+            "The article form is written with $|z|$ and the lamet-agent form uses the positive-$z$ implementation; `gfix=CG` adds the explicit factor $z^{-n}$ shown above.",
         ]
     else:
         article_formula = rf"h^{{\rm {order}}}_{{\rm art}}(z)=\left[\sum_j A_j e^{{i\phi_j\,{{\rm sign}}(z)}} e^{{i\omega_j z}}\right]{article_tail}."
@@ -494,8 +494,8 @@ def _field_definitions(result: dict[str, Any], *, language: str) -> list[str]:
         "|---|---|",
         "| Observable | Physical matrix element transformed by this stage. |",
         "| Sector | Requested physics projection; PDF/GPD accept `sea`, `valence`, `singlet`, and `full`, while DA uses `full`. |",
-        "| Tail method/order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{method}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
-        "| Active fitted component | Execution channel resolved from `sector`; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one component. |",
+        "| Gauge-link treatment / tail order | $\\mathrm{order}$ selects LA or NLA; $\\mathrm{gfix}=\\mathrm{CG}$ adds $z^{-n}$ to the base tail. |",
+        "| Active fitted part | Execution channel resolved from `sector`, or supplied manually when `sector` is omitted; `both` fits $\\mathrm{Re}\\,\\tilde h^R$ and $\\mathrm{Im}\\,\\tilde h^R$ together, while `re` or `im` fits one channel. |",
         "| Coordinate unit | Input coordinates and `scheme_scan` ranges are fixed physical distances in fm; the fit uses $z_{\\rm GeV^{-1}}=z_{\\rm fm}/(\\hbar c)$ and $\\lambda=\\bar P^z z_{\\rm GeV^{-1}}$, where $\\bar P^z=(P_i^z+P_f^z)/2$ (and $P_i^z=P_f^z$ for forward kinematics). |",
         "| Posterior-prior error scale | The mean fit gives $\\bar p_i\\pm\\sigma_{p_i}$; resampled fits use $p_i=\\bar p_i\\pm s\\sigma_{p_i}$. |",
     ]
@@ -526,7 +526,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
         if truncated:
             intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
         if sector == "sea":
-            meaning = "`sea` is reconstructed from the full vector/tensor quark distribution as $\\bar q(x)=-q_{\\rm ext}(-x)$, using one joint fit of the real and imaginary matrix-element components; for a nonzero-skewness GPD, the reflected ERBL region remains a quark-antiquark amplitude rather than an antiquark density."
+            meaning = "`sea` is reconstructed from the full vector/tensor quark distribution as $\\bar q(x)=-q_{\\rm ext}(-x)$, using one joint fit of the real and imaginary matrix-element channels; for a nonzero-skewness GPD, the reflected ERBL region remains a quark-antiquark amplitude rather than an antiquark density."
         elif sector == "singlet":
             meaning = "`singlet` returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor-singlet distribution additionally sums this combination over quark flavors."
         elif part == "both":
@@ -568,9 +568,34 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
         f"This run uses `sector={sector}`, resolved internally to `part={part}`, "
         f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`."
     )
-    if parton == "gluon":
+    if sector == "manual":
+        intro = (
+            f"This run omits a named sector and directly uses `part={part}`, "
+            f"`output_scale={_fmt(scale)}`, and `im_flip_for_ft={result.get('im_flip_for_ft', False)}`."
+        )
+        meaning = "The reported result is a manual real/imaginary projection; these numerical controls do not assign a named `sea`, `valence`, `singlet`, or `full` interpretation by themselves."
+    elif parton == "gluon":
         intro += " Gluon operator families use only the full complex Fourier result; quark/antiquark sector projections are not applied."
         meaning = "`full` preserves the gluon result without assigning quark `sea`, `valence`, or `singlet` semantics."
+    elif target == "gpd":
+        sign = "+" if polarization == "helicity" else "-"
+        negative_y_relation = (
+            "$\\Delta q_{\\rm ext}(-x)=+\\Delta\\bar q(x)$"
+            if polarization == "helicity"
+            else "$q_{\\rm ext}(-x)=-\\bar q(x)$"
+        )
+        intro += (
+            " GPD sectors are constructed after the full complex paired reconstruction and Fourier transform; "
+            "no real or imaginary coordinate-space channel is discarded before fitting. "
+            f"The signed-extension convention is {negative_y_relation}."
+        )
+        meaning = {
+            "sea": f"`sea` returns $\\bar H(y,\\xi)={sign}H(-y,\\xi)$.",
+            "valence": f"`valence` returns $H(y,\\xi){'-' if sign == '+' else '+'}H(-y,\\xi)$.",
+            "singlet": f"`singlet` returns $H(y,\\xi){'+' if sign == '+' else '-'}H(-y,\\xi)$ per flavor; a strict flavor singlet also sums over flavors.",
+            "full": "`full` preserves the complete complex $H(y,\\xi)$ reconstructed from the paired flows.",
+        }.get(sector, "The selected part is reported without an additional named projection.")
+        meaning += " The upper sign is the helicity convention; unpolarized and transversity use the lower sign."
     elif polarization == "helicity":
         intro += " The helicity convention is $\\Delta q_{\\rm ext}(-x)=+\\Delta\\bar q(x)$."
         meaning = {
@@ -578,7 +603,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             "valence": "`valence` uses the sine/odd projection and returns $\\Delta q(x)-\\Delta\\bar q(x)$.",
             "singlet": "`singlet` uses the cosine/even projection and returns the per-flavor C-even combination $\\Delta q(x)+\\Delta\\bar q(x)$; a strict flavor singlet also sums over flavors.",
             "full": "`full` uses one real/imaginary joint fit and reconstructs the complete extended helicity distribution $\\Delta q_{\\rm ext}(x)$.",
-        }.get(sector, "The selected component is reported without an additional named projection.")
+        }.get(sector, "The selected part is reported without an additional named projection.")
     else:
         intro += " The unpolarized/transversity convention is $q_{\\rm ext}(-x)=-\\bar q(x)$."
         meaning = {
@@ -586,7 +611,7 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             "valence": "`valence` uses the cosine/even projection and returns $q(x)-\\bar q(x)$.",
             "singlet": "`singlet` uses the sine/odd projection and returns the per-flavor C-even combination $q(x)+\\bar q(x)$; a strict flavor singlet also sums over flavors.",
             "full": "`full` uses one real/imaginary joint fit and reconstructs the complete extended distribution $q_{\\rm ext}(x)$.",
-        }.get(sector, "The selected component is reported without an additional named projection.")
+        }.get(sector, "The selected part is reported without an additional named projection.")
     if truncated:
         intro += f" This input misses short-distance coordinates {missing}; these points are omitted from the Fourier sum, so the output is a short-distance-truncated projection."
     if target == "gpd":
@@ -596,6 +621,18 @@ def _projection_text(result: dict[str, Any], *, language: str) -> list[str]:
             "transversity": ("the tensor family $H_T,E_T,\\widetilde H_T,\\widetilde E_T$ for a spin-$1/2$ hadron", "the tensor-GPD"),
         }.get(polarization, ("the recorded operator family", "the corresponding invariant-GPD"))
         meaning += f" This run labels {family}, but the input is a projected quasi-GPD matrix element; `polarization` alone does not perform {decomposition} decomposition."
+        anchor = str(result.get("bilocal_anchor", "mid_at_0"))
+        completion = str(result.get("gpd_completion_mode", "single_flow"))
+        partner = str(result.get("hermitian_partner_id", ""))
+        meaning += (
+            f" The input uses `bilocal_anchor={anchor}` and is converted to the centered convention with "
+            "$h_{fi}^{\\rm mid}(z)=e^{-i(P_f^z-P_i^z)z/2}h_{fi}^{\\bar\\psi@0}(z)$."
+        )
+        if completion == "paired_flow":
+            meaning += (
+                f" Its negative-$z$ branch is reconstructed from the exchanged-flow partner `{partner}` through "
+                "$h_{fi}^{\\rm mid}(-z)=h_{if}^{\\rm mid}(z)^*$ for the supported Hermitian current phase $\\eta_\\Gamma=+1$."
+            )
         if sector == "sea":
             meaning += " The antiquark interpretation applies only in the negative-$x$ DGLAP region; the ERBL region $|x|<|\\xi|$ is a quark-antiquark amplitude, not a pure sea density."
     if truncated:
@@ -754,7 +791,7 @@ def _settings_table(
     result: dict[str, Any],
     observable: str,
     observable_text: str,
-    method: str,
+    gfix: str,
     order: str,
     fit_range_text: str,
     z_ext_max: Any,
@@ -775,8 +812,8 @@ def _settings_table(
     rows = [
         ("Observable", f"`{observable}` ({observable_text})"),
         ("Sector", f"`{result.get('sector', 'full')}`"),
-        ("Tail method/order", f"`{method}` / `{order}`"),
-        ("Active fitted component", f"`{result.get('part', 'both')}`"),
+        ("Gauge-link treatment / tail order", f"`{gfix}` / `{order}`"),
+        ("Active fitted part", f"`{result.get('part', 'both')}`"),
         ("Resampling mode", f"`{result.get('resample_mode', 'not recorded')}`"),
         ("Coordinate unit", r"fm input and scan; fit unit $\mathrm{GeV}^{-1}$"),
         ("Decay offset", f"$\\Lambda_0={_fmt(result.get('Lambda0_gev'))}$"),
@@ -792,6 +829,16 @@ def _settings_table(
             ("Current operator", f"`{result.get('current_operator', 'not recorded')}`"),
             ("Parton", f"`{result.get('parton', 'not recorded')}`"),
             ("Hadron", f"`{result.get('hadron', 'not recorded')}`"),
+        ]
+    if str(result.get("target_observable", "")).lower() == "gpd":
+        partner = str(result.get("hermitian_partner_id", "")) or "not used"
+        rows[1:1] = [
+            ("Bilocal anchor", f"`{result.get('bilocal_anchor', 'mid_at_0')}`"),
+            ("Negative-z completion", f"`{result.get('gpd_completion_mode', 'single_flow')}`; partner `{partner}`"),
+            (
+                "Signed momentum transfer",
+                f"$\\Delta P_z={_fmt(result.get('delta_momentum_gev'))}$ GeV from `{result.get('phase_momentum_source', 'not recorded')}`",
+            ),
         ]
     if observable == "meson_quasi_da":
         rows.insert(2, ("DA flavor classes", f"`psi1={result.get('psi1_flavor_class', 'heavy')}`, `psi2={result.get('psi2_flavor_class', 'heavy')}`"))
@@ -817,13 +864,20 @@ def _artifact_field_table(kind: str, *, language: str, target_observable: str = 
             ("attrs `candidate_scheme_*`", "Sample-average range-scan diagnostics used before model averaging."),
             ("attr `selection_mode`", "Two-stage selection mode: range selection followed by fit-model averaging or best-model selection."),
             ("attrs `momentum_gev`, `final_momentum_gev`, `lattice_spacing_fm`", "Momentum and lattice-spacing metadata."),
-            ("attrs `sector`, `method`, `order`, `observable`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
+            ("attrs `sector`, `gfix`, `order`, `observable`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Physics projection, gauge-link treatment, formula choices, execution channel, final output normalization, DA symmetry projection, and flavor-class metadata."),
         ]
         if target_observable in {"pdf", "gpd"}:
             rows[-1:] = [
                 ("attrs `observable`, `observable_backend`, `parton`, `hadron`, `current_operator`, `polarization`, `sector`", "Resolved observable, numerical tail backend, operator provenance, and physics projection."),
-                ("attrs `method`, `order`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
+                ("attrs `gfix`, `order`, `part`, `output_scale`, `symmetry_guarantee`, `psi1_flavor_class`, `psi2_flavor_class`", "Gauge-link treatment, formula choices, execution channel, final normalization, DA symmetry projection, and flavor-class metadata."),
             ]
+        if target_observable == "gpd":
+            rows.extend(
+                [
+                    ("attrs `bilocal_anchor`, `delta_momentum_gev`, `phase_momentum_source`", "Authored bilocal layout and the signed momentum transfer used to convert it to the centered convention."),
+                    ("attrs `hermitian_partner_id`, `hermiticity_phase`, `gpd_completion_mode`", "Exchanged-flow provenance and the Hermiticity convention used to reconstruct negative z."),
+                ]
+            )
     else:
         rows = [
             ("`values`", "Fit-parameter samples with dimensions `(resample, scheme, parameter)`."),
@@ -836,6 +890,10 @@ def _artifact_field_table(kind: str, *, language: str, target_observable: str = 
             ("attrs `fit_model_*`", "Per-sample weights and diagnostics for fixed-range fit-model averaging."),
             ("attrs `candidate_scheme_*`, `selection_mode`", "Range-scan diagnostics and the two-stage selection mode."),
         ]
+        if target_observable == "gpd":
+            rows.append(
+                ("attrs `bilocal_anchor`, `delta_momentum_gev`, `phase_momentum_source`, `hermitian_partner_id`, `hermiticity_phase`, `gpd_completion_mode`", "GPD bilocal-layout conversion and exchanged-flow completion provenance shared with the Fourier result.")
+            )
     header = "| Field | Meaning |"
     lines = [header, "|---|---|"]
     for field, description in rows:
@@ -887,7 +945,7 @@ def build_fourier_report_markdown(
     artifacts = artifacts or {}
     observable = str(result.get("observable", ""))
     observable_text = OBSERVABLE_TEXT.get(observable, observable or "not recorded")
-    method = str(result.get("method", "not recorded"))
+    gfix = str(result.get("gfix", "not recorded"))
     order = str(result.get("order", "not recorded"))
     y_grid = np.asarray(result.get("y_grid", []), dtype=float)
     schemes = list(result.get("scheme_results", []))
@@ -896,7 +954,7 @@ def build_fourier_report_markdown(
     z_ext_max = selected_model.get("z_ext_max", "not available")
 
     title = "# Fourier Transform Analysis Report"
-    abstract = f"This report summarizes the Fourier transform for `{observable}` ({observable_text}) using `{method}` / `{order}` large-distance extrapolation."
+    abstract = f"This report summarizes the Fourier transform for `{observable}` ({observable_text}) using `{gfix}` / `{order}` large-distance extrapolation."
     transform_text = _fourier_transform_text(result, language="en")
     lines = [
         title,
@@ -905,7 +963,7 @@ def build_fourier_report_markdown(
         abstract,
         "",
         "## Analysis Setup",
-        *_settings_table(result=result, observable=observable, observable_text=observable_text, method=method, order=order, fit_range_text=fit_range_text, z_ext_max=z_ext_max, y_grid=y_grid, language="en"),
+        *_settings_table(result=result, observable=observable, observable_text=observable_text, gfix=gfix, order=order, fit_range_text=fit_range_text, z_ext_max=z_ext_max, y_grid=y_grid, language="en"),
         "",
         "### Field Definitions",
         *_field_definitions(result, language="en"),
@@ -915,7 +973,7 @@ def build_fourier_report_markdown(
         "## Large-Distance Extrapolation",
         _tail_formula_text(result, language="en"),
         "",
-        "## Fourier Transform Method",
+        "## Fourier Transform Setup",
         transform_text,
         "",
         "## Fit Quality and Model Diagnostics",
@@ -1005,7 +1063,7 @@ def write_fourier_stage_report(
 
     observable = str(first.get("observable", ""))
     observable_text = OBSERVABLE_TEXT.get(observable, observable or "not recorded")
-    method = str(first.get("method", "not recorded"))
+    gfix = str(first.get("gfix", "not recorded"))
     order = str(first.get("order", "not recorded"))
     y_grid = np.asarray(first.get("y_grid", []), dtype=float)
     z_ext_values = []
@@ -1083,7 +1141,7 @@ def write_fourier_stage_report(
                 result=first,
                 observable=observable,
                 observable_text=observable_text,
-                method=method,
+                gfix=gfix,
                 order=order,
                 fit_range_text=fit_range_text,
                 z_ext_max=z_ext_max,
@@ -1099,7 +1157,7 @@ def write_fourier_stage_report(
             "## Large-Distance Extrapolation",
             _tail_formula_text(first, language=language),
             "",
-            "## Fourier Transform Method",
+            "## Fourier Transform Setup",
             transform_text,
             "",
             "## Fit Quality and Model Diagnostics",
@@ -1109,7 +1167,7 @@ def write_fourier_stage_report(
         "This stage first scans `zmin_fm × zmax_fm` on the sample-average matrix element, selects the largest-`logGBF` range among candidates passing $Q\\ge0.05$, and falls back to the largest-$Q$ successful range if none passes. The selected range is then fixed; range variation is not part of model averaging."
     )
     lines.append(
-        "With `model_average=true`, each resample sample refits the `(order, prior width)` candidates at fixed range and fixed method, then uses that sample's normalized evidence weight $w_{s,m}=\\exp(\\log\\mathrm{GBF}_{s,m}-\\max_n\\log\\mathrm{GBF}_{s,n})/\\sum_k\\exp(\\log\\mathrm{GBF}_{s,k}-\\max_n\\log\\mathrm{GBF}_{s,n})$. With `model_average=false`, each sample selects the largest-`logGBF` candidate after the $Q$ gate."
+        "With `model_average=true`, each resample sample refits the `(order, prior width)` candidates at fixed range and fixed gfix, then uses that sample's normalized evidence weight $w_{s,m}=\\exp(\\log\\mathrm{GBF}_{s,m}-\\max_n\\log\\mathrm{GBF}_{s,n})/\\sum_k\\exp(\\log\\mathrm{GBF}_{s,k}-\\max_n\\log\\mathrm{GBF}_{s,n})$. With `model_average=false`, each sample selects the largest-`logGBF` candidate after the $Q$ gate."
     )
     lines.extend(
         [
@@ -1140,7 +1198,7 @@ def write_fourier_stage_report(
         [
             "",
             "- The `range grid` denotes range candidates, not the model-averaging space; the model candidates are `(order, prior width)` at fixed range.",
-            "- `method` is a fixed theory input from the manifest and is not model averaged.",
+            "- `gfix` is inherited from correlator provenance or declared for an external input, and is not model averaged.",
         ]
     )
     for item in jobs:

@@ -59,7 +59,7 @@
         "data_path": "data_pion_pdf_cg/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5", // relative to root_directory; standard path is source/sink/momentum
         "ensemble": "HISQa060_X", // ensemble identifier propagated to artifacts
         "hadron": "pion", // e.g. "pion", "proton", or another stage-supported label
-        "gfix": "CG", // gauge-fixing provenance; Fourier method is declared separately
+        "gfix": "CG", // gauge-fixing provenance inherited by the Fourier stage
         "source_operator": "g5", // free non-empty string; gamma labels conventionally start with g
         "sink_operator": "g5", // use a distinct label such as gT5_nonlocal when needed
         "volume": "S48T64", // exact S<Ls>T<Lt> form; Lt must match the HDF5 time axis
@@ -253,12 +253,10 @@
     },
     "fourier_transform": {
       "defaults": {
-        "method": "CG", // required tail parameterization; do not infer it from gfix
         "order": ["LA", "NLA"], // tail ansatz candidates: "LA" and/or "NLA"
         "sector": "valence", // quark PDF/GPD: sea/valence/singlet/full; gluon and DA: full
         // Lower-level incompatible alternative: omit sector and set
         // "part": "re" // "re", "im", or "both" (contract default "both"); sector is preferred when available
-        // "component": "both", // legacy alias for part; cannot be set together with part
         "Lambda0_gev": 0.0, // required fixed extra exponential scale in GeV
         "posterior_prior_error_scale": [2.0, 3.0, 5.0], // tail-fit model candidates
         "quasi_y_ls": {
@@ -279,19 +277,19 @@
           "model_average": false, // runtime default true; false uses one selected tail model
           "max_schemes": 200 // contract default 200; cap accepted range combinations
         }
-        // Usually inferred from manifest metadata or upstream attrs:
-        // "gfix": "CG", // optional; usually inherited from the input
+        // This full chain inherits gfix from the selected correlator.
         // "polarization": "unpolarized", // required for PDF/GPD if upstream 3pt provenance is absent
         // "hadron": "pion", // required when no upstream correlator/artifact supplies it
+        // "bilocal_anchor": "mid_at_0", // GPD only: mid_at_0/barpsi_at_0/psi_at_0; omitted GPD default is mid_at_0
         // "psi1_flavor_class": "heavy", // "light" or "heavy" tail-model class
         // "psi2_flavor_class": "heavy",
         // "zmin_shift": 1, // optional; clone low/high tail-window systematics (contract default 0 = off)
         // "im_flip_for_ft": false, // contract default false; manual imaginary-part sign override; cannot combine with sector
         // "symmetry_guarantee": true, // DA only: project exp(+i*z*Pz/2)h to real, then rotate back
         // "output_scale": 1.0,      // contract default 1.0; optional final multiplicative scale; cannot combine with sector
-        // "plot_fourier": { "save_path": "custom_xdep.pdf", "title": "quasi PDF" },
-        // "plot_extension": { "save_path": "custom_extension_re.pdf", "title": "tail", "scheme_index": 0 },
-        // "report": { "enabled": true, "report_language": "en", "save_path": "fourier_report.md" }
+        // "plot_fourier": { "title": "quasi PDF" },
+        // "plot_extension": { "title": "tail", "scheme_index": 0 },
+        // "report": { "enabled": true, "report_language": "en" }
         // Non-NetCDF partial inputs (omit for standard EnsembleData .nc sources):
         // "input_format": "h5", // "nc"/"netcdf"/"npz"/"h5"/"hdf5"
         // "h5_group": "momentum_PX4PY0PZ0",
@@ -312,6 +310,10 @@
           "inputs": { "input": "rn_p5" },
           "params": {}
         }
+        // Nonforward GPD example (the partner must exchange initial/final momenta):
+        // { "id": "ft_gpd_nonbreit",
+        //   "inputs": { "input": "rn_gpd_2to3", "hermitian_partner": "rn_gpd_3to2" },
+        //   "params": { "bilocal_anchor": "mid_at_0" } }
       ]
     },
     "perturbative_matching": {

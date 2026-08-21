@@ -146,11 +146,15 @@ def test_review_appends_deterministic_consistency_sections(tmp_path: Path, monke
     manifest = _manifest(matching_zs=0.3)
     manifest._artifacts_directory = tmp_path / "artifacts"
 
-    english = write_review_from_manifest(manifest, output_dir=tmp_path / "en")
-    chinese = write_review_from_manifest(manifest, report_language="ch", output_dir=tmp_path / "ch")
+    english = write_review_from_manifest(manifest)
+    chinese = write_review_from_manifest(manifest, report_language="ch")
 
-    english_text = Path(english["review"]).read_text(encoding="utf-8")
-    chinese_text = Path(chinese["review"]).read_text(encoding="utf-8")
+    english_path = Path(english["review"])
+    chinese_path = Path(chinese["review"])
+    english_text = english_path.read_text(encoding="utf-8")
+    chinese_text = chinese_path.read_text(encoding="utf-8")
+    assert english_path == tmp_path / "artifacts" / "review" / "review.md"
+    assert chinese_path == tmp_path / "artifacts" / "review" / "review_CN.md"
     assert "## Manifest Parameter Consistency" in english_text
     assert "`mismatch`" in english_text
     assert "stages.perturbative_matching.jobs[0].params.zs_fm" in english_text
@@ -174,7 +178,7 @@ def test_review_rewrites_stage_svg_links_relative_to_review_dir(tmp_path: Path, 
     for index in range(13):
         (stage_dir / f"ca_{index:02d}.svg").write_text("<svg/>", encoding="utf-8")
 
-    result = write_review_from_manifest(manifest, output_dir=tmp_path / "artifacts")
+    result = write_review_from_manifest(manifest)
     text = Path(result["review"]).read_text(encoding="utf-8")
 
     assert "](../correlator_analysis/ca_HISQa060_X_re.svg)" in text
@@ -191,8 +195,12 @@ def test_review_prompt_avoids_repeating_matching_zs_fm(tmp_path: Path, monkeypat
         return "# LLM Review"
 
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
-    write_review_from_manifest(_manifest(), output_dir=tmp_path / "en")
-    write_review_from_manifest(_manifest(), report_language="ch", output_dir=tmp_path / "ch")
+    english_manifest = _manifest()
+    english_manifest._artifacts_directory = tmp_path / "en"
+    chinese_manifest = _manifest()
+    chinese_manifest._artifacts_directory = tmp_path / "ch"
+    write_review_from_manifest(english_manifest)
+    write_review_from_manifest(chinese_manifest, report_language="ch")
 
     assert len(prompts) == 2
     assert "do not repeat the same `zs_fm` discussion in the matching section" in prompts[0]
@@ -211,7 +219,9 @@ def test_review_prompt_omits_literature_context_when_disabled(tmp_path: Path, mo
         return "# LLM Review"
 
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
-    write_review_from_manifest(_manifest(), output_dir=tmp_path / "en")
+    manifest = _manifest()
+    manifest._artifacts_directory = tmp_path
+    write_review_from_manifest(manifest)
 
     assert "Relevant literature context (background only)" not in prompts[0]
     assert "Literature context rules:" not in prompts[0]
@@ -227,7 +237,8 @@ def test_review_prompt_includes_literature_context_when_enabled(tmp_path: Path, 
     monkeypatch.setattr("lamet_agent.stages.review.functions.request_llm_text", fake_request_llm_text)
     manifest = _manifest()
     manifest.stages["review"].defaults["literature"] = True
-    write_review_from_manifest(manifest, output_dir=tmp_path / "en")
+    manifest._artifacts_directory = tmp_path
+    write_review_from_manifest(manifest)
 
     assert "Relevant literature context (background only)" in prompts[0]
     assert "Literature context rules:" in prompts[0]
@@ -281,7 +292,8 @@ def test_review_literature_ranking_prefers_manifest_anchor_matches(tmp_path: Pat
     manifest._root_directory = tmp_path
     manifest.stages["review"].defaults["literature"] = True
     manifest.stages["review"].defaults["literature_max_papers"] = 1
-    write_review_from_manifest(manifest, output_dir=tmp_path / "en")
+    manifest._artifacts_directory = tmp_path
+    write_review_from_manifest(manifest)
 
     prompt = prompts[0]
     assert '"matched_topics": [' in prompt

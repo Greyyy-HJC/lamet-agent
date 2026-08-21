@@ -24,7 +24,7 @@
       {
         "correlator_id": "a060_x_2pt",
         "correlator_type": "2pt",
-        "data_path": "data_pion_pdf_cg/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5",
+        "data_path": "data_cg_pdf/correlators/HISQa060_X/2pt/HISQa060_X_2pt.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
@@ -40,7 +40,7 @@
       {
         "correlator_id": "a060_x_3pt",
         "correlator_type": "3pt",
-        "data_path": "data_pion_pdf_cg/correlators/HISQa060_X/3pt/HISQa060_X_free_3pt.h5",
+        "data_path": "data_cg_pdf/correlators/HISQa060_X/3pt/HISQa060_X_free_3pt.h5",
         "ensemble": "HISQa060_X",
         "hadron": "pion",
         "gfix": "CG",
@@ -96,7 +96,7 @@
     "kernels": [
       {
         "stage": "perturbative_matching",
-        "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
+        "kernel_id": "CG_gt_quark_PDF_hybrid_RGR_re_NLO",
         "kernel_path": "lamet_agent/kernels.py",
         "kernel_parameters": {}
       }
@@ -203,7 +203,6 @@
           "LA",
           "NLA"
         ],
-        "method": "CG",
         "sector": "valence",
         "Lambda0_gev": 0.1,
         "posterior_prior_error_scale": [
@@ -261,7 +260,9 @@
             "quasi": "ft_p5"
           },
           "params": {
-            "zs_fm": 0.18
+            "zs_fm": 0.18,
+            "rgr_kappa": 1.0,
+            "rgr_mu_min_gev": 0.6
           }
         }
       ]

@@ -37,6 +37,7 @@ _STAGE_ARTIFACT_LOADERS: dict[str, dict[str, tuple[str, str]]] = {
     },
     "fourier_transform": {
         "input": ("load_renormalized_matrix_element_samples", "matrix_element_data"),
+        "hermitian_partner": ("load_renormalized_matrix_element_samples", "matrix_element_data"),
     },
     "perturbative_matching": {
         "quasi": ("load_quasi_pdf", "quasi_ed"),
@@ -75,6 +76,8 @@ def _hydrate_external_artifact_inputs(
             artifacts_dir=artifacts_dir,
             store=store,
         )
+        if stage == "fourier_transform":
+            args["path"] = value.path
         call_args, _ = filter_tool_kwargs(tool, args)
         tool(store, **call_args)
         loaded = store.get(data_key)
@@ -323,10 +326,12 @@ def _ensemble_label(data: EnsembleData, fallback: str = "") -> str:
 
 def _momentum_label(attrs: dict[str, Any], result: dict[str, Any]) -> str:
     form = str(attrs.get("fitting_form") or result.get("fitting_form") or "Breit")
-    if form == "NonBreit":
+    if form == "NonBreit" or result.get("final_momentum_gev", attrs.get("final_momentum_gev")) is not None:
         t_gev2 = result.get("t_gev2", attrs.get("t_gev2"))
         xi = result.get("xi", attrs.get("xi"))
         initial = result.get("initial_momentum_gev", attrs.get("initial_momentum_gev"))
+        if initial is None:
+            initial = result.get("momentum_gev", attrs.get("momentum_gev"))
         final = result.get("final_momentum_gev", attrs.get("final_momentum_gev"))
         if (t_gev2 is None or xi is None) and initial is not None and final is not None:
             t_gev2 = (float(final) - float(initial)) ** 2
@@ -334,7 +339,12 @@ def _momentum_label(attrs: dict[str, Any], result: dict[str, Any]) -> str:
             xi = None if denominator == 0.0 else (float(initial) - float(final)) / denominator
         t_text = "n/a" if t_gev2 is None else f"{float(t_gev2):.2f}"
         xi_text = "n/a" if xi is None else f"{float(xi):.2f}"
-        return rf"$t={t_text}\,\mathrm{{GeV}}^2$, $\xi={xi_text}$"
+        initial_text = "n/a" if initial is None else f"{float(initial):.2f}"
+        final_text = "n/a" if final is None else f"{float(final):.2f}"
+        return (
+            rf"$P_i^z={initial_text},\ P_f^z={final_text}\,\mathrm{{GeV}}$, "
+            rf"$t={t_text}\,\mathrm{{GeV}}^2$, $\xi={xi_text}$"
+        )
     momentum = attrs.get("momentum_gev") or result.get("momentum_gev")
     p_text = "n/a" if momentum in (None, "") else f"{float(momentum):.2f}"
     return rf"$p={p_text}\,\mathrm{{GeV}}$"
@@ -448,8 +458,6 @@ def _write_fourier_overlay_artifacts(jobs: list[dict[str, Any]], stage_dir: Path
             data: EnsembleData = item["data"]
             result = item["record"].get("result", {})
             x = np.asarray(data.coords["x"], dtype=float)
-            p = result.get("momentum_gev", data.attrs.get("momentum_gev"))
-            p_text = "n/a" if p in (None, "") else f"{float(p):.2f}"
             color = COLOR_CYCLE[index % len(COLOR_CYCLE)]
             values = np.asarray(data.values)
             mode = "jk" if data.resample == "jackknife" else "bs"
@@ -469,18 +477,20 @@ def _write_fourier_overlay_artifacts(jobs: list[dict[str, Any]], stage_dir: Path
                     )
                 mean = np.where(np.abs(mean) < 1e-14, 0.0, mean)
                 err = np.where(err < 1e-14, 0.0, err)
-                ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.28, linewidth=0, label=rf"$P_z={p_text}\,\mathrm{{GeV}}$")
+                ax.fill_between(x, mean - err, mean + err, color=color, alpha=0.28, linewidth=0, label=_momentum_label(dict(data.attrs), result))
                 ax.plot(x, mean, color=color, linewidth=0.9, alpha=0.72)
         ax_re.set_xlim(-2.0, 2.0)
         ax_im.set_xlim(-2.0, 2.0)
-        ax_re.set_ylabel(r"$\mathrm{Re}\,\tilde{q}(x)$", **FONT_SIZE)
-        ax_im.set_ylabel(r"$\mathrm{Im}\,\tilde{q}(x)$", **FONT_SIZE)
+        is_gpd = any(str(item["data"].attrs.get("target_observable", "")) == "gpd" for item in items)
+        distribution = r"\widetilde H(y,\xi,t)" if is_gpd else r"\tilde q(x)"
+        ax_re.set_ylabel(rf"$\mathrm{{Re}}\,{distribution}$", **FONT_SIZE)
+        ax_im.set_ylabel(rf"$\mathrm{{Im}}\,{distribution}$", **FONT_SIZE)
         ax_re.yaxis.set_label_coords(-0.11, 0.5)
         ax_im.yaxis.set_label_coords(-0.11, 0.5)
-        ax_im.set_xlabel(r"$x$", **FONT_SIZE)
+        ax_im.set_xlabel(r"$y$" if is_gpd else r"$x$", **FONT_SIZE)
         ax_re.legend(**LEGEND_SETS)
         ax_im.legend(**LEGEND_SETS)
-        ax_re.set_title(f"{ensemble} quasi distribution", **FONT_SIZE)
+        ax_re.set_title(f"{ensemble} {'paired quasi-GPD' if is_gpd else 'quasi distribution'}", **FONT_SIZE)
         fig.tight_layout()
         pdf, svg = _overlay_paths(stage_dir, "ft", ensemble, "xdep")
         fig.savefig(pdf, bbox_inches="tight", transparent=True)

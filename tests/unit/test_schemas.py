@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from lamet_agent.manifest import AnalysisManifest
 from lamet_agent.manifest_params import (
     ListItems,
+    NO_DEFAULT,
     ParameterSpec,
     STAGE_PARAM_CONTRACTS,
     get_stage_parameter_contract,
@@ -195,7 +196,7 @@ def test_manifest_accepts_fourier_lambda0_gev() -> None:
     AnalysisManifest.model_validate(_fourier_payload())
 
 
-@pytest.mark.parametrize("parameter", ["coord_unit", "observable", "target_observable", "y_grid"])
+@pytest.mark.parametrize("parameter", ["component", "coord_unit", "observable", "target_observable", "y_grid"])
 def test_manifest_rejects_removed_fourier_inputs(parameter: str) -> None:
     payload = _fourier_payload()
     payload["stages"]["fourier_transform"]["defaults"][parameter] = "fm"
@@ -255,10 +256,20 @@ def test_every_stage_contract_is_stage_owned_and_documents_physics() -> None:
     contract = get_stage_parameter_contract("fourier_transform")
     sector = contract.schema["sector"]
     quasi_y_ls = contract.schema["quasi_y_ls"]
+    gfix = contract.schema["gfix"]
+    bilocal_anchor = contract.schema["bilocal_anchor"]
 
     assert isinstance(sector, ParameterSpec)
+    assert sector.required is False
+    assert "component" not in contract.schema
     assert isinstance(quasi_y_ls, ParameterSpec)
     assert quasi_y_ls.required is True
+    assert isinstance(gfix, ParameterSpec)
+    assert gfix.required is True
+    assert gfix.choices == ("CG", "GI")
+    assert isinstance(bilocal_anchor, ParameterSpec)
+    assert bilocal_anchor.choices == ("mid_at_0", "barpsi_at_0", "psi_at_0")
+    assert bilocal_anchor.default is NO_DEFAULT
     assert callable(quasi_y_ls.validator)
     assert sector.choices == ("sea", "valence", "singlet", "full")
     assert "negative-x extension" in sector.physics

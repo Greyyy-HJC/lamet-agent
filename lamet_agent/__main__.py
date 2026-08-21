@@ -83,7 +83,15 @@ def _render_boxed_notice(title: str, body_lines: list[str], *, wrap: int = 88) -
     """Render a framed terminal notice with wrapped body lines."""
     lines = [title]
     for item in body_lines:
-        lines.extend(textwrap.wrap(item, width=wrap) or [""])
+        lines.extend(
+            textwrap.wrap(
+                item,
+                width=wrap,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            or [""]
+        )
     width = max(len(line) for line in lines)
     border = f"+{'-' * (width + 2)}+"
     box = [border, *(f"| {line:<{width}} |" for line in lines), border]
@@ -469,6 +477,88 @@ def run_workflow(
     result["correlators"] = [item.correlator_id for item in parsed.correlators]
     result["kernels"] = [item.kernel_id for item in parsed.kernels]
     typer.echo(json.dumps(_cli_run_summary(result), indent=2))
+
+
+@app.command("precompute-formulas")
+def precompute_formulas(
+    backend: str = typer.Option(
+        "api",
+        "--backend",
+        help="LLM backend used to generate the formulas: api or codex.",
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="Codex model ID, or API model as provider/model_id (api backend).",
+    ),
+    api_key_file: Path | None = typer.Option(
+        None,
+        "--api-key-file",
+        help="Read the API key from this file instead of the provider environment variable.",
+    ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        help="Override the provider API base URL (api backend only).",
+    ),
+    kernel: list[str] = typer.Option(
+        [],
+        "--kernel",
+        help="Restrict to these kernel_ids (repeatable). Default: every registered kernel.",
+    ),
+    prune: bool = typer.Option(
+        False,
+        "--prune",
+        help="Delete cached formulas for kernels that are no longer registered.",
+    ),
+) -> None:
+    """Generate the matching formulas that ship inside the package.
+
+    The matching report's formula section is written by an LLM reading the kernel source
+    next to its arXiv paper -- about 27k prompt tokens and one paper download per kernel.
+    Running this once, and committing the result, means an installed lamet-agent renders
+    that section straight from disk: no network, no tokens, on a user's very first run.
+
+    Re-run it after adding or editing a kernel. Entries are keyed by a digest of the
+    kernel's own source, so only what actually changed is regenerated and an edit
+    overwrites its own file.
+    """
+    from .stages.matching.functions import KERNEL_REGISTRY
+    from .stages.matching.reporting import FormulaLlm, precompute_kernel_formulas
+
+    if backend not in {"api", "codex"}:
+        raise typer.BadParameter("--backend must be 'api' or 'codex' to generate formulas.")
+    if backend == "api" and not model:
+        raise typer.BadParameter("backend='api' requires --model provider/model_id.")
+
+    unknown = sorted(set(kernel) - set(KERNEL_REGISTRY))
+    if unknown:
+        raise typer.BadParameter(
+            f"Unknown kernel_id(s): {unknown}. Available: {sorted(KERNEL_REGISTRY)}"
+        )
+    kernel_ids = sorted(kernel) if kernel else sorted(KERNEL_REGISTRY)
+
+    provider, model_name, api_key, resolved_base_url, _key_source = _resolve_llm_config(
+        backend=backend,
+        model=model,
+        api_key_file=api_key_file,
+        base_url=base_url,
+    )
+    try:
+        result = precompute_kernel_formulas(
+            kernel_ids,
+            llm=FormulaLlm(
+                backend=backend,
+                provider=provider,
+                model_name=model_name,
+                api_key=api_key,
+                base_url=resolved_base_url,
+            ),
+            prune=prune,
+        )
+    except RuntimeError as exc:  # pragma: no cover - CLI surface
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(result, indent=2))
 
 
 def main() -> None:

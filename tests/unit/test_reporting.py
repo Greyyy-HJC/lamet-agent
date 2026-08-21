@@ -227,7 +227,7 @@ def test_fourier_stage_report_lists_overlay_last_with_ensemble_description(tmp_p
                     "momentum_gev": 1.8,
                     "final_momentum_gev": 2.2,
                     "observable": "pion_quark_quasi_pdf",
-                    "method": "LA",
+                    "gfix": "GI",
                     "order": 2,
                     "z_ext_max": 2.0,
                 },
@@ -281,7 +281,12 @@ def test_fourier_gpd_report_records_operator_family_and_projection_limits(
             "final_momentum_gev": 2.0,
             "sector": "sea",
             "part": "both",
-            "method": "GI",
+            "bilocal_anchor": "barpsi_at_0",
+            "hermitian_partner_id": "rn_reverse",
+            "gpd_completion_mode": "paired_flow",
+            "delta_momentum_gev": 1.0,
+            "phase_momentum_source": "signed_discrete_momentum",
+            "gfix": "GI",
             "order": "LA",
             "y_grid": [-0.5, 0.0, 0.5],
         }
@@ -298,6 +303,10 @@ def test_fourier_gpd_report_records_operator_family_and_projection_limits(
     assert "Current operator" in text
     assert "Parton" in text
     assert "Hadron" in text
+    assert "`barpsi_at_0`" in text
+    assert "`paired_flow`; partner `rn_reverse`" in text
+    assert r"\Delta P_z=1" in text
+    assert r"h_{fi}^{\rm mid}(-z)=h_{if}^{\rm mid}(z)^*" in text
     assert r"\lambda=\bar P^z z_{\rm GeV^{-1}}" in text
 
 
@@ -311,7 +320,7 @@ def test_da_fourier_stage_report_documents_symmetry_projection(tmp_path: Path) -
                     "target_observable": "da",
                     "observable": "meson_quasi_da",
                     "momentum_gev": 2.0,
-                    "method": "GI",
+                    "gfix": "GI",
                     "order": "NLA",
                     "part": "both",
                     "symmetry_guarantee": True,

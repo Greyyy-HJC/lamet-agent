@@ -221,7 +221,9 @@ def test_standard_manifest_contract_and_lanczos_tool_routing(tmp_path: Path) -> 
     assert args["pt3_paths"] == {str(tsep): pt3_path for tsep in (4, 6, 8, 12)}
     assert args["tsep_ls"] == [4, 6, 8, 12]
     assert args["z_values"] == [0]
-    assert args["save_path"] == str(tmp_path / "artifacts" / "matrix")
+    assert "save_path" not in args
+    assert args["artifacts_dir"] == str(tmp_path / "artifacts")
+    assert args["job_id"] == "matrix"
     assert args["workers"] == 3
 
 
