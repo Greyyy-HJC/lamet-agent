@@ -1,32 +1,13 @@
-<!-- lamet-agent formula cache; kernel=GI_gtg5_quark_PDF_ratio_NLO; arxiv=2412.20461; equations=Eq. (23); digest=3078e182b362647a; paper_used=true -->
-The matching coefficient for the `gtg5` operator in the `ratio` scheme is given by Eq. (23) of arXiv:2412.20461. With $\xi = x/y$ and $L = \ln(4y^2P_z^2/\mu^2)$, the coefficient is
+<!-- lamet-agent formula cache; kernel=GI_gtg5_quark_PDF_ratio_NLO; arxiv=2412.20461; equations=Eq. (23); digest=18af8b8b1e4048c8; paper_used=true -->
+$$C_{q_iq_i}^{\mathrm{ratio}}(\xi,L)=\delta(1-\xi)+\frac{\alpha_s C_F}{2\pi}\left\{ \begin{array}{rcl} &\left[\xi\frac{1+\xi^2}{1-\xi}\ln\frac{\xi}{\xi-1}+\xi+\frac{3}{2}+\frac{17}{6}\frac{1}{\xi-1}\right]_{+(1)}^{[1,\infty]} & \mbox{for}\ 1<\xi \\ &\left[\xi\frac{1+\xi^2}{1-\xi}\left(-\ln\frac{\mu^2}{4(1-\xi)\xi p_z^2}\right)-\frac{\xi^2(1+\xi)}{1-\xi}+\frac{17}{6}\frac{1}{1-\xi}+\frac{3}{2}\right]_{+(1)}^{[0,1]} & \mbox{for}\  0<\xi<1 \\ &\left[-\xi\frac{1+\xi^2}{1-\xi}\ln\frac{-\xi}{1-\xi}-\xi-\frac{3}{2}+\frac{17}{6}\frac{1}{1-\xi}\right]_{+(1)}^{[-\infty,0]} & \mbox{for}\ \xi<0 \end{array}\right.$$
 
-$$
-C_{q_iq_i}(\xi, L) = \delta(1-\xi) + \frac{\alpha_s C_F}{2\pi} \left\{ 
-\begin{array}{ll}
-\left[ \xi\frac{1+\xi^2}{1-\xi}\ln\frac{\xi}{\xi-1} + \xi + \frac{3}{2} + \frac{17}{6}\frac{1}{\xi-1} \right]_{+(1)}^{[1,\infty]} & \xi>1 \\[1.2em]
-\left[ \xi\frac{1+\xi^2}{1-\xi}\left(-\ln\frac{\mu^2}{4(1-\xi)\xi P_z^2}\right) - \frac{\xi^2(1+\xi)}{1-\xi} + \frac{17}{6}\frac{1}{1-\xi} + \frac{3}{2} \right]_{+(1)}^{[0,1]} & 0<\xi<1 \\[1.2em]
-\left[ -\xi\frac{1+\xi^2}{1-\xi}\ln\frac{-\xi}{1-\xi} - \xi - \frac{3}{2} + \frac{17}{6}\frac{1}{1-\xi} \right]_{+(1)}^{[-\infty,0]} & \xi<0
-\end{array}
-\right.
-$$
+$$-\frac{\alpha_s T_F}{2\pi}\left\{ \left[\frac{1}{3}-\frac{1}{3}\ln\left(\frac{\mu^2}{4p_z^2}\right)\right]\delta(1-\xi)+\frac{1}{3}\left[\left[\frac{1}{|1-\xi|} \right]_{+(1)}^{[0,2]}+\frac{1}{|\xi-1|}\theta(-\xi)+\frac{1}{|1-\xi|}\theta(\xi-2) \right] \right\}\frac{\langle x\rangle_g}{\langle x\rangle_i},$$
 
-where the plus prescription is defined as
+with the plus function defined as
+$$\int_{-\infty}^{\infty}dx\ \left[ f(x) \right]_{+(c)}^{[a,b]}g(x)=\int_{a}^{b}dx\ f(x)\left[ g(x)-g(c) \right].$$
 
-$$
-\int_{-\infty}^{\infty} dx\ \left[ f(x) \right]_{+(c)}^{[a,b]} g(x) = \int_{a}^{b} dx\ f(x)\left[ g(x) - g(c) \right].
-$$
-
-The scheme-specific correction is the $17/6$ term in each branch, which arises from the ratio-scheme counterterm. There is no $\delta(1-\xi)$ term beyond the leading-order one.
+Here $\xi=x/y$, $L=\ln(4y^2P_z^2/\mu^2)$, $C_F=(N^2-1)/(2N)$, $T_F=1/2$, and the $\delta(1-\xi)$ term is the scheme-specific correction from the ratio scheme's denominator.
 
 #### Consistency check
 
-The code implements the coefficient via `C_ratio_gi`, which evaluates the three branches. Comparing term by term:
-
-- **Regular coefficient**: The code's `splitting = (1+ksi**2)/(1-ksi)` matches the paper's $\xi(1+\xi^2)/(1-\xi)$ (the extra $\xi$ is absorbed by the $dy/|y|$ measure in the code's density). The constant $+1$ in the code's `entry` for $0<\xi<1$ matches the paper's $+3/2$ after the code adds $1.5/|1-\xi|$ separately. For $\xi>1$ and $\xi<0$, the code's `sgn(ksi) * (splitting * log_ratio + 1)` matches the paper's $\pm[\xi(1+\xi^2)/(1-\xi)\ln(\xi/(\xi-1)) + \xi + 3/2]$ after the $1.5/|1-\xi|$ addition.
-- **Logarithms**: The code uses `log_scale - log(4)` for the inside branch, which equals $\ln(y^2P_z^2/\mu^2)$, matching the paper's $-\ln(\mu^2/(4(1-\xi)\xi P_z^2))$ after the $\ln(4\xi(1-\xi))$ term is added. The outside branches use $\ln|\xi/(\xi-1)|$, matching the paper's $\ln(\xi/(\xi-1))$ for $\xi>1$ and $\ln(-\xi/(1-\xi))$ for $\xi<0$.
-- **Plus prescription**: The code restores the plus prescription by making each $y$-column integrate to zero, which is equivalent to the paper's $[\,\cdot\,]_{+(1)}^{D}$ with the subtraction point at $\xi=1$. The domain split into $[1,\infty]$, $[0,1]$, $[-\infty,0]$ is reproduced exactly.
-- **Delta term**: The code's `identity` matrix provides the $\delta(1-\xi)$ term, matching the paper's leading-order delta.
-- **Scheme correction**: The $17/6$ terms are present in all three branches of the code (via the `1.5/|1-ksi|` plus the constant), matching the paper.
-
-No discrepancies found. The code reproduces Eq. (23) of arXiv:2412.20461 exactly.
+The code's `C_ratio_gi` implements the $\xi>1$, $0<\xi<1$, and $\xi<0$ branches of the first curly bracket in Eq. (23) exactly: the splitting function $S=(1+\xi^2)/(1-\xi)$, the log arguments $\ln[\xi/(\xi-1)]$ and $\ln[-\xi/(1-\xi)]$, the constants $+1$ (inside $[0,1]$) and $\pm1$ (outside), and the $3/[2(1-\xi)]$ tail all match. The code's `log_scale` is $\ln(4y^2P_z^2/\mu^2)$, and it subtracts $\ln 4$ to recover the paper's $\ln(y^2P_z^2/\mu^2)$ inside the $[0,1]$ branch — consistent. The plus prescription is restored by the column-sum in `build_matching_matrix`, matching the paper's $[\,\cdot\,]_{+(1)}^{D}$ with $D=[1,\infty]$, $[0,1]$, $[-\infty,0]$. However, the code omits the entire second curly bracket: the $\delta(1-\xi)$ term with $\ln(\mu^2/4p_z^2)$ and the $\frac{1}{3}[[1/|1-\xi|]_{+(1)}^{[0,2]}+\cdots]$ term proportional to $\langle x\rangle_g/\langle x\rangle_i$. This is a real discrepancy — the code implements only the $C_F$ part of Eq. (23), not the $T_F$ mixing term.

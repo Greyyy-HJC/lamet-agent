@@ -761,9 +761,10 @@ def test_rgr_channels_pair_the_scheme_and_the_c_parity_the_notebook_labelled() -
         K.CG_gtg5_quark_PDF_hybrid_RGR_re_NLO(x, **hybrid),
     )
 
-    # gamma^z shares gamma^t's hybrid coefficient but has its own MSbar one (Eq. 2.15 adds
-    # 2(1-ksi)_+), so the two agree in the real channel and must not in the imaginary one.
-    assert np.allclose(
+    # gamma^z carries its own 2(1-ksi) in EVERY scheme, not only in MSbar: Eq. (2.20) makes
+    # the hybrid-vs-ratio piece identical for gamma^t and gamma^z, so the shift cannot be a
+    # scheme artefact. Both channels must therefore separate gamma^z from gamma^t.
+    assert not np.allclose(
         K.CG_gz_quark_PDF_hybrid_RGR_re_NLO(x, **hybrid),
         K.CG_gt_quark_PDF_hybrid_RGR_re_NLO(x, **hybrid),
     )
@@ -779,6 +780,9 @@ def test_rgr_channels_pair_the_scheme_and_the_c_parity_the_notebook_labelled() -
 
     # Transversity has one evolution kernel and one fixed order across schemes, so its two
     # channels coincide numerically; they stay separate ids so a manifest names what it ran.
+    # In particular the MSbar channel's Z_psi conversion does NOT apply here -- transversity
+    # MSbar is its ratio/hybrid coefficient, and the notebook's transversity sections build
+    # no such factor in either. Getting that wrong would split the two channels apart.
     assert np.allclose(
         K.CG_gtgpg5_quark_PDF_hybrid_RGR_re_NLO(x, **hybrid),
         K.CG_gtgpg5_quark_PDF_msbar_RGR_im_NLO(x, **msbar),

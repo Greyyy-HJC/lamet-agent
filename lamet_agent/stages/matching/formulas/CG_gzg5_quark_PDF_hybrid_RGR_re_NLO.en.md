@@ -1,20 +1,26 @@
-<!-- lamet-agent formula cache; kernel=CG_gzg5_quark_PDF_hybrid_RGR_re_NLO; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=3b2240b4f7336c15; paper_used=true -->
-$$C_{\rm RGR}^{(1)}\left(\xi,\frac{\mu}{|x|P_z}\right) = \left[\,C^{\rm ratio(1)}\left(\xi,\frac{\mu}{|x|P_z}\right) + \frac{\alpha_s C_F}{2\pi}\frac{3}{2}\left(-\frac{1}{|1-\xi|}+\frac{2\,{\rm Si}[(1-\xi)|y|z_sP_z]}{\pi(1-\xi)}\right)\right]_{+(1)}^{[-\infty,\infty]}$$
+<!-- lamet-agent formula cache; kernel=CG_gzg5_quark_PDF_hybrid_RGR_re_NLO; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=e05ac695c72b48ba; paper_used=true -->
+$$C^{(1)}_{\rm RGR}\left(\xi,\frac{\mu}{|x|P_z}\right) = \left[\,C^{(1)}_{\rm hybrid}\left(\xi,\frac{\mu_0(x)}{|x|P_z}\right)\right]_{+(1)}^{[-\infty,\infty]} \otimes \mathcal{E}\left(\mu_0(x),\mu\right), \qquad \mu_0(x) = 2\kappa x P_z,$$
 
-where $\xi=x/y$, $L=\ln(4y^2P_z^2/\mu^2)$, and the ratio-scheme kernel is
+where $\xi = x/y$, $L = \ln(4y^2P_z^2/\mu^2)$, and the fixed-order hybrid kernel is
 
-$$C^{\rm ratio(1)}\left(\xi,\frac{\mu}{|x|P_z}\right)= \frac{\alpha_{s} C_{F}}{2 \pi} \begin{cases}\left(\frac{1+\xi^{2}}{1-\xi} \ln \frac{\xi}{\xi-1}+1-\frac{3}{2(1-\xi)}\right)_{+(1)}^{[1, \infty]} & \xi>1 \\ \left(\frac{1+\xi^{2}}{1-\xi}\left[-\ln \frac{\mu^{2}}{4 x^{2} P_{z}^{2}}+\ln (\frac{1-\xi}{\xi})-1\right]+1+\frac{3}{2(1-\xi)}\right)_{+(1)}^{[0,1]} & 0<\xi<1 \\ \left(-\frac{1+\xi^{2}}{1-\xi} \ln \frac{-\xi}{1-\xi}-1+\frac{3}{2(1-\xi)}\right)_{+(1)}^{[-\infty, 0]} & \xi<0 \end{cases}$$
+$$C^{(1)}_{\rm hybrid}\left(\xi,\frac{\mu}{|x|P_z}\right) = C^{(1)}_{\rm ratio}\left(\xi,\frac{\mu}{|x|P_z}\right) + \frac{\alpha_s C_F}{2\pi}\frac{3}{2}\left[-\frac{1}{|1-\xi|}+\frac{2\,{\rm Si}[(1-\xi)|y|z_sP_z]}{\pi(1-\xi)}\right]_{+(1)}^{[-\infty,\infty]},$$
 
-The plus-prescription is defined as in the paper: for a function $g(\xi)$ with a singularity at $\xi=1$, $[g(\xi)]_{+(1)}^{D}$ is the distribution such that $\int_D d\xi\,[g(\xi)]_{+(1)}^{D}\,\phi(\xi) = \int_D d\xi\,g(\xi)\,[\phi(\xi)-\phi(1)]$ for any test function $\phi$, with the domain $D$ indicated by the superscript. The $\delta(1-\xi)$ term is implicit in the plus-prescription and is not written separately.
+with the ratio-scheme coefficient (Eq. (2.16) of the paper, plus the $\gamma^z$ shift $2(1-\xi)$ on $0<\xi<1$):
 
-The RGR kernel is not a fixed-order coefficient. Each row $x$ is constructed by evaluating the fixed-order kernel at the row's own scale $\mu_0(x)=2\kappa xP_z$ (with $\kappa$ the scale-variation parameter, $\kappa=1$ for the central value), then evolving to the final scale $\mu$ via a path-ordered matrix exponential of the two-loop (NLL) non-singlet DGLAP splitting function $P[w,\alpha_s(\mu)]$:
+$$C^{(1)}_{\rm ratio}\left(\xi,\frac{\mu}{|x|P_z}\right) = \frac{\alpha_s C_F}{2\pi}\begin{cases}
+\left(\frac{1+\xi^2}{1-\xi}\ln\frac{\xi}{\xi-1}+1-\frac{3}{2(1-\xi)}\right)_{+(1)}^{[1,\infty]} & \xi>1,\\[4pt]
+\left(\frac{1+\xi^2}{1-\xi}\left[-\ln\frac{\mu^2}{4x^2P_z^2}+\ln\left(\frac{1-\xi}{\xi}\right)-1\right]+1+\frac{3}{2(1-\xi)}\right)_{+(1)}^{[0,1]} & 0<\xi<1,\\[4pt]
+\left(-\frac{1+\xi^2}{1-\xi}\ln\frac{-\xi}{1-\xi}-1+\frac{3}{2(1-\xi)}\right)_{+(1)}^{[-\infty,0]} & \xi<0,
+\end{cases}$$
 
-$$C^{-1}_{\rm RGR}\left(\frac{x}{y},\frac{\mu}{|x|P_z}\right) = \mathcal{P}\exp\left[\int_{\mu_0(x)}^{\mu} \frac{d\mu'}{\mu'}\,P\left[\frac{x}{y},\alpha_s(\mu')\right]\right] C^{-1}\left(\frac{x}{y},\frac{\mu_0(x)}{|x|P_z}\right)$$
+plus the $\gamma^z$ shift $2(1-\xi)$ on $0<\xi<1$ (the paper's Eq. (2.15) for MSbar, extended to ratio/hybrid per the code). The plus prescription is defined as in the paper: $[g(\xi)]^{D}_{+(x_0)} = g(\xi) - \delta(1-\xi)\int_D g(\xi')d\xi'$, with the subtraction point $x_0=1$ and domain $D$ as indicated.
 
-Rows with $\mu_0(x)<\mu_{\rm min}$ (the perturbative cutoff, corresponding to the paper's $x_{\rm min}$) are set to zero. The splitting function used is the full helicity (q+q̄)/2 channel, which is the valence kernel plus an additional $n_f$ structure.
+The RGR evolution operator is a path-ordered matrix exponential over $\ln\mu^2$:
 
-The scheme-specific correction is the Wilson-line term $\frac{\alpha_s C_F}{2\pi}\frac{3}{2}\left(-\frac{1}{|1-\xi|}+\frac{2\,{\rm Si}[(1-\xi)|y|z_sP_z]}{\pi(1-\xi)}\right)$, which replaces the $\overline{\rm MS}$ counterterm and encodes the hybrid-scheme renormalization with Wilson-line length $z_s$.
+$$\mathcal{E}(\mu_0,\mu) = \mathcal{P}\exp\left[\int_{\ln\mu_0^2}^{\ln\mu^2} \frac{d\ln\mu'^2}{2}\left(\frac{\alpha_s(\mu')}{4\pi}P^{(1)}_{\rm NS} + \left(\frac{\alpha_s(\mu')}{4\pi}\right)^2 P^{(2)}_{\rm NS}\right)\right],$$
+
+where $P^{(1)}_{\rm NS}$ is the LO non-singlet splitting function and $P^{(2)}_{\rm NS}$ is the two-loop (NLL) non-singlet splitting function for the *full* helicity channel $(q+\bar{q})/2$ (the code uses `_p_nlo_full_helicity`, which is the valence kernel plus the extra $n_f$ structure). Rows with $\mu_0(x) < \mu_{\rm min}$ (the paper's $x_{\rm min}$) are set to zero, since $\alpha_s(2xP_z)$ is out of perturbative control.
 
 #### Consistency check
 
-The code reproduces the paper's Eq. (matchingRGI) and the hybrid-scheme NLO kernel of App. A (Eqs. (2.19)–(2.20) of the cited paper) term by term: the ratio-scheme coefficient $C^{\rm ratio(1)}$ matches exactly, including the $\ln(\mu^2/(4x^2P_z^2))$ argument and the $\ln(\xi/(\xi-1))$, $\ln((1-\xi)/\xi)$, and $\ln(-\xi/(1-\xi))$ branch logs; the plus-prescription domains $[1,\infty)$, $[0,1]$, $[-\infty,0]$ and the overall $[-\infty,\infty]$ with subscript $+(1)$ are reproduced verbatim; the Wilson-line Si correction with its $|y|z_sP_z$ argument matches; and the RGR construction via per-row scale $\mu_0=2\kappa xP_z$ and DGLAP evolution with the two-loop non-singlet kernel follows the paper's App. 'A Method Solving RG Equation'. No discrepancies were found between the code and the paper for this coefficient.
+The code reproduces the paper's App. 'A Method Solving RG Equation' (Eq. matchingRGI) structure: the per-row scale $\mu_0(x)=2\kappa xP_z$, the DGLAP evolution from $\mu_0$ to $\mu$, and the cutoff at small $x$ all match the paper's description. The fixed-order hybrid kernel matches the paper's Eq. (2.19)–(2.20) with the $\gamma^z$ shift of Eq. (2.15) applied to the ratio backbone. The plus prescription and its domain split ($[0,1]$, $[1,\infty]$, $[-\infty,0]$, and the overall $[-\infty,\infty]$ for the Wilson-line correction) follow the paper's notation exactly. The one discrepancy: the paper's Eq. (2.15) writes the $\gamma^z$ shift as $[2(1-\xi)]_+ + \delta(1-\xi)$ for MSbar, while the code applies the bare $2(1-\xi)$ (without the delta) in the ratio/hybrid schemes, arguing the delta is an MSbar normalization term. This is a deliberate scheme-interpretation choice, not an error, but it differs from a literal reading of the paper. No other discrepancies found.

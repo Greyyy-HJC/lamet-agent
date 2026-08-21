@@ -1,30 +1,24 @@
-<!-- lamet-agent formula cache; kernel=GI_gzg5_quark_PDF_hybrid_NLO; arxiv=2604.00143; equations=Eqs. (C6)-(C8); digest=e083728d16229637; paper_used=true -->
-The matching coefficient for the `gzg5` operator in the hybrid scheme is given by Eqs. (C6)–(C8) of arXiv:2604.00143. With $\xi = x/y$ and $L = \ln(4y^2P_z^2/\mu^2)$, the NLO kernel is
+<!-- lamet-agent formula cache; kernel=GI_gzg5_quark_PDF_hybrid_NLO; arxiv=2604.00143; equations=Eqs. (C6)-(C8); digest=b13bac72af1379b9; paper_used=true -->
+$$C_{\mathrm{hybrid}}^{g_zg_5}(\xi, L, y, z_s P_z) = C_{\mathrm{ratio}}^{g_zg_5}(\xi, L) + \Delta C_{\mathrm{hybrid}}(\xi, y, z_s P_z),$$
 
-$$
-\mathcal{C}(x,y,\mu,P_z) = \delta(1-\xi) + \frac{\alpha_s C_F}{2\pi} \left[ C^{(1)}_{\text{ratio}}(\xi,L) + C^{(1)}_{\text{hybrid}}(\xi,y,z_sP_z) \right],
-$$
+with $\xi = x/y$ and $L = \ln(4y^2P_z^2/\mu^2)$. The ratio-scheme coefficient is
 
-where the ratio-scheme piece, Eq. (C7), is
+$$C_{\mathrm{ratio}}^{g_zg_5}(\xi, L) = \left[ \frac{1+\xi^2}{1-\xi} \left( L + \ln\frac{4\xi(1-\xi)}{1} - 1 \right) + 1 \right]^{(-\infty,\infty)}_{+(1)} + \frac{3}{2|1-\xi|} + 2(1-\xi)\quad (0<\xi<1),$$
 
-$$
-C^{(1)}_{\text{ratio}}(\xi,L) = \left[ \frac{1+\xi^2}{1-\xi} \left( L + \ln\frac{4\xi(1-\xi)}{1} - 1 \right) + 1 \right]^{(-\infty,\infty)}_{+(1)} + \frac{3}{2|1-\xi|},
-$$
+where the plus-prescription is defined as in the paper:
 
-with the plus-prescription defined as
+$$\int_0^1 d\xi\, [g(\xi)]^{D}_{+(x_0)}\,\varphi(\xi) = \int_0^1 d\xi\, g(\xi)\big(\varphi(\xi)-\varphi(x_0)\big),$$
 
-$$
-[g(\xi)]^{D}_{+(x_0)} = g(\xi) - \delta(1-\xi)\int_D d\xi'\, g(\xi'),
-$$
+with $D=(-\infty,\infty)$ and $x_0=1$. The hybrid-scheme correction is
 
-and the hybrid correction, Eq. (C8), is
+$$\Delta C_{\mathrm{hybrid}}(\xi, y, z_s P_z) = \frac{3}{2}\left[ -\frac{1}{|1-\xi|} + \frac{2\,\mathrm{Si}\big((1-\xi)|y|z_s P_z\big)}{\pi(1-\xi)} \right],$$
 
-$$
-C^{(1)}_{\text{hybrid}}(\xi,y,z_sP_z) = \frac{3}{2}\left[ -\frac{1}{|1-\xi|} + \frac{2\,\mathrm{Si}((1-\xi)|y|z_sP_z)}{\pi(1-\xi)} \right].
-$$
+where $\mathrm{Si}(z)$ is the sine integral. The full coefficient is
 
-The full coefficient is the sum of these two pieces, with the plus-prescription applied to the combined expression over the domain $(-\infty,\infty)$ at the subtraction point $x_0=1$.
+$$C_{\mathrm{hybrid}}^{g_zg_5}(\xi, L, y, z_s P_z) = \left[ \frac{1+\xi^2}{1-\xi} \left( L + \ln\frac{4\xi(1-\xi)}{1} - 1 \right) + 1 \right]^{(-\infty,\infty)}_{+(1)} + \frac{3}{2|1-\xi|} + 2(1-\xi) + \frac{3}{2}\left[ -\frac{1}{|1-\xi|} + \frac{2\,\mathrm{Si}\big((1-\xi)|y|z_s P_z\big)}{\pi(1-\xi)} \right],$$
+
+with the plus-prescription at $\xi=1$ applied to the first bracket, and the $\delta(1-\xi)$ term from the LO is implicit in the discretization.
 
 #### Consistency check
 
-The code implements exactly the structure above. The ratio piece matches Eq. (C7) term by term: the splitting function $(1+\xi^2)/(1-\xi)$, the log combination $L + \ln(4\xi(1-\xi)) - 1$ (with the code's $\ln(4y^2P_z^2/\mu^2)$ correctly reduced by $\ln 4$ to match the paper's $\ln(y^2P_z^2/\mu^2)$), the constant $+1$, and the $3/(2|1-\xi|)$ tail. The hybrid piece matches Eq. (C8) with the correct prefactor $3/2$ and the sine-integral argument $(1-\xi)|y|z_sP_z$. The plus-prescription is restored by the column-sum method, which is equivalent to the paper's $[\,\cdot\,]^{(-\infty,\infty)}_{+(1)}$ definition. The code omits the $\delta C_M$ (leading-renormalon) term and the NNLO piece of Eq. (C6), as stated in its docstring, but these are not part of the NLO coefficient being documented. No discrepancies found.
+The code reproduces Eqs. (C6)–(C8) of arXiv:2604.00143 term by term. The regular coefficient matches: the splitting function $(1+\xi^2)/(1-\xi)$, the log argument $L + \ln(4\xi(1-\xi))$, the constant $-1$, and the $+1$ term are all present. The $3/(2|1-\xi|)$ tail and the $2(1-\xi)$ shift for $\gamma^z$ vs $\gamma^t$ are correctly implemented. The hybrid correction matches Eq. (C8) exactly: the prefactor $3/2$, the $-1/|1-\xi|$ term, and the sine-integral term with argument $(1-\xi)|y|z_sP_z$ are all reproduced. The plus-prescription is implemented as the paper defines it, with the subtraction point at $\xi=1$ and the domain $(-\infty,\infty)$. The only discrepancy is that the code does not implement the $\delta C_M$ (leading-renormalon/mass) term and the NNLO piece mentioned in Eq. (C6), but these are explicitly documented as not implemented in the code. No other discrepancies found.

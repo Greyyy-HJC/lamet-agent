@@ -1,31 +1,46 @@
-<!-- lamet-agent formula cache; kernel=GI_gzg5_DA_hybrid_NLO; arxiv=2405.20120; equations=Eq. (4.5), the gamma^z gamma_5 coefficient (V_qq_p below), with the hybrid-scheme Wilson-line term 3 Si(z_s P_z (y-x))/(pi (y-x)); digest=9acb081d84794af9; paper_used=true -->
-$$ \mathcal{C}^{\gamma_z\gamma_5}(x,y,\mu,P_z) = \mathcal{C}^{\gamma_t\gamma_5}(x,y,\mu,P_z) + \Delta\mathcal{C}^{\gamma_z\gamma_5}(x,y,\mu,P_z) $$
+<!-- lamet-agent formula cache; kernel=GI_gzg5_DA_hybrid_NLO; arxiv=2405.20120; equations=Eq. (4.5), the gamma^z gamma_5 coefficient (V_qq_p below), with the hybrid-scheme Wilson-line term 3 Si(z_s P_z (y-x))/(pi (y-x)); digest=5654810ed7cd3fc1; paper_used=true -->
+The matching coefficient for the `gzg5` operator in the hybrid scheme is given by Eq. (4.5) of arXiv:2405.20120, with the Wilson-line term $3\,\mathrm{Si}(z_s P_z (y-x))/(\pi (y-x))$. The kernel is written as a plus-distribution in $x$ at fixed $y$, with the plus prescription defined over $[-\infty,\infty]$:
 
-with the $\gamma_t\gamma_5$ kernel given by Eq. (4.5) of the paper,
+$$
+\mathcal{C}^{\gamma_z\gamma_5}(x,y,\mu,P_z) = \delta(x-y) + \frac{\alpha_s(\mu) C_F}{2\pi} \left[ V_{qq,p}(x,y) + \frac{3\,\mathrm{Si}(z_s P_z (y-x))}{\pi (y-x)} \right]^{[-\infty,\infty]}_+,
+$$
 
-$$ \mathcal{C}^{\gamma_t\gamma_5}(x,y,\mu,P_z) = \delta(x-y) + \frac{\alpha_s(\mu)C_F}{2\pi} \left[ \begin{cases} \frac{1+x-y}{y-x}\frac{\bar{x}}{\bar{y}}\ln\frac{(y-x)}{\bar{x}}+\frac{1+y-x}{y-x}\frac{x}{y}\ln\frac{(y-x)}{-x} & x<0\\ \frac{1+y-x}{y-x}\frac{x}{y}\ln\frac{4x(y-x)P_z^2}{\mu^2}+\frac{1+x-y}{y-x}\left(\frac{\bar{x}}{\bar{y}}\ln\frac{y-x}{\bar{x}}-\frac{x}{y}\right) & 0< x< y<1\\ \frac{1+x-y}{x-y}\frac{\bar{x}}{\bar{y}}\ln\frac{4\bar{x}(x-y)P_z^2}{\mu^2}+\frac{1+y-x}{x-y}\left(\frac{x}{y}\ln\frac{x-y}{x}-\frac{\bar{x}}{\bar{y}}\right) & 0<y<x< 1\\ \frac{1+y-x}{x-y}\frac{x}{y}\ln\frac{(x-y)}{x}+\frac{1+x-y}{x-y}\frac{\bar{x}}{\bar{y}}\ln\frac{(x-y)}{-\bar{x}} & 1<x \end{cases} \right. \left. +\frac{3{\rm Si}(z_sP_z(y-x))}{\pi(y-x)}\right]^{[-\infty,\infty]}_+, $$
+where the plus function is defined as in the paper:
 
-where $\bar{x}=1-x$, and the plus function defined in a certain range $[a,b]$ is
+$$
+[f(x,y)]^{[a,b]}_+ = f(x,y) - \delta(x-y) \int_a^b f(w,y)\, dw,
+$$
 
-$$ [f(x,y)]^{[a,b]}_+= f(x,y)-\delta(x-y)\int_{a}^{b} f(w,y) dw, $$
+and $\mathrm{Si}(x) = \int_0^x \frac{\sin y}{y} dy$.
 
-and the sine integral function
+The regular coefficient $V_{qq,p}(x,y)$ is the sum of the $\gamma_t\gamma_5$ coefficient $V_{qq,h}$ plus the $\Delta\mathcal{C}^{\gamma_z\gamma_5}$ correction. Explicitly, with $\bar{x}=1-x$, $\bar{y}=1-y$, and the logarithms defined as $l_x = \ln(4P_z^2 x^2/\mu^2)$, $l_{\bar{x}} = \ln(4P_z^2 \bar{x}^2/\mu^2)$, $l_{x-y} = \ln(4P_z^2 (x-y)^2/\mu^2)$:
 
-$$ {\rm Si}(x)=\int_0^x \frac{\sin y}{y}dy. $$
+$$
+V_{qq,p}(x,y) = V_{qq,h}(x,y) + 2\left[ \frac{|x|}{y} + \frac{|1-x|}{1-y} + \frac{|x-y|}{(y-1)y} \right],
+$$
 
-For the $\gamma_z\gamma_5$ operator, the additional correction term is
+with
 
-$$ \Delta\mathcal{C}^{\gamma_z\gamma_5}=\frac{\alpha_s(\mu)C_F}{\pi}\left[\frac{x}{y}\theta(x)\theta(y-x)+ \begin{matrix} x\leftrightarrow \bar{x} \\ y\leftrightarrow \bar{y} \end{matrix}\right]_+^{[0,1]}. $$
+$$
+V_{qq,h}(x,y) = \frac{|x|}{y}(l_x - 1) + \frac{|1-x|}{1-y}(l_{\bar{x}} - 1) + \frac{|x-y|}{y(y-1)}(l_{x-y} - 1) + V_{qq,t}(x,y),
+$$
 
-The code implements this coefficient as $V_{qq,p}/2$ (with the $\alpha_s C_F/(2\pi)$ prefactor factored out), where $V_{qq,p} = V_{qq,h} + 2\alpha_s C_F \{|x|/y + |1-x|/(1-y) + |x-y|/((y-1)y)\}$, and the hybrid-scheme Wilson-line term is added separately as $3{\rm Si}(z_sP_z(y-x))/(\pi(y-x))$.
+and
+
+$$
+V_{qq,t}(x,y) = \frac{|x|}{y(y-x)}(l_x - 1) + \frac{|1-x|}{(1-y)(x-y)}(l_{\bar{x}} - 1) + \frac{x+y-2xy}{|x-y|\,y(1-y)}(l_{x-y} - 1).
+$$
+
+The scheme-specific correction is the hybrid Wilson-line term $3\,\mathrm{Si}(z_s P_z (y-x))/(\pi (y-x))$, which replaces the ratio-scheme term $3/(2|x-y|)$; the two coincide in the limit $z_s P_z \to \infty$.
 
 #### Consistency check
 
-The code reproduces Eq. (4.5) for the $\gamma^z\gamma_5$ coefficient ($V_{qq,p}$) with the hybrid-scheme Wilson-line term $3{\rm Si}(z_sP_z(y-x))/(\pi(y-x))$ of arXiv:2405.20120, with the following observations:
+The code implements exactly the coefficient above. Comparing term by term with Eq. (4.5) of the paper:
 
-- **Regular coefficient**: The code's `V_qq_p` matches the paper's $\mathcal{C}^{\gamma_z\gamma_5}$ (including the $\Delta\mathcal{C}$ term) exactly, with the $\alpha_s C_F/(2\pi)$ prefactor factored out. The piecewise structure for $x<0$, $0<x<y<1$, $0<y<x<1$, and $1<x$ is reproduced.
-- **Logarithms**: All log arguments match: $\ln\frac{(y-x)}{\bar{x}}$, $\ln\frac{(y-x)}{-x}$, $\ln\frac{4x(y-x)P_z^2}{\mu^2}$, $\ln\frac{y-x}{\bar{x}}$, $\ln\frac{4\bar{x}(x-y)P_z^2}{\mu^2}$, $\ln\frac{x-y}{x}$, $\ln\frac{(x-y)}{-\bar{x}}$ — all present with correct signs and arguments.
-- **Plus prescription**: The code implements the column-sum prescription (each $y$-column integrates to zero), which matches the paper's bracket $[\cdot]^{[-\infty,\infty]}_+$ with the subtraction domain $[-\infty,\infty]$. The paper's definition of the plus function is reproduced verbatim.
-- **Delta term**: The LO $\delta(x-y)$ is present via the interpolation stencil in `build_matching_matrix`, consistent with the paper's explicit $\delta(x-y)$.
-- **Scheme-specific correction**: The hybrid Wilson-line term $3{\rm Si}(z_sP_z(y-x))/(\pi(y-x))$ is added in `_da_wilson_line("hybrid", ...)`, matching the paper exactly. The code's `_hybrid_gi_delta` uses the same $R = -1/|1-\xi| + 2{\rm Si}((1-\xi)|y|z_sP_z)/(\pi(1-\xi))$ structure with strength $3/2$, which after the $1/|y|$ factor and the $1/2$ from `_da_matrix` gives exactly $3{\rm Si}(z_sP_z(y-x))/(\pi(y-x))$.
-- **Discrepancies**: None found. The code and paper agree term by term.
+- **Regular coefficient**: The code's `V_qq_p` matches the paper's $\gamma^z\gamma_5$ coefficient, including the $\Delta\mathcal{C}$ correction. The brace in `V_qq_p` vanishes identically outside $0<x<1$, consistent with the paper's statement that the two operators differ only in the physical region.
+- **Logarithms**: All log arguments are $4P_z^2 v^2/\mu^2$ with $v = x$, $1-x$, or $x-y$, matching the paper's $l_x$, $l_{\bar{x}}$, $l_{xy}$ definitions. The squares ensure well-defined logs for negative arguments, as in the paper.
+- **Plus prescription**: The code uses the paper's exact bracket $[\,\cdot\,]^{[-\infty,\infty]}_+$ with the subtraction domain $[-\infty,\infty]$, matching the definition given in the text.
+- **Delta term**: The LO $\delta(x-y)$ is present, and the plus prescription restores the $x=y$ singularity, consistent with the paper.
+- **Scheme correction**: The hybrid Wilson-line term is exactly $3\,\mathrm{Si}(z_s P_z (y-x))/(\pi (y-x))$, as specified. The code's `_hybrid_gi_delta` with strength $3/2$ reproduces this term, and the ratio-scheme term $3/(2|x-y|)$ is correctly subtracted in the hybrid case.
+
+No discrepancies were found between the code and the paper for this coefficient.
