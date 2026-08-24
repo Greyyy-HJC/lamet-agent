@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lamet-agent"
+version = "0.1.0"
+description = "Minimal LaMET agent scaffold."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "scipy",
+  "matplotlib",
+  "gvar",
+  "lsqfit",
+  "xarray",
+  "h5py",
+  "netCDF4",
+  "tqdm",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+codex = ["openai-codex"]
+literature = ["beautifulsoup4", "requests"]
+
+[project.scripts]
+lamet-agent = "lamet_agent.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lamet_agent*"]
+
+# `formulas/*.md` are the precomputed matching formulas: shipping them means the matching
+# report's formula section renders with no arXiv download and no LLM call, even on a
+# user's very first run. Regenerate with `lamet-agent precompute-formulas`.
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.json", "kernels/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

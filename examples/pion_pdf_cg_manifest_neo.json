@@ -1,0 +1,132 @@
+{
+  "metadata": {
+    "run_id": "pion_pdf_cg_neo",
+    "root_directory": "..",
+    "artifacts_directory": "runs/pion_pdf_cg_neo/artifacts",
+    "random_seed": 1984,
+    "workers": 4,
+    "target_observable": "pdf",
+    "resample_mode": "jackknife",
+    "bin_size": 1,
+    "sample_error_mode": "covariance"
+  },
+  "stages": {
+    "correlator_analysis": {
+      "defaults": {
+        "observable": "matrix_element",
+        "analysis_method": "lsqfit",
+        "resample_group": "HISQa060_X",
+        "component": "re",
+        "nstate": [2],
+        "lsqfit": {
+          "fit_scope": ["3pt_ratio"],
+          "fit_strategy": ["joint"],
+          "fitting_form": "Breit",
+          "prior_width": [1.0],
+          "model_average": false,
+          "time_range": {"min": 3, "max": 12},
+          "pt2_windows": [
+            {"tmin": 3, "tmax": 12},
+            {"tmin": 4, "tmax": 12},
+            {"tmin": 5, "tmax": 12}
+          ],
+          "pt3_windows": [
+            {"tsep_ls": [8, 10, 12], "tau_cut": 3},
+            {"tsep_ls": [8, 10, 12], "tau_cut": 4}
+          ],
+          "svdcut": 1e-6,
+          "posterior_prior_error_scale": 10.0,
+          "q_min": 0.05,
+          "tune_z": 0
+        }
+      },
+      "jobs": [
+        {
+          "id": "ca_p0",
+          "inputs": {"correlators": {"file": "examples/pion_pdf_cg_correlators_neo.json"}},
+          "params": {"correlator_ids": ["p0_2pt", "p0_3pt"]}
+        },
+        {
+          "id": "ca_p5",
+          "inputs": {"correlators": {"file": "examples/pion_pdf_cg_correlators_neo.json"}},
+          "params": {"correlator_ids": ["p5_2pt", "p5_3pt"]}
+        }
+      ]
+    },
+    "renormalization": {
+      "defaults": {
+        "operation": "apply",
+        "scheme": "hybrid",
+        "strategy": "external_denominator",
+        "normalization": true,
+        "mu": 2.0,
+        "zs_fm": 0.18,
+        "m0_gev": 0.0,
+        "delta_m_gev": 0.0
+      },
+      "jobs": [
+        {
+          "id": "rn_p5",
+          "inputs": {"target": {"job": "ca_p5"}, "denominator": {"job": "ca_p0"}},
+          "params": {}
+        }
+      ]
+    },
+    "fourier_transform": {
+      "defaults": {
+        "parton": "quark",
+        "gfix": "CG",
+        "symmetry": {"real": "even", "imag": "odd"},
+        "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "pz_over_2pi"},
+        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 200},
+        "tail_models": ["cg_nla"],
+        "zmin_fm": [0.72, 0.78, 0.84, 0.9],
+        "zmax_fm": [1.26, 1.32, 1.38, 1.44],
+        "smoothing": {"smooth": ["linear"], "widths_fm": [0.06]},
+        "zmax_ext_fm": 1.5,
+        "scheme_scan": {
+          "order": ["LA", "NLA"],
+          "sector": "valence",
+          "Lambda0_gev": 0.1,
+          "posterior_prior_error_scale": [3.0, 4.0, 5.0],
+          "model_average": false,
+          "max_schemes": 200,
+          "component": "re",
+          "output_scale": 2.0,
+          "q_min": 0.05
+        }
+      },
+      "jobs": [
+        {"id": "ft_p5", "inputs": {"input": {"job": "rn_p5"}}, "params": {}}
+      ]
+    },
+    "perturbative_matching": {
+      "defaults": {
+        "kernel_id": "CG_gt_quark_PDF_hybrid_RGR_re_NLO",
+        "scheme": "hybrid",
+        "mu": 2.0,
+        "lc_x_ls": {"start": 0.0, "stop": 1.0},
+        "kernel_parameters": {"rgr_kappa": 1.0, "rgr_mu_min_gev": 0.6},
+        "zs_fm": 0.18
+      },
+      "jobs": [
+        {"id": "mt_p5", "inputs": {"quasi": {"job": "ft_p5"}}, "params": {}}
+      ]
+    },
+    "review": {
+      "defaults": {
+        "catalog": "builtin",
+        "max_papers": 4,
+        "report_language": "en",
+        "checks": ["identity", "units", "kinematics", "schemes", "grids", "resampling"]
+      },
+      "jobs": [
+        {
+          "id": "review",
+          "inputs": {"results": [{"job": "ca_p0"}, {"job": "ca_p5"}, {"job": "rn_p5"}, {"job": "ft_p5"}, {"job": "mt_p5"}]},
+          "params": {}
+        }
+      ]
+    }
+  }
+}

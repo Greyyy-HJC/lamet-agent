@@ -1,0 +1,31 @@
+# AI assistant working directories
+.claude/
+.codex
+.cursor/
+
+__pycache__/
+*.py[cod]
+.pytest_cache
+.coverage
+build/
+dist/
+*.egg-info/
+.venv/
+.mypy_cache/
+.DS_Store
+
+# Generated workflow outputs
+runs/
+
+
+# Local files
+temp/
+examples/fake_data/data/
+**/*.key
+data*/
+artifacts/
+examples/artifacts/
+lamet_literature/arxiv/
+**/temp*
+
+examples/workflow_cg_qpdf_complete_manifest.json
