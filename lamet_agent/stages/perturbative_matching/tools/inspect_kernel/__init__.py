@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import numpy as np
 
 from lamet_agent.agent import ToolContext
 from lamet_agent.kernels import load_kernel, load_kernel_document
@@ -20,6 +21,11 @@ def _one(value):
 def run(context: ToolContext) -> dict[str, object]:
     """Load one kernel module and store its input/output grid summary."""
     data = load_data(_one(context.inputs["quasi"]))
+    if np.iscomplexobj(data.values):
+        component = str(data.attrs.get("component", "re")).lower()
+        data = data.imag if component in {"im", "imag", "imaginary"} else data.real
+        attrs = data.attrs
+        attrs["matching_component"] = "im" if component in {"im", "imag", "imaginary"} else "re"
     momentum = data.attrs.get("momentum_gev")
     if not isinstance(momentum, (int, float)) or isinstance(momentum, bool) or not math.isfinite(float(momentum)) or not float(momentum) > 0:
         raise ValueError("quasi input requires a finite positive momentum_gev")
@@ -27,13 +33,13 @@ def run(context: ToolContext) -> dict[str, object]:
         raise ValueError("quasi input requires a nonempty x coordinate")
     root = context.state.get("kernel_root")
     kernel = load_kernel(context.params["kernel_id"], root=root)
-    parameter_values = dict(context.params.get("kernel_parameters", {}))
+    parameter_values = dict(context.params["kernel_parameters"])
     if "rgr_kappa" in parameter_values:
         parameter_values["kappa"] = parameter_values.pop("rgr_kappa")
     if "rgr_mu_min_gev" in parameter_values:
         parameter_values["mu_min_gev"] = parameter_values.pop("rgr_mu_min_gev")
-    if "zs_fm" in context.params:
-        parameter_values["zs_fm"] = context.params["zs_fm"]
+    if "hybrid" in context.params:
+        parameter_values["zs_fm"] = context.params["hybrid"]["zs_fm"]
     parameter_names, required = inspect_callable(kernel, parameter_values=parameter_values)
     document = load_kernel_document(context.params["kernel_id"], root=root)
     attrs = data.attrs

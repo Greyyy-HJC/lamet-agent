@@ -6,6 +6,7 @@
     "random_seed": 1984,
     "workers": 4,
     "target_observable": "pdf",
+    "parton": "quark",
     "resample_mode": "jackknife",
     "bin_size": 1,
     "sample_error_mode": "covariance"
@@ -13,58 +14,192 @@
   "stages": {
     "correlator_analysis": {
       "defaults": {
-        "observable": "matrix_element",
-        "analysis_method": "lsqfit",
-        "resample_group": "HISQa060_X",
         "component": "re",
-        "nstate": [2],
+        "nstate": [
+          2
+        ],
         "lsqfit": {
-          "fit_scope": ["3pt_ratio"],
-          "fit_strategy": ["joint"],
+          "fit_scope": [
+            "3pt_ratio"
+          ],
+          "fit_strategy": [
+            "joint"
+          ],
           "fitting_form": "Breit",
-          "prior_width": [1.0],
           "model_average": false,
-          "time_range": {"min": 4, "max": 12},
-          "pt2_windows": [{"tmin": 4, "tmax": 12}, {"tmin": 5, "tmax": 12}, {"tmin": 6, "tmax": 12}],
-          "pt3_windows": [{"tsep_ls": [8, 10], "tau_cut": 3}],
-          "svdcut": 1e-6,
+          "pt2_windows": [
+            {
+              "tmin": 4,
+              "tmax": 12
+            },
+            {
+              "tmin": 5,
+              "tmax": 12
+            },
+            {
+              "tmin": 6,
+              "tmax": 12
+            }
+          ],
+          "pt3_windows": [
+            {
+              "tsep_ls": [
+                8,
+                10
+              ],
+              "tau_cut": 3
+            }
+          ],
+          "svdcut": 1E-06,
           "posterior_prior_error_scale": 10.0,
-          "q_min": 0.05,
-          "tune_z": 0
+          "q_min": 0.05
         }
       },
       "jobs": [
-        {"id": "ca_p0", "inputs": {"correlators": {"file": "examples/pion_pdf_gi_correlators_neo.json"}}, "params": {"correlator_ids": ["p0_2pt", "p0_3pt"]}},
-        {"id": "ca_p4", "inputs": {"correlators": {"file": "examples/pion_pdf_gi_correlators_neo.json"}}, "params": {"correlator_ids": ["p4_2pt", "p4_3pt"]}}
+        {
+          "id": "ca_p0",
+          "inputs": {
+            "correlators": {
+              "file": "examples/pion_pdf_gi_correlators_neo.json"
+            }
+          },
+          "correlator_ids": [
+            "p0_2pt",
+            "p0_3pt"
+          ]
+        },
+        {
+          "id": "ca_p4",
+          "inputs": {
+            "correlators": {
+              "file": "examples/pion_pdf_gi_correlators_neo.json"
+            }
+          },
+          "correlator_ids": [
+            "p4_2pt",
+            "p4_3pt"
+          ]
+        }
       ]
     },
     "renormalization": {
-      "defaults": {"operation": "apply", "scheme": "hybrid", "strategy": "external_denominator", "normalization": true, "mu": 2.0, "zs_fm": 0.18, "m0_gev": 0.1232, "delta_m_gev": 0.5207366666666666},
-      "jobs": [{"id": "rn_p4", "inputs": {"target": {"job": "ca_p4"}, "denominator": {"job": "ca_p0"}}, "params": {}}]
+      "defaults": {
+        "strategy": "external_denominator",
+        "normalization": true,
+        "external_denominator": {
+          "scheme": "hybrid",
+          "hybrid": {
+            "zs_fm": 0.18,
+            "m0_gev": 0.1232,
+            "delta_m_gev": 0.5207366666666666
+          }
+        }
+      },
+      "jobs": [
+        {
+          "id": "rn_p4",
+          "inputs": {
+            "target": "ca_p4",
+            "denominator": "ca_p0"
+          }
+        }
+      ]
     },
     "fourier_transform": {
       "defaults": {
-        "parton": "quark",
-        "gfix": "GI",
-        "symmetry": {"real": "even", "imag": "odd"},
-        "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "pz_over_2pi"},
-        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 200},
-        "tail_models": ["gi_nla"],
-        "zmin_fm": [0.66, 0.72, 0.78, 0.84],
-        "zmax_fm": [1.08, 1.14, 1.20, 1.26],
-        "smoothing": {"smooth": ["linear"], "widths_fm": [0.06]},
+        "quasi_y_ls": {
+          "start": -2.0,
+          "stop": 2.0,
+          "num": 200
+        },
+        "zmin_fm": [
+          0.66,
+          0.72,
+          0.78,
+          0.84
+        ],
+        "zmax_fm": [
+          1.08,
+          1.14,
+          1.2,
+          1.26
+        ],
+        "smooth": "linear",
         "zmax_ext_fm": 1.5,
-        "scheme_scan": {"order": ["LA", "NLA"], "sector": "valence", "Lambda0_gev": 0.1, "posterior_prior_error_scale": [3.0, 4.0, 5.0], "model_average": false, "max_schemes": 200, "component": "re", "output_scale": 2.0, "q_min": 0.05}
+        "scheme_scan": {
+          "order": [
+            "LA",
+            "NLA"
+          ],
+          "sector": "valence",
+          "Lambda0_gev": 0.1,
+          "posterior_prior_error_scale": [
+            3.0,
+            4.0,
+            5.0
+          ],
+          "model_average": false
+        }
       },
-      "jobs": [{"id": "ft_p4", "inputs": {"input": {"job": "rn_p4"}}, "params": {}}]
+      "jobs": [
+        {
+          "id": "ft_p4",
+          "inputs": {
+            "input": "rn_p4"
+          }
+        }
+      ]
     },
     "perturbative_matching": {
-      "defaults": {"kernel_id": "GI_gt_quark_PDF_hybrid_NLO", "scheme": "hybrid", "mu": 2.0, "lc_x_ls": {"start": 0.0, "stop": 1.0}, "kernel_parameters": {}, "zs_fm": 0.18},
-      "jobs": [{"id": "mt_p4", "inputs": {"quasi": {"job": "ft_p4"}}, "params": {}}]
+      "defaults": {
+        "kernel_id": "GI_gt_quark_PDF_hybrid_NLO",
+        "scheme": "hybrid",
+        "mu": 2.0,
+        "lc_x_ls": {
+          "start": 0.0,
+          "stop": 1.0
+        },
+        "hybrid": {
+          "zs_fm": 0.18
+        }
+      },
+      "jobs": [
+        {
+          "id": "mt_p4",
+          "inputs": {
+            "quasi": "ft_p4"
+          }
+        }
+      ]
     },
     "review": {
-      "defaults": {"catalog": "builtin", "max_papers": 4, "report_language": "en", "checks": ["identity", "units", "kinematics", "schemes", "grids", "resampling"]},
-      "jobs": [{"id": "review", "inputs": {"results": [{"job": "ca_p0"}, {"job": "ca_p4"}, {"job": "rn_p4"}, {"job": "ft_p4"}, {"job": "mt_p4"}]}, "params": {}}]
+      "defaults": {
+        "catalog": "builtin",
+        "max_papers": 4,
+        "report_language": "en",
+        "checks": [
+          "identity",
+          "units",
+          "kinematics",
+          "schemes",
+          "grids",
+          "resampling"
+        ]
+      },
+      "jobs": [
+        {
+          "id": "review",
+          "inputs": {
+            "results": [
+              "ca_p0",
+              "ca_p4",
+              "rn_p4",
+              "ft_p4",
+              "mt_p4"
+            ]
+          }
+        }
+      ]
     }
   }
 }

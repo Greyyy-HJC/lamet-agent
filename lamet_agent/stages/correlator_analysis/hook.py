@@ -57,6 +57,10 @@ def ensure_raw_correlators(
     if unknown:
         raise ValueError(f"unknown correlator ids: {sorted(unknown)}")
     context.state["correlator_descriptor_path"] = source
+    ensemble = loaded["descriptor"].get("ensemble", {})
+    context.state["correlator_resample_group"] = str(
+        ensemble.get("id", context.job_id)
+    )
     context.state["correlator_records"] = {
         record["id"]: record
         for record in loaded["descriptor"]["correlators"]
@@ -103,7 +107,7 @@ def ensure_correlators(
             ),
         },
         mode=context.manifest["metadata"]["resample_mode"],
-        group=context.params["resample_group"],
+        group=str(context.state.get("correlator_resample_group", context.job_id)),
         bin_size=context.manifest["metadata"]["bin_size"],
         n_boot=context.manifest["metadata"].get("bootstrap_samples"),
         seed=int(context.manifest["metadata"]["random_seed"]),
@@ -152,12 +156,15 @@ def recommend_pt2_windows(
         )
     if not records:
         raise ValueError("two-point window recommendation requires two-point data")
-    time_range = context.params["lsqfit"]["time_range"]
+    lower = max(min(record["t"]) for record in records)
+    upper = min(max(record["t"]) for record in records) + 1
+    if lower >= upper:
+        raise ValueError("two-point correlators have no shared time-coordinate coverage")
     evidence = {
         "two_point_correlators": records,
         "allowed_time_range": {
-            "min": int(time_range["min"]),
-            "max": int(time_range["max"]),
+            "min": int(lower),
+            "max": int(upper),
         },
         "minimum_points": 2 * max(int(value) for value in context.params["nstate"]),
         "window_convention": "tmin is inclusive and tmax is exclusive",
@@ -193,12 +200,6 @@ def recommend_pt3_windows(
     correlator_id, data = three_points[0]
     if data.dims != ["tsep", "tau", "z"]:
         raise ValueError("three-point recommendation data must have tsep, tau, and z dimensions")
-    z_values = np.asarray(data.coords["z"], dtype=float)
-    tune_z = float(context.params["lsqfit"]["tune_z"])
-    matches = np.flatnonzero(np.isclose(z_values, tune_z, rtol=0.0, atol=1e-12))
-    if matches.size != 1:
-        raise ValueError("lsqfit.tune_z must name exactly one available z coordinate")
-    tuned = data.at("z", data.coords["z"][int(matches[0])])
     requested_components = {
         "re": ("real",),
         "im": ("imag",),
@@ -206,13 +207,13 @@ def recommend_pt3_windows(
     }[context.params["component"]]
     components = {}
     for component in requested_components:
-        mean, error = _mean_error(tuned, component, sample_error_mode)
+        mean, error = _mean_error(data, component, sample_error_mode)
         components[component] = {"mean": mean, "error": error}
     evidence = {
         "correlator_id": correlator_id,
-        "tune_z": tune_z,
-        "tsep": [int(value) for value in tuned.coords["tsep"]],
-        "tau": [int(value) for value in tuned.coords["tau"]],
+        "z": [float(value) for value in data.coords["z"]],
+        "tsep": [int(value) for value in data.coords["tsep"]],
+        "tau": [int(value) for value in data.coords["tau"]],
         "components": components,
         "fit_scope": context.params["lsqfit"]["fit_scope"],
         "constraint": "Each tau_cut must satisfy 2*tau_cut <= every selected tsep.",

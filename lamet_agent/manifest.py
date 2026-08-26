@@ -6,7 +6,7 @@ import copy
 import importlib.util
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal, Mapping, Sequence
@@ -15,16 +15,14 @@ from .contract import (
     CheckContext,
     Depends,
     Issue,
+    Recommends,
     Value,
-    _apply_recommended_defaults,
     _unresolved_null_hooks,
     evaluate_checks,
     evaluate_rules,
 )
 
 _SAFE_STAGE = re.compile(r"^[a-z][a-z0-9_]*$")
-_SAFE_JOB = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_SAFE_KERNEL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
 def _strip_json_comments(text: str) -> str:
@@ -85,8 +83,8 @@ def _positive(value: int) -> bool:
 
 
 @dataclass(frozen=True)
-class _ResolvedJob:
-    """One authored job with effective parameters and its artifact cell."""
+class Job:
+    """One concrete globally ordered job owned by a parsed Manifest."""
 
     stage_id: str
     stage_index: int
@@ -103,6 +101,8 @@ class Manifest:
 
     path: Path
     document: dict[str, Any]
+    jobs: tuple[Job, ...] = field(default=(), repr=False)
+    _systematics_expanded: bool = field(default=False, repr=False)
 
     def __post_init__(self) -> None:
         self.path = Path(self.path).expanduser().resolve()
@@ -118,6 +118,11 @@ class Manifest:
         return metadata
 
     @property
+    def jobs_by_stage(self) -> Mapping[str, tuple[Job, ...]]:
+        """Return a derived stage index over the canonical flat job graph."""
+        return _group_jobs_by_stage(self.document, self.jobs)
+
+    @property
     def root_directory(self) -> Path:
         """Resolve the authored root directory from the manifest location."""
         root = self.metadata.get("root_directory")
@@ -126,12 +131,63 @@ class Manifest:
         return _resolve_root(self.path, root)
 
     def validate(self, *, stage_root: str | Path | None = None) -> list[Issue]:
-        """Return all structural, stage-contract, and reference issues."""
-        return _validate_document(self.document, manifest_path=self.path, stage_root=stage_root)
+        """Resolve once, validate the concrete document, and commit it on success."""
+        try:
+            expanded = self.expand_systematics(stage_root=stage_root)
+        except (TypeError, ValueError) as exc:
+            return [_issue("systematics", str(exc), "Systematics declarations must compile to one deterministic concrete job graph.")]
+        issues = _validate_document(
+            expanded.document, manifest_path=self.path, stage_root=stage_root
+        )
+        if not issues:
+            self.document = expanded.document
+            self._systematics_expanded = True
+            self.jobs = tuple(_build_jobs(self))
+        return issues
 
-    def _resolved_jobs(self) -> list[_ResolvedJob]:
+    def expand_systematics(
+        self, *, stage_root: str | Path | None = None
+    ) -> "Manifest":
+        """Return a copy whose stage-local systematics declarations are concrete jobs."""
+        if self._systematics_expanded:
+            return self
+        document = copy.deepcopy(self.document)
+        declarations = document.get("systematics")
+        stages = document.get("stages")
+        if declarations is None:
+            return Manifest(self.path, document, _systematics_expanded=True)
+        if not isinstance(declarations, Mapping):
+            raise TypeError("must be an object keyed by stage id")
+        if not isinstance(stages, Mapping):
+            raise ValueError("cannot expand before stages is an object")
+        unknown = set(declarations) - set(stages)
+        if unknown:
+            raise ValueError(f"declares absent stages: {sorted(unknown)}")
+        state: dict[str, Any] = {}
+        for stage_id in stages:
+            if stage_id not in declarations:
+                continue
+            config = declarations[stage_id]
+            if not isinstance(config, Mapping):
+                raise TypeError(f"{stage_id} declaration must be an object")
+            module = _load_stage_systematics(stage_id, stage_root)
+            try:
+                module.expand(document, copy.deepcopy(dict(config)), state)
+            except KeyError as exc:
+                raise ValueError(
+                    f"{stage_id} systematics expansion requires missing field {exc}"
+                ) from exc
+        document.pop("systematics")
+        return Manifest(self.path, document, _systematics_expanded=True)
+
+    def _resolved_jobs(
+        self, *, stage_root: str | Path | None = None
+    ) -> list[Job]:
         """Return jobs in authored order with exact artifact paths."""
-        return _build_resolved_jobs(self)
+        if self.jobs:
+            return list(self.jobs)
+        resolved = self.expand_systematics(stage_root=stage_root)
+        return _build_jobs(resolved)
 
     def _resolve_source(
         self,
@@ -144,15 +200,17 @@ class Manifest:
         return _resolve_source(source, root=self.root_directory, outputs=outputs, summaries=summaries)
 
 
-_BASE_RULES: tuple[Depends | Value, ...] = (
+_BASE_RULES: tuple[Depends | Recommends | Value, ...] = (
     Depends("", "metadata", physics="Run metadata names the physical analysis and its execution root."),
     Depends("", "stages", physics="The authored stage mapping is the sole execution order."),
+    Depends("", "systematics", physics="Optional stage-local declarations compile into concrete variation jobs.", required=False),
     Depends("metadata", "run_id", physics="A run needs a stable human-readable identifier."),
     Depends("metadata", "root_directory", physics="Relative input paths are resolved from this directory."),
     Depends("metadata", "artifacts_directory", physics="Every job owns one artifact cell below this directory."),
     Depends("metadata", "random_seed", physics="Stochastic numerical work needs a reproducible root seed."),
     Depends("metadata", "workers", physics="All sample-wise fits share one run-level parallelism limit."),
     Depends("metadata", "target_observable", physics="The run has one final physical target observable."),
+    Recommends("metadata", "parton", physics="The migrated workflows default to the reference quark species.", default="quark"),
     Depends("metadata", "resample_mode", physics="All correlator jobs use one run-level resampling convention."),
     Depends("metadata", "sample_error_mode", physics="All stages use one authored sample center and error convention."),
     Depends("metadata", "bootstrap_samples", physics="Bootstrap sample count is explicit when bootstrap is selected.", required=False),
@@ -163,16 +221,21 @@ _BASE_RULES: tuple[Depends | Value, ...] = (
     Value("metadata.random_seed", int, physics="The random seed is a nonnegative integer.", validator=_nonnegative),
     Value("metadata.workers", int, physics="The run-level worker count is a positive integer.", validator=_positive),
     Value("metadata.target_observable", Literal["pdf", "da"], physics="The migrated workflow targets a PDF or DA."),
+    Value("metadata.parton", Literal["quark"], physics="The migrated examples use quark distributions."),
     Value("metadata.resample_mode", Literal["jackknife", "bootstrap"], physics="The run-level sample plan is jackknife or bootstrap."),
     Value("metadata.sample_error_mode", Literal["covariance", "mean", "median"], physics="Sample statistics use covariance, mean-diagonal, or median-percentile errors."),
     Value("metadata.bootstrap_samples", int, physics="Bootstrap sample count is positive.", validator=_positive),
     Value("metadata.bin_size", int, physics="Configuration bin size is positive.", validator=_positive),
+    Value("systematics", dict, physics="Systematics declarations are keyed by stage id."),
 )
 
 
-def _metadata_relationship_issues(metadata: Mapping[str, Any]) -> list[Issue]:
-    """Validate relationships within the global sampling plan."""
+def _check_manifest_relations(context: CheckContext) -> list[Issue]:
+    """Validate top-level sampling and stage-key relationships."""
     issues: list[Issue] = []
+    metadata = context.manifest.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return issues
     mode = metadata.get("resample_mode")
     count = metadata.get("bootstrap_samples")
     if mode == "bootstrap" and count is None:
@@ -181,7 +244,28 @@ def _metadata_relationship_issues(metadata: Mapping[str, Any]) -> list[Issue]:
         issues.append(_issue("metadata.bootstrap_samples", "must be omitted for jackknife", "Jackknife sample count is fixed by the binned configurations."))
     if metadata.get("sample_error_mode") == "median" and mode != "bootstrap":
         issues.append(_issue("metadata.sample_error_mode", "median errors require resample_mode='bootstrap'", "Median-percentile errors require bootstrap samples."))
+    stages = context.manifest.get("stages")
+    if isinstance(stages, Mapping):
+        if not stages:
+            issues.append(
+                _issue(
+                    "stages",
+                    "must be a nonempty object",
+                    "A workflow executes at least one contracted stage.",
+                )
+            )
+        for stage_name in stages:
+            if not isinstance(stage_name, str) or not _SAFE_STAGE.fullmatch(stage_name):
+                issues.append(
+                    _issue(
+                        f"stages.{stage_name}",
+                        "stage id must match [a-z][a-z0-9_]*",
+                    )
+                )
     return issues
+
+
+_BASE_CHECKS = (_check_manifest_relations,)
 
 
 def load_manifest(path: str | Path) -> Manifest:
@@ -196,28 +280,8 @@ def load_manifest(path: str | Path) -> Manifest:
     return Manifest(manifest_path, document)
 
 
-def _merge_defaults(defaults: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, Any]:
-    """Recursively merge mappings; lists and scalar values are replaced."""
-    merged = copy.deepcopy(dict(defaults))
-    for key, value in params.items():
-        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
-            merged[key] = _merge_defaults(merged[key], value)
-        else:
-            merged[key] = copy.deepcopy(value)
-    return merged
-
-
 def _default_stage_root(stage_root: str | Path | None) -> Path:
     return Path(stage_root).expanduser().resolve() if stage_root is not None else (Path(__file__).parent / "stages").resolve()
-
-
-def _kernel_file(stage_root: str | Path | None, kernel_id: str) -> Path:
-    """Resolve a kernel stem lexically without importing its module."""
-    return _default_stage_root(stage_root).parent / "kernels" / f"{kernel_id}.py"
-
-
-def _kernel_document_file(stage_root: str | Path | None, kernel_id: str) -> Path:
-    return _default_stage_root(stage_root).parent / "kernels" / f"{kernel_id}.md"
 
 
 def _load_stage_contract(stage_id: str, stage_root: str | Path | None = None) -> ModuleType:
@@ -234,9 +298,30 @@ def _load_stage_contract(stage_id: str, stage_root: str | Path | None = None) ->
         raise ValueError(f"Cannot load contract for stage '{stage_id}'")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    for name in ("PARAM_RULES", "INPUT_RULES", "CHECKS"):
+    for name in ("JOB_RULES", "PARAM_RULES", "CHECKS"):
         if not hasattr(module, name):
             raise ValueError(f"Stage '{stage_id}' contract does not export {name}")
+    return module
+
+
+def _load_stage_systematics(
+    stage_id: str, stage_root: str | Path | None = None
+) -> ModuleType:
+    """Load one optional stage-owned systematics compiler."""
+    if not _SAFE_STAGE.fullmatch(stage_id):
+        raise ValueError(f"invalid systematics stage id '{stage_id}'")
+    path = _default_stage_root(stage_root) / stage_id / "systematics.py"
+    if not path.is_file():
+        raise ValueError(f"stage '{stage_id}' does not support systematics declarations")
+    digest = __import__("hashlib").sha256(str(path).encode("utf-8")).hexdigest()[:16]
+    module_name = f"_lamet_agent_neo_systematics_{stage_id}_{digest}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"cannot load systematics compiler for stage '{stage_id}'")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not callable(getattr(module, "expand", None)):
+        raise ValueError(f"stage '{stage_id}' systematics.py does not export expand")
     return module
 
 
@@ -244,38 +329,30 @@ def _issue(path: str, message: str, physics: str = "Manifest structure is explic
     return Issue(path, message, physics, None)
 
 
-def _source_issues(value: Any, path: str, seen_jobs: set[str], root: Path, *, allow_constant: bool = False) -> list[Issue]:
+def _source_issues(value: Any, path: str, seen_jobs: set[str], root: Path) -> list[Issue]:
     issues: list[Issue] = []
     if isinstance(value, list):
-        if not value:
-            issues.append(_issue(path, "must not be an empty source list"))
         for index, item in enumerate(value):
-            issues.extend(_source_issues(item, f"{path}[{index}]", seen_jobs, root, allow_constant=allow_constant))
+            issues.extend(_source_issues(item, f"{path}[{index}]", seen_jobs, root))
         return issues
-    if allow_constant and isinstance(value, (int, float)) and not isinstance(value, bool):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         return []
-    if not isinstance(value, Mapping):
-        return [_issue(path, "must be a source object or a nonempty list of source objects")]
-    if set(value) not in ({"job"}, {"file"}):
-        issues.append(_issue(path, "must contain exactly one of 'job' or 'file'"))
+    if isinstance(value, str):
+        if value not in seen_jobs:
+            return [_issue(path, f"must reference an earlier job, not '{value}'")]
+        return []
+    if not isinstance(value, Mapping) or set(value) != {"file"} or not isinstance(value.get("file"), str):
         return issues
-    if "job" in value:
-        reference = value["job"]
-        if not isinstance(reference, str):
-            issues.append(_issue(f"{path}.job", "must be a string"))
-        elif reference not in seen_jobs:
-            issues.append(_issue(f"{path}.job", f"must reference an earlier job, not '{reference}'"))
+    file_value = value["file"]
+    if not isinstance(file_value, str):
+        issues.append(_issue(f"{path}.file", "must be a string"))
     else:
-        file_value = value["file"]
-        if not isinstance(file_value, str):
-            issues.append(_issue(f"{path}.file", "must be a string"))
-        else:
-            resolved = Path(file_value).expanduser()
-            if not resolved.is_absolute():
-                resolved = root / resolved
-            resolved = resolved.resolve()
-            if not resolved.is_file():
-                issues.append(_issue(f"{path}.file", f"file does not exist: {resolved}"))
+        resolved = Path(file_value).expanduser()
+        if not resolved.is_absolute():
+            resolved = root / resolved
+        resolved = resolved.resolve()
+        if not resolved.is_file():
+            issues.append(_issue(f"{path}.file", f"file does not exist: {resolved}"))
     return issues
 
 
@@ -301,7 +378,13 @@ def _validate_document(
     metadata = document.get("metadata")
     if not isinstance(metadata, Mapping):
         return issues
-    issues.extend(_metadata_relationship_issues(metadata))
+    if not issues:
+        issues.extend(
+            evaluate_checks(
+                _BASE_CHECKS,
+                CheckContext(document, "", None, {}, {}),
+            )
+        )
     root_value = metadata.get("root_directory")
     manifest_file = manifest_path
     root = _resolve_root(manifest_file, root_value) if isinstance(root_value, str) else manifest_file.parent
@@ -311,21 +394,8 @@ def _validate_document(
     if not isinstance(stage_blocks, Mapping):
         issues.append(_issue("stages", "must be an object"))
         return issues
-    if not stage_blocks:
-        issues.append(_issue("stages", "must be a nonempty object"))
-        return issues
     stages = list(stage_blocks)
-    for stage_id in stages:
-        if not isinstance(stage_id, str) or not _SAFE_STAGE.fullmatch(stage_id):
-            issues.append(
-                _issue(
-                    f"stages.{stage_id}",
-                    "stage id must match [a-z][a-z0-9_]*",
-                )
-            )
 
-    seen_jobs: set[str] = set()
-    root_for_inputs = root
     for stage_id in stages:
         if not isinstance(stage_id, str) or not _SAFE_STAGE.fullmatch(stage_id):
             continue
@@ -333,79 +403,94 @@ def _validate_document(
         if not isinstance(block, Mapping):
             issues.append(_issue(f"stages.{stage_id}", "must be an object"))
             continue
-        allowed_block_keys = {"defaults", "jobs"}
-        for key in block:
-            if key not in allowed_block_keys:
-                issues.append(_issue(f"stages.{stage_id}.{key}", "unknown stage key"))
-        defaults = block.get("defaults", {})
         jobs = block.get("jobs")
-        if not isinstance(defaults, Mapping):
-            issues.append(_issue(f"stages.{stage_id}.defaults", "must be an object"))
-            defaults = {}
-        if not isinstance(jobs, list) or not jobs:
-            issues.append(_issue(f"stages.{stage_id}.jobs", "must be a nonempty list"))
-            continue
         try:
             contract = _load_stage_contract(stage_id, stage_root)
         except ValueError as exc:
             issues.append(_issue(f"stages.{stage_id}", str(exc)))
             contract = None
+        stage_rule_issues: list[Issue] = []
         if contract is not None:
-            issues.extend(_prefix_issues(evaluate_rules(defaults, contract.PARAM_RULES, complete=False), f"stages.{stage_id}.defaults"))
+            if isinstance(jobs, list) and jobs:
+                parsed_jobs: list[Any] = []
+                for job_index, job in enumerate(jobs):
+                    single = {
+                        key: copy.deepcopy(value)
+                        for key, value in block.items()
+                        if key != "jobs"
+                    }
+                    single["jobs"] = [copy.deepcopy(job)]
+                    local_issues = evaluate_rules(
+                        single,
+                        contract.JOB_RULES,
+                        complete=True,
+                        root_document=document,
+                    )
+                    for issue in local_issues:
+                        path = issue.path
+                        if path == "jobs[0]":
+                            path = f"jobs[{job_index}]"
+                        elif path.startswith("jobs[0]."):
+                            path = f"jobs[{job_index}].{path[len('jobs[0].'):]}"
+                        stage_rule_issues.append(
+                            Issue(path, issue.message, issue.physics, issue.question)
+                        )
+                    parsed_jobs.append(single["jobs"][0])
+                if isinstance(block, dict):
+                    block["jobs"] = parsed_jobs
+            else:
+                stage_rule_issues = evaluate_rules(
+                    block,
+                    contract.JOB_RULES,
+                    complete=True,
+                    root_document=document,
+                )
+            issues.extend(
+                _prefix_issues(stage_rule_issues, f"stages.{stage_id}")
+            )
+        jobs = block.get("jobs")
+        if not isinstance(jobs, list):
+            continue
         for job_index, job in enumerate(jobs):
             job_path = f"stages.{stage_id}.jobs[{job_index}]"
             if not isinstance(job, Mapping):
-                issues.append(_issue(job_path, "must be an object"))
                 continue
-            for key in job:
-                if key not in {"id", "inputs", "params"}:
-                    issues.append(_issue(f"{job_path}.{key}", "unknown job key"))
             job_id = job.get("id")
-            if not isinstance(job_id, str) or not _SAFE_JOB.fullmatch(job_id):
-                issues.append(_issue(f"{job_path}.id", "must match [A-Za-z0-9][A-Za-z0-9_.-]*"))
+            if not isinstance(job_id, str):
                 job_id = None
-            elif job_id in seen_jobs:
-                issues.append(_issue(f"{job_path}.id", f"job id '{job_id}' is not globally unique"))
             inputs = job.get("inputs", {})
-            params = job.get("params", {})
-            if not isinstance(inputs, Mapping):
-                issues.append(_issue(f"{job_path}.inputs", "must be an object"))
-                inputs = {}
-            if not isinstance(params, Mapping):
-                issues.append(_issue(f"{job_path}.params", "must be an object"))
-                params = {}
-            for role, source in inputs.items():
-                issues.extend(_source_issues(source, f"{job_path}.inputs.{role}", seen_jobs, root_for_inputs, allow_constant=stage_id == "renormalization" and role == "denominator"))
+            params = {
+                key: value
+                for key, value in job.items()
+                if key not in {"id", "inputs"}
+            }
             if contract is not None:
-                input_rule_issues = evaluate_rules(inputs, contract.INPUT_RULES, complete=True)
-                issues.extend(_prefix_issues(input_rule_issues, f"{job_path}.inputs"))
-                effective = _merge_defaults(defaults, params)
-                _apply_recommended_defaults(effective, contract.PARAM_RULES)
-                param_rule_issues = evaluate_rules(effective, contract.PARAM_RULES, complete=True)
-                issues.extend(_prefix_issues(param_rule_issues, f"{job_path}.params"))
-                if stage_id == "perturbative_matching" and isinstance(effective.get("kernel_id"), str) and _SAFE_KERNEL.fullmatch(effective["kernel_id"]):
-                    if not _kernel_file(stage_root, effective["kernel_id"]).is_file():
-                        issues.append(_issue(f"{job_path}.params.kernel_id", f"kernel file does not exist: {_kernel_file(stage_root, effective['kernel_id'])}"))
-                    elif not _kernel_document_file(stage_root, effective["kernel_id"]).is_file():
-                        issues.append(_issue(f"{job_path}.params.kernel_id", f"kernel formula document does not exist: {_kernel_document_file(stage_root, effective['kernel_id'])}"))
-                if job_id is not None and not input_rule_issues and not param_rule_issues:
+                job_rule_issues = [
+                    issue
+                    for issue in stage_rule_issues
+                    if issue.path == f"jobs[{job_index}]"
+                    or issue.path.startswith(f"jobs[{job_index}].")
+                ]
+                if job_id is not None and not job_rule_issues and isinstance(inputs, Mapping):
                     unresolved = frozenset(
                         rule.path
                         for rule in _unresolved_null_hooks(
-                            effective, contract.PARAM_RULES
+                            params, contract.PARAM_RULES
                         )
                     )
                     context = CheckContext(
                         document,
                         stage_id,
                         job_id,
-                        effective,
+                        params,
                         inputs,
                         unresolved,
                     )
                     issues.extend(_prefix_issues(evaluate_checks(contract.CHECKS, context), job_path))
-            if job_id is not None:
-                seen_jobs.add(job_id)
+    jobs_for_graph = _build_jobs_from_document(
+        document, manifest_path=manifest_path
+    )
+    issues.extend(_job_graph_issues(jobs_for_graph, root=root))
     return issues
 
 
@@ -417,29 +502,93 @@ def _prefix_issues(issues: Sequence[Issue], prefix: str) -> list[Issue]:
     return output
 
 
-def _build_resolved_jobs(manifest: Manifest) -> list[_ResolvedJob]:
+def _build_jobs(manifest: Manifest) -> list[Job]:
     """Return jobs in authored stage/job order with exact artifact paths."""
-    document = manifest.document
-    metadata = document["metadata"]
-    root = manifest.root_directory
-    artifact_base = Path(metadata["artifacts_directory"]).expanduser()
+    return _build_jobs_from_document(manifest.document, manifest_path=manifest.path)
+
+
+def _build_jobs_from_document(
+    document: Mapping[str, Any], *, manifest_path: Path
+) -> list[Job]:
+    metadata = document.get("metadata")
+    stages = document.get("stages")
+    if not isinstance(metadata, Mapping) or not isinstance(stages, Mapping):
+        return []
+    root_value = metadata.get("root_directory")
+    artifacts_value = metadata.get("artifacts_directory")
+    if not isinstance(root_value, str) or not isinstance(artifacts_value, str):
+        return []
+    root = _resolve_root(manifest_path, root_value)
+    artifact_base = Path(artifacts_value).expanduser()
     artifact_base = artifact_base.resolve() if artifact_base.is_absolute() else (root / artifact_base).resolve()
-    resolved: list[_ResolvedJob] = []
-    for stage_index, (stage_id, block) in enumerate(document["stages"].items(), start=1):
-        defaults = block.get("defaults", {})
+    resolved: list[Job] = []
+    for stage_index, (stage_id, block) in enumerate(stages.items(), start=1):
+        if not isinstance(block, Mapping) or not isinstance(block.get("jobs"), list):
+            continue
         for job_index, job in enumerate(block["jobs"]):
+            if not isinstance(job, Mapping):
+                continue
+            job_id = job.get("id")
+            inputs = job.get("inputs", {})
+            if not isinstance(job_id, str) or not isinstance(inputs, Mapping):
+                continue
             resolved.append(
-                _ResolvedJob(
+                Job(
                     stage_id=stage_id,
                     stage_index=stage_index,
                     job_index=job_index,
                     job_id=job["id"],
-                    params=_merge_defaults(defaults, job.get("params", {})),
+                    params={
+                        key: copy.deepcopy(value)
+                        for key, value in job.items()
+                        if key not in {"id", "inputs"}
+                    },
                     inputs=copy.deepcopy(job.get("inputs", {})),
                     artifact_directory=artifact_base / f"{stage_index:02d}_{stage_id}" / job["id"],
                 )
             )
     return resolved
+
+
+def _group_jobs_by_stage(
+    document: Mapping[str, Any], jobs: Sequence[Job]
+) -> dict[str, tuple[Job, ...]]:
+    """Group the concrete flat job graph by authored stage order."""
+    blocks = document.get("stages")
+    if not isinstance(blocks, Mapping):
+        return {}
+    grouped: dict[str, list[Job]] = {str(stage_id): [] for stage_id in blocks}
+    for job in jobs:
+        if job.stage_id not in grouped:
+            raise ValueError(f"job '{job.job_id}' belongs to absent stage '{job.stage_id}'")
+        grouped[job.stage_id].append(job)
+    return {stage_id: tuple(stage_jobs) for stage_id, stage_jobs in grouped.items()}
+
+
+def _job_graph_issues(jobs: Sequence[Job], *, root: Path) -> list[Issue]:
+    """Validate global uniqueness and prior-job/file references in one ordered pass."""
+    issues: list[Issue] = []
+    seen: set[str] = set()
+    for job in jobs:
+        job_path = f"stages.{job.stage_id}.jobs[{job.job_index}]"
+        if job.job_id in seen:
+            issues.append(
+                _issue(
+                    f"{job_path}.id",
+                    f"job id '{job.job_id}' is not globally unique",
+                )
+            )
+        for role, source in job.inputs.items():
+            issues.extend(
+                _source_issues(
+                    source,
+                    f"{job_path}.inputs.{role}",
+                    seen,
+                    root,
+                )
+            )
+        seen.add(job.job_id)
+    return issues
 
 
 def _resolve_source(source: Any, *, root: Path, outputs: Mapping[str, Any], summaries: Mapping[str, Any]) -> tuple[Any, Any]:
@@ -454,15 +603,14 @@ def _resolve_source(source: Any, *, root: Path, outputs: Mapping[str, Any], summ
             values.append(value)
             source_summaries.append(summary)
         return values, source_summaries
-    if not isinstance(source, Mapping) or set(source) not in ({"job"}, {"file"}):
+    if isinstance(source, str):
+        if source not in outputs:
+            raise RuntimeError(f"Job output '{source}' is not available")
+        return outputs[source], summaries.get(source)
+    if not isinstance(source, Mapping) or set(source) != {"file"}:
         raise ValueError("Invalid input source")
-    if "job" in source:
-        job_id = source["job"]
-        if job_id not in outputs:
-            raise RuntimeError(f"Job output '{job_id}' is not available")
-        return outputs[job_id], summaries.get(job_id)
     path = Path(source["file"]).expanduser()
     return (path if path.is_absolute() else (root / path).resolve()), None
 
 
-__all__ = ["Manifest", "load_manifest"]
+__all__ = ["Job", "Manifest", "load_manifest"]

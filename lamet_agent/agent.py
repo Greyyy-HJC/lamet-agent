@@ -16,8 +16,9 @@ from typing import Any, Callable, Literal, Mapping, Union, get_args, get_origin,
 import numpy as np
 
 from .llm import LlmBackend, Message
-from .manifest import Manifest, _ResolvedJob, _load_stage_contract
+from .manifest import Job, Manifest, _load_stage_contract
 from .parallel._pool import _ParallelPool
+from .stages._reporting import StageReportRecord
 from .contract import (
     CheckContext,
     _apply_recommended_defaults,
@@ -117,7 +118,11 @@ class ToolContext:
         """Atomically set and validate one runtime-resolved dependency."""
         unresolved = {
             rule.path: rule
-            for rule in _unresolved_null_hooks(self.params, self._param_rules)
+            for rule in _unresolved_null_hooks(
+                self.params,
+                self._param_rules,
+                root_document=self.manifest,
+            )
         }
         if path not in unresolved:
             raise ValueError(f"{path!r} does not have an unresolved null hook")
@@ -134,11 +139,21 @@ class ToolContext:
         applied_defaults = _apply_recommended_defaults(
             self.params,
             self._param_rules,
+            root_document=self.manifest,
         )
-        rule_issues = evaluate_rules(self.params, self._param_rules, complete=True)
+        rule_issues = evaluate_rules(
+            self.params,
+            self._param_rules,
+            complete=True,
+            root_document=self.manifest,
+        )
         remaining = frozenset(
             rule.path
-            for rule in _unresolved_null_hooks(self.params, self._param_rules)
+            for rule in _unresolved_null_hooks(
+                self.params,
+                self._param_rules,
+                root_document=self.manifest,
+            )
         )
         check_issues = []
         if not rule_issues:
@@ -373,9 +388,56 @@ def _discover_tools(stage_id: str, *, stage_root: str | Path | None = None) -> l
     return discovered
 
 
+def _load_stage_reporter(stage_id: str, stage_root: str | Path | None) -> Callable[..., Path] | None:
+    """Load an optional stage-owned deterministic reporting hook."""
+    path = _stage_path(stage_id, stage_root) / "reporting.py"
+    if not path.exists():
+        return None
+    if not path.is_file():
+        raise ValueError(f"Stage '{stage_id}' reporting.py is not a file")
+    digest = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()
+    spec = importlib.util.spec_from_file_location(f"_lamet_agent_neo_reporting_{stage_id}_{digest}", path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Cannot load reporting hook for stage '{stage_id}'")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    writer = getattr(module, "write_stage_report", None)
+    if not callable(writer):
+        raise TypeError(f"Stage '{stage_id}' reporting.py must export write_stage_report")
+    return writer
+
+
+def _write_stage_report(
+    stage_id: str,
+    records: list[StageReportRecord],
+    *,
+    stage_root: str | Path | None,
+) -> Path | None:
+    """Invoke one stage reporter after every job in that stage has finished."""
+    if not records:
+        raise ValueError(f"Stage '{stage_id}' has no completed jobs to report")
+    writer = _load_stage_reporter(stage_id, stage_root)
+    if writer is None:
+        return None
+    artifact_directory = records[0].artifact_directory.parent
+    if any(record.artifact_directory.parent != artifact_directory for record in records):
+        raise ValueError(f"Stage '{stage_id}' jobs do not share one artifact directory")
+    result = writer(records=tuple(records), artifact_directory=artifact_directory)
+    if not isinstance(result, Path):
+        raise TypeError(f"Stage '{stage_id}' reporter must return pathlib.Path")
+    resolved = result.resolve()
+    if resolved != (artifact_directory / "report.md").resolve() or not resolved.is_file():
+        raise ValueError(f"Stage '{stage_id}' reporter must create its canonical report.md")
+    return resolved
+
+
 def _summarize(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return _summarize(value.tolist())
     if isinstance(value, Mapping):
         return {str(key): _summarize(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -385,7 +447,7 @@ def _summarize(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     if value.__class__.__name__ == "EnsembleData":
-        return {"type": "EnsembleData", "dims": list(value.dims), "n_sample": value.n_sample, "name": value.name, "attrs": value.attrs}
+        return {"type": "EnsembleData", "dims": list(value.dims), "n_sample": int(value.n_sample), "name": value.name, "attrs": _summarize(value.attrs)}
     return {"type": type(value).__name__}
 
 
@@ -398,7 +460,7 @@ def _read_stage_prompt(stage_id: str, stage_root: str | Path | None) -> str:
 
 def _build_static_prompt(
     *,
-    job: _ResolvedJob,
+    job: Job,
     tools: list[_Tool],
     stage_root: str | Path | None,
     backend_identity: str,
@@ -565,6 +627,7 @@ def _resolve_runtime_null_hooks(
     applied_defaults = _apply_recommended_defaults(
         context.params,
         context._param_rules,
+        root_document=context.manifest,
     )
     if applied_defaults:
         context.state["recommended_defaults"] = applied_defaults
@@ -572,6 +635,7 @@ def _resolve_runtime_null_hooks(
         unresolved = _unresolved_null_hooks(
             context.params,
             context._param_rules,
+            root_document=context.manifest,
         )
         if not unresolved:
             return
@@ -742,6 +806,7 @@ class _AgentSession:
                         remaining = _unresolved_null_hooks(
                             context.params,
                             context._param_rules,
+                            root_document=context.manifest,
                         )
                         if remaining:
                             paths = [rule.path for rule in remaining]
@@ -765,17 +830,23 @@ class _AgentSession:
         """Validate and run one already-loaded manifest in authored order."""
         if not isinstance(manifest, Manifest):
             raise TypeError("run_manifest requires a loaded Manifest")
-        document = manifest.document
         self._outputs.clear()
         self._summaries.clear()
         self._stage_bundles.clear()
         issues = manifest.validate(stage_root=self.stage_root)
         if issues:
             raise ValueError("\n".join(f"{issue.path}: {issue.message}" for issue in issues))
-        jobs = manifest._resolved_jobs()
+        document = manifest.document
+        jobs = list(manifest.jobs)
+        jobs_by_stage = manifest.jobs_by_stage
         collisions = [job.artifact_directory for job in jobs if job.artifact_directory.exists()]
         if collisions:
             raise FileExistsError(f"selected job artifact directory already exists: {collisions[0]}")
+        artifact_base = jobs[0].artifact_directory.parent
+        artifact_base.mkdir(parents=True, exist_ok=True)
+        (artifact_base / "resolved_manifest.json").write_text(
+            json.dumps(document, indent=2, sort_keys=True), encoding="utf-8"
+        )
         manifest_file = manifest.path
         metadata = document["metadata"]
         stage_ids = [str(stage_id) for stage_id in document["stages"]]
@@ -783,17 +854,21 @@ class _AgentSession:
         _emit_progress(f"Agent run: {metadata['run_id']}  (backend={self.backend.identity})")
         _emit_progress(f"Stages: {', '.join(stage_ids)}")
         _emit_progress("=" * 60)
-        current_stage: str | None = None
+        stage_reports: dict[str, str] = {}
+        stage_records: list[StageReportRecord] = []
         parallel = _ParallelPool(int(metadata["workers"]))
         try:
             for job in jobs:
-                if job.stage_id != current_stage:
-                    if current_stage is not None:
-                        _emit_progress(f"Stage {current_stage} finished.")
-                    current_stage = job.stage_id
+                stage_id = job.stage_id
+                stage_jobs = jobs_by_stage.get(stage_id)
+                if not stage_jobs:
+                    raise ValueError(f"Stage '{stage_id}' has no indexed jobs")
+                if job is stage_jobs[0]:
+                    if stage_records:
+                        raise RuntimeError("stage report records leaked across a stage boundary")
                     _emit_progress("")
-                    _emit_progress(f"Stage: {job.stage_id}")
-                _emit_progress(f"Job: {job.stage_id}/{job.job_id}")
+                    _emit_progress(f"Stage: {stage_id}")
+                _emit_progress(f"Job: {stage_id}/{job.job_id}")
                 job.artifact_directory.mkdir(parents=True, exist_ok=False)
                 resolved_inputs: dict[str, Any] = {}
                 input_summaries: dict[str, Any] = {}
@@ -807,7 +882,7 @@ class _AgentSession:
                 context = ToolContext(
                     document,
                     manifest_file,
-                    job.stage_id,
+                    stage_id,
                     job.job_id,
                     copy.deepcopy(dict(job.params)),
                     resolved_inputs,
@@ -817,29 +892,46 @@ class _AgentSession:
                     np.random.default_rng(seed_sequence),
                     _parallel=parallel,
                 )
-                bundle = self._stage_bundles.get(job.stage_id)
+                bundle = self._stage_bundles.get(stage_id)
                 if bundle is None:
-                    tools = _discover_tools(job.stage_id, stage_root=self.stage_root)
+                    tools = _discover_tools(stage_id, stage_root=self.stage_root)
                     static_prompt, digest = _build_static_prompt(
                         job=job,
                         tools=tools,
                         stage_root=self.stage_root,
                         backend_identity=self.backend.identity,
                     )
-                    self._stage_bundles[job.stage_id] = (tools, static_prompt, digest)
+                    self._stage_bundles[stage_id] = (tools, static_prompt, digest)
                 else:
                     tools, static_prompt, digest = bundle
                 output, summary = self._run_context(context, tools, static_prompt, digest)
                 self._outputs[job.job_id] = output
                 self._summaries[job.job_id] = summary
+                stage_records.append(
+                    StageReportRecord(
+                        job_id=job.job_id,
+                        params=copy.deepcopy(context.params),
+                        inputs=dict(context.inputs),
+                        output=output,
+                        summary=copy.deepcopy(summary),
+                        artifact_directory=job.artifact_directory,
+                    )
+                )
+                if job is stage_jobs[-1]:
+                    _emit_progress(f"Writing stage report: {stage_id}...")
+                    report = _write_stage_report(stage_id, stage_records, stage_root=self.stage_root)
+                    if report is not None:
+                        stage_reports[stage_id] = str(report)
+                    _emit_progress(f"Stage {stage_id} finished.")
+                    stage_records = []
+            if stage_records:
+                raise RuntimeError("final stage did not reach its indexed report boundary")
         finally:
             parallel.close()
-        if current_stage is not None:
-            _emit_progress(f"Stage {current_stage} finished.")
         _emit_progress("=" * 60)
         _emit_progress(f"Agent run complete ({len(jobs)} job(s)).")
         _emit_progress("=" * 60)
-        return {"outputs": dict(self._outputs), "summaries": dict(self._summaries)}
+        return {"outputs": dict(self._outputs), "summaries": dict(self._summaries), "stage_reports": stage_reports}
 
 
 def create_session(backend: LlmBackend) -> _AgentSession:

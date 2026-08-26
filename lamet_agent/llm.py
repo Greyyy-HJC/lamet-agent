@@ -243,25 +243,32 @@ class _OpenAICompatibleBackend:
             headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        choice = payload["choices"][0]
-        message = choice["message"]
-        provider_calls = message.get("tool_calls") or []
-        if not isinstance(provider_calls, list):
-            raise ValueError("provider returned malformed tool_calls")
-        calls = []
-        for provider_call in provider_calls:
-            if not isinstance(provider_call, dict) or not isinstance(provider_call.get("function"), dict):
-                raise ValueError("provider returned a malformed tool call")
-            function = provider_call["function"]
-            if not isinstance(provider_call.get("id"), str) or not provider_call["id"] or not isinstance(function.get("name"), str) or not function["name"] or not isinstance(function.get("arguments"), str):
-                raise ValueError("provider returned a malformed tool call")
-            arguments = json.loads(function["arguments"])
-            if not isinstance(arguments, dict):
-                raise TypeError("provider tool arguments must decode to an object")
-            calls.append(_ToolCall(provider_call["id"], function["name"], arguments))
-        return _AssistantResponse(str(message.get("content") or ""), tool_calls=tuple(calls))
+        last_protocol_error: Exception | None = None
+        for _attempt in range(3):
+            with urllib.request.urlopen(request) as response:
+                raw = response.read().decode("utf-8")
+            try:
+                payload = json.loads(raw)
+                choice = payload["choices"][0]
+                message = choice["message"]
+                provider_calls = message.get("tool_calls") or []
+                if not isinstance(provider_calls, list):
+                    raise ValueError("provider returned malformed tool_calls")
+                calls = []
+                for provider_call in provider_calls:
+                    if not isinstance(provider_call, dict) or not isinstance(provider_call.get("function"), dict):
+                        raise ValueError("provider returned a malformed tool call")
+                    function = provider_call["function"]
+                    if not isinstance(provider_call.get("id"), str) or not provider_call["id"] or not isinstance(function.get("name"), str) or not function["name"] or not isinstance(function.get("arguments"), str):
+                        raise ValueError("provider returned a malformed tool call")
+                    arguments = json.loads(function["arguments"])
+                    if not isinstance(arguments, dict):
+                        raise TypeError("provider tool arguments must decode to an object")
+                    calls.append(_ToolCall(provider_call["id"], function["name"], arguments))
+                return _AssistantResponse(str(message.get("content") or ""), tool_calls=tuple(calls))
+            except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
+                last_protocol_error = exc
+        raise ValueError(f"provider returned malformed tool JSON after 3 attempts: {last_protocol_error}") from last_protocol_error
 
 
 class _CodexBackend:

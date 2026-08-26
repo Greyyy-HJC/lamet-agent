@@ -26,7 +26,6 @@ def load_data(value: Any) -> EnsembleData:
         return EnsembleData.from_netcdf(value)
     raise TypeError("Fourier input is neither EnsembleData nor a NetCDF Path")
 
-
 def _symmetry_mapping(value: Mapping[str, str]) -> dict[str, str]:
     """Validate the authored component-wise signed-z convention."""
     if not isinstance(value, Mapping) or set(value) != {"real", "imag"}:
@@ -68,7 +67,7 @@ def _signed_from_positive(positive_values: np.ndarray, extended_z: np.ndarray, s
     return np.concatenate([real + 1j * imag, positive_values[~negative_mask]])
 
 
-def _tail_parameter_names(model_id: str, order: str, observable: str, psi1_flavor_class: str, psi2_flavor_class: str) -> list[str]:
+def _tail_parameter_names_base(model_id: str, order: str, observable: str, psi1_flavor_class: str, psi2_flavor_class: str) -> list[str]:
     """Return the independent parameters of one PDF or meson-DA endpoint tail."""
     if observable == "DA":
         names = []
@@ -90,7 +89,7 @@ def _tail_parameter_names(model_id: str, order: str, observable: str, psi1_flavo
     return names
 
 
-def tail_model_values(
+def _tail_model_values_base(
     z_fm: np.ndarray,
     model_id: str,
     parameters: Mapping[str, float],
@@ -152,7 +151,7 @@ def tail_model_values(
     return result
 
 
-def tail_fit_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
+def _tail_fit_fcn_base(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
     """Evaluate real and imaginary tail channels for the shared fitter."""
     z = np.asarray(x["z"], dtype=float)
     absolute = np.abs(z)
@@ -192,6 +191,171 @@ def tail_fit_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndar
     return np.concatenate([real, imag])
 
 
+def _tail_parameter_names(
+    model_id: str,
+    order: str,
+    observable: str,
+    psi1_flavor_class: str,
+    psi2_flavor_class: str,
+    sector: str = "full",
+    hadron: str = "",
+) -> list[str]:
+    """Return the reference endpoint parameter set for the selected observable."""
+    if observable == "PDF" and hadron.lower() == "pion" and sector.lower() == "valence":
+        names = ["A2", "A1", "phi1"]
+        if order.upper() == "NLA":
+            names.extend(["A2p", "A1p", "phi1p"])
+        names.append("Lambda")
+        if model_id == "cg_nla":
+            names.append("n")
+        return names
+    return _tail_parameter_names_base(
+        model_id, order, observable, psi1_flavor_class, psi2_flavor_class
+    )
+
+
+def tail_model_values(
+    z_fm: np.ndarray,
+    model_id: str,
+    parameters: Mapping[str, float],
+    *,
+    order: str = "NLA",
+    observable: str = "PDF",
+    momentum_gev: float | None = None,
+    psi1_flavor_class: str = "heavy",
+    psi2_flavor_class: str = "heavy",
+    sector: str = "full",
+    hadron: str = "",
+) -> np.ndarray:
+    """Evaluate the reference pion-valence tail or the generic migrated family."""
+    if observable != "PDF" or hadron.lower() != "pion" or sector.lower() != "valence":
+        return _tail_model_values_base(
+            z_fm,
+            model_id,
+            parameters,
+            order=order,
+            observable=observable,
+            momentum_gev=momentum_gev,
+            psi1_flavor_class=psi1_flavor_class,
+            psi2_flavor_class=psi2_flavor_class,
+        )
+    expected = _tail_parameter_names(
+        model_id, order, observable, psi1_flavor_class, psi2_flavor_class, sector, hadron
+    )
+    if set(parameters) != set(expected):
+        raise ValueError(f"tail parameters must contain exactly {expected}")
+    if not isinstance(momentum_gev, (int, float)) or isinstance(momentum_gev, bool) or not math.isfinite(float(momentum_gev)) or float(momentum_gev) <= 0:
+        raise ValueError("pion PDF tails require finite positive momentum_gev")
+    absolute = np.abs(np.asarray(z_fm, dtype=float))
+    if np.any(absolute <= 0):
+        raise ValueError("tail model is undefined at z=0")
+    phase = float(parameters["phi1"]) - float(momentum_gev) * absolute / HBAR_C_GEV_FM
+    result = float(parameters["A2"]) + 2.0 * float(parameters["A1"]) * np.cos(phase)
+    if order.upper() == "NLA":
+        phase_prime = float(parameters["phi1p"]) - float(momentum_gev) * absolute / HBAR_C_GEV_FM
+        result = result + (
+            float(parameters["A2p"]) + 2.0 * float(parameters["A1p"]) * np.cos(phase_prime)
+        ) * HBAR_C_GEV_FM / absolute
+    result = result * np.exp(-float(parameters["Lambda"]) * absolute / HBAR_C_GEV_FM)
+    if model_id == "cg_nla":
+        result = result / (absolute / HBAR_C_GEV_FM) ** float(parameters["n"])
+    return np.asarray(result, dtype=complex)
+
+
+def tail_fit_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
+    """Evaluate the reference pion-valence fit family or the generic family."""
+    if x["observable"] != "PDF" or str(x.get("hadron", "")).lower() != "pion" or str(x.get("sector", "")).lower() != "valence":
+        return _tail_fit_fcn_base(x, parameters)
+    absolute = np.abs(np.asarray(x["z"], dtype=float))
+    phase = parameters["phi1"] - float(x["momentum_gev"]) * absolute / HBAR_C_GEV_FM
+    real = parameters["A2"] + 2.0 * parameters["A1"] * gv.cos(phase)
+    if x["order"] == "NLA":
+        phase_prime = parameters["phi1p"] - float(x["momentum_gev"]) * absolute / HBAR_C_GEV_FM
+        real = real + (
+            parameters["A2p"] + 2.0 * parameters["A1p"] * gv.cos(phase_prime)
+        ) * HBAR_C_GEV_FM / absolute
+    real = real * gv.exp(
+        -(parameters["Lambda"] + float(x["lambda0_gev"])) * absolute / HBAR_C_GEV_FM
+    )
+    if x["model_id"] == "cg_nla":
+        real = real / (absolute / HBAR_C_GEV_FM) ** parameters["n"]
+    if x["component"] == "im":
+        return np.zeros_like(absolute)
+    if x["component"] == "both":
+        return np.concatenate([real, np.zeros_like(absolute)])
+    return real
+
+
+
+def _tail_bounds(names: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    lower = []
+    upper = []
+    for name in names:
+        if name.startswith("A"):
+            lower.append(-20.0)
+            upper.append(20.0)
+        elif name.startswith("phi"):
+            lower.append(-np.pi)
+            upper.append(np.pi)
+        elif name == "Lambda":
+            lower.append(0.0)
+            upper.append(np.inf)
+        elif name == "n":
+            lower.append(-2.0)
+            upper.append(4.0)
+        else:
+            raise ValueError(f"unsupported tail parameter '{name}'")
+    return np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)
+
+
+def _bounded_to_internal(value: float, lower: float, upper: float) -> float:
+    if np.isfinite(lower) and np.isfinite(upper):
+        width = upper - lower
+        clipped = min(max(float(value), lower + 1e-8 * width), upper - 1e-8 * width)
+        ratio = (clipped - lower) / width
+        return float(np.log(ratio / (1.0 - ratio)))
+    if np.isfinite(lower):
+        return float(np.log(max(float(value) - lower, 1e-8)))
+    if np.isfinite(upper):
+        return float(np.log(max(upper - float(value), 1e-8)))
+    return float(value)
+
+
+def _internal_to_bounded(value: Any, lower: float, upper: float) -> Any:
+    if np.isfinite(lower) and np.isfinite(upper):
+        return lower + (upper - lower) / (1.0 + gv.exp(-value))
+    if np.isfinite(lower):
+        return lower + gv.exp(value)
+    if np.isfinite(upper):
+        return upper - gv.exp(value)
+    return value
+
+
+def _internal_start(initial: np.ndarray, bounds: tuple[np.ndarray, np.ndarray]) -> gv.BufferDict:
+    lower, upper = bounds
+    result = gv.BufferDict()
+    for index, value in enumerate(initial):
+        result[f"u{index}"] = _bounded_to_internal(float(value), float(lower[index]), float(upper[index]))
+    return result
+
+
+def _physical_tail_parameters(
+    parameters: Mapping[str, Any],
+    names: list[str],
+    bounds: tuple[np.ndarray, np.ndarray],
+) -> dict[str, Any]:
+    lower, upper = bounds
+    return {
+        name: _internal_to_bounded(parameters[f"u{index}"], float(lower[index]), float(upper[index]))
+        for index, name in enumerate(names)
+    }
+def _bounded_tail_fit_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
+    names = list(x["parameter_names"])
+    bounds = (np.asarray(x["lower_bounds"], dtype=float), np.asarray(x["upper_bounds"], dtype=float))
+    return tail_fit_fcn(x, _physical_tail_parameters(parameters, names, bounds))
+
+
+
 def fit_tail_parameters(
     data: EnsembleData,
     *,
@@ -206,6 +370,8 @@ def fit_tail_parameters(
     observable: str = "PDF",
     psi1_flavor_class: str = "heavy",
     psi2_flavor_class: str = "heavy",
+    sector: str = "full",
+    hadron: str = "",
     workers: int = 1,
     mode: Literal["center", "resamples"] = "resamples",
     posterior_prior_scale: float | None = None,
@@ -230,7 +396,7 @@ def fit_tail_parameters(
     momentum = data.attrs.get("momentum_gev")
     if observable == "DA" and (not isinstance(momentum, (int, float)) or isinstance(momentum, bool) or not math.isfinite(float(momentum)) or float(momentum) <= 0):
         raise ValueError("DA tail fitting requires finite positive momentum_gev")
-    names = _tail_parameter_names(model_id, order, observable, psi1_flavor_class, psi2_flavor_class)
+    names = _tail_parameter_names(model_id, order, observable, psi1_flavor_class, psi2_flavor_class, sector, hadron)
     channel_count = 2 if component == "both" else 1
     required_points = max(int(math.ceil(len(names) / channel_count)), 2)
     if int(np.count_nonzero(mask)) < required_points:
@@ -251,19 +417,24 @@ def fit_tail_parameters(
     imag_selected = np.imag(selected)
     observations = real_selected if component == "re" else imag_selected if component == "im" else np.concatenate([real_selected, imag_selected], axis=1)
     fit_data = EnsembleData(data.ensemble, data.resample, list(observations), ["observation"], {"observation": list(range(observations.shape[1]))})
-    real_data = EnsembleData(data.ensemble, data.resample, list(real_selected), ["z"], {"z": z[mask].tolist()})
-    imag_data = EnsembleData(data.ensemble, data.resample, list(imag_selected), ["z"], {"z": z[mask].tolist()})
-    error_floor = max(1e-8, 0.02 * max(float(np.max(np.abs(np.mean(real_selected, axis=0)))), float(np.max(np.abs(np.mean(imag_selected, axis=0)))), 1.0))
     sample_error_mode = str(data.attrs.get("sample_error_mode", "covariance"))
-    real_error = np.maximum(np.asarray(gv.sdev(real_data.average(sample_error_mode)), dtype=float), error_floor)
-    imag_error = np.maximum(np.asarray(gv.sdev(imag_data.average(sample_error_mode)), dtype=float), error_floor)
-    fit_error = real_error if component == "re" else imag_error if component == "im" else np.concatenate([real_error, imag_error])
-    covariance = np.diag(fit_error**2)
+    if sample_error_mode == "covariance":
+        covariance = np.asarray(gv.evalcov(fit_data.average("covariance")), dtype=float)
+    else:
+        real_data = EnsembleData(data.ensemble, data.resample, list(real_selected), ["z"], {"z": z[mask].tolist()})
+        imag_data = EnsembleData(data.ensemble, data.resample, list(imag_selected), ["z"], {"z": z[mask].tolist()})
+        error_floor = max(1e-8, 0.02 * max(float(np.max(np.abs(np.mean(real_selected, axis=0)))), float(np.max(np.abs(np.mean(imag_selected, axis=0)))), 1.0))
+        real_error = np.maximum(np.asarray(gv.sdev(real_data.average(sample_error_mode)), dtype=float), error_floor)
+        imag_error = np.maximum(np.asarray(gv.sdev(imag_data.average(sample_error_mode)), dtype=float), error_floor)
+        fit_error = real_error if component == "re" else imag_error if component == "im" else np.concatenate([real_error, imag_error])
+        covariance = np.diag(fit_error**2)
+    bounds = _tail_bounds(names)
+    internal_start = _internal_start(initial, bounds)
     prior = gv.BufferDict()
-    for name, center, width in zip(names, initial, widths):
-        value = gv.gvar(center, width)
-        prior[f"log({name})" if name in {"Lambda", "n"} else name] = gv.log(value) if name in {"Lambda", "n"} else value
-    fit_x = {"z": z[mask], "model_id": model_id, "order": order, "component": component, "lambda0_gev": float(lambda0_gev), "observable": observable, "momentum_gev": momentum, "psi1_flavor_class": psi1_flavor_class, "psi2_flavor_class": psi2_flavor_class}
+    for index, width in enumerate(widths):
+        prior[f"u{index}"] = gv.gvar(float(internal_start[f"u{index}"]), float(width))
+    fit_x = {"z": z[mask], "model_id": model_id, "order": order, "component": component, "lambda0_gev": float(lambda0_gev), "observable": observable, "momentum_gev": momentum, "psi1_flavor_class": psi1_flavor_class, "psi2_flavor_class": psi2_flavor_class, "sector": sector, "hadron": hadron, "parameter_names": names, "lower_bounds": bounds[0], "upper_bounds": bounds[1]}
+
     fit_options = {
         "maxit": 2000,
         "svdcut": 1e-12,
@@ -273,7 +444,7 @@ def fit_tail_parameters(
             raise ValueError("posterior_prior_scale must be finite and positive")
         initial_result = nonlinear_fit(
             (fit_x, fit_data),
-            tail_fit_fcn,
+            _bounded_tail_fit_fcn,
             prior,
             workers=workers,
             covariance=covariance,
@@ -289,7 +460,7 @@ def fit_tail_parameters(
         prior = posterior_prior
     result = nonlinear_fit(
         (fit_x, fit_data),
-        tail_fit_fcn,
+        _bounded_tail_fit_fcn,
         prior,
         workers=workers,
         covariance=covariance,
@@ -304,7 +475,13 @@ def fit_tail_parameters(
         parameters if parameters is not None else center_parameters
         for parameters in result.samples
     )
-    records = [{name: float(parameters[name]) + (lambda0_gev if name == "Lambda" else 0.0) for name in names} for parameters in fitted_parameters]
+    records = []
+    for parameters in fitted_parameters:
+        physical = _physical_tail_parameters(parameters, names, bounds)
+        records.append({
+            name: float(physical[name]) + (lambda0_gev if name == "Lambda" else 0.0)
+            for name in names
+        })
     center_diagnostics = {"chi2": result.chi2, "dof": float(result.dof), "chi2_dof": result.chi2 / result.dof, "Q": result.Q, "logGBF": result.logGBF, "aic": result.chi2 + 2.0 * len(names)}
     if mode == "center":
         return records, center_diagnostics
@@ -374,18 +551,20 @@ def extend_tail(
     observable: str = "PDF",
     psi1_flavor_class: str = "heavy",
     psi2_flavor_class: str = "heavy",
+    sector: str = "full",
+    hadron: str = "",
 ) -> EnsembleData:
     """Connect an exponentially damped endpoint tail on the input spacing."""
-    if z_max_fm <= 0 or z_min_fm < 0 or z_max_fm <= z_min_fm or smoothing_width_fm <= 0 or smoothing_method not in {"linear", "cosine"}:
+    if z_max_fm <= 0 or z_min_fm < 0 or z_max_fm <= z_min_fm or smoothing_width_fm <= 0 or smoothing_method not in {"linear", "none"}:
         raise ValueError("tail ranges and smoothing width are invalid")
     z = np.asarray(data.coords["z"], dtype=float)
     positive = z[z >= 0]
     if positive.size < 2:
         raise ValueError("tail extension requires at least two nonnegative z points")
     spacing = float(np.min(np.diff(positive)))
-    steps = round(float(z_max_fm) / spacing)
-    if steps < 1 or not math.isclose(float(steps) * spacing, float(z_max_fm), rel_tol=0.0, abs_tol=1e-12):
-        raise ValueError("tail extent must lie on the input coordinate grid")
+    steps = int(math.floor(float(z_max_fm) / spacing + 0.5))
+    if steps < 1:
+        raise ValueError("tail extent does not reach one input-grid step")
     extended_positive = np.arange(steps + 1, dtype=float) * spacing
     extended_z = np.concatenate([-extended_positive[extended_positive > 0][::-1], extended_positive])
     symmetry = _stored_symmetry(data.attrs)
@@ -438,10 +617,12 @@ def extend_tail(
             momentum_gev=data.attrs.get("momentum_gev"),
             psi1_flavor_class=psi1_flavor_class,
             psi2_flavor_class=psi2_flavor_class,
+            sector=sector,
+            hadron=hadron,
         )
         extension[np.abs(extended_z) <= np.finfo(float).eps] = measured[np.abs(extended_z) <= np.finfo(float).eps]
         u = (np.abs(extended_z) - tail_start) / smoothing_width_fm
-        weight = np.where(u <= 0, 1.0, np.where(u >= 1, 0.0, 1.0 - u if smoothing_method == "linear" else 0.5 * (1.0 + np.cos(np.pi * u))))
+        weight = np.where(np.abs(extended_z) <= z_max_fm, 1.0, 0.0) if smoothing_method == "none" else np.where(u <= 0, 1.0, np.where(u >= 1, 0.0, 1.0 - u))
         values.append(weight * measured + (1.0 - weight) * extension)
     attrs = completed.attrs
     attrs.update({"tail_model": model_id, "tail_order": order.upper(), "tail_extent_fm": float(z_max_fm), "smoothing_method": smoothing_method})
@@ -456,9 +637,11 @@ def _scan_tail_priors(
     observable: str = "PDF",
     psi1_flavor_class: str = "heavy",
     psi2_flavor_class: str = "heavy",
+    sector: str = "full",
+    hadron: str = "",
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Return the original fixed tail starts and first-pass prior widths."""
-    names = _tail_parameter_names(model_id, order, observable, psi1_flavor_class, psi2_flavor_class)
+    names = _tail_parameter_names(model_id, order, observable, psi1_flavor_class, psi2_flavor_class, sector, hadron)
     means = {}
     widths = {}
     amplitude_index = 0
@@ -550,7 +733,7 @@ def scan_fourier_transform(
 ) -> dict[str, Any]:
     """Fit, transform, and select one complete native Fourier candidate scan."""
     transform_keys = {"phase_sign", "x_shift", "prefactor"}
-    tail_keys = {"models", "z_min_fm", "z_max_fm", "extent_fm", "smoothing_methods", "smoothing_widths_fm"}
+    tail_keys = {"models", "z_min_fm", "z_max_fm", "extent_fm", "smoothing_method"}
     scan_keys = {"orders", "sector", "lambda0_gev", "prior_widths", "model_average", "max_schemes", "component", "output_scale", "q_min"}
     if set(transform) != transform_keys or set(tail) != tail_keys or set(scan) != scan_keys:
         raise ValueError("Fourier transform, tail, and scan mappings do not match the native interface")
@@ -563,18 +746,15 @@ def scan_fourier_transform(
     models = list(tail["models"])
     orders = [str(value).upper() for value in scan["orders"]]
     prior_widths = [float(value) for value in scan["prior_widths"]]
-    smoothing_methods = list(tail["smoothing_methods"])
-    smoothing_widths = [float(value) for value in tail["smoothing_widths_fm"]]
+    smoothing_method = str(tail["smoothing_method"])
     if not models or any(model not in {"gi_nla", "cg_nla"} for model in models):
         raise ValueError("tail scan needs at least one supported model")
     if not orders or any(order not in {"LA", "NLA"} for order in orders):
         raise ValueError("orders must be a nonempty LA/NLA list")
     if not prior_widths or any(not math.isfinite(value) or value <= 0 for value in prior_widths):
         raise ValueError("prior_widths must be finite and positive")
-    if not smoothing_methods or any(value not in {"linear", "cosine"} for value in smoothing_methods):
-        raise ValueError("smoothing_methods must be a nonempty linear/cosine list")
-    if not smoothing_widths or any(not math.isfinite(value) or value <= 0 for value in smoothing_widths):
-        raise ValueError("smoothing_widths_fm must be finite and positive")
+    if smoothing_method not in {"linear", "none"}:
+        raise ValueError("smoothing_method must be linear or none")
     component = str(scan["component"])
     if component not in {"re", "im", "both"}:
         raise ValueError("component must be re, im, or both")
@@ -587,6 +767,7 @@ def scan_fourier_transform(
     momentum = data.attrs.get("momentum_gev")
     if not isinstance(momentum, (int, float)) or isinstance(momentum, bool) or not math.isfinite(float(momentum)) or float(momentum) <= 0:
         raise ValueError("Fourier scan requires finite positive momentum_gev")
+    hadron = str(data.attrs.get("hadron", ""))
     if observable == "DA" and phase_transfer_da:
         z = np.asarray(data.coords["z"], dtype=float)
         phase = np.exp(0.5j * z * float(momentum) / HBAR_C_GEV_FM)[None, :]
@@ -613,6 +794,8 @@ def scan_fourier_transform(
             observable,
             psi1_flavor_class,
             psi2_flavor_class,
+            scan["sector"],
+            hadron,
         )
         z = np.asarray(data.coords["z"], dtype=float)
         mask = (z >= z_min_fm - 1e-12) & (z <= z_max_fm + 1e-12) & (z > 0)
@@ -627,6 +810,8 @@ def scan_fourier_transform(
             observable=observable,
             psi1_flavor_class=psi1_flavor_class,
             psi2_flavor_class=psi2_flavor_class,
+            sector=str(scan["sector"]),
+            hadron=hadron,
         )
         record = {
             "model_id": model_id,
@@ -636,7 +821,7 @@ def scan_fourier_transform(
             "prior_width": range_prior_width,
         }
         try:
-            _parameters, diagnostics = fit_tail_parameters(
+            range_parameters, diagnostics = fit_tail_parameters(
                 data,
                 model_id=model_id,
                 z_min_fm=z_min_fm,
@@ -649,11 +834,13 @@ def scan_fourier_transform(
                 observable=observable,
                 psi1_flavor_class=psi1_flavor_class,
                 psi2_flavor_class=psi2_flavor_class,
+                sector=str(scan["sector"]),
+                hadron=hadron,
                 workers=workers,
                 mode="center",
                 posterior_prior_scale=range_prior_width,
             )
-            record.update({"fit_success": True, **diagnostics})
+            record.update({"fit_success": True, "fit_parameters": range_parameters[0], **diagnostics})
         except FitNumericalError as exc:
             record.update({"fit_success": False, "error": str(exc)})
         range_records.append(record)
@@ -676,6 +863,8 @@ def scan_fourier_transform(
             observable,
             psi1_flavor_class,
             psi2_flavor_class,
+            scan["sector"],
+            hadron,
         )
         channel_count = 2 if component == "both" else 1
         required_points = max(int(math.ceil(len(names) / channel_count)), 2)
@@ -688,18 +877,59 @@ def scan_fourier_transform(
     try:
         candidates = []
         for order, prior_width in fit_model_specs:
-            means, widths = _scan_tail_priors(model_id=selected_model_id, order=order, lambda0_gev=lambda0_gev, observable=observable, psi1_flavor_class=psi1_flavor_class, psi2_flavor_class=psi2_flavor_class)
-            parameters, diagnostics = fit_tail_parameters(data, model_id=selected_model_id, z_min_fm=selected_z_min, z_max_fm=selected_z_max, prior_means=means, prior_widths=widths, order=order, component=component, lambda0_gev=lambda0_gev, observable=observable, psi1_flavor_class=psi1_flavor_class, psi2_flavor_class=psi2_flavor_class, workers=workers, mode="resamples", posterior_prior_scale=prior_width, _parallel=parallel)
-            for smoothing_method in smoothing_methods:
-                for smoothing_width in smoothing_widths:
-                    if selected_z_min + smoothing_width > selected_z_max:
-                        continue
-                    extended = extend_tail(data, z_max_fm=float(tail["extent_fm"]), z_min_fm=selected_z_min, smoothing_method=smoothing_method, smoothing_width_fm=smoothing_width, model_id=selected_model_id, tail_parameters=parameters, order=order, observable=observable, psi1_flavor_class=psi1_flavor_class, psi2_flavor_class=psi2_flavor_class)
-                    projected_values = np.real(extended.values) if component == "re" else 1j * np.imag(extended.values) if component == "im" else np.asarray(extended.values)
-                    projected = EnsembleData(extended.ensemble, extended.resample, list(projected_values), extended.dims, extended.coords, attrs=extended.attrs, name=extended.name)
-                    transformed = fourier_transform(projected, x_grid, momentum_gev=float(momentum), phase_sign=int(transform["phase_sign"]), x_shift=float(transform["x_shift"]), prefactor=str(transform["prefactor"]), workers=workers, _parallel=parallel)
-                    label = f"{selected_model_id}_{selected_z_min:g}_{selected_z_max:g}_{order}_w{prior_width:g}_{smoothing_method}_{smoothing_width:g}"
-                    candidates.append({"label": label, "model_id": selected_model_id, "z_min_fm": selected_z_min, "z_max_fm": selected_z_max, "order": order, "prior_width": prior_width, "smoothing_method": smoothing_method, "smoothing_width_fm": smoothing_width, "extended": extended, "data": transformed, **diagnostics})
+            means, widths = _scan_tail_priors(
+                model_id=selected_model_id,
+                order=order,
+                lambda0_gev=lambda0_gev,
+                observable=observable,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
+                sector=str(scan["sector"]),
+                hadron=hadron,
+            )
+            parameters, diagnostics = fit_tail_parameters(
+                data,
+                model_id=selected_model_id,
+                z_min_fm=selected_z_min,
+                z_max_fm=selected_z_max,
+                prior_means=means,
+                prior_widths=widths,
+                order=order,
+                component=component,
+                lambda0_gev=lambda0_gev,
+                observable=observable,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
+                sector=str(scan["sector"]),
+                hadron=hadron,
+                workers=workers,
+                mode="resamples",
+                posterior_prior_scale=prior_width,
+                _parallel=parallel,
+            )
+            smoothing_width = selected_z_max - selected_z_min
+            extended = extend_tail(
+                data,
+                z_max_fm=float(tail["extent_fm"]),
+                z_min_fm=selected_z_min,
+                smoothing_method=smoothing_method,
+                smoothing_width_fm=smoothing_width,
+                model_id=selected_model_id,
+                tail_parameters=parameters,
+                order=order,
+                observable=observable,
+                psi1_flavor_class=psi1_flavor_class,
+                psi2_flavor_class=psi2_flavor_class,
+                sector=str(scan["sector"]),
+                hadron=hadron,
+            )
+            projected_values = np.real(extended.values) if component == "re" else 1j * np.imag(extended.values) if component == "im" else np.asarray(extended.values)
+            projected = EnsembleData(extended.ensemble, extended.resample, list(projected_values), extended.dims, extended.coords, attrs=extended.attrs, name=extended.name)
+            transformed = fourier_transform(projected, x_grid, momentum_gev=float(momentum), phase_sign=int(transform["phase_sign"]), x_shift=float(transform["x_shift"]), prefactor=str(transform["prefactor"]), workers=workers, _parallel=parallel)
+            label = f"{selected_model_id}_{selected_z_min:g}_{selected_z_max:g}_{order}_w{prior_width:g}_{smoothing_method}"
+            parameter_names = list(parameters[0])
+            parameter_values = {name: np.asarray([sample[name] for sample in parameters], dtype=float) for name in parameter_names}
+            candidates.append({"label": label, "model_id": selected_model_id, "z_min_fm": selected_z_min, "z_max_fm": selected_z_max, "order": order, "prior_width": prior_width, "smoothing_method": smoothing_method, "parameter_mean": {name: float(np.mean(values)) for name, values in parameter_values.items()}, "parameter_sdev": {name: float(np.std(values, ddof=1)) if values.size > 1 else 0.0 for name, values in parameter_values.items()}, "extended": extended, "data": transformed, **diagnostics})
     finally:
         if _parallel is None:
             parallel.close()

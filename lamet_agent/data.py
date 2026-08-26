@@ -19,14 +19,16 @@ import xarray
 
 from .kernels import implementation as _kernel_implementation
 
-DimType = str
-DimsType = Sequence[DimType]
-IndexType = Union[int, float, str]
-CoordType = Sequence[IndexType]
-CoordsType = Dict[DimType, CoordType]
-ResampleType = Literal["raw", "jackknife", "bootstrap", "gvar"]
-RESAMPLE_TYPE_VALUES = get_args(ResampleType)
-RESAMPLE_DIM = "resample"
+_DimType = str
+_DimsType = Sequence[_DimType]
+_IndexType = Union[int, float, str]
+_CoordType = Sequence[_IndexType]
+_CoordsType = Dict[_DimType, _CoordType]
+_ResampleType = Literal["raw", "jackknife", "bootstrap", "gvar"]
+_RESAMPLE_TYPE_VALUES = get_args(_ResampleType)
+_RESAMPLE_DIM = "resample"
+
+
 class EnsembleInfo(NamedTuple):
     """Lattice ensemble metadata used for momentum conversion."""
 
@@ -36,7 +38,7 @@ class EnsembleInfo(NamedTuple):
     a_t: float
     L_s: int
     L_t: int
-    m_pi_gev: float
+    m_pi: float
 
     @property
     def k_s(self) -> float:
@@ -64,14 +66,14 @@ class EnsembleData:
     def __init__(
         self,
         ensemble: Optional[EnsembleInfo],
-        resample: ResampleType,
+        resample: _ResampleType,
         values: Union[List[Union[int, float, complex, NDArray]], gvar.GVar, NDArray[gvar.GVar]],
-        dims: DimsType,
-        coords: CoordsType,
+        dims: _DimsType,
+        coords: _CoordsType,
         attrs: Optional[Dict[str, Any]] = None,
         name: Optional[str] = None,
     ) -> None:
-        if resample not in RESAMPLE_TYPE_VALUES:
+        if resample not in _RESAMPLE_TYPE_VALUES:
             raise ValueError(f"Unknown resampling method '{resample}'.")
         self.resample = resample
         self.ensemble = ensemble
@@ -79,8 +81,8 @@ class EnsembleData:
 
     @staticmethod
     def _build_xarray(resample, values, dims, coords, attrs=None, name=None) -> xarray.DataArray:
-        if RESAMPLE_DIM in dims:
-            raise ValueError(f"Physical dimensions should not include resampling dimension '{RESAMPLE_DIM}'.")
+        if _RESAMPLE_DIM in dims:
+            raise ValueError(f"Physical dimensions should not include resampling dimension '{_RESAMPLE_DIM}'.")
         if isinstance(values, list):
             if resample == "gvar":
                 raise TypeError("'gvar' does not support list of samples")
@@ -95,7 +97,7 @@ class EnsembleData:
             resample_values = numpy.expand_dims(numpy.asarray(values, dtype=object), axis=0)
         if resample_values.ndim != len(dims) + 1:
             raise ValueError("Resampled data must have one leading sample axis")
-        resample_coords: dict[str, Any] = {RESAMPLE_DIM: list(range(resample_values.shape[0]))}
+        resample_coords: dict[str, Any] = {_RESAMPLE_DIM: list(range(resample_values.shape[0]))}
         for dim, size in zip(dims, resample_values.shape[1:]):
             if dim not in coords:
                 raise ValueError(f"Missing dimension coordinate '{dim}'.")
@@ -103,19 +105,19 @@ class EnsembleData:
                 raise ValueError(f"Unmatched length of coordinates for dimension '{dim}'")
             resample_coords[dim] = list(coords[dim])
         return xarray.DataArray(
-            resample_values, coords=resample_coords, dims=(RESAMPLE_DIM, *dims), name=name, attrs=attrs
+            resample_values, coords=resample_coords, dims=(_RESAMPLE_DIM, *dims), name=name, attrs=attrs
         )
 
     @classmethod
     def _from_xarray(
-        cls, ensemble: Optional[EnsembleInfo], resample: ResampleType, array: xarray.DataArray
+        cls, ensemble: Optional[EnsembleInfo], resample: _ResampleType, array: xarray.DataArray
     ) -> "EnsembleData":
-        if resample not in RESAMPLE_TYPE_VALUES:
+        if resample not in _RESAMPLE_TYPE_VALUES:
             raise ValueError(f"Unknown resampling method '{resample}'.")
-        if len(array.dims) == 0 or array.dims[0] != RESAMPLE_DIM:
-            raise ValueError(f"The first xarray dimension must be '{RESAMPLE_DIM}'.")
+        if len(array.dims) == 0 or array.dims[0] != _RESAMPLE_DIM:
+            raise ValueError(f"The first xarray dimension must be '{_RESAMPLE_DIM}'.")
         if resample == "gvar":
-            if array.sizes[RESAMPLE_DIM] != 1:
+            if array.sizes[_RESAMPLE_DIM] != 1:
                 raise ValueError("resample='gvar' requires a length-1 dimension.")
             if not _is_gvar_values(array.values):
                 raise TypeError("resample='gvar' requires gvar values.")
@@ -194,7 +196,7 @@ class EnsembleData:
         return list(self.array.dims[1:])
 
     @property
-    def coords(self) -> CoordsType:
+    def coords(self) -> _CoordsType:
         return {dim: self.array.coords[dim].values.tolist() for dim in self.array.dims[1:]}
 
     @property
@@ -218,7 +220,7 @@ class EnsembleData:
 
     @property
     def n_sample(self) -> int:
-        return self.array.sizes[RESAMPLE_DIM]
+        return self.array.sizes[_RESAMPLE_DIM]
 
     def bin(self, bin_size: int) -> "EnsembleData":
         if self.resample != "raw":
@@ -249,12 +251,12 @@ class EnsembleData:
 
     @classmethod
     def concat(
-        cls, data_list: Sequence["EnsembleData"], dim: DimType, coord: Optional[CoordType] = None
+        cls, data_list: Sequence["EnsembleData"], dim: _DimType, coord: Optional[_CoordType] = None
     ) -> "EnsembleData":
         if not data_list:
             raise ValueError("Cannot concatenate an empty list of EnsembleData.")
-        if dim == RESAMPLE_DIM:
-            raise ValueError(f"Cannot concatenate along '{RESAMPLE_DIM}'.")
+        if dim == _RESAMPLE_DIM:
+            raise ValueError(f"Cannot concatenate along '{_RESAMPLE_DIM}'.")
         first = data_list[0]
         for data in data_list[1:]:
             if data.ensemble != first.ensemble or data.resample != first.resample or data.dims != first.dims:
@@ -266,20 +268,20 @@ class EnsembleData:
         if dim in first.dims:
             if coord is not None:
                 raise ValueError("Coordinates cannot be supplied for an existing dimension.")
-            dims_out = [RESAMPLE_DIM, *first.dims]
+            dims_out = [_RESAMPLE_DIM, *first.dims]
         else:
             if coord is None:
                 raise ValueError("Coordinates are required for a new dimension.")
             array = array.assign_coords({dim: coord})
-            dims_out = [RESAMPLE_DIM, dim, *first.dims]
+            dims_out = [_RESAMPLE_DIM, dim, *first.dims]
         return cls._from_xarray(first.ensemble, first.resample, array.transpose(*dims_out).sortby(dim))
 
-    def at(self, dim: DimType, coord: Union[IndexType, CoordType]) -> "EnsembleData":
+    def at(self, dim: _DimType, coord: Union[_IndexType, _CoordType]) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         return self._from_xarray(self.ensemble, self.resample, self.array.sel({dim: coord}, drop=True))
 
-    def near(self, dim: DimType, coord: Union[IndexType, CoordType], tolerance: float = 1e-8) -> "EnsembleData":
+    def near(self, dim: _DimType, coord: Union[_IndexType, _CoordType], tolerance: float = 1e-8) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         return self._from_xarray(
@@ -319,7 +321,8 @@ class EnsembleData:
             n_sample = self.array.values.shape[0]
             values = self.array.values
             meanm, mean, meanp = numpy.percentile(values, q=[50 - 34.1344746, 50, 50 + 34.1344746], axis=0)
-            std = numpy.maximum(meanp - mean, mean - meanm)
+            # std = numpy.maximum(meanp - mean, mean - meanm)
+            std = 0.5 * (meanp - meanm)
             if self.resample == "raw":
                 std /= n_sample**0.5
             elif self.resample == "jackknife":
@@ -352,17 +355,17 @@ class EnsembleData:
     def avg_data(self) -> "EnsembleData":
         return EnsembleData(self.ensemble, "gvar", self.gvar, self.dims, self.coords, self.attrs, self.name)
 
-    def update_dim(self, dim: DimType, dim_out: DimType, coord_out: Optional[CoordType] = None) -> "EnsembleData":
+    def update_dim(self, dim: _DimType, dim_out: _DimType, coord_out: Optional[_CoordType] = None) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
-        if dim_out != dim and (dim_out == RESAMPLE_DIM or dim_out in self.dims):
+        if dim_out != dim and (dim_out == _RESAMPLE_DIM or dim_out in self.dims):
             raise ValueError(f"Output dimension '{dim_out}' already exists.")
         array = self.array.rename({dim: dim_out})
         if coord_out is not None:
             array = array.assign_coords({dim_out: coord_out})
         return self._from_xarray(self.ensemble, self.resample, array)
 
-    def sort_dim(self, dim: DimType, ascending: bool = True) -> "EnsembleData":
+    def sort_dim(self, dim: _DimType, ascending: bool = True) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in data dimensions.")
         return self._from_xarray(self.ensemble, self.resample, self.array.sortby(dim, ascending=ascending))
@@ -411,15 +414,15 @@ class EnsembleData:
 
     def transform_dim(
         self,
-        dim: DimType,
-        dim_out: DimType,
-        coord_out: CoordType,
-        function: Callable[[NDArray, CoordType, CoordType, Dict[DimType, IndexType]], NDArray],
-        dims_dispatch: Union[DimType, DimsType, None] = None,
+        dim: _DimType,
+        dim_out: _DimType,
+        coord_out: _CoordType,
+        function: Callable[[NDArray, _CoordType, _CoordType, Dict[_DimType, _IndexType]], NDArray],
+        dims_dispatch: Union[_DimType, _DimsType, None] = None,
     ) -> "EnsembleData":
         if dim not in self.dims:
             raise ValueError(f"Input dimension '{dim}' not found in data dimensions.")
-        if dim_out != dim and (dim_out == RESAMPLE_DIM or dim_out in self.dims):
+        if dim_out != dim and (dim_out == _RESAMPLE_DIM or dim_out in self.dims):
             raise ValueError(f"Output dimension '{dim_out}' already exists.")
         if dims_dispatch is None:
             dispatch: list[str] = []
@@ -436,7 +439,7 @@ class EnsembleData:
         dims_out_core = [dim_out] + [candidate for candidate in dims_core if candidate != dim]
         dims_out = [dim_out if candidate == dim else candidate for candidate in self.array.dims]
 
-        def apply_function(value: NDArray, *index_list: IndexType) -> NDArray:
+        def apply_function(value: NDArray, *index_list: _IndexType) -> NDArray:
             return function(
                 value, self.coords[dim], coord_out, {name: index for name, index in zip(dispatch, index_list)}
             )
@@ -460,6 +463,4 @@ class EnsembleData:
 __all__ = [
     "EnsembleInfo",
     "EnsembleData",
-    "ResampleType",
-    "RESAMPLE_DIM",
 ]

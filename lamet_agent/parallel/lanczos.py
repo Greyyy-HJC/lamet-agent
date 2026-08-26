@@ -15,7 +15,7 @@ import numpy as np
 from ._pool import _ParallelPool
 
 
-def plan_tsep_tau_conversion(
+def _plan_tsep_tau_conversion(
     tseps: list[int] | tuple[int, ...],
     *,
     source_times: int,
@@ -131,7 +131,7 @@ def plan_tsep_tau_conversion(
     }
 
 
-def plan_twopt_grid(
+def _plan_twopt_grid(
     *,
     source_times: int,
     sink_times: int,
@@ -164,7 +164,7 @@ def plan_twopt_grid(
     }
 
 
-class Ritz(NamedTuple):
+class _Ritz(NamedTuple):
     """Ritz values and eigenvectors in the oblique-Lanczos convention."""
 
     values: np.ndarray
@@ -182,10 +182,10 @@ class Ritz(NamedTuple):
         order = self.physical_order()
         return float(self.values[order[state]]) if state < len(order) else float("nan")
 
-    def filter_spurious(self, epsilon: float) -> "Ritz":
+    def filter_spurious(self, epsilon: float) -> "_Ritz":
         """Apply a Cullum-Willoughby distance threshold."""
         keep = (self.cullum_willoughby_distance > epsilon) & (self.values < 1.0)
-        return Ritz(
+        return _Ritz(
             self.values[keep],
             self.right_vectors[:, keep],
             self.inverse_vectors[keep, :],
@@ -297,7 +297,7 @@ def _transfer_matrix_mpmath(
         return arrays(m)
 
 
-def transfer_matrix(
+def _transfer_matrix(
     c2: np.ndarray, precision: int = 0
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build the transfer-matrix projection from an averaged real 2pt signal."""
@@ -317,15 +317,15 @@ def transfer_matrix(
     )
 
 
-def ritz_spectrum(matrix: np.ndarray, epsilon_float: float = 1e-12) -> Ritz:
+def _ritz_spectrum(matrix: np.ndarray, epsilon_float: float = 1e-12) -> _Ritz:
     """Compute real Ritz values and their Cullum-Willoughby distances."""
     m = len(matrix)
     if m == 0:
         empty = np.empty(0, dtype=float)
-        return Ritz(empty, np.empty((0, 0)), np.empty((0, 0)), empty)
+        return _Ritz(empty, np.empty((0, 0)), np.empty((0, 0)), empty)
     if m == 1:
         value = np.asarray([matrix[0, 0]], dtype=float)
-        return Ritz(value, np.ones((1, 1)), np.ones((1, 1)), np.abs(value))
+        return _Ritz(value, np.ones((1, 1)), np.ones((1, 1)), np.abs(value))
     values = np.linalg.eigvals(matrix)
     real = (np.abs(np.angle(values)) <= epsilon_float) & (values != 0)
     values = values[real].real
@@ -335,15 +335,15 @@ def ritz_spectrum(matrix: np.ndarray, epsilon_float: float = 1e-12) -> Ritz:
         if len(values)
         else np.empty(0, dtype=float)
     )
-    return Ritz(values, np.identity(len(values)), np.identity(len(values)), distances)
+    return _Ritz(values, np.identity(len(values)), np.identity(len(values)), distances)
 
 
-def ritz_hermitian(matrix: np.ndarray, a_cw: float = 10.0, b_cw: float = 1.0, epsilon_float: float = 1e-8) -> Ritz:
+def _ritz_hermitian(matrix: np.ndarray, a_cw: float = 10.0, b_cw: float = 1.0, epsilon_float: float = 1e-8) -> _Ritz:
     """Keep the Hermitian Ritz subspace and apply the iteration-local CW cut."""
     m = len(matrix)
     if m == 0:
         empty = np.empty(0, dtype=float)
-        return Ritz(empty, np.empty((0, 0)), np.empty((0, 0)), empty)
+        return _Ritz(empty, np.empty((0, 0)), np.empty((0, 0)), empty)
     values, right = np.linalg.eig(matrix)
     right = right * np.exp(-1j * np.angle(right[0, :]))[None, :]
     inverse = np.linalg.inv(right)
@@ -358,7 +358,7 @@ def ritz_hermitian(matrix: np.ndarray, a_cw: float = 10.0, b_cw: float = 1.0, ep
     right = right[:, keep]
     inverse = inverse[keep, :]
     if not len(values):
-        return Ritz(values, right, inverse, np.empty(0, dtype=float))
+        return _Ritz(values, right, inverse, np.empty(0, dtype=float))
 
     reduced = np.linalg.eigvals(matrix[1:, 1:])
     reduced = reduced[
@@ -371,10 +371,10 @@ def ritz_hermitian(matrix: np.ndarray, a_cw: float = 10.0, b_cw: float = 1.0, ep
         values = values[keep]
         right = right[:, keep]
         inverse = inverse[keep, :]
-    return Ritz(values, right, inverse, np.empty(0, dtype=float))
+    return _Ritz(values, right, inverse, np.empty(0, dtype=float))
 
 
-def _filter_twopt_cw(results: list[list[Ritz]]) -> list[list[Ritz]]:
+def _filter_twopt_cw(results: list[list[_Ritz]]) -> list[list[_Ritz]]:
     """Apply the bootstrap-histogram CW prescription to a nested result."""
     n_boot = len(results)
     n_iterations = max((len(result) for result in results), default=0)
@@ -395,14 +395,14 @@ def _filter_twopt_cw(results: list[list[Ritz]]) -> list[list[Ritz]]:
     return [[ritz.filter_spurious(epsilon) for ritz in result] for result in results]
 
 
-def analyze_twopt(
+def _analyze_twopt(
     c2_configurations: np.ndarray,
     n_bootstrap: int,
     *,
     seed: Any = None,
     precision: int = 0,
     max_iterations: int | None = None,
-) -> list[list[Ritz]]:
+) -> list[list[_Ritz]]:
     """Return CW-filtered inner-bootstrap Ritz spectra for every iteration."""
     c2 = np.asarray(c2_configurations, dtype=float)
     if c2.ndim != 2:
@@ -414,17 +414,17 @@ def analyze_twopt(
     if n_bootstrap < 1:
         raise ValueError("Lanczos inner bootstrap count must be positive")
     rng = np.random.default_rng(seed)
-    results: list[list[Ritz]] = []
+    results: list[list[_Ritz]] = []
     for _ in range(n_bootstrap):
         indices = rng.integers(0, c2.shape[0], c2.shape[0])
-        matrix, _alpha, _beta, _gamma = transfer_matrix(
+        matrix, _alpha, _beta, _gamma = _transfer_matrix(
             c2[indices].mean(axis=0)[: 2 * requested], precision=precision
         )
-        results.append([ritz_spectrum(matrix[:m, :m]) for m in range(1, len(matrix) + 1)])
+        results.append([_ritz_spectrum(matrix[:m, :m]) for m in range(1, len(matrix) + 1)])
     return _filter_twopt_cw(results)
 
 
-def krylov_polynomial(
+def _krylov_polynomial(
     alpha: np.ndarray, beta: np.ndarray, gamma: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
     """Construct right and left Krylov-polynomial coefficients."""
@@ -447,7 +447,7 @@ def krylov_polynomial(
     return right, left
 
 
-def ritz_rotator(ritz: Ritz, right_krylov: np.ndarray, left_krylov: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _ritz_rotator(ritz: _Ritz, right_krylov: np.ndarray, left_krylov: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Construct normalized right and left Ritz rotators."""
     norms = np.sqrt((ritz.inverse_vectors[:, 0].conj() / ritz.right_vectors[0, :]).real)
     right = np.einsum("k,ik,it->kt", norms, ritz.right_vectors, right_krylov)
@@ -455,7 +455,7 @@ def ritz_rotator(ritz: Ritz, right_krylov: np.ndarray, left_krylov: np.ndarray) 
     return right, left
 
 
-def analyze_threept(
+def _analyze_threept(
     c3_configurations: np.ndarray,
     c2_sink_configurations: np.ndarray,
     c2_source_configurations: np.ndarray,
@@ -490,19 +490,19 @@ def analyze_threept(
         c2_source_mean = c2_source[indices].mean(axis=0)[: 2 * requested]
         c3_mean = c3[indices].mean(axis=0) / np.sqrt(c2_sink_mean[0] * c2_source_mean[0])
 
-        sink_matrix, sink_alpha, sink_beta, sink_gamma = transfer_matrix(c2_sink_mean, precision=precision)
-        source_matrix, source_alpha, source_beta, source_gamma = transfer_matrix(c2_source_mean, precision=precision)
-        sink_krylov = krylov_polynomial(sink_alpha, sink_beta, sink_gamma)
-        source_krylov = krylov_polynomial(source_alpha, source_beta, source_gamma)
+        sink_matrix, sink_alpha, sink_beta, sink_gamma = _transfer_matrix(c2_sink_mean, precision=precision)
+        source_matrix, source_alpha, source_beta, source_gamma = _transfer_matrix(c2_source_mean, precision=precision)
+        sink_krylov = _krylov_polynomial(sink_alpha, sink_beta, sink_gamma)
+        source_krylov = _krylov_polynomial(source_alpha, source_beta, source_gamma)
         usable = min(requested, len(sink_matrix), len(source_matrix))
         matrices: list[np.ndarray] = []
         for m in range(1, usable + 1):
-            sink_ritz = ritz_hermitian(sink_matrix[:m, :m])
-            source_ritz = ritz_hermitian(source_matrix[:m, :m])
-            sink_left = ritz_rotator(
+            sink_ritz = _ritz_hermitian(sink_matrix[:m, :m])
+            source_ritz = _ritz_hermitian(source_matrix[:m, :m])
+            sink_left = _ritz_rotator(
                 sink_ritz, sink_krylov[0][:m, :m], sink_krylov[1][:m, :m]
             )[1]
-            source_right = ritz_rotator(
+            source_right = _ritz_rotator(
                 source_ritz, source_krylov[0][:m, :m], source_krylov[1][:m, :m]
             )[0]
             matrices.append(
@@ -517,8 +517,8 @@ def analyze_threept(
     return results
 
 
-def median_twopt_energies(
-    results: list[list[Ritz]], *, max_states: int, time_step: int = 1
+def _median_twopt_energies(
+    results: list[list[_Ritz]], *, max_states: int, time_step: int = 1
 ) -> np.ndarray:
     """Aggregate inner bootstraps into ``(iteration, state)`` median energies."""
     if time_step < 1:
@@ -537,7 +537,7 @@ def median_twopt_energies(
     return energies
 
 
-def median_threept_matrix(
+def _median_threept_matrix(
     results: list[list[np.ndarray]], *, iteration: int, max_states: int
 ) -> np.ndarray:
     """Aggregate one iteration into a fixed, NaN-padded state matrix."""
@@ -621,7 +621,7 @@ def prepare_lanczos_data(
         channels = sorted(two_points, key=lambda item: item[0])
         source_id, source_data = channels[0]
         sink_id, sink_data = channels[-1]
-        plan = plan_twopt_grid(
+        plan = _plan_twopt_grid(
             source_times=len(source_data.coords["t"]),
             sink_times=len(sink_data.coords["t"]),
             t0=t0,
@@ -655,7 +655,7 @@ def prepare_lanczos_data(
         taus = _ordered_integer_coords(three_point, "tau")
         if any(any(tau not in taus for tau in range(tsep + 1)) for tsep in tseps):
             raise ValueError("Lanczos three-point tau coordinates must cover 0 through every tsep")
-        plan = plan_tsep_tau_conversion(
+        plan = _plan_tsep_tau_conversion(
             tseps,
             source_times=len(source_data.coords["t"]),
             sink_times=len(sink_data.coords["t"]),
@@ -780,14 +780,14 @@ def _twopt_outer_result(task: tuple[Any, ...]) -> tuple[int, np.ndarray]:
     ) = task
     values = np.full((len(channels), iterations, max_states), np.nan, dtype=float)
     for channel, data in enumerate(channels):
-        inner = analyze_twopt(
+        inner = _analyze_twopt(
             data[indices],
             inner_samples,
             seed=np.random.SeedSequence([seed, outer, channel]),
             precision=precision,
             max_iterations=iterations,
         )
-        energies = median_twopt_energies(inner, max_states=max_states, time_step=time_step)
+        energies = _median_twopt_energies(inner, max_states=max_states, time_step=time_step)
         values[channel, : len(energies)] = energies
     return outer, values
 
@@ -814,7 +814,7 @@ def _threept_outer_result(task: tuple[Any, ...]) -> tuple[int, np.ndarray]:
     for z_index, c3 in enumerate(c3_by_z):
         for component_index, component in enumerate(components):
             signal = np.real(c3) if component == "real" else np.imag(c3)
-            inner = analyze_threept(
+            inner = _analyze_threept(
                 signal[indices],
                 sink[indices],
                 source[indices],
@@ -823,7 +823,7 @@ def _threept_outer_result(task: tuple[Any, ...]) -> tuple[int, np.ndarray]:
                 precision=precision,
                 max_iterations=iterations,
             )
-            values[z_index, component_index] = median_threept_matrix(
+            values[z_index, component_index] = _median_threept_matrix(
                 inner,
                 iteration=iterations,
                 max_states=max_states,
@@ -963,3 +963,6 @@ def analyze_prepared_lanczos(
         "components": selected_components,
         "outer_samples": len(outer),
     }
+
+
+__all__ = ["prepare_lanczos_data", "analyze_prepared_lanczos"]

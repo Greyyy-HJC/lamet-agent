@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from lamet_agent.contract import Depends, List, Value
+from lamet_agent.contract import Depends, List, Source, Value, stage_job_rules
 
 
 def _positive(value: int) -> bool:
@@ -28,7 +28,9 @@ PARAM_RULES = (
 INPUT_RULES = (
     Depends("", "results", physics="Review scope is an explicit ordered list of prior results."),
     List("results", "result", physics="Review results are nonempty and preserve authored order.", validator=_nonempty),
-    Value("results.result", dict, physics="Each review result is a job source."),
+    Source("results.result", physics="Each review result is a prior job or external file source."),
 )
+
+JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 
 CHECKS = ()

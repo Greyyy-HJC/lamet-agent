@@ -49,10 +49,16 @@ def fourier_transform(
     x = np.asarray(x_grid, dtype=float)
     if x.ndim != 1 or x.size == 0 or not np.all(np.isfinite(x)) or np.any(np.diff(x) <= 0):
         raise ValueError("x_grid must be finite, nonempty, and strictly increasing")
-    weights = np.empty_like(z)
-    weights[0] = 0.5 * (z[1] - z[0])
-    weights[-1] = 0.5 * (z[-1] - z[-2])
-    weights[1:-1] = 0.5 * (z[2:] - z[:-2])
+    differences = np.diff(z)
+    if np.allclose(differences, differences[0], rtol=1e-7, atol=1e-12):
+        weights = np.full_like(z, abs(float(differences[0])))
+        quadrature = "reference_uniform_rectangle"
+    else:
+        weights = np.empty_like(z)
+        weights[0] = abs(float(z[1] - z[0])) / 2.0
+        weights[-1] = abs(float(z[-1] - z[-2])) / 2.0
+        weights[1:-1] = np.abs(z[2:] - z[:-2]) / 2.0
+        quadrature = "trapezoid_nonuniform"
     phase = np.exp(
         1j
         * phase_sign
@@ -100,6 +106,7 @@ def fourier_transform(
             "x_shift": float(x_shift),
             "prefactor": prefactor,
             "momentum_gev": float(momentum_gev),
+            "quadrature": quadrature,
             "workers": workers,
             "units": '{"values":"dimensionless","x":"dimensionless"}',
         }

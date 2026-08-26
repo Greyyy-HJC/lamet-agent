@@ -138,49 +138,6 @@ def errorband(
     axis.plot(x, mean, color=selected_color, alpha=0.65, linewidth=0.9)
 
 
-def plot(
-    x: Any,
-    values: Any,
-    *,
-    color: str | None = None,
-    marker: str = "o",
-    label: str | None = None,
-) -> None:
-    """Plot numerical points with the error-bar marker conventions."""
-    try:
-        MarkerStyle(marker)
-    except ValueError as exc:
-        raise ValueError(f"unsupported marker {marker!r}") from exc
-    _axis().plot(
-        x,
-        values,
-        marker=marker,
-        color=_resolve_color(color),
-        label=label,
-        markersize=_ERRORBAR_STYLE["markersize"],
-        markerfacecolor=_ERRORBAR_STYLE["mfc"],
-        linestyle="none",
-    )
-
-
-def line(
-    x: Any,
-    values: Any,
-    *,
-    color: str | None = None,
-    label: str | None = None,
-) -> None:
-    """Plot one numerical line with the error-band center-line conventions."""
-    _axis().plot(
-        x,
-        values,
-        color=_resolve_color(color),
-        label=label,
-        alpha=0.65,
-        linewidth=0.9,
-    )
-
-
 def _validate_line_style(linestyle: str) -> None:
     if linestyle not in _LINE_STYLES:
         raise ValueError(f"unsupported line style {linestyle!r}")
@@ -217,30 +174,6 @@ def vline(
         linestyle=linestyle,
         linewidth=0.8,
         alpha=0.45,
-    )
-
-
-def hband(
-    lower: float,
-    upper: float,
-    *,
-    color: str | None = None,
-) -> None:
-    """Add a horizontal band between two y values."""
-    _axis().axhspan(
-        lower, upper, color=_resolve_color(color), alpha=0.32, linewidth=0
-    )
-
-
-def vband(
-    lower: float,
-    upper: float,
-    *,
-    color: str | None = None,
-) -> None:
-    """Add a vertical band between two x values."""
-    _axis().axvspan(
-        lower, upper, color=_resolve_color(color), alpha=0.32, linewidth=0
     )
 
 
@@ -292,11 +225,7 @@ __all__ = [
     "configure_plot",
     "errorbar",
     "errorband",
-    "plot",
-    "line",
     "hline",
     "vline",
-    "hband",
-    "vband",
     "save_figure",
 ]

@@ -15,8 +15,8 @@ def run(context: ToolContext, *, t_min: int, t_max: int, n_states: int, prior_me
     lsqfit = context.params["lsqfit"]
     if "spectrum" not in lsqfit["fit_scope"]:
         raise ValueError("spectrum fitting is not allowed for this job")
-    if t_min < lsqfit["time_range"]["min"] or t_max > lsqfit["time_range"]["max"] or t_min > t_max:
-        raise ValueError("spectrum fit window is outside the authored time range")
+    if t_min >= t_max:
+        raise ValueError("spectrum fit window must be increasing")
     if n_states not in context.params["nstate"]:
         raise ValueError("n_states must be selected from the authored candidate list")
     correlators = context.state.get("correlators")
@@ -26,7 +26,10 @@ def run(context: ToolContext, *, t_min: int, t_max: int, n_states: int, prior_me
     if "t" not in source.dims:
         raise ValueError("spectrum fitting requires a t coordinate")
     time = np.asarray(source.coords["t"])
-    selection = (time >= t_min) & (time <= t_max)
+    requested = np.arange(t_min, t_max, dtype=float)
+    if any(not np.any(np.isclose(time, value, rtol=0.0, atol=1e-12)) for value in requested):
+        raise ValueError("spectrum fit window is not covered by input time coordinates")
+    selection = (time >= t_min) & (time < t_max)
     if selection.sum() < 2 * n_states:
         raise ValueError("spectrum fit window must contain at least 2*n_states times")
     if source.dims != ["t"]:

@@ -47,20 +47,20 @@ def run(context: ToolContext) -> dict[str, object]:
     momentum = data.attrs.get("momentum_gev")
     if not isinstance(momentum, (int, float)) or isinstance(momentum, bool):
         raise ValueError("quasi input requires momentum_gev")
-    kernel_parameters = dict(context.params.get("kernel_parameters", {}))
+    kernel_parameters = dict(context.params["kernel_parameters"])
     if "rgr_kappa" in kernel_parameters:
         kernel_parameters["kappa"] = kernel_parameters.pop("rgr_kappa")
     if "rgr_mu_min_gev" in kernel_parameters:
         kernel_parameters["mu_min_gev"] = kernel_parameters.pop("rgr_mu_min_gev")
-    if "zs_fm" in context.params:
-        kernel_parameters["zs_fm"] = float(context.params["zs_fm"])
+    if "hybrid" in context.params:
+        kernel_parameters["zs_fm"] = float(context.params["hybrid"]["zs_fm"])
     matrix = kernel(np.asarray(x_out, dtype=float), np.asarray(x_in, dtype=float), momentum_gev=float(momentum), scale_gev=float(context.params["mu"]), **kernel_parameters)
     matrix = np.asarray(matrix)
     if matrix.shape != (len(x_out), len(x_in)) or not np.all(np.isfinite(matrix)):
         raise ValueError("kernel returned an invalid matching matrix shape or value")
     result = apply_matrix(data, matrix, x_out)
     attrs = result.attrs
-    attrs.update({"kernel_id": context.params["kernel_id"], "mu": float(context.params["mu"]), "kernel_parameters": json.dumps(context.params.get("kernel_parameters", {}), sort_keys=True), "units": '{"values":"dimensionless","x":"dimensionless"}'})
+    attrs.update({"kernel_id": context.params["kernel_id"], "mu": float(context.params["mu"]), "kernel_parameters": json.dumps(context.params["kernel_parameters"], sort_keys=True), "units": '{"values":"dimensionless","x":"dimensionless"}'})
     result = EnsembleData(result.ensemble, result.resample, [sample for sample in result.values], result.dims, result.coords, attrs=attrs, name=result.name)
     context.state["matching_result"] = {"data": result, "matrix": matrix, "x_in": x_in, "x_out": x_out}
     result.to_netcdf(context.artifact_directory / "output.nc")

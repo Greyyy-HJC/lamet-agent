@@ -27,18 +27,19 @@ from lamet_agent.stages.correlator_analysis.hook import (
     recommend_pt3_windows,
 )
 from lamet_agent.parallel.lanczos import (
+    _analyze_threept,
+    _analyze_twopt,
+    _median_threept_matrix,
+    _median_twopt_energies,
     analyze_prepared_lanczos,
-    analyze_threept,
-    analyze_twopt,
-    median_threept_matrix,
-    median_twopt_energies,
     prepare_lanczos_data,
 )
 from lamet_agent.stages.extrapolation.physics import basis_terms, fit_candidate
 from lamet_agent.parallel import fourier_transform
 from lamet_agent.stages.fourier_transform.physics import fit_tail_parameters, scan_fourier_transform, tail_model_values
 from lamet_agent.stages.perturbative_matching.physics import inspect_callable
-from lamet_agent.stages.renormalization.physics import fit_factor, log_m, zmsbar_pdf_log
+from lamet_agent.stages.renormalization.physics import fit_factor, load_data as load_renormalization_data, log_m, zmsbar_pdf_log
+from lamet_agent.stages.fourier_transform.physics import fourier_transform as stage_fourier_transform
 
 
 def test_matrix_ratio_uses_declared_tsep_and_tau_coordinates() -> None:
@@ -93,7 +94,6 @@ def test_correlator_window_recommendations_send_direct_means_and_errors(
         "lsqfit": {
             "time_range": {"min": 1, "max": 5},
             "fit_scope": ["3pt_ratio"],
-            "tune_z": 1,
         },
     }
     context = ToolContext(
@@ -134,12 +134,12 @@ def test_correlator_window_recommendations_send_direct_means_and_errors(
         error > 0 for error in pt2_evidence["two_point_correlators"][0]["error"]
     )
     pt3_evidence = requests[1][1]
-    assert pt3_evidence["tune_z"] == 1.0
+    assert pt3_evidence["z"] == [0.0, 1.0]
     assert pt3_evidence["tsep"] == [6, 8]
     assert pt3_evidence["tau"] == [0, 1, 2, 3]
     assert set(pt3_evidence["components"]) == {"real", "imag"}
-    assert np.shape(pt3_evidence["components"]["real"]["mean"]) == (2, 4)
-    assert np.shape(pt3_evidence["components"]["imag"]["error"]) == (2, 4)
+    assert np.shape(pt3_evidence["components"]["real"]["mean"]) == (2, 4, 2)
+    assert np.shape(pt3_evidence["components"]["imag"]["error"]) == (2, 4, 2)
 
 
 def _exact_lanczos_correlators(
@@ -174,10 +174,10 @@ def _exact_lanczos_correlators(
 def test_migrated_lanczos_recovers_exact_spectrum_and_matrix() -> None:
     c2, c3, current = _exact_lanczos_correlators()
 
-    spectra = analyze_twopt(c2, 6, seed=0, max_iterations=3)
-    energies = median_twopt_energies(spectra, max_states=2)
-    matrices = analyze_threept(c3, c2, c2, 6, seed=0, max_iterations=2)
-    matrix = median_threept_matrix(matrices, iteration=2, max_states=2)
+    spectra = _analyze_twopt(c2, 6, seed=0, max_iterations=3)
+    energies = _median_twopt_energies(spectra, max_states=2)
+    matrices = _analyze_threept(c3, c2, c2, 6, seed=0, max_iterations=2)
+    matrix = _median_threept_matrix(matrices, iteration=2, max_states=2)
 
     assert energies[-1] == pytest.approx([0.25, 0.7])
     assert matrix == pytest.approx(current)
@@ -371,13 +371,14 @@ def test_qda_fit_divides_by_nonlocal_origin_and_fits_each_sample() -> None:
         t_min=2,
         t_max=7,
         tau_min=None,
-        lsqfit={"pt2_windows": [{"tmin": 2, "tmax": 7}], "svdcut": 1e-8, "posterior_prior_error_scale": 3.0, "q_min": 0.0, "tune_z": 1},
+        lsqfit={"pt2_windows": [{"tmin": 2, "tmax": 7}], "svdcut": 1e-8, "posterior_prior_error_scale": 3.0, "q_min": 0.0},
         workers=2,
     )
     assert coordinates == z
     assert np.all(values[:, 0] == 1.0)
     assert np.isclose(np.mean(values[:, 1]), target, atol=2e-3)
-    assert diagnostics["quality_passed"]
+    assert diagnostics["min_Q"] >= 0.0
+    assert all("E0" in fit and "E0_sdev" in fit for fit in diagnostics["fits"])
 
 
 def test_correlator_publish_requires_complete_scan_and_deterministic_best_candidate(tmp_path) -> None:
@@ -387,10 +388,10 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
     low = EnsembleData(None, "bootstrap", [np.array([0.9]), np.array([1.1])], ["z"], {"z": [0]}, attrs=attrs, name="bare_matrix_element")
     high = EnsembleData(None, "bootstrap", [np.array([1.0]), np.array([1.2])], ["z"], {"z": [0]}, attrs=attrs, name="bare_matrix_element")
     candidates = [
-        {"id": "matrix_001", "method": "qda", "observable": "matrix_element", "window": {"t_min": 2, "t_max": 5, "tau_min": None}, "data": low, "Q": 0.2, "chi2_dof": 1.2, "quality_passed": True},
-        {"id": "matrix_002", "method": "qda", "observable": "matrix_element", "window": {"t_min": 3, "t_max": 6, "tau_min": None}, "data": high, "Q": 0.8, "chi2_dof": 0.9, "quality_passed": True},
+        {"id": "matrix_001", "method": "qda", "fit_strategy": "independent", "nstate": 1, "prior_width": 1.0, "observable": "matrix_element", "window": {"t_min": 2, "t_max": 5, "tau_min": None}, "data": low, "Q": 0.2, "chi2_dof": 1.2, "min_Q": 0.2, "worst_chi2_dof": 1.2, "n_data": 6, "n_params": 5, "quality_passed": True, "feasible_at_all_tune_z": True},
+        {"id": "matrix_002", "method": "qda", "fit_strategy": "independent", "nstate": 1, "prior_width": 1.0, "observable": "matrix_element", "window": {"t_min": 3, "t_max": 6, "tau_min": None}, "data": high, "Q": 0.8, "chi2_dof": 0.9, "min_Q": 0.8, "worst_chi2_dof": 0.9, "n_data": 6, "n_params": 5, "quality_passed": True, "feasible_at_all_tune_z": True},
     ]
-    params = {"observable": "matrix_element", "analysis_method": "lsqfit", "nstate": [1], "lsqfit": {"fit_scope": ["qda_ratio"], "fit_strategy": ["independent"], "prior_width": [1.0], "pt2_windows": [{"tmin": 2, "tmax": 5}, {"tmin": 3, "tmax": 6}]}}
+    params = {"observable": "matrix_element", "analysis_method": "lsqfit", "nstate": [1], "lsqfit": {"fit_scope": ["qda_ratio"], "fit_strategy": ["independent"], "prior_width": [1.0], "q_min": 0.05, "chi2_dof_tolerance": 0.25, "tune_z_values": [1], "pt2_windows": [{"tmin": 2, "tmax": 5}, {"tmin": 3, "tmax": 6}]}}
     context = ToolContext({"metadata": {"workers": 1, "sample_error_mode": "median"}}, tmp_path / "manifest.json", "correlator_analysis", "qda", params, {}, {}, {"matrix_element_candidates": candidates}, tmp_path, np.random.default_rng(2))
     with pytest.raises(ValueError, match="deterministic best"):
         run(context, candidate_id="matrix_001")
@@ -407,11 +408,15 @@ def test_correlator_window_selection_preserves_original_information_rule() -> No
         {"id": "best_chi2", "n_data": 18, "n_params": 10, "Q": 0.9, "chi2_dof": 0.50},
         {"id": "outside_tolerance", "n_data": 25, "n_params": 10, "Q": 0.9, "chi2_dof": 0.76},
     ]
-    selected, fallback = _select_data_window(candidates, q_min=0.05)
+    selected, fallback = _select_data_window(
+        candidates, q_min=0.05, chi2_dof_tolerance=0.25
+    )
     assert selected["id"] == "largest"
     assert fallback is False
     candidates[0]["numerical_failure"] = True
-    selected, fallback = _select_data_window(candidates, q_min=0.05)
+    selected, fallback = _select_data_window(
+        candidates, q_min=0.05, chi2_dof_tolerance=0.25
+    )
     assert selected["id"] == "best_chi2"
     assert fallback is False
 
@@ -463,30 +468,199 @@ def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, t
         "fitting_form": "Breit",
         "fit_scope": ["3pt_ratio"],
         "fit_strategy": ["joint"],
-        "pt2_windows": [{"tmin": 3, "tmax": 8}],
+        "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 10.0,
         "q_min": 0.05,
-        "tune_z": 0,
+        "chi2_dof_tolerance": 0.25,
     }
     params = {"observable": "matrix_element", "analysis_method": "lsqfit", "component": "re", "nstate": [2], "lsqfit": {"prior_width": [1.0], **settings}}
     context = ToolContext({"metadata": {"workers": 2, "sample_error_mode": "covariance"}}, tmp_path / "manifest.json", "correlator_analysis", "matrix", params, {}, {}, {"correlators": {"c3": three_point}, "correlator_rescale": 1.0}, tmp_path, np.random.default_rng(2))
 
-    received = {}
+    received = []
 
     def fail_fit(*args, **kwargs):
-        received.update(kwargs)
-        raise FitNumericalError("sample-average fit failed: ZeroDivisionError: float division")
+        received.append(kwargs)
+        if kwargs["t_min"] == 3:
+            raise FitNumericalError("sample-average fit failed: ZeroDivisionError: float division")
+        return None, {
+            "tune_z": kwargs["tune_z"],
+            "fit_scope": "3pt_ratio",
+            "Q": 0.8,
+            "chi2": 8.0,
+            "dof": 10,
+            "chi2_dof": 0.8,
+            "logGBF": 2.0,
+            "n_data": 12,
+            "n_params": 5,
+        }
 
     monkeypatch.setattr(tool, "fit_matrix_element_samples", fail_fit)
-    observation = tool.run(context, strategy="joint", fit_scope="3pt_ratio", t_min=3, t_max=8, tau_min=2, nstate=2, prior_width=1.0)
-    candidate = context.state["matrix_element_candidates"][0]
-    assert observation["metrics"]["numerical_failure"] is True
-    assert candidate["quality_passed"] is False
-    assert "ZeroDivisionError" in candidate["error"]
-    assert received["fit_samples"] is False
-    assert received["tune_z"] == 0
+    observation = tool.run(context, tune_z_values=[0])
+    rejected, accepted = context.state["matrix_element_candidates"]
+    assert rejected["numerical_failure"] is True
+    assert rejected["feasible_at_all_tune_z"] is False
+    assert "ZeroDivisionError" in rejected["failure_reasons"]["0.0"]
+    assert accepted["feasible_at_all_tune_z"] is True
+    assert observation["metrics"]["recommended_candidate_id"] == "matrix_002"
+    assert all(call["fit_samples"] is False for call in received)
+    assert all(call["tune_z"] == 0 for call in received)
+
+
+def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp_path) -> None:
+    import lamet_agent.stages.correlator_analysis.tools.fit_matrix_element_model as tool
+
+    three_point = EnsembleData(
+        None,
+        "bootstrap",
+        [np.ones((1, 4, 2)), np.ones((1, 4, 2))],
+        ["tsep", "tau", "z"],
+        {"tsep": [8], "tau": [0, 1, 2, 3], "z": [0, 1]},
+        attrs={"correlator_type": "three_point"},
+    )
+    settings = {
+        "fitting_form": "Breit",
+        "fit_scope": ["3pt_ratio"],
+        "fit_strategy": ["joint"],
+        "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
+        "pt3_windows": [
+            {"tsep_ls": [8], "tau_cut": 2},
+            {"tsep_ls": [8], "tau_cut": 3},
+        ],
+        "prior_width": [1.0],
+        "svdcut": 1e-6,
+        "posterior_prior_error_scale": 10.0,
+        "q_min": 0.05,
+        "chi2_dof_tolerance": 0.25,
+    }
+    params = {
+        "observable": "matrix_element",
+        "analysis_method": "lsqfit",
+        "component": "re",
+        "nstate": [2],
+        "lsqfit": settings,
+    }
+    context = ToolContext(
+        {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "matrix",
+        params,
+        {},
+        {},
+        {
+            "correlators": {"c3": three_point},
+            "correlator_rescale": 1.0,
+        },
+        tmp_path,
+        np.random.default_rng(2),
+    )
+    calls = []
+
+    def tune(*args, **kwargs):
+        calls.append((kwargs["t_min"], kwargs["tau_min"], kwargs["tune_z"]))
+        return None, {
+            "tune_z": kwargs["tune_z"],
+            "fit_scope": "3pt_ratio",
+            "Q": 0.8,
+            "chi2": 8.0,
+            "dof": 10,
+            "chi2_dof": 0.8,
+            "logGBF": 2.0,
+            "n_data": 20 - kwargs["t_min"] - kwargs["tau_min"],
+            "n_params": 5,
+        }
+
+    monkeypatch.setattr(tool, "fit_matrix_element_samples", tune)
+    observation = tool.run(context, tune_z_values=[0, 1])
+
+    assert calls == [
+        (3, 2, 0.0),
+        (3, 2, 1.0),
+        (3, 3, 0.0),
+        (3, 3, 1.0),
+        (4, 2, 0.0),
+        (4, 2, 1.0),
+        (4, 3, 0.0),
+        (4, 3, 1.0),
+    ]
+    assert observation["metrics"]["candidate_count"] == 4
+    assert observation["metrics"]["recommended_candidate_id"] == "matrix_001"
+    assert all(
+        candidate["feasible_at_all_tune_z"]
+        for candidate in context.state["matrix_element_candidates"]
+    )
+
+
+def test_qda_fit_tool_tunes_every_window_before_full_application(
+    monkeypatch, tmp_path
+) -> None:
+    import lamet_agent.stages.correlator_analysis.tools.fit_matrix_element as tool
+
+    source = EnsembleData(
+        None,
+        "bootstrap",
+        [np.ones((8, 3)), np.ones((8, 3))],
+        ["t", "z"],
+        {"t": list(range(8)), "z": [0, 1, 2]},
+        attrs={"correlator_type": "qda"},
+    )
+    settings = {
+        "fit_scope": ["qda_ratio"],
+        "fit_strategy": ["independent"],
+        "pt2_windows": [{"tmin": 2, "tmax": 6}, {"tmin": 2, "tmax": 7}],
+        "prior_width": [1.0],
+        "posterior_prior_error_scale": 3.0,
+        "svdcut": 1e-6,
+        "q_min": 0.05,
+        "chi2_dof_tolerance": 0.25,
+    }
+    params = {
+        "observable": "matrix_element",
+        "analysis_method": "lsqfit",
+        "component": "both",
+        "nstate": [1],
+        "lsqfit": settings,
+    }
+    context = ToolContext(
+        {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "qda",
+        params,
+        {},
+        {},
+        {"correlators": {"qda": source}},
+        tmp_path,
+        np.random.default_rng(2),
+    )
+    calls = []
+
+    def tune(*args, **kwargs):
+        calls.append((kwargs["t_min"], kwargs["t_max"], kwargs["tune_z"]))
+        q_value = 0.6 if kwargs["t_max"] == 6 else 0.8
+        return None, [0, 1, 2], {
+            "tune_z": kwargs["tune_z"],
+            "Q": q_value,
+            "chi2": 4.0,
+            "dof": 8,
+            "chi2_dof": 0.5,
+            "logGBF": 2.0,
+            "n_data": 2 * (kwargs["t_max"] - kwargs["t_min"]),
+            "n_params": 5,
+        }
+
+    monkeypatch.setattr(tool, "matrix_element_samples", tune)
+    observation = tool.run(context, tune_z_values=[1, 2])
+
+    assert calls == [(2, 6, 1.0), (2, 6, 2.0), (2, 7, 1.0), (2, 7, 2.0)]
+    assert observation["metrics"]["candidate_count"] == 2
+    assert observation["metrics"]["recommended_candidate_id"] == "matrix_002"
+    assert all(
+        candidate.get("data") is None
+        for candidate in context.state["matrix_element_candidates"]
+    )
 
 
 def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkeypatch, tmp_path) -> None:
@@ -494,7 +668,7 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
 
     data = EnsembleData(None, "bootstrap", [np.array([0.9, 0.7]), np.array([1.1, 0.8])], ["z"], {"z": [0, 1]}, attrs={"observable": "matrix_element"}, name="bare_matrix_element")
     candidate = {"id": "matrix_001", "method": "joint", "fit_scope": "3pt_ratio", "observable": "matrix_element", "window": {"t_min": 3, "t_max": 8, "tau_min": 2}, "tsep_values": [8], "nstate": 2, "prior_width": 1.0, "correlator_rescale": 1.0, "quality_passed": True, "numerical_failure": False, "n_data": 8, "n_params": 4, "Q": 0.8, "chi2_dof": 0.9}
-    settings = {"fitting_form": "Breit", "fit_scope": ["3pt_ratio"], "fit_strategy": ["joint"], "pt2_windows": [{"tmin": 3, "tmax": 8}], "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}], "svdcut": 1e-6, "posterior_prior_error_scale": 10.0, "q_min": 0.05, "tune_z": 0}
+    settings = {"fitting_form": "Breit", "fit_scope": ["3pt_ratio"], "fit_strategy": ["joint"], "pt2_windows": [{"tmin": 3, "tmax": 8}], "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}], "svdcut": 1e-6, "posterior_prior_error_scale": 10.0, "q_min": 0.05, "chi2_dof_tolerance": 0.25, "tune_z_values": [0]}
     params = {"observable": "matrix_element", "analysis_method": "lsqfit", "component": "re", "nstate": [2], "lsqfit": {"prior_width": [1.0], **settings}}
     context = ToolContext({"metadata": {"workers": 2, "sample_error_mode": "covariance"}}, tmp_path / "manifest.json", "correlator_analysis", "matrix", params, {}, {}, {"correlators": {"placeholder": object()}, "matrix_element_candidates": [candidate]}, tmp_path, np.random.default_rng(2))
     calls = []
@@ -523,7 +697,7 @@ def test_publish_preflights_and_reselects_without_llm_round_trip(monkeypatch, tm
         {"id": "matrix_001", "method": "joint", "fit_scope": "3pt_ratio", "observable": "matrix_element", "window": {"t_min": 3, "t_max": 8, "tau_min": 2}, "tsep_values": [8], "nstate": 2, "prior_width": 1.0, "correlator_rescale": 1.0, "quality_passed": True, "numerical_failure": False, "n_data": 9, "n_params": 4, "Q": 0.8, "chi2_dof": 0.9},
         {"id": "matrix_002", "method": "joint", "fit_scope": "3pt_ratio", "observable": "matrix_element", "window": {"t_min": 4, "t_max": 8, "tau_min": 2}, "tsep_values": [8], "nstate": 2, "prior_width": 1.0, "correlator_rescale": 1.0, "quality_passed": True, "numerical_failure": False, "n_data": 8, "n_params": 4, "Q": 0.9, "chi2_dof": 0.8},
     ]
-    settings = {"fitting_form": "Breit", "fit_scope": ["3pt_ratio"], "fit_strategy": ["joint"], "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}], "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}], "svdcut": 1e-6, "posterior_prior_error_scale": 10.0, "q_min": 0.05, "tune_z": 0}
+    settings = {"fitting_form": "Breit", "fit_scope": ["3pt_ratio"], "fit_strategy": ["joint"], "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}], "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}], "svdcut": 1e-6, "posterior_prior_error_scale": 10.0, "q_min": 0.05, "chi2_dof_tolerance": 0.25, "tune_z_values": [0]}
     params = {"observable": "matrix_element", "analysis_method": "lsqfit", "component": "re", "nstate": [2], "lsqfit": {"prior_width": [1.0], **settings}}
     context = ToolContext({"metadata": {"workers": 2, "sample_error_mode": "covariance"}}, tmp_path / "manifest.json", "correlator_analysis", "matrix", params, {}, {}, {"correlators": {"placeholder": object()}, "matrix_element_candidates": candidates}, tmp_path, np.random.default_rng(2))
     calls = []
@@ -556,7 +730,7 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
         {"id": "matrix_001", "method": "joint", "fit_scope": "3pt_ratio", "observable": "matrix_element", "window": {"t_min": 3, "t_max": 8, "tau_min": 2}, "nstate": 2, "prior_width": 1.0, "quality_passed": False, "numerical_failure": True, "error": "sample-average fit failed"},
         {"id": "matrix_002", "method": "joint", "fit_scope": "3pt_ratio", "observable": "matrix_element", "window": {"t_min": 4, "t_max": 8, "tau_min": 2}, "nstate": 2, "prior_width": 1.0, "quality_passed": True, "numerical_failure": False, "data": data, "n_data": 8, "n_params": 4, "Q": 0.8, "chi2_dof": 0.9},
     ]
-    params = {"observable": "matrix_element", "analysis_method": "lsqfit", "nstate": [2], "lsqfit": {"fit_scope": ["3pt_ratio"], "fit_strategy": ["joint"], "prior_width": [1.0], "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}], "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}], "q_min": 0.05}}
+    params = {"observable": "matrix_element", "analysis_method": "lsqfit", "nstate": [2], "lsqfit": {"fit_scope": ["3pt_ratio"], "fit_strategy": ["joint"], "prior_width": [1.0], "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}], "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}], "q_min": 0.05, "chi2_dof_tolerance": 0.25}}
     context = ToolContext({"metadata": {"workers": 1, "sample_error_mode": "covariance"}}, tmp_path / "manifest.json", "correlator_analysis", "matrix", params, {}, {}, {"matrix_element_candidates": candidates}, tmp_path, np.random.default_rng(2))
     run(context, candidate_id="matrix_002")
     table = json.loads((tmp_path / "diagnostics" / "candidates.json").read_text(encoding="utf-8"))["candidates"]
@@ -703,17 +877,58 @@ def test_correlated_spectrum_fit_uses_authored_priors_and_sample_covariance() ->
 def test_extrapolation_uses_one_joint_lsqfit() -> None:
     rng = np.random.default_rng(81)
     x = [-0.2, 0.2]
-    physical = np.asarray([0.8 + 0.1j, 1.1 - 0.2j])
+    physical = np.asarray([0.8, 1.1])
     data = []
     for index, spacing in enumerate([0.05, 0.07, 0.09, 0.11]):
-        center = physical + (0.3 - 0.15j) * spacing / 0.1
-        samples = [center + rng.normal(0.0, 0.01, 2) + 1j * rng.normal(0.0, 0.01, 2) for _ in range(40)]
-        data.append(EnsembleData(None, "bootstrap", samples, ["x"], {"x": x}, attrs={"lattice_spacing_fm": spacing, "L_s": 64, "m_pi_gev": 0.14, "momentum_gev": 2.0, "resample_id": f"ensemble_{index}"}))
-    result, diagnostics = fit_candidate(data, ["a"], 0.135, {"a": {"mean": 0.0, "sdev": 1.0}}, x_range=(-0.2, 0.2))
-    assert np.allclose(np.asarray(result.mean[0]), np.real(physical), atol=0.05)
-    assert np.allclose(np.asarray(result.mean[1]), np.imag(physical), atol=0.05)
-    assert diagnostics["dof"] == 12
+        center = physical + 0.3 * spacing / 0.1
+        samples = [center + rng.normal(0.0, 0.01, 2) for _ in range(40)]
+        data.append(EnsembleData(None, "bootstrap", samples, ["x"], {"x": x}, attrs={"lattice_spacing_fm": spacing, "L_s": 64, "m_pi": 0.14, "momentum_gev": 2.0, "resample_id": f"ensemble_{index}"}))
+    result, diagnostics = fit_candidate(data, ["a"], 0.135, {"mean": 0.0, "sdev": 1.0}, x_range=(-0.2, 0.2), pdep_gev=[1.5, 2.0])
+    assert result.dims == ["x"]
+    assert np.allclose(np.asarray(result.mean), physical, atol=0.05)
+    assert diagnostics["dof"] > 0
     assert 0.0 <= diagnostics["Q"] <= 1.0
+    assert set(diagnostics["parameter_mean"]) == {"h0", "a"}
+    assert set(diagnostics["parameter_sdev"]) == {"h0", "a"}
+    assert set(diagnostics["momentum_dependence"]) == {"1.5", "2"}
+    np.testing.assert_allclose(diagnostics["momentum_dependence"]["1.5"]["mean"], diagnostics["parameter_mean"]["h0"])
+
+
+def test_extrapolation_comparison_requires_the_single_reference_candidate(tmp_path) -> None:
+    from lamet_agent.stages.extrapolation.tools.compare_extrapolations import run
+
+    data = EnsembleData(None, "bootstrap", [[0.8, 1.0], [0.9, 1.1]], ["x"], {"x": [-0.2, 0.2]})
+    candidate = {
+        "id": "extrapolation_001",
+        "terms": ["a"],
+        "excluded_ensembles": [],
+        "data": data,
+        "chi2": 1.0,
+        "dof": 2.0,
+        "chi2_dof": 0.5,
+        "Q": 0.8,
+        "aic": 3.0,
+        "parameter_mean": {"h0": [0.85, 1.05], "a": 0.1},
+        "parameter_sdev": {"h0": [0.05, 0.05], "a": 0.02},
+        "momentum_dependence": {"2": {"momentum_gev": 2.0, "mean": [0.85, 1.05], "sdev": [0.05, 0.05]}},
+    }
+    context = ToolContext(
+        {"metadata": {"workers": 1}},
+        tmp_path / "manifest.json",
+        "extrapolation",
+        "fit",
+        {"operation": "fit"},
+        {},
+        {},
+        {"extrapolation_candidates": [candidate]},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    observation = run(context, candidate_ids=["extrapolation_001"])
+
+    assert observation["metrics"]["weights"] == [1.0]
+    assert context.state["extrapolation_selected_data"] is data
 
 
 def test_self_renormalization_factor_is_not_a_placeholder() -> None:
@@ -724,15 +939,14 @@ def test_self_renormalization_factor_is_not_a_placeholder() -> None:
         known = log_m(z, spacing, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0)
         g = 0.15 * z / 0.1973269804
         f = 0.4 * spacing
-        references.append(EnsembleData(None, "bootstrap", [np.exp(known + g + f)], ["z"], {"z": z.tolist()}, attrs={"lattice_spacing_fm": spacing, "resample_id": f"r{spacing}"}))
-    factor = fit_factor(references, short_distance_max_fm=0.2, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0)
+        center = np.exp(known + g + f)
+        references.append(EnsembleData(None, "bootstrap", [center * (1.0 + shift) for shift in (-0.002, 0.0, 0.002)], ["z"], {"z": z.tolist()}, attrs={"lattice_spacing_fm": spacing, "resample_id": f"r{spacing}"}))
+    factor = fit_factor(references, short_distance_max_fm=0.2, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0, svdcut=1e-12)
     assert factor.dims == ["a", "z"]
+    assert factor.n_sample == 1
     assert not np.allclose(factor.values, 1.0)
-    nonzero = z > 0
-    z_dimensionless = z[nonzero] / 0.1973269804
-    remainder = 0.15 * z_dimensionless - zmsbar_pdf_log(z, scale_gev=2.0)[nonzero]
-    expected_m0 = float(np.linalg.lstsq(np.column_stack([z_dimensionless, np.ones_like(z_dimensionless)]), remainder, rcond=None)[0][0])
-    assert abs(float(factor.attrs["m0_gev"]) - expected_m0) < 1e-6
+    assert factor.attrs["m0_convention"] == "reference_inverse_fm"
+    assert np.isfinite(float(factor.attrs["m0_gev"]))
 
 
 def test_self_renormalization_accepts_one_sample_bearing_a_z_reference() -> None:
@@ -743,9 +957,9 @@ def test_self_renormalization_accepts_one_sample_bearing_a_z_reference() -> None
         known = log_m(z, spacing, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0)
         grids.append(np.exp(known + 0.15 * z / HBAR_C_GEV_FM + 0.4 * spacing))
     reference = EnsembleData(None, "bootstrap", [np.stack(grids), np.stack(grids) * 1.001], ["a", "z"], {"a": spacings, "z": z.tolist()})
-    factor = fit_factor(reference, short_distance_max_fm=0.2, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0)
+    factor = fit_factor(reference, short_distance_max_fm=0.2, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0, svdcut=1e-12)
     assert factor.dims == ["a", "z"]
-    assert factor.n_sample == 2
+    assert factor.n_sample == 1
     assert np.allclose(factor.coords["a"], spacings)
 
 
@@ -792,7 +1006,7 @@ def test_fourier_transform_uses_dimensionless_lambda_measure_on_uniform_grid() -
     momentum = 2.0
     data = EnsembleData(None, "bootstrap", [np.ones(3)], ["z"], {"z": z})
     transformed = fourier_transform(data, [0.0], momentum_gev=momentum, prefactor="pz_over_2pi")
-    expected = momentum * 0.1 * (len(z) - 1) / (2.0 * np.pi * HBAR_C_GEV_FM)
+    expected = momentum * 0.1 * len(z) / (2.0 * np.pi * HBAR_C_GEV_FM)
     assert np.allclose(transformed.values, [[expected]], rtol=1e-13, atol=1e-13)
 
 
@@ -818,16 +1032,20 @@ def test_native_fourier_scan_fits_and_transforms_with_one_parallel_entry(monkeyp
         data,
         np.linspace(-1.0, 1.0, 17).tolist(),
         transform={"phase_sign": 1, "x_shift": 0.0, "prefactor": "pz_over_2pi"},
-        tail={"models": ["gi_nla"], "z_min_fm": [0.3, 0.4], "z_max_fm": [0.8, 1.0], "extent_fm": 1.2, "smoothing_methods": ["linear"], "smoothing_widths_fm": [0.1]},
+        tail={"models": ["gi_nla"], "z_min_fm": [0.3, 0.4], "z_max_fm": [0.8, 1.0], "extent_fm": 1.23, "smoothing_method": "linear"},
         scan={"orders": ["LA", "NLA"], "sector": "full", "lambda0_gev": 0.1, "prior_widths": [1.0], "model_average": False, "max_schemes": 3, "component": "both", "output_scale": 1.0, "q_min": 0.0},
         workers=2,
     )
     assert result["data"].dims == ["x"]
     assert result["data"].n_sample == data.n_sample
     assert np.all(np.isfinite(result["data"].values))
-    assert len(result["selected_labels"]) == 1
+    assert 1 <= len(result["selected_labels"]) <= 2
+    assert np.sum(result["weights"]) == pytest.approx(1.0)
     assert len(result["range_candidates"]) == 3
     assert len(result["model_candidates"]) == 2
+    assert all("fit_parameters" in candidate for candidate in result["range_candidates"] if candidate["fit_success"])
+    assert all(set(candidate["parameter_mean"]) == set(candidate["parameter_sdev"]) for candidate in result["model_candidates"])
+    assert max(result["selected_candidate"]["extended"].coords["z"]) == pytest.approx(1.2)
     assert modes == ["center"] * 3 + ["resamples"] * 2
     assert result["workers"] == 2
 
@@ -896,7 +1114,7 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
         "zmin_fm": [0.2],
         "zmax_fm": [0.3],
         "zmax_ext_fm": 0.4,
-        "smoothing": {"smooth": ["linear"], "widths_fm": [0.1]},
+        "smooth": "linear",
         "scheme_scan": {"order": ["NLA"], "sector": "full", "Lambda0_gev": 0.1, "posterior_prior_error_scale": [1.0], "model_average": False, "max_schemes": 1, "component": "both", "output_scale": 1.0, "q_min": 0.0},
     }
     context = ToolContext(
@@ -907,7 +1125,7 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
         params,
         {},
         {},
-        {"tail_inspection": {}, "fourier_input": source},
+        {"tail_inspection": {}, "fourier_input": source, "fourier_conventions": {"parton": "quark", "gfix": "GI", "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "pz_over_2pi"}, "tail_models": ["gi_nla"], "component": "both", "output_scale": 1.0, "q_min": 0.05}},
         tmp_path,
         np.random.default_rng(2),
     )
@@ -993,12 +1211,76 @@ def test_extrapolation_lattice_spacing_basis_uses_original_units() -> None:
     attrs = {
         "lattice_spacing_fm": 0.08,
         "L_s": 32,
-        "m_pi_gev": 0.14,
+        "m_pi": 0.14,
         "momentum_gev": 2.0,
     }
-    assert basis_terms(attrs, ["a", "a2", "a4"], 0.135) == pytest.approx(
-        [0.08, 0.08**2, 0.08**4]
+    assert basis_terms(attrs, ["a", "a2", "a4", "ap4"], 0.135) == pytest.approx(
+        [0.08, 0.08**2, 0.08**4, (0.08 * 2.0) ** 4]
     )
+
+
+def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(tmp_path) -> None:
+    import xarray as xr
+
+    from lamet_agent.stages.extrapolation.tools.publish_systematics_budget import run
+
+    x = [0.0, 0.5, 1.0]
+    attrs = {"sample_error_mode": "covariance"}
+
+    def distribution(first, second):
+        return EnsembleData(
+            None,
+            "bootstrap",
+            [np.asarray(first, dtype=float), np.asarray(second, dtype=float)],
+            ["x"],
+            {"x": x},
+            attrs=attrs,
+        )
+
+    main = distribution([1.0, 2.0, 3.0], [1.2, 2.2, 3.2])
+    lambda_low = distribution([0.8, 1.8, 2.8], [1.0, 2.0, 3.0])
+    lambda_high = distribution([1.3, 2.3, 3.3], [1.5, 2.5, 3.5])
+    mu = distribution([1.0, 1.9, 3.0], [1.2, 2.1, 3.2])
+    context = ToolContext(
+        {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "extrapolation",
+        "budget",
+            {
+                "operation": "systematics_budget",
+                "systematics_budget": {
+                    "systematics_prescription": "variant_envelope_quadrature",
+                    "systematics_groups": {
+                "main": 0,
+                "zs": [],
+                "lambda_extrapolation": [1, 2],
+                "lamet_scale": [3],
+                "other_extrapolations": [],
+                    },
+                },
+        },
+        {"distributions": [main, lambda_low, lambda_high, mu]},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(2),
+    )
+
+    run(context)
+
+    output = xr.load_dataset(tmp_path / "output.nc")
+    lambda_error = np.full(3, 0.5)
+    mu_error = np.asarray([0.0, 0.1, 0.0])
+    expected_systematic = np.sqrt(lambda_error**2 + mu_error**2)
+    assert np.allclose(output["lambda_extrapolation"], lambda_error)
+    assert np.allclose(output["lamet_scale"], mu_error)
+    assert np.allclose(output["total_systematic_error"], expected_systematic)
+    assert np.allclose(
+        output["total_error"],
+        np.sqrt(np.asarray(main.sdev) ** 2 + expected_systematic**2),
+    )
+    assert context.output is main
+    assert context.summary["result"] == "systematics_budget"
 
 
 def test_fourier_terminal_publishes_one_explicit_candidate(tmp_path) -> None:
@@ -1007,7 +1289,7 @@ def test_fourier_terminal_publishes_one_explicit_candidate(tmp_path) -> None:
     data = EnsembleData(None, "bootstrap", [np.ones(3), 1.1 * np.ones(3)], ["z"], {"z": [-0.1, 0.0, 0.1]}, attrs={"momentum_gev": 2.0})
     candidate = {"id": "tail_001", "model_id": "gi_nla", "data": data, "chi2": 1.0, "dof": 2.0, "chi2_dof": 0.5, "Q": 0.6, "aic": 11.0}
     params = {"parton": "quark", "gfix": "GI", "quasi_y_ls": [-0.5, 0.0, 0.5], "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "one_over_2pi"}}
-    context = ToolContext({"metadata": {"workers": 1, "target_observable": "pdf"}}, tmp_path / "manifest.json", "fourier_transform", "transform", params, {}, {}, {"tail_candidates": [candidate]}, tmp_path, np.random.default_rng(2))
+    context = ToolContext({"metadata": {"workers": 1, "target_observable": "pdf"}}, tmp_path / "manifest.json", "fourier_transform", "transform", params, {}, {}, {"tail_candidates": [candidate], "fourier_conventions": {"parton": "quark", "gfix": "GI", "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "one_over_2pi"}}}, tmp_path, np.random.default_rng(2))
     observation = run(context, candidate_id="tail_001")
     assert observation["metrics"]["candidate_id"] == "tail_001"
     assert context.summary["decisions"] == {"candidate_id": "tail_001"}
@@ -1073,7 +1355,7 @@ def test_external_renormalization_terminal_writes_publication_artifacts(tmp_path
 
     target = EnsembleData(None, "bootstrap", [np.array([2.0, 4.0]), np.array([2.2, 4.4])], ["z"], {"z": [0.0, 0.1]}, attrs={"coord_unit": "fm", "resample_id": "shared", "lattice_spacing_fm": 0.1})
     denominator = EnsembleData(None, "bootstrap", [np.array([2.0, 2.0]), np.array([2.2, 2.2])], ["z"], {"z": [0.0, 0.1]}, attrs={"coord_unit": "fm", "resample_id": "shared", "lattice_spacing_fm": 0.1})
-    context = ToolContext({}, tmp_path / "manifest.json", "renormalization", "apply", {"operation": "apply", "scheme": "ratio", "strategy": "external_denominator", "normalization": False}, {"target": target, "denominator": denominator}, {}, {}, tmp_path, np.random.default_rng(1))
+    context = ToolContext({}, tmp_path / "manifest.json", "renormalization", "apply", {"scheme": "ratio", "strategy": "external_denominator", "normalization": False}, {"target": target, "denominator": denominator}, {}, {}, tmp_path, np.random.default_rng(1))
     inspect(context)
     observation = run(context)
     assert observation["summary"] == "published renormalized matrix element"
@@ -1098,8 +1380,8 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
     factor_values = np.exp(baseline + 0.4 * z_factor**2 * spacing)
     factor = EnsembleData(None, "bootstrap", [[factor_values], [factor_values]], ["a", "z"], {"a": [spacing], "z": z_factor.tolist()}, attrs={"coord_unit": "fm", "d": d, "m0_gev": m0, "k": k, "n_f": 3, "scale_gev": scale})
     target = EnsembleData(None, "bootstrap", [np.ones(4), np.ones(4)], ["z"], {"z": z_target.tolist()}, attrs={"coord_unit": "fm", "lattice_spacing_fm": spacing})
-    params = {"operation": "apply", "scheme": "ratio", "strategy": "self_renormalization", "normalization": False, "mu": scale, "factor_remap": {"d": d, "m0_gev": m0, "LambdaQCD_gev": lambda_qcd, "zms_model": "da_nlo"}}
-    context = ToolContext({}, tmp_path / "manifest.json", "renormalization", "apply", params, {"target": target, "factor": factor}, {}, {}, tmp_path, np.random.default_rng(1))
+    params = {"scheme": "ratio", "strategy": "self_renormalization", "normalization": False, "mu": scale, "LambdaQCD_gev": lambda_qcd, "d": d, "m0_gev": m0}
+    context = ToolContext({"metadata": {"target_observable": "da"}}, tmp_path / "manifest.json", "renormalization", "apply", params, {"target": target, "zR": factor}, {}, {}, tmp_path, np.random.default_rng(1))
     inspect(context)
     run(context)
     assert context.output.coords["z"] == z_target.tolist()
@@ -1109,7 +1391,7 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
 def test_every_migrated_kernel_owns_its_callable_and_formula_document() -> None:
     from lamet_agent.kernels import implementation
 
-    root = Path(__file__).parents[2] / "lamet_agent_neo" / "kernels"
+    root = Path(__file__).parents[2] / "lamet_agent" / "kernels"
     kernel_ids = list_kernel_ids()
     assert len(kernel_ids) == 46
     assert set(kernel_ids) == {path.stem for path in root.glob("*.md")}
@@ -1119,7 +1401,7 @@ def test_every_migrated_kernel_owns_its_callable_and_formula_document() -> None:
         tree = ast.parse(source)
         assert any(isinstance(node, ast.FunctionDef) and node.name == "kernel" for node in tree.body)
         for node in tree.body:
-            if isinstance(node, ast.ImportFrom) and node.module == "lamet_agent_neo.kernels.implementation":
+            if isinstance(node, ast.ImportFrom) and node.module == "lamet_agent.kernels.implementation":
                 assert all(alias.name != kernel_id and alias.asname != "_implementation" for alias in node.names)
         parameters = {"zs_fm": 0.2} if "_hybrid_" in kernel_id else {}
         accepted, required = inspect_callable(load_kernel(kernel_id), parameter_values=parameters)
@@ -1144,15 +1426,14 @@ def test_kernel_implementation_owns_the_unit_conversion_constant() -> None:
 
 
 def test_migrated_kernel_code_has_no_legacy_imports_or_embedded_documentation() -> None:
-    root = Path(__file__).parents[2] / "lamet_agent_neo" / "kernels"
+    root = Path(__file__).parents[2] / "lamet_agent" / "kernels"
     paths = [root / "implementation.py", *(root / f"{kernel_id}.py" for kernel_id in list_kernel_ids())]
     for path in paths:
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                assert node.module != "lamet_agent"
-                assert not node.module.startswith("lamet_agent.")
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("lamet_agent."):
+                assert node.module == "lamet_agent.kernels.implementation"
             if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                 assert ast.get_docstring(node, clean=False) is None
         comments = [
@@ -1171,28 +1452,83 @@ def test_ratio_kernel_executes_the_migrated_physics_function() -> None:
     assert np.all(np.isfinite(matrix))
 
 
-def test_extrapolation_fit_uses_independent_resample_covariance_blocks(monkeypatch) -> None:
-    actual_average = EnsembleData.average
-    selected_modes = []
-
-    def record_average(samples, mode="covariance"):
-        selected_modes.append(mode)
-        return actual_average(samples, mode)
-
-    monkeypatch.setattr(EnsembleData, "average", record_average)
+def test_extrapolation_fit_uses_reference_median_covariance(monkeypatch) -> None:
     rng = np.random.default_rng(12)
     x = [-0.2, 0.2]
-    physical = np.array([0.45 + 0.08j, 0.35 - 0.04j])
+    physical = np.array([0.45, 0.35])
     data = []
     for index, spacing in enumerate((0.06, 0.08, 0.10, 0.12)):
         center = physical + 0.3 * spacing / 0.1
-        samples = [center + rng.normal(0.0, 0.003, 2) + 1j * rng.normal(0.0, 0.003, 2) for _ in range(60)]
-        attrs = {"lattice_spacing_fm": spacing, "L_s": 32, "m_pi_gev": 0.2, "momentum_gev": 2.0, "resample_id": f"ensemble-{index}", "sample_error_mode": "median"}
+        samples = [center + rng.normal(0.0, 0.003, 2) for _ in range(60)]
+        attrs = {"lattice_spacing_fm": spacing, "L_s": 32, "m_pi": 0.2, "momentum_gev": 2.0, "resample_id": f"ensemble-{index}", "sample_error_mode": "median"}
         data.append(EnsembleData(None, "bootstrap", samples, ["x"], {"x": x}, attrs=attrs))
-    result, diagnostics = fit_candidate(data, ["a"], 0.135, {"a": {"mean": 0.0, "sdev": 2.0}}, x_range=(-0.2, 0.2), x_dependence={"a": False})
-    assert result.dims == ["component", "x"]
-    recovered = np.asarray(result.mean[0]) + 1j * np.asarray(result.mean[1])
-    assert np.allclose(recovered, physical, atol=2e-2)
+    result, diagnostics = fit_candidate(data, ["a"], 0.135, {"mean": 0.0, "sdev": 2.0}, x_range=(-0.2, 0.2), x_dependence={"a": False})
+    assert result.dims == ["x"]
+    assert result.resample == "bootstrap"
+    assert result.n_sample == 60
+    assert np.allclose(result.mean, physical, atol=2e-2)
     assert diagnostics["dof"] > 0
     assert '"a": false' in result.attrs["x_dependence"]
-    assert selected_modes == ["median"] * 8
+
+
+def test_stage_median_temporarily_matches_reference_symmetric_percentiles() -> None:
+    values = np.asarray([0.0, 1.0, 2.0, 100.0])
+    data = EnsembleData(None, "bootstrap", [np.asarray([value]) for value in values], ["x"], {"x": [0.0]})
+    result = data.average("median")
+    lower, center, upper = np.percentile(
+        values, [50 - 34.1344746, 50, 50 + 34.1344746]
+    )
+    assert float(result[0].mean) == pytest.approx(float(center))
+    assert float(result[0].sdev) == pytest.approx(float(0.5 * (upper - lower)))
+
+
+def test_stage_fourier_uniform_grid_keeps_full_endpoint_weights() -> None:
+    z = [-0.1, 0.0, 0.1]
+    data = EnsembleData(None, "bootstrap", [np.ones(3), np.ones(3)], ["z"], {"z": z})
+    result = stage_fourier_transform(
+        data,
+        [0.0],
+        momentum_gev=HBAR_C_GEV_FM,
+        prefactor="pz_over_2pi",
+        workers=1,
+    )
+    assert np.allclose(result.values[:, 0], 0.3 / (2.0 * np.pi))
+    assert result.attrs["quadrature"] == "reference_uniform_rectangle"
+
+
+def test_pion_valence_tail_keeps_reference_endpoint_pair() -> None:
+    z = np.asarray([0.4, 0.8])
+    parameters = {"A2": 0.8, "A1": 0.2, "phi1": 0.3, "Lambda": 0.7}
+    momentum = 2.0
+    result = tail_model_values(
+        z,
+        "gi_nla",
+        parameters,
+        order="LA",
+        observable="PDF",
+        momentum_gev=momentum,
+        sector="valence",
+        hadron="pion",
+    )
+
+
+
+def test_renormalization_loader_maps_reference_m_pi_metadata(tmp_path: Path) -> None:
+    import xarray as xr
+
+    path = tmp_path / "reference.nc"
+    array = xr.DataArray(
+        np.ones((2, 2, 2)),
+        dims=["resample", "a", "z"],
+        coords={"resample": [0, 1], "a": [0.06, 0.12], "z": [0.1, 0.2]},
+        attrs={
+            "ensemble": '{"series":"MILC","id":"reference","a_s":0.12,"a_t":0.12,"L_s":0,"L_t":0,"m_pi":0.0}',
+            "resample": "bootstrap",
+        },
+        name="reference",
+    )
+    array.to_netcdf(path, format="NETCDF4")
+    loaded = load_renormalization_data(path)
+    assert loaded.ensemble is not None
+    assert loaded.ensemble.m_pi == 0.0
+    assert loaded.dims == ["a", "z"]

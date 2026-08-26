@@ -8,7 +8,7 @@ from lamet_agent.stages.renormalization.physics import load_data, physical_z_coo
 
 
 def run(context: ToolContext) -> dict[str, object]:
-    """Load and align target, denominator, factor, or reference inputs."""
+    """Load and align target, denominator, zR, or reference inputs."""
     aligned = {}
     for role, value in context.inputs.items():
         if isinstance(value, list):
@@ -17,7 +17,9 @@ def run(context: ToolContext) -> dict[str, object]:
             data = load_data(value)
             if role == "reference" and data.attrs.get("coord_unit") is None:
                 attrs = data.attrs
-                attrs["coord_unit"] = context.params["self_renormalization"]["reference_coord_unit"]
+                if attrs.get("z_unit") != "fm":
+                    raise ValueError("self-renormalization reference must declare z_unit='fm'")
+                attrs["coord_unit"] = "fm"
                 data = EnsembleData(data.ensemble, data.resample, [sample for sample in data.values], data.dims, data.coords, attrs=attrs, name=data.name)
             aligned[role] = physical_z_coordinates(data)
     if not aligned:

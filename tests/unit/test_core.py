@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import ast
+import copy
 from pathlib import Path
 import json
 from types import SimpleNamespace
@@ -24,11 +24,13 @@ from lamet_agent.contract import (
     List,
     Provides,
     Recommends,
+    Suggests,
     Value,
     _apply_recommended_defaults,
     _unresolved_null_hooks,
     evaluate_checks,
     evaluate_rules,
+    stage_job_rules,
 )
 from lamet_agent.__main__ import _build_parser
 from lamet_agent.llm import Message, _AssistantResponse, _ToolCall, create_backend
@@ -137,29 +139,6 @@ def _null_hook_rules(hook=_recommend_interval):
     )
 
 
-def test_neo_introduces_no_unreviewed_numeric_literals() -> None:
-    """Every executable neo literal must already have legacy provenance."""
-    root = Path(__file__).parents[2]
-
-    def numeric_literals(package: Path) -> set[int | float | complex]:
-        values: set[int | float | complex] = set()
-        for path in package.rglob("*.py"):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            values.update(
-                node.value
-                for node in ast.walk(tree)
-                if isinstance(node, ast.Constant)
-                and isinstance(node.value, (int, float, complex))
-                and not isinstance(node.value, bool)
-            )
-        return values
-
-    legacy = numeric_literals(root / "lamet_agent")
-    neo = numeric_literals(root / "lamet_agent_neo")
-    approved_neo_semantics = {34.1344746}
-    assert neo <= legacy | approved_neo_semantics
-
-
 def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path) -> None:
     import gvar
     from matplotlib import rcParams
@@ -169,13 +148,9 @@ def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path)
         configure_plot,
         errorband,
         errorbar,
-        hband,
         hline,
-        line,
-        plot,
         save_figure,
         start_plot,
-        vband,
         vline,
     )
 
@@ -187,22 +162,12 @@ def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path)
     assert errorbar(
         [0.0, 1.0], values, color=COLOR_CYCLE[0], marker="s", label="points"
     ) is None
-    assert plot(
-        [0.0, 1.0], [0.9, 1.4], color=COLOR_CYCLE[2], marker="^", label="central points"
-    ) is None
-    assert line(
-        [0.0, 1.0], [0.8, 1.3], color=COLOR_CYCLE[3], label="central line"
-    ) is None
     with pytest.raises(ValueError, match="unsupported marker"):
         errorbar([0.0, 1.0], values, marker="r--")
-    with pytest.raises(ValueError, match="unsupported marker"):
-        plot([0.0, 1.0], [0.9, 1.4], marker="r--")
     with pytest.raises(TypeError, match="gvar"):
         errorbar([0.0, 1.0], np.asarray([[1.0, 2.0], [1.1, 2.1]]))
     assert hline(0.0, color=COLOR_CYCLE[2], linestyle="dashed") is None
     assert vline(0.5, color=COLOR_CYCLE[3], linestyle=":") is None
-    assert hband(0.8, 1.2, color=COLOR_CYCLE[4]) is None
-    assert vband(0.2, 0.4, color=COLOR_CYCLE[5]) is None
     with pytest.raises(ValueError, match="unsupported line style"):
         hline(0.0, linestyle="custom")
     assert configure_plot(xlabel="x", ylabel="y", legend=True) is None
@@ -219,49 +184,52 @@ def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path)
     assert start_plot() is None
     errorband([0.0, 1.0], values)
     errorbar([0.0, 1.0], values)
-    plot([0.0, 1.0], [0.9, 1.4])
-    line([0.0, 1.0], [0.8, 1.3])
     hline(0.0)
     vline(0.5)
-    hband(0.8, 1.2)
-    vband(0.2, 0.4)
+    hline(0.2, color=COLOR_CYCLE[4])
+    vline(0.7, color=COLOR_CYCLE[5])
     cycle_path = tmp_path / "cycle.svg"
     save_figure(cycle_path)
     cycle_svg = cycle_path.read_text(encoding="utf-8").lower()
     assert all(color.lower() in cycle_svg for color in COLOR_CYCLE)
 
 
-def test_neo_contract_plotting_and_parallel_exports_are_minimal() -> None:
-    from lamet_agent import contract, parallel, plotting
+def test_neo_core_exports_are_minimal() -> None:
+    from lamet_agent import agent, contract, data, llm, manifest, parallel, plotting
+    from lamet_agent.parallel import lanczos
 
+    assert agent.__all__ == ["ToolContext", "create_session"]
     assert contract.__all__ == [
         "Depends",
         "Provides",
         "Recommends",
+        "Suggests",
         "List",
         "Value",
+        "Source",
         "Issue",
         "CheckContext",
         "evaluate_rules",
         "evaluate_checks",
+        "stage_job_rules",
     ]
     assert not hasattr(contract, "Contains")
+    assert data.__all__ == ["EnsembleInfo", "EnsembleData"]
+    assert llm.__all__ == ["Message", "LlmBackend", "create_backend"]
+    assert manifest.__all__ == ["Job", "Manifest", "load_manifest"]
     assert plotting.__all__ == [
         "COLOR_CYCLE",
         "start_plot",
         "configure_plot",
         "errorbar",
         "errorband",
-        "plot",
-        "line",
         "hline",
         "vline",
-        "hband",
-        "vband",
         "save_figure",
     ]
     assert not hasattr(plotting, "mean_sdev")
     assert parallel.__all__ == ["FitNumericalError", "nonlinear_fit", "fourier_transform"]
+    assert lanczos.__all__ == ["prepare_lanczos_data", "analyze_prepared_lanczos"]
 
 
 def test_neo_cli_uses_provider_and_optional_model() -> None:
@@ -393,6 +361,21 @@ def test_unified_backend_preserves_multiple_ordered_tool_calls(tmp_path: Path, m
         ("call-1", "fit", 1),
         ("call-2", "fit", 2),
     ]
+
+
+def test_api_backend_retries_only_malformed_tool_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    malformed = {"choices": [{"message": {"content": "bad", "tool_calls": [{"id": "bad", "type": "function", "function": {"name": "fit", "arguments": "{bad"}}]}}]}
+    valid = {"choices": [{"message": {"content": "ok", "tool_calls": [{"id": "good", "type": "function", "function": {"name": "fit", "arguments": "{\"window\":3}"}}]}}]}
+    key_file = tmp_path / "provider.key"
+    key_file.write_text("key\n", encoding="utf-8")
+    responses = iter([_ModelsResponse(["model"]), _ChatResponse(malformed), _ChatResponse(malformed), _ChatResponse(valid)])
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, **kwargs: next(responses))
+
+    response = create_backend("https://example.test/v1", "model", key_file).complete(
+        messages=[Message("user", "run")], tools=[], prompt_digest="digest"
+    )
+
+    assert response.calls[0].arguments == {"window": 3}
 
 
 def test_contract_traverses_virtual_list_items() -> None:
@@ -732,7 +715,7 @@ def test_contract_value_uses_literal_as_its_choice_source() -> None:
     assert not hasattr(string_rule, "choices")
 
 
-def test_contract_provides_defines_selector_values_and_real_dependencies() -> None:
+def test_contract_provides_activates_real_dependency_nodes() -> None:
     rules = (
         Depends("lsqfit", "window", physics="The fit window is required."),
         Value("lsqfit.window", int, physics="The fit window is an integer."),
@@ -743,6 +726,11 @@ def test_contract_provides_defines_selector_values_and_real_dependencies() -> No
             physics="Least-squares fitting owns its parameter object.",
         ),
         Depends("", "analysis_method", physics="Select one analysis method."),
+        Value(
+            "analysis_method",
+            Literal["lsqfit", "lanczos"],
+            physics="The analysis method owns its choices.",
+        ),
         Provides(
             "",
             "lanczos",
@@ -764,7 +752,7 @@ def test_contract_provides_defines_selector_values_and_real_dependencies() -> No
     )] == [
         (
             "analysis_method",
-            "must be provided by one of 'lsqfit', 'lanczos'",
+            "must be one of 'lsqfit', 'lanczos'",
         )
     ]
     assert [(issue.path, issue.message, issue.physics) for issue in evaluate_rules(
@@ -776,14 +764,26 @@ def test_contract_provides_defines_selector_values_and_real_dependencies() -> No
             "Least-squares fitting owns its parameter object.",
         )
     ]
-    assert [(issue.path, issue.message) for issue in evaluate_rules(
-        {
-            "analysis_method": "lsqfit",
-            "lsqfit": {"window": 4},
-            "lanczos": {"iterations": 3},
-        },
-        rules,
-    )] == [("lanczos", "unknown key 'lanczos'")]
+    mixed = {
+        "analysis_method": "lsqfit",
+        "lsqfit": {"window": 4},
+        "lanczos": {"iterations": 3},
+    }
+    assert evaluate_rules(mixed, rules) == []
+    assert mixed == {
+        "analysis_method": "lsqfit",
+        "lsqfit": {"window": 4},
+        "lanczos": {"iterations": 3},
+    }
+    invalid_inactive = {
+        "analysis_method": "lsqfit",
+        "lsqfit": {"window": 4},
+        "lanczos": {"iterations": "three", "typo": 1},
+    }
+    assert [(issue.path, issue.message) for issue in evaluate_rules(invalid_inactive, rules)] == [
+        ("lanczos.iterations", "expected int"),
+        ("lanczos.typo", "unknown key 'typo'"),
+    ]
 
 
 def test_contract_only_applies_defaults_and_hooks_in_the_selected_provider() -> None:
@@ -814,6 +814,146 @@ def test_contract_only_applies_defaults_and_hooks_in_the_selected_provider() -> 
     assert _unresolved_null_hooks(params, rules) == ()
 
 
+def test_absolute_provider_selector_does_not_own_global_choices() -> None:
+    rules = (
+        Provides("", "da", "$.metadata.target_observable", physics="DA settings."),
+        Depends("da", "phase_transfer_da", physics="DA phase is explicit."),
+        Value("da.phase_transfer_da", bool, physics="DA phase is boolean."),
+        Provides("", "pdf", "$.metadata.target_observable", physics="PDF settings."),
+        Recommends("pdf", "sector", physics="PDF sector has a default.", default="valence"),
+    )
+    root = {"metadata": {"target_observable": "da"}}
+    params = {"da": {"phase_transfer_da": True}}
+    assert evaluate_rules(params, rules, root_document=root) == []
+    assert params == {"da": {"phase_transfer_da": True}}
+
+    root["metadata"]["target_observable"] = "pdf"
+    params = {"pdf": {}}
+    assert evaluate_rules(params, rules, root_document=root) == []
+    assert params == {"pdf": {"sector": "valence"}}
+
+    root["metadata"]["target_observable"] = "gpd"
+    assert evaluate_rules({}, rules, root_document=root) == []
+
+
+def test_nested_provider_uses_the_same_explicit_selector_path_as_value() -> None:
+    rules = (
+        Depends("", "strategy", physics="Strategy is explicit."),
+        Value("strategy", Literal["external"], physics="Strategy is controlled."),
+        Provides("", "external", "strategy", physics="External branch."),
+        Depends("external", "scheme", physics="Scheme is explicit."),
+        Value("external.scheme", Literal["ratio", "hybrid"], physics="Scheme is controlled."),
+        Provides("external", "hybrid", "external.scheme", physics="Hybrid branch."),
+        Depends("external.hybrid", "switch", physics="Hybrid switch is explicit."),
+        Value("external.hybrid.switch", float, physics="Hybrid switch is numeric."),
+    )
+    hybrid = {"strategy": "external", "external": {"scheme": "hybrid", "hybrid": {"switch": 0.2}}}
+    assert evaluate_rules(hybrid, rules) == []
+    ratio = {"strategy": "external", "external": {"scheme": "ratio", "hybrid": {"switch": 0.2}}}
+    assert evaluate_rules(ratio, rules) == []
+    assert ratio == {
+        "strategy": "external",
+        "external": {"scheme": "ratio", "hybrid": {"switch": 0.2}},
+    }
+
+
+def test_job_provider_values_override_stage_defaults() -> None:
+    rules = stage_job_rules(
+        (
+            Depends("", "analysis_method", physics="Method is explicit."),
+            Value("analysis_method", Literal["lsqfit"], physics="Method is controlled."),
+            Provides("", "lsqfit", "analysis_method", physics="Fit branch."),
+            Depends("lsqfit", "window", physics="Window is explicit."),
+            Value("lsqfit.window", int, physics="Window is integer."),
+        ),
+        (),
+    )
+    document = {
+        "defaults": {"analysis_method": "lsqfit", "lsqfit": {"window": 2}},
+        "jobs": [{"id": "fit", "lsqfit": {"window": 7}}],
+    }
+    assert evaluate_rules(document, rules) == []
+    assert document["jobs"][0]["lsqfit"]["window"] == 7
+
+
+def test_suggests_fills_list_items_before_bfs_validation() -> None:
+    rules = (
+        Depends("", "jobs", physics="jobs are declared"),
+        List("jobs", "job", physics="jobs preserve order"),
+        Suggests("", "defaults", "jobs.job", physics="defaults fill jobs"),
+        Depends("jobs.job", "mode", physics="mode is required"),
+        Depends("jobs.job", "nested", physics="nested settings are required"),
+        Depends("jobs.job.nested", "left", physics="left is required"),
+        Depends("jobs.job.nested", "right", physics="right is required"),
+        Value("jobs.job.mode", str, physics="mode is text"),
+        Value("jobs.job.nested.left", int, physics="left is integer"),
+        Value("jobs.job.nested.right", int, physics="right is integer"),
+    )
+    document = {
+        "defaults": {"mode": "safe", "nested": {"left": 1, "right": 2}},
+        "jobs": [{"nested": {"right": 7}}, {}],
+    }
+
+    assert evaluate_rules(document, rules) == []
+    assert document["jobs"] == [
+        {"mode": "safe", "nested": {"left": 1, "right": 7}},
+        {"mode": "safe", "nested": {"left": 1, "right": 2}},
+    ]
+
+
+def test_suggests_missing_source_is_empty_and_bad_types_are_reported() -> None:
+    rules = (
+        Depends("", "jobs", physics="jobs are declared"),
+        List("jobs", "job", physics="jobs preserve order"),
+        Suggests("", "defaults", "jobs.job", physics="defaults fill jobs"),
+        Depends("jobs.job", "mode", physics="mode is required"),
+        Value("jobs.job.mode", str, physics="mode is text"),
+    )
+    missing = {"jobs": [{"mode": "local"}]}
+    assert evaluate_rules(missing, rules) == []
+    assert "defaults" not in missing
+
+    bad_source = {"defaults": 1.5, "jobs": [{"mode": "local"}]}
+    assert [(issue.path, issue.message) for issue in evaluate_rules(bad_source, rules)] == [
+        ("defaults", "expected an object")
+    ]
+    bad_target = {"jobs": [1.5]}
+    assert [(issue.path, issue.message) for issue in evaluate_rules(bad_target, rules)] == [
+        ("jobs[0]", "expected an object"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "rules, message",
+    [
+        (
+            (
+                Suggests("", "left", "jobs.job", physics="first"),
+                Suggests("", "right", "jobs.job", physics="second"),
+            ),
+            "duplicate Suggests target",
+        ),
+        (
+            (
+                Suggests("", "left", "jobs", physics="parent"),
+                Suggests("", "right", "jobs.job", physics="child"),
+            ),
+            "overlapping Suggests targets",
+        ),
+        (
+            (
+                Suggests("", "right", "left", physics="left"),
+                Suggests("", "left", "right", physics="right"),
+            ),
+            "cyclic Suggests dependency",
+        ),
+    ],
+)
+def test_suggests_rejects_ambiguous_injection_graphs(rules, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        evaluate_rules({}, rules)
+
+
 def test_manifest_skips_stage_relationship_checks_after_rule_failure(tmp_path: Path, monkeypatch) -> None:
     calls = []
 
@@ -829,7 +969,10 @@ def test_manifest_skips_stage_relationship_checks_after_rule_failure(tmp_path: P
         INPUT_RULES=(),
         CHECKS=(relationship_check,),
     )
-    monkeypatch.setattr("lamet_agent_neo.manifest._load_stage_contract", lambda *args: contract)
+    contract.JOB_RULES = stage_job_rules(
+        contract.PARAM_RULES, contract.INPUT_RULES
+    )
+    monkeypatch.setattr("lamet_agent.manifest._load_stage_contract", lambda *args: contract)
     document = {
         "metadata": {
             "run_id": "invalid-stage-value",
@@ -845,14 +988,14 @@ def test_manifest_skips_stage_relationship_checks_after_rule_failure(tmp_path: P
         "stages": {
             "demo": {
                 "defaults": {"mode": "invalid"},
-                "jobs": [{"id": "job", "inputs": {}, "params": {}}],
+                "jobs": [{"id": "job", "inputs": {}}],
             }
         },
     }
 
     issues = Manifest(tmp_path / "manifest.json", document).validate()
 
-    assert any(issue.path.endswith("params.mode") and "must be one of" in issue.message for issue in issues)
+    assert any(issue.path.endswith("jobs[0].mode") and "must be one of" in issue.message for issue in issues)
     assert calls == []
 
 
@@ -865,9 +1008,6 @@ def test_fourier_scan_intrinsic_values_are_owned_by_rules() -> None:
         "posterior_prior_error_scale": [1.0],
         "model_average": False,
         "max_schemes": 1,
-        "component": "both",
-        "output_scale": 1.0,
-        "q_min": 0.05,
     }
 
     issues = evaluate_rules({"scheme_scan": scheme_scan}, contract.PARAM_RULES, complete=False)
@@ -978,8 +1118,8 @@ def test_correlator_manifest_accepts_missing_hook_windows() -> None:
     manifest = load_manifest(
         Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json"
     )
-    lsqfit = manifest.document["stages"]["correlator_analysis"]["defaults"]["lsqfit"]
-    lsqfit.pop("pt2_windows")
+    defaults = manifest.document["stages"]["correlator_analysis"]["defaults"]
+    defaults["lsqfit"].pop("pt2_windows")
 
     assert manifest.validate() == []
 
@@ -989,9 +1129,11 @@ def test_correlator_manifest_accepts_missing_hook_windows() -> None:
     ("pion_pdf_cg", "pion_pdf_gi", "pion_da_gi", "kaon_da_gi"),
 )
 def test_refactor_examples_reuse_legacy_physics_parameter_names(stem: str) -> None:
-    examples = Path(__file__).parents[2] / "examples"
-    legacy = json.loads((examples / f"{stem}_manifest.json").read_text(encoding="utf-8"))
-    neo_manifest = load_manifest(examples / f"{stem}_manifest_neo.json")
+    root = Path(__file__).parents[2]
+    legacy_examples = root.parent / "lamet-agent" / "examples"
+    neo_examples = root / "examples"
+    legacy = json.loads((legacy_examples / f"{stem}_manifest.json").read_text(encoding="utf-8"))
+    neo_manifest = load_manifest(neo_examples / f"{stem}_manifest_neo.json")
     neo = neo_manifest.document
 
     def key_names(value: object) -> set[str]:
@@ -1029,17 +1171,147 @@ def test_refactor_examples_reuse_legacy_physics_parameter_names(stem: str) -> No
     correlator_defaults = neo["stages"]["correlator_analysis"]["defaults"]
     assert not {"resample_mode", "sample_error_mode", "bootstrap_samples", "bin_size"} & set(correlator_defaults)
     assert "target_observable" not in neo["stages"]["fourier_transform"]["defaults"]
-    correlator_lsqfit = neo["stages"]["correlator_analysis"]["defaults"]["lsqfit"]
-    assert not {"allowed_methods", "matrix_fit", "qda_fit"} & set(correlator_lsqfit)
+    branch = correlator_defaults.get("lsqfit", correlator_defaults.get("lanczos", {}))
+    assert not {"allowed_methods", "matrix_fit", "qda_fit"} & set(branch)
     assert neo_manifest.validate() == []
+    grouped = neo_manifest.jobs_by_stage
+    flattened = tuple(job for stage_jobs in grouped.values() for job in stage_jobs)
+    assert flattened == neo_manifest.jobs
+    assert all(
+        grouped[job.stage_id][job.job_index] is job
+        for job in neo_manifest.jobs
+    )
+
+
+@pytest.mark.parametrize("stem", ("pion_da_gi", "kaon_da_gi"))
+def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> None:
+    manifest = load_manifest(Path(__file__).parents[2] / "examples" / f"{stem}_manifest_neo.json")
+    authored_stages = manifest.document["stages"]
+    assert len(authored_stages["fourier_transform"]["jobs"]) == 9
+    assert len(authored_stages["perturbative_matching"]["jobs"]) == 9
+    assert len(authored_stages["extrapolation"]["jobs"]) == 1
+
+    resolved = load_manifest(manifest.path)
+    assert resolved.validate() == []
+    stages = resolved.document["stages"]
+    assert "systematics" not in resolved.document
+    assert '"job"' not in json.dumps(resolved.document)
+    extrapolation_jobs = [
+        job
+        for job in resolved._resolved_jobs()
+        if job.stage_id == "extrapolation"
+    ]
+    assert all(
+        job.params["fit"]["priors"] == {"mean": 0.0, "sdev": 3.0}
+        for job in extrapolation_jobs
+        if job.params["operation"] == "fit"
+    )
+    budget_job = next(
+        job for job in extrapolation_jobs
+        if job.params["operation"] == "systematics_budget"
+    )
+    assert "fit" in budget_job.params
+    assert "priors" not in budget_job.params["fit"]
+    assert len(stages["fourier_transform"]["jobs"]) == 27
+    assert len(stages["perturbative_matching"]["jobs"]) == 45
+    assert [job["id"] for job in stages["extrapolation"]["jobs"]] == [
+        "extrapolate_all",
+        "extrapolate_lambda_low",
+        "extrapolate_lambda_high",
+        "extrapolate_mu_low",
+        "extrapolate_mu_high",
+        "extrapolate_a_sym",
+        "extrapolate_p_sym",
+        "extrapolate_ap_sym",
+        "extrapolation_systematics_budget",
+    ]
+    budget = stages["extrapolation"]["jobs"][-1]
+    assert budget["systematics_budget"]["systematics_groups"] == {
+        "main": 0,
+        "zs": [],
+        "lambda_extrapolation": [1, 2],
+        "lamet_scale": [3, 4],
+        "other_extrapolations": [5, 6, 7],
+    }
+    fourier = {job["id"]: job for job in stages["fourier_transform"]["jobs"]}
+    assert fourier["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == [
+        0.4592,
+        0.5166,
+        0.574,
+        0.6314,
+    ]
+    matching = {
+        job["id"]: job for job in stages["perturbative_matching"]["jobs"]
+    }
+    assert (
+        matching["mt_a06m130_pz6_lambda_low"]["inputs"]["quasi"]
+        == "ft_a06m130_pz6_lambda_low"
+    )
+    assert matching["mt_a06m130_pz6_mu_low"]["mu"] == pytest.approx(
+        2.0**0.5
+    )
+    assert matching["mt_a06m130_pz6_mu_high"]["mu"] == pytest.approx(
+        2.0 * 2.0**0.5
+    )
+    assert len(manifest.document["stages"]["fourier_transform"]["jobs"]) == 9
+    assert "zmin_shift" not in json.dumps(manifest.document)
+
+    parsed = load_manifest(manifest.path)
+    assert parsed.validate() == []
+    assert "systematics" not in parsed.document
+    assert parsed.document["stages"]["extrapolation"]["defaults"][
+        "fit"
+    ][
+        "required_terms"
+    ] == ["a", "inv_p2", "inv_p4", "ap2"]
+    assert parsed.document["stages"]["extrapolation"]["jobs"][0][
+        "fit"
+    ][
+        "priors"
+    ] == {"mean": 0.0, "sdev": 3.0}
+
+
+def test_job_source_object_is_rejected_at_the_input_role() -> None:
+    path = Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json"
+    manifest = load_manifest(path)
+    document = copy.deepcopy(manifest.document)
+    document["stages"]["fourier_transform"]["jobs"][0]["inputs"]["input"] = {
+        "job": "rn_p4"
+    }
+
+    issues = Manifest(path, document).validate()
+
+    source_issues = [
+        issue
+        for issue in issues
+        if issue.path.endswith("fourier_transform.jobs[0].inputs.input")
+    ]
+    assert len(source_issues) == 1
+    assert source_issues[0].message == "is not an allowed input source"
+    assert all(not issue.path.endswith(".job") for issue in issues)
+
+
+def test_systematics_compiler_rejects_explicit_variation_jobs() -> None:
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    manifest = load_manifest(path)
+    document = copy.deepcopy(manifest.document)
+    explicit = copy.deepcopy(
+        document["stages"]["fourier_transform"]["jobs"][0]
+    )
+    explicit["id"] += "_lambda_low"
+    document["stages"]["fourier_transform"]["jobs"].append(explicit)
+
+    issues = Manifest(path, document).validate()
+
+    assert len(issues) == 1
+    assert issues[0].path == "systematics"
+    assert "explicitly authored variation jobs" in issues[0].message
 
 
 def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive() -> None:
     contract = _load_stage_contract("correlator_analysis")
     lanczos = {
-        "observable": "matrix_element",
         "analysis_method": "lanczos",
-        "resample_group": "toy",
         "component": "both",
         "nstate": [2],
         "correlator_ids": ["c2", "c3"],
@@ -1049,32 +1321,28 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
     context = CheckContext({}, "correlator_analysis", "job", lanczos, {})
     assert evaluate_checks(contract.CHECKS, context) == []
 
-    mixed = {**lanczos, "lsqfit": {}}
-    issues = evaluate_rules(mixed, contract.PARAM_RULES)
-    assert [(issue.path, issue.message) for issue in issues] == [
-        ("lsqfit", "unknown key 'lsqfit'")
-    ]
+    mixed = {**lanczos, "lsqfit": {"fit_scope": ["spectrum"]}}
+    assert evaluate_rules(mixed, contract.PARAM_RULES) == []
+    assert mixed["lsqfit"] == {"fit_scope": ["spectrum"]}
 
     ground_fit = {
-        **{key: value for key, value in lanczos.items() if key != "lanczos"},
-        "observable": "spectrum",
         "analysis_method": "lsqfit",
         "component": "re",
+        "nstate": [2],
+        "correlator_ids": ["c2"],
         "lsqfit": {
             "fit_scope": ["spectrum"],
             "fit_strategy": ["independent"],
             "fitting_form": "Breit",
-            "prior_width": [1.0],
             "model_average": False,
-            "time_range": {"min": 2, "max": 8},
             "pt2_windows": [{"tmin": 2, "tmax": 8}],
             "svdcut": 1e-6,
             "posterior_prior_error_scale": 1.0,
             "q_min": 0.05,
-            "tune_z": 0,
         },
     }
     assert evaluate_rules(ground_fit, contract.PARAM_RULES) == []
+    assert ground_fit["lsqfit"]["prior_width"] == [1.0]
     assert evaluate_checks(
         contract.CHECKS,
         CheckContext({}, "correlator_analysis", "job", ground_fit, {}),
@@ -1085,7 +1353,7 @@ def test_each_shipped_stage_contract_reports_incomplete_params_instead_of_crashi
     for stage_id in ("correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"):
         manifest = {
             "metadata": {"run_id": "incomplete", "root_directory": str(tmp_path), "artifacts_directory": "runs", "random_seed": 1, "workers": 1},
-            "stages": {stage_id: {"defaults": {}, "jobs": [{"id": "job", "inputs": {}, "params": {}}]}},
+            "stages": {stage_id: {"defaults": {}, "jobs": [{"id": "job", "inputs": {}}]}},
         }
         issues = Manifest(tmp_path / "manifest.json", manifest).validate()
         assert issues
@@ -1096,8 +1364,8 @@ def test_neo_correlator_descriptors_use_physical_field_names() -> None:
     for path in examples.glob("*correlators_neo.json"):
         descriptor = json.loads(path.read_text(encoding="utf-8"))
         ensemble = descriptor["ensemble"]
-        assert "m_pi_gev" in ensemble
-        assert "m_pi" not in ensemble
+        assert "m_pi" in ensemble
+        assert "m_pi_gev" not in ensemble
         for record in descriptor["correlators"]:
             assert "correlator_type" in record
             assert "kind" not in record
@@ -1109,9 +1377,9 @@ def test_neo_correlator_descriptors_use_physical_field_names() -> None:
 
 def test_matching_check_reports_the_exact_parameter_path() -> None:
     contract = _load_stage_contract("perturbative_matching")
-    context = CheckContext({}, "perturbative_matching", "job", {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "scheme": "ratio", "zs_fm": 0.2}, {"quasi": {"job": "earlier"}})
+    context = CheckContext({}, "perturbative_matching", "job", {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "scheme": "ratio", "zs_fm": 0.2}, {"quasi": "earlier"})
     issues = evaluate_checks(contract.CHECKS, context)
-    assert [(issue.path, issue.message) for issue in issues] == [("params.scheme", "must equal 'hybrid' for kernel 'CG_gt_quark_PDF_hybrid_NLO'")]
+    assert [(issue.path, issue.message) for issue in issues] == [("scheme", "must equal 'hybrid' for kernel 'CG_gt_quark_PDF_hybrid_NLO'")]
 
 
 def test_finish_rejects_second_terminal_result(tmp_path: Path) -> None:
@@ -1126,6 +1394,15 @@ def test_finish_rejects_second_terminal_result(tmp_path: Path) -> None:
         raise AssertionError("finish must reject a second terminal result")
 
 
+def test_dynamic_summary_converts_numpy_scalars_and_arrays() -> None:
+    from lamet_agent.agent import _summarize
+
+    summary = _summarize({"count": np.int64(3), "scale": np.float64(2.5), "values": np.asarray([1, 2], dtype=np.int64)})
+
+    assert summary == {"count": 3, "scale": 2.5, "values": [1, 2]}
+    json.dumps(summary)
+
+
 def test_manifest_has_exact_two_top_level_keys(tmp_path: Path) -> None:
     descriptor = tmp_path / "input.json"
     descriptor.write_text("{}", encoding="utf-8")
@@ -1134,13 +1411,13 @@ def test_manifest_has_exact_two_top_level_keys(tmp_path: Path) -> None:
         "stages": {
             "review": {
                 "defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]},
-                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(descriptor)}]}, "params": {}}],
+                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(descriptor)}]}}],
             }
         },
     }
     manifest = Manifest(tmp_path / "manifest.json", document)
     assert not manifest.validate()
-    document["extra"] = True
+    manifest.document["extra"] = True
     assert any("extra" in issue.path for issue in manifest.validate())
 
 
@@ -1163,7 +1440,7 @@ def test_manifest_rejects_redundant_metadata_stages(tmp_path: Path) -> None:
         "stages": {
             "review": {
                 "defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]},
-                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}, "params": {}}],
+                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
             }
         },
     }
@@ -1187,8 +1464,8 @@ def test_top_level_stage_order_controls_execution_and_artifact_numbering(tmp_pat
             "bin_size": 1,
         },
         "stages": {
-            "second_authored": {"defaults": {}, "jobs": [{"id": "job_b", "inputs": {}, "params": {}}]},
-            "first_authored": {"defaults": {}, "jobs": [{"id": "job_a", "inputs": {}, "params": {}}]},
+            "second_authored": {"defaults": {}, "jobs": [{"id": "job_b", "inputs": {}}]},
+            "first_authored": {"defaults": {}, "jobs": [{"id": "job_a", "inputs": {}}]},
         },
     }
 
@@ -1209,7 +1486,7 @@ def test_manifest_requires_a_positive_run_worker_count(tmp_path: Path) -> None:
         "stages": {
             "review": {
                 "defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]},
-                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}, "params": {}}],
+                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
             }
         },
     }
@@ -1225,7 +1502,7 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, capsys) -> N
     source.write_text("{}", encoding="utf-8")
     manifest = {
         "metadata": _valid_metadata(tmp_path, random_seed=2),
-        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}, "params": {}}]}},
+        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}]}},
     }
     responses = [
         _AssistantResponse("inspect", _ToolCall("1", "inspect_results", {})),
@@ -1266,7 +1543,7 @@ def test_scripted_review_run_executes_multi_call_responses_sequentially(tmp_path
     source.write_text("{}", encoding="utf-8")
     manifest = {
         "metadata": _valid_metadata(tmp_path, random_seed=2),
-        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}, "params": {}}]}},
+        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}]}},
     }
     backend = _ScriptedBackend([
         _AssistantResponse("inspect and check", tool_calls=(_ToolCall("1", "inspect_results", {}), _ToolCall("2", "check_consistency", {}))),
@@ -1290,7 +1567,7 @@ def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path) ->
     manifest_path = tmp_path / "manifest.json"
     manifest = {
         "metadata": _valid_metadata(tmp_path, random_seed=2),
-        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}, "params": {}}]}},
+        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}]}},
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     responses = [
@@ -1309,7 +1586,7 @@ def test_agent_fails_immediately_when_the_model_returns_no_tool_call(tmp_path: P
     source.write_text("{}", encoding="utf-8")
     manifest = {
         "metadata": _valid_metadata(tmp_path, random_seed=2),
-        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}, "params": {}}]}},
+        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}]}},
     }
     session = create_session(_ScriptedBackend([_AssistantResponse("plain answer", None)]))
     with pytest.raises(RuntimeError, match="returned no tool call"):

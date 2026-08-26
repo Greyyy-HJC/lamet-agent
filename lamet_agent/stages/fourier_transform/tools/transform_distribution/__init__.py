@@ -17,7 +17,10 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     if candidate_id not in candidates:
         raise ValueError("candidate_id must name an existing tail candidate")
     selected = candidates[candidate_id]
-    transform = context.params["transform"]
+    conventions = context.state.get("fourier_conventions")
+    if not isinstance(conventions, dict):
+        raise RuntimeError("inspect_long_distance did not derive Fourier conventions")
+    transform = conventions["transform"]
     data = selected["data"]
     momentum = data.attrs.get("momentum_gev")
     if not isinstance(momentum, (int, float)) or not np.isfinite(float(momentum)) or float(momentum) <= 0:
@@ -27,7 +30,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         grid = np.linspace(float(grid["start"]), float(grid["stop"]), int(grid["num"])).tolist()
     result = fourier_transform(data, grid, momentum_gev=float(momentum), phase_sign=int(transform["phase_sign"]), x_shift=float(transform["x_shift"]), prefactor=str(transform["prefactor"]), workers=context.workers)
     attrs = result.attrs
-    attrs.update({"target_observable": context.manifest["metadata"]["target_observable"], "parton": context.params["parton"], "gfix": context.params["gfix"], "tail_model": selected["model_id"]})
+    attrs.update({"target_observable": context.manifest["metadata"]["target_observable"], "parton": conventions["parton"], "gfix": conventions["gfix"], "tail_model": selected["model_id"]})
     result = EnsembleData(result.ensemble, result.resample, [sample for sample in result.values], result.dims, result.coords, attrs=attrs, name=result.name)
     context.state["fourier_result"] = {"data": result, "candidate_id": candidate_id}
     result.to_netcdf(context.artifact_directory / "output.nc")

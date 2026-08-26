@@ -1,2 +1,3 @@
-Use only for `operation=fit_factor`. Select a short-distance range within the
-authored physical bounds; the tool publishes a reusable sample-bearing factor.
+Use only for a reference-only job. The tool derives the original three-point
+short-distance range from the reference coordinates and publishes a reusable
+sample-bearing factor.

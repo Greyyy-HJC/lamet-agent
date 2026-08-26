@@ -1,7 +1,8 @@
 # Fourier transform
 
-Inspect signed physical `z` coordinates and the declared symmetry before fitting
-the long-distance tail. Fit one allowed tail candidate at a time, connect it to
+Inspect signed physical `z` coordinates and derive the reference symmetry,
+projection, normalization, and tail family from upstream provenance before
+fitting the long-distance tail. Fit one allowed tail candidate at a time, connect it to
 the data with the authored smoothing prescription, and transform every sample on
 the explicit dimensionless `quasi_y_ls`. The terminal result must preserve sample
 order and record units, convention, tail model, and inherited identity.

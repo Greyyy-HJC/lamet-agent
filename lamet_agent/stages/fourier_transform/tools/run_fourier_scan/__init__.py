@@ -18,6 +18,9 @@ def run(context: ToolContext) -> dict[str, object]:
     if "tail_inspection" not in context.state:
         raise RuntimeError("inspect_long_distance must run before run_fourier_scan")
     scheme_scan = context.params["scheme_scan"]
+    conventions = context.state.get("fourier_conventions")
+    if not isinstance(conventions, dict):
+        raise RuntimeError("inspect_long_distance did not derive Fourier conventions")
     scan = {
         "orders": scheme_scan["order"],
         "sector": scheme_scan["sector"],
@@ -25,8 +28,8 @@ def run(context: ToolContext) -> dict[str, object]:
         "prior_widths": scheme_scan["posterior_prior_error_scale"],
         "model_average": scheme_scan["model_average"],
         "max_schemes": scheme_scan["max_schemes"],
-        "component": scheme_scan["component"],
-        "output_scale": scheme_scan["output_scale"],
+        "component": conventions["component"],
+        "output_scale": conventions["output_scale"],
         "q_min": scheme_scan["q_min"],
     }
     source = context.state.get("fourier_input")
@@ -35,29 +38,30 @@ def run(context: ToolContext) -> dict[str, object]:
     grid = context.params["quasi_y_ls"]
     if isinstance(grid, dict):
         grid = np.linspace(float(grid["start"]), float(grid["stop"]), int(grid["num"])).tolist()
+    is_da = str(context.manifest["metadata"]["target_observable"]).lower() == "da"
+    da = context.params["da"] if is_da else None
     result = scan_fourier_transform(
         source,
         grid,
-        transform=context.params["transform"],
+        transform=conventions["transform"],
         tail={
-            "models": context.params["tail_models"],
+            "models": conventions["tail_models"],
             "z_min_fm": context.params["zmin_fm"],
             "z_max_fm": context.params["zmax_fm"],
             "extent_fm": context.params["zmax_ext_fm"],
-            "smoothing_methods": context.params["smoothing"]["smooth"],
-            "smoothing_widths_fm": context.params["smoothing"]["widths_fm"],
+            "smoothing_method": context.params["smooth"],
         },
         scan=scan,
         observable=context.manifest["metadata"]["target_observable"].upper(),
-        phase_transfer_da=context.params.get("phase_transfer_da", False),
-        psi1_flavor_class=context.params.get("psi1_flavor_class", "heavy"),
-        psi2_flavor_class=context.params.get("psi2_flavor_class", "heavy"),
+        phase_transfer_da=da["phase_transfer_da"] if da is not None else False,
+        psi1_flavor_class=da["psi1_flavor_class"] if da is not None else "heavy",
+        psi2_flavor_class=da["psi2_flavor_class"] if da is not None else "heavy",
         workers=context.workers,
         _parallel=context._parallel,
     )
     scanned = result["data"]
     output_attrs = dict(scanned.attrs)
-    output_attrs.update({"target_observable": context.manifest["metadata"]["target_observable"], "parton": context.params["parton"], "gfix": context.params["gfix"]})
+    output_attrs.update({"target_observable": context.manifest["metadata"]["target_observable"], "parton": conventions["parton"], "gfix": conventions["gfix"]})
     output = EnsembleData(scanned.ensemble, scanned.resample, [np.asarray(sample) for sample in scanned.values], scanned.dims, scanned.coords, attrs=output_attrs, name="quasi_distribution")
     output.to_netcdf(context.artifact_directory / "output.nc")
     selected_range = result["selected_range"]
@@ -69,15 +73,25 @@ def run(context: ToolContext) -> dict[str, object]:
     candidate_table = [
         {
             key: candidate[key]
-            for key in ("label", "model_id", "z_min_fm", "z_max_fm", "order", "prior_width", "smoothing_method", "smoothing_width_fm", "chi2", "dof", "chi2_dof", "Q", "logGBF")
+            for key in ("label", "model_id", "z_min_fm", "z_max_fm", "order", "prior_width", "smoothing_method", "smoothing_width_fm", "parameter_mean", "parameter_sdev", "chi2", "dof", "chi2_dof", "Q", "logGBF", "n_failed_samples", "sample_failures")
             if key in candidate
         }
         | {"selected": candidate["label"] in selected_labels, "model_weight": model_weights[candidate["label"]]}
         for candidate in result["model_candidates"]
     ]
+    range_table = [
+        {
+            key: candidate[key]
+            for key in ("model_id", "z_min_fm", "z_max_fm", "order", "prior_width", "fit_success", "fit_parameters", "chi2", "dof", "chi2_dof", "Q", "logGBF", "error")
+            if key in candidate
+        }
+        | {"selected": candidate["model_id"] == selected_range["model_id"] and float(candidate["z_min_fm"]) == float(selected_range["z_min_fm"]) and float(candidate["z_max_fm"]) == float(selected_range["z_max_fm"])}
+        for candidate in result["range_candidates"]
+    ]
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
     (context.artifact_directory / "diagnostics" / "candidates.json").write_text(json.dumps(candidate_table, indent=2), encoding="utf-8")
-    artifacts = ["output.nc", "diagnostics/candidates.json", "output_xdep.pdf", "output_re.pdf", "output_im.pdf"]
+    (context.artifact_directory / "diagnostics" / "ranges.json").write_text(json.dumps(range_table, indent=2), encoding="utf-8")
+    artifacts = ["output.nc", "diagnostics/candidates.json", "diagnostics/ranges.json", "output_xdep.pdf", "output_re.pdf", "output_im.pdf"]
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
     start_plot()
     if scan["component"] in {"re", "both"}:

@@ -6,6 +6,7 @@
     "random_seed": 1984,
     "workers": 4,
     "target_observable": "pdf",
+    "parton": "quark",
     "resample_mode": "jackknife",
     "bin_size": 1,
     "sample_error_mode": "covariance"
@@ -13,11 +14,11 @@
   "stages": {
     "correlator_analysis": {
       "defaults": {
-        "observable": "matrix_element",
         "analysis_method": "lanczos",
-        "resample_group": "HISQa060_X",
         "component": "both",
-        "nstate": [2],
+        "nstate": [
+          2
+        ],
         "lanczos": {
           "scope": "3pt_matrix",
           "precision": 100
@@ -31,9 +32,10 @@
               "file": "examples/pion_pdf_cg_correlators_neo.json"
             }
           },
-          "params": {
-            "correlator_ids": ["p0_2pt", "p0_3pt"]
-          }
+          "correlator_ids": [
+            "p0_2pt",
+            "p0_3pt"
+          ]
         },
         {
           "id": "ca_p5",
@@ -42,57 +44,79 @@
               "file": "examples/pion_pdf_cg_correlators_neo.json"
             }
           },
-          "params": {
-            "correlator_ids": ["p5_2pt", "p5_3pt"]
-          }
+          "correlator_ids": [
+            "p5_2pt",
+            "p5_3pt"
+          ]
         }
       ]
     },
     "renormalization": {
       "defaults": {
-        "operation": "apply",
-        "scheme": "hybrid",
         "strategy": "external_denominator",
         "normalization": false,
-        "mu": 2.0,
-        "zs_fm": 0.18,
-        "m0_gev": 0.0,
-        "delta_m_gev": 0.0
+        "external_denominator": {
+          "scheme": "hybrid",
+          "hybrid": {
+            "zs_fm": 0.18,
+            "m0_gev": 0.0,
+            "delta_m_gev": 0.0
+          }
+        }
       },
       "jobs": [
         {
           "id": "rn_p5",
-          "inputs": {"target": {"job": "ca_p5"}, "denominator": {"job": "ca_p0"}},
-          "params": {}
+          "inputs": {
+            "target": "ca_p5",
+            "denominator": "ca_p0"
+          }
         }
       ]
     },
     "fourier_transform": {
       "defaults": {
-        "parton": "quark",
-        "gfix": "CG",
-        "symmetry": {"real": "even", "imag": "odd"},
-        "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "pz_over_2pi"},
-        "quasi_y_ls": {"start": -2.0, "stop": 2.0, "num": 200},
-        "tail_models": ["cg_nla"],
-        "zmin_fm": [0.72, 0.78, 0.84, 0.9],
-        "zmax_fm": [1.26, 1.32, 1.38, 1.44],
-        "smoothing": {"smooth": ["linear"], "widths_fm": [0.06]},
+        "quasi_y_ls": {
+          "start": -2.0,
+          "stop": 2.0,
+          "num": 200
+        },
+        "zmin_fm": [
+          0.72,
+          0.78,
+          0.84,
+          0.9
+        ],
+        "zmax_fm": [
+          1.26,
+          1.32,
+          1.38,
+          1.44
+        ],
+        "smooth": "linear",
         "zmax_ext_fm": 1.5,
         "scheme_scan": {
-          "order": ["LA", "NLA"],
+          "order": [
+            "LA",
+            "NLA"
+          ],
           "sector": "valence",
           "Lambda0_gev": 0.1,
-          "posterior_prior_error_scale": [3.0, 4.0, 5.0],
-          "model_average": false,
-          "max_schemes": 200,
-          "component": "re",
-          "output_scale": 2.0,
-          "q_min": 0.05
+          "posterior_prior_error_scale": [
+            3.0,
+            4.0,
+            5.0
+          ],
+          "model_average": false
         }
       },
       "jobs": [
-        {"id": "ft_p5", "inputs": {"input": {"job": "rn_p5"}}, "params": {}}
+        {
+          "id": "ft_p5",
+          "inputs": {
+            "input": "rn_p5"
+          }
+        }
       ]
     },
     "perturbative_matching": {
@@ -100,12 +124,25 @@
         "kernel_id": "CG_gt_quark_PDF_hybrid_RGR_re_NLO",
         "scheme": "hybrid",
         "mu": 2.0,
-        "lc_x_ls": {"start": 0.0, "stop": 1.0},
-        "kernel_parameters": {"rgr_kappa": 1.0, "rgr_mu_min_gev": 0.6},
-        "zs_fm": 0.18
+        "lc_x_ls": {
+          "start": 0.0,
+          "stop": 1.0
+        },
+        "kernel_parameters": {
+          "rgr_kappa": 1.0,
+          "rgr_mu_min_gev": 0.6
+        },
+        "hybrid": {
+          "zs_fm": 0.18
+        }
       },
       "jobs": [
-        {"id": "mt_p5", "inputs": {"quasi": {"job": "ft_p5"}}, "params": {}}
+        {
+          "id": "mt_p5",
+          "inputs": {
+            "quasi": "ft_p5"
+          }
+        }
       ]
     },
     "review": {
@@ -113,13 +150,27 @@
         "catalog": "builtin",
         "max_papers": 4,
         "report_language": "en",
-        "checks": ["identity", "units", "kinematics", "schemes", "grids", "resampling"]
+        "checks": [
+          "identity",
+          "units",
+          "kinematics",
+          "schemes",
+          "grids",
+          "resampling"
+        ]
       },
       "jobs": [
         {
           "id": "review",
-          "inputs": {"results": [{"job": "ca_p0"}, {"job": "ca_p5"}, {"job": "rn_p5"}, {"job": "ft_p5"}, {"job": "mt_p5"}]},
-          "params": {}
+          "inputs": {
+            "results": [
+              "ca_p0",
+              "ca_p5",
+              "rn_p5",
+              "ft_p5",
+              "mt_p5"
+            ]
+          }
         }
       ]
     }

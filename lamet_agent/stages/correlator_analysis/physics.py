@@ -321,7 +321,13 @@ def fit_matrix_element_samples(
             fit_prior = chained_prior if chained_prior is not None else base_prior
             result = nonlinear_fit((x, fit_data), matrix_element_fcn, fit_prior, workers=workers, sample_prior_scale=posterior_prior_error_scale * prior_width, covariance=covariance, sample_error_mode=sample_error_mode, mode="resamples" if fit_samples else "center", tolerate_sample_failures=True, _parallel=parallel, svdcut=svdcut, maxit=10000)
             n_params = sum(int(np.size(gv.mean(fit_prior[key]))) for key in fit_prior)
-            center_metrics.append({"z": z_value, "chi2": result.chi2, "dof": result.dof, "chi2_dof": result.chi2 / result.dof, "Q": result.Q, "logGBF": result.logGBF, "n_data": int(observations.shape[1]), "n_params": n_params, "n_failed_samples": 0})
+            energy_keys = ("E0_i", "E0_f") if fitting_form == "NonBreit" else ("E0",)
+            energy_summary = {}
+            for energy_key in energy_keys:
+                energy_summary[energy_key] = float(result.pmean[energy_key])
+                energy_samples = [float(parameters[energy_key]) for parameters in result.samples if parameters is not None] if fit_samples else []
+                energy_summary[f"{energy_key}_sdev"] = float(np.std(energy_samples, ddof=1)) if len(energy_samples) > 1 else None
+            center_metrics.append({"z": z_value, "chi2": result.chi2, "dof": result.dof, "chi2_dof": result.chi2 / result.dof, "Q": result.Q, "logGBF": result.logGBF, "n_data": int(observations.shape[1]), "n_params": n_params, "n_failed_samples": 0, **energy_summary})
             if not fit_samples:
                 continue
             for sample_index, parameters in enumerate(result.samples):
@@ -369,12 +375,12 @@ def spectrum_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndar
 
 
 def qda_ratio_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
-    """Evaluate the real and imaginary one-state qDA ratios together."""
+    """Evaluate the reference one-state nonlocal-z0 qDA ratio."""
     size = len(x["times"])
     return np.concatenate(
         [
-            np.full(size, parameters["matrix_element_re"]),
-            np.full(size, parameters["matrix_element_im"]),
+            np.full(size, parameters["O00_re"] / parameters["zprime0"]),
+            np.full(size, parameters["O00_im"] / parameters["zprime0"]),
         ]
     )
 
@@ -428,8 +434,12 @@ def matrix_element_samples(
     lsqfit: Mapping[str, Any] | None = None,
     sample_error_mode: str = "covariance",
     workers: int = 1,
+    tune_z: int | float | None = None,
+    fit_samples: bool = True,
+    n_states: int = 1,
+    prior_width: float = 1.0,
     _parallel: _ParallelPool | None = None,
-) -> tuple[np.ndarray, list[float], dict[str, Any]]:
+) -> tuple[np.ndarray | None, list[float], dict[str, Any]]:
     """Extract ratio/summation-style matrix-element samples from correlators.
 
     Three-point data are reduced using the declared coordinates, never by
@@ -448,6 +458,14 @@ def matrix_element_samples(
     if source.attrs.get("correlator_type") == "qda":
         if method != "qda" or source.dims != ["t", "z"] or lsqfit is None:
             raise ValueError("qDA fitting requires method='qda', dimensions ['t', 'z'], and lsqfit settings")
+        if n_states != 1:
+            raise ValueError("qDA ratio fitting supports exactly one state")
+        if not np.isfinite(prior_width) or prior_width <= 0:
+            raise ValueError("qDA prior_width must be finite and positive")
+        if fit_samples and tune_z is not None:
+            raise ValueError("tune_z is only valid for a sample-average qDA fit")
+        if not fit_samples and tune_z is None:
+            raise ValueError("sample-average qDA tuning requires tune_z")
         t = np.asarray(source.coords["t"], dtype=float)
         z = np.asarray(source.coords["z"], dtype=float)
         origin = np.flatnonzero(np.isclose(z, 0.0, rtol=0.0, atol=1e-12))
@@ -461,21 +479,35 @@ def matrix_element_samples(
         if np.any(denominator == 0):
             raise ValueError("qDA z=0 denominator contains zero values in the fit window")
         ratios = window_values / denominator[:, :, None]
-        values = np.ones((source.n_sample, len(z)), dtype=complex)
+        values = (
+            np.ones((source.n_sample, len(z)), dtype=complex)
+            if fit_samples
+            else None
+        )
         prior_scale = float(lsqfit["posterior_prior_error_scale"])
         svdcut = float(lsqfit["svdcut"])
         q_min = float(lsqfit["q_min"])
-        tune_matches = np.flatnonzero(np.isclose(z, float(lsqfit["tune_z"]), rtol=0.0, atol=1e-12))
-        if tune_matches.size != 1:
-            raise ValueError("lsqfit.tune_z must name exactly one available z coordinate")
-        tune_index = int(tune_matches[0])
+        if tune_z is None:
+            z_indices = [
+                index for index in range(len(z)) if index != int(origin[0])
+            ]
+        else:
+            tune_matches = np.flatnonzero(
+                np.isclose(z, float(tune_z), rtol=0.0, atol=1e-12)
+            )
+            if tune_matches.size != 1:
+                raise ValueError(
+                    "tune_z must name exactly one available qDA z coordinate"
+                )
+            tune_index = int(tune_matches[0])
+            if tune_index == int(origin[0]):
+                raise ValueError("qDA tuning cannot use its exact z=0 denominator")
+            z_indices = [tune_index]
         fit_metrics = []
 
         parallel = _parallel or _ParallelPool(min(workers, source.n_sample))
         try:
-            for z_index in range(len(z)):
-                if z_index == int(origin[0]):
-                    continue
+            for z_index in z_indices:
                 component_values = ratios[:, :, z_index]
                 real_samples = EnsembleData(
                     source.ensemble,
@@ -502,8 +534,11 @@ def matrix_element_samples(
                 covariance[: selected.size, : selected.size] = gv.evalcov(real_samples.average(sample_error_mode))
                 covariance[selected.size :, selected.size :] = gv.evalcov(imag_samples.average(sample_error_mode))
                 prior = gv.BufferDict()
-                prior["matrix_element_re"] = gv.gvar(1.0, 10.0)
-                prior["matrix_element_im"] = gv.gvar(0.0, 10.0)
+                prior["E0"] = gv.gvar(1.0, 10.0 * prior_width)
+                prior["z0"] = gv.gvar(1.0, 10.0 * prior_width)
+                prior["zprime0"] = gv.gvar(1.0, 10.0 * prior_width)
+                prior["O00_re"] = gv.gvar(1.0, 10.0 * prior_width)
+                prior["O00_im"] = gv.gvar(0.0, 10.0 * prior_width)
                 result = nonlinear_fit(
                     ({"times": t[selected]}, combined),
                     qda_ratio_fcn,
@@ -514,25 +549,51 @@ def matrix_element_samples(
                     sample_error_mode=sample_error_mode,
                     svdcut=svdcut,
                     maxit=10000,
+                    mode="resamples" if fit_samples else "center",
                     _parallel=parallel,
                 )
-                fit_metrics.append({"z": float(z[z_index]), "chi2": result.chi2, "dof": result.dof, "chi2_dof": result.chi2 / result.dof, "Q": result.Q, "logGBF": result.logGBF})
-                if z_index == tune_index and result.Q < q_min:
-                    raise ValueError(
-                        f"qDA tuning fit at z={z[z_index]} has Q={result.Q:.6g}, below q_min={q_min:.6g}"
+                energy_samples = [float(parameters["E0"]) for parameters in result.samples if parameters is not None] if fit_samples else []
+                fit_metrics.append({"z": float(z[z_index]), "chi2": result.chi2, "dof": result.dof, "chi2_dof": result.chi2 / result.dof, "Q": result.Q, "logGBF": result.logGBF, "E0": float(result.pmean["E0"]), "E0_sdev": float(np.std(energy_samples, ddof=1)) if len(energy_samples) > 1 else None})
+                if values is not None:
+                    values[:, z_index] = np.asarray(
+                        [
+                            float(parameters["O00_re"] / parameters["zprime0"])
+                            + 1j * float(parameters["O00_im"] / parameters["zprime0"])
+                            for parameters in result.samples
+                        ]
                     )
-                values[:, z_index] = np.asarray(
-                    [
-                        float(parameters["matrix_element_re"])
-                        + 1j * float(parameters["matrix_element_im"])
-                        for parameters in result.samples
-                    ]
-                )
         finally:
             if _parallel is None:
                 parallel.close()
-        tune_fit = next(record for record in fit_metrics if np.isclose(record["z"], z[tune_index], rtol=0.0, atol=1e-12))
-        return values, z.tolist(), {"Q": tune_fit["Q"], "chi2_dof": tune_fit["chi2_dof"], "min_Q": min(record["Q"] for record in fit_metrics), "max_chi2_dof": max(record["chi2_dof"] for record in fit_metrics), "fits": fit_metrics, "q_min": q_min, "quality_passed": tune_fit["Q"] >= q_min}
+        diagnostics = {
+            "min_Q": min(record["Q"] for record in fit_metrics),
+            "max_chi2_dof": max(record["chi2_dof"] for record in fit_metrics),
+            "fits": fit_metrics,
+            "q_min": q_min,
+            "n_data": int(2 * selected.size),
+            "n_params": 5,
+        }
+        primary_z = tune_z
+        if primary_z is not None:
+            tune_fit = next(
+                record
+                for record in fit_metrics
+                if np.isclose(
+                    record["z"], float(primary_z), rtol=0.0, atol=1e-12
+                )
+            )
+            diagnostics.update(
+                {
+                    "tune_z": tune_fit["z"],
+                    "chi2": tune_fit["chi2"],
+                    "dof": tune_fit["dof"],
+                    "Q": tune_fit["Q"],
+                    "chi2_dof": tune_fit["chi2_dof"],
+                    "logGBF": tune_fit["logGBF"],
+                    "quality_passed": tune_fit["Q"] >= q_min,
+                }
+            )
+        return values, z.tolist(), diagnostics
     if "tau" not in source.dims:
         array = np.asarray(source.values)
         physical_dims = [dim for dim in source.dims if dim in {"z", "x"}]

@@ -76,8 +76,10 @@ def test_gvar_median_uses_resampling_scaled_percentile_errors_without_correlatio
     samples = np.asarray([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0], [100.0, 3.0]])
     data = EnsembleData(None, resample, list(samples), ["x"], {"x": [0, 1]})
     result = data.gvar_median
-    low, center, high = np.percentile(samples, [50 - 34.1344746, 50, 50 + 34.1344746], axis=0)
-    expected = np.maximum(high - center, center - low) * factor
+    low, center, high = np.percentile(
+        samples, [50 - 34.1344746, 50, 50 + 34.1344746], axis=0
+    )
+    expected = 0.5 * (high - low) * factor
     np.testing.assert_allclose(gv.mean(result), center)
     np.testing.assert_allclose(gv.sdev(result), expected)
     covariance = gv.evalcov(result)

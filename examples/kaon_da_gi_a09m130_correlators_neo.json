@@ -6,7 +6,7 @@
     "a_t": 0.0882,
     "L_s": 64,
     "L_t": 96,
-    "m_pi_gev": 0.135
+    "m_pi": 0.135
   },
   "configuration_count": 737,
   "correlators": [

@@ -134,7 +134,7 @@ def load_descriptor(path: Path) -> dict[str, Any]:
             "correlator_id": record["id"],
             "ensemble_id": ensemble.id,
             "L_s": int(ensemble.L_s),
-            "m_pi_gev": float(ensemble.m_pi_gev),
+            "m_pi": float(ensemble.m_pi),
             "correlator_type": record["correlator_type"],
             "hadron": record.get("hadron", {}).get("name") if isinstance(record.get("hadron"), dict) else record.get("hadron"),
             "source_momentum": json.dumps(record["source_momentum"]),

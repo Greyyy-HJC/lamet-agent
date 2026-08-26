@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
+import gvar as gv
+import lsqfit as lsf
 import numpy as np
 
 from lamet_agent.data import EnsembleData
@@ -195,101 +197,166 @@ def fit_factor(
     d: float,
     n_f: int,
     scale_gev: float,
+    svdcut: float,
     zms_model: str = "pdf_nlo",
     short_distance_min_fm: float = 0.0,
     lattice_spacing_range_fm: tuple[float, float] | None = None,
 ) -> EnsembleData:
-    """Fit a sample-bearing ``Z_R(a,z)`` factor over the declared ``(a,z)`` grid.
-
-    For each resample and coordinate, the known divergence and perturbative
-    term are subtracted from ``log M``.  A linear fit in ``a`` yields ``g(z)``;
-    the short-distance fit of ``g(z)-log Z_MS`` through the origin yields
-    ``m0`` and hence ``M_R``.  The returned factor is ``M/M_R`` and keeps the
-    authored source ordering and sample index intact.
-    """
+    """Fit the reference workflow's correlated mean self-renormalization factor."""
     if isinstance(reference, EnsembleData) and reference.dims == ["a", "z"]:
-        references = []
-        for spacing in reference.coords["a"]:
-            item = reference.at("a", spacing)
-            attrs = item.attrs
-            attrs["lattice_spacing_fm"] = float(spacing)
-            references.append(
-                EnsembleData(
-                    item.ensemble,
-                    item.resample,
-                    [sample for sample in item.values],
-                    item.dims,
-                    item.coords,
-                    attrs=attrs,
-                    name=item.name,
-                )
-            )
+        source = reference
+        spacings = [float(value) for value in source.coords["a"]]
+        z = np.asarray(source.coords["z"], dtype=float)
+        values = np.asarray(source.values)
     else:
         references = [reference] if isinstance(reference, EnsembleData) else list(reference)
-    if len(references) < 2 or any("z" not in item.dims or item.dims != ["z"] for item in references) or short_distance_min_fm < 0 or short_distance_max_fm <= short_distance_min_fm:
-        raise ValueError("self-renormalization requires at least two one-dimensional z references")
-    first = references[0]
-    z = np.asarray(first.coords["z"], dtype=float)
-    if z.size == 0 or not np.all(np.isfinite(z)) or any(not np.allclose(item.coords["z"], z, rtol=0.0, atol=1e-12) for item in references[1:]):
-        raise ValueError("self-renormalization references must share one finite z grid")
-    if any(item.resample != first.resample or item.n_sample != first.n_sample for item in references[1:]):
-        raise ValueError("self-renormalization references must share resampling mode and sample count")
-    spacings: list[float] = []
-    for item in references:
-        spacing = item.attrs.get("lattice_spacing_fm")
-        if spacing is None and item.ensemble is not None:
-            spacing = item.ensemble.a_s
-        if not isinstance(spacing, (int, float)) or isinstance(spacing, bool) or not math.isfinite(float(spacing)) or float(spacing) <= 0:
-            raise ValueError("self-renormalization references require positive lattice_spacing_fm")
-        spacings.append(float(spacing))
-    if len(set(spacings)) != len(spacings):
-        raise ValueError("self-renormalization reference lattice spacings must be unique")
-    if lattice_spacing_range_fm is not None and any(value < lattice_spacing_range_fm[0] - 1e-12 or value > lattice_spacing_range_fm[1] + 1e-12 for value in spacings):
+        if len(references) < 2 or any(item.dims != ["z"] for item in references):
+            raise ValueError("self-renormalization requires an (a,z) source or at least two z sources")
+        source = references[0]
+        spacings = [
+            float(item.attrs.get("lattice_spacing_fm", item.ensemble.a_s if item.ensemble is not None else np.nan))
+            for item in references
+        ]
+        z = np.asarray(source.coords["z"], dtype=float)
+        if any(not np.allclose(item.coords["z"], z, rtol=0.0, atol=1e-12) for item in references[1:]):
+            raise ValueError("self-renormalization references must share one z grid")
+        values = np.stack([np.asarray(item.values) for item in references], axis=1)
+    if (
+        values.ndim != 3
+        or values.shape[1:] != (len(spacings), len(z))
+        or np.any(~np.isfinite(values))
+        or np.any(values == 0)
+    ):
+        raise ValueError("self-renormalization reference values must be finite, nonzero (sample,a,z) data")
+    if lattice_spacing_range_fm is not None and any(
+        value < lattice_spacing_range_fm[0] - 1e-12 or value > lattice_spacing_range_fm[1] + 1e-12
+        for value in spacings
+    ):
         raise ValueError("reference lattice spacings are outside the authored fit range")
-    design = np.column_stack([np.ones(len(spacings)), np.asarray(spacings, dtype=float)])
-    known = np.asarray([log_m(z, spacing, k=k, lambda_qcd_gev=lambda_qcd_gev, d=d, n_f=n_f, scale_gev=scale_gev) for spacing in spacings])
-    values = np.stack([np.asarray(item.values) for item in references], axis=0)
-    if np.any(~np.isfinite(values)) or np.any(values == 0):
-        raise ValueError("self-renormalization references must be finite and nonzero")
-    factor_samples: list[np.ndarray] = []
-    m0_samples: list[float] = []
-    m_r_samples: list[np.ndarray] = []
-    zms = zmsbar_pdf_log(z, scale_gev=scale_gev, model=zms_model)
-    short_mask = (np.abs(z) >= float(short_distance_min_fm) - 1e-12) & (np.abs(z) <= float(short_distance_max_fm) + 1e-12) & (np.abs(z) > 1e-12)
-    if not np.any(short_mask):
-        raise ValueError("short-distance range contains no nonzero z coordinate")
-    for sample_index in range(first.n_sample):
-        log_values = np.log(np.abs(values[:, sample_index, :]))
-        adjusted = log_values - known
-        coefficients = np.linalg.lstsq(design, adjusted, rcond=None)[0]
-        g = coefficients[0]
-        z_dimensionless = z[short_mask] / HBAR_C_GEV_FM
-        remainder = np.real(g[short_mask] - zms[short_mask])
-        m0 = float(np.linalg.lstsq(np.column_stack([z_dimensionless, np.ones_like(z_dimensionless)]), remainder, rcond=None)[0][0])
-        m_r = np.exp(g - m0 * z / HBAR_C_GEV_FM)
-        predicted_log = known + g[None, :] + coefficients[1][None, :] * np.asarray(spacings)[:, None]
-        factor_samples.append(np.exp(predicted_log - np.log(m_r)[None, :]))
-        m0_samples.append(m0)
-        m_r_samples.append(m_r)
-    attrs = first.attrs
-    source_ids = [str(item.attrs.get("resample_id", item.attrs.get("ensemble_id", index))) for index, item in enumerate(references)]
-    digest_payload = json.dumps({"source_resample_ids": source_ids, "spacings": spacings, "short_distance_min_fm": float(short_distance_min_fm), "short_distance_max_fm": float(short_distance_max_fm), "k": float(k), "lambda_qcd_gev": float(lambda_qcd_gev), "d": float(d), "n_f": int(n_f), "scale_gev": float(scale_gev), "zms_model": zms_model}, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    attrs.update({
-        "operation": "fit_factor",
-        "renormalization_scheme": "msbar",
-        "strategy": "self_renormalization",
-        "short_distance_min_fm": float(short_distance_min_fm),
-        "short_distance_max_fm": float(short_distance_max_fm),
-        "formula": "log M=k*z/(a*log(a*Lambda))+g(z)+f(z)*a+perturbative(a); Z_R=M/M_R",
-        "source_resample_ids": json.dumps(source_ids),
-        "resample_id": hashlib.sha256(digest_payload).hexdigest(),
-        "k": float(k),
-        "lambda_qcd_gev": float(lambda_qcd_gev),
-        "d": float(d),
-        "n_f": int(n_f),
-        "scale_gev": float(scale_gev),
-        "zms_model": zms_model,
-        "m0_gev": float(np.mean(m0_samples)),
-        "units": '{"values":"dimensionless","a":"fm","z":"fm"}',
-    })
-    return EnsembleData(None, first.resample, factor_samples, ["a", "z"], {"a": spacings, "z": list(first.coords["z"])}, attrs=attrs, name="renormalization_factor")
+    log_data = EnsembleData(
+        source.ensemble,
+        source.resample,
+        [np.log(np.abs(sample)) for sample in values],
+        ["a", "z"],
+        {"a": spacings, "z": z.tolist()},
+    )
+    log_average = log_data.gvar
+    prior = gv.BufferDict()
+    for coordinate in z:
+        prior[f"g{coordinate}"] = gv.gvar(0.0, 20.0)
+        prior[f"f1{coordinate}"] = gv.gvar(0.0, 5.0)
+    fit_x = {"z": [], "a": []}
+    fit_y = []
+    for spacing_index, spacing in enumerate(spacings):
+        for z_index, coordinate in enumerate(z):
+            fit_x["z"].append(float(coordinate))
+            fit_x["a"].append(float(spacing))
+            fit_y.append(log_average[spacing_index, z_index])
+
+    def model(x, parameters):
+        return [
+            log_m(
+                np.asarray([coordinate]),
+                spacing,
+                k=k,
+                lambda_qcd_gev=lambda_qcd_gev,
+                d=d,
+                n_f=n_f,
+                scale_gev=scale_gev,
+            )[0]
+            + parameters[f"g{coordinate}"]
+            + parameters[f"f1{coordinate}"] * spacing / HBAR_C_GEV_FM
+            for coordinate, spacing in zip(x["z"], x["a"])
+        ]
+
+    fit = lsf.nonlinear_fit(
+        data=(fit_x, fit_y),
+        prior=prior,
+        fcn=model,
+        maxit=10000,
+        svdcut=svdcut,
+        fitter="scipy_least_squares",
+    )
+    short = (z >= short_distance_min_fm - 1e-12) & (z <= short_distance_max_fm + 1e-12)
+    if np.count_nonzero(short) < 3:
+        raise ValueError("short-distance range must contain at least three coordinates")
+    short_z = z[short]
+    short_g = np.asarray([fit.p[f"g{coordinate}"] for coordinate in z], dtype=object)[short]
+    zms = zmsbar_pdf_log(short_z, scale_gev=scale_gev, model=zms_model)
+    m0_prior = gv.BufferDict()
+    m0_prior["m0"] = gv.gvar(0.0, 20.0)
+    m0_prior["b"] = gv.gvar(0.0, 100.0)
+    m0_fit = lsf.nonlinear_fit(
+        data=(short_z, short_g),
+        prior=m0_prior,
+        fcn=lambda coordinates, parameters: zms + parameters["m0"] * coordinates + parameters["b"],
+        maxit=10000,
+        svdcut=svdcut,
+        fitter="scipy_least_squares",
+    )
+    m0 = m0_fit.p["m0"]
+    factor = np.empty((len(spacings), len(z)), dtype=float)
+    for spacing_index, spacing in enumerate(spacings):
+        known = log_m(
+            z,
+            spacing,
+            k=k,
+            lambda_qcd_gev=lambda_qcd_gev,
+            d=d,
+            n_f=n_f,
+            scale_gev=scale_gev,
+        )
+        finite = np.asarray([fit.p[f"f1{coordinate}"] for coordinate in z], dtype=object)
+        factor[spacing_index] = np.asarray(
+            gv.mean(gv.exp(known + finite * spacing / HBAR_C_GEV_FM + m0 * z)),
+            dtype=float,
+        )
+    source_ids = [str(source.attrs.get("resample_id", source.attrs.get("ensemble_id", "reference")))]
+    attrs = dict(source.attrs)
+    attrs.update(
+        {
+            "operation": "fit_factor",
+            "renormalization_scheme": "msbar",
+            "strategy": "self_renormalization",
+            "short_distance_min_fm": float(short_distance_min_fm),
+            "short_distance_max_fm": float(short_distance_max_fm),
+            "formula": "reference_correlated_mean_self_renormalization",
+            "source_resample_ids": json.dumps(source_ids),
+            "resample_id": hashlib.sha256(
+                json.dumps(
+                    {
+                        "source_resample_ids": source_ids,
+                        "spacings": spacings,
+                        "short_distance_min_fm": float(short_distance_min_fm),
+                        "short_distance_max_fm": float(short_distance_max_fm),
+                        "k": float(k),
+                        "lambda_qcd_gev": float(lambda_qcd_gev),
+                        "d": float(d),
+                        "n_f": int(n_f),
+                        "scale_gev": float(scale_gev),
+                        "zms_model": zms_model,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            "k": float(k),
+            "lambda_qcd_gev": float(lambda_qcd_gev),
+            "d": float(d),
+            "n_f": int(n_f),
+            "scale_gev": float(scale_gev),
+            "zms_model": zms_model,
+            "m0_gev": float(gv.mean(m0)),
+            "m0_convention": "reference_inverse_fm",
+            "units": '{"values":"dimensionless","a":"fm","z":"fm"}',
+        }
+    )
+    return EnsembleData(
+        None,
+        source.resample,
+        [factor],
+        ["a", "z"],
+        {"a": spacings, "z": z.tolist()},
+        attrs=attrs,
+        name="renormalization_factor",
+    )
