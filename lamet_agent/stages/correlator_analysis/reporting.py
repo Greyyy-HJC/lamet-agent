@@ -67,30 +67,230 @@ performed before the median Lanczos result is published.
 """.strip()
 
 
+def _sample_quality_lines(records: tuple[StageReportRecord, ...], artifact_directory: Path) -> list[str]:
+    """Plot selected-production per-sample Q and chi2/dof distributions."""
+    import numpy as np
+
+    from lamet_agent.plotting import configure_plot, histogram, line, save_figure, series_color, start_plot
+
+    def series(key: str) -> list[tuple[str, np.ndarray]]:
+        result = []
+        for record in records:
+            quality = record.summary.get("diagnostics", {}).get("sample_fit_quality", {})
+            values = np.asarray(quality.get(key, []), dtype=float) if isinstance(quality, dict) else np.asarray([])
+            values = values[np.isfinite(values)]
+            if values.size:
+                result.append((record.job_id, values))
+        return result
+
+    q_series = series("Q")
+    chi2_series = series("chi2_dof")
+    if not q_series and not chi2_series:
+        return ["No successful production sample-fit quality diagnostics were available."]
+    lines = [
+        "The LSQFit $Q$ value is the goodness-of-fit p-value. Distributions include successful production "
+        "sample fits only; numerical failures remain counted in the job diagnostics.",
+        "",
+    ]
+    if q_series:
+        start_plot()
+        pooled = []
+        for index, (label, values) in enumerate(q_series):
+            pooled.append(values)
+            ordered = np.sort(values)
+            cdf = np.arange(1, ordered.size + 1, dtype=float) / ordered.size
+            line(
+                np.r_[ordered[0], ordered],
+                np.r_[0.0, cdf],
+                color=series_color(index),
+                label=label,
+                linewidth=1.4,
+                drawstyle="steps-post",
+            )
+        all_values = np.sort(np.concatenate(pooled))
+        all_cdf = np.arange(1, all_values.size + 1, dtype=float) / all_values.size
+        line(
+            np.r_[all_values[0], all_values],
+            np.r_[0.0, all_cdf],
+            color="0.15",
+            label="All",
+            linewidth=2.0,
+            drawstyle="steps-post",
+        )
+        configure_plot(
+            xlabel=r"$Q$",
+            ylabel=r"CDF of $Q$",
+            xlim=(0.0, 1.0),
+            ylim=(0.0, 1.0),
+            legend=True,
+            title=r"Per-sample fit $Q$",
+        )
+        q_pdf = artifact_directory / "plots" / "sample_fit_quality_Q.pdf"
+        q_svg = artifact_directory / "plots" / "sample_fit_quality_Q.svg"
+        save_figure(q_pdf, q_svg)
+        lines.extend(
+            [
+                "![CDF of per-sample Q](plots/sample_fit_quality_Q.svg)",
+                "",
+                "[CDF of per-sample Q (PDF)](plots/sample_fit_quality_Q.pdf)",
+                "",
+            ]
+        )
+    if chi2_series:
+        pooled_values = np.concatenate([values for _label, values in chi2_series])
+        low = float(np.min(pooled_values))
+        high = float(np.max(pooled_values))
+        if high <= low:
+            padding = 0.05 if low == 0.0 else abs(low) * 0.05
+            low, high = low - padding, high + padding
+        automatic = max(1, int(np.histogram_bin_edges(pooled_values, bins="auto").size - 1))
+        bins = np.linspace(low, high, max(1, int(np.round(automatic * 1.5))) + 1)
+        start_plot()
+        for index, (label, values) in enumerate(chi2_series):
+            histogram(values, bins, color=series_color(index), label=label)
+        histogram(pooled_values, bins, color="0.15", label="All", linewidth=2.0)
+        span = float(bins[-1] - bins[0])
+        padding = 0.02 * span if span > 0 else 0.05
+        configure_plot(
+            xlabel=r"$\chi^2/\mathrm{dof}$",
+            ylabel="Counts",
+            xlim=(float(bins[0]) - padding, float(bins[-1]) + padding),
+            legend=True,
+            title=r"Per-sample fit $\chi^2/\mathrm{dof}$",
+        )
+        chi2_pdf = artifact_directory / "plots" / "sample_fit_quality_chi2.pdf"
+        chi2_svg = artifact_directory / "plots" / "sample_fit_quality_chi2.svg"
+        save_figure(chi2_pdf, chi2_svg)
+        lines.extend(
+            [
+                r"![Histogram of per-sample chi2/dof](plots/sample_fit_quality_chi2.svg)",
+                "",
+                "[Histogram of per-sample chi2/dof (PDF)](plots/sample_fit_quality_chi2.pdf)",
+            ]
+        )
+    return lines
+
+
+def _dispersion_model(x_design, parameters):
+    """Evaluate E^2 = m^2 + k2 p^2 + k3 p^4 a^2 on the two-column design matrix."""
+    return parameters["m2"] + parameters["k2"] * x_design[:, 0] + parameters["k3"] * x_design[:, 1]
+
+
+_DISPERSION_N_PARAMS = 3
+
+
 def _dispersion_lines(records: tuple[StageReportRecord, ...], artifact_directory: Path) -> list[str]:
+    """Restore the physical-unit ensemble dispersion plot from aligned E0 samples."""
+    import gvar as gv
+    import lsqfit
+    import numpy as np
+
+    from lamet_agent.data import EnsembleData
+    from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
+    from lamet_agent.plotting import configure_plot, errorband, errorbar, line, save_figure, series_color, start_plot
+
     points = []
     for record in records:
         diagnostics = record.summary.get("diagnostics", {})
-        application = diagnostics.get("selected_application_fit")
-        fits = application.get("fits", []) if isinstance(application, dict) else []
+        energy = diagnostics.get("dispersion_energy", {}) if isinstance(diagnostics, dict) else {}
         attrs = output_attrs(record)
         momentum = attrs.get("momentum_gev")
-        fit = fits[0] if fits and isinstance(fits[0], dict) else None
-        if fit is None or momentum is None or fit.get("E0") is None:
+        ensemble = getattr(record.output, "ensemble", None)
+        samples = energy.get("E0_samples", []) if isinstance(energy, dict) else []
+        if ensemble is None or momentum is None or not samples:
             continue
-        points.append((record.job_id, float(momentum), float(fit["E0"]), fit.get("E0_sdev")))
+        lattice_samples = np.asarray(samples, dtype=float)
+        if lattice_samples.ndim != 1 or np.any(~np.isfinite(lattice_samples)):
+            continue
+        gev2_samples = (lattice_samples * HBAR_C_GEV_FM / float(ensemble.a_t)) ** 2
+        mode = str(attrs.get("sample_error_mode", "covariance"))
+        point_data = EnsembleData(
+            ensemble,
+            str(record.output.resample),
+            [[value] for value in gev2_samples],
+            ["point"],
+            {"point": [0]},
+        )
+        points.append(
+            {
+                "job_id": record.job_id,
+                "ensemble": str(ensemble.id),
+                "ensemble_info": ensemble,
+                "momentum2": float(momentum) ** 2,
+                "samples": gev2_samples,
+                "value": point_data.average(mode)[0],
+                "mode": mode,
+                "resample": str(record.output.resample),
+                "resample_id": attrs.get("resample_id"),
+            }
+        )
     if len(points) < 2:
         return [
-            "Fewer than two jobs carried a common ground-state energy and momentum, so no dispersion plot was generated."
+            "Fewer than two jobs carried compatible ground-state energy resamples and momentum, so no "
+            "dispersion plot was generated."
         ]
-    from lamet_agent.plotting import configure_plot, errorbar, save_figure, start_plot
-    import gvar
 
+    groups: dict[str, list[dict[str, object]]] = {}
+    for point in points:
+        groups.setdefault(str(point["ensemble"]), []).append(point)
     start_plot()
-    for label, momentum, energy, energy_sdev in points:
-        sdev = 0.0 if energy_sdev is None else 2.0 * abs(energy) * float(energy_sdev)
-        errorbar([momentum**2], [gvar.gvar(energy**2, sdev)], label=label)
-    configure_plot(xlabel=r"$P_z^2$ [GeV$^2$]", ylabel=r"$E_0^2$", legend=True)
+    maximum = max(float(point["momentum2"]) for point in points)
+    p2_line = np.linspace(0.0, maximum * 1.05 if maximum > 0.0 else 1.0, 200)
+    notes: list[str] = []
+    for group_index, (label, group) in enumerate(sorted(groups.items())):
+        group.sort(key=lambda point: (float(point["momentum2"]), str(point["job_id"])))
+        color = series_color(group_index)
+        p2 = np.asarray([float(point["momentum2"]) for point in group], dtype=float)
+        signatures = {(point["resample"], point["resample_id"], len(point["samples"])) for point in group}
+        compatible = len(group) >= 2 and len(signatures) == 1 and next(iter(signatures))[1] is not None
+        if compatible:
+            sample_matrix = np.column_stack([point["samples"] for point in group])
+            ensemble = group[0]["ensemble_info"]
+            combined = EnsembleData(
+                ensemble,
+                str(group[0]["resample"]),
+                list(sample_matrix),
+                ["point"],
+                {"point": list(range(len(group)))},
+            )
+            values = combined.average(str(group[0]["mode"]))
+        else:
+            values = np.asarray([point["value"] for point in group], dtype=object)
+        errorbar(p2, values, color=color, label=label or "ensemble")
+        if not compatible:
+            notes.append(f"`{label}` did not have aligned resamples, so its fit band was omitted.")
+            continue
+        if len(group) <= _DISPERSION_N_PARAMS:
+            notes.append(
+                f"`{label}` has {len(group)} momenta and the dispersion model has "
+                f"{_DISPERSION_N_PARAMS} parameters, so the fit band was omitted."
+            )
+            continue
+        ensemble = group[0]["ensemble_info"]
+        a2 = np.full_like(p2, (float(ensemble.a_s) / HBAR_C_GEV_FM) ** 2)
+        design = np.column_stack([p2, p2**2 * a2])
+        prior = gv.BufferDict(
+            {
+                "m2": gv.gvar(float(np.min(gv.mean(values))), 10.0),
+                "k2": gv.gvar(1.0, 10.0),
+                "k3": gv.gvar(0.0, 10.0),
+            }
+        )
+        try:
+            fit = lsqfit.nonlinear_fit(data=(design, values), fcn=_dispersion_model, prior=prior, maxit=2000)
+        except (FloatingPointError, OverflowError, RuntimeError, ValueError) as exc:
+            notes.append(f"`{label}` dispersion fit failed: {type(exc).__name__}: {exc}")
+            continue
+        line_design = np.column_stack([p2_line, p2_line**2 * np.full_like(p2_line, float(np.mean(a2)))])
+        errorband(p2_line, _dispersion_model(line_design, fit.p), color=color)
+    line(p2_line, p2_line, color="0.65", label=r"$E^2=p^2$", linestyle="dashed")
+    configure_plot(
+        xlabel=r"$p^2\,[\mathrm{GeV}^2]$",
+        ylabel=r"$E_0^2\,[\mathrm{GeV}^2]$",
+        legend=True,
+        legend_loc="upper left",
+        title="Dispersion relation",
+    )
     pdf = artifact_directory / "plots" / "dispersion_relation.pdf"
     svg = artifact_directory / "plots" / "dispersion_relation.svg"
     save_figure(pdf, svg)
@@ -98,10 +298,13 @@ def _dispersion_lines(records: tuple[StageReportRecord, ...], artifact_directory
         "![Ground-state dispersion relation](plots/dispersion_relation.svg)",
         "",
         "[Dispersion relation (PDF)](plots/dispersion_relation.pdf)",
+        *(["", *notes] if notes else []),
     ]
 
 
 def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_directory: Path) -> Path:
+    from lamet_agent.plotting import BARE_MATRIX_ELEMENT_LABEL, Z_OVER_A_LABEL
+
     methods = {str(record.params["analysis_method"]) for record in records}
     lines = [
         "# Correlator Analysis Stage Report",
@@ -148,8 +351,17 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             "## Stage Overview",
             "",
             *stage_overlay_lines(
-                records, artifact_directory, coordinate="z", stem="correlator_overview", ylabel="bare matrix element"
+                records,
+                artifact_directory,
+                coordinate="z",
+                stem="correlator_overview",
+                xlabel=Z_OVER_A_LABEL,
+                ylabel=BARE_MATRIX_ELEMENT_LABEL,
             ),
+            "",
+            "## Sample Fit Quality",
+            "",
+            *_sample_quality_lines(records, artifact_directory),
             "",
             "## Dispersion Relation",
             "",
@@ -293,6 +505,10 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "| `Q`, `chi2_dof`, `logGBF` | Sample-average goodness-of-fit and evidence diagnostics used by the selection rule. |",
                 "| `tune_z_diagnostics` | Fits used only to select a common model/window before full-z resample application. |",
                 "| `application_rejections` | Candidates that tuned successfully but failed the mandatory full-grid/sample application. |",
+                "| `sample_fit_quality` | Successful production-resample Q and chi2/dof values used by the stage "
+                "statistics. |",
+                "| `dispersion_energy` | Aligned ground-state energy resamples in lattice units used only for the stage "
+                "dispersion figure. |",
                 "",
                 "### Figures",
                 "",

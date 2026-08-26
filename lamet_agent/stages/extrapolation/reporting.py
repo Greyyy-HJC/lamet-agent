@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+from lamet_agent.plotting import X_LABEL
 from lamet_agent.stages._reporting import (
     StageReportRecord,
     artifact_rows,
@@ -160,6 +161,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 coordinate="x",
                 stem="extrapolation_overview",
                 ylabel="physical distribution",
+                xlabel=X_LABEL,
             ),
         ]
     )

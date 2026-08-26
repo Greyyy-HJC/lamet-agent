@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from numbers import Real
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,15 @@ _VIOLET = "#7B6FD0"
 _FUCHSIA = "#CC79A7"
 COLOR_CYCLE = [_BLUE, _ORANGE, _GREEN, _RED, _VIOLET, _FUCHSIA]
 
+X_LABEL = r"$x$"
+Z_OVER_A_LABEL = r"$z~/~a$"
+BARE_MATRIX_ELEMENT_LABEL = "bare matrix element"
+QUASI_DISTRIBUTION_LABELS = {
+    "real": r"$\mathrm{Re}\,\tilde q(x)$",
+    "imag": r"$\mathrm{Im}\,\tilde q(x)$",
+    "both": r"$\tilde q(x)$",
+}
+
 _FONT_CONFIG = {
     "font.family": "serif",
     "mathtext.fontset": "stix",
@@ -41,6 +52,7 @@ _ERRORBAR_STYLE = {
     "elinewidth": 1,
 }
 _LINE_STYLES = {"solid", "dashed", "dotted", "dashdot", "-", "--", ":", "-."}
+_DRAW_STYLES = {"default", "steps", "steps-pre", "steps-mid", "steps-post"}
 _CURRENT_FIGURE: Any | None = None
 _CURRENT_AXIS: Any | None = None
 _COLOR_INDEX = 0
@@ -75,6 +87,31 @@ def _resolve_color(color: str | None) -> str:
     selected = COLOR_CYCLE[_COLOR_INDEX % len(COLOR_CYCLE)]
     _COLOR_INDEX += 1
     return selected
+
+
+def series_color(index: int) -> str:
+    """Return a stable color for a related group of plot primitives."""
+    return COLOR_CYCLE[index % len(COLOR_CYCLE)]
+
+
+def momentum_label(momentum_gev: object, *, default: str | None = None) -> str:
+    """Format a momentum legend label, optionally falling back for missing metadata."""
+    if isinstance(momentum_gev, Real) and not isinstance(momentum_gev, bool):
+        momentum = float(momentum_gev)
+        if math.isfinite(momentum):
+            return rf"$P_z={round(momentum, 2):g}\,\mathrm{{GeV}}$"
+    if default is not None:
+        return default
+    raise ValueError("momentum_gev must be a finite real number")
+
+
+def quasi_distribution_label(component: str) -> str:
+    """Return the shared quasi-distribution label for one component."""
+    normalized = {"re": "real", "im": "imag"}.get(component, component)
+    try:
+        return QUASI_DISTRIBUTION_LABELS[normalized]
+    except KeyError as exc:
+        raise ValueError(f"unsupported quasi-distribution component {component!r}") from exc
 
 
 def start_plot() -> None:
@@ -137,6 +174,50 @@ def errorband(
     axis.plot(x, mean, color=selected_color, alpha=0.65, linewidth=0.9)
 
 
+def line(
+    x: Any,
+    values: Any,
+    *,
+    color: str | None = None,
+    label: str | None = None,
+    linestyle: str = "solid",
+    linewidth: float = 1.0,
+    drawstyle: str = "default",
+) -> None:
+    """Plot one deterministic line using the shared style and color cycle."""
+    _validate_line_style(linestyle)
+    if drawstyle not in _DRAW_STYLES:
+        raise ValueError(f"unsupported draw style {drawstyle!r}")
+    _axis().plot(
+        x,
+        values,
+        color=_resolve_color(color),
+        label=label,
+        linestyle=linestyle,
+        linewidth=linewidth,
+        drawstyle=drawstyle,
+    )
+
+
+def histogram(
+    values: Any,
+    bins: Any,
+    *,
+    color: str | None = None,
+    label: str | None = None,
+    linewidth: float = 1.4,
+) -> None:
+    """Plot one unfilled step histogram with explicitly shared bins."""
+    _axis().hist(
+        values,
+        bins=bins,
+        histtype="step",
+        color=_resolve_color(color),
+        label=label,
+        linewidth=linewidth,
+    )
+
+
 def _validate_line_style(linestyle: str) -> None:
     if linestyle not in _LINE_STYLES:
         raise ValueError(f"unsupported line style {linestyle!r}")
@@ -183,6 +264,8 @@ def configure_plot(
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     legend: bool = False,
+    legend_loc: str | None = None,
+    title: str | None = None,
 ) -> None:
     """Apply the supported labels, limits, and optional standard legend."""
     axis = _axis()
@@ -192,8 +275,13 @@ def configure_plot(
         axis.set_xlim(*xlim)
     if ylim is not None:
         axis.set_ylim(*ylim)
+    if title is not None:
+        axis.set_title(title, **_FONT_SIZE)
     if legend:
-        axis.legend(**_LEGEND_SETTINGS)
+        settings = dict(_LEGEND_SETTINGS)
+        if legend_loc is not None:
+            settings["loc"] = legend_loc
+        axis.legend(**settings)
 
 
 def save_figure(*paths: str | Path) -> None:
@@ -220,10 +308,19 @@ def save_figure(*paths: str | Path) -> None:
 
 __all__ = [
     "COLOR_CYCLE",
+    "X_LABEL",
+    "Z_OVER_A_LABEL",
+    "BARE_MATRIX_ELEMENT_LABEL",
+    "QUASI_DISTRIBUTION_LABELS",
+    "series_color",
+    "momentum_label",
+    "quasi_distribution_label",
     "start_plot",
     "configure_plot",
     "errorbar",
     "errorband",
+    "line",
+    "histogram",
     "hline",
     "vline",
     "save_figure",

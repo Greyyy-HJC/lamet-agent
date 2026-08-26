@@ -89,8 +89,8 @@ def test_tolerated_sample_failure_preserves_sample_alignment(monkeypatch) -> Non
             assert description == "Sample fits"
             assert unit == "fit"
             return [
-                (successful, None, {"chi2": 1.0, "dof": 1.0, "Q": 0.5, "logGBF": 0.0}),
-                (None, "ZeroDivisionError: float division", None),
+                (successful, None, {"chi2": 1.0, "dof": 1.0, "Q": 0.5, "logGBF": 0.0}, None),
+                (None, "ZeroDivisionError: float division", None, None),
             ]
 
     result = nonlinear_fit(
@@ -105,6 +105,23 @@ def test_tolerated_sample_failure_preserves_sample_alignment(monkeypatch) -> Non
     assert result.sample_errors == (None, "ZeroDivisionError: float division")
     assert result.sample_diagnostics[0]["Q"] == 0.5
     assert result.n_failed_samples == 1
+
+
+def test_sample_posterior_capture_is_explicit_and_indexed() -> None:
+    data = EnsembleData(None, "bootstrap", [[1.0], [1.1], [0.9]], ["x"], {"x": [0]})
+    prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
+    default = nonlinear_fit(data, lambda p: np.asarray([p["amplitude"]]), prior, workers=1)
+    captured = nonlinear_fit(
+        data,
+        lambda p: np.asarray([p["amplitude"]]),
+        prior,
+        workers=1,
+        capture_sample_posteriors=(0,),
+    )
+    assert default.sample_posteriors == (None, None, None)
+    assert captured.sample_posteriors[0] is not None
+    assert captured.sample_posteriors[1:] == (None, None)
+    assert isinstance(captured.sample_posteriors[0]["amplitude"], gv.GVar)
 
 
 def test_center_mode_averages_raw_source_without_scheduling_resamples(monkeypatch) -> None:

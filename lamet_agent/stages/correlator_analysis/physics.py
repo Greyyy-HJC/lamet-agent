@@ -126,7 +126,7 @@ def matrix_element_prior(
     prior = gv.BufferDict()
     suffixes = ("",) if form == "Breit" else ("_i", "_f")
     for suffix in suffixes:
-        prior[f"E0{suffix}"] = gv.gvar(1.0, 10.0 * width_scale)
+        prior[f"log(E0{suffix})"] = gv.gvar(0.0, 3.0 * width_scale)
         for state in range(1, n_states):
             prior[f"log(dE{state}{suffix})"] = gv.gvar(0.0, width_scale)
         for state in range(n_states):
@@ -149,6 +149,172 @@ def matrix_element_prior(
         if n_states > 1:
             prior["sum_den_exp_coeff"] = gv.gvar(0.0, 10.0 * width_scale)
     return prior
+
+
+def _sample_diagnostic_records(result: Any) -> list[dict[str, float | int]]:
+    """Return ordered, JSON-safe quality records for successful sample fits."""
+    records: list[dict[str, float | int]] = []
+    for sample_index, diagnostics in enumerate(result.sample_diagnostics):
+        if diagnostics is None:
+            continue
+        dof = float(diagnostics["dof"])
+        records.append(
+            {
+                "sample": sample_index,
+                "chi2": float(diagnostics["chi2"]),
+                "dof": dof,
+                "chi2_dof": float(diagnostics["chi2"]) / dof,
+                "Q": float(diagnostics["Q"]),
+                "logGBF": float(diagnostics["logGBF"]),
+            }
+        )
+    return records
+
+
+def _gvar_payload(values: Any) -> tuple[list[float], list[float]]:
+    return (
+        np.asarray(gv.mean(values), dtype=float).reshape(-1).tolist(),
+        np.asarray(gv.sdev(values), dtype=float).reshape(-1).tolist(),
+    )
+
+
+def _matrix_sample0_plot_payload(
+    *,
+    ratios: Mapping[int, np.ndarray],
+    z_value: int | float,
+    z_index: int,
+    posterior: Mapping[str, Any] | None,
+    selected_components: tuple[str, ...],
+    fit_scope: str,
+    fitting_form: str,
+    extent: int,
+    n_states: int,
+    tsep_values: list[int],
+    available_tau: np.ndarray,
+    tau_min: int,
+    ensemble: Any,
+    resample: str,
+    sample_error_mode: str,
+) -> dict[str, Any] | None:
+    """Build serializable sample-0 data and posterior bands without refitting."""
+    if posterior is None:
+        return None
+    plots: list[dict[str, Any]] = []
+    if fit_scope in {"3pt_ratio", "3pt_ratio+FH"}:
+        for component in selected_components:
+            series = []
+            for tsep in tsep_values:
+                mask = (available_tau >= tau_min) & (available_tau <= tsep - tau_min)
+                values = ratios[tsep][:, mask, z_index]
+                selected = np.real(values) if component == "re" else np.imag(values)
+                average = EnsembleData(
+                    ensemble,
+                    resample,
+                    list(selected),
+                    ["tau"],
+                    {"tau": available_tau[mask].tolist()},
+                ).average(sample_error_mode)
+                # The fitted ratio uses the periodic two-point denominator.
+                # For the diagnostic figure, restore the legacy forward-
+                # denominator convention so its asymptotic band is directly
+                # comparable with O00/(2 E0).
+                correction_energy = posterior["E0_f"] if fitting_form == "NonBreit" else posterior["E0"]
+                denominator_correction = 1.0 + gv.exp(-correction_energy * (float(extent) - 2.0 * float(tsep)))
+                plotted_data = (
+                    gv.gvar(
+                        np.asarray(selected[0], dtype=float),
+                        np.asarray(gv.evalcov(average), dtype=float),
+                    )
+                    * denominator_correction
+                )
+                fit_tau = np.linspace(float(tau_min) - 0.5, float(tsep - tau_min) + 0.5, 200)
+                fit_values = (
+                    _ratio_model(
+                        np.full_like(fit_tau, float(tsep)),
+                        fit_tau,
+                        posterior,
+                        extent,
+                        n_states,
+                        fitting_form,
+                        component,
+                    )
+                    * denominator_correction
+                )
+                data_mean, data_sdev = _gvar_payload(plotted_data)
+                fit_mean, fit_sdev = _gvar_payload(fit_values)
+                series.append(
+                    {
+                        "label": rf"$t_{{\mathrm{{sep}}}}={tsep}\,a$",
+                        "x": (available_tau[mask].astype(float) - float(tsep) / 2.0).tolist(),
+                        "y": data_mean,
+                        "yerr": data_sdev,
+                        "fit_x": (fit_tau - float(tsep) / 2.0).tolist(),
+                        "fit_mean": fit_mean,
+                        "fit_sdev": fit_sdev,
+                    }
+                )
+            if fitting_form == "NonBreit":
+                sign = -1.0 if float(gv.mean(posterior["z0_i"] * posterior["z0_f"])) < 0.0 else 1.0
+                plateau = sign * posterior[f"O00_{component}"] / (posterior["E0_i"] + posterior["E0_f"])
+            else:
+                plateau = posterior[f"O00_{component}"] / (2.0 * posterior["E0"])
+            plots.append(
+                {
+                    "kind": "pt3_ratio",
+                    "component": component,
+                    "series": series,
+                    "plateau_mean": float(gv.mean(plateau)),
+                    "plateau_sdev": float(gv.sdev(plateau)),
+                }
+            )
+    if fit_scope in {"FH", "3pt_ratio+FH"}:
+        summed = []
+        for tsep in tsep_values:
+            mask = (available_tau >= tau_min) & (available_tau <= tsep - tau_min)
+            summed.append(np.sum(ratios[tsep][:, mask, z_index], axis=1))
+        summed_values = np.stack(summed, axis=1)
+        dt = np.diff(np.asarray(tsep_values, dtype=float))
+        differences = np.diff(summed_values, axis=1) / dt[None, :]
+        fh_t = np.asarray(tsep_values[:-1], dtype=float)
+        if fh_t.size == 1 or not np.allclose(dt, dt[0], rtol=0.0, atol=1e-12):
+            fit_t = fh_t
+            fit_dt = dt
+        else:
+            fit_t = np.linspace(float(fh_t.min()), float(fh_t.max()), 200)
+            fit_dt = np.full_like(fit_t, float(dt[0]))
+        for component in selected_components:
+            selected = np.real(differences) if component == "re" else np.imag(differences)
+            average = EnsembleData(
+                ensemble,
+                resample,
+                list(selected),
+                ["tsep"],
+                {"tsep": fh_t.tolist()},
+            ).average(sample_error_mode)
+            after = _summed_ratio_model(fit_t + fit_dt, tau_min, posterior, n_states, component)
+            before = _summed_ratio_model(fit_t, tau_min, posterior, n_states, component)
+            fit_mean, fit_sdev = _gvar_payload((after - before) / fit_dt)
+            plateau = posterior[f"O00_{component}"] / (2.0 * posterior["E0"])
+            plots.append(
+                {
+                    "kind": "fh",
+                    "component": component,
+                    "series": [
+                        {
+                            "label": "FH",
+                            "x": fh_t.tolist(),
+                            "y": np.asarray(selected[0], dtype=float).tolist(),
+                            "yerr": np.asarray(gv.sdev(average), dtype=float).tolist(),
+                            "fit_x": fit_t.tolist(),
+                            "fit_mean": fit_mean,
+                            "fit_sdev": fit_sdev,
+                        }
+                    ],
+                    "plateau_mean": float(gv.mean(plateau)),
+                    "plateau_sdev": float(gv.sdev(plateau)),
+                }
+            )
+    return {"z": float(z_value), "plots": plots} if plots else None
 
 
 def _momentum(data: EnsembleData, name: str) -> tuple[int, int, int]:
@@ -416,6 +582,7 @@ def fit_matrix_element_samples(
                 sample_error_mode=sample_error_mode,
                 mode="resamples" if fit_samples else "center",
                 tolerate_sample_failures=True,
+                capture_sample_posteriors=(0,) if fit_samples else (),
                 _parallel=parallel,
                 svdcut=svdcut,
                 maxit=10000,
@@ -426,13 +593,49 @@ def fit_matrix_element_samples(
             for energy_key in energy_keys:
                 energy_summary[energy_key] = float(result.pmean[energy_key])
                 energy_samples = (
-                    [float(parameters[energy_key]) for parameters in result.samples if parameters is not None]
+                    [float(parameters[energy_key]) if parameters is not None else None for parameters in result.samples]
                     if fit_samples
                     else []
                 )
+                finite_energy_samples = [value for value in energy_samples if value is not None]
                 energy_summary[f"{energy_key}_sdev"] = (
-                    float(np.std(energy_samples, ddof=1)) if len(energy_samples) > 1 else None
+                    float(
+                        gv.sdev(
+                            EnsembleData(
+                                initial.ensemble,
+                                initial.resample,
+                                [[value] for value in finite_energy_samples],
+                                ["energy"],
+                                {"energy": [0]},
+                            ).average(sample_error_mode)[0]
+                        )
+                    )
+                    if len(finite_energy_samples) == len(energy_samples) and len(energy_samples) > 1
+                    else None
                 )
+                energy_summary[f"{energy_key}_samples"] = energy_samples
+            sample_diagnostics = _sample_diagnostic_records(result) if fit_samples else []
+            sample0_plot = (
+                _matrix_sample0_plot_payload(
+                    ratios=ratios,
+                    z_value=z_value,
+                    z_index=z_index,
+                    posterior=result.sample_posteriors[0] if result.sample_posteriors else None,
+                    selected_components=selected_components,
+                    fit_scope=fit_scope,
+                    fitting_form=fitting_form,
+                    extent=extent,
+                    n_states=n_states,
+                    tsep_values=tsep_values,
+                    available_tau=available_tau,
+                    tau_min=tau_min,
+                    ensemble=three_point.ensemble,
+                    resample=three_point.resample,
+                    sample_error_mode=sample_error_mode,
+                )
+                if fit_samples
+                else None
+            )
             center_metrics.append(
                 {
                     "z": z_value,
@@ -444,6 +647,8 @@ def fit_matrix_element_samples(
                     "n_data": int(observations.shape[1]),
                     "n_params": n_params,
                     "n_failed_samples": 0,
+                    "sample_diagnostics": sample_diagnostics,
+                    "sample0_plot": sample0_plot,
                     **energy_summary,
                 }
             )
@@ -685,11 +890,20 @@ def matrix_element_samples(
         selected = np.flatnonzero((t >= t_min) & (t < t_max))
         if selected.size < 2:
             raise ValueError("qDA fit window must contain at least two time points")
-        window_values = np.asarray(source.values)[:, selected, :]
+        source_values = np.asarray(source.values)
+        window_values = source_values[:, selected, :]
         denominator = window_values[:, :, int(origin[0])]
         if np.any(denominator == 0):
             raise ValueError("qDA z=0 denominator contains zero values in the fit window")
         ratios = window_values / denominator[:, :, None]
+        plot_upper = float(source.ensemble.L_t) / 2.0 if source.ensemble is not None else float(np.max(t))
+        plot_selected = np.flatnonzero((t >= 0.0) & (t <= plot_upper))
+        plot_denominator = source_values[:, plot_selected, int(origin[0])]
+        plot_selected = plot_selected[np.all(plot_denominator != 0, axis=0)]
+        if plot_selected.size == 0:
+            plot_selected = selected
+        plot_values = source_values[:, plot_selected, :]
+        plot_ratios = plot_values / plot_values[:, :, int(origin[0]), None]
         values = np.ones((source.n_sample, len(z)), dtype=complex) if fit_samples else None
         prior_scale = float(lsqfit["posterior_prior_error_scale"])
         svdcut = float(lsqfit["svdcut"])
@@ -710,12 +924,27 @@ def matrix_element_samples(
         try:
             for z_index in z_indices:
                 component_values = ratios[:, :, z_index]
+                plot_component_values = plot_ratios[:, :, z_index]
                 real_samples = EnsembleData(
                     source.ensemble,
                     source.resample,
                     [np.real(sample) for sample in component_values],
                     ["t"],
                     {"t": t[selected].tolist()},
+                )
+                real_plot_samples = EnsembleData(
+                    source.ensemble,
+                    source.resample,
+                    [np.real(sample) for sample in plot_component_values],
+                    ["t"],
+                    {"t": t[plot_selected].tolist()},
+                )
+                imag_plot_samples = EnsembleData(
+                    source.ensemble,
+                    source.resample,
+                    [np.imag(sample) for sample in plot_component_values],
+                    ["t"],
+                    {"t": t[plot_selected].tolist()},
                 )
                 imag_samples = EnsembleData(
                     source.ensemble,
@@ -735,7 +964,7 @@ def matrix_element_samples(
                 covariance[: selected.size, : selected.size] = gv.evalcov(real_samples.average(sample_error_mode))
                 covariance[selected.size :, selected.size :] = gv.evalcov(imag_samples.average(sample_error_mode))
                 prior = gv.BufferDict()
-                prior["E0"] = gv.gvar(1.0, 10.0 * prior_width)
+                prior["log(E0)"] = gv.gvar(0.0, 3.0 * prior_width)
                 prior["z0"] = gv.gvar(1.0, 10.0 * prior_width)
                 prior["zprime0"] = gv.gvar(1.0, 10.0 * prior_width)
                 prior["O00_re"] = gv.gvar(1.0, 10.0 * prior_width)
@@ -751,13 +980,62 @@ def matrix_element_samples(
                     svdcut=svdcut,
                     maxit=10000,
                     mode="resamples" if fit_samples else "center",
+                    capture_sample_posteriors=(0,) if fit_samples else (),
                     _parallel=parallel,
                 )
                 energy_samples = (
-                    [float(parameters["E0"]) for parameters in result.samples if parameters is not None]
+                    [float(parameters["E0"]) if parameters is not None else None for parameters in result.samples]
                     if fit_samples
                     else []
                 )
+                finite_energy_samples = [value for value in energy_samples if value is not None]
+                energy_sdev = (
+                    float(
+                        gv.sdev(
+                            EnsembleData(
+                                source.ensemble,
+                                source.resample,
+                                [[value] for value in finite_energy_samples],
+                                ["energy"],
+                                {"energy": [0]},
+                            ).average(sample_error_mode)[0]
+                        )
+                    )
+                    if len(finite_energy_samples) == len(energy_samples) and len(energy_samples) > 1
+                    else None
+                )
+                sample0_plot = None
+                if fit_samples and result.sample_posteriors and result.sample_posteriors[0] is not None:
+                    posterior = result.sample_posteriors[0]
+                    fit_x = [float(t[selected][0]), float(t[selected][-1])]
+                    plots = []
+                    for component, samples_for_component in (
+                        ("re", real_plot_samples),
+                        ("im", imag_plot_samples),
+                    ):
+                        ratio = posterior[f"O00_{component}"] / posterior["zprime0"]
+                        plots.append(
+                            {
+                                "kind": "qda_ratio",
+                                "component": component,
+                                "series": [
+                                    {
+                                        "label": "qDA ratio",
+                                        "x": t[plot_selected].astype(float).tolist(),
+                                        "y": np.asarray(samples_for_component.values[0], dtype=float).tolist(),
+                                        "yerr": np.asarray(
+                                            gv.sdev(samples_for_component.average(sample_error_mode)), dtype=float
+                                        ).tolist(),
+                                        "fit_x": fit_x,
+                                        "fit_mean": [float(gv.mean(ratio))] * 2,
+                                        "fit_sdev": [float(gv.sdev(ratio))] * 2,
+                                    }
+                                ],
+                                "plateau_mean": float(gv.mean(ratio)),
+                                "plateau_sdev": float(gv.sdev(ratio)),
+                            }
+                        )
+                    sample0_plot = {"z": float(z[z_index]), "plots": plots}
                 fit_metrics.append(
                     {
                         "z": float(z[z_index]),
@@ -767,7 +1045,10 @@ def matrix_element_samples(
                         "Q": result.Q,
                         "logGBF": result.logGBF,
                         "E0": float(result.pmean["E0"]),
-                        "E0_sdev": float(np.std(energy_samples, ddof=1)) if len(energy_samples) > 1 else None,
+                        "E0_sdev": energy_sdev,
+                        "E0_samples": energy_samples,
+                        "sample_diagnostics": _sample_diagnostic_records(result) if fit_samples else [],
+                        "sample0_plot": sample0_plot,
                     }
                 )
                 if values is not None:

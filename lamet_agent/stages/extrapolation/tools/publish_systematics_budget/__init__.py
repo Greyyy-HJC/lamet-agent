@@ -9,7 +9,7 @@ import numpy as np
 import xarray as xr
 
 from lamet_agent.agent import ToolContext
-from lamet_agent.plotting import configure_plot, save_figure, start_plot
+from lamet_agent.plotting import X_LABEL, configure_plot, save_figure, start_plot
 from lamet_agent.stages.extrapolation.physics import load_data
 
 
@@ -97,7 +97,7 @@ def run(context: ToolContext) -> dict[str, object]:
 
     plt.bar(x, total_error, width=0.078, color="0.82", label="total error")
     plt.bar(x, total_systematic, width=0.06, color="0.65", label="total systematic")
-    configure_plot(xlabel="x", ylabel="distribution uncertainty")
+    configure_plot(xlabel=X_LABEL, ylabel="distribution uncertainty")
     plt.legend(frameon=False)
     save_figure(context.artifact_directory / "plots" / "systematics_budget.pdf")
 
@@ -105,7 +105,7 @@ def run(context: ToolContext) -> dict[str, object]:
     plt.fill_between(x, central - total_error, central + total_error, color="0.88", linewidth=0)
     plt.fill_between(x, central - stat_sdev, central + stat_sdev, color="0.70", linewidth=0)
     plt.plot(x, central, color="0.35", linewidth=1.2)
-    configure_plot(xlabel="x", ylabel="physical distribution")
+    configure_plot(xlabel=X_LABEL, ylabel="physical distribution")
     save_figure(context.artifact_directory / "plots" / "distribution_with_systematics.pdf")
 
     (context.artifact_directory / "report.md").write_text(

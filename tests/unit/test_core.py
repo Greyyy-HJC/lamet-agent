@@ -186,6 +186,26 @@ def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path)
     assert all(color.lower() in cycle_svg for color in COLOR_CYCLE)
 
 
+def test_plotting_shared_labels_and_formatters() -> None:
+    from lamet_agent.plotting import (
+        COLOR_CYCLE,
+        QUASI_DISTRIBUTION_LABELS,
+        X_LABEL,
+        Z_OVER_A_LABEL,
+        momentum_label,
+        quasi_distribution_label,
+        series_color,
+    )
+
+    assert X_LABEL == r"$x$"
+    assert Z_OVER_A_LABEL == r"$z~/~a$"
+    assert quasi_distribution_label("re") == QUASI_DISTRIBUTION_LABELS["real"]
+    assert quasi_distribution_label("imag") == QUASI_DISTRIBUTION_LABELS["imag"]
+    assert momentum_label(np.float64(1.72)) == r"$P_z=1.72\,\mathrm{GeV}$"
+    assert momentum_label(None, default="job") == "job"
+    assert series_color(len(COLOR_CYCLE)) == COLOR_CYCLE[0]
+
+
 def test_neo_core_exports_are_minimal() -> None:
     from lamet_agent import agent, contract, data, llm, manifest, parallel, plotting
     from lamet_agent.parallel import lanczos
@@ -211,10 +231,19 @@ def test_neo_core_exports_are_minimal() -> None:
     assert manifest.__all__ == ["Job", "Manifest", "load_manifest"]
     assert plotting.__all__ == [
         "COLOR_CYCLE",
+        "X_LABEL",
+        "Z_OVER_A_LABEL",
+        "BARE_MATRIX_ELEMENT_LABEL",
+        "QUASI_DISTRIBUTION_LABELS",
+        "series_color",
+        "momentum_label",
+        "quasi_distribution_label",
         "start_plot",
         "configure_plot",
         "errorbar",
         "errorband",
+        "line",
+        "histogram",
         "hline",
         "vline",
         "save_figure",
