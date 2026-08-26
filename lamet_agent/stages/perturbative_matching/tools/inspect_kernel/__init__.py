@@ -27,7 +27,12 @@ def run(context: ToolContext) -> dict[str, object]:
         attrs = data.attrs
         attrs["matching_component"] = "im" if component in {"im", "imag", "imaginary"} else "re"
     momentum = data.attrs.get("momentum_gev")
-    if not isinstance(momentum, (int, float)) or isinstance(momentum, bool) or not math.isfinite(float(momentum)) or not float(momentum) > 0:
+    if (
+        not isinstance(momentum, (int, float))
+        or isinstance(momentum, bool)
+        or not math.isfinite(float(momentum))
+        or not float(momentum) > 0
+    ):
         raise ValueError("quasi input requires a finite positive momentum_gev")
     if "x" not in data.dims or len(data.coords["x"]) < 1:
         raise ValueError("quasi input requires a nonempty x coordinate")
@@ -50,10 +55,25 @@ def run(context: ToolContext) -> dict[str, object]:
         "renormalization_scheme": attrs.get("renormalization_scheme"),
     }
     tokens = set(context.params["kernel_id"].split("_"))
-    missing_tokens = [key for key, value in required_tokens.items() if not isinstance(value, str) or not value or value not in tokens]
+    missing_tokens = [
+        key for key, value in required_tokens.items() if not isinstance(value, str) or not value or value not in tokens
+    ]
     if missing_tokens:
         raise ValueError(f"kernel id does not match quasi provenance fields: {missing_tokens}")
     context.state["kernel"] = kernel
     context.state["quasi"] = data
-    context.state["kernel_inspection"] = {"kernel_id": context.params["kernel_id"], "parameters": parameter_names, "required": required, "x_count": len(data.coords.get("x", [])), "dims": data.dims, "momentum_gev": float(momentum), "document": document}
-    return {"summary": f"loaded kernel {context.params['kernel_id']}", "metrics": {key: value for key, value in context.state["kernel_inspection"].items() if key != "document"}, "state_keys": ["kernel", "quasi", "kernel_inspection"], "artifacts": []}
+    context.state["kernel_inspection"] = {
+        "kernel_id": context.params["kernel_id"],
+        "parameters": parameter_names,
+        "required": required,
+        "x_count": len(data.coords.get("x", [])),
+        "dims": data.dims,
+        "momentum_gev": float(momentum),
+        "document": document,
+    }
+    return {
+        "summary": f"loaded kernel {context.params['kernel_id']}",
+        "metrics": {key: value for key, value in context.state["kernel_inspection"].items() if key != "document"},
+        "state_keys": ["kernel", "quasi", "kernel_inspection"],
+        "artifacts": [],
+    }

@@ -118,12 +118,14 @@ def stage_overlay_lines(
         pdf = artifact_directory / "plots" / f"{stem}{suffix_name}.pdf"
         svg = artifact_directory / "plots" / f"{stem}{suffix_name}.svg"
         save_figure(pdf, svg)
-        lines.extend([
-            f"![{suffix or ylabel} stage overlay](plots/{svg.name})",
-            "",
-            f"[{suffix or ylabel} stage overlay (PDF)](plots/{pdf.name})",
-            "",
-        ])
+        lines.extend(
+            [
+                f"![{suffix or ylabel} stage overlay](plots/{svg.name})",
+                "",
+                f"[{suffix or ylabel} stage overlay (PDF)](plots/{pdf.name})",
+                "",
+            ]
+        )
     return lines
 
 

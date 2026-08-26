@@ -24,7 +24,12 @@ def load_descriptor(path: Path) -> dict[str, Any]:
     if path.suffix.lower() != ".json" or not path.is_file():
         raise ValueError(f"correlator descriptor must be an existing .json file: {path}")
     descriptor = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(descriptor, dict) or set(descriptor) != {"ensemble", "configuration_count", "correlators"} or not isinstance(descriptor.get("ensemble"), dict) or not isinstance(descriptor.get("correlators"), list):
+    if (
+        not isinstance(descriptor, dict)
+        or set(descriptor) != {"ensemble", "configuration_count", "correlators"}
+        or not isinstance(descriptor.get("ensemble"), dict)
+        or not isinstance(descriptor.get("correlators"), list)
+    ):
         raise ValueError("descriptor requires ensemble, configuration_count, and correlators")
     try:
         ensemble = EnsembleInfo(**descriptor["ensemble"])
@@ -38,36 +43,83 @@ def load_descriptor(path: Path) -> dict[str, Any]:
     for record in descriptor["correlators"]:
         if not isinstance(record, dict):
             raise ValueError("each correlator record must be an object")
-        required = {"id", "format", "path", "dataset", "dataset_dims", "dims", "coords", "selectors", "correlator_type", "hadron", "source_momentum", "sink_momentum", "current", "source_sink_separation"}
+        required = {
+            "id",
+            "format",
+            "path",
+            "dataset",
+            "dataset_dims",
+            "dims",
+            "coords",
+            "selectors",
+            "correlator_type",
+            "hadron",
+            "source_momentum",
+            "sink_momentum",
+            "current",
+            "source_sink_separation",
+        }
         if set(record) != required:
             raise ValueError(f"correlator record must contain exactly: {sorted(required)}")
-        if not isinstance(record["id"], str) or not record["id"] or not isinstance(record["path"], str) or not isinstance(record["dataset"], str):
+        if (
+            not isinstance(record["id"], str)
+            or not record["id"]
+            or not isinstance(record["path"], str)
+            or not isinstance(record["dataset"], str)
+        ):
             raise ValueError("correlator id, path, and dataset must be strings")
         if record["id"] in output["correlators"]:
             raise ValueError(f"correlator id is repeated: {record['id']}")
-        if record["format"] != "hdf5" or not isinstance(record["dims"], list) or not record["dims"] or record["dims"][0] != "configuration":
+        if (
+            record["format"] != "hdf5"
+            or not isinstance(record["dims"], list)
+            or not record["dims"]
+            or record["dims"][0] != "configuration"
+        ):
             raise ValueError("only HDF5 descriptors with configuration as the first dimension are supported")
-        if any(not isinstance(dim, str) or not dim or dim == "resample" for dim in record["dims"]) or len(set(record["dims"])) != len(record["dims"]):
+        if any(not isinstance(dim, str) or not dim or dim == "resample" for dim in record["dims"]) or len(
+            set(record["dims"])
+        ) != len(record["dims"]):
             raise ValueError("descriptor dimensions must be unique nonempty names")
-        if not isinstance(record["coords"], dict) or not isinstance(record["dataset_dims"], list) or not isinstance(record["selectors"], dict):
+        if (
+            not isinstance(record["coords"], dict)
+            or not isinstance(record["dataset_dims"], list)
+            or not isinstance(record["selectors"], dict)
+        ):
             raise ValueError("coords, dataset_dims, and selectors must be explicit objects/lists")
         dataset_dims = record["dataset_dims"]
-        if any(not isinstance(dim, str) or dim not in record["dims"] for dim in dataset_dims) or len(set(dataset_dims)) != len(dataset_dims):
+        if any(not isinstance(dim, str) or dim not in record["dims"] for dim in dataset_dims) or len(
+            set(dataset_dims)
+        ) != len(dataset_dims):
             raise ValueError("dataset_dims must be unique names from dims")
         if record["correlator_type"] not in {"two_point", "three_point", "qda"}:
             raise ValueError("correlator_type must be two_point, three_point, or qda")
         momenta = [record["source_momentum"], record["sink_momentum"]]
-        if any(not isinstance(momentum, list) or len(momentum) != 3 for momentum in momenta) or any(not isinstance(value, int) or isinstance(value, bool) for momentum in momenta for value in momentum):
+        if any(not isinstance(momentum, list) or len(momentum) != 3 for momentum in momenta) or any(
+            not isinstance(value, int) or isinstance(value, bool) for momentum in momenta for value in momentum
+        ):
             raise ValueError("source and sink momenta must be integer triples")
         if record["correlator_type"] == "two_point" and record["current"] is not None:
             raise ValueError("two-point correlators must have current=null")
         if record["correlator_type"] != "two_point" and not isinstance(record["current"], dict):
             raise ValueError("three-point and qDA correlators require a current object")
-        if isinstance(record["current"], dict) and set(record["current"]) != {"kernel_operator", "parton", "renormalization_scheme"}:
+        if isinstance(record["current"], dict) and set(record["current"]) != {
+            "kernel_operator",
+            "parton",
+            "renormalization_scheme",
+        }:
             raise ValueError("current must contain exactly kernel_operator, parton, and renormalization_scheme")
-        if record["source_sink_separation"] is not None and (not isinstance(record["source_sink_separation"], int) or isinstance(record["source_sink_separation"], bool) or record["source_sink_separation"] < 0):
+        if record["source_sink_separation"] is not None and (
+            not isinstance(record["source_sink_separation"], int)
+            or isinstance(record["source_sink_separation"], bool)
+            or record["source_sink_separation"] < 0
+        ):
             raise ValueError("source_sink_separation must be a nonnegative integer or null")
-        if record["source_sink_separation"] is None and "tsep" not in record["dims"] and record["correlator_type"] == "three_point":
+        if (
+            record["source_sink_separation"] is None
+            and "tsep" not in record["dims"]
+            and record["correlator_type"] == "three_point"
+        ):
             raise ValueError("a null source_sink_separation requires an explicit tsep dimension")
         if not isinstance(record["hadron"], dict):
             raise ValueError("hadron must be an object")
@@ -79,16 +131,23 @@ def load_descriptor(path: Path) -> dict[str, Any]:
         import h5py
 
         placeholders = re.findall(r"{([A-Za-z][A-Za-z0-9_]*)}", record["dataset"])
-        if len(placeholders) != len(set(placeholders)) or any(dim not in record["dims"] or dim not in record["coords"] or dim in dataset_dims for dim in placeholders):
+        if len(placeholders) != len(set(placeholders)) or any(
+            dim not in record["dims"] or dim not in record["coords"] or dim in dataset_dims for dim in placeholders
+        ):
             raise ValueError("dataset placeholders must be unique coordinate dimensions outside dataset_dims")
         remaining_dims = [dim for dim in record["dims"] if dim not in placeholders]
         if set(remaining_dims) != set(dataset_dims):
             raise ValueError("dataset_dims plus dataset placeholders must cover dims exactly")
-        shape = [configuration_count if dim == "configuration" else len(record["coords"].get(dim, [])) for dim in record["dims"]]
+        shape = [
+            configuration_count if dim == "configuration" else len(record["coords"].get(dim, []))
+            for dim in record["dims"]
+        ]
         if any(size == 0 for size in shape):
             raise ValueError("every non-configuration dimension needs nonempty coordinates")
         values = None
-        coordinate_products = itertools.product(*(record["coords"][dim] for dim in placeholders)) if placeholders else [()]
+        coordinate_products = (
+            itertools.product(*(record["coords"][dim] for dim in placeholders)) if placeholders else [()]
+        )
         with h5py.File(hdf5_path, "r") as handle:
             for coordinate_values in coordinate_products:
                 selected = dict(zip(placeholders, coordinate_values))
@@ -136,7 +195,9 @@ def load_descriptor(path: Path) -> dict[str, Any]:
             "L_s": int(ensemble.L_s),
             "m_pi": float(ensemble.m_pi),
             "correlator_type": record["correlator_type"],
-            "hadron": record.get("hadron", {}).get("name") if isinstance(record.get("hadron"), dict) else record.get("hadron"),
+            "hadron": record.get("hadron", {}).get("name")
+            if isinstance(record.get("hadron"), dict)
+            else record.get("hadron"),
             "source_momentum": json.dumps(record["source_momentum"]),
             "sink_momentum": json.dumps(record["sink_momentum"]),
             "lattice_spacing_fm": float(ensemble.a_s),
@@ -144,7 +205,17 @@ def load_descriptor(path: Path) -> dict[str, Any]:
             "units": json.dumps({"values": "dimensionless", **{dim: "lattice" for dim in dims[1:]}}),
             "coord_unit": "lattice",
         }
-        for key in ("gfix", "volume", "source_operator", "sink_operator", "current_operator", "polarization", "bz_direction", "bT", "momentum"):
+        for key in (
+            "gfix",
+            "volume",
+            "source_operator",
+            "sink_operator",
+            "current_operator",
+            "polarization",
+            "bz_direction",
+            "bT",
+            "momentum",
+        ):
             if key in record["selectors"]:
                 attrs[key] = record["selectors"][key]
         if record["source_sink_separation"] is not None:
@@ -153,12 +224,22 @@ def load_descriptor(path: Path) -> dict[str, Any]:
             value = record.get(key, current.get(key))
             if value is not None:
                 attrs[key] = value
-        raw = EnsembleData(ensemble, "raw", [values[index] for index in range(values.shape[0])], dims[1:], {dim: coords[dim] for dim in dims[1:]}, attrs=attrs, name=record["id"])
+        raw = EnsembleData(
+            ensemble,
+            "raw",
+            [values[index] for index in range(values.shape[0])],
+            dims[1:],
+            {dim: coords[dim] for dim in dims[1:]},
+            attrs=attrs,
+            name=record["id"],
+        )
         output["correlators"][record["id"]] = raw
     return output
 
 
-def resample_correlators(raw: dict[str, Any], *, mode: str, group: str, bin_size: int, n_boot: int | None, seed: int) -> dict[str, EnsembleData]:
+def resample_correlators(
+    raw: dict[str, Any], *, mode: str, group: str, bin_size: int, n_boot: int | None, seed: int
+) -> dict[str, EnsembleData]:
     """Apply one explicit plan to every configuration-aligned correlator."""
     data = raw["correlators"]
     first = next(iter(data.values()))
@@ -167,13 +248,23 @@ def resample_correlators(raw: dict[str, Any], *, mode: str, group: str, bin_size
         raise ValueError("configuration counts differ inside one resample group")
     if bin_size < 1 or n_configurations // bin_size < 2:
         raise ValueError("bin_size leaves fewer than two configurations")
-    binned_count = n_configurations // bin_size
     plan_seed: int | None = None
     if mode == "bootstrap":
         plan_seed = int(seed)
     elif mode != "jackknife":
         raise ValueError("resampling must be bootstrap or jackknife")
-    plan_header = json.dumps({"group": group, "configurations": raw.get("configuration_ids", []), "bin_size": bin_size, "mode": mode, "n_boot": n_boot, "seed": plan_seed}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    plan_header = json.dumps(
+        {
+            "group": group,
+            "configurations": raw.get("configuration_ids", []),
+            "bin_size": bin_size,
+            "mode": mode,
+            "n_boot": n_boot,
+            "seed": plan_seed,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     resample_id = hashlib.sha256(plan_header).hexdigest()
     result: dict[str, EnsembleData] = {}
     for correlator_id, item in data.items():
@@ -184,5 +275,13 @@ def resample_correlators(raw: dict[str, Any], *, mode: str, group: str, bin_size
             sampled = prepared.jackknife()
         attrs = sampled.attrs
         attrs.update({"resample_id": resample_id, "resample_group": group})
-        result[correlator_id] = EnsembleData(sampled.ensemble, sampled.resample, [sample for sample in sampled.values], sampled.dims, sampled.coords, attrs=attrs, name=sampled.name)
+        result[correlator_id] = EnsembleData(
+            sampled.ensemble,
+            sampled.resample,
+            [sample for sample in sampled.values],
+            sampled.dims,
+            sampled.coords,
+            attrs=attrs,
+            name=sampled.name,
+        )
     return result

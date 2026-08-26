@@ -5,7 +5,17 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from lamet_agent.contract import CheckContext, Depends, Issue, List, Provides, Recommends, Source, Value, stage_job_rules
+from lamet_agent.contract import (
+    CheckContext,
+    Depends,
+    Issue,
+    List,
+    Provides,
+    Recommends,
+    Source,
+    Value,
+    stage_job_rules,
+)
 
 
 def _positive(value: int | float) -> bool:
@@ -47,8 +57,7 @@ def _boolean_values(value: dict[object, object]) -> bool:
 
 def _valid_systematics_groups(value: dict[object, object]) -> bool:
     return (
-        set(value)
-        == {"main", "zs", "lambda_extrapolation", "lamet_scale", "other_extrapolations"}
+        set(value) == {"main", "zs", "lambda_extrapolation", "lamet_scale", "other_extrapolations"}
         and isinstance(value["main"], int)
         and not isinstance(value["main"], bool)
         and all(
@@ -59,6 +68,8 @@ def _valid_systematics_groups(value: dict[object, object]) -> bool:
     )
 
 
+# ruff: disable[E501]
+# fmt: off
 PARAM_RULES = (
     Recommends("", "operation", physics="Authored extrapolation jobs fit; generated budget jobs override this operation.", default="fit"),
     Value("operation", Literal["fit", "systematics_budget"], physics="The extrapolation operation is controlled."),
@@ -94,6 +105,8 @@ INPUT_RULES = (
     List("distributions", "distribution", physics="Distributions are nonempty and preserve authored order.", validator=_nonempty),
     Source("distributions.distribution", physics="Each distribution is a prior job or external file source."),
 )
+# fmt: on
+# ruff: enable[E501]
 
 
 def check_extrapolation_relations(context: CheckContext) -> Issue | None:
@@ -101,11 +114,19 @@ def check_extrapolation_relations(context: CheckContext) -> Issue | None:
     if context.params["operation"] == "systematics_budget":
         groups = context.params["systematics_budget"]["systematics_groups"]
         count = len(context.inputs.get("distributions", []))
-        indices = [groups["main"], *groups["zs"], *groups["lambda_extrapolation"], *groups["lamet_scale"], *groups["other_extrapolations"]]
+        indices = [
+            groups["main"],
+            *groups["zs"],
+            *groups["lambda_extrapolation"],
+            *groups["lamet_scale"],
+            *groups["other_extrapolations"],
+        ]
         if not indices or min(indices) < 0 or max(indices) >= count:
             return Issue("systematics_groups", "contains an index outside the ordered distributions input", physics)
         if len(indices) != len(set(indices)) or set(indices) != set(range(count)):
-            return Issue("systematics_groups", "must assign every ordered distribution input to exactly one budget role", physics)
+            return Issue(
+                "systematics_groups", "must assign every ordered distribution input to exactly one budget role", physics
+            )
         return None
     fit = context.params["fit"]
     required = fit.get("required_terms")
@@ -123,7 +144,11 @@ def check_extrapolation_relations(context: CheckContext) -> Issue | None:
         return Issue("x_dependence", "must contain exactly one boolean for every required or allowed term", physics)
     pdep = fit.get("pdep_gev")
     if len(set(float(value) for value in pdep)) != len(pdep):
-        return Issue("pdep_gev", "must contain unique momenta", "Each requested diagnostic curve needs one distinct physical momentum.")
+        return Issue(
+            "pdep_gev",
+            "must contain unique momenta",
+            "Each requested diagnostic curve needs one distinct physical momentum.",
+        )
     mass_terms = {"mpi2", "mpi4_log_mpi2"}
     if expected & mass_terms and "physical_pion_mass_gev" not in fit:
         return Issue("physical_pion_mass_gev", "is required by pion-mass correction terms", physics)

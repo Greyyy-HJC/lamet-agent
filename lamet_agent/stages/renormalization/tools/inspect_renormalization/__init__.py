@@ -20,7 +20,15 @@ def run(context: ToolContext) -> dict[str, object]:
                 if attrs.get("z_unit") != "fm":
                     raise ValueError("self-renormalization reference must declare z_unit='fm'")
                 attrs["coord_unit"] = "fm"
-                data = EnsembleData(data.ensemble, data.resample, [sample for sample in data.values], data.dims, data.coords, attrs=attrs, name=data.name)
+                data = EnsembleData(
+                    data.ensemble,
+                    data.resample,
+                    [sample for sample in data.values],
+                    data.dims,
+                    data.coords,
+                    attrs=attrs,
+                    name=data.name,
+                )
             aligned[role] = physical_z_coordinates(data)
     if not aligned:
         raise ValueError("no numerical renormalization input was supplied")
@@ -28,5 +36,17 @@ def run(context: ToolContext) -> dict[str, object]:
     coverage = {}
     for role, data in aligned.items():
         values = data if isinstance(data, list) else [data]
-        coverage[role] = [{"dims": item.dims, "coords": {dim: len(coords) for dim, coords in item.coords.items()}, "n_sample": item.n_sample} for item in values]
-    return {"summary": f"aligned {len(aligned)} renormalization inputs", "metrics": coverage, "state_keys": ["aligned_inputs"], "artifacts": []}
+        coverage[role] = [
+            {
+                "dims": item.dims,
+                "coords": {dim: len(coords) for dim, coords in item.coords.items()},
+                "n_sample": item.n_sample,
+            }
+            for item in values
+        ]
+    return {
+        "summary": f"aligned {len(aligned)} renormalization inputs",
+        "metrics": coverage,
+        "state_keys": ["aligned_inputs"],
+        "artifacts": [],
+    }

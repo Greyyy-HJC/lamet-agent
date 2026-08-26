@@ -32,14 +32,7 @@ def run(context: ToolContext) -> dict[str, object]:
     else:
         prepared = normalize_at_origin(source) if params["normalization"] else source
     items = prepared if isinstance(prepared, list) else [prepared]
-    positive_z = sorted(
-        {
-            float(value)
-            for item in items
-            for value in item.coords["z"]
-            if float(value) > 0
-        }
-    )
+    positive_z = sorted({float(value) for item in items for value in item.coords["z"] if float(value) > 0})
     if len(positive_z) < 3:
         raise ValueError("self-renormalization reference requires at least three positive z coordinates")
     short_distance_min_fm = positive_z[0]
@@ -48,11 +41,7 @@ def run(context: ToolContext) -> dict[str, object]:
         {
             float(value)
             for item in items
-            for value in (
-                item.coords["a"]
-                if "a" in item.dims
-                else [item.attrs.get("lattice_spacing_fm")]
-            )
+            for value in (item.coords["a"] if "a" in item.dims else [item.attrs.get("lattice_spacing_fm")])
             if isinstance(value, (int, float)) and not isinstance(value, bool)
         }
     )
@@ -72,20 +61,72 @@ def run(context: ToolContext) -> dict[str, object]:
         lattice_spacing_range_fm=(spacings[0], spacings[-1]),
     )
     attrs = factor.attrs
-    attrs.update({"scale_gev": float(params["mu"]), "zms_model": _REFERENCE_ZMS_MODEL, "short_distance_range_fm": json.dumps({"min": short_distance_min_fm, "max": short_distance_max_fm}, sort_keys=True), "lattice_spacing_range_fm": json.dumps({"min": spacings[0], "max": spacings[-1]}, sort_keys=True)})
-    factor = EnsembleData(factor.ensemble, factor.resample, [sample for sample in factor.values], factor.dims, factor.coords, attrs=attrs, name=factor.name)
-    context.state["self_renormalization"] = {"factor": factor, "m0_gev": factor.attrs.get("m0_gev"), "formula": factor.attrs.get("formula")}
+    attrs.update(
+        {
+            "scale_gev": float(params["mu"]),
+            "zms_model": _REFERENCE_ZMS_MODEL,
+            "short_distance_range_fm": json.dumps(
+                {"min": short_distance_min_fm, "max": short_distance_max_fm}, sort_keys=True
+            ),
+            "lattice_spacing_range_fm": json.dumps({"min": spacings[0], "max": spacings[-1]}, sort_keys=True),
+        }
+    )
+    factor = EnsembleData(
+        factor.ensemble,
+        factor.resample,
+        [sample for sample in factor.values],
+        factor.dims,
+        factor.coords,
+        attrs=attrs,
+        name=factor.name,
+    )
+    context.state["self_renormalization"] = {
+        "factor": factor,
+        "m0_gev": factor.attrs.get("m0_gev"),
+        "formula": factor.attrs.get("formula"),
+    }
     factor.to_netcdf(context.artifact_directory / "output.nc")
-    diagnostics = {"short_distance_min_fm": short_distance_min_fm, "short_distance_max_fm": short_distance_max_fm, "lattice_spacing_range_fm": [spacings[0], spacings[-1]], "z_range_fm": [float(min(factor.coords["z"])), float(max(factor.coords["z"]))], "m0_gev": factor.attrs.get("m0_gev"), "d": factor.attrs.get("d"), "k": factor.attrs.get("k"), "n_f": factor.attrs.get("n_f"), "scale_gev": factor.attrs.get("scale_gev"), "LambdaQCD_gev": factor.attrs.get("LambdaQCD_gev"), "zms_model": factor.attrs.get("zms_model"), "formula": factor.attrs["formula"], "factor_dims": factor.dims}
+    diagnostics = {
+        "short_distance_min_fm": short_distance_min_fm,
+        "short_distance_max_fm": short_distance_max_fm,
+        "lattice_spacing_range_fm": [spacings[0], spacings[-1]],
+        "z_range_fm": [float(min(factor.coords["z"])), float(max(factor.coords["z"]))],
+        "m0_gev": factor.attrs.get("m0_gev"),
+        "d": factor.attrs.get("d"),
+        "k": factor.attrs.get("k"),
+        "n_f": factor.attrs.get("n_f"),
+        "scale_gev": factor.attrs.get("scale_gev"),
+        "LambdaQCD_gev": factor.attrs.get("LambdaQCD_gev"),
+        "zms_model": factor.attrs.get("zms_model"),
+        "formula": factor.attrs["formula"],
+        "factor_dims": factor.dims,
+    }
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
-    (context.artifact_directory / "diagnostics" / "self_renormalization.json").write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
+    (context.artifact_directory / "diagnostics" / "self_renormalization.json").write_text(
+        json.dumps(diagnostics, indent=2), encoding="utf-8"
+    )
     start_plot()
     plot_data = factor.real if np.iscomplexobj(factor.values) else factor
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
     errorbar(factor.coords["a"], np.mean(plot_data.average(sample_error_mode), axis=-1))
     configure_plot(xlabel="a [fm]", ylabel="Z_R")
     save_figure(context.artifact_directory / "plots" / "factor.pdf")
-    (context.artifact_directory / "report.md").write_text("# Self-renormalization factor\n\nA reusable sample-bearing factor was fitted on the authored reference grid.\n", encoding="utf-8")
-    summary = {"stage_id": context.stage_id, "job_id": context.job_id, "result": "renormalization_factor", "decisions": {"short_distance_max_fm": short_distance_max_fm}, "diagnostics": diagnostics, "artifacts": ["output.nc", "diagnostics/self_renormalization.json", "plots/factor.pdf", "report.md"]}
+    (context.artifact_directory / "report.md").write_text(
+        "# Self-renormalization factor\n\nA reusable sample-bearing factor was fitted on the authored reference grid.\n",
+        encoding="utf-8",
+    )
+    summary = {
+        "stage_id": context.stage_id,
+        "job_id": context.job_id,
+        "result": "renormalization_factor",
+        "decisions": {"short_distance_max_fm": short_distance_max_fm},
+        "diagnostics": diagnostics,
+        "artifacts": ["output.nc", "diagnostics/self_renormalization.json", "plots/factor.pdf", "report.md"],
+    }
     context.finish(factor, summary)
-    return {"summary": "published self-renormalization factor", "metrics": diagnostics, "state_keys": [], "artifacts": summary["artifacts"]}
+    return {
+        "summary": "published self-renormalization factor",
+        "metrics": diagnostics,
+        "state_keys": [],
+        "artifacts": summary["artifacts"],
+    }

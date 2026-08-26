@@ -23,9 +23,7 @@ from .manifest import Manifest, load_manifest
 
 def _render_issues(issues: Sequence[Issue]) -> str:
     """Render validation issues for CLI output."""
-    return "\n".join(
-        f"{issue.path}: {issue.message} ({issue.physics})" for issue in issues
-    )
+    return "\n".join(f"{issue.path}: {issue.message} ({issue.physics})" for issue in issues)
 
 
 def _render_guidance(issues: Sequence[Issue]) -> str:
@@ -105,9 +103,13 @@ def _build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--set", dest="assignments", action="append", default=[], help="set one JSON value at a dot path")
     run = subparsers.add_parser("run", help="execute one validated manifest")
     run.add_argument("manifest", type=Path)
-    run.add_argument("--provider", required=True, help="registered agent CLI/API provider, or an OpenAI-compatible API URL")
+    run.add_argument(
+        "--provider", required=True, help="registered agent CLI/API provider, or an OpenAI-compatible API URL"
+    )
     run.add_argument("--model", help="model ID override; optional when a local API exposes exactly one model")
-    run.add_argument("--api-key-file", type=Path, help="API key file; required for a custom URL, optional for registered APIs")
+    run.add_argument(
+        "--api-key-file", type=Path, help="API key file; required for a custom URL, optional for registered APIs"
+    )
     return parser
 
 

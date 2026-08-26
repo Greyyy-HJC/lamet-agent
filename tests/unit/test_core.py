@@ -89,15 +89,11 @@ def _recommend_interval(_context: ToolContext, ask) -> list[_RecommendedInterval
     )
 
 
-def _estimate_interval_without_llm(
-    _context: ToolContext, _ask
-) -> list[_RecommendedInterval]:
+def _estimate_interval_without_llm(_context: ToolContext, _ask) -> list[_RecommendedInterval]:
     return [{"start": 1, "stop": 3}]
 
 
-def _estimate_interval_with_two_llm_calls(
-    _context: ToolContext, ask
-) -> list[_RecommendedInterval]:
+def _estimate_interval_with_two_llm_calls(_context: ToolContext, ask) -> list[_RecommendedInterval]:
     assessment = ask(
         instruction="Identify the first stable coordinate.",
         evidence={"coordinates": [0, 1, 2, 3]},
@@ -156,12 +152,8 @@ def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path)
 
     assert start_plot() is None
     values = np.asarray([gvar.gvar(1.0, 0.1), gvar.gvar(1.5, 0.2)], dtype=object)
-    assert errorband(
-        [0.0, 1.0], values, color=COLOR_CYCLE[1], label="result"
-    ) is None
-    assert errorbar(
-        [0.0, 1.0], values, color=COLOR_CYCLE[0], marker="s", label="points"
-    ) is None
+    assert errorband([0.0, 1.0], values, color=COLOR_CYCLE[1], label="result") is None
+    assert errorbar([0.0, 1.0], values, color=COLOR_CYCLE[0], marker="s", label="points") is None
     with pytest.raises(ValueError, match="unsupported marker"):
         errorbar([0.0, 1.0], values, marker="r--")
     with pytest.raises(TypeError, match="gvar"):
@@ -268,7 +260,9 @@ def test_neo_manifest_loader_rejects_unterminated_jsonc_comment(tmp_path: Path) 
 
 def test_neo_provider_selection_has_one_public_backend_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "key")
-    monkeypatch.setattr("urllib.request.urlopen", lambda request, **kwargs: _ModelsResponse(["gpt-5.6-luna", "gpt-test"]))
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda request, **kwargs: _ModelsResponse(["gpt-5.6-luna", "gpt-test"])
+    )
     assert create_backend("openai").identity.endswith(":gpt-5.6-luna")
     assert create_backend("openai", "gpt-test").identity.endswith(":gpt-test")
     assert create_backend("codex").identity == "codex:default"
@@ -312,9 +306,7 @@ def test_neo_api_model_is_checked_against_models_endpoint(monkeypatch: pytest.Mo
         create_backend("openai", "missing")
 
 
-def test_neo_backend_factory_owns_api_key_file_validation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_neo_backend_factory_owns_api_key_file_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("urllib.request.urlopen", lambda request, **kwargs: _ModelsResponse(["gpt-a"]))
     key_file = tmp_path / "provider.key"
     key_file.write_text("key-from-file\n", encoding="utf-8")
@@ -345,10 +337,17 @@ def test_neo_local_api_rejects_ambiguous_model_selection(tmp_path: Path, monkeyp
 
 def test_unified_backend_preserves_multiple_ordered_tool_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {
-        "choices": [{"message": {"content": "fit both candidates", "tool_calls": [
-            {"id": "call-1", "type": "function", "function": {"name": "fit", "arguments": "{\"window\":1}"}},
-            {"id": "call-2", "type": "function", "function": {"name": "fit", "arguments": "{\"window\":2}"}},
-        ]}}]
+        "choices": [
+            {
+                "message": {
+                    "content": "fit both candidates",
+                    "tool_calls": [
+                        {"id": "call-1", "type": "function", "function": {"name": "fit", "arguments": '{"window":1}'}},
+                        {"id": "call-2", "type": "function", "function": {"name": "fit", "arguments": '{"window":2}'}},
+                    ],
+                }
+            }
+        ]
     }
     key_file = tmp_path / "provider.key"
     key_file.write_text("key\n", encoding="utf-8")
@@ -364,11 +363,33 @@ def test_unified_backend_preserves_multiple_ordered_tool_calls(tmp_path: Path, m
 
 
 def test_api_backend_retries_only_malformed_tool_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    malformed = {"choices": [{"message": {"content": "bad", "tool_calls": [{"id": "bad", "type": "function", "function": {"name": "fit", "arguments": "{bad"}}]}}]}
-    valid = {"choices": [{"message": {"content": "ok", "tool_calls": [{"id": "good", "type": "function", "function": {"name": "fit", "arguments": "{\"window\":3}"}}]}}]}
+    malformed = {
+        "choices": [
+            {
+                "message": {
+                    "content": "bad",
+                    "tool_calls": [{"id": "bad", "type": "function", "function": {"name": "fit", "arguments": "{bad"}}],
+                }
+            }
+        ]
+    }
+    valid = {
+        "choices": [
+            {
+                "message": {
+                    "content": "ok",
+                    "tool_calls": [
+                        {"id": "good", "type": "function", "function": {"name": "fit", "arguments": '{"window":3}'}}
+                    ],
+                }
+            }
+        ]
+    }
     key_file = tmp_path / "provider.key"
     key_file.write_text("key\n", encoding="utf-8")
-    responses = iter([_ModelsResponse(["model"]), _ChatResponse(malformed), _ChatResponse(malformed), _ChatResponse(valid)])
+    responses = iter(
+        [_ModelsResponse(["model"]), _ChatResponse(malformed), _ChatResponse(malformed), _ChatResponse(valid)]
+    )
     monkeypatch.setattr("urllib.request.urlopen", lambda request, **kwargs: next(responses))
 
     response = create_backend("https://example.test/v1", "model", key_file).complete(
@@ -394,13 +415,10 @@ def test_depends_null_hook_defers_missing_and_null_but_not_empty_lists() -> None
 
     assert evaluate_rules({"settings": {}}, rules) == []
     assert evaluate_rules({"settings": {"windows": None}}, rules) == []
-    assert [
-        (issue.path, issue.message)
-        for issue in evaluate_rules({"settings": {"windows": []}}, rules)
-    ] == [("settings.windows", "failed its intrinsic value check")]
-    assert evaluate_rules(
-        {"settings": {"windows": [{"start": 1, "stop": 3}]}}, rules
-    ) == []
+    assert [(issue.path, issue.message) for issue in evaluate_rules({"settings": {"windows": []}}, rules)] == [
+        ("settings.windows", "failed its intrinsic value check")
+    ]
+    assert evaluate_rules({"settings": {"windows": [{"start": 1, "stop": 3}]}}, rules) == []
 
 
 def test_runtime_null_hook_uses_a_typed_response_and_updates_params(
@@ -449,9 +467,7 @@ def test_runtime_null_hook_uses_a_typed_response_and_updates_params(
         "llm_requests": 1,
         "value": [{"start": 1, "stop": 3}],
     }
-    schema = backend.calls[0][1][0]["function"]["parameters"]["properties"][
-        "value"
-    ]
+    schema = backend.calls[0][1][0]["function"]["parameters"]["properties"]["value"]
     assert schema["items"]["additionalProperties"] is False
     assert schema["items"]["required"] == ["start", "stop"]
     transcript_text = transcript.read_text(encoding="utf-8")
@@ -491,9 +507,7 @@ def test_invalid_runtime_null_hook_value_is_rolled_back(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="invalid null-hook value"):
         _resolve_runtime_null_hooks(
             context=context,
-            contract=SimpleNamespace(
-                PARAM_RULES=_null_hook_rules(), CHECKS=()
-            ),
+            contract=SimpleNamespace(PARAM_RULES=_null_hook_rules(), CHECKS=()),
             backend=backend,
             transcript_path=transcript,
         )
@@ -517,9 +531,7 @@ def test_recommends_fills_a_static_default_before_normal_validation(
     assert evaluate_rules({"settings": {}}, rules) == []
     assert evaluate_rules({"settings": {"mode": None}}, rules) == []
     assert evaluate_rules({"settings": []}, rules)[0].message == "expected an object"
-    assert evaluate_rules({"settings": {"mode": "invalid"}}, rules)[0].path == (
-        "settings.mode"
-    )
+    assert evaluate_rules({"settings": {"mode": "invalid"}}, rules)[0].path == ("settings.mode")
     params = {"settings": {"mode": None}}
     context = ToolContext(
         {"metadata": {"workers": 1}},
@@ -567,18 +579,14 @@ def test_null_hook_may_estimate_without_calling_the_llm(tmp_path: Path) -> None:
 
     _resolve_runtime_null_hooks(
         context=context,
-        contract=SimpleNamespace(
-            PARAM_RULES=_null_hook_rules(_estimate_interval_without_llm), CHECKS=()
-        ),
+        contract=SimpleNamespace(PARAM_RULES=_null_hook_rules(_estimate_interval_without_llm), CHECKS=()),
         backend=backend,
         transcript_path=transcript,
     )
 
     assert params["settings"]["windows"] == [{"start": 1, "stop": 3}]
     assert backend.calls == []
-    assert context.state["null_hook_provenance"]["settings.windows"][
-        "llm_requests"
-    ] == 0
+    assert context.state["null_hook_provenance"]["settings.windows"]["llm_requests"] == 0
 
 
 def test_null_hook_may_make_multiple_typed_llm_requests(tmp_path: Path) -> None:
@@ -631,9 +639,7 @@ def test_null_hook_may_make_multiple_typed_llm_requests(tmp_path: Path) -> None:
     assert len(backend.calls) == 2
     second_evidence = json.loads(backend.calls[1][0][1].content)["evidence"]
     assert second_evidence["assessment"] == {"stable_start": 1}
-    assert context.state["null_hook_provenance"]["settings.windows"][
-        "llm_requests"
-    ] == 2
+    assert context.state["null_hook_provenance"]["settings.windows"]["llm_requests"] == 2
 
 
 def test_depends_owns_structured_mapping_type_once() -> None:
@@ -647,9 +653,7 @@ def test_depends_owns_structured_mapping_type_once() -> None:
 
     issues = evaluate_rules({"settings": []}, rules)
 
-    assert [(issue.path, issue.message) for issue in issues] == [
-        ("settings", "expected an object")
-    ]
+    assert [(issue.path, issue.message) for issue in issues] == [("settings", "expected an object")]
 
 
 def test_shipped_contracts_do_not_repeat_depends_mapping_types() -> None:
@@ -663,15 +667,11 @@ def test_shipped_contracts_do_not_repeat_depends_mapping_types() -> None:
     ):
         stage_contract = _load_stage_contract(stage_id)
         for rules in (stage_contract.PARAM_RULES, stage_contract.INPUT_RULES):
-            structured_paths = {
-                rule.parent for rule in rules if isinstance(rule, Depends)
-            }
+            structured_paths = {rule.parent for rule in rules if isinstance(rule, Depends)}
             redundant = [
                 rule.path
                 for rule in rules
-                if isinstance(rule, Value)
-                and rule.expected is dict
-                and rule.path in structured_paths
+                if isinstance(rule, Value) and rule.expected is dict and rule.path in structured_paths
             ]
             assert redundant == []
 
@@ -704,9 +704,7 @@ def test_contract_value_uses_literal_as_its_choice_source() -> None:
     depends = Depends("", "mode", physics="mode is declared")
     assert evaluate_rules({"mode": "first"}, (depends, string_rule)) == []
     issues = evaluate_rules({"mode": "third"}, (depends, string_rule))
-    assert [(issue.path, issue.message) for issue in issues] == [
-        ("mode", "must be one of 'first', 'second'")
-    ]
+    assert [(issue.path, issue.message) for issue in issues] == [("mode", "must be one of 'first', 'second'")]
 
     integer_rule = Value("sign", Literal[-1, 1], physics="sign is controlled")
     sign_depends = Depends("", "sign", physics="sign is declared")
@@ -741,23 +739,17 @@ def test_contract_provides_activates_real_dependency_nodes() -> None:
         Value("lanczos.iterations", int, physics="Lanczos iterations are integers."),
     )
 
-    assert evaluate_rules(
-        {"analysis_method": "lsqfit", "lsqfit": {"window": 4}}, rules
-    ) == []
-    assert evaluate_rules(
-        {"analysis_method": "lanczos", "lanczos": {"iterations": 3}}, rules
-    ) == []
-    assert [(issue.path, issue.message) for issue in evaluate_rules(
-        {"analysis_method": "unknown"}, rules
-    )] == [
+    assert evaluate_rules({"analysis_method": "lsqfit", "lsqfit": {"window": 4}}, rules) == []
+    assert evaluate_rules({"analysis_method": "lanczos", "lanczos": {"iterations": 3}}, rules) == []
+    assert [(issue.path, issue.message) for issue in evaluate_rules({"analysis_method": "unknown"}, rules)] == [
         (
             "analysis_method",
             "must be one of 'lsqfit', 'lanczos'",
         )
     ]
-    assert [(issue.path, issue.message, issue.physics) for issue in evaluate_rules(
-        {"analysis_method": "lsqfit"}, rules
-    )] == [
+    assert [
+        (issue.path, issue.message, issue.physics) for issue in evaluate_rules({"analysis_method": "lsqfit"}, rules)
+    ] == [
         (
             "lsqfit",
             "is required when analysis_method='lsqfit'",
@@ -969,9 +961,7 @@ def test_manifest_skips_stage_relationship_checks_after_rule_failure(tmp_path: P
         INPUT_RULES=(),
         CHECKS=(relationship_check,),
     )
-    contract.JOB_RULES = stage_job_rules(
-        contract.PARAM_RULES, contract.INPUT_RULES
-    )
+    contract.JOB_RULES = stage_job_rules(contract.PARAM_RULES, contract.INPUT_RULES)
     monkeypatch.setattr("lamet_agent.manifest._load_stage_contract", lambda *args: contract)
     document = {
         "metadata": {
@@ -1018,7 +1008,14 @@ def test_fourier_scan_intrinsic_values_are_owned_by_rules() -> None:
 
 
 def test_all_shipped_tools_have_provider_schemas() -> None:
-    for stage_id in ("correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"):
+    for stage_id in (
+        "correlator_analysis",
+        "renormalization",
+        "fourier_transform",
+        "perturbative_matching",
+        "extrapolation",
+        "review",
+    ):
         tools = _discover_tools(stage_id)
         assert tools
         assert all(tool.schema["function"]["name"] == tool.name for tool in tools)
@@ -1028,11 +1025,7 @@ def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Pa
     from lamet_agent.agent import _invoke
     from lamet_agent.data import EnsembleData
 
-    tool = next(
-        item
-        for item in _discover_tools("renormalization")
-        if item.name == "inspect_renormalization"
-    )
+    tool = next(item for item in _discover_tools("renormalization") if item.name == "inspect_renormalization")
     target = EnsembleData(
         None,
         "bootstrap",
@@ -1057,17 +1050,20 @@ def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Pa
     assert observation["ignored_arguments"] == ["{}"]
     assert "aligned_inputs" in context.state
 
-    argument_tool = next(
-        item
-        for item in _discover_tools("correlator_analysis")
-        if item.name == "inspect_correlators"
-    )
+    argument_tool = next(item for item in _discover_tools("correlator_analysis") if item.name == "inspect_correlators")
     with pytest.raises(ValueError, match="unknown arguments"):
         _invoke(argument_tool, context, {"{}": {}})
 
 
 def test_all_shipped_stage_contracts_load_without_tool_imports() -> None:
-    for stage_id in ("correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"):
+    for stage_id in (
+        "correlator_analysis",
+        "renormalization",
+        "fourier_transform",
+        "perturbative_matching",
+        "extrapolation",
+        "review",
+    ):
         contract = _load_stage_contract(stage_id)
         assert hasattr(contract, "PARAM_RULES")
         assert hasattr(contract, "INPUT_RULES")
@@ -1086,25 +1082,30 @@ def test_all_shipped_stage_contracts_load_without_tool_imports() -> None:
 def test_correlator_contract_rejects_global_sampling_controls(name: str, value: object) -> None:
     contract = _load_stage_contract("correlator_analysis")
     issues = evaluate_rules({name: value}, contract.PARAM_RULES, complete=False)
-    assert [(issue.path, issue.message) for issue in issues] == [
-        (name, f"unknown key {name!r}")
-    ]
+    assert [(issue.path, issue.message) for issue in issues] == [(name, f"unknown key {name!r}")]
 
 
 def test_manifest_enforces_global_sampling_relationships(tmp_path: Path) -> None:
     metadata = _valid_metadata(tmp_path, resample_mode="bootstrap")
     manifest = Manifest(tmp_path / "manifest.json", {"metadata": metadata, "stages": {}})
-    assert any(issue.path == "metadata.bootstrap_samples" and "required" in issue.message for issue in manifest.validate())
+    assert any(
+        issue.path == "metadata.bootstrap_samples" and "required" in issue.message for issue in manifest.validate()
+    )
 
     metadata["bootstrap_samples"] = 100
     assert not [issue for issue in manifest.validate() if issue.path.startswith("metadata.")]
 
     metadata["resample_mode"] = "jackknife"
-    assert any(issue.path == "metadata.bootstrap_samples" and "must be omitted" in issue.message for issue in manifest.validate())
+    assert any(
+        issue.path == "metadata.bootstrap_samples" and "must be omitted" in issue.message
+        for issue in manifest.validate()
+    )
 
     metadata.pop("bootstrap_samples")
     metadata["sample_error_mode"] = "median"
-    assert any(issue.path == "metadata.sample_error_mode" and "require" in issue.message for issue in manifest.validate())
+    assert any(
+        issue.path == "metadata.sample_error_mode" and "require" in issue.message for issue in manifest.validate()
+    )
 
 
 def test_manifest_rejects_legacy_sampling_abbreviations(tmp_path: Path) -> None:
@@ -1115,9 +1116,7 @@ def test_manifest_rejects_legacy_sampling_abbreviations(tmp_path: Path) -> None:
 
 
 def test_correlator_manifest_accepts_missing_hook_windows() -> None:
-    manifest = load_manifest(
-        Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json"
-    )
+    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json")
     defaults = manifest.document["stages"]["correlator_analysis"]["defaults"]
     defaults["lsqfit"].pop("pt2_windows")
 
@@ -1144,12 +1143,30 @@ def test_refactor_examples_reuse_legacy_physics_parameter_names(stem: str) -> No
         return set()
 
     aligned_names = {
-        "run_id", "resample_mode", "bin_size", "component", "nstate",
-        "fit_scope", "fit_strategy", "fitting_form", "model_average",
-        "posterior_prior_error_scale", "normalization",
-        "scheme", "strategy", "mu",
-        "target_observable", "parton", "quasi_y_ls", "zmin_fm", "zmax_fm",
-        "smooth", "zmax_ext_fm", "order", "sector", "Lambda0_gev",
+        "run_id",
+        "resample_mode",
+        "bin_size",
+        "component",
+        "nstate",
+        "fit_scope",
+        "fit_strategy",
+        "fitting_form",
+        "model_average",
+        "posterior_prior_error_scale",
+        "normalization",
+        "scheme",
+        "strategy",
+        "mu",
+        "target_observable",
+        "parton",
+        "quasi_y_ls",
+        "zmin_fm",
+        "zmax_fm",
+        "smooth",
+        "zmax_ext_fm",
+        "order",
+        "sector",
+        "Lambda0_gev",
         "lc_x_ls",
     }
     if stem.startswith("pion_pdf"):
@@ -1177,10 +1194,7 @@ def test_refactor_examples_reuse_legacy_physics_parameter_names(stem: str) -> No
     grouped = neo_manifest.jobs_by_stage
     flattened = tuple(job for stage_jobs in grouped.values() for job in stage_jobs)
     assert flattened == neo_manifest.jobs
-    assert all(
-        grouped[job.stage_id][job.job_index] is job
-        for job in neo_manifest.jobs
-    )
+    assert all(grouped[job.stage_id][job.job_index] is job for job in neo_manifest.jobs)
 
 
 @pytest.mark.parametrize("stem", ("pion_da_gi", "kaon_da_gi"))
@@ -1196,20 +1210,13 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
     stages = resolved.document["stages"]
     assert "systematics" not in resolved.document
     assert '"job"' not in json.dumps(resolved.document)
-    extrapolation_jobs = [
-        job
-        for job in resolved._resolved_jobs()
-        if job.stage_id == "extrapolation"
-    ]
+    extrapolation_jobs = [job for job in resolved._resolved_jobs() if job.stage_id == "extrapolation"]
     assert all(
         job.params["fit"]["priors"] == {"mean": 0.0, "sdev": 3.0}
         for job in extrapolation_jobs
         if job.params["operation"] == "fit"
     )
-    budget_job = next(
-        job for job in extrapolation_jobs
-        if job.params["operation"] == "systematics_budget"
-    )
+    budget_job = next(job for job in extrapolation_jobs if job.params["operation"] == "systematics_budget")
     assert "fit" in budget_job.params
     assert "priors" not in budget_job.params["fit"]
     assert len(stages["fourier_transform"]["jobs"]) == 27
@@ -1240,52 +1247,34 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
         0.574,
         0.6314,
     ]
-    matching = {
-        job["id"]: job for job in stages["perturbative_matching"]["jobs"]
-    }
-    assert (
-        matching["mt_a06m130_pz6_lambda_low"]["inputs"]["quasi"]
-        == "ft_a06m130_pz6_lambda_low"
-    )
-    assert matching["mt_a06m130_pz6_mu_low"]["mu"] == pytest.approx(
-        2.0**0.5
-    )
-    assert matching["mt_a06m130_pz6_mu_high"]["mu"] == pytest.approx(
-        2.0 * 2.0**0.5
-    )
+    matching = {job["id"]: job for job in stages["perturbative_matching"]["jobs"]}
+    assert matching["mt_a06m130_pz6_lambda_low"]["inputs"]["quasi"] == "ft_a06m130_pz6_lambda_low"
+    assert matching["mt_a06m130_pz6_mu_low"]["mu"] == pytest.approx(2.0**0.5)
+    assert matching["mt_a06m130_pz6_mu_high"]["mu"] == pytest.approx(2.0 * 2.0**0.5)
     assert len(manifest.document["stages"]["fourier_transform"]["jobs"]) == 9
     assert "zmin_shift" not in json.dumps(manifest.document)
 
     parsed = load_manifest(manifest.path)
     assert parsed.validate() == []
     assert "systematics" not in parsed.document
-    assert parsed.document["stages"]["extrapolation"]["defaults"][
-        "fit"
-    ][
-        "required_terms"
-    ] == ["a", "inv_p2", "inv_p4", "ap2"]
-    assert parsed.document["stages"]["extrapolation"]["jobs"][0][
-        "fit"
-    ][
-        "priors"
-    ] == {"mean": 0.0, "sdev": 3.0}
+    assert parsed.document["stages"]["extrapolation"]["defaults"]["fit"]["required_terms"] == [
+        "a",
+        "inv_p2",
+        "inv_p4",
+        "ap2",
+    ]
+    assert parsed.document["stages"]["extrapolation"]["jobs"][0]["fit"]["priors"] == {"mean": 0.0, "sdev": 3.0}
 
 
 def test_job_source_object_is_rejected_at_the_input_role() -> None:
     path = Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json"
     manifest = load_manifest(path)
     document = copy.deepcopy(manifest.document)
-    document["stages"]["fourier_transform"]["jobs"][0]["inputs"]["input"] = {
-        "job": "rn_p4"
-    }
+    document["stages"]["fourier_transform"]["jobs"][0]["inputs"]["input"] = {"job": "rn_p4"}
 
     issues = Manifest(path, document).validate()
 
-    source_issues = [
-        issue
-        for issue in issues
-        if issue.path.endswith("fourier_transform.jobs[0].inputs.input")
-    ]
+    source_issues = [issue for issue in issues if issue.path.endswith("fourier_transform.jobs[0].inputs.input")]
     assert len(source_issues) == 1
     assert source_issues[0].message == "is not an allowed input source"
     assert all(not issue.path.endswith(".job") for issue in issues)
@@ -1295,9 +1284,7 @@ def test_systematics_compiler_rejects_explicit_variation_jobs() -> None:
     path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
     manifest = load_manifest(path)
     document = copy.deepcopy(manifest.document)
-    explicit = copy.deepcopy(
-        document["stages"]["fourier_transform"]["jobs"][0]
-    )
+    explicit = copy.deepcopy(document["stages"]["fourier_transform"]["jobs"][0])
     explicit["id"] += "_lambda_low"
     document["stages"]["fourier_transform"]["jobs"].append(explicit)
 
@@ -1343,16 +1330,32 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
     }
     assert evaluate_rules(ground_fit, contract.PARAM_RULES) == []
     assert ground_fit["lsqfit"]["prior_width"] == [1.0]
-    assert evaluate_checks(
-        contract.CHECKS,
-        CheckContext({}, "correlator_analysis", "job", ground_fit, {}),
-    ) == []
+    assert (
+        evaluate_checks(
+            contract.CHECKS,
+            CheckContext({}, "correlator_analysis", "job", ground_fit, {}),
+        )
+        == []
+    )
 
 
 def test_each_shipped_stage_contract_reports_incomplete_params_instead_of_crashing(tmp_path: Path) -> None:
-    for stage_id in ("correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation", "review"):
+    for stage_id in (
+        "correlator_analysis",
+        "renormalization",
+        "fourier_transform",
+        "perturbative_matching",
+        "extrapolation",
+        "review",
+    ):
         manifest = {
-            "metadata": {"run_id": "incomplete", "root_directory": str(tmp_path), "artifacts_directory": "runs", "random_seed": 1, "workers": 1},
+            "metadata": {
+                "run_id": "incomplete",
+                "root_directory": str(tmp_path),
+                "artifacts_directory": "runs",
+                "random_seed": 1,
+                "workers": 1,
+            },
             "stages": {stage_id: {"defaults": {}, "jobs": [{"id": "job", "inputs": {}}]}},
         }
         issues = Manifest(tmp_path / "manifest.json", manifest).validate()
@@ -1377,14 +1380,31 @@ def test_neo_correlator_descriptors_use_physical_field_names() -> None:
 
 def test_matching_check_reports_the_exact_parameter_path() -> None:
     contract = _load_stage_contract("perturbative_matching")
-    context = CheckContext({}, "perturbative_matching", "job", {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "scheme": "ratio", "zs_fm": 0.2}, {"quasi": "earlier"})
+    context = CheckContext(
+        {},
+        "perturbative_matching",
+        "job",
+        {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "scheme": "ratio", "zs_fm": 0.2},
+        {"quasi": "earlier"},
+    )
     issues = evaluate_checks(contract.CHECKS, context)
-    assert [(issue.path, issue.message) for issue in issues] == [("scheme", "must equal 'hybrid' for kernel 'CG_gt_quark_PDF_hybrid_NLO'")]
+    assert [(issue.path, issue.message) for issue in issues] == [
+        ("scheme", "must equal 'hybrid' for kernel 'CG_gt_quark_PDF_hybrid_NLO'")
+    ]
 
 
 def test_finish_rejects_second_terminal_result(tmp_path: Path) -> None:
-    context = ToolContext({}, tmp_path / "manifest.json", "review", "job", {}, {}, {}, {}, tmp_path, np.random.default_rng(1))
-    summary = {"stage_id": "review", "job_id": "job", "result": "review", "decisions": {}, "diagnostics": {}, "artifacts": []}
+    context = ToolContext(
+        {}, tmp_path / "manifest.json", "review", "job", {}, {}, {}, {}, tmp_path, np.random.default_rng(1)
+    )
+    summary = {
+        "stage_id": "review",
+        "job_id": "job",
+        "result": "review",
+        "decisions": {},
+        "diagnostics": {},
+        "artifacts": [],
+    }
     context.finish("report", summary)
     try:
         context.finish("again", summary)
@@ -1410,7 +1430,12 @@ def test_manifest_has_exact_two_top_level_keys(tmp_path: Path) -> None:
         "metadata": _valid_metadata(tmp_path, random_seed=7),
         "stages": {
             "review": {
-                "defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]},
+                "defaults": {
+                    "catalog": "builtin",
+                    "max_papers": 1,
+                    "report_language": "English",
+                    "checks": ["identity"],
+                },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(descriptor)}]}}],
             }
         },
@@ -1439,7 +1464,12 @@ def test_manifest_rejects_redundant_metadata_stages(tmp_path: Path) -> None:
         },
         "stages": {
             "review": {
-                "defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]},
+                "defaults": {
+                    "catalog": "builtin",
+                    "max_papers": 1,
+                    "report_language": "English",
+                    "checks": ["identity"],
+                },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
             }
         },
@@ -1485,7 +1515,12 @@ def test_manifest_requires_a_positive_run_worker_count(tmp_path: Path) -> None:
         "metadata": _valid_metadata(tmp_path, random_seed=7),
         "stages": {
             "review": {
-                "defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]},
+                "defaults": {
+                    "catalog": "builtin",
+                    "max_papers": 1,
+                    "report_language": "English",
+                    "checks": ["identity"],
+                },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
             }
         },
@@ -1502,21 +1537,40 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, capsys) -> N
     source.write_text("{}", encoding="utf-8")
     manifest = {
         "metadata": _valid_metadata(tmp_path, random_seed=2),
-        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}]}},
+        "stages": {
+            "review": {
+                "defaults": {
+                    "catalog": "builtin",
+                    "max_papers": 1,
+                    "report_language": "English",
+                    "checks": ["identity"],
+                },
+                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
+            }
+        },
     }
     responses = [
         _AssistantResponse("inspect", _ToolCall("1", "inspect_results", {})),
         _AssistantResponse("check", _ToolCall("2", "check_consistency", {})),
         _AssistantResponse("list", _ToolCall("3", "list_literature", {})),
         _AssistantResponse("read", _ToolCall("4", "read_papers", {"paper_ids": ["refactor_demo_lamet"]})),
-        _AssistantResponse("write", _ToolCall("5", "write_review", {"title": "Toy review", "analysis": "The scoped outputs are mutually consistent.", "conclusion": "The toy workflow is internally consistent."})),
+        _AssistantResponse(
+            "write",
+            _ToolCall(
+                "5",
+                "write_review",
+                {
+                    "title": "Toy review",
+                    "analysis": "The scoped outputs are mutually consistent.",
+                    "conclusion": "The toy workflow is internally consistent.",
+                },
+            ),
+        ),
     ]
     result = create_session(_ScriptedBackend(responses)).run_manifest(Manifest(tmp_path / "manifest.json", manifest))
     assert result["summaries"]["review_1"]["result"] == "review"
     assert (tmp_path / "runs" / "01_review" / "review_1" / "review.md").is_file()
-    transcript = (tmp_path / "runs" / "01_review" / "review_1" / "llm_transcript.md").read_text(
-        encoding="utf-8"
-    )
+    transcript = (tmp_path / "runs" / "01_review" / "review_1" / "llm_transcript.md").read_text(encoding="utf-8")
     assert "## Turn 1: sent to LLM" in transcript
     assert '"role": "system"' in transcript
     assert '"tools": [' in transcript
@@ -1543,13 +1597,45 @@ def test_scripted_review_run_executes_multi_call_responses_sequentially(tmp_path
     source.write_text("{}", encoding="utf-8")
     manifest = {
         "metadata": _valid_metadata(tmp_path, random_seed=2),
-        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}]}},
+        "stages": {
+            "review": {
+                "defaults": {
+                    "catalog": "builtin",
+                    "max_papers": 1,
+                    "report_language": "English",
+                    "checks": ["identity"],
+                },
+                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
+            }
+        },
     }
-    backend = _ScriptedBackend([
-        _AssistantResponse("inspect and check", tool_calls=(_ToolCall("1", "inspect_results", {}), _ToolCall("2", "check_consistency", {}))),
-        _AssistantResponse("list and read", tool_calls=(_ToolCall("3", "list_literature", {}), _ToolCall("4", "read_papers", {"paper_ids": ["refactor_demo_lamet"]}))),
-        _AssistantResponse("write", _ToolCall("5", "write_review", {"title": "Toy review", "analysis": "The scoped outputs are mutually consistent.", "conclusion": "The toy workflow is internally consistent."})),
-    ])
+    backend = _ScriptedBackend(
+        [
+            _AssistantResponse(
+                "inspect and check",
+                tool_calls=(_ToolCall("1", "inspect_results", {}), _ToolCall("2", "check_consistency", {})),
+            ),
+            _AssistantResponse(
+                "list and read",
+                tool_calls=(
+                    _ToolCall("3", "list_literature", {}),
+                    _ToolCall("4", "read_papers", {"paper_ids": ["refactor_demo_lamet"]}),
+                ),
+            ),
+            _AssistantResponse(
+                "write",
+                _ToolCall(
+                    "5",
+                    "write_review",
+                    {
+                        "title": "Toy review",
+                        "analysis": "The scoped outputs are mutually consistent.",
+                        "conclusion": "The toy workflow is internally consistent.",
+                    },
+                ),
+            ),
+        ]
+    )
     result = create_session(backend).run_manifest(Manifest(tmp_path / "manifest.json", manifest))
     assert result["summaries"]["review_1"]["result"] == "review"
     assert len(backend.calls) == 3
@@ -1567,7 +1653,17 @@ def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path) ->
     manifest_path = tmp_path / "manifest.json"
     manifest = {
         "metadata": _valid_metadata(tmp_path, random_seed=2),
-        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}]}},
+        "stages": {
+            "review": {
+                "defaults": {
+                    "catalog": "builtin",
+                    "max_papers": 1,
+                    "report_language": "English",
+                    "checks": ["identity"],
+                },
+                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
+            }
+        },
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     responses = [
@@ -1575,7 +1671,18 @@ def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path) ->
         _AssistantResponse("check", _ToolCall("2", "check_consistency", {})),
         _AssistantResponse("list", _ToolCall("3", "list_literature", {})),
         _AssistantResponse("read", _ToolCall("4", "read_papers", {"paper_ids": ["refactor_demo_lamet"]})),
-        _AssistantResponse("write", _ToolCall("5", "write_review", {"title": "Toy review", "analysis": "The scoped outputs are mutually consistent.", "conclusion": "The toy workflow is internally consistent."})),
+        _AssistantResponse(
+            "write",
+            _ToolCall(
+                "5",
+                "write_review",
+                {
+                    "title": "Toy review",
+                    "analysis": "The scoped outputs are mutually consistent.",
+                    "conclusion": "The toy workflow is internally consistent.",
+                },
+            ),
+        ),
     ]
     result = create_session(_ScriptedBackend(responses)).run_manifest(load_manifest(manifest_path))
     assert result["summaries"]["review_1"]["result"] == "review"
@@ -1586,7 +1693,17 @@ def test_agent_fails_immediately_when_the_model_returns_no_tool_call(tmp_path: P
     source.write_text("{}", encoding="utf-8")
     manifest = {
         "metadata": _valid_metadata(tmp_path, random_seed=2),
-        "stages": {"review": {"defaults": {"catalog": "builtin", "max_papers": 1, "report_language": "English", "checks": ["identity"]}, "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}]}},
+        "stages": {
+            "review": {
+                "defaults": {
+                    "catalog": "builtin",
+                    "max_papers": 1,
+                    "report_language": "English",
+                    "checks": ["identity"],
+                },
+                "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
+            }
+        },
     }
     session = create_session(_ScriptedBackend([_AssistantResponse("plain answer", None)]))
     with pytest.raises(RuntimeError, match="returned no tool call"):
@@ -1600,7 +1717,16 @@ def test_agent_fails_immediately_when_the_model_returns_no_tool_call(tmp_path: P
 
 
 def test_finish_rejects_a_declared_artifact_that_does_not_exist(tmp_path: Path) -> None:
-    context = ToolContext({}, tmp_path / "manifest.json", "review", "job", {}, {}, {}, {}, tmp_path, np.random.default_rng(1))
-    summary = {"stage_id": "review", "job_id": "job", "result": "review", "decisions": {}, "diagnostics": {}, "artifacts": ["missing.md"]}
+    context = ToolContext(
+        {}, tmp_path / "manifest.json", "review", "job", {}, {}, {}, {}, tmp_path, np.random.default_rng(1)
+    )
+    summary = {
+        "stage_id": "review",
+        "job_id": "job",
+        "result": "review",
+        "decisions": {},
+        "diagnostics": {},
+        "artifacts": ["missing.md"],
+    }
     with pytest.raises(FileNotFoundError, match="missing.md"):
         context.finish("report", summary)

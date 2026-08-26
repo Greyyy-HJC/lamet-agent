@@ -19,50 +19,29 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
     settings = context.params["lsqfit"]
     correlators = context.state.get("correlators")
     if not isinstance(correlators, dict):
-        raise RuntimeError(
-            "inspect_correlators must run before fit_matrix_element_model"
-        )
-    three_points = [
-        value
-        for value in correlators.values()
-        if value.attrs.get("correlator_type") == "three_point"
-    ]
+        raise RuntimeError("inspect_correlators must run before fit_matrix_element_model")
+    three_points = [value for value in correlators.values() if value.attrs.get("correlator_type") == "three_point"]
     if len(three_points) != 1:
-        raise ValueError(
-            "matrix-element model fitting requires exactly one selected three-point correlator"
-        )
+        raise ValueError("matrix-element model fitting requires exactly one selected three-point correlator")
     three_point = three_points[0]
     available_tseps = {int(value) for value in three_point.coords["tsep"]}
     if not tune_z_values or len(set(tune_z_values)) != len(tune_z_values):
         raise ValueError("tune_z_values must be a nonempty unique list")
     tune_z_values = [float(value) for value in tune_z_values]
     available_z = [float(value) for value in three_point.coords["z"]]
-    if any(
-        not any(abs(value - available) <= 1e-12 for available in available_z)
-        for value in tune_z_values
-    ):
-        raise ValueError(
-            "every tune_z_values entry must name an available z coordinate"
-        )
+    if any(not any(abs(value - available) <= 1e-12 for available in available_z) for value in tune_z_values):
+        raise ValueError("every tune_z_values entry must name an available z coordinate")
     correlator_rescale = context.state.get("correlator_rescale")
     if not isinstance(correlator_rescale, float):
-        raise RuntimeError(
-            "inspect_correlators must determine correlator_rescale before spectral fitting"
-        )
-    sample_error_mode = str(
-        context.manifest["metadata"]["sample_error_mode"]
-    )
+        raise RuntimeError("inspect_correlators must determine correlator_rescale before spectral fitting")
+    sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
     component = {
         "re": "real",
         "im": "imag",
         "both": "both",
     }[context.params["component"]]
     candidates: list[dict[str, object]] = []
-    ordinary_scopes = [
-        scope
-        for scope in settings["fit_scope"]
-        if scope in {"3pt_ratio", "FH", "3pt_ratio+FH"}
-    ]
+    ordinary_scopes = [scope for scope in settings["fit_scope"] if scope in {"3pt_ratio", "FH", "3pt_ratio+FH"}]
     authored = sorted(
         product(
             settings["fit_strategy"],
@@ -93,9 +72,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
     ) in authored:
         tseps = [int(value) for value in pt3_window["tsep_ls"]]
         if not set(tseps).issubset(available_tseps):
-            raise ValueError(
-                "an authored three-point window is not covered by the input"
-            )
+            raise ValueError("an authored three-point window is not covered by the input")
         candidate_id = f"matrix_{len(candidates) + 1:03d}"
         metadata = {
             "id": candidate_id,
@@ -131,9 +108,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
                     prior_width=float(prior_width),
                     correlator_rescale=correlator_rescale,
                     svdcut=float(settings["svdcut"]),
-                    posterior_prior_error_scale=float(
-                        settings["posterior_prior_error_scale"]
-                    ),
+                    posterior_prior_error_scale=float(settings["posterior_prior_error_scale"]),
                     sample_error_mode=sample_error_mode,
                     workers=context.workers,
                     tune_z=tune_z,
@@ -144,9 +119,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
                 failures[str(tune_z)] = str(exc)
                 continue
             if data is not None:
-                raise RuntimeError(
-                    "candidate tuning must not produce a full sample result"
-                )
+                raise RuntimeError("candidate tuning must not produce a full sample result")
             per_z[str(tune_z)] = fit
         primary = per_z.get(str(tune_z_values[0]))
         usable = list(per_z.values())
@@ -154,24 +127,15 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
             **metadata,
             "tune_z_values": tune_z_values,
             "tune_z_diagnostics": per_z,
-            "feasible_at_all_tune_z": not failures
-            and len(per_z) == len(tune_z_values),
+            "feasible_at_all_tune_z": not failures and len(per_z) == len(tune_z_values),
             "failure_reasons": failures,
             "numerical_failure": bool(failures),
-            "min_Q": min(float(fit["Q"]) for fit in usable)
-            if usable
-            else None,
-            "worst_chi2_dof": max(
-                float(fit["chi2_dof"]) for fit in usable
-            )
-            if usable
-            else None,
+            "min_Q": min(float(fit["Q"]) for fit in usable) if usable else None,
+            "worst_chi2_dof": max(float(fit["chi2_dof"]) for fit in usable) if usable else None,
         }
         if primary is not None:
             candidate.update(primary)
-            candidate["quality_passed"] = (
-                float(primary["Q"]) >= float(settings["q_min"])
-            )
+            candidate["quality_passed"] = float(primary["Q"]) >= float(settings["q_min"])
         else:
             candidate["quality_passed"] = False
         candidates.append(candidate)
@@ -184,14 +148,9 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
             qda=False,
         )
     except ValueError as exc:
-        raise FitNumericalError(
-            "no ordinary matrix-fit candidate is feasible across tune_z_values"
-        ) from exc
+        raise FitNumericalError("no ordinary matrix-fit candidate is feasible across tune_z_values") from exc
     return {
-        "summary": (
-            f"tuned {len(candidates)} authored matrix-element candidates; "
-            f"recommended {recommended['id']}"
-        ),
+        "summary": (f"tuned {len(candidates)} authored matrix-element candidates; recommended {recommended['id']}"),
         "metrics": {
             "candidate_count": len(candidates),
             "tune_z_values": tune_z_values,

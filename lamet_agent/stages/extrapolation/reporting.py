@@ -7,7 +7,16 @@ from pathlib import Path
 
 import numpy as np
 
-from lamet_agent.stages._reporting import StageReportRecord, artifact_rows, describe_grid, figure_lines, format_value, output_attrs, stage_overlay_lines, write_report
+from lamet_agent.stages._reporting import (
+    StageReportRecord,
+    artifact_rows,
+    describe_grid,
+    figure_lines,
+    format_value,
+    output_attrs,
+    stage_overlay_lines,
+    write_report,
+)
 from lamet_agent.stages.extrapolation.physics import load_data
 
 
@@ -86,7 +95,10 @@ def _parameter_rows(record: StageReportRecord, candidate: dict[str, object]) -> 
         if isinstance(raw_mean, list):
             if not isinstance(raw_sdev, list) or len(raw_mean) != len(x) or len(raw_sdev) != len(x):
                 raise ValueError(f"extrapolation parameter '{name}' does not match the x grid")
-            rows.extend(f"| `{name}` | {format_value(x[index])} | {format_value(raw_mean[index])} | {format_value(raw_sdev[index])} |" for index in indices)
+            rows.extend(
+                f"| `{name}` | {format_value(x[index])} | {format_value(raw_mean[index])} | {format_value(raw_sdev[index])} |"
+                for index in indices
+            )
         else:
             rows.append(f"| `{name}` | all x | {format_value(raw_mean)} | {format_value(raw_sdev)} |")
     return rows
@@ -129,13 +141,28 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         diagnostics = summary.get("diagnostics", {})
         attrs = dict(output_attrs(record))
         terms = attrs.get("extrapolation_terms", diagnostics.get("sources"))
-        candidate = (diagnostics.get("candidates") or [{}])[0] if summary.get("result") == "physical_distribution" else {}
+        candidate = (
+            (diagnostics.get("candidates") or [{}])[0] if summary.get("result") == "physical_distribution" else {}
+        )
         lines.append(
             f"| `{record.job_id}` | `{summary.get('result')}` | {format_value(terms)} | "
             f"{format_value(candidate.get('Q'))} | {format_value(candidate.get('chi2_dof'))} | "
             f"{format_value(getattr(record.output, 'n_sample', None))} |"
         )
-    lines.extend(["", "## Stage Overview", "", *stage_overlay_lines(tuple(fit_records), artifact_directory, coordinate="x", stem="extrapolation_overview", ylabel="physical distribution")])
+    lines.extend(
+        [
+            "",
+            "## Stage Overview",
+            "",
+            *stage_overlay_lines(
+                tuple(fit_records),
+                artifact_directory,
+                coordinate="x",
+                stem="extrapolation_overview",
+                ylabel="physical distribution",
+            ),
+        ]
+    )
     for record in fit_records:
         attrs = dict(output_attrs(record))
         raw_terms = attrs.get("extrapolation_terms", "")
@@ -146,104 +173,110 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             raise ValueError(f"job '{record.job_id}' terms and x_dependence provenance differ")
         diagnostics = record.summary["diagnostics"]
         candidate = (diagnostics.get("candidates") or [{}])[0]
-        lines.extend([
-            "",
-            f"## `{record.job_id}`",
-            "",
-            "### Extrapolation Form",
-            "",
-            _formula(terms, x_dependence),
-            "",
-            "The intercept is the published continuum/infinite-momentum distribution.  Coefficients marked as x-dependent are fitted independently across the common x grid; constant coefficients are shared across x.",
-            "",
-            "### Input Coverage",
-            "",
-            "| index | ensemble | a [fm] | momentum [GeV] | pion mass [GeV] | matching kernel |",
-            "|---:|---|---:|---:|---:|---|",
-            *_input_rows(record),
-            "",
-            "### Fit Settings and Quality",
-            "",
-            "| quantity | value |",
-            "|---|---|",
-            f"| required terms | {format_value(fit['required_terms'])} |",
-            f"| optional terms | {format_value(fit['allowed_terms'])} |",
-            f"| x dependence | {format_value(x_dependence)} |",
-            f"| initial prior | {format_value(fit['priors'])} |",
-            f"| sample-prior widening | {format_value(fit['posterior_prior_error_scale'])} |",
-            f"| momentum diagnostic points [GeV] | {format_value(fit['pdep_gev'])} |",
-            f"| inputs | {format_value(candidate.get('n_inputs', candidate.get('input_count')))} |",
-            f"| parameters | {format_value(candidate.get('n_params'))} |",
-            f"| Q | {format_value(candidate.get('Q'))} |",
-            f"| chi2/dof | {format_value(candidate.get('chi2_dof'))} |",
-            f"| failed resamples | {format_value(candidate.get('n_failed_samples'))} |",
-            f"| output grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
-            "",
-            "### Fit-model Parameter Table",
-            "",
-            "Vector coefficients are shown at the first, central, and last x coordinates; scalar coefficients are shared across the complete grid.",
-            "",
-            "| parameter | x | mean | sdev across resamples |",
-            "|---|---:|---:|---:|",
-            *(_parameter_rows(record, candidate) or ["| n/a | n/a | n/a | n/a |"]),
-            "",
-            "### Momentum Dependence",
-            "",
-            "At each requested momentum the fitted model is evaluated at a=0, retaining the finite-momentum inverse-power terms; the infinite-momentum curve is the published intercept.",
-            "",
-            "| Pz [GeV] | x | mean | sdev across resamples |",
-            "|---:|---:|---:|---:|",
-            *_momentum_rows(record, candidate),
-            "",
-            "### Field Definitions",
-            "",
-            "| field | meaning |",
-            "|---|---|",
-            "| `required_terms` | Correction basis that must appear in this fit. |",
-            "| `allowed_terms` | Additional basis terms the agent may include; empty in the reference examples. |",
-            "| `x_dependence` | Whether each correction coefficient is a function of x or one global scalar. |",
-            "| `priors` | Shared initial Gaussian prior for the intercept and correction coefficients. |",
-            "| `posterior_prior_error_scale` | Widening applied when the sample-average posterior seeds resample fits. |",
-            "| `pdep_gev` | Requested momenta for the post-fit diagnostic only; it does not select inputs or alter the infinite-momentum result. |",
-            "",
-            "### Figures",
-            "",
-            *figure_lines(record, artifact_directory),
-            "",
-            "### Artifacts",
-            "",
-            "| job | artifact |",
-            "|---|---|",
-            *artifact_rows(record, artifact_directory),
-        ])
-    if budget_records:
-        lines.extend([
-            "",
-            "## Systematics Budget",
-            "",
-            "For every declared source, the pointwise systematic is the larger absolute displacement from the central result.  Independent source groups are combined in quadrature, followed by the statistical uncertainty:",
-            "",
-            r"$$\sigma_{\rm sys}(x)=\sqrt{\sum_k\Delta_k(x)^2},\qquad \sigma_{\rm total}(x)=\sqrt{\sigma_{\rm stat}(x)^2+\sigma_{\rm sys}(x)^2}.$$",
-        ])
-        for record in budget_records:
-            lines.extend([
+        lines.extend(
+            [
                 "",
-                f"### `{record.job_id}`",
+                f"## `{record.job_id}`",
                 "",
-                f"- Source groups: {format_value(record.summary['decisions']['systematics_groups'])}",
-                f"- Published components: {format_value(record.summary['diagnostics']['sources'])}",
-                f"- x points: {format_value(record.summary['diagnostics']['point_count'])}",
+                "### Extrapolation Form",
                 "",
-                "| uncertainty component | maximum absolute size |",
-                "|---|---:|",
-                *_budget_rows(record),
+                _formula(terms, x_dependence),
+                "",
+                "The intercept is the published continuum/infinite-momentum distribution.  Coefficients marked as x-dependent are fitted independently across the common x grid; constant coefficients are shared across x.",
+                "",
+                "### Input Coverage",
+                "",
+                "| index | ensemble | a [fm] | momentum [GeV] | pion mass [GeV] | matching kernel |",
+                "|---:|---|---:|---:|---:|---|",
+                *_input_rows(record),
+                "",
+                "### Fit Settings and Quality",
+                "",
+                "| quantity | value |",
+                "|---|---|",
+                f"| required terms | {format_value(fit['required_terms'])} |",
+                f"| optional terms | {format_value(fit['allowed_terms'])} |",
+                f"| x dependence | {format_value(x_dependence)} |",
+                f"| initial prior | {format_value(fit['priors'])} |",
+                f"| sample-prior widening | {format_value(fit['posterior_prior_error_scale'])} |",
+                f"| momentum diagnostic points [GeV] | {format_value(fit['pdep_gev'])} |",
+                f"| inputs | {format_value(candidate.get('n_inputs', candidate.get('input_count')))} |",
+                f"| parameters | {format_value(candidate.get('n_params'))} |",
+                f"| Q | {format_value(candidate.get('Q'))} |",
+                f"| chi2/dof | {format_value(candidate.get('chi2_dof'))} |",
+                f"| failed resamples | {format_value(candidate.get('n_failed_samples'))} |",
+                f"| output grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
+                "",
+                "### Fit-model Parameter Table",
+                "",
+                "Vector coefficients are shown at the first, central, and last x coordinates; scalar coefficients are shared across the complete grid.",
+                "",
+                "| parameter | x | mean | sdev across resamples |",
+                "|---|---:|---:|---:|",
+                *(_parameter_rows(record, candidate) or ["| n/a | n/a | n/a | n/a |"]),
+                "",
+                "### Momentum Dependence",
+                "",
+                "At each requested momentum the fitted model is evaluated at a=0, retaining the finite-momentum inverse-power terms; the infinite-momentum curve is the published intercept.",
+                "",
+                "| Pz [GeV] | x | mean | sdev across resamples |",
+                "|---:|---:|---:|---:|",
+                *_momentum_rows(record, candidate),
+                "",
+                "### Field Definitions",
+                "",
+                "| field | meaning |",
+                "|---|---|",
+                "| `required_terms` | Correction basis that must appear in this fit. |",
+                "| `allowed_terms` | Additional basis terms the agent may include; empty in the reference examples. |",
+                "| `x_dependence` | Whether each correction coefficient is a function of x or one global scalar. |",
+                "| `priors` | Shared initial Gaussian prior for the intercept and correction coefficients. |",
+                "| `posterior_prior_error_scale` | Widening applied when the sample-average posterior seeds resample fits. |",
+                "| `pdep_gev` | Requested momenta for the post-fit diagnostic only; it does not select inputs or alter the infinite-momentum result. |",
                 "",
                 "### Figures",
                 "",
                 *figure_lines(record, artifact_directory),
                 "",
+                "### Artifacts",
+                "",
                 "| job | artifact |",
                 "|---|---|",
                 *artifact_rows(record, artifact_directory),
-            ])
+            ]
+        )
+    if budget_records:
+        lines.extend(
+            [
+                "",
+                "## Systematics Budget",
+                "",
+                "For every declared source, the pointwise systematic is the larger absolute displacement from the central result.  Independent source groups are combined in quadrature, followed by the statistical uncertainty:",
+                "",
+                r"$$\sigma_{\rm sys}(x)=\sqrt{\sum_k\Delta_k(x)^2},\qquad \sigma_{\rm total}(x)=\sqrt{\sigma_{\rm stat}(x)^2+\sigma_{\rm sys}(x)^2}.$$",
+            ]
+        )
+        for record in budget_records:
+            lines.extend(
+                [
+                    "",
+                    f"### `{record.job_id}`",
+                    "",
+                    f"- Source groups: {format_value(record.summary['decisions']['systematics_groups'])}",
+                    f"- Published components: {format_value(record.summary['diagnostics']['sources'])}",
+                    f"- x points: {format_value(record.summary['diagnostics']['point_count'])}",
+                    "",
+                    "| uncertainty component | maximum absolute size |",
+                    "|---|---:|",
+                    *_budget_rows(record),
+                    "",
+                    "### Figures",
+                    "",
+                    *figure_lines(record, artifact_directory),
+                    "",
+                    "| job | artifact |",
+                    "|---|---|",
+                    *artifact_rows(record, artifact_directory),
+                ]
+            )
     return write_report(artifact_directory, lines)

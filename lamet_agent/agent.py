@@ -45,8 +45,7 @@ def _message_payload(message: Message) -> dict[str, Any]:
         payload["tool_call_id"] = message.tool_call_id
     if message.calls:
         payload["tool_calls"] = [
-            {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
-            for call in message.calls
+            {"id": call.id, "name": call.name, "arguments": dict(call.arguments)} for call in message.calls
         ]
     return payload
 
@@ -62,9 +61,7 @@ def _append_transcript(path: Path, title: str, payload: Any) -> None:
     """Append one exact JSON payload as a Markdown transcript section."""
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(
-            f"\n## {title}\n\n```json\n"
-            + json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)
-            + "\n```\n"
+            f"\n## {title}\n\n```json\n" + json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n```\n"
         )
 
 
@@ -104,7 +101,12 @@ class ToolContext:
             raise ValueError(f"finish summary keys must be exactly {sorted(required)}")
         if summary["stage_id"] != self.stage_id or summary["job_id"] != self.job_id:
             raise ValueError("finish summary identifies a different stage or job")
-        if not isinstance(summary["result"], str) or not isinstance(summary["decisions"], dict) or not isinstance(summary["diagnostics"], dict) or not isinstance(summary["artifacts"], list):
+        if (
+            not isinstance(summary["result"], str)
+            or not isinstance(summary["decisions"], dict)
+            or not isinstance(summary["diagnostics"], dict)
+            or not isinstance(summary["artifacts"], list)
+        ):
             raise TypeError("finish summary has invalid envelope types")
         for artifact in summary["artifacts"]:
             if not isinstance(artifact, str) or Path(artifact).is_absolute() or ".." in Path(artifact).parts:
@@ -172,9 +174,7 @@ class ToolContext:
         if issues:
             self.params.clear()
             self.params.update(previous_params)
-            detail = "; ".join(
-                f"{issue.path}: {issue.message}" for issue in issues
-            )
+            detail = "; ".join(f"{issue.path}: {issue.message}" for issue in issues)
             raise ValueError(f"invalid null-hook value for {path}: {detail}")
         if applied_defaults:
             defaults = self.state.setdefault("recommended_defaults", {})
@@ -194,14 +194,18 @@ class _Tool:
 def _stage_path(stage_id: str, stage_root: str | Path | None) -> Path:
     if not re.fullmatch(r"[a-z][a-z0-9_]*", stage_id):
         raise ValueError(f"Invalid stage id '{stage_id}'")
-    return (Path(stage_root).expanduser().resolve() if stage_root is not None else Path(__file__).parent / "stages") / stage_id
+    return (
+        Path(stage_root).expanduser().resolve() if stage_root is not None else Path(__file__).parent / "stages"
+    ) / stage_id
 
 
 def _load_tool_module(stage_id: str, tool_directory: Path) -> ModuleType:
     digest = hashlib.sha256(str(tool_directory.resolve()).encode("utf-8")).hexdigest()
     module_name = f"_lamet_agent_neo_tool_{stage_id}_{tool_directory.name}_{digest}"
     init_path = tool_directory / "__init__.py"
-    spec = importlib.util.spec_from_file_location(module_name, init_path, submodule_search_locations=[str(tool_directory)])
+    spec = importlib.util.spec_from_file_location(
+        module_name, init_path, submodule_search_locations=[str(tool_directory)]
+    )
     if spec is None or spec.loader is None:
         raise ValueError(f"Cannot load tool '{tool_directory.name}'")
     module = importlib.util.module_from_spec(spec)
@@ -238,7 +242,17 @@ def _annotation_schema(annotation: Any) -> tuple[dict[str, Any], bool]:
         values = list(args)
         if not values:
             raise TypeError("Literal tool annotations cannot be empty")
-        type_name = "string" if all(isinstance(value, str) for value in values) else "integer" if all(isinstance(value, int) and not isinstance(value, bool) for value in values) else "number" if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in values) else "boolean" if all(isinstance(value, bool) for value in values) else None
+        type_name = (
+            "string"
+            if all(isinstance(value, str) for value in values)
+            else "integer"
+            if all(isinstance(value, int) and not isinstance(value, bool) for value in values)
+            else "number"
+            if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in values)
+            else "boolean"
+            if all(isinstance(value, bool) for value in values)
+            else None
+        )
         if type_name is None:
             raise TypeError("Literal values must share a JSON scalar type")
         return {"type": type_name, "enum": values}, False
@@ -251,7 +265,11 @@ def _annotation_schema(annotation: Any) -> tuple[dict[str, Any], bool]:
     if annotation is float:
         return {"type": "number"}, False
     if annotation in (list, dict):
-        return ({"type": "array", "items": {}}, False) if annotation is list else ({"type": "object", "additionalProperties": True}, False)
+        return (
+            ({"type": "array", "items": {}}, False)
+            if annotation is list
+            else ({"type": "object", "additionalProperties": True}, False)
+        )
     if origin is list:
         item = args[0] if args else Any
         if item is Any:
@@ -274,7 +292,11 @@ def _tool_schema(name: str, function: Any) -> dict[str, Any]:
     parameters: dict[str, Any] = {}
     required: list[str] = []
     entries = list(signature.parameters.values())
-    if not entries or entries[0].name != "context" or entries[0].kind not in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}:
+    if (
+        not entries
+        or entries[0].name != "context"
+        or entries[0].kind not in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+    ):
         raise TypeError("tool run() must start with a context parameter")
     for parameter in entries:
         if parameter.name == "context":
@@ -288,7 +310,19 @@ def _tool_schema(name: str, function: Any) -> dict[str, Any]:
         parameters[parameter.name] = schema
         if parameter.default is inspect.Parameter.empty:
             required.append(parameter.name)
-    return {"type": "function", "function": {"name": name, "description": f"Call stage tool {name}; follow its system-prompt tool guidance.", "parameters": {"type": "object", "properties": parameters, "required": required, "additionalProperties": False}}}
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": f"Call stage tool {name}; follow its system-prompt tool guidance.",
+            "parameters": {
+                "type": "object",
+                "properties": parameters,
+                "required": required,
+                "additionalProperties": False,
+            },
+        },
+    }
 
 
 def _validate_argument(annotation: Any, value: Any, path: str) -> None:
@@ -384,7 +418,14 @@ def _discover_tools(stage_id: str, *, stage_root: str | Path | None = None) -> l
         function = getattr(module, "run", None)
         if not callable(function):
             raise TypeError(f"Tool '{directory.name}' must export callable run")
-        discovered.append(_Tool(directory.name, function, prompt_path.read_text(encoding="utf-8").strip(), _tool_schema(directory.name, function)))
+        discovered.append(
+            _Tool(
+                directory.name,
+                function,
+                prompt_path.read_text(encoding="utf-8").strip(),
+                _tool_schema(directory.name, function),
+            )
+        )
     return discovered
 
 
@@ -447,7 +488,13 @@ def _summarize(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     if value.__class__.__name__ == "EnsembleData":
-        return {"type": "EnsembleData", "dims": list(value.dims), "n_sample": int(value.n_sample), "name": value.name, "attrs": _summarize(value.attrs)}
+        return {
+            "type": "EnsembleData",
+            "dims": list(value.dims),
+            "n_sample": int(value.n_sample),
+            "name": value.name,
+            "attrs": _summarize(value.attrs),
+        }
     return {"type": type(value).__name__}
 
 
@@ -600,14 +647,10 @@ def _ask_for_parameter(
         _message_payload(assistant_message),
     )
     if len(response.calls) != 1 or response.calls[0].name != tool_name:
-        raise RuntimeError(
-            f"parameter estimate for {path} must return exactly one {tool_name} call"
-        )
+        raise RuntimeError(f"parameter estimate for {path} must return exactly one {tool_name} call")
     arguments = dict(response.calls[0].arguments)
     if set(arguments) != {"value"}:
-        raise ValueError(
-            f"parameter estimate for {path} must contain exactly the value field"
-        )
+        raise ValueError(f"parameter estimate for {path} must contain exactly the value field")
     value = arguments["value"]
     _validate_argument(expected, value, path)
     _emit_progress(f"Parameter estimate received for {path}.")
@@ -646,9 +689,7 @@ def _resolve_runtime_null_hooks(
         hints = get_type_hints(hook)
         expected = hints.get("return")
         if expected is None or expected is Any:
-            raise TypeError(
-                f"null hook {hook.__name__} needs a concrete return annotation"
-            )
+            raise TypeError(f"null hook {hook.__name__} needs a concrete return annotation")
         request_count = 0
 
         def ask(
@@ -697,12 +738,18 @@ def _invoke(tool: _Tool, context: ToolContext, arguments: Mapping[str, Any]) -> 
         raise ValueError(f"unknown arguments for tool '{tool.name}': {sorted(unknown)}")
     ignored = sorted(unknown)
     arguments = {key: value for key, value in arguments.items() if key in visible}
-    missing = [parameter.name for parameter in visible_parameters if parameter.default is inspect.Parameter.empty and parameter.name not in arguments]
+    missing = [
+        parameter.name
+        for parameter in visible_parameters
+        if parameter.default is inspect.Parameter.empty and parameter.name not in arguments
+    ]
     if missing:
         raise ValueError(f"missing arguments for tool '{tool.name}': {missing}")
     for parameter in visible_parameters:
         if parameter.name in arguments:
-            _validate_argument(hints.get(parameter.name, parameter.annotation), arguments[parameter.name], parameter.name)
+            _validate_argument(
+                hints.get(parameter.name, parameter.annotation), arguments[parameter.name], parameter.name
+            )
     observation = _observation(tool.run(context, **dict(arguments)))
     if ignored:
         observation["ignored_arguments"] = ignored
@@ -763,8 +810,7 @@ class _AgentSession:
                 }
                 _append_transcript(transcript_path, f"Turn {turn}: sent to LLM", request_payload)
                 _emit_progress(
-                    f"Calling LLM ({self.backend.identity}) for "
-                    f"{context.stage_id}/{context.job_id} [turn {turn}]..."
+                    f"Calling LLM ({self.backend.identity}) for {context.stage_id}/{context.job_id} [turn {turn}]..."
                 )
                 response = self.backend.complete(
                     messages=messages,
@@ -810,15 +856,11 @@ class _AgentSession:
                         )
                         if remaining:
                             paths = [rule.path for rule in remaining]
-                            raise RuntimeError(
-                                f"job '{context.job_id}' finished with unresolved null hooks: {paths}"
-                            )
+                            raise RuntimeError(f"job '{context.job_id}' finished with unresolved null hooks: {paths}")
                         (context.artifact_directory / "summary.json").write_text(
                             json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
                         )
-                        _emit_progress(
-                            f"Job {context.stage_id}/{context.job_id} finished after {turn} turn(s)."
-                        )
+                        _emit_progress(f"Job {context.stage_id}/{context.job_id} finished after {turn} turn(s).")
                         return context.output, context.summary
             raise RuntimeError(
                 f"job '{context.job_id}' did not call a terminal tool within {self.max_tool_steps} turns"
@@ -878,7 +920,9 @@ class _AgentSession:
                         outputs=self._outputs,
                         summaries=self._summaries,
                     )
-                seed_sequence = np.random.SeedSequence([int(metadata["random_seed"]), job.stage_index - 1, job.job_index])
+                seed_sequence = np.random.SeedSequence(
+                    [int(metadata["random_seed"]), job.stage_index - 1, job.job_index]
+                )
                 context = ToolContext(
                     document,
                     manifest_file,

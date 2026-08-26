@@ -69,7 +69,9 @@ def _fit_warning_scope():
         yield
 
 
-def _sample_fit(task: tuple[Any, np.ndarray, np.ndarray, Callable[..., Any], Mapping[str, Any], Mapping[str, Any]]) -> tuple[gv.BufferDict | None, str | None, dict[str, float] | None]:
+def _sample_fit(
+    task: tuple[Any, np.ndarray, np.ndarray, Callable[..., Any], Mapping[str, Any], Mapping[str, Any]],
+) -> tuple[gv.BufferDict | None, str | None, dict[str, float] | None]:
     x, mean, covariance, fcn, prior, options = task
     import lsqfit
 
@@ -80,12 +82,16 @@ def _sample_fit(task: tuple[Any, np.ndarray, np.ndarray, Callable[..., Any], Map
             fit = lsqfit.nonlinear_fit(data=fit_data, fcn=fcn, prior=prior, **dict(options))
     except _NUMERICAL_FIT_ERRORS as exc:
         return None, f"{type(exc).__name__}: {exc}", None
-    return fit.pmean, None, {
-        "chi2": float(fit.chi2),
-        "dof": float(fit.dof),
-        "Q": float(fit.Q),
-        "logGBF": float(fit.logGBF),
-    }
+    return (
+        fit.pmean,
+        None,
+        {
+            "chi2": float(fit.chi2),
+            "dof": float(fit.dof),
+            "Q": float(fit.Q),
+            "logGBF": float(fit.logGBF),
+        },
+    )
 
 
 def _posterior_prior(fit: Any, template: Mapping[str, Any], scale: float) -> gv.BufferDict:
@@ -175,9 +181,7 @@ def nonlinear_fit(
         covariance = np.asarray(covariance, dtype=float)
         if covariance.shape != (flat_size, flat_size) or np.any(~np.isfinite(covariance)):
             raise ValueError("covariance must be a finite square matrix matching one flattened sample")
-        center_data = gv.gvar(
-            np.asarray(gv.mean(average)).reshape(-1), covariance
-        ).reshape(sample_values.shape[1:])
+        center_data = gv.gvar(np.asarray(gv.mean(average)).reshape(-1), covariance).reshape(sample_values.shape[1:])
     fit_data = center_data if x is None else (x, center_data)
     try:
         with _fit_warning_scope():
@@ -198,10 +202,7 @@ def nonlinear_fit(
         for key in prior
     }
     covariance = np.asarray(gv.evalcov(center_data))
-    tasks = [
-        (x, np.asarray(sample), covariance, fcn, sample_prior, sample_options)
-        for sample in samples.values
-    ]
+    tasks = [(x, np.asarray(sample), covariance, fcn, sample_prior, sample_options) for sample in samples.values]
     if _parallel is None:
         with _ParallelPool(min(workers, len(tasks))) as parallel:
             outcomes = parallel.map(
@@ -222,9 +223,7 @@ def nonlinear_fit(
     sample_diagnostics = tuple(diagnostics for _parameters, _error, diagnostics in outcomes)
     if not tolerate_sample_failures and any(error is not None for error in sample_errors):
         failed_index = next(index for index, error in enumerate(sample_errors) if error is not None)
-        raise FitNumericalError(
-            f"sample fit {failed_index} failed: {sample_errors[failed_index]}"
-        )
+        raise FitNumericalError(f"sample fit {failed_index} failed: {sample_errors[failed_index]}")
     return _FitResult(center_fit, fitted_samples, samples.resample, sample_errors, sample_diagnostics)
 
 

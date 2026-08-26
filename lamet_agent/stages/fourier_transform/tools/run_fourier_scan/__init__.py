@@ -61,19 +61,63 @@ def run(context: ToolContext) -> dict[str, object]:
     )
     scanned = result["data"]
     output_attrs = dict(scanned.attrs)
-    output_attrs.update({"target_observable": context.manifest["metadata"]["target_observable"], "parton": conventions["parton"], "gfix": conventions["gfix"]})
-    output = EnsembleData(scanned.ensemble, scanned.resample, [np.asarray(sample) for sample in scanned.values], scanned.dims, scanned.coords, attrs=output_attrs, name="quasi_distribution")
+    output_attrs.update(
+        {
+            "target_observable": context.manifest["metadata"]["target_observable"],
+            "parton": conventions["parton"],
+            "gfix": conventions["gfix"],
+        }
+    )
+    output = EnsembleData(
+        scanned.ensemble,
+        scanned.resample,
+        [np.asarray(sample) for sample in scanned.values],
+        scanned.dims,
+        scanned.coords,
+        attrs=output_attrs,
+        name="quasi_distribution",
+    )
     output.to_netcdf(context.artifact_directory / "output.nc")
     selected_range = result["selected_range"]
     selected_range_label = f"zmin_{selected_range['z_min_fm']:g}_zmax_{selected_range['z_max_fm']:g}".replace(".", "p")
     model_labels = [candidate["label"] for candidate in result["model_candidates"]]
-    diagnostics = {"selected_range_label": selected_range_label, "fit_model_labels": model_labels, "fit_model_weights": result["weights"], "selected_fit_model_labels": result["selected_labels"], "selected_Q": result["selected_candidate"]["Q"], "selected_chi2_dof": result["selected_candidate"]["chi2_dof"], "range_candidate_count": len(result["range_candidates"]), "model_candidate_count": len(result["model_candidates"]), "sample_count": output.n_sample, "x_count": len(output.coords["x"]), "workers": result["workers"]}
+    diagnostics = {
+        "selected_range_label": selected_range_label,
+        "fit_model_labels": model_labels,
+        "fit_model_weights": result["weights"],
+        "selected_fit_model_labels": result["selected_labels"],
+        "selected_Q": result["selected_candidate"]["Q"],
+        "selected_chi2_dof": result["selected_candidate"]["chi2_dof"],
+        "range_candidate_count": len(result["range_candidates"]),
+        "model_candidate_count": len(result["model_candidates"]),
+        "sample_count": output.n_sample,
+        "x_count": len(output.coords["x"]),
+        "workers": result["workers"],
+    }
     model_weights = dict(zip(model_labels, result["weights"]))
     selected_labels = set(result["selected_labels"])
     candidate_table = [
         {
             key: candidate[key]
-            for key in ("label", "model_id", "z_min_fm", "z_max_fm", "order", "prior_width", "smoothing_method", "smoothing_width_fm", "parameter_mean", "parameter_sdev", "chi2", "dof", "chi2_dof", "Q", "logGBF", "n_failed_samples", "sample_failures")
+            for key in (
+                "label",
+                "model_id",
+                "z_min_fm",
+                "z_max_fm",
+                "order",
+                "prior_width",
+                "smoothing_method",
+                "smoothing_width_fm",
+                "parameter_mean",
+                "parameter_sdev",
+                "chi2",
+                "dof",
+                "chi2_dof",
+                "Q",
+                "logGBF",
+                "n_failed_samples",
+                "sample_failures",
+            )
             if key in candidate
         }
         | {"selected": candidate["label"] in selected_labels, "model_weight": model_weights[candidate["label"]]}
@@ -82,16 +126,45 @@ def run(context: ToolContext) -> dict[str, object]:
     range_table = [
         {
             key: candidate[key]
-            for key in ("model_id", "z_min_fm", "z_max_fm", "order", "prior_width", "fit_success", "fit_parameters", "chi2", "dof", "chi2_dof", "Q", "logGBF", "error")
+            for key in (
+                "model_id",
+                "z_min_fm",
+                "z_max_fm",
+                "order",
+                "prior_width",
+                "fit_success",
+                "fit_parameters",
+                "chi2",
+                "dof",
+                "chi2_dof",
+                "Q",
+                "logGBF",
+                "error",
+            )
             if key in candidate
         }
-        | {"selected": candidate["model_id"] == selected_range["model_id"] and float(candidate["z_min_fm"]) == float(selected_range["z_min_fm"]) and float(candidate["z_max_fm"]) == float(selected_range["z_max_fm"])}
+        | {
+            "selected": candidate["model_id"] == selected_range["model_id"]
+            and float(candidate["z_min_fm"]) == float(selected_range["z_min_fm"])
+            and float(candidate["z_max_fm"]) == float(selected_range["z_max_fm"])
+        }
         for candidate in result["range_candidates"]
     ]
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
-    (context.artifact_directory / "diagnostics" / "candidates.json").write_text(json.dumps(candidate_table, indent=2), encoding="utf-8")
-    (context.artifact_directory / "diagnostics" / "ranges.json").write_text(json.dumps(range_table, indent=2), encoding="utf-8")
-    artifacts = ["output.nc", "diagnostics/candidates.json", "diagnostics/ranges.json", "output_xdep.pdf", "output_re.pdf", "output_im.pdf"]
+    (context.artifact_directory / "diagnostics" / "candidates.json").write_text(
+        json.dumps(candidate_table, indent=2), encoding="utf-8"
+    )
+    (context.artifact_directory / "diagnostics" / "ranges.json").write_text(
+        json.dumps(range_table, indent=2), encoding="utf-8"
+    )
+    artifacts = [
+        "output.nc",
+        "diagnostics/candidates.json",
+        "diagnostics/ranges.json",
+        "output_xdep.pdf",
+        "output_re.pdf",
+        "output_im.pdf",
+    ]
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
     start_plot()
     if scan["component"] in {"re", "both"}:
@@ -115,14 +188,40 @@ def run(context: ToolContext) -> dict[str, object]:
     lambda_max = z_max_fm * ioffe_time_scale
     for component, filename in (("real", "output_re.pdf"), ("imag", "output_im.pdf")):
         start_plot()
-        errorband(input_lambda, getattr(source, component).average(sample_error_mode), color=COLOR_CYCLE[0], label="input")
-        errorband(extension_lambda, getattr(extension_segment, component).average(sample_error_mode), color=COLOR_CYCLE[1], label="extrapolation")
+        errorband(
+            input_lambda, getattr(source, component).average(sample_error_mode), color=COLOR_CYCLE[0], label="input"
+        )
+        errorband(
+            extension_lambda,
+            getattr(extension_segment, component).average(sample_error_mode),
+            color=COLOR_CYCLE[1],
+            label="extrapolation",
+        )
         vline(lambda_min, color="black", linestyle="dashed")
         vline(lambda_max, color="black", linestyle="dashed")
-        configure_plot(xlabel=r"$\lambda = zP^z$", ylabel=r"Re $h(\lambda)$" if component == "real" else r"Im $h(\lambda)$", legend=True)
+        configure_plot(
+            xlabel=r"$\lambda = zP^z$",
+            ylabel=r"Re $h(\lambda)$" if component == "real" else r"Im $h(\lambda)$",
+            legend=True,
+        )
         save_figure(context.artifact_directory / filename)
-    (context.artifact_directory / "report.md").write_text(f"# Fourier transform\n\nSelected range: `{selected_range_label}`.\n\nSelected models: {', '.join(result['selected_labels'])}.\n", encoding="utf-8")
+    (context.artifact_directory / "report.md").write_text(
+        f"# Fourier transform\n\nSelected range: `{selected_range_label}`.\n\nSelected models: {', '.join(result['selected_labels'])}.\n",
+        encoding="utf-8",
+    )
     artifacts.append("report.md")
-    summary = {"stage_id": context.stage_id, "job_id": context.job_id, "result": "quasi_distribution", "decisions": {"selected_range_label": selected_range_label, "fit_model_labels": result["selected_labels"]}, "diagnostics": diagnostics, "artifacts": artifacts}
+    summary = {
+        "stage_id": context.stage_id,
+        "job_id": context.job_id,
+        "result": "quasi_distribution",
+        "decisions": {"selected_range_label": selected_range_label, "fit_model_labels": result["selected_labels"]},
+        "diagnostics": diagnostics,
+        "artifacts": artifacts,
+    }
     context.finish(output, summary)
-    return {"summary": "published scanned quasi distribution", "metrics": diagnostics, "state_keys": [], "artifacts": artifacts}
+    return {
+        "summary": "published scanned quasi distribution",
+        "metrics": diagnostics,
+        "state_keys": [],
+        "artifacts": artifacts,
+    }

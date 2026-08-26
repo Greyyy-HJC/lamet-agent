@@ -83,13 +83,14 @@ def test_tolerated_sample_failure_preserves_sample_alignment(monkeypatch) -> Non
     data = EnsembleData(None, "bootstrap", [[1.0], [1.1]], ["x"], {"x": [0]})
     prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
     successful = gv.BufferDict({"amplitude": 1.0})
+
     class FailedSampleParallel:
         def map(self, _function, _tasks, *, description, unit):
             assert description == "Sample fits"
             assert unit == "fit"
             return [
-            (successful, None, {"chi2": 1.0, "dof": 1.0, "Q": 0.5, "logGBF": 0.0}),
-            (None, "ZeroDivisionError: float division", None),
+                (successful, None, {"chi2": 1.0, "dof": 1.0, "Q": 0.5, "logGBF": 0.0}),
+                (None, "ZeroDivisionError: float division", None),
             ]
 
     result = nonlinear_fit(

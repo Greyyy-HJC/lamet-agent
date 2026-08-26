@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lamet_agent.stages._reporting import StageReportRecord, artifact_rows, describe_grid, figure_lines, format_value, output_attrs, stage_overlay_lines, write_report
+from lamet_agent.stages._reporting import (
+    StageReportRecord,
+    artifact_rows,
+    describe_grid,
+    figure_lines,
+    format_value,
+    output_attrs,
+    stage_overlay_lines,
+    write_report,
+)
 from lamet_agent.stages.renormalization.parameters import effective_params
 
 
@@ -90,8 +99,7 @@ lattice spacing, and coordinate coverage must agree with the fitted factor.
 
 def _method_text(records: tuple[StageReportRecord, ...]) -> list[str]:
     combinations = {
-        (params["scheme"], params["strategy"])
-        for params in (effective_params(record.params) for record in records)
+        (params["scheme"], params["strategy"]) for params in (effective_params(record.params) for record in records)
     }
     blocks: list[str] = []
     for scheme, strategy in sorted(combinations):
@@ -129,62 +137,77 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             f"{format_value(params['normalization'])} | {format_value(getattr(record.output, 'n_sample', None))} | "
             f"`{summary.get('result')}` |"
         )
-    lines.extend(["", "## Stage Overview", "", *stage_overlay_lines(records, artifact_directory, coordinate="z", stem="renormalization_overview", ylabel="renormalized matrix element")])
+    lines.extend(
+        [
+            "",
+            "## Stage Overview",
+            "",
+            *stage_overlay_lines(
+                records,
+                artifact_directory,
+                coordinate="z",
+                stem="renormalization_overview",
+                ylabel="renormalized matrix element",
+            ),
+        ]
+    )
     for record in records:
         params = effective_params(record.params)
         attrs = output_attrs(record)
         diagnostics = record.summary.get("diagnostics", {})
-        lines.extend([
-            "",
-            f"## `{record.job_id}`",
-            "",
-            "### Parameters and Provenance",
-            "",
-            "| quantity | value |",
-            "|---|---|",
-            f"| scheme | `{params['scheme']}` |",
-            f"| strategy | `{params['strategy']}` |",
-            f"| normalization | {format_value(params['normalization'])} |",
-            f"| $z_s$ [fm] | {format_value(params.get('zs_fm'))} |",
-            f"| $m_0$ [GeV] | {format_value(params.get('m0_gev', attrs.get('m0_gev')))} |",
-            f"| $\\delta m$ [GeV] | {format_value(params.get('delta_m_gev'))} |",
-            f"| $d$ | {format_value(params.get('d', attrs.get('d')))} |",
-            f"| $\\mu$ [GeV] | {format_value(params.get('mu', attrs.get('scale_gev')))} |",
-            f"| $\\Lambda_{{\\rm QCD}}$ [GeV] | {format_value(params.get('LambdaQCD_gev'))} |",
-            f"| dimensions | {format_value(getattr(record.output, 'dims', diagnostics.get('dims')))} |",
-            f"| coordinate unit | `{attrs.get('coord_unit', 'n/a')}` |",
-            f"| fitted formula | {format_value(diagnostics.get('formula'))} |",
-            f"| short-distance fit range [fm] | {format_value([diagnostics.get('short_distance_min_fm'), diagnostics.get('short_distance_max_fm')])} |",
-            f"| lattice-spacing fit range [fm] | {format_value(diagnostics.get('lattice_spacing_range_fm'))} |",
-            f"| output z range [fm] | {format_value(diagnostics.get('z_range_fm'))} |",
-            f"| input z ranges [fm] | {format_value(diagnostics.get('input_z_ranges_fm'))} |",
-            f"| denominator kind | `{diagnostics.get('denominator_kind', 'n/a')}` |",
-            f"| ZMSbar model | `{diagnostics.get('zms_model', attrs.get('zms_model', 'n/a'))}` |",
-            "",
-            "### Coverage and Statistical Semantics",
-            "",
-            f"- Output grid: {describe_grid(record.output.coords.get('z', record.output.coords.get('a', [])), symbol='z')}",
-            "- Every operation acts sample by sample. Matrix denominators are aligned by coordinate value before division; numeric constants carry no artificial uncertainty.",
-            "- A reusable factor is selected at the target lattice spacing and must cover every nonzero target coordinate. The origin is preserved exactly.",
-            "",
-            "### Field Definitions",
-            "",
-            "| field | meaning |",
-            "|---|---|",
-            "| `scheme` | Finite prescription: ratio, hybrid, or MSbar. |",
-            "| `strategy` | External denominator or a reusable factor fitted from reference ensembles. |",
-            "| `d`, `m0_gev` | Finite logarithmic and linear operator corrections used by self-renormalization. |",
-            "| `delta_m_gev` | Long-distance exponential correction in the external hybrid prescription. |",
-            "| `LambdaQCD_gev`, `mu` | Scales entering the continuum logarithm and perturbative finite conversion. |",
-            "",
-            "### Figures",
-            "",
-            *figure_lines(record, artifact_directory),
-            "",
-            "### Artifacts",
-            "",
-            "| job | artifact |",
-            "|---|---|",
-            *artifact_rows(record, artifact_directory),
-        ])
+        lines.extend(
+            [
+                "",
+                f"## `{record.job_id}`",
+                "",
+                "### Parameters and Provenance",
+                "",
+                "| quantity | value |",
+                "|---|---|",
+                f"| scheme | `{params['scheme']}` |",
+                f"| strategy | `{params['strategy']}` |",
+                f"| normalization | {format_value(params['normalization'])} |",
+                f"| $z_s$ [fm] | {format_value(params.get('zs_fm'))} |",
+                f"| $m_0$ [GeV] | {format_value(params.get('m0_gev', attrs.get('m0_gev')))} |",
+                f"| $\\delta m$ [GeV] | {format_value(params.get('delta_m_gev'))} |",
+                f"| $d$ | {format_value(params.get('d', attrs.get('d')))} |",
+                f"| $\\mu$ [GeV] | {format_value(params.get('mu', attrs.get('scale_gev')))} |",
+                f"| $\\Lambda_{{\\rm QCD}}$ [GeV] | {format_value(params.get('LambdaQCD_gev'))} |",
+                f"| dimensions | {format_value(getattr(record.output, 'dims', diagnostics.get('dims')))} |",
+                f"| coordinate unit | `{attrs.get('coord_unit', 'n/a')}` |",
+                f"| fitted formula | {format_value(diagnostics.get('formula'))} |",
+                f"| short-distance fit range [fm] | {format_value([diagnostics.get('short_distance_min_fm'), diagnostics.get('short_distance_max_fm')])} |",
+                f"| lattice-spacing fit range [fm] | {format_value(diagnostics.get('lattice_spacing_range_fm'))} |",
+                f"| output z range [fm] | {format_value(diagnostics.get('z_range_fm'))} |",
+                f"| input z ranges [fm] | {format_value(diagnostics.get('input_z_ranges_fm'))} |",
+                f"| denominator kind | `{diagnostics.get('denominator_kind', 'n/a')}` |",
+                f"| ZMSbar model | `{diagnostics.get('zms_model', attrs.get('zms_model', 'n/a'))}` |",
+                "",
+                "### Coverage and Statistical Semantics",
+                "",
+                f"- Output grid: {describe_grid(record.output.coords.get('z', record.output.coords.get('a', [])), symbol='z')}",
+                "- Every operation acts sample by sample. Matrix denominators are aligned by coordinate value before division; numeric constants carry no artificial uncertainty.",
+                "- A reusable factor is selected at the target lattice spacing and must cover every nonzero target coordinate. The origin is preserved exactly.",
+                "",
+                "### Field Definitions",
+                "",
+                "| field | meaning |",
+                "|---|---|",
+                "| `scheme` | Finite prescription: ratio, hybrid, or MSbar. |",
+                "| `strategy` | External denominator or a reusable factor fitted from reference ensembles. |",
+                "| `d`, `m0_gev` | Finite logarithmic and linear operator corrections used by self-renormalization. |",
+                "| `delta_m_gev` | Long-distance exponential correction in the external hybrid prescription. |",
+                "| `LambdaQCD_gev`, `mu` | Scales entering the continuum logarithm and perturbative finite conversion. |",
+                "",
+                "### Figures",
+                "",
+                *figure_lines(record, artifact_directory),
+                "",
+                "### Artifacts",
+                "",
+                "| job | artifact |",
+                "|---|---|",
+                *artifact_rows(record, artifact_directory),
+            ]
+        )
     return write_report(artifact_directory, lines)

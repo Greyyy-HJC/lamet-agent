@@ -81,7 +81,12 @@ def run(context: ToolContext, *, correlator_ids: list[str] | None = None) -> dic
     inspection = {}
     artifact_paths = []
     for index, (key, value) in enumerate(resampled.items(), start=1):
-        metrics = {"dims": value.dims, "shape": list(value.values.shape), "n_sample": value.n_sample, "coord_ranges": {dim: [min(coords), max(coords)] for dim, coords in value.coords.items()}}
+        metrics = {
+            "dims": value.dims,
+            "shape": list(value.values.shape),
+            "n_sample": value.n_sample,
+            "coord_ranges": {dim: [min(coords), max(coords)] for dim, coords in value.coords.items()},
+        }
         if "t" in value.dims:
             times = np.asarray(value.coords["t"], dtype=float)
             samples = np.asarray(value.real.values if np.iscomplexobj(value.values) else value.values)
@@ -90,9 +95,23 @@ def run(context: ToolContext, *, correlator_ids: list[str] | None = None) -> dic
             samples = samples.reshape(samples.shape[0], samples.shape[1], -1).mean(axis=2)
             central = np.mean(samples, axis=0)
             usable = np.isfinite(central) & (central > 0)
-            effective_mass = -np.diff(np.log(central[usable])) / np.diff(times[usable]) if np.count_nonzero(usable) > 1 else np.asarray([], dtype=float)
-            relative_noise = np.std(samples, axis=0, ddof=1) / np.maximum(np.abs(central), np.finfo(float).eps) if samples.shape[0] > 1 else np.zeros_like(central)
-            metrics.update({"effective_mass": effective_mass.tolist(), "relative_noise": relative_noise.tolist(), "usable_time_count": int(np.count_nonzero(usable))})
+            effective_mass = (
+                -np.diff(np.log(central[usable])) / np.diff(times[usable])
+                if np.count_nonzero(usable) > 1
+                else np.asarray([], dtype=float)
+            )
+            relative_noise = (
+                np.std(samples, axis=0, ddof=1) / np.maximum(np.abs(central), np.finfo(float).eps)
+                if samples.shape[0] > 1
+                else np.zeros_like(central)
+            )
+            metrics.update(
+                {
+                    "effective_mass": effective_mass.tolist(),
+                    "relative_noise": relative_noise.tolist(),
+                    "usable_time_count": int(np.count_nonzero(usable)),
+                }
+            )
             plot_data = EnsembleData(
                 value.ensemble,
                 value.resample,
@@ -109,9 +128,21 @@ def run(context: ToolContext, *, correlator_ids: list[str] | None = None) -> dic
             artifact_paths.append(plot_path)
         inspection[key] = metrics
     context.state["inspection"] = inspection
-    metrics = {"correlator_count": len(resampled), "resample_id": next(iter(resampled.values())).attrs.get("resample_id") if resampled else None, "diagnostics": {key: {name: value for name, value in item.items() if name not in {"effective_mass", "relative_noise"}} for key, item in inspection.items()}}
+    metrics = {
+        "correlator_count": len(resampled),
+        "resample_id": next(iter(resampled.values())).attrs.get("resample_id") if resampled else None,
+        "diagnostics": {
+            key: {name: value for name, value in item.items() if name not in {"effective_mass", "relative_noise"}}
+            for key, item in inspection.items()
+        },
+    }
     state_keys = ["correlators", "inspection"]
     if scale_inspection is not None:
         metrics["correlator_scale"] = scale_inspection
         state_keys.extend(["correlator_scale_inspection", "correlator_rescale"])
-    return {"summary": f"inspected {len(resampled)} correlators with shared resample plan", "metrics": metrics, "state_keys": state_keys, "artifacts": artifact_paths}
+    return {
+        "summary": f"inspected {len(resampled)} correlators with shared resample plan",
+        "metrics": metrics,
+        "state_keys": state_keys,
+        "artifacts": artifact_paths,
+    }

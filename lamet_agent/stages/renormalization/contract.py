@@ -26,9 +26,17 @@ def _nonnegative_finite(value: int | float) -> bool:
 
 
 def _valid_denominator(value: object) -> bool:
-    return isinstance(value, (str, dict)) or isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value != 0
+    return (
+        isinstance(value, (str, dict))
+        or isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value != 0
+    )
 
 
+# ruff: disable[E501]
+# fmt: off
 PARAM_RULES = (
     Depends("", "strategy", physics="Strategy selects external or self-renormalization data flow."),
     Value("strategy", Literal["external_denominator", "self_renormalization"], physics="Strategy is external_denominator or self_renormalization."),
@@ -76,6 +84,8 @@ INPUT_RULES = (
     Source("zR", physics="zR is one prior job or external file source."),
     Source("reference", physics="Reference is one source or a nonempty source list.", allow_list=True),
 )
+# fmt: on
+# ruff: enable[E501]
 
 
 def check_path(context: CheckContext) -> Issue | None:
@@ -123,9 +133,7 @@ def check_inputs(context: CheckContext) -> Issue | None:
         if scheme in {"ratio", "msbar"}:
             if "denominator" not in context.inputs:
                 return Issue("inputs.denominator", "is required for ratio/MSbar external renormalization", physics)
-        if scheme == "hybrid" and not isinstance(
-            context.inputs.get("denominator"), (str, dict)
-        ):
+        if scheme == "hybrid" and not isinstance(context.inputs.get("denominator"), (str, dict)):
             return Issue("inputs.denominator", "hybrid requires a coordinate-dependent source", physics)
         if "zR" in context.inputs or "reference" in context.inputs:
             role = "zR" if "zR" in context.inputs else "reference"
@@ -151,11 +159,12 @@ def _check_scale(context: CheckContext) -> Issue | None:
     is_fit = set(context.inputs) == {"reference"}
     requires = is_fit or strategy == "self_renormalization" or scheme == "msbar"
     if requires and "mu" not in params:
-        return Issue("mu", "is required for this renormalization path", "Scale-dependent renormalization paths require a positive scale; ratio external division does not.")
-    if (
-        (is_fit or strategy == "self_renormalization")
-        and "LambdaQCD_gev" not in params
-    ):
+        return Issue(
+            "mu",
+            "is required for this renormalization path",
+            "Scale-dependent renormalization paths require a positive scale; ratio external division does not.",
+        )
+    if (is_fit or strategy == "self_renormalization") and "LambdaQCD_gev" not in params:
         return Issue(
             "params.LambdaQCD_gev",
             "is required for self-renormalization fitting and application",

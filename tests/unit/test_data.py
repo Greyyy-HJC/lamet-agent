@@ -10,7 +10,15 @@ from lamet_agent.data import EnsembleData
 
 
 def test_sample_bearing_data_keeps_leading_resample_dimension() -> None:
-    data = EnsembleData(None, "bootstrap", [np.array([1.0, 2.0]), np.array([2.0, 4.0])], ["x"], {"x": [0.0, 1.0]}, attrs={"resample_id": "same"}, name="toy")
+    data = EnsembleData(
+        None,
+        "bootstrap",
+        [np.array([1.0, 2.0]), np.array([2.0, 4.0])],
+        ["x"],
+        {"x": [0.0, 1.0]},
+        attrs={"resample_id": "same"},
+        name="toy",
+    )
     assert data.array.dims == ("resample", "x")
     assert data.n_sample == 2
     assert data.coords == {"x": [0.0, 1.0]}
@@ -18,7 +26,9 @@ def test_sample_bearing_data_keeps_leading_resample_dimension() -> None:
 
 
 def test_netcdf_roundtrip(tmp_path) -> None:
-    data = EnsembleData(None, "bootstrap", [np.array([1.0, 2.0]), np.array([2.0, 4.0])], ["x"], {"x": [0.0, 1.0]}, name="toy")
+    data = EnsembleData(
+        None, "bootstrap", [np.array([1.0, 2.0]), np.array([2.0, 4.0])], ["x"], {"x": [0.0, 1.0]}, name="toy"
+    )
     netcdf = tmp_path / "toy.nc"
     data.to_netcdf(netcdf)
     restored = EnsembleData.from_netcdf(netcdf)
@@ -76,9 +86,7 @@ def test_gvar_median_uses_resampling_scaled_percentile_errors_without_correlatio
     samples = np.asarray([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0], [100.0, 3.0]])
     data = EnsembleData(None, resample, list(samples), ["x"], {"x": [0, 1]})
     result = data.gvar_median
-    low, center, high = np.percentile(
-        samples, [50 - 34.1344746, 50, 50 + 34.1344746], axis=0
-    )
+    low, center, high = np.percentile(samples, [50 - 34.1344746, 50, 50 + 34.1344746], axis=0)
     expected = 0.5 * (high - low) * factor
     np.testing.assert_allclose(gv.mean(result), center)
     np.testing.assert_allclose(gv.sdev(result), expected)
@@ -106,8 +114,12 @@ def test_average_selects_data_owned_uncertainty_semantics() -> None:
 
 
 def test_aligned_ensemble_data_preserves_ratio_correlations() -> None:
-    numerator = EnsembleData(None, "raw", [np.array([2.0, 4.0]), np.array([4.0, 8.0]), np.array([6.0, 10.0])], ["z"], {"z": [0.0, 1.0]})
-    denominator = EnsembleData(None, "raw", [np.array([1.0, 2.0]), np.array([2.0, 4.0]), np.array([3.0, 5.0])], ["z"], {"z": [0.0, 1.0]})
+    numerator = EnsembleData(
+        None, "raw", [np.array([2.0, 4.0]), np.array([4.0, 8.0]), np.array([6.0, 10.0])], ["z"], {"z": [0.0, 1.0]}
+    )
+    denominator = EnsembleData(
+        None, "raw", [np.array([1.0, 2.0]), np.array([2.0, 4.0]), np.array([3.0, 5.0])], ["z"], {"z": [0.0, 1.0]}
+    )
     sampled_numerator = numerator.bootstrap(12, seed=7)
     sampled_denominator = denominator.bootstrap(12, seed=7)
     ratio = sampled_numerator.div(sampled_denominator)

@@ -14,7 +14,6 @@ from lamet_agent.stages.correlator_analysis.physics import (
     matrix_element_samples,
 )
 from lamet_agent.stages.correlator_analysis.selection import (
-    select_data_window as _select_data_window,
     select_tuned_candidate,
 )
 
@@ -38,13 +37,23 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
             for width in lsqfit["prior_width"]
         }
         observed = {
-            (candidate["method"], candidate.get("fit_scope"), candidate["window"]["t_min"], candidate["window"]["t_max"], candidate["window"]["tau_min"], candidate.get("nstate"), candidate.get("prior_width"))
+            (
+                candidate["method"],
+                candidate.get("fit_scope"),
+                candidate["window"]["t_min"],
+                candidate["window"]["t_max"],
+                candidate["window"]["tau_min"],
+                candidate.get("nstate"),
+                candidate.get("prior_width"),
+            )
             for candidate in candidates
             if candidate.get("method") in spectral_methods
         }
         missing = sorted(expected - observed)
         if missing:
-            raise ValueError(f"all authored matrix-fit candidates must be evaluated before publishing; missing {missing[:3]}")
+            raise ValueError(
+                f"all authored matrix-fit candidates must be evaluated before publishing; missing {missing[:3]}"
+            )
     if "qda_ratio" in lsqfit["fit_scope"]:
         expected_qda = {
             (
@@ -84,10 +93,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         if candidate.get("method") in spectral_methods or candidate.get("method") == "qda"
     ]
     if matrix_candidates:
-        is_qda = bool(matrix_candidates) and all(
-            candidate.get("method") == "qda"
-            for candidate in matrix_candidates
-        )
+        is_qda = bool(matrix_candidates) and all(candidate.get("method") == "qda" for candidate in matrix_candidates)
         deterministic, fallback = select_tuned_candidate(
             matrix_candidates,
             q_min=float(lsqfit["q_min"]),
@@ -120,10 +126,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     while True:
         data = selected.get("data")
         selected_method = selected.get("method")
-        if isinstance(data, EnsembleData) or (
-            selected_method not in spectral_methods
-            and selected_method != "qda"
-        ):
+        if isinstance(data, EnsembleData) or (selected_method not in spectral_methods and selected_method != "qda"):
             break
         if not isinstance(correlators, dict):
             raise RuntimeError("inspect_correlators must run before publishing a matrix-element model")
@@ -143,9 +146,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                     t_max=int(selected["window"]["t_max"]),
                     tau_min=None,
                     lsqfit=settings,
-                    sample_error_mode=str(
-                        context.manifest["metadata"]["sample_error_mode"]
-                    ),
+                    sample_error_mode=str(context.manifest["metadata"]["sample_error_mode"]),
                     workers=context.workers,
                     fit_samples=True,
                     n_states=int(selected["nstate"]),
@@ -153,19 +154,13 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                     _parallel=context._parallel,
                 )
                 if values is None:
-                    raise RuntimeError(
-                        "full qDA fitting produced no sample values"
-                    )
+                    raise RuntimeError("full qDA fitting produced no sample values")
                 component = str(context.params["component"])
                 if component == "re":
                     values = values.real
                 elif component == "im":
                     values = values.imag
-                source = next(
-                    value
-                    for value in correlators.values()
-                    if value.attrs.get("correlator_type") == "qda"
-                )
+                source = next(value for value in correlators.values() if value.attrs.get("correlator_type") == "qda")
                 attrs = dict(source.attrs)
                 attrs.update(
                     {
@@ -173,9 +168,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                         "method": "qda",
                         "n_states": int(selected["nstate"]),
                         "prior_width": float(selected["prior_width"]),
-                        "sample_error_mode": context.manifest["metadata"][
-                            "sample_error_mode"
-                        ],
+                        "sample_error_mode": context.manifest["metadata"]["sample_error_mode"],
                         "units": '{"values":"dimensionless","z":"lattice"}',
                     }
                 )
@@ -220,11 +213,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                 data, application_fit = fit_matrix_element_samples(correlators, **application_kwargs)
         except FitNumericalError as exc:
             error = str(exc)
-        if (
-            error is None
-            and application_fit is not None
-            and int(application_fit.get("n_failed_samples", 0))
-        ):
+        if error is None and application_fit is not None and int(application_fit.get("n_failed_samples", 0)):
             error = f"{application_fit['n_failed_samples']} sample fit(s) failed numerically"
         if error is None:
             if not isinstance(data, EnsembleData) or application_fit is None:
@@ -247,7 +236,9 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                 qda=is_qda,
             )
         except ValueError as exc:
-            raise FitNumericalError(f"all matrix-fit candidates failed full-grid application: {application_rejections}") from exc
+            raise FitNumericalError(
+                f"all matrix-fit candidates failed full-grid application: {application_rejections}"
+            ) from exc
         print(f"Retrying publication with matrix candidate {selected['id']}...", flush=True)
         selection_rule = (
             "original_qda_robust_rule(min_Q_then_worst_chi2_dof)"
@@ -269,17 +260,54 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
             "correlator_rescale": candidate.get("correlator_rescale"),
             "quality_passed": candidate.get("quality_passed", True),
             "numerical_failure": candidate.get("numerical_failure", False),
-            **{key: candidate[key] for key in ("error", "failure_reasons", "feasible_at_all_tune_z", "tune_z_values", "tune_z_diagnostics", "n_failed_samples", "n_data", "n_params", "chi2", "dof", "chi2_dof", "Q", "min_Q", "worst_chi2_dof", "max_chi2_dof", "logGBF", "aic") if key in candidate},
+            **{
+                key: candidate[key]
+                for key in (
+                    "error",
+                    "failure_reasons",
+                    "feasible_at_all_tune_z",
+                    "tune_z_values",
+                    "tune_z_diagnostics",
+                    "n_failed_samples",
+                    "n_data",
+                    "n_params",
+                    "chi2",
+                    "dof",
+                    "chi2_dof",
+                    "Q",
+                    "min_Q",
+                    "worst_chi2_dof",
+                    "max_chi2_dof",
+                    "logGBF",
+                    "aic",
+                )
+                if key in candidate
+            },
         }
         for candidate in sorted(candidates, key=lambda item: str(item["id"]))
     ]
-    diagnostics = {"candidate_id": candidate_id, "method": selected.get("method"), "selection_rule": selection_rule, "application_rejections": application_rejections, "recommended_defaults": context.state.get("recommended_defaults", {}), "correlator_scale_inspection": context.state.get("correlator_scale_inspection", {}), "selected_preflight_fit": selected.get("preflight_fit"), "selected_application_fit": selected.get("application_fit"), "candidates": candidate_table, **{key: selected[key] for key in ("chi2", "dof", "chi2_dof", "Q", "aic") if key in selected}}
+    diagnostics = {
+        "candidate_id": candidate_id,
+        "method": selected.get("method"),
+        "selection_rule": selection_rule,
+        "application_rejections": application_rejections,
+        "recommended_defaults": context.state.get("recommended_defaults", {}),
+        "correlator_scale_inspection": context.state.get("correlator_scale_inspection", {}),
+        "selected_preflight_fit": selected.get("preflight_fit"),
+        "selected_application_fit": selected.get("application_fit"),
+        "candidates": candidate_table,
+        **{key: selected[key] for key in ("chi2", "dof", "chi2_dof", "Q", "aic") if key in selected},
+    }
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
-    (context.artifact_directory / "diagnostics" / "candidates.json").write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
+    (context.artifact_directory / "diagnostics" / "candidates.json").write_text(
+        json.dumps(diagnostics, indent=2), encoding="utf-8"
+    )
     plot_dim = "z" if "z" in data.dims else "state" if "state" in data.dims else data.dims[0]
     plot_samples = np.asarray(data.real.values if np.iscomplexobj(data.values) else data.values)
     plot_axis = data.array.dims.index(plot_dim)
-    plot_samples = np.moveaxis(plot_samples, plot_axis, 1).reshape(data.n_sample, len(data.coords[plot_dim]), -1).mean(axis=2)
+    plot_samples = (
+        np.moveaxis(plot_samples, plot_axis, 1).reshape(data.n_sample, len(data.coords[plot_dim]), -1).mean(axis=2)
+    )
     plot_data = EnsembleData(
         data.ensemble,
         data.resample,
@@ -299,6 +327,18 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     report = f"# Correlator result\n\nSelected candidate: `{candidate_id}`.\nMethod: `{selected.get('method')}`.\n"
     (context.artifact_directory / "report.md").write_text(report, encoding="utf-8")
     artifacts = ["output.nc", "diagnostics/candidates.json", "report.md"] + ([plot_artifact] if plot_artifact else [])
-    summary = {"stage_id": context.stage_id, "job_id": context.job_id, "result": str(data.name or "correlator_result"), "decisions": {"candidate_id": candidate_id, "method": selected.get("method")}, "diagnostics": diagnostics, "artifacts": artifacts}
+    summary = {
+        "stage_id": context.stage_id,
+        "job_id": context.job_id,
+        "result": str(data.name or "correlator_result"),
+        "decisions": {"candidate_id": candidate_id, "method": selected.get("method")},
+        "diagnostics": diagnostics,
+        "artifacts": artifacts,
+    }
     context.finish(data, summary)
-    return {"summary": f"published {data.name or 'correlator result'}", "metrics": diagnostics, "state_keys": [], "artifacts": summary["artifacts"]}
+    return {
+        "summary": f"published {data.name or 'correlator result'}",
+        "metrics": diagnostics,
+        "state_keys": [],
+        "artifacts": summary["artifacts"],
+    }

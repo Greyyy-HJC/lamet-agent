@@ -411,9 +411,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"use --force to rebuild schema_version={SCHEMA_VERSION}"
             )
 
-    pending_papers = [
-        paper for paper in papers if args.force or paper["arxiv_id"] not in classified
-    ]
+    pending_papers = [paper for paper in papers if args.force or paper["arxiv_id"] not in classified]
     if not pending_papers:
         print(f"All {len(papers)} selected papers are already classified.")
         return 0
@@ -434,14 +432,10 @@ def main(argv: list[str] | None = None) -> int:
             document = soup.select_one(".ltx_document")
             source_scope = "full_text" if document is not None else "abstract_page"
             document = document or soup
-            for tag in document.select(
-                "script, style, nav, header, footer, .ltx_bibliography, .ltx_page_footer"
-            ):
+            for tag in document.select("script, style, nav, header, footer, .ltx_bibliography, .ltx_page_footer"):
                 tag.decompose()
 
-            full_text = "\n".join(
-                line.strip() for line in document.get_text("\n").splitlines() if line.strip()
-            )
+            full_text = "\n".join(line.strip() for line in document.get_text("\n").splitlines() if line.strip())
             sections = document.select("section.ltx_section")
             if source_scope == "full_text" and sections:
                 headings = [
@@ -476,8 +470,7 @@ def main(argv: list[str] | None = None) -> int:
                 for section in sections:
                     heading = section.find(["h1", "h2"], recursive=False)
                     if heading is None or not any(
-                        keyword in heading.get_text(" ", strip=True).lower()
-                        for keyword in section_keywords
+                        keyword in heading.get_text(" ", strip=True).lower() for keyword in section_keywords
                     ):
                         continue
                     section_text = "\n".join(
@@ -576,19 +569,13 @@ def main(argv: list[str] | None = None) -> int:
                     value for value in result["lattice_setup"]["momenta_gev"] if 0 <= value <= 20
                 ]
                 result["lattice_setup"]["source_sink_separations_fm"] = [
-                    value
-                    for value in result["lattice_setup"]["source_sink_separations_fm"]
-                    if 0 < value <= 5
+                    value for value in result["lattice_setup"]["source_sink_separations_fm"] if 0 < value <= 5
                 ]
                 pion_masses = [
-                    mass
-                    for ensemble in result["lattice_setup"]["ensembles"]
-                    for mass in ensemble["pion_masses_mev"]
+                    mass for ensemble in result["lattice_setup"]["ensembles"] for mass in ensemble["pion_masses_mev"]
                 ]
                 if pion_masses:
-                    result["lattice_setup"]["physical_pion_mass"] = any(
-                        125 <= mass <= 145 for mass in pion_masses
-                    )
+                    result["lattice_setup"]["physical_pion_mass"] = any(125 <= mass <= 145 for mass in pion_masses)
 
             if (
                 result["paper_type"] == "review"
@@ -609,9 +596,7 @@ def main(argv: list[str] | None = None) -> int:
                     metadata_text,
                 )
             ):
-                result["tags"]["observables"] = [
-                    value for value in result["tags"]["observables"] if value != "da"
-                ]
+                result["tags"]["observables"] = [value for value in result["tags"]["observables"] if value != "da"]
                 result["tags"]["observables"].append("pdf")
 
             if not result["lattice_setup"]["uses_lattice_data"]:
@@ -620,37 +605,29 @@ def main(argv: list[str] | None = None) -> int:
 
             if "current_current" not in result["tags"]["operators"]:
                 result["tags"]["correlator_types"] = [
-                    value
-                    for value in result["tags"]["correlator_types"]
-                    if value != "current_current"
+                    value for value in result["tags"]["correlator_types"] if value != "current_current"
                 ]
                 result["tags"]["methods"] = [
                     value
                     for value in result["tags"]["methods"]
                     if value not in {"current_current_correlator", "hadronic_tensor"}
                 ]
-            if (
-                "lattice_cross_section" in result["tags"]["methods"]
-                and not re.search(
-                    r"lattice.{0,2}cross.{0,2}section(?:s)?",
-                    full_text,
-                    re.IGNORECASE,
-                )
+            if "lattice_cross_section" in result["tags"]["methods"] and not re.search(
+                r"lattice.{0,2}cross.{0,2}section(?:s)?",
+                full_text,
+                re.IGNORECASE,
             ):
                 result["tags"]["methods"].remove("lattice_cross_section")
             if (
                 result["lattice_setup"]["uses_lattice_data"]
                 and {"pdf", "gpd"} & set(result["tags"]["observables"])
-                and {"straight_wilson_line", "local_current", "gluon_operator"}
-                & set(result["tags"]["operators"])
+                and {"straight_wilson_line", "local_current", "gluon_operator"} & set(result["tags"]["operators"])
                 and "current_current" not in result["tags"]["correlator_types"]
                 and "three_point" not in result["tags"]["correlator_types"]
             ):
                 result["tags"]["correlator_types"].append("three_point")
                 if not result["tags"]["currents"]:
-                    flavor_structure = (
-                        "flavor_diagonal" if result["tags"]["flavors"] else "not_stated"
-                    )
+                    flavor_structure = "flavor_diagonal" if result["tags"]["flavors"] else "not_stated"
                     current_types = []
                     if "unpolarized" in result["tags"]["polarizations"]:
                         current_types.append("vector")
@@ -658,10 +635,7 @@ def main(argv: list[str] | None = None) -> int:
                         current_types.append("axial_vector")
                     if "transversity" in result["tags"]["polarizations"]:
                         current_types.append("tensor")
-                    if (
-                        "gluon_operator" in result["tags"]["operators"]
-                        and "gluon" in result["tags"]["partons"]
-                    ):
+                    if "gluon_operator" in result["tags"]["operators"] and "gluon" in result["tags"]["partons"]:
                         current_types.append("gluon")
                     result["tags"]["currents"] = [
                         {
@@ -675,10 +649,7 @@ def main(argv: list[str] | None = None) -> int:
             for field in ARRAY_ENUMS:
                 result["tags"][field] = list(dict.fromkeys(result["tags"][field]))
             result["tags"]["currents"] = list(
-                {
-                    json.dumps(current, sort_keys=True): current
-                    for current in result["tags"]["currents"]
-                }.values()
+                {json.dumps(current, sort_keys=True): current for current in result["tags"]["currents"]}.values()
             )
             if "three_point" not in result["tags"]["correlator_types"]:
                 result["tags"]["currents"] = []
@@ -705,24 +676,17 @@ def main(argv: list[str] | None = None) -> int:
             for field, prefix in topic_fields:
                 review_topics.extend(f"{prefix}={value}" for value in result["tags"][field])
             review_topics.extend(
-                f"current={current['type']}:{current['flavor_structure']}"
-                for current in result["tags"]["currents"]
+                f"current={current['type']}:{current['flavor_structure']}" for current in result["tags"]["currents"]
             )
             if result["lattice_setup"]["uses_lattice_data"]:
                 review_topics.append("uses_lattice_data=true")
             for ensemble in result["lattice_setup"]["ensembles"]:
-                review_topics.extend(
-                    f"lattice_spacing_fm={value:g}" for value in ensemble["lattice_spacings_fm"]
-                )
+                review_topics.extend(f"lattice_spacing_fm={value:g}" for value in ensemble["lattice_spacings_fm"])
                 review_topics.extend(f"volume={value}" for value in ensemble["volumes"])
-                review_topics.extend(
-                    f"pion_mass_mev={value:g}" for value in ensemble["pion_masses_mev"]
-                )
+                review_topics.extend(f"pion_mass_mev={value:g}" for value in ensemble["pion_masses_mev"])
                 if ensemble["sea_quark_content"]:
                     review_topics.append(f"sea_quark_content={ensemble['sea_quark_content']}")
-            review_topics.extend(
-                f"momentum_gev={value:g}" for value in result["lattice_setup"]["momenta_gev"]
-            )
+            review_topics.extend(f"momentum_gev={value:g}" for value in result["lattice_setup"]["momenta_gev"])
 
             classified[arxiv_id] = {
                 "arxiv_id": arxiv_id,
@@ -737,11 +701,7 @@ def main(argv: list[str] | None = None) -> int:
                 "prompt_version": PROMPT_VERSION,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "model": model,
-                "papers": [
-                    classified[item["arxiv_id"]]
-                    for item in catalog_papers
-                    if item["arxiv_id"] in classified
-                ],
+                "papers": [classified[item["arxiv_id"]] for item in catalog_papers if item["arxiv_id"] in classified],
             }
             temporary_output = args.output.with_suffix(".json.tmp")
             temporary_output.write_text(
@@ -750,8 +710,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             temporary_output.replace(args.output)
             print(
-                f"[{index}/{len(papers)}] {arxiv_id}: "
-                f"{result['relevance']} ({result['paper_type']})",
+                f"[{index}/{len(papers)}] {arxiv_id}: {result['relevance']} ({result['paper_type']})",
                 flush=True,
             )
 

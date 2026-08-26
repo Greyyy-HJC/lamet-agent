@@ -21,27 +21,16 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
         raise RuntimeError("inspect_correlators must run before fit_matrix_element")
     settings = context.params["lsqfit"]
     if settings["fit_scope"] != ["qda_ratio"]:
-        raise ValueError(
-            "fit_matrix_element is the qDA grid tuner and requires fit_scope=['qda_ratio']"
-        )
-    sources = [
-        value
-        for value in correlators.values()
-        if value.attrs.get("correlator_type") == "qda"
-    ]
+        raise ValueError("fit_matrix_element is the qDA grid tuner and requires fit_scope=['qda_ratio']")
+    sources = [value for value in correlators.values() if value.attrs.get("correlator_type") == "qda"]
     if len(sources) != 1:
         raise ValueError("qDA tuning requires exactly one selected qDA correlator")
     available_z = [float(value) for value in sources[0].coords["z"]]
     if not tune_z_values or len(set(tune_z_values)) != len(tune_z_values):
         raise ValueError("tune_z_values must be a nonempty unique list")
     tune_z_values = [float(value) for value in tune_z_values]
-    if any(
-        not any(abs(value - available) <= 1e-12 for available in available_z)
-        for value in tune_z_values
-    ):
-        raise ValueError(
-            "every tune_z_values entry must name an available qDA z coordinate"
-        )
+    if any(not any(abs(value - available) <= 1e-12 for available in available_z) for value in tune_z_values):
+        raise ValueError("every tune_z_values entry must name an available qDA z coordinate")
     candidates: list[dict[str, object]] = []
     authored = sorted(
         product(
@@ -86,9 +75,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
                     t_max=int(window["tmax"]),
                     tau_min=None,
                     lsqfit=settings,
-                    sample_error_mode=str(
-                        context.manifest["metadata"]["sample_error_mode"]
-                    ),
+                    sample_error_mode=str(context.manifest["metadata"]["sample_error_mode"]),
                     workers=context.workers,
                     tune_z=tune_z,
                     fit_samples=False,
@@ -100,9 +87,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
                 failures[str(tune_z)] = str(exc)
                 continue
             if values is not None:
-                raise RuntimeError(
-                    "qDA candidate tuning must not produce full sample values"
-                )
+                raise RuntimeError("qDA candidate tuning must not produce full sample values")
             per_z[str(tune_z)] = fit
         primary = per_z.get(str(tune_z_values[0]))
         usable = list(per_z.values())
@@ -110,24 +95,15 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
             **metadata,
             "tune_z_values": tune_z_values,
             "tune_z_diagnostics": per_z,
-            "feasible_at_all_tune_z": not failures
-            and len(per_z) == len(tune_z_values),
+            "feasible_at_all_tune_z": not failures and len(per_z) == len(tune_z_values),
             "failure_reasons": failures,
             "numerical_failure": bool(failures),
-            "min_Q": min(float(fit["Q"]) for fit in usable)
-            if usable
-            else None,
-            "worst_chi2_dof": max(
-                float(fit["chi2_dof"]) for fit in usable
-            )
-            if usable
-            else None,
+            "min_Q": min(float(fit["Q"]) for fit in usable) if usable else None,
+            "worst_chi2_dof": max(float(fit["chi2_dof"]) for fit in usable) if usable else None,
         }
         if primary is not None:
             candidate.update(primary)
-            candidate["quality_passed"] = (
-                float(primary["Q"]) >= float(settings["q_min"])
-            )
+            candidate["quality_passed"] = float(primary["Q"]) >= float(settings["q_min"])
         else:
             candidate["quality_passed"] = False
         candidates.append(candidate)
@@ -140,14 +116,9 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
             qda=True,
         )
     except ValueError as exc:
-        raise FitNumericalError(
-            "no qDA candidate is feasible across tune_z_values"
-        ) from exc
+        raise FitNumericalError("no qDA candidate is feasible across tune_z_values") from exc
     return {
-        "summary": (
-            f"tuned {len(candidates)} authored qDA candidates; "
-            f"recommended {recommended['id']}"
-        ),
+        "summary": (f"tuned {len(candidates)} authored qDA candidates; recommended {recommended['id']}"),
         "metrics": {
             "candidate_count": len(candidates),
             "tune_z_values": tune_z_values,

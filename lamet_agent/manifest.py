@@ -135,19 +135,21 @@ class Manifest:
         try:
             expanded = self.expand_systematics(stage_root=stage_root)
         except (TypeError, ValueError) as exc:
-            return [_issue("systematics", str(exc), "Systematics declarations must compile to one deterministic concrete job graph.")]
-        issues = _validate_document(
-            expanded.document, manifest_path=self.path, stage_root=stage_root
-        )
+            return [
+                _issue(
+                    "systematics",
+                    str(exc),
+                    "Systematics declarations must compile to one deterministic concrete job graph.",
+                )
+            ]
+        issues = _validate_document(expanded.document, manifest_path=self.path, stage_root=stage_root)
         if not issues:
             self.document = expanded.document
             self._systematics_expanded = True
             self.jobs = tuple(_build_jobs(self))
         return issues
 
-    def expand_systematics(
-        self, *, stage_root: str | Path | None = None
-    ) -> "Manifest":
+    def expand_systematics(self, *, stage_root: str | Path | None = None) -> "Manifest":
         """Return a copy whose stage-local systematics declarations are concrete jobs."""
         if self._systematics_expanded:
             return self
@@ -174,15 +176,11 @@ class Manifest:
             try:
                 module.expand(document, copy.deepcopy(dict(config)), state)
             except KeyError as exc:
-                raise ValueError(
-                    f"{stage_id} systematics expansion requires missing field {exc}"
-                ) from exc
+                raise ValueError(f"{stage_id} systematics expansion requires missing field {exc}") from exc
         document.pop("systematics")
         return Manifest(self.path, document, _systematics_expanded=True)
 
-    def _resolved_jobs(
-        self, *, stage_root: str | Path | None = None
-    ) -> list[Job]:
+    def _resolved_jobs(self, *, stage_root: str | Path | None = None) -> list[Job]:
         """Return jobs in authored order with exact artifact paths."""
         if self.jobs:
             return list(self.jobs)
@@ -200,6 +198,8 @@ class Manifest:
         return _resolve_source(source, root=self.root_directory, outputs=outputs, summaries=summaries)
 
 
+# ruff: disable[E501]
+# fmt: off
 _BASE_RULES: tuple[Depends | Recommends | Value, ...] = (
     Depends("", "metadata", physics="Run metadata names the physical analysis and its execution root."),
     Depends("", "stages", physics="The authored stage mapping is the sole execution order."),
@@ -228,6 +228,8 @@ _BASE_RULES: tuple[Depends | Recommends | Value, ...] = (
     Value("metadata.bin_size", int, physics="Configuration bin size is positive.", validator=_positive),
     Value("systematics", dict, physics="Systematics declarations are keyed by stage id."),
 )
+# fmt: on
+# ruff: enable[E501]
 
 
 def _check_manifest_relations(context: CheckContext) -> list[Issue]:
@@ -239,11 +241,29 @@ def _check_manifest_relations(context: CheckContext) -> list[Issue]:
     mode = metadata.get("resample_mode")
     count = metadata.get("bootstrap_samples")
     if mode == "bootstrap" and count is None:
-        issues.append(_issue("metadata.bootstrap_samples", "is required when resample_mode='bootstrap'", "Bootstrap requires an authored sample count."))
+        issues.append(
+            _issue(
+                "metadata.bootstrap_samples",
+                "is required when resample_mode='bootstrap'",
+                "Bootstrap requires an authored sample count.",
+            )
+        )
     elif mode == "jackknife" and count is not None:
-        issues.append(_issue("metadata.bootstrap_samples", "must be omitted for jackknife", "Jackknife sample count is fixed by the binned configurations."))
+        issues.append(
+            _issue(
+                "metadata.bootstrap_samples",
+                "must be omitted for jackknife",
+                "Jackknife sample count is fixed by the binned configurations.",
+            )
+        )
     if metadata.get("sample_error_mode") == "median" and mode != "bootstrap":
-        issues.append(_issue("metadata.sample_error_mode", "median errors require resample_mode='bootstrap'", "Median-percentile errors require bootstrap samples."))
+        issues.append(
+            _issue(
+                "metadata.sample_error_mode",
+                "median errors require resample_mode='bootstrap'",
+                "Median-percentile errors require bootstrap samples.",
+            )
+        )
     stages = context.manifest.get("stages")
     if isinstance(stages, Mapping):
         if not stages:
@@ -281,7 +301,11 @@ def load_manifest(path: str | Path) -> Manifest:
 
 
 def _default_stage_root(stage_root: str | Path | None) -> Path:
-    return Path(stage_root).expanduser().resolve() if stage_root is not None else (Path(__file__).parent / "stages").resolve()
+    return (
+        Path(stage_root).expanduser().resolve()
+        if stage_root is not None
+        else (Path(__file__).parent / "stages").resolve()
+    )
 
 
 def _load_stage_contract(stage_id: str, stage_root: str | Path | None = None) -> ModuleType:
@@ -304,9 +328,7 @@ def _load_stage_contract(stage_id: str, stage_root: str | Path | None = None) ->
     return module
 
 
-def _load_stage_systematics(
-    stage_id: str, stage_root: str | Path | None = None
-) -> ModuleType:
+def _load_stage_systematics(stage_id: str, stage_root: str | Path | None = None) -> ModuleType:
     """Load one optional stage-owned systematics compiler."""
     if not _SAFE_STAGE.fullmatch(stage_id):
         raise ValueError(f"invalid systematics stage id '{stage_id}'")
@@ -414,11 +436,7 @@ def _validate_document(
             if isinstance(jobs, list) and jobs:
                 parsed_jobs: list[Any] = []
                 for job_index, job in enumerate(jobs):
-                    single = {
-                        key: copy.deepcopy(value)
-                        for key, value in block.items()
-                        if key != "jobs"
-                    }
+                    single = {key: copy.deepcopy(value) for key, value in block.items() if key != "jobs"}
                     single["jobs"] = [copy.deepcopy(job)]
                     local_issues = evaluate_rules(
                         single,
@@ -431,10 +449,8 @@ def _validate_document(
                         if path == "jobs[0]":
                             path = f"jobs[{job_index}]"
                         elif path.startswith("jobs[0]."):
-                            path = f"jobs[{job_index}].{path[len('jobs[0].'):]}"
-                        stage_rule_issues.append(
-                            Issue(path, issue.message, issue.physics, issue.question)
-                        )
+                            path = f"jobs[{job_index}].{path[len('jobs[0].') :]}"
+                        stage_rule_issues.append(Issue(path, issue.message, issue.physics, issue.question))
                     parsed_jobs.append(single["jobs"][0])
                 if isinstance(block, dict):
                     block["jobs"] = parsed_jobs
@@ -445,9 +461,7 @@ def _validate_document(
                     complete=True,
                     root_document=document,
                 )
-            issues.extend(
-                _prefix_issues(stage_rule_issues, f"stages.{stage_id}")
-            )
+            issues.extend(_prefix_issues(stage_rule_issues, f"stages.{stage_id}"))
         jobs = block.get("jobs")
         if not isinstance(jobs, list):
             continue
@@ -459,25 +473,15 @@ def _validate_document(
             if not isinstance(job_id, str):
                 job_id = None
             inputs = job.get("inputs", {})
-            params = {
-                key: value
-                for key, value in job.items()
-                if key not in {"id", "inputs"}
-            }
+            params = {key: value for key, value in job.items() if key not in {"id", "inputs"}}
             if contract is not None:
                 job_rule_issues = [
                     issue
                     for issue in stage_rule_issues
-                    if issue.path == f"jobs[{job_index}]"
-                    or issue.path.startswith(f"jobs[{job_index}].")
+                    if issue.path == f"jobs[{job_index}]" or issue.path.startswith(f"jobs[{job_index}].")
                 ]
                 if job_id is not None and not job_rule_issues and isinstance(inputs, Mapping):
-                    unresolved = frozenset(
-                        rule.path
-                        for rule in _unresolved_null_hooks(
-                            params, contract.PARAM_RULES
-                        )
-                    )
+                    unresolved = frozenset(rule.path for rule in _unresolved_null_hooks(params, contract.PARAM_RULES))
                     context = CheckContext(
                         document,
                         stage_id,
@@ -487,9 +491,7 @@ def _validate_document(
                         unresolved,
                     )
                     issues.extend(_prefix_issues(evaluate_checks(contract.CHECKS, context), job_path))
-    jobs_for_graph = _build_jobs_from_document(
-        document, manifest_path=manifest_path
-    )
+    jobs_for_graph = _build_jobs_from_document(document, manifest_path=manifest_path)
     issues.extend(_job_graph_issues(jobs_for_graph, root=root))
     return issues
 
@@ -507,9 +509,7 @@ def _build_jobs(manifest: Manifest) -> list[Job]:
     return _build_jobs_from_document(manifest.document, manifest_path=manifest.path)
 
 
-def _build_jobs_from_document(
-    document: Mapping[str, Any], *, manifest_path: Path
-) -> list[Job]:
+def _build_jobs_from_document(document: Mapping[str, Any], *, manifest_path: Path) -> list[Job]:
     metadata = document.get("metadata")
     stages = document.get("stages")
     if not isinstance(metadata, Mapping) or not isinstance(stages, Mapping):
@@ -538,11 +538,7 @@ def _build_jobs_from_document(
                     stage_index=stage_index,
                     job_index=job_index,
                     job_id=job["id"],
-                    params={
-                        key: copy.deepcopy(value)
-                        for key, value in job.items()
-                        if key not in {"id", "inputs"}
-                    },
+                    params={key: copy.deepcopy(value) for key, value in job.items() if key not in {"id", "inputs"}},
                     inputs=copy.deepcopy(job.get("inputs", {})),
                     artifact_directory=artifact_base / f"{stage_index:02d}_{stage_id}" / job["id"],
                 )
@@ -550,9 +546,7 @@ def _build_jobs_from_document(
     return resolved
 
 
-def _group_jobs_by_stage(
-    document: Mapping[str, Any], jobs: Sequence[Job]
-) -> dict[str, tuple[Job, ...]]:
+def _group_jobs_by_stage(document: Mapping[str, Any], jobs: Sequence[Job]) -> dict[str, tuple[Job, ...]]:
     """Group the concrete flat job graph by authored stage order."""
     blocks = document.get("stages")
     if not isinstance(blocks, Mapping):
@@ -591,7 +585,9 @@ def _job_graph_issues(jobs: Sequence[Job], *, root: Path) -> list[Issue]:
     return issues
 
 
-def _resolve_source(source: Any, *, root: Path, outputs: Mapping[str, Any], summaries: Mapping[str, Any]) -> tuple[Any, Any]:
+def _resolve_source(
+    source: Any, *, root: Path, outputs: Mapping[str, Any], summaries: Mapping[str, Any]
+) -> tuple[Any, Any]:
     """Resolve one authored source recursively for the ordered agent loop."""
     if isinstance(source, (int, float)) and not isinstance(source, bool):
         return source, None

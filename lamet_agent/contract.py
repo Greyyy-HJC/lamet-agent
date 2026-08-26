@@ -237,15 +237,13 @@ def _scope_rules(root: str, rules: Sequence[_Rule]) -> tuple[_Rule, ...]:
 def _valid_job_id(value: object) -> bool:
     import re
 
-    return isinstance(value, str) and bool(
-        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value)
-    )
+    return isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value))
 
 
-def stage_job_rules(
-    param_rules: Sequence[_Rule], input_rules: Sequence[_Rule]
-) -> tuple[_Rule, ...]:
+def stage_job_rules(param_rules: Sequence[_Rule], input_rules: Sequence[_Rule]) -> tuple[_Rule, ...]:
     """Compose one complete stage-document contract rooted at jobs.job."""
+    # ruff: disable[E501]
+    # fmt: off
     base: tuple[_Rule, ...] = (
         Depends("", "jobs", physics="A stage declares a nonempty ordered job list."),
         List(
@@ -279,6 +277,9 @@ def stage_job_rules(
             physics="Job inputs form a role-to-source mapping.",
         ),
     )
+    # fmt: on
+    # ruff: enable[E501]
+
     return (
         *base,
         *_scope_rules("jobs.job", param_rules),
@@ -347,10 +348,7 @@ def _provider_index(rules: Sequence[_Rule]) -> dict[str, tuple[Provides, ...]]:
             continue
         identity = (rule.parent, rule.child, rule.selector)
         if identity in seen:
-            raise ValueError(
-                f"duplicate Provides({rule.parent!r}, {rule.child!r}, "
-                f"{rule.selector!r})"
-            )
+            raise ValueError(f"duplicate Provides({rule.parent!r}, {rule.child!r}, {rule.selector!r})")
         seen.add(identity)
         indexed.setdefault(rule.selector_path, []).append(rule)
     return {path: tuple(providers) for path, providers in indexed.items()}
@@ -374,17 +372,11 @@ def _suggestion_index(rules: Sequence[_Rule]) -> dict[str, Suggests]:
         parts = _path_parts(target)
         for previous, previous_rule in zip(targets, indexed.values()):
             if parts[: len(previous)] == previous or previous[: len(parts)] == parts:
-                raise ValueError(
-                    f"overlapping Suggests targets {previous_rule.target_path!r} and {target!r}"
-                )
+                raise ValueError(f"overlapping Suggests targets {previous_rule.target_path!r} and {target!r}")
         indexed[target] = rule
         targets.append(parts)
 
-    adjacency = {
-        rule.source_path: rule.target_path
-        for rule in suggestions
-        if rule.source_path in indexed
-    }
+    adjacency = {rule.source_path: rule.target_path for rule in suggestions if rule.source_path in indexed}
     visiting: set[str] = set()
     visited: set[str] = set()
 
@@ -434,16 +426,12 @@ def _walk_rules(
     for providers in providers_by_selector.values():
         for provider in providers:
             providers_by_parent.setdefault(provider.parent, []).append(provider)
-            provider_children_by_parent.setdefault(provider.parent, set()).add(
-                provider.child
-            )
+            provider_children_by_parent.setdefault(provider.parent, set()).add(provider.child)
     absolute_selectors_by_parent: dict[str, set[str]] = {}
     for selector, providers in providers_by_selector.items():
         if selector.startswith("$."):
             for provider in providers:
-                absolute_selectors_by_parent.setdefault(provider.parent, set()).add(
-                    selector
-                )
+                absolute_selectors_by_parent.setdefault(provider.parent, set()).add(selector)
     suggestions_by_target = _suggestion_index(rules)
     suggestions_by_parent: dict[str, list[Suggests]] = {}
     dependencies_by_parent: dict[str, list[Depends | Recommends]] = {}
@@ -512,9 +500,7 @@ def _walk_rules(
                 root_document,
             )
             if len(sources) > 1:
-                raise ValueError(
-                    f"Suggests source {suggestion.source_path!r} resolves ambiguously"
-                )
+                raise ValueError(f"Suggests source {suggestion.source_path!r} resolves ambiguously")
             source: Mapping[str, Any] = {}
             if sources:
                 source_logical, source_concrete, source_value = sources[0]
@@ -566,9 +552,7 @@ def _walk_rules(
                 display = _display_path(logical, concrete)
                 if not isinstance(value, list):
                     if validate:
-                        issues.append(
-                            Issue(display, "expected a list", rule.physics, None)
-                        )
+                        issues.append(Issue(display, "expected a list", rule.physics, None))
                     continue
                 found_list = True
                 if validate and rule.validator is not None and not rule.validator(value):
@@ -588,16 +572,9 @@ def _walk_rules(
                 if not validate:
                     continue
                 display = _display_path(logical, concrete)
-                literal_values = (
-                    get_args(rule.expected)
-                    if get_origin(rule.expected) is Literal
-                    else ()
-                )
+                literal_values = get_args(rule.expected) if get_origin(rule.expected) is Literal else ()
                 if literal_values:
-                    if not any(
-                        type(value) is type(choice) and value == choice
-                        for choice in literal_values
-                    ):
+                    if not any(type(value) is type(choice) and value == choice for choice in literal_values):
                         choices = ", ".join(repr(choice) for choice in literal_values)
                         issues.append(
                             Issue(
@@ -648,11 +625,7 @@ def _walk_rules(
                 and isinstance(value["file"], str)
             ):
                 return
-            if (
-                isinstance(value, (int, float))
-                and not isinstance(value, bool)
-                and rule.allow_constant
-            ):
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and rule.allow_constant:
                 return
             if isinstance(value, list) and rule.allow_list:
                 if not value:
@@ -679,9 +652,7 @@ def _walk_rules(
         if validate:
             for rule in sources_by_path.get(path, ()):
                 for logical, concrete, value in resolved:
-                    validate_source(
-                        value, rule, _display_path(logical, concrete)
-                    )
+                    validate_source(value, rule, _display_path(logical, concrete))
 
         providers = providers_by_selector.get(path, ())
         if providers:
@@ -756,31 +727,18 @@ def _walk_rules(
             child_exists = False
             for logical, concrete, parent in mapping_parents:
                 declare(logical, concrete, parent, rule.child)
-                missing_or_null = (
-                    rule.child not in parent or parent[rule.child] is None
-                )
+                missing_or_null = rule.child not in parent or parent[rule.child] is None
                 if active and isinstance(rule, Recommends) and missing_or_null:
                     if apply_defaults and isinstance(parent, dict):
                         value = copy.deepcopy(rule.default)
                         parent[rule.child] = value
                         applied[rule.path] = copy.deepcopy(value)
                         missing_or_null = False
-                if (
-                    isinstance(rule, Depends)
-                    and active
-                    and rule.null_hook is not None
-                    and missing_or_null
-                ):
+                if isinstance(rule, Depends) and active and rule.null_hook is not None and missing_or_null:
                     pending_hook = True
                     continue
                 if rule.child not in parent:
-                    if (
-                        validate
-                        and active
-                        and complete
-                        and isinstance(rule, Depends)
-                        and rule.required
-                    ):
+                    if validate and active and complete and isinstance(rule, Depends) and rule.required:
                         issues.append(
                             Issue(
                                 _path_join(concrete, rule.child),

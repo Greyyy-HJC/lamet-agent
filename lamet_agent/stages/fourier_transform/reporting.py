@@ -5,7 +5,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from lamet_agent.stages._reporting import StageReportRecord, artifact_rows, describe_grid, figure_lines, format_value, output_attrs, stage_overlay_lines, write_report
+from lamet_agent.stages._reporting import (
+    StageReportRecord,
+    artifact_rows,
+    describe_grid,
+    figure_lines,
+    format_value,
+    output_attrs,
+    stage_overlay_lines,
+    write_report,
+)
 
 
 _TAIL_FORMULA = r"""
@@ -65,7 +74,13 @@ def _json_attr(attrs: dict[str, object], name: str) -> object:
 
 def _candidate_records(record: StageReportRecord) -> list[dict[str, object]]:
     artifacts = set(record.summary.get("artifacts", []))
-    relative = "diagnostics/candidates.json" if "diagnostics/candidates.json" in artifacts else "diagnostics/fourier.json" if "diagnostics/fourier.json" in artifacts else None
+    relative = (
+        "diagnostics/candidates.json"
+        if "diagnostics/candidates.json" in artifacts
+        else "diagnostics/fourier.json"
+        if "diagnostics/fourier.json" in artifacts
+        else None
+    )
     if relative is None:
         raise ValueError(f"job '{record.job_id}' declares no Fourier candidate diagnostics")
     path = record.artifact_directory / relative
@@ -75,7 +90,15 @@ def _candidate_records(record: StageReportRecord) -> list[dict[str, object]]:
     if relative == "diagnostics/fourier.json":
         if not isinstance(value, dict):
             raise TypeError("Fourier diagnostics must contain one object")
-        return [{"label": value.get("candidate_id"), "model_id": value.get("tail_model"), **value, "model_weight": 1.0, "selected": True}]
+        return [
+            {
+                "label": value.get("candidate_id"),
+                "model_id": value.get("tail_model"),
+                **value,
+                "model_weight": 1.0,
+                "selected": True,
+            }
+        ]
     if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
         raise TypeError("Fourier candidates.json must contain a list of objects")
     return value
@@ -125,7 +148,16 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             f"{format_value(diagnostics.get('selected_Q'))} | {format_value(diagnostics.get('selected_chi2_dof'))} | "
             f"{format_value(getattr(record.output, 'n_sample', None))} |"
         )
-    lines.extend(["", "## Stage Overview", "", *stage_overlay_lines(records, artifact_directory, coordinate="x", stem="fourier_overview", ylabel="quasi distribution")])
+    lines.extend(
+        [
+            "",
+            "## Stage Overview",
+            "",
+            *stage_overlay_lines(
+                records, artifact_directory, coordinate="x", stem="fourier_overview", ylabel="quasi distribution"
+            ),
+        ]
+    )
     for record in records:
         params = record.params
         scan = params["scheme_scan"]
@@ -147,7 +179,9 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             f"{format_value(item.get('logGBF'))} | {format_value(item.get('selected'))} | {format_value(item.get('error'))} |"
             for item in ranges
         ]
-        parameter_names = sorted({name for candidate in candidates for name in dict(candidate.get("parameter_mean", {}))})
+        parameter_names = sorted(
+            {name for candidate in candidates for name in dict(candidate.get("parameter_mean", {}))}
+        )
         parameter_rows = []
         for candidate in candidates:
             means = dict(candidate.get("parameter_mean", {}))
@@ -156,78 +190,80 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 parameter_rows.append(
                     f"| `{candidate.get('label')}` | `{name}` | {format_value(means.get(name))} | {format_value(sdevs.get(name))} |"
                 )
-        lines.extend([
-            "",
-            f"## `{record.job_id}`",
-            "",
-            "### Analysis Settings",
-            "",
-            "| quantity | value |",
-            "|---|---|",
-            f"| target observable | `{attrs.get('target_observable', 'n/a')}` |",
-            f"| parton / construction | `{attrs.get('parton', 'n/a')}` / `{attrs.get('gfix', 'n/a')}` |",
-            f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
-            f"| x grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
-            f"| candidate $z_{{\\min}}$ [fm] | {format_value(params['zmin_fm'])} |",
-            f"| candidate $z_{{\\max}}$ [fm] | {format_value(params['zmax_fm'])} |",
-            f"| extension [fm] | {format_value(params['zmax_ext_fm'])} |",
-            f"| smoothing | `{params['smooth']}` |",
-            f"| orders | {format_value(scan['order'])} |",
-            f"| tail-prior scales | {format_value(scan['posterior_prior_error_scale'])} |",
-            f"| model average | {format_value(scan['model_average'])} |",
-            f"| component / output scale | `{attrs.get('component', 'n/a')}` / {format_value(attrs.get('output_scale'))} |",
-            f"| range candidates | {format_value(diagnostics.get('range_candidate_count'))} |",
-            f"| model candidates | {format_value(diagnostics.get('model_candidate_count'))} |",
-            "",
-            "### Selected Model Diagnostics",
-            "",
-            f"- Selected range: `{diagnostics.get('selected_range_label', 'n/a')}`",
-            f"- Selected models: {format_value(diagnostics.get('selected_fit_model_labels'))}",
-            f"- Model weights: {format_value(diagnostics.get('fit_model_weights'))}",
-            f"- DA phase transfer: {format_value(attrs.get('phase_transfer_da'))}",
-            "",
-            "### Range and Fit-model Candidates",
-            "",
-            "The range scan uses the first authored order and prior width to select one physical interval. With that interval fixed, every authored LA/NLA and prior-width model is refitted. `model_average=false` selects the best successful model; `model_average=true` combines successful candidates per resample using their recorded weights.",
-            "",
-            "#### Range-selection fits",
-            "",
-            "| tail | zmin [fm] | zmax [fm] | success | Q | chi2/dof | logGBF | selected | failure |",
-            "|---|---:|---:|---|---:|---:|---:|---|---|",
-            *(range_rows or ["| n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |"]),
-            "",
-            "#### Fixed-range model fits",
-            "",
-            "| label | tail | zmin [fm] | zmax [fm] | order | prior scale | Q | chi2/dof | weight | selected |",
-            "|---|---|---:|---:|---|---:|---:|---:|---:|---|",
-            *(candidate_rows or ["| n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |"]),
-            "",
-            "#### Tail posterior parameters",
-            "",
-            "| candidate | parameter | mean | sdev across resamples |",
-            "|---|---|---:|---:|",
-            *(parameter_rows or ["| n/a | n/a | n/a | n/a |"]),
-            "",
-            "### Projection and Field Definitions",
-            "",
-            f"The output records sector `{attrs.get('sector', 'n/a')}`, component `{attrs.get('component', 'n/a')}`, and multiplicative projection scale {format_value(attrs.get('output_scale'))}. These values are derived from upstream observable and polarization provenance rather than independently authored controls.",
-            "",
-            "| field | meaning |",
-            "|---|---|",
-            "| `selected_range` | Sample-average tail interval held fixed during all resample fits. |",
-            "| `selected_models`, `model_weights` | LA/NLA/prior candidates retained by selection or model averaging. |",
-            "| `component`, `output_scale` | Sector-derived complex channel and normalization of the stored quasi-distribution. |",
-            "| `phase_transfer_da` | Whether the midpoint DA phase/symmetry projection was applied before tail fitting. |",
-            "| `zmax_ext_fm` | Maximum physical separation of the finite transform, distinct from the fitted data interval. |",
-            "",
-            "### Figures",
-            "",
-            *figure_lines(record, artifact_directory),
-            "",
-            "### Artifacts",
-            "",
-            "| job | artifact |",
-            "|---|---|",
-            *artifact_rows(record, artifact_directory),
-        ])
+        lines.extend(
+            [
+                "",
+                f"## `{record.job_id}`",
+                "",
+                "### Analysis Settings",
+                "",
+                "| quantity | value |",
+                "|---|---|",
+                f"| target observable | `{attrs.get('target_observable', 'n/a')}` |",
+                f"| parton / construction | `{attrs.get('parton', 'n/a')}` / `{attrs.get('gfix', 'n/a')}` |",
+                f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
+                f"| x grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
+                f"| candidate $z_{{\\min}}$ [fm] | {format_value(params['zmin_fm'])} |",
+                f"| candidate $z_{{\\max}}$ [fm] | {format_value(params['zmax_fm'])} |",
+                f"| extension [fm] | {format_value(params['zmax_ext_fm'])} |",
+                f"| smoothing | `{params['smooth']}` |",
+                f"| orders | {format_value(scan['order'])} |",
+                f"| tail-prior scales | {format_value(scan['posterior_prior_error_scale'])} |",
+                f"| model average | {format_value(scan['model_average'])} |",
+                f"| component / output scale | `{attrs.get('component', 'n/a')}` / {format_value(attrs.get('output_scale'))} |",
+                f"| range candidates | {format_value(diagnostics.get('range_candidate_count'))} |",
+                f"| model candidates | {format_value(diagnostics.get('model_candidate_count'))} |",
+                "",
+                "### Selected Model Diagnostics",
+                "",
+                f"- Selected range: `{diagnostics.get('selected_range_label', 'n/a')}`",
+                f"- Selected models: {format_value(diagnostics.get('selected_fit_model_labels'))}",
+                f"- Model weights: {format_value(diagnostics.get('fit_model_weights'))}",
+                f"- DA phase transfer: {format_value(attrs.get('phase_transfer_da'))}",
+                "",
+                "### Range and Fit-model Candidates",
+                "",
+                "The range scan uses the first authored order and prior width to select one physical interval. With that interval fixed, every authored LA/NLA and prior-width model is refitted. `model_average=false` selects the best successful model; `model_average=true` combines successful candidates per resample using their recorded weights.",
+                "",
+                "#### Range-selection fits",
+                "",
+                "| tail | zmin [fm] | zmax [fm] | success | Q | chi2/dof | logGBF | selected | failure |",
+                "|---|---:|---:|---|---:|---:|---:|---|---|",
+                *(range_rows or ["| n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |"]),
+                "",
+                "#### Fixed-range model fits",
+                "",
+                "| label | tail | zmin [fm] | zmax [fm] | order | prior scale | Q | chi2/dof | weight | selected |",
+                "|---|---|---:|---:|---|---:|---:|---:|---:|---|",
+                *(candidate_rows or ["| n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |"]),
+                "",
+                "#### Tail posterior parameters",
+                "",
+                "| candidate | parameter | mean | sdev across resamples |",
+                "|---|---|---:|---:|",
+                *(parameter_rows or ["| n/a | n/a | n/a | n/a |"]),
+                "",
+                "### Projection and Field Definitions",
+                "",
+                f"The output records sector `{attrs.get('sector', 'n/a')}`, component `{attrs.get('component', 'n/a')}`, and multiplicative projection scale {format_value(attrs.get('output_scale'))}. These values are derived from upstream observable and polarization provenance rather than independently authored controls.",
+                "",
+                "| field | meaning |",
+                "|---|---|",
+                "| `selected_range` | Sample-average tail interval held fixed during all resample fits. |",
+                "| `selected_models`, `model_weights` | LA/NLA/prior candidates retained by selection or model averaging. |",
+                "| `component`, `output_scale` | Sector-derived complex channel and normalization of the stored quasi-distribution. |",
+                "| `phase_transfer_da` | Whether the midpoint DA phase/symmetry projection was applied before tail fitting. |",
+                "| `zmax_ext_fm` | Maximum physical separation of the finite transform, distinct from the fitted data interval. |",
+                "",
+                "### Figures",
+                "",
+                *figure_lines(record, artifact_directory),
+                "",
+                "### Artifacts",
+                "",
+                "| job | artifact |",
+                "|---|---|",
+                *artifact_rows(record, artifact_directory),
+            ]
+        )
     return write_report(artifact_directory, lines)

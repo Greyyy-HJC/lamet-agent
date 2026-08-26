@@ -13,6 +13,8 @@ def _nonempty(value: list[object]) -> bool:
     return len(value) > 0
 
 
+# ruff: disable[E501]
+# fmt: off
 PARAM_RULES = (
     Depends("", "catalog", physics="Review catalog source is explicit."),
     Depends("", "max_papers", physics="Full-text literature access is bounded."),
@@ -30,6 +32,9 @@ INPUT_RULES = (
     List("results", "result", physics="Review results are nonempty and preserve authored order.", validator=_nonempty),
     Source("results.result", physics="Each review result is a prior job or external file source."),
 )
+# fmt: on
+# ruff: enable[E501]
+
 
 JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 

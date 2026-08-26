@@ -18,19 +18,10 @@ def select_data_window(
     ]
     if not eligible:
         raise ValueError("no overdetermined matrix-fit candidate is available")
-    passing = [
-        candidate
-        for candidate in eligible
-        if float(candidate.get("Q", 0.0)) >= q_min
-    ]
+    passing = [candidate for candidate in eligible if float(candidate.get("Q", 0.0)) >= q_min]
     pool = passing or eligible
     best_chi2_dof = min(float(candidate["chi2_dof"]) for candidate in pool)
-    comparable = [
-        candidate
-        for candidate in pool
-        if float(candidate["chi2_dof"])
-        <= best_chi2_dof + chi2_dof_tolerance
-    ]
+    comparable = [candidate for candidate in pool if float(candidate["chi2_dof"]) <= best_chi2_dof + chi2_dof_tolerance]
     selected = max(
         comparable,
         key=lambda candidate: (
@@ -49,8 +40,7 @@ def select_tuned_candidate(
     feasible = [
         candidate
         for candidate in candidates
-        if candidate.get("feasible_at_all_tune_z", True)
-        and not candidate.get("numerical_failure", False)
+        if candidate.get("feasible_at_all_tune_z", True) and not candidate.get("numerical_failure", False)
     ]
     if not feasible:
         raise ValueError("no candidate is feasible at every tune_z value")

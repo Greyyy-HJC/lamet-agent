@@ -44,9 +44,15 @@ def run(context: ToolContext) -> dict[str, object]:
     x = np.asarray(main.coords["x"], dtype=float)
     if x.ndim != 1 or x.size == 0 or np.any(np.diff(x) <= 0):
         raise ValueError("the main systematics input requires a strictly increasing x grid")
-    sample_error_mode = str(main.attrs.get("sample_error_mode", context.manifest.get("metadata", {}).get("sample_error_mode", "covariance")))
+    sample_error_mode = str(
+        main.attrs.get("sample_error_mode", context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    )
     variant_modes = {
-        str(item.attrs.get("sample_error_mode", context.manifest.get("metadata", {}).get("sample_error_mode", "covariance")))
+        str(
+            item.attrs.get(
+                "sample_error_mode", context.manifest.get("metadata", {}).get("sample_error_mode", "covariance")
+            )
+        )
         for item in data
     }
     if variant_modes != {sample_error_mode}:
@@ -62,9 +68,7 @@ def run(context: ToolContext) -> dict[str, object]:
             continue
         variants = np.stack([_aligned_mean(data[index], x, sample_error_mode) for index in indices])
         components[name] = (
-            np.abs(variants[0] - central)
-            if len(indices) == 1
-            else np.max(variants, axis=0) - np.min(variants, axis=0)
+            np.abs(variants[0] - central) if len(indices) == 1 else np.max(variants, axis=0) - np.min(variants, axis=0)
         )
     total_systematic = np.sqrt(sum(components[name] ** 2 for name in _COMPONENTS))
     total_error = np.sqrt(stat_sdev**2 + total_systematic**2)
@@ -124,4 +128,9 @@ def run(context: ToolContext) -> dict[str, object]:
     }
     context.state["systematics_budget"] = dataset
     context.finish(main, summary)
-    return {"summary": "published extrapolation systematics budget", "metrics": summary["diagnostics"], "state_keys": ["systematics_budget"], "artifacts": summary["artifacts"]}
+    return {
+        "summary": "published extrapolation systematics budget",
+        "metrics": summary["diagnostics"],
+        "state_keys": ["systematics_budget"],
+        "artifacts": summary["artifacts"],
+    }

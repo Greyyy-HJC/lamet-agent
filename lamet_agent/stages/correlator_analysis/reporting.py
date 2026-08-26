@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lamet_agent.stages._reporting import StageReportRecord, artifact_rows, describe_grid, figure_lines, format_value, output_attrs, stage_overlay_lines, write_report
+from lamet_agent.stages._reporting import (
+    StageReportRecord,
+    artifact_rows,
+    describe_grid,
+    figure_lines,
+    format_value,
+    output_attrs,
+    stage_overlay_lines,
+    write_report,
+)
 
 
 _LSQFIT_METHOD = r"""
@@ -71,7 +80,9 @@ def _dispersion_lines(records: tuple[StageReportRecord, ...], artifact_directory
             continue
         points.append((record.job_id, float(momentum), float(fit["E0"]), fit.get("E0_sdev")))
     if len(points) < 2:
-        return ["Fewer than two jobs carried a common ground-state energy and momentum, so no dispersion plot was generated."]
+        return [
+            "Fewer than two jobs carried a common ground-state energy and momentum, so no dispersion plot was generated."
+        ]
     from lamet_agent.plotting import configure_plot, errorbar, save_figure, start_plot
     import gvar
 
@@ -83,7 +94,11 @@ def _dispersion_lines(records: tuple[StageReportRecord, ...], artifact_directory
     pdf = artifact_directory / "plots" / "dispersion_relation.pdf"
     svg = artifact_directory / "plots" / "dispersion_relation.svg"
     save_figure(pdf, svg)
-    return ["![Ground-state dispersion relation](plots/dispersion_relation.svg)", "", "[Dispersion relation (PDF)](plots/dispersion_relation.pdf)"]
+    return [
+        "![Ground-state dispersion relation](plots/dispersion_relation.svg)",
+        "",
+        "[Dispersion relation (PDF)](plots/dispersion_relation.pdf)",
+    ]
 
 
 def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_directory: Path) -> Path:
@@ -100,18 +115,22 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         lines.extend([_LSQFIT_METHOD, ""])
     if "lanczos" in methods:
         lines.extend([_LANCZOS_METHOD, ""])
-    lines.extend([
-        "## Selection Policy",
-        "",
-        "LSQFit jobs enumerate the complete authored Cartesian grid of strategies, scopes, state counts, prior widths, and windows. Numerical failures remain recorded rather than disappearing from the candidate set. Ordinary matrix elements use the reference information/window rule; qDA jobs require feasibility at every selected tuning separation and rank by minimum Q followed by worst chi2/dof. Full-z application may reject a tuned candidate, in which case the next deterministic candidate is tried and the rejection is recorded.",
-        "",
-    ])
-    lines.extend([
-        "## Job Summary",
-        "",
-        "| job | method | result | selected candidate/scope | Q | chi2/dof | samples |",
-        "|---|---|---|---|---:|---:|---:|",
-    ])
+    lines.extend(
+        [
+            "## Selection Policy",
+            "",
+            "LSQFit jobs enumerate the complete authored Cartesian grid of strategies, scopes, state counts, prior widths, and windows. Numerical failures remain recorded rather than disappearing from the candidate set. Ordinary matrix elements use the reference information/window rule; qDA jobs require feasibility at every selected tuning separation and rank by minimum Q followed by worst chi2/dof. Full-z application may reject a tuned candidate, in which case the next deterministic candidate is tried and the rejection is recorded.",
+            "",
+        ]
+    )
+    lines.extend(
+        [
+            "## Job Summary",
+            "",
+            "| job | method | result | selected candidate/scope | Q | chi2/dof | samples |",
+            "|---|---|---|---|---:|---:|---:|",
+        ]
+    )
     for record in records:
         summary = record.summary
         diagnostics = summary.get("diagnostics", {})
@@ -123,45 +142,66 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             f"`{summary.get('result')}` | `{selected}` | {format_value(diagnostics.get('Q'))} | "
             f"{format_value(diagnostics.get('chi2_dof'))} | {format_value(getattr(output, 'n_sample', None))} |"
         )
-    lines.extend(["", "## Stage Overview", "", *stage_overlay_lines(records, artifact_directory, coordinate="z", stem="correlator_overview", ylabel="bare matrix element"), "", "## Dispersion Relation", "", "The stage compares the fitted ground-state energies against momentum whenever at least two compatible jobs provide the required posterior provenance.", "", *_dispersion_lines(records, artifact_directory)])
+    lines.extend(
+        [
+            "",
+            "## Stage Overview",
+            "",
+            *stage_overlay_lines(
+                records, artifact_directory, coordinate="z", stem="correlator_overview", ylabel="bare matrix element"
+            ),
+            "",
+            "## Dispersion Relation",
+            "",
+            "The stage compares the fitted ground-state energies against momentum whenever at least two compatible jobs provide the required posterior provenance.",
+            "",
+            *_dispersion_lines(records, artifact_directory),
+        ]
+    )
     for record in records:
         params = record.params
         summary = record.summary
         diagnostics = summary.get("diagnostics", {})
         attrs = output_attrs(record)
-        lines.extend([
-            "",
-            f"## `{record.job_id}`",
-            "",
-            "### Analysis Settings",
-            "",
-            "| quantity | value |",
-            "|---|---|",
-            f"| analysis method | `{params['analysis_method']}` |",
-            f"| component | `{params['component']}` |",
-            f"| nstate | {format_value(params['nstate'])} |",
-            f"| output dimensions | {format_value(getattr(record.output, 'dims', None))} |",
-            f"| resampling | `{getattr(record.output, 'resample', 'n/a')}` |",
-        ])
+        lines.extend(
+            [
+                "",
+                f"## `{record.job_id}`",
+                "",
+                "### Analysis Settings",
+                "",
+                "| quantity | value |",
+                "|---|---|",
+                f"| analysis method | `{params['analysis_method']}` |",
+                f"| component | `{params['component']}` |",
+                f"| nstate | {format_value(params['nstate'])} |",
+                f"| output dimensions | {format_value(getattr(record.output, 'dims', None))} |",
+                f"| resampling | `{getattr(record.output, 'resample', 'n/a')}` |",
+            ]
+        )
         if params["analysis_method"] == "lsqfit":
             settings = params["lsqfit"]
-            lines.extend([
-                f"| fit scope | {format_value(settings['fit_scope'])} |",
-                f"| fit strategy | {format_value(settings['fit_strategy'])} |",
-                f"| fitting form | `{settings['fitting_form']}` |",
-                f"| pt2 windows | {format_value(settings['pt2_windows'])} |",
-                f"| pt3 windows | {format_value(settings.get('pt3_windows'))} |",
-                f"| SVD cutoff | {format_value(settings['svdcut'])} |",
-                f"| Q threshold | {format_value(settings['q_min'])} |",
-            ])
+            lines.extend(
+                [
+                    f"| fit scope | {format_value(settings['fit_scope'])} |",
+                    f"| fit strategy | {format_value(settings['fit_strategy'])} |",
+                    f"| fitting form | `{settings['fitting_form']}` |",
+                    f"| pt2 windows | {format_value(settings['pt2_windows'])} |",
+                    f"| pt3 windows | {format_value(settings.get('pt3_windows'))} |",
+                    f"| SVD cutoff | {format_value(settings['svdcut'])} |",
+                    f"| Q threshold | {format_value(settings['q_min'])} |",
+                ]
+            )
             candidates = diagnostics.get("candidates", [])
-            lines.extend([
-                "",
-                "### Candidate Diagnostics",
-                "",
-                "| candidate | method | window | nstate | Q | chi2/dof | accepted | numerical failure |",
-                "|---|---|---|---:|---:|---:|---|---|",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "### Candidate Diagnostics",
+                    "",
+                    "| candidate | method | window | nstate | Q | chi2/dof | accepted | numerical failure |",
+                    "|---|---|---|---:|---:|---:|---|---|",
+                ]
+            )
             for candidate in candidates:
                 lines.append(
                     f"| `{candidate.get('candidate_id')}` | `{candidate.get('method')}` | "
@@ -182,18 +222,20 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                         f"| `{candidate.get('candidate_id')}` | {z_value} | {format_value(fit.get('Q'))} | "
                         f"{format_value(fit.get('chi2_dof'))} | {format_value(fit.get('logGBF'))} |"
                     )
-            lines.extend([
-                "",
-                "### Per-tuning-z Fit Summary",
-                "",
-                "| candidate | z | Q | chi2/dof | logGBF |",
-                "|---|---:|---:|---:|---:|",
-                *(tune_rows or ["| n/a | n/a | n/a | n/a | n/a |"]),
-                "",
-                "### Full-grid Application Rejections",
-                "",
-                format_value(diagnostics.get("application_rejections", [])),
-            ])
+            lines.extend(
+                [
+                    "",
+                    "### Per-tuning-z Fit Summary",
+                    "",
+                    "| candidate | z | Q | chi2/dof | logGBF |",
+                    "|---|---:|---:|---:|---:|",
+                    *(tune_rows or ["| n/a | n/a | n/a | n/a | n/a |"]),
+                    "",
+                    "### Full-grid Application Rejections",
+                    "",
+                    format_value(diagnostics.get("application_rejections", [])),
+                ]
+            )
             application = diagnostics.get("selected_application_fit")
             application_fits = application.get("fits", []) if isinstance(application, dict) else []
             application_rows = [
@@ -201,55 +243,66 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 for fit in application_fits
                 if isinstance(fit, dict)
             ]
-            lines.extend([
-                "",
-                "### Full-z Application Fit Summary",
-                "",
-                "| z | Q | chi2/dof | logGBF | E0 | E0 sdev |",
-                "|---:|---:|---:|---:|---:|---:|",
-                *(application_rows or ["| not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |"]),
-                "",
-                "### Runtime-resolved Defaults and Scale Inspection",
-                "",
-                f"- Recommended defaults: {format_value(diagnostics.get('recommended_defaults', {}))}",
-                f"- Correlator scale inspection: {format_value(diagnostics.get('correlator_scale_inspection', {}))}",
-                f"- Center preflight: {format_value(diagnostics.get('selected_preflight_fit'))}",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "### Full-z Application Fit Summary",
+                    "",
+                    "| z | Q | chi2/dof | logGBF | E0 | E0 sdev |",
+                    "|---:|---:|---:|---:|---:|---:|",
+                    *(
+                        application_rows
+                        or [
+                            "| not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |"
+                        ]
+                    ),
+                    "",
+                    "### Runtime-resolved Defaults and Scale Inspection",
+                    "",
+                    f"- Recommended defaults: {format_value(diagnostics.get('recommended_defaults', {}))}",
+                    f"- Correlator scale inspection: {format_value(diagnostics.get('correlator_scale_inspection', {}))}",
+                    f"- Center preflight: {format_value(diagnostics.get('selected_preflight_fit'))}",
+                ]
+            )
         else:
             inspection = diagnostics.get("inspection", {})
-            lines.extend([
-                f"| Lanczos scope | `{params['lanczos']['scope']}` |",
-                f"| iterations | {format_value(inspection.get('iterations'))} |",
-                f"| inner samples | {format_value(params['lanczos']['inner_samples'])} |",
-                f"| precision | {format_value(params['lanczos']['precision'])} |",
-                f"| point-usage warning | {format_value(inspection.get('point_usage_warning'))} |",
-            ])
-        lines.extend([
-            "",
-            "### Output Provenance",
-            "",
-            f"- Ensemble: `{attrs.get('ensemble', getattr(record.output, 'ensemble', None))}`",
-            f"- Momentum: {format_value(attrs.get('momentum_gev'))} GeV",
-            f"- Lattice spacing: {format_value(attrs.get('lattice_spacing_fm'))} fm",
-            f"- Output grid: {describe_grid(next(iter(record.output.coords.values())), symbol=next(iter(record.output.coords)))}",
-            "",
-            "### Field Definitions",
-            "",
-            "| field | meaning |",
-            "|---|---|",
-            "| `candidate_id` | Deterministic id of one complete authored fit candidate. |",
-            "| `Q`, `chi2_dof`, `logGBF` | Sample-average goodness-of-fit and evidence diagnostics used by the selection rule. |",
-            "| `tune_z_diagnostics` | Fits used only to select a common model/window before full-z resample application. |",
-            "| `application_rejections` | Candidates that tuned successfully but failed the mandatory full-grid/sample application. |",
-            "",
-            "### Figures",
-            "",
-            *figure_lines(record, artifact_directory),
-            "",
-            "### Artifacts",
-            "",
-            "| job | artifact |",
-            "|---|---|",
-            *artifact_rows(record, artifact_directory),
-        ])
+            lines.extend(
+                [
+                    f"| Lanczos scope | `{params['lanczos']['scope']}` |",
+                    f"| iterations | {format_value(inspection.get('iterations'))} |",
+                    f"| inner samples | {format_value(params['lanczos']['inner_samples'])} |",
+                    f"| precision | {format_value(params['lanczos']['precision'])} |",
+                    f"| point-usage warning | {format_value(inspection.get('point_usage_warning'))} |",
+                ]
+            )
+        lines.extend(
+            [
+                "",
+                "### Output Provenance",
+                "",
+                f"- Ensemble: `{attrs.get('ensemble', getattr(record.output, 'ensemble', None))}`",
+                f"- Momentum: {format_value(attrs.get('momentum_gev'))} GeV",
+                f"- Lattice spacing: {format_value(attrs.get('lattice_spacing_fm'))} fm",
+                f"- Output grid: {describe_grid(next(iter(record.output.coords.values())), symbol=next(iter(record.output.coords)))}",
+                "",
+                "### Field Definitions",
+                "",
+                "| field | meaning |",
+                "|---|---|",
+                "| `candidate_id` | Deterministic id of one complete authored fit candidate. |",
+                "| `Q`, `chi2_dof`, `logGBF` | Sample-average goodness-of-fit and evidence diagnostics used by the selection rule. |",
+                "| `tune_z_diagnostics` | Fits used only to select a common model/window before full-z resample application. |",
+                "| `application_rejections` | Candidates that tuned successfully but failed the mandatory full-grid/sample application. |",
+                "",
+                "### Figures",
+                "",
+                *figure_lines(record, artifact_directory),
+                "",
+                "### Artifacts",
+                "",
+                "| job | artifact |",
+                "|---|---|",
+                *artifact_rows(record, artifact_directory),
+            ]
+        )
     return write_report(artifact_directory, lines)

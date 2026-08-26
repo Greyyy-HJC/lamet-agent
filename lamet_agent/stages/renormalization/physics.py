@@ -40,12 +40,25 @@ def physical_z_coordinates(data: EnsembleData) -> EnsembleData:
     if coord_unit == "fm":
         return data
     spacing = attrs.get("lattice_spacing_fm")
-    if not isinstance(spacing, (int, float)) or isinstance(spacing, bool) or not math.isfinite(float(spacing)) or float(spacing) <= 0:
+    if (
+        not isinstance(spacing, (int, float))
+        or isinstance(spacing, bool)
+        or not math.isfinite(float(spacing))
+        or float(spacing) <= 0
+    ):
         raise ValueError("lattice-coordinate renormalization input requires positive lattice_spacing_fm")
     coords = data.coords
     coords["z"] = [float(value) * float(spacing) for value in coords["z"]]
     attrs.update({"coord_unit": "fm", "input_coord_unit": "lattice"})
-    return EnsembleData(data.ensemble, data.resample, [np.asarray(sample) for sample in data.values], data.dims, coords, attrs=attrs, name=data.name)
+    return EnsembleData(
+        data.ensemble,
+        data.resample,
+        [np.asarray(sample) for sample in data.values],
+        data.dims,
+        coords,
+        attrs=attrs,
+        name=data.name,
+    )
 
 
 def divide_by_constant(target: EnsembleData, denominator: float) -> EnsembleData:
@@ -55,12 +68,24 @@ def divide_by_constant(target: EnsembleData, denominator: float) -> EnsembleData
     values = [sample / denominator for sample in target.values]
     attrs = target.attrs
     attrs["denominator_kind"] = "constant"
-    return EnsembleData(target.ensemble, target.resample, values, target.dims, target.coords, attrs=attrs, name="renormalized_matrix_element")
+    return EnsembleData(
+        target.ensemble,
+        target.resample,
+        values,
+        target.dims,
+        target.coords,
+        attrs=attrs,
+        name="renormalized_matrix_element",
+    )
 
 
 def ratio(target: EnsembleData, denominator: EnsembleData) -> EnsembleData:
     """Apply the pointwise complex ratio on the complete physical grid."""
-    if target.attrs.get("resample_id") and denominator.attrs.get("resample_id") and target.attrs["resample_id"] != denominator.attrs["resample_id"]:
+    if (
+        target.attrs.get("resample_id")
+        and denominator.attrs.get("resample_id")
+        and target.attrs["resample_id"] != denominator.attrs["resample_id"]
+    ):
         raise ValueError("target and denominator use different resample_id plans")
     if target.resample != denominator.resample or target.n_sample != denominator.n_sample:
         raise ValueError("target and denominator must use the same resampling mode and sample count")
@@ -78,10 +103,20 @@ def normalize_at_origin(data: EnsembleData) -> EnsembleData:
     result = data.div(origin)
     attrs = result.attrs
     attrs["normalized_at_origin"] = 1
-    return EnsembleData(result.ensemble, result.resample, [np.asarray(sample) for sample in result.values], result.dims, result.coords, attrs=attrs, name=result.name)
+    return EnsembleData(
+        result.ensemble,
+        result.resample,
+        [np.asarray(sample) for sample in result.values],
+        result.dims,
+        result.coords,
+        attrs=attrs,
+        name=result.name,
+    )
 
 
-def hybrid_ratio(target: EnsembleData, denominator: EnsembleData, *, zs_fm: float, delta_m_gev: float, m0_gev: float = 0.0) -> EnsembleData:
+def hybrid_ratio(
+    target: EnsembleData, denominator: EnsembleData, *, zs_fm: float, delta_m_gev: float, m0_gev: float = 0.0
+) -> EnsembleData:
     """Use a short ratio and a continuous long-distance denominator anchor.
 
     The exponent is dimensionless because ``z`` is in fm and ``delta_m`` is in
@@ -116,8 +151,18 @@ def hybrid_ratio(target: EnsembleData, denominator: EnsembleData, *, zs_fm: floa
             long = positive_long
         values.append(np.where(short_mask.reshape(shape), short_sample, long * long_weight))
     attrs = base.attrs
-    attrs.update({"zs_fm": switch, "delta_m_gev": float(delta_m_gev), "m0_gev": float(m0_gev), "strategy": "hybrid", "hybrid_switch_coord_fm": switch})
-    return EnsembleData(base.ensemble, base.resample, values, base.dims, base.coords, attrs=attrs, name="renormalized_matrix_element")
+    attrs.update(
+        {
+            "zs_fm": switch,
+            "delta_m_gev": float(delta_m_gev),
+            "m0_gev": float(m0_gev),
+            "strategy": "hybrid",
+            "hybrid_switch_coord_fm": switch,
+        }
+    )
+    return EnsembleData(
+        base.ensemble, base.resample, values, base.dims, base.coords, attrs=attrs, name="renormalized_matrix_element"
+    )
 
 
 def _perturbative_log(a_fm: float, *, lambda_qcd_gev: float, scale_gev: float, d: float, n_f: int) -> float:
@@ -185,7 +230,9 @@ def log_m(
     if a_lambda <= 0:
         raise ValueError("a*Lambda must be positive")
     divergence = float(k) * (z / float(a_fm)) / math.log(a_lambda)
-    return divergence + _perturbative_log(float(a_fm), lambda_qcd_gev=float(lambda_qcd_gev), scale_gev=float(scale_gev), d=float(d), n_f=int(n_f))
+    return divergence + _perturbative_log(
+        float(a_fm), lambda_qcd_gev=float(lambda_qcd_gev), scale_gev=float(scale_gev), d=float(d), n_f=int(n_f)
+    )
 
 
 def fit_factor(
@@ -229,8 +276,7 @@ def fit_factor(
     ):
         raise ValueError("self-renormalization reference values must be finite, nonzero (sample,a,z) data")
     if lattice_spacing_range_fm is not None and any(
-        value < lattice_spacing_range_fm[0] - 1e-12 or value > lattice_spacing_range_fm[1] + 1e-12
-        for value in spacings
+        value < lattice_spacing_range_fm[0] - 1e-12 or value > lattice_spacing_range_fm[1] + 1e-12 for value in spacings
     ):
         raise ValueError("reference lattice spacings are outside the authored fit range")
     log_data = EnsembleData(

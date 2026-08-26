@@ -55,8 +55,7 @@ def _unpack_gvar(values: Any) -> tuple[np.ndarray, np.ndarray]:
     """Extract central values and standard deviations from gvars."""
     array = np.asarray(values)
     is_gvar = isinstance(values, gvar.GVar) or (
-        array.dtype == object
-        and all(isinstance(value, gvar.GVar) for value in array.flat)
+        array.dtype == object and all(isinstance(value, gvar.GVar) for value in array.flat)
     )
     if not is_gvar:
         raise TypeError("plot values must be a gvar or an array of gvars")

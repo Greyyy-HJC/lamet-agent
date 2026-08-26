@@ -8,7 +8,16 @@ import numpy as np
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels import load_kernel_document
-from lamet_agent.stages._reporting import StageReportRecord, artifact_rows, describe_grid, figure_lines, format_value, output_attrs, stage_overlay_lines, write_report
+from lamet_agent.stages._reporting import (
+    StageReportRecord,
+    artifact_rows,
+    describe_grid,
+    figure_lines,
+    format_value,
+    output_attrs,
+    stage_overlay_lines,
+    write_report,
+)
 
 
 def _kernel_document(kernel_id: str) -> str:
@@ -122,38 +131,44 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             f"{format_value(attrs.get('momentum_gev'))} | {format_value(record.params['mu'])} | "
             f"{format_value(quasi_integral)} | {format_value(matched_integral)} | {format_value(100.0 * relative)}% |"
         )
-    lines.extend([
-        "",
-        "The integrals use the light-cone output range for both arrays.  They are diagnostics, not a normalization verdict: the expected normalization is fixed upstream by the coordinate-space matrix element and its projection convention.",
-        "",
-        "## Kernel-id and Field Definitions",
-        "",
-        "| field | meaning |",
-        "|---|---|",
-        "| `kernel_id` | Public kernel filename stem encoding gauge construction, Dirac operator, target distribution, renormalization scheme, resummation options, component, and perturbative order. |",
-        "| `mu` | MSbar renormalization/matching scale in GeV. |",
-        "| `zs_fm` | Hybrid Wilson-line switching distance; absent for ratio/MSbar kernels. |",
-        "| `kernel_parameters` | Parameters owned by a particular kernel, such as RGR kappa and its minimum running scale. |",
-        "| matching matrix | Discretized convolution from the quasi input grid to the requested light-cone output grid. |",
-        "",
-        "## Stage Overview",
-        "",
-        *stage_overlay_lines(records, artifact_directory, coordinate="x", stem="matching_overview", ylabel="matched distribution"),
-    ])
+    lines.extend(
+        [
+            "",
+            "The integrals use the light-cone output range for both arrays.  They are diagnostics, not a normalization verdict: the expected normalization is fixed upstream by the coordinate-space matrix element and its projection convention.",
+            "",
+            "## Kernel-id and Field Definitions",
+            "",
+            "| field | meaning |",
+            "|---|---|",
+            "| `kernel_id` | Public kernel filename stem encoding gauge construction, Dirac operator, target distribution, renormalization scheme, resummation options, component, and perturbative order. |",
+            "| `mu` | MSbar renormalization/matching scale in GeV. |",
+            "| `zs_fm` | Hybrid Wilson-line switching distance; absent for ratio/MSbar kernels. |",
+            "| `kernel_parameters` | Parameters owned by a particular kernel, such as RGR kappa and its minimum running scale. |",
+            "| matching matrix | Discretized convolution from the quasi input grid to the requested light-cone output grid. |",
+            "",
+            "## Stage Overview",
+            "",
+            *stage_overlay_lines(
+                records, artifact_directory, coordinate="x", stem="matching_overview", ylabel="matched distribution"
+            ),
+        ]
+    )
     for kernel_id in kernel_ids:
         structure = _kernel_structure(kernel_id)
-        lines.extend([
-            "",
-            f"## Kernel `{kernel_id}`",
-            "",
-            "| property | value |",
-            "|---|---|",
-            *[f"| {name} | `{format_value(value)}` |" for name, value in structure.items()],
-            "",
-            "### Matching Formula and Literature Consistency Check",
-            "",
-            _kernel_document(kernel_id),
-        ])
+        lines.extend(
+            [
+                "",
+                f"## Kernel `{kernel_id}`",
+                "",
+                "| property | value |",
+                "|---|---|",
+                *[f"| {name} | `{format_value(value)}` |" for name, value in structure.items()],
+                "",
+                "### Matching Formula and Literature Consistency Check",
+                "",
+                _kernel_document(kernel_id),
+            ]
+        )
     for record in records:
         attrs = output_attrs(record)
         diagnostics = record.summary.get("diagnostics", {})
@@ -162,49 +177,63 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         scale = float(attrs.get("output_scale", 1.0))
         mirrored = abs(scale - 1.0) > 1e-12 and _is_even_about_zero(record.output)
         gap = _has_interior_gap(record.output)
-        lines.extend([
-            "",
-            f"## `{record.job_id}`",
-            "",
-            "### Analysis Settings",
-            "",
-            "| quantity | value |",
-            "|---|---|",
-            f"| kernel | `{record.params['kernel_id']}` |",
-            f"| scheme | `{record.params['scheme']}` |",
-            f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
-            f"| renormalization scale | {format_value(record.params['mu'])} GeV |",
-            f"| hybrid switch | {format_value(record.params.get('hybrid', {}).get('zs_fm'))} fm |",
-            f"| quasi grid | {describe_grid(quasi.coords['x'], symbol='x')} |",
-            f"| light-cone grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
-            f"| kernel parameters | {format_value(record.params.get('kernel_parameters', {}))} |",
-            f"| matching matrix shape | {format_value(diagnostics.get('matrix_shape'))} |",
-            f"| resampling | `{getattr(record.output, 'resample', 'n/a')}` with {format_value(getattr(record.output, 'n_sample', None))} samples |",
-            "",
-            "### Integral Diagnostic",
-            "",
-            f"- Quasi input: {format_value(quasi_integral)}",
-            f"- Matched output: {format_value(matched_integral)}",
-            f"- Relative change: {format_value(100.0 * relative)}%",
-            f"- Fourier projection scale: {format_value(scale)}",
-            *( [f"- The stored matched distribution is symmetric about x=0; one-sided quasi/matched integrals after removing the projection scale are {format_value(quasi_integral / scale)} / {format_value(matched_integral / scale)}."] if mirrored else [] ),
-            *( ["- The matched grid contains an interior gap. The trapezoid diagnostic bridges that interval linearly, so part of the integral is interpolation."] if gap else [] ),
-            "- Compare these values with the normalization convention fixed upstream (`normalization=true` gives unity only for the corresponding operator/projection convention).",
-            "",
-            "### Matching Scheme",
-            "",
-            _scheme_text(str(record.params["scheme"])),
-            "",
-            "The LO contribution is the identity. The shipped kernel document above is the source of truth for the implemented NLO coefficient, plus prescription, support regions, and any RGR or hybrid correction.",
-            "",
-            "### Figures",
-            "",
-            *figure_lines(record, artifact_directory),
-            "",
-            "### Artifacts",
-            "",
-            "| job | artifact |",
-            "|---|---|",
-            *artifact_rows(record, artifact_directory),
-        ])
+        lines.extend(
+            [
+                "",
+                f"## `{record.job_id}`",
+                "",
+                "### Analysis Settings",
+                "",
+                "| quantity | value |",
+                "|---|---|",
+                f"| kernel | `{record.params['kernel_id']}` |",
+                f"| scheme | `{record.params['scheme']}` |",
+                f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
+                f"| renormalization scale | {format_value(record.params['mu'])} GeV |",
+                f"| hybrid switch | {format_value(record.params.get('hybrid', {}).get('zs_fm'))} fm |",
+                f"| quasi grid | {describe_grid(quasi.coords['x'], symbol='x')} |",
+                f"| light-cone grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
+                f"| kernel parameters | {format_value(record.params.get('kernel_parameters', {}))} |",
+                f"| matching matrix shape | {format_value(diagnostics.get('matrix_shape'))} |",
+                f"| resampling | `{getattr(record.output, 'resample', 'n/a')}` with {format_value(getattr(record.output, 'n_sample', None))} samples |",
+                "",
+                "### Integral Diagnostic",
+                "",
+                f"- Quasi input: {format_value(quasi_integral)}",
+                f"- Matched output: {format_value(matched_integral)}",
+                f"- Relative change: {format_value(100.0 * relative)}%",
+                f"- Fourier projection scale: {format_value(scale)}",
+                *(
+                    [
+                        f"- The stored matched distribution is symmetric about x=0; one-sided quasi/matched integrals after removing the projection scale are {format_value(quasi_integral / scale)} / {format_value(matched_integral / scale)}."
+                    ]
+                    if mirrored
+                    else []
+                ),
+                *(
+                    [
+                        "- The matched grid contains an interior gap. The trapezoid diagnostic bridges that interval linearly, so part of the integral is interpolation."
+                    ]
+                    if gap
+                    else []
+                ),
+                "- Compare these values with the normalization convention fixed upstream (`normalization=true` gives unity only for the corresponding operator/projection convention).",
+                "",
+                "### Matching Scheme",
+                "",
+                _scheme_text(str(record.params["scheme"])),
+                "",
+                "The LO contribution is the identity. The shipped kernel document above is the source of truth for the implemented NLO coefficient, plus prescription, support regions, and any RGR or hybrid correction.",
+                "",
+                "### Figures",
+                "",
+                *figure_lines(record, artifact_directory),
+                "",
+                "### Artifacts",
+                "",
+                "| job | artifact |",
+                "|---|---|",
+                *artifact_rows(record, artifact_directory),
+            ]
+        )
     return write_report(artifact_directory, lines)

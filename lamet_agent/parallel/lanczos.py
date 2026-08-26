@@ -32,9 +32,7 @@ def _plan_tsep_tau_conversion(
         raise ValueError("lanczos_t0 must be a nonnegative integer")
     if time_step is not None and (type(time_step) is not int or time_step < 1):
         raise ValueError("lanczos_time_step must be a positive integer")
-    if requested_iterations is not None and (
-        type(requested_iterations) is not int or requested_iterations < 1
-    ):
+    if requested_iterations is not None and (type(requested_iterations) is not int or requested_iterations < 1):
         raise ValueError("lanczos_iterations must be a positive integer")
 
     tsep_set = set(available_tseps)
@@ -86,10 +84,7 @@ def _plan_tsep_tau_conversion(
         ),
     )
     iterations = requested_iterations or chosen["max_iterations"]
-    selected_tseps = [
-        2 * chosen["t0"] + chosen["time_step"] * k
-        for k in range(2 * iterations - 1)
-    ]
+    selected_tseps = [2 * chosen["t0"] + chosen["time_step"] * k for k in range(2 * iterations - 1)]
     used_points = []
     used_tau_by_tsep: dict[int, set[int]] = {value: set() for value in selected_tseps}
     for sigma_index in range(iterations):
@@ -224,12 +219,8 @@ def _transfer_matrix_numpy(c2: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.n
             - (beta * g[1 : k + 1, j] + gamma * b[1 : k + 1, j])
             + gamma * beta * a[:k, j - 1]
         ) / product
-        g[:k, j + 1] = (
-            a[1 : k + 1, j] - alpha * a[:k, j] - gamma * b[:k, j]
-        ) / beta_next
-        b[:k, j + 1] = (
-            a[1 : k + 1, j] - alpha * a[:k, j] - beta * g[:k, j]
-        ) / gamma_next
+        g[:k, j + 1] = (a[1 : k + 1, j] - alpha * a[:k, j] - gamma * b[:k, j]) / beta_next
+        b[:k, j + 1] = (a[1 : k + 1, j] - alpha * a[:k, j] - beta * g[:k, j]) / gamma_next
         matrix[j, j] = alpha
         matrix[j, j + 1] = beta_next
         matrix[j + 1, j] = gamma_next
@@ -238,9 +229,7 @@ def _transfer_matrix_numpy(c2: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.n
     return matrix, a[1], b[1], g[1]
 
 
-def _transfer_matrix_mpmath(
-    c2: np.ndarray, precision: int
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _transfer_matrix_mpmath(c2: np.ndarray, precision: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build the recurrence with ``precision`` decimal digits using mpmath."""
     import mpmath as mp
 
@@ -284,12 +273,8 @@ def _transfer_matrix_mpmath(
                     - (beta * g[t + 1][j] + gamma * b[t + 1][j])
                     + gamma * beta * a[t][j - 1]
                 ) / product
-                g[t][j + 1] = (
-                    a[t + 1][j] - alpha * a[t][j] - gamma * b[t][j]
-                ) / beta_next
-                b[t][j + 1] = (
-                    a[t + 1][j] - alpha * a[t][j] - beta * g[t][j]
-                ) / gamma_next
+                g[t][j + 1] = (a[t + 1][j] - alpha * a[t][j] - gamma * b[t][j]) / beta_next
+                b[t][j + 1] = (a[t + 1][j] - alpha * a[t][j] - beta * g[t][j]) / gamma_next
             matrix[j][j] = alpha
             matrix[j][j + 1] = beta_next
             matrix[j + 1][j] = gamma_next
@@ -297,9 +282,7 @@ def _transfer_matrix_mpmath(
         return arrays(m)
 
 
-def _transfer_matrix(
-    c2: np.ndarray, precision: int = 0
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _transfer_matrix(c2: np.ndarray, precision: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build the transfer-matrix projection from an averaged real 2pt signal."""
     values = np.asarray(c2, dtype=float)
     if values.ndim != 1 or values.size < 2:
@@ -310,11 +293,7 @@ def _transfer_matrix(
         raise ValueError("Lanczos normalization requires the ensemble-average C(0) to be positive")
     if precision < 0:
         raise ValueError("Lanczos precision must be nonnegative")
-    return (
-        _transfer_matrix_numpy(values)
-        if precision == 0
-        else _transfer_matrix_mpmath(values, precision)
-    )
+    return _transfer_matrix_numpy(values) if precision == 0 else _transfer_matrix_mpmath(values, precision)
 
 
 def _ritz_spectrum(matrix: np.ndarray, epsilon_float: float = 1e-12) -> _Ritz:
@@ -330,11 +309,7 @@ def _ritz_spectrum(matrix: np.ndarray, epsilon_float: float = 1e-12) -> _Ritz:
     real = (np.abs(np.angle(values)) <= epsilon_float) & (values != 0)
     values = values[real].real
     reduced = np.linalg.eigvals(matrix[1:, 1:])
-    distances = (
-        np.min(np.abs(values[:, None] - reduced[None, :]), axis=1)
-        if len(values)
-        else np.empty(0, dtype=float)
-    )
+    distances = np.min(np.abs(values[:, None] - reduced[None, :]), axis=1) if len(values) else np.empty(0, dtype=float)
     return _Ritz(values, np.identity(len(values)), np.identity(len(values)), distances)
 
 
@@ -361,9 +336,7 @@ def _ritz_hermitian(matrix: np.ndarray, a_cw: float = 10.0, b_cw: float = 1.0, e
         return _Ritz(values, right, inverse, np.empty(0, dtype=float))
 
     reduced = np.linalg.eigvals(matrix[1:, 1:])
-    reduced = reduced[
-        np.abs(reduced.imag) <= epsilon_float * np.abs(reduced)
-    ].real
+    reduced = reduced[np.abs(reduced.imag) <= epsilon_float * np.abs(reduced)].real
     if len(reduced):
         distances = np.min(np.abs(values[:, None] - reduced[None, :]), axis=1)
         epsilon_cw = (np.max(distances) - np.min(distances)) / (a_cw * len(values) + b_cw)
@@ -417,16 +390,12 @@ def _analyze_twopt(
     results: list[list[_Ritz]] = []
     for _ in range(n_bootstrap):
         indices = rng.integers(0, c2.shape[0], c2.shape[0])
-        matrix, _alpha, _beta, _gamma = _transfer_matrix(
-            c2[indices].mean(axis=0)[: 2 * requested], precision=precision
-        )
+        matrix, _alpha, _beta, _gamma = _transfer_matrix(c2[indices].mean(axis=0)[: 2 * requested], precision=precision)
         results.append([_ritz_spectrum(matrix[:m, :m]) for m in range(1, len(matrix) + 1)])
     return _filter_twopt_cw(results)
 
 
-def _krylov_polynomial(
-    alpha: np.ndarray, beta: np.ndarray, gamma: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
+def _krylov_polynomial(alpha: np.ndarray, beta: np.ndarray, gamma: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Construct right and left Krylov-polynomial coefficients."""
     m = len(alpha)
     right = np.zeros((m, m), dtype=float)
@@ -438,12 +407,8 @@ def _krylov_polynomial(
     left[1, 0], left[1, 1] = -alpha[0] / beta[1], 1.0 / beta[1]
     for j in range(1, m - 1):
         for t in range(j + 2):
-            right[j + 1, t] = (
-                right[j, t - 1] - alpha[j] * right[j, t] - beta[j] * right[j - 1, t]
-            ) / gamma[j + 1]
-            left[j + 1, t] = (
-                left[j, t - 1] - alpha[j] * left[j, t] - gamma[j] * left[j - 1, t]
-            ) / beta[j + 1]
+            right[j + 1, t] = (right[j, t - 1] - alpha[j] * right[j, t] - beta[j] * right[j - 1, t]) / gamma[j + 1]
+            left[j + 1, t] = (left[j, t - 1] - alpha[j] * left[j, t] - gamma[j] * left[j - 1, t]) / beta[j + 1]
     return right, left
 
 
@@ -499,12 +464,8 @@ def _analyze_threept(
         for m in range(1, usable + 1):
             sink_ritz = _ritz_hermitian(sink_matrix[:m, :m])
             source_ritz = _ritz_hermitian(source_matrix[:m, :m])
-            sink_left = _ritz_rotator(
-                sink_ritz, sink_krylov[0][:m, :m], sink_krylov[1][:m, :m]
-            )[1]
-            source_right = _ritz_rotator(
-                source_ritz, source_krylov[0][:m, :m], source_krylov[1][:m, :m]
-            )[0]
+            sink_left = _ritz_rotator(sink_ritz, sink_krylov[0][:m, :m], sink_krylov[1][:m, :m])[1]
+            source_right = _ritz_rotator(source_ritz, source_krylov[0][:m, :m], source_krylov[1][:m, :m])[0]
             matrices.append(
                 np.einsum(
                     "fs,st,it->fi",
@@ -517,9 +478,7 @@ def _analyze_threept(
     return results
 
 
-def _median_twopt_energies(
-    results: list[list[_Ritz]], *, max_states: int, time_step: int = 1
-) -> np.ndarray:
+def _median_twopt_energies(results: list[list[_Ritz]], *, max_states: int, time_step: int = 1) -> np.ndarray:
     """Aggregate inner bootstraps into ``(iteration, state)`` median energies."""
     if time_step < 1:
         raise ValueError("Lanczos time_step must be a positive integer")
@@ -537,9 +496,7 @@ def _median_twopt_energies(
     return energies
 
 
-def _median_threept_matrix(
-    results: list[list[np.ndarray]], *, iteration: int, max_states: int
-) -> np.ndarray:
+def _median_threept_matrix(results: list[list[np.ndarray]], *, iteration: int, max_states: int) -> np.ndarray:
     """Aggregate one iteration into a fixed, NaN-padded state matrix."""
     samples = np.full((len(results), max_states, max_states), np.nan, dtype=float)
     for index, result in enumerate(results):
@@ -565,9 +522,7 @@ def _momentum(data: Any, name: str) -> tuple[int, int, int]:
         decoded = json.loads(value) if isinstance(value, str) else value
     except json.JSONDecodeError as exc:
         raise ValueError(f"correlator {name} is not a momentum triple") from exc
-    if not isinstance(decoded, list) or len(decoded) != 3 or any(
-        type(component) is not int for component in decoded
-    ):
+    if not isinstance(decoded, list) or len(decoded) != 3 or any(type(component) is not int for component in decoded):
         raise ValueError(f"correlator {name} is not a momentum triple")
     return tuple(decoded)
 
@@ -641,8 +596,7 @@ def prepare_lanczos_data(
             return [
                 (correlator_id, data)
                 for correlator_id, data in two_points
-                if _momentum(data, "source_momentum") == momentum
-                and _momentum(data, "sink_momentum") == momentum
+                if _momentum(data, "source_momentum") == momentum and _momentum(data, "sink_momentum") == momentum
             ]
 
         source_matches = matching(source_momentum)
@@ -664,10 +618,7 @@ def prepare_lanczos_data(
         )
 
     iterations = int(plan["iterations"])
-    c2_times = [
-        2 * int(plan["t0"]) + int(plan["time_step"]) * index
-        for index in range(2 * iterations)
-    ]
+    c2_times = [2 * int(plan["t0"]) + int(plan["time_step"]) * index for index in range(2 * iterations)]
     source = np.real(np.asarray(source_data.values)[:, c2_times])
     sink = np.real(np.asarray(sink_data.values)[:, c2_times])
     for label, values in (("source", source), ("sink", sink)):
@@ -694,11 +645,7 @@ def prepare_lanczos_data(
             c3_by_z.append(effective)
 
     inspection = {
-        "status": (
-            "valid_with_discarded_points"
-            if int(plan.get("discarded_point_count", 0)) > 0
-            else "valid"
-        ),
+        "status": ("valid_with_discarded_points" if int(plan.get("discarded_point_count", 0)) > 0 else "valid"),
         "scope": scope,
         "configuration_count": int(source.shape[0]),
         "source_correlator_id": source_id,
@@ -759,10 +706,7 @@ def _outer_indices(
         if type(bootstrap_samples) is not int or bootstrap_samples < 1:
             raise ValueError("Lanczos bootstrap requires bootstrap_samples")
         rng = np.random.default_rng(seed)
-        return [
-            rng.integers(0, n_configurations, n_configurations)
-            for _ in range(bootstrap_samples)
-        ]
+        return [rng.integers(0, n_configurations, n_configurations) for _ in range(bootstrap_samples)]
     raise ValueError("Lanczos resampling must be jackknife or bootstrap")
 
 
@@ -857,10 +801,7 @@ def analyze_prepared_lanczos(
     inspection = prepared["inspection"]
     source = _bin_configurations(np.asarray(prepared["source"]), bin_size)
     sink = _bin_configurations(np.asarray(prepared["sink"]), bin_size)
-    c3_by_z = [
-        _bin_configurations(np.asarray(values), bin_size)
-        for values in prepared["c3_by_z"]
-    ]
+    c3_by_z = [_bin_configurations(np.asarray(values), bin_size) for values in prepared["c3_by_z"]]
     outer = _outer_indices(
         len(source),
         resampling=resampling,
@@ -955,8 +896,16 @@ def analyze_prepared_lanczos(
         )
     for index, result in results:
         matrices[index] = result
-    real = matrices[:, :, selected_components.index("real"), 0, 0] if "real" in selected_components else np.zeros((len(outer), len(c3_by_z)))
-    imag = matrices[:, :, selected_components.index("imag"), 0, 0] if "imag" in selected_components else np.zeros((len(outer), len(c3_by_z)))
+    real = (
+        matrices[:, :, selected_components.index("real"), 0, 0]
+        if "real" in selected_components
+        else np.zeros((len(outer), len(c3_by_z)))
+    )
+    imag = (
+        matrices[:, :, selected_components.index("imag"), 0, 0]
+        if "imag" in selected_components
+        else np.zeros((len(outer), len(c3_by_z)))
+    )
     return {
         "values": real + 1j * imag,
         "matrices": matrices,

@@ -5,7 +5,17 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from lamet_agent.contract import CheckContext, Depends, Issue, List, Provides, Recommends, Source, Value, stage_job_rules
+from lamet_agent.contract import (
+    CheckContext,
+    Depends,
+    Issue,
+    List,
+    Provides,
+    Recommends,
+    Source,
+    Value,
+    stage_job_rules,
+)
 
 
 def _positive(value: int | float) -> bool:
@@ -22,10 +32,26 @@ def _nonnegative(value: int | float) -> bool:
 
 def _valid_grid(value: object) -> bool:
     if isinstance(value, list):
-        return bool(value) and all(isinstance(left, (int, float)) and not isinstance(left, bool) and isinstance(right, (int, float)) and not isinstance(right, bool) and right > left for left, right in zip(value, value[1:]))
+        return bool(value) and all(
+            isinstance(left, (int, float))
+            and not isinstance(left, bool)
+            and isinstance(right, (int, float))
+            and not isinstance(right, bool)
+            and right > left
+            for left, right in zip(value, value[1:])
+        )
     if not isinstance(value, dict) or set(value) != {"start", "stop", "num"}:
         return False
-    return isinstance(value["start"], (int, float)) and not isinstance(value["start"], bool) and isinstance(value["stop"], (int, float)) and not isinstance(value["stop"], bool) and value["stop"] > value["start"] and isinstance(value["num"], int) and not isinstance(value["num"], bool) and value["num"] > 1
+    return (
+        isinstance(value["start"], (int, float))
+        and not isinstance(value["start"], bool)
+        and isinstance(value["stop"], (int, float))
+        and not isinstance(value["stop"], bool)
+        and value["stop"] > value["start"]
+        and isinstance(value["num"], int)
+        and not isinstance(value["num"], bool)
+        and value["num"] > 1
+    )
 
 
 def _nonempty(value: list[object]) -> bool:
@@ -36,6 +62,8 @@ def _unit_interval(value: int | float) -> bool:
     return math.isfinite(value) and 0 <= value <= 1
 
 
+# ruff: disable[E501]
+# fmt: off
 PARAM_RULES = (
     Depends("", "quasi_y_ls", physics="The output grid is explicit and dimensionless."),
     Depends("", "zmin_fm", physics="Tail lower ranges are authored candidate values."),
@@ -79,6 +107,8 @@ INPUT_RULES = (
     Depends("", "input", physics="Fourier transformation consumes one renormalized coordinate-space input."),
     Source("input", physics="The Fourier input is one prior job or external file source."),
 )
+# fmt: on
+# ruff: enable[E501]
 
 
 def check_tail_ranges(context: CheckContext) -> Issue | None:
@@ -98,7 +128,11 @@ def check_da_sector(context: CheckContext) -> Issue | None:
     if scan is None:
         return None
     if context.manifest["metadata"]["target_observable"] == "da" and scan["sector"] != "full":
-        return Issue("scheme_scan.sector", "must be full for a DA", "The migrated DA transform retains the full complex distribution.")
+        return Issue(
+            "scheme_scan.sector",
+            "must be full for a DA",
+            "The migrated DA transform retains the full complex distribution.",
+        )
     return None
 
 

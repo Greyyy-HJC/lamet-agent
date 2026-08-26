@@ -71,15 +71,11 @@ class _ParallelPool:
         if not task_list:
             return []
         if self.workers == 1:
-            return [
-                function(task)
-                for task in tqdm(task_list, desc=description, unit=unit)
-            ]
+            return [function(task) for task in tqdm(task_list, desc=description, unit=unit)]
         executor = self._start()
         batches = _balanced_batches(task_list, self.workers)
         futures: dict[Future[Any], int] = {
-            executor.submit(_run_batch, function, batch): len(batch)
-            for batch in batches
+            executor.submit(_run_batch, function, batch): len(batch) for batch in batches
         }
         results: list[Any] = [None] * len(task_list)
         try:

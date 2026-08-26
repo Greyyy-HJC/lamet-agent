@@ -59,14 +59,7 @@ def fourier_transform(
         weights[-1] = abs(float(z[-1] - z[-2])) / 2.0
         weights[1:-1] = np.abs(z[2:] - z[:-2]) / 2.0
         quadrature = "trapezoid_nonuniform"
-    phase = np.exp(
-        1j
-        * phase_sign
-        * (x[:, None] - x_shift)
-        * momentum_gev
-        * z[None, :]
-        / HBAR_C_GEV_FM
-    )
+    phase = np.exp(1j * phase_sign * (x[:, None] - x_shift) * momentum_gev * z[None, :] / HBAR_C_GEV_FM)
     normalization = (
         momentum_gev / (2.0 * math.pi * HBAR_C_GEV_FM)
         if prefactor == "pz_over_2pi"
@@ -76,11 +69,7 @@ def fourier_transform(
     )
     operator = normalization * phase * weights[None, :]
     chunk_count = min(workers, data.n_sample)
-    chunks = [
-        chunk
-        for chunk in np.array_split(np.asarray(data.values), chunk_count)
-        if len(chunk)
-    ]
+    chunks = [chunk for chunk in np.array_split(np.asarray(data.values), chunk_count) if len(chunk)]
     tasks = [(chunk, operator) for chunk in chunks]
     if _parallel is None:
         with _ParallelPool(chunk_count) as parallel:

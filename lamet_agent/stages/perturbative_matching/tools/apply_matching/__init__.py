@@ -36,11 +36,11 @@ def run(context: ToolContext) -> dict[str, object]:
         raise RuntimeError("inspect_kernel must run before apply_matching")
     x_in = list(data.coords["x"])
     lc_x_ls = context.params["lc_x_ls"]
-    x_out = list(lc_x_ls) if isinstance(lc_x_ls, list) else [
-        value
-        for value in x_in
-        if float(lc_x_ls["start"]) <= float(value) <= float(lc_x_ls["stop"])
-    ]
+    x_out = (
+        list(lc_x_ls)
+        if isinstance(lc_x_ls, list)
+        else [value for value in x_in if float(lc_x_ls["start"]) <= float(value) <= float(lc_x_ls["stop"])]
+    )
     if isinstance(lc_x_ls, dict):
         if not x_out:
             raise ValueError("lc_x_ls selects no quasi-grid points")
@@ -54,19 +54,47 @@ def run(context: ToolContext) -> dict[str, object]:
         kernel_parameters["mu_min_gev"] = kernel_parameters.pop("rgr_mu_min_gev")
     if "hybrid" in context.params:
         kernel_parameters["zs_fm"] = float(context.params["hybrid"]["zs_fm"])
-    matrix = kernel(np.asarray(x_out, dtype=float), np.asarray(x_in, dtype=float), momentum_gev=float(momentum), scale_gev=float(context.params["mu"]), **kernel_parameters)
+    matrix = kernel(
+        np.asarray(x_out, dtype=float),
+        np.asarray(x_in, dtype=float),
+        momentum_gev=float(momentum),
+        scale_gev=float(context.params["mu"]),
+        **kernel_parameters,
+    )
     matrix = np.asarray(matrix)
     if matrix.shape != (len(x_out), len(x_in)) or not np.all(np.isfinite(matrix)):
         raise ValueError("kernel returned an invalid matching matrix shape or value")
     result = apply_matrix(data, matrix, x_out)
     attrs = result.attrs
-    attrs.update({"kernel_id": context.params["kernel_id"], "mu": float(context.params["mu"]), "kernel_parameters": json.dumps(context.params["kernel_parameters"], sort_keys=True), "units": '{"values":"dimensionless","x":"dimensionless"}'})
-    result = EnsembleData(result.ensemble, result.resample, [sample for sample in result.values], result.dims, result.coords, attrs=attrs, name=result.name)
+    attrs.update(
+        {
+            "kernel_id": context.params["kernel_id"],
+            "mu": float(context.params["mu"]),
+            "kernel_parameters": json.dumps(context.params["kernel_parameters"], sort_keys=True),
+            "units": '{"values":"dimensionless","x":"dimensionless"}',
+        }
+    )
+    result = EnsembleData(
+        result.ensemble,
+        result.resample,
+        [sample for sample in result.values],
+        result.dims,
+        result.coords,
+        attrs=attrs,
+        name=result.name,
+    )
     context.state["matching_result"] = {"data": result, "matrix": matrix, "x_in": x_in, "x_out": x_out}
     result.to_netcdf(context.artifact_directory / "output.nc")
-    diagnostics = {"kernel_id": context.params["kernel_id"], "matrix_shape": list(matrix.shape), "x_in_count": len(x_in), "x_out_count": len(x_out)}
+    diagnostics = {
+        "kernel_id": context.params["kernel_id"],
+        "matrix_shape": list(matrix.shape),
+        "x_in_count": len(x_in),
+        "x_out_count": len(x_out),
+    }
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
-    (context.artifact_directory / "diagnostics" / "matching.json").write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
+    (context.artifact_directory / "diagnostics" / "matching.json").write_text(
+        json.dumps(diagnostics, indent=2), encoding="utf-8"
+    )
     start_plot()
     hline(0.0, color="black")
     plot_min = np.inf
@@ -97,6 +125,22 @@ def run(context: ToolContext) -> dict[str, object]:
     document = str(context.state.get("kernel_inspection", {}).get("document", "")).strip()
     report = f"# Perturbative matching\n\nKernel: `{context.params['kernel_id']}`.\nScheme: `{context.params['scheme']}`.\n\nPlot: [PDF](plots/result.pdf) ([SVG](plots/result.svg)).\n\n{document}\n"
     (context.artifact_directory / "report.md").write_text(report, encoding="utf-8")
-    summary = {"stage_id": context.stage_id, "job_id": context.job_id, "result": "matched_distribution", "decisions": {"kernel_id": context.params["kernel_id"], "scheme": context.params["scheme"], "mu": context.params["mu"]}, "diagnostics": diagnostics, "artifacts": ["output.nc", "diagnostics/matching.json", "plots/result.pdf", "plots/result.svg", "report.md"]}
+    summary = {
+        "stage_id": context.stage_id,
+        "job_id": context.job_id,
+        "result": "matched_distribution",
+        "decisions": {
+            "kernel_id": context.params["kernel_id"],
+            "scheme": context.params["scheme"],
+            "mu": context.params["mu"],
+        },
+        "diagnostics": diagnostics,
+        "artifacts": ["output.nc", "diagnostics/matching.json", "plots/result.pdf", "plots/result.svg", "report.md"],
+    }
     context.finish(result, summary)
-    return {"summary": "published matched distribution", "metrics": diagnostics, "state_keys": [], "artifacts": summary["artifacts"]}
+    return {
+        "summary": "published matched distribution",
+        "metrics": diagnostics,
+        "state_keys": [],
+        "artifacts": summary["artifacts"],
+    }

@@ -132,11 +132,7 @@ def fit_candidate(
         raise ValueError("candidate priors must contain exactly mean and sdev")
     prior_center = float(priors["mean"])
     prior_width = float(priors["sdev"])
-    if (
-        not math.isfinite(prior_center)
-        or not math.isfinite(prior_width)
-        or prior_width <= 0
-    ):
+    if not math.isfinite(prior_center) or not math.isfinite(prior_width) or prior_width <= 0:
         raise ValueError("candidate prior mean and sdev must be finite with positive sdev")
     x_dependence = {term: True for term in terms} if x_dependence is None else dict(x_dependence)
     if set(x_dependence) != set(terms):
@@ -169,14 +165,10 @@ def fit_candidate(
     sample_error_mode = sample_error_modes.pop()
     covariance = np.asarray(gv.evalcov(fit_data.average(sample_error_mode)), dtype=float)
     prior = gv.BufferDict()
-    prior["h0"] = gv.gvar(
-        np.full(len(x), prior_center), np.full(len(x), prior_width)
-    )
+    prior["h0"] = gv.gvar(np.full(len(x), prior_center), np.full(len(x), prior_width))
     for term in terms:
         prior[term] = (
-            gv.gvar(
-                np.full(len(x), prior_center), np.full(len(x), prior_width)
-            )
+            gv.gvar(np.full(len(x), prior_center), np.full(len(x), prior_width))
             if x_dependence[term]
             else gv.gvar(prior_center, prior_width)
         )
@@ -221,7 +213,9 @@ def fit_candidate(
         momentum_dependence[f"{momentum:g}"] = {
             "momentum_gev": momentum,
             "mean": np.mean(values, axis=0).tolist(),
-            "sdev": (np.std(values, axis=0, ddof=1) if values.shape[0] > 1 else np.zeros(values.shape[1], dtype=float)).tolist(),
+            "sdev": (
+                np.std(values, axis=0, ddof=1) if values.shape[0] > 1 else np.zeros(values.shape[1], dtype=float)
+            ).tolist(),
         }
     attrs = dict(data[0].attrs)
     attrs.update(

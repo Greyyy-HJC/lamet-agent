@@ -24,23 +24,17 @@ def _merge(defaults: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, 
     return merged
 
 
-def expand(
-    document: dict[str, Any], config: dict[str, Any], state: dict[str, Any]
-) -> None:
+def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, Any]) -> None:
     """Append one Fourier clone per declared lattice-step offset."""
     if set(config) != {"tail_window_variants"}:
-        raise ValueError(
-            "fourier_transform systematics keys must be exactly ['tail_window_variants']"
-        )
+        raise ValueError("fourier_transform systematics keys must be exactly ['tail_window_variants']")
     variants = config["tail_window_variants"]
     if not isinstance(variants, list) or not variants:
         raise ValueError("fourier_transform.tail_window_variants must be nonempty")
     parsed: list[tuple[str, int]] = []
     for index, variant in enumerate(variants):
         if not isinstance(variant, Mapping) or set(variant) != {"id", "step_offset"}:
-            raise ValueError(
-                f"fourier_transform.tail_window_variants[{index}] must contain id and step_offset"
-            )
+            raise ValueError(f"fourier_transform.tail_window_variants[{index}] must contain id and step_offset")
         label = variant["id"]
         offset = variant["step_offset"]
         if not isinstance(label, str) or not _SAFE_LABEL.fullmatch(label):
@@ -58,12 +52,8 @@ def expand(
     central = list(block["jobs"])
     suffixes = tuple(f"_{label}" for label, _ in parsed)
     if any(str(job.get("id", "")).endswith(suffixes) for job in central):
-        raise ValueError(
-            "Fourier systematics cannot be combined with explicitly authored variation jobs"
-        )
-    known_ids = {
-        job["id"] for stage in document["stages"].values() for job in stage["jobs"]
-    }
+        raise ValueError("Fourier systematics cannot be combined with explicitly authored variation jobs")
+    known_ids = {job["id"] for stage in document["stages"].values() for job in stage["jobs"]}
     generated: list[dict[str, Any]] = []
     mapping: dict[str, dict[str, str]] = {}
     for job in central:
@@ -76,9 +66,7 @@ def expand(
             not isinstance(zmin, list)
             or len(zmin) < 2
             or any(
-                not isinstance(value, (int, float))
-                or isinstance(value, bool)
-                or not math.isfinite(float(value))
+                not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value))
                 for value in zmin
             )
         ):
@@ -87,24 +75,16 @@ def expand(
             )
         differences = np.diff(np.asarray(zmin, dtype=float))
         spacing = float(differences[0])
-        if spacing <= 0 or not np.allclose(
-            differences, spacing, rtol=0.0, atol=1e-12
-        ):
-            raise ValueError(
-                f"Fourier job '{job['id']}' zmin_fm must be a strictly increasing uniform lattice grid"
-            )
+        if spacing <= 0 or not np.allclose(differences, spacing, rtol=0.0, atol=1e-12):
+            raise ValueError(f"Fourier job '{job['id']}' zmin_fm must be a strictly increasing uniform lattice grid")
         mapping[job["id"]] = {}
         for label, offset in parsed:
             job_id = f"{job['id']}_{label}"
             if job_id in known_ids:
                 raise ValueError(f"generated Fourier job id collides with '{job_id}'")
-            shifted = [
-                round(float(value) + offset * spacing, 12) for value in zmin
-            ]
+            shifted = [round(float(value) + offset * spacing, 12) for value in zmin]
             if min(shifted) < 0:
-                raise ValueError(
-                    f"Fourier variation '{job_id}' shifts zmin_fm below zero"
-                )
+                raise ValueError(f"Fourier variation '{job_id}' shifts zmin_fm below zero")
             clone = copy.deepcopy(job)
             clone["id"] = job_id
             clone["zmin_fm"] = shifted

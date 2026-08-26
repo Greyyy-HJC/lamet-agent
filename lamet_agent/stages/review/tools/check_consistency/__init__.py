@@ -29,8 +29,32 @@ def run(context: ToolContext) -> dict[str, object]:
                 continue
             for attr in fields:
                 if (attr in left or attr in right) and left.get(attr) != right.get(attr):
-                    findings.append({"kind": "mismatch", "group": group, "index": index, "field": attr, "left": left.get(attr), "right": right.get(attr)})
-        if "grids" in checks and (first.get("dims") != current.get("dims") or first.get("coords") != current.get("coords")):
-            findings.append({"kind": "mismatch", "index": index, "field": "dims", "left": first.get("dims"), "right": current.get("dims")})
+                    findings.append(
+                        {
+                            "kind": "mismatch",
+                            "group": group,
+                            "index": index,
+                            "field": attr,
+                            "left": left.get(attr),
+                            "right": right.get(attr),
+                        }
+                    )
+        if "grids" in checks and (
+            first.get("dims") != current.get("dims") or first.get("coords") != current.get("coords")
+        ):
+            findings.append(
+                {
+                    "kind": "mismatch",
+                    "index": index,
+                    "field": "dims",
+                    "left": first.get("dims"),
+                    "right": current.get("dims"),
+                }
+            )
     context.state["consistency"] = findings
-    return {"summary": f"found {len(findings)} consistency findings", "metrics": {"finding_count": len(findings), "findings": findings}, "state_keys": ["consistency"], "artifacts": []}
+    return {
+        "summary": f"found {len(findings)} consistency findings",
+        "metrics": {"finding_count": len(findings), "findings": findings},
+        "state_keys": ["consistency"],
+        "artifacts": [],
+    }

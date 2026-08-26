@@ -49,6 +49,8 @@ def _nonempty_unique(value: list[object]) -> bool:
     return _nonempty(value) and _unique(value)
 
 
+# ruff: disable[E501]
+# fmt: off
 PARAM_RULES = (
     Recommends("", "analysis_method", physics="Ordinary jobs use the reference least-squares implementation unless Lanczos is selected explicitly.", default="lsqfit"),
     Value("analysis_method", Literal["lsqfit", "lanczos"], physics="The analysis method selector owns the supported implementation names."),
@@ -112,6 +114,8 @@ INPUT_RULES = (
     Depends("", "correlators", physics="Correlator analysis consumes one descriptor source."),
     Source("correlators", physics="The correlator descriptor is one external file source.", allow_job=False),
 )
+# fmt: on
+# ruff: enable[E501]
 
 
 def check_method_family(context: CheckContext) -> Issue | None:
@@ -122,11 +126,23 @@ def check_method_family(context: CheckContext) -> Issue | None:
     strategies = set(settings["fit_strategy"])
     if "spectrum" in scopes:
         if scopes != {"spectrum"}:
-            return Issue("lsqfit.fit_scope", "spectrum must be the only scope in a spectrum job", "Spectrum and matrix-element jobs expose disjoint fit scopes.")
+            return Issue(
+                "lsqfit.fit_scope",
+                "spectrum must be the only scope in a spectrum job",
+                "Spectrum and matrix-element jobs expose disjoint fit scopes.",
+            )
         if strategies != {"independent"}:
-            return Issue("lsqfit.fit_strategy", "must contain only 'independent' for a spectrum job", "A direct two-point spectrum fit has no separate matrix-element covariance propagation.")
+            return Issue(
+                "lsqfit.fit_strategy",
+                "must contain only 'independent' for a spectrum job",
+                "A direct two-point spectrum fit has no separate matrix-element covariance propagation.",
+            )
     if "qda_ratio" in scopes and (len(scopes) != 1 or strategies != {"independent"}):
-        return Issue("lsqfit", "qda_ratio requires the exclusive fit_scope ['qda_ratio'] and fit_strategy ['independent']", "The migrated qDA path fits each nonlocal/local two-point ratio independently.")
+        return Issue(
+            "lsqfit",
+            "qda_ratio requires the exclusive fit_scope ['qda_ratio'] and fit_strategy ['independent']",
+            "The migrated qDA path fits each nonlocal/local two-point ratio independently.",
+        )
     return None
 
 
@@ -137,20 +153,40 @@ def check_lsqfit_windows(context: CheckContext) -> Issue | None:
     scopes = set(lsqfit["fit_scope"])
     ordinary_scopes = scopes & {"3pt_ratio", "FH", "3pt_ratio+FH"}
     if ordinary_scopes and "pt3_windows" not in lsqfit:
-        return Issue("lsqfit.pt3_windows", "is required for three-point and FH fit scopes", "The matrix-element fitter needs authored source-sink and insertion-time candidates.")
+        return Issue(
+            "lsqfit.pt3_windows",
+            "is required for three-point and FH fit scopes",
+            "The matrix-element fitter needs authored source-sink and insertion-time candidates.",
+        )
     if lsqfit["fitting_form"] == "NonBreit" and ordinary_scopes != {"3pt_ratio"}:
-        return Issue("lsqfit.fit_scope", "must contain only '3pt_ratio' for NonBreit fitting", "The implemented non-forward model is the three-point ratio decomposition.")
+        return Issue(
+            "lsqfit.fit_scope",
+            "must contain only '3pt_ratio' for NonBreit fitting",
+            "The implemented non-forward model is the three-point ratio decomposition.",
+        )
     for index, window in enumerate(lsqfit.get("pt2_windows") or []):
         if window["tmin"] >= window["tmax"]:
-            return Issue(f"lsqfit.pt2_windows[{index}]", "must be an increasing nonnegative integer window", "Every two-point fit window contains physical lattice times.")
+            return Issue(
+                f"lsqfit.pt2_windows[{index}]",
+                "must be an increasing nonnegative integer window",
+                "Every two-point fit window contains physical lattice times.",
+            )
     for index, window in enumerate(lsqfit.get("pt3_windows") or []):
         tseps = window["tsep_ls"]
         tau_cut = window["tau_cut"]
         if any(2 * tau_cut > value for value in tseps):
-            return Issue(f"lsqfit.pt3_windows[{index}].tau_cut", "must leave at least one insertion point for every tsep", "The insertion cut cannot remove the complete three-point window.")
+            return Issue(
+                f"lsqfit.pt3_windows[{index}].tau_cut",
+                "must leave at least one insertion point for every tsep",
+                "The insertion cut cannot remove the complete three-point window.",
+            )
     tau_cuts = [window["tau_cut"] for window in lsqfit.get("pt3_windows") or []]
     if len(set(tau_cuts)) != len(tau_cuts):
-        return Issue("lsqfit.pt3_windows", "tau_cut values must be unique", "The fit tool identifies each authored three-point window by its insertion cut.")
+        return Issue(
+            "lsqfit.pt3_windows",
+            "tau_cut values must be unique",
+            "The fit tool identifies each authored three-point window by its insertion cut.",
+        )
     return None
 
 
@@ -161,9 +197,17 @@ def check_qda_scope(context: CheckContext) -> Issue | None:
     if "qda_ratio" not in set(lsqfit["fit_scope"]):
         return None
     if lsqfit["fitting_form"] != "Breit":
-        return Issue("lsqfit.fitting_form", "must be 'Breit' for qda_ratio", "The implemented qDA ratio uses the forward one-state decomposition.")
+        return Issue(
+            "lsqfit.fitting_form",
+            "must be 'Breit' for qda_ratio",
+            "The implemented qDA ratio uses the forward one-state decomposition.",
+        )
     if "pt3_windows" in lsqfit:
-        return Issue("lsqfit.pt3_windows", "must be omitted for qda_ratio", "The qDA ratio consumes only nonlocal/local two-point correlators.")
+        return Issue(
+            "lsqfit.pt3_windows",
+            "must be omitted for qda_ratio",
+            "The qDA ratio consumes only nonlocal/local two-point correlators.",
+        )
     return None
 
 
@@ -172,18 +216,29 @@ def check_candidate_policy(context: CheckContext) -> Issue | None:
     if not isinstance(settings, dict):
         return None
     if settings.get("model_average") is True:
-        return Issue("lsqfit.model_average", "must be false until weighted candidate averaging is implemented", "Publishing one candidate and model averaging are distinct statistical procedures.")
+        return Issue(
+            "lsqfit.model_average",
+            "must be false until weighted candidate averaging is implemented",
+            "Publishing one candidate and model averaging are distinct statistical procedures.",
+        )
     if "qda_ratio" in set(settings.get("fit_scope", [])) and context.params.get("nstate") != [1]:
-        return Issue("nstate", "must be [1] for qDA ratio fitting", "The implemented qDA ratio model is a one-state constant fit.")
+        return Issue(
+            "nstate",
+            "must be [1] for qDA ratio fitting",
+            "The implemented qDA ratio model is a one-state constant fit.",
+        )
     return None
 
 
 def check_lanczos_branch(context: CheckContext) -> Issue | None:
     if context.params.get("analysis_method") != "lanczos":
         return None
-    settings = context.params["lanczos"]
     if len(context.params.get("nstate", [])) != 1:
-        return Issue("nstate", "must contain exactly one exported Ritz-state count", "Lanczos orders states internally and exports one authored count.")
+        return Issue(
+            "nstate",
+            "must contain exactly one exported Ritz-state count",
+            "Lanczos orders states internally and exports one authored count.",
+        )
     return None
 
 

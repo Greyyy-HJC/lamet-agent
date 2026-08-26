@@ -5,9 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
-def derive_conventions(
-    attrs: Mapping[str, object], *, target_observable: str, sector: str
-) -> dict[str, object]:
+def derive_conventions(attrs: Mapping[str, object], *, target_observable: str, sector: str) -> dict[str, object]:
     """Return the conventions selected implicitly by the reference pipeline."""
     target = str(target_observable).lower()
     parton = str(attrs.get("parton", "")).lower()

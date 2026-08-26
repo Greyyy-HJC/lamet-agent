@@ -75,7 +75,11 @@ def _validate_provider_model(provider: _ResolvedProvider, api_key: str) -> _Reso
         method="GET",
     )
     try:
-        response_context = urllib.request.urlopen(request) if _is_local_url(provider.base_url) else urllib.request.urlopen(request, timeout=180)
+        response_context = (
+            urllib.request.urlopen(request)
+            if _is_local_url(provider.base_url)
+            else urllib.request.urlopen(request, timeout=180)
+        )
         with response_context as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
@@ -93,10 +97,14 @@ def _validate_provider_model(provider: _ResolvedProvider, api_key: str) -> _Reso
         if not _is_local_url(provider.base_url):
             raise ValueError("model may be omitted only for a local provider URL")
         if len(available) != 1:
-            raise ValueError(f"model is required because the local provider exposes multiple models: {', '.join(available)}")
+            raise ValueError(
+                f"model is required because the local provider exposes multiple models: {', '.join(available)}"
+            )
         return replace(provider, model=available[0])
     if provider.model not in available:
-        raise ValueError(f"model {provider.model!r} is not available from {provider.base_url!r}; available models: {', '.join(available)}")
+        raise ValueError(
+            f"model {provider.model!r} is not available from {provider.base_url!r}; available models: {', '.join(available)}"
+        )
     return provider
 
 
@@ -196,8 +204,9 @@ class LlmBackend(Protocol):
 
     identity: str
 
-    def complete(self, *, messages: list[Message], tools: list[dict[str, Any]], prompt_digest: str) -> _AssistantResponse:
-        ...
+    def complete(
+        self, *, messages: list[Message], tools: list[dict[str, Any]], prompt_digest: str
+    ) -> _AssistantResponse: ...
 
 
 def _chat_message(message: Message) -> dict[str, Any]:
@@ -229,7 +238,9 @@ class _OpenAICompatibleBackend:
         self._api_key = api_key
         self.identity = f"openai-compatible:{self.base_url}:{self.model}"
 
-    def complete(self, *, messages: list[Message], tools: list[dict[str, Any]], prompt_digest: str) -> _AssistantResponse:
+    def complete(
+        self, *, messages: list[Message], tools: list[dict[str, Any]], prompt_digest: str
+    ) -> _AssistantResponse:
         body = {
             "model": self.model,
             "messages": [_chat_message(message) for message in messages],
@@ -259,7 +270,13 @@ class _OpenAICompatibleBackend:
                     if not isinstance(provider_call, dict) or not isinstance(provider_call.get("function"), dict):
                         raise ValueError("provider returned a malformed tool call")
                     function = provider_call["function"]
-                    if not isinstance(provider_call.get("id"), str) or not provider_call["id"] or not isinstance(function.get("name"), str) or not function["name"] or not isinstance(function.get("arguments"), str):
+                    if (
+                        not isinstance(provider_call.get("id"), str)
+                        or not provider_call["id"]
+                        or not isinstance(function.get("name"), str)
+                        or not function["name"]
+                        or not isinstance(function.get("arguments"), str)
+                    ):
                         raise ValueError("provider returned a malformed tool call")
                     arguments = json.loads(function["arguments"])
                     if not isinstance(arguments, dict):
@@ -268,7 +285,9 @@ class _OpenAICompatibleBackend:
                 return _AssistantResponse(str(message.get("content") or ""), tool_calls=tuple(calls))
             except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
                 last_protocol_error = exc
-        raise ValueError(f"provider returned malformed tool JSON after 3 attempts: {last_protocol_error}") from last_protocol_error
+        raise ValueError(
+            f"provider returned malformed tool JSON after 3 attempts: {last_protocol_error}"
+        ) from last_protocol_error
 
 
 class _CodexBackend:
@@ -279,7 +298,9 @@ class _CodexBackend:
         self.identity = f"codex:{model or 'default'}"
         self._turn = 0
 
-    def complete(self, *, messages: list[Message], tools: list[dict[str, Any]], prompt_digest: str) -> _AssistantResponse:
+    def complete(
+        self, *, messages: list[Message], tools: list[dict[str, Any]], prompt_digest: str
+    ) -> _AssistantResponse:
         transcript = []
         start = 1 if messages and messages[0].role == "system" else 0
         for message in messages[start:]:
@@ -290,7 +311,9 @@ class _CodexBackend:
                 call = message.calls[0]
                 item["tool_call"] = {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
             elif message.calls:
-                item["tool_calls"] = [{"id": call.id, "name": call.name, "arguments": dict(call.arguments)} for call in message.calls]
+                item["tool_calls"] = [
+                    {"id": call.id, "name": call.name, "arguments": dict(call.arguments)} for call in message.calls
+                ]
             transcript.append(item)
         task = {
             "messages": transcript,
@@ -301,7 +324,12 @@ class _CodexBackend:
             from codex import Codex  # type: ignore
         except ImportError as exc:
             raise RuntimeError("the codex provider requires the optional codex package") from exc
-        raw = Codex().run(model=self.model, instructions=messages[0].content if messages and messages[0].role == "system" else "", input=json.dumps(task, separators=(",", ":"), ensure_ascii=False), read_only=True)
+        raw = Codex().run(
+            model=self.model,
+            instructions=messages[0].content if messages and messages[0].role == "system" else "",
+            input=json.dumps(task, separators=(",", ":"), ensure_ascii=False),
+            read_only=True,
+        )
         if not isinstance(raw, str):
             raise TypeError("Codex executor must return a JSON string")
         payload = json.loads(raw)
@@ -311,7 +339,11 @@ class _CodexBackend:
         self._turn += 1
         call = None
         if tool_payload is not None:
-            if not isinstance(tool_payload, dict) or set(tool_payload) != {"name", "arguments"} or not isinstance(tool_payload["arguments"], dict):
+            if (
+                not isinstance(tool_payload, dict)
+                or set(tool_payload) != {"name", "arguments"}
+                or not isinstance(tool_payload["arguments"], dict)
+            ):
                 raise ValueError("Codex tool_call must contain a name and object arguments")
             known_names = {
                 item.get("function", {}).get("name")

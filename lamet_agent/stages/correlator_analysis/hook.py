@@ -25,17 +25,11 @@ def ensure_raw_correlators(
     correlator_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Load the selected configuration-level correlators once for a job."""
-    requested = set(
-        correlator_ids
-        if correlator_ids is not None
-        else context.params["correlator_ids"]
-    )
+    requested = set(correlator_ids if correlator_ids is not None else context.params["correlator_ids"])
     existing = context.state.get("raw_correlators")
     if isinstance(existing, dict):
         if requested != set(existing):
-            raise ValueError(
-                "correlators were already prepared with a different selection"
-            )
+            raise ValueError("correlators were already prepared with a different selection")
         return existing
 
     from lamet_agent.stages.correlator_analysis.input import (
@@ -58,22 +52,12 @@ def ensure_raw_correlators(
         raise ValueError(f"unknown correlator ids: {sorted(unknown)}")
     context.state["correlator_descriptor_path"] = source
     ensemble = loaded["descriptor"].get("ensemble", {})
-    context.state["correlator_resample_group"] = str(
-        ensemble.get("id", context.job_id)
-    )
+    context.state["correlator_resample_group"] = str(ensemble.get("id", context.job_id))
     context.state["correlator_records"] = {
-        record["id"]: record
-        for record in loaded["descriptor"]["correlators"]
-        if record["id"] in requested
+        record["id"]: record for record in loaded["descriptor"]["correlators"] if record["id"] in requested
     }
-    selected = {
-        key: value
-        for key, value in loaded["correlators"].items()
-        if key in requested
-    }
-    context.state["correlator_configuration_ids"] = list(
-        loaded.get("configuration_ids", [])
-    )
+    selected = {key: value for key, value in loaded["correlators"].items() if key in requested}
+    context.state["correlator_configuration_ids"] = list(loaded.get("configuration_ids", []))
     context.state["raw_correlators"] = selected
     return selected
 
@@ -85,26 +69,18 @@ def ensure_correlators(
     """Load and resample the selected correlators once for a job."""
     from lamet_agent.stages.correlator_analysis.input import resample_correlators
 
-    requested = set(
-        correlator_ids
-        if correlator_ids is not None
-        else context.params["correlator_ids"]
-    )
+    requested = set(correlator_ids if correlator_ids is not None else context.params["correlator_ids"])
     existing = context.state.get("correlators")
     if isinstance(existing, dict):
         if requested != set(existing):
-            raise ValueError(
-                "correlators were already prepared with a different selection"
-            )
+            raise ValueError("correlators were already prepared with a different selection")
         return existing
 
     raw = ensure_raw_correlators(context, correlator_ids)
     resampled = resample_correlators(
         {
             "correlators": raw,
-            "configuration_ids": context.state.get(
-                "correlator_configuration_ids", []
-            ),
+            "configuration_ids": context.state.get("correlator_configuration_ids", []),
         },
         mode=context.manifest["metadata"]["resample_mode"],
         group=str(context.state.get("correlator_resample_group", context.job_id)),
@@ -186,7 +162,6 @@ def recommend_pt3_windows(
     ask: Callable[..., Any],
 ) -> list[Pt3Window]:
     """Ask the model for three-point windows using direct means and errors."""
-    import numpy as np
 
     correlators = ensure_correlators(context)
     sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])

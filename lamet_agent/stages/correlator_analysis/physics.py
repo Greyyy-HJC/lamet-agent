@@ -23,7 +23,9 @@ def _state_energies(parameters: Mapping[str, Any], n_states: int, suffix: str = 
     return energies
 
 
-def _two_point_model(times: np.ndarray, parameters: Mapping[str, Any], extent: int, n_states: int, suffix: str = "") -> np.ndarray:
+def _two_point_model(
+    times: np.ndarray, parameters: Mapping[str, Any], extent: int, n_states: int, suffix: str = ""
+) -> np.ndarray:
     values = 0.0
     for state, energy in enumerate(_state_energies(parameters, n_states, suffix)):
         overlap = parameters[f"z{state}{suffix}"]
@@ -31,21 +33,35 @@ def _two_point_model(times: np.ndarray, parameters: Mapping[str, Any], extent: i
     return values
 
 
-def _ratio_model(times: np.ndarray, insertions: np.ndarray, parameters: Mapping[str, Any], extent: int, n_states: int, form: str, component: str) -> np.ndarray:
+def _ratio_model(
+    times: np.ndarray,
+    insertions: np.ndarray,
+    parameters: Mapping[str, Any],
+    extent: int,
+    n_states: int,
+    form: str,
+    component: str,
+) -> np.ndarray:
     if form == "Breit":
         energies = _state_energies(parameters, n_states)
         numerator = 0.0
         for source, source_energy in enumerate(energies):
             for sink, sink_energy in enumerate(energies):
                 matrix = parameters[f"O{min(source, sink)}{max(source, sink)}_{component}"]
-                numerator = numerator + matrix * parameters[f"z{source}"] * parameters[f"z{sink}"] * np.exp(-source_energy * (times - insertions)) * np.exp(-sink_energy * insertions) / (2 * source_energy) / (2 * sink_energy)
+                numerator = numerator + matrix * parameters[f"z{source}"] * parameters[f"z{sink}"] * np.exp(
+                    -source_energy * (times - insertions)
+                ) * np.exp(-sink_energy * insertions) / (2 * source_energy) / (2 * sink_energy)
         return numerator / _two_point_model(times, parameters, extent, n_states)
     energies_i = _state_energies(parameters, n_states, "_i")
     energies_f = _state_energies(parameters, n_states, "_f")
     numerator = 0.0
     for sink, sink_energy in enumerate(energies_f):
         for source, source_energy in enumerate(energies_i):
-            numerator = numerator + parameters[f"O{sink}{source}_{component}"] * parameters[f"z{sink}_f"] * parameters[f"z{source}_i"] * np.exp(-sink_energy * (times - insertions)) * np.exp(-source_energy * insertions) / (2 * sink_energy) / (2 * source_energy)
+            numerator = numerator + parameters[f"O{sink}{source}_{component}"] * parameters[f"z{sink}_f"] * parameters[
+                f"z{source}_i"
+            ] * np.exp(-sink_energy * (times - insertions)) * np.exp(-source_energy * insertions) / (
+                2 * sink_energy
+            ) / (2 * source_energy)
     c2_i_t_tau = _two_point_model(times - insertions, parameters, extent, n_states, "_i")
     c2_i_tau = _two_point_model(insertions, parameters, extent, n_states, "_i")
     c2_i_t = _two_point_model(times, parameters, extent, n_states, "_i")
@@ -55,11 +71,19 @@ def _ratio_model(times: np.ndarray, insertions: np.ndarray, parameters: Mapping[
     return numerator / c2_f_t * gv.sqrt(c2_i_t_tau * c2_f_tau * c2_f_t / (c2_f_t_tau * c2_i_tau * c2_i_t))
 
 
-def _summed_ratio_model(times: np.ndarray, tau_min: int, parameters: Mapping[str, Any], n_states: int, component: str) -> np.ndarray:
+def _summed_ratio_model(
+    times: np.ndarray, tau_min: int, parameters: Mapping[str, Any], n_states: int, component: str
+) -> np.ndarray:
     if n_states == 1:
         return parameters[f"O00_{component}"] * (times - 2 * tau_min + 1) / (2 * parameters["E0"])
     exponential = np.exp(-parameters["dE1"] * times)
-    numerator = parameters[f"O00_{component}"] * (times - 2 * tau_min + 1) * (1 + parameters[f"sum_{component}_excited_coeff"] * exponential) + parameters[f"sum_{component}_offset"] + parameters[f"sum_{component}_exp_offset"] * exponential
+    numerator = (
+        parameters[f"O00_{component}"]
+        * (times - 2 * tau_min + 1)
+        * (1 + parameters[f"sum_{component}_excited_coeff"] * exponential)
+        + parameters[f"sum_{component}_offset"]
+        + parameters[f"sum_{component}_exp_offset"] * exponential
+    )
     return numerator / (2 * parameters["E0"] * (1 + parameters["sum_den_exp_coeff"] * exponential))
 
 
@@ -89,7 +113,9 @@ def matrix_element_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> n
     return np.concatenate([np.atleast_1d(value) for value in values])
 
 
-def matrix_element_prior(n_states: int, *, form: str, scope: str, components: tuple[str, ...], width_scale: float) -> gv.BufferDict:
+def matrix_element_prior(
+    n_states: int, *, form: str, scope: str, components: tuple[str, ...], width_scale: float
+) -> gv.BufferDict:
     """Build the explicit spectral and matrix-element prior for one fit model."""
     if n_states < 1 or not np.isfinite(width_scale) or width_scale <= 0:
         raise ValueError("n_states and width_scale must be positive")
@@ -181,8 +207,12 @@ def fit_matrix_element_samples(
         raise ValueError("three-point data must have exactly tsep, tau, and z dimensions")
     source_momentum = _momentum(three_point, "source_momentum")
     sink_momentum = _momentum(three_point, "sink_momentum")
-    initial_matches = [value for value in two_points if value.dims == ["t"] and _momentum(value, "sink_momentum") == source_momentum]
-    final_matches = [value for value in two_points if value.dims == ["t"] and _momentum(value, "sink_momentum") == sink_momentum]
+    initial_matches = [
+        value for value in two_points if value.dims == ["t"] and _momentum(value, "sink_momentum") == source_momentum
+    ]
+    final_matches = [
+        value for value in two_points if value.dims == ["t"] and _momentum(value, "sink_momentum") == sink_momentum
+    ]
     if len(initial_matches) != 1 or len(final_matches) != 1:
         raise ValueError("two-point inputs must uniquely match the three-point source and sink momenta")
     initial, final = initial_matches[0], final_matches[0]
@@ -227,23 +257,63 @@ def fit_matrix_element_samples(
                 raise ValueError("NonBreit ratio needs exact t and tsep-t two-point coordinates")
             reflected_indices = np.asarray([np.flatnonzero(times == value)[0] for value in reflected])
             tau_time_indices = np.asarray([np.flatnonzero(times == value)[0] for value in available_tau[valid_tau]])
-            correction = initial_values[:, reflected_indices] * final_values[:, tau_time_indices] * final_values[:, time_index[0], None] / (final_values[:, reflected_indices] * initial_values[:, tau_time_indices] * initial_values[:, time_index[0], None])
+            correction = (
+                initial_values[:, reflected_indices]
+                * final_values[:, tau_time_indices]
+                * final_values[:, time_index[0], None]
+                / (
+                    final_values[:, reflected_indices]
+                    * initial_values[:, tau_time_indices]
+                    * initial_values[:, time_index[0], None]
+                )
+            )
             ratio = np.zeros_like(three_slice)
-            ratio[:, valid_tau, :] = three_slice[:, valid_tau, :] / final_values[:, time_index[0], None, None] * np.sqrt(correction[:, :, None])
+            ratio[:, valid_tau, :] = (
+                three_slice[:, valid_tau, :]
+                / final_values[:, time_index[0], None, None]
+                * np.sqrt(correction[:, :, None])
+            )
             ratios[tsep] = ratio
 
-    base_prior = matrix_element_prior(n_states, form=fitting_form, scope=fit_scope, components=selected_components, width_scale=prior_width)
+    base_prior = matrix_element_prior(
+        n_states, form=fitting_form, scope=fit_scope, components=selected_components, width_scale=prior_width
+    )
     chained_prior = None
     if strategy == "chained":
-        spectral_x = {"n_states": n_states, "extent": extent, "strategy": "joint", "form": fitting_form, "scope": "spectrum", "components": (), "pt2_t": times[pt2_mask]}
+        spectral_x = {
+            "n_states": n_states,
+            "extent": extent,
+            "strategy": "joint",
+            "form": fitting_form,
+            "scope": "spectrum",
+            "components": (),
+            "pt2_t": times[pt2_mask],
+        }
         spectral_parts = [np.real(initial_values[:, pt2_mask]) * correlator_rescale]
         if fitting_form == "NonBreit":
             spectral_parts.append(np.real(final_values[:, pt2_mask]) * correlator_rescale)
         spectral_values = np.concatenate(spectral_parts, axis=1)
-        spectral_data = EnsembleData(initial.ensemble, initial.resample, list(spectral_values), ["observation"], {"observation": list(range(spectral_values.shape[1]))})
-        spectral_prior = matrix_element_prior(n_states, form=fitting_form, scope="3pt_ratio", components=selected_components, width_scale=prior_width)
+        spectral_data = EnsembleData(
+            initial.ensemble,
+            initial.resample,
+            list(spectral_values),
+            ["observation"],
+            {"observation": list(range(spectral_values.shape[1]))},
+        )
+        spectral_prior = matrix_element_prior(
+            n_states, form=fitting_form, scope="3pt_ratio", components=selected_components, width_scale=prior_width
+        )
         spectral_prior = gv.BufferDict({key: value for key, value in spectral_prior.items() if not key.startswith("O")})
-        spectral_fit = nonlinear_fit((spectral_x, spectral_data), matrix_element_fcn, spectral_prior, workers=workers, sample_error_mode=sample_error_mode, mode="center", svdcut=svdcut, maxit=10000)
+        spectral_fit = nonlinear_fit(
+            (spectral_x, spectral_data),
+            matrix_element_fcn,
+            spectral_prior,
+            workers=workers,
+            sample_error_mode=sample_error_mode,
+            mode="center",
+            svdcut=svdcut,
+            maxit=10000,
+        )
         chained_prior = gv.BufferDict(base_prior)
         for key in spectral_prior:
             value = spectral_fit.p[key]
@@ -253,7 +323,9 @@ def fit_matrix_element_samples(
     if tune_z is None:
         z_indices = list(range(len(z_values)))
     else:
-        tune_matches = np.flatnonzero(np.isclose(np.asarray(z_values, dtype=float), float(tune_z), rtol=0.0, atol=1e-12))
+        tune_matches = np.flatnonzero(
+            np.isclose(np.asarray(z_values, dtype=float), float(tune_z), rtol=0.0, atol=1e-12)
+        )
         if tune_matches.size != 1:
             raise ValueError("lsqfit.tune_z must name exactly one available z coordinate")
         z_indices = [int(tune_matches[0])]
@@ -265,7 +337,15 @@ def fit_matrix_element_samples(
         for z_index in z_indices:
             z_value = z_values[z_index]
             pieces = []
-            x: dict[str, Any] = {"n_states": n_states, "extent": extent, "strategy": strategy, "form": fitting_form, "scope": fit_scope, "components": selected_components, "tau_min": tau_min}
+            x: dict[str, Any] = {
+                "n_states": n_states,
+                "extent": extent,
+                "strategy": strategy,
+                "form": fitting_form,
+                "scope": fit_scope,
+                "components": selected_components,
+                "tau_min": tau_min,
+            }
             if strategy == "joint":
                 x["pt2_t"] = times[pt2_mask]
                 pieces.append(np.real(initial_values[:, pt2_mask]) * correlator_rescale)
@@ -284,8 +364,7 @@ def fit_matrix_element_samples(
                 x["ratio_tau"] = np.asarray(ratio_tau, dtype=float)
                 for component in selected_components:
                     pieces.extend(
-                        np.real(values) if component == "re" else np.imag(values)
-                        for values in selected_ratio
+                        np.real(values) if component == "re" else np.imag(values) for values in selected_ratio
                     )
             if fit_scope in {"FH", "3pt_ratio+FH"}:
                 summed = []
@@ -299,7 +378,13 @@ def fit_matrix_element_samples(
                 for component in selected_components:
                     pieces.append(np.real(differences) if component == "re" else np.imag(differences))
             observations = np.concatenate(pieces, axis=1)
-            fit_data = EnsembleData(initial.ensemble, initial.resample, list(observations), ["observation"], {"observation": list(range(observations.shape[1]))})
+            fit_data = EnsembleData(
+                initial.ensemble,
+                initial.resample,
+                list(observations),
+                ["observation"],
+                {"observation": list(range(observations.shape[1]))},
+            )
             block_covariances = []
             for piece in pieces:
                 block = EnsembleData(
@@ -310,7 +395,9 @@ def fit_matrix_element_samples(
                     {"observation": list(range(piece.shape[1]))},
                 )
                 block_covariances.append(
-                    np.asarray(gv.evalcov(block.average(sample_error_mode)), dtype=float).reshape(piece.shape[1], piece.shape[1])
+                    np.asarray(gv.evalcov(block.average(sample_error_mode)), dtype=float).reshape(
+                        piece.shape[1], piece.shape[1]
+                    )
                 )
             covariance = np.zeros((observations.shape[1], observations.shape[1]), dtype=float)
             offset = 0
@@ -319,32 +406,80 @@ def fit_matrix_element_samples(
                 covariance[offset:stop, offset:stop] = block
                 offset = stop
             fit_prior = chained_prior if chained_prior is not None else base_prior
-            result = nonlinear_fit((x, fit_data), matrix_element_fcn, fit_prior, workers=workers, sample_prior_scale=posterior_prior_error_scale * prior_width, covariance=covariance, sample_error_mode=sample_error_mode, mode="resamples" if fit_samples else "center", tolerate_sample_failures=True, _parallel=parallel, svdcut=svdcut, maxit=10000)
+            result = nonlinear_fit(
+                (x, fit_data),
+                matrix_element_fcn,
+                fit_prior,
+                workers=workers,
+                sample_prior_scale=posterior_prior_error_scale * prior_width,
+                covariance=covariance,
+                sample_error_mode=sample_error_mode,
+                mode="resamples" if fit_samples else "center",
+                tolerate_sample_failures=True,
+                _parallel=parallel,
+                svdcut=svdcut,
+                maxit=10000,
+            )
             n_params = sum(int(np.size(gv.mean(fit_prior[key]))) for key in fit_prior)
             energy_keys = ("E0_i", "E0_f") if fitting_form == "NonBreit" else ("E0",)
             energy_summary = {}
             for energy_key in energy_keys:
                 energy_summary[energy_key] = float(result.pmean[energy_key])
-                energy_samples = [float(parameters[energy_key]) for parameters in result.samples if parameters is not None] if fit_samples else []
-                energy_summary[f"{energy_key}_sdev"] = float(np.std(energy_samples, ddof=1)) if len(energy_samples) > 1 else None
-            center_metrics.append({"z": z_value, "chi2": result.chi2, "dof": result.dof, "chi2_dof": result.chi2 / result.dof, "Q": result.Q, "logGBF": result.logGBF, "n_data": int(observations.shape[1]), "n_params": n_params, "n_failed_samples": 0, **energy_summary})
+                energy_samples = (
+                    [float(parameters[energy_key]) for parameters in result.samples if parameters is not None]
+                    if fit_samples
+                    else []
+                )
+                energy_summary[f"{energy_key}_sdev"] = (
+                    float(np.std(energy_samples, ddof=1)) if len(energy_samples) > 1 else None
+                )
+            center_metrics.append(
+                {
+                    "z": z_value,
+                    "chi2": result.chi2,
+                    "dof": result.dof,
+                    "chi2_dof": result.chi2 / result.dof,
+                    "Q": result.Q,
+                    "logGBF": result.logGBF,
+                    "n_data": int(observations.shape[1]),
+                    "n_params": n_params,
+                    "n_failed_samples": 0,
+                    **energy_summary,
+                }
+            )
             if not fit_samples:
                 continue
             for sample_index, parameters in enumerate(result.samples):
                 if parameters is None:
                     fitted_samples[sample_index, z_index] = np.nan + 1j * np.nan
-                    sample_failures.append({"z": z_value, "sample": sample_index, "error": result.sample_errors[sample_index]})
+                    sample_failures.append(
+                        {"z": z_value, "sample": sample_index, "error": result.sample_errors[sample_index]}
+                    )
                     continue
                 try:
-                    real = float(parameters["O00_re"] / (parameters["E0_f"] + parameters["E0_i"])) if fitting_form == "NonBreit" and "re" in selected_components else float(parameters["O00_re"] / (2 * parameters["E0"])) if "re" in selected_components else 0.0
-                    imag = float(parameters["O00_im"] / (parameters["E0_f"] + parameters["E0_i"])) if fitting_form == "NonBreit" and "im" in selected_components else float(parameters["O00_im"] / (2 * parameters["E0"])) if "im" in selected_components else 0.0
+                    real = (
+                        float(parameters["O00_re"] / (parameters["E0_f"] + parameters["E0_i"]))
+                        if fitting_form == "NonBreit" and "re" in selected_components
+                        else float(parameters["O00_re"] / (2 * parameters["E0"]))
+                        if "re" in selected_components
+                        else 0.0
+                    )
+                    imag = (
+                        float(parameters["O00_im"] / (parameters["E0_f"] + parameters["E0_i"]))
+                        if fitting_form == "NonBreit" and "im" in selected_components
+                        else float(parameters["O00_im"] / (2 * parameters["E0"]))
+                        if "im" in selected_components
+                        else 0.0
+                    )
                     if fitting_form == "NonBreit" and float(parameters["z0_f"] * parameters["z0_i"]) < 0:
                         real, imag = -real, -imag
                     if not np.isfinite(real) or not np.isfinite(imag):
                         raise FloatingPointError("non-finite fitted matrix element")
                 except (FloatingPointError, OverflowError, ZeroDivisionError, ValueError) as exc:
                     fitted_samples[sample_index, z_index] = np.nan + 1j * np.nan
-                    sample_failures.append({"z": z_value, "sample": sample_index, "error": f"{type(exc).__name__}: {exc}"})
+                    sample_failures.append(
+                        {"z": z_value, "sample": sample_index, "error": f"{type(exc).__name__}: {exc}"}
+                    )
                     continue
                 fitted_samples[sample_index, z_index] = real + 1j * imag
             z_failure_count = sum(failure["z"] == z_value for failure in sample_failures)
@@ -357,12 +492,53 @@ def fit_matrix_element_samples(
     output = None
     if fit_samples:
         attrs = dict(three_point.attrs)
-        attrs.update({"method": strategy, "fitting_form": fitting_form, "fit_scope": fit_scope, "n_states": n_states, "t_min": t_min, "t_max": t_max, "tau_min": tau_min, "correlator_rescale": correlator_rescale, "sample_error_mode": sample_error_mode})
-        output = EnsembleData(three_point.ensemble, three_point.resample, list(fitted_samples), ["z"], {"z": z_values}, attrs=attrs, name="bare_matrix_element")
+        attrs.update(
+            {
+                "method": strategy,
+                "fitting_form": fitting_form,
+                "fit_scope": fit_scope,
+                "n_states": n_states,
+                "t_min": t_min,
+                "t_max": t_max,
+                "tau_min": tau_min,
+                "correlator_rescale": correlator_rescale,
+                "sample_error_mode": sample_error_mode,
+            }
+        )
+        output = EnsembleData(
+            three_point.ensemble,
+            three_point.resample,
+            list(fitted_samples),
+            ["z"],
+            {"z": z_values},
+            attrs=attrs,
+            name="bare_matrix_element",
+        )
     tuning_fit = center_metrics[0] if not fit_samples and tune_z is not None else None
-    diagnostics = {"fit_scope": fit_scope, "strategy": strategy, "fitting_form": fitting_form, "workers": workers, "min_Q": min(record["Q"] for record in center_metrics), "max_chi2_dof": max(record["chi2_dof"] for record in center_metrics), "n_failed_samples": len(sample_failures), "sample_failures": sample_failures, "fits": center_metrics}
+    diagnostics = {
+        "fit_scope": fit_scope,
+        "strategy": strategy,
+        "fitting_form": fitting_form,
+        "workers": workers,
+        "min_Q": min(record["Q"] for record in center_metrics),
+        "max_chi2_dof": max(record["chi2_dof"] for record in center_metrics),
+        "n_failed_samples": len(sample_failures),
+        "sample_failures": sample_failures,
+        "fits": center_metrics,
+    }
     if tuning_fit is not None:
-        diagnostics.update({"tune_z": tuning_fit["z"], "chi2": tuning_fit["chi2"], "dof": tuning_fit["dof"], "chi2_dof": tuning_fit["chi2_dof"], "Q": tuning_fit["Q"], "logGBF": tuning_fit["logGBF"], "n_data": tuning_fit["n_data"], "n_params": tuning_fit["n_params"]})
+        diagnostics.update(
+            {
+                "tune_z": tuning_fit["z"],
+                "chi2": tuning_fit["chi2"],
+                "dof": tuning_fit["dof"],
+                "chi2_dof": tuning_fit["chi2_dof"],
+                "Q": tuning_fit["Q"],
+                "logGBF": tuning_fit["logGBF"],
+                "n_data": tuning_fit["n_data"],
+                "n_params": tuning_fit["n_params"],
+            }
+        )
     return output, diagnostics
 
 
@@ -371,7 +547,9 @@ def spectrum_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndar
     energies = [parameters["E0"]]
     for state in range(1, int(x["n_states"])):
         energies.append(energies[-1] + parameters[f"dE{state}"])
-    return np.sum([parameters[f"A{state}"] * np.exp(-energy * x["times"]) for state, energy in enumerate(energies)], axis=0)
+    return np.sum(
+        [parameters[f"A{state}"] * np.exp(-energy * x["times"]) for state, energy in enumerate(energies)], axis=0
+    )
 
 
 def qda_ratio_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
@@ -385,7 +563,18 @@ def qda_ratio_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.nda
     )
 
 
-def fit_spectrum_samples(values: np.ndarray, times: np.ndarray, n_states: int, *, resample: str, prior_means: dict[str, float], prior_widths: dict[str, float], sample_error_mode: str = "covariance", workers: int = 1, _parallel: _ParallelPool | None = None) -> tuple[list[np.ndarray], dict[str, float]]:
+def fit_spectrum_samples(
+    values: np.ndarray,
+    times: np.ndarray,
+    n_states: int,
+    *,
+    resample: str,
+    prior_means: dict[str, float],
+    prior_widths: dict[str, float],
+    sample_error_mode: str = "covariance",
+    workers: int = 1,
+    _parallel: _ParallelPool | None = None,
+) -> tuple[list[np.ndarray], dict[str, float]]:
     """Perform one correlated, prior-constrained multi-state spectral fit."""
     samples = np.asarray(values)
     times = np.asarray(times, dtype=float)
@@ -402,7 +591,14 @@ def fit_spectrum_samples(values: np.ndarray, times: np.ndarray, n_states: int, *
     mean = np.asarray([float(prior_means[name]) for name in names])
     widths = np.asarray([float(prior_widths[name]) for name in names])
     energies = mean[:n_states]
-    if np.any(~np.isfinite(mean)) or np.any(~np.isfinite(widths)) or np.any(widths <= 0) or np.any(energies <= 0) or np.any(np.diff(energies) <= 0) or np.any(mean[n_states:] <= 0):
+    if (
+        np.any(~np.isfinite(mean))
+        or np.any(~np.isfinite(widths))
+        or np.any(widths <= 0)
+        or np.any(energies <= 0)
+        or np.any(np.diff(energies) <= 0)
+        or np.any(mean[n_states:] <= 0)
+    ):
         raise ValueError("spectrum priors require ordered positive energies, positive amplitudes, and positive widths")
     if resample not in {"raw", "jackknife", "bootstrap"}:
         raise ValueError("spectrum fitting requires raw, jackknife, or bootstrap samples")
@@ -414,14 +610,29 @@ def fit_spectrum_samples(values: np.ndarray, times: np.ndarray, n_states: int, *
     for state in range(n_states):
         prior[f"log(A{state})"] = gv.log(gv.gvar(mean[n_states + state], widths[n_states + state]))
     fit_data = EnsembleData(None, resample, list(samples), ["t"], {"t": times.tolist()})
-    result = nonlinear_fit(({"times": times, "n_states": n_states}, fit_data), spectrum_fcn, prior, workers=workers, sample_error_mode=sample_error_mode, maxit=2000, _parallel=_parallel)
+    result = nonlinear_fit(
+        ({"times": times, "n_states": n_states}, fit_data),
+        spectrum_fcn,
+        prior,
+        workers=workers,
+        sample_error_mode=sample_error_mode,
+        maxit=2000,
+        _parallel=_parallel,
+    )
     fitted_samples = []
     for parameters in result.samples:
         fitted_energies = [float(parameters["E0"])]
         for state in range(1, n_states):
             fitted_energies.append(fitted_energies[-1] + float(parameters[f"dE{state}"]))
         fitted_samples.append(np.asarray(fitted_energies))
-    return fitted_samples, {"chi2": result.chi2, "dof": float(result.dof), "chi2_dof": result.chi2 / result.dof, "Q": result.Q, "logGBF": result.logGBF, "aic": result.chi2 + 4.0 * n_states}
+    return fitted_samples, {
+        "chi2": result.chi2,
+        "dof": float(result.dof),
+        "chi2_dof": result.chi2 / result.dof,
+        "Q": result.Q,
+        "logGBF": result.logGBF,
+        "aic": result.chi2 + 4.0 * n_states,
+    }
 
 
 def matrix_element_samples(
@@ -479,26 +690,16 @@ def matrix_element_samples(
         if np.any(denominator == 0):
             raise ValueError("qDA z=0 denominator contains zero values in the fit window")
         ratios = window_values / denominator[:, :, None]
-        values = (
-            np.ones((source.n_sample, len(z)), dtype=complex)
-            if fit_samples
-            else None
-        )
+        values = np.ones((source.n_sample, len(z)), dtype=complex) if fit_samples else None
         prior_scale = float(lsqfit["posterior_prior_error_scale"])
         svdcut = float(lsqfit["svdcut"])
         q_min = float(lsqfit["q_min"])
         if tune_z is None:
-            z_indices = [
-                index for index in range(len(z)) if index != int(origin[0])
-            ]
+            z_indices = [index for index in range(len(z)) if index != int(origin[0])]
         else:
-            tune_matches = np.flatnonzero(
-                np.isclose(z, float(tune_z), rtol=0.0, atol=1e-12)
-            )
+            tune_matches = np.flatnonzero(np.isclose(z, float(tune_z), rtol=0.0, atol=1e-12))
             if tune_matches.size != 1:
-                raise ValueError(
-                    "tune_z must name exactly one available qDA z coordinate"
-                )
+                raise ValueError("tune_z must name exactly one available qDA z coordinate")
             tune_index = int(tune_matches[0])
             if tune_index == int(origin[0]):
                 raise ValueError("qDA tuning cannot use its exact z=0 denominator")
@@ -552,8 +753,23 @@ def matrix_element_samples(
                     mode="resamples" if fit_samples else "center",
                     _parallel=parallel,
                 )
-                energy_samples = [float(parameters["E0"]) for parameters in result.samples if parameters is not None] if fit_samples else []
-                fit_metrics.append({"z": float(z[z_index]), "chi2": result.chi2, "dof": result.dof, "chi2_dof": result.chi2 / result.dof, "Q": result.Q, "logGBF": result.logGBF, "E0": float(result.pmean["E0"]), "E0_sdev": float(np.std(energy_samples, ddof=1)) if len(energy_samples) > 1 else None})
+                energy_samples = (
+                    [float(parameters["E0"]) for parameters in result.samples if parameters is not None]
+                    if fit_samples
+                    else []
+                )
+                fit_metrics.append(
+                    {
+                        "z": float(z[z_index]),
+                        "chi2": result.chi2,
+                        "dof": result.dof,
+                        "chi2_dof": result.chi2 / result.dof,
+                        "Q": result.Q,
+                        "logGBF": result.logGBF,
+                        "E0": float(result.pmean["E0"]),
+                        "E0_sdev": float(np.std(energy_samples, ddof=1)) if len(energy_samples) > 1 else None,
+                    }
+                )
                 if values is not None:
                     values[:, z_index] = np.asarray(
                         [
@@ -576,11 +792,7 @@ def matrix_element_samples(
         primary_z = tune_z
         if primary_z is not None:
             tune_fit = next(
-                record
-                for record in fit_metrics
-                if np.isclose(
-                    record["z"], float(primary_z), rtol=0.0, atol=1e-12
-                )
+                record for record in fit_metrics if np.isclose(record["z"], float(primary_z), rtol=0.0, atol=1e-12)
             )
             diagnostics.update(
                 {
@@ -652,7 +864,9 @@ def matrix_element_samples(
         for tsep_index, tsep_value in enumerate(tsep):
             if tsep_value < t_min or tsep_value > t_max:
                 continue
-            tau_mask = (tau >= (tau_min if tau_min is not None else t_min)) & (tau <= tsep_value - (tau_min if tau_min is not None else 0))
+            tau_mask = (tau >= (tau_min if tau_min is not None else t_min)) & (
+                tau <= tsep_value - (tau_min if tau_min is not None else 0)
+            )
             if not np.any(tau_mask):
                 continue
             c2_indices = np.where(np.isclose(c2_time, tsep_value, rtol=0.0, atol=1e-12))[0]
