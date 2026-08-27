@@ -16,6 +16,7 @@ from typing import Any, Callable, Literal, Mapping, get_args, get_origin, get_ty
 
 import numpy as np
 
+from .banner import BANNER
 from .llm import LlmBackend, Message
 from .manifest import Job, Manifest, _load_stage_contract
 from .parallel._pool import _ParallelPool
@@ -697,10 +698,11 @@ class _AgentSession:
         manifest_file = manifest.path
         metadata = document["metadata"]
         stage_ids = [str(stage_id) for stage_id in document["stages"]]
-        _emit_progress("=" * 60)
-        _emit_progress(f"Agent run: {metadata['run_id']}  (backend={self.backend.identity})")
+        _emit_progress(BANNER)
+        _emit_progress("")
+        _emit_progress(f"Run: {metadata['run_id']}  backend={self.backend.identity}")
         _emit_progress(f"Stages: {', '.join(stage_ids)}")
-        _emit_progress("=" * 60)
+        _emit_progress("")
         stage_reports: dict[str, str] = {}
         stage_records: list[StageReportRecord] = []
         parallel = _ParallelPool(int(metadata["workers"]))
