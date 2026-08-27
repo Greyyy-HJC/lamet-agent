@@ -8,7 +8,7 @@ import numpy as np
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.parallel import FitNumericalError
-from lamet_agent.plotting import Z_OVER_A_LABEL, configure_plot, errorline, save_figure, start_plot
+from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
 from lamet_agent.stages.correlator_analysis.diagnostics import write_fit_artifacts
 from lamet_agent.stages.correlator_analysis.physics import (
     fit_matrix_element_samples,
@@ -147,6 +147,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                     sample_error_mode=str(context.manifest["metadata"]["sample_error_mode"]),
                     workers=context.workers,
                     fit_samples=True,
+                    show_progress=bool(context.state.get("show_job_progress", False)),
                     n_states=int(selected["nstate"]),
                     prior_width=float(selected["prior_width"]),
                     _parallel=context._parallel,
@@ -196,6 +197,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                     "posterior_prior_error_scale": float(settings["posterior_prior_error_scale"]),
                     "sample_error_mode": str(context.manifest["metadata"]["sample_error_mode"]),
                     "workers": context.workers,
+                    "show_progress": bool(context.state.get("show_job_progress", False)),
                     "_parallel": context._parallel,
                 }
                 print(f"Preflighting matrix candidate {selected['id']} on the full z grid...", flush=True)
@@ -330,7 +332,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
         start_plot()
         errorline(data.coords[plot_dim], plot_data.average(sample_error_mode))
-        xlabel = Z_OVER_A_LABEL if plot_dim == "z" else plot_dim
+        xlabel = r"$z~/~a$" if plot_dim == "z" else plot_dim
         configure_plot(xlabel=xlabel, ylabel=str(data.name or "result").replace("_", " "))
         save_figure(context.artifact_directory / "plots" / "result.pdf")
         plot_artifact = "plots/result.pdf"

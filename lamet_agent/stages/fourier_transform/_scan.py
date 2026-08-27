@@ -10,11 +10,8 @@ from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
 from lamet_agent.plotting import (
-    X_LABEL,
     configure_plot,
     errorband,
-    momentum_label,
-    quasi_distribution_label,
     save_figure,
     series_color,
     start_plot,
@@ -67,6 +64,7 @@ def attempt(context: ToolContext) -> dict[str, object]:
         psi1_flavor_class=da["psi1_flavor_class"] if da is not None else "heavy",
         psi2_flavor_class=da["psi2_flavor_class"] if da is not None else "heavy",
         workers=context.workers,
+        show_progress=bool(context.state.get("show_job_progress", False)),
         _parallel=context._parallel,
     )
     return result
@@ -185,7 +183,7 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
     ]
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
     momentum = float(source.attrs["momentum_gev"])
-    pz_label = momentum_label(momentum)
+    pz_label = rf"$P_z={round(momentum, 2):g}\,\mathrm{{GeV}}$"
     component = str(scan["component"])
     component_series = {
         "re": (("real", pz_label, 0),),
@@ -204,8 +202,12 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
             label=label,
         )
     configure_plot(
-        xlabel=X_LABEL,
-        ylabel=quasi_distribution_label(component),
+        xlabel=r"$x$",
+        ylabel={
+            "re": r"$\mathrm{Re}\,\tilde q(x)$",
+            "im": r"$\mathrm{Im}\,\tilde q(x)$",
+            "both": r"$\tilde q(x)$",
+        }[component],
         legend=True,
     )
     save_figure(context.artifact_directory / "output_xdep.pdf")

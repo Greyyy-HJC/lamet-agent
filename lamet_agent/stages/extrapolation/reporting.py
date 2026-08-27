@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 
-from lamet_agent.plotting import X_LABEL
 from lamet_agent.stages._reporting import (
     StageReportRecord,
     artifact_rows,
@@ -36,22 +35,22 @@ _TERM_FORMULAS = {
 }
 
 
-def _formula(terms: list[str], x_dependence: dict[str, bool]) -> str:
+def _formula(terms: list[str], independent_terms: set[str]) -> str:
     pieces = []
     for term in terms:
-        coefficient = f"c_{{{term}}}(x)" if x_dependence[term] else f"c_{{{term}}}"
+        coefficient = f"c_{{{term}}}" if term in independent_terms else f"c_{{{term}}}(x)"
         pieces.append(f"{coefficient}{_TERM_FORMULAS[term]}")
     correction = " + ".join(pieces)
     return f"$$h(x,a,P_z)=h(x,0,\\infty)+{correction}.$$"
 
 
-def _x_dependence(attrs: dict[str, object], params: dict[str, object]) -> dict[str, bool]:
-    value = attrs.get("x_dependence", params.get("x_dependence"))
+def _term_list(attrs: dict[str, object], params: dict[str, object], name: str) -> list[str]:
+    value = attrs.get(name, params.get(name, []))
     if isinstance(value, str):
         value = json.loads(value)
-    if not isinstance(value, dict) or any(not isinstance(flag, bool) for flag in value.values()):
-        raise ValueError("extrapolation report requires x_dependence provenance")
-    return {str(key): flag for key, flag in value.items()}
+    if not isinstance(value, list) or any(not isinstance(term, str) for term in value):
+        raise ValueError(f"extrapolation report requires {name} provenance")
+    return list(value)
 
 
 def _input_rows(record: StageReportRecord) -> list[str]:
@@ -161,7 +160,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 coordinate="x",
                 stem="extrapolation_overview",
                 ylabel="physical distribution",
-                xlabel=X_LABEL,
+                xlabel=r"$x$",
             ),
         ]
     )
@@ -170,9 +169,10 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         raw_terms = attrs.get("extrapolation_terms", "")
         terms = [term for term in str(raw_terms).split(",") if term]
         fit = record.params
-        x_dependence = _x_dependence(attrs, dict(record.params))
-        if set(terms) != set(x_dependence):
-            raise ValueError(f"job '{record.job_id}' terms and x_dependence provenance differ")
+        independent_terms = _term_list(attrs, dict(record.params), "x_independent_terms")
+        dependent_terms = _term_list(attrs, dict(record.params), "x_dependent_terms")
+        if set(terms) != set(independent_terms) | set(dependent_terms):
+            raise ValueError(f"job '{record.job_id}' term provenance differs")
         diagnostics = record.summary["diagnostics"]
         candidate = (diagnostics.get("candidates") or [{}])[0]
         lines.extend(
@@ -182,7 +182,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "### Extrapolation Form",
                 "",
-                _formula(terms, x_dependence),
+                _formula(terms, set(independent_terms)),
                 "",
                 "The intercept is the published continuum/infinite-momentum distribution.  Coefficients marked as x-dependent are fitted independently across the common x grid; constant coefficients are shared across x.",
                 "",
@@ -196,9 +196,9 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "| quantity | value |",
                 "|---|---|",
-                f"| required terms | {format_value(fit['required_terms'])} |",
-                f"| optional terms | {format_value(fit['allowed_terms'])} |",
-                f"| x dependence | {format_value(x_dependence)} |",
+                f"| x-independent terms | {format_value(independent_terms)} |",
+                f"| x-dependent terms | {format_value(dependent_terms)} |",
+                f"| cross-x covariance | {format_value(fit.get('x_covariance', False))} |",
                 f"| initial prior | {format_value(fit['priors'])} |",
                 f"| sample-prior widening | {format_value(fit['posterior_prior_error_scale'])} |",
                 f"| momentum diagnostic points [GeV] | {format_value(fit['pdep_gev'])} |",
@@ -229,9 +229,9 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "| field | meaning |",
                 "|---|---|",
-                "| `required_terms` | Correction basis that must appear in this fit. |",
-                "| `allowed_terms` | Additional basis terms the agent may include; empty in the reference examples. |",
-                "| `x_dependence` | Whether each correction coefficient is a function of x or one global scalar. |",
+                "| `x_independent_terms` | Correction coefficients shared across the complete x grid. |",
+                "| `x_dependent_terms` | Correction coefficients fitted independently at every x. |",
+                "| `x_covariance` | Whether cross-x covariance is retained within each ensemble source. |",
                 "| `priors` | Shared initial Gaussian prior for the intercept and correction coefficients. |",
                 "| `posterior_prior_error_scale` | Widening applied when the sample-average posterior seeds resample fits. |",
                 "| `pdep_gev` | Requested momenta for the post-fit diagnostic only; it does not select inputs or alter the infinite-momentum result. |",

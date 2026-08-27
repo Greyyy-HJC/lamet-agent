@@ -19,7 +19,95 @@ from lamet_agent.stages.renormalization.physics import (
     ratio,
     zmsbar_log,
 )
-from lamet_agent.stages.renormalization.parameters import effective_params
+from lamet_agent.stages.renormalization.parameters import authored_kernel_parameters, effective_params
+
+
+def _coverage_mask(z_target: np.ndarray, z_factor: np.ndarray, policy: str) -> np.ndarray:
+    """Return the original self-renormalization target-coverage selection."""
+    if policy not in {"strict", "intersection", "extrapolate"}:
+        raise ValueError("z_coverage_policy must be 'strict', 'intersection', or 'extrapolate'")
+    tolerance = 1e-12
+    covered = (z_target >= z_factor[0] - tolerance) & (z_target <= z_factor[-1] + tolerance)
+    if policy == "strict" and not np.all(covered):
+        raise ValueError(
+            "target z grid lies outside the fitted zR range: "
+            f"target=[{float(np.min(z_target))}, {float(np.max(z_target))}], "
+            f"zR=[{float(z_factor[0])}, {float(z_factor[-1])}]"
+        )
+    if not np.any(covered):
+        raise ValueError("target and zR grids have no overlapping z range")
+    if policy == "extrapolate":
+        if np.any(z_target < z_factor[0] - tolerance):
+            raise ValueError("zR extrapolation only supports the long-distance upper end")
+        return np.ones_like(z_target, dtype=bool)
+    return covered
+
+
+def _complete_long_distance_factor(
+    z_target: np.ndarray,
+    z_factor: np.ndarray,
+    factor_values: np.ndarray,
+    *,
+    spacing_fm: float,
+    k: float,
+    n_f: int,
+    lambda_qcd_gev: float,
+    d: float,
+    m0: float,
+    scale_gev: float,
+) -> tuple[np.ndarray, dict[str, object]]:
+    """Complete zR above its fitted range with the original quadratic f1 tail."""
+    if np.any(factor_values <= 0):
+        raise ValueError("zR extrapolation requires positive fitted zR values")
+    zmax = float(z_factor[-1])
+    extrapolated = z_target > zmax + 1e-12
+    result = np.interp(np.minimum(z_target, zmax), z_factor, factor_values)
+    if not np.any(extrapolated):
+        return result, {
+            "n_z_extrapolated": 0,
+            "z_extrapolation_method": "none",
+            "f1_tail_zmin_fm": None,
+        }
+    baseline = (
+        log_m(
+            z_factor,
+            spacing_fm,
+            k=k,
+            lambda_qcd_gev=lambda_qcd_gev,
+            d=d,
+            n_f=n_f,
+            scale_gev=scale_gev,
+        )
+        + m0 * z_factor
+    )
+    finite_term = (np.log(factor_values) - baseline) / spacing_fm
+    tail = z_factor >= 0.4 * zmax - 1e-12
+    if np.count_nonzero(tail) < 3:
+        tail = np.zeros_like(z_factor, dtype=bool)
+        tail[-min(3, len(z_factor)) :] = True
+    if np.count_nonzero(tail) < 3:
+        raise ValueError("zR extrapolation requires at least three fitted z points")
+    coefficients = np.polyfit(z_factor[tail], finite_term[tail], 2)
+    z_extra = z_target[extrapolated]
+    completed_log = (
+        log_m(
+            z_extra,
+            spacing_fm,
+            k=k,
+            lambda_qcd_gev=lambda_qcd_gev,
+            d=d,
+            n_f=n_f,
+            scale_gev=scale_gev,
+        )
+        + m0 * z_extra
+        + np.polyval(coefficients, z_extra) * spacing_fm
+    )
+    result[extrapolated] = np.exp(completed_log)
+    return result, {
+        "n_z_extrapolated": int(np.count_nonzero(extrapolated)),
+        "z_extrapolation_method": "quadratic_f1_tail",
+        "f1_tail_zmin_fm": float(np.min(z_factor[tail])),
+    }
 
 
 def run(context: ToolContext) -> dict[str, object]:
@@ -36,11 +124,13 @@ def run(context: ToolContext) -> dict[str, object]:
     normalize_inputs = bool(params["normalization"])
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
     apply_plot_data: dict[str, object] | None = None
+    coverage_diagnostics: dict[str, object] = {}
     if normalize_inputs and strategy != "self_renormalization":
         target = normalize_at_origin(target)
     if strategy == "self_renormalization":
         kernel_id = str(params["kernel_id"])
         zms_kernel = load_renormalization_kernel(kernel_id)
+        kernel_parameters = authored_kernel_parameters(params)
         factor = aligned.get("zR")
         if not isinstance(factor, EnsembleData):
             raise ValueError("zR must be one numerical source")
@@ -76,8 +166,6 @@ def run(context: ToolContext) -> dict[str, object]:
         nonzero = np.abs(z_target) > 1e-12
         if np.any(np.diff(z_factor) <= 0) or np.any(z_factor <= 0):
             raise ValueError("self-renormalization factor z coordinates must be strictly increasing and positive")
-        if np.any(np.abs(z_target[nonzero]) < z_factor[0] - 1e-12):
-            raise ValueError("target nonzero z grid starts below the reusable factor range")
         mean_factor = np.mean(np.real(np.asarray(factor.values)), axis=0)
         lambda_qcd = float(params["LambdaQCD_gev"])
         d_to = float(params.get("d", d_from))
@@ -89,94 +177,119 @@ def run(context: ToolContext) -> dict[str, object]:
             / (1.0 + float(d_from) / log_a_lambda)
             * np.exp((m0_to - float(m0_from)) * z_factor)
         )
-        denominator_values = np.ones_like(z_target)
+        policy = str(params["z_coverage_policy"])
+        nonzero_indices = np.flatnonzero(nonzero)
         target_nonzero = np.abs(z_target[nonzero])
-        denominator_values[nonzero] = np.interp(np.minimum(target_nonzero, z_factor[-1]), z_factor, remapped_factor)
-        long_distance = target_nonzero > z_factor[-1] + 1e-12
-        if np.any(long_distance):
-            k = float(factor.attrs["k"])
-            n_f = int(factor.attrs["n_f"])
-            scale_gev = float(params["mu"])
-            baseline = (
-                log_m(z_factor, float(spacing), k=k, lambda_qcd_gev=lambda_qcd, d=d_to, n_f=n_f, scale_gev=scale_gev)
-                + m0_to * z_factor
+        selected = _coverage_mask(target_nonzero, z_factor, policy)
+        target_indices = nonzero_indices[selected]
+        zero_indices = np.flatnonzero(~nonzero)
+        output_indices = np.sort(np.concatenate((zero_indices, target_indices)))
+        z_output = z_target[output_indices]
+        selected_z = np.abs(z_target[target_indices])
+        if policy == "extrapolate":
+            factor_on_target, extrapolation = _complete_long_distance_factor(
+                selected_z,
+                z_factor,
+                remapped_factor,
+                spacing_fm=float(spacing),
+                k=float(factor.attrs["k"]),
+                n_f=int(factor.attrs["n_f"]),
+                lambda_qcd_gev=lambda_qcd,
+                d=d_to,
+                m0=m0_to,
+                scale_gev=float(params["mu"]),
             )
-            finite_term = (np.log(remapped_factor) - baseline) / float(spacing)
-            tail = z_factor >= 0.4 * z_factor[-1] - 1e-12
-            if np.count_nonzero(tail) < 3:
-                raise ValueError("long-distance factor completion requires at least three tail coordinates")
-            coefficients = np.polyfit(z_factor[tail], finite_term[tail], 2)
-            z_long = target_nonzero[long_distance]
-            completed_log = (
-                log_m(z_long, float(spacing), k=k, lambda_qcd_gev=lambda_qcd, d=d_to, n_f=n_f, scale_gev=scale_gev)
-                + m0_to * z_long
-                + np.polyval(coefficients, z_long) * float(spacing)
-            )
-            denominator_values[np.flatnonzero(nonzero)[long_distance]] = np.exp(completed_log)
-        if scheme == "ratio":
-            zmsbar_values = np.exp(
-                zmsbar_log(
-                    zms_kernel,
-                    np.abs(z_target[nonzero]),
-                    scale_gev=float(params["mu"]),
-                )
-            )
-            h_over_zr = EnsembleData(
-                target.ensemble,
-                target.resample,
-                [np.asarray(sample)[nonzero] / denominator_values[nonzero] for sample in target.values],
-                ["z"],
-                {"z": z_target[nonzero].tolist()},
-                attrs={"sample_error_mode": sample_error_mode},
-                name="bare_over_self_renormalization_factor",
-            )
-            h_over_zr_average = h_over_zr.real.average(sample_error_mode)
-            apply_plot_data = {
-                "kind": "apply",
-                "z_fm": z_target[nonzero].tolist(),
-                "h_over_zR_real_mean": np.asarray(
-                    [float(value.mean) for value in h_over_zr_average], dtype=float
-                ).tolist(),
-                "h_over_zR_real_sdev": np.asarray(
-                    [float(value.sdev) for value in h_over_zr_average], dtype=float
-                ).tolist(),
-                "zmsbar": np.asarray(zmsbar_values, dtype=float).tolist(),
+        else:
+            factor_on_target = np.interp(selected_z, z_factor, remapped_factor)
+            extrapolation = {
+                "n_z_extrapolated": 0,
+                "z_extrapolation_method": "none",
+                "f1_tail_zmin_fm": None,
             }
-            denominator_values[nonzero] *= zmsbar_values
-        denominator = EnsembleData(None, "raw", [denominator_values], ["z"], {"z": z_target.tolist()})
+        target_values = np.asarray(target.values)[:, output_indices]
         if scheme == "hybrid":
             denominator = aligned.get("denominator")
             if not isinstance(denominator, EnsembleData):
                 raise ValueError("hybrid denominator must be one numerical source")
+            if (
+                denominator.resample != target.resample
+                or denominator.coords.get("z") != target.coords.get("z")
+                or np.asarray(denominator.values).shape != np.asarray(target.values).shape
+            ):
+                raise ValueError("hybrid target and denominator must have matching samples and z coordinates")
+            denominator_values = np.asarray(denominator.values)[:, output_indices]
             switch = float(params["zs_fm"])
-            z = np.asarray(target.coords["z"], dtype=float)
-            matches = np.flatnonzero(np.isclose(z, switch, rtol=0.0, atol=1e-12))
+            matches = np.flatnonzero(np.isclose(z_output, switch, rtol=0.0, atol=1e-12))
             if len(matches) != 1:
                 raise ValueError("hybrid switch must be an exact positive z coordinate")
-            switch_coord = switch
-            short = ratio(target, denominator)
-            factor_switch = factor.near("z", switch_coord, tolerance=1e-12)
-            denominator_switch = denominator.near("z", switch_coord, tolerance=1e-12)
-            transfer = denominator_switch.div(factor_switch)
-            long = target.div(factor).div(transfer)
-            mask = np.abs(z) <= abs(switch_coord)
-            values = [
-                np.where(mask, np.asarray(short_sample), np.asarray(long_sample))
-                for short_sample, long_sample in zip(short.values, long.values)
-            ]
-            attrs = short.attrs
-            attrs.update({"hybrid_switch_coord_fm": switch_coord, "strategy": strategy})
-            result = EnsembleData(
-                target.ensemble,
-                target.resample,
-                values,
-                target.dims,
-                target.coords,
-                attrs=attrs,
-                name="renormalized_matrix_element",
-            )
+            switch_index = int(matches[0])
+            factor_values = np.ones_like(z_output, dtype=float)
+            factor_values[np.isin(output_indices, target_indices)] = factor_on_target
+            transfer = denominator_values[:, switch_index] / factor_values[switch_index]
+            if np.any(np.isclose(np.abs(transfer), 0.0, rtol=0.0, atol=1e-30)):
+                raise ValueError("hybrid self-renormalization produced zero transfer at the switch point")
+            short_values = target_values / denominator_values
+            long_values = target_values / (factor_values[None, :] * transfer[:, None])
+            values = np.where((np.abs(z_output) <= switch)[None, :], short_values, long_values)
+            result_attrs = target.attrs
+            result_attrs.update({"hybrid_switch_coord_fm": switch, "strategy": strategy})
         else:
-            result = target.div(denominator)
+            factor_values = np.ones_like(z_output, dtype=float)
+            nonzero_output = np.abs(z_output) > 1e-12
+            factor_values[nonzero_output] = factor_on_target
+            if scheme == "ratio":
+                zmsbar_values = np.exp(
+                    zmsbar_log(
+                        zms_kernel,
+                        np.abs(z_output[nonzero_output]),
+                        scale_gev=float(params["mu"]),
+                        kernel_parameters=kernel_parameters,
+                    )
+                )
+                h_over_zr = EnsembleData(
+                    target.ensemble,
+                    target.resample,
+                    [sample[nonzero_output] / factor_values[nonzero_output] for sample in target_values],
+                    ["z"],
+                    {"z": z_output[nonzero_output].tolist()},
+                    attrs={"sample_error_mode": sample_error_mode},
+                    name="bare_over_self_renormalization_factor",
+                )
+                h_over_zr_average = h_over_zr.real.average(sample_error_mode)
+                apply_plot_data = {
+                    "kind": "apply",
+                    "z_fm": z_output[nonzero_output].tolist(),
+                    "h_over_zR_real_mean": np.asarray(
+                        [float(value.mean) for value in h_over_zr_average], dtype=float
+                    ).tolist(),
+                    "h_over_zR_real_sdev": np.asarray(
+                        [float(value.sdev) for value in h_over_zr_average], dtype=float
+                    ).tolist(),
+                    "zmsbar": np.asarray(zmsbar_values, dtype=float).tolist(),
+                }
+                factor_values[nonzero_output] *= zmsbar_values
+            values = target_values / factor_values[None, :]
+            result_attrs = target.attrs
+        result = EnsembleData(
+            target.ensemble,
+            target.resample,
+            [np.asarray(sample) for sample in values],
+            ["z"],
+            {"z": z_output.tolist()},
+            attrs=result_attrs,
+            name="renormalized_matrix_element",
+        )
+        coverage_diagnostics = {
+            "z_coverage_policy": policy,
+            "n_z_input": int(z_target.size),
+            "n_z_dropped": int(z_target.size - z_output.size),
+            "n_z_coverage_dropped": int(np.count_nonzero(nonzero) - len(target_indices)),
+            "n_z_zero_passthrough": int(len(zero_indices)),
+            "z_input_range_fm": [float(np.min(z_target)), float(np.max(z_target))],
+            "z_output_range_fm": [float(np.min(z_output)), float(np.max(z_output))],
+            "zR_input_range_fm": [float(z_factor[0]), float(z_factor[-1])],
+            **extrapolation,
+        }
     else:
         denominator_source = context.inputs["denominator"]
         if isinstance(denominator_source, (int, float)) and not isinstance(denominator_source, bool):
@@ -211,6 +324,19 @@ def run(context: ToolContext) -> dict[str, object]:
     )
     if strategy == "self_renormalization":
         attrs["kernel_id"] = params["kernel_id"]
+        attrs["kernel_parameters"] = json.dumps(kernel_parameters, sort_keys=True)
+        attrs.update(
+            {
+                "z_coverage_policy": coverage_diagnostics["z_coverage_policy"],
+                "n_z_dropped": coverage_diagnostics["n_z_dropped"],
+                "n_z_coverage_dropped": coverage_diagnostics["n_z_coverage_dropped"],
+                "n_z_extrapolated": coverage_diagnostics["n_z_extrapolated"],
+                "z_extrapolation_method": coverage_diagnostics["z_extrapolation_method"],
+                "f1_tail_zmin_fm": ""
+                if coverage_diagnostics["f1_tail_zmin_fm"] is None
+                else coverage_diagnostics["f1_tail_zmin_fm"],
+            }
+        )
     result = EnsembleData(
         result.ensemble,
         result.resample,
@@ -228,6 +354,7 @@ def run(context: ToolContext) -> dict[str, object]:
         "strategy": strategy,
         "type": params["type"],
         "kernel_id": params.get("kernel_id"),
+        "kernel_parameters": params.get("kernel_parameters") if strategy == "self_renormalization" else None,
         "sample_count": result.n_sample,
         "dims": result.dims,
         "z_range_fm": [float(np.min(z_values)), float(np.max(z_values))],
@@ -251,6 +378,7 @@ def run(context: ToolContext) -> dict[str, object]:
             for role, value in aligned.items()
             if isinstance(value, EnsembleData) and "z" in value.coords
         },
+        **coverage_diagnostics,
     }
     diagnostic_payload = dict(diagnostics)
     if apply_plot_data is not None:
@@ -280,6 +408,9 @@ def run(context: ToolContext) -> dict[str, object]:
             "strategy": strategy,
             "kernel_id": params.get("kernel_id"),
             "normalization": bool(params["normalization"]),
+            "z_coverage_policy": params.get("z_coverage_policy")
+            if strategy == "self_renormalization"
+            else None,
         },
         "diagnostics": diagnostics,
         "artifacts": [

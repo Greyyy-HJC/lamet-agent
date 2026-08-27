@@ -8,7 +8,6 @@ import numpy as np
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels import load_kernel_document
-from lamet_agent.plotting import X_LABEL
 from lamet_agent.stages._reporting import (
     StageReportRecord,
     artifact_rows,
@@ -155,7 +154,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 artifact_directory,
                 coordinate="x",
                 stem="matching_overview",
-                xlabel=X_LABEL,
+                xlabel=r"$x$",
                 ylabel="matched distribution",
                 band=True,
             ),

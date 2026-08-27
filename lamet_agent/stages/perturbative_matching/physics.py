@@ -44,7 +44,7 @@ def inspect_callable(kernel, *, parameter_values: dict[str, Any]) -> tuple[list[
         for parameter in parameters[2:]
         if parameter.default is inspect.Parameter.empty and parameter.name not in {"momentum_gev", "scale_gev"}
     ]
-    accepted = [parameter.name for parameter in parameters[2:] if parameter.name not in {"momentum_gev", "scale_gev"}]
+    accepted = [parameter.name for parameter in parameters[2:]]
     missing = [name for name in required if name not in parameter_values]
     unexpected = [name for name in parameter_values if name not in accepted]
     if missing or unexpected:

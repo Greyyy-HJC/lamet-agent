@@ -526,11 +526,17 @@ def test_extrapolation_stage_report_contains_model_and_budget(tmp_path: Path) ->
         "kernel_id": "GI_gzg5_DA_ratio_NLO",
     }
     source = _data(attrs=provenance)
-    output = _data(attrs={"extrapolation_terms": "a,inv_p2", "x_dependence": json.dumps({"a": False, "inv_p2": True})})
+    output = _data(
+        attrs={
+            "extrapolation_terms": "a,inv_p2",
+            "x_independent_terms": json.dumps(["a"]),
+            "x_dependent_terms": json.dumps(["inv_p2"]),
+        }
+    )
     fit_params = {
-        "required_terms": ["a", "inv_p2"],
-        "allowed_terms": [],
-        "x_dependence": {"a": False, "inv_p2": True},
+        "x_independent_terms": ["a"],
+        "x_dependent_terms": ["inv_p2"],
+        "x_covariance": False,
         "priors": {"mean": 0.0, "sdev": 3.0},
         "posterior_prior_error_scale": 3.0,
         "pdep_gev": [1.5, 2.0, 2.5],

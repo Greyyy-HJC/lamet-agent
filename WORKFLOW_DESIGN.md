@@ -51,18 +51,16 @@ budget is `1 + metadata.parameter_recommendation_retries`.
 
 ### Current behavior
 
-The contract describes a model space through `required_terms`, `allowed_terms`,
-and `max_terms`, but it does not define how a model is chosen from that space.
-The migrated workflow supports only the fixed reference case:
+The contract defines one exact model through disjoint `x_independent_terms` and
+`x_dependent_terms` lists:
 
 ```text
-allowed_terms=[] -> one model -> weight 1 -> publish
+authored term partition -> one model -> weight 1 -> publish
 ```
 
-Nonempty `allowed_terms` currently raises an explicit not-implemented error.
 The old comparison tool was not a multi-model implementation: it required
-exactly one candidate and assigned weight 1, so it has been replaced by ordinary
-single-candidate selection logic.
+exactly one candidate and assigned weight 1, so ordinary single-candidate
+selection owns the current path.
 
 `excluded_ensembles` is also not a current decision surface. The fitting code
 rejects every nonempty exclusion list.

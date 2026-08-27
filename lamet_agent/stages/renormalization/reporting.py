@@ -16,13 +16,11 @@ from lamet_agent.stages._reporting import (
     stage_overlay_lines,
     write_report,
 )
-from lamet_agent.plotting import (
+from lamet_agent.stages.renormalization._plotting import (
     RENORMALIZED_MATRIX_ELEMENT_LABELS,
     Z_FM_LABEL,
     lattice_spacing_label,
     momentum_label,
-)
-from lamet_agent.stages.renormalization._plotting import (
     render_fit_diagnostics,
     render_result,
     render_zmsbar_comparison,
@@ -367,6 +365,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| strategy | `{params['strategy']}` |",
                 f"| type | `{params['type']}` |",
                 f"| kernel id | `{params.get('kernel_id', 'n/a')}` |",
+                f"| kernel parameters | {format_value(params.get('kernel_parameters', {}))} |",
                 f"| normalization | {format_value(params['normalization'])} |",
                 f"| $z_s$ [fm] | {format_value(params.get('zs_fm'))} |",
                 f"| $m_0$ [GeV] | {format_value(params.get('m0_gev', attrs.get('m0_gev')))} |",
@@ -392,8 +391,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     "value before division; numeric constants carry no artificial uncertainty."
                 ),
                 (
-                    "- A reusable factor is selected at the target lattice spacing and must cover every "
-                    "nonzero target coordinate. The origin is preserved exactly."
+                    f"- z coverage policy: `{params.get('z_coverage_policy', 'n/a')}`. "
+                    "The origin is preserved exactly."
                 ),
                 "",
                 "### Field Definitions",
@@ -404,6 +403,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "| `strategy` | External denominator or a reusable factor fitted from reference ensembles. |",
                 "| `type` | Fit a reusable factor or apply a renormalization prescription. |",
                 "| `kernel_id` | Explicit coordinate-space conversion formula selected for self-renormalization. |",
+                "| `kernel_parameters` | Explicit overrides of signature parameters not fixed by input coordinates. |",
                 "| `d`, `m0_gev` | Finite logarithmic and linear operator corrections used by self-renormalization. |",
                 "| `delta_m_gev` | Long-distance exponential correction in the external hybrid prescription. |",
                 (

@@ -1,5 +1,4 @@
 from __future__ import annotations
-import contextlib
 import functools
 from typing import Callable, Final
 import numpy as np
@@ -17,14 +16,6 @@ def ZMSbar(z_fm: np.ndarray | float, *, mu: float, offset: float) -> np.ndarray:
     alphas = alpha_s(float(mu))
     log_term = np.log(mu**2 * (z_arr / GEV_FM) ** 2 * np.exp(2.0 * np.euler_gamma) / 4.0)
     return 1.0 + alphas * CF / (2.0 * np.pi) * (1.5 * log_term + offset)
-
-
-def ZMSbar_pdf(z_fm: np.ndarray | float, mu: float) -> np.ndarray:
-    return ZMSbar(z_fm, mu=mu, offset=2.5)
-
-
-def ZMSbar_da(z_fm: np.ndarray | float, mu: float) -> np.ndarray:
-    return ZMSbar(z_fm, mu=mu, offset=3.5)
 
 
 def _sine_integral(value: float) -> float:
@@ -139,52 +130,6 @@ def C_hybrid_gz(ksi: float, log_scale: float, y: float, zspz: float, eps: float 
 
 
 DensityFn = Callable[[float, float], float]
-_PROGRESS_SILENCED = False
-
-
-@contextlib.contextmanager
-def _quiet_progress():
-    global _PROGRESS_SILENCED
-    previous = _PROGRESS_SILENCED
-    _PROGRESS_SILENCED = True
-    try:
-        yield
-    finally:
-        _PROGRESS_SILENCED = previous
-
-
-def _progress(iterable, *, desc: str, leave: bool = True):
-    if _PROGRESS_SILENCED:
-        return iterable
-    try:
-        from tqdm import tqdm
-    except Exception:
-        return iterable
-    return tqdm(iterable, desc=desc, leave=leave)
-
-
-class _NoOpBar:
-    def update(self, n: int = 1) -> None:
-        return None
-
-    def close(self) -> None:
-        return None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc) -> bool:
-        return False
-
-
-def _progress_bar(*, total: int, desc: str):
-    if _PROGRESS_SILENCED:
-        return _NoOpBar()
-    try:
-        from tqdm import tqdm
-    except Exception:
-        return _NoOpBar()
-    return tqdm(total=total, desc=desc)
 
 
 def _lo_interp_matrix(x_grid: np.ndarray, y_grid: np.ndarray) -> np.ndarray:
@@ -227,7 +172,7 @@ def build_matching_matrix(
     offsets = np.abs(x_grid[:, None] - y_grid[None, :])
     diag_rows = offsets.argmin(axis=0)
     has_diag = offsets[diag_rows, np.arange(ny)] <= eps * np.maximum(np.abs(y_grid), 1.0)
-    for idx, x_val in enumerate(_progress(x_grid, desc="matching kernel")):
+    for idx, x_val in enumerate(x_grid):
         for idy, y_val in enumerate(y_grid):
             if np.abs(x_val - y_val) <= eps * np.abs(y_val):
                 continue
@@ -350,43 +295,39 @@ def _build_pdf_matrix(
     nx, ny = (len(x_grid), len(y_grid))
     identity = _lo_interp_matrix(x_grid, y_grid)
     nlo_matrix = np.zeros((nx, ny))
-    with _progress_bar(total=2 * nx, desc="matching kernel") as bar:
-        for idx, x_val in enumerate(x_grid):
-            for idy, y_val in enumerate(y_grid):
-                ksi = x_val / y_val
-                if np.abs(1.0 - ksi) <= eps:
-                    continue
-                log_scale = _pdf_log_scale(y_val, momentum_gev, mu)
-                nlo_matrix[idx, idy] = coeff(ksi, log_scale, y_val) / np.abs(y_val)
-            bar.update(1)
-        ascending = y_grid[1] > y_grid[0]
-        y_sorted = y_grid if ascending else y_grid[::-1]
-        for idx, x_val in enumerate(x_grid):
-            if np.abs(x_val) <= eps:
-                bar.update(1)
+    for idx, x_val in enumerate(x_grid):
+        for idy, y_val in enumerate(y_grid):
+            ksi = x_val / y_val
+            if np.abs(1.0 - ksi) <= eps:
                 continue
-            pos = int(np.searchsorted(y_sorted, x_val))
-            pos = min(max(pos, 1), ny - 1)
-            w_hi = np.clip((x_val - y_sorted[pos - 1]) / (y_sorted[pos] - y_sorted[pos - 1]), 0.0, 1.0)
-            cols_weights = (
-                (pos - 1 if ascending else ny - pos, 1.0 - w_hi),
-                (pos if ascending else ny - 1 - pos, w_hi),
-            )
-            log_scale = _pdf_log_scale(x_val, momentum_gev, mu)
-            subtraction = 0.0
-            for y_val in y_grid:
-                ksi = x_val / y_val
-                if np.abs(1.0 - ksi) <= eps:
-                    continue
-                subtraction += plus_coeff(ksi, log_scale, x_val) * np.abs(x_val) * dy / y_val**2
-            for lo, hi in _uncovered_ksi_intervals(x_val, y_grid, dy, eps):
-                subtraction += _integrate(lambda ksi: plus_coeff(ksi, log_scale, x_val), lo, hi)
-            delta_entry = -subtraction
-            if diagonal_extra is not None:
-                delta_entry += diagonal_extra(log_scale)
-            for col, weight in cols_weights:
-                nlo_matrix[idx, int(col)] += weight * delta_entry / dy
-            bar.update(1)
+            log_scale = _pdf_log_scale(y_val, momentum_gev, mu)
+            nlo_matrix[idx, idy] = coeff(ksi, log_scale, y_val) / np.abs(y_val)
+    ascending = y_grid[1] > y_grid[0]
+    y_sorted = y_grid if ascending else y_grid[::-1]
+    for idx, x_val in enumerate(x_grid):
+        if np.abs(x_val) <= eps:
+            continue
+        pos = int(np.searchsorted(y_sorted, x_val))
+        pos = min(max(pos, 1), ny - 1)
+        w_hi = np.clip((x_val - y_sorted[pos - 1]) / (y_sorted[pos] - y_sorted[pos - 1]), 0.0, 1.0)
+        cols_weights = (
+            (pos - 1 if ascending else ny - pos, 1.0 - w_hi),
+            (pos if ascending else ny - 1 - pos, w_hi),
+        )
+        log_scale = _pdf_log_scale(x_val, momentum_gev, mu)
+        subtraction = 0.0
+        for y_val in y_grid:
+            ksi = x_val / y_val
+            if np.abs(1.0 - ksi) <= eps:
+                continue
+            subtraction += plus_coeff(ksi, log_scale, x_val) * np.abs(x_val) * dy / y_val**2
+        for lo, hi in _uncovered_ksi_intervals(x_val, y_grid, dy, eps):
+            subtraction += _integrate(lambda ksi: plus_coeff(ksi, log_scale, x_val), lo, hi)
+        delta_entry = -subtraction
+        if diagonal_extra is not None:
+            delta_entry += diagonal_extra(log_scale)
+        for col, weight in cols_weights:
+            nlo_matrix[idx, int(col)] += weight * delta_entry / dy
     return identity - alphas * color_factor / (2.0 * np.pi) * nlo_matrix * dy
 
 
@@ -607,7 +548,7 @@ def _plus_prescription_matrix(x_grid: np.ndarray, y_grid: np.ndarray, density: D
     offsets = np.abs(x[:, None] - y[None, :])
     diag_rows = offsets.argmin(axis=0)
     has_diag = offsets[diag_rows, np.arange(len(y))] <= eps * np.maximum(np.abs(y), 1.0)
-    for idx, x_val in enumerate(_progress(x, desc="matching LRR kernel")):
+    for idx, x_val in enumerate(x):
         for idy, y_val in enumerate(y):
             if np.abs(x_val - y_val) <= eps * np.abs(y_val):
                 continue
@@ -878,14 +819,13 @@ def _rgr_from_fixed_order(
     y = x if quasi_y_ls is None else np.asarray(quasi_y_ls, dtype=float)
     evo_lo, evo_nlo = _dglap_evolution_matrices(x, p_nlo)
     matrix = np.zeros((x.size, y.size), dtype=float)
-    with _quiet_progress():
-        for index, x_value in enumerate(_progress(range(x.size), desc="RGR matching kernel")):
-            mu0 = 2.0 * kappa * float(x[x_value]) * float(momentum_gev)
-            if not np.isfinite(mu0) or mu0 < mu_min:
-                continue
-            extra = {"zspz": zspz} if takes_zspz else {}
-            fixed = fixed_order_builder(x, momentum_gev=momentum_gev, mu=mu0, quasi_y_ls=y, eps=eps, **extra)
-            evolution = _evolution_operator(mu0, mu, evo_lo, evo_nlo, steps)
-            row = (evolution @ fixed)[x_value, :]
-            matrix[x_value, :] = row * _zpsi_msbar_ratio(mu0) if needs_zpsi else row
+    for x_value in range(x.size):
+        mu0 = 2.0 * kappa * float(x[x_value]) * float(momentum_gev)
+        if not np.isfinite(mu0) or mu0 < mu_min:
+            continue
+        extra = {"zspz": zspz} if takes_zspz else {}
+        fixed = fixed_order_builder(x, momentum_gev=momentum_gev, mu=mu0, quasi_y_ls=y, eps=eps, **extra)
+        evolution = _evolution_operator(mu0, mu, evo_lo, evo_nlo, steps)
+        row = (evolution @ fixed)[x_value, :]
+        matrix[x_value, :] = row * _zpsi_msbar_ratio(mu0) if needs_zpsi else row
     return matrix

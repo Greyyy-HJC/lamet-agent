@@ -302,8 +302,6 @@ def _dispersion_lines(records: tuple[StageReportRecord, ...], artifact_directory
 
 
 def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_directory: Path) -> Path:
-    from lamet_agent.plotting import BARE_MATRIX_ELEMENT_LABEL, Z_OVER_A_LABEL
-
     methods = {str(record.params["analysis_method"]) for record in records}
     lines = [
         "# Correlator Analysis Stage Report",
@@ -354,8 +352,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 artifact_directory,
                 coordinate="z",
                 stem="correlator_overview",
-                xlabel=Z_OVER_A_LABEL,
-                ylabel=BARE_MATRIX_ELEMENT_LABEL,
+                xlabel=r"$z~/~a$",
+                ylabel="bare matrix element",
             ),
             "",
             "## Sample Fit Quality",

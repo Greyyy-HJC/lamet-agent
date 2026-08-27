@@ -15,6 +15,7 @@ from types import ModuleType
 from typing import Any, Callable, Literal, Mapping, get_args, get_origin, get_type_hints
 
 import numpy as np
+from tqdm import tqdm
 
 from .banner import BANNER
 from .llm import LlmBackend, Message
@@ -37,6 +38,15 @@ _SAFE_TOOL = re.compile(r"^[a-z][a-z0-9_]*$")
 _WORKFLOW_STAGES = frozenset(
     {"correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation"}
 )
+
+
+def _resolve_progress_mode(mode: str, *, has_systematics: bool) -> str:
+    """Resolve automatic progress display from the authored manifest shape."""
+    if mode not in {"auto", "stage", "job", "none"}:
+        raise ValueError("progress mode must be auto, stage, job, or none")
+    if mode == "auto":
+        return "stage" if has_systematics else "job"
+    return mode
 
 
 def _emit_progress(message: str = "") -> None:
@@ -601,6 +611,7 @@ class _AgentSession:
     backend: LlmBackend
     stage_root: str | Path | None = None
     max_tool_steps: int = _MAX_ASSISTANT_TURNS
+    progress_mode: Literal["auto", "stage", "job", "none"] = "auto"
     _outputs: dict[str, Any] = field(default_factory=dict, init=False)
     _summaries: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
     _stage_bundles: dict[str, tuple[list[_Tool], str, str]] = field(default_factory=dict, init=False)
@@ -736,6 +747,7 @@ class _AgentSession:
         document = manifest.document
         jobs = list(manifest.jobs)
         jobs_by_stage = manifest.jobs_by_stage
+        progress_mode = _resolve_progress_mode(self.progress_mode, has_systematics=manifest.has_systematics)
         collisions = [job.artifact_directory for job in jobs if job.artifact_directory.exists()]
         if collisions:
             raise FileExistsError(f"selected job artifact directory already exists: {collisions[0]}")
@@ -754,6 +766,7 @@ class _AgentSession:
         _emit_progress("")
         stage_reports: dict[str, str] = {}
         stage_records: list[StageReportRecord] = []
+        stage_progress = None
         parallel = _ParallelPool(int(metadata["workers"]))
         try:
             for job in jobs:
@@ -766,6 +779,8 @@ class _AgentSession:
                         raise RuntimeError("stage report records leaked across a stage boundary")
                     _emit_progress("")
                     _emit_progress(f"Stage: {stage_id}")
+                    if progress_mode == "stage":
+                        stage_progress = tqdm(total=len(stage_jobs), desc=stage_id, unit="job")
                 _emit_progress(f"Job: {stage_id}/{job.job_id}")
                 job.artifact_directory.mkdir(parents=True, exist_ok=False)
                 resolved_inputs: dict[str, Any] = {}
@@ -787,7 +802,7 @@ class _AgentSession:
                     copy.deepcopy(dict(job.params)),
                     resolved_inputs,
                     input_summaries,
-                    {},
+                    {"show_job_progress": progress_mode == "job"},
                     job.artifact_directory,
                     np.random.default_rng(seed_sequence),
                     _parallel=parallel,
@@ -817,6 +832,8 @@ class _AgentSession:
                         artifact_directory=job.artifact_directory,
                     )
                 )
+                if stage_progress is not None:
+                    stage_progress.update(1)
                 if job is stage_jobs[-1]:
                     _emit_progress(f"Writing stage report: {stage_id}...")
                     report = _write_stage_report(stage_id, stage_records, stage_root=self.stage_root)
@@ -824,9 +841,14 @@ class _AgentSession:
                         stage_reports[stage_id] = str(report)
                     _emit_progress(f"Stage {stage_id} finished.")
                     stage_records = []
+                    if stage_progress is not None:
+                        stage_progress.close()
+                        stage_progress = None
             if stage_records:
                 raise RuntimeError("final stage did not reach its indexed report boundary")
         finally:
+            if stage_progress is not None:
+                stage_progress.close()
             parallel.close()
         _emit_progress("=" * 60)
         _emit_progress(f"Agent run complete ({len(jobs)} job(s)).")
@@ -834,9 +856,13 @@ class _AgentSession:
         return {"outputs": dict(self._outputs), "summaries": dict(self._summaries), "stage_reports": stage_reports}
 
 
-def create_session(backend: LlmBackend) -> _AgentSession:
+def create_session(
+    backend: LlmBackend,
+    *,
+    progress_mode: Literal["auto", "stage", "job", "none"] = "auto",
+) -> _AgentSession:
     """Create an isolated workflow session for one resolved LLM backend."""
-    return _AgentSession(backend)
+    return _AgentSession(backend, progress_mode=progress_mode)
 
 
 __all__ = [

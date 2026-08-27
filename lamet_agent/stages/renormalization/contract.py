@@ -4,11 +4,91 @@ from __future__ import annotations
 
 import inspect
 import math
-from typing import Literal
+import types
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
+
+import numpy as np
 
 from lamet_agent.contract import CheckContext, Depends, Issue, Provides, Recommends, Source, Value, stage_job_rules
 from lamet_agent.kernels import load_renormalization_kernel
 from lamet_agent.stages.renormalization.parameters import effective_params
+
+
+def _annotation_accepts(annotation: Any, value: Any) -> bool:
+    """Return whether a JSON value matches one supported kernel annotation."""
+    if annotation is Any:
+        return True
+    origin = get_origin(annotation)
+    arguments = get_args(annotation)
+    if origin in (Union, types.UnionType):
+        return any(_annotation_accepts(candidate, value) for candidate in arguments)
+    if origin is Literal:
+        return any(type(value) is type(choice) and value == choice for choice in arguments)
+    if annotation is np.ndarray:
+        return isinstance(value, list) and all(
+            isinstance(item, (int, float)) and not isinstance(item, bool) for item in value
+        )
+    if annotation is float:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if annotation is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if annotation is str:
+        return isinstance(value, str)
+    if annotation is bool:
+        return isinstance(value, bool)
+    if annotation is type(None):
+        return value is None
+    if origin is list:
+        return isinstance(value, list) and all(_annotation_accepts(arguments[0], item) for item in value)
+    return False
+
+
+def _kernel_parameter_issues(kernel: Any, values: dict[str, Any]) -> list[Issue]:
+    """Validate authored renormalization kernel parameters against its signature."""
+    physics = "Kernel parameters must match the selected renormalization kernel() signature."
+    parameters = inspect.signature(kernel).parameters
+    z_fm = parameters.get("z_fm")
+    mu = parameters.get("mu")
+    if (
+        z_fm is None
+        or z_fm.kind not in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+        or mu is None
+        or mu.kind is inspect.Parameter.POSITIONAL_ONLY
+        or any(
+            parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+            for parameter in parameters.values()
+        )
+    ):
+        return [Issue("kernel_id", "kernel must explicitly accept z_fm and keyword mu", physics)]
+    issues = [
+        Issue("kernel_parameters.z_fm", "is supplied by input data and cannot be overridden", physics)
+        for _name in values
+        if _name == "z_fm"
+    ]
+    issues.extend(
+        Issue(f"kernel_parameters.{name}", "is not accepted by the selected kernel signature", physics)
+        for name in values
+        if name not in parameters
+    )
+    issues.extend(
+        Issue(f"kernel_parameters.{name}", "is required by the selected kernel signature", physics)
+        for name, parameter in parameters.items()
+        if name not in {"z_fm", "mu"} and parameter.default is inspect.Parameter.empty and name not in values
+    )
+    try:
+        annotations = get_type_hints(kernel)
+    except (NameError, TypeError) as exc:
+        return [*issues, Issue("kernel_id", f"kernel annotations cannot be resolved: {exc}", physics)]
+    for name, value in values.items():
+        if name not in parameters or name == "z_fm":
+            continue
+        annotation = annotations.get(name, parameters[name].annotation)
+        if annotation is inspect.Parameter.empty:
+            issues.append(Issue(f"kernel_parameters.{name}", "has no type annotation", physics))
+        elif not _annotation_accepts(annotation, value):
+            expected = getattr(annotation, "__name__", str(annotation).replace("typing.", ""))
+            issues.append(Issue(f"kernel_parameters.{name}", f"must match kernel annotation {expected}", physics))
+    return issues
 
 
 def _positive(value: int | float) -> bool:
@@ -56,15 +136,19 @@ PARAM_RULES = (
     Value("self_renormalization.scheme", Literal["ratio", "hybrid", "msbar"], physics="Self-renormalization scheme is ratio, hybrid, or msbar."),
     Depends("self_renormalization", "kernel_id", physics="Self-renormalization explicitly selects its coordinate-space conversion formula."),
     Value("self_renormalization.kernel_id", str, physics="The renormalization kernel id is one exact public filename stem."),
+    Recommends("self_renormalization", "kernel_parameters", physics="Kernel signature parameters default to stage context and may be explicitly overridden.", default={}),
+    Value("self_renormalization.kernel_parameters", dict, physics="Renormalization kernel parameters are an explicit mapping."),
     Depends("self_renormalization", "mu", physics="Self-renormalization uses an explicit perturbative scale."),
     Depends("self_renormalization", "LambdaQCD_gev", physics="Self-renormalization fitting and remapping share one explicitly authored QCD scale."),
     Recommends("self_renormalization", "svdcut", physics="The original self-renormalization reference fit defaults to a 1e-12 covariance singular-value cut.", default=1e-12),
+    Recommends("self_renormalization", "z_coverage_policy", physics="Target coverage is strict, intersected with zR, or completed only at the long-distance upper end.", default="extrapolate"),
     Depends("self_renormalization.fit", "d", physics="The reference fit uses one explicit finite logarithmic coefficient."),
     Depends("self_renormalization.apply", "d", physics="Application remaps one explicit finite logarithmic coefficient."),
     Depends("self_renormalization.apply", "m0_gev", physics="Application remaps the fitted residual mass."),
     Value("self_renormalization.mu", (int, float), physics="The scale is finite and positive.", validator=_positive),
     Value("self_renormalization.LambdaQCD_gev", (int, float), physics="Lambda_QCD is finite and positive.", validator=_positive),
     Value("self_renormalization.svdcut", (int, float), physics="The self-renormalization covariance cutoff is finite and positive.", validator=_positive),
+    Value("self_renormalization.z_coverage_policy", Literal["strict", "intersection", "extrapolate"], physics="The z-coverage policy is strict, intersection, or long-distance extrapolation."),
     Value("self_renormalization.fit.d", (int, float), physics="The fit logarithmic correction is finite.", validator=_finite),
     Value("self_renormalization.apply.d", (int, float), physics="The apply logarithmic correction is finite.", validator=_finite),
     Value("self_renormalization.apply.m0_gev", (int, float), physics="The remapped residual mass is finite.", validator=_finite),
@@ -178,7 +262,7 @@ def check_inputs(context: CheckContext) -> Issue | None:
     return None
 
 
-def check_kernel(context: CheckContext) -> Issue | None:
+def check_kernel(context: CheckContext) -> list[Issue] | Issue | None:
     params = effective_params(context.params)
     if params.get("strategy") != "self_renormalization":
         return None
@@ -188,31 +272,10 @@ def check_kernel(context: CheckContext) -> Issue | None:
     physics = "Self-renormalization formulas are explicit callables selected by filename stem."
     try:
         kernel = load_renormalization_kernel(kernel_id)
-        signature = inspect.signature(kernel)
     except (ImportError, OSError, TypeError, ValueError) as exc:
         return Issue("kernel_id", str(exc), physics)
-    parameters = list(signature.parameters.values())
-    mu = signature.parameters.get("mu")
-    if (
-        not parameters
-        or parameters[0].name != "z_fm"
-        or parameters[0].kind not in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
-        or mu is None
-        or mu.kind is inspect.Parameter.POSITIONAL_ONLY
-        or any(
-            parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
-            for parameter in parameters
-        )
-    ):
-        return Issue("kernel_id", "kernel must explicitly accept positional z_fm and keyword mu", physics)
-    required = [
-        parameter.name
-        for parameter in parameters[1:]
-        if parameter.default is inspect.Parameter.empty and parameter.name != "mu"
-    ]
-    if required:
-        return Issue("kernel_id", f"kernel has unsupported required parameters: {required}", physics)
-    return None
+    values = params.get("kernel_parameters")
+    return _kernel_parameter_issues(kernel, values) if isinstance(values, dict) else None
 
 
 def _check_scale(context: CheckContext) -> Issue | None:

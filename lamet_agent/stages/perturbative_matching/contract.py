@@ -9,11 +9,14 @@ import re
 import types
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
+import numpy as np
+
 from lamet_agent.contract import CheckContext, Depends, Issue, Provides, Recommends, Source, Value, stage_job_rules
 from lamet_agent.kernels import load_kernel
 
 
-_STAGE_KERNEL_ARGUMENTS = frozenset({"x_out", "x_in", "momentum_gev", "scale_gev", "zs_fm"})
+_DATA_KERNEL_ARGUMENTS = frozenset({"x_out", "x_in"})
+_CONTEXT_KERNEL_ARGUMENTS = frozenset({"momentum_gev", "scale_gev", "zs_fm"})
 
 
 def _positive(value: int | float) -> bool:
@@ -56,6 +59,10 @@ def _annotation_accepts(annotation: Any, value: Any) -> bool:
         return any(_annotation_accepts(candidate, value) for candidate in arguments)
     if origin is Literal:
         return any(type(value) is type(choice) and value == choice for choice in arguments)
+    if annotation is np.ndarray:
+        return isinstance(value, list) and all(
+            isinstance(item, (int, float)) and not isinstance(item, bool) for item in value
+        )
     if annotation is str:
         return isinstance(value, str)
     if annotation is bool:
@@ -103,15 +110,15 @@ def _kernel_parameter_issues(kernel: Any, values: dict[str, Any]) -> list[Issue]
             )
         ]
 
-    configurable = {parameter.name: parameter for parameter in parameters[4:] if parameter.name != "zs_fm"}
+    configurable = {parameter.name: parameter for parameter in parameters if parameter.name not in _DATA_KERNEL_ARGUMENTS}
     issues = [
         Issue(
             f"kernel_parameters.{name}",
-            "is supplied by the matching stage and must not be exposed in kernel_parameters",
+            "is supplied by input/output data and cannot be overridden",
             physics,
         )
         for name in values
-        if name in _STAGE_KERNEL_ARGUMENTS
+        if name in _DATA_KERNEL_ARGUMENTS
     ]
     issues.extend(
         Issue(
@@ -120,7 +127,7 @@ def _kernel_parameter_issues(kernel: Any, values: dict[str, Any]) -> list[Issue]
             physics,
         )
         for name in values
-        if name not in configurable and name not in _STAGE_KERNEL_ARGUMENTS
+        if name not in configurable and name not in _DATA_KERNEL_ARGUMENTS
     )
     issues.extend(
         Issue(
@@ -129,7 +136,9 @@ def _kernel_parameter_issues(kernel: Any, values: dict[str, Any]) -> list[Issue]
             physics,
         )
         for name, parameter in configurable.items()
-        if parameter.default is inspect.Parameter.empty and name not in values
+        if parameter.default is inspect.Parameter.empty
+        and name not in _CONTEXT_KERNEL_ARGUMENTS
+        and name not in values
     )
     try:
         annotations = get_type_hints(kernel)

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import gvar as gv
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
@@ -101,6 +102,223 @@ def _reference_extrapolation_fcn(x: dict[str, object], parameters: dict[str, obj
     return prediction.reshape(-1)
 
 
+def _ensemble_groups(data: list[EnsembleData]) -> list[list[int]]:
+    """Group inputs that share one resampling source; absent provenance stays independent."""
+    grouped: dict[tuple[str, object], list[int]] = {}
+    for index, item in enumerate(data):
+        resample_id = item.attrs.get("resample_id")
+        ensemble_id = item.attrs.get("ensemble_id")
+        key = (
+            ("resample_id", resample_id)
+            if resample_id not in {None, ""}
+            else ("ensemble_id", ensemble_id)
+            if ensemble_id not in {None, ""}
+            else ("input", index)
+        )
+        grouped.setdefault(key, []).append(index)
+    return list(grouped.values())
+
+
+def _grouped_centers_and_covariances(
+    values: np.ndarray,
+    data: list[EnsembleData],
+    sample_error_mode: str,
+    *,
+    x_covariance: bool,
+) -> tuple[np.ndarray, list[np.ndarray] | np.ndarray]:
+    """Build centers and covariance with zero correlation between ensemble sources."""
+    n_input, _n_sample, n_x = values.shape
+    centers = np.empty((n_input, n_x), dtype=float)
+    groups = _ensemble_groups(data)
+    if not x_covariance:
+        covariances = [np.zeros((n_input, n_input), dtype=float) for _ in range(n_x)]
+        for group in groups:
+            samples = np.moveaxis(values[group], 1, 0)
+            for x_index in range(n_x):
+                grouped_data = EnsembleData(
+                    None,
+                    data[0].resample,
+                    list(samples[:, :, x_index]),
+                    ["input"],
+                    {"input": list(range(len(group)))},
+                )
+                average = grouped_data.average(sample_error_mode)
+                centers[group, x_index] = np.asarray(gv.mean(average), dtype=float)
+                covariances[x_index][np.ix_(group, group)] = np.asarray(gv.evalcov(average), dtype=float)
+        return centers, covariances
+
+    covariance = np.zeros((n_input * n_x, n_input * n_x), dtype=float)
+    for group in groups:
+        samples = np.moveaxis(values[group], 1, 0).reshape(values.shape[1], -1)
+        grouped_data = EnsembleData(
+            None,
+            data[0].resample,
+            list(samples),
+            ["observation"],
+            {"observation": list(range(samples.shape[1]))},
+        )
+        average = grouped_data.average(sample_error_mode)
+        centers[group] = np.asarray(gv.mean(average), dtype=float).reshape(len(group), n_x)
+        indices = np.concatenate([input_index * n_x + np.arange(n_x) for input_index in group])
+        covariance[np.ix_(indices, indices)] = np.asarray(gv.evalcov(average), dtype=float)
+    return centers, covariance
+
+
+def _regulated_inverse(matrix: np.ndarray, *, cutoff: float = 1e-12) -> tuple[np.ndarray, float]:
+    """Return a symmetric regulated inverse and log determinant."""
+    matrix = np.asarray(matrix, dtype=float)
+    eigenvalues, eigenvectors = np.linalg.eigh(0.5 * (matrix + matrix.T))
+    maximum = float(np.max(eigenvalues))
+    if not math.isfinite(maximum) or maximum <= 0:
+        raise ValueError("fit covariance/information matrix has no positive scale")
+    regulated = np.maximum(eigenvalues, maximum * cutoff)
+    inverse = (eigenvectors / regulated[None, :]) @ eigenvectors.T
+    return inverse, float(np.sum(np.log(regulated)))
+
+
+def _prepare_block_system(
+    design: np.ndarray,
+    covariances: list[np.ndarray],
+    terms: list[str],
+    x_dependence: dict[str, bool],
+    local_means: np.ndarray,
+    local_sdevs: np.ndarray,
+    global_means: np.ndarray,
+    global_sdevs: np.ndarray,
+) -> dict[str, object]:
+    """Factor the block-arrow posterior information matrix."""
+    local_terms = [term for term in terms if x_dependence[term]]
+    global_terms = [term for term in terms if not x_dependence[term]]
+    local_design = np.column_stack(
+        [np.ones(design.shape[0]), *[design[:, terms.index(term)] for term in local_terms]]
+    )
+    global_design = (
+        np.column_stack([design[:, terms.index(term)] for term in global_terms])
+        if global_terms
+        else np.empty((design.shape[0], 0), dtype=float)
+    )
+    global_precision = 1.0 / global_sdevs**2 if global_terms else np.empty(0, dtype=float)
+    global_information = np.diag(global_precision)
+    local_inverses = []
+    local_couplings = []
+    local_information_logdet = 0.0
+    covariance_logdet = 0.0
+    weights = []
+    for x_index, covariance in enumerate(covariances):
+        weight, covariance_logdet_x = _regulated_inverse(covariance)
+        weights.append(weight)
+        covariance_logdet += covariance_logdet_x
+        local_precision = 1.0 / local_sdevs[x_index] ** 2
+        information = local_design.T @ weight @ local_design + np.diag(local_precision)
+        information_inverse, information_logdet = _regulated_inverse(information)
+        coupling = local_design.T @ weight @ global_design
+        local_inverses.append(information_inverse)
+        local_couplings.append(coupling)
+        local_information_logdet += information_logdet
+        global_information += global_design.T @ weight @ global_design
+    schur = global_information.copy()
+    for inverse, coupling in zip(local_inverses, local_couplings):
+        schur -= coupling.T @ inverse @ coupling
+    if global_terms:
+        global_inverse, schur_logdet = _regulated_inverse(schur)
+    else:
+        global_inverse = np.empty((0, 0), dtype=float)
+        schur_logdet = 0.0
+    return {
+        "local_terms": local_terms,
+        "global_terms": global_terms,
+        "local_design": local_design,
+        "global_design": global_design,
+        "weights": weights,
+        "local_inverses": local_inverses,
+        "couplings": local_couplings,
+        "global_inverse": global_inverse,
+        "local_means": local_means,
+        "local_sdevs": local_sdevs,
+        "global_means": global_means,
+        "global_sdevs": global_sdevs,
+        "logdet_information": local_information_logdet + schur_logdet,
+        "logdet_covariance": covariance_logdet,
+    }
+
+
+def _solve_block_system(system: dict[str, object], observations: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Solve one center or resample RHS using a prepared block-arrow system."""
+    local_design = system["local_design"]
+    global_design = system["global_design"]
+    local_means = system["local_means"]
+    local_sdevs = system["local_sdevs"]
+    global_means = system["global_means"]
+    global_sdevs = system["global_sdevs"]
+    local_rhs = []
+    local_preliminary = []
+    global_rhs = global_means / global_sdevs**2 if global_means.size else np.empty(0, dtype=float)
+    for x_index, (weight, inverse, coupling) in enumerate(
+        zip(system["weights"], system["local_inverses"], system["couplings"])
+    ):
+        rhs = local_design.T @ weight @ observations[:, x_index] + local_means[x_index] / local_sdevs[x_index] ** 2
+        preliminary = inverse @ rhs
+        local_rhs.append(rhs)
+        local_preliminary.append(preliminary)
+        global_rhs += global_design.T @ weight @ observations[:, x_index] - coupling.T @ preliminary
+    global_values = system["global_inverse"] @ global_rhs if global_means.size else np.empty(0, dtype=float)
+    local_values = np.asarray(
+        [
+            inverse @ (rhs - coupling @ global_values)
+            for inverse, rhs, coupling in zip(system["local_inverses"], local_rhs, system["couplings"])
+        ]
+    )
+    return local_values, global_values
+
+
+def _block_posterior_sdevs(system: dict[str, object]) -> tuple[np.ndarray, np.ndarray]:
+    """Return marginal posterior deviations for local and global parameters."""
+    global_covariance = system["global_inverse"]
+    local_covariances = []
+    for inverse, coupling in zip(system["local_inverses"], system["couplings"]):
+        bridge = inverse @ coupling
+        local_covariances.append(inverse + bridge @ global_covariance @ bridge.T)
+    local_sdevs = np.sqrt(np.maximum([np.diag(covariance) for covariance in local_covariances], 0.0))
+    global_sdevs = np.sqrt(np.maximum(np.diag(global_covariance), 0.0))
+    return np.asarray(local_sdevs), np.asarray(global_sdevs)
+
+
+def _block_fit_diagnostics(
+    system: dict[str, object],
+    observations: np.ndarray,
+    local_values: np.ndarray,
+    global_values: np.ndarray,
+) -> dict[str, float]:
+    """Compute center Bayesian-fit diagnostics for the block solution."""
+    chi2 = 0.0
+    for x_index, weight in enumerate(system["weights"]):
+        prediction = system["local_design"] @ local_values[x_index] + system["global_design"] @ global_values
+        residual = observations[:, x_index] - prediction
+        chi2 += float(residual @ weight @ residual)
+    chi2 += float(np.sum(((local_values - system["local_means"]) / system["local_sdevs"]) ** 2))
+    if global_values.size:
+        chi2 += float(np.sum(((global_values - system["global_means"]) / system["global_sdevs"]) ** 2))
+    dof = int(observations.size)
+    from scipy.special import gammaincc
+
+    prior_logdet = float(2.0 * np.sum(np.log(system["local_sdevs"])))
+    if global_values.size:
+        prior_logdet += float(2.0 * np.sum(np.log(system["global_sdevs"])))
+    log_gbf = -0.5 * (
+        chi2
+        + dof * math.log(2.0 * math.pi)
+        + float(system["logdet_covariance"])
+        + prior_logdet
+        + float(system["logdet_information"])
+    )
+    return {
+        "chi2": chi2,
+        "dof": float(dof),
+        "Q": float(gammaincc(dof / 2.0, chi2 / 2.0)),
+        "logGBF": log_gbf,
+    }
+
+
 def fit_candidate(
     data: list[EnsembleData],
     terms: list[str],
@@ -108,7 +326,8 @@ def fit_candidate(
     priors: dict[str, float],
     *,
     x_range: tuple[float, float],
-    x_dependence: dict[str, bool] | None = None,
+    x_independent_terms: list[str] | None = None,
+    x_covariance: bool = False,
     pdep_gev: list[float] | None = None,
     posterior_prior_error_scale: float = 3.0,
     workers: int = 1,
@@ -134,9 +353,10 @@ def fit_candidate(
     prior_width = float(priors["sdev"])
     if not math.isfinite(prior_center) or not math.isfinite(prior_width) or prior_width <= 0:
         raise ValueError("candidate prior mean and sdev must be finite with positive sdev")
-    x_dependence = {term: True for term in terms} if x_dependence is None else dict(x_dependence)
-    if set(x_dependence) != set(terms):
-        raise ValueError("x_dependence must contain every selected term")
+    x_independent_terms = [] if x_independent_terms is None else list(x_independent_terms)
+    if len(set(x_independent_terms)) != len(x_independent_terms) or not set(x_independent_terms).issubset(terms):
+        raise ValueError("x_independent_terms must be a unique subset of terms")
+    x_dependence = {term: term not in x_independent_terms for term in terms}
     if not math.isfinite(posterior_prior_error_scale) or posterior_prior_error_scale <= 0:
         raise ValueError("posterior_prior_error_scale must be finite and positive")
     n_sample = min(item.n_sample for item in data)
@@ -151,42 +371,99 @@ def fit_candidate(
         [basis_terms(item.attrs, terms, physical_mass) for item in data],
         dtype=float,
     )
-    flattened = np.moveaxis(values, 1, 0).reshape(n_sample, -1)
-    fit_data = EnsembleData(
-        None,
-        data[0].resample,
-        list(flattened),
-        ["observation"],
-        {"observation": list(range(flattened.shape[1]))},
-    )
     sample_error_modes = {str(item.attrs.get("sample_error_mode", "covariance")) for item in data}
     if len(sample_error_modes) != 1:
         raise ValueError("all extrapolation inputs must share sample_error_mode")
     sample_error_mode = sample_error_modes.pop()
-    covariance = np.asarray(gv.evalcov(fit_data.average(sample_error_mode)), dtype=float)
-    prior = gv.BufferDict()
-    prior["h0"] = gv.gvar(np.full(len(x), prior_center), np.full(len(x), prior_width))
-    for term in terms:
-        prior[term] = (
-            gv.gvar(np.full(len(x), prior_center), np.full(len(x), prior_width))
-            if x_dependence[term]
-            else gv.gvar(prior_center, prior_width)
-        )
-    fit_x = {"design": design, "terms": terms, "x_dependence": x_dependence, "n_x": len(x)}
-    fit = nonlinear_fit(
-        (fit_x, fit_data),
-        _reference_extrapolation_fcn,
-        prior,
-        workers=workers,
-        sample_prior_scale=posterior_prior_error_scale,
-        covariance=covariance,
-        sample_error_mode=sample_error_mode,
-        tolerate_sample_failures=True,
-        _parallel=_parallel,
-        maxit=2000,
-        svdcut=1e-12,
+    centers, covariance = _grouped_centers_and_covariances(
+        values,
+        data,
+        sample_error_mode,
+        x_covariance=x_covariance,
     )
-    fitted_parameters = [parameters or fit.pmean for parameters in fit.samples]
+    if not x_covariance:
+        local_terms = [term for term in terms if x_dependence[term]]
+        global_terms = [term for term in terms if not x_dependence[term]]
+        local_means = np.full((len(x), 1 + len(local_terms)), prior_center, dtype=float)
+        local_sdevs = np.full_like(local_means, prior_width)
+        global_means = np.full(len(global_terms), prior_center, dtype=float)
+        global_sdevs = np.full(len(global_terms), prior_width, dtype=float)
+        center_system = _prepare_block_system(
+            design,
+            covariance,
+            terms,
+            x_dependence,
+            local_means,
+            local_sdevs,
+            global_means,
+            global_sdevs,
+        )
+        center_local, center_global = _solve_block_system(center_system, centers)
+        fit_diagnostics = _block_fit_diagnostics(center_system, centers, center_local, center_global)
+        posterior_local_sdevs, posterior_global_sdevs = _block_posterior_sdevs(center_system)
+        sample_system = _prepare_block_system(
+            design,
+            covariance,
+            terms,
+            x_dependence,
+            center_local,
+            posterior_local_sdevs * posterior_prior_error_scale,
+            center_global,
+            posterior_global_sdevs * posterior_prior_error_scale,
+        )
+
+        def parameter_record(local_values: np.ndarray, global_values: np.ndarray) -> dict[str, object]:
+            record: dict[str, object] = {"h0": local_values[:, 0]}
+            for index, term in enumerate(local_terms, start=1):
+                record[term] = local_values[:, index]
+            for index, term in enumerate(global_terms):
+                record[term] = float(global_values[index])
+            return record
+
+        fitted_parameters = []
+        for sample_index in range(n_sample):
+            sample_local, sample_global = _solve_block_system(sample_system, values[:, sample_index, :])
+            fitted_parameters.append(parameter_record(sample_local, sample_global))
+        n_failed_samples = 0.0
+    else:
+        flattened = np.moveaxis(values, 1, 0).reshape(n_sample, -1)
+        fit_data = EnsembleData(
+            None,
+            data[0].resample,
+            list(flattened),
+            ["observation"],
+            {"observation": list(range(flattened.shape[1]))},
+        )
+        prior = gv.BufferDict()
+        prior["h0"] = gv.gvar(np.full(len(x), prior_center), np.full(len(x), prior_width))
+        for term in terms:
+            prior[term] = (
+                gv.gvar(np.full(len(x), prior_center), np.full(len(x), prior_width))
+                if x_dependence[term]
+                else gv.gvar(prior_center, prior_width)
+            )
+        fit_x = {"design": design, "terms": terms, "x_dependence": x_dependence, "n_x": len(x)}
+        fit = nonlinear_fit(
+            (fit_x, fit_data),
+            _reference_extrapolation_fcn,
+            prior,
+            workers=workers,
+            sample_prior_scale=posterior_prior_error_scale,
+            covariance=covariance,
+            sample_error_mode=sample_error_mode,
+            tolerate_sample_failures=True,
+            _parallel=_parallel,
+            maxit=2000,
+            svdcut=1e-12,
+        )
+        fitted_parameters = [parameters or fit.pmean for parameters in fit.samples]
+        fit_diagnostics = {
+            "chi2": float(fit.chi2),
+            "dof": float(fit.dof),
+            "Q": float(fit.Q),
+            "logGBF": float(fit.logGBF),
+        }
+        n_failed_samples = float(fit.n_failed_samples)
     samples = [np.asarray(parameters["h0"], dtype=float) for parameters in fitted_parameters]
     parameter_mean: dict[str, object] = {}
     parameter_sdev: dict[str, object] = {}
@@ -222,7 +499,9 @@ def fit_candidate(
         {
             "ensemble": None,
             "extrapolation_terms": ",".join(terms),
-            "x_dependence": json.dumps(x_dependence, sort_keys=True),
+            "x_independent_terms": json.dumps(x_independent_terms),
+            "x_dependent_terms": json.dumps([term for term in terms if term not in x_independent_terms]),
+            "x_covariance": int(bool(x_covariance)),
             "physical_point": "continuum,infinite_momentum",
             "sample_error_mode": sample_error_mode,
             "posterior_prior_error_scale": float(posterior_prior_error_scale),
@@ -244,12 +523,14 @@ def fit_candidate(
     )
     parameter_count = len(x) + sum(len(x) if x_dependence[term] else 1 for term in terms)
     return result, {
-        "chi2": float(fit.chi2),
-        "dof": float(fit.dof),
-        "chi2_dof": float(fit.chi2 / fit.dof),
-        "Q": float(fit.Q),
-        "aic": float(fit.chi2 + 2.0 * parameter_count),
-        "n_failed_samples": float(fit.n_failed_samples),
+        "chi2": float(fit_diagnostics["chi2"]),
+        "dof": float(fit_diagnostics["dof"]),
+        "chi2_dof": float(fit_diagnostics["chi2"] / fit_diagnostics["dof"]),
+        "Q": float(fit_diagnostics["Q"]),
+        "logGBF": float(fit_diagnostics["logGBF"]),
+        "aic": float(fit_diagnostics["chi2"] + 2.0 * parameter_count),
+        "n_failed_samples": n_failed_samples,
+        "x_covariance": bool(x_covariance),
         "parameter_mean": parameter_mean,
         "parameter_sdev": parameter_sdev,
         "momentum_dependence": momentum_dependence,

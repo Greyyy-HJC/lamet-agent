@@ -104,11 +104,19 @@ class Manifest:
     document: dict[str, Any]
     jobs: tuple[Job, ...] = field(default=(), repr=False)
     _systematics_expanded: bool = field(default=False, repr=False)
+    _has_systematics: bool | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.path = Path(self.path).expanduser().resolve()
         if not isinstance(self.document, dict):
             raise TypeError("Manifest document must be a JSON object")
+        if self._has_systematics is None:
+            self._has_systematics = "systematics" in self.document
+
+    @property
+    def has_systematics(self) -> bool:
+        """Return whether the authored manifest declared systematics."""
+        return bool(self._has_systematics)
 
     @property
     def metadata(self) -> Mapping[str, Any]:
@@ -158,7 +166,12 @@ class Manifest:
         declarations = document.get("systematics")
         stages = document.get("stages")
         if declarations is None:
-            return Manifest(self.path, document, _systematics_expanded=True)
+            return Manifest(
+                self.path,
+                document,
+                _systematics_expanded=True,
+                _has_systematics=self.has_systematics,
+            )
         if not isinstance(declarations, Mapping):
             raise TypeError("must be an object keyed by stage id")
         if not isinstance(stages, Mapping):
@@ -179,7 +192,12 @@ class Manifest:
             except KeyError as exc:
                 raise ValueError(f"{stage_id} systematics expansion requires missing field {exc}") from exc
         document.pop("systematics")
-        return Manifest(self.path, document, _systematics_expanded=True)
+        return Manifest(
+            self.path,
+            document,
+            _systematics_expanded=True,
+            _has_systematics=self.has_systematics,
+        )
 
     def _resolved_jobs(self, *, stage_root: str | Path | None = None) -> list[Job]:
         """Return jobs in authored order with exact artifact paths."""
@@ -225,7 +243,7 @@ _BASE_RULES: tuple[Depends | Provides | Recommends | Value, ...] = (
     Value("metadata.target_observable", Literal["pdf", "da"], physics="The migrated workflow targets a PDF or DA."),
     Value("metadata.parton", Literal["quark"], physics="The migrated examples use quark distributions."),
     Value("metadata.resample_mode", Literal["jackknife", "bootstrap"], physics="The run-level sample plan is jackknife or bootstrap."),
-    Value("metadata.sample_error_mode", Literal["covariance", "mean", "median"], physics="Sample statistics use covariance, mean-diagonal, or median-percentile errors."),
+    Value("metadata.sample_error_mode", Literal["covariance", "variance", "one_sigma"], physics="Sample statistics use covariance, variance-only mean, or median one-sigma errors."),
     Value("metadata.parameter_recommendation_retries", int, physics="The per-job parameter recommendation retry limit is nonnegative.", validator=_nonnegative),
     Value("metadata.bootstrap.samples", int, physics="Bootstrap sample count is positive.", validator=_positive),
     Value("metadata.bin_size", int, physics="Configuration bin size is positive.", validator=_positive),
@@ -241,12 +259,12 @@ def _check_manifest_relations(context: CheckContext) -> list[Issue]:
     if not isinstance(metadata, Mapping):
         return issues
     mode = metadata.get("resample_mode")
-    if metadata.get("sample_error_mode") == "median" and mode != "bootstrap":
+    if metadata.get("sample_error_mode") == "one_sigma" and mode != "bootstrap":
         issues.append(
             _issue(
                 "metadata.sample_error_mode",
-                "median errors require resample_mode='bootstrap'",
-                "Median-percentile errors require bootstrap samples.",
+                "one_sigma errors require resample_mode='bootstrap'",
+                "Median one-sigma errors require bootstrap samples.",
             )
         )
     stages = context.manifest.get("stages")

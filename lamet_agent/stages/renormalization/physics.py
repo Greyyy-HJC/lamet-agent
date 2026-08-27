@@ -7,7 +7,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import gvar as gv
 import numpy as np
@@ -187,15 +187,26 @@ def _perturbative_log(a_fm: float, *, lambda_qcd_gev: float, scale_gev: float, d
     return (3.0 * c_f / b0) * math.log(log_inverse / log_scale_ratio) + math.log(1.0 + float(d) / log_a_lambda)
 
 
-def zmsbar_log(kernel: Callable[..., Any], z_fm: np.ndarray, *, scale_gev: float) -> np.ndarray:
+def zmsbar_log(
+    kernel: Callable[..., Any],
+    z_fm: np.ndarray,
+    *,
+    scale_gev: float,
+    kernel_parameters: Mapping[str, Any] | None = None,
+) -> np.ndarray:
     """Evaluate one selected coordinate-space conversion kernel as ``log Z_MSbar``."""
     if not math.isfinite(float(scale_gev)) or float(scale_gev) <= 0:
         raise ValueError("scale_gev must be finite and positive")
     z = np.asarray(z_fm, dtype=float)
     nonzero = np.abs(z) > 1e-14
     conversion = np.ones_like(z)
-    evaluated = np.asarray(kernel(z[nonzero], mu=float(scale_gev)), dtype=float)
-    if evaluated.shape != z[nonzero].shape or np.any(~np.isfinite(evaluated)) or np.any(evaluated <= 0):
+    arguments = {"z_fm": z[nonzero], "mu": float(scale_gev), **dict(kernel_parameters or {})}
+    evaluated = np.asarray(kernel(**arguments), dtype=float)
+    try:
+        evaluated = np.broadcast_to(evaluated, z[nonzero].shape)
+    except ValueError as exc:
+        raise ValueError("renormalization kernel output does not match the physical z grid") from exc
+    if np.any(~np.isfinite(evaluated)) or np.any(evaluated <= 0):
         raise ValueError("renormalization kernel returned an invalid nonpositive conversion factor")
     conversion[nonzero] = evaluated
     return np.log(conversion)
@@ -247,6 +258,7 @@ def _fit_factor_result(
     zms_kernel: Callable[..., Any],
     kernel_id: str,
     svdcut: float,
+    kernel_parameters: Mapping[str, Any] | None = None,
     short_distance_min_fm: float = 0.0,
     lattice_spacing_range_fm: tuple[float, float] | None = None,
     sample_error_mode: str = "covariance",
@@ -342,7 +354,12 @@ def _fit_factor_result(
         ["z"],
         {"z": short_z.tolist()},
     )
-    zms = zmsbar_log(zms_kernel, short_z, scale_gev=scale_gev)
+    zms = zmsbar_log(
+        zms_kernel,
+        short_z,
+        scale_gev=scale_gev,
+        kernel_parameters=kernel_parameters,
+    )
     m0_prior = gv.BufferDict()
     m0_prior["m0"] = gv.gvar(0.0, 20.0)
     m0_prior["b"] = gv.gvar(0.0, 100.0)
@@ -407,6 +424,7 @@ def _fit_factor_result(
             "n_f": int(n_f),
             "scale_gev": float(scale_gev),
             "kernel_id": kernel_id,
+            "kernel_parameters": json.dumps(dict(kernel_parameters or {}), sort_keys=True),
             "m0_gev": float(gv.mean(m0)),
             "m0_convention": "reference_inverse_fm",
             "units": '{"values":"dimensionless","a":"fm","z":"fm"}',

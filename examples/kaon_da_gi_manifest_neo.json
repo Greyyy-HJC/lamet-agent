@@ -9,7 +9,7 @@
     "parton": "quark",
     "resample_mode": "bootstrap",
     "bin_size": 10,
-    "sample_error_mode": "median",
+    "sample_error_mode": "one_sigma",
     "samples": 100
   },
   "stages": {
@@ -649,8 +649,10 @@
     },
     "extrapolation": {
       "defaults": {
-        "required_terms": [
-          "a",
+        "x_independent_terms": [
+          "a"
+        ],
+        "x_dependent_terms": [
           "inv_p2",
           "inv_p4",
           "ap2"
@@ -677,12 +679,6 @@
               "mt_a09m130_pz10",
               "mt_a12m130_pz10"
             ]
-          },
-          "x_dependence": {
-            "a": false,
-            "inv_p2": true,
-            "inv_p4": true,
-            "ap2": true
           }
         }
       ]

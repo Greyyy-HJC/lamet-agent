@@ -9,6 +9,7 @@ from typing import Any, Literal, Mapping
 
 import gvar as gv
 import numpy as np
+from tqdm import tqdm
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
@@ -925,6 +926,7 @@ def scan_fourier_transform(
     psi1_flavor_class: str = "heavy",
     psi2_flavor_class: str = "heavy",
     workers: int = 1,
+    show_progress: bool = False,
     _parallel: _ParallelPool | None = None,
 ) -> dict[str, Any]:
     """Fit, transform, and select one complete native Fourier candidate scan."""
@@ -1092,7 +1094,8 @@ def scan_fourier_transform(
     parallel = _parallel or _ParallelPool(min(workers, data.n_sample))
     try:
         candidates = []
-        for order, prior_width in fit_model_specs:
+        model_specs = tqdm(fit_model_specs, desc="Fourier models", unit="model") if show_progress else fit_model_specs
+        for order, prior_width in model_specs:
             means, widths = _scan_tail_priors(
                 model_id=selected_model_id,
                 order=order,

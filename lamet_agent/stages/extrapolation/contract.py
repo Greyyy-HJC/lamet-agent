@@ -51,10 +51,6 @@ def _valid_priors(value: dict[object, object]) -> bool:
     )
 
 
-def _boolean_values(value: dict[object, object]) -> bool:
-    return all(isinstance(item, bool) for item in value.values())
-
-
 def _valid_systematics_groups(value: dict[object, object]) -> bool:
     return (
         set(value) == {"main", "zs", "lambda_extrapolation", "lamet_scale", "other_extrapolations"}
@@ -75,21 +71,19 @@ PARAM_RULES = (
     Value("operation", Literal["fit", "systematics_budget"], physics="The extrapolation operation is controlled."),
     Provides("", "fit", "operation", physics="Fit jobs own continuum-model and diagnostic parameters."),
     Provides("", "systematics_budget", "operation", physics="Budget jobs own grouping and combination parameters."),
-    Depends("fit", "required_terms", physics="Required correction terms are always included."),
-    Recommends("fit", "allowed_terms", physics="The reference examples add no optional terms beyond their exact authored model.", default=[]),
-    Recommends("fit", "max_terms", physics="The reference central model contains four correction terms.", default=4),
+    Recommends("fit", "x_independent_terms", physics="These correction coefficients are shared across the complete x grid.", default=[]),
+    Recommends("fit", "x_dependent_terms", physics="These correction coefficients are fitted independently at every x.", default=[]),
     Recommends("fit", "priors", physics="All initial linear coefficients share the reference zero-centered width-three prior unless explicitly overridden.", default={"mean": 0.0, "sdev": 3.0}),
-    Depends("fit", "x_dependence", physics="Each correction coefficient declares whether it varies with x."),
+    Recommends("fit", "x_covariance", physics="Cross-x covariance may be retained within each ensemble source.", default=False),
     Depends("fit", "pdep_gev", physics="Requested finite momenta are used only for the post-fit momentum-dependence diagnostic."),
     Recommends("fit", "physical_pion_mass_gev", physics="Pion-mass terms use the shared isospin-limit physical point.", default=0.135),
     Depends("fit", "posterior_prior_error_scale", physics="Per-resample fits use an explicitly authored widening of the sample-average posterior."),
-    List("fit.required_terms", "required", physics="Required terms are a list."),
-    List("fit.allowed_terms", "allowed", physics="Allowed terms are a list."),
-    Value("fit.required_terms.required", Literal["a", "a2", "a4", "ap2", "ap4", "exp_mpi_L", "exp_sqrt2_mpi_L", "mpi2", "mpi4_log_mpi2", "inv_p2", "inv_p4"], physics="Required correction term ids are supported basis terms."),
-    Value("fit.allowed_terms.allowed", Literal["a", "a2", "a4", "ap2", "ap4", "exp_mpi_L", "exp_sqrt2_mpi_L", "mpi2", "mpi4_log_mpi2", "inv_p2", "inv_p4"], physics="Allowed correction term ids are supported basis terms."),
-    Value("fit.max_terms", int, physics="Maximum term count is positive.", validator=_positive),
+    List("fit.x_independent_terms", "term", physics="Shared correction terms preserve authored order."),
+    List("fit.x_dependent_terms", "term", physics="x-dependent correction terms preserve authored order."),
+    Value("fit.x_independent_terms.term", Literal["a", "a2", "a4", "ap2", "ap4", "exp_mpi_L", "exp_sqrt2_mpi_L", "mpi2", "mpi4_log_mpi2", "inv_p2", "inv_p4"], physics="Shared correction term ids are supported basis terms."),
+    Value("fit.x_dependent_terms.term", Literal["a", "a2", "a4", "ap2", "ap4", "exp_mpi_L", "exp_sqrt2_mpi_L", "mpi2", "mpi4_log_mpi2", "inv_p2", "inv_p4"], physics="x-dependent correction term ids are supported basis terms."),
     Value("fit.priors", dict, physics="The shared initial prior has one finite mean and positive sdev.", validator=_valid_priors),
-    Value("fit.x_dependence", dict, physics="Coefficient x-dependence maps term ids to booleans.", validator=_boolean_values),
+    Value("fit.x_covariance", bool, physics="Cross-x covariance is retained only when explicitly enabled."),
     List("fit.pdep_gev", "momentum", physics="Momentum-dependence diagnostics use a nonempty authored list.", validator=_nonempty),
     Value("fit.pdep_gev.momentum", (int, float), physics="Every diagnostic momentum is finite and positive.", validator=_positive),
     Value("fit.physical_pion_mass_gev", (int, float), physics="Physical pion mass is finite and positive.", validator=_positive),
@@ -129,19 +123,14 @@ def check_extrapolation_relations(context: CheckContext) -> Issue | None:
             )
         return None
     fit = context.params
-    required = fit.get("required_terms")
-    allowed = fit.get("allowed_terms")
-    maximum = fit.get("max_terms")
-    if len(set(required)) != len(required) or len(set(allowed)) != len(allowed):
-        return Issue("required_terms", "required_terms and allowed_terms must not contain duplicates", physics)
-    if set(required) & set(allowed):
-        return Issue("allowed_terms", "must be disjoint from required_terms", physics)
-    if maximum < len(required) or maximum > len(set(required) | set(allowed)):
-        return Issue("max_terms", "must lie between required term count and total authored term count", physics)
-    expected = set(required) | set(allowed)
-    x_dependence = fit.get("x_dependence")
-    if set(x_dependence) != expected:
-        return Issue("x_dependence", "must contain exactly one boolean for every required or allowed term", physics)
+    independent = fit.get("x_independent_terms")
+    dependent = fit.get("x_dependent_terms")
+    if len(set(independent)) != len(independent) or len(set(dependent)) != len(dependent):
+        return Issue("x_independent_terms", "term lists must not contain duplicates", physics)
+    if set(independent) & set(dependent):
+        return Issue("x_dependent_terms", "must be disjoint from x_independent_terms", physics)
+    if not independent and not dependent:
+        return Issue("x_dependent_terms", "at least one extrapolation term is required", physics)
     pdep = fit.get("pdep_gev")
     if len(set(float(value) for value in pdep)) != len(pdep):
         return Issue(

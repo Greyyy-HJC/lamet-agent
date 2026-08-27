@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 import gvar as gv
 import numpy as np
+from tqdm import tqdm
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.parallel import FitNumericalError, nonlinear_fit
@@ -342,6 +343,7 @@ def fit_matrix_element_samples(
     workers: int,
     tune_z: int | float | None = None,
     fit_samples: bool = True,
+    show_progress: bool = False,
     _parallel: _ParallelPool | None = None,
 ) -> tuple[EnsembleData | None, dict[str, Any]]:
     """Fit one tuning point or apply one model to all z values and samples."""
@@ -500,7 +502,10 @@ def fit_matrix_element_samples(
     sample_failures = []
     parallel = _parallel or _ParallelPool(min(workers, three_point.n_sample))
     try:
-        for z_index in z_indices:
+        fit_indices = (
+            tqdm(z_indices, desc="Matrix-element fits", unit="z") if fit_samples and show_progress else z_indices
+        )
+        for z_index in fit_indices:
             z_value = z_values[z_index]
             pieces = []
             x: dict[str, Any] = {
@@ -852,6 +857,7 @@ def matrix_element_samples(
     workers: int = 1,
     tune_z: int | float | None = None,
     fit_samples: bool = True,
+    show_progress: bool = False,
     n_states: int = 1,
     prior_width: float = 1.0,
     _parallel: _ParallelPool | None = None,
@@ -922,7 +928,8 @@ def matrix_element_samples(
 
         parallel = _parallel or _ParallelPool(min(workers, source.n_sample))
         try:
-            for z_index in z_indices:
+            fit_indices = tqdm(z_indices, desc="qDA fits", unit="z") if fit_samples and show_progress else z_indices
+            for z_index in fit_indices:
                 component_values = ratios[:, :, z_index]
                 plot_component_values = plot_ratios[:, :, z_index]
                 real_samples = EnsembleData(

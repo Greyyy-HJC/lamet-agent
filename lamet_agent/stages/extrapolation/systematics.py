@@ -9,31 +9,16 @@ from typing import Any
 
 _MODEL_VARIANTS = {
     "a_sym": {
-        "required_terms": ["a", "a2", "inv_p2", "inv_p4", "ap2"],
-        "max_terms": 5,
-        "x_dependence": {
-            "a": False,
-            "a2": False,
-            "inv_p2": True,
-            "inv_p4": True,
-            "ap2": True,
-        },
+        "x_independent_terms": ["a", "a2"],
+        "x_dependent_terms": ["inv_p2", "inv_p4", "ap2"],
     },
     "p_sym": {
-        "required_terms": ["a", "inv_p2", "ap2"],
-        "max_terms": 3,
-        "x_dependence": {"a": False, "inv_p2": True, "ap2": True},
+        "x_independent_terms": ["a"],
+        "x_dependent_terms": ["inv_p2", "ap2"],
     },
     "ap_sym": {
-        "required_terms": ["a", "inv_p2", "inv_p4", "ap2", "ap4"],
-        "max_terms": 5,
-        "x_dependence": {
-            "a": False,
-            "inv_p2": True,
-            "inv_p4": True,
-            "ap2": True,
-            "ap4": True,
-        },
+        "x_independent_terms": ["a"],
+        "x_dependent_terms": ["inv_p2", "inv_p4", "ap2", "ap4"],
     },
 }
 

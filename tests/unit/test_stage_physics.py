@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import io
+import json
 from pathlib import Path
 import tokenize
 
@@ -324,7 +325,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
     original = tool.configure_plot
     monkeypatch.setattr(tool, "configure_plot", lambda **kwargs: labels.append(kwargs) or original(**kwargs))
 
-    attrs = {"observable": "matrix_element", "sample_error_mode": "median"}
+    attrs = {"observable": "matrix_element", "sample_error_mode": "one_sigma"}
     low = EnsembleData(
         None,
         "bootstrap",
@@ -394,7 +395,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
         "pt2_windows": [{"tmin": 2, "tmax": 5}, {"tmin": 3, "tmax": 6}],
     }
     context = ToolContext(
-        {"metadata": {"workers": 1, "sample_error_mode": "median"}},
+        {"metadata": {"workers": 1, "sample_error_mode": "one_sigma"}},
         tmp_path / "manifest.json",
         "correlator_analysis",
         "qda",
@@ -1152,7 +1153,7 @@ def test_correlated_spectrum_fit_uses_authored_priors_and_sample_covariance() ->
     assert 0.0 <= diagnostics["Q"] <= 1.0
 
 
-def test_extrapolation_uses_one_joint_lsqfit() -> None:
+def test_extrapolation_supports_block_and_full_x_covariance() -> None:
     rng = np.random.default_rng(81)
     x = [-0.2, 0.2]
     physical = np.asarray([0.8, 1.1])
@@ -1187,6 +1188,44 @@ def test_extrapolation_uses_one_joint_lsqfit() -> None:
     assert set(diagnostics["parameter_sdev"]) == {"h0", "a"}
     assert set(diagnostics["momentum_dependence"]) == {"1.5", "2"}
     np.testing.assert_allclose(diagnostics["momentum_dependence"]["1.5"]["mean"], diagnostics["parameter_mean"]["h0"])
+    full_result, full_diagnostics = fit_candidate(
+        data,
+        ["a"],
+        0.135,
+        {"mean": 0.0, "sdev": 1.0},
+        x_range=(-0.2, 0.2),
+        x_covariance=True,
+    )
+    assert full_result.attrs["x_covariance"] == 1
+    assert np.allclose(np.asarray(full_result.mean), physical, atol=0.05)
+    assert full_diagnostics["x_covariance"] is True
+
+
+def test_extrapolation_covariance_is_blocked_by_ensemble_source() -> None:
+    from lamet_agent.stages.extrapolation.physics import _grouped_centers_and_covariances
+
+    base = np.arange(12.0).reshape(6, 2)
+    values = np.stack([base, 2.0 * base, 3.0 * base, 4.0 * base])
+    data = [
+        EnsembleData(
+            None,
+            "bootstrap",
+            list(item),
+            ["x"],
+            {"x": [0.0, 1.0]},
+            attrs={"resample_id": "A" if index < 2 else "B"},
+        )
+        for index, item in enumerate(values)
+    ]
+
+    _centers, per_x = _grouped_centers_and_covariances(values, data, "covariance", x_covariance=False)
+    assert per_x[0][0, 1] != 0.0
+    assert per_x[0][2, 3] != 0.0
+    assert np.allclose(per_x[0][:2, 2:], 0.0)
+    _centers, full = _grouped_centers_and_covariances(values, data, "covariance", x_covariance=True)
+    assert full[0, 2] != 0.0
+    assert full[4, 6] != 0.0
+    assert np.allclose(full[:4, 4:], 0.0)
 
 
 def test_extrapolation_comparison_requires_the_single_reference_candidate() -> None:
@@ -1289,6 +1328,26 @@ def test_explicit_zmsbar_kernels_preserve_pdf_and_da_finite_terms() -> None:
     assert np.all(da > pdf)
     with pytest.raises(ValueError, match="not available"):
         load_renormalization_kernel("missing_renormalization_formula")
+
+
+def test_renormalization_kernel_mu_override_warns_and_replaces_context() -> None:
+    from lamet_agent.stages.renormalization.parameters import authored_kernel_parameters
+    from lamet_agent.stages.renormalization.physics import zmsbar_log
+
+    seen = {}
+
+    def kernel(z_fm: np.ndarray | float, mu: float = 2.0):
+        seen.update({"z_fm": np.asarray(z_fm), "mu": mu})
+        return np.ones_like(np.asarray(z_fm), dtype=float)
+
+    params = {"strategy": "self_renormalization", "kernel_parameters": {"mu": 3.0}}
+    with pytest.warns(RuntimeWarning, match="overrides stage context"):
+        overrides = authored_kernel_parameters(params)
+    result = zmsbar_log(kernel, np.asarray([0.1, 0.2]), scale_gev=2.0, kernel_parameters=overrides)
+
+    assert seen["mu"] == 3.0
+    np.testing.assert_allclose(seen["z_fm"], [0.1, 0.2])
+    np.testing.assert_allclose(result, 0.0)
 
 
 def test_nla_tail_fit_recovers_a_complex_toy() -> None:
@@ -1702,8 +1761,8 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
     )
 
     def selection_kernel(x_out, x_in, *, momentum_gev, scale_gev):
-        assert momentum_gev == 1.722
-        assert scale_gev == 2.0
+        assert momentum_gev == 2.5
+        assert scale_gev == 3.0
         assert list(x_out) == [-0.5, 0.5]
         return np.asarray([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 
@@ -1712,7 +1771,7 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
         "scheme": "ratio",
         "mu": 2.0,
         "lc_x_ls": [-0.5, 0.5],
-        "kernel_parameters": {},
+        "kernel_parameters": {"momentum_gev": 2.5, "scale_gev": 3.0},
     }
     context = ToolContext(
         {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
@@ -1730,7 +1789,8 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
         tmp_path,
         np.random.default_rng(1),
     )
-    observation = run(context)
+    with pytest.warns(RuntimeWarning, match="overrides stage context"):
+        observation = run(context)
     assert (tmp_path / "plots" / "result.pdf").is_file()
     assert (tmp_path / "plots" / "result.svg").is_file()
     assert "plots/result.pdf" in context.summary["artifacts"]
@@ -1784,9 +1844,105 @@ def test_external_renormalization_terminal_writes_publication_artifacts(tmp_path
     assert np.allclose(context.output.values, [[1.0, 2.0], [1.0, 2.0]])
 
 
-def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_path) -> None:
+def _self_coverage_context(tmp_path, *, policy: str, scheme: str = "msbar") -> ToolContext:
+    factor = EnsembleData(
+        None,
+        "bootstrap",
+        [np.asarray([[2.0, 2.5, 3.0, 4.0]]), np.asarray([[2.0, 2.5, 3.0, 4.0]])],
+        ["a", "z"],
+        {"a": [0.1], "z": [0.05, 0.1, 0.15, 0.2]},
+        attrs={"coord_unit": "fm", "d": 0.0, "m0_gev": 0.0, "k": 0.65, "n_f": 3, "scale_gev": 2.0},
+    )
+    target = EnsembleData(
+        None,
+        "bootstrap",
+        [np.asarray([1.0, 2.0, 4.0, 8.0]), np.asarray([1.0, 2.0, 4.0, 8.0])],
+        ["z"],
+        {"z": [0.0, 0.1, 0.2, 0.3]},
+        attrs={"coord_unit": "fm", "lattice_spacing_fm": 0.1},
+    )
+    inputs = {"target": target, "zR": factor}
+    if scheme == "hybrid":
+        inputs["denominator"] = EnsembleData(
+            None,
+            "bootstrap",
+            [np.full(4, 2.0), np.full(4, 2.0)],
+            ["z"],
+            {"z": [0.0, 0.1, 0.2, 0.3]},
+            attrs={"coord_unit": "fm", "lattice_spacing_fm": 0.1},
+        )
+    params = {
+        "type": "apply",
+        "scheme": scheme,
+        "strategy": "self_renormalization",
+        "kernel_id": "z_msbar_da_nlo",
+        "normalization": False,
+        "mu": 2.0,
+        "LambdaQCD_gev": 0.1,
+        "d": 0.0,
+        "m0_gev": 0.0,
+        "z_coverage_policy": policy,
+    }
+    if scheme == "hybrid":
+        params["zs_fm"] = 0.1
+    return ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "renormalization",
+        "apply",
+        params,
+        inputs,
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+
+def test_self_renormalization_strict_rejects_uncovered_target_z(tmp_path) -> None:
     from lamet_agent.stages.renormalization._apply import run
     from lamet_agent.stages.renormalization._inspection import run as inspect
+
+    context = _self_coverage_context(tmp_path, policy="strict")
+    inspect(context)
+    with pytest.raises(ValueError, match="outside the fitted zR range"):
+        run(context)
+
+
+@pytest.mark.parametrize("scheme", ["msbar", "hybrid"])
+def test_self_renormalization_intersection_trims_the_output_grid(tmp_path, scheme) -> None:
+    from lamet_agent.stages.renormalization._apply import run
+    from lamet_agent.stages.renormalization._inspection import run as inspect
+
+    context = _self_coverage_context(tmp_path, policy="intersection", scheme=scheme)
+    inspect(context)
+    run(context)
+
+    assert context.output.coords["z"] == [0.0, 0.1, 0.2]
+    assert context.output.attrs["z_coverage_policy"] == "intersection"
+    assert context.output.attrs["n_z_dropped"] == 1
+    assert context.summary["diagnostics"]["n_z_coverage_dropped"] == 1
+    assert context.summary["diagnostics"]["n_z_extrapolated"] == 0
+
+
+def test_hybrid_self_renormalization_extrapolates_the_completed_factor(tmp_path) -> None:
+    from lamet_agent.stages.renormalization._apply import run
+    from lamet_agent.stages.renormalization._inspection import run as inspect
+
+    context = _self_coverage_context(tmp_path, policy="extrapolate", scheme="hybrid")
+    inspect(context)
+    run(context)
+
+    assert context.output.coords["z"] == [0.0, 0.1, 0.2, 0.3]
+    assert np.all(np.isfinite(context.output.values))
+    assert context.summary["diagnostics"]["n_z_extrapolated"] == 1
+
+
+def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_path) -> None:
+    from lamet_agent.kernels import load_renormalization_kernel
+    from lamet_agent.stages.renormalization._apply import run
+    from lamet_agent.stages.renormalization._inspection import run as inspect
+    from lamet_agent.stages.renormalization.physics import zmsbar_log
 
     spacing = 0.1
     z_factor = np.array([0.05, 0.1, 0.15, 0.2])
@@ -1798,7 +1954,7 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
     scale = 2.0
     baseline = (
         log_m(z_factor, spacing, k=k, lambda_qcd_gev=lambda_qcd, d=d, n_f=3, scale_gev=scale)
-        + m0 * z_factor / HBAR_C_GEV_FM
+        + m0 * z_factor
     )
     factor_values = np.exp(baseline + 0.4 * z_factor**2 * spacing)
     factor = EnsembleData(
@@ -1827,6 +1983,7 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
         "LambdaQCD_gev": lambda_qcd,
         "d": d,
         "m0_gev": m0,
+        "z_coverage_policy": "extrapolate",
     }
     context = ToolContext(
         {"metadata": {"target_observable": "pdf"}},
@@ -1845,6 +2002,28 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
     assert context.output.coords["z"] == z_target.tolist()
     assert np.all(np.isfinite(context.output.values))
     assert context.output.attrs["kernel_id"] == "z_msbar_da_nlo"
+    assert context.output.attrs["z_coverage_policy"] == "extrapolate"
+    assert context.output.attrs["n_z_extrapolated"] == 1
+    assert context.output.attrs["z_extrapolation_method"] == "quadratic_f1_tail"
+    expected_factor = np.ones_like(z_target)
+    expected_factor[1:] = np.exp(
+        log_m(
+            z_target[1:],
+            spacing,
+            k=k,
+            lambda_qcd_gev=lambda_qcd,
+            d=d,
+            n_f=3,
+            scale_gev=scale,
+        )
+        + m0 * z_target[1:]
+        + 0.4 * z_target[1:] ** 2 * spacing
+    )
+    expected_factor[1:] *= np.exp(
+        zmsbar_log(load_renormalization_kernel("z_msbar_da_nlo"), z_target[1:], scale_gev=scale)
+    )
+    expected = np.tile(1.0 / expected_factor[None, :], (target.n_sample, 1))
+    np.testing.assert_allclose(context.output.values, expected, rtol=1e-10, atol=1e-12)
 
 
 def test_every_migrated_kernel_owns_its_callable_and_formula_document() -> None:
@@ -1925,18 +2104,23 @@ def test_extrapolation_fit_uses_reference_median_covariance(monkeypatch) -> None
             "m_pi": 0.2,
             "momentum_gev": 2.0,
             "resample_id": f"ensemble-{index}",
-            "sample_error_mode": "median",
+            "sample_error_mode": "one_sigma",
         }
         data.append(EnsembleData(None, "bootstrap", samples, ["x"], {"x": x}, attrs=attrs))
     result, diagnostics = fit_candidate(
-        data, ["a"], 0.135, {"mean": 0.0, "sdev": 2.0}, x_range=(-0.2, 0.2), x_dependence={"a": False}
+        data,
+        ["a"],
+        0.135,
+        {"mean": 0.0, "sdev": 2.0},
+        x_range=(-0.2, 0.2),
+        x_independent_terms=["a"],
     )
     assert result.dims == ["x"]
     assert result.resample == "bootstrap"
     assert result.n_sample == 60
     assert np.allclose(result.mean, physical, atol=2e-2)
     assert diagnostics["dof"] > 0
-    assert '"a": false' in result.attrs["x_dependence"]
+    assert json.loads(result.attrs["x_independent_terms"]) == ["a"]
 
 
 def test_stage_fourier_uniform_grid_keeps_full_endpoint_weights() -> None:

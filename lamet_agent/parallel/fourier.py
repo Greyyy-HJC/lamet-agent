@@ -76,15 +76,11 @@ def fourier_transform(
             transformed = parallel.map(
                 _fourier_chunk,
                 tasks,
-                description="Fourier transforms",
-                unit="chunk",
             )
     else:
         transformed = _parallel.map(
             _fourier_chunk,
             tasks,
-            description="Fourier transforms",
-            unit="chunk",
         )
     values = np.concatenate(transformed, axis=0)
     attrs = data.attrs

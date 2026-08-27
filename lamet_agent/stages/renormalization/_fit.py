@@ -9,7 +9,7 @@ from lamet_agent.data import EnsembleData
 from lamet_agent.kernels import load_renormalization_kernel
 from lamet_agent.stages.renormalization._plotting import render_fit_diagnostics
 from lamet_agent.stages.renormalization.physics import _fit_factor_result, normalize_at_origin
-from lamet_agent.stages.renormalization.parameters import effective_params
+from lamet_agent.stages.renormalization.parameters import authored_kernel_parameters, effective_params
 
 
 _REFERENCE_K = 0.6551255749279999
@@ -27,6 +27,7 @@ def run(context: ToolContext) -> dict[str, object]:
     params = effective_params(context.params)
     kernel_id = str(params["kernel_id"])
     zms_kernel = load_renormalization_kernel(kernel_id)
+    kernel_parameters = authored_kernel_parameters(params)
     if isinstance(source, list):
         prepared = [normalize_at_origin(item) if params["normalization"] else item for item in source]
     else:
@@ -59,6 +60,7 @@ def run(context: ToolContext) -> dict[str, object]:
         scale_gev=float(params["mu"]),
         zms_kernel=zms_kernel,
         kernel_id=kernel_id,
+        kernel_parameters=kernel_parameters,
         svdcut=float(params["svdcut"]),
         lattice_spacing_range_fm=(spacings[0], spacings[-1]),
         sample_error_mode=sample_error_mode,
@@ -102,6 +104,7 @@ def run(context: ToolContext) -> dict[str, object]:
         "scale_gev": factor.attrs.get("scale_gev"),
         "LambdaQCD_gev": float(params["LambdaQCD_gev"]),
         "kernel_id": kernel_id,
+        "kernel_parameters": kernel_parameters,
         "formula": factor.attrs["formula"],
         "factor_dims": factor.dims,
     }

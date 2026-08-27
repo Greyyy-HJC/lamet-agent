@@ -15,8 +15,8 @@
 
 ## Renormalization
 
-- [ ] Expose kernel parameters
-- [ ] Restore the original `z_coverage_policy` choices (`strict`, `intersection`, `extrapolate`) before exposing its original `extrapolate` default through `Recommends`; Neo currently implements only extrapolation.
+- [x] Expose kernel parameters
+- [x] Restore the original `z_coverage_policy` choices (`strict`, `intersection`, `extrapolate`) before exposing its original `extrapolate` default through `Recommends`.
   - [ ] Or ask LLM
 
 ## Fourier Transform
@@ -30,7 +30,7 @@
 
 ## Continuum Extrapolation
 
-- [ ] Performance with "variance" and "one_sigma" error mode
+- [x] Performance with "variance" and "one_sigma" error mode
 - [ ] Contract of systematic parameters (Unexpected parameters)
 
 ### Codex Hints

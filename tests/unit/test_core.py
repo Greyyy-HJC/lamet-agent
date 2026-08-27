@@ -15,6 +15,7 @@ from lamet_agent.agent import (
     LlmSession,
     ToolContext,
     _discover_tools,
+    _resolve_progress_mode,
     _resolve_runtime_null_hooks,
     _write_transcript_header,
     create_session,
@@ -246,23 +247,9 @@ def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path)
     assert all(color.lower() in cycle_svg for color in COLOR_CYCLE)
 
 
-def test_plotting_shared_labels_and_formatters() -> None:
-    from lamet_agent.plotting import (
-        COLOR_CYCLE,
-        QUASI_DISTRIBUTION_LABELS,
-        X_LABEL,
-        Z_OVER_A_LABEL,
-        momentum_label,
-        quasi_distribution_label,
-        series_color,
-    )
+def test_plotting_series_colors_wrap() -> None:
+    from lamet_agent.plotting import COLOR_CYCLE, series_color
 
-    assert X_LABEL == r"$x$"
-    assert Z_OVER_A_LABEL == r"$z~/~a$"
-    assert quasi_distribution_label("re") == QUASI_DISTRIBUTION_LABELS["real"]
-    assert quasi_distribution_label("imag") == QUASI_DISTRIBUTION_LABELS["imag"]
-    assert momentum_label(np.float64(1.72)) == r"$P_z=1.72\,\mathrm{GeV}$"
-    assert momentum_label(None, default="job") == "job"
     assert series_color(len(COLOR_CYCLE)) == COLOR_CYCLE[0]
 
 
@@ -291,19 +278,8 @@ def test_neo_core_exports_are_minimal() -> None:
     assert manifest.__all__ == ["Job", "Manifest", "load_manifest"]
     assert plotting.__all__ == [
         "COLOR_CYCLE",
-        "X_LABEL",
-        "Z_OVER_A_LABEL",
-        "Z_FM_LABEL",
-        "INVERSE_LATTICE_SPACING_LABEL",
-        "BARE_MATRIX_ELEMENT_LABEL",
-        "SELF_RENORMALIZATION_FACTOR_LABEL",
-        "RENORMALIZED_MATRIX_ELEMENT_LABELS",
-        "QUASI_DISTRIBUTION_LABELS",
         "series_color",
         "continuous_color",
-        "lattice_spacing_label",
-        "momentum_label",
-        "quasi_distribution_label",
         "start_plot",
         "configure_plot",
         "line",
@@ -327,7 +303,19 @@ def test_neo_cli_uses_provider_and_optional_model() -> None:
     args = _build_parser().parse_args(["run", "manifest.json", "--provider", "codex"])
     assert args.provider == "codex"
     assert args.model is None
+    assert args.progress == "auto"
     assert not hasattr(args, "backend")
+
+    explicit = _build_parser().parse_args(
+        ["run", "manifest.json", "--provider", "codex", "--progress", "stage"]
+    )
+    assert explicit.progress == "stage"
+
+
+def test_auto_progress_uses_stage_mode_only_for_authored_systematics() -> None:
+    assert _resolve_progress_mode("auto", has_systematics=True) == "stage"
+    assert _resolve_progress_mode("auto", has_systematics=False) == "job"
+    assert _resolve_progress_mode("none", has_systematics=True) == "none"
 
 
 def test_neo_manifest_loader_accepts_jsonc_comments(tmp_path: Path) -> None:
@@ -1195,7 +1183,7 @@ def test_shipped_contracts_do_not_use_optional_depends() -> None:
     "name,value",
     (
         ("resample_mode", "jackknife"),
-        ("sample_error_mode", "median"),
+        ("sample_error_mode", "one_sigma"),
         ("bootstrap_samples", 100),
         ("bin_size", 1),
     ),
@@ -1218,7 +1206,7 @@ def test_manifest_enforces_global_sampling_relationships(tmp_path: Path) -> None
     assert not [issue for issue in manifest.validate() if issue.path.startswith("metadata.")]
 
     manifest.document["metadata"].pop("samples")
-    manifest.document["metadata"]["sample_error_mode"] = "median"
+    manifest.document["metadata"]["sample_error_mode"] = "one_sigma"
     assert any(
         issue.path == "metadata.sample_error_mode" and "require" in issue.message for issue in manifest.validate()
     )
@@ -1248,9 +1236,27 @@ def test_fourier_manifest_accepts_missing_recommended_tail_ranges() -> None:
     assert manifest.validate() == []
 
 
+def test_extrapolation_term_partitions_are_disjoint_and_individually_optional() -> None:
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    dependent_only = load_manifest(path)
+    dependent_only.document["stages"]["extrapolation"]["defaults"].pop("x_independent_terms")
+    assert dependent_only.validate() == []
+    assert dependent_only.jobs_by_stage["extrapolation"][0].params["x_independent_terms"] == []
+
+    independent_only = load_manifest(path)
+    independent_only.document["stages"]["extrapolation"]["defaults"].pop("x_dependent_terms")
+    assert independent_only.validate() == []
+    assert independent_only.jobs_by_stage["extrapolation"][0].params["x_dependent_terms"] == []
+
+    overlap = load_manifest(path)
+    overlap.document["stages"]["extrapolation"]["defaults"]["x_dependent_terms"].append("a")
+    assert any(issue.path.endswith("x_dependent_terms") and "disjoint" in issue.message for issue in overlap.validate())
+
+
 @pytest.mark.parametrize("stem", ("pion_da_gi", "kaon_da_gi"))
 def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> None:
     manifest = load_manifest(Path(__file__).parents[2] / "examples" / f"{stem}_manifest_neo.json")
+    assert manifest.has_systematics is True
     authored_stages = manifest.document["stages"]
     assert len(authored_stages["fourier_transform"]["jobs"]) == 9
     assert len(authored_stages["perturbative_matching"]["jobs"]) == 9
@@ -1258,6 +1264,7 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
 
     resolved = load_manifest(manifest.path)
     assert resolved.validate() == []
+    assert resolved.has_systematics is True
     stages = resolved.document["stages"]
     assert "systematics" not in resolved.document
     assert '"job"' not in json.dumps(resolved.document)
@@ -1307,13 +1314,14 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
     parsed = load_manifest(manifest.path)
     assert parsed.validate() == []
     assert "systematics" not in parsed.document
-    assert parsed.document["stages"]["extrapolation"]["defaults"]["required_terms"] == [
-        "a",
+    assert parsed.document["stages"]["extrapolation"]["defaults"]["x_independent_terms"] == ["a"]
+    assert parsed.document["stages"]["extrapolation"]["defaults"]["x_dependent_terms"] == [
         "inv_p2",
         "inv_p4",
         "ap2",
     ]
     assert parsed.document["stages"]["extrapolation"]["jobs"][0]["priors"] == {"mean": 0.0, "sdev": 3.0}
+    assert parsed.document["stages"]["extrapolation"]["jobs"][0]["x_covariance"] is False
 
 
 def test_job_source_object_is_rejected_at_the_input_role() -> None:
@@ -1476,9 +1484,15 @@ def test_matching_kernel_parameters_follow_the_selected_signature() -> None:
         issue.path == "kernel_parameters.kappa"
         for issue in issues(rgr, "hybrid", {"kappa": True}, hybrid={"zs_fm": 0.18})
     )
-    for managed in ("x_out", "x_in", "momentum_gev", "scale_gev", "zs_fm"):
-        current = issues(rgr, "hybrid", {managed: 0.18}, hybrid={"zs_fm": 0.18})
-        assert any(issue.path == f"kernel_parameters.{managed}" and "stage" in issue.message for issue in current)
+    for coordinate in ("x_out", "x_in"):
+        current = issues(rgr, "hybrid", {coordinate: [0.0, 1.0]}, hybrid={"zs_fm": 0.18})
+        assert any(issue.path == f"kernel_parameters.{coordinate}" and "data" in issue.message for issue in current)
+    assert issues(
+        rgr,
+        "hybrid",
+        {"momentum_gev": 2.5, "scale_gev": 3.0, "zs_fm": 0.2},
+        hybrid={"zs_fm": 0.18},
+    ) == []
 
 
 def test_matching_kernel_parameter_rules_require_a_dict_and_required_signature_values() -> None:
@@ -1553,6 +1567,31 @@ def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
         "apply",
         "z_msbar_da_nlo",
         {"target", "zR"},
+    )
+    assert fit["z_coverage_policy"] == apply["z_coverage_policy"] == "extrapolate"
+    assert fit["kernel_parameters"] == apply["kernel_parameters"] == {}
+
+    strict = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    strict.document["stages"]["renormalization"]["defaults"]["z_coverage_policy"] = "strict"
+    assert strict.validate() == []
+    assert all(job.params["z_coverage_policy"] == "strict" for job in strict.jobs_by_stage["renormalization"])
+
+    invalid_coverage = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    invalid_coverage.document["stages"]["renormalization"]["defaults"]["z_coverage_policy"] = "freeze"
+    assert any(
+        issue.path.endswith("z_coverage_policy") and "must be one of" in issue.message
+        for issue in invalid_coverage.validate()
+    )
+
+    kernel_override = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    kernel_override.document["stages"]["renormalization"]["defaults"]["kernel_parameters"] = {"mu": 3.0}
+    assert kernel_override.validate() == []
+
+    data_override = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    data_override.document["stages"]["renormalization"]["defaults"]["kernel_parameters"] = {"z_fm": 0.2}
+    assert any(
+        issue.path.endswith("kernel_parameters.z_fm") and "data" in issue.message
+        for issue in data_override.validate()
     )
 
     wrong_type = load_manifest(examples / "pion_da_gi_manifest_neo.json")

@@ -7,7 +7,7 @@ import json
 import gvar
 
 from lamet_agent.agent import ToolContext
-from lamet_agent.plotting import X_LABEL, configure_plot, errorband, momentum_label, save_figure, start_plot
+from lamet_agent.plotting import configure_plot, errorband, save_figure, start_plot
 
 
 def run(context: ToolContext) -> dict[str, object]:
@@ -28,7 +28,7 @@ def run(context: ToolContext) -> dict[str, object]:
     plot_data = data.at("component", "real") if "component" in data.dims else data
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
     errorband(data.coords["x"], plot_data.average(sample_error_mode))
-    configure_plot(xlabel=X_LABEL, ylabel="physical distribution")
+    configure_plot(xlabel=r"$x$", ylabel="physical distribution")
     save_figure(context.artifact_directory / "plots" / "distribution.pdf")
     candidate = comparison["candidates"][0]
     momentum_dependence = candidate.get("momentum_dependence")
@@ -42,10 +42,10 @@ def run(context: ToolContext) -> dict[str, object]:
         errorband(
             data.coords["x"],
             gvar.gvar(record["mean"], record["sdev"]),
-            label=momentum_label(record["momentum_gev"]),
+            label=rf"$P_z={round(float(record['momentum_gev']), 2):g}\,\mathrm{{GeV}}$",
         )
     errorband(data.coords["x"], plot_data.average(sample_error_mode), label="Pz→∞")
-    configure_plot(xlabel=X_LABEL, ylabel="physical distribution", legend=True)
+    configure_plot(xlabel=r"$x$", ylabel="physical distribution", legend=True)
     save_figure(
         context.artifact_directory / "plots" / "momentum_dependence.pdf",
         context.artifact_directory / "plots" / "momentum_dependence.svg",

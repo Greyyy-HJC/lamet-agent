@@ -7,9 +7,6 @@ import os
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from typing import Any, Callable, Iterable
 
-from tqdm import tqdm
-
-
 _MISSING = object()
 
 
@@ -62,16 +59,13 @@ class _ParallelPool:
         self,
         function: Callable[[Any], Any],
         tasks: Iterable[Any],
-        *,
-        description: str,
-        unit: str,
     ) -> list[Any]:
-        """Run balanced worker batches with sample progress and ordered output."""
+        """Run balanced worker batches and return results in task order."""
         task_list = list(tasks)
         if not task_list:
             return []
         if self.workers == 1:
-            return [function(task) for task in tqdm(task_list, desc=description, unit=unit)]
+            return [function(task) for task in task_list]
         executor = self._start()
         batches = _balanced_batches(task_list, self.workers)
         futures: dict[Future[Any], int] = {
@@ -79,12 +73,10 @@ class _ParallelPool:
         }
         results: list[Any] = [None] * len(task_list)
         try:
-            with tqdm(total=len(task_list), desc=description, unit=unit) as progress:
-                for future in as_completed(futures):
-                    batch_results = future.result()
-                    for index, result in batch_results:
-                        results[index] = result
-                    progress.update(futures[future])
+            for future in as_completed(futures):
+                batch_results = future.result()
+                for index, result in batch_results:
+                    results[index] = result
         except Exception:
             for future in futures:
                 future.cancel()

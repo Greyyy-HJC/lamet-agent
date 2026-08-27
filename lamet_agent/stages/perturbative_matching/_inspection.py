@@ -40,7 +40,7 @@ def run(context: ToolContext) -> dict[str, object]:
     kernel = load_kernel(context.params["kernel_id"], root=root)
     parameter_values = dict(context.params["kernel_parameters"])
     if context.params["scheme"] == "hybrid":
-        parameter_values["zs_fm"] = context.params["zs_fm"]
+        parameter_values.setdefault("zs_fm", context.params["zs_fm"])
     parameter_names, required = inspect_callable(kernel, parameter_values=parameter_values)
     document = load_kernel_document(context.params["kernel_id"], root=root)
     attrs = data.attrs

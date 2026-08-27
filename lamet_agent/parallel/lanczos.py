@@ -838,15 +838,11 @@ def analyze_prepared_lanczos(
                 results = parallel.map(
                     _twopt_outer_result,
                     tasks,
-                    description="Lanczos outer samples",
-                    unit="sample",
                 )
         else:
             results = _parallel.map(
                 _twopt_outer_result,
                 tasks,
-                description="Lanczos outer samples",
-                unit="sample",
             )
         for index, result in results:
             values[index] = result
@@ -881,18 +877,14 @@ def analyze_prepared_lanczos(
     ]
     if _parallel is None:
         with _ParallelPool(min(workers, len(tasks))) as parallel:
-            results = parallel.map(
-                _threept_outer_result,
-                tasks,
-                description="Lanczos outer samples",
-                unit="sample",
-            )
+                results = parallel.map(
+                    _threept_outer_result,
+                    tasks,
+                )
     else:
         results = _parallel.map(
             _threept_outer_result,
             tasks,
-            description="Lanczos outer samples",
-            unit="sample",
         )
     for index, result in results:
         matrices[index] = result

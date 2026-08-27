@@ -120,7 +120,7 @@ def nonlinear_fit(
     workers: int = 1,
     sample_prior_scale: float | None = None,
     covariance: np.ndarray | None = None,
-    sample_error_mode: Literal["covariance", "mean", "median"] = "covariance",
+    sample_error_mode: Literal["covariance", "variance", "one_sigma"] = "covariance",
     mode: Literal["center", "resamples"] = "resamples",
     tolerate_sample_failures: bool = False,
     capture_sample_posteriors: Sequence[int] = (),
@@ -228,15 +228,11 @@ def nonlinear_fit(
             outcomes = parallel.map(
                 _sample_fit,
                 tasks,
-                description="Sample fits",
-                unit="fit",
             )
     else:
         outcomes = _parallel.map(
             _sample_fit,
             tasks,
-            description="Sample fits",
-            unit="fit",
         )
     fitted_samples = tuple(parameters for parameters, _error, _diagnostics, _posterior in outcomes)
     sample_errors = tuple(error for _parameters, error, _diagnostics, _posterior in outcomes)

@@ -15,11 +15,8 @@ def run(context: ToolContext, _session: LlmSession) -> None:
     if context.params["operation"] == "systematics_budget":
         publish_budget(context)
         return
-    params = context.params
-    if params["allowed_terms"]:
-        raise RuntimeError("generic extrapolation parameter selection is not implemented")
     inspect(context)
-    fit(context, terms=list(params["required_terms"]), excluded_ensembles=[])
+    fit(context, excluded_ensembles=[])
     selected, comparison = select_single_candidate(context.state.get("extrapolation_candidates", []))
     context.state["extrapolation_selected_data"] = selected
     context.state["extrapolation_comparison"] = comparison

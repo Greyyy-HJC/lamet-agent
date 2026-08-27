@@ -110,6 +110,12 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--api-key-file", type=Path, help="API key file; required for a custom URL, optional for registered APIs"
     )
+    run.add_argument(
+        "--progress",
+        choices=("auto", "stage", "job", "none"),
+        default="auto",
+        help="progress granularity; auto uses stage progress when systematics are declared, otherwise job progress",
+    )
     return parser
 
 
@@ -155,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             print(_render_issues(issues), file=sys.stderr)
             return 1
         backend = create_backend(args.provider, args.model, args.api_key_file)
-        result = create_session(backend).run_manifest(manifest)
+        result = create_session(backend, progress_mode=args.progress).run_manifest(manifest)
         print(json.dumps({"status": "completed", "jobs": sorted(result["summaries"])}, indent=2))
         return 0
     except (OSError, ValueError, RuntimeError) as exc:

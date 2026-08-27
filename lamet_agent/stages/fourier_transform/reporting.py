@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
+from numbers import Real
 from pathlib import Path
 
-from lamet_agent.plotting import QUASI_DISTRIBUTION_LABELS, X_LABEL, momentum_label
 from lamet_agent.stages._reporting import (
     StageReportRecord,
     artifact_rows,
@@ -19,7 +20,10 @@ from lamet_agent.stages._reporting import (
 
 
 def _momentum_series_label(record: StageReportRecord) -> str:
-    return momentum_label(output_attrs(record).get("momentum_gev"), default=record.job_id)
+    value = output_attrs(record).get("momentum_gev")
+    if isinstance(value, Real) and not isinstance(value, bool) and math.isfinite(float(value)):
+        return rf"$P_z={round(float(value), 2):g}\,\mathrm{{GeV}}$"
+    return record.job_id
 
 
 _TAIL_FORMULA = r"""
@@ -163,8 +167,11 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 artifact_directory,
                 coordinate="x",
                 stem="fourier_overview",
-                xlabel=X_LABEL,
-                ylabel=QUASI_DISTRIBUTION_LABELS,
+                xlabel=r"$x$",
+                ylabel={
+                    "real": r"$\mathrm{Re}\,\tilde q(x)$",
+                    "imag": r"$\mathrm{Im}\,\tilde q(x)$",
+                },
                 band=True,
                 series_label=_momentum_series_label,
             ),

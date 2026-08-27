@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import math
+from numbers import Real
 from pathlib import Path
+import re
 from typing import Any
 
 import gvar
@@ -11,20 +14,58 @@ import numpy as np
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.plotting import (
-    INVERSE_LATTICE_SPACING_LABEL,
-    RENORMALIZED_MATRIX_ELEMENT_LABELS,
-    SELF_RENORMALIZATION_FACTOR_LABEL,
-    Z_FM_LABEL,
     configure_plot,
     continuous_color,
     errorline,
     hline,
-    lattice_spacing_label,
     line,
     save_figure,
     series_color,
     start_plot,
 )
+
+Z_FM_LABEL = r"$z\,[\mathrm{fm}]$"
+INVERSE_LATTICE_SPACING_LABEL = r"$a^{-1}\,[\mathrm{GeV}]$"
+SELF_RENORMALIZATION_FACTOR_LABEL = r"$Z_R(z,a)$"
+RENORMALIZED_MATRIX_ELEMENT_LABELS = {
+    "real": r"$\mathrm{Re}\,h^R(z)$",
+    "imag": r"$\mathrm{Im}\,h^R(z)$",
+    "both": r"$h^R(z)$",
+}
+
+
+def lattice_spacing_label(spacing_fm: object, *, default: str | None = None) -> str:
+    """Format one stage-owned lattice-spacing label."""
+    if isinstance(spacing_fm, Real) and not isinstance(spacing_fm, bool):
+        spacing = float(spacing_fm)
+        if math.isfinite(spacing) and spacing > 0:
+            return rf"$a={spacing:.4g}\,\mathrm{{fm}}$"
+    if default is not None:
+        return default
+    raise ValueError("spacing_fm must be a finite positive real number")
+
+
+def momentum_label(
+    momentum_gev: object,
+    *,
+    momentum: object | None = None,
+    default: str | None = None,
+) -> str:
+    """Format one stage-owned momentum label."""
+    if isinstance(momentum_gev, Real) and not isinstance(momentum_gev, bool):
+        value = float(momentum_gev)
+        if math.isfinite(value):
+            return rf"$P_z={round(value, 2):g}\,\mathrm{{GeV}}$"
+    if isinstance(momentum, str):
+        match = re.fullmatch(r"PX(-?\d+)PY(-?\d+)PZ(-?\d+)", momentum.upper())
+        if match is not None:
+            px, py, pz = (int(value) for value in match.groups())
+            if px == 0 and py == 0:
+                return rf"$P_z={pz}\,(2\pi/L)$"
+            return rf"$\mathbf{{P}}=({px},{py},{pz})\,(2\pi/L)$"
+    if default is not None:
+        return default
+    raise ValueError("momentum_gev must be a finite real number")
 
 _FIT_CAPTIONS = {
     "factor": "Reusable self-renormalization factor",

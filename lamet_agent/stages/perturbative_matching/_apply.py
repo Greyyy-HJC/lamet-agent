@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 
 import gvar
 import numpy as np
@@ -10,11 +11,9 @@ import numpy as np
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.plotting import (
-    X_LABEL,
     configure_plot,
     errorband,
     hline,
-    momentum_label,
     save_figure,
     series_color,
     start_plot,
@@ -50,15 +49,26 @@ def run(context: ToolContext) -> dict[str, object]:
     if not isinstance(momentum, (int, float)) or isinstance(momentum, bool):
         raise ValueError("quasi input requires momentum_gev")
     kernel_parameters = dict(context.params["kernel_parameters"])
+    forbidden = sorted({"x_out", "x_in"}.intersection(kernel_parameters))
+    if forbidden:
+        raise ValueError(f"matching kernel_parameters cannot override data grids: {forbidden}")
+    overridden = sorted({"momentum_gev", "scale_gev", "zs_fm"}.intersection(kernel_parameters))
+    if overridden:
+        warnings.warn(
+            f"matching kernel_parameters overrides stage context: {overridden}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    kernel_arguments = {
+        "x_out": np.asarray(x_out, dtype=float),
+        "x_in": np.asarray(x_in, dtype=float),
+        "momentum_gev": float(momentum),
+        "scale_gev": float(context.params["mu"]),
+    }
     if context.params["scheme"] == "hybrid":
-        kernel_parameters["zs_fm"] = float(context.params["zs_fm"])
-    matrix = kernel(
-        np.asarray(x_out, dtype=float),
-        np.asarray(x_in, dtype=float),
-        momentum_gev=float(momentum),
-        scale_gev=float(context.params["mu"]),
-        **kernel_parameters,
-    )
+        kernel_arguments["zs_fm"] = float(context.params["zs_fm"])
+    kernel_arguments.update(kernel_parameters)
+    matrix = kernel(**kernel_arguments)
     matrix = np.asarray(matrix)
     if matrix.shape != (len(x_out), len(x_in)) or not np.all(np.isfinite(matrix)):
         raise ValueError("kernel returned an invalid matching matrix shape or value")
@@ -88,6 +98,7 @@ def run(context: ToolContext) -> dict[str, object]:
         "matrix_shape": list(matrix.shape),
         "x_in_count": len(x_in),
         "x_out_count": len(x_out),
+        "kernel_parameters": kernel_parameters,
     }
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
     (context.artifact_directory / "diagnostics" / "matching.json").write_text(
@@ -98,7 +109,7 @@ def run(context: ToolContext) -> dict[str, object]:
     plot_min = np.inf
     plot_max = -np.inf
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
-    quasi_label = momentum_label(momentum)
+    quasi_label = rf"$P_z={round(float(momentum), 2):g}\,\mathrm{{GeV}}$"
     for values, x_values, label, color in (
         (data, x_in, quasi_label, series_color(0)),
         (result, x_out, "light-cone", series_color(1)),
@@ -112,7 +123,7 @@ def run(context: ToolContext) -> dict[str, object]:
         errorband(x_values, average, color=color, label=label)
     all_x = np.concatenate([np.asarray(x_in, dtype=float), np.asarray(x_out, dtype=float)])
     configure_plot(
-        xlabel=X_LABEL,
+        xlabel=r"$x$",
         ylabel="distribution",
         xlim=(float(np.min(all_x)) - 0.01, float(np.max(all_x)) + 0.01),
         ylim=(plot_min - 0.2, plot_max + 1.0),

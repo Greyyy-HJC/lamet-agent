@@ -299,22 +299,46 @@ class EnsembleData:
             shape = self.array.values.shape[1:]
             values = self.array.values.reshape(n_sample, -1)
             mean = numpy.mean(values, axis=0)
+            cov = numpy.atleast_2d(numpy.cov(values, rowvar=False, ddof=1))
             if n_sample == 1:
                 cov = numpy.zeros((mean.size, mean.size), mean.dtype)
             elif self.resample == "raw":
-                cov = numpy.atleast_2d(numpy.cov(values, rowvar=False, ddof=1) / n_sample)
+                cov /= n_sample
             elif self.resample == "jackknife":
-                cov = numpy.atleast_2d(numpy.cov(values, rowvar=False, ddof=0) * (n_sample - 1))
+                cov *= (n_sample - 1) ** 2 / n_sample
             elif self.resample == "bootstrap":
-                cov = numpy.atleast_2d(numpy.cov(values, rowvar=False, ddof=1))
+                pass
             else:
                 raise ValueError(f"Unknown resampling method '{self.resample}'.")
             return gvar.gvar(mean.reshape(shape), cov.reshape(shape + shape))
 
     @property
+    def gvar_mean(self):
+        if self.resample == "gvar":
+            return gvar.gvar(gvar.mean(self.array.values[0]), gvar.sdev(self.array.values[0]))
+        else:
+            if numpy.iscomplexobj(self.array.values):
+                raise TypeError("gvar conversion requires real data; select .real or .imag first.")
+            n_sample = self.array.values.shape[0]
+            values = self.array.values
+            mean = numpy.mean(values, axis=0)
+            std = numpy.std(values, axis=0, ddof=1)
+            if n_sample == 1:
+                std = numpy.zeros_like(mean)
+            elif self.resample == "raw":
+                std /= n_sample**0.5
+            elif self.resample == "jackknife":
+                std *= (n_sample - 1) / n_sample**0.5
+            elif self.resample == "bootstrap":
+                pass
+            else:
+                raise ValueError(f"Unknown resampling method '{self.resample}'.")
+            return gvar.gvar(mean, std)
+
+    @property
     def gvar_median(self):
         if self.resample == "gvar":
-            return self.array.values[0]
+            return gvar.gvar(gvar.mean(self.array.values[0]), gvar.sdev(self.array.values[0]))
         else:
             if numpy.iscomplexobj(self.array.values):
                 raise TypeError("gvar conversion requires real data; select .real or .imag first.")
@@ -325,23 +349,22 @@ class EnsembleData:
             if self.resample == "raw":
                 std /= n_sample**0.5
             elif self.resample == "jackknife":
-                std *= (n_sample - 1) ** 0.5
+                std *= (n_sample - 1) / n_sample**0.5
             elif self.resample == "bootstrap":
                 pass
             else:
                 raise ValueError(f"Unknown resampling method '{self.resample}'.")
             return gvar.gvar(mean, std)
 
-    def average(self, mode: Literal["covariance", "mean", "median"] = "covariance"):
+    def average(self, mode: Literal["covariance", "variance", "one_sigma"] = "covariance"):
         """Return the selected center and uncertainty representation as gvars."""
         if mode == "covariance":
             return self.gvar
-        if mode == "median":
+        if mode == "one_sigma":
             return self.gvar_median
-        if mode == "mean":
-            average = self.gvar
-            return gvar.gvar(gvar.mean(average), gvar.sdev(average))
-        raise ValueError("average mode must be 'covariance', 'mean', or 'median'")
+        if mode == "variance":
+            return self.gvar_mean
+        raise ValueError("average mode must be 'covariance', 'variance', or 'one_sigma'")
 
     @property
     def mean(self):

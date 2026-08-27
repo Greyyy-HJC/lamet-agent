@@ -68,6 +68,25 @@ def test_gvar_supports_scalar_and_single_sample_data() -> None:
     np.testing.assert_allclose(gv.sdev(singleton.gvar), [0.0, 0.0])
 
 
+def test_gvar_mean_supports_multidimensional_single_sample_data() -> None:
+    values = np.asarray([[1.0, 2.0], [3.0, 4.0]])
+    data = EnsembleData(None, "bootstrap", [values], ["x", "y"], {"x": [0, 1], "y": [0, 1]})
+
+    assert data.gvar_mean.shape == values.shape
+    np.testing.assert_allclose(gv.mean(data.gvar_mean), values)
+    np.testing.assert_allclose(gv.sdev(data.gvar_mean), 0.0)
+
+
+def test_diagonal_gvar_summaries_discard_input_covariance() -> None:
+    values = gv.gvar([1.0, 2.0], [[1.0, 0.5], [0.5, 4.0]])
+    data = EnsembleData(None, "gvar", values, ["x"], {"x": [0, 1]})
+
+    for result in (data.gvar_mean, data.gvar_median):
+        np.testing.assert_allclose(gv.mean(result), gv.mean(values))
+        np.testing.assert_allclose(gv.sdev(result), gv.sdev(values))
+        assert gv.evalcov(result)[0, 1] == 0.0
+
+
 def test_gvar_requires_an_explicit_real_or_imaginary_component() -> None:
     data = EnsembleData(None, "bootstrap", [np.asarray([1.0 + 2.0j]), np.asarray([2.0 + 4.0j])], ["x"], {"x": [0]})
     with pytest.raises(TypeError, match="select .real or .imag"):
@@ -81,16 +100,16 @@ def test_average_selects_data_owned_uncertainty_semantics() -> None:
     data = EnsembleData(None, "bootstrap", list(samples), ["x"], {"x": [0, 1]})
 
     covariance = data.average("covariance")
-    diagonal = data.average("mean")
-    median = data.average("median")
+    variance = data.average("variance")
+    one_sigma = data.average("one_sigma")
 
     np.testing.assert_allclose(gv.mean(covariance), gv.mean(data.gvar))
-    np.testing.assert_allclose(gv.mean(diagonal), gv.mean(data.gvar))
-    np.testing.assert_allclose(gv.sdev(diagonal), gv.sdev(data.gvar))
+    np.testing.assert_allclose(gv.mean(variance), gv.mean(data.gvar_mean))
+    np.testing.assert_allclose(gv.sdev(variance), gv.sdev(data.gvar_mean))
     assert gv.evalcov(covariance)[0, 1] != 0.0
-    assert gv.evalcov(diagonal)[0, 1] == 0.0
-    np.testing.assert_allclose(gv.mean(median), gv.mean(data.gvar_median))
-    np.testing.assert_allclose(gv.sdev(median), gv.sdev(data.gvar_median))
+    assert gv.evalcov(variance)[0, 1] == 0.0
+    np.testing.assert_allclose(gv.mean(one_sigma), gv.mean(data.gvar_median))
+    np.testing.assert_allclose(gv.sdev(one_sigma), gv.sdev(data.gvar_median))
     with pytest.raises(ValueError, match="average mode"):
         data.average("unsupported")
 

@@ -59,10 +59,8 @@ def test_injected_parallel_pool_is_used_for_sample_fits(monkeypatch) -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def map(self, function, tasks, *, description, unit):
+        def map(self, function, tasks):
             self.calls += 1
-            assert description == "Sample fits"
-            assert unit == "fit"
             return [function(task) for task in tasks]
 
     data = EnsembleData(None, "bootstrap", [[1.0], [1.1]], ["x"], {"x": [0]})
@@ -95,9 +93,7 @@ def test_tolerated_sample_failure_preserves_sample_alignment(monkeypatch) -> Non
     successful = gv.BufferDict({"amplitude": 1.0})
 
     class FailedSampleParallel:
-        def map(self, _function, _tasks, *, description, unit):
-            assert description == "Sample fits"
-            assert unit == "fit"
+        def map(self, _function, _tasks):
             return [
                 (successful, None, {"chi2": 1.0, "dof": 1.0, "Q": 0.5, "logGBF": 0.0}, None),
                 (None, "ZeroDivisionError: float division", None, None),
@@ -159,8 +155,6 @@ def test_parallel_pool_sets_worker_omp_threads_and_restores_parent() -> None:
         assert parallel.map(
             _worker_omp_threads,
             [0, 1],
-            description="OMP check",
-            unit="task",
         ) == ["1", "1"]
     assert os.environ.get("OMP_NUM_THREADS") == previous
 
@@ -191,7 +185,7 @@ def test_parallel_pool_submits_one_balanced_batch_per_worker(monkeypatch) -> Non
         lambda _method: object(),
     )
     with _ParallelPool(3) as parallel:
-        results = parallel.map(abs, [-1, -2, -3, -4, -5, -6, -7, -8], description="Batched", unit="task")
+        results = parallel.map(abs, [-1, -2, -3, -4, -5, -6, -7, -8])
     assert results == [1, 2, 3, 4, 5, 6, 7, 8]
     assert executor.batch_sizes == [3, 3, 2]
 
