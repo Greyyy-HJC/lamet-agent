@@ -1,7 +1,7 @@
 import numpy as np
 
-from .implementation import ZMSbar
+from .implementation import ZMSbar_pdf
 
 
-def kernel(z_fm: np.ndarray | float, mu: float = 2.0, order: int = 0, Nf: int = 3) -> np.ndarray:
-    return ZMSbar(z_fm, mu=mu, offset=2.5, order=order, Nf=Nf)
+def kernel(z_fm: np.ndarray | float, mu: float = 2.0) -> np.ndarray:
+    return ZMSbar_pdf(z_fm, mu)

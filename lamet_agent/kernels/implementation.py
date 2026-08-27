@@ -12,46 +12,19 @@ CA: Final[float] = 3.0
 TF: Final[float] = 1.0 / 2.0
 
 
-def beta(order: int = 0, Nf: int = 3) -> float:
-    if order == 0:
-        return 11.0 / 3.0 * CA - 4.0 / 3.0 * TF * Nf
-    if order == 1:
-        return 34.0 / 3.0 * CA**2 - (20.0 / 3.0 * CA + 4.0 * CF) * TF * Nf
-    if order == 2:
-        return (
-            2857.0 / 54.0 * CA**3
-            + (2.0 * CF**2 - 205.0 / 9.0 * CF * CA - 1415.0 / 27.0 * CA**2) * TF * Nf
-            + (44.0 / 9.0 * CF + 158.0 / 27.0 * CA) * TF**2 * Nf**2
-        )
-    raise NotImplementedError(f"beta coefficient at order={order} is not implemented.")
-
-
-def alphas_nloop(mu: float, order: int = 0, Nf: int = 3) -> float:
-    a_s_ref = 0.293 / (4.0 * np.pi)
-    b0 = beta(0, Nf)
-    temp = 1.0 + a_s_ref * b0 * np.log((mu / 2.0) ** 2)
-    if order == 0:
-        return a_s_ref * 4.0 * np.pi / temp
-    if order == 1:
-        b1 = beta(1, Nf)
-        return a_s_ref * 4.0 * np.pi / (temp + a_s_ref * b1 / b0 * np.log(temp))
-    if order == 2:
-        b1 = beta(1, Nf)
-        b2 = beta(2, Nf)
-        correction = (
-            temp
-            + a_s_ref * b1 / b0 * np.log(temp)
-            + a_s_ref**2 * (b2 / b0 * (1.0 - 1.0 / temp) + b1**2 / b0**2 * (np.log(temp) / temp + 1.0 / temp - 1.0))
-        )
-        return a_s_ref * 4.0 * np.pi / correction
-    raise NotImplementedError(f"alpha_s at order={order} is not implemented.")
-
-
-def ZMSbar(z_fm: np.ndarray | float, *, mu: float = 2.0, offset: float, order: int = 0, Nf: int = 3) -> np.ndarray:
+def ZMSbar(z_fm: np.ndarray | float, *, mu: float, offset: float) -> np.ndarray:
     z_arr = np.asarray(z_fm, dtype=float)
-    alphas = alphas_nloop(mu, order=order, Nf=Nf)
+    alphas = alpha_s(float(mu))
     log_term = np.log(mu**2 * (z_arr / GEV_FM) ** 2 * np.exp(2.0 * np.euler_gamma) / 4.0)
     return 1.0 + alphas * CF / (2.0 * np.pi) * (1.5 * log_term + offset)
+
+
+def ZMSbar_pdf(z_fm: np.ndarray | float, mu: float) -> np.ndarray:
+    return ZMSbar(z_fm, mu=mu, offset=2.5)
+
+
+def ZMSbar_da(z_fm: np.ndarray | float, mu: float) -> np.ndarray:
+    return ZMSbar(z_fm, mu=mu, offset=3.5)
 
 
 def _sine_integral(value: float) -> float:
@@ -247,7 +220,7 @@ def build_matching_matrix(
         raise ValueError("`quasi_y_ls` spacing must be non-zero.")
     if not np.allclose(y_step, y_step[0], rtol=0.0, atol=eps):
         raise ValueError("`quasi_y_ls` must be uniformly spaced.")
-    alpha_s = _alpha_s(float(mu))
+    alphas = alpha_s(float(mu))
     nx, ny = (len(x_grid), len(y_grid))
     nlo_matrix = np.zeros((nx, ny))
     identity = _lo_interp_matrix(x_grid, y_grid)
@@ -266,7 +239,7 @@ def build_matching_matrix(
         nlo_matrix[int(diag_row), idy] -= column_totals[idy]
         if diagonal_extra is not None:
             nlo_matrix[int(diag_row), idy] += diagonal_extra(float(y_grid[idy])) / dy
-    return identity - alpha_s * color_factor / (2.0 * np.pi) * nlo_matrix * dy
+    return identity - alphas * color_factor / (2.0 * np.pi) * nlo_matrix * dy
 
 
 CoeffFn = Callable[[float, float, float], float]
@@ -373,7 +346,7 @@ def _build_pdf_matrix(
         raise ValueError("every x must lie inside the y grid to place its delta term.")
     if plus_coeff is None:
         plus_coeff = coeff
-    alpha_s = _alpha_s(float(mu))
+    alphas = alpha_s(float(mu))
     nx, ny = (len(x_grid), len(y_grid))
     identity = _lo_interp_matrix(x_grid, y_grid)
     nlo_matrix = np.zeros((nx, ny))
@@ -414,7 +387,7 @@ def _build_pdf_matrix(
             for col, weight in cols_weights:
                 nlo_matrix[idx, int(col)] += weight * delta_entry / dy
             bar.update(1)
-    return identity - alpha_s * color_factor / (2.0 * np.pi) * nlo_matrix * dy
+    return identity - alphas * color_factor / (2.0 * np.pi) * nlo_matrix * dy
 
 
 def C_ratio_gi(ksi: float, log_scale: float, eps: float = 1e-12) -> float:
@@ -672,9 +645,9 @@ def _lrr_improve(
         if x_ls.shape == y_ls.shape and np.allclose(x_ls, y_ls, rtol=0.0, atol=1e-12)
         else _plus_prescription_matrix(y_ls, y_ls, density_cz, eps)
     )
-    alpha_s = _alpha_s(float(mu))
-    rsum_pv = dPVasym(1.0, mu, nf, alpha_s)
-    r0 = rnasym(0, 1.0, mu, nf) * alpha_s
+    alphas = alpha_s(float(mu))
+    rsum_pv = dPVasym(1.0, mu, nf, alphas)
+    r0 = rnasym(0, 1.0, mu, nf) * alphas
     return (fixed_order_matrix + r0 * m_cz_sum) @ expm(-m_cz_exp * rsum_pv)
 
 
@@ -737,7 +710,7 @@ def _run_alpha(nf: float, mu_from: float, mu_to: float, alpha_from: float, order
 
 
 @functools.lru_cache(maxsize=4096)
-def _alpha_s(mu: float) -> float:
+def alpha_s(mu: float) -> float:
     if mu <= 0.0:
         raise ValueError("alpha_s needs a positive scale.")
     if mu >= _M_B:
@@ -849,7 +822,7 @@ _ZPSI_REF_GEV: Final = 2.0
 def _zpsi_msbar_ratio(mu: float, mu_ref: float = _ZPSI_REF_GEV, nf: float = 3.0) -> float:
     b0 = _beta_coefficient(0, nf)
     b1 = _beta_coefficient(1, nf)
-    alpha, alpha_ref = (_alpha_s(float(mu)), _alpha_s(float(mu_ref)))
+    alpha, alpha_ref = (alpha_s(float(mu)), alpha_s(float(mu_ref)))
     ratio = alpha / (b0 + b1 * alpha) / (alpha_ref / (b0 + b1 * alpha_ref))
     return float(ratio ** (1.0 / (3.0 * np.pi * b0)))
 
@@ -877,7 +850,7 @@ def _evolution_operator(
     operator = np.eye(evo_lo.shape[0])
     for index in range(steps):
         mu_mid = float(np.exp((t0 + dt * (index + 0.5)) / 2.0))
-        a = _alpha_s(mu_mid) / (4.0 * np.pi)
+        a = alpha_s(mu_mid) / (4.0 * np.pi)
         operator = operator @ expm((a * evo_lo + a**2 * evo_nlo) * dt)
     return operator
 
