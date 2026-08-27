@@ -10,11 +10,13 @@ import numpy as np
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.plotting import (
-    COLOR_CYCLE,
+    X_LABEL,
     configure_plot,
     errorband,
     hline,
+    momentum_label,
     save_figure,
+    series_color,
     start_plot,
 )
 from lamet_agent.stages.perturbative_matching.physics import apply_matrix
@@ -96,9 +98,10 @@ def run(context: ToolContext) -> dict[str, object]:
     plot_min = np.inf
     plot_max = -np.inf
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    quasi_label = momentum_label(momentum)
     for values, x_values, label, color in (
-        (data, x_in, "quasi", COLOR_CYCLE[0]),
-        (result, x_out, "light-cone", COLOR_CYCLE[1]),
+        (data, x_in, quasi_label, series_color(0)),
+        (result, x_out, "light-cone", series_color(1)),
     ):
         plotted = values.real if np.iscomplexobj(values.values) else values
         average = plotted.average(sample_error_mode)
@@ -109,7 +112,7 @@ def run(context: ToolContext) -> dict[str, object]:
         errorband(x_values, average, color=color, label=label)
     all_x = np.concatenate([np.asarray(x_in, dtype=float), np.asarray(x_out, dtype=float)])
     configure_plot(
-        xlabel="x",
+        xlabel=X_LABEL,
         ylabel="distribution",
         xlim=(float(np.min(all_x)) - 0.01, float(np.max(all_x)) + 0.01),
         ylim=(plot_min - 0.2, plot_max + 1.0),

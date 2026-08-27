@@ -394,10 +394,19 @@ def test_qda_fit_divides_by_nonlocal_origin_and_fits_each_sample() -> None:
     assert np.isclose(np.mean(values[:, 1]), target, atol=2e-3)
     assert diagnostics["min_Q"] >= 0.0
     assert all("E0" in fit and "E0_sdev" in fit for fit in diagnostics["fits"])
+    production_fit = diagnostics["fits"][0]
+    assert len(production_fit["sample_diagnostics"]) == source.n_sample
+    assert len(production_fit["E0_samples"]) == source.n_sample
+    assert production_fit["sample0_plot"]["plots"][0]["kind"] == "qda_ratio"
+    assert production_fit["sample0_plot"]["plots"][0]["series"][0]["x"] == times.tolist()
 
 
-def test_correlator_publish_requires_complete_scan_and_deterministic_best_candidate(tmp_path) -> None:
-    from lamet_agent.stages.correlator_analysis._publish import run
+def test_correlator_publish_requires_complete_scan_and_deterministic_best_candidate(tmp_path, monkeypatch) -> None:
+    import lamet_agent.stages.correlator_analysis._publish as tool
+
+    labels = []
+    original = tool.configure_plot
+    monkeypatch.setattr(tool, "configure_plot", lambda **kwargs: labels.append(kwargs) or original(**kwargs))
 
     attrs = {"observable": "matrix_element", "sample_error_mode": "median"}
     low = EnsembleData(
@@ -481,10 +490,12 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
         np.random.default_rng(2),
     )
     with pytest.raises(ValueError, match="deterministic best"):
-        run(context, candidate_id="matrix_001")
-    run(context, candidate_id="matrix_002")
+        tool.run(context, candidate_id="matrix_001")
+    tool.run(context, candidate_id="matrix_002")
     assert context.output is high
     assert (tmp_path / "diagnostics" / "candidates.json").is_file()
+    assert labels[-1]["xlabel"] == r"$z~/~a$"
+    assert labels[-1]["ylabel"] == "bare matrix element"
 
 
 def test_correlator_window_selection_preserves_original_information_rule() -> None:
@@ -508,6 +519,8 @@ def test_matrix_element_prior_keeps_original_inactive_component_parameters() -> 
     prior = matrix_element_prior(2, form="Breit", scope="3pt_ratio", components=("re",), width_scale=1.0)
     assert "O00_im" in prior and "O01_im" in prior and "O11_im" in prior
     assert float(prior["O00_im"].mean) == 1.0
+    assert "log(E0)" in prior
+    assert float(prior["E0"].mean) > 0.0
 
 
 @pytest.mark.parametrize(
@@ -530,6 +543,34 @@ def test_correlator_rescale_is_a_data_driven_power_of_ten(typical_abs: float, ex
     result = _automatic_correlator_rescale({"two_point": data}, [{"tmin": 2, "tmax": 7}])
     assert result["correlator_rescale"] == expected_scale
     assert 1.0e-4 <= result["rescaled_typical_abs"] <= 1.0e-2
+
+
+def test_inspect_correlators_does_not_write_raw_correlator_plots(tmp_path) -> None:
+    from lamet_agent.stages.correlator_analysis._inspection import run
+
+    data = EnsembleData(
+        None,
+        "bootstrap",
+        [np.full(8, 1.0e-3), np.full(8, 1.1e-3)],
+        ["t"],
+        {"t": list(range(8))},
+        attrs={"correlator_type": "two_point"},
+    )
+    context = ToolContext(
+        {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "inspect",
+        {"correlator_ids": ["two_point"]},
+        {},
+        {},
+        {"correlators": {"two_point": data}},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    observation = run(context)
+    assert observation["artifacts"] == []
+    assert not list((tmp_path / "plots").glob("correlator_*.pdf"))
 
 
 def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, tmp_path) -> None:
@@ -1072,6 +1113,19 @@ def test_native_matrix_element_fit_supports_authored_strategies_and_scopes(strat
         assert np.isclose(np.mean(np.real(result.values[:, 0])), 0.8 / 0.6, atol=0.12)
     assert diagnostics["strategy"] == strategy
     assert diagnostics["fit_scope"] == scope
+    production_fit = diagnostics["fits"][0]
+    assert len(production_fit["sample_diagnostics"]) == result.n_sample
+    assert len(production_fit["E0_samples"]) == result.n_sample
+    expected_kinds = {"pt3_ratio"} if scope == "3pt_ratio" else {"fh"} if scope == "FH" else {"pt3_ratio", "fh"}
+    assert {plot["kind"] for plot in production_fit["sample0_plot"]["plots"]} == expected_kinds
+    if "pt3_ratio" in expected_kinds:
+        ratio_plot = next(plot for plot in production_fit["sample0_plot"]["plots"] if plot["kind"] == "pt3_ratio")
+        assert len(ratio_plot["series"]) == len(tseps)
+        for series in ratio_plot["series"]:
+            x = np.asarray(series["x"], dtype=float)
+            fit_x = np.asarray(series["fit_x"], dtype=float)
+            assert np.isclose(float(np.min(x) + np.max(x)), 0.0)
+            assert np.isclose(float(np.min(fit_x) + np.max(fit_x)), 0.0)
     if strategy == "joint" and scope == "3pt_ratio":
         tuned, tuning = fit_matrix_element_samples(
             {"c2": c2_data, "c3": c3_data},
@@ -1592,6 +1646,8 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
     np.testing.assert_allclose([value for value, _ in boundaries], np.asarray([0.2, 0.3, 0.2, 0.3]) * scale)
     assert all(item == {"color": "black", "linestyle": "dashed"} for _, item in boundaries)
     assert [item["xlabel"] for item in configured[-2:]] == [r"$\lambda = zP^z$", r"$\lambda = zP^z$"]
+    assert configured[0]["xlabel"] == r"$x$"
+    assert configured[0]["ylabel"] == r"$\tilde q(x)$"
 
 
 def test_fourier_model_choice_is_made_per_sample() -> None:
@@ -1784,12 +1840,12 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
         [np.array([0.2, 1.0, 0.3]), np.array([0.3, 1.1, 0.4])],
         ["x"],
         {"x": x},
-        attrs={"momentum_gev": 2.0, "sample_error_mode": "covariance"},
+        attrs={"momentum_gev": 1.722, "sample_error_mode": "covariance"},
         name="quasi_distribution",
     )
 
     def selection_kernel(x_out, x_in, *, momentum_gev, scale_gev):
-        assert momentum_gev == 2.0
+        assert momentum_gev == 1.722
         assert scale_gev == 2.0
         assert list(x_out) == [-0.5, 0.5]
         return np.asarray([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
@@ -1824,6 +1880,10 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
     assert "plots/result.svg" in observation["artifacts"]
     report = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert "[PDF](plots/result.pdf)" in report
+    result_svg = (tmp_path / "plots" / "result.svg").read_text(encoding="utf-8")
+    assert "FillBetweenPolyCollection" in result_svg
+    assert r"$P_z=1.72\,\mathrm{GeV}$" in result_svg
+    assert r"$x$" in result_svg
     np.testing.assert_allclose(context.output.values, quasi.values[:, [0, 2]])
 
 

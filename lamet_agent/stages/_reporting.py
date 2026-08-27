@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -93,16 +94,20 @@ def stage_overlay_lines(
     *,
     coordinate: str,
     stem: str,
-    ylabel: str,
+    ylabel: str | Mapping[str, str],
+    xlabel: str | None = None,
+    band: bool = False,
+    series_label: Callable[[StageReportRecord], str] | None = None,
 ) -> list[str]:
     """Create stage-level real/imaginary overlays from compatible 1D outputs."""
-    from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
+    from lamet_agent.plotting import configure_plot, errorband, errorline, save_figure, start_plot
 
     usable = [record for record in records if getattr(record.output, "dims", None) == [coordinate]]
     if not usable:
         return ["No compatible one-dimensional outputs were available for a stage overlay."]
     complex_output = any(np.iscomplexobj(record.output.values) for record in usable)
     components = (("real", "Re"), ("imag", "Im")) if complex_output else (("real", ""),)
+    draw = errorband if band else errorline
     lines: list[str] = []
     for component, suffix in components:
         start_plot()
@@ -111,18 +116,32 @@ def stage_overlay_lines(
             data = getattr(record.output, component) if np.iscomplexobj(record.output.values) else record.output
             mode = str(data.attrs.get("sample_error_mode", "covariance"))
             average = data.average(mode)
-            errorline(data.coords[coordinate], average, label=record.job_id)
+            draw(
+                data.coords[coordinate],
+                average,
+                label=series_label(record) if series_label is not None else record.job_id,
+            )
             plotted += 1
-        configure_plot(xlabel=coordinate, ylabel=f"{suffix} {ylabel}".strip(), legend=plotted <= 15)
+        if isinstance(ylabel, Mapping):
+            axis_ylabel = str(ylabel[component])
+            caption = suffix or axis_ylabel
+        else:
+            axis_ylabel = f"{suffix} {ylabel}".strip()
+            caption = suffix or ylabel
+        configure_plot(
+            xlabel=xlabel or coordinate,
+            ylabel=axis_ylabel,
+            legend=plotted <= 15,
+        )
         suffix_name = f"_{component}" if complex_output else ""
         pdf = artifact_directory / "plots" / f"{stem}{suffix_name}.pdf"
         svg = artifact_directory / "plots" / f"{stem}{suffix_name}.svg"
         save_figure(pdf, svg)
         lines.extend(
             [
-                f"![{suffix or ylabel} stage overlay](plots/{svg.name})",
+                f"![{caption} stage overlay](plots/{svg.name})",
                 "",
-                f"[{suffix or ylabel} stage overlay (PDF)](plots/{pdf.name})",
+                f"[{caption} stage overlay (PDF)](plots/{pdf.name})",
                 "",
             ]
         )

@@ -8,7 +8,8 @@ import numpy as np
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.parallel import FitNumericalError
-from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
+from lamet_agent.plotting import Z_OVER_A_LABEL, configure_plot, errorline, save_figure, start_plot
+from lamet_agent.stages.correlator_analysis.diagnostics import write_fit_artifacts
 from lamet_agent.stages.correlator_analysis.physics import (
     fit_matrix_element_samples,
     matrix_element_samples,
@@ -286,6 +287,26 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         }
         for candidate in sorted(candidates, key=lambda item: str(item["id"]))
     ]
+    fit_artifacts: list[str] = []
+    sample_fit_quality: dict[str, object] = {}
+    dispersion_energy: dict[str, object] = {}
+    application_fit = selected.get("application_fit")
+    if isinstance(application_fit, dict):
+        fit_result = write_fit_artifacts(
+            job_id=context.job_id,
+            selected=selected,
+            candidates=candidates,
+            preflight_fit=selected.get("preflight_fit"),
+            application_fit=application_fit,
+            application_rejections=application_rejections,
+            artifact_directory=context.artifact_directory,
+            component=str(context.params["component"]),
+            q_min=float(settings["q_min"]),
+        )
+        fit_artifacts = list(fit_result.artifacts)
+        sample_fit_quality = fit_result.sample_fit_quality
+        dispersion_energy = fit_result.dispersion_energy
+        selected["application_fit"] = fit_result.application_fit
     diagnostics = {
         "candidate_id": candidate_id,
         "method": selected.get("method"),
@@ -296,6 +317,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         "selected_preflight_fit": selected.get("preflight_fit"),
         "selected_application_fit": selected.get("application_fit"),
         "candidates": candidate_table,
+        "sample_fit_quality": sample_fit_quality,
+        "dispersion_energy": dispersion_energy,
         **{key: selected[key] for key in ("chi2", "dof", "chi2_dof", "Q", "aic") if key in selected},
     }
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
@@ -321,12 +344,17 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
         start_plot()
         errorline(data.coords[plot_dim], plot_data.average(sample_error_mode))
-        configure_plot(xlabel=plot_dim, ylabel=str(data.name or "result"))
+        xlabel = Z_OVER_A_LABEL if plot_dim == "z" else plot_dim
+        configure_plot(xlabel=xlabel, ylabel=str(data.name or "result").replace("_", " "))
         save_figure(context.artifact_directory / "plots" / "result.pdf")
         plot_artifact = "plots/result.pdf"
     report = f"# Correlator result\n\nSelected candidate: `{candidate_id}`.\nMethod: `{selected.get('method')}`.\n"
     (context.artifact_directory / "report.md").write_text(report, encoding="utf-8")
-    artifacts = ["output.nc", "diagnostics/candidates.json", "report.md"] + ([plot_artifact] if plot_artifact else [])
+    artifacts = (
+        ["output.nc", "diagnostics/candidates.json", "report.md"]
+        + ([plot_artifact] if plot_artifact else [])
+        + fit_artifacts
+    )
     summary = {
         "stage_id": context.stage_id,
         "job_id": context.job_id,

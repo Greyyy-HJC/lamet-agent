@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping, Sequence
 import warnings
 
 import gvar as gv
@@ -22,6 +22,7 @@ class _FitResult:
     resample: str
     sample_errors: tuple[str | None, ...] = ()
     sample_diagnostics: tuple[dict[str, float] | None, ...] = ()
+    sample_posteriors: tuple[gv.BufferDict | None, ...] = ()
 
     @property
     def n_failed_samples(self) -> int:
@@ -70,9 +71,9 @@ def _fit_warning_scope():
 
 
 def _sample_fit(
-    task: tuple[Any, np.ndarray, np.ndarray, Callable[..., Any], Mapping[str, Any], Mapping[str, Any]],
-) -> tuple[gv.BufferDict | None, str | None, dict[str, float] | None]:
-    x, mean, covariance, fcn, prior, options = task
+    task: tuple[Any, np.ndarray, np.ndarray, Callable[..., Any], Mapping[str, Any], Mapping[str, Any], bool],
+) -> tuple[gv.BufferDict | None, str | None, dict[str, float] | None, gv.BufferDict | None]:
+    x, mean, covariance, fcn, prior, options, capture_posterior = task
     import lsqfit
 
     sample_data = gv.gvar(mean, covariance)
@@ -81,7 +82,7 @@ def _sample_fit(
         with _fit_warning_scope():
             fit = lsqfit.nonlinear_fit(data=fit_data, fcn=fcn, prior=prior, **dict(options))
     except _NUMERICAL_FIT_ERRORS as exc:
-        return None, f"{type(exc).__name__}: {exc}", None
+        return None, f"{type(exc).__name__}: {exc}", None, None
     return (
         fit.pmean,
         None,
@@ -91,6 +92,7 @@ def _sample_fit(
             "Q": float(fit.Q),
             "logGBF": float(fit.logGBF),
         },
+        fit.p if capture_posterior else None,
     )
 
 
@@ -121,6 +123,7 @@ def nonlinear_fit(
     sample_error_mode: Literal["covariance", "mean", "median"] = "covariance",
     mode: Literal["center", "resamples"] = "resamples",
     tolerate_sample_failures: bool = False,
+    capture_sample_posteriors: Sequence[int] = (),
     _parallel: _ParallelPool | None = None,
     **options: Any,
 ) -> _FitResult:
@@ -131,6 +134,8 @@ def nonlinear_fit(
     corresponding covariance and performs no sample scheduling. Resamples mode
     accepts existing jackknife/bootstrap samples, or creates them from raw data
     when ``resampling`` is supplied, then fits every stored sample in order.
+    ``capture_sample_posteriors`` retains full gvar posteriors only for the
+    requested sample indices; ordinary callers continue to receive means only.
     """
     if isinstance(data, tuple):
         if len(data) != 2 or not isinstance(data[1], EnsembleData):
@@ -146,6 +151,13 @@ def nonlinear_fit(
         raise ValueError("workers must be a positive integer")
     if mode not in {"center", "resamples"}:
         raise ValueError("mode must be 'center' or 'resamples'")
+    capture_indices = tuple(capture_sample_posteriors)
+    if any(isinstance(index, bool) or not isinstance(index, int) or index < 0 for index in capture_indices):
+        raise ValueError("capture_sample_posteriors must contain nonnegative integer indices")
+    if len(set(capture_indices)) != len(capture_indices):
+        raise ValueError("capture_sample_posteriors must not contain duplicates")
+    if samples.resample == "gvar" and mode != "center":
+        raise ValueError("fitting requires raw, jackknife, or bootstrap data")
     if resampling is not None:
         if samples.resample != "raw":
             raise ValueError("resampling can only be requested for raw data")
@@ -193,7 +205,9 @@ def nonlinear_fit(
     except (FloatingPointError, OverflowError, ZeroDivisionError, ValueError) as exc:
         raise FitNumericalError(f"sample-average posterior is unusable: {type(exc).__name__}: {exc}") from exc
     if mode == "center":
-        return _FitResult(fitted_center, (), samples.resample, (), ())
+        if capture_indices:
+            raise ValueError("capture_sample_posteriors requires mode='resamples'")
+        return _FitResult(fitted_center, (), samples.resample, (), (), ())
     sample_options = dict(options)
     sample_options["p0"] = {
         key: np.asarray(gv.mean(fitted_center.p[key])).item()
@@ -202,7 +216,13 @@ def nonlinear_fit(
         for key in prior
     }
     covariance = np.asarray(gv.evalcov(center_data))
-    tasks = [(x, np.asarray(sample), covariance, fcn, sample_prior, sample_options) for sample in samples.values]
+    if any(index >= samples.n_sample for index in capture_indices):
+        raise ValueError("capture_sample_posteriors contains an out-of-range sample index")
+    capture_set = set(capture_indices)
+    tasks = [
+        (x, np.asarray(sample), covariance, fcn, sample_prior, sample_options, index in capture_set)
+        for index, sample in enumerate(samples.values)
+    ]
     if _parallel is None:
         with _ParallelPool(min(workers, len(tasks))) as parallel:
             outcomes = parallel.map(
@@ -218,13 +238,21 @@ def nonlinear_fit(
             description="Sample fits",
             unit="fit",
         )
-    fitted_samples = tuple(parameters for parameters, _error, _diagnostics in outcomes)
-    sample_errors = tuple(error for _parameters, error, _diagnostics in outcomes)
-    sample_diagnostics = tuple(diagnostics for _parameters, _error, diagnostics in outcomes)
+    fitted_samples = tuple(parameters for parameters, _error, _diagnostics, _posterior in outcomes)
+    sample_errors = tuple(error for _parameters, error, _diagnostics, _posterior in outcomes)
+    sample_diagnostics = tuple(diagnostics for _parameters, _error, diagnostics, _posterior in outcomes)
+    sample_posteriors = tuple(posterior for _parameters, _error, _diagnostics, posterior in outcomes)
     if not tolerate_sample_failures and any(error is not None for error in sample_errors):
         failed_index = next(index for index, error in enumerate(sample_errors) if error is not None)
         raise FitNumericalError(f"sample fit {failed_index} failed: {sample_errors[failed_index]}")
-    return _FitResult(fitted_center, fitted_samples, samples.resample, sample_errors, sample_diagnostics)
+    return _FitResult(
+        fitted_center,
+        fitted_samples,
+        samples.resample,
+        sample_errors,
+        sample_diagnostics,
+        sample_posteriors,
+    )
 
 
 __all__ = ["FitNumericalError", "nonlinear_fit"]

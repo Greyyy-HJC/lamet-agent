@@ -5,8 +5,6 @@ from __future__ import annotations
 import numpy as np
 
 from lamet_agent.agent import ToolContext
-from lamet_agent.data import EnsembleData
-from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
 from lamet_agent.stages.correlator_analysis.hook import ensure_correlators
 
 
@@ -78,8 +76,7 @@ def run(context: ToolContext, *, correlator_ids: list[str] | None = None) -> dic
         context.state["correlator_scale_inspection"] = scale_inspection
         context.state["correlator_rescale"] = scale_inspection["correlator_rescale"]
     inspection = {}
-    artifact_paths = []
-    for index, (key, value) in enumerate(resampled.items(), start=1):
+    for key, value in resampled.items():
         metrics = {
             "dims": value.dims,
             "shape": list(value.values.shape),
@@ -111,20 +108,6 @@ def run(context: ToolContext, *, correlator_ids: list[str] | None = None) -> dic
                     "usable_time_count": int(np.count_nonzero(usable)),
                 }
             )
-            plot_data = EnsembleData(
-                value.ensemble,
-                value.resample,
-                list(samples),
-                ["t"],
-                {"t": times.tolist()},
-            )
-            sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
-            start_plot()
-            errorline(times, plot_data.average(sample_error_mode))
-            configure_plot(xlabel="t", ylabel=key)
-            plot_path = f"plots/correlator_{index:03d}.pdf"
-            save_figure(context.artifact_directory / plot_path)
-            artifact_paths.append(plot_path)
         inspection[key] = metrics
     context.state["inspection"] = inspection
     metrics = {
@@ -143,5 +126,5 @@ def run(context: ToolContext, *, correlator_ids: list[str] | None = None) -> dic
         "summary": f"inspected {len(resampled)} correlators with shared resample plan",
         "metrics": metrics,
         "state_keys": state_keys,
-        "artifacts": artifact_paths,
+        "artifacts": [],
     }

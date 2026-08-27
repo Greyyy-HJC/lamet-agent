@@ -9,7 +9,17 @@ import numpy as np
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
-from lamet_agent.plotting import COLOR_CYCLE, configure_plot, errorband, save_figure, start_plot, vline
+from lamet_agent.plotting import (
+    X_LABEL,
+    configure_plot,
+    errorband,
+    momentum_label,
+    quasi_distribution_label,
+    save_figure,
+    series_color,
+    start_plot,
+    vline,
+)
 from lamet_agent.stages.fourier_transform.physics import scan_fourier_transform
 
 
@@ -166,12 +176,30 @@ def run(context: ToolContext) -> dict[str, object]:
         "output_im.pdf",
     ]
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    momentum = float(source.attrs["momentum_gev"])
+    pz_label = momentum_label(momentum)
+    component = str(scan["component"])
+    component_series = {
+        "re": (("real", pz_label, 0),),
+        "im": (("imag", pz_label, 1),),
+        "both": (
+            ("real", "Re", 0),
+            ("imag", "Im", 1),
+        ),
+    }[component]
     start_plot()
-    if scan["component"] in {"re", "both"}:
-        errorband(output.coords["x"], output.real.average(sample_error_mode), color=COLOR_CYCLE[0], label="Re")
-    if scan["component"] in {"im", "both"}:
-        errorband(output.coords["x"], output.imag.average(sample_error_mode), color=COLOR_CYCLE[1], label="Im")
-    configure_plot(xlabel="x", ylabel="quasi distribution", legend=scan["component"] == "both")
+    for data_component, label, color_index in component_series:
+        errorband(
+            output.coords["x"],
+            getattr(output, data_component).average(sample_error_mode),
+            color=series_color(color_index),
+            label=label,
+        )
+    configure_plot(
+        xlabel=X_LABEL,
+        ylabel=quasi_distribution_label(component),
+        legend=True,
+    )
     save_figure(context.artifact_directory / "output_xdep.pdf")
     extended = result["selected_candidate"]["extended"]
     z_min_fm = float(selected_range["z_min_fm"])
@@ -189,12 +217,12 @@ def run(context: ToolContext) -> dict[str, object]:
     for component, filename in (("real", "output_re.pdf"), ("imag", "output_im.pdf")):
         start_plot()
         errorband(
-            input_lambda, getattr(source, component).average(sample_error_mode), color=COLOR_CYCLE[0], label="input"
+            input_lambda, getattr(source, component).average(sample_error_mode), color=series_color(0), label="input"
         )
         errorband(
             extension_lambda,
             getattr(extension_segment, component).average(sample_error_mode),
-            color=COLOR_CYCLE[1],
+            color=series_color(1),
             label="extrapolation",
         )
         vline(lambda_min, color="black", linestyle="dashed")

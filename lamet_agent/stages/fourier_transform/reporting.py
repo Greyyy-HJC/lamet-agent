@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from lamet_agent.plotting import QUASI_DISTRIBUTION_LABELS, X_LABEL, momentum_label
 from lamet_agent.stages._reporting import (
     StageReportRecord,
     artifact_rows,
@@ -15,6 +16,10 @@ from lamet_agent.stages._reporting import (
     stage_overlay_lines,
     write_report,
 )
+
+
+def _momentum_series_label(record: StageReportRecord) -> str:
+    return momentum_label(output_attrs(record).get("momentum_gev"), default=record.job_id)
 
 
 _TAIL_FORMULA = r"""
@@ -154,7 +159,14 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             "## Stage Overview",
             "",
             *stage_overlay_lines(
-                records, artifact_directory, coordinate="x", stem="fourier_overview", ylabel="quasi distribution"
+                records,
+                artifact_directory,
+                coordinate="x",
+                stem="fourier_overview",
+                xlabel=X_LABEL,
+                ylabel=QUASI_DISTRIBUTION_LABELS,
+                band=True,
+                series_label=_momentum_series_label,
             ),
         ]
     )

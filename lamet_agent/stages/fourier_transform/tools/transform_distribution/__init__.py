@@ -7,7 +7,15 @@ import numpy as np
 
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
-from lamet_agent.plotting import configure_plot, errorband, save_figure, start_plot
+from lamet_agent.plotting import (
+    X_LABEL,
+    configure_plot,
+    errorband,
+    momentum_label,
+    quasi_distribution_label,
+    save_figure,
+    start_plot,
+)
 from lamet_agent.stages.fourier_transform.physics import fourier_transform
 
 
@@ -69,8 +77,12 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     )
     start_plot()
     sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
-    errorband(result.coords["x"], result.real.average(sample_error_mode))
-    configure_plot(xlabel="x", ylabel="quasi distribution")
+    errorband(
+        result.coords["x"],
+        result.real.average(sample_error_mode),
+        label=momentum_label(momentum),
+    )
+    configure_plot(xlabel=X_LABEL, ylabel=quasi_distribution_label("real"), legend=True)
     save_figure(context.artifact_directory / "plots" / "distribution.pdf")
     (context.artifact_directory / "report.md").write_text(
         f"# Fourier transform\n\nTail model: `{attrs['tail_model']}`.\n", encoding="utf-8"

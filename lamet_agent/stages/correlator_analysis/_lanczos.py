@@ -10,7 +10,14 @@ import xarray as xr
 
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
-from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
+from lamet_agent.plotting import (
+    BARE_MATRIX_ELEMENT_LABEL,
+    Z_OVER_A_LABEL,
+    configure_plot,
+    errorline,
+    save_figure,
+    start_plot,
+)
 from lamet_agent.parallel.lanczos import (
     analyze_prepared_lanczos,
 )
@@ -107,7 +114,7 @@ def run(context: ToolContext) -> dict[str, object]:
             errorline(z_values, _plot_values(np.real(values)), label="Re")
         if context.params["component"] in {"im", "both"}:
             errorline(z_values, _plot_values(np.imag(values)), marker="s", label="Im")
-        configure_plot(xlabel=r"$z/a$", ylabel="Lanczos matrix element", legend=True)
+        configure_plot(xlabel=Z_OVER_A_LABEL, ylabel=BARE_MATRIX_ELEMENT_LABEL, legend=True)
         details_path = context.artifact_directory / "diagnostics" / "state_matrices.nc"
         details_path.parent.mkdir(parents=True, exist_ok=True)
         xr.DataArray(
