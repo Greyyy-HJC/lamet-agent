@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -14,6 +15,12 @@ import numpy as np
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
 from lamet_agent.parallel import nonlinear_fit
+
+
+@dataclass(frozen=True)
+class _FactorFitResult:
+    factor: EnsembleData
+    plot_data: dict[str, Any]
 
 
 def load_data(value: Any) -> EnsembleData:
@@ -228,7 +235,7 @@ def log_m(
     )
 
 
-def fit_factor(
+def _fit_factor_result(
     reference: EnsembleData | Sequence[EnsembleData],
     *,
     short_distance_max_fm: float,
@@ -242,7 +249,8 @@ def fit_factor(
     svdcut: float,
     short_distance_min_fm: float = 0.0,
     lattice_spacing_range_fm: tuple[float, float] | None = None,
-) -> EnsembleData:
+    sample_error_mode: str = "covariance",
+) -> _FactorFitResult:
     """Fit the reference workflow's correlated mean self-renormalization factor."""
     if isinstance(reference, EnsembleData) and reference.dims == ["a", "z"]:
         source = reference
@@ -348,7 +356,9 @@ def fit_factor(
         fitter="scipy_least_squares",
     )
     m0 = m0_fit.p["m0"]
-    factor = np.empty((len(spacings), len(z)), dtype=float)
+    g_parameters = np.asarray([fit.p[f"g{coordinate}"] for coordinate in z], dtype=object)
+    finite = np.asarray([fit.p[f"f1{coordinate}"] for coordinate in z], dtype=object)
+    factor_gvar = np.empty((len(spacings), len(z)), dtype=object)
     for spacing_index, spacing in enumerate(spacings):
         known = log_m(
             z,
@@ -359,11 +369,8 @@ def fit_factor(
             n_f=n_f,
             scale_gev=scale_gev,
         )
-        finite = np.asarray([fit.p[f"f1{coordinate}"] for coordinate in z], dtype=object)
-        factor[spacing_index] = np.asarray(
-            gv.mean(gv.exp(known + finite * spacing / HBAR_C_GEV_FM + m0 * z)),
-            dtype=float,
-        )
+        factor_gvar[spacing_index] = gv.exp(known + finite * spacing / HBAR_C_GEV_FM + m0 * z)
+    factor = np.asarray(gv.mean(factor_gvar), dtype=float)
     source_ids = [str(source.attrs.get("resample_id", source.attrs.get("ensemble_id", "reference")))]
     attrs = dict(source.attrs)
     attrs.update(
@@ -405,7 +412,7 @@ def fit_factor(
             "units": '{"values":"dimensionless","a":"fm","z":"fm"}',
         }
     )
-    return EnsembleData(
+    factor_data = EnsembleData(
         None,
         source.resample,
         [factor],
@@ -414,3 +421,74 @@ def fit_factor(
         attrs=attrs,
         name="renormalization_factor",
     )
+    lnm = log_data.average(sample_error_mode)
+    m_r = gv.exp(g_parameters - m0 * z)
+    zmsbar = np.full(len(z), np.nan, dtype=float)
+    finite_z = np.abs(z) > 1e-12
+    if np.any(finite_z):
+        zmsbar[finite_z] = np.exp(zmsbar_log(zms_kernel, np.abs(z[finite_z]), scale_gev=scale_gev))
+    m_r_ratio_mean = np.full(len(z), np.nan, dtype=float)
+    m_r_ratio_sdev = np.full(len(z), np.nan, dtype=float)
+    if np.any(finite_z):
+        ratio_values = m_r[finite_z] / zmsbar[finite_z]
+        m_r_ratio_mean[finite_z] = np.asarray(gv.mean(ratio_values), dtype=float)
+        m_r_ratio_sdev[finite_z] = np.asarray(gv.sdev(ratio_values), dtype=float)
+    m_over_zr = gv.exp(lnm) / factor_gvar
+    plot_data = {
+        "kind": "fit",
+        "z_fm": z.tolist(),
+        "a_fm": [float(value) for value in spacings],
+        "inverse_a_gev": (HBAR_C_GEV_FM / np.asarray(spacings, dtype=float)).tolist(),
+        "lnm_mean": np.asarray(gv.mean(lnm), dtype=float).tolist(),
+        "lnm_sdev": np.asarray(gv.sdev(lnm), dtype=float).tolist(),
+        "factor_mean": factor.tolist(),
+        "factor_sdev": np.asarray(gv.sdev(factor_gvar), dtype=float).tolist(),
+        "g_mean": np.asarray(gv.mean(g_parameters), dtype=float).tolist(),
+        "g_sdev": np.asarray(gv.sdev(g_parameters), dtype=float).tolist(),
+        "f1_mean": np.asarray(gv.mean(finite), dtype=float).tolist(),
+        "f1_sdev": np.asarray(gv.sdev(finite), dtype=float).tolist(),
+        "m0_mean": float(gv.mean(m0)),
+        "m0_sdev": float(gv.sdev(m0)),
+        "mR_mean": np.asarray(gv.mean(m_r), dtype=float).tolist(),
+        "mR_sdev": np.asarray(gv.sdev(m_r), dtype=float).tolist(),
+        "zmsbar": [float(value) if np.isfinite(value) else None for value in zmsbar],
+        "mR_over_zmsbar_mean": [float(value) if np.isfinite(value) else None for value in m_r_ratio_mean],
+        "mR_over_zmsbar_sdev": [float(value) if np.isfinite(value) else None for value in m_r_ratio_sdev],
+        "m_over_zR_mean": np.asarray(gv.mean(m_over_zr), dtype=float).tolist(),
+        "m_over_zR_sdev": np.asarray(gv.sdev(m_over_zr), dtype=float).tolist(),
+    }
+    return _FactorFitResult(factor=factor_data, plot_data=plot_data)
+
+
+def fit_factor(
+    reference: EnsembleData | Sequence[EnsembleData],
+    *,
+    short_distance_max_fm: float,
+    k: float,
+    lambda_qcd_gev: float,
+    d: float,
+    n_f: int,
+    scale_gev: float,
+    zms_kernel: Callable[..., Any],
+    kernel_id: str,
+    svdcut: float,
+    short_distance_min_fm: float = 0.0,
+    lattice_spacing_range_fm: tuple[float, float] | None = None,
+    sample_error_mode: str = "covariance",
+) -> EnsembleData:
+    """Fit and return the reusable factor while keeping diagnostics internal."""
+    return _fit_factor_result(
+        reference,
+        short_distance_max_fm=short_distance_max_fm,
+        k=k,
+        lambda_qcd_gev=lambda_qcd_gev,
+        d=d,
+        n_f=n_f,
+        scale_gev=scale_gev,
+        zms_kernel=zms_kernel,
+        kernel_id=kernel_id,
+        svdcut=svdcut,
+        short_distance_min_fm=short_distance_min_fm,
+        lattice_spacing_range_fm=lattice_spacing_range_fm,
+        sample_error_mode=sample_error_mode,
+    ).factor

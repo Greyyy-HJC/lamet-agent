@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 
-import numpy as np
-
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels import load_renormalization_kernel
-from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
-from lamet_agent.stages.renormalization.physics import fit_factor, normalize_at_origin
+from lamet_agent.stages.renormalization._plotting import render_fit_diagnostics
+from lamet_agent.stages.renormalization.physics import _fit_factor_result, normalize_at_origin
 from lamet_agent.stages.renormalization.parameters import effective_params
 
 
@@ -49,7 +47,8 @@ def run(context: ToolContext) -> dict[str, object]:
     )
     if not spacings:
         raise ValueError("self-renormalization reference has no lattice-spacing coordinates")
-    factor = fit_factor(
+    sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    fit_result = _fit_factor_result(
         prepared,
         short_distance_max_fm=short_distance_max_fm,
         short_distance_min_fm=short_distance_min_fm,
@@ -62,7 +61,9 @@ def run(context: ToolContext) -> dict[str, object]:
         kernel_id=kernel_id,
         svdcut=float(params["svdcut"]),
         lattice_spacing_range_fm=(spacings[0], spacings[-1]),
+        sample_error_mode=sample_error_mode,
     )
+    factor = fit_result.factor
     attrs = factor.attrs
     attrs.update(
         {
@@ -99,23 +100,24 @@ def run(context: ToolContext) -> dict[str, object]:
         "k": factor.attrs.get("k"),
         "n_f": factor.attrs.get("n_f"),
         "scale_gev": factor.attrs.get("scale_gev"),
-        "LambdaQCD_gev": factor.attrs.get("LambdaQCD_gev"),
+        "LambdaQCD_gev": float(params["LambdaQCD_gev"]),
         "kernel_id": kernel_id,
         "formula": factor.attrs["formula"],
         "factor_dims": factor.dims,
     }
+    diagnostic_payload = {**diagnostics, "plot_data": fit_result.plot_data}
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
     (context.artifact_directory / "diagnostics" / "self_renormalization.json").write_text(
-        json.dumps(diagnostics, indent=2), encoding="utf-8"
+        json.dumps(diagnostic_payload, indent=2), encoding="utf-8"
     )
-    start_plot()
-    plot_data = factor.real if np.iscomplexobj(factor.values) else factor
-    sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
-    errorline(factor.coords["a"], np.mean(plot_data.average(sample_error_mode), axis=-1))
-    configure_plot(xlabel="a [fm]", ylabel="Z_R")
-    save_figure(context.artifact_directory / "plots" / "factor.pdf")
+    rendered = render_fit_diagnostics(
+        fit_result.plot_data,
+        directory=context.artifact_directory / "plots",
+        formats=("pdf",),
+    )
     (context.artifact_directory / "report.md").write_text(
-        "# Self-renormalization factor\n\nA reusable sample-bearing factor was fitted on the authored reference grid.\n",
+        "# Self-renormalization factor\n\n"
+        "A reusable sample-bearing factor was fitted on the authored reference grid.\n",
         encoding="utf-8",
     )
     summary = {
@@ -124,7 +126,12 @@ def run(context: ToolContext) -> dict[str, object]:
         "result": "renormalization_factor",
         "decisions": {"type": "fit", "kernel_id": kernel_id, "short_distance_max_fm": short_distance_max_fm},
         "diagnostics": diagnostics,
-        "artifacts": ["output.nc", "diagnostics/self_renormalization.json", "plots/factor.pdf", "report.md"],
+        "artifacts": [
+            "output.nc",
+            "diagnostics/self_renormalization.json",
+            *[f"plots/{stem}.pdf" for stem, _caption in rendered],
+            "report.md",
+        ],
     }
     context.finish(factor, summary)
     return {

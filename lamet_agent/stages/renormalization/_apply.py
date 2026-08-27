@@ -10,7 +10,7 @@ from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels import load_renormalization_kernel
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
-from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
+from lamet_agent.stages.renormalization._plotting import render_result
 from lamet_agent.stages.renormalization.physics import (
     divide_by_constant,
     hybrid_ratio,
@@ -34,6 +34,8 @@ def run(context: ToolContext) -> dict[str, object]:
     strategy = params["strategy"]
     scheme = params["scheme"]
     normalize_inputs = bool(params["normalization"])
+    sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    apply_plot_data: dict[str, object] | None = None
     if normalize_inputs and strategy != "self_renormalization":
         target = normalize_at_origin(target)
     if strategy == "self_renormalization":
@@ -112,13 +114,35 @@ def run(context: ToolContext) -> dict[str, object]:
             )
             denominator_values[np.flatnonzero(nonzero)[long_distance]] = np.exp(completed_log)
         if scheme == "ratio":
-            denominator_values[nonzero] *= np.exp(
+            zmsbar_values = np.exp(
                 zmsbar_log(
                     zms_kernel,
                     np.abs(z_target[nonzero]),
                     scale_gev=float(params["mu"]),
                 )
             )
+            h_over_zr = EnsembleData(
+                target.ensemble,
+                target.resample,
+                [np.asarray(sample)[nonzero] / denominator_values[nonzero] for sample in target.values],
+                ["z"],
+                {"z": z_target[nonzero].tolist()},
+                attrs={"sample_error_mode": sample_error_mode},
+                name="bare_over_self_renormalization_factor",
+            )
+            h_over_zr_average = h_over_zr.real.average(sample_error_mode)
+            apply_plot_data = {
+                "kind": "apply",
+                "z_fm": z_target[nonzero].tolist(),
+                "h_over_zR_real_mean": np.asarray(
+                    [float(value.mean) for value in h_over_zr_average], dtype=float
+                ).tolist(),
+                "h_over_zR_real_sdev": np.asarray(
+                    [float(value.sdev) for value in h_over_zr_average], dtype=float
+                ).tolist(),
+                "zmsbar": np.asarray(zmsbar_values, dtype=float).tolist(),
+            }
+            denominator_values[nonzero] *= zmsbar_values
         denominator = EnsembleData(None, "raw", [denominator_values], ["z"], {"z": z_target.tolist()})
         if scheme == "hybrid":
             denominator = aligned.get("denominator")
@@ -228,16 +252,22 @@ def run(context: ToolContext) -> dict[str, object]:
             if isinstance(value, EnsembleData) and "z" in value.coords
         },
     }
+    diagnostic_payload = dict(diagnostics)
+    if apply_plot_data is not None:
+        diagnostic_payload["plot_data"] = apply_plot_data
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
     (context.artifact_directory / "diagnostics" / "renormalization.json").write_text(
-        json.dumps(diagnostics, indent=2), encoding="utf-8"
+        json.dumps(diagnostic_payload, indent=2), encoding="utf-8"
     )
-    start_plot()
-    plot_data = result.real if np.iscomplexobj(result.values) else result
-    sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
-    errorline(result.coords["z"], plot_data.average(sample_error_mode))
-    configure_plot(xlabel="z [fm]", ylabel="renormalized matrix element")
-    save_figure(context.artifact_directory / "plots" / "result.pdf")
+    rendered = [
+        render_result(
+            result,
+            directory=context.artifact_directory / "plots",
+            stem="result",
+            formats=("pdf",),
+            sample_error_mode=sample_error_mode,
+        )
+    ]
     report = f"# Renormalized matrix element\n\nScheme: `{scheme}`.\nStrategy: `{strategy}`.\n"
     (context.artifact_directory / "report.md").write_text(report, encoding="utf-8")
     summary = {
@@ -252,7 +282,12 @@ def run(context: ToolContext) -> dict[str, object]:
             "normalization": bool(params["normalization"]),
         },
         "diagnostics": diagnostics,
-        "artifacts": ["output.nc", "diagnostics/renormalization.json", "plots/result.pdf", "report.md"],
+        "artifacts": [
+            "output.nc",
+            "diagnostics/renormalization.json",
+            *[f"plots/{stem}.pdf" for stem, _caption in rendered],
+            "report.md",
+        ],
     }
     context.finish(result, summary)
     return {

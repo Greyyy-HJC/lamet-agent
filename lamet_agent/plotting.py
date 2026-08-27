@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from numbers import Real
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import rcParams
+from matplotlib.colors import to_hex
 from matplotlib.markers import MarkerStyle
 
 _BLUE = "#4E79A7"
@@ -26,7 +28,15 @@ COLOR_CYCLE = [_BLUE, _ORANGE, _GREEN, _RED, _VIOLET, _FUCHSIA]
 
 X_LABEL = r"$x$"
 Z_OVER_A_LABEL = r"$z~/~a$"
+Z_FM_LABEL = r"$z\,[\mathrm{fm}]$"
+INVERSE_LATTICE_SPACING_LABEL = r"$a^{-1}\,[\mathrm{GeV}]$"
 BARE_MATRIX_ELEMENT_LABEL = "bare matrix element"
+SELF_RENORMALIZATION_FACTOR_LABEL = r"$Z_R(z,a)$"
+RENORMALIZED_MATRIX_ELEMENT_LABELS = {
+    "real": r"$\mathrm{Re}\,h^R(z)$",
+    "imag": r"$\mathrm{Im}\,h^R(z)$",
+    "both": r"$h^R(z)$",
+}
 QUASI_DISTRIBUTION_LABELS = {
     "real": r"$\mathrm{Re}\,\tilde q(x)$",
     "imag": r"$\mathrm{Im}\,\tilde q(x)$",
@@ -96,12 +106,47 @@ def series_color(index: int) -> str:
     return COLOR_CYCLE[index % len(COLOR_CYCLE)]
 
 
-def momentum_label(momentum_gev: object, *, default: str | None = None) -> str:
+def continuous_color(index: int, total: int, *, cmap: str = "viridis") -> str:
+    """Return one stable color sampled from a named continuous color map."""
+    if not isinstance(index, int) or not isinstance(total, int) or total <= 0 or not 0 <= index < total:
+        raise ValueError("continuous color requires 0 <= index < total with positive integer total")
+    try:
+        color_map = matplotlib.colormaps[cmap]
+    except KeyError as exc:
+        raise ValueError(f"unsupported color map {cmap!r}") from exc
+    position = 0.5 if total == 1 else index / (total - 1)
+    return to_hex(color_map(position), keep_alpha=False)
+
+
+def lattice_spacing_label(spacing_fm: object, *, default: str | None = None) -> str:
+    """Format a lattice spacing legend label."""
+    if isinstance(spacing_fm, Real) and not isinstance(spacing_fm, bool):
+        spacing = float(spacing_fm)
+        if math.isfinite(spacing) and spacing > 0:
+            return rf"$a={spacing:.4g}\,\mathrm{{fm}}$"
+    if default is not None:
+        return default
+    raise ValueError("spacing_fm must be a finite positive real number")
+
+
+def momentum_label(
+    momentum_gev: object,
+    *,
+    momentum: object | None = None,
+    default: str | None = None,
+) -> str:
     """Format a momentum legend label, optionally falling back for missing metadata."""
     if isinstance(momentum_gev, Real) and not isinstance(momentum_gev, bool):
-        momentum = float(momentum_gev)
-        if math.isfinite(momentum):
-            return rf"$P_z={round(momentum, 2):g}\,\mathrm{{GeV}}$"
+        value = float(momentum_gev)
+        if math.isfinite(value):
+            return rf"$P_z={round(value, 2):g}\,\mathrm{{GeV}}$"
+    if isinstance(momentum, str):
+        match = re.fullmatch(r"PX(-?\d+)PY(-?\d+)PZ(-?\d+)", momentum.upper())
+        if match is not None:
+            px, py, pz = (int(value) for value in match.groups())
+            if px == 0 and py == 0:
+                return rf"$P_z={pz}\,(2\pi/L)$"
+            return rf"$\mathbf{{P}}=({px},{py},{pz})\,(2\pi/L)$"
     if default is not None:
         return default
     raise ValueError("momentum_gev must be a finite real number")
@@ -365,9 +410,15 @@ __all__ = [
     "COLOR_CYCLE",
     "X_LABEL",
     "Z_OVER_A_LABEL",
+    "Z_FM_LABEL",
+    "INVERSE_LATTICE_SPACING_LABEL",
     "BARE_MATRIX_ELEMENT_LABEL",
+    "SELF_RENORMALIZATION_FACTOR_LABEL",
+    "RENORMALIZED_MATRIX_ELEMENT_LABELS",
     "QUASI_DISTRIBUTION_LABELS",
     "series_color",
+    "continuous_color",
+    "lattice_spacing_label",
     "momentum_label",
     "quasi_distribution_label",
     "start_plot",
