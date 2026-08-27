@@ -6,9 +6,6 @@ import json
 from pathlib import Path
 from typing import Any, TypedDict
 
-import gvar
-import numpy as np
-
 from lamet_agent.agent import LlmSession, ToolContext
 from lamet_agent.stages.fourier_transform._inspection import prepare
 from lamet_agent.structured import annotation_schema, json_compatible, validate_value
@@ -28,11 +25,7 @@ def _ensure_context(context: ToolContext, session: LlmSession) -> None:
     mode = str(context.manifest["metadata"]["sample_error_mode"])
     components = {}
     for name, selected in (("real", data.real), ("imag", data.imag)):
-        average = selected.average(mode)
-        components[name] = {
-            "mean": np.asarray(gvar.mean(average), dtype=float).tolist(),
-            "sdev": np.asarray(gvar.sdev(average), dtype=float).tolist(),
-        }
+        components[name] = str(selected.average(mode))
     session.add_context(
         "fourier_tail_fit_data",
         {

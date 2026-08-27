@@ -13,6 +13,7 @@ from lamet_agent.contract import (
     Provides,
     Recommends,
     Source,
+    Suggests,
     Value,
     stage_job_rules,
 )
@@ -64,6 +65,23 @@ def _valid_systematics_groups(value: dict[object, object]) -> bool:
     )
 
 
+_EXTRAPOLATION_TERMS = frozenset(
+    {"a", "a2", "a4", "ap2", "ap4", "exp_mpi_L", "exp_sqrt2_mpi_L", "mpi2", "mpi4_log_mpi2", "inv_p2", "inv_p4"}
+)
+
+
+def _safe_systematics_id(value: str) -> bool:
+    import re
+
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]*", value))
+
+
+def _systematics_terms(value: list[object]) -> bool:
+    return len(value) == len(set(value)) and all(
+        isinstance(term, str) and term in _EXTRAPOLATION_TERMS for term in value
+    )
+
+
 # ruff: disable[E501]
 # fmt: off
 PARAM_RULES = (
@@ -98,6 +116,24 @@ INPUT_RULES = (
     Depends("", "distributions", physics="Extrapolation consumes a nonempty ordered list of matched distributions."),
     List("distributions", "distribution", physics="Distributions are nonempty and preserve authored order.", validator=_nonempty),
     Source("distributions.distribution", physics="Each distribution is a prior job or external file source."),
+)
+
+SYSTEMATICS_RULES = (
+    Recommends("", "defaults", physics="Extrapolation systematics defaults are optional.", default={}),
+    Recommends("", "variants", physics="Extrapolation systematic variants are optional.", default=[]),
+    Value("defaults", dict, physics="Extrapolation systematics defaults form an object."),
+    List("variants", "variant", physics="Extrapolation systematic variants preserve authored order."),
+    Suggests("", "defaults", "variants.variant", physics="Systematics defaults fill each extrapolation variant."),
+    Depends("variants.variant", "id", physics="Every extrapolation variation has one safe label."),
+    Recommends("variants.variant", "append_x_independent_terms", physics="A variation may append shared correction terms.", default=[]),
+    Recommends("variants.variant", "remove_x_independent_terms", physics="A variation may remove shared correction terms.", default=[]),
+    Recommends("variants.variant", "append_x_dependent_terms", physics="A variation may append pointwise correction terms.", default=[]),
+    Recommends("variants.variant", "remove_x_dependent_terms", physics="A variation may remove pointwise correction terms.", default=[]),
+    Value("variants.variant.id", str, physics="Extrapolation variation labels are safe identifiers.", validator=_safe_systematics_id),
+    Value("variants.variant.append_x_independent_terms", list, physics="Added shared correction terms are supported and unique.", validator=_systematics_terms),
+    Value("variants.variant.remove_x_independent_terms", list, physics="Removed shared correction terms are supported and unique.", validator=_systematics_terms),
+    Value("variants.variant.append_x_dependent_terms", list, physics="Added pointwise correction terms are supported and unique.", validator=_systematics_terms),
+    Value("variants.variant.remove_x_dependent_terms", list, physics="Removed pointwise correction terms are supported and unique.", validator=_systematics_terms),
 )
 # fmt: on
 # ruff: enable[E501]
@@ -144,3 +180,41 @@ def check_extrapolation_relations(context: CheckContext) -> Issue | None:
 JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 
 CHECKS = (check_extrapolation_relations,)
+
+
+def check_systematics(context: CheckContext) -> list[Issue]:
+    variants = context.params["variants"]
+    labels = [variant["id"] for variant in variants]
+    issues = []
+    if len(set(labels)) != len(labels):
+        issues.append(Issue("variants", "ids must be unique", "Every variation creates one job suffix."))
+    for index, variant in enumerate(variants):
+        controls = (
+            "append_x_independent_terms",
+            "remove_x_independent_terms",
+            "append_x_dependent_terms",
+            "remove_x_dependent_terms",
+        )
+        if not any(variant[key] for key in controls):
+            issues.append(
+                Issue(
+                    f"variants[{index}]",
+                    "must add or remove at least one extrapolation term",
+                    "A systematic variant must differ from its central fit.",
+                )
+            )
+        for dependence in ("independent", "dependent"):
+            added = set(variant[f"append_x_{dependence}_terms"])
+            removed = set(variant[f"remove_x_{dependence}_terms"])
+            if added & removed:
+                issues.append(
+                    Issue(
+                        f"variants[{index}].append_x_{dependence}_terms",
+                        f"must be disjoint from remove_x_{dependence}_terms",
+                        "One variation cannot add and remove the same term in one coefficient class.",
+                    )
+                )
+    return issues
+
+
+SYSTEMATICS_CHECKS = (check_systematics,)

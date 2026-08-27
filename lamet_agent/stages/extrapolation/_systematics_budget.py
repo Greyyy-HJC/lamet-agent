@@ -44,14 +44,10 @@ def run(context: ToolContext) -> dict[str, object]:
     x = np.asarray(main.coords["x"], dtype=float)
     if x.ndim != 1 or x.size == 0 or np.any(np.diff(x) <= 0):
         raise ValueError("the main systematics input requires a strictly increasing x grid")
-    sample_error_mode = str(
-        main.attrs.get("sample_error_mode", context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
-    )
+    sample_error_mode = str(main.attrs.get("sample_error_mode", context.manifest["metadata"]["sample_error_mode"]))
     variant_modes = {
         str(
-            item.attrs.get(
-                "sample_error_mode", context.manifest.get("metadata", {}).get("sample_error_mode", "covariance")
-            )
+            item.attrs.get("sample_error_mode", context.manifest["metadata"]["sample_error_mode"])
         )
         for item in data
     }

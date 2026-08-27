@@ -16,7 +16,7 @@ from lamet_agent.contract import (
     Value,
     stage_job_rules,
 )
-from lamet_agent.stages.correlator_analysis.tools._joint_fit_recommendation import (
+from lamet_agent.stages.correlator_analysis.tools.recommendation import (
     pt2_windows as recommend_pt2_windows,
     pt3_windows as recommend_pt3_windows,
 )
@@ -120,7 +120,7 @@ INPUT_RULES = (
 
 
 def check_method_family(context: CheckContext) -> Issue | None:
-    if context.params.get("analysis_method", "lsqfit") != "lsqfit":
+    if context.params["analysis_method"] != "lsqfit":
         return None
     settings = context.params
     scopes = set(settings["fit_scope"])
@@ -148,7 +148,7 @@ def check_method_family(context: CheckContext) -> Issue | None:
 
 
 def check_lsqfit_windows(context: CheckContext) -> Issue | None:
-    if context.params.get("analysis_method", "lsqfit") != "lsqfit":
+    if context.params["analysis_method"] != "lsqfit":
         return None
     lsqfit = context.params
     scopes = set(lsqfit["fit_scope"])
@@ -192,7 +192,7 @@ def check_lsqfit_windows(context: CheckContext) -> Issue | None:
 
 
 def check_qda_scope(context: CheckContext) -> Issue | None:
-    if context.params.get("analysis_method", "lsqfit") != "lsqfit":
+    if context.params["analysis_method"] != "lsqfit":
         return None
     lsqfit = context.params
     if "qda_ratio" not in set(lsqfit["fit_scope"]):
@@ -213,7 +213,7 @@ def check_qda_scope(context: CheckContext) -> Issue | None:
 
 
 def check_candidate_policy(context: CheckContext) -> Issue | None:
-    if context.params.get("analysis_method", "lsqfit") != "lsqfit":
+    if context.params["analysis_method"] != "lsqfit":
         return None
     settings = context.params
     if settings.get("model_average") is True:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 
 from lamet_agent.agent import ToolContext
-from lamet_agent.stages.correlator_analysis.hook import ensure_raw_correlators
+from lamet_agent.stages.correlator_analysis._input import ensure_raw_correlators
 from lamet_agent.parallel.lanczos import prepare_lanczos_data
 
 

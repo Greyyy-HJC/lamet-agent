@@ -13,7 +13,7 @@ from lamet_agent.stages.correlator_analysis._inspection import run as inspect
 from lamet_agent.stages.correlator_analysis._lanczos import run as run_lanczos
 from lamet_agent.stages.correlator_analysis._lanczos_inspection import run as inspect_lanczos
 from lamet_agent.stages.correlator_analysis._publish import run as publish
-from lamet_agent.stages.correlator_analysis.tools._joint_fit_recommendation import initial, revise
+from lamet_agent.stages.correlator_analysis.tools.recommendation import initial, revise
 
 
 def _candidate_attempts(context: ToolContext) -> dict[str, dict[str, Any]]:

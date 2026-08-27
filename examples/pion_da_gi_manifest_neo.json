@@ -739,37 +739,44 @@
   },
   "systematics": {
     "fourier_transform": {
-      "tail_window_variants": [
+      "variants": [
         {
           "id": "lambda_low",
-          "step_offset": -1
+          "tail_window_step_offset": -1
         },
         {
           "id": "lambda_high",
-          "step_offset": 1
+          "tail_window_step_offset": 1
         }
       ]
     },
     "perturbative_matching": {
-      "propagate_fourier_variants": true,
-      "scale_variants": [
+      "variants": [
         {
           "id": "mu_low",
-          "factor": 0.7071067811865475
+          "mu_factor": 0.7071067811865475
         },
         {
           "id": "mu_high",
-          "factor": 1.4142135623730951
+          "mu_factor": 1.4142135623730951
         }
       ]
     },
     "extrapolation": {
-      "model_variants": [
-        "a_sym",
-        "p_sym",
-        "ap_sym"
-      ],
-      "publish_budget": true
+      "variants": [
+        {
+          "id": "a_model",
+          "append_x_independent_terms": ["a2"]
+        },
+        {
+          "id": "inv_p_model",
+          "remove_x_dependent_terms": ["inv_p4"]
+        },
+        {
+          "id": "ap_model",
+          "append_x_dependent_terms": ["ap4"]
+        }
+      ]
     }
   }
 }

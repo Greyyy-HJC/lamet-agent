@@ -156,7 +156,7 @@ def test_parallel_pool_sets_worker_omp_threads_and_restores_parent() -> None:
             _worker_omp_threads,
             [0, 1],
         ) == ["1", "1"]
-    assert os.environ.get("OMP_NUM_THREADS") == previous
+        assert os.environ.get("OMP_NUM_THREADS") == previous
 
 
 def test_parallel_pool_submits_one_balanced_batch_per_worker(monkeypatch) -> None:

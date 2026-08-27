@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from lamet_agent.agent import ToolContext
-from lamet_agent.stages.correlator_analysis.hook import ensure_correlators
+from lamet_agent.stages.correlator_analysis._input import ensure_correlators
 
 
 _RESCALED_TYPICAL_ABS_RANGE = (1.0e-4, 1.0e-2)

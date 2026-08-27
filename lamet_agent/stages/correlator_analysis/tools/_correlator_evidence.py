@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import gvar
 import numpy as np
 
 from lamet_agent.agent import LlmSession, ToolContext
-from lamet_agent.stages.correlator_analysis.hook import ensure_correlators
+from lamet_agent.stages.correlator_analysis._input import ensure_correlators
 
 
 _CONTEXT_KEY = "correlator_fit_data"
@@ -30,10 +29,7 @@ def prepare(context: ToolContext) -> dict[str, Any]:
         for component in selected_components:
             selected = data.imag if component == "imag" else data.real
             average = selected.average(sample_error_mode)
-            components[component] = {
-                "mean": np.asarray(gvar.mean(average), dtype=float).tolist(),
-                "sdev": np.asarray(gvar.sdev(average), dtype=float).tolist(),
-            }
+            components[component] = str(average)
         correlators[name] = {
             "dims": data.dims,
             "coords": data.coords,

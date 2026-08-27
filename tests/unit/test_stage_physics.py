@@ -416,7 +416,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
 
 
 def test_correlator_window_selection_preserves_original_information_rule() -> None:
-    from lamet_agent.stages.correlator_analysis.selection import select_data_window
+    from lamet_agent.stages.correlator_analysis._selection import select_data_window
 
     candidates = [
         {"id": "largest", "n_data": 24, "n_params": 10, "Q": 0.8, "chi2_dof": 0.70},
@@ -1194,11 +1194,13 @@ def test_extrapolation_supports_block_and_full_x_covariance() -> None:
         0.135,
         {"mean": 0.0, "sdev": 1.0},
         x_range=(-0.2, 0.2),
+        x_independent_terms=["a"],
         x_covariance=True,
     )
     assert full_result.attrs["x_covariance"] == 1
     assert np.allclose(np.asarray(full_result.mean), physical, atol=0.05)
     assert full_diagnostics["x_covariance"] is True
+    assert np.asarray(full_diagnostics["parameter_mean"]["a"]).ndim == 0
 
 
 def test_extrapolation_covariance_is_blocked_by_ensemble_source() -> None:
@@ -1229,7 +1231,7 @@ def test_extrapolation_covariance_is_blocked_by_ensemble_source() -> None:
 
 
 def test_extrapolation_comparison_requires_the_single_reference_candidate() -> None:
-    from lamet_agent.stages.extrapolation.selection import select_single_candidate
+    from lamet_agent.stages.extrapolation.workflow import select_single_candidate
 
     data = EnsembleData(None, "bootstrap", [[0.8, 1.0], [0.9, 1.1]], ["x"], {"x": [-0.2, 0.2]})
     candidate = {
@@ -1331,7 +1333,8 @@ def test_explicit_zmsbar_kernels_preserve_pdf_and_da_finite_terms() -> None:
 
 
 def test_renormalization_kernel_mu_override_warns_and_replaces_context() -> None:
-    from lamet_agent.stages.renormalization.parameters import authored_kernel_parameters
+    import lamet_agent.stages.renormalization.contract as contract
+    from lamet_agent.contract import CheckContext
     from lamet_agent.stages.renormalization.physics import zmsbar_log
 
     seen = {}
@@ -1340,9 +1343,15 @@ def test_renormalization_kernel_mu_override_warns_and_replaces_context() -> None
         seen.update({"z_fm": np.asarray(z_fm), "mu": mu})
         return np.ones_like(np.asarray(z_fm), dtype=float)
 
-    params = {"strategy": "self_renormalization", "kernel_parameters": {"mu": 3.0}}
+    params = {
+        "strategy": "self_renormalization",
+        "kernel_id": "z_msbar_da_nlo",
+        "kernel_parameters": {"mu": 3.0},
+    }
+    context = CheckContext({}, "renormalization", "apply", params, {})
     with pytest.warns(RuntimeWarning, match="overrides stage context"):
-        overrides = authored_kernel_parameters(params)
+        assert contract.check_kernel(context) == []
+    overrides = params["kernel_parameters"]
     result = zmsbar_log(kernel, np.asarray([0.1, 0.2]), scale_gev=2.0, kernel_parameters=overrides)
 
     assert seen["mu"] == 3.0
@@ -1571,12 +1580,12 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
         },
     }
     context = ToolContext(
-        {"metadata": {"workers": 1, "target_observable": "pdf"}},
+        {"metadata": {"workers": 1, "target_observable": "pdf", "sample_error_mode": "covariance"}},
         tmp_path / "manifest.json",
         "fourier_transform",
         "fourier",
         params,
-        {},
+        {"metadata": {"sample_error_mode": "covariance"}},
         {},
         {
             "tail_inspection": {},
@@ -1789,8 +1798,7 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
         tmp_path,
         np.random.default_rng(1),
     )
-    with pytest.warns(RuntimeWarning, match="overrides stage context"):
-        observation = run(context)
+    observation = run(context)
     assert (tmp_path / "plots" / "result.pdf").is_file()
     assert (tmp_path / "plots" / "result.svg").is_file()
     assert "plots/result.pdf" in context.summary["artifacts"]
@@ -1825,7 +1833,7 @@ def test_external_renormalization_terminal_writes_publication_artifacts(tmp_path
         attrs={"coord_unit": "fm", "resample_id": "shared", "lattice_spacing_fm": 0.1},
     )
     context = ToolContext(
-        {},
+        {"metadata": {"sample_error_mode": "covariance"}},
         tmp_path / "manifest.json",
         "renormalization",
         "apply",
@@ -1876,6 +1884,7 @@ def _self_coverage_context(tmp_path, *, policy: str, scheme: str = "msbar") -> T
         "scheme": scheme,
         "strategy": "self_renormalization",
         "kernel_id": "z_msbar_da_nlo",
+        "kernel_parameters": {},
         "normalization": False,
         "mu": 2.0,
         "LambdaQCD_gev": 0.1,
@@ -1978,6 +1987,7 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
         "scheme": "ratio",
         "strategy": "self_renormalization",
         "kernel_id": "z_msbar_da_nlo",
+        "kernel_parameters": {},
         "normalization": False,
         "mu": scale,
         "LambdaQCD_gev": lambda_qcd,
@@ -1986,7 +1996,7 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
         "z_coverage_policy": "extrapolate",
     }
     context = ToolContext(
-        {"metadata": {"target_observable": "pdf"}},
+        {"metadata": {"target_observable": "pdf", "sample_error_mode": "covariance"}},
         tmp_path / "manifest.json",
         "renormalization",
         "apply",

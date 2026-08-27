@@ -181,7 +181,7 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         "output_re.pdf",
         "output_im.pdf",
     ]
-    sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
     momentum = float(source.attrs["momentum_gev"])
     pz_label = rf"$P_z={round(momentum, 2):g}\,\mathrm{{GeV}}$"
     component = str(scan["component"])

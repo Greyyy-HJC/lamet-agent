@@ -9,19 +9,19 @@ from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.parallel import FitNumericalError
 from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
-from lamet_agent.stages.correlator_analysis.diagnostics import write_fit_artifacts
+from lamet_agent.stages.correlator_analysis._diagnostics import write_fit_artifacts
 from lamet_agent.stages.correlator_analysis.physics import (
     fit_matrix_element_samples,
     matrix_element_samples,
 )
-from lamet_agent.stages.correlator_analysis.selection import (
+from lamet_agent.stages.correlator_analysis._selection import (
     select_tuned_candidate,
 )
 
 
 def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     """Select one candidate, write ``output.nc``, and finish the job."""
-    lsqfit = context.params if context.params.get("analysis_method", "lsqfit") == "lsqfit" else None
+    lsqfit = context.params if context.params["analysis_method"] == "lsqfit" else None
     if not isinstance(lsqfit, dict):
         raise ValueError("publish_correlator_result is only available for lsqfit jobs")
     candidates = [*context.state.get("spectrum_candidates", []), *context.state.get("matrix_element_candidates", [])]
@@ -329,7 +329,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     )
     plot_artifact = selected.get("plot_artifact")
     if plot_artifact is None:
-        sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+        sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
         start_plot()
         errorline(data.coords[plot_dim], plot_data.average(sample_error_mode))
         xlabel = r"$z~/~a$" if plot_dim == "z" else plot_dim

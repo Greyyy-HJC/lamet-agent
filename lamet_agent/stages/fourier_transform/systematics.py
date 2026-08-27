@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import copy
 import math
-import re
 from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
-
-
-_SAFE_LABEL = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def _merge(defaults: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, Any]:
@@ -26,26 +22,9 @@ def _merge(defaults: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, 
 
 def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, Any]) -> None:
     """Append one Fourier clone per declared lattice-step offset."""
-    if set(config) != {"tail_window_variants"}:
-        raise ValueError("fourier_transform systematics keys must be exactly ['tail_window_variants']")
-    variants = config["tail_window_variants"]
-    if not isinstance(variants, list) or not variants:
-        raise ValueError("fourier_transform.tail_window_variants must be nonempty")
-    parsed: list[tuple[str, int]] = []
-    for index, variant in enumerate(variants):
-        if not isinstance(variant, Mapping) or set(variant) != {"id", "step_offset"}:
-            raise ValueError(f"fourier_transform.tail_window_variants[{index}] must contain id and step_offset")
-        label = variant["id"]
-        offset = variant["step_offset"]
-        if not isinstance(label, str) or not _SAFE_LABEL.fullmatch(label):
-            raise ValueError("Fourier systematics ids must match [a-z][a-z0-9_]*")
-        if not isinstance(offset, int) or isinstance(offset, bool) or offset == 0:
-            raise ValueError("Fourier systematics step_offset must be a nonzero integer")
-        parsed.append((label, offset))
-    if len({label for label, _ in parsed}) != len(parsed):
-        raise ValueError("Fourier systematics ids must be unique")
-    if len({offset for _, offset in parsed}) != len(parsed):
-        raise ValueError("Fourier systematics step offsets must be unique")
+    parsed = [(str(variant["id"]), int(variant["tail_window_step_offset"])) for variant in config["variants"]]
+    if not parsed:
+        return
 
     block = document["stages"]["fourier_transform"]
     defaults = block.get("defaults", {})

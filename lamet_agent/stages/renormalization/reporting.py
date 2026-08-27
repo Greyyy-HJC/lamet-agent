@@ -25,7 +25,6 @@ from lamet_agent.stages.renormalization._plotting import (
     render_result,
     render_zmsbar_comparison,
 )
-from lamet_agent.stages.renormalization.parameters import effective_params
 
 
 _EXTERNAL_RATIO = r"""
@@ -110,7 +109,7 @@ lattice spacing, and coordinate coverage must agree with the fitted factor.
 
 def _method_text(records: tuple[StageReportRecord, ...]) -> list[str]:
     combinations = {
-        (params["scheme"], params["strategy"]) for params in (effective_params(record.params) for record in records)
+        (record.params["scheme"], record.params["strategy"]) for record in records
     }
     blocks: list[str] = []
     for scheme, strategy in sorted(combinations):
@@ -126,7 +125,7 @@ def _method_text(records: tuple[StageReportRecord, ...]) -> list[str]:
 
 
 def _load_plot_data(record: StageReportRecord) -> dict[str, object] | None:
-    params = effective_params(record.params)
+    params = record.params
     name = "self_renormalization.json" if params["type"] == "fit" else "renormalization.json"
     path = record.artifact_directory / "diagnostics" / name
     if not path.is_file() or path.stat().st_size == 0:
@@ -190,7 +189,7 @@ def _apply_records(records: tuple[StageReportRecord, ...]) -> list[StageReportRe
     return [
         record
         for record in records
-        if effective_params(record.params)["type"] == "apply" and getattr(record.output, "dims", None) == ["z"]
+        if record.params["type"] == "apply" and getattr(record.output, "dims", None) == ["z"]
     ]
 
 
@@ -200,7 +199,7 @@ def _render_formal_figures(
     figures: dict[str, list[tuple[str, str]]] = {}
     directory = artifact_directory / "plots"
     for record in records:
-        params = effective_params(record.params)
+        params = record.params
         plot_data = _load_plot_data(record)
         entries: list[tuple[str, str]] = []
         if params["type"] == "fit":
@@ -332,7 +331,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         "|---|---|---|---|---|---:|---|",
     ]
     for record in records:
-        params = effective_params(record.params)
+        params = record.params
         summary = record.summary
         kind = params["type"]
         lines.append(
@@ -342,7 +341,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         )
     lines.extend(["", "## Stage Overview", "", *overview_lines, *grouped_lines])
     for record in records:
-        params = effective_params(record.params)
+        params = record.params
         attrs = output_attrs(record)
         diagnostics = record.summary.get("diagnostics", {})
         short_distance_range = [

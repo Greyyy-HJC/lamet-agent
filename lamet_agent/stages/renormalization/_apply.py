@@ -19,7 +19,6 @@ from lamet_agent.stages.renormalization.physics import (
     ratio,
     zmsbar_log,
 )
-from lamet_agent.stages.renormalization.parameters import authored_kernel_parameters, effective_params
 
 
 def _coverage_mask(z_target: np.ndarray, z_factor: np.ndarray, policy: str) -> np.ndarray:
@@ -118,11 +117,11 @@ def run(context: ToolContext) -> dict[str, object]:
     target = aligned["target"]
     if isinstance(target, list):
         raise ValueError("target must be one source")
-    params = effective_params(context.params)
+    params = context.params
     strategy = params["strategy"]
     scheme = params["scheme"]
     normalize_inputs = bool(params["normalization"])
-    sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
     apply_plot_data: dict[str, object] | None = None
     coverage_diagnostics: dict[str, object] = {}
     if normalize_inputs and strategy != "self_renormalization":
@@ -130,7 +129,7 @@ def run(context: ToolContext) -> dict[str, object]:
     if strategy == "self_renormalization":
         kernel_id = str(params["kernel_id"])
         zms_kernel = load_renormalization_kernel(kernel_id)
-        kernel_parameters = authored_kernel_parameters(params)
+        kernel_parameters = dict(params["kernel_parameters"])
         factor = aligned.get("zR")
         if not isinstance(factor, EnsembleData):
             raise ValueError("zR must be one numerical source")
@@ -146,7 +145,7 @@ def run(context: ToolContext) -> dict[str, object]:
             factor = factor.at("a", factor.coords["a"][matches[0]])
         if (
             factor.attrs.get("scale_gev") is not None
-            and abs(float(factor.attrs["scale_gev"]) - float(params.get("mu", factor.attrs["scale_gev"]))) > 1e-12
+            and abs(float(factor.attrs["scale_gev"]) - float(params["mu"])) > 1e-12
         ):
             raise ValueError("self-renormalization factor scale does not match the apply job")
         if params["normalization"]:
@@ -168,8 +167,8 @@ def run(context: ToolContext) -> dict[str, object]:
             raise ValueError("self-renormalization factor z coordinates must be strictly increasing and positive")
         mean_factor = np.mean(np.real(np.asarray(factor.values)), axis=0)
         lambda_qcd = float(params["LambdaQCD_gev"])
-        d_to = float(params.get("d", d_from))
-        m0_to = float(params.get("m0_gev", m0_from))
+        d_to = float(params["d"])
+        m0_to = float(params["m0_gev"])
         log_a_lambda = np.log(float(spacing) * lambda_qcd / HBAR_C_GEV_FM)
         remapped_factor = (
             mean_factor

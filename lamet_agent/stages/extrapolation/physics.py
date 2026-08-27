@@ -88,20 +88,6 @@ def extrapolation_fcn(x: dict[str, object], parameters: dict[str, object]) -> np
     return np.concatenate([predicted_re.T, predicted_im.T], axis=1).reshape(-1)
 
 
-def _reference_extrapolation_fcn(x: dict[str, object], parameters: dict[str, object]) -> np.ndarray:
-    design = np.asarray(x["design"], dtype=float)
-    terms = list(x["terms"])
-    x_dependence = dict(x["x_dependence"])
-    n_x = int(x["n_x"])
-    prediction = np.tile(np.asarray(parameters["h0"], dtype=object), (design.shape[0], 1))
-    for term_index, term in enumerate(terms):
-        coefficient = np.asarray(parameters[term], dtype=object)
-        if not x_dependence[term]:
-            coefficient = np.full(n_x, coefficient.item(), dtype=object)
-        prediction = prediction + design[:, term_index, None] * coefficient[None, :]
-    return prediction.reshape(-1)
-
-
 def _ensemble_groups(data: list[EnsembleData]) -> list[list[int]]:
     """Group inputs that share one resampling source; absent provenance stays independent."""
     grouped: dict[tuple[str, object], list[int]] = {}
@@ -319,6 +305,126 @@ def _block_fit_diagnostics(
     }
 
 
+def _full_design_matrix(
+    design: np.ndarray,
+    terms: list[str],
+    x_dependence: dict[str, bool],
+    n_x: int,
+) -> tuple[np.ndarray, dict[str, slice]]:
+    """Build the joint-x linear map and its parameter layout once."""
+    layout = {"h0": slice(0, n_x)}
+    offset = n_x
+    for term in terms:
+        size = n_x if x_dependence[term] else 1
+        layout[term] = slice(offset, offset + size)
+        offset += size
+    matrix = np.zeros((design.shape[0] * n_x, offset), dtype=float)
+    for input_index in range(design.shape[0]):
+        rows = input_index * n_x + np.arange(n_x)
+        matrix[rows, np.arange(n_x)] = 1.0
+        for term_index, term in enumerate(terms):
+            parameter_slice = layout[term]
+            if x_dependence[term]:
+                matrix[rows, parameter_slice.start + np.arange(n_x)] = design[input_index, term_index]
+            else:
+                matrix[rows, parameter_slice.start] = design[input_index, term_index]
+    return matrix, layout
+
+
+def _factor_full_covariance(
+    covariance: np.ndarray,
+    data: list[EnsembleData],
+    n_x: int,
+) -> tuple[list[tuple[np.ndarray, np.ndarray]], float]:
+    """Factor independent ensemble-source blocks of the full x covariance."""
+    blocks = []
+    logdet = 0.0
+    for group in _ensemble_groups(data):
+        indices = np.concatenate([input_index * n_x + np.arange(n_x) for input_index in group])
+        weight, block_logdet = _regulated_inverse(covariance[np.ix_(indices, indices)])
+        blocks.append((indices, weight))
+        logdet += block_logdet
+    return blocks, logdet
+
+
+def _prepare_full_system(
+    design_matrix: np.ndarray,
+    covariance_blocks: list[tuple[np.ndarray, np.ndarray]],
+    covariance_logdet: float,
+    prior_means: np.ndarray,
+    prior_sdevs: np.ndarray,
+) -> dict[str, object]:
+    """Factor one full correlated linear posterior for repeated right-hand sides."""
+    from scipy.linalg import cho_factor
+
+    information = np.diag(1.0 / prior_sdevs**2)
+    for indices, weight in covariance_blocks:
+        block_design = design_matrix[indices]
+        information += block_design.T @ weight @ block_design
+    factor = cho_factor(information, lower=True, check_finite=False)
+    information_logdet = float(2.0 * np.sum(np.log(np.diag(factor[0]))))
+    return {
+        "design": design_matrix,
+        "covariance_blocks": covariance_blocks,
+        "covariance_logdet": covariance_logdet,
+        "prior_means": prior_means,
+        "prior_sdevs": prior_sdevs,
+        "factor": factor,
+        "information_logdet": information_logdet,
+    }
+
+
+def _solve_full_system(system: dict[str, object], observations: np.ndarray) -> np.ndarray:
+    """Solve one center or resample using the prepared full covariance and posterior factor."""
+    from scipy.linalg import cho_solve
+
+    design = system["design"]
+    rhs = system["prior_means"] / system["prior_sdevs"] ** 2
+    for indices, weight in system["covariance_blocks"]:
+        rhs += design[indices].T @ weight @ observations[indices]
+    return cho_solve(system["factor"], rhs, check_finite=False)
+
+
+def _full_posterior_sdevs(system: dict[str, object]) -> np.ndarray:
+    """Return marginal posterior deviations from one factored information matrix."""
+    from scipy.linalg import cho_solve
+
+    size = len(system["prior_means"])
+    covariance = cho_solve(system["factor"], np.eye(size), check_finite=False)
+    return np.sqrt(np.maximum(np.diag(covariance), 0.0))
+
+
+def _full_fit_diagnostics(
+    system: dict[str, object],
+    observations: np.ndarray,
+    parameters: np.ndarray,
+) -> dict[str, float]:
+    """Compute center Bayesian-fit diagnostics for the full correlated solution."""
+    residual = observations - system["design"] @ parameters
+    chi2 = 0.0
+    for indices, weight in system["covariance_blocks"]:
+        block = residual[indices]
+        chi2 += float(block @ weight @ block)
+    chi2 += float(np.sum(((parameters - system["prior_means"]) / system["prior_sdevs"]) ** 2))
+    dof = int(observations.size)
+    from scipy.special import gammaincc
+
+    prior_logdet = float(2.0 * np.sum(np.log(system["prior_sdevs"])))
+    log_gbf = -0.5 * (
+        chi2
+        + dof * math.log(2.0 * math.pi)
+        + float(system["covariance_logdet"])
+        + prior_logdet
+        + float(system["information_logdet"])
+    )
+    return {
+        "chi2": chi2,
+        "dof": float(dof),
+        "Q": float(gammaincc(dof / 2.0, chi2 / 2.0)),
+        "logGBF": log_gbf,
+    }
+
+
 def fit_candidate(
     data: list[EnsembleData],
     terms: list[str],
@@ -334,10 +440,6 @@ def fit_candidate(
     _parallel=None,
 ) -> tuple[EnsembleData, dict[str, float]]:
     """Run the reference joint-x, sample-bearing extrapolation fit."""
-    import gvar as gv
-
-    from lamet_agent.parallel import nonlinear_fit
-
     if not data or any(item.dims != ["x"] for item in data):
         raise ValueError("extrapolation requires one-dimensional x-space inputs")
     x_all = np.asarray(data[0].coords["x"], dtype=float)
@@ -426,44 +528,43 @@ def fit_candidate(
             fitted_parameters.append(parameter_record(sample_local, sample_global))
         n_failed_samples = 0.0
     else:
+        design_matrix, parameter_layout = _full_design_matrix(
+            design,
+            terms,
+            x_dependence,
+            len(x),
+        )
+        covariance_blocks, covariance_logdet = _factor_full_covariance(covariance, data, len(x))
+        prior_means = np.full(design_matrix.shape[1], prior_center, dtype=float)
+        prior_sdevs = np.full(design_matrix.shape[1], prior_width, dtype=float)
+        center_system = _prepare_full_system(
+            design_matrix,
+            covariance_blocks,
+            covariance_logdet,
+            prior_means,
+            prior_sdevs,
+        )
+        center_parameters = _solve_full_system(center_system, centers.reshape(-1))
+        fit_diagnostics = _full_fit_diagnostics(center_system, centers.reshape(-1), center_parameters)
+        posterior_sdevs = _full_posterior_sdevs(center_system)
+        sample_system = _prepare_full_system(
+            design_matrix,
+            covariance_blocks,
+            covariance_logdet,
+            center_parameters,
+            posterior_sdevs * posterior_prior_error_scale,
+        )
+
+        def parameter_record(parameters: np.ndarray) -> dict[str, object]:
+            record: dict[str, object] = {}
+            for name, parameter_slice in parameter_layout.items():
+                value = parameters[parameter_slice]
+                record[name] = value.copy() if value.size > 1 else float(value[0])
+            return record
+
         flattened = np.moveaxis(values, 1, 0).reshape(n_sample, -1)
-        fit_data = EnsembleData(
-            None,
-            data[0].resample,
-            list(flattened),
-            ["observation"],
-            {"observation": list(range(flattened.shape[1]))},
-        )
-        prior = gv.BufferDict()
-        prior["h0"] = gv.gvar(np.full(len(x), prior_center), np.full(len(x), prior_width))
-        for term in terms:
-            prior[term] = (
-                gv.gvar(np.full(len(x), prior_center), np.full(len(x), prior_width))
-                if x_dependence[term]
-                else gv.gvar(prior_center, prior_width)
-            )
-        fit_x = {"design": design, "terms": terms, "x_dependence": x_dependence, "n_x": len(x)}
-        fit = nonlinear_fit(
-            (fit_x, fit_data),
-            _reference_extrapolation_fcn,
-            prior,
-            workers=workers,
-            sample_prior_scale=posterior_prior_error_scale,
-            covariance=covariance,
-            sample_error_mode=sample_error_mode,
-            tolerate_sample_failures=True,
-            _parallel=_parallel,
-            maxit=2000,
-            svdcut=1e-12,
-        )
-        fitted_parameters = [parameters or fit.pmean for parameters in fit.samples]
-        fit_diagnostics = {
-            "chi2": float(fit.chi2),
-            "dof": float(fit.dof),
-            "Q": float(fit.Q),
-            "logGBF": float(fit.logGBF),
-        }
-        n_failed_samples = float(fit.n_failed_samples)
+        fitted_parameters = [parameter_record(_solve_full_system(sample_system, sample)) for sample in flattened]
+        n_failed_samples = 0.0
     samples = [np.asarray(parameters["h0"], dtype=float) for parameters in fitted_parameters]
     parameter_mean: dict[str, object] = {}
     parameter_sdev: dict[str, object] = {}

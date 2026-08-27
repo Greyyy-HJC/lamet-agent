@@ -7,46 +7,32 @@ from collections.abc import Mapping
 from typing import Any
 
 
-_MODEL_VARIANTS = {
-    "a_sym": {
-        "x_independent_terms": ["a", "a2"],
-        "x_dependent_terms": ["inv_p2", "inv_p4", "ap2"],
-    },
-    "p_sym": {
-        "x_independent_terms": ["a"],
-        "x_dependent_terms": ["inv_p2", "ap2"],
-    },
-    "ap_sym": {
-        "x_independent_terms": ["a"],
-        "x_dependent_terms": ["inv_p2", "inv_p4", "ap2", "ap4"],
-    },
-}
-
-
 def _variant_job_id(central_id: str, label: str) -> str:
     stem = central_id[:-4] if central_id.endswith("_all") else central_id
     return f"{stem}_{label}"
 
 
+def _changed_terms(base: list[str], added: list[str], removed: list[str], *, label: str, role: str) -> list[str]:
+    missing = [term for term in removed if term not in base]
+    if missing:
+        raise ValueError(f"Extrapolation variation '{label}' cannot remove absent {role} terms {missing}")
+    redundant = [term for term in added if term in base]
+    if redundant:
+        raise ValueError(f"Extrapolation variation '{label}' cannot add existing {role} terms {redundant}")
+    return [term for term in base if term not in removed] + list(added)
+
+
 def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, Any]) -> None:
     """Append propagated fits, model variants, and one terminal budget job."""
-    if set(config) != {"model_variants", "publish_budget"}:
-        raise ValueError("extrapolation systematics keys must be model_variants and publish_budget")
-    models = config["model_variants"]
-    if (
-        not isinstance(models, list)
-        or not models
-        or any(not isinstance(name, str) or name not in _MODEL_VARIANTS for name in models)
-    ):
-        raise ValueError(f"extrapolation.model_variants must use {sorted(_MODEL_VARIANTS)}")
-    if len(set(models)) != len(models):
-        raise ValueError("extrapolation model variants must be unique")
-    publish_budget = config["publish_budget"]
-    if not isinstance(publish_budget, bool):
-        raise ValueError("extrapolation.publish_budget must be boolean")
+    variants = config["variants"]
 
-    matching_mapping = state.get("matching_variants")
-    groups = state.get("matching_variant_groups")
+    matching_mapping = state.get("matching_variants", {})
+    groups = state.get(
+        "matching_variant_groups",
+        {"lambda_extrapolation": [], "lamet_scale": []},
+    )
+    if not variants and not matching_mapping:
+        return
     if not isinstance(matching_mapping, Mapping) or not isinstance(groups, Mapping):
         raise ValueError("Extrapolation systematics require compiled Matching variants")
     block = document["stages"]["extrapolation"]
@@ -54,8 +40,12 @@ def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, An
     if len(central_jobs) != 1:
         raise ValueError("Extrapolation systematics require exactly one authored central job")
     central = central_jobs[0]
-    if central.get("operation", block.get("defaults", {}).get("operation", "fit")) != "fit":
+    if central["operation"] != "fit":
         raise ValueError("the authored extrapolation job must be operation='fit'")
+    effective = copy.deepcopy(block.get("defaults", {}))
+    effective.update({key: value for key, value in central.items() if key not in {"id", "inputs"}})
+    central_independent = list(effective.get("x_independent_terms", []))
+    central_dependent = list(effective.get("x_dependent_terms", []))
     distributions = central.get("inputs", {}).get("distributions")
     if not isinstance(distributions, list) or not distributions:
         raise ValueError("the authored extrapolation job needs a nonempty distributions list")
@@ -72,7 +62,7 @@ def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, An
     all_labels = [
         *labels_by_group["lambda_extrapolation"],
         *labels_by_group["lamet_scale"],
-        *models,
+        *[variant["id"] for variant in variants],
     ]
     suffixes = tuple(f"_{label}" for label in all_labels)
     if suffixes and str(central["id"]).endswith(suffixes):
@@ -96,24 +86,42 @@ def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, An
         generated.append(clone)
         generated_by_label[label] = clone["id"]
         known_ids.add(clone["id"])
-    for label in models:
+    for variant in variants:
+        label = variant["id"]
         clone = copy.deepcopy(central)
         clone["id"] = _variant_job_id(central["id"], label)
-        clone.update(copy.deepcopy(_MODEL_VARIANTS[label]))
+        clone["x_independent_terms"] = _changed_terms(
+            central_independent,
+            variant["append_x_independent_terms"],
+            variant["remove_x_independent_terms"],
+            label=label,
+            role="x-independent",
+        )
+        clone["x_dependent_terms"] = _changed_terms(
+            central_dependent,
+            variant["append_x_dependent_terms"],
+            variant["remove_x_dependent_terms"],
+            label=label,
+            role="x-dependent",
+        )
+        if set(clone["x_independent_terms"]) & set(clone["x_dependent_terms"]):
+            raise ValueError(f"Extrapolation variation '{label}' produces overlapping term classes")
+        if not clone["x_independent_terms"] and not clone["x_dependent_terms"]:
+            raise ValueError(f"Extrapolation variation '{label}' removes every extrapolation term")
         if clone["id"] in known_ids:
             raise ValueError(f"generated extrapolation job id collides with '{clone['id']}'")
         generated.append(clone)
         generated_by_label[label] = clone["id"]
         known_ids.add(clone["id"])
 
-    if publish_budget:
+    if generated:
         budget_id = "extrapolation_systematics_budget"
         if budget_id in known_ids:
             raise ValueError(f"generated budget job id collides with '{budget_id}'")
         ordered_labels = [
             *labels_by_group["lambda_extrapolation"],
             *labels_by_group["lamet_scale"],
-            *models,
+            *[variant["id"] for variant in variants],
         ]
         budget = {
             "id": budget_id,

@@ -5,13 +5,13 @@ from __future__ import annotations
 import inspect
 import math
 import types
+import warnings
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 import numpy as np
 
 from lamet_agent.contract import CheckContext, Depends, Issue, Provides, Recommends, Source, Value, stage_job_rules
 from lamet_agent.kernels import load_renormalization_kernel
-from lamet_agent.stages.renormalization.parameters import effective_params
 
 
 def _annotation_accepts(annotation: Any, value: Any) -> bool:
@@ -117,6 +117,8 @@ PARAM_RULES = (
     Depends("", "normalization", physics="Origin normalization is explicit."),
     Value("normalization", bool, physics="Origin normalization is boolean."),
     Depends("external_denominator", "scheme", physics="External renormalization selects ratio, hybrid, or MSbar."),
+    Recommends("external_denominator", "type", physics="External-denominator jobs only apply an authored prescription.", default="apply"),
+    Value("external_denominator.type", Literal["apply"], physics="External-denominator jobs are apply operations."),
     Value("external_denominator.scheme", Literal["ratio", "hybrid", "msbar"], physics="External scheme is ratio, hybrid, or msbar."),
     Provides("external_denominator", "hybrid", "external_denominator.scheme", physics="External hybrid renormalization owns switch and mass-gap parameters."),
     Depends("external_denominator.hybrid", "zs_fm", physics="Hybrid switching distance is explicit."),
@@ -183,7 +185,7 @@ JOB_CONDITIONAL_RULES = (
 
 def check_path(context: CheckContext) -> Issue | None:
     physics = "Only the declared renormalization operation/scheme/strategy combinations have one numerical path."
-    params = effective_params(context.params)
+    params = context.params
     strategy = params.get("strategy")
     job_type = params.get("type")
     if job_type == "fit" and strategy != "self_renormalization":
@@ -196,7 +198,7 @@ def check_path(context: CheckContext) -> Issue | None:
 
 
 def check_hybrid(context: CheckContext) -> Issue | None:
-    params = effective_params(context.params)
+    params = context.params
     inputs = context.inputs
     physics = "Hybrid application requires a switching distance and its mass correction."
     if params.get("scheme") == "hybrid":
@@ -216,7 +218,7 @@ def check_hybrid(context: CheckContext) -> Issue | None:
 
 def check_inputs(context: CheckContext) -> Issue | None:
     physics = "The explicit job type, strategy, and scheme determine one exact set of input roles."
-    params = effective_params(context.params)
+    params = context.params
     strategy = params.get("strategy")
     scheme = params.get("scheme")
     job_type = params.get("type")
@@ -263,7 +265,7 @@ def check_inputs(context: CheckContext) -> Issue | None:
 
 
 def check_kernel(context: CheckContext) -> list[Issue] | Issue | None:
-    params = effective_params(context.params)
+    params = context.params
     if params.get("strategy") != "self_renormalization":
         return None
     kernel_id = params.get("kernel_id")
@@ -275,11 +277,21 @@ def check_kernel(context: CheckContext) -> list[Issue] | Issue | None:
     except (ImportError, OSError, TypeError, ValueError) as exc:
         return Issue("kernel_id", str(exc), physics)
     values = params.get("kernel_parameters")
-    return _kernel_parameter_issues(kernel, values) if isinstance(values, dict) else None
+    if not isinstance(values, dict):
+        return None
+    issues = _kernel_parameter_issues(kernel, values)
+    overridden = sorted({"mu"}.intersection(values))
+    if not issues and overridden:
+        warnings.warn(
+            f"renormalization kernel_parameters overrides stage context: {overridden}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return issues
 
 
 def _check_scale(context: CheckContext) -> Issue | None:
-    params = effective_params(context.params)
+    params = context.params
     scheme = params.get("scheme")
     strategy = params.get("strategy")
     is_fit = params.get("type") == "fit"

@@ -156,7 +156,7 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
 
 
 def test_correlator_fit_artifacts_write_logs_and_pdf_only(tmp_path: Path) -> None:
-    from lamet_agent.stages.correlator_analysis.diagnostics import write_fit_artifacts
+    from lamet_agent.stages.correlator_analysis._diagnostics import write_fit_artifacts
 
     def plot_payload(z_value: int) -> dict[str, object]:
         plots = []
@@ -230,7 +230,7 @@ def test_correlator_fit_artifacts_write_logs_and_pdf_only(tmp_path: Path) -> Non
 
 
 def test_correlator_sample0_plot_restores_legacy_physical_labels(monkeypatch, tmp_path: Path) -> None:
-    import lamet_agent.stages.correlator_analysis.diagnostics as diagnostics
+    import lamet_agent.stages.correlator_analysis._diagnostics as diagnostics
 
     configured = {}
     monkeypatch.setattr(diagnostics, "start_plot", lambda: None)

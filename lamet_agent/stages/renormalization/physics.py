@@ -340,7 +340,6 @@ def _fit_factor_result(
         mode="center",
         maxit=10000,
         svdcut=svdcut,
-        fitter="scipy_least_squares",
     )
     short = (z >= short_distance_min_fm - 1e-12) & (z <= short_distance_max_fm + 1e-12)
     if np.count_nonzero(short) < 3:
@@ -370,7 +369,6 @@ def _fit_factor_result(
         mode="center",
         maxit=10000,
         svdcut=svdcut,
-        fitter="scipy_least_squares",
     )
     m0 = m0_fit.p["m0"]
     g_parameters = np.asarray([fit.p[f"g{coordinate}"] for coordinate in z], dtype=object)

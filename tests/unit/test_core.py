@@ -338,6 +338,28 @@ def test_neo_manifest_loader_accepts_jsonc_comments(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "expected_path"),
+    [
+        ("metadata", [], "metadata"),
+        ("stages", [], "stages"),
+        ("systematics", [], "systematics"),
+        ("stages", {}, "stages"),
+    ],
+)
+def test_base_rules_own_manifest_envelope_types(tmp_path: Path, field: str, value: object, expected_path: str) -> None:
+    document = {
+        "metadata": _valid_metadata(tmp_path),
+        "stages": {"review": {"jobs": []}},
+        "systematics": {},
+    }
+    document[field] = value
+
+    issues = Manifest(tmp_path / "manifest.json", document).validate()
+
+    assert any(issue.path == expected_path for issue in issues)
+
+
 def test_neo_manifest_loader_rejects_unterminated_jsonc_comment(tmp_path: Path) -> None:
     path = tmp_path / "manifest.jsonc"
     path.write_text('{"metadata": {} /* unfinished', encoding="utf-8")
@@ -1239,11 +1261,13 @@ def test_fourier_manifest_accepts_missing_recommended_tail_ranges() -> None:
 def test_extrapolation_term_partitions_are_disjoint_and_individually_optional() -> None:
     path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
     dependent_only = load_manifest(path)
+    dependent_only.document["systematics"] = {}
     dependent_only.document["stages"]["extrapolation"]["defaults"].pop("x_independent_terms")
     assert dependent_only.validate() == []
     assert dependent_only.jobs_by_stage["extrapolation"][0].params["x_independent_terms"] == []
 
     independent_only = load_manifest(path)
+    independent_only.document["systematics"] = {}
     independent_only.document["stages"]["extrapolation"]["defaults"].pop("x_dependent_terms")
     assert independent_only.validate() == []
     assert independent_only.jobs_by_stage["extrapolation"][0].params["x_dependent_terms"] == []
@@ -1284,9 +1308,9 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
         "extrapolate_lambda_high",
         "extrapolate_mu_low",
         "extrapolate_mu_high",
-        "extrapolate_a_sym",
-        "extrapolate_p_sym",
-        "extrapolate_ap_sym",
+        "extrapolate_a_model",
+        "extrapolate_inv_p_model",
+        "extrapolate_ap_model",
         "extrapolation_systematics_budget",
     ]
     budget = stages["extrapolation"]["jobs"][-1]
@@ -1297,6 +1321,10 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
         "lamet_scale": [3, 4],
         "other_extrapolations": [5, 6, 7],
     }
+    extrapolation = {job["id"]: job for job in stages["extrapolation"]["jobs"]}
+    assert extrapolation["extrapolate_a_model"]["x_independent_terms"] == ["a", "a2"]
+    assert extrapolation["extrapolate_inv_p_model"]["x_dependent_terms"] == ["inv_p2", "ap2"]
+    assert extrapolation["extrapolate_ap_model"]["x_dependent_terms"] == ["inv_p2", "inv_p4", "ap2", "ap4"]
     fourier = {job["id"]: job for job in stages["fourier_transform"]["jobs"]}
     assert fourier["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == [
         0.4592,
@@ -1351,6 +1379,70 @@ def test_systematics_compiler_rejects_explicit_variation_jobs() -> None:
     assert len(issues) == 1
     assert issues[0].path == "systematics"
     assert "explicitly authored variation jobs" in issues[0].message
+
+
+def test_systematics_schema_errors_use_stage_contract_paths() -> None:
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+
+    unknown = load_manifest(path)
+    unknown.document["systematics"]["fourier_transform"]["extra"] = 1
+    assert any(
+        issue.path == "systematics.fourier_transform.extra" and "unknown key" in issue.message
+        for issue in unknown.validate()
+    )
+
+    missing = load_manifest(path)
+    missing.document["systematics"]["perturbative_matching"]["variants"][0].pop("mu_factor")
+    assert any(
+        issue.path == "systematics.perturbative_matching.variants[0].mu_factor" and "required" in issue.message
+        for issue in missing.validate()
+    )
+
+    nested = load_manifest(path)
+    nested.document["systematics"]["fourier_transform"]["variants"][0]["tail_window_step_offset"] = 0
+    assert any(
+        issue.path == "systematics.fourier_transform.variants[0].tail_window_step_offset" for issue in nested.validate()
+    )
+
+
+def test_empty_systematics_is_a_noop_and_does_not_enable_stage_progress() -> None:
+    path = Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json"
+    manifest = load_manifest(path)
+    manifest.document["systematics"] = {}
+
+    assert manifest.has_systematics is False
+    assert manifest.validate() == []
+    assert manifest.has_systematics is False
+
+
+def test_systematics_propagate_without_downstream_declarations() -> None:
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    manifest = load_manifest(path)
+    manifest.document["systematics"].pop("perturbative_matching")
+    manifest.document["systematics"].pop("extrapolation")
+
+    assert manifest.validate() == []
+    stages = manifest.document["stages"]
+    assert len(stages["fourier_transform"]["jobs"]) == 27
+    assert len(stages["perturbative_matching"]["jobs"]) == 27
+    assert [job["id"] for job in stages["extrapolation"]["jobs"]] == [
+        "extrapolate_all",
+        "extrapolate_lambda_low",
+        "extrapolate_lambda_high",
+        "extrapolation_systematics_budget",
+    ]
+
+
+def test_systematics_defaults_fill_variants_before_compilation() -> None:
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    manifest = load_manifest(path)
+    matching = manifest.document["systematics"]["perturbative_matching"]
+    matching["defaults"] = {"mu_factor": 0.5}
+    matching["variants"] = [{"id": "mu_half"}]
+
+    assert manifest.validate() == []
+    jobs = {job["id"]: job for job in manifest.document["stages"]["perturbative_matching"]["jobs"]}
+    assert jobs["mt_a06m130_pz6_mu_half"]["mu"] == pytest.approx(1.0)
 
 
 def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive() -> None:
@@ -1487,12 +1579,13 @@ def test_matching_kernel_parameters_follow_the_selected_signature() -> None:
     for coordinate in ("x_out", "x_in"):
         current = issues(rgr, "hybrid", {coordinate: [0.0, 1.0]}, hybrid={"zs_fm": 0.18})
         assert any(issue.path == f"kernel_parameters.{coordinate}" and "data" in issue.message for issue in current)
-    assert issues(
-        rgr,
-        "hybrid",
-        {"momentum_gev": 2.5, "scale_gev": 3.0, "zs_fm": 0.2},
-        hybrid={"zs_fm": 0.18},
-    ) == []
+    with pytest.warns(RuntimeWarning, match="overrides stage context"):
+        assert issues(
+            rgr,
+            "hybrid",
+            {"momentum_gev": 2.5, "scale_gev": 3.0, "zs_fm": 0.2},
+            hybrid={"zs_fm": 0.18},
+        ) == []
 
 
 def test_matching_kernel_parameter_rules_require_a_dict_and_required_signature_values() -> None:
@@ -1551,10 +1644,8 @@ def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
     manifest = load_manifest(examples / "pion_da_gi_manifest_neo.json")
     assert manifest.validate() == []
     jobs = manifest.jobs_by_stage["renormalization"]
-    from lamet_agent.stages.renormalization.parameters import effective_params
-
-    fit = effective_params(jobs[0].params)
-    apply = effective_params(jobs[1].params)
+    fit = jobs[0].params
+    apply = jobs[1].params
     contract = _load_stage_contract("renormalization")
     assert evaluate_rules(dict(jobs[0].params), contract.PARAM_RULES) == []
     assert evaluate_rules(dict(jobs[1].params), contract.PARAM_RULES) == []
@@ -1585,7 +1676,8 @@ def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
 
     kernel_override = load_manifest(examples / "pion_da_gi_manifest_neo.json")
     kernel_override.document["stages"]["renormalization"]["defaults"]["kernel_parameters"] = {"mu": 3.0}
-    assert kernel_override.validate() == []
+    with pytest.warns(RuntimeWarning, match="overrides stage context"):
+        assert kernel_override.validate() == []
 
     data_override = load_manifest(examples / "pion_da_gi_manifest_neo.json")
     data_override.document["stages"]["renormalization"]["defaults"]["kernel_parameters"] = {"z_fm": 0.2}
@@ -1610,7 +1702,7 @@ def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
     redundant_type = load_manifest(examples / "pion_pdf_gi_manifest_neo.json")
     redundant_type.document["stages"]["renormalization"]["jobs"][0]["type"] = "apply"
     assert redundant_type.validate() == []
-    assert "type" not in redundant_type.jobs_by_stage["renormalization"][0].params
+    assert redundant_type.jobs_by_stage["renormalization"][0].params["type"] == "apply"
 
 
 def test_finish_rejects_second_terminal_result(tmp_path: Path) -> None:
@@ -1930,7 +2022,7 @@ def test_deterministic_stage_workflow_bypasses_the_backend(tmp_path: Path, monke
     monkeypatch.setattr(workflow, "run", deterministic)
     backend = _ScriptedBackend([])
     context = ToolContext(
-        {"metadata": {"workers": 1}},
+        {"metadata": {"workers": 1, "parameter_recommendation_retries": 1}},
         tmp_path / "manifest.json",
         "perturbative_matching",
         "matching",
@@ -2068,12 +2160,14 @@ def test_recommendation_sends_data_on_first_human_failure_but_not_on_retry(tmp_p
     assert set(second_evidence) == {"fixed_parameters", "previous_attempts"}
     assert first_evidence["previous_attempts"] == attempts
     assert first_payload["context"][0]["key"] == "correlator_fit_data"
-    assert "correlators" in first_payload["context"][0]["content"]
+    correlator_context = first_payload["context"][0]["content"]
+    assert "correlators" in correlator_context
+    assert isinstance(correlator_context["correlators"]["qda"]["components"]["real"], str)
 
 
 def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path) -> None:
     from lamet_agent.data import EnsembleData
-    from lamet_agent.stages.correlator_analysis.tools._joint_fit_recommendation import initial, pt2_windows
+    from lamet_agent.stages.correlator_analysis.tools.recommendation import initial, pt2_windows
 
     backend = _ScriptedBackend(
         [
@@ -2119,7 +2213,7 @@ def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path)
 
 def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(tmp_path: Path) -> None:
     from lamet_agent.data import EnsembleData
-    from lamet_agent.stages.fourier_transform.recommendation import initial, revise
+    from lamet_agent.stages.fourier_transform.tools.recommendation import initial, revise
 
     data = EnsembleData(
         None,
@@ -2161,6 +2255,7 @@ def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(t
     first_payload = json.loads(backend.calls[0][0][-1].content)
     second_payload = json.loads(backend.calls[1][0][-1].content)
     assert first_payload["context"][0]["key"] == "fourier_tail_fit_data"
+    assert isinstance(first_payload["context"][0]["content"]["components"]["real"], str)
     assert "context" not in second_payload
     assert second_payload["evidence"]["previous_attempts"] == attempts
 

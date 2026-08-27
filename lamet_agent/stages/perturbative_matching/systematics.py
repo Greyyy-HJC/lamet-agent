@@ -3,13 +3,8 @@
 from __future__ import annotations
 
 import copy
-import math
-import re
 from collections.abc import Mapping
 from typing import Any
-
-
-_SAFE_LABEL = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def _merge(defaults: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, Any]:
@@ -24,39 +19,14 @@ def _merge(defaults: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, 
 
 def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, Any]) -> None:
     """Append Fourier-propagated and scale-varied matching jobs."""
-    if set(config) != {"propagate_fourier_variants", "scale_variants"}:
-        raise ValueError("perturbative_matching systematics keys must be propagate_fourier_variants and scale_variants")
-    propagate = config["propagate_fourier_variants"]
-    if not isinstance(propagate, bool):
-        raise ValueError("propagate_fourier_variants must be boolean")
-    raw_variants = config["scale_variants"]
-    if not isinstance(raw_variants, list) or not raw_variants:
-        raise ValueError("perturbative_matching.scale_variants must be nonempty")
-    scale_variants: list[tuple[str, float]] = []
-    for index, variant in enumerate(raw_variants):
-        if not isinstance(variant, Mapping) or set(variant) != {"id", "factor"}:
-            raise ValueError(f"perturbative_matching.scale_variants[{index}] must contain id and factor")
-        label = variant["id"]
-        factor = variant["factor"]
-        if not isinstance(label, str) or not _SAFE_LABEL.fullmatch(label):
-            raise ValueError("Matching systematics ids must match [a-z][a-z0-9_]*")
-        if (
-            not isinstance(factor, (int, float))
-            or isinstance(factor, bool)
-            or not math.isfinite(float(factor))
-            or float(factor) <= 0
-            or math.isclose(float(factor), 1.0, rel_tol=0.0, abs_tol=1e-15)
-        ):
-            raise ValueError("Matching scale factors must be finite, positive, and not one")
-        scale_variants.append((label, float(factor)))
-    if len({label for label, _ in scale_variants}) != len(scale_variants):
-        raise ValueError("Matching systematics ids must be unique")
+    scale_variants = [(str(variant["id"]), float(variant["mu_factor"])) for variant in config["variants"]]
 
     fourier_mapping = state.get("fourier_variants", {})
     fourier_labels = state.get("fourier_variant_labels", [])
-    if propagate and (not fourier_mapping or not fourier_labels):
-        raise ValueError("Matching requested Fourier propagation but no Fourier variants were compiled")
-    labels = ([*fourier_labels] if propagate else []) + [label for label, _ in scale_variants]
+    propagate = bool(fourier_mapping and fourier_labels)
+    if not propagate and not scale_variants:
+        return
+    labels = [*fourier_labels, *[label for label, _ in scale_variants]]
     if len(set(labels)) != len(labels):
         raise ValueError("Fourier-propagated and matching scale ids must be disjoint")
 
@@ -70,7 +40,7 @@ def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, An
     generated: list[dict[str, Any]] = []
     mapping: dict[str, dict[str, str]] = {}
     groups = {
-        "lambda_extrapolation": list(fourier_labels) if propagate else [],
+        "lambda_extrapolation": list(fourier_labels),
         "lamet_scale": [label for label, _ in scale_variants],
     }
     for job in central:
@@ -94,9 +64,7 @@ def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, An
             defaults,
             {key: value for key, value in job.items() if key not in {"id", "inputs"}},
         )
-        mu = effective.get("mu")
-        if not isinstance(mu, (int, float)) or isinstance(mu, bool):
-            raise ValueError(f"Matching job '{job['id']}' requires a numeric central mu")
+        mu = float(effective["mu"])
         for label, factor in scale_variants:
             clone = copy.deepcopy(job)
             clone["id"] = f"{job['id']}_{label}"

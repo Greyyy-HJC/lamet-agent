@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Literal
 
 from lamet_agent.contract import (
@@ -13,11 +14,12 @@ from lamet_agent.contract import (
     Provides,
     Recommends,
     Source,
+    Suggests,
     Value,
     stage_job_rules,
 )
-from lamet_agent.stages.fourier_transform.recommendation import zmax_fm as recommend_zmax_fm
-from lamet_agent.stages.fourier_transform.recommendation import zmin_fm as recommend_zmin_fm
+from lamet_agent.stages.fourier_transform.tools.recommendation import zmax_fm as recommend_zmax_fm
+from lamet_agent.stages.fourier_transform.tools.recommendation import zmin_fm as recommend_zmin_fm
 
 
 def _positive(value: int | float) -> bool:
@@ -62,6 +64,14 @@ def _nonempty(value: list[object]) -> bool:
 
 def _unit_interval(value: int | float) -> bool:
     return math.isfinite(value) and 0 <= value <= 1
+
+
+def _safe_systematics_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]*", value))
+
+
+def _nonzero(value: int) -> bool:
+    return value != 0
 
 
 # ruff: disable[E501]
@@ -109,6 +119,18 @@ INPUT_RULES = (
     Depends("", "input", physics="Fourier transformation consumes one renormalized coordinate-space input."),
     Source("input", physics="The Fourier input is one prior job or external file source."),
 )
+
+SYSTEMATICS_RULES = (
+    Recommends("", "defaults", physics="Fourier systematics defaults are optional.", default={}),
+    Recommends("", "variants", physics="Fourier systematic variants are optional.", default=[]),
+    Value("defaults", dict, physics="Fourier systematics defaults form an object."),
+    List("variants", "variant", physics="Fourier systematic variants preserve authored order."),
+    Suggests("", "defaults", "variants.variant", physics="Systematics defaults fill each Fourier variant."),
+    Depends("variants.variant", "id", physics="Every Fourier variation has one safe label."),
+    Depends("variants.variant", "tail_window_step_offset", physics="Every Fourier variation shifts the tail window by a nonzero lattice step."),
+    Value("variants.variant.id", str, physics="Fourier variation labels are safe identifiers.", validator=_safe_systematics_id),
+    Value("variants.variant.tail_window_step_offset", int, physics="Tail-window offsets are nonzero integers.", validator=_nonzero),
+)
 # fmt: on
 # ruff: enable[E501]
 
@@ -143,3 +165,20 @@ def check_da_sector(context: CheckContext) -> Issue | None:
 JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 
 CHECKS = (check_tail_ranges, check_da_sector)
+
+
+def check_systematics(context: CheckContext) -> list[Issue]:
+    variants = context.params["variants"]
+    labels = [variant["id"] for variant in variants]
+    offsets = [variant["tail_window_step_offset"] for variant in variants]
+    issues = []
+    if len(set(labels)) != len(labels):
+        issues.append(Issue("variants", "ids must be unique", "Every variation creates one job suffix."))
+    if len(set(offsets)) != len(offsets):
+        issues.append(
+            Issue("variants", "tail-window offsets must be unique", "Duplicate shifts create duplicate analyses.")
+        )
+    return issues
+
+
+SYSTEMATICS_CHECKS = (check_systematics,)

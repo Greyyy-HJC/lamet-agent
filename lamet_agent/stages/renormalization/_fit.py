@@ -9,7 +9,6 @@ from lamet_agent.data import EnsembleData
 from lamet_agent.kernels import load_renormalization_kernel
 from lamet_agent.stages.renormalization._plotting import render_fit_diagnostics
 from lamet_agent.stages.renormalization.physics import _fit_factor_result, normalize_at_origin
-from lamet_agent.stages.renormalization.parameters import authored_kernel_parameters, effective_params
 
 
 _REFERENCE_K = 0.6551255749279999
@@ -24,10 +23,10 @@ def run(context: ToolContext) -> dict[str, object]:
     if not isinstance(aligned, dict) or "reference" not in aligned:
         raise RuntimeError("inspect_renormalization must run before fitting")
     source = aligned["reference"]
-    params = effective_params(context.params)
+    params = context.params
     kernel_id = str(params["kernel_id"])
     zms_kernel = load_renormalization_kernel(kernel_id)
-    kernel_parameters = authored_kernel_parameters(params)
+    kernel_parameters = dict(params["kernel_parameters"])
     if isinstance(source, list):
         prepared = [normalize_at_origin(item) if params["normalization"] else item for item in source]
     else:
@@ -48,7 +47,7 @@ def run(context: ToolContext) -> dict[str, object]:
     )
     if not spacings:
         raise ValueError("self-renormalization reference has no lattice-spacing coordinates")
-    sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
     fit_result = _fit_factor_result(
         prepared,
         short_distance_max_fm=short_distance_max_fm,

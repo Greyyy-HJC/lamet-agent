@@ -17,7 +17,7 @@
 
 - [x] Expose kernel parameters
 - [x] Restore the original `z_coverage_policy` choices (`strict`, `intersection`, `extrapolate`) before exposing its original `extrapolate` default through `Recommends`.
-  - [ ] Or ask LLM
+  - [ ] ~~Or ask LLM~~
 
 ## Fourier Transform
 
@@ -31,11 +31,11 @@
 ## Continuum Extrapolation
 
 - [x] Performance with "variance" and "one_sigma" error mode
-- [ ] Contract of systematic parameters (Unexpected parameters)
+- [x] Contract of systematic parameters (Unexpected parameters)
 
 ### Codex Hints
-- [ ] Avoid serializing the full 2700 x 1201 extrapolation design matrix separately to every worker batch
-- [ ] After four-example parity, replace repeated global `lsqfit.nonlinear_fit` calls for the linear joint-x model with a correlated linear solve that reuses the fixed design/covariance/prior factorization across resamples
+- [x] Avoid serializing the full 2700 x 1201 extrapolation design matrix separately to every worker batch
+- [x] Replace repeated global `lsqfit.nonlinear_fit` calls for the linear joint-x model with a correlated linear solve that reuses the fixed design/covariance/prior factorization across resamples
 
 ## Review
 

@@ -26,7 +26,7 @@ def run(context: ToolContext) -> dict[str, object]:
     )
     start_plot()
     plot_data = data.at("component", "real") if "component" in data.dims else data
-    sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
     errorband(data.coords["x"], plot_data.average(sample_error_mode))
     configure_plot(xlabel=r"$x$", ylabel="physical distribution")
     save_figure(context.artifact_directory / "plots" / "distribution.pdf")

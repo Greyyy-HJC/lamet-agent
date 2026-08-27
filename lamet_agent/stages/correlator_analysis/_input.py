@@ -285,3 +285,72 @@ def resample_correlators(
             name=sampled.name,
         )
     return result
+
+
+def ensure_raw_correlators(
+    context: Any,
+    correlator_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Load the selected configuration-level correlators once for a job."""
+    requested = set(correlator_ids if correlator_ids is not None else context.params["correlator_ids"])
+    existing = context.state.get("raw_correlators")
+    if isinstance(existing, dict):
+        if requested != set(existing):
+            raise ValueError("correlators were already prepared with a different selection")
+        return existing
+
+    source = context.inputs["correlators"]
+    if isinstance(source, list):
+        if len(source) != 1:
+            raise ValueError("one correlator descriptor source is required")
+        source = source[0]
+    if not isinstance(source, Path):
+        raise TypeError("correlators input must resolve to a descriptor Path")
+    if not requested:
+        raise ValueError("at least one correlator must be selected")
+
+    loaded = load_descriptor(source)
+    unknown = requested - set(loaded["correlators"])
+    if unknown:
+        raise ValueError(f"unknown correlator ids: {sorted(unknown)}")
+    context.state["correlator_descriptor_path"] = source
+    ensemble = loaded["descriptor"].get("ensemble", {})
+    context.state["correlator_resample_group"] = str(ensemble.get("id", context.job_id))
+    context.state["correlator_records"] = {
+        record["id"]: record for record in loaded["descriptor"]["correlators"] if record["id"] in requested
+    }
+    selected = {key: value for key, value in loaded["correlators"].items() if key in requested}
+    context.state["correlator_configuration_ids"] = list(loaded.get("configuration_ids", []))
+    context.state["raw_correlators"] = selected
+    return selected
+
+
+def ensure_correlators(
+    context: Any,
+    correlator_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Load and resample the selected correlators once for a job."""
+    requested = set(correlator_ids if correlator_ids is not None else context.params["correlator_ids"])
+    existing = context.state.get("correlators")
+    if isinstance(existing, dict):
+        if requested != set(existing):
+            raise ValueError("correlators were already prepared with a different selection")
+        return existing
+
+    raw = ensure_raw_correlators(context, correlator_ids)
+    resampled = resample_correlators(
+        {
+            "correlators": raw,
+            "configuration_ids": context.state.get("correlator_configuration_ids", []),
+        },
+        mode=context.manifest["metadata"]["resample_mode"],
+        group=str(context.state.get("correlator_resample_group", context.job_id)),
+        bin_size=context.manifest["metadata"]["bin_size"],
+        n_boot=context.manifest["metadata"].get("samples"),
+        seed=int(context.manifest["metadata"]["random_seed"]),
+    )
+    context.state["correlators"] = resampled
+    return resampled
+
+
+__all__ = ["ensure_correlators", "ensure_raw_correlators", "load_descriptor", "resample_correlators"]

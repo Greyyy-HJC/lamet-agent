@@ -7,11 +7,23 @@ import math
 from pathlib import Path
 import re
 import types
+import warnings
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 import numpy as np
 
-from lamet_agent.contract import CheckContext, Depends, Issue, Provides, Recommends, Source, Value, stage_job_rules
+from lamet_agent.contract import (
+    CheckContext,
+    Depends,
+    Issue,
+    List,
+    Provides,
+    Recommends,
+    Source,
+    Suggests,
+    Value,
+    stage_job_rules,
+)
 from lamet_agent.kernels import load_kernel
 
 
@@ -47,6 +59,14 @@ def _valid_lc_x_ls(value: object) -> bool:
 
 def _valid_kernel_id(value: object) -> bool:
     return isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", value))
+
+
+def _safe_systematics_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]*", value))
+
+
+def _valid_mu_factor(value: int | float) -> bool:
+    return _positive(value) and not math.isclose(float(value), 1.0, rel_tol=0.0, abs_tol=1e-15)
 
 
 def _annotation_accepts(annotation: Any, value: Any) -> bool:
@@ -184,6 +204,18 @@ INPUT_RULES = (
     Depends("", "quasi", physics="Matching consumes one quasi-distribution source."),
     Source("quasi", physics="The quasi input is one prior job or external file source."),
 )
+
+SYSTEMATICS_RULES = (
+    Recommends("", "defaults", physics="Matching systematics defaults are optional.", default={}),
+    Recommends("", "variants", physics="Matching systematic variants are optional.", default=[]),
+    Value("defaults", dict, physics="Matching systematics defaults form an object."),
+    List("variants", "variant", physics="Matching systematic variants preserve authored order."),
+    Suggests("", "defaults", "variants.variant", physics="Systematics defaults fill each matching variant."),
+    Depends("variants.variant", "id", physics="Every matching variation has one safe label."),
+    Depends("variants.variant", "mu_factor", physics="Every matching variation has one noncentral scale multiplier."),
+    Value("variants.variant.id", str, physics="Matching variation labels are safe identifiers.", validator=_safe_systematics_id),
+    Value("variants.variant.mu_factor", (int, float), physics="Matching scale multipliers are finite, positive, and not one.", validator=_valid_mu_factor),
+)
 # fmt: on
 # ruff: enable[E501]
 
@@ -263,7 +295,15 @@ def check_kernel_parameters(context: CheckContext) -> list[Issue] | Issue | None
                 f"kernel signature must {expected} stage-managed zs_fm for scheme {context.params.get('scheme')!r}",
                 "The matching scheme determines whether the stage injects a Wilson-line switching distance.",
             )
-        return _kernel_parameter_issues(kernel, values)
+        issues = _kernel_parameter_issues(kernel, values)
+        overridden = sorted(_CONTEXT_KERNEL_ARGUMENTS.intersection(values))
+        if not issues and overridden:
+            warnings.warn(
+                f"matching kernel_parameters overrides stage context: {overridden}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return issues
     except (TypeError, ValueError) as exc:
         return Issue(
             "kernel_id",
@@ -275,3 +315,13 @@ def check_kernel_parameters(context: CheckContext) -> list[Issue] | Issue | None
 JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 
 CHECKS = (check_kernel_shape, check_x_output, check_kernel_resources, check_kernel_parameters)
+
+
+def check_systematics(context: CheckContext) -> Issue | None:
+    labels = [variant["id"] for variant in context.params["variants"]]
+    if len(set(labels)) != len(labels):
+        return Issue("variants", "ids must be unique", "Every variation creates one job suffix.")
+    return None
+
+
+SYSTEMATICS_CHECKS = (check_systematics,)

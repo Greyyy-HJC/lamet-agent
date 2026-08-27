@@ -9,7 +9,7 @@ from lamet_agent.parallel import FitNumericalError
 from lamet_agent.stages.correlator_analysis.physics import (
     matrix_element_samples,
 )
-from lamet_agent.stages.correlator_analysis.selection import (
+from lamet_agent.stages.correlator_analysis._selection import (
     select_tuned_candidate,
 )
 

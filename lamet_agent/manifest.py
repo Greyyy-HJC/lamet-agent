@@ -111,7 +111,10 @@ class Manifest:
         if not isinstance(self.document, dict):
             raise TypeError("Manifest document must be a JSON object")
         if self._has_systematics is None:
-            self._has_systematics = "systematics" in self.document
+            declarations = self.document.get("systematics")
+            self._has_systematics = isinstance(declarations, Mapping) and any(
+                isinstance(config, Mapping) and bool(config.get("variants")) for config in declarations.values()
+            )
 
     @property
     def has_systematics(self) -> bool:
@@ -140,9 +143,20 @@ class Manifest:
         return _resolve_root(self.path, root)
 
     def validate(self, *, stage_root: str | Path | None = None) -> list[Issue]:
-        """Resolve once, validate the concrete document, and commit it on success."""
+        """Validate authored contracts, expand systematics, then validate generated jobs."""
+        authored = Manifest(
+            self.path,
+            copy.deepcopy(self.document),
+            _systematics_expanded=self._systematics_expanded,
+            _has_systematics=self.has_systematics,
+        )
+        issues = _validate_document(authored.document, manifest_path=self.path, stage_root=stage_root)
+        if not authored._systematics_expanded:
+            issues.extend(_validate_systematics_contracts(authored.document, stage_root=stage_root))
+        if issues:
+            return issues
         try:
-            expanded = self.expand_systematics(stage_root=stage_root)
+            expanded = authored.expand_systematics(stage_root=stage_root)
         except (TypeError, ValueError) as exc:
             return [
                 _issue(
@@ -153,6 +167,7 @@ class Manifest:
             ]
         issues = _validate_document(expanded.document, manifest_path=self.path, stage_root=stage_root)
         if not issues:
+            expanded.document.pop("systematics", None)
             self.document = expanded.document
             self._systematics_expanded = True
             self.jobs = tuple(_build_jobs(self))
@@ -163,32 +178,39 @@ class Manifest:
         if self._systematics_expanded:
             return self
         document = copy.deepcopy(self.document)
-        declarations = document.get("systematics")
-        stages = document.get("stages")
-        if declarations is None:
-            return Manifest(
-                self.path,
-                document,
-                _systematics_expanded=True,
-                _has_systematics=self.has_systematics,
-            )
-        if not isinstance(declarations, Mapping):
-            raise TypeError("must be an object keyed by stage id")
-        if not isinstance(stages, Mapping):
-            raise ValueError("cannot expand before stages is an object")
-        unknown = set(declarations) - set(stages)
-        if unknown:
-            raise ValueError(f"declares absent stages: {sorted(unknown)}")
+        contract_issues = evaluate_rules(document, _BASE_RULES, complete=True)
+        if isinstance(document.get("metadata"), Mapping):
+            contract_issues.extend(evaluate_checks(_BASE_CHECKS, CheckContext(document, "", None, {}, {})))
+        contract_issues.extend(_validate_systematics_contracts(document, stage_root=stage_root))
+        if contract_issues:
+            raise ValueError("; ".join(f"{issue.path}: {issue.message}" for issue in contract_issues))
+        declarations = document["systematics"]
+        stages = document["stages"]
         state: dict[str, Any] = {}
         for stage_id in stages:
-            if stage_id not in declarations:
+            systematics_path = _default_stage_root(stage_root) / stage_id / "systematics.py"
+            if not systematics_path.is_file():
                 continue
-            config = declarations[stage_id]
-            if not isinstance(config, Mapping):
-                raise TypeError(f"{stage_id} declaration must be an object")
+            config = copy.deepcopy(dict(declarations.get(stage_id, {})))
+            contract = _load_stage_contract(stage_id, stage_root)
+            local = evaluate_rules(
+                config,
+                contract.SYSTEMATICS_RULES,
+                complete=True,
+                root_document=document,
+            )
+            if not local:
+                local.extend(
+                    evaluate_checks(
+                        contract.SYSTEMATICS_CHECKS,
+                        CheckContext(document, stage_id, None, config, {}),
+                    )
+                )
+            if local:
+                raise ValueError("; ".join(f"{stage_id}.{issue.path}: {issue.message}" for issue in local))
             module = _load_stage_systematics(stage_id, stage_root)
             try:
-                module.expand(document, copy.deepcopy(dict(config)), state)
+                module.expand(document, config, state)
             except KeyError as exc:
                 raise ValueError(f"{stage_id} systematics expansion requires missing field {exc}") from exc
         document.pop("systematics")
@@ -220,8 +242,13 @@ class Manifest:
 # ruff: disable[E501]
 # fmt: off
 _BASE_RULES: tuple[Depends | Provides | Recommends | Value, ...] = (
+    Value("", dict, physics="The manifest root is one JSON object."),
     Depends("", "metadata", physics="Run metadata names the physical analysis and its execution root."),
     Depends("", "stages", physics="The authored stage mapping is the sole execution order."),
+    Recommends("", "systematics", physics="Runs without systematic variations use an empty declaration mapping.", default={}),
+    Value("metadata", dict, physics="Run metadata is an object."),
+    Value("stages", dict, physics="Stages form a nonempty ordered object.", validator=bool),
+    Value("systematics", dict, physics="Systematics declarations form a stage-keyed object."),
     Depends("metadata", "run_id", physics="A run needs a stable human-readable identifier."),
     Depends("metadata", "root_directory", physics="Relative input paths are resolved from this directory."),
     Depends("metadata", "artifacts_directory", physics="Every job owns one artifact cell below this directory."),
@@ -269,20 +296,39 @@ def _check_manifest_relations(context: CheckContext) -> list[Issue]:
         )
     stages = context.manifest.get("stages")
     if isinstance(stages, Mapping):
-        if not stages:
-            issues.append(
-                _issue(
-                    "stages",
-                    "must be a nonempty object",
-                    "A workflow executes at least one contracted stage.",
-                )
-            )
         for stage_name in stages:
             if not isinstance(stage_name, str) or not _SAFE_STAGE.fullmatch(stage_name):
                 issues.append(
                     _issue(
                         f"stages.{stage_name}",
                         "stage id must match [a-z][a-z0-9_]*",
+                    )
+                )
+            elif not isinstance(stages[stage_name], Mapping):
+                issues.append(
+                    _issue(
+                        f"stages.{stage_name}",
+                        "must be an object",
+                        "Every stage owns one defaults/jobs configuration object.",
+                    )
+                )
+    declarations = context.manifest.get("systematics")
+    if isinstance(declarations, Mapping) and isinstance(stages, Mapping):
+        for stage_id, config in declarations.items():
+            if stage_id not in stages:
+                issues.append(
+                    _issue(
+                        f"systematics.{stage_id}",
+                        "declares a stage absent from stages",
+                        "Systematic variations can only extend an authored stage.",
+                    )
+                )
+            if not isinstance(config, Mapping):
+                issues.append(
+                    _issue(
+                        f"systematics.{stage_id}",
+                        "must be an object",
+                        "Each stage owns one systematics configuration object.",
                     )
                 )
     return issues
@@ -328,6 +374,11 @@ def _load_stage_contract(stage_id: str, stage_root: str | Path | None = None) ->
     for name in ("JOB_RULES", "PARAM_RULES", "CHECKS"):
         if not hasattr(module, name):
             raise ValueError(f"Stage '{stage_id}' contract does not export {name}")
+    systematics_path = contract_path.with_name("systematics.py")
+    if systematics_path.is_file():
+        for name in ("SYSTEMATICS_RULES", "SYSTEMATICS_CHECKS"):
+            if not hasattr(module, name):
+                raise ValueError(f"Stage '{stage_id}' contract does not export {name}")
     return module
 
 
@@ -345,9 +396,48 @@ def _load_stage_systematics(stage_id: str, stage_root: str | Path | None = None)
         raise ValueError(f"cannot load systematics compiler for stage '{stage_id}'")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if not callable(getattr(module, "expand", None)):
-        raise ValueError(f"stage '{stage_id}' systematics.py does not export expand")
+    if not callable(module.expand):
+        raise ValueError(f"stage '{stage_id}' systematics expand is not callable")
     return module
+
+
+def _validate_systematics_contracts(
+    document: Mapping[str, Any],
+    *,
+    stage_root: str | Path | None = None,
+) -> list[Issue]:
+    """Validate each authored stage-systematics object with its owned contract."""
+    declarations = document.get("systematics")
+    stages = document.get("stages")
+    if not isinstance(declarations, Mapping) or not isinstance(stages, Mapping):
+        return []
+    issues: list[Issue] = []
+    for stage_id in stages:
+        config = declarations.get(stage_id)
+        if config is None or not isinstance(config, Mapping):
+            continue
+        try:
+            contract = _load_stage_contract(str(stage_id), stage_root)
+            _load_stage_systematics(str(stage_id), stage_root)
+        except ValueError as exc:
+            issues.append(_issue(f"systematics.{stage_id}", str(exc)))
+            continue
+        local = evaluate_rules(
+            config,
+            contract.SYSTEMATICS_RULES,
+            complete=True,
+            root_document=document,
+        )
+        issues.extend(_prefix_issues(local, f"systematics.{stage_id}"))
+        if not local:
+            context = CheckContext(document, str(stage_id), None, config, {})
+            issues.extend(
+                _prefix_issues(
+                    evaluate_checks(contract.SYSTEMATICS_CHECKS, context),
+                    f"systematics.{stage_id}",
+                )
+            )
+    return issues
 
 
 def _issue(path: str, message: str, physics: str = "Manifest structure is explicit.") -> Issue:
@@ -403,13 +493,12 @@ def _validate_document(
     metadata = document.get("metadata")
     if not isinstance(metadata, Mapping):
         return issues
-    if not issues:
-        issues.extend(
-            evaluate_checks(
-                _BASE_CHECKS,
-                CheckContext(document, "", None, {}, {}),
-            )
+    issues.extend(
+        evaluate_checks(
+            _BASE_CHECKS,
+            CheckContext(document, "", None, {}, {}),
         )
+    )
     root_value = metadata.get("root_directory")
     manifest_file = manifest_path
     root = _resolve_root(manifest_file, root_value) if isinstance(root_value, str) else manifest_file.parent
@@ -426,7 +515,6 @@ def _validate_document(
             continue
         block = stage_blocks.get(stage_id)
         if not isinstance(block, Mapping):
-            issues.append(_issue(f"stages.{stage_id}", "must be an object"))
             continue
         jobs = block.get("jobs")
         try:

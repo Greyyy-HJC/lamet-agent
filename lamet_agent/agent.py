@@ -644,7 +644,7 @@ class _AgentSession:
         transcript_path = context.artifact_directory / _LLM_TRANSCRIPT_FILENAME
         _write_transcript_header(transcript_path)
         history = [Message("system", static_prompt)] if static_prompt else []
-        retry_limit = int(context.manifest["metadata"].get("parameter_recommendation_retries", 1))
+        retry_limit = int(context.manifest["metadata"]["parameter_recommendation_retries"])
         llm_session = LlmSession(
             self.backend,
             transcript_path,

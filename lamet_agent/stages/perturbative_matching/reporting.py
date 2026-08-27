@@ -200,7 +200,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| hybrid switch | {format_value(record.params.get('zs_fm'))} fm |",
                 f"| quasi grid | {describe_grid(quasi.coords['x'], symbol='x')} |",
                 f"| light-cone grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
-                f"| kernel parameters | {format_value(record.params.get('kernel_parameters', {}))} |",
+                f"| kernel parameters | {format_value(record.params['kernel_parameters'])} |",
                 f"| matching matrix shape | {format_value(diagnostics.get('matrix_shape'))} |",
                 f"| resampling | `{getattr(record.output, 'resample', 'n/a')}` with {format_value(getattr(record.output, 'n_sample', None))} samples |",
                 "",

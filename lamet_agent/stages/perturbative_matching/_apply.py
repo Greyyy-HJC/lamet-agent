@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import warnings
 
 import gvar
 import numpy as np
@@ -49,16 +48,6 @@ def run(context: ToolContext) -> dict[str, object]:
     if not isinstance(momentum, (int, float)) or isinstance(momentum, bool):
         raise ValueError("quasi input requires momentum_gev")
     kernel_parameters = dict(context.params["kernel_parameters"])
-    forbidden = sorted({"x_out", "x_in"}.intersection(kernel_parameters))
-    if forbidden:
-        raise ValueError(f"matching kernel_parameters cannot override data grids: {forbidden}")
-    overridden = sorted({"momentum_gev", "scale_gev", "zs_fm"}.intersection(kernel_parameters))
-    if overridden:
-        warnings.warn(
-            f"matching kernel_parameters overrides stage context: {overridden}",
-            RuntimeWarning,
-            stacklevel=2,
-        )
     kernel_arguments = {
         "x_out": np.asarray(x_out, dtype=float),
         "x_in": np.asarray(x_in, dtype=float),
@@ -108,7 +97,7 @@ def run(context: ToolContext) -> dict[str, object]:
     hline(0.0, color="black")
     plot_min = np.inf
     plot_max = -np.inf
-    sample_error_mode = str(context.manifest.get("metadata", {}).get("sample_error_mode", "covariance"))
+    sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
     quasi_label = rf"$P_z={round(float(momentum), 2):g}\,\mathrm{{GeV}}$"
     for values, x_values, label, color in (
         (data, x_in, quasi_label, series_color(0)),
