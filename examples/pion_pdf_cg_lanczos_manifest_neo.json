@@ -19,10 +19,10 @@
         "nstate": [
           2
         ],
-        "lanczos": {
-          "scope": "3pt_matrix",
-          "precision": 100
-        }
+        "scope": "3pt_matrix",
+        "precision": 100,
+        "t0": 4,
+        "time_step": 2
       },
       "jobs": [
         {
@@ -55,14 +55,10 @@
       "defaults": {
         "strategy": "external_denominator",
         "normalization": false,
-        "external_denominator": {
-          "scheme": "hybrid",
-          "hybrid": {
-            "zs_fm": 0.18,
-            "m0_gev": 0.0,
-            "delta_m_gev": 0.0
-          }
-        }
+        "scheme": "hybrid",
+        "zs_fm": 0.18,
+        "m0_gev": 0.0,
+        "delta_m_gev": 0.0
       },
       "jobs": [
         {
@@ -129,12 +125,10 @@
           "stop": 1.0
         },
         "kernel_parameters": {
-          "rgr_kappa": 1.0,
-          "rgr_mu_min_gev": 0.6
+          "kappa": 1.0,
+          "mu_min_gev": 0.6
         },
-        "hybrid": {
-          "zs_fm": 0.18
-        }
+        "zs_fm": 0.18
       },
       "jobs": [
         {

@@ -16,8 +16,8 @@ from lamet_agent.contract import (
     Value,
     stage_job_rules,
 )
-from lamet_agent.stages.correlator_analysis.hook import (
-    recommend_pt2_windows,
+from lamet_agent.stages.correlator_analysis.tools.recommend_pt2_windows.recommendation import (
+    recommend as recommend_pt2_windows,
 )
 
 
@@ -65,7 +65,7 @@ PARAM_RULES = (
     Recommends("lsqfit", "prior_width", physics="The original correlator fit uses one unit prior-width candidate unless explicitly varied.", default=[1.0]),
     Depends("lsqfit", "model_average", physics="Candidate averaging is an explicit analysis choice."),
     Depends("lsqfit", "pt2_windows", physics="Two-point candidate windows are selected from the observed signal and uncertainty.", null_hook=recommend_pt2_windows),
-    Depends("lsqfit", "pt3_windows", physics="Three-point candidate windows are explicit for three-point/FH scopes.", required=False),
+    Recommends("lsqfit", "pt3_windows", physics="Scopes without three-point data use no three-point windows.", default=[]),
     Recommends("lsqfit", "svdcut", physics="The original correlator fit defaults to a 1e-12 relative covariance singular-value cut.", default=1e-12),
     Depends("lsqfit", "posterior_prior_error_scale", physics="Posterior-prior scaling is explicit."),
     Depends("lsqfit", "q_min", physics="The candidate quality threshold is explicit."),
@@ -80,7 +80,7 @@ PARAM_RULES = (
     Value("lsqfit.pt2_windows.window.tmin", int, physics="The lower two-point time is nonnegative.", validator=_nonnegative),
     Depends("lsqfit.pt2_windows.window", "tmax", physics="The upper two-point time is explicit."),
     Value("lsqfit.pt2_windows.window.tmax", int, physics="The upper two-point time is positive.", validator=_positive),
-    List("lsqfit.pt3_windows", "window", physics="Three-point windows form an explicit candidate list.", validator=_nonempty),
+    List("lsqfit.pt3_windows", "window", physics="Three-point windows form an explicit candidate list."),
     Depends("lsqfit.pt3_windows.window", "tsep_ls", physics="Source-sink separations are explicit."),
     List("lsqfit.pt3_windows.window.tsep_ls", "tsep", physics="Source-sink separations are nonempty and unique.", validator=_nonempty_unique),
     Value("lsqfit.pt3_windows.window.tsep_ls.tsep", int, physics="Every source-sink separation is positive.", validator=_positive),
@@ -89,8 +89,8 @@ PARAM_RULES = (
     Depends("lanczos", "scope", physics="Lanczos explicitly selects a two-point spectrum or three-point matrix."),
     Recommends("lanczos", "inner_samples", physics="The inner bootstrap distribution drives CW filtering and median aggregation.", default=200),
     Recommends("lanczos", "precision", physics="Lanczos recurrence construction uses NumPy double precision unless decimal precision is requested.", default=0),
-    Depends("lanczos", "t0", physics="An optional nonnegative trimming offset fixes the first effective moment.", required=False),
-    Depends("lanczos", "time_step", physics="An optional positive transfer-matrix power fixes sparse moment spacing.", required=False),
+    Depends("lanczos", "t0", physics="The nonnegative trimming offset fixes the first effective moment."),
+    Depends("lanczos", "time_step", physics="The positive transfer-matrix power fixes sparse moment spacing."),
     Value("lsqfit.fit_scope.scope", Literal["spectrum", "3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"], physics="Every scope names one migrated correlator observable family."),
     Value("lsqfit.fit_strategy.strategy", Literal["joint", "chained", "independent"], physics="Every strategy names one migrated covariance-propagation path."),
     Value("component", Literal["re", "im", "both"], physics="Components are real, imaginary, or both."),
@@ -119,27 +119,27 @@ INPUT_RULES = (
 
 
 def check_method_family(context: CheckContext) -> Issue | None:
-    settings = context.params.get("lsqfit")
-    if not isinstance(settings, dict):
+    if context.params.get("analysis_method", "lsqfit") != "lsqfit":
         return None
+    settings = context.params
     scopes = set(settings["fit_scope"])
     strategies = set(settings["fit_strategy"])
     if "spectrum" in scopes:
         if scopes != {"spectrum"}:
             return Issue(
-                "lsqfit.fit_scope",
+                "fit_scope",
                 "spectrum must be the only scope in a spectrum job",
                 "Spectrum and matrix-element jobs expose disjoint fit scopes.",
             )
         if strategies != {"independent"}:
             return Issue(
-                "lsqfit.fit_strategy",
+                "fit_strategy",
                 "must contain only 'independent' for a spectrum job",
                 "A direct two-point spectrum fit has no separate matrix-element covariance propagation.",
             )
     if "qda_ratio" in scopes and (len(scopes) != 1 or strategies != {"independent"}):
         return Issue(
-            "lsqfit",
+            "fit_scope",
             "qda_ratio requires the exclusive fit_scope ['qda_ratio'] and fit_strategy ['independent']",
             "The migrated qDA path fits each nonlocal/local two-point ratio independently.",
         )
@@ -147,27 +147,27 @@ def check_method_family(context: CheckContext) -> Issue | None:
 
 
 def check_lsqfit_windows(context: CheckContext) -> Issue | None:
-    lsqfit = context.params.get("lsqfit")
-    if not isinstance(lsqfit, dict):
+    if context.params.get("analysis_method", "lsqfit") != "lsqfit":
         return None
+    lsqfit = context.params
     scopes = set(lsqfit["fit_scope"])
     ordinary_scopes = scopes & {"3pt_ratio", "FH", "3pt_ratio+FH"}
-    if ordinary_scopes and "pt3_windows" not in lsqfit:
+    if ordinary_scopes and not lsqfit["pt3_windows"]:
         return Issue(
-            "lsqfit.pt3_windows",
+            "pt3_windows",
             "is required for three-point and FH fit scopes",
             "The matrix-element fitter needs authored source-sink and insertion-time candidates.",
         )
     if lsqfit["fitting_form"] == "NonBreit" and ordinary_scopes != {"3pt_ratio"}:
         return Issue(
-            "lsqfit.fit_scope",
+            "fit_scope",
             "must contain only '3pt_ratio' for NonBreit fitting",
             "The implemented non-forward model is the three-point ratio decomposition.",
         )
     for index, window in enumerate(lsqfit.get("pt2_windows") or []):
         if window["tmin"] >= window["tmax"]:
             return Issue(
-                f"lsqfit.pt2_windows[{index}]",
+                f"pt2_windows[{index}]",
                 "must be an increasing nonnegative integer window",
                 "Every two-point fit window contains physical lattice times.",
             )
@@ -176,14 +176,14 @@ def check_lsqfit_windows(context: CheckContext) -> Issue | None:
         tau_cut = window["tau_cut"]
         if any(2 * tau_cut > value for value in tseps):
             return Issue(
-                f"lsqfit.pt3_windows[{index}].tau_cut",
+                f"pt3_windows[{index}].tau_cut",
                 "must leave at least one insertion point for every tsep",
                 "The insertion cut cannot remove the complete three-point window.",
             )
     tau_cuts = [window["tau_cut"] for window in lsqfit.get("pt3_windows") or []]
     if len(set(tau_cuts)) != len(tau_cuts):
         return Issue(
-            "lsqfit.pt3_windows",
+            "pt3_windows",
             "tau_cut values must be unique",
             "The fit tool identifies each authored three-point window by its insertion cut.",
         )
@@ -191,20 +191,20 @@ def check_lsqfit_windows(context: CheckContext) -> Issue | None:
 
 
 def check_qda_scope(context: CheckContext) -> Issue | None:
-    lsqfit = context.params.get("lsqfit")
-    if not isinstance(lsqfit, dict):
+    if context.params.get("analysis_method", "lsqfit") != "lsqfit":
         return None
+    lsqfit = context.params
     if "qda_ratio" not in set(lsqfit["fit_scope"]):
         return None
     if lsqfit["fitting_form"] != "Breit":
         return Issue(
-            "lsqfit.fitting_form",
+            "fitting_form",
             "must be 'Breit' for qda_ratio",
             "The implemented qDA ratio uses the forward one-state decomposition.",
         )
-    if "pt3_windows" in lsqfit:
+    if lsqfit["pt3_windows"]:
         return Issue(
-            "lsqfit.pt3_windows",
+            "pt3_windows",
             "must be omitted for qda_ratio",
             "The qDA ratio consumes only nonlocal/local two-point correlators.",
         )
@@ -212,12 +212,12 @@ def check_qda_scope(context: CheckContext) -> Issue | None:
 
 
 def check_candidate_policy(context: CheckContext) -> Issue | None:
-    settings = context.params.get("lsqfit")
-    if not isinstance(settings, dict):
+    if context.params.get("analysis_method", "lsqfit") != "lsqfit":
         return None
+    settings = context.params
     if settings.get("model_average") is True:
         return Issue(
-            "lsqfit.model_average",
+            "model_average",
             "must be false until weighted candidate averaging is implemented",
             "Publishing one candidate and model averaging are distinct statistical procedures.",
         )

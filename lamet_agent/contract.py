@@ -20,7 +20,6 @@ class Depends:
     parent: str
     child: str
     physics: str
-    required: bool = True
     question: str | None = None
 
     null_hook: Callable[..., object] | None = None
@@ -49,7 +48,7 @@ class Recommends:
 
 @dataclass(frozen=True)
 class Suggests:
-    """Fill missing target mapping values from one optional source mapping."""
+    """Copy a source mapping, then apply the target mapping as a shallow overlay."""
 
     parent: str
     source: str
@@ -70,7 +69,7 @@ class Suggests:
 
 @dataclass(frozen=True)
 class Provides:
-    """Conditionally provide one real child as a selector implementation."""
+    """Activate a virtual rule branch without creating a document child."""
 
     parent: str
     child: str
@@ -79,7 +78,7 @@ class Provides:
 
     @property
     def path(self) -> str:
-        """Return the real path activated when this provider is selected."""
+        """Return the virtual path activated when this provider is selected."""
         return _path_join(self.parent, self.child)
 
     @property
@@ -166,7 +165,6 @@ def _scope_rules(root: str, rules: Sequence[_Rule]) -> tuple[_Rule, ...]:
                     _scope_path(root, rule.parent),
                     rule.child,
                     rule.physics,
-                    rule.required,
                     rule.question,
                     rule.null_hook,
                 )
@@ -240,8 +238,12 @@ def _valid_job_id(value: object) -> bool:
     return isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value))
 
 
-def stage_job_rules(param_rules: Sequence[_Rule], input_rules: Sequence[_Rule]) -> tuple[_Rule, ...]:
-    """Compose one complete stage-document contract rooted at jobs.job."""
+def stage_job_rules(
+    param_rules: Sequence[_Rule],
+    input_rules: Sequence[_Rule],
+    job_rules: Sequence[_Rule] = (),
+) -> tuple[_Rule, ...]:
+    """Compose one stage contract, including optional cross-field job rules."""
     # ruff: disable[E501]
     # fmt: off
     base: tuple[_Rule, ...] = (
@@ -284,6 +286,7 @@ def stage_job_rules(param_rules: Sequence[_Rule], input_rules: Sequence[_Rule]) 
         *base,
         *_scope_rules("jobs.job", param_rules),
         *_scope_rules("jobs.job.inputs", input_rules),
+        *_scope_rules("jobs.job", job_rules),
     )
 
 
@@ -305,19 +308,43 @@ def _virtual_map(rules: Sequence[_Rule]) -> dict[str, str]:
     return {rule.path: rule.item for rule in rules if isinstance(rule, List)}
 
 
+def _translate_provider_path(path: str, provider_aliases: Mapping[str, str]) -> str:
+    """Collapse virtual provider prefixes to their concrete parent paths."""
+    translated = path
+    while True:
+        matches = [
+            virtual for virtual in provider_aliases if translated == virtual or translated.startswith(f"{virtual}.")
+        ]
+        if not matches:
+            return translated
+        virtual = max(matches, key=len)
+        parent = provider_aliases[virtual]
+        suffix = translated[len(virtual) :].removeprefix(".")
+        replacement = _path_join(parent, suffix) if suffix else parent
+        if replacement == translated:
+            return translated
+        translated = replacement
+
+
 def _resolve(
     document: Any,
     path: str,
     list_rules: Mapping[str, str],
     root_document: Mapping[str, Any],
+    provider_aliases: Mapping[str, str] | None = None,
 ) -> list[tuple[str, str, Any]]:
     """Resolve a logical path to ``(logical, concrete, value)`` tuples."""
+    provider_aliases = {} if provider_aliases is None else provider_aliases
+
+    path = _translate_provider_path(path, provider_aliases)
+    list_rules = {_translate_provider_path(logical, provider_aliases): item for logical, item in list_rules.items()}
     absolute = path == "$" or path.startswith("$.")
     if path in {"", "$"}:
         value = root_document if absolute else document
-        return [("$" if absolute else "", "", value)]
+        resolved = [("$" if absolute else "", "", value)]
+    else:
+        resolved = []
     parts = path[2:].split(".") if absolute else path.split(".")
-    resolved: list[tuple[str, str, Any]] = []
 
     def walk(value: Any, remaining: list[str], logical: str, concrete: str) -> None:
         if not remaining:
@@ -335,7 +362,8 @@ def _resolve(
             next_concrete = _path_join(concrete, segment)
             walk(value[segment], remaining[1:], next_logical, next_concrete)
 
-    walk(root_document if absolute else document, parts, "$" if absolute else "", "")
+    if path not in {"", "$"}:
+        walk(root_document if absolute else document, parts, "$" if absolute else "", "")
     return resolved
 
 
@@ -352,6 +380,17 @@ def _provider_index(rules: Sequence[_Rule]) -> dict[str, tuple[Provides, ...]]:
         seen.add(identity)
         indexed.setdefault(rule.selector_path, []).append(rule)
     return {path: tuple(providers) for path, providers in indexed.items()}
+
+
+def _provider_aliases(rules: Sequence[_Rule]) -> dict[str, str]:
+    """Return the unique virtual-branch-to-parent aliases in one contract."""
+    aliases: dict[str, str] = {}
+    for providers in _provider_index(rules).values():
+        for provider in providers:
+            previous = aliases.setdefault(provider.path, provider.parent)
+            if previous != provider.parent:
+                raise ValueError(f"conflicting virtual provider path {provider.path!r}")
+    return aliases
 
 
 def _path_parts(path: str) -> tuple[str, ...]:
@@ -397,17 +436,6 @@ def _suggestion_index(rules: Sequence[_Rule]) -> dict[str, Suggests]:
     return indexed
 
 
-def _deep_suggest(source: Mapping[str, Any], target: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a deep source copy with target values taking precedence."""
-    merged = copy.deepcopy(dict(source))
-    for key, value in target.items():
-        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
-            merged[key] = _deep_suggest(merged[key], value)
-        else:
-            merged[key] = copy.deepcopy(value)
-    return merged
-
-
 def _walk_rules(
     document: Mapping[str, Any],
     rules: Sequence[_Rule],
@@ -421,12 +449,12 @@ def _walk_rules(
     root_document = document if root_document is None else root_document
     list_rules = _virtual_map(rules)
     providers_by_selector = _provider_index(rules)
-    providers_by_parent: dict[str, list[Provides]] = {}
-    provider_children_by_parent: dict[str, set[str]] = {}
-    for providers in providers_by_selector.values():
-        for provider in providers:
-            providers_by_parent.setdefault(provider.parent, []).append(provider)
-            provider_children_by_parent.setdefault(provider.parent, set()).add(provider.child)
+    provider_aliases = _provider_aliases(rules)
+    potential_children_by_parent: dict[str, set[str]] = {}
+    for rule in rules:
+        if isinstance(rule, (Depends, Recommends)):
+            concrete_parent = _translate_provider_path(rule.parent, provider_aliases)
+            potential_children_by_parent.setdefault(concrete_parent, set()).add(rule.child)
     absolute_selectors_by_parent: dict[str, set[str]] = {}
     for selector, providers in providers_by_selector.items():
         if selector.startswith("$."):
@@ -487,6 +515,7 @@ def _walk_rules(
             path,
             list_rules,
             root_document,
+            provider_aliases,
         )
         if not resolved:
             continue
@@ -498,6 +527,7 @@ def _walk_rules(
                 suggestion.source_path,
                 list_rules,
                 root_document,
+                provider_aliases,
             )
             if len(sources) > 1:
                 raise ValueError(f"Suggests source {suggestion.source_path!r} resolves ambiguously")
@@ -532,16 +562,10 @@ def _walk_rules(
                             )
                         )
                     continue
-                merged = _deep_suggest(source, target)
+                merged = copy.deepcopy(dict(source))
+                merged.update(copy.deepcopy(target))
                 target.clear()
                 target.update(merged)
-
-        for provider in providers_by_parent.get(path, ()):
-            for logical, concrete, parent in resolved:
-                if isinstance(parent, Mapping):
-                    declare(logical, concrete, parent, provider.child)
-                    if not active and provider.child in parent:
-                        enqueue(provider.path, False)
 
         for selector in absolute_selectors_by_parent.get(path, ()):
             enqueue(selector, active)
@@ -663,33 +687,13 @@ def _walk_rules(
                         provider.parent,
                         list_rules,
                         root_document,
+                        provider_aliases,
                     ):
                         if not isinstance(parent, Mapping):
                             continue
-                        if not provider.selector_path.startswith("$."):
-                            prefix = f"{provider.parent}." if provider.parent else ""
-                            if not provider.selector_path.startswith(prefix):
-                                raise ValueError(
-                                    f"provider selector {provider.selector_path!r} is outside parent {provider.parent!r}"
-                                )
-                            relative_selector = provider.selector_path[len(prefix) :]
-                            if concrete != _path_join(parent_concrete, relative_selector):
-                                continue
                         matched = isinstance(selected, str) and selected == provider.child
-                        exists = provider.child in parent
-                        if active and matched and not exists:
-                            if validate and complete:
-                                issues.append(
-                                    Issue(
-                                        _path_join(parent_concrete, provider.child),
-                                        f"is required when {provider.selector_path}={provider.child!r}",
-                                        provider.physics,
-                                        None,
-                                    )
-                                )
-                            continue
-                        if exists:
-                            enqueue(provider.path, active and matched)
+                        if active and matched:
+                            enqueue(provider.path, True)
 
         outgoing = dependencies_by_parent.get(path, ())
         suggestions = suggestions_by_parent.get(path, ())
@@ -732,13 +736,14 @@ def _walk_rules(
                     if apply_defaults and isinstance(parent, dict):
                         value = copy.deepcopy(rule.default)
                         parent[rule.child] = value
-                        applied[rule.path] = copy.deepcopy(value)
+                        concrete_rule_path = _translate_provider_path(rule.path, provider_aliases)
+                        applied[concrete_rule_path] = copy.deepcopy(value)
                         missing_or_null = False
                 if isinstance(rule, Depends) and active and rule.null_hook is not None and missing_or_null:
                     pending_hook = True
                     continue
                 if rule.child not in parent:
-                    if validate and active and complete and isinstance(rule, Depends) and rule.required:
+                    if validate and active and complete and isinstance(rule, Depends):
                         issues.append(
                             Issue(
                                 _path_join(concrete, rule.child),
@@ -758,10 +763,10 @@ def _walk_rules(
 
     if validate:
         for concrete, logical, mapping, declared in owned_mappings.values():
-            provider_keys = provider_children_by_parent.get(logical, set())
             for key in list(mapping):
                 if key not in declared:
-                    if key in provider_keys:
+                    if isinstance(mapping, dict) and key in potential_children_by_parent.get(logical, set()):
+                        del mapping[key]
                         continue
                     issues.append(
                         Issue(
@@ -798,15 +803,24 @@ def _unresolved_null_hooks(
     root_document: Mapping[str, Any] | None = None,
 ) -> tuple[Depends, ...]:
     """Return active dependencies whose runtime hooks remain unresolved."""
+    unresolved = _walk_rules(
+        document,
+        rules,
+        complete=False,
+        apply_defaults=False,
+        validate=False,
+        root_document=root_document,
+    ).unresolved
+    aliases = _provider_aliases(rules)
     return tuple(
-        _walk_rules(
-            document,
-            rules,
-            complete=False,
-            apply_defaults=False,
-            validate=False,
-            root_document=root_document,
-        ).unresolved
+        Depends(
+            _translate_provider_path(rule.parent, aliases),
+            rule.child,
+            rule.physics,
+            rule.question,
+            rule.null_hook,
+        )
+        for rule in unresolved
     )
 
 

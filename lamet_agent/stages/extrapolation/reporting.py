@@ -45,7 +45,7 @@ def _formula(terms: list[str], x_dependence: dict[str, bool]) -> str:
 
 
 def _x_dependence(attrs: dict[str, object], params: dict[str, object]) -> dict[str, bool]:
-    value = attrs.get("x_dependence", params.get("fit", {}).get("x_dependence"))
+    value = attrs.get("x_dependence", params.get("x_dependence"))
     if isinstance(value, str):
         value = json.loads(value)
     if not isinstance(value, dict) or any(not isinstance(flag, bool) for flag in value.values()):
@@ -167,7 +167,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         attrs = dict(output_attrs(record))
         raw_terms = attrs.get("extrapolation_terms", "")
         terms = [term for term in str(raw_terms).split(",") if term]
-        fit = record.params["fit"]
+        fit = record.params
         x_dependence = _x_dependence(attrs, dict(record.params))
         if set(terms) != set(x_dependence):
             raise ValueError(f"job '{record.job_id}' terms and x_dependence provenance differ")

@@ -37,7 +37,7 @@ def run(
     sector = str(scan["sector"])
     hadron = str(data.attrs.get("hadron", ""))
     is_da = observable.lower() == "da"
-    da = context.params["da"] if is_da else None
+    da = context.params if is_da else None
     psi1_flavor_class = da["psi1_flavor_class"] if da is not None else "heavy"
     psi2_flavor_class = da["psi2_flavor_class"] if da is not None else "heavy"
     parameters, fit = fit_tail_parameters(

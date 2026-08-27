@@ -146,8 +146,6 @@ def nonlinear_fit(
         raise ValueError("workers must be a positive integer")
     if mode not in {"center", "resamples"}:
         raise ValueError("mode must be 'center' or 'resamples'")
-    if samples.resample == "gvar":
-        raise ValueError("fitting requires raw, jackknife, or bootstrap data")
     if resampling is not None:
         if samples.resample != "raw":
             raise ValueError("resampling can only be requested for raw data")
@@ -165,7 +163,7 @@ def nonlinear_fit(
         raise ValueError("seed and n_resample require resampling='bootstrap'")
     if mode == "resamples" and samples.resample not in {"jackknife", "bootstrap"}:
         raise ValueError("resamples mode requires jackknife or bootstrap samples")
-    if samples.n_sample < 2:
+    if samples.resample != "gvar" and samples.n_sample < 2:
         raise ValueError("fitting requires at least two source samples")
 
     import lsqfit
@@ -185,20 +183,22 @@ def nonlinear_fit(
     fit_data = center_data if x is None else (x, center_data)
     try:
         with _fit_warning_scope():
-            center_fit = lsqfit.nonlinear_fit(data=fit_data, fcn=fcn, prior=prior, **options)
+            fitted_center = lsqfit.nonlinear_fit(data=fit_data, fcn=fcn, prior=prior, **options)
     except _NUMERICAL_FIT_ERRORS as exc:
         raise FitNumericalError(f"sample-average fit failed: {type(exc).__name__}: {exc}") from exc
     try:
-        sample_prior = prior if sample_prior_scale is None else _posterior_prior(center_fit, prior, sample_prior_scale)
+        sample_prior = (
+            prior if sample_prior_scale is None else _posterior_prior(fitted_center, prior, sample_prior_scale)
+        )
     except (FloatingPointError, OverflowError, ZeroDivisionError, ValueError) as exc:
         raise FitNumericalError(f"sample-average posterior is unusable: {type(exc).__name__}: {exc}") from exc
     if mode == "center":
-        return _FitResult(center_fit, (), samples.resample, (), ())
+        return _FitResult(fitted_center, (), samples.resample, (), ())
     sample_options = dict(options)
     sample_options["p0"] = {
-        key: np.asarray(gv.mean(center_fit.p[key])).item()
-        if np.asarray(gv.mean(center_fit.p[key])).ndim == 0
-        else np.asarray(gv.mean(center_fit.p[key]))
+        key: np.asarray(gv.mean(fitted_center.p[key])).item()
+        if np.asarray(gv.mean(fitted_center.p[key])).ndim == 0
+        else np.asarray(gv.mean(fitted_center.p[key]))
         for key in prior
     }
     covariance = np.asarray(gv.evalcov(center_data))
@@ -224,7 +224,7 @@ def nonlinear_fit(
     if not tolerate_sample_failures and any(error is not None for error in sample_errors):
         failed_index = next(index for index, error in enumerate(sample_errors) if error is not None)
         raise FitNumericalError(f"sample fit {failed_index} failed: {sample_errors[failed_index]}")
-    return _FitResult(center_fit, fitted_samples, samples.resample, sample_errors, sample_diagnostics)
+    return _FitResult(fitted_center, fitted_samples, samples.resample, sample_errors, sample_diagnostics)
 
 
 __all__ = ["FitNumericalError", "nonlinear_fit"]

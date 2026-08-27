@@ -96,7 +96,7 @@ def stage_overlay_lines(
     ylabel: str,
 ) -> list[str]:
     """Create stage-level real/imaginary overlays from compatible 1D outputs."""
-    from lamet_agent.plotting import configure_plot, errorbar, save_figure, start_plot
+    from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
 
     usable = [record for record in records if getattr(record.output, "dims", None) == [coordinate]]
     if not usable:
@@ -111,7 +111,7 @@ def stage_overlay_lines(
             data = getattr(record.output, component) if np.iscomplexobj(record.output.values) else record.output
             mode = str(data.attrs.get("sample_error_mode", "covariance"))
             average = data.average(mode)
-            errorbar(data.coords[coordinate], average, label=record.job_id)
+            errorline(data.coords[coordinate], average, label=record.job_id)
             plotted += 1
         configure_plot(xlabel=coordinate, ylabel=f"{suffix} {ylabel}".strip(), legend=plotted <= 15)
         suffix_name = f"_{component}" if complex_output else ""

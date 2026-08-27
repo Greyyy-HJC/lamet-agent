@@ -83,13 +83,13 @@ def _dispersion_lines(records: tuple[StageReportRecord, ...], artifact_directory
         return [
             "Fewer than two jobs carried a common ground-state energy and momentum, so no dispersion plot was generated."
         ]
-    from lamet_agent.plotting import configure_plot, errorbar, save_figure, start_plot
+    from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
     import gvar
 
     start_plot()
     for label, momentum, energy, energy_sdev in points:
         sdev = 0.0 if energy_sdev is None else 2.0 * abs(energy) * float(energy_sdev)
-        errorbar([momentum**2], [gvar.gvar(energy**2, sdev)], label=label)
+        errorline([momentum**2], [gvar.gvar(energy**2, sdev)], label=label)
     configure_plot(xlabel=r"$P_z^2$ [GeV$^2$]", ylabel=r"$E_0^2$", legend=True)
     pdf = artifact_directory / "plots" / "dispersion_relation.pdf"
     svg = artifact_directory / "plots" / "dispersion_relation.svg"
@@ -180,7 +180,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             ]
         )
         if params["analysis_method"] == "lsqfit":
-            settings = params["lsqfit"]
+            settings = params
             lines.extend(
                 [
                     f"| fit scope | {format_value(settings['fit_scope'])} |",
@@ -268,10 +268,10 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             inspection = diagnostics.get("inspection", {})
             lines.extend(
                 [
-                    f"| Lanczos scope | `{params['lanczos']['scope']}` |",
+                    f"| Lanczos scope | `{params['scope']}` |",
                     f"| iterations | {format_value(inspection.get('iterations'))} |",
-                    f"| inner samples | {format_value(params['lanczos']['inner_samples'])} |",
-                    f"| precision | {format_value(params['lanczos']['precision'])} |",
+                    f"| inner samples | {format_value(params['inner_samples'])} |",
+                    f"| precision | {format_value(params['precision'])} |",
                     f"| point-usage warning | {format_value(inspection.get('point_usage_warning'))} |",
                 ]
             )

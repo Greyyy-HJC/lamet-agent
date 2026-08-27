@@ -18,42 +18,40 @@
         "nstate": [
           2
         ],
-        "lsqfit": {
-          "fit_scope": [
-            "3pt_ratio"
-          ],
-          "fit_strategy": [
-            "joint"
-          ],
-          "fitting_form": "Breit",
-          "model_average": false,
-          "pt2_windows": [
-            {
-              "tmin": 4,
-              "tmax": 12
-            },
-            {
-              "tmin": 5,
-              "tmax": 12
-            },
-            {
-              "tmin": 6,
-              "tmax": 12
-            }
-          ],
-          "pt3_windows": [
-            {
-              "tsep_ls": [
-                8,
-                10
-              ],
-              "tau_cut": 3
-            }
-          ],
-          "svdcut": 1E-06,
-          "posterior_prior_error_scale": 10.0,
-          "q_min": 0.05
-        }
+        "fit_scope": [
+          "3pt_ratio"
+        ],
+        "fit_strategy": [
+          "joint"
+        ],
+        "fitting_form": "Breit",
+        "model_average": false,
+        "pt2_windows": [
+          {
+            "tmin": 4,
+            "tmax": 12
+          },
+          {
+            "tmin": 5,
+            "tmax": 12
+          },
+          {
+            "tmin": 6,
+            "tmax": 12
+          }
+        ],
+        "pt3_windows": [
+          {
+            "tsep_ls": [
+              8,
+              10
+            ],
+            "tau_cut": 3
+          }
+        ],
+        "svdcut": 0.000001,
+        "posterior_prior_error_scale": 10.0,
+        "q_min": 0.05
       },
       "jobs": [
         {
@@ -86,14 +84,10 @@
       "defaults": {
         "strategy": "external_denominator",
         "normalization": true,
-        "external_denominator": {
-          "scheme": "hybrid",
-          "hybrid": {
-            "zs_fm": 0.18,
-            "m0_gev": 0.1232,
-            "delta_m_gev": 0.5207366666666666
-          }
-        }
+        "scheme": "hybrid",
+        "zs_fm": 0.18,
+        "m0_gev": 0.1232,
+        "delta_m_gev": 0.5207366666666666
       },
       "jobs": [
         {
@@ -159,9 +153,7 @@
           "start": 0.0,
           "stop": 1.0
         },
-        "hybrid": {
-          "zs_fm": 0.18
-        }
+        "zs_fm": 0.18
       },
       "jobs": [
         {

@@ -81,7 +81,7 @@ PARAM_RULES = (
     Recommends("fit", "priors", physics="All initial linear coefficients share the reference zero-centered width-three prior unless explicitly overridden.", default={"mean": 0.0, "sdev": 3.0}),
     Depends("fit", "x_dependence", physics="Each correction coefficient declares whether it varies with x."),
     Depends("fit", "pdep_gev", physics="Requested finite momenta are used only for the post-fit momentum-dependence diagnostic."),
-    Depends("fit", "physical_pion_mass_gev", physics="Mass-dependent extensions require an explicit physical pion mass.", required=False),
+    Recommends("fit", "physical_pion_mass_gev", physics="Pion-mass terms use the shared isospin-limit physical point.", default=0.135),
     Depends("fit", "posterior_prior_error_scale", physics="Per-resample fits use an explicitly authored widening of the sample-average posterior."),
     List("fit.required_terms", "required", physics="Required terms are a list."),
     List("fit.allowed_terms", "allowed", physics="Allowed terms are a list."),
@@ -112,7 +112,7 @@ INPUT_RULES = (
 def check_extrapolation_relations(context: CheckContext) -> Issue | None:
     physics = "Extrapolation terms, ranges, priors, and model policy form one closed authored fit contract."
     if context.params["operation"] == "systematics_budget":
-        groups = context.params["systematics_budget"]["systematics_groups"]
+        groups = context.params["systematics_groups"]
         count = len(context.inputs.get("distributions", []))
         indices = [
             groups["main"],
@@ -128,7 +128,7 @@ def check_extrapolation_relations(context: CheckContext) -> Issue | None:
                 "systematics_groups", "must assign every ordered distribution input to exactly one budget role", physics
             )
         return None
-    fit = context.params["fit"]
+    fit = context.params
     required = fit.get("required_terms")
     allowed = fit.get("allowed_terms")
     maximum = fit.get("max_terms")
@@ -149,11 +149,6 @@ def check_extrapolation_relations(context: CheckContext) -> Issue | None:
             "must contain unique momenta",
             "Each requested diagnostic curve needs one distinct physical momentum.",
         )
-    mass_terms = {"mpi2", "mpi4_log_mpi2"}
-    if expected & mass_terms and "physical_pion_mass_gev" not in fit:
-        return Issue("physical_pion_mass_gev", "is required by pion-mass correction terms", physics)
-    if not expected & mass_terms and "physical_pion_mass_gev" in fit:
-        return Issue("physical_pion_mass_gev", "must be omitted when no pion-mass term is selected", physics)
     return None
 
 

@@ -18,51 +18,49 @@
         "nstate": [
           2
         ],
-        "lsqfit": {
-          "fit_scope": [
-            "3pt_ratio"
-          ],
-          "fit_strategy": [
-            "joint"
-          ],
-          "fitting_form": "Breit",
-          "model_average": false,
-          "pt2_windows": [
-            {
-              "tmin": 3,
-              "tmax": 12
-            },
-            {
-              "tmin": 4,
-              "tmax": 12
-            },
-            {
-              "tmin": 5,
-              "tmax": 12
-            }
-          ],
-          "pt3_windows": [
-            {
-              "tsep_ls": [
-                8,
-                10,
-                12
-              ],
-              "tau_cut": 3
-            },
-            {
-              "tsep_ls": [
-                8,
-                10,
-                12
-              ],
-              "tau_cut": 4
-            }
-          ],
-          "svdcut": 1E-06,
-          "posterior_prior_error_scale": 10.0,
-          "q_min": 0.05
-        }
+        "fit_scope": [
+          "3pt_ratio"
+        ],
+        "fit_strategy": [
+          "joint"
+        ],
+        "fitting_form": "Breit",
+        "model_average": false,
+        "pt2_windows": [
+          {
+            "tmin": 3,
+            "tmax": 12
+          },
+          {
+            "tmin": 4,
+            "tmax": 12
+          },
+          {
+            "tmin": 5,
+            "tmax": 12
+          }
+        ],
+        "pt3_windows": [
+          {
+            "tsep_ls": [
+              8,
+              10,
+              12
+            ],
+            "tau_cut": 3
+          },
+          {
+            "tsep_ls": [
+              8,
+              10,
+              12
+            ],
+            "tau_cut": 4
+          }
+        ],
+        "svdcut": 0.000001,
+        "posterior_prior_error_scale": 10.0,
+        "q_min": 0.05
       },
       "jobs": [
         {
@@ -95,14 +93,10 @@
       "defaults": {
         "strategy": "external_denominator",
         "normalization": true,
-        "external_denominator": {
-          "scheme": "hybrid",
-          "hybrid": {
-            "zs_fm": 0.18,
-            "m0_gev": 0.0,
-            "delta_m_gev": 0.0
-          }
-        }
+        "scheme": "hybrid",
+        "zs_fm": 0.18,
+        "m0_gev": 0.0,
+        "delta_m_gev": 0.0
       },
       "jobs": [
         {
@@ -169,12 +163,10 @@
           "stop": 1.0
         },
         "kernel_parameters": {
-          "rgr_kappa": 1.0,
-          "rgr_mu_min_gev": 0.6
+          "kappa": 1.0,
+          "mu_min_gev": 0.6
         },
-        "hybrid": {
-          "zs_fm": 0.18
-        }
+        "zs_fm": 0.18
       },
       "jobs": [
         {

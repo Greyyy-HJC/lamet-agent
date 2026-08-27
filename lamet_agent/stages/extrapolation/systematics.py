@@ -114,10 +114,7 @@ def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, An
     for label in models:
         clone = copy.deepcopy(central)
         clone["id"] = _variant_job_id(central["id"], label)
-        fit = copy.deepcopy(block.get("defaults", {}).get("fit", {}))
-        fit.update(copy.deepcopy(central.get("fit", {})))
-        fit.update(copy.deepcopy(_MODEL_VARIANTS[label]))
-        clone["fit"] = fit
+        clone.update(copy.deepcopy(_MODEL_VARIANTS[label]))
         if clone["id"] in known_ids:
             raise ValueError(f"generated extrapolation job id collides with '{clone['id']}'")
         generated.append(clone)
@@ -142,29 +139,27 @@ def expand(document: dict[str, Any], config: dict[str, Any], state: dict[str, An
                 ]
             },
             "operation": "systematics_budget",
-            "systematics_budget": {
-                "systematics_groups": {
-                    "main": 0,
-                    "zs": [],
-                    "lambda_extrapolation": list(
-                        range(
-                            1,
-                            1 + len(labels_by_group["lambda_extrapolation"]),
-                        )
-                    ),
-                    "lamet_scale": list(
-                        range(
-                            1 + len(labels_by_group["lambda_extrapolation"]),
-                            1 + len(labels_by_group["lambda_extrapolation"]) + len(labels_by_group["lamet_scale"]),
-                        )
-                    ),
-                    "other_extrapolations": list(
-                        range(
-                            1 + len(labels_by_group["lambda_extrapolation"]) + len(labels_by_group["lamet_scale"]),
-                            1 + len(ordered_labels),
-                        )
-                    ),
-                },
+            "systematics_groups": {
+                "main": 0,
+                "zs": [],
+                "lambda_extrapolation": list(
+                    range(
+                        1,
+                        1 + len(labels_by_group["lambda_extrapolation"]),
+                    )
+                ),
+                "lamet_scale": list(
+                    range(
+                        1 + len(labels_by_group["lambda_extrapolation"]),
+                        1 + len(labels_by_group["lambda_extrapolation"]) + len(labels_by_group["lamet_scale"]),
+                    )
+                ),
+                "other_extrapolations": list(
+                    range(
+                        1 + len(labels_by_group["lambda_extrapolation"]) + len(labels_by_group["lamet_scale"]),
+                        1 + len(ordered_labels),
+                    )
+                ),
             },
         }
         generated.append(budget)

@@ -65,15 +65,13 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
-        "lsqfit": {
-            "fit_scope": ["3pt_ratio"],
-            "fit_strategy": ["joint"],
-            "fitting_form": "Breit",
-            "pt2_windows": [{"tmin": 3, "tmax": 8}],
-            "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
-            "svdcut": 1e-6,
-            "q_min": 0.05,
-        },
+        "fit_scope": ["3pt_ratio"],
+        "fit_strategy": ["joint"],
+        "fitting_form": "Breit",
+        "pt2_windows": [{"tmin": 3, "tmax": 8}],
+        "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
+        "svdcut": 1e-6,
+        "q_min": 0.05,
     }
     summary = {
         "result": "bare_matrix_element",
@@ -117,8 +115,12 @@ def test_renormalization_stage_report_contains_scheme_formula(tmp_path: Path) ->
     )
     params = {
         "strategy": "external_denominator",
+        "type": "apply",
         "normalization": True,
-        "external_denominator": {"scheme": "hybrid", "hybrid": {"zs_fm": 0.1, "m0_gev": 0.0, "delta_m_gev": 0.2}},
+        "scheme": "hybrid",
+        "zs_fm": 0.1,
+        "m0_gev": 0.0,
+        "delta_m_gev": 0.2,
     }
     summary = {
         "result": "renormalized_matrix_element",
@@ -287,7 +289,7 @@ def test_extrapolation_stage_report_contains_model_and_budget(tmp_path: Path) ->
         "posterior_prior_error_scale": 3.0,
         "pdep_gev": [1.5, 2.0, 2.5],
     }
-    params = {"operation": "fit", "fit": fit_params}
+    params = {"operation": "fit", **fit_params}
     momentum_dependence = {
         f"{momentum:g}": {
             "momentum_gev": momentum,
@@ -328,10 +330,8 @@ def test_extrapolation_stage_report_contains_model_and_budget(tmp_path: Path) ->
         "budget",
         params={
             "operation": "systematics_budget",
-            "systematics_budget": {
-                "systematics_groups": {"main": 0},
-                "systematics_prescription": "variant_envelope_quadrature",
-            },
+            "systematics_groups": {"main": 0},
+            "systematics_prescription": "variant_envelope_quadrature",
         },
         output=output,
         summary=budget_summary,

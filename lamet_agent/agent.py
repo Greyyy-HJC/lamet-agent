@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib
 import importlib.util
 import inspect
 import json
@@ -11,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Literal, Mapping, Union, get_args, get_origin, get_type_hints, is_typeddict
+from typing import Any, Callable, Literal, Mapping, get_args, get_origin, get_type_hints
 
 import numpy as np
 
@@ -19,6 +20,7 @@ from .llm import LlmBackend, Message
 from .manifest import Job, Manifest, _load_stage_contract
 from .parallel._pool import _ParallelPool
 from .stages._reporting import StageReportRecord
+from .structured import annotation_schema, json_compatible, validate_value
 from .contract import (
     CheckContext,
     _apply_recommended_defaults,
@@ -31,6 +33,7 @@ from .contract import (
 _MAX_ASSISTANT_TURNS = 40
 _LLM_TRANSCRIPT_FILENAME = "llm_transcript.md"
 _SAFE_TOOL = re.compile(r"^[a-z][a-z0-9_]*$")
+_WORKFLOW_STAGES = frozenset({"correlator_analysis", "renormalization", "perturbative_matching", "extrapolation"})
 
 
 def _emit_progress(message: str = "") -> None:
@@ -63,6 +66,71 @@ def _append_transcript(path: Path, title: str, payload: Any) -> None:
         handle.write(
             f"\n## {title}\n\n```json\n" + json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n```\n"
         )
+
+
+@dataclass
+class LlmSession:
+    """One generic recorded LLM channel bound to a job transcript."""
+
+    backend: LlmBackend
+    transcript_path: Path
+    history: list[Message] = field(default_factory=list)
+    calls: int = 0
+
+    def complete(
+        self,
+        *,
+        label: str,
+        messages: list[Message] | None = None,
+        user_message: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_schema: Mapping[str, Any] | None = None,
+        prompt_digest: str | None = None,
+    ) -> Any:
+        """Record and execute one backend call without imposing response semantics."""
+        if (messages is None) == (user_message is None):
+            raise ValueError("complete requires exactly one of messages or user_message")
+        retain_history = user_message is not None
+        request_messages = (
+            [*self.history, Message("user", user_message)] if user_message is not None else list(messages or [])
+        )
+        tool_schemas = [] if tools is None else tools
+        self.calls += 1
+        request_payload = {
+            "messages": [_message_payload(message) for message in request_messages],
+            "tools": tool_schemas,
+            "response_schema": response_schema,
+        }
+        _append_transcript(
+            self.transcript_path,
+            f"{label}, request {self.calls}: sent to LLM",
+            request_payload,
+        )
+        if prompt_digest is None:
+            digest_payload = json.dumps(
+                {"request": request_payload, "backend": self.backend.identity},
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            prompt_digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
+        _emit_progress(f"Calling LLM ({self.backend.identity}) for {label}...")
+        response = self.backend.complete(
+            messages=request_messages,
+            tools=tool_schemas,
+            prompt_digest=prompt_digest,
+            response_schema=response_schema,
+        )
+        _emit_progress("LLM response received.")
+        assistant_message = Message("assistant", response.text, tool_calls=response.calls)
+        _append_transcript(
+            self.transcript_path,
+            f"{label}, request {self.calls}: received from LLM",
+            _message_payload(assistant_message),
+        )
+        if retain_history:
+            self.history.extend((request_messages[-1], assistant_message))
+        return response
 
 
 @dataclass
@@ -213,79 +281,6 @@ def _load_tool_module(stage_id: str, tool_directory: Path) -> ModuleType:
     return module
 
 
-def _annotation_schema(annotation: Any) -> tuple[dict[str, Any], bool]:
-    """Return a JSON schema and whether the annotation is nullable."""
-    if annotation is Any or annotation is inspect.Parameter.empty:
-        raise TypeError("tool arguments need supported annotations")
-    if is_typeddict(annotation):
-        hints = get_type_hints(annotation)
-        properties = {}
-        for name, child_annotation in hints.items():
-            child_schema, _nullable = _annotation_schema(child_annotation)
-            properties[name] = child_schema
-        required_keys = sorted(getattr(annotation, "__required_keys__", hints))
-        return {
-            "type": "object",
-            "properties": properties,
-            "required": required_keys,
-            "additionalProperties": False,
-        }, False
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if origin in (Union, getattr(__import__("types"), "UnionType", object)):
-        if len(args) != 2 or type(None) not in args:
-            raise TypeError("only T | None tool annotations are supported")
-        other = args[0] if args[1] is type(None) else args[1]
-        schema, _ = _annotation_schema(other)
-        return {"anyOf": [schema, {"type": "null"}]}, True
-    if origin is Literal:
-        values = list(args)
-        if not values:
-            raise TypeError("Literal tool annotations cannot be empty")
-        type_name = (
-            "string"
-            if all(isinstance(value, str) for value in values)
-            else "integer"
-            if all(isinstance(value, int) and not isinstance(value, bool) for value in values)
-            else "number"
-            if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in values)
-            else "boolean"
-            if all(isinstance(value, bool) for value in values)
-            else None
-        )
-        if type_name is None:
-            raise TypeError("Literal values must share a JSON scalar type")
-        return {"type": type_name, "enum": values}, False
-    if annotation is str:
-        return {"type": "string"}, False
-    if annotation is bool:
-        return {"type": "boolean"}, False
-    if annotation is int:
-        return {"type": "integer"}, False
-    if annotation is float:
-        return {"type": "number"}, False
-    if annotation in (list, dict):
-        return (
-            ({"type": "array", "items": {}}, False)
-            if annotation is list
-            else ({"type": "object", "additionalProperties": True}, False)
-        )
-    if origin is list:
-        item = args[0] if args else Any
-        if item is Any:
-            return {"type": "array", "items": {}}, False
-        item_schema, _ = _annotation_schema(item)
-        return {"type": "array", "items": item_schema}, False
-    if origin is dict:
-        if len(args) != 2 or args[0] is not str:
-            raise TypeError("tool mappings must be dict[str, T]")
-        if args[1] is Any:
-            return {"type": "object", "additionalProperties": True}, False
-        value_schema, _ = _annotation_schema(args[1])
-        return {"type": "object", "additionalProperties": value_schema}, False
-    raise TypeError(f"unsupported tool annotation {annotation!r}")
-
-
 def _tool_schema(name: str, function: Any) -> dict[str, Any]:
     signature = inspect.signature(function)
     hints = get_type_hints(function)
@@ -306,7 +301,7 @@ def _tool_schema(name: str, function: Any) -> dict[str, Any]:
         if parameter.name.startswith("_"):
             raise TypeError("model-visible tool arguments cannot be private")
         annotation = hints.get(parameter.name, parameter.annotation)
-        schema, nullable = _annotation_schema(annotation)
+        schema, nullable = annotation_schema(annotation)
         parameters[parameter.name] = schema
         if parameter.default is inspect.Parameter.empty:
             required.append(parameter.name)
@@ -325,76 +320,6 @@ def _tool_schema(name: str, function: Any) -> dict[str, Any]:
     }
 
 
-def _validate_argument(annotation: Any, value: Any, path: str) -> None:
-    """Validate one already-decoded JSON argument against a tool annotation."""
-    if is_typeddict(annotation):
-        if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
-            raise TypeError(f"tool argument '{path}' must be an object")
-        hints = get_type_hints(annotation)
-        required_keys = set(getattr(annotation, "__required_keys__", hints))
-        unknown = set(value) - set(hints)
-        missing = required_keys - set(value)
-        if unknown:
-            raise TypeError(f"tool argument '{path}' has unknown keys {sorted(unknown)}")
-        if missing:
-            raise TypeError(f"tool argument '{path}' is missing keys {sorted(missing)}")
-        for key, child in value.items():
-            _validate_argument(hints[key], child, f"{path}.{key}")
-        return
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    union_type = getattr(__import__("types"), "UnionType", object)
-    if origin in (Union, union_type):
-        if type(None) in args and value is None:
-            return
-        non_null = [candidate for candidate in args if candidate is not type(None)]
-        if len(non_null) == 1:
-            _validate_argument(non_null[0], value, path)
-            return
-        raise TypeError(f"unsupported union for tool argument '{path}'")
-    if origin is Literal:
-        if not any(type(value) is type(item) and value == item for item in args):
-            raise TypeError(f"tool argument '{path}' is not one of the declared literal values")
-        return
-    if annotation is str:
-        if not isinstance(value, str):
-            raise TypeError(f"tool argument '{path}' must be a string")
-        return
-    if annotation is bool:
-        if not isinstance(value, bool):
-            raise TypeError(f"tool argument '{path}' must be a boolean")
-        return
-    if annotation is int:
-        if not isinstance(value, int) or isinstance(value, bool):
-            raise TypeError(f"tool argument '{path}' must be an integer")
-        return
-    if annotation is float:
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise TypeError(f"tool argument '{path}' must be a number")
-        return
-    if annotation in (list, dict):
-        if not isinstance(value, annotation):
-            raise TypeError(f"tool argument '{path}' has the wrong container type")
-        return
-    if origin is list:
-        if not isinstance(value, list):
-            raise TypeError(f"tool argument '{path}' must be a list")
-        if args and args[0] is not Any:
-            for index, item in enumerate(value):
-                _validate_argument(args[0], item, f"{path}[{index}]")
-        return
-    if origin is dict:
-        if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
-            raise TypeError(f"tool argument '{path}' must be a string-keyed object")
-        if len(args) == 2 and args[1] is not Any:
-            for key, item in value.items():
-                _validate_argument(args[1], item, f"{path}.{key}")
-        return
-    if annotation is Any:
-        return
-    raise TypeError(f"unsupported tool annotation for '{path}'")
-
-
 def _discover_tools(stage_id: str, *, stage_root: str | Path | None = None) -> list[_Tool]:
     """Discover immediate public tool directories for one entered stage."""
     tools_directory = _stage_path(stage_id, stage_root) / "tools"
@@ -411,7 +336,11 @@ def _discover_tools(stage_id: str, *, stage_root: str | Path | None = None) -> l
         if not init_path.exists() and not prompt_path.exists():
             continue
         if not init_path.is_file():
-            raise ValueError(f"Tool '{directory.name}' is missing __init__.py")
+            # Prompt-only directories describe typed parameter suggestions used
+            # by stage workflows; they are not model-visible executable tools.
+            if not prompt_path.is_file() or not prompt_path.read_text(encoding="utf-8").strip():
+                raise ValueError(f"Parameter suggestion '{directory.name}' requires a nonempty prompt.md")
+            continue
         if not prompt_path.is_file() or not prompt_path.read_text(encoding="utf-8").strip():
             raise ValueError(f"Tool '{directory.name}' requires a nonempty prompt.md")
         module = _load_tool_module(stage_id, directory)
@@ -550,119 +479,14 @@ def _observation(value: Any) -> dict[str, Any]:
         raise TypeError("stage tools must return an observation object")
     if "summary" not in value or not isinstance(value["summary"], str):
         raise ValueError("stage tool observation requires a string summary")
-    return _json_compatible(dict(value))
-
-
-def _json_compatible(value: Any) -> Any:
-    """Convert a tool observation to the supported JSON-compatible surface."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Mapping):
-        return {str(key): _json_compatible(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_compatible(item) for item in value]
-    raise TypeError(f"value of type {type(value).__name__} is not JSON-compatible")
-
-
-def _ask_for_parameter(
-    *,
-    backend: LlmBackend,
-    transcript_path: Path,
-    path: str,
-    physics: str,
-    expected: Any,
-    instruction: str,
-    evidence: Mapping[str, Any],
-    request_index: int,
-) -> Any:
-    """Perform one backend-neutral structured parameter-estimation turn."""
-    if not isinstance(instruction, str) or not instruction.strip():
-        raise ValueError(f"null hook for {path} requires an instruction")
-    if not isinstance(evidence, Mapping):
-        raise TypeError(f"null hook for {path} requires object evidence")
-    value_schema, nullable = _annotation_schema(expected)
-    if nullable:
-        raise TypeError(f"parameter estimate type for {path} cannot be nullable")
-    tool_name = "return_parameter_estimate"
-    tool_schema = {
-        "type": "function",
-        "function": {
-            "name": tool_name,
-            "description": "Return one structured parameter estimate.",
-            "parameters": {
-                "type": "object",
-                "properties": {"value": value_schema},
-                "required": ["value"],
-                "additionalProperties": False,
-            },
-        },
-    }
-    evidence_payload = _json_compatible(dict(evidence))
-    messages = [
-        Message(
-            "system",
-            "Estimate the requested value from the supplied scientific evidence. "
-            "Return exactly one call to return_parameter_estimate and no other tool. "
-            f"Parameter: {path}. Physics: {physics}",
-        ),
-        Message(
-            "user",
-            json.dumps(
-                {"instruction": instruction.strip(), "evidence": evidence_payload},
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=False,
-            ),
-        ),
-    ]
-    request_payload = {
-        "messages": [_message_payload(message) for message in messages],
-        "tools": [tool_schema],
-    }
-    _append_transcript(
-        transcript_path,
-        f"Null hook {path}, request {request_index}: sent to LLM",
-        request_payload,
-    )
-    digest_payload = json.dumps(
-        {"request": request_payload, "backend": backend.identity},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    _emit_progress(f"Requesting parameter estimate for {path} ({backend.identity})...")
-    response = backend.complete(
-        messages=messages,
-        tools=[tool_schema],
-        prompt_digest=hashlib.sha256(digest_payload.encode("utf-8")).hexdigest(),
-    )
-    assistant_message = Message(
-        "assistant",
-        response.text,
-        tool_calls=response.calls,
-    )
-    _append_transcript(
-        transcript_path,
-        f"Null hook {path}, request {request_index}: received from LLM",
-        _message_payload(assistant_message),
-    )
-    if len(response.calls) != 1 or response.calls[0].name != tool_name:
-        raise RuntimeError(f"parameter estimate for {path} must return exactly one {tool_name} call")
-    arguments = dict(response.calls[0].arguments)
-    if set(arguments) != {"value"}:
-        raise ValueError(f"parameter estimate for {path} must contain exactly the value field")
-    value = arguments["value"]
-    _validate_argument(expected, value, path)
-    _emit_progress(f"Parameter estimate received for {path}.")
-    return copy.deepcopy(value)
+    return json_compatible(dict(value))
 
 
 def _resolve_runtime_null_hooks(
     *,
     context: ToolContext,
     contract: ModuleType,
-    backend: LlmBackend,
-    transcript_path: Path,
+    session: LlmSession,
 ) -> None:
     """Apply static defaults, then run unresolved dependency hooks in order."""
     context._param_rules = tuple(contract.PARAM_RULES)
@@ -686,42 +510,14 @@ def _resolve_runtime_null_hooks(
         hook = rule.null_hook
         if hook is None:
             raise RuntimeError(f"unresolved dependency {rule.path} has no null hook")
-        hints = get_type_hints(hook)
-        expected = hints.get("return")
-        if expected is None or expected is Any:
-            raise TypeError(f"null hook {hook.__name__} needs a concrete return annotation")
-        request_count = 0
-
-        def ask(
-            *,
-            instruction: str,
-            evidence: Mapping[str, Any],
-            response_type: Any | None = None,
-        ) -> Any:
-            nonlocal request_count
-            request_count += 1
-            estimate_type = expected if response_type is None else response_type
-            if estimate_type is Any:
-                raise TypeError("ask response_type must be a concrete supported type")
-            return _ask_for_parameter(
-                backend=backend,
-                transcript_path=transcript_path,
-                path=rule.path,
-                physics=rule.physics,
-                expected=estimate_type,
-                instruction=instruction,
-                evidence=evidence,
-                request_index=request_count,
-            )
-
-        value = hook(context, ask)
-        _validate_argument(expected, value, rule.path)
+        previous_calls = session.calls
+        value = hook(context, session)
         context._resolve_null_hook(rule.path, value)
         provenance = context.state.setdefault("null_hook_provenance", {})
         provenance[rule.path] = {
-            "backend": backend.identity,
+            "backend": session.backend.identity,
             "hook": hook.__name__,
-            "llm_requests": request_count,
+            "llm_requests": session.calls - previous_calls,
             "value": copy.deepcopy(value),
         }
 
@@ -747,9 +543,7 @@ def _invoke(tool: _Tool, context: ToolContext, arguments: Mapping[str, Any]) -> 
         raise ValueError(f"missing arguments for tool '{tool.name}': {missing}")
     for parameter in visible_parameters:
         if parameter.name in arguments:
-            _validate_argument(
-                hints.get(parameter.name, parameter.annotation), arguments[parameter.name], parameter.name
-            )
+            validate_value(hints.get(parameter.name, parameter.annotation), arguments[parameter.name], parameter.name)
     observation = _observation(tool.run(context, **dict(arguments)))
     if ignored:
         observation["ignored_arguments"] = ignored
@@ -767,6 +561,24 @@ class _AgentSession:
     _summaries: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
     _stage_bundles: dict[str, tuple[list[_Tool], str, str]] = field(default_factory=dict, init=False)
 
+    @staticmethod
+    def _finish_context(context: ToolContext, *, llm_turns: int) -> tuple[Any, dict[str, Any]]:
+        if context.summary is None or context.output is None:
+            raise RuntimeError(f"job '{context.job_id}' deterministic workflow did not finish")
+        remaining = _unresolved_null_hooks(
+            context.params,
+            context._param_rules,
+            root_document=context.manifest,
+        )
+        if remaining:
+            paths = [rule.path for rule in remaining]
+            raise RuntimeError(f"job '{context.job_id}' finished with unresolved null hooks: {paths}")
+        (context.artifact_directory / "summary.json").write_text(
+            json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        _emit_progress(f"Job {context.stage_id}/{context.job_id} finished with {llm_turns} LLM turn(s).")
+        return context.output, context.summary
+
     def _run_context(
         self,
         context: ToolContext,
@@ -776,13 +588,19 @@ class _AgentSession:
     ) -> tuple[Any, dict[str, Any]]:
         transcript_path = context.artifact_directory / _LLM_TRANSCRIPT_FILENAME
         _write_transcript_header(transcript_path)
+        history = [Message("system", static_prompt)] if static_prompt else []
+        llm_session = LlmSession(self.backend, transcript_path, history=history)
         contract = _load_stage_contract(context.stage_id, self.stage_root)
         _resolve_runtime_null_hooks(
             context=context,
             contract=contract,
-            backend=self.backend,
-            transcript_path=transcript_path,
+            session=llm_session,
         )
+        if context.stage_id in _WORKFLOW_STAGES:
+            workflow = importlib.import_module(f"lamet_agent.stages.{context.stage_id}.workflow")
+            workflow.run(context, llm_session)
+            return self._finish_context(context, llm_turns=llm_session.calls)
+
         dynamic_job = {
             "stage_id": context.stage_id,
             "job_id": context.job_id,
@@ -804,28 +622,15 @@ class _AgentSession:
         tool_steps = 0
         try:
             for turn in range(1, self.max_tool_steps + 1):
-                request_payload = {
-                    "messages": [_message_payload(message) for message in messages],
-                    "tools": tool_schemas,
-                }
-                _append_transcript(transcript_path, f"Turn {turn}: sent to LLM", request_payload)
-                _emit_progress(
-                    f"Calling LLM ({self.backend.identity}) for {context.stage_id}/{context.job_id} [turn {turn}]..."
-                )
-                response = self.backend.complete(
+                response = llm_session.complete(
+                    label=f"{context.stage_id}/{context.job_id} turn {turn}",
                     messages=messages,
                     tools=tool_schemas,
                     prompt_digest=digest,
                 )
-                _emit_progress("LLM response received.")
                 calls = response.calls
                 assistant_message = Message("assistant", response.text, tool_calls=calls)
                 messages.append(assistant_message)
-                _append_transcript(
-                    transcript_path,
-                    f"Turn {turn}: received from LLM",
-                    _message_payload(assistant_message),
-                )
                 if not calls:
                     raise RuntimeError(f"job '{context.job_id}' returned no tool call")
                 unavailable = [call.name for call in calls if call.name not in tool_map]

@@ -1,48 +1,38 @@
 ## LLM Calls
 
-- Execution model: each agent turn issues one `backend.complete(...)` request
-  and normally selects one deterministic stage tool. Tools do not call the LLM
-  themselves. The only separate stage-owned path is the conditional correlator
-  `pt2_windows` null-hook. Malformed-protocol retries are repeated attempts, not
-  new logical stage decisions.
+Deferred Fourier scan and generic Extrapolation design is recorded in
+[`WORKFLOW_DESIGN.md`](WORKFLOW_DESIGN.md).
+
+- Execution model: Correlator, Renormalization, Matching, and reference
+  Extrapolation jobs run through stage-owned workflows. The LLM receives typed
+  parameter-estimation requests only when a fit parameter is missing; it does
+  not select inspect, fit, comparison, publish, or reporting functions. Fourier
+  and Review retain their previous tool loops pending separate design work.
 - Labels: **UNNECESSARY** = validated params/state determine the call;
   **PARTIAL** = only some arguments need scientific judgment; **KEEP** = a real
   scientific or narrative choice remains.
-- Four reference examples, excluding Review and protocol retries:
-  `pion_pdf_cg=12`, `pion_pdf_gi=12`, `pion_da_gi=224`,
-  `kaon_da_gi=224`; total `472` logical requests.
+- Four reference examples after the first workflow migration, excluding Review,
+  protocol retries, and authored-away null hooks: `pion_pdf_cg=4`,
+  `pion_pdf_gi=4`, `pion_da_gi=63`, `kaon_da_gi=63`; total `134`
+  logical requests. Of these, 22 are typed Correlator fit suggestions and 112
+  remain in the deferred Fourier `scheme_scan` tool loop.
 
 ### Correlator Analysis
 
 - Conditional `recommend_pt2_windows -> return_parameter_estimate` when
-  `lsqfit.pt2_windows` is absent: **KEEP/PARTIAL** because plateau selection is
+  `pt2_windows` is absent: **KEEP/PARTIAL** because plateau selection is
   data-dependent, but consolidate it with tuning instead of opening a separate
   conversation. The four current manifests author it and do not trigger this.
-- Ordinary least-squares/qDA path, currently three calls per job:
-  1. `inspect_correlators`: **UNNECESSARY**; inspection and rescaling are
-     mandatory/deterministic.
-  2. `fit_matrix_element` (`qda_ratio`) or `fit_matrix_element_model` (ordinary):
-     **PARTIAL**. The LLM chooses `tune_z_values`; the tool deterministically
-     scans every authored scope, strategy, state, prior, and window. Keep one
-     constrained nonzero tuning-coordinate decision until a deterministic policy
-     is approved.
-  3. `publish_correlator_result(candidate_id=...)`: **UNNECESSARY**; the grid
-     result already supplies the original-rule recommendation and publishing
-     performs deterministic full-grid preflight/reselection.
-- Direct spectrum path, `inspect_correlators -> fit_spectrum ->
-  publish_correlator_result`: inspection/publication are **UNNECESSARY**;
-  `fit_spectrum` is **KEEP** because its range and ordered prior means/widths are
-  currently model decisions.
-- Lanczos path, `inspect_lanczos_inputs -> run_lanczos_analysis`: both are
-  **UNNECESSARY**; method/scope and all moment-grid/resampling choices are
-  explicit or derived deterministically.
+- Ordinary least-squares/qDA path now performs inspection, the candidate scan,
+  deterministic selection, and publication in the stage workflow. The only LLM
+  communication is one typed `tune_z_values` suggestion per job.
+- Direct spectrum jobs request one typed range/state/prior suggestion; inspection,
+  fitting, selection, and publication remain workflow-owned.
+- Lanczos is fully deterministic and performs no LLM communication.
 
 ### Renormalization
 
-- `inspect_renormalization -> apply_renormalization`: both **UNNECESSARY**;
-  scheme, strategy, inputs, scale, normalization, and hybrid switch are explicit.
-- `inspect_renormalization -> fit_self_renormalization`: both **UNNECESSARY**;
-  operation, fit/remap parameters, and numerical fitting are deterministic.
+- Renormalization is fully workflow-owned and performs no LLM communication.
 
 ### Fourier Transform
 
@@ -60,23 +50,13 @@
 
 ### Perturbative Matching
 
-- `inspect_kernel -> apply_matching`, two calls per job: both **UNNECESSARY**.
-  Kernel identity, scheme, scales, grids, component, and parameters are validated;
-  document loading and matrix application are deterministic.
+- Matching is fully workflow-owned and performs no LLM communication.
 
 ### Continuum Extrapolation
 
-- Fit path, currently four calls per job:
-  1. `inspect_scaling`: **UNNECESSARY** mandatory alignment/provenance checking.
-  2. `fit_extrapolation_candidate(terms, excluded_ensembles)`: **PARTIAL** in the
-     generic engine, but **UNNECESSARY for all four reference examples** because
-     `allowed_terms=[]`, required terms fix one model, and no ensemble is excluded.
-  3. `compare_extrapolations(candidate_ids)`: **UNNECESSARY in the current
-     implementation**; it selects one candidate with weight 1 and performs no
-     real multi-model comparison.
-  4. `publish_extrapolation`: **UNNECESSARY** after selection.
-- `operation="systematics_budget" -> publish_systematics_budget`: one
-  **UNNECESSARY** call; groups, envelope, and quadrature are authored.
+- Reference fit jobs (`allowed_terms=[]`) and systematics budgets are fully
+  workflow-owned and perform no LLM communication. Single-candidate selection is
+  ordinary Python logic rather than a tool. Generic term selection is deferred.
 
 ### Review
 
@@ -92,15 +72,13 @@
 
 ### Proposed reduction order
 
-- [ ] P0: remove all LLM orchestration from Renormalization, reference
-  `scheme_scan` Fourier, Perturbative Matching, and systematics budget.
-- [ ] P1: directly execute mandatory inspect/publish tools around remaining
-  correlator, generic Fourier, and generic extrapolation decisions.
-- [ ] P1: reduce reference correlator jobs from three requests to one constrained
-  `tune_z_values` decision; merge an unresolved `pt2_windows` hook into it.
-- [ ] P1: run reference extrapolation deterministically when required terms fix
-  the sole candidate; design a real comparison rule before retaining
-  `compare_extrapolations`.
+- [x] Remove LLM orchestration from Renormalization, Perturbative Matching, and
+  systematics budget. Fourier `scheme_scan` remains deferred.
+- [x] Execute Correlator inspect/selection/publish in the stage workflow.
+- [x] Reduce reference Correlator jobs to one typed fit-parameter suggestion.
+  Merging an unresolved `pt2_windows` hook into that request remains open.
+- [x] Run reference Extrapolation deterministically and remove the single-model
+  comparison tool. Generic model selection remains deferred.
 - [ ] P2: make Review inspection, checks, and provenance-scoped literature list
   deterministic; retain paper selection and narrative calls.
 
@@ -111,12 +89,14 @@
 
 ## Correlator Analysis
 
+- [ ] Add one bounded typed parameter re-suggestion when every authored fit
+  candidate fails numerically or remains below the accepted quality policy.
 - [ ] After parity evaluation, consider moving full-grid candidate retry policy out of publishing while preserving fail-early diagnostics
 
 ## Renormalization
 
-- [ ] Replace the internal fixed self-renormalization ZMS model with the original
-  explicit renormalization `kernel_id` selection (`ZMSbar_pdf` or `ZMSbar_da`);
+- [x] Replace the internal fixed self-renormalization ZMS model with the original
+  explicit renormalization `kernel_id` selection (`z_msbar_pdf_nlo` or `z_msbar_da_nlo`);
   this is not a `Recommends` default because the observable changes the kernel.
 - [ ] Restore the original `z_coverage_policy` choices (`strict`, `intersection`,
   `extrapolate`) before exposing its original `extrapolate` default through

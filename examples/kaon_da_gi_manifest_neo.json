@@ -8,9 +8,9 @@
     "target_observable": "da",
     "parton": "quark",
     "resample_mode": "bootstrap",
-    "bootstrap_samples": 100,
     "bin_size": 10,
-    "sample_error_mode": "median"
+    "sample_error_mode": "median",
+    "samples": 100
   },
   "stages": {
     "correlator_analysis": {
@@ -19,19 +19,17 @@
         "nstate": [
           1
         ],
-        "lsqfit": {
-          "fit_scope": [
-            "qda_ratio"
-          ],
-          "fit_strategy": [
-            "independent"
-          ],
-          "fitting_form": "Breit",
-          "model_average": false,
-          "svdcut": 1E-06,
-          "posterior_prior_error_scale": 3.0,
-          "q_min": 0.05
-        }
+        "fit_scope": [
+          "qda_ratio"
+        ],
+        "fit_strategy": [
+          "independent"
+        ],
+        "fitting_form": "Breit",
+        "model_average": false,
+        "svdcut": 0.000001,
+        "posterior_prior_error_scale": 3.0,
+        "q_min": 0.05
       },
       "jobs": [
         {
@@ -44,22 +42,20 @@
           "correlator_ids": [
             "qda_pz6"
           ],
-          "lsqfit": {
-            "pt2_windows": [
-              {
-                "tmin": 13,
-                "tmax": 16
-              },
-              {
-                "tmin": 13,
-                "tmax": 17
-              },
-              {
-                "tmin": 13,
-                "tmax": 18
-              }
-            ]
-          }
+          "pt2_windows": [
+            {
+              "tmin": 13,
+              "tmax": 16
+            },
+            {
+              "tmin": 13,
+              "tmax": 17
+            },
+            {
+              "tmin": 13,
+              "tmax": 18
+            }
+          ]
         },
         {
           "id": "ca_a09m130_pz6",
@@ -71,22 +67,20 @@
           "correlator_ids": [
             "qda_pz6"
           ],
-          "lsqfit": {
-            "pt2_windows": [
-              {
-                "tmin": 8,
-                "tmax": 11
-              },
-              {
-                "tmin": 8,
-                "tmax": 12
-              },
-              {
-                "tmin": 8,
-                "tmax": 13
-              }
-            ]
-          }
+          "pt2_windows": [
+            {
+              "tmin": 8,
+              "tmax": 11
+            },
+            {
+              "tmin": 8,
+              "tmax": 12
+            },
+            {
+              "tmin": 8,
+              "tmax": 13
+            }
+          ]
         },
         {
           "id": "ca_a12m130_pz6",
@@ -98,22 +92,20 @@
           "correlator_ids": [
             "qda_pz6"
           ],
-          "lsqfit": {
-            "pt2_windows": [
-              {
-                "tmin": 6,
-                "tmax": 9
-              },
-              {
-                "tmin": 6,
-                "tmax": 10
-              },
-              {
-                "tmin": 6,
-                "tmax": 11
-              }
-            ]
-          }
+          "pt2_windows": [
+            {
+              "tmin": 6,
+              "tmax": 9
+            },
+            {
+              "tmin": 6,
+              "tmax": 10
+            },
+            {
+              "tmin": 6,
+              "tmax": 11
+            }
+          ]
         },
         {
           "id": "ca_a06m130_pz8",
@@ -125,22 +117,20 @@
           "correlator_ids": [
             "qda_pz8"
           ],
-          "lsqfit": {
-            "pt2_windows": [
-              {
-                "tmin": 9,
-                "tmax": 12
-              },
-              {
-                "tmin": 9,
-                "tmax": 13
-              },
-              {
-                "tmin": 9,
-                "tmax": 14
-              }
-            ]
-          }
+          "pt2_windows": [
+            {
+              "tmin": 9,
+              "tmax": 12
+            },
+            {
+              "tmin": 9,
+              "tmax": 13
+            },
+            {
+              "tmin": 9,
+              "tmax": 14
+            }
+          ]
         },
         {
           "id": "ca_a09m130_pz8",
@@ -152,22 +142,20 @@
           "correlator_ids": [
             "qda_pz8"
           ],
-          "lsqfit": {
-            "pt2_windows": [
-              {
-                "tmin": 6,
-                "tmax": 9
-              },
-              {
-                "tmin": 6,
-                "tmax": 10
-              },
-              {
-                "tmin": 6,
-                "tmax": 11
-              }
-            ]
-          }
+          "pt2_windows": [
+            {
+              "tmin": 6,
+              "tmax": 9
+            },
+            {
+              "tmin": 6,
+              "tmax": 10
+            },
+            {
+              "tmin": 6,
+              "tmax": 11
+            }
+          ]
         },
         {
           "id": "ca_a12m130_pz8",
@@ -179,22 +167,20 @@
           "correlator_ids": [
             "qda_pz8"
           ],
-          "lsqfit": {
-            "pt2_windows": [
-              {
-                "tmin": 4,
-                "tmax": 7
-              },
-              {
-                "tmin": 4,
-                "tmax": 8
-              },
-              {
-                "tmin": 4,
-                "tmax": 9
-              }
-            ]
-          }
+          "pt2_windows": [
+            {
+              "tmin": 4,
+              "tmax": 7
+            },
+            {
+              "tmin": 4,
+              "tmax": 8
+            },
+            {
+              "tmin": 4,
+              "tmax": 9
+            }
+          ]
         },
         {
           "id": "ca_a06m130_pz10",
@@ -206,22 +192,20 @@
           "correlator_ids": [
             "qda_pz10"
           ],
-          "lsqfit": {
-            "pt2_windows": [
-              {
-                "tmin": 7,
-                "tmax": 10
-              },
-              {
-                "tmin": 7,
-                "tmax": 11
-              },
-              {
-                "tmin": 7,
-                "tmax": 12
-              }
-            ]
-          }
+          "pt2_windows": [
+            {
+              "tmin": 7,
+              "tmax": 10
+            },
+            {
+              "tmin": 7,
+              "tmax": 11
+            },
+            {
+              "tmin": 7,
+              "tmax": 12
+            }
+          ]
         },
         {
           "id": "ca_a09m130_pz10",
@@ -233,22 +217,20 @@
           "correlator_ids": [
             "qda_pz10"
           ],
-          "lsqfit": {
-            "pt2_windows": [
-              {
-                "tmin": 5,
-                "tmax": 8
-              },
-              {
-                "tmin": 5,
-                "tmax": 9
-              },
-              {
-                "tmin": 5,
-                "tmax": 10
-              }
-            ]
-          }
+          "pt2_windows": [
+            {
+              "tmin": 5,
+              "tmax": 8
+            },
+            {
+              "tmin": 5,
+              "tmax": 9
+            },
+            {
+              "tmin": 5,
+              "tmax": 10
+            }
+          ]
         },
         {
           "id": "ca_a12m130_pz10",
@@ -260,22 +242,20 @@
           "correlator_ids": [
             "qda_pz10"
           ],
-          "lsqfit": {
-            "pt2_windows": [
-              {
-                "tmin": 3,
-                "tmax": 6
-              },
-              {
-                "tmin": 3,
-                "tmax": 7
-              },
-              {
-                "tmin": 3,
-                "tmax": 8
-              }
-            ]
-          }
+          "pt2_windows": [
+            {
+              "tmin": 3,
+              "tmax": 6
+            },
+            {
+              "tmin": 3,
+              "tmax": 7
+            },
+            {
+              "tmin": 3,
+              "tmax": 8
+            }
+          ]
         }
       ]
     },
@@ -283,11 +263,10 @@
       "defaults": {
         "strategy": "self_renormalization",
         "normalization": false,
-        "self_renormalization": {
-          "scheme": "ratio",
-          "mu": 2.0,
-          "LambdaQCD_gev": 0.1
-        }
+        "scheme": "ratio",
+        "kernel_id": "z_msbar_da_nlo",
+        "mu": 2.0,
+        "LambdaQCD_gev": 0.1
       },
       "jobs": [
         {
@@ -297,9 +276,9 @@
               "file": "data_kaon_da_gi/correlators/self_renormalization/pion_zero_momentum_reference.nc"
             }
           },
-          "self_renormalization": {
-            "d": -0.08183
-          }
+          "type": "fit",
+          "kernel_id": "z_msbar_pdf_nlo",
+          "d": -0.08183
         },
         {
           "id": "rn_a06m130_pz6",
@@ -307,10 +286,8 @@
             "target": "ca_a06m130_pz6",
             "zR": "rn_zr_fit"
           },
-          "self_renormalization": {
-            "d": 0.19,
-            "m0_gev": -0.094
-          }
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a09m130_pz6",
@@ -318,10 +295,8 @@
             "target": "ca_a09m130_pz6",
             "zR": "rn_zr_fit"
           },
-          "self_renormalization": {
-            "d": 0.19,
-            "m0_gev": -0.094
-          }
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a12m130_pz6",
@@ -329,10 +304,8 @@
             "target": "ca_a12m130_pz6",
             "zR": "rn_zr_fit"
           },
-          "self_renormalization": {
-            "d": 0.19,
-            "m0_gev": -0.094
-          }
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a06m130_pz8",
@@ -340,10 +313,8 @@
             "target": "ca_a06m130_pz8",
             "zR": "rn_zr_fit"
           },
-          "self_renormalization": {
-            "d": 0.19,
-            "m0_gev": -0.094
-          }
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a09m130_pz8",
@@ -351,10 +322,8 @@
             "target": "ca_a09m130_pz8",
             "zR": "rn_zr_fit"
           },
-          "self_renormalization": {
-            "d": 0.19,
-            "m0_gev": -0.094
-          }
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a12m130_pz8",
@@ -362,10 +331,8 @@
             "target": "ca_a12m130_pz8",
             "zR": "rn_zr_fit"
           },
-          "self_renormalization": {
-            "d": 0.19,
-            "m0_gev": -0.094
-          }
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a06m130_pz10",
@@ -373,10 +340,8 @@
             "target": "ca_a06m130_pz10",
             "zR": "rn_zr_fit"
           },
-          "self_renormalization": {
-            "d": 0.19,
-            "m0_gev": -0.094
-          }
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a09m130_pz10",
@@ -384,10 +349,8 @@
             "target": "ca_a09m130_pz10",
             "zR": "rn_zr_fit"
           },
-          "self_renormalization": {
-            "d": 0.19,
-            "m0_gev": -0.094
-          }
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a12m130_pz10",
@@ -395,10 +358,8 @@
             "target": "ca_a12m130_pz10",
             "zR": "rn_zr_fit"
           },
-          "self_renormalization": {
-            "d": 0.19,
-            "m0_gev": -0.094
-          }
+          "d": 0.19,
+          "m0_gev": -0.094
         }
       ]
     },
@@ -423,11 +384,9 @@
           ],
           "model_average": true
         },
-        "da": {
-          "phase_transfer_da": false,
-          "psi1_flavor_class": "light",
-          "psi2_flavor_class": "light"
-        }
+        "phase_transfer_da": false,
+        "psi1_flavor_class": "light",
+        "psi2_flavor_class": "light"
       },
       "jobs": [
         {
@@ -690,20 +649,18 @@
     },
     "extrapolation": {
       "defaults": {
-        "fit": {
-          "required_terms": [
-            "a",
-            "inv_p2",
-            "inv_p4",
-            "ap2"
-          ],
-          "pdep_gev": [
-            1.5,
-            2.0,
-            2.5
-          ],
-          "posterior_prior_error_scale": 3.0
-        }
+        "required_terms": [
+          "a",
+          "inv_p2",
+          "inv_p4",
+          "ap2"
+        ],
+        "pdep_gev": [
+          1.5,
+          2.0,
+          2.5
+        ],
+        "posterior_prior_error_scale": 3.0
       },
       "jobs": [
         {
@@ -721,13 +678,11 @@
               "mt_a12m130_pz10"
             ]
           },
-          "fit": {
-            "x_dependence": {
-              "a": false,
-              "inv_p2": true,
-              "inv_p4": true,
-              "ap2": true
-            }
+          "x_dependence": {
+            "a": false,
+            "inv_p2": true,
+            "inv_p4": true,
+            "ap2": true
           }
         }
       ]

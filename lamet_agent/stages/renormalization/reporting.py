@@ -47,12 +47,12 @@ bare matrix element.
 
 
 _SELF_RATIO = r"""
-Self-renormalization first fits the reusable factor $z_R(z,a)$.  The short
-distance PDF conversion fixes the finite slope $m_0$, while target application
-uses the ZMSbar finite term selected by `metadata.target_observable`:
+Self-renormalization first fits the reusable factor $z_R(z,a)$.  The fit job's
+explicit conversion kernel fixes the finite slope $m_0$, while target
+application uses the finite term selected by the apply job's `kernel_id`:
 
 $$
-g(z)-\ln Z_{\overline{\rm MS}}^{\rm PDF}(z;\mu)\simeq m_0z+b,
+g(z)-\ln Z_{\overline{\rm MS}}^{\rm fit}(z;\mu)\simeq m_0z+b,
 \qquad
 h_s^R(z)=\frac{h_s^{\rm tar}(z)}{z_R(z,a)
 Z_{\overline{\rm MS}}(z;\mu)}.
@@ -131,7 +131,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
     for record in records:
         params = effective_params(record.params)
         summary = record.summary
-        kind = "fit factor" if summary.get("result") == "renormalization_factor" else "apply"
+        kind = params["type"]
         lines.append(
             f"| `{record.job_id}` | {kind} | `{params['scheme']}` | `{params['strategy']}` | "
             f"{format_value(params['normalization'])} | {format_value(getattr(record.output, 'n_sample', None))} | "
@@ -166,6 +166,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "|---|---|",
                 f"| scheme | `{params['scheme']}` |",
                 f"| strategy | `{params['strategy']}` |",
+                f"| type | `{params['type']}` |",
+                f"| kernel id | `{params.get('kernel_id', 'n/a')}` |",
                 f"| normalization | {format_value(params['normalization'])} |",
                 f"| $z_s$ [fm] | {format_value(params.get('zs_fm'))} |",
                 f"| $m_0$ [GeV] | {format_value(params.get('m0_gev', attrs.get('m0_gev')))} |",
@@ -181,7 +183,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| output z range [fm] | {format_value(diagnostics.get('z_range_fm'))} |",
                 f"| input z ranges [fm] | {format_value(diagnostics.get('input_z_ranges_fm'))} |",
                 f"| denominator kind | `{diagnostics.get('denominator_kind', 'n/a')}` |",
-                f"| ZMSbar model | `{diagnostics.get('zms_model', attrs.get('zms_model', 'n/a'))}` |",
+                f"| ZMSbar kernel | `{diagnostics.get('kernel_id', attrs.get('kernel_id', 'n/a'))}` |",
                 "",
                 "### Coverage and Statistical Semantics",
                 "",
@@ -195,6 +197,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "|---|---|",
                 "| `scheme` | Finite prescription: ratio, hybrid, or MSbar. |",
                 "| `strategy` | External denominator or a reusable factor fitted from reference ensembles. |",
+                "| `type` | Fit a reusable factor or apply a renormalization prescription. |",
+                "| `kernel_id` | Explicit coordinate-space conversion formula selected for self-renormalization. |",
                 "| `d`, `m0_gev` | Finite logarithmic and linear operator corrections used by self-renormalization. |",
                 "| `delta_m_gev` | Long-distance exponential correction in the external hybrid prescription. |",
                 "| `LambdaQCD_gev`, `mu` | Scales entering the continuum logarithm and perturbative finite conversion. |",

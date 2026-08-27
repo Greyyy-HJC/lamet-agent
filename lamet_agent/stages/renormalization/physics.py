@@ -6,14 +6,14 @@ import math
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import gvar as gv
-import lsqfit as lsf
 import numpy as np
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
+from lamet_agent.parallel import nonlinear_fit
 
 
 def load_data(value: Any) -> EnsembleData:
@@ -180,24 +180,17 @@ def _perturbative_log(a_fm: float, *, lambda_qcd_gev: float, scale_gev: float, d
     return (3.0 * c_f / b0) * math.log(log_inverse / log_scale_ratio) + math.log(1.0 + float(d) / log_a_lambda)
 
 
-def zmsbar_pdf_log(z_fm: np.ndarray, *, scale_gev: float, model: str = "pdf_nlo") -> np.ndarray:
-    """Return ``log Z_MSbar`` for the one-loop PDF or DA conversion factor."""
-    if model not in {"pdf_nlo", "da_nlo"}:
-        raise ValueError(f"unsupported zms model '{model}'")
+def zmsbar_log(kernel: Callable[..., Any], z_fm: np.ndarray, *, scale_gev: float) -> np.ndarray:
+    """Evaluate one selected coordinate-space conversion kernel as ``log Z_MSbar``."""
     if not math.isfinite(float(scale_gev)) or float(scale_gev) <= 0:
         raise ValueError("scale_gev must be finite and positive")
     z = np.asarray(z_fm, dtype=float)
-    b0 = 11.0 - 2.0 * 3.0 / 3.0
-    alpha_reference = 0.293 / (4.0 * np.pi)
-    running = 1.0 + alpha_reference * b0 * np.log((float(scale_gev) / 2.0) ** 2)
-    alpha_s = alpha_reference * 4.0 * np.pi / running
     nonzero = np.abs(z) > 1e-14
     conversion = np.ones_like(z)
-    log_term = np.log(float(scale_gev) ** 2 * (z[nonzero] / HBAR_C_GEV_FM) ** 2 * np.exp(2.0 * np.euler_gamma) / 4.0)
-    offset = 2.5 if model == "pdf_nlo" else 3.5
-    conversion[nonzero] = 1.0 + alpha_s * (4.0 / 3.0) / (2.0 * np.pi) * (1.5 * log_term + offset)
-    if np.any(conversion[nonzero] <= 0):
-        raise ValueError("pdf_nlo Z_MSbar is nonpositive on the short-distance grid")
+    evaluated = np.asarray(kernel(z[nonzero], mu=float(scale_gev)), dtype=float)
+    if evaluated.shape != z[nonzero].shape or np.any(~np.isfinite(evaluated)) or np.any(evaluated <= 0):
+        raise ValueError("renormalization kernel returned an invalid nonpositive conversion factor")
+    conversion[nonzero] = evaluated
     return np.log(conversion)
 
 
@@ -244,8 +237,9 @@ def fit_factor(
     d: float,
     n_f: int,
     scale_gev: float,
+    zms_kernel: Callable[..., Any],
+    kernel_id: str,
     svdcut: float,
-    zms_model: str = "pdf_nlo",
     short_distance_min_fm: float = 0.0,
     lattice_spacing_range_fm: tuple[float, float] | None = None,
 ) -> EnsembleData:
@@ -286,18 +280,22 @@ def fit_factor(
         ["a", "z"],
         {"a": spacings, "z": z.tolist()},
     )
-    log_average = log_data.gvar
     prior = gv.BufferDict()
     for coordinate in z:
         prior[f"g{coordinate}"] = gv.gvar(0.0, 20.0)
         prior[f"f1{coordinate}"] = gv.gvar(0.0, 5.0)
     fit_x = {"z": [], "a": []}
-    fit_y = []
-    for spacing_index, spacing in enumerate(spacings):
-        for z_index, coordinate in enumerate(z):
+    for spacing in spacings:
+        for coordinate in z:
             fit_x["z"].append(float(coordinate))
             fit_x["a"].append(float(spacing))
-            fit_y.append(log_average[spacing_index, z_index])
+    fit_data = EnsembleData(
+        source.ensemble,
+        source.resample,
+        [np.asarray(sample).reshape(-1) for sample in log_data.values],
+        ["point"],
+        {"point": list(range(len(fit_x["z"])))},
+    )
 
     def model(x, parameters):
         return [
@@ -315,10 +313,11 @@ def fit_factor(
             for coordinate, spacing in zip(x["z"], x["a"])
         ]
 
-    fit = lsf.nonlinear_fit(
-        data=(fit_x, fit_y),
+    fit = nonlinear_fit(
+        data=(fit_x, fit_data),
         prior=prior,
         fcn=model,
+        mode="center",
         maxit=10000,
         svdcut=svdcut,
         fitter="scipy_least_squares",
@@ -328,14 +327,22 @@ def fit_factor(
         raise ValueError("short-distance range must contain at least three coordinates")
     short_z = z[short]
     short_g = np.asarray([fit.p[f"g{coordinate}"] for coordinate in z], dtype=object)[short]
-    zms = zmsbar_pdf_log(short_z, scale_gev=scale_gev, model=zms_model)
+    short_g_data = EnsembleData(
+        None,
+        "gvar",
+        short_g,
+        ["z"],
+        {"z": short_z.tolist()},
+    )
+    zms = zmsbar_log(zms_kernel, short_z, scale_gev=scale_gev)
     m0_prior = gv.BufferDict()
     m0_prior["m0"] = gv.gvar(0.0, 20.0)
     m0_prior["b"] = gv.gvar(0.0, 100.0)
-    m0_fit = lsf.nonlinear_fit(
-        data=(short_z, short_g),
+    m0_fit = nonlinear_fit(
+        data=(short_z, short_g_data),
         prior=m0_prior,
         fcn=lambda coordinates, parameters: zms + parameters["m0"] * coordinates + parameters["b"],
+        mode="center",
         maxit=10000,
         svdcut=svdcut,
         fitter="scipy_least_squares",
@@ -362,6 +369,7 @@ def fit_factor(
     attrs.update(
         {
             "operation": "fit_factor",
+            "type": "fit",
             "renormalization_scheme": "msbar",
             "strategy": "self_renormalization",
             "short_distance_min_fm": float(short_distance_min_fm),
@@ -380,7 +388,7 @@ def fit_factor(
                         "d": float(d),
                         "n_f": int(n_f),
                         "scale_gev": float(scale_gev),
-                        "zms_model": zms_model,
+                        "kernel_id": kernel_id,
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -391,7 +399,7 @@ def fit_factor(
             "d": float(d),
             "n_f": int(n_f),
             "scale_gev": float(scale_gev),
-            "zms_model": zms_model,
+            "kernel_id": kernel_id,
             "m0_gev": float(gv.mean(m0)),
             "m0_convention": "reference_inverse_fm",
             "units": '{"values":"dimensionless","a":"fm","z":"fm"}',

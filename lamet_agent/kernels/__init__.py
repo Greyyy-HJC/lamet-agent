@@ -7,6 +7,7 @@ registry or metadata object; ``load_kernel`` imports exactly the requested file.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import importlib.util
 from pathlib import Path
 from types import ModuleType
@@ -56,6 +57,20 @@ def load_kernel(kernel_id: str, root: str | Path | None = None) -> Any:
     return function
 
 
+def load_renormalization_kernel(kernel_id: str, root: str | Path | None = None) -> Any:
+    """Load one explicit renormalization formula callable by filename stem."""
+    if not isinstance(kernel_id, str) or not kernel_id or not kernel_id.isidentifier() or kernel_id.startswith("_"):
+        raise ValueError("renormalization kernel_id must be an exact public filename stem")
+    path = _root(root) / f"{kernel_id}.py"
+    if not path.is_file():
+        raise ValueError(f"renormalization kernel '{kernel_id}' is not available")
+    module = importlib.import_module(f"{__package__}.{kernel_id}") if root is None else _load_module(path)
+    function = getattr(module, "kernel", None)
+    if not callable(function):
+        raise TypeError(f"renormalization kernel file '{kernel_id}.py' must export kernel()")
+    return function
+
+
 def load_kernel_document(kernel_id: str, root: str | Path | None = None) -> str:
     """Read the formula document paired with an exact kernel filename stem."""
     if not isinstance(kernel_id, str) or not kernel_id or not kernel_id.isidentifier() or kernel_id.startswith("_"):
@@ -72,5 +87,6 @@ def load_kernel_document(kernel_id: str, root: str | Path | None = None) -> str:
 __all__ = [
     "list_kernel_ids",
     "load_kernel",
+    "load_renormalization_kernel",
     "load_kernel_document",
 ]

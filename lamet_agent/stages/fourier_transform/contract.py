@@ -70,7 +70,7 @@ PARAM_RULES = (
     Depends("", "zmax_fm", physics="Tail upper ranges are authored candidate values."),
     Depends("", "smooth", physics="Tail/data connection uses a declared prescription."),
     Depends("", "zmax_ext_fm", physics="The finite transform extent is explicit."),
-    Depends("", "scheme_scan", physics="The complete native LA/NLA candidate scan remains one stage-owned mapping.", required=False),
+    Depends("", "scheme_scan", physics="The complete native LA/NLA candidate scan is explicit."),
     Provides("", "da", "$.metadata.target_observable", physics="DA jobs own midpoint projection and endpoint flavor controls."),
     Depends("da", "phase_transfer_da", physics="A meson DA explicitly selects whether to project about its midpoint before tail fitting."),
     Depends("da", "psi1_flavor_class", physics="The first DA endpoint flavor class fixes the allowed tail term."),

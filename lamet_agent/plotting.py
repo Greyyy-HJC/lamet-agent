@@ -41,6 +41,8 @@ _ERRORBAR_STYLE = {
     "elinewidth": 1,
 }
 _LINE_STYLES = {"solid", "dashed", "dotted", "dashdot", "-", "--", ":", "-."}
+_LINE_ALPHA = 0.65
+_BAND_ALPHA = 0.32
 _CURRENT_FIGURE: Any | None = None
 _CURRENT_AXIS: Any | None = None
 _COLOR_INDEX = 0
@@ -89,7 +91,7 @@ def start_plot() -> None:
     _CURRENT_AXIS.grid(linestyle=":")
 
 
-def errorbar(
+def errorline(
     x: Any,
     values: Any,
     *,
@@ -97,7 +99,7 @@ def errorbar(
     marker: str = "o",
     label: str | None = None,
 ) -> None:
-    """Plot central values and errors with the selected color, marker, and label."""
+    """Plot central values with marker-based error lines."""
     try:
         MarkerStyle(marker)
     except ValueError as exc:
@@ -114,6 +116,85 @@ def errorbar(
     )
 
 
+def line(
+    x: Any,
+    y: Any,
+    *,
+    color: str | None = None,
+    marker: str | None = None,
+    label: str | None = None,
+) -> None:
+    """Plot one ordinary line with an optional marker and label."""
+    if marker is not None:
+        try:
+            MarkerStyle(marker)
+        except ValueError as exc:
+            raise ValueError(f"unsupported marker {marker!r}") from exc
+    _axis().plot(
+        x,
+        y,
+        color=_resolve_color(color),
+        marker=marker,
+        alpha=_LINE_ALPHA,
+        linewidth=0.9,
+        label=label,
+    )
+
+
+def band(
+    x: Any,
+    lower: Any,
+    upper: Any,
+    *,
+    color: str | None = None,
+    label: str | None = None,
+) -> None:
+    """Fill one vertical interval between lower and upper curves."""
+    _axis().fill_between(
+        x,
+        lower,
+        upper,
+        color=_resolve_color(color),
+        alpha=_BAND_ALPHA,
+        linewidth=0,
+        label=label,
+    )
+
+
+def vband(
+    lower: float,
+    upper: float,
+    *,
+    color: str | None = None,
+    label: str | None = None,
+) -> None:
+    """Fill one vertical coordinate interval."""
+    _axis().axvspan(lower, upper, color=_resolve_color(color), alpha=_BAND_ALPHA, linewidth=0, label=label)
+
+
+def hband(
+    lower: float,
+    upper: float,
+    *,
+    color: str | None = None,
+    label: str | None = None,
+) -> None:
+    """Fill one horizontal coordinate interval."""
+    _axis().axhspan(lower, upper, color=_resolve_color(color), alpha=_BAND_ALPHA, linewidth=0, label=label)
+
+
+def bar(
+    x: Any,
+    height: Any,
+    *,
+    width: float = 0.8,
+    color: str | None = None,
+    label: str | None = None,
+) -> None:
+    """Plot one bar series with an explicit width."""
+    _axis().bar(x, height, width=width, color=_resolve_color(color), label=label)
+
+
 def errorband(
     x: Any,
     values: Any,
@@ -124,17 +205,8 @@ def errorband(
     """Plot a central line over its one-sigma error band."""
     mean, sdev = _unpack_gvar(values)
     selected_color = _resolve_color(color)
-    axis = _axis()
-    axis.fill_between(
-        x,
-        mean - sdev,
-        mean + sdev,
-        color=selected_color,
-        alpha=0.32,
-        linewidth=0,
-        label=label,
-    )
-    axis.plot(x, mean, color=selected_color, alpha=0.65, linewidth=0.9)
+    band(x, mean - sdev, mean + sdev, color=selected_color, label=label)
+    line(x, mean, color=selected_color)
 
 
 def _validate_line_style(linestyle: str) -> None:
@@ -222,7 +294,12 @@ __all__ = [
     "COLOR_CYCLE",
     "start_plot",
     "configure_plot",
-    "errorbar",
+    "line",
+    "band",
+    "vband",
+    "hband",
+    "bar",
+    "errorline",
     "errorband",
     "hline",
     "vline",

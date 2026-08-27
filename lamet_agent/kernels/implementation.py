@@ -54,14 +54,6 @@ def ZMSbar(z_fm: np.ndarray | float, *, mu: float = 2.0, offset: float, order: i
     return 1.0 + alphas * CF / (2.0 * np.pi) * (1.5 * log_term + offset)
 
 
-def ZMSbar_pdf(z_fm: np.ndarray | float, mu: float = 2.0, order: int = 0, Nf: int = 3) -> np.ndarray:
-    return ZMSbar(z_fm, mu=mu, offset=2.5, order=order, Nf=Nf)
-
-
-def ZMSbar_da(z_fm: np.ndarray | float, mu: float = 2.0, order: int = 0, Nf: int = 3) -> np.ndarray:
-    return ZMSbar(z_fm, mu=mu, offset=3.5, order=order, Nf=Nf)
-
-
 def _sine_integral(value: float) -> float:
     try:
         from scipy.special import sici

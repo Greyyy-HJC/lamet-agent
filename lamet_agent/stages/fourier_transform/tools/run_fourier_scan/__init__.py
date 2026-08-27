@@ -39,7 +39,7 @@ def run(context: ToolContext) -> dict[str, object]:
     if isinstance(grid, dict):
         grid = np.linspace(float(grid["start"]), float(grid["stop"]), int(grid["num"])).tolist()
     is_da = str(context.manifest["metadata"]["target_observable"]).lower() == "da"
-    da = context.params["da"] if is_da else None
+    da = context.params if is_da else None
     result = scan_fourier_transform(
         source,
         grid,

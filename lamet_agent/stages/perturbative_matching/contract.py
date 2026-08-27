@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
 import math
 from pathlib import Path
 import re
-from typing import Literal
+import types
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 from lamet_agent.contract import CheckContext, Depends, Issue, Provides, Recommends, Source, Value, stage_job_rules
+from lamet_agent.kernels import load_kernel
+
+
+_STAGE_KERNEL_ARGUMENTS = frozenset({"x_out", "x_in", "momentum_gev", "scale_gev", "zs_fm"})
 
 
 def _positive(value: int | float) -> bool:
@@ -38,6 +44,113 @@ def _valid_lc_x_ls(value: object) -> bool:
 
 def _valid_kernel_id(value: object) -> bool:
     return isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", value))
+
+
+def _annotation_accepts(annotation: Any, value: Any) -> bool:
+    """Return whether one JSON value matches a supported kernel annotation."""
+    if annotation is Any:
+        return True
+    origin = get_origin(annotation)
+    arguments = get_args(annotation)
+    if origin in (Union, types.UnionType):
+        return any(_annotation_accepts(candidate, value) for candidate in arguments)
+    if origin is Literal:
+        return any(type(value) is type(choice) and value == choice for choice in arguments)
+    if annotation is str:
+        return isinstance(value, str)
+    if annotation is bool:
+        return isinstance(value, bool)
+    if annotation is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if annotation is float:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if annotation is list:
+        return isinstance(value, list)
+    if annotation is dict:
+        return isinstance(value, dict)
+    if annotation is type(None):
+        return value is None
+    if origin is list:
+        return isinstance(value, list) and all(_annotation_accepts(arguments[0], item) for item in value)
+    if origin is dict:
+        return (
+            isinstance(value, dict)
+            and all(isinstance(key, str) for key in value)
+            and all(_annotation_accepts(arguments[1], item) for item in value.values())
+        )
+    return False
+
+
+def _kernel_parameter_issues(kernel: Any, values: dict[str, Any]) -> list[Issue]:
+    """Validate authored parameters directly against one kernel signature."""
+    physics = "Kernel parameters must match the selected kernel() signature; stage-owned arguments are implicit."
+    signature = inspect.signature(kernel)
+    parameters = list(signature.parameters.values())
+    if (
+        len(parameters) < 4
+        or [parameter.name for parameter in parameters[:4]] != ["x_out", "x_in", "momentum_gev", "scale_gev"]
+        or any(parameter.kind is not inspect.Parameter.KEYWORD_ONLY for parameter in parameters[2:])
+        or any(
+            parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+            for parameter in parameters
+        )
+    ):
+        return [
+            Issue(
+                "kernel_id",
+                "kernel must have signature kernel(x_out, x_in, *, momentum_gev, scale_gev, ...)",
+                physics,
+            )
+        ]
+
+    configurable = {parameter.name: parameter for parameter in parameters[4:] if parameter.name != "zs_fm"}
+    issues = [
+        Issue(
+            f"kernel_parameters.{name}",
+            "is supplied by the matching stage and must not be exposed in kernel_parameters",
+            physics,
+        )
+        for name in values
+        if name in _STAGE_KERNEL_ARGUMENTS
+    ]
+    issues.extend(
+        Issue(
+            f"kernel_parameters.{name}",
+            "is not accepted by the selected kernel signature",
+            physics,
+        )
+        for name in values
+        if name not in configurable and name not in _STAGE_KERNEL_ARGUMENTS
+    )
+    issues.extend(
+        Issue(
+            f"kernel_parameters.{name}",
+            "is required by the selected kernel signature",
+            physics,
+        )
+        for name, parameter in configurable.items()
+        if parameter.default is inspect.Parameter.empty and name not in values
+    )
+    try:
+        annotations = get_type_hints(kernel)
+    except (NameError, TypeError) as exc:
+        return [*issues, Issue("kernel_id", f"kernel annotations cannot be resolved: {exc}", physics)]
+    for name, value in values.items():
+        if name not in configurable:
+            continue
+        annotation = annotations.get(name, configurable[name].annotation)
+        if annotation is inspect.Parameter.empty:
+            issues.append(Issue(f"kernel_parameters.{name}", "has no type annotation in the kernel signature", physics))
+        elif not _annotation_accepts(annotation, value):
+            expected = getattr(annotation, "__name__", str(annotation).replace("typing.", ""))
+            issues.append(
+                Issue(
+                    f"kernel_parameters.{name}",
+                    f"must match kernel annotation {expected}",
+                    physics,
+                )
+            )
+    return issues
 
 
 # ruff: disable[E501]
@@ -114,6 +227,42 @@ def check_kernel_resources(context: CheckContext) -> Issue | None:
     return None
 
 
+def check_kernel_parameters(context: CheckContext) -> list[Issue] | Issue | None:
+    """Validate the explicit parameter mapping against the selected kernel."""
+    values = context.params.get("kernel_parameters")
+    kernel_id = context.params.get("kernel_id")
+    if not isinstance(values, dict) or not isinstance(kernel_id, str) or not _valid_kernel_id(kernel_id):
+        return None
+    if check_kernel_shape(context) is not None or check_kernel_resources(context) is not None:
+        return None
+    try:
+        kernel = load_kernel(kernel_id)
+    except Exception as exc:
+        return Issue(
+            "kernel_id",
+            f"cannot load kernel signature: {exc}",
+            "The selected kernel must expose an inspectable kernel() callable.",
+        )
+    try:
+        signature = inspect.signature(kernel)
+        kernel_uses_zs = "zs_fm" in signature.parameters
+        stage_supplies_zs = context.params.get("scheme") == "hybrid"
+        if kernel_uses_zs != stage_supplies_zs:
+            expected = "include" if stage_supplies_zs else "omit"
+            return Issue(
+                "kernel_id",
+                f"kernel signature must {expected} stage-managed zs_fm for scheme {context.params.get('scheme')!r}",
+                "The matching scheme determines whether the stage injects a Wilson-line switching distance.",
+            )
+        return _kernel_parameter_issues(kernel, values)
+    except (TypeError, ValueError) as exc:
+        return Issue(
+            "kernel_id",
+            f"cannot inspect kernel signature: {exc}",
+            "The selected kernel must expose an inspectable kernel() callable.",
+        )
+
+
 JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 
-CHECKS = (check_kernel_shape, check_x_output, check_kernel_resources)
+CHECKS = (check_kernel_shape, check_x_output, check_kernel_resources, check_kernel_parameters)

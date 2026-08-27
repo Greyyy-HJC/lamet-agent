@@ -26,6 +26,16 @@ def linear_model(x: np.ndarray, p: gv.BufferDict) -> np.ndarray:
     return p["intercept"] + p["slope"] * x
 
 
+def test_center_mode_accepts_gvar_ensemble_data() -> None:
+    x = np.linspace(-1.0, 1.0, 5)
+    data = EnsembleData(None, "gvar", gv.gvar(1.2 + 0.7 * x, np.full(x.size, 0.02)), ["x"], {"x": x})
+    prior = gv.BufferDict({"intercept": gv.gvar(0.0, 5.0), "slope": gv.gvar(0.0, 5.0)})
+    result = nonlinear_fit((x, data), linear_model, prior, mode="center")
+    assert result.samples == ()
+    assert result.resample == "gvar"
+    assert np.isclose(gv.mean(result.p["slope"]), 0.7, atol=0.03)
+
+
 def test_bootstrap_fit_is_seeded_and_worker_independent() -> None:
     x = np.linspace(-1.0, 1.0, 8)
     rng = np.random.default_rng(9)

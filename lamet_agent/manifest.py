@@ -15,6 +15,7 @@ from .contract import (
     CheckContext,
     Depends,
     Issue,
+    Provides,
     Recommends,
     Value,
     _unresolved_null_hooks,
@@ -200,10 +201,9 @@ class Manifest:
 
 # ruff: disable[E501]
 # fmt: off
-_BASE_RULES: tuple[Depends | Recommends | Value, ...] = (
+_BASE_RULES: tuple[Depends | Provides | Recommends | Value, ...] = (
     Depends("", "metadata", physics="Run metadata names the physical analysis and its execution root."),
     Depends("", "stages", physics="The authored stage mapping is the sole execution order."),
-    Depends("", "systematics", physics="Optional stage-local declarations compile into concrete variation jobs.", required=False),
     Depends("metadata", "run_id", physics="A run needs a stable human-readable identifier."),
     Depends("metadata", "root_directory", physics="Relative input paths are resolved from this directory."),
     Depends("metadata", "artifacts_directory", physics="Every job owns one artifact cell below this directory."),
@@ -213,7 +213,8 @@ _BASE_RULES: tuple[Depends | Recommends | Value, ...] = (
     Recommends("metadata", "parton", physics="The migrated workflows default to the reference quark species.", default="quark"),
     Depends("metadata", "resample_mode", physics="All correlator jobs use one run-level resampling convention."),
     Depends("metadata", "sample_error_mode", physics="All stages use one authored sample center and error convention."),
-    Depends("metadata", "bootstrap_samples", physics="Bootstrap sample count is explicit when bootstrap is selected.", required=False),
+    Provides("metadata", "bootstrap", "metadata.resample_mode", physics="Bootstrap sampling owns one explicit sample count."),
+    Depends("metadata.bootstrap", "samples", physics="Bootstrap sample count is explicit when bootstrap is selected."),
     Depends("metadata", "bin_size", physics="All raw correlators use one positive configuration bin size."),
     Value("metadata.run_id", str, physics="The run id is a human-readable string."),
     Value("metadata.root_directory", str, physics="The root directory is a path string."),
@@ -224,9 +225,8 @@ _BASE_RULES: tuple[Depends | Recommends | Value, ...] = (
     Value("metadata.parton", Literal["quark"], physics="The migrated examples use quark distributions."),
     Value("metadata.resample_mode", Literal["jackknife", "bootstrap"], physics="The run-level sample plan is jackknife or bootstrap."),
     Value("metadata.sample_error_mode", Literal["covariance", "mean", "median"], physics="Sample statistics use covariance, mean-diagonal, or median-percentile errors."),
-    Value("metadata.bootstrap_samples", int, physics="Bootstrap sample count is positive.", validator=_positive),
+    Value("metadata.bootstrap.samples", int, physics="Bootstrap sample count is positive.", validator=_positive),
     Value("metadata.bin_size", int, physics="Configuration bin size is positive.", validator=_positive),
-    Value("systematics", dict, physics="Systematics declarations are keyed by stage id."),
 )
 # fmt: on
 # ruff: enable[E501]
@@ -239,23 +239,6 @@ def _check_manifest_relations(context: CheckContext) -> list[Issue]:
     if not isinstance(metadata, Mapping):
         return issues
     mode = metadata.get("resample_mode")
-    count = metadata.get("bootstrap_samples")
-    if mode == "bootstrap" and count is None:
-        issues.append(
-            _issue(
-                "metadata.bootstrap_samples",
-                "is required when resample_mode='bootstrap'",
-                "Bootstrap requires an authored sample count.",
-            )
-        )
-    elif mode == "jackknife" and count is not None:
-        issues.append(
-            _issue(
-                "metadata.bootstrap_samples",
-                "must be omitted for jackknife",
-                "Jackknife sample count is fixed by the binned configurations.",
-            )
-        )
     if metadata.get("sample_error_mode") == "median" and mode != "bootstrap":
         issues.append(
             _issue(
@@ -539,7 +522,7 @@ def _build_jobs_from_document(document: Mapping[str, Any], *, manifest_path: Pat
                     job_index=job_index,
                     job_id=job["id"],
                     params={key: copy.deepcopy(value) for key, value in job.items() if key not in {"id", "inputs"}},
-                    inputs=copy.deepcopy(job.get("inputs", {})),
+                    inputs=copy.deepcopy(dict(inputs)),
                     artifact_directory=artifact_base / f"{stage_index:02d}_{stage_id}" / job["id"],
                 )
             )

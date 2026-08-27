@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from lamet_agent.agent import (
+    LlmSession,
     ToolContext,
     _discover_tools,
     _resolve_runtime_null_hooks,
@@ -21,6 +22,7 @@ from lamet_agent.agent import (
 from lamet_agent.contract import (
     CheckContext,
     Depends,
+    Issue,
     List,
     Provides,
     Recommends,
@@ -35,6 +37,7 @@ from lamet_agent.contract import (
 from lamet_agent.__main__ import _build_parser
 from lamet_agent.llm import Message, _AssistantResponse, _ToolCall, create_backend
 from lamet_agent.manifest import Manifest, _load_stage_contract, load_manifest
+from lamet_agent.structured import annotation_schema
 
 
 def _valid_metadata(tmp_path: Path, **overrides: object) -> dict[str, object]:
@@ -59,6 +62,7 @@ class _ScriptedBackend:
     def __init__(self, responses: list[_AssistantResponse]) -> None:
         self._responses = list(responses)
         self.calls: list[tuple[list[Message], list[dict[str, object]], str]] = []
+        self.response_schemas: list[object] = []
 
     def complete(
         self,
@@ -66,8 +70,10 @@ class _ScriptedBackend:
         messages: list[Message],
         tools: list[dict[str, object]],
         prompt_digest: str,
+        response_schema=None,
     ) -> _AssistantResponse:
         self.calls.append((list(messages), list(tools), prompt_digest))
+        self.response_schemas.append(response_schema)
         if not self._responses:
             raise RuntimeError("scripted backend has no response for this turn")
         return self._responses.pop(0)
@@ -82,27 +88,65 @@ class _PlateauAssessment(TypedDict):
     stable_start: int
 
 
-def _recommend_interval(_context: ToolContext, ask) -> list[_RecommendedInterval]:
-    return ask(
-        instruction="Choose one nonempty half-open interval.",
-        evidence={"allowed_coordinates": [0, 1, 2, 3]},
+def test_llm_session_appends_structured_recommendations_to_job_history(tmp_path: Path) -> None:
+    backend = _ScriptedBackend(
+        [
+            _AssistantResponse('{"value":1}', structured={"value": 1}),
+            _AssistantResponse('{"value":2}', structured={"value": 2}),
+        ]
     )
+    session = LlmSession(backend, tmp_path / "llm.md", history=[Message("system", "fixed stage prefix")])
+    schema = {
+        "name": "integer_recommendation",
+        "schema": {
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+    }
+
+    session.complete(label="first recommendation", user_message="first question", response_schema=schema)
+    session.complete(label="second recommendation", user_message="second question", response_schema=schema)
+
+    assert [message.role for message in backend.calls[0][0]] == ["system", "user"]
+    assert [message.role for message in backend.calls[1][0]] == ["system", "user", "assistant", "user"]
+    assert backend.calls[1][0][-1].content == "second question"
+    assert session.calls == 2
 
 
-def _estimate_interval_without_llm(_context: ToolContext, _ask) -> list[_RecommendedInterval]:
+class _IntervalSuggestion(TypedDict):
+    windows: list[_RecommendedInterval]
+
+
+def _recommend_interval(_context: ToolContext, session: LlmSession) -> list[_RecommendedInterval]:
+    schema, _ = annotation_schema(_IntervalSuggestion)
+    response = session.complete(
+        label="interval recommendation",
+        user_message="Choose one nonempty half-open interval from coordinates 0,1,2,3.",
+        response_schema={"name": "interval_recommendation", "schema": schema},
+    )
+    return list(response.structured["windows"])
+
+
+def _estimate_interval_without_llm(_context: ToolContext, _session: LlmSession) -> list[_RecommendedInterval]:
     return [{"start": 1, "stop": 3}]
 
 
-def _estimate_interval_with_two_llm_calls(_context: ToolContext, ask) -> list[_RecommendedInterval]:
-    assessment = ask(
-        instruction="Identify the first stable coordinate.",
-        evidence={"coordinates": [0, 1, 2, 3]},
-        response_type=_PlateauAssessment,
+def _estimate_interval_with_two_llm_calls(_context: ToolContext, session: LlmSession) -> list[_RecommendedInterval]:
+    assessment_schema, _ = annotation_schema(_PlateauAssessment)
+    assessment_response = session.complete(
+        label="plateau assessment",
+        user_message="Identify the first stable coordinate among 0,1,2,3.",
+        response_schema={"name": "plateau_assessment", "schema": assessment_schema},
     )
-    return ask(
-        instruction="Choose an interval using the preliminary assessment.",
-        evidence={"assessment": assessment, "last_coordinate": 3},
+    interval_schema, _ = annotation_schema(_IntervalSuggestion)
+    response = session.complete(
+        label="interval recommendation",
+        user_message=f"Choose an interval using {dict(assessment_response.structured)} and last coordinate 3.",
+        response_schema={"name": "interval_recommendation", "schema": interval_schema},
     )
+    return list(response.structured["windows"])
 
 
 def _null_hook_rules(hook=_recommend_interval):
@@ -141,23 +185,35 @@ def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path)
 
     from lamet_agent.plotting import (
         COLOR_CYCLE,
+        band,
+        bar,
         configure_plot,
         errorband,
-        errorbar,
+        errorline,
+        hband,
         hline,
+        line,
         save_figure,
         start_plot,
+        vband,
         vline,
     )
 
     assert start_plot() is None
     values = np.asarray([gvar.gvar(1.0, 0.1), gvar.gvar(1.5, 0.2)], dtype=object)
     assert errorband([0.0, 1.0], values, color=COLOR_CYCLE[1], label="result") is None
-    assert errorbar([0.0, 1.0], values, color=COLOR_CYCLE[0], marker="s", label="points") is None
+    assert errorline([0.0, 1.0], values, color=COLOR_CYCLE[0], marker="s", label="points") is None
+    assert line([0.0, 1.0], [0.8, 1.2], color="0.3", marker="o", label="line") is None
+    assert band([0.0, 1.0], [0.7, 1.0], [0.9, 1.4], color="0.8", label="band") is None
+    assert vband(0.2, 0.4, color="0.7", label="vband") is None
+    assert hband(0.9, 1.1, color="0.6", label="hband") is None
+    assert bar([0.25, 0.75], [0.2, 0.3], width=0.1, color="0.5", label="bar") is None
     with pytest.raises(ValueError, match="unsupported marker"):
-        errorbar([0.0, 1.0], values, marker="r--")
+        errorline([0.0, 1.0], values, marker="r--")
+    with pytest.raises(ValueError, match="unsupported marker"):
+        line([0.0, 1.0], [1.0, 1.2], marker="r--")
     with pytest.raises(TypeError, match="gvar"):
-        errorbar([0.0, 1.0], np.asarray([[1.0, 2.0], [1.1, 2.1]]))
+        errorline([0.0, 1.0], np.asarray([[1.0, 2.0], [1.1, 2.1]]))
     assert hline(0.0, color=COLOR_CYCLE[2], linestyle="dashed") is None
     assert vline(0.5, color=COLOR_CYCLE[3], linestyle=":") is None
     with pytest.raises(ValueError, match="unsupported line style"):
@@ -175,7 +231,7 @@ def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path)
         save_figure(tmp_path / "again.pdf")
     assert start_plot() is None
     errorband([0.0, 1.0], values)
-    errorbar([0.0, 1.0], values)
+    errorline([0.0, 1.0], values)
     hline(0.0)
     vline(0.5)
     hline(0.2, color=COLOR_CYCLE[4])
@@ -213,7 +269,12 @@ def test_neo_core_exports_are_minimal() -> None:
         "COLOR_CYCLE",
         "start_plot",
         "configure_plot",
-        "errorbar",
+        "line",
+        "band",
+        "vband",
+        "hband",
+        "bar",
+        "errorline",
         "errorband",
         "hline",
         "vline",
@@ -428,11 +489,7 @@ def test_runtime_null_hook_uses_a_typed_response_and_updates_params(
         [
             _AssistantResponse(
                 "selected from the plateau",
-                _ToolCall(
-                    "recommend-1",
-                    "return_parameter_estimate",
-                    {"value": [{"start": 1, "stop": 3}]},
-                ),
+                structured={"windows": [{"start": 1, "stop": 3}]},
             )
         ]
     )
@@ -456,8 +513,7 @@ def test_runtime_null_hook_uses_a_typed_response_and_updates_params(
     _resolve_runtime_null_hooks(
         context=context,
         contract=contract,
-        backend=backend,
-        transcript_path=transcript,
+        session=LlmSession(backend, transcript),
     )
 
     assert params["settings"]["windows"] == [{"start": 1, "stop": 3}]
@@ -467,12 +523,12 @@ def test_runtime_null_hook_uses_a_typed_response_and_updates_params(
         "llm_requests": 1,
         "value": [{"start": 1, "stop": 3}],
     }
-    schema = backend.calls[0][1][0]["function"]["parameters"]["properties"]["value"]
-    assert schema["items"]["additionalProperties"] is False
-    assert schema["items"]["required"] == ["start", "stop"]
+    schema = backend.response_schemas[0]["schema"]["properties"]["windows"]["items"]
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["start", "stop"]
     transcript_text = transcript.read_text(encoding="utf-8")
-    assert "Null hook settings.windows, request 1: sent to LLM" in transcript_text
-    assert "Null hook settings.windows, request 1: received from LLM" in transcript_text
+    assert "interval recommendation, request 1: sent to LLM" in transcript_text
+    assert "interval recommendation, request 1: received from LLM" in transcript_text
 
 
 def test_invalid_runtime_null_hook_value_is_rolled_back(tmp_path: Path) -> None:
@@ -480,11 +536,7 @@ def test_invalid_runtime_null_hook_value_is_rolled_back(tmp_path: Path) -> None:
         [
             _AssistantResponse(
                 "no usable interval",
-                _ToolCall(
-                    "recommend-1",
-                    "return_parameter_estimate",
-                    {"value": []},
-                ),
+                structured={"windows": []},
             )
         ]
     )
@@ -508,8 +560,7 @@ def test_invalid_runtime_null_hook_value_is_rolled_back(tmp_path: Path) -> None:
         _resolve_runtime_null_hooks(
             context=context,
             contract=SimpleNamespace(PARAM_RULES=_null_hook_rules(), CHECKS=()),
-            backend=backend,
-            transcript_path=transcript,
+            session=LlmSession(backend, transcript),
         )
 
     assert params == {"settings": {"windows": None}}
@@ -551,8 +602,7 @@ def test_recommends_fills_a_static_default_before_normal_validation(
     _resolve_runtime_null_hooks(
         context=context,
         contract=SimpleNamespace(PARAM_RULES=rules, CHECKS=()),
-        backend=_ScriptedBackend([]),
-        transcript_path=transcript,
+        session=LlmSession(_ScriptedBackend([]), transcript),
     )
 
     assert params == {"settings": {"mode": "safe"}}
@@ -580,8 +630,7 @@ def test_null_hook_may_estimate_without_calling_the_llm(tmp_path: Path) -> None:
     _resolve_runtime_null_hooks(
         context=context,
         contract=SimpleNamespace(PARAM_RULES=_null_hook_rules(_estimate_interval_without_llm), CHECKS=()),
-        backend=backend,
-        transcript_path=transcript,
+        session=LlmSession(backend, transcript),
     )
 
     assert params["settings"]["windows"] == [{"start": 1, "stop": 3}]
@@ -594,19 +643,11 @@ def test_null_hook_may_make_multiple_typed_llm_requests(tmp_path: Path) -> None:
         [
             _AssistantResponse(
                 "plateau assessment",
-                _ToolCall(
-                    "estimate-1",
-                    "return_parameter_estimate",
-                    {"value": {"stable_start": 1}},
-                ),
+                structured={"stable_start": 1},
             ),
             _AssistantResponse(
                 "final interval",
-                _ToolCall(
-                    "estimate-2",
-                    "return_parameter_estimate",
-                    {"value": [{"start": 1, "stop": 3}]},
-                ),
+                structured={"windows": [{"start": 1, "stop": 3}]},
             ),
         ]
     )
@@ -632,13 +673,11 @@ def test_null_hook_may_make_multiple_typed_llm_requests(tmp_path: Path) -> None:
             PARAM_RULES=_null_hook_rules(_estimate_interval_with_two_llm_calls),
             CHECKS=(),
         ),
-        backend=backend,
-        transcript_path=transcript,
+        session=LlmSession(backend, transcript),
     )
 
     assert len(backend.calls) == 2
-    second_evidence = json.loads(backend.calls[1][0][1].content)["evidence"]
-    assert second_evidence["assessment"] == {"stable_start": 1}
+    assert "stable_start" in backend.calls[1][0][-1].content
     assert context.state["null_hook_provenance"]["settings.windows"]["llm_requests"] == 2
 
 
@@ -713,7 +752,7 @@ def test_contract_value_uses_literal_as_its_choice_source() -> None:
     assert not hasattr(string_rule, "choices")
 
 
-def test_contract_provides_activates_real_dependency_nodes() -> None:
+def test_contract_provides_activates_virtual_dependency_branches() -> None:
     rules = (
         Depends("lsqfit", "window", physics="The fit window is required."),
         Value("lsqfit.window", int, physics="The fit window is an integer."),
@@ -739,8 +778,8 @@ def test_contract_provides_activates_real_dependency_nodes() -> None:
         Value("lanczos.iterations", int, physics="Lanczos iterations are integers."),
     )
 
-    assert evaluate_rules({"analysis_method": "lsqfit", "lsqfit": {"window": 4}}, rules) == []
-    assert evaluate_rules({"analysis_method": "lanczos", "lanczos": {"iterations": 3}}, rules) == []
+    assert evaluate_rules({"analysis_method": "lsqfit", "window": 4}, rules) == []
+    assert evaluate_rules({"analysis_method": "lanczos", "iterations": 3}, rules) == []
     assert [(issue.path, issue.message) for issue in evaluate_rules({"analysis_method": "unknown"}, rules)] == [
         (
             "analysis_method",
@@ -751,31 +790,28 @@ def test_contract_provides_activates_real_dependency_nodes() -> None:
         (issue.path, issue.message, issue.physics) for issue in evaluate_rules({"analysis_method": "lsqfit"}, rules)
     ] == [
         (
-            "lsqfit",
-            "is required when analysis_method='lsqfit'",
-            "Least-squares fitting owns its parameter object.",
+            "window",
+            "is required",
+            "The fit window is required.",
         )
     ]
     mixed = {
         "analysis_method": "lsqfit",
-        "lsqfit": {"window": 4},
-        "lanczos": {"iterations": 3},
+        "window": 4,
+        "iterations": 3,
     }
     assert evaluate_rules(mixed, rules) == []
-    assert mixed == {
-        "analysis_method": "lsqfit",
-        "lsqfit": {"window": 4},
-        "lanczos": {"iterations": 3},
-    }
+    assert mixed == {"analysis_method": "lsqfit", "window": 4}
     invalid_inactive = {
         "analysis_method": "lsqfit",
-        "lsqfit": {"window": 4},
-        "lanczos": {"iterations": "three", "typo": 1},
+        "window": 4,
+        "iterations": "three",
+        "typo": 1,
     }
     assert [(issue.path, issue.message) for issue in evaluate_rules(invalid_inactive, rules)] == [
-        ("lanczos.iterations", "expected int"),
-        ("lanczos.typo", "unknown key 'typo'"),
+        ("typo", "unknown key 'typo'")
     ]
+    assert "iterations" not in invalid_inactive
 
 
 def test_contract_only_applies_defaults_and_hooks_in_the_selected_provider() -> None:
@@ -796,14 +832,15 @@ def test_contract_only_applies_defaults_and_hooks_in_the_selected_provider() -> 
             null_hook=_estimate_interval_without_llm,
         ),
     )
-    params = {"analysis_method": "lsqfit", "lsqfit": {}}
+    params = {"analysis_method": "lsqfit"}
 
-    assert _apply_recommended_defaults(params, rules) == {"lsqfit.mode": "safe"}
-    assert params == {
-        "analysis_method": "lsqfit",
-        "lsqfit": {"mode": "safe"},
-    }
+    assert _apply_recommended_defaults(params, rules) == {"mode": "safe"}
+    assert params == {"analysis_method": "lsqfit", "mode": "safe"}
     assert _unresolved_null_hooks(params, rules) == ()
+
+    lanczos = {"analysis_method": "lanczos"}
+    unresolved = _unresolved_null_hooks(lanczos, rules)
+    assert [rule.path for rule in unresolved] == ["windows"]
 
 
 def test_absolute_provider_selector_does_not_own_global_choices() -> None:
@@ -815,14 +852,14 @@ def test_absolute_provider_selector_does_not_own_global_choices() -> None:
         Recommends("pdf", "sector", physics="PDF sector has a default.", default="valence"),
     )
     root = {"metadata": {"target_observable": "da"}}
-    params = {"da": {"phase_transfer_da": True}}
+    params = {"phase_transfer_da": True}
     assert evaluate_rules(params, rules, root_document=root) == []
-    assert params == {"da": {"phase_transfer_da": True}}
+    assert params == {"phase_transfer_da": True}
 
     root["metadata"]["target_observable"] = "pdf"
-    params = {"pdf": {}}
+    params = {}
     assert evaluate_rules(params, rules, root_document=root) == []
-    assert params == {"pdf": {"sector": "valence"}}
+    assert params == {"sector": "valence"}
 
     root["metadata"]["target_observable"] = "gpd"
     assert evaluate_rules({}, rules, root_document=root) == []
@@ -839,14 +876,11 @@ def test_nested_provider_uses_the_same_explicit_selector_path_as_value() -> None
         Depends("external.hybrid", "switch", physics="Hybrid switch is explicit."),
         Value("external.hybrid.switch", float, physics="Hybrid switch is numeric."),
     )
-    hybrid = {"strategy": "external", "external": {"scheme": "hybrid", "hybrid": {"switch": 0.2}}}
+    hybrid = {"strategy": "external", "scheme": "hybrid", "switch": 0.2}
     assert evaluate_rules(hybrid, rules) == []
-    ratio = {"strategy": "external", "external": {"scheme": "ratio", "hybrid": {"switch": 0.2}}}
+    ratio = {"strategy": "external", "scheme": "ratio", "switch": 0.2}
     assert evaluate_rules(ratio, rules) == []
-    assert ratio == {
-        "strategy": "external",
-        "external": {"scheme": "ratio", "hybrid": {"switch": 0.2}},
-    }
+    assert ratio == {"strategy": "external", "scheme": "ratio"}
 
 
 def test_job_provider_values_override_stage_defaults() -> None:
@@ -861,11 +895,41 @@ def test_job_provider_values_override_stage_defaults() -> None:
         (),
     )
     document = {
-        "defaults": {"analysis_method": "lsqfit", "lsqfit": {"window": 2}},
-        "jobs": [{"id": "fit", "lsqfit": {"window": 7}}],
+        "defaults": {"analysis_method": "lsqfit", "window": 2},
+        "jobs": [{"id": "fit", "window": 7}],
     }
     assert evaluate_rules(document, rules) == []
-    assert document["jobs"][0]["lsqfit"]["window"] == 7
+    assert document["jobs"][0]["window"] == 7
+
+
+def test_virtual_provider_projects_active_values_without_hiding_typos() -> None:
+    rules = stage_job_rules(
+        (
+            Depends("", "operation", physics="Operation is explicit."),
+            Value("operation", Literal["fit", "budget"], physics="Operation is controlled."),
+            Provides("", "fit", "operation", physics="Fit branch."),
+            Depends("fit", "fit_only", physics="Fit parameter is explicit."),
+            Value("fit.fit_only", int, physics="Fit parameter is integer."),
+            Provides("", "budget", "operation", physics="Budget branch."),
+            Depends("budget", "budget_only", physics="Budget parameter is explicit."),
+            Value("budget.budget_only", int, physics="Budget parameter is integer."),
+        ),
+        (),
+    )
+    document = {
+        "defaults": {"operation": "fit", "fit_only": 1},
+        "jobs": [{"id": "budget", "operation": "budget", "fit_only": 9, "budget_only": 2}],
+    }
+    assert evaluate_rules(document, rules) == []
+    assert document["jobs"] == [{"id": "budget", "operation": "budget", "budget_only": 2, "inputs": {}}]
+
+    typo = {
+        "defaults": {"operation": "fit", "fit_only": 1, "fit_typo": 3},
+        "jobs": [{"id": "fit"}],
+    }
+    assert [(issue.path, issue.message) for issue in evaluate_rules(typo, rules)] == [
+        ("jobs[0].fit_typo", "unknown key 'fit_typo'")
+    ]
 
 
 def test_suggests_fills_list_items_before_bfs_validation() -> None:
@@ -883,13 +947,21 @@ def test_suggests_fills_list_items_before_bfs_validation() -> None:
     )
     document = {
         "defaults": {"mode": "safe", "nested": {"left": 1, "right": 2}},
-        "jobs": [{"nested": {"right": 7}}, {}],
+        "jobs": [{"nested": {"left": 1, "right": 7}}, {}],
     }
 
     assert evaluate_rules(document, rules) == []
     assert document["jobs"] == [
         {"mode": "safe", "nested": {"left": 1, "right": 7}},
         {"mode": "safe", "nested": {"left": 1, "right": 2}},
+    ]
+
+    partial = {
+        "defaults": {"mode": "safe", "nested": {"left": 1, "right": 2}},
+        "jobs": [{"nested": {"right": 7}}],
+    }
+    assert [(issue.path, issue.message) for issue in evaluate_rules(partial, rules)] == [
+        ("jobs[0].nested.left", "is required")
     ]
 
 
@@ -1008,6 +1080,7 @@ def test_fourier_scan_intrinsic_values_are_owned_by_rules() -> None:
 
 
 def test_all_shipped_tools_have_provider_schemas() -> None:
+    workflow_stages = {"correlator_analysis", "renormalization", "perturbative_matching", "extrapolation"}
     for stage_id in (
         "correlator_analysis",
         "renormalization",
@@ -1017,7 +1090,7 @@ def test_all_shipped_tools_have_provider_schemas() -> None:
         "review",
     ):
         tools = _discover_tools(stage_id)
-        assert tools
+        assert bool(tools) is (stage_id not in workflow_stages)
         assert all(tool.schema["function"]["name"] == tool.name for tool in tools)
 
 
@@ -1025,7 +1098,7 @@ def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Pa
     from lamet_agent.agent import _invoke
     from lamet_agent.data import EnsembleData
 
-    tool = next(item for item in _discover_tools("renormalization") if item.name == "inspect_renormalization")
+    tool = next(item for item in _discover_tools("review") if item.name == "inspect_results")
     target = EnsembleData(
         None,
         "bootstrap",
@@ -1037,10 +1110,10 @@ def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Pa
     context = ToolContext(
         {},
         tmp_path / "manifest.json",
-        "renormalization",
+        "review",
         "rn",
         {},
-        {"target": target},
+        {"results": [target]},
         {},
         {},
         tmp_path,
@@ -1048,9 +1121,9 @@ def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Pa
     )
     observation = _invoke(tool, context, {"{}": {}})
     assert observation["ignored_arguments"] == ["{}"]
-    assert "aligned_inputs" in context.state
+    assert "result_summary" in context.state
 
-    argument_tool = next(item for item in _discover_tools("correlator_analysis") if item.name == "inspect_correlators")
+    argument_tool = next(item for item in _discover_tools("review") if item.name == "list_literature")
     with pytest.raises(ValueError, match="unknown arguments"):
         _invoke(argument_tool, context, {"{}": {}})
 
@@ -1068,6 +1141,10 @@ def test_all_shipped_stage_contracts_load_without_tool_imports() -> None:
         assert hasattr(contract, "PARAM_RULES")
         assert hasattr(contract, "INPUT_RULES")
         assert hasattr(contract, "CHECKS")
+
+
+def test_shipped_contracts_do_not_use_optional_depends() -> None:
+    assert "required" not in Depends.__dataclass_fields__
 
 
 @pytest.mark.parametrize(
@@ -1088,21 +1165,16 @@ def test_correlator_contract_rejects_global_sampling_controls(name: str, value: 
 def test_manifest_enforces_global_sampling_relationships(tmp_path: Path) -> None:
     metadata = _valid_metadata(tmp_path, resample_mode="bootstrap")
     manifest = Manifest(tmp_path / "manifest.json", {"metadata": metadata, "stages": {}})
-    assert any(
-        issue.path == "metadata.bootstrap_samples" and "required" in issue.message for issue in manifest.validate()
-    )
+    assert any(issue.path == "metadata.samples" and "required" in issue.message for issue in manifest.validate())
 
-    metadata["bootstrap_samples"] = 100
+    metadata["samples"] = 100
     assert not [issue for issue in manifest.validate() if issue.path.startswith("metadata.")]
 
-    metadata["resample_mode"] = "jackknife"
-    assert any(
-        issue.path == "metadata.bootstrap_samples" and "must be omitted" in issue.message
-        for issue in manifest.validate()
-    )
+    manifest.document["metadata"]["resample_mode"] = "jackknife"
+    assert not [issue for issue in manifest.validate() if issue.path.startswith("metadata.")]
 
-    metadata.pop("bootstrap_samples")
-    metadata["sample_error_mode"] = "median"
+    manifest.document["metadata"].pop("samples")
+    manifest.document["metadata"]["sample_error_mode"] = "median"
     assert any(
         issue.path == "metadata.sample_error_mode" and "require" in issue.message for issue in manifest.validate()
     )
@@ -1118,83 +1190,9 @@ def test_manifest_rejects_legacy_sampling_abbreviations(tmp_path: Path) -> None:
 def test_correlator_manifest_accepts_missing_hook_windows() -> None:
     manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json")
     defaults = manifest.document["stages"]["correlator_analysis"]["defaults"]
-    defaults["lsqfit"].pop("pt2_windows")
+    defaults.pop("pt2_windows")
 
     assert manifest.validate() == []
-
-
-@pytest.mark.parametrize(
-    "stem",
-    ("pion_pdf_cg", "pion_pdf_gi", "pion_da_gi", "kaon_da_gi"),
-)
-def test_refactor_examples_reuse_legacy_physics_parameter_names(stem: str) -> None:
-    root = Path(__file__).parents[2]
-    legacy_examples = root.parent / "lamet-agent" / "examples"
-    neo_examples = root / "examples"
-    legacy = json.loads((legacy_examples / f"{stem}_manifest.json").read_text(encoding="utf-8"))
-    neo_manifest = load_manifest(neo_examples / f"{stem}_manifest_neo.json")
-    neo = neo_manifest.document
-
-    def key_names(value: object) -> set[str]:
-        if isinstance(value, dict):
-            return set(value) | {name for child in value.values() for name in key_names(child)}
-        if isinstance(value, list):
-            return {name for child in value for name in key_names(child)}
-        return set()
-
-    aligned_names = {
-        "run_id",
-        "resample_mode",
-        "bin_size",
-        "component",
-        "nstate",
-        "fit_scope",
-        "fit_strategy",
-        "fitting_form",
-        "model_average",
-        "posterior_prior_error_scale",
-        "normalization",
-        "scheme",
-        "strategy",
-        "mu",
-        "target_observable",
-        "parton",
-        "quasi_y_ls",
-        "zmin_fm",
-        "zmax_fm",
-        "smooth",
-        "zmax_ext_fm",
-        "order",
-        "sector",
-        "Lambda0_gev",
-        "lc_x_ls",
-    }
-    if stem.startswith("pion_pdf"):
-        aligned_names |= {"zs_fm", "m0_gev", "delta_m_gev"}
-    else:
-        aligned_names |= {"LambdaQCD_gev", "d", "phase_transfer_da", "psi1_flavor_class", "psi2_flavor_class"}
-    if stem == "pion_pdf_cg":
-        aligned_names |= {"rgr_kappa", "rgr_mu_min_gev"}
-    legacy_names = key_names(legacy)
-    neo_names = key_names(neo)
-    assert aligned_names <= legacy_names
-    assert aligned_names <= neo_names
-    expected_target = "pdf" if "pdf" in stem else "da"
-    metadata = neo["metadata"]
-    assert metadata["target_observable"] == expected_target
-    assert metadata["resample_mode"] == ("jackknife" if expected_target == "pdf" else "bootstrap")
-    assert metadata["bin_size"] > 0
-    assert "bootstrap_samples" in metadata if expected_target == "da" else "bootstrap_samples" not in metadata
-    correlator_defaults = neo["stages"]["correlator_analysis"]["defaults"]
-    assert not {"resample_mode", "sample_error_mode", "bootstrap_samples", "bin_size"} & set(correlator_defaults)
-    assert "target_observable" not in neo["stages"]["fourier_transform"]["defaults"]
-    branch = correlator_defaults.get("lsqfit", correlator_defaults.get("lanczos", {}))
-    assert not {"allowed_methods", "matrix_fit", "qda_fit"} & set(branch)
-    assert neo_manifest.validate() == []
-    grouped = neo_manifest.jobs_by_stage
-    flattened = tuple(job for stage_jobs in grouped.values() for job in stage_jobs)
-    assert flattened == neo_manifest.jobs
-    assert all(grouped[job.stage_id][job.job_index] is job for job in neo_manifest.jobs)
 
 
 @pytest.mark.parametrize("stem", ("pion_da_gi", "kaon_da_gi"))
@@ -1212,13 +1210,12 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
     assert '"job"' not in json.dumps(resolved.document)
     extrapolation_jobs = [job for job in resolved._resolved_jobs() if job.stage_id == "extrapolation"]
     assert all(
-        job.params["fit"]["priors"] == {"mean": 0.0, "sdev": 3.0}
+        job.params["priors"] == {"mean": 0.0, "sdev": 3.0}
         for job in extrapolation_jobs
         if job.params["operation"] == "fit"
     )
     budget_job = next(job for job in extrapolation_jobs if job.params["operation"] == "systematics_budget")
-    assert "fit" in budget_job.params
-    assert "priors" not in budget_job.params["fit"]
+    assert "priors" not in budget_job.params
     assert len(stages["fourier_transform"]["jobs"]) == 27
     assert len(stages["perturbative_matching"]["jobs"]) == 45
     assert [job["id"] for job in stages["extrapolation"]["jobs"]] == [
@@ -1233,7 +1230,7 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
         "extrapolation_systematics_budget",
     ]
     budget = stages["extrapolation"]["jobs"][-1]
-    assert budget["systematics_budget"]["systematics_groups"] == {
+    assert budget["systematics_groups"] == {
         "main": 0,
         "zs": [],
         "lambda_extrapolation": [1, 2],
@@ -1257,13 +1254,13 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
     parsed = load_manifest(manifest.path)
     assert parsed.validate() == []
     assert "systematics" not in parsed.document
-    assert parsed.document["stages"]["extrapolation"]["defaults"]["fit"]["required_terms"] == [
+    assert parsed.document["stages"]["extrapolation"]["defaults"]["required_terms"] == [
         "a",
         "inv_p2",
         "inv_p4",
         "ap2",
     ]
-    assert parsed.document["stages"]["extrapolation"]["jobs"][0]["fit"]["priors"] == {"mean": 0.0, "sdev": 3.0}
+    assert parsed.document["stages"]["extrapolation"]["jobs"][0]["priors"] == {"mean": 0.0, "sdev": 3.0}
 
 
 def test_job_source_object_is_rejected_at_the_input_role() -> None:
@@ -1302,34 +1299,34 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
         "component": "both",
         "nstate": [2],
         "correlator_ids": ["c2", "c3"],
-        "lanczos": {"scope": "3pt_matrix"},
+        "scope": "3pt_matrix",
+        "t0": 4,
+        "time_step": 2,
     }
     assert evaluate_rules(lanczos, contract.PARAM_RULES) == []
     context = CheckContext({}, "correlator_analysis", "job", lanczos, {})
     assert evaluate_checks(contract.CHECKS, context) == []
 
-    mixed = {**lanczos, "lsqfit": {"fit_scope": ["spectrum"]}}
+    mixed = {**lanczos, "fit_scope": ["spectrum"]}
     assert evaluate_rules(mixed, contract.PARAM_RULES) == []
-    assert mixed["lsqfit"] == {"fit_scope": ["spectrum"]}
+    assert "fit_scope" not in mixed
 
     ground_fit = {
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
         "correlator_ids": ["c2"],
-        "lsqfit": {
-            "fit_scope": ["spectrum"],
-            "fit_strategy": ["independent"],
-            "fitting_form": "Breit",
-            "model_average": False,
-            "pt2_windows": [{"tmin": 2, "tmax": 8}],
-            "svdcut": 1e-6,
-            "posterior_prior_error_scale": 1.0,
-            "q_min": 0.05,
-        },
+        "fit_scope": ["spectrum"],
+        "fit_strategy": ["independent"],
+        "fitting_form": "Breit",
+        "model_average": False,
+        "pt2_windows": [{"tmin": 2, "tmax": 8}],
+        "svdcut": 1e-6,
+        "posterior_prior_error_scale": 1.0,
+        "q_min": 0.05,
     }
     assert evaluate_rules(ground_fit, contract.PARAM_RULES) == []
-    assert ground_fit["lsqfit"]["prior_width"] == [1.0]
+    assert ground_fit["prior_width"] == [1.0]
     assert (
         evaluate_checks(
             contract.CHECKS,
@@ -1391,6 +1388,137 @@ def test_matching_check_reports_the_exact_parameter_path() -> None:
     assert [(issue.path, issue.message) for issue in issues] == [
         ("scheme", "must equal 'hybrid' for kernel 'CG_gt_quark_PDF_hybrid_NLO'")
     ]
+
+
+def test_matching_kernel_parameters_follow_the_selected_signature() -> None:
+    contract = _load_stage_contract("perturbative_matching")
+
+    def issues(kernel_id: str, scheme: str, parameters: dict[str, object], **extra: object):
+        params = {
+            "kernel_id": kernel_id,
+            "scheme": scheme,
+            "mu": 2.0,
+            "lc_x_ls": [0.0, 1.0],
+            "kernel_parameters": parameters,
+            **extra,
+        }
+        context = CheckContext({}, "perturbative_matching", "job", params, {"quasi": "earlier"})
+        return evaluate_checks(contract.CHECKS, context)
+
+    ratio = "CG_gt_quark_PDF_ratio_NLO"
+    rgr = "CG_gt_quark_PDF_hybrid_RGR_re_NLO"
+    rgr_parameters = {"kappa": 1, "mu_min_gev": 0.6}
+    assert issues(rgr, "hybrid", rgr_parameters, hybrid={"zs_fm": 0.18}) == []
+    assert issues(ratio, "ratio", {}, hybrid={"zs_fm": 0.18}) == []
+    switched = issues(ratio, "ratio", rgr_parameters)
+    assert {issue.path for issue in switched} == {
+        "kernel_parameters.kappa",
+        "kernel_parameters.mu_min_gev",
+    }
+    assert any(
+        issue.path == "kernel_parameters.rgr_kappa"
+        for issue in issues(rgr, "hybrid", {"rgr_kappa": 1.0}, hybrid={"zs_fm": 0.18})
+    )
+    assert any(
+        issue.path == "kernel_parameters.kappa"
+        for issue in issues(rgr, "hybrid", {"kappa": True}, hybrid={"zs_fm": 0.18})
+    )
+    for managed in ("x_out", "x_in", "momentum_gev", "scale_gev", "zs_fm"):
+        current = issues(rgr, "hybrid", {managed: 0.18}, hybrid={"zs_fm": 0.18})
+        assert any(issue.path == f"kernel_parameters.{managed}" and "stage" in issue.message for issue in current)
+
+
+def test_matching_kernel_parameter_rules_require_a_dict_and_required_signature_values() -> None:
+    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_cg_manifest_neo.json")
+    manifest.document["stages"]["perturbative_matching"]["defaults"]["kernel_parameters"] = []
+    assert any(
+        issue.path.endswith("kernel_parameters") and "expected dict" in issue.message for issue in manifest.validate()
+    )
+
+    contract = _load_stage_contract("perturbative_matching")
+
+    def kernel(x_out, x_in, *, momentum_gev: float, scale_gev: float, cutoff: int, enabled: bool = True):
+        return None
+
+    missing = contract._kernel_parameter_issues(kernel, {})
+    assert [(issue.path, issue.message) for issue in missing] == [
+        ("kernel_parameters.cutoff", "is required by the selected kernel signature")
+    ]
+    assert contract._kernel_parameter_issues(kernel, {"cutoff": 2, "enabled": False}) == []
+
+
+def test_matching_check_requires_zs_fm_exactly_for_hybrid_kernels(monkeypatch) -> None:
+    contract = _load_stage_contract("perturbative_matching")
+
+    def without_zs(x_out, x_in, *, momentum_gev: float, scale_gev: float):
+        return None
+
+    def with_zs(x_out, x_in, *, momentum_gev: float, scale_gev: float, zs_fm: float):
+        return None
+
+    context = CheckContext(
+        {},
+        "perturbative_matching",
+        "job",
+        {
+            "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
+            "scheme": "hybrid",
+            "kernel_parameters": {},
+            "zs_fm": 0.18,
+        },
+        {"quasi": "earlier"},
+    )
+    monkeypatch.setattr(contract, "load_kernel", lambda _kernel_id: without_zs)
+    issue = contract.check_kernel_parameters(context)
+    assert isinstance(issue, Issue) and "must include" in issue.message
+
+    context.params["kernel_id"] = "CG_gt_quark_PDF_ratio_NLO"
+    context.params["scheme"] = "ratio"
+    monkeypatch.setattr(contract, "load_kernel", lambda _kernel_id: with_zs)
+    issue = contract.check_kernel_parameters(context)
+    assert isinstance(issue, Issue) and "must omit" in issue.message
+
+
+def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
+    examples = Path(__file__).parents[2] / "examples"
+    manifest = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    assert manifest.validate() == []
+    jobs = manifest.jobs_by_stage["renormalization"]
+    from lamet_agent.stages.renormalization.parameters import effective_params
+
+    fit = effective_params(jobs[0].params)
+    apply = effective_params(jobs[1].params)
+    contract = _load_stage_contract("renormalization")
+    assert evaluate_rules(dict(jobs[0].params), contract.PARAM_RULES) == []
+    assert evaluate_rules(dict(jobs[1].params), contract.PARAM_RULES) == []
+    assert (fit["type"], fit["kernel_id"], set(jobs[0].inputs)) == (
+        "fit",
+        "z_msbar_pdf_nlo",
+        {"reference"},
+    )
+    assert (apply["type"], apply["kernel_id"], set(jobs[1].inputs)) == (
+        "apply",
+        "z_msbar_da_nlo",
+        {"target", "zR"},
+    )
+
+    wrong_type = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    wrong_type.document["stages"]["renormalization"]["jobs"][0]["type"] = "apply"
+    assert any(issue.path.endswith("inputs.target") and "required" in issue.message for issue in wrong_type.validate())
+
+    missing_kernel = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    missing_kernel.document["stages"]["renormalization"]["defaults"].pop("kernel_id")
+    assert any(issue.path.endswith("kernel_id") for issue in missing_kernel.validate())
+
+    wrong_signature = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    fit_params = wrong_signature.document["stages"]["renormalization"]["jobs"][0]
+    fit_params["kernel_id"] = "GI_gzg5_DA_ratio_NLO"
+    assert any(issue.path.endswith("kernel_id") and "z_fm" in issue.message for issue in wrong_signature.validate())
+
+    redundant_type = load_manifest(examples / "pion_pdf_gi_manifest_neo.json")
+    redundant_type.document["stages"]["renormalization"]["jobs"][0]["type"] = "apply"
+    assert redundant_type.validate() == []
+    assert "type" not in redundant_type.jobs_by_stage["renormalization"][0].params
 
 
 def test_finish_rejects_second_terminal_result(tmp_path: Path) -> None:
@@ -1686,6 +1814,189 @@ def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path) ->
     ]
     result = create_session(_ScriptedBackend(responses)).run_manifest(load_manifest(manifest_path))
     assert result["summaries"]["review_1"]["result"] == "review"
+
+
+def test_deterministic_stage_workflow_bypasses_the_backend(tmp_path: Path, monkeypatch) -> None:
+    import lamet_agent.stages.perturbative_matching.workflow as workflow
+
+    calls = []
+
+    def deterministic(context, _ask):
+        calls.append(context.job_id)
+        context.finish(
+            "matched",
+            {
+                "stage_id": context.stage_id,
+                "job_id": context.job_id,
+                "result": "matched_distribution",
+                "decisions": {},
+                "diagnostics": {},
+                "artifacts": [],
+            },
+        )
+
+    monkeypatch.setattr(workflow, "run", deterministic)
+    backend = _ScriptedBackend([])
+    context = ToolContext(
+        {"metadata": {"workers": 1}},
+        tmp_path / "manifest.json",
+        "perturbative_matching",
+        "matching",
+        {
+            "kernel_id": "CG_gt_quark_PDF_ratio_NLO",
+            "scheme": "ratio",
+            "mu": 2.0,
+            "lc_x_ls": [0.0, 1.0],
+            "kernel_parameters": {},
+        },
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    output, summary = create_session(backend)._run_context(context, [], "", "")
+
+    assert output == "matched"
+    assert summary["result"] == "matched_distribution"
+    assert calls == ["matching"]
+    assert backend.calls == []
+
+
+def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, monkeypatch) -> None:
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    events = []
+    monkeypatch.setattr(workflow, "inspect", lambda _context: events.append("inspect"))
+
+    def fit(_context, *, tune_z_values):
+        events.append(("fit", tune_z_values))
+        return {"metrics": {"recommended_candidate_id": "matrix_001"}}
+
+    def publish(context, *, candidate_id):
+        events.append(("publish", candidate_id))
+        context.finish(
+            "matrix",
+            {
+                "stage_id": context.stage_id,
+                "job_id": context.job_id,
+                "result": "bare_matrix_element",
+                "decisions": {"candidate_id": candidate_id},
+                "diagnostics": {},
+                "artifacts": [],
+            },
+        )
+
+    monkeypatch.setattr(workflow, "fit_qda", fit)
+    monkeypatch.setattr(workflow, "publish", publish)
+    backend = _ScriptedBackend([_AssistantResponse("", structured={"tune_z_values": [0.1]})])
+
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "correlator",
+        {"analysis_method": "lsqfit", "fit_scope": ["qda_ratio"]},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(backend, tmp_path / "recommendation.md"))
+
+    assert events == ["inspect", ("fit", [0.1]), ("publish", "matrix_001")]
+    assert backend.calls[0][1] == []
+    schema = backend.response_schemas[0]["schema"]
+    assert schema["required"] == ["tune_z_values"]
+    assert schema["properties"]["tune_z_values"]["items"] == {"type": "number"}
+
+
+def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Path, monkeypatch) -> None:
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    recommendations = []
+
+    def recommend(_context, _ask, *, diagnostics=None):
+        recommendations.append(diagnostics)
+        return [float(len(recommendations))]
+
+    attempts = []
+
+    def fit(context, *, tune_z_values):
+        attempts.append(tune_z_values)
+        quality = 0.01 if len(attempts) == 1 else 0.8
+        context.state["matrix_element_candidates"] = [
+            {
+                "id": f"matrix_{len(attempts):03d}",
+                "min_Q": quality,
+                "worst_chi2_dof": 1.0,
+                "feasible_at_all_tune_z": True,
+                "numerical_failure": False,
+                "tune_z_values": tune_z_values,
+            }
+        ]
+        return {"metrics": {"recommended_candidate_id": f"matrix_{len(attempts):03d}"}}
+
+    published = []
+    monkeypatch.setattr(workflow, "recommend_qda", recommend)
+    monkeypatch.setattr(workflow, "fit_qda", fit)
+    monkeypatch.setattr(workflow, "publish", lambda _context, *, candidate_id: published.append(candidate_id))
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "correlator",
+        {"analysis_method": "lsqfit", "fit_scope": ["qda_ratio"], "q_min": 0.05},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, lambda **_request: None)
+
+    assert attempts == [[1.0], [2.0]]
+    assert recommendations[0] is None
+    assert recommendations[1][0]["min_Q"] == 0.01
+    assert published == ["matrix_002"]
+
+
+def test_renormalization_workflow_routes_virtual_provider_type(tmp_path: Path, monkeypatch) -> None:
+    import lamet_agent.stages.renormalization.workflow as workflow
+
+    events = []
+    monkeypatch.setattr(workflow, "inspect", lambda _context: events.append("inspect"))
+    monkeypatch.setattr(workflow, "fit", lambda _context: events.append("fit"))
+    monkeypatch.setattr(workflow, "apply", lambda _context: events.append("apply"))
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "renormalization",
+        "fit",
+        {
+            "strategy": "self_renormalization",
+            "type": "fit",
+            "scheme": "ratio",
+            "kernel_id": "z_msbar_pdf_nlo",
+            "mu": 2.0,
+            "LambdaQCD_gev": 0.1,
+            "d": -0.08,
+        },
+        {"reference": "source"},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, lambda **_kwargs: None)
+
+    assert events == ["inspect", "fit"]
 
 
 def test_agent_fails_immediately_when_the_model_returns_no_tool_call(tmp_path: Path) -> None:

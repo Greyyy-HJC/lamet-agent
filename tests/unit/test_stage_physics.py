@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import io
+import json
 from pathlib import Path
 import tokenize
 
@@ -18,13 +19,15 @@ import pytest
 from lamet_agent.data import EnsembleData, EnsembleInfo
 from lamet_agent.agent import ToolContext
 from lamet_agent.parallel import FitNumericalError
-from lamet_agent.kernels import list_kernel_ids, load_kernel, load_kernel_document
+from lamet_agent.kernels import list_kernel_ids, load_kernel, load_kernel_document, load_renormalization_kernel
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
 from lamet_agent.stages.correlator_analysis.physics import fit_spectrum_samples, matrix_element_samples
 from lamet_agent.stages.correlator_analysis.physics import fit_matrix_element_samples, matrix_element_prior
-from lamet_agent.stages.correlator_analysis.hook import (
-    recommend_pt2_windows,
-    recommend_pt3_windows,
+from lamet_agent.stages.correlator_analysis.tools.recommend_pt2_windows.recommendation import (
+    recommend as recommend_pt2_windows,
+)
+from lamet_agent.stages.correlator_analysis.tools.recommend_pt3_windows.recommendation import (
+    recommend as recommend_pt3_windows,
 )
 from lamet_agent.parallel.lanczos import (
     _analyze_threept,
@@ -114,10 +117,8 @@ def test_correlator_window_recommendations_send_direct_means_and_errors(
         "nstate": [1, 2],
         "component": "both",
         "analysis_method": "lsqfit",
-        "lsqfit": {
-            "time_range": {"min": 1, "max": 5},
-            "fit_scope": ["3pt_ratio"],
-        },
+        "time_range": {"min": 1, "max": 5},
+        "fit_scope": ["3pt_ratio"],
     }
     context = ToolContext(
         {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
@@ -131,24 +132,32 @@ def test_correlator_window_recommendations_send_direct_means_and_errors(
         tmp_path,
         np.random.default_rng(1),
     )
-    requests = []
+    from lamet_agent.agent import LlmSession
+    from lamet_agent.llm import _AssistantResponse
 
-    def choose_pt2(*, instruction, evidence):
-        requests.append((instruction, evidence))
-        return [{"tmin": 1, "tmax": 5}]
+    class StructuredBackend:
+        identity = "structured:test"
 
-    def choose_pt3(*, instruction, evidence):
-        requests.append((instruction, evidence))
-        return [{"tsep_ls": [6, 8], "tau_cut": 2}]
+        def __init__(self, response):
+            self.response = response
+            self.calls = []
 
-    assert recommend_pt2_windows(context, choose_pt2) == [{"tmin": 1, "tmax": 5}]
-    assert recommend_pt3_windows(context, choose_pt3) == [{"tsep_ls": [6, 8], "tau_cut": 2}]
+        def complete(self, **request):
+            self.calls.append((request["messages"], request["tools"], request["prompt_digest"]))
+            return self.response
 
-    pt2_evidence = requests[0][1]
+    pt2_backend = StructuredBackend(_AssistantResponse("", structured={"windows": [{"tmin": 1, "tmax": 5}]}))
+    pt3_backend = StructuredBackend(_AssistantResponse("", structured={"windows": [{"tsep_ls": [6, 8], "tau_cut": 2}]}))
+    assert recommend_pt2_windows(context, LlmSession(pt2_backend, tmp_path / "pt2.md")) == [{"tmin": 1, "tmax": 5}]
+    assert recommend_pt3_windows(context, LlmSession(pt3_backend, tmp_path / "pt3.md")) == [
+        {"tsep_ls": [6, 8], "tau_cut": 2}
+    ]
+
+    pt2_evidence = json.loads(pt2_backend.calls[0][0][-1].content)["evidence"]
     assert pt2_evidence["minimum_points"] == 4
     assert pt2_evidence["two_point_correlators"][0]["mean"] == pytest.approx([2.0, 3.0, 4.0, 5.0])
     assert all(error > 0 for error in pt2_evidence["two_point_correlators"][0]["error"])
-    pt3_evidence = requests[1][1]
+    pt3_evidence = json.loads(pt3_backend.calls[0][0][-1].content)["evidence"]
     assert pt3_evidence["z"] == [0.0, 1.0]
     assert pt3_evidence["tsep"] == [6, 8]
     assert pt3_evidence["tau"] == [0, 1, 2, 3]
@@ -276,10 +285,10 @@ def test_neo_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
     assert inspection["point_usage"]["discarded_per_z"] == 30
     assert result["values"][:, 0] == pytest.approx(np.full(n_configurations, current[0, 0]))
 
-    from lamet_agent.stages.correlator_analysis.tools.inspect_lanczos_inputs import (
+    from lamet_agent.stages.correlator_analysis._lanczos_inspection import (
         run as inspect_lanczos,
     )
-    from lamet_agent.stages.correlator_analysis.tools.run_lanczos_analysis import (
+    from lamet_agent.stages.correlator_analysis._lanczos import (
         run as run_lanczos,
     )
 
@@ -288,11 +297,9 @@ def test_neo_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
         "correlator_ids": ["c2", "c3"],
         "component": "both",
         "nstate": [2],
-        "lanczos": {
-            "scope": "3pt_matrix",
-            "inner_samples": 4,
-            "precision": 0,
-        },
+        "scope": "3pt_matrix",
+        "inner_samples": 4,
+        "precision": 0,
     }
     context = ToolContext(
         {
@@ -331,11 +338,9 @@ def test_neo_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
         **params,
         "correlator_ids": ["c2"],
         "component": "re",
-        "lanczos": {
-            "scope": "2pt_spectrum",
-            "inner_samples": 4,
-            "precision": 0,
-        },
+        "scope": "2pt_spectrum",
+        "inner_samples": 4,
+        "precision": 0,
     }
     spectrum_context = ToolContext(
         context.manifest,
@@ -392,7 +397,7 @@ def test_qda_fit_divides_by_nonlocal_origin_and_fits_each_sample() -> None:
 
 
 def test_correlator_publish_requires_complete_scan_and_deterministic_best_candidate(tmp_path) -> None:
-    from lamet_agent.stages.correlator_analysis.tools.publish_correlator_result import run
+    from lamet_agent.stages.correlator_analysis._publish import run
 
     attrs = {"observable": "matrix_element", "sample_error_mode": "median"}
     low = EnsembleData(
@@ -455,15 +460,13 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
         "nstate": [1],
-        "lsqfit": {
-            "fit_scope": ["qda_ratio"],
-            "fit_strategy": ["independent"],
-            "prior_width": [1.0],
-            "q_min": 0.05,
-            "chi2_dof_tolerance": 0.25,
-            "tune_z_values": [1],
-            "pt2_windows": [{"tmin": 2, "tmax": 5}, {"tmin": 3, "tmax": 6}],
-        },
+        "fit_scope": ["qda_ratio"],
+        "fit_strategy": ["independent"],
+        "prior_width": [1.0],
+        "q_min": 0.05,
+        "chi2_dof_tolerance": 0.25,
+        "tune_z_values": [1],
+        "pt2_windows": [{"tmin": 2, "tmax": 5}, {"tmin": 3, "tmax": 6}],
     }
     context = ToolContext(
         {"metadata": {"workers": 1, "sample_error_mode": "median"}},
@@ -512,7 +515,7 @@ def test_matrix_element_prior_keeps_original_inactive_component_parameters() -> 
     [(3.64e-19, 1.0e15), (3.25e-22, 1.0e18)],
 )
 def test_correlator_rescale_is_a_data_driven_power_of_ten(typical_abs: float, expected_scale: float) -> None:
-    from lamet_agent.stages.correlator_analysis.tools.inspect_correlators import (
+    from lamet_agent.stages.correlator_analysis._inspection import (
         _automatic_correlator_rescale,
     )
 
@@ -530,7 +533,7 @@ def test_correlator_rescale_is_a_data_driven_power_of_ten(typical_abs: float, ex
 
 
 def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, tmp_path) -> None:
-    import lamet_agent.stages.correlator_analysis.tools.fit_matrix_element_model as tool
+    import lamet_agent.stages.correlator_analysis._fit_matrix as tool
 
     three_point = EnsembleData(
         None,
@@ -556,7 +559,8 @@ def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, t
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
-        "lsqfit": {"prior_width": [1.0], **settings},
+        "prior_width": [1.0],
+        **settings,
     }
     context = ToolContext(
         {"metadata": {"workers": 2, "sample_error_mode": "covariance"}},
@@ -602,7 +606,7 @@ def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, t
 
 
 def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp_path) -> None:
-    import lamet_agent.stages.correlator_analysis.tools.fit_matrix_element_model as tool
+    import lamet_agent.stages.correlator_analysis._fit_matrix as tool
 
     three_point = EnsembleData(
         None,
@@ -632,7 +636,7 @@ def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
-        "lsqfit": settings,
+        **settings,
     }
     context = ToolContext(
         {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
@@ -684,7 +688,7 @@ def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp
 
 
 def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tmp_path) -> None:
-    import lamet_agent.stages.correlator_analysis.tools.fit_matrix_element as tool
+    import lamet_agent.stages.correlator_analysis._fit_qda as tool
 
     source = EnsembleData(
         None,
@@ -709,7 +713,7 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
         "analysis_method": "lsqfit",
         "component": "both",
         "nstate": [1],
-        "lsqfit": settings,
+        **settings,
     }
     context = ToolContext(
         {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
@@ -753,7 +757,7 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
 
 
 def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkeypatch, tmp_path) -> None:
-    import lamet_agent.stages.correlator_analysis.tools.publish_correlator_result as tool
+    import lamet_agent.stages.correlator_analysis._publish as tool
 
     data = EnsembleData(
         None,
@@ -798,7 +802,8 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
-        "lsqfit": {"prior_width": [1.0], **settings},
+        "prior_width": [1.0],
+        **settings,
     }
     context = ToolContext(
         {"metadata": {"workers": 2, "sample_error_mode": "covariance"}},
@@ -831,7 +836,7 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
 
 
 def test_publish_preflights_and_reselects_without_llm_round_trip(monkeypatch, tmp_path) -> None:
-    import lamet_agent.stages.correlator_analysis.tools.publish_correlator_result as tool
+    import lamet_agent.stages.correlator_analysis._publish as tool
 
     data = EnsembleData(
         None,
@@ -895,7 +900,8 @@ def test_publish_preflights_and_reselects_without_llm_round_trip(monkeypatch, tm
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
-        "lsqfit": {"prior_width": [1.0], **settings},
+        "prior_width": [1.0],
+        **settings,
     }
     context = ToolContext(
         {"metadata": {"workers": 2, "sample_error_mode": "covariance"}},
@@ -931,7 +937,7 @@ def test_publish_preflights_and_reselects_without_llm_round_trip(monkeypatch, tm
 
 def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_path) -> None:
     import json
-    from lamet_agent.stages.correlator_analysis.tools.publish_correlator_result import run
+    from lamet_agent.stages.correlator_analysis._publish import run
 
     attrs = {"observable": "matrix_element", "sample_error_mode": "covariance"}
     data = EnsembleData(
@@ -977,15 +983,13 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
         "nstate": [2],
-        "lsqfit": {
-            "fit_scope": ["3pt_ratio"],
-            "fit_strategy": ["joint"],
-            "prior_width": [1.0],
-            "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
-            "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
-            "q_min": 0.05,
-            "chi2_dof_tolerance": 0.25,
-        },
+        "fit_scope": ["3pt_ratio"],
+        "fit_strategy": ["joint"],
+        "prior_width": [1.0],
+        "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
+        "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
+        "q_min": 0.05,
+        "chi2_dof_tolerance": 0.25,
     }
     context = ToolContext(
         {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
@@ -1227,8 +1231,8 @@ def test_extrapolation_uses_one_joint_lsqfit() -> None:
     np.testing.assert_allclose(diagnostics["momentum_dependence"]["1.5"]["mean"], diagnostics["parameter_mean"]["h0"])
 
 
-def test_extrapolation_comparison_requires_the_single_reference_candidate(tmp_path) -> None:
-    from lamet_agent.stages.extrapolation.tools.compare_extrapolations import run
+def test_extrapolation_comparison_requires_the_single_reference_candidate() -> None:
+    from lamet_agent.stages.extrapolation.selection import select_single_candidate
 
     data = EnsembleData(None, "bootstrap", [[0.8, 1.0], [0.9, 1.1]], ["x"], {"x": [-0.2, 0.2]})
     candidate = {
@@ -1245,23 +1249,11 @@ def test_extrapolation_comparison_requires_the_single_reference_candidate(tmp_pa
         "parameter_sdev": {"h0": [0.05, 0.05], "a": 0.02},
         "momentum_dependence": {"2": {"momentum_gev": 2.0, "mean": [0.85, 1.05], "sdev": [0.05, 0.05]}},
     }
-    context = ToolContext(
-        {"metadata": {"workers": 1}},
-        tmp_path / "manifest.json",
-        "extrapolation",
-        "fit",
-        {"operation": "fit"},
-        {},
-        {},
-        {"extrapolation_candidates": [candidate]},
-        tmp_path,
-        np.random.default_rng(1),
-    )
-
-    observation = run(context, candidate_ids=["extrapolation_001"])
-
-    assert observation["metrics"]["weights"] == [1.0]
-    assert context.state["extrapolation_selected_data"] is data
+    selected, comparison = select_single_candidate([candidate])
+    assert comparison["weights"] == [1.0]
+    assert selected is data
+    with pytest.raises(ValueError, match="exactly one"):
+        select_single_candidate([])
 
 
 def test_self_renormalization_factor_is_not_a_placeholder() -> None:
@@ -1284,12 +1276,22 @@ def test_self_renormalization_factor_is_not_a_placeholder() -> None:
             )
         )
     factor = fit_factor(
-        references, short_distance_max_fm=0.2, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0, svdcut=1e-12
+        references,
+        short_distance_max_fm=0.2,
+        k=0.4,
+        lambda_qcd_gev=0.2,
+        d=0.0,
+        n_f=3,
+        scale_gev=2.0,
+        zms_kernel=load_renormalization_kernel("z_msbar_pdf_nlo"),
+        kernel_id="z_msbar_pdf_nlo",
+        svdcut=1e-12,
     )
     assert factor.dims == ["a", "z"]
     assert factor.n_sample == 1
     assert not np.allclose(factor.values, 1.0)
     assert factor.attrs["m0_convention"] == "reference_inverse_fm"
+    assert factor.attrs["kernel_id"] == "z_msbar_pdf_nlo"
     assert np.isfinite(float(factor.attrs["m0_gev"]))
 
 
@@ -1304,11 +1306,31 @@ def test_self_renormalization_accepts_one_sample_bearing_a_z_reference() -> None
         None, "bootstrap", [np.stack(grids), np.stack(grids) * 1.001], ["a", "z"], {"a": spacings, "z": z.tolist()}
     )
     factor = fit_factor(
-        reference, short_distance_max_fm=0.2, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0, svdcut=1e-12
+        reference,
+        short_distance_max_fm=0.2,
+        k=0.4,
+        lambda_qcd_gev=0.2,
+        d=0.0,
+        n_f=3,
+        scale_gev=2.0,
+        zms_kernel=load_renormalization_kernel("z_msbar_pdf_nlo"),
+        kernel_id="z_msbar_pdf_nlo",
+        svdcut=1e-12,
     )
     assert factor.dims == ["a", "z"]
     assert factor.n_sample == 1
     assert np.allclose(factor.coords["a"], spacings)
+    assert factor.attrs["kernel_id"] == "z_msbar_pdf_nlo"
+
+
+def test_explicit_zmsbar_kernels_preserve_pdf_and_da_finite_terms() -> None:
+    z = np.array([0.1, 0.2])
+    pdf = np.asarray(load_renormalization_kernel("z_msbar_pdf_nlo")(z, mu=2.0), dtype=float)
+    da = np.asarray(load_renormalization_kernel("z_msbar_da_nlo")(z, mu=2.0), dtype=float)
+    assert np.all(np.isfinite(pdf)) and np.all(np.isfinite(da))
+    assert np.all(da > pdf)
+    with pytest.raises(ValueError, match="not available"):
+        load_renormalization_kernel("missing_renormalization_formula")
 
 
 def test_nla_tail_fit_recovers_a_complex_toy() -> None:
@@ -1646,7 +1668,7 @@ def test_extrapolation_lattice_spacing_basis_uses_original_units() -> None:
 def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(tmp_path) -> None:
     import xarray as xr
 
-    from lamet_agent.stages.extrapolation.tools.publish_systematics_budget import run
+    from lamet_agent.stages.extrapolation._systematics_budget import run
 
     x = [0.0, 0.5, 1.0]
     attrs = {"sample_error_mode": "covariance"}
@@ -1672,15 +1694,13 @@ def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(tmp_path
         "budget",
         {
             "operation": "systematics_budget",
-            "systematics_budget": {
-                "systematics_prescription": "variant_envelope_quadrature",
-                "systematics_groups": {
-                    "main": 0,
-                    "zs": [],
-                    "lambda_extrapolation": [1, 2],
-                    "lamet_scale": [3],
-                    "other_extrapolations": [],
-                },
+            "systematics_prescription": "variant_envelope_quadrature",
+            "systematics_groups": {
+                "main": 0,
+                "zs": [],
+                "lambda_extrapolation": [1, 2],
+                "lamet_scale": [3],
+                "other_extrapolations": [],
             },
         },
         {"distributions": [main, lambda_low, lambda_high, mu]},
@@ -1755,7 +1775,7 @@ def test_fourier_terminal_publishes_one_explicit_candidate(tmp_path) -> None:
 
 
 def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> None:
-    from lamet_agent.stages.perturbative_matching.tools.apply_matching import run
+    from lamet_agent.stages.perturbative_matching._apply import run
 
     x = [-0.5, 0.0, 0.5]
     quasi = EnsembleData(
@@ -1808,8 +1828,8 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
 
 
 def test_external_renormalization_terminal_writes_publication_artifacts(tmp_path) -> None:
-    from lamet_agent.stages.renormalization.tools.apply_renormalization import run
-    from lamet_agent.stages.renormalization.tools.inspect_renormalization import run as inspect
+    from lamet_agent.stages.renormalization._apply import run
+    from lamet_agent.stages.renormalization._inspection import run as inspect
 
     target = EnsembleData(
         None,
@@ -1832,7 +1852,7 @@ def test_external_renormalization_terminal_writes_publication_artifacts(tmp_path
         tmp_path / "manifest.json",
         "renormalization",
         "apply",
-        {"scheme": "ratio", "strategy": "external_denominator", "normalization": False},
+        {"type": "apply", "scheme": "ratio", "strategy": "external_denominator", "normalization": False},
         {"target": target, "denominator": denominator},
         {},
         {},
@@ -1848,8 +1868,8 @@ def test_external_renormalization_terminal_writes_publication_artifacts(tmp_path
 
 
 def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_path) -> None:
-    from lamet_agent.stages.renormalization.tools.apply_renormalization import run
-    from lamet_agent.stages.renormalization.tools.inspect_renormalization import run as inspect
+    from lamet_agent.stages.renormalization._apply import run
+    from lamet_agent.stages.renormalization._inspection import run as inspect
 
     spacing = 0.1
     z_factor = np.array([0.05, 0.1, 0.15, 0.2])
@@ -1881,8 +1901,10 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
         attrs={"coord_unit": "fm", "lattice_spacing_fm": spacing},
     )
     params = {
+        "type": "apply",
         "scheme": "ratio",
         "strategy": "self_renormalization",
+        "kernel_id": "z_msbar_da_nlo",
         "normalization": False,
         "mu": scale,
         "LambdaQCD_gev": lambda_qcd,
@@ -1890,7 +1912,7 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
         "m0_gev": m0,
     }
     context = ToolContext(
-        {"metadata": {"target_observable": "da"}},
+        {"metadata": {"target_observable": "pdf"}},
         tmp_path / "manifest.json",
         "renormalization",
         "apply",
@@ -1905,6 +1927,7 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
     run(context)
     assert context.output.coords["z"] == z_target.tolist()
     assert np.all(np.isfinite(context.output.values))
+    assert context.output.attrs["kernel_id"] == "z_msbar_da_nlo"
 
 
 def test_every_migrated_kernel_owns_its_callable_and_formula_document() -> None:

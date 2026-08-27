@@ -179,17 +179,22 @@ class _AssistantResponse:
     text: str
     tool_call: _ToolCall | None = None
     tool_calls: tuple[_ToolCall, ...] = ()
+    structured: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.text, str):
             raise TypeError("assistant text must be a string")
         if not isinstance(self.tool_calls, tuple) or any(not isinstance(call, _ToolCall) for call in self.tool_calls):
             raise TypeError("tool_calls must be a tuple of internal tool-call values")
+        if self.structured is not None and not isinstance(self.structured, Mapping):
+            raise TypeError("structured response must be an object")
         if self.tool_call is None and len(self.tool_calls) == 1:
             object.__setattr__(self, "tool_call", self.tool_calls[0])
             object.__setattr__(self, "tool_calls", ())
         if self.tool_call is not None and self.tool_calls:
             raise ValueError("assistant responses cannot mix tool_call and tool_calls")
+        if self.structured is not None and self.calls:
+            raise ValueError("assistant responses cannot mix structured output and tool calls")
         if len({call.id for call in self.calls}) != len(self.calls):
             raise ValueError("tool call ids must be unique within one assistant response")
 
@@ -205,7 +210,12 @@ class LlmBackend(Protocol):
     identity: str
 
     def complete(
-        self, *, messages: list[Message], tools: list[dict[str, Any]], prompt_digest: str
+        self,
+        *,
+        messages: list[Message],
+        tools: list[dict[str, Any]],
+        prompt_digest: str,
+        response_schema: Mapping[str, Any] | None = None,
     ) -> _AssistantResponse: ...
 
 
@@ -239,7 +249,12 @@ class _OpenAICompatibleBackend:
         self.identity = f"openai-compatible:{self.base_url}:{self.model}"
 
     def complete(
-        self, *, messages: list[Message], tools: list[dict[str, Any]], prompt_digest: str
+        self,
+        *,
+        messages: list[Message],
+        tools: list[dict[str, Any]],
+        prompt_digest: str,
+        response_schema: Mapping[str, Any] | None = None,
     ) -> _AssistantResponse:
         body = {
             "model": self.model,
@@ -248,6 +263,17 @@ class _OpenAICompatibleBackend:
             "parallel_tool_calls": False,
             "stream": False,
         }
+        if response_schema is not None:
+            if tools:
+                raise ValueError("structured responses cannot be combined with tools")
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_schema["name"],
+                    "strict": True,
+                    "schema": response_schema["schema"],
+                },
+            }
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
@@ -282,7 +308,13 @@ class _OpenAICompatibleBackend:
                     if not isinstance(arguments, dict):
                         raise TypeError("provider tool arguments must decode to an object")
                     calls.append(_ToolCall(provider_call["id"], function["name"], arguments))
-                return _AssistantResponse(str(message.get("content") or ""), tool_calls=tuple(calls))
+                text = str(message.get("content") or "")
+                structured = None
+                if response_schema is not None:
+                    structured = json.loads(text)
+                    if not isinstance(structured, dict):
+                        raise TypeError("provider structured response must decode to an object")
+                return _AssistantResponse(text, tool_calls=tuple(calls), structured=structured)
             except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
                 last_protocol_error = exc
         raise ValueError(
@@ -291,7 +323,7 @@ class _OpenAICompatibleBackend:
 
 
 class _CodexBackend:
-    """Stateless adapter for an installed Codex SDK."""
+    """Stateless adapter for the installed openai-codex thread SDK."""
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model
@@ -299,7 +331,12 @@ class _CodexBackend:
         self._turn = 0
 
     def complete(
-        self, *, messages: list[Message], tools: list[dict[str, Any]], prompt_digest: str
+        self,
+        *,
+        messages: list[Message],
+        tools: list[dict[str, Any]],
+        prompt_digest: str,
+        response_schema: Mapping[str, Any] | None = None,
     ) -> _AssistantResponse:
         transcript = []
         start = 1 if messages and messages[0].role == "system" else 0
@@ -319,41 +356,81 @@ class _CodexBackend:
             "messages": transcript,
             "tools": tools,
             "prompt_digest": prompt_digest,
+            "response_schema": response_schema,
         }
         try:
-            from codex import Codex  # type: ignore
+            from openai_codex import Codex, Sandbox  # type: ignore
         except ImportError as exc:
-            raise RuntimeError("the codex provider requires the optional codex package") from exc
-        raw = Codex().run(
-            model=self.model,
-            instructions=messages[0].content if messages and messages[0].role == "system" else "",
-            input=json.dumps(task, separators=(",", ":"), ensure_ascii=False),
-            read_only=True,
+            raise RuntimeError("the codex provider requires the openai-codex package") from exc
+
+        if response_schema is not None:
+            if tools:
+                raise ValueError("structured responses cannot be combined with tools")
+            output_constraint = "Return exactly one JSON object matching this schema and no other text:\n" + json.dumps(
+                response_schema["schema"], separators=(",", ":"), ensure_ascii=False
+            )
+        else:
+            output_constraint = (
+                "Return exactly one JSON object with keys 'text' and 'tool_calls'. "
+                "'text' must be a string. 'tool_calls' must be a list of objects containing exactly "
+                "'name' and object 'arguments'. Do not call tools yourself."
+            )
+        task_input = "\n\n".join(
+            [
+                "<TASK_INPUT>",
+                json.dumps(task, separators=(",", ":"), ensure_ascii=False),
+                "</TASK_INPUT>",
+                "<OUTPUT_CONSTRAINT>",
+                output_constraint,
+                "Do not use markdown. Do not run shell commands. Do not edit files.",
+                "</OUTPUT_CONSTRAINT>",
+            ]
         )
-        if not isinstance(raw, str):
-            raise TypeError("Codex executor must return a JSON string")
-        payload = json.loads(raw)
-        if not isinstance(payload, dict) or set(payload) != {"text", "tool_call"}:
-            raise ValueError("Codex response must contain exactly text and tool_call")
-        tool_payload = payload["tool_call"]
+        developer_instructions = messages[0].content if messages and messages[0].role == "system" else ""
+        with Codex() as codex:
+            thread = codex.thread_start(
+                developer_instructions=developer_instructions,
+                sandbox=Sandbox.read_only,
+                ephemeral=True,
+                model=self.model,
+            )
+            result = thread.run(task_input, sandbox=Sandbox.read_only)
+        raw = result.final_response
+        if not isinstance(raw, str) or not raw.strip():
+            raise RuntimeError(f"Codex returned no final response: {result}")
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Codex returned malformed JSON: {raw}") from exc
+
         self._turn += 1
-        call = None
-        if tool_payload is not None:
+        if response_schema is not None:
+            if not isinstance(payload, dict):
+                raise TypeError("Codex structured response must decode to an object")
+            return _AssistantResponse(raw, structured=payload)
+
+        if not isinstance(payload, dict) or set(payload) != {"text", "tool_calls"}:
+            raise ValueError("Codex response must contain exactly text and tool_calls")
+        if not isinstance(payload["text"], str) or not isinstance(payload["tool_calls"], list):
+            raise TypeError("Codex text must be a string and tool_calls must be a list")
+        known_names = {
+            item.get("function", {}).get("name")
+            for item in tools
+            if isinstance(item, dict) and isinstance(item.get("function"), dict)
+        }
+        calls = []
+        for index, tool_payload in enumerate(payload["tool_calls"], start=1):
             if (
                 not isinstance(tool_payload, dict)
                 or set(tool_payload) != {"name", "arguments"}
+                or not isinstance(tool_payload["name"], str)
                 or not isinstance(tool_payload["arguments"], dict)
             ):
-                raise ValueError("Codex tool_call must contain a name and object arguments")
-            known_names = {
-                item.get("function", {}).get("name")
-                for item in tools
-                if isinstance(item, dict) and isinstance(item.get("function"), dict)
-            }
+                raise ValueError("Codex tool calls must contain exactly name and object arguments")
             if tool_payload["name"] not in known_names:
                 raise ValueError(f"Codex response requested unavailable tool '{tool_payload['name']}'")
-            call = _ToolCall(f"turn-{self._turn}", tool_payload["name"], tool_payload["arguments"])
-        return _AssistantResponse(payload["text"], call)
+            calls.append(_ToolCall(f"turn-{self._turn}-{index}", tool_payload["name"], tool_payload["arguments"]))
+        return _AssistantResponse(payload["text"], tool_calls=tuple(calls))
 
 
 def create_backend(

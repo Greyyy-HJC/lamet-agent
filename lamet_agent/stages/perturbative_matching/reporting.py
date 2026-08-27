@@ -143,7 +143,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             "| `kernel_id` | Public kernel filename stem encoding gauge construction, Dirac operator, target distribution, renormalization scheme, resummation options, component, and perturbative order. |",
             "| `mu` | MSbar renormalization/matching scale in GeV. |",
             "| `zs_fm` | Hybrid Wilson-line switching distance; absent for ratio/MSbar kernels. |",
-            "| `kernel_parameters` | Parameters owned by a particular kernel, such as RGR kappa and its minimum running scale. |",
+            "| `kernel_parameters` | Kernel-signature parameters not supplied by the stage, such as `kappa` "
+            "and `mu_min_gev`. |",
             "| matching matrix | Discretized convolution from the quasi input grid to the requested light-cone output grid. |",
             "",
             "## Stage Overview",
@@ -190,7 +191,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| scheme | `{record.params['scheme']}` |",
                 f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
                 f"| renormalization scale | {format_value(record.params['mu'])} GeV |",
-                f"| hybrid switch | {format_value(record.params.get('hybrid', {}).get('zs_fm'))} fm |",
+                f"| hybrid switch | {format_value(record.params.get('zs_fm'))} fm |",
                 f"| quasi grid | {describe_grid(quasi.coords['x'], symbol='x')} |",
                 f"| light-cone grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
                 f"| kernel parameters | {format_value(record.params.get('kernel_parameters', {}))} |",

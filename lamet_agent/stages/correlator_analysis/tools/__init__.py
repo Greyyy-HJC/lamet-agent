@@ -1,1 +1,1 @@
-"""Model-callable correlator tools discovered from this directory."""
+"""Prompt-coupled parameter recommendations for correlator fitting."""
