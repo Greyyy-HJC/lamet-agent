@@ -76,24 +76,6 @@ def test_gvar_requires_an_explicit_real_or_imaginary_component() -> None:
     np.testing.assert_allclose(gv.mean(data.imag.gvar), [3.0])
 
 
-@pytest.mark.parametrize(
-    ("resample", "factor"),
-    [("raw", 0.5), ("jackknife", np.sqrt(3.0)), ("bootstrap", 1.0)],
-)
-def test_gvar_median_uses_resampling_scaled_percentile_errors_without_correlations(
-    resample: str, factor: float
-) -> None:
-    samples = np.asarray([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0], [100.0, 3.0]])
-    data = EnsembleData(None, resample, list(samples), ["x"], {"x": [0, 1]})
-    result = data.gvar_median
-    low, center, high = np.percentile(samples, [50 - 34.1344746, 50, 50 + 34.1344746], axis=0)
-    expected = 0.5 * (high - low) * factor
-    np.testing.assert_allclose(gv.mean(result), center)
-    np.testing.assert_allclose(gv.sdev(result), expected)
-    covariance = gv.evalcov(result)
-    assert covariance[0, 1] == covariance[1, 0] == 0.0
-
-
 def test_average_selects_data_owned_uncertainty_semantics() -> None:
     samples = np.asarray([[0.0, 0.0], [1.0, 2.0], [2.0, 4.0], [100.0, 6.0]])
     data = EnsembleData(None, "bootstrap", list(samples), ["x"], {"x": [0, 1]})

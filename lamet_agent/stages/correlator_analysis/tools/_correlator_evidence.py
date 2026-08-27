@@ -7,14 +7,18 @@ from typing import Any
 import gvar
 import numpy as np
 
-from lamet_agent.agent import ToolContext
+from lamet_agent.agent import LlmSession, ToolContext
+from lamet_agent.stages.correlator_analysis.hook import ensure_correlators
+
+
+_CONTEXT_KEY = "correlator_fit_data"
 
 
 def prepare(context: ToolContext) -> dict[str, Any]:
     """Return coordinates plus central values and errors from EnsembleData averages."""
     sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
     correlators = {}
-    for name, data in context.state.get("correlators", {}).items():
+    for name, data in ensure_correlators(context).items():
         components = {}
         selected_components = (
             ("real", "imag")
@@ -42,4 +46,10 @@ def prepare(context: ToolContext) -> dict[str, Any]:
     }
 
 
-__all__ = ["prepare"]
+def ensure_context(context: ToolContext, session: LlmSession) -> None:
+    """Queue the job's complete correlator fit evidence exactly once."""
+    if not session.has_context(_CONTEXT_KEY):
+        session.add_context(_CONTEXT_KEY, prepare(context))
+
+
+__all__ = ["ensure_context", "prepare"]

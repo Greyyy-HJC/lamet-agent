@@ -16,6 +16,8 @@ from lamet_agent.contract import (
     Value,
     stage_job_rules,
 )
+from lamet_agent.stages.fourier_transform.recommendation import zmax_fm as recommend_zmax_fm
+from lamet_agent.stages.fourier_transform.recommendation import zmin_fm as recommend_zmin_fm
 
 
 def _positive(value: int | float) -> bool:
@@ -66,8 +68,8 @@ def _unit_interval(value: int | float) -> bool:
 # fmt: off
 PARAM_RULES = (
     Depends("", "quasi_y_ls", physics="The output grid is explicit and dimensionless."),
-    Depends("", "zmin_fm", physics="Tail lower ranges are authored candidate values."),
-    Depends("", "zmax_fm", physics="Tail upper ranges are authored candidate values."),
+    Depends("", "zmin_fm", physics="Tail lower ranges are authored or data-recommended candidate values.", null_hook=recommend_zmin_fm),
+    Depends("", "zmax_fm", physics="Tail upper ranges are authored or data-recommended candidate values.", null_hook=recommend_zmax_fm),
     Depends("", "smooth", physics="Tail/data connection uses a declared prescription."),
     Depends("", "zmax_ext_fm", physics="The finite transform extent is explicit."),
     Depends("", "scheme_scan", physics="The complete native LA/NLA candidate scan is explicit."),
@@ -113,8 +115,10 @@ INPUT_RULES = (
 
 def check_tail_ranges(context: CheckContext) -> Issue | None:
     physics = "Tail ranges must be positive, ordered, and contained in the transform extent."
-    lower = context.params["zmin_fm"]
-    upper = context.params["zmax_fm"]
+    lower = context.params.get("zmin_fm")
+    upper = context.params.get("zmax_fm")
+    if not isinstance(lower, list) or not isinstance(upper, list):
+        return None
     extent = context.params["zmax_ext_fm"]
     if any(value > extent for value in [*lower, *upper]):
         return Issue("zmax_ext_fm", "must contain every tail candidate range", physics)

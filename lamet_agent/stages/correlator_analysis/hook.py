@@ -78,22 +78,6 @@ def ensure_correlators(
     return resampled
 
 
-def _mean_error(
-    data: Any,
-    component: str,
-    sample_error_mode: str,
-) -> tuple[list[Any], list[Any]]:
-    import gvar as gv
-    import numpy as np
-
-    selected = data.real if component == "real" else data.imag
-    average = selected.average(sample_error_mode)
-    return (
-        np.asarray(gv.mean(average), dtype=float).tolist(),
-        np.asarray(gv.sdev(average), dtype=float).tolist(),
-    )
-
-
 __all__ = [
     "ensure_correlators",
     "ensure_raw_correlators",

@@ -321,8 +321,7 @@ class EnsembleData:
             n_sample = self.array.values.shape[0]
             values = self.array.values
             meanm, mean, meanp = numpy.percentile(values, q=[50 - 34.1344746, 50, 50 + 34.1344746], axis=0)
-            # std = numpy.maximum(meanp - mean, mean - meanm)
-            std = 0.5 * (meanp - meanm)
+            std = numpy.maximum(meanp - mean, mean - meanm)
             if self.resample == "raw":
                 std /= n_sample**0.5
             elif self.resample == "jackknife":

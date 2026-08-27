@@ -321,7 +321,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         [
             "## Selection Policy",
             "",
-            "LSQFit jobs enumerate the complete authored Cartesian grid of strategies, scopes, state counts, prior widths, and windows. Numerical failures remain recorded rather than disappearing from the candidate set. Ordinary matrix elements use the reference information/window rule; qDA jobs require feasibility at every selected tuning separation and rank by minimum Q followed by worst chi2/dof. Full-z application may reject a tuned candidate, in which case the next deterministic candidate is tried and the rejection is recorded.",
+            "LSQFit jobs enumerate the complete authored Cartesian grid of strategies, scopes, state counts, prior widths, and windows. Numerical failures remain recorded rather than disappearing from the candidate set. Ordinary matrix elements use the reference information/window rule; qDA jobs require feasibility at every selected tuning separation and rank by minimum Q followed by worst chi2/dof. The selected combination is fixed before full-z application; any full-grid failure terminates the job.",
             "",
         ]
     )
@@ -441,10 +441,6 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     "| candidate | z | Q | chi2/dof | logGBF |",
                     "|---|---:|---:|---:|---:|",
                     *(tune_rows or ["| n/a | n/a | n/a | n/a | n/a |"]),
-                    "",
-                    "### Full-grid Application Rejections",
-                    "",
-                    format_value(diagnostics.get("application_rejections", [])),
                 ]
             )
             application = diagnostics.get("selected_application_fit")
@@ -503,7 +499,6 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "| `candidate_id` | Deterministic id of one complete authored fit candidate. |",
                 "| `Q`, `chi2_dof`, `logGBF` | Sample-average goodness-of-fit and evidence diagnostics used by the selection rule. |",
                 "| `tune_z_diagnostics` | Fits used only to select a common model/window before full-z resample application. |",
-                "| `application_rejections` | Candidates that tuned successfully but failed the mandatory full-grid/sample application. |",
                 "| `sample_fit_quality` | Successful production-resample Q and chi2/dof values used by the stage "
                 "statistics. |",
                 "| `dispersion_energy` | Aligned ground-state energy resamples in lattice units used only for the stage "

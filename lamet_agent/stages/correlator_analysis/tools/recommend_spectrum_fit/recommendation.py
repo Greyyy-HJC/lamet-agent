@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from lamet_agent.agent import LlmSession, ToolContext
-from lamet_agent.stages.correlator_analysis.tools._correlator_evidence import prepare
+from lamet_agent.stages.correlator_analysis.tools._correlator_evidence import ensure_context
 from lamet_agent.structured import annotation_schema, json_compatible, validate_value
 
 
@@ -25,13 +25,20 @@ def recommend(
     context: ToolContext,
     session: LlmSession,
     *,
-    diagnostics: dict[str, Any] | None = None,
+    fixed_parameters: dict[str, Any] | None = None,
+    previous_attempts: dict[str, dict[str, Any]] | None = None,
 ) -> SpectrumSuggestion:
     """Return typed spectrum parameters from prepared gvar evidence."""
-    evidence = prepare(context)
-    if diagnostics is not None:
-        evidence["previous_fit_diagnostics"] = diagnostics
+    ensure_context(context, session)
+    evidence = {"fixed_parameters": fixed_parameters or {}}
+    if previous_attempts is not None:
+        evidence["previous_attempts"] = previous_attempts
     instruction = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
+    if previous_attempts is not None:
+        instruction += (
+            "\n\nThe previous spectrum parameters were fitted and did not satisfy the quality policy. "
+            "Make a conservative adjustment using the parameter-to-quality mapping in previous_attempts."
+        )
     schema, _nullable = annotation_schema(SpectrumSuggestion)
     response = session.complete(
         label="spectrum fit recommendation",

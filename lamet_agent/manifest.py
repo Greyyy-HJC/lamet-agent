@@ -213,6 +213,7 @@ _BASE_RULES: tuple[Depends | Provides | Recommends | Value, ...] = (
     Recommends("metadata", "parton", physics="The migrated workflows default to the reference quark species.", default="quark"),
     Depends("metadata", "resample_mode", physics="All correlator jobs use one run-level resampling convention."),
     Depends("metadata", "sample_error_mode", physics="All stages use one authored sample center and error convention."),
+    Recommends("metadata", "parameter_recommendation_retries", physics="Each job permits one parameter recommendation plus this many bounded retries.", default=1),
     Provides("metadata", "bootstrap", "metadata.resample_mode", physics="Bootstrap sampling owns one explicit sample count."),
     Depends("metadata.bootstrap", "samples", physics="Bootstrap sample count is explicit when bootstrap is selected."),
     Depends("metadata", "bin_size", physics="All raw correlators use one positive configuration bin size."),
@@ -225,6 +226,7 @@ _BASE_RULES: tuple[Depends | Provides | Recommends | Value, ...] = (
     Value("metadata.parton", Literal["quark"], physics="The migrated examples use quark distributions."),
     Value("metadata.resample_mode", Literal["jackknife", "bootstrap"], physics="The run-level sample plan is jackknife or bootstrap."),
     Value("metadata.sample_error_mode", Literal["covariance", "mean", "median"], physics="Sample statistics use covariance, mean-diagonal, or median-percentile errors."),
+    Value("metadata.parameter_recommendation_retries", int, physics="The per-job parameter recommendation retry limit is nonnegative.", validator=_nonnegative),
     Value("metadata.bootstrap.samples", int, physics="Bootstrap sample count is positive.", validator=_positive),
     Value("metadata.bin_size", int, physics="Configuration bin size is positive.", validator=_positive),
 )

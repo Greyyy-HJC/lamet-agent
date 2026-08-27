@@ -13,22 +13,26 @@ from lamet_agent.stages.correlator_analysis._inspection import run as inspect
 from lamet_agent.stages.correlator_analysis._lanczos import run as run_lanczos
 from lamet_agent.stages.correlator_analysis._lanczos_inspection import run as inspect_lanczos
 from lamet_agent.stages.correlator_analysis._publish import run as publish
-from lamet_agent.stages.correlator_analysis.tools.recommend_matrix_tune_z.recommendation import (
-    recommend as recommend_matrix,
-)
-from lamet_agent.stages.correlator_analysis.tools.recommend_qda_tune_z.recommendation import (
-    recommend as recommend_qda,
-)
-from lamet_agent.stages.correlator_analysis.tools.recommend_spectrum_fit.recommendation import (
-    recommend as recommend_spectrum,
-)
+from lamet_agent.stages.correlator_analysis.tools._joint_fit_recommendation import initial, revise
 
 
-def _candidate_diagnostics(context: ToolContext) -> list[dict[str, Any]]:
-    """Return the compact fit-quality evidence used for one recommendation retry."""
-    fields = (
-        "id",
+def _candidate_attempts(context: ToolContext) -> dict[str, dict[str, Any]]:
+    """Map every attempted authored combination to compact fit-quality diagnostics."""
+    attempts = {}
+    parameter_fields = (
+        "method",
+        "fit_strategy",
+        "fit_scope",
+        "window",
+        "tsep_values",
+        "nstate",
+        "prior_width",
+        "tune_z_values",
+    )
+    quality_fields = (
         "Q",
+        "chi2",
+        "dof",
         "chi2_dof",
         "min_Q",
         "worst_chi2_dof",
@@ -36,12 +40,40 @@ def _candidate_diagnostics(context: ToolContext) -> list[dict[str, Any]]:
         "numerical_failure",
         "feasible_at_all_tune_z",
         "failure_reasons",
-        "tune_z_values",
     )
-    return [
-        {name: candidate[name] for name in fields if name in candidate}
-        for candidate in context.state.get("matrix_element_candidates", [])
-    ]
+    for candidate in context.state.get("matrix_element_candidates", []):
+        candidate_id = str(candidate["id"])
+        attempt = {
+            "parameters": {name: candidate[name] for name in parameter_fields if name in candidate},
+            **{name: candidate[name] for name in quality_fields if name in candidate},
+        }
+        per_z = candidate.get("tune_z_diagnostics")
+        if isinstance(per_z, dict):
+            attempt["by_tune_z"] = {
+                str(z_value): {
+                    name: fit[name]
+                    for name in ("Q", "chi2", "dof", "chi2_dof", "logGBF")
+                    if isinstance(fit, dict) and name in fit
+                }
+                for z_value, fit in per_z.items()
+            }
+        attempts[candidate_id] = attempt
+    return attempts
+
+
+def _spectrum_attempt(
+    suggestion: dict[str, Any], *, metrics: dict[str, Any] | None = None, error: str | None = None
+) -> dict[str, dict[str, Any]]:
+    attempt = {"parameters": suggestion}
+    if metrics is not None:
+        attempt.update({name: metrics[name] for name in ("Q", "chi2", "dof", "chi2_dof", "logGBF") if name in metrics})
+    if error is not None:
+        attempt.update({"numerical_failure": True, "error": error})
+    return {"spectrum_001": attempt}
+
+
+def _spectrum_parameters(suggestion: dict[str, Any]) -> dict[str, Any]:
+    return {name: suggestion[name] for name in ("t_min", "t_max", "n_states", "prior_means", "prior_widths")}
 
 
 def _qda_quality_is_low(context: ToolContext) -> bool:
@@ -67,29 +99,43 @@ def run(context: ToolContext, session: LlmSession) -> None:
 
     inspect(context)
     scopes = set(context.params["fit_scope"])
+    suggestion = initial(context, session)
     if scopes == {"spectrum"}:
-        suggestion = recommend_spectrum(context, session)
         retried = False
         try:
-            observation = fit_spectrum(context, **suggestion)
+            observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
         except FitNumericalError as exc:
             retried = True
-            suggestion = recommend_spectrum(context, session, diagnostics={"error": str(exc)})
-            observation = fit_spectrum(context, **suggestion)
+            suggestion = revise(
+                context,
+                session,
+                _spectrum_attempt(suggestion, error=str(exc)),
+            )
+            observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
         if not retried and float(observation["metrics"].get("Q", 1.0)) < float(context.params["q_min"]):
-            suggestion = recommend_spectrum(context, session, diagnostics=dict(observation["metrics"]))
-            observation = fit_spectrum(context, **suggestion)
+            suggestion = revise(
+                context,
+                session,
+                _spectrum_attempt(suggestion, metrics=dict(observation["metrics"])),
+            )
+            observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
+            retried = True
+        if float(observation["metrics"].get("Q", 0.0)) < float(context.params["q_min"]):
+            raise FitNumericalError("spectrum fit remains below q_min after the allowed recommendation attempts")
         candidate_id = observation["metrics"]["candidate_id"]
     else:
-        recommend = recommend_qda if scopes == {"qda_ratio"} else recommend_matrix
         fit = fit_qda if scopes == {"qda_ratio"} else fit_matrix
-        tune_z_values = recommend(context, session)
+        tune_z_values = list(suggestion["tune_z_values"])
         retried = False
         try:
             observation = fit(context, tune_z_values=tune_z_values)
         except FitNumericalError:
             retried = True
-            tune_z_values = recommend(context, session, diagnostics=_candidate_diagnostics(context))
+            suggestion = revise(context, session, _candidate_attempts(context))
+            context.params["pt2_windows"] = list(suggestion["pt2_windows"])
+            if scopes != {"qda_ratio"}:
+                context.params["pt3_windows"] = list(suggestion["pt3_windows"])
+            tune_z_values = list(suggestion["tune_z_values"])
             observation = fit(context, tune_z_values=tune_z_values)
         low_quality = (
             _qda_quality_is_low(context)
@@ -97,8 +143,20 @@ def run(context: ToolContext, session: LlmSession) -> None:
             else bool(observation["metrics"].get("fallback_no_q_passing", False))
         )
         if low_quality and not retried:
-            tune_z_values = recommend(context, session, diagnostics=_candidate_diagnostics(context))
+            suggestion = revise(context, session, _candidate_attempts(context))
+            context.params["pt2_windows"] = list(suggestion["pt2_windows"])
+            if scopes != {"qda_ratio"}:
+                context.params["pt3_windows"] = list(suggestion["pt3_windows"])
+            tune_z_values = list(suggestion["tune_z_values"])
             observation = fit(context, tune_z_values=tune_z_values)
+            retried = True
+        final_low_quality = (
+            _qda_quality_is_low(context)
+            if scopes == {"qda_ratio"}
+            else bool(observation["metrics"].get("fallback_no_q_passing", False))
+        )
+        if final_low_quality:
+            raise FitNumericalError("all correlator fit candidates remain below q_min after the allowed attempts")
         candidate_id = observation["metrics"]["recommended_candidate_id"]
     publish(context, candidate_id=str(candidate_id))
 

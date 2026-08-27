@@ -16,8 +16,9 @@ from lamet_agent.contract import (
     Value,
     stage_job_rules,
 )
-from lamet_agent.stages.correlator_analysis.tools.recommend_pt2_windows.recommendation import (
-    recommend as recommend_pt2_windows,
+from lamet_agent.stages.correlator_analysis.tools._joint_fit_recommendation import (
+    pt2_windows as recommend_pt2_windows,
+    pt3_windows as recommend_pt3_windows,
 )
 
 
@@ -65,7 +66,7 @@ PARAM_RULES = (
     Recommends("lsqfit", "prior_width", physics="The original correlator fit uses one unit prior-width candidate unless explicitly varied.", default=[1.0]),
     Depends("lsqfit", "model_average", physics="Candidate averaging is an explicit analysis choice."),
     Depends("lsqfit", "pt2_windows", physics="Two-point candidate windows are selected from the observed signal and uncertainty.", null_hook=recommend_pt2_windows),
-    Recommends("lsqfit", "pt3_windows", physics="Scopes without three-point data use no three-point windows.", default=[]),
+    Depends("lsqfit", "pt3_windows", physics="Three-point and FH scopes require data-selected windows; scopes without three-point data use none.", null_hook=recommend_pt3_windows),
     Recommends("lsqfit", "svdcut", physics="The original correlator fit defaults to a 1e-12 relative covariance singular-value cut.", default=1e-12),
     Depends("lsqfit", "posterior_prior_error_scale", physics="Posterior-prior scaling is explicit."),
     Depends("lsqfit", "q_min", physics="The candidate quality threshold is explicit."),
@@ -152,7 +153,7 @@ def check_lsqfit_windows(context: CheckContext) -> Issue | None:
     lsqfit = context.params
     scopes = set(lsqfit["fit_scope"])
     ordinary_scopes = scopes & {"3pt_ratio", "FH", "3pt_ratio+FH"}
-    if ordinary_scopes and not lsqfit["pt3_windows"]:
+    if ordinary_scopes and not lsqfit.get("pt3_windows"):
         return Issue(
             "pt3_windows",
             "is required for three-point and FH fit scopes",
@@ -202,7 +203,7 @@ def check_qda_scope(context: CheckContext) -> Issue | None:
             "must be 'Breit' for qda_ratio",
             "The implemented qDA ratio uses the forward one-state decomposition.",
         )
-    if lsqfit["pt3_windows"]:
+    if lsqfit.get("pt3_windows"):
         return Issue(
             "pt3_windows",
             "must be omitted for qda_ratio",

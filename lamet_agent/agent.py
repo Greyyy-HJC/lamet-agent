@@ -33,7 +33,9 @@ from .contract import (
 _MAX_ASSISTANT_TURNS = 40
 _LLM_TRANSCRIPT_FILENAME = "llm_transcript.md"
 _SAFE_TOOL = re.compile(r"^[a-z][a-z0-9_]*$")
-_WORKFLOW_STAGES = frozenset({"correlator_analysis", "renormalization", "perturbative_matching", "extrapolation"})
+_WORKFLOW_STAGES = frozenset(
+    {"correlator_analysis", "renormalization", "fourier_transform", "perturbative_matching", "extrapolation"}
+)
 
 
 def _emit_progress(message: str = "") -> None:
@@ -76,6 +78,23 @@ class LlmSession:
     transcript_path: Path
     history: list[Message] = field(default_factory=list)
     calls: int = 0
+    max_recommendation_calls: int = 2
+    recommendation_calls: int = 0
+    _context_keys: set[str] = field(default_factory=set, repr=False)
+    _pending_context: list[dict[str, Any]] = field(default_factory=list, repr=False)
+
+    def has_context(self, key: str) -> bool:
+        """Return whether one named context is pending or already in message history."""
+        return key in self._context_keys
+
+    def add_context(self, key: str, content: Mapping[str, Any]) -> None:
+        """Queue one named context for inclusion in the next user message."""
+        if not isinstance(key, str) or not key:
+            raise ValueError("LLM context key must be a nonempty string")
+        if key in self._context_keys:
+            return
+        self._context_keys.add(key)
+        self._pending_context.append({"key": key, "content": json_compatible(dict(content))})
 
     def complete(
         self,
@@ -90,9 +109,32 @@ class LlmSession:
         """Record and execute one backend call without imposing response semantics."""
         if (messages is None) == (user_message is None):
             raise ValueError("complete requires exactly one of messages or user_message")
+        if messages is not None and self._pending_context:
+            raise RuntimeError("pending LLM context requires a user_message completion")
+        if response_schema is not None:
+            if self.recommendation_calls >= self.max_recommendation_calls:
+                raise RuntimeError(
+                    f"parameter recommendation limit exceeded: used {self.recommendation_calls}, "
+                    f"allowed {self.max_recommendation_calls}"
+                )
+            self.recommendation_calls += 1
         retain_history = user_message is not None
+        combined_user_message = user_message
+        if user_message is not None and self._pending_context:
+            try:
+                request_content = json.loads(user_message)
+            except json.JSONDecodeError:
+                request_content = user_message
+            combined_user_message = json.dumps(
+                {"context": self._pending_context, "request": request_content},
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
         request_messages = (
-            [*self.history, Message("user", user_message)] if user_message is not None else list(messages or [])
+            [*self.history, Message("user", combined_user_message)]
+            if combined_user_message is not None
+            else list(messages or [])
         )
         tool_schemas = [] if tools is None else tools
         self.calls += 1
@@ -130,6 +172,7 @@ class LlmSession:
         )
         if retain_history:
             self.history.extend((request_messages[-1], assistant_message))
+            self._pending_context.clear()
         return response
 
 
@@ -589,7 +632,13 @@ class _AgentSession:
         transcript_path = context.artifact_directory / _LLM_TRANSCRIPT_FILENAME
         _write_transcript_header(transcript_path)
         history = [Message("system", static_prompt)] if static_prompt else []
-        llm_session = LlmSession(self.backend, transcript_path, history=history)
+        retry_limit = int(context.manifest["metadata"].get("parameter_recommendation_retries", 1))
+        llm_session = LlmSession(
+            self.backend,
+            transcript_path,
+            history=history,
+            max_recommendation_calls=1 + retry_limit,
+        )
         contract = _load_stage_contract(context.stage_id, self.stage_root)
         _resolve_runtime_null_hooks(
             context=context,

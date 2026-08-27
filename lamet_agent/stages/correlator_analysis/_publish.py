@@ -124,16 +124,13 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     application_rejections: list[dict[str, object]] = []
     correlators = context.state.get("correlators")
     settings = lsqfit
-    while True:
-        data = selected.get("data")
-        selected_method = selected.get("method")
-        if isinstance(data, EnsembleData) or (selected_method not in spectral_methods and selected_method != "qda"):
-            break
+    data = selected.get("data")
+    selected_method = selected.get("method")
+    if not isinstance(data, EnsembleData) and (selected_method in spectral_methods or selected_method == "qda"):
         if not isinstance(correlators, dict):
             raise RuntimeError("inspect_correlators must run before publishing a matrix-element model")
         application_fit = None
         preflight_fit = None
-        error = None
         try:
             if selected_method == "qda":
                 print(
@@ -214,38 +211,28 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                 data, application_fit = fit_matrix_element_samples(correlators, **application_kwargs)
         except FitNumericalError as exc:
             error = str(exc)
-        if error is None and application_fit is not None and int(application_fit.get("n_failed_samples", 0)):
-            error = f"{application_fit['n_failed_samples']} sample fit(s) failed numerically"
-        if error is None:
-            if not isinstance(data, EnsembleData) or application_fit is None:
-                raise RuntimeError("full-grid matrix-element fitting produced no sample result")
-            selected["data"] = data
-            selected["preflight_fit"] = preflight_fit
-            selected["application_fit"] = application_fit
-            break
-        rejected_id = str(selected["id"])
-        selected.update({"quality_passed": False, "numerical_failure": True, "error": error})
-        if application_fit is not None:
-            selected["application_fit"] = application_fit
-        application_rejections.append({"candidate_id": rejected_id, "error": error})
-        print(f"Rejected matrix candidate {rejected_id}: {error}", flush=True)
-        try:
-            selected, fallback = select_tuned_candidate(
-                matrix_candidates,
-                q_min=float(settings["q_min"]),
-                chi2_dof_tolerance=float(settings["chi2_dof_tolerance"]),
-                qda=is_qda,
-            )
-        except ValueError as exc:
+            selected.update({"quality_passed": False, "numerical_failure": True, "error": error})
+            application_rejections.append({"candidate_id": str(selected["id"]), "error": error})
             raise FitNumericalError(
-                f"all matrix-fit candidates failed full-grid application: {application_rejections}"
+                f"selected candidate {selected['id']} failed full-grid application: {error}"
             ) from exc
-        print(f"Retrying publication with matrix candidate {selected['id']}...", flush=True)
-        selection_rule = (
-            "original_qda_robust_rule(min_Q_then_worst_chi2_dof)"
-            if is_qda
-            else f"original_data_window_rule(fallback_no_q_passing={fallback})"
-        )
+        if application_fit is not None and int(application_fit.get("n_failed_samples", 0)):
+            error = f"{application_fit['n_failed_samples']} sample fit(s) failed numerically"
+            selected.update(
+                {
+                    "quality_passed": False,
+                    "numerical_failure": True,
+                    "error": error,
+                    "application_fit": application_fit,
+                }
+            )
+            application_rejections.append({"candidate_id": str(selected["id"]), "error": error})
+            raise FitNumericalError(f"selected candidate {selected['id']} failed full-grid application: {error}")
+        if not isinstance(data, EnsembleData) or application_fit is None:
+            raise RuntimeError("full-grid matrix-element fitting produced no sample result")
+        selected["data"] = data
+        selected["preflight_fit"] = preflight_fit
+        selected["application_fit"] = application_fit
     candidate_id = str(selected["id"])
     if not isinstance(data, EnsembleData):
         raise TypeError("selected candidate has no EnsembleData result")
@@ -311,7 +298,6 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         "candidate_id": candidate_id,
         "method": selected.get("method"),
         "selection_rule": selection_rule,
-        "application_rejections": application_rejections,
         "recommended_defaults": context.state.get("recommended_defaults", {}),
         "correlator_scale_inspection": context.state.get("correlator_scale_inspection", {}),
         "selected_preflight_fit": selected.get("preflight_fit"),

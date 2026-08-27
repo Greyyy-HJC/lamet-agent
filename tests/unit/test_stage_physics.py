@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ast
 import io
-import json
 from pathlib import Path
 import tokenize
 
@@ -23,12 +22,6 @@ from lamet_agent.kernels import list_kernel_ids, load_kernel, load_kernel_docume
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
 from lamet_agent.stages.correlator_analysis.physics import fit_spectrum_samples, matrix_element_samples
 from lamet_agent.stages.correlator_analysis.physics import fit_matrix_element_samples, matrix_element_prior
-from lamet_agent.stages.correlator_analysis.tools.recommend_pt2_windows.recommendation import (
-    recommend as recommend_pt2_windows,
-)
-from lamet_agent.stages.correlator_analysis.tools.recommend_pt3_windows.recommendation import (
-    recommend as recommend_pt3_windows,
-)
 from lamet_agent.parallel.lanczos import (
     _analyze_threept,
     _analyze_twopt,
@@ -87,83 +80,6 @@ def test_matrix_ratio_rejects_a_missing_exact_two_point_denominator() -> None:
     )
     with pytest.raises(ValueError, match="exactly one entry"):
         matrix_element_samples({"c2": c2, "c3": c3}, method="ratio", t_min=1, t_max=3, tau_min=1)
-
-
-def test_correlator_window_recommendations_send_direct_means_and_errors(
-    tmp_path: Path,
-) -> None:
-    c2 = EnsembleData(
-        None,
-        "bootstrap",
-        [
-            np.asarray([1.0, 2.0, 3.0, 4.0]),
-            np.asarray([3.0, 4.0, 5.0, 6.0]),
-        ],
-        ["t"],
-        {"t": [1, 2, 3, 4]},
-        attrs={"correlator_type": "two_point"},
-    )
-    c3_center = np.arange(16, dtype=float).reshape(2, 4, 2)
-    c3 = EnsembleData(
-        None,
-        "bootstrap",
-        [c3_center + 1j * c3_center, c3_center + 2.0 + 2j * c3_center],
-        ["tsep", "tau", "z"],
-        {"tsep": [6, 8], "tau": [0, 1, 2, 3], "z": [0, 1]},
-        attrs={"correlator_type": "three_point"},
-    )
-    params = {
-        "correlator_ids": ["c2", "c3"],
-        "nstate": [1, 2],
-        "component": "both",
-        "analysis_method": "lsqfit",
-        "time_range": {"min": 1, "max": 5},
-        "fit_scope": ["3pt_ratio"],
-    }
-    context = ToolContext(
-        {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
-        tmp_path / "manifest.json",
-        "correlator_analysis",
-        "matrix",
-        params,
-        {},
-        {},
-        {"correlators": {"c2": c2, "c3": c3}},
-        tmp_path,
-        np.random.default_rng(1),
-    )
-    from lamet_agent.agent import LlmSession
-    from lamet_agent.llm import _AssistantResponse
-
-    class StructuredBackend:
-        identity = "structured:test"
-
-        def __init__(self, response):
-            self.response = response
-            self.calls = []
-
-        def complete(self, **request):
-            self.calls.append((request["messages"], request["tools"], request["prompt_digest"]))
-            return self.response
-
-    pt2_backend = StructuredBackend(_AssistantResponse("", structured={"windows": [{"tmin": 1, "tmax": 5}]}))
-    pt3_backend = StructuredBackend(_AssistantResponse("", structured={"windows": [{"tsep_ls": [6, 8], "tau_cut": 2}]}))
-    assert recommend_pt2_windows(context, LlmSession(pt2_backend, tmp_path / "pt2.md")) == [{"tmin": 1, "tmax": 5}]
-    assert recommend_pt3_windows(context, LlmSession(pt3_backend, tmp_path / "pt3.md")) == [
-        {"tsep_ls": [6, 8], "tau_cut": 2}
-    ]
-
-    pt2_evidence = json.loads(pt2_backend.calls[0][0][-1].content)["evidence"]
-    assert pt2_evidence["minimum_points"] == 4
-    assert pt2_evidence["two_point_correlators"][0]["mean"] == pytest.approx([2.0, 3.0, 4.0, 5.0])
-    assert all(error > 0 for error in pt2_evidence["two_point_correlators"][0]["error"])
-    pt3_evidence = json.loads(pt3_backend.calls[0][0][-1].content)["evidence"]
-    assert pt3_evidence["z"] == [0.0, 1.0]
-    assert pt3_evidence["tsep"] == [6, 8]
-    assert pt3_evidence["tau"] == [0, 1, 2, 3]
-    assert set(pt3_evidence["components"]) == {"real", "imag"}
-    assert np.shape(pt3_evidence["components"]["real"]["mean"]) == (2, 4, 2)
-    assert np.shape(pt3_evidence["components"]["imag"]["error"]) == (2, 4, 2)
 
 
 def _exact_lanczos_correlators(
@@ -876,18 +792,9 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
     assert context.output is data
 
 
-def test_publish_preflights_and_reselects_without_llm_round_trip(monkeypatch, tmp_path) -> None:
+def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monkeypatch, tmp_path) -> None:
     import lamet_agent.stages.correlator_analysis._publish as tool
 
-    data = EnsembleData(
-        None,
-        "bootstrap",
-        [np.array([0.9]), np.array([1.1])],
-        ["z"],
-        {"z": [0]},
-        attrs={"observable": "matrix_element"},
-        name="bare_matrix_element",
-    )
     candidates = [
         {
             "id": "matrix_001",
@@ -960,20 +867,17 @@ def test_publish_preflights_and_reselects_without_llm_round_trip(monkeypatch, tm
 
     def apply_fit(*args, **kwargs):
         calls.append(kwargs)
-        if kwargs["t_min"] == 3:
-            assert kwargs["fit_samples"] is False
-            raise FitNumericalError("sample-average posterior is unusable")
-        if kwargs.get("fit_samples") is False:
-            return None, {"n_failed_samples": 0, "sample_failures": [], "fits": []}
-        return data, {"n_failed_samples": 0, "sample_failures": [], "fits": []}
+        assert kwargs["t_min"] == 3
+        assert kwargs["fit_samples"] is False
+        raise FitNumericalError("sample-average posterior is unusable")
 
     monkeypatch.setattr(tool, "fit_matrix_element_samples", apply_fit)
-    tool.run(context, candidate_id="matrix_001")
-    assert len(calls) == 3
+    with pytest.raises(FitNumericalError, match="selected candidate matrix_001 failed full-grid"):
+        tool.run(context, candidate_id="matrix_001")
+    assert len(calls) == 1
     assert candidates[0]["numerical_failure"] is True
-    assert context.output is data
-    assert context.summary["decisions"]["candidate_id"] == "matrix_002"
-    assert context.summary["diagnostics"]["application_rejections"][0]["candidate_id"] == "matrix_001"
+    assert context.output is None
+    assert candidates[1]["numerical_failure"] is False
 
 
 def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_path) -> None:
@@ -1531,7 +1435,7 @@ def test_native_fourier_scan_fits_and_transforms_with_one_parallel_entry(monkeyp
 
 
 def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypatch, tmp_path) -> None:
-    import lamet_agent.stages.fourier_transform.tools.run_fourier_scan as tool
+    import lamet_agent.stages.fourier_transform._scan as tool
 
     z = [-0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4]
     source = EnsembleData(
@@ -1781,53 +1685,6 @@ def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(tmp_path
     )
     assert context.output is main
     assert context.summary["result"] == "systematics_budget"
-
-
-def test_fourier_terminal_publishes_one_explicit_candidate(tmp_path) -> None:
-    from lamet_agent.stages.fourier_transform.tools.transform_distribution import run
-
-    data = EnsembleData(
-        None, "bootstrap", [np.ones(3), 1.1 * np.ones(3)], ["z"], {"z": [-0.1, 0.0, 0.1]}, attrs={"momentum_gev": 2.0}
-    )
-    candidate = {
-        "id": "tail_001",
-        "model_id": "gi_nla",
-        "data": data,
-        "chi2": 1.0,
-        "dof": 2.0,
-        "chi2_dof": 0.5,
-        "Q": 0.6,
-        "aic": 11.0,
-    }
-    params = {
-        "parton": "quark",
-        "gfix": "GI",
-        "quasi_y_ls": [-0.5, 0.0, 0.5],
-        "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "one_over_2pi"},
-    }
-    context = ToolContext(
-        {"metadata": {"workers": 1, "target_observable": "pdf"}},
-        tmp_path / "manifest.json",
-        "fourier_transform",
-        "transform",
-        params,
-        {},
-        {},
-        {
-            "tail_candidates": [candidate],
-            "fourier_conventions": {
-                "parton": "quark",
-                "gfix": "GI",
-                "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "one_over_2pi"},
-            },
-        },
-        tmp_path,
-        np.random.default_rng(2),
-    )
-    observation = run(context, candidate_id="tail_001")
-    assert observation["metrics"]["candidate_id"] == "tail_001"
-    assert context.summary["decisions"] == {"candidate_id": "tail_001"}
-    assert (tmp_path / "output.nc").is_file()
 
 
 def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> None:
@@ -2080,15 +1937,6 @@ def test_extrapolation_fit_uses_reference_median_covariance(monkeypatch) -> None
     assert np.allclose(result.mean, physical, atol=2e-2)
     assert diagnostics["dof"] > 0
     assert '"a": false' in result.attrs["x_dependence"]
-
-
-def test_stage_median_temporarily_matches_reference_symmetric_percentiles() -> None:
-    values = np.asarray([0.0, 1.0, 2.0, 100.0])
-    data = EnsembleData(None, "bootstrap", [np.asarray([value]) for value in values], ["x"], {"x": [0.0]})
-    result = data.average("median")
-    lower, center, upper = np.percentile(values, [50 - 34.1344746, 50, 50 + 34.1344746])
-    assert float(result[0].mean) == pytest.approx(float(center))
-    assert float(result[0].sdev) == pytest.approx(float(0.5 * (upper - lower)))
 
 
 def test_stage_fourier_uniform_grid_keeps_full_endpoint_weights() -> None:

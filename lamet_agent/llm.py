@@ -256,24 +256,28 @@ class _OpenAICompatibleBackend:
         prompt_digest: str,
         response_schema: Mapping[str, Any] | None = None,
     ) -> _AssistantResponse:
+        provider_messages = [_chat_message(message) for message in messages]
         body = {
             "model": self.model,
-            "messages": [_chat_message(message) for message in messages],
-            "tools": tools,
-            "parallel_tool_calls": False,
+            "messages": provider_messages,
             "stream": False,
         }
+        if tools:
+            body["tools"] = tools
+            body["parallel_tool_calls"] = False
         if response_schema is not None:
             if tools:
                 raise ValueError("structured responses cannot be combined with tools")
-            body["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": response_schema["name"],
-                    "strict": True,
-                    "schema": response_schema["schema"],
-                },
-            }
+            provider_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Return only a JSON object matching this schema exactly:\n"
+                        + json.dumps(response_schema["schema"], separators=(",", ":"), ensure_ascii=False)
+                    ),
+                }
+            )
+            body["response_format"] = {"type": "json_object"}
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(body, separators=(",", ":")).encode("utf-8"),

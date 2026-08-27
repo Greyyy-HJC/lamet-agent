@@ -7,28 +7,40 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from lamet_agent.agent import LlmSession, ToolContext
-from lamet_agent.stages.correlator_analysis.tools._correlator_evidence import prepare
+from lamet_agent.stages.correlator_analysis.tools._correlator_evidence import ensure_context
 from lamet_agent.structured import annotation_schema, json_compatible, validate_value
 
 
-class QdaTuneZSuggestion(TypedDict):
-    """Representative nonzero qDA tuning coordinates."""
+class QdaFitSuggestion(TypedDict, total=False):
+    """Joint qDA fit-parameter suggestion."""
 
     tune_z_values: list[float]
+    pt2_windows: list[dict[str, int]]
 
 
 def recommend(
     context: ToolContext,
     session: LlmSession,
     *,
-    diagnostics: list[dict[str, Any]] | None = None,
-) -> list[float]:
-    """Return representative qDA z coordinates from prepared gvar evidence."""
-    evidence = prepare(context)
-    if diagnostics is not None:
-        evidence["previous_fit_diagnostics"] = diagnostics
+    requested_fields: set[str] | None = None,
+    fixed_parameters: dict[str, Any] | None = None,
+    previous_attempts: dict[str, dict[str, Any]] | None = None,
+) -> QdaFitSuggestion:
+    """Return joint qDA parameters from prepared gvar evidence."""
+    ensure_context(context, session)
+    evidence = {"fixed_parameters": fixed_parameters or {}}
+    if previous_attempts is not None:
+        evidence["previous_attempts"] = previous_attempts
     instruction = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
-    schema, _nullable = annotation_schema(QdaTuneZSuggestion)
+    if previous_attempts is not None:
+        instruction += (
+            "\n\nThe previous tuning coordinates were tried across every authored fit combination. "
+            "Make a conservative adjustment using the parameter-to-quality mapping in previous_attempts."
+        )
+    schema, _nullable = annotation_schema(QdaFitSuggestion)
+    requested = requested_fields or {"tune_z_values"}
+    schema["properties"] = {name: value for name, value in schema["properties"].items() if name in requested}
+    schema["required"] = sorted(requested)
     response = session.complete(
         label="qDA tuning-coordinate recommendation",
         user_message=json.dumps(
@@ -42,8 +54,11 @@ def recommend(
     if response.structured is None:
         raise RuntimeError("qDA tuning recommendation returned no structured response")
     result = dict(response.structured)
-    validate_value(QdaTuneZSuggestion, result, "qda_tune_z_recommendation")
-    return result["tune_z_values"]
+    restricted_type = QdaFitSuggestion
+    validate_value(restricted_type, result, "qda_tune_z_recommendation")
+    if set(result) != requested:
+        raise ValueError(f"qDA recommendation must return exactly {sorted(requested)}")
+    return result
 
 
-__all__ = ["QdaTuneZSuggestion", "recommend"]
+__all__ = ["QdaFitSuggestion", "recommend"]

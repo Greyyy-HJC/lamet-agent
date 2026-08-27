@@ -23,8 +23,8 @@ from lamet_agent.plotting import (
 from lamet_agent.stages.fourier_transform.physics import scan_fourier_transform
 
 
-def run(context: ToolContext) -> dict[str, object]:
-    """Evaluate the authored scan and publish the selected quasi-distribution."""
+def attempt(context: ToolContext) -> dict[str, object]:
+    """Evaluate the complete effective range × scheme scan without publishing."""
     if "tail_inspection" not in context.state:
         raise RuntimeError("inspect_long_distance must run before run_fourier_scan")
     scheme_scan = context.params["scheme_scan"]
@@ -69,6 +69,14 @@ def run(context: ToolContext) -> dict[str, object]:
         workers=context.workers,
         _parallel=context._parallel,
     )
+    return result
+
+
+def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object]:
+    """Publish one already accepted deterministic scan result."""
+    conventions = context.state["fourier_conventions"]
+    source = context.state["fourier_input"]
+    scan = {"component": conventions["component"]}
     scanned = result["data"]
     output_attrs = dict(scanned.attrs)
     output_attrs.update(
@@ -253,3 +261,11 @@ def run(context: ToolContext) -> dict[str, object]:
         "state_keys": [],
         "artifacts": artifacts,
     }
+
+
+def run(context: ToolContext) -> dict[str, object]:
+    """Evaluate and publish one scan without parameter re-suggestion."""
+    return publish(context, attempt(context))
+
+
+__all__ = ["attempt", "publish", "run"]

@@ -1,7 +1,7 @@
 ## Contract
 
 - [ ] Better physics comments
-- [ ] `max(P84-P50, P50-P16)`
+- [x] `max(P84-P50, P50-P16)`
 
 ## Artifacts
 
@@ -11,8 +11,7 @@
 
 ## Correlator Analysis
 
-- [ ] Add one bounded typed parameter re-suggestion when every authored fit candidate fails numerically or remains below the accepted quality policy.
-- [ ] After parity evaluation, consider moving full-grid candidate retry policy out of publishing while preserving fail-early diagnostics
+- [x] Add one bounded typed parameter re-suggestion when every authored fit candidate fails numerically or remains below the accepted quality policy.
 
 ## Renormalization
 
@@ -22,8 +21,8 @@
 
 ## Fourier Transform
 
-- [ ] LLM suggested `z_min` and `z_max` lists
-- [ ] Repeated LLM requests if failed on fitting
+- [x] LLM suggested `z_min` and `z_max` lists
+- [x] Repeated LLM requests if failed on fitting
 
 ## Perturbative Matching
 

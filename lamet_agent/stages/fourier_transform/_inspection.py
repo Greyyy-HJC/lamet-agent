@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 
@@ -11,8 +12,12 @@ from lamet_agent.stages.fourier_transform.conventions import derive_conventions
 from lamet_agent.stages.fourier_transform.physics import complete_signed_z, load_data
 
 
-def run(context: ToolContext) -> dict[str, object]:
-    """Load and complete the coordinate-space input."""
+def prepare(context: ToolContext) -> tuple[Any, float]:
+    """Load and complete the coordinate-space input without requiring fit ranges."""
+    existing = context.state.get("fourier_input")
+    inspection = context.state.get("tail_inspection")
+    if existing is not None and isinstance(inspection, dict):
+        return existing, float(inspection["spacing_fm"])
     value = context.inputs["input"]
     if isinstance(value, list):
         if len(value) != 1:
@@ -46,21 +51,6 @@ def run(context: ToolContext) -> dict[str, object]:
     spacing = float(np.diff(positive)[0])
     if spacing <= 0 or not np.allclose(np.diff(positive), spacing, rtol=0.0, atol=1e-12):
         raise ValueError("Fourier input z coordinates must be uniformly spaced")
-    parameters = context.params
-    if float(parameters["zmax_ext_fm"]) < float(np.max(np.abs(z))) - 1e-12:
-        raise ValueError("zmax_ext_fm cannot be smaller than the input z coverage")
-    grid_values = [
-        *parameters["zmin_fm"],
-        *parameters["zmax_fm"],
-    ]
-    if any(
-        not math.isclose(round(float(value) / spacing) * spacing, float(value), rel_tol=0.0, abs_tol=1e-12)
-        for value in grid_values
-    ):
-        raise ValueError("Fourier fit boundaries and tail extent must lie on the input z grid")
-    input_max = float(np.max(np.abs(z)))
-    if any(float(value) > input_max + 1e-12 for value in parameters["zmax_fm"]):
-        raise ValueError("every zmax_fm candidate must be covered by the input z grid")
     context.state["fourier_input"] = data
     context.state["fourier_conventions"] = conventions
     context.state["tail_inspection"] = {
@@ -71,9 +61,31 @@ def run(context: ToolContext) -> dict[str, object]:
         "coord_unit": data.attrs["coord_unit"],
         "spacing_fm": spacing,
     }
+    return data, spacing
+
+
+def run(context: ToolContext) -> dict[str, object]:
+    """Inspect the prepared input and validate the effective fit ranges."""
+    data, spacing = prepare(context)
+    z = np.asarray(data.coords["z"], dtype=float)
+    parameters = context.params
+    if float(parameters["zmax_ext_fm"]) < float(np.max(np.abs(z))) - 1e-12:
+        raise ValueError("zmax_ext_fm cannot be smaller than the input z coverage")
+    grid_values = [*parameters["zmin_fm"], *parameters["zmax_fm"]]
+    if any(
+        not math.isclose(round(float(value) / spacing) * spacing, float(value), rel_tol=0.0, abs_tol=1e-12)
+        for value in grid_values
+    ):
+        raise ValueError("Fourier fit boundaries and tail extent must lie on the input z grid")
+    input_max = float(np.max(np.abs(z)))
+    if any(float(value) > input_max + 1e-12 for value in parameters["zmax_fm"]):
+        raise ValueError("every zmax_fm candidate must be covered by the input z grid")
     return {
         "summary": "inspected and completed signed z grid",
         "metrics": context.state["tail_inspection"],
         "state_keys": ["fourier_input", "fourier_conventions", "tail_inspection"],
         "artifacts": [],
     }
+
+
+__all__ = ["prepare", "run"]

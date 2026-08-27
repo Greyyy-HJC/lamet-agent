@@ -34,31 +34,18 @@ required dependency in the current parity workflow. The generic path remains
 disabled until an explicit scan-versus-suggested provider is approved; it must
 not be represented by making `scheme_scan` optional again.
 
-### Proposed model
+### Resolved recommendation boundary
 
-Replace the implicit optional branch with an explicit tail-fit mode, for
-example:
+`scheme_scan` remains required, fixed, and deterministic. The LLM never selects
+order, sector, prior width, tail model, model averaging, or candidate ranking.
+Only missing `zmin_fm`/`zmax_fm` lists are jointly recommended through null
+hooks. Every valid range is crossed with the complete authored scan.
 
-```json
-{
-  "tail_fit": {
-    "mode": "scan",
-    "scan": {
-      "order": ["LA", "NLA"],
-      "posterior_prior_error_scale": [2.0, 3.0, 5.0],
-      "model_average": true,
-      "q_min": 0.05,
-      "max_candidates": 200
-    }
-  }
-}
-```
-
-`mode="scan"` should remain deterministic and workflow-owned. A separate
-`mode="suggested"` may ask the LLM for a typed model/range/prior suggestion,
-then run fitting, selection, transformation, and publication deterministically.
-The suggested mode must own its `order`, `sector`, and `Lambda0_gev` fields and
-must not depend on a scan mapping.
+When no candidate passes `q_min`, one job-bounded recommendation may revise the
+runtime ranges using the complete parameter-to-Q/chi2 mapping. User-authored
+ranges are fixed on the first attempt but may be temporarily overridden after
+that attempt fails; the resolved manifest is never changed. The per-job request
+budget is `1 + metadata.parameter_recommendation_retries`.
 
 ## Generic Extrapolation
 

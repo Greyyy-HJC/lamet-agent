@@ -96,6 +96,7 @@ def test_llm_session_appends_structured_recommendations_to_job_history(tmp_path:
         ]
     )
     session = LlmSession(backend, tmp_path / "llm.md", history=[Message("system", "fixed stage prefix")])
+    session.add_context("fit_data", {"mean": [1.0], "sdev": [0.1]})
     schema = {
         "name": "integer_recommendation",
         "schema": {
@@ -111,6 +112,9 @@ def test_llm_session_appends_structured_recommendations_to_job_history(tmp_path:
 
     assert [message.role for message in backend.calls[0][0]] == ["system", "user"]
     assert [message.role for message in backend.calls[1][0]] == ["system", "user", "assistant", "user"]
+    first_payload = json.loads(backend.calls[0][0][-1].content)
+    assert first_payload["context"] == [{"key": "fit_data", "content": {"mean": [1.0], "sdev": [0.1]}}]
+    assert first_payload["request"] == "first question"
     assert backend.calls[1][0][-1].content == "second question"
     assert session.calls == 2
 
@@ -1109,7 +1113,13 @@ def test_fourier_scan_intrinsic_values_are_owned_by_rules() -> None:
 
 
 def test_all_shipped_tools_have_provider_schemas() -> None:
-    workflow_stages = {"correlator_analysis", "renormalization", "perturbative_matching", "extrapolation"}
+    workflow_stages = {
+        "correlator_analysis",
+        "renormalization",
+        "fourier_transform",
+        "perturbative_matching",
+        "extrapolation",
+    }
     for stage_id in (
         "correlator_analysis",
         "renormalization",
@@ -1220,6 +1230,15 @@ def test_correlator_manifest_accepts_missing_hook_windows() -> None:
     manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json")
     defaults = manifest.document["stages"]["correlator_analysis"]["defaults"]
     defaults.pop("pt2_windows")
+
+    assert manifest.validate() == []
+
+
+def test_fourier_manifest_accepts_missing_recommended_tail_ranges() -> None:
+    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json")
+    defaults = manifest.document["stages"]["fourier_transform"]["defaults"]
+    defaults.pop("zmin_fm")
+    defaults.pop("zmax_fm")
 
     assert manifest.validate() == []
 
@@ -1895,6 +1914,7 @@ def test_deterministic_stage_workflow_bypasses_the_backend(tmp_path: Path, monke
 
 def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, monkeypatch) -> None:
     import lamet_agent.stages.correlator_analysis.workflow as workflow
+    from lamet_agent.data import EnsembleData
 
     events = []
     monkeypatch.setattr(workflow, "inspect", lambda _context: events.append("inspect"))
@@ -1926,10 +1946,26 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
         tmp_path / "manifest.json",
         "correlator_analysis",
         "correlator",
-        {"analysis_method": "lsqfit", "fit_scope": ["qda_ratio"]},
+        {
+            "analysis_method": "lsqfit",
+            "fit_scope": ["qda_ratio"],
+            "component": "re",
+            "correlator_ids": ["qda"],
+            "pt2_windows": [{"tmin": 2, "tmax": 8}],
+        },
         {},
         {},
-        {},
+        {
+            "correlators": {
+                "qda": EnsembleData(
+                    None,
+                    "bootstrap",
+                    [np.asarray([1.0, 0.8]), np.asarray([1.0, 0.9])],
+                    ["z"],
+                    {"z": [0.0, 0.1]},
+                )
+            }
+        },
         tmp_path,
         np.random.default_rng(1),
     )
@@ -1943,15 +1979,210 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
     assert schema["properties"]["tune_z_values"]["items"] == {"type": "number"}
 
 
+def test_recommendation_sends_data_on_first_human_failure_but_not_on_retry(tmp_path: Path) -> None:
+    from lamet_agent.data import EnsembleData
+    from lamet_agent.stages.correlator_analysis.tools.recommend_qda_tune_z.recommendation import recommend
+
+    backend = _ScriptedBackend(
+        [
+            _AssistantResponse("", structured={"tune_z_values": [0.1]}),
+            _AssistantResponse("", structured={"tune_z_values": [0.2]}),
+        ]
+    )
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "correlator",
+        {"component": "re", "correlator_ids": ["qda"]},
+        {},
+        {},
+        {
+            "correlators": {
+                "qda": EnsembleData(
+                    None,
+                    "bootstrap",
+                    [np.asarray([1.0, 0.8]), np.asarray([1.0, 0.9])],
+                    ["z"],
+                    {"z": [0.0, 0.1]},
+                )
+            }
+        },
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    session = LlmSession(backend, tmp_path / "recommendation.md")
+    attempts = {"matrix_001": {"parameters": {"window": [2, 8]}, "Q": 0.01, "chi2_dof": 2.0}}
+
+    assert recommend(context, session, previous_attempts=attempts) == {"tune_z_values": [0.1]}
+    assert recommend(context, session, previous_attempts=attempts) == {"tune_z_values": [0.2]}
+
+    first_payload = json.loads(backend.calls[0][0][-1].content)
+    first_evidence = first_payload["request"]["evidence"]
+    second_evidence = json.loads(backend.calls[1][0][-1].content)["evidence"]
+    assert set(first_evidence) == {"fixed_parameters", "previous_attempts"}
+    assert set(second_evidence) == {"fixed_parameters", "previous_attempts"}
+    assert first_evidence["previous_attempts"] == attempts
+    assert first_payload["context"][0]["key"] == "correlator_fit_data"
+    assert "correlators" in first_payload["context"][0]["content"]
+
+
+def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path) -> None:
+    from lamet_agent.data import EnsembleData
+    from lamet_agent.stages.correlator_analysis.tools._joint_fit_recommendation import initial, pt2_windows
+
+    backend = _ScriptedBackend(
+        [
+            _AssistantResponse(
+                "",
+                structured={"pt2_windows": [{"tmin": 2, "tmax": 8}], "tune_z_values": [0.1]},
+            )
+        ]
+    )
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "correlator",
+        {
+            "component": "re",
+            "correlator_ids": ["qda"],
+            "fit_scope": ["qda_ratio"],
+            "nstate": [1],
+        },
+        {},
+        {},
+        {
+            "correlators": {
+                "qda": EnsembleData(
+                    None,
+                    "bootstrap",
+                    [np.asarray([1.0, 0.8]), np.asarray([1.0, 0.9])],
+                    ["z"],
+                    {"z": [0.0, 0.1]},
+                )
+            }
+        },
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    session = LlmSession(backend, tmp_path / "joint.md")
+
+    assert pt2_windows(context, session) == [{"tmin": 2, "tmax": 8}]
+    assert initial(context, session)["tune_z_values"] == [0.1]
+    assert session.recommendation_calls == 1
+
+
+def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(tmp_path: Path) -> None:
+    from lamet_agent.data import EnsembleData
+    from lamet_agent.stages.fourier_transform.recommendation import initial, revise
+
+    data = EnsembleData(
+        None,
+        "bootstrap",
+        [np.asarray([0.8, 1.0, 0.8], dtype=complex), np.asarray([0.7, 1.0, 0.7], dtype=complex)],
+        ["z"],
+        {"z": [-0.1, 0.0, 0.1]},
+        attrs={"coord_unit": "fm", "momentum_gev": 2.0},
+    )
+    backend = _ScriptedBackend(
+        [
+            _AssistantResponse("", structured={"zmin_fm": [0.05], "zmax_fm": [0.1]}),
+            _AssistantResponse("", structured={"zmin_fm": [0.04], "zmax_fm": [0.1]}),
+        ]
+    )
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {
+            "scheme_scan": {"order": ["LA"], "posterior_prior_error_scale": [3.0]},
+            "zmax_ext_fm": 0.2,
+        },
+        {},
+        {},
+        {"fourier_input": data, "tail_inspection": {"spacing_fm": 0.1}},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    session = LlmSession(backend, tmp_path / "fourier.md", max_recommendation_calls=2)
+
+    assert initial(context, session) == {"zmin_fm": [0.05], "zmax_fm": [0.1]}
+    attempts = {"candidate": {"parameters": {"order": "LA"}, "Q": 0.01, "chi2_dof": 2.0}}
+    assert revise(context, session, attempts) == {"zmin_fm": [0.04], "zmax_fm": [0.1]}
+    with pytest.raises(RuntimeError, match="limit exceeded"):
+        revise(context, session, attempts)
+
+    first_payload = json.loads(backend.calls[0][0][-1].content)
+    second_payload = json.loads(backend.calls[1][0][-1].content)
+    assert first_payload["context"][0]["key"] == "fourier_tail_fit_data"
+    assert "context" not in second_payload
+    assert second_payload["evidence"]["previous_attempts"] == attempts
+
+
+def test_fourier_workflow_allows_user_attempt_plus_two_job_recommendations(tmp_path: Path, monkeypatch) -> None:
+    import lamet_agent.stages.fourier_transform.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    qualities = [0.01, 0.02, 0.8]
+    attempted_ranges = []
+
+    def attempt(context):
+        attempted_ranges.append((list(context.params["zmin_fm"]), list(context.params["zmax_fm"])))
+        quality = qualities[len(attempted_ranges) - 1]
+        return {
+            "range_candidates": [],
+            "model_candidates": [{"label": f"candidate_{len(attempted_ranges)}", "Q": quality}],
+        }
+
+    revisions = []
+
+    def revise(_context, session, previous_attempts):
+        revisions.append(previous_attempts)
+        session.recommendation_calls += 1
+        value = 0.2 + 0.1 * len(revisions)
+        return {"zmin_fm": [value], "zmax_fm": [0.8]}
+
+    published = []
+    monkeypatch.setattr(workflow, "attempt", attempt)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "publish", lambda _context, result: published.append(result))
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {"zmin_fm": [0.2], "zmax_fm": [0.8], "scheme_scan": {"q_min": 0.05}},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    session = LlmSession(_ScriptedBackend([]), tmp_path / "fourier.md", max_recommendation_calls=2)
+
+    workflow.run(context, session)
+
+    assert len(attempted_ranges) == 3
+    assert len(revisions) == 2
+    assert session.recommendation_calls == 2
+    assert published[0]["model_candidates"][0]["Q"] == 0.8
+
+
 def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Path, monkeypatch) -> None:
     import lamet_agent.stages.correlator_analysis.workflow as workflow
 
     monkeypatch.setattr(workflow, "inspect", lambda _context: None)
     recommendations = []
 
-    def recommend(_context, _ask, *, diagnostics=None):
-        recommendations.append(diagnostics)
-        return [float(len(recommendations))]
+    def initial(_context, _session):
+        recommendations.append(None)
+        return {"tune_z_values": [1.0]}
+
+    def revise(_context, _session, previous_attempts):
+        recommendations.append(previous_attempts)
+        return {"pt2_windows": [{"tmin": 2, "tmax": 8}], "tune_z_values": [2.0]}
 
     attempts = []
 
@@ -1961,17 +2192,24 @@ def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Pa
         context.state["matrix_element_candidates"] = [
             {
                 "id": f"matrix_{len(attempts):03d}",
+                "fit_strategy": "independent",
+                "fit_scope": "qda_ratio",
+                "window": {"t_min": 2, "t_max": 8, "tau_min": None},
+                "nstate": 1,
+                "prior_width": 1.0,
                 "min_Q": quality,
                 "worst_chi2_dof": 1.0,
                 "feasible_at_all_tune_z": True,
                 "numerical_failure": False,
                 "tune_z_values": tune_z_values,
+                "tune_z_diagnostics": {str(tune_z_values[0]): {"Q": quality, "chi2": 8.0, "dof": 8.0, "chi2_dof": 1.0}},
             }
         ]
         return {"metrics": {"recommended_candidate_id": f"matrix_{len(attempts):03d}"}}
 
     published = []
-    monkeypatch.setattr(workflow, "recommend_qda", recommend)
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", revise)
     monkeypatch.setattr(workflow, "fit_qda", fit)
     monkeypatch.setattr(workflow, "publish", lambda _context, *, candidate_id: published.append(candidate_id))
     context = ToolContext(
@@ -1979,7 +2217,12 @@ def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Pa
         tmp_path / "manifest.json",
         "correlator_analysis",
         "correlator",
-        {"analysis_method": "lsqfit", "fit_scope": ["qda_ratio"], "q_min": 0.05},
+        {
+            "analysis_method": "lsqfit",
+            "fit_scope": ["qda_ratio"],
+            "q_min": 0.05,
+            "pt2_windows": [{"tmin": 2, "tmax": 8}],
+        },
         {},
         {},
         {},
@@ -1987,11 +2230,17 @@ def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Pa
         np.random.default_rng(1),
     )
 
-    workflow.run(context, lambda **_request: None)
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md"))
 
     assert attempts == [[1.0], [2.0]]
     assert recommendations[0] is None
-    assert recommendations[1][0]["min_Q"] == 0.01
+    assert recommendations[1]["matrix_001"]["min_Q"] == 0.01
+    assert recommendations[1]["matrix_001"]["parameters"]["window"] == {
+        "t_min": 2,
+        "t_max": 8,
+        "tau_min": None,
+    }
+    assert recommendations[1]["matrix_001"]["by_tune_z"]["1.0"]["Q"] == 0.01
     assert published == ["matrix_002"]
 
 
