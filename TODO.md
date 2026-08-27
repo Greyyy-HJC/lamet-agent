@@ -5,7 +5,7 @@
 
 ## Artifacts
 
-- [ ] Compare artifacts with original
+- [x] Compare artifacts with original
 - [ ] Flat folder structure
 - [ ] Plots and reports
 
