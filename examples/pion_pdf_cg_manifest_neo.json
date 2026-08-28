@@ -155,16 +155,12 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "kernel_id": "quark_pdf_cg_gt_hybrid_rgr_nlo_re",
+        "kernel_id": "quark_pdf_cg_gt_hybrid_nlo",
         "scheme": "hybrid",
         "mu": 2.0,
         "lc_x_ls": {
           "start": 0.0,
           "stop": 1.0
-        },
-        "kernel_parameters": {
-          "kappa": 1.0,
-          "mu_min_gev": 0.6
         },
         "zs_fm": 0.18
       },
