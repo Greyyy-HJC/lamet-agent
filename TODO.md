@@ -2,7 +2,7 @@
 
 - [ ] Better contract physics comments
   - [ ] `correlator_analys`: Xiangyu
-  - [ ] `renormalization`: Jinchen
+  - [x] `renormalization`: Jinchen
   - [x] `fourier_transform`: Dianjun
   - [ ] `perturbative_matching`: Fei
   - [x] `extrapolation`: Dianjun
@@ -19,7 +19,6 @@
 - [ ] Plots: Jinchen
   - [ ] Check: ALL
   - [ ] Missing extrapolation plots
-  - [ ] pion/kaon DA extrapolation selection
 - [ ] Reports
   - [ ] `correlator_analys`: Jinchen
   - [ ] `renormalization`: Jinchen

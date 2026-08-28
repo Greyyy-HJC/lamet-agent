@@ -109,81 +109,81 @@ def _nonnegative_finite(value: int | float) -> bool:
 # ruff: disable[E501]
 # fmt: off
 PARAM_RULES = (
-    Depends("", "strategy", physics="Strategy selects external or self-renormalization data flow."),
-    Value("strategy", Literal["external_denominator", "self_renormalization"], physics="Strategy is external_denominator or self_renormalization."),
-    Provides("", "external_denominator", "strategy", physics="External-denominator jobs own direct ratio, hybrid, and MSbar parameters."),
-    Provides("", "self_renormalization", "strategy", physics="Self-renormalization jobs own factor fitting and remapping parameters."),
-    Depends("", "normalization", physics="Origin normalization is explicit."),
-    Value("normalization", bool, physics="Origin normalization is boolean."),
-    Depends("external_denominator", "scheme", physics="External renormalization selects ratio, hybrid, or MSbar."),
-    Recommends("external_denominator", "type", physics="External-denominator jobs only apply an authored prescription.", default="apply"),
-    Value("external_denominator.type", Literal["apply"], physics="External-denominator jobs are apply operations."),
-    Value("external_denominator.scheme", Literal["ratio", "hybrid", "msbar"], physics="External scheme is ratio, hybrid, or msbar."),
-    Provides("external_denominator", "hybrid", "external_denominator.scheme", physics="External hybrid renormalization owns switch and mass-gap parameters."),
-    Depends("external_denominator.hybrid", "zs_fm", physics="Hybrid switching distance is explicit."),
-    Depends("external_denominator.hybrid", "m0_gev", physics="Hybrid long-distance mass correction is explicit."),
-    Depends("external_denominator.hybrid", "delta_m_gev", physics="Hybrid mass difference is explicit."),
-    Value("external_denominator.hybrid.zs_fm", (int, float), physics="Hybrid switching distance is finite and positive.", validator=_positive),
-    Value("external_denominator.hybrid.m0_gev", (int, float), physics="The hybrid mass parameter is finite.", validator=_finite),
-    Value("external_denominator.hybrid.delta_m_gev", (int, float), physics="The hybrid mass difference is finite.", validator=_finite),
-    Provides("external_denominator", "msbar", "external_denominator.scheme", physics="External MSbar renormalization owns its perturbative scale."),
-    Depends("external_denominator.msbar", "mu", physics="MSbar external renormalization requires an explicit scale."),
-    Value("external_denominator.msbar.mu", (int, float), physics="The MSbar scale is finite and positive.", validator=_positive),
-    Depends("self_renormalization", "scheme", physics="Self-renormalization selects ratio, hybrid, or MSbar."),
-    Recommends("self_renormalization", "type", physics="Self-renormalization applies a reusable factor unless fit is selected explicitly.", default="apply"),
-    Value("self_renormalization.type", Literal["fit", "apply"], physics="Self-renormalization job type is fit or apply."),
-    Provides("self_renormalization", "fit", "self_renormalization.type", physics="Fit jobs own the reference-operator finite coefficient."),
-    Provides("self_renormalization", "apply", "self_renormalization.type", physics="Apply jobs own target-operator remapping coefficients."),
-    Value("self_renormalization.scheme", Literal["ratio", "hybrid", "msbar"], physics="Self-renormalization scheme is ratio, hybrid, or msbar."),
-    Depends("self_renormalization", "kernel_id", physics="Self-renormalization explicitly selects its coordinate-space conversion formula."),
-    Value("self_renormalization.kernel_id", str, physics="The renormalization kernel id is one exact public filename stem."),
-    Recommends("self_renormalization", "kernel_parameters", physics="Kernel signature parameters default to stage context and may be explicitly overridden.", default={}),
-    Value("self_renormalization.kernel_parameters", dict, physics="Renormalization kernel parameters are an explicit mapping."),
-    Depends("self_renormalization", "mu", physics="Self-renormalization uses an explicit perturbative scale."),
-    Depends("self_renormalization", "LambdaQCD_gev", physics="Self-renormalization fitting and remapping share one explicitly authored QCD scale."),
-    Recommends("self_renormalization", "svdcut", physics="The original self-renormalization reference fit defaults to a 1e-12 covariance singular-value cut.", default=1e-12),
-    Recommends("self_renormalization", "z_coverage_policy", physics="Target coverage is strict, intersected with zR, or completed only at the long-distance upper end.", default="extrapolate"),
-    Depends("self_renormalization.fit", "d", physics="The reference fit uses one explicit finite logarithmic coefficient."),
-    Depends("self_renormalization.apply", "d", physics="Application remaps one explicit finite logarithmic coefficient."),
-    Depends("self_renormalization.apply", "m0_gev", physics="Application remaps the fitted residual mass."),
-    Value("self_renormalization.mu", (int, float), physics="The scale is finite and positive.", validator=_positive),
-    Value("self_renormalization.LambdaQCD_gev", (int, float), physics="Lambda_QCD is finite and positive.", validator=_positive),
-    Value("self_renormalization.svdcut", (int, float), physics="The self-renormalization covariance cutoff is finite and positive.", validator=_positive),
-    Value("self_renormalization.z_coverage_policy", Literal["strict", "intersection", "extrapolate"], physics="The z-coverage policy is strict, intersection, or long-distance extrapolation."),
-    Value("self_renormalization.fit.d", (int, float), physics="The fit logarithmic correction is finite.", validator=_finite),
-    Value("self_renormalization.apply.d", (int, float), physics="The apply logarithmic correction is finite.", validator=_finite),
-    Value("self_renormalization.apply.m0_gev", (int, float), physics="The remapped residual mass is finite.", validator=_finite),
-    Provides("self_renormalization", "hybrid", "self_renormalization.scheme", physics="Hybrid self-renormalization owns its switching distance."),
-    Depends("self_renormalization.hybrid", "zs_fm", physics="Hybrid switching distance is explicit."),
-    Value("self_renormalization.hybrid.zs_fm", (int, float), physics="Hybrid switching distance is finite and positive.", validator=_positive),
+    Depends("", "strategy", physics="Renormalization factors are either supplied through an external denominator or extracted by fitting reference matrix elements in the self-renormalization workflow."),
+    Value("strategy", Literal["external_denominator", "self_renormalization"], physics="Selects whether the denominator factor is externally determined or fitted from reference matrix elements."),
+    Provides("", "external_denominator", "strategy", physics="External-denominator jobs apply a renormalization factor determined outside this workflow to the target matrix element."),
+    Provides("", "self_renormalization", "strategy", physics="Self-renormalization jobs extract a reusable factor from reference matrix elements and apply it to target matrix elements."),
+    Depends("", "normalization", physics="Selects whether matrix-element inputs are normalized at the origin z=0 before the renormalization prescription is applied."),
+    Value("normalization", bool, physics="Origin normalization divides each sample by its own value at the unique z=0 point, setting that local normalization to one."),
+    Depends("external_denominator", "scheme", physics="The external scheme determines how the supplied renormalization factor is interpreted across the short- and long-distance regions."),
+    Recommends("external_denominator", "type", physics="External factors are not fitted in this stage, so external-denominator jobs use type='apply'.", default="apply"),
+    Value("external_denominator.type", Literal["apply"], physics="External-denominator jobs apply an authored renormalization prescription rather than fitting one."),
+    Value("external_denominator.scheme", Literal["ratio", "hybrid", "msbar"], physics="The supplied denominator represents the selected ratio, hybrid, or MSbar renormalization prescription."),
+    Provides("external_denominator", "hybrid", "external_denominator.scheme", physics="External hybrid renormalization separates perturbative short-distance treatment from predominantly nonperturbative long-distance mass subtraction."),
+    Depends("external_denominator.hybrid", "zs_fm", physics="The switching distance marks the boundary between the short-range and long-range hybrid prescriptions."),
+    Depends("external_denominator.hybrid", "m0_gev", physics="The long-distance hybrid correction includes an explicit renormalon-related linear mass contribution."),
+    Depends("external_denominator.hybrid", "delta_m_gev", physics="The long-distance hybrid correction includes the linear-power-divergence mass contribution associated with the Wilson line."),
+    Value("external_denominator.hybrid.zs_fm", (int, float), physics="The hybrid short/long-distance boundary is a finite positive physical distance in fm and must be represented on the z grid.", validator=_positive),
+    Value("external_denominator.hybrid.m0_gev", (int, float), physics="Renormalon-related linear mass parameter for the long-distance hybrid correction, in GeV.", validator=_finite),
+    Value("external_denominator.hybrid.delta_m_gev", (int, float), physics="Linear-power-divergence mass contribution for the long-distance hybrid correction, in GeV.", validator=_finite),
+    Provides("external_denominator", "msbar", "external_denominator.scheme", physics="External MSbar jobs use a denominator determined in the MSbar prescription and record its perturbative scale."),
+    Depends("external_denominator.msbar", "mu", physics="An externally determined MSbar factor must be associated with an explicit perturbative scale."),
+    Value("external_denominator.msbar.mu", (int, float), physics="The external MSbar perturbative scale is finite and positive.", validator=_positive),
+    Depends("self_renormalization", "scheme", physics="Self-renormalization selects ratio, hybrid, or MSbar for the fitted factor and its target application."),
+    Recommends("self_renormalization", "type", physics="Self-renormalization uses type='fit' to extract a reusable factor from reference matrix elements and type='apply' to use it on target matrix elements.", default="apply"),
+    Value("self_renormalization.type", Literal["fit", "apply"], physics="A self-renormalization job either extracts the factor from references or applies it to a target."),
+    Provides("self_renormalization", "fit", "self_renormalization.type", physics="Fit jobs determine the reference operator's finite correction and reusable self-renormalization factor."),
+    Provides("self_renormalization", "apply", "self_renormalization.type", physics="Apply jobs remap the reusable factor to the target operator using target-specific finite corrections."),
+    Value("self_renormalization.scheme", Literal["ratio", "hybrid", "msbar"], physics="The self-renormalization scheme records whether the fitted factor is used for ratio, hybrid, or MSbar renormalization."),
+    Depends("self_renormalization", "kernel_id", physics="Self-renormalization requires an explicit coordinate-space MSbar conversion kernel for short-distance matching and finite-term determination."),
+    Value("self_renormalization.kernel_id", str, physics="The kernel id selects the operator- and channel-specific coordinate-space MSbar conversion formula, including its perturbative order."),
+    Recommends("self_renormalization", "kernel_parameters", physics="Kernel parameters expose non-coordinate inputs of the selected conversion formula; coordinate z is supplied by the data and the stage scale may be explicitly overridden.", default={}),
+    Value("self_renormalization.kernel_parameters", dict, physics="Kernel parameter overrides form the explicit mapping passed to the selected conversion formula."),
+    Depends("self_renormalization", "mu", physics="Self-renormalization uses an explicit perturbative scale for short-distance matching and factor provenance."),
+    Depends("self_renormalization", "LambdaQCD_gev", physics="Fit and apply use one QCD scale so the UV running and self-renormalization remapping share the same prescription."),
+    Recommends("self_renormalization", "svdcut", physics="The covariance singular-value cutoff regularizes ill-conditioned directions in the correlated self-renormalization fit; the default is 1e-12.", default=1e-12),
+    Recommends("self_renormalization", "z_coverage_policy", physics="Target coverage relative to the fitted factor is either required in full, restricted to the intersection, or extended only at the long-distance upper end.", default="extrapolate"),
+    Depends("self_renormalization.fit", "d", physics="The reference fit uses the finite perturbative correction associated with the reference operator."),
+    Depends("self_renormalization.apply", "d", physics="Application remaps the fitted factor with the target operator's finite perturbative correction, which may differ from the fit value."),
+    Depends("self_renormalization.apply", "m0_gev", physics="Application remaps the fitted factor with the target operator's renormalon-related mass contribution."),
+    Value("self_renormalization.mu", (int, float), physics="The perturbative matching scale is finite and positive.", validator=_positive),
+    Value("self_renormalization.LambdaQCD_gev", (int, float), physics="Lambda_QCD is the finite positive QCD scale used by the common self-renormalization prescription.", validator=_positive),
+    Value("self_renormalization.svdcut", (int, float), physics="The covariance singular-value cutoff used to stabilize the self-renormalization fit is finite and positive.", validator=_positive),
+    Value("self_renormalization.z_coverage_policy", Literal["strict", "intersection", "extrapolate"], physics="Coverage is strict, limited to the target/factor intersection, or extrapolated only toward larger long-distance coordinates."),
+    Value("self_renormalization.fit.d", (int, float), physics="The reference operator's finite perturbative correction coefficient is finite.", validator=_finite),
+    Value("self_renormalization.apply.d", (int, float), physics="The target operator's finite perturbative correction coefficient is finite and may differ from the reference-fit value.", validator=_finite),
+    Value("self_renormalization.apply.m0_gev", (int, float), physics="The target operator's renormalon-related mass parameter is finite and is used for factor remapping.", validator=_finite),
+    Provides("self_renormalization", "hybrid", "self_renormalization.scheme", physics="Self-hybrid renormalization uses an external ratio at short distance and the reusable self-renormalization factor at long distance, with a transfer normalization enforcing continuity at the switch."),
+    Depends("self_renormalization.hybrid", "zs_fm", physics="The switching distance marks the boundary between short-distance ratio treatment and long-distance self-renormalization."),
+    Value("self_renormalization.hybrid.zs_fm", (int, float), physics="The self-hybrid switching distance is a finite positive physical distance in fm and must lie on the z grid.", validator=_positive),
 )
 
 INPUT_RULES = ()
 
 JOB_CONDITIONAL_RULES = (
-    Depends("external_denominator", "inputs", physics="External renormalization consumes a target and denominator."),
-    Depends("external_denominator.inputs", "target", physics="External renormalization consumes one target source."),
-    Depends("external_denominator.inputs", "denominator", physics="External renormalization consumes one denominator source or constant."),
-    Source("external_denominator.inputs.target", physics="The target is one prior job or external file source."),
-    Source("external_denominator.inputs.denominator", physics="The denominator is one prior job, file, or nonzero constant.", allow_constant=True),
-    Depends("self_renormalization.fit", "inputs", physics="Self-renormalization fitting consumes reference matrix elements."),
-    Depends("self_renormalization.fit.inputs", "reference", physics="The fit reference is explicit."),
-    Source("self_renormalization.fit.inputs.reference", physics="The fit reference is one source or an ordered source list.", allow_list=True),
-    Depends("self_renormalization.apply", "inputs", physics="Self-renormalization application consumes a target and fitted factor."),
-    Depends("self_renormalization.apply.inputs", "target", physics="Self-renormalization application consumes one target source."),
-    Depends("self_renormalization.apply.inputs", "zR", physics="Self-renormalization application consumes one fitted factor source."),
-    Source("self_renormalization.apply.inputs.target", physics="The target is one prior job or external file source."),
-    Source("self_renormalization.apply.inputs.zR", physics="The fitted factor is one prior job or external file source."),
-    Provides("self_renormalization.apply", "hybrid", "self_renormalization.scheme", physics="Hybrid self-renormalization application also consumes a short-distance denominator."),
-    Depends("self_renormalization.apply.hybrid.inputs", "denominator", physics="Hybrid self-renormalization consumes one short-distance denominator source."),
-    Source("self_renormalization.apply.hybrid.inputs.denominator", physics="The hybrid denominator is one prior job or external file source."),
+    Depends("external_denominator", "inputs", physics="External renormalization applies the supplied denominator factor to one target matrix element."),
+    Depends("external_denominator.inputs", "target", physics="The target is the bare matrix element selected for renormalization."),
+    Depends("external_denominator.inputs", "denominator", physics="The denominator is the externally determined renormalization factor, supplied as a coordinate-dependent source or a nonzero constant."),
+    Source("external_denominator.inputs.target", physics="The target comes from one prior job or external file source."),
+    Source("external_denominator.inputs.denominator", physics="The external renormalization factor comes from one prior job, file, or nonzero constant.", allow_constant=True),
+    Depends("self_renormalization.fit", "inputs", physics="Self-renormalization fitting extracts a reusable factor from reference matrix elements at multiple lattice spacings."),
+    Depends("self_renormalization.fit.inputs", "reference", physics="The reference matrix elements used to extract the factor must be explicit."),
+    Source("self_renormalization.fit.inputs.reference", physics="The fit reference is one (a,z) source or an ordered source list at different lattice spacings sharing the physical z grid.", allow_list=True),
+    Depends("self_renormalization.apply", "inputs", physics="Self-renormalization application combines one target matrix element with one fitted renormalization factor."),
+    Depends("self_renormalization.apply.inputs", "target", physics="The target is the bare matrix element to be renormalized."),
+    Depends("self_renormalization.apply.inputs", "zR", physics="zR is the fitted reusable self-renormalization factor applied to the target."),
+    Source("self_renormalization.apply.inputs.target", physics="The target comes from one prior job or external file source."),
+    Source("self_renormalization.apply.inputs.zR", physics="The reusable factor comes from one prior self-renormalization fit or external file source."),
+    Provides("self_renormalization.apply", "hybrid", "self_renormalization.scheme", physics="Self-hybrid application combines short-distance external ratio renormalization with long-distance self-renormalization while preserving continuity at the switch."),
+    Depends("self_renormalization.apply.hybrid.inputs", "denominator", physics="The short-distance denominator anchors the ratio branch and its continuity with the long-distance fitted factor."),
+    Source("self_renormalization.apply.hybrid.inputs.denominator", physics="The short-distance denominator comes from one prior job or external file source."),
 )
 # fmt: on
 # ruff: enable[E501]
 
 
 def check_path(context: CheckContext) -> Issue | None:
-    physics = "Only the declared renormalization operation/scheme/strategy combinations have one numerical path."
+    physics = "Only declared renormalization strategy, type, and scheme combinations define a valid numerical path; the renormalon-related mass term is extracted by fitting and supplied when applying the factor."
     params = context.params
     strategy = params.get("strategy")
     job_type = params.get("type")
@@ -199,7 +199,7 @@ def check_path(context: CheckContext) -> Issue | None:
 def check_hybrid(context: CheckContext) -> Issue | None:
     params = context.params
     inputs = context.inputs
-    physics = "Hybrid application requires a switching distance and its mass correction."
+    physics = "Hybrid renormalization separates short- and long-distance treatments at an explicit switching distance; the external branch additionally requires its mass-subtraction parameters and coordinate-dependent denominator."
     if params.get("scheme") == "hybrid":
         missing = ["zs_fm"] if "zs_fm" not in params else []
         if missing:
@@ -216,7 +216,7 @@ def check_hybrid(context: CheckContext) -> Issue | None:
 
 
 def check_inputs(context: CheckContext) -> Issue | None:
-    physics = "The explicit job type, strategy, and scheme determine one exact set of input roles."
+    physics = "The strategy, job type, and scheme determine whether target, denominator, reference, and fitted factor roles are physically required; no additional input roles are meaningful."
     params = context.params
     strategy = params.get("strategy")
     scheme = params.get("scheme")
@@ -270,7 +270,7 @@ def check_kernel(context: CheckContext) -> list[Issue] | Issue | None:
     kernel_id = params.get("kernel_id")
     if not isinstance(kernel_id, str):
         return None
-    physics = "Self-renormalization formulas are explicit callables selected by filename stem."
+    physics = "Self-renormalization matches the selected operator's short-distance behavior to an explicit coordinate-space MSbar kernel; its signature and authored overrides must be consistent."
     try:
         kernel = load_renormalization_kernel(kernel_id)
     except (ImportError, OSError, TypeError, ValueError) as exc:
@@ -295,13 +295,13 @@ def _check_scale(context: CheckContext) -> Issue | None:
         return Issue(
             "mu",
             "is required for this renormalization path",
-            "Scale-dependent renormalization paths require a positive scale; ratio external division does not.",
+            "Scale-dependent renormalization paths require a positive perturbative scale; pure external ratio division does not.",
         )
     if (is_fit or strategy == "self_renormalization") and "LambdaQCD_gev" not in params:
         return Issue(
             "LambdaQCD_gev",
             "is required for self-renormalization fitting and application",
-            "The reusable zR fit and its target remap must use one shared QCD scale.",
+            "The reusable zR fit and its target remap must use one shared QCD scale so their UV running and finite remapping remain in the same prescription.",
         )
     return None
 
