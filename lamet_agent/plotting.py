@@ -21,7 +21,26 @@ _GREEN = "#2CA02C"
 _RED = "#D62728"
 _VIOLET = "#7B6FD0"
 _FUCHSIA = "#CC79A7"
-COLOR_CYCLE = [_BLUE, _ORANGE, _GREEN, _RED, _VIOLET, _FUCHSIA]
+_TURQUOISE = "#1B9E77"
+_GRAPE = "#6A3D9A"
+_LIME = "#B2DF8A"
+_PEACH = "#FFBE7A"
+_SUNKIST = "#F2C12E"
+_YELLOW = "#FFD54F"
+COLOR_CYCLE = [
+    _BLUE,
+    _ORANGE,
+    _GREEN,
+    _RED,
+    _VIOLET,
+    _FUCHSIA,
+    _TURQUOISE,
+    _GRAPE,
+    _LIME,
+    _PEACH,
+    _SUNKIST,
+    _YELLOW,
+]
 
 _FONT_CONFIG = {
     "font.family": "serif",

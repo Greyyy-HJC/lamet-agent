@@ -239,8 +239,8 @@ def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path)
     errorline([0.0, 1.0], values)
     hline(0.0)
     vline(0.5)
-    hline(0.2, color=COLOR_CYCLE[4])
-    vline(0.7, color=COLOR_CYCLE[5])
+    for index, color in enumerate(COLOR_CYCLE[4:]):
+        hline(0.2 + 0.05 * index, color=color)
     cycle_path = tmp_path / "cycle.svg"
     save_figure(cycle_path)
     cycle_svg = cycle_path.read_text(encoding="utf-8").lower()
