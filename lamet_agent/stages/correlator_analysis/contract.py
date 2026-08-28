@@ -16,7 +16,7 @@ from lamet_agent.contract import (
     Value,
     stage_job_rules,
 )
-from lamet_agent.stages.correlator_analysis.tools.recommendation import (
+from lamet_agent.stages.correlator_analysis.ask import (
     pt2_windows as recommend_pt2_windows,
     pt3_windows as recommend_pt3_windows,
 )

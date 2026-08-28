@@ -15,6 +15,7 @@ from lamet_agent.agent import (
     LlmSession,
     ToolContext,
     _discover_tools,
+    _ensure_stage_ask,
     _resolve_progress_mode,
     _resolve_runtime_null_hooks,
     _write_transcript_header,
@@ -106,6 +107,15 @@ class _ScriptedBackend:
         return self._responses.pop(0)
 
 
+def _ask_session(backend, path: Path, context: ToolContext, **kwargs) -> LlmSession:
+    return LlmSession(
+        backend,
+        path,
+        _initializer=lambda session: _ensure_stage_ask(context, session, None),
+        **kwargs,
+    )
+
+
 class _RecommendedInterval(TypedDict):
     start: int
     stop: int
@@ -143,6 +153,7 @@ def test_llm_session_appends_structured_recommendations_to_job_history(tmp_path:
     assert first_payload["context"] == [{"key": "fit_data", "content": {"mean": [1.0], "sdev": [0.1]}}]
     assert first_payload["request"] == "first question"
     assert backend.calls[1][0][-1].content == "second question"
+    assert backend.calls[0][2] == backend.calls[1][2]
     assert session.calls == 2
 
 
@@ -1151,25 +1162,24 @@ def test_fourier_scan_intrinsic_values_are_owned_by_rules() -> None:
     ]
 
 
-def test_all_shipped_tools_have_provider_schemas() -> None:
-    workflow_stages = {
-        "correlator_analysis",
-        "renormalization",
-        "fourier_transform",
-        "perturbative_matching",
-        "extrapolation",
-    }
+def test_review_tools_have_provider_schemas() -> None:
+    tools = _discover_tools("review")
+    assert tools
+    assert all(tool.schema["function"]["name"] == tool.name for tool in tools)
+
+
+def test_workflow_asks_are_not_model_visible_tool_directories() -> None:
+    stages = Path(__file__).parents[2] / "lamet_agent" / "stages"
+    assert (stages / "correlator_analysis" / "ask").is_dir()
+    assert (stages / "fourier_transform" / "ask").is_dir()
     for stage_id in (
         "correlator_analysis",
         "renormalization",
         "fourier_transform",
         "perturbative_matching",
         "extrapolation",
-        "review",
     ):
-        tools = _discover_tools(stage_id)
-        assert bool(tools) is (stage_id not in workflow_stages)
-        assert all(tool.schema["function"]["name"] == tool.name for tool in tools)
+        assert not (stages / stage_id / "tools").exists()
 
 
 def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Path) -> None:
@@ -2161,7 +2171,7 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
         np.random.default_rng(1),
     )
 
-    workflow.run(context, LlmSession(backend, tmp_path / "recommendation.md"))
+    workflow.run(context, _ask_session(backend, tmp_path / "recommendation.md", context))
 
     assert events == ["inspect", ("fit", [0.1]), ("publish", "matrix_001")]
     assert backend.calls[0][1] == []
@@ -2177,7 +2187,7 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
 
 def test_recommendation_sends_data_on_first_human_failure_but_not_on_retry(tmp_path: Path) -> None:
     from lamet_agent.data import EnsembleData
-    from lamet_agent.stages.correlator_analysis.tools.recommend_qda_tune_z.recommendation import recommend
+    from lamet_agent.stages.correlator_analysis.ask.ask_for_qda_tune_z import recommend
 
     backend = _ScriptedBackend(
         [
@@ -2207,7 +2217,7 @@ def test_recommendation_sends_data_on_first_human_failure_but_not_on_retry(tmp_p
         tmp_path,
         np.random.default_rng(1),
     )
-    session = LlmSession(backend, tmp_path / "recommendation.md")
+    session = _ask_session(backend, tmp_path / "recommendation.md", context)
     attempts = {"matrix_001": {"parameters": {"window": [2, 8]}, "Q": 0.01, "chi2_dof": 2.0}}
 
     assert recommend(context, session, previous_attempts=attempts) == {"tune_z_values": [0.1]}
@@ -2223,11 +2233,14 @@ def test_recommendation_sends_data_on_first_human_failure_but_not_on_retry(tmp_p
     correlator_context = first_payload["context"][0]["content"]
     assert "correlators" in correlator_context
     assert isinstance(correlator_context["correlators"]["qda"]["components"]["real"], str)
+    assert [message.role for message in backend.calls[0][0][:3]] == ["system", "system", "user"]
+    assert backend.calls[0][0][0].content.startswith("# Correlator analysis")
+    assert backend.calls[0][2] == backend.calls[1][2]
 
 
 def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path) -> None:
     from lamet_agent.data import EnsembleData
-    from lamet_agent.stages.correlator_analysis.tools.recommendation import initial, pt2_windows
+    from lamet_agent.stages.correlator_analysis.ask import initial, pt2_windows
 
     backend = _ScriptedBackend(
         [
@@ -2264,7 +2277,7 @@ def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path)
         tmp_path,
         np.random.default_rng(1),
     )
-    session = LlmSession(backend, tmp_path / "joint.md")
+    session = _ask_session(backend, tmp_path / "joint.md", context)
 
     assert pt2_windows(context, session) == [{"tmin": 2, "tmax": 8}]
     assert initial(context, session)["tune_z_values"] == [0.1]
@@ -2276,7 +2289,7 @@ def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path)
 
 def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(tmp_path: Path) -> None:
     from lamet_agent.data import EnsembleData, EnsembleInfo
-    from lamet_agent.stages.fourier_transform.tools.recommendation import initial, revise
+    from lamet_agent.stages.fourier_transform.ask import initial, revise
 
     data = EnsembleData(
         EnsembleInfo("test", "test", 0.1, 0.1, 32, 64, 0.14),
@@ -2307,7 +2320,7 @@ def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(t
         tmp_path,
         np.random.default_rng(1),
     )
-    session = LlmSession(backend, tmp_path / "fourier.md", max_recommendation_calls=2)
+    session = _ask_session(backend, tmp_path / "fourier.md", context, max_recommendation_calls=2)
 
     assert initial(context, session) == {"zmin_fm": [0.05], "zmax_fm": [0.1]}
     attempts = {"candidate": {"parameters": {"order": "LA"}, "Q": 0.01, "chi2_dof": 2.0}}
@@ -2321,6 +2334,9 @@ def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(t
     assert isinstance(first_payload["context"][0]["content"]["components"]["real"], str)
     assert "context" not in second_payload
     assert second_payload["evidence"]["previous_attempts"] == attempts
+    assert [message.role for message in backend.calls[0][0][:3]] == ["system", "system", "user"]
+    assert backend.calls[0][0][0].content.startswith("# Fourier transform")
+    assert backend.calls[0][2] == backend.calls[1][2]
 
 
 def test_fourier_workflow_allows_user_attempt_plus_two_job_recommendations(tmp_path: Path, monkeypatch) -> None:

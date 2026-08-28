@@ -93,6 +93,23 @@ class LlmSession:
     recommendation_calls: int = 0
     _context_keys: set[str] = field(default_factory=set, repr=False)
     _pending_context: list[dict[str, Any]] = field(default_factory=list, repr=False)
+    _system_prompt_keys: set[str] = field(default_factory=set, repr=False)
+    _initializer: Callable[[LlmSession], None] | None = field(default=None, repr=False, kw_only=True)
+
+    def has_system_prompt(self, key: str) -> bool:
+        """Return whether one named ask prompt is already present in history."""
+        return key in self._system_prompt_keys
+
+    def add_system_prompt(self, key: str, content: str) -> None:
+        """Append one nonempty system prompt to this job's ask history exactly once."""
+        if not isinstance(key, str) or not key:
+            raise ValueError("LLM system-prompt key must be a nonempty string")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("LLM system prompt must be nonempty")
+        if key in self._system_prompt_keys:
+            return
+        self._system_prompt_keys.add(key)
+        self.history.append(Message("system", content.strip()))
 
     def has_context(self, key: str) -> bool:
         """Return whether one named context is pending or already in message history."""
@@ -116,10 +133,18 @@ class LlmSession:
         tools: list[dict[str, Any]] | None = None,
         response_schema: Mapping[str, Any] | None = None,
         prompt_digest: str | None = None,
+        ask_prompt_key: str | None = None,
+        ask_prompt: str | None = None,
     ) -> Any:
         """Record and execute one backend call without imposing response semantics."""
         if (messages is None) == (user_message is None):
             raise ValueError("complete requires exactly one of messages or user_message")
+        if (ask_prompt_key is None) != (ask_prompt is None):
+            raise ValueError("ask_prompt_key and ask_prompt must be provided together")
+        if user_message is not None and self._initializer is not None:
+            self._initializer(self)
+        if ask_prompt_key is not None and ask_prompt is not None:
+            self.add_system_prompt(ask_prompt_key, ask_prompt)
         if messages is not None and self._pending_context:
             raise RuntimeError("pending LLM context requires a user_message completion")
         if response_schema is not None:
@@ -160,8 +185,18 @@ class LlmSession:
             request_payload,
         )
         if prompt_digest is None:
+            system_prefix = []
+            for message in request_messages:
+                if message.role != "system":
+                    break
+                system_prefix.append(_message_payload(message))
             digest_payload = json.dumps(
-                {"request": request_payload, "backend": self.backend.identity},
+                {
+                    "system_prefix": system_prefix,
+                    "tools": tool_schemas,
+                    "response_schema": response_schema,
+                    "backend": self.backend.identity,
+                },
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=False,
@@ -334,6 +369,37 @@ def _load_tool_module(stage_id: str, tool_directory: Path) -> ModuleType:
     return module
 
 
+def _load_stage_ask(stage_id: str, stage_root: str | Path | None) -> ModuleType:
+    """Import one stage ask package directly without tool discovery."""
+    if stage_root is None:
+        return importlib.import_module(f"lamet_agent.stages.{stage_id}.ask")
+    directory = _stage_path(stage_id, stage_root) / "ask"
+    init_path = directory / "__init__.py"
+    if not init_path.is_file():
+        raise ValueError(f"Stage '{stage_id}' has no ask package")
+    digest = hashlib.sha256(str(directory.resolve()).encode("utf-8")).hexdigest()
+    module_name = f"_lamet_agent_ask_{stage_id}_{digest}"
+    spec = importlib.util.spec_from_file_location(module_name, init_path, submodule_search_locations=[str(directory)])
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Cannot load ask package for stage '{stage_id}'")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _ensure_stage_ask(
+    context: ToolContext,
+    session: LlmSession,
+    stage_root: str | Path | None,
+) -> None:
+    """Invoke one stage's idempotent ask initializer without scanning for tools."""
+    module = _load_stage_ask(context.stage_id, stage_root)
+    ensure = getattr(module, "ensure", None)
+    if not callable(ensure):
+        raise TypeError(f"Stage '{context.stage_id}' ask package must export callable ensure")
+    ensure(context, session)
+
+
 def _tool_schema(name: str, function: Any) -> dict[str, Any]:
     signature = inspect.signature(function)
     hints = get_type_hints(function)
@@ -389,11 +455,7 @@ def _discover_tools(stage_id: str, *, stage_root: str | Path | None = None) -> l
         if not init_path.exists() and not prompt_path.exists():
             continue
         if not init_path.is_file():
-            # Prompt-only directories describe typed parameter suggestions used
-            # by stage workflows; they are not model-visible executable tools.
-            if not prompt_path.is_file() or not prompt_path.read_text(encoding="utf-8").strip():
-                raise ValueError(f"Parameter suggestion '{directory.name}' requires a nonempty prompt.md")
-            continue
+            raise ValueError(f"Tool '{directory.name}' requires an __init__.py")
         if not prompt_path.is_file() or not prompt_path.read_text(encoding="utf-8").strip():
             raise ValueError(f"Tool '{directory.name}' requires a nonempty prompt.md")
         module = _load_tool_module(stage_id, directory)
@@ -649,6 +711,11 @@ class _AgentSession:
             transcript_path,
             history=history,
             max_recommendation_calls=1 + retry_limit,
+            _initializer=(
+                (lambda session: _ensure_stage_ask(context, session, self.stage_root))
+                if context.stage_id in _WORKFLOW_STAGES
+                else None
+            ),
         )
         contract = _load_stage_contract(context.stage_id, self.stage_root)
         _resolve_runtime_null_hooks(
@@ -809,13 +876,16 @@ class _AgentSession:
                 )
                 bundle = self._stage_bundles.get(stage_id)
                 if bundle is None:
-                    tools = _discover_tools(stage_id, stage_root=self.stage_root)
-                    static_prompt, digest = _build_static_prompt(
-                        job=job,
-                        tools=tools,
-                        stage_root=self.stage_root,
-                        backend_identity=self.backend.identity,
-                    )
+                    if stage_id in _WORKFLOW_STAGES:
+                        tools, static_prompt, digest = [], "", ""
+                    else:
+                        tools = _discover_tools(stage_id, stage_root=self.stage_root)
+                        static_prompt, digest = _build_static_prompt(
+                            job=job,
+                            tools=tools,
+                            stage_root=self.stage_root,
+                            backend_identity=self.backend.identity,
+                        )
                     self._stage_bundles[stage_id] = (tools, static_prompt, digest)
                 else:
                     tools, static_prompt, digest = bundle

@@ -1,1 +1,0 @@
-"""Model-callable matching tools."""

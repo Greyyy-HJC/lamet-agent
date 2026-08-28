@@ -1,4 +1,4 @@
-"""Prepare ordinary matrix-fit evidence and request tuning coordinates."""
+"""Request qDA tuning coordinates and two-point windows."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from lamet_agent.agent import LlmSession, ToolContext
-from lamet_agent.stages.correlator_analysis.tools._correlator_evidence import ensure_context
 from lamet_agent.structured import annotation_schema, json_compatible, validate_value
 
 
@@ -16,17 +15,11 @@ class Pt2Window(TypedDict):
     tmax: int
 
 
-class Pt3Window(TypedDict):
-    tsep_ls: list[int]
-    tau_cut: int
-
-
-class MatrixFitSuggestion(TypedDict, total=False):
-    """Joint ordinary matrix-element fit-parameter suggestion."""
+class QdaFitSuggestion(TypedDict, total=False):
+    """Joint qDA fit-parameter suggestion."""
 
     tune_z_values: list[float]
     pt2_windows: list[Pt2Window]
-    pt3_windows: list[Pt3Window]
 
 
 def recommend(
@@ -36,49 +29,46 @@ def recommend(
     requested_fields: set[str] | None = None,
     fixed_parameters: dict[str, Any] | None = None,
     previous_attempts: dict[str, dict[str, Any]] | None = None,
-) -> MatrixFitSuggestion:
-    """Return joint ordinary matrix-element parameters from prepared gvar evidence."""
-    ensure_context(context, session)
+) -> QdaFitSuggestion:
+    """Return joint qDA parameters from prepared gvar evidence."""
     evidence = {"fixed_parameters": fixed_parameters or {}}
     if previous_attempts is not None:
         evidence["previous_attempts"] = previous_attempts
-    instruction = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
+    prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
+    request = {"evidence": json_compatible(evidence)}
     if previous_attempts is not None:
-        instruction += (
-            "\n\nThe previous tuning coordinates were tried across every authored fit combination. "
+        request["instruction"] = (
+            "The previous tuning coordinates were tried across every authored fit combination. "
             "Make a conservative adjustment using the parameter-to-quality mapping in previous_attempts."
         )
-    schema, _nullable = annotation_schema(MatrixFitSuggestion)
+    schema, _nullable = annotation_schema(QdaFitSuggestion)
     requested = requested_fields or {"tune_z_values"}
     schema["properties"]["tune_z_values"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["tune_z_values"]["items"]["not"] = {"const": 0}
     schema["properties"]["pt2_windows"].update({"minItems": 1, "uniqueItems": True})
-    schema["properties"]["pt3_windows"].update({"minItems": 1, "uniqueItems": True})
     schema["properties"]["pt2_windows"]["items"]["properties"]["tmin"]["minimum"] = 0
     schema["properties"]["pt2_windows"]["items"]["properties"]["tmax"]["minimum"] = 1
-    schema["properties"]["pt3_windows"]["items"]["properties"]["tau_cut"]["minimum"] = 0
-    schema["properties"]["pt3_windows"]["items"]["properties"]["tsep_ls"].update(
-        {"minItems": 1, "uniqueItems": True}
-    )
-    schema["properties"]["pt3_windows"]["items"]["properties"]["tsep_ls"]["items"]["minimum"] = 1
     schema["properties"] = {name: value for name, value in schema["properties"].items() if name in requested}
     schema["required"] = sorted(requested)
     response = session.complete(
-        label="matrix-element tuning-coordinate recommendation",
+        label="qDA tuning-coordinate recommendation",
         user_message=json.dumps(
-            {"instruction": instruction, "evidence": json_compatible(evidence)},
+            request,
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
         ),
-        response_schema={"name": "matrix_tune_z_recommendation", "schema": schema},
+        response_schema={"name": "qda_tune_z_recommendation", "schema": schema},
+        ask_prompt_key="correlator_qda_tune_z_ask",
+        ask_prompt=prompt,
     )
     if response.structured is None:
-        raise RuntimeError("matrix tuning recommendation returned no structured response")
+        raise RuntimeError("qDA tuning recommendation returned no structured response")
     result = dict(response.structured)
-    validate_value(MatrixFitSuggestion, result, "matrix_tune_z_recommendation")
+    validate_value(QdaFitSuggestion, result, "qda_tune_z_recommendation")
     if set(result) != requested:
-        raise ValueError(f"matrix recommendation must return exactly {sorted(requested)}")
+        raise ValueError(f"qDA recommendation must return exactly {sorted(requested)}")
     return result
 
 
-__all__ = ["MatrixFitSuggestion", "recommend"]
+__all__ = ["Pt2Window", "QdaFitSuggestion", "recommend"]

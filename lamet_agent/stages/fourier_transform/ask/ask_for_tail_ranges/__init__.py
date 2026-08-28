@@ -1,4 +1,4 @@
-"""Recommend missing or revised Fourier tail-range candidate lists."""
+"""Request missing or revised Fourier tail-range candidates."""
 
 from __future__ import annotations
 
@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from lamet_agent.agent import LlmSession, ToolContext
-from lamet_agent.data import format_gvar
-from lamet_agent.stages.fourier_transform._inspection import prepare
 from lamet_agent.structured import annotation_schema, json_compatible, validate_value
 
 
@@ -17,26 +15,6 @@ class TailRangeSuggestion(TypedDict, total=False):
 
     zmin_fm: list[float]
     zmax_fm: list[float]
-
-
-def _ensure_context(context: ToolContext, session: LlmSession) -> None:
-    if session.has_context("fourier_tail_fit_data"):
-        return
-    data, z_grid_step = prepare(context)
-    mode = str(context.manifest["metadata"]["sample_error_mode"])
-    components = {}
-    for name, selected in (("real", data.real), ("imag", data.imag)):
-        components[name] = format_gvar(selected.average(mode))
-    session.add_context(
-        "fourier_tail_fit_data",
-        {
-            "z_fm": [float(value) for value in data.coords["z"]],
-            "z_grid_step_fm": z_grid_step,
-            "lattice_spacing_fm": data.ensemble.a_s,
-            "momentum_gev": data.attrs.get("momentum_gev"),
-            "components": components,
-        },
-    )
 
 
 def recommend(
@@ -48,8 +26,7 @@ def recommend(
     previous_attempts: dict[str, dict[str, Any]] | None = None,
 ) -> TailRangeSuggestion:
     """Return exactly the requested range fields under a strict dynamic schema."""
-    _ensure_context(context, session)
-    instruction = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
+    prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
     evidence = {
         "fixed_parameters": fixed_parameters or {},
         "scheme_scan": context.params["scheme_scan"],
@@ -57,7 +34,6 @@ def recommend(
     }
     if previous_attempts is not None:
         evidence["previous_attempts"] = previous_attempts
-        instruction += "\n\nThe complete previous z-range × scheme scan was unacceptable; revise both ranges."
     schema, _nullable = annotation_schema(TailRangeSuggestion)
     schema["properties"]["zmin_fm"].update({"minItems": 1, "uniqueItems": True})
     schema["properties"]["zmin_fm"]["items"]["minimum"] = 0.0
@@ -70,12 +46,14 @@ def recommend(
     response = session.complete(
         label="Fourier tail-range recommendation",
         user_message=json.dumps(
-            {"instruction": instruction, "evidence": json_compatible(evidence)},
+            {"evidence": json_compatible(evidence)},
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
         ),
         response_schema={"name": "fourier_tail_range_recommendation", "schema": schema},
+        ask_prompt_key="fourier_tail_ranges_ask",
+        ask_prompt=prompt,
     )
     if response.structured is None:
         raise RuntimeError("Fourier tail-range recommendation returned no structured response")

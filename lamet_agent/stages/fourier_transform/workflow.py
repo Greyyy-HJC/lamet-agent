@@ -9,7 +9,7 @@ from lamet_agent.agent import LlmSession, ToolContext
 from lamet_agent.parallel import FitNumericalError
 from lamet_agent.stages.fourier_transform._inspection import run as inspect
 from lamet_agent.stages.fourier_transform._scan import attempt, publish
-from lamet_agent.stages.fourier_transform.tools.recommendation import revise
+from lamet_agent.stages.fourier_transform.ask import revise
 
 
 def _attempts(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
