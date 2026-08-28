@@ -407,9 +407,7 @@ def run(context: ToolContext) -> dict[str, object]:
             "strategy": strategy,
             "kernel_id": params.get("kernel_id"),
             "normalization": bool(params["normalization"]),
-            "z_coverage_policy": params.get("z_coverage_policy")
-            if strategy == "self_renormalization"
-            else None,
+            "z_coverage_policy": params.get("z_coverage_policy") if strategy == "self_renormalization" else None,
         },
         "diagnostics": diagnostics,
         "artifacts": [

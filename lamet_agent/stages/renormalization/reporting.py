@@ -108,9 +108,7 @@ lattice spacing, and coordinate coverage must agree with the fitted factor.
 
 
 def _method_text(records: tuple[StageReportRecord, ...]) -> list[str]:
-    combinations = {
-        (record.params["scheme"], record.params["strategy"]) for record in records
-    }
+    combinations = {(record.params["scheme"], record.params["strategy"]) for record in records}
     blocks: list[str] = []
     for scheme, strategy in sorted(combinations):
         blocks.append(f"### `{scheme}` / `{strategy}`")
@@ -348,9 +346,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             diagnostics.get("short_distance_min_fm"),
             diagnostics.get("short_distance_max_fm"),
         ]
-        output_grid = describe_grid(
-            record.output.coords.get("z", record.output.coords.get("a", [])), symbol="z"
-        )
+        output_grid = describe_grid(record.output.coords.get("z", record.output.coords.get("a", [])), symbol="z")
         lines.extend(
             [
                 "",
@@ -389,10 +385,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     "- Every operation acts sample by sample. Matrix denominators are aligned by coordinate "
                     "value before division; numeric constants carry no artificial uncertainty."
                 ),
-                (
-                    f"- z coverage policy: `{params.get('z_coverage_policy', 'n/a')}`. "
-                    "The origin is preserved exactly."
-                ),
+                (f"- z coverage policy: `{params.get('z_coverage_policy', 'n/a')}`. The origin is preserved exactly."),
                 "",
                 "### Field Definitions",
                 "",

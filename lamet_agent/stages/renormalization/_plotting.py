@@ -67,6 +67,7 @@ def momentum_label(
         return default
     raise ValueError("momentum_gev must be a finite real number")
 
+
 _FIT_CAPTIONS = {
     "factor": "Reusable self-renormalization factor",
     "fit_lnM_vs_inv_a": r"Reference $\ln|M|$ fit input",

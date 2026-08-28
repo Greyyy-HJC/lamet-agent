@@ -1,46 +1,66 @@
-## Contract
+## Quick: Xiangyu
 
-- [ ] Better physics comments
-- [x] `max(P84-P50, P50-P16)`
+- [ ] Remove fake data generator: Xiangyu
+- [ ] Remove all "neo": Xiangyu
+- [ ] Combine all input manifests into one: Xiangyu
+- [ ] Red FAILED: Xiangyu
+
+## Physics
+
+- [ ] Better contract physics comments
+  - [ ] `correlator_analys`: Xiangyu
+  - [ ] `renormalization`: Jinchen
+  - [ ] `fourier_transform`: Dianjun
+  - [ ] `perturbative_matching`: Fei
+  - [ ] `extrapolation`: Dianjun
+  - `manifest.py`
+  - `<stage>/contract.py`
+- [ ] Better prompts
+  - [ ] `correlator_analys`: Xiangyu
+  - [ ] `renormalization`: Jinchen
+  - [ ] `fourier_transform`: Dianjun
+  - [ ] `perturbative_matching`: Fei
+  - [ ] `extrapolation`: Dianjun
+  - `<stage>/prompts.md`
+  - `<stage>/tools/<tool>/prompts.md`
+  - Correlator analysis recommendation (too many `tune_z`)
 
 ## Artifacts
 
-- [x] Compare artifacts with original
-- [ ] Flat folder structure
-- [ ] Plots and reports
+- [ ] Plots: Jinchen
+  - [ ] Check: ALL
+  - [ ] Missing extrapolation plots
+  - [ ] pion/kaon DA extrapolation selection
+- [ ] Reports
+  - [ ] `correlator_analys`: Jinchen
+  - [ ] `renormalization`: Jinchen
+  - [ ] `fourier_transform`: Dianjun
+  - [ ] `perturbative_matching`: Fei
+  - [ ] `extrapolation`: Dianjun
 
-## Correlator Analysis
+## UI/UX
 
-- [x] Add one bounded typed parameter re-suggestion when every authored fit candidate fails numerically or remains below the accepted quality policy.
+- [ ] Output optimization: Jinchen
+  - [ ] Suppress "with * LLM turn(s)"
+  - [ ] Suppress "LLM response received"
+  - [ ] Suppress "RuntimeWarning" (data, matching, renormalization) to print
+- [ ] Better banner logo: Anyone interested
+  - `banner.py`
 
-## Renormalization
-
-- [x] Expose kernel parameters
-- [x] Restore the original `z_coverage_policy` choices (`strict`, `intersection`, `extrapolate`) before exposing its original `extrapolate` default through `Recommends`.
-  - [ ] ~~Or ask LLM~~
-
-## Fourier Transform
-
-- [x] LLM suggested `z_min` and `z_max` lists
-- [x] Repeated LLM requests if failed on fitting
-
-## Perturbative Matching
-
-- [x] New `_alpha_s` from Fei Yao
-
-## Continuum Extrapolation
-
-- [x] Performance with "variance" and "one_sigma" error mode
-- [x] Contract of systematic parameters (Unexpected parameters)
-
-### Codex Hints
-- [x] Avoid serializing the full 2700 x 1201 extrapolation design matrix separately to every worker batch
-- [x] Replace repeated global `lsqfit.nonlinear_fit` calls for the linear joint-x model with a correlated linear solve that reuses the fixed design/covariance/prior factorization across resamples
-
-## Review
+## Review: Dianjun
 
 - [ ] Implement review
 - [ ] Include all previous reports
-- [ ] Include related papers (https://ar5iv.labs.arxiv.org/html/)
+- [ ] Include related papers (`https://ar5iv.labs.arxiv.org/html/`)
 - [ ] Rely on `literature` module
 - [ ] Prompts engineering
+
+## Plan: Xiangyu
+
+- [ ] TUI
+- [ ] Agentic workflow to set up the manifest
+
+## Kernel: Fei
+
+- [ ] New `alpha_s()` with more arguments
+- [ ] Rename all kernels to `"[<parton>_]<observable>_<gauge>_<current>_<scheme>_<order>"`

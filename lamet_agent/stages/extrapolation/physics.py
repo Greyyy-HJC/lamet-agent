@@ -175,9 +175,7 @@ def _prepare_block_system(
     """Factor the block-arrow posterior information matrix."""
     local_terms = [term for term in terms if x_dependence[term]]
     global_terms = [term for term in terms if not x_dependence[term]]
-    local_design = np.column_stack(
-        [np.ones(design.shape[0]), *[design[:, terms.index(term)] for term in local_terms]]
-    )
+    local_design = np.column_stack([np.ones(design.shape[0]), *[design[:, terms.index(term)] for term in local_terms]])
     global_design = (
         np.column_stack([design[:, terms.index(term)] for term in global_terms])
         if global_terms

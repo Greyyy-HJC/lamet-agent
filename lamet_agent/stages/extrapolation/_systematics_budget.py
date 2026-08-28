@@ -46,10 +46,7 @@ def run(context: ToolContext) -> dict[str, object]:
         raise ValueError("the main systematics input requires a strictly increasing x grid")
     sample_error_mode = str(main.attrs.get("sample_error_mode", context.manifest["metadata"]["sample_error_mode"]))
     variant_modes = {
-        str(
-            item.attrs.get("sample_error_mode", context.manifest["metadata"]["sample_error_mode"])
-        )
-        for item in data
+        str(item.attrs.get("sample_error_mode", context.manifest["metadata"]["sample_error_mode"])) for item in data
     }
     if variant_modes != {sample_error_mode}:
         raise ValueError("all systematics inputs must share sample_error_mode")

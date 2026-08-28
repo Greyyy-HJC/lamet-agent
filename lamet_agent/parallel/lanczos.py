@@ -877,10 +877,10 @@ def analyze_prepared_lanczos(
     ]
     if _parallel is None:
         with _ParallelPool(min(workers, len(tasks))) as parallel:
-                results = parallel.map(
-                    _threept_outer_result,
-                    tasks,
-                )
+            results = parallel.map(
+                _threept_outer_result,
+                tasks,
+            )
     else:
         results = _parallel.map(
             _threept_outer_result,

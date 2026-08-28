@@ -130,7 +130,9 @@ def _kernel_parameter_issues(kernel: Any, values: dict[str, Any]) -> list[Issue]
             )
         ]
 
-    configurable = {parameter.name: parameter for parameter in parameters if parameter.name not in _DATA_KERNEL_ARGUMENTS}
+    configurable = {
+        parameter.name: parameter for parameter in parameters if parameter.name not in _DATA_KERNEL_ARGUMENTS
+    }
     issues = [
         Issue(
             f"kernel_parameters.{name}",
@@ -156,9 +158,7 @@ def _kernel_parameter_issues(kernel: Any, values: dict[str, Any]) -> list[Issue]
             physics,
         )
         for name, parameter in configurable.items()
-        if parameter.default is inspect.Parameter.empty
-        and name not in _CONTEXT_KERNEL_ARGUMENTS
-        and name not in values
+        if parameter.default is inspect.Parameter.empty and name not in _CONTEXT_KERNEL_ARGUMENTS and name not in values
     )
     try:
         annotations = get_type_hints(kernel)

@@ -1961,10 +1961,7 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
     m0 = -0.02
     lambda_qcd = 0.1
     scale = 2.0
-    baseline = (
-        log_m(z_factor, spacing, k=k, lambda_qcd_gev=lambda_qcd, d=d, n_f=3, scale_gev=scale)
-        + m0 * z_factor
-    )
+    baseline = log_m(z_factor, spacing, k=k, lambda_qcd_gev=lambda_qcd, d=d, n_f=3, scale_gev=scale) + m0 * z_factor
     factor_values = np.exp(baseline + 0.4 * z_factor**2 * spacing)
     factor = EnsembleData(
         None,

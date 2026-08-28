@@ -306,9 +306,7 @@ def test_neo_cli_uses_provider_and_optional_model() -> None:
     assert args.progress == "auto"
     assert not hasattr(args, "backend")
 
-    explicit = _build_parser().parse_args(
-        ["run", "manifest.json", "--provider", "codex", "--progress", "stage"]
-    )
+    explicit = _build_parser().parse_args(["run", "manifest.json", "--provider", "codex", "--progress", "stage"])
     assert explicit.progress == "stage"
 
 
@@ -1580,12 +1578,15 @@ def test_matching_kernel_parameters_follow_the_selected_signature() -> None:
         current = issues(rgr, "hybrid", {coordinate: [0.0, 1.0]}, hybrid={"zs_fm": 0.18})
         assert any(issue.path == f"kernel_parameters.{coordinate}" and "data" in issue.message for issue in current)
     with pytest.warns(RuntimeWarning, match="overrides stage context"):
-        assert issues(
-            rgr,
-            "hybrid",
-            {"momentum_gev": 2.5, "scale_gev": 3.0, "zs_fm": 0.2},
-            hybrid={"zs_fm": 0.18},
-        ) == []
+        assert (
+            issues(
+                rgr,
+                "hybrid",
+                {"momentum_gev": 2.5, "scale_gev": 3.0, "zs_fm": 0.2},
+                hybrid={"zs_fm": 0.18},
+            )
+            == []
+        )
 
 
 def test_matching_kernel_parameter_rules_require_a_dict_and_required_signature_values() -> None:
@@ -1682,8 +1683,7 @@ def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
     data_override = load_manifest(examples / "pion_da_gi_manifest_neo.json")
     data_override.document["stages"]["renormalization"]["defaults"]["kernel_parameters"] = {"z_fm": 0.2}
     assert any(
-        issue.path.endswith("kernel_parameters.z_fm") and "data" in issue.message
-        for issue in data_override.validate()
+        issue.path.endswith("kernel_parameters.z_fm") and "data" in issue.message for issue in data_override.validate()
     )
 
     wrong_type = load_manifest(examples / "pion_da_gi_manifest_neo.json")
