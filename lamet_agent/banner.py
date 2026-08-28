@@ -7,9 +7,10 @@ letters are vertically centered independently.
 
 from __future__ import annotations
 
-Glyph = tuple[str, str, str, str, str, str, str, str]
+Glyph = tuple[str, str, str, str, str, str, str, str, str]
 
 _L: Glyph = (
+    "L        ",
     "L        ",
     "L        ",
     "L        ",
@@ -24,12 +25,14 @@ _A: Glyph = (
     "   A A   ",
     "  A   A  ",
     " A     A ",
+    "A       A",
     "AAAAAAAAA",
     "A       A",
     "A       A",
     "A       A",
 )
 _a: Glyph = (
+    "         ",
     "         ",
     " aaaaaaa ",
     "a       a",
@@ -48,9 +51,11 @@ _M: Glyph = (
     "M       M",
     "M       M",
     "M       M",
+    "M       M",
 )
 _E: Glyph = (
     "EEEEEEEEE",
+    "E        ",
     "E        ",
     "E        ",
     "EEEEEEEE ",
@@ -68,10 +73,12 @@ _T: Glyph = (
     "    T    ",
     "    T    ",
     "    T    ",
+    "    T    ",
 )
 _G: Glyph = (
     "  GGGGGG ",
     " G      G",
+    "G        ",
     "G        ",
     "G        ",
     "G    GGGG",
@@ -84,6 +91,7 @@ _N: Glyph = (
     "NN      N",
     "N N     N",
     "N  N    N",
+    "N   N   N",
     "N    N  N",
     "N     N N",
     "N      NN",
@@ -116,10 +124,7 @@ _LIGHT_CONE = (
 
 def _compose_word(letters: tuple[Glyph, ...]) -> tuple[str, ...]:
     """Lay out fixed-width glyphs on a shared column grid."""
-    height = len(letters[0])
-    if any(len(glyph) != height for glyph in letters):
-        raise ValueError("all banner glyphs must have the same height")
-    return tuple(" ".join(glyph[row] for glyph in letters) for row in range(height))
+    return tuple(" ".join(glyph[row] for glyph in letters) for row in range(9))
 
 
 _LAMET_LINES = _compose_word((_L, _a, _M, _E, _T))
