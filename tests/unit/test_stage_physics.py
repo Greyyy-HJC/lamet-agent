@@ -1,8 +1,8 @@
-"""Focused numerical checks for neo stage-owned physics.
+"""Focused numerical checks for stage-owned physics.
 
 Purpose: exercise multi-state spectra, coordinate-aware matrix ratios, and the
 self-renormalization factor fit. Inputs are deterministic toy arrays; outputs
-are recovered physical parameters. Example: ``pytest tests/unit/test_neo_stage_physics.py``.
+are recovered physical parameters. Example: ``pytest tests/unit/test_stage_physics.py``.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def test_matrix_ratio_uses_declared_tsep_and_tau_coordinates() -> None:
         {"tsep": tsep.tolist(), "tau": tau.tolist(), "z": z.tolist()},
         attrs={"correlator_type": "three_point"},
     )
-    values, coordinates, _ = matrix_element_samples({"c2": c2, "c3": c3}, method="ratio", t_min=2, t_max=4, tau_min=1)
+    values, coordinates, _ = matrix_element_samples({"c2": c2, "c3": c3}, method="ratio", tmin=2, tmax=4, tau_min=1)
     assert coordinates == [0.0, 1.0]
     assert np.allclose(values, 0.7, atol=1e-12)
 
@@ -80,7 +80,7 @@ def test_matrix_ratio_rejects_a_missing_exact_two_point_denominator() -> None:
         attrs={"correlator_type": "three_point"},
     )
     with pytest.raises(ValueError, match="exactly one entry"):
-        matrix_element_samples({"c2": c2, "c3": c3}, method="ratio", t_min=1, t_max=3, tau_min=1)
+        matrix_element_samples({"c2": c2, "c3": c3}, method="ratio", tmin=1, tmax=3, tau_min=1)
 
 
 def _exact_lanczos_correlators(
@@ -122,7 +122,7 @@ def test_migrated_lanczos_recovers_exact_spectrum_and_matrix() -> None:
     assert matrix == pytest.approx(current)
 
 
-def test_neo_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
+def test_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
     tmp_path: Path,
 ) -> None:
     n_configurations = 6
@@ -295,8 +295,8 @@ def test_qda_fit_divides_by_nonlocal_origin_and_fits_each_sample() -> None:
     values, coordinates, diagnostics = matrix_element_samples(
         {"qda": source},
         method="qda",
-        t_min=2,
-        t_max=7,
+        tmin=2,
+        tmax=7,
         tau_min=None,
         lsqfit={
             "pt2_windows": [{"tmin": 2, "tmax": 7}],
@@ -352,7 +352,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
             "nstate": 1,
             "prior_width": 1.0,
             "observable": "matrix_element",
-            "window": {"t_min": 2, "t_max": 5, "tau_min": None},
+            "window": {"tmin": 2, "tmax": 5, "tau_min": None},
             "data": low,
             "Q": 0.2,
             "chi2_dof": 1.2,
@@ -370,7 +370,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
             "nstate": 1,
             "prior_width": 1.0,
             "observable": "matrix_element",
-            "window": {"t_min": 3, "t_max": 6, "tau_min": None},
+            "window": {"tmin": 3, "tmax": 6, "tau_min": None},
             "data": high,
             "Q": 0.8,
             "chi2_dof": 0.9,
@@ -537,7 +537,7 @@ def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, t
 
     def fail_fit(*args, **kwargs):
         received.append(kwargs)
-        if kwargs["t_min"] == 3:
+        if kwargs["tmin"] == 3:
             raise FitNumericalError("sample-average fit failed: ZeroDivisionError: float division")
         return None, {
             "tune_z": kwargs["tune_z"],
@@ -614,7 +614,7 @@ def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp
     calls = []
 
     def tune(*args, **kwargs):
-        calls.append((kwargs["t_min"], kwargs["tau_min"], kwargs["tune_z"]))
+        calls.append((kwargs["tmin"], kwargs["tau_min"], kwargs["tune_z"]))
         return None, {
             "tune_z": kwargs["tune_z"],
             "fit_scope": "3pt_ratio",
@@ -623,7 +623,7 @@ def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp
             "dof": 10,
             "chi2_dof": 0.8,
             "logGBF": 2.0,
-            "n_data": 20 - kwargs["t_min"] - kwargs["tau_min"],
+            "n_data": 20 - kwargs["tmin"] - kwargs["tau_min"],
             "n_params": 5,
         }
 
@@ -688,8 +688,8 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
     calls = []
 
     def tune(*args, **kwargs):
-        calls.append((kwargs["t_min"], kwargs["t_max"], kwargs["tune_z"]))
-        q_value = 0.6 if kwargs["t_max"] == 6 else 0.8
+        calls.append((kwargs["tmin"], kwargs["tmax"], kwargs["tune_z"]))
+        q_value = 0.6 if kwargs["tmax"] == 6 else 0.8
         return (
             None,
             [0, 1, 2],
@@ -700,7 +700,7 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
                 "dof": 8,
                 "chi2_dof": 0.5,
                 "logGBF": 2.0,
-                "n_data": 2 * (kwargs["t_max"] - kwargs["t_min"]),
+                "n_data": 2 * (kwargs["tmax"] - kwargs["tmin"]),
                 "n_params": 5,
             },
         )
@@ -731,7 +731,7 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
         "method": "joint",
         "fit_scope": "3pt_ratio",
         "observable": "matrix_element",
-        "window": {"t_min": 3, "t_max": 8, "tau_min": 2},
+        "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
         "tsep_values": [8],
         "nstate": 2,
         "prior_width": 1.0,
@@ -802,7 +802,7 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
             "method": "joint",
             "fit_scope": "3pt_ratio",
             "observable": "matrix_element",
-            "window": {"t_min": 3, "t_max": 8, "tau_min": 2},
+            "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
             "nstate": 2,
             "prior_width": 1.0,
@@ -819,7 +819,7 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
             "method": "joint",
             "fit_scope": "3pt_ratio",
             "observable": "matrix_element",
-            "window": {"t_min": 4, "t_max": 8, "tau_min": 2},
+            "window": {"tmin": 4, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
             "nstate": 2,
             "prior_width": 1.0,
@@ -868,7 +868,7 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
 
     def apply_fit(*args, **kwargs):
         calls.append(kwargs)
-        assert kwargs["t_min"] == 3
+        assert kwargs["tmin"] == 3
         assert kwargs["fit_samples"] is False
         raise FitNumericalError("sample-average posterior is unusable")
 
@@ -901,7 +901,7 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
             "method": "joint",
             "fit_scope": "3pt_ratio",
             "observable": "matrix_element",
-            "window": {"t_min": 3, "t_max": 8, "tau_min": 2},
+            "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
             "nstate": 2,
             "prior_width": 1.0,
             "quality_passed": False,
@@ -913,7 +913,7 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
             "method": "joint",
             "fit_scope": "3pt_ratio",
             "observable": "matrix_element",
-            "window": {"t_min": 4, "t_max": 8, "tau_min": 2},
+            "window": {"tmin": 4, "tmax": 8, "tau_min": 2},
             "nstate": 2,
             "prior_width": 1.0,
             "quality_passed": True,
@@ -1001,8 +1001,8 @@ def test_native_matrix_element_fit_supports_authored_strategies_and_scopes(strat
         fitting_form="Breit",
         fit_scope=scope,
         components="real",
-        t_min=3,
-        t_max=8,
+        tmin=3,
+        tmax=8,
         tsep_values=tseps.tolist(),
         tau_min=2,
         n_states=1,
@@ -1038,8 +1038,8 @@ def test_native_matrix_element_fit_supports_authored_strategies_and_scopes(strat
             fitting_form="Breit",
             fit_scope=scope,
             components="real",
-            t_min=3,
-            t_max=8,
+            tmin=3,
+            tmax=8,
             tsep_values=tseps.tolist(),
             tau_min=2,
             n_states=1,
@@ -1125,8 +1125,8 @@ def test_native_nonbreit_fit_uses_distinct_source_and_sink_spectra() -> None:
         fitting_form="NonBreit",
         fit_scope="3pt_ratio",
         components="real",
-        t_min=3,
-        t_max=8,
+        tmin=3,
+        tmax=8,
         tsep_values=tseps.tolist(),
         tau_min=2,
         n_states=1,

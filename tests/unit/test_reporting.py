@@ -132,7 +132,7 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
                 {
                     "candidate_id": "matrix_001",
                     "method": "joint",
-                    "window": {"t_min": 3, "t_max": 8},
+                    "window": {"tmin": 3, "tmax": 8},
                     "nstate": 2,
                     "Q": 0.8,
                     "chi2_dof": 0.9,
@@ -205,7 +205,7 @@ def test_correlator_fit_artifacts_write_logs_and_pdf_only(tmp_path: Path) -> Non
         "id": "matrix_001",
         "method": "joint",
         "fit_scope": "3pt_ratio",
-        "window": {"t_min": 3, "t_max": 8, "tau_min": 2},
+        "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
         "nstate": 1,
         "prior_width": 1.0,
     }

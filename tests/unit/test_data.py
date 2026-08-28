@@ -1,4 +1,4 @@
-"""Focused behavior checks for the migrated neo numerical base."""
+"""Focused behavior checks for the numerical data layer."""
 
 from __future__ import annotations
 

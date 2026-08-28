@@ -57,6 +57,12 @@ def recommend(
         evidence["previous_attempts"] = previous_attempts
         instruction += "\n\nThe complete previous z-range × scheme scan was unacceptable; revise both ranges."
     schema, _nullable = annotation_schema(TailRangeSuggestion)
+    schema["properties"]["zmin_fm"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["zmin_fm"]["items"]["minimum"] = 0.0
+    schema["properties"]["zmax_fm"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["zmax_fm"]["items"].update(
+        {"exclusiveMinimum": 0.0, "maximum": float(context.params["zmax_ext_fm"])}
+    )
     schema["properties"] = {name: value for name, value in schema["properties"].items() if name in requested_fields}
     schema["required"] = sorted(requested_fields)
     response = session.complete(

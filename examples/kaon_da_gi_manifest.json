@@ -1,8 +1,8 @@
 {
   "metadata": {
-    "run_id": "pion_da_gi_neo",
+    "run_id": "kaon_da_gi",
     "root_directory": "..",
-    "artifacts_directory": "runs/pion_da_gi_neo/artifacts",
+    "artifacts_directory": "runs/kaon_da_gi/artifacts",
     "random_seed": 1984,
     "workers": 8,
     "target_observable": "da",
@@ -27,13 +27,7 @@
         ],
         "fitting_form": "Breit",
         "model_average": false,
-        "pt2_windows": [
-          {
-            "tmin": 0,
-            "tmax": 1
-          }
-        ],
-        "svdcut": 0.000001,
+        "svdcut": 1e-06,
         "posterior_prior_error_scale": 3.0,
         "q_min": 0.05
       },
@@ -42,24 +36,24 @@
           "id": "ca_a06m130_pz6",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_da_gi_a06m130_correlators_neo.json"
+              "file": "examples/kaon_da_gi_correlators.json"
             }
           },
           "correlator_ids": [
-            "qda_pz6"
+            "a06m130_qda_pz6"
           ],
           "pt2_windows": [
             {
-              "tmin": 13,
+              "tmin": 12,
+              "tmax": 15
+            },
+            {
+              "tmin": 12,
               "tmax": 16
             },
             {
-              "tmin": 13,
+              "tmin": 12,
               "tmax": 17
-            },
-            {
-              "tmin": 13,
-              "tmax": 18
             }
           ]
         },
@@ -67,11 +61,11 @@
           "id": "ca_a09m130_pz6",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_da_gi_a09m130_correlators_neo.json"
+              "file": "examples/kaon_da_gi_correlators.json"
             }
           },
           "correlator_ids": [
-            "qda_pz6"
+            "a09m130_qda_pz6"
           ],
           "pt2_windows": [
             {
@@ -92,11 +86,11 @@
           "id": "ca_a12m130_pz6",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_da_gi_a12m130_correlators_neo.json"
+              "file": "examples/kaon_da_gi_correlators.json"
             }
           },
           "correlator_ids": [
-            "qda_pz6"
+            "a12m130_qda_pz6"
           ],
           "pt2_windows": [
             {
@@ -117,24 +111,24 @@
           "id": "ca_a06m130_pz8",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_da_gi_a06m130_correlators_neo.json"
+              "file": "examples/kaon_da_gi_correlators.json"
             }
           },
           "correlator_ids": [
-            "qda_pz8"
+            "a06m130_qda_pz8"
           ],
           "pt2_windows": [
             {
-              "tmin": 9,
+              "tmin": 8,
+              "tmax": 11
+            },
+            {
+              "tmin": 8,
               "tmax": 12
             },
             {
-              "tmin": 9,
+              "tmin": 8,
               "tmax": 13
-            },
-            {
-              "tmin": 9,
-              "tmax": 14
             }
           ]
         },
@@ -142,11 +136,11 @@
           "id": "ca_a09m130_pz8",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_da_gi_a09m130_correlators_neo.json"
+              "file": "examples/kaon_da_gi_correlators.json"
             }
           },
           "correlator_ids": [
-            "qda_pz8"
+            "a09m130_qda_pz8"
           ],
           "pt2_windows": [
             {
@@ -167,11 +161,11 @@
           "id": "ca_a12m130_pz8",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_da_gi_a12m130_correlators_neo.json"
+              "file": "examples/kaon_da_gi_correlators.json"
             }
           },
           "correlator_ids": [
-            "qda_pz8"
+            "a12m130_qda_pz8"
           ],
           "pt2_windows": [
             {
@@ -192,11 +186,11 @@
           "id": "ca_a06m130_pz10",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_da_gi_a06m130_correlators_neo.json"
+              "file": "examples/kaon_da_gi_correlators.json"
             }
           },
           "correlator_ids": [
-            "qda_pz10"
+            "a06m130_qda_pz10"
           ],
           "pt2_windows": [
             {
@@ -217,11 +211,11 @@
           "id": "ca_a09m130_pz10",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_da_gi_a09m130_correlators_neo.json"
+              "file": "examples/kaon_da_gi_correlators.json"
             }
           },
           "correlator_ids": [
-            "qda_pz10"
+            "a09m130_qda_pz10"
           ],
           "pt2_windows": [
             {
@@ -242,11 +236,11 @@
           "id": "ca_a12m130_pz10",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_da_gi_a12m130_correlators_neo.json"
+              "file": "examples/kaon_da_gi_correlators.json"
             }
           },
           "correlator_ids": [
-            "qda_pz10"
+            "a12m130_qda_pz10"
           ],
           "pt2_windows": [
             {
@@ -272,16 +266,14 @@
         "scheme": "ratio",
         "kernel_id": "z_msbar_da_nlo",
         "mu": 2.0,
-        "LambdaQCD_gev": 0.1,
-        "d": 0.19,
-        "m0_gev": -0.094
+        "LambdaQCD_gev": 0.1
       },
       "jobs": [
         {
           "id": "rn_zr_fit",
           "inputs": {
             "reference": {
-              "file": "data_pion_da_gi/correlators/self_renormalization/pion_zero_momentum_reference.nc"
+              "file": "data_kaon_da_gi/correlators/self_renormalization/pion_zero_momentum_reference.nc"
             }
           },
           "type": "fit",
@@ -293,63 +285,81 @@
           "inputs": {
             "target": "ca_a06m130_pz6",
             "zR": "rn_zr_fit"
-          }
+          },
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a09m130_pz6",
           "inputs": {
             "target": "ca_a09m130_pz6",
             "zR": "rn_zr_fit"
-          }
+          },
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a12m130_pz6",
           "inputs": {
             "target": "ca_a12m130_pz6",
             "zR": "rn_zr_fit"
-          }
+          },
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a06m130_pz8",
           "inputs": {
             "target": "ca_a06m130_pz8",
             "zR": "rn_zr_fit"
-          }
+          },
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a09m130_pz8",
           "inputs": {
             "target": "ca_a09m130_pz8",
             "zR": "rn_zr_fit"
-          }
+          },
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a12m130_pz8",
           "inputs": {
             "target": "ca_a12m130_pz8",
             "zR": "rn_zr_fit"
-          }
+          },
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a06m130_pz10",
           "inputs": {
             "target": "ca_a06m130_pz10",
             "zR": "rn_zr_fit"
-          }
+          },
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a09m130_pz10",
           "inputs": {
             "target": "ca_a09m130_pz10",
             "zR": "rn_zr_fit"
-          }
+          },
+          "d": 0.19,
+          "m0_gev": -0.094
         },
         {
           "id": "rn_a12m130_pz10",
           "inputs": {
             "target": "ca_a12m130_pz10",
             "zR": "rn_zr_fit"
-          }
+          },
+          "d": 0.19,
+          "m0_gev": -0.094
         }
       ]
     },
@@ -374,7 +384,7 @@
           ],
           "model_average": true
         },
-        "phase_transfer_da": true,
+        "phase_transfer_da": false,
         "psi1_flavor_class": "light",
         "psi2_flavor_class": "light"
       },
@@ -659,13 +669,13 @@
           "inputs": {
             "distributions": [
               "mt_a06m130_pz6",
-              "mt_a06m130_pz8",
-              "mt_a06m130_pz10",
               "mt_a09m130_pz6",
-              "mt_a09m130_pz8",
-              "mt_a09m130_pz10",
               "mt_a12m130_pz6",
+              "mt_a06m130_pz8",
+              "mt_a09m130_pz8",
               "mt_a12m130_pz8",
+              "mt_a06m130_pz10",
+              "mt_a09m130_pz10",
               "mt_a12m130_pz10"
             ]
           }
@@ -773,7 +783,9 @@
         },
         {
           "id": "ap_model",
-          "append_x_dependent_terms": ["ap4"]
+          "append_x_dependent_terms": [
+            "ap4"
+          ]
         }
       ]
     }

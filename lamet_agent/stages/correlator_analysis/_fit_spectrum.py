@@ -13,8 +13,8 @@ from lamet_agent.stages.correlator_analysis.physics import fit_spectrum_samples
 def run(
     context: ToolContext,
     *,
-    t_min: int,
-    t_max: int,
+    tmin: int,
+    tmax: int,
     n_states: int,
     prior_means: dict[str, float],
     prior_widths: dict[str, float],
@@ -23,7 +23,7 @@ def run(
     lsqfit = context.params
     if "spectrum" not in lsqfit["fit_scope"]:
         raise ValueError("spectrum fitting is not allowed for this job")
-    if t_min >= t_max:
+    if tmin >= tmax:
         raise ValueError("spectrum fit window must be increasing")
     if n_states not in context.params["nstate"]:
         raise ValueError("n_states must be selected from the authored candidate list")
@@ -37,10 +37,10 @@ def run(
     if "t" not in source.dims:
         raise ValueError("spectrum fitting requires a t coordinate")
     time = np.asarray(source.coords["t"])
-    requested = np.arange(t_min, t_max, dtype=float)
+    requested = np.arange(tmin, tmax, dtype=float)
     if any(not np.any(np.isclose(time, value, rtol=0.0, atol=1e-12)) for value in requested):
         raise ValueError("spectrum fit window is not covered by input time coordinates")
-    selection = (time >= t_min) & (time < t_max)
+    selection = (time >= tmin) & (time < tmax)
     if selection.sum() < 2 * n_states:
         raise ValueError("spectrum fit window must contain at least 2*n_states times")
     if source.dims != ["t"]:
@@ -85,7 +85,7 @@ def run(
             "id": candidate_id,
             "method": "direct_fit",
             "observable": "spectrum",
-            "window": {"t_min": t_min, "t_max": t_max},
+            "window": {"tmin": tmin, "tmax": tmax},
             "data": candidate,
             "prior_means": dict(prior_means),
             "prior_widths": dict(prior_widths),

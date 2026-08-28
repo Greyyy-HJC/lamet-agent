@@ -322,7 +322,7 @@ def _stage_path(stage_id: str, stage_root: str | Path | None) -> Path:
 
 def _load_tool_module(stage_id: str, tool_directory: Path) -> ModuleType:
     digest = hashlib.sha256(str(tool_directory.resolve()).encode("utf-8")).hexdigest()
-    module_name = f"_lamet_agent_neo_tool_{stage_id}_{tool_directory.name}_{digest}"
+    module_name = f"_lamet_agent_tool_{stage_id}_{tool_directory.name}_{digest}"
     init_path = tool_directory / "__init__.py"
     spec = importlib.util.spec_from_file_location(
         module_name, init_path, submodule_search_locations=[str(tool_directory)]
@@ -419,7 +419,7 @@ def _load_stage_reporter(stage_id: str, stage_root: str | Path | None) -> Callab
     if not path.is_file():
         raise ValueError(f"Stage '{stage_id}' reporting.py is not a file")
     digest = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()
-    spec = importlib.util.spec_from_file_location(f"_lamet_agent_neo_reporting_{stage_id}_{digest}", path)
+    spec = importlib.util.spec_from_file_location(f"_lamet_agent_reporting_{stage_id}_{digest}", path)
     if spec is None or spec.loader is None:
         raise ValueError(f"Cannot load reporting hook for stage '{stage_id}'")
     module = importlib.util.module_from_spec(spec)

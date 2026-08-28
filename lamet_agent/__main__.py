@@ -1,9 +1,9 @@
-"""Run the independent LaMET Agent Neo CLI.
+"""Run the LaMET Agent CLI.
 
 Purpose: validate, plan, or execute one JSON manifest.
 Inputs: a manifest path plus command-specific output/provider options.
 Outputs: deterministic issue text, a completed manifest, or a JSON run summary.
-Example: ``python -m lamet_agent_neo validate examples/neo.json``.
+Example: ``python -m lamet_agent validate examples/pion_pdf_gi_manifest.json``.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ def _validate(path: Path) -> tuple[Manifest, list[Any]]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="lamet-agent-neo")
+    parser = argparse.ArgumentParser(prog="lamet-agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
     validate = subparsers.add_parser("validate", help="validate one JSON manifest")
     validate.add_argument("manifest", type=Path)

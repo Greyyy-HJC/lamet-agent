@@ -1,4 +1,4 @@
-"""Small publication-style plotting primitives shared by neo stages."""
+"""Small publication-style plotting primitives shared by stages."""
 
 from __future__ import annotations
 

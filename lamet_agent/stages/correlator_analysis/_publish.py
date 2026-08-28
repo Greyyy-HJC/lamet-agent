@@ -41,8 +41,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
             (
                 candidate["method"],
                 candidate.get("fit_scope"),
-                candidate["window"]["t_min"],
-                candidate["window"]["t_max"],
+                candidate["window"]["tmin"],
+                candidate["window"]["tmax"],
                 candidate["window"]["tau_min"],
                 candidate.get("nstate"),
                 candidate.get("prior_width"),
@@ -74,8 +74,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                 str(candidate.get("fit_strategy")),
                 int(candidate.get("nstate", context.params["nstate"][0])),
                 float(candidate.get("prior_width", lsqfit["prior_width"][0])),
-                int(candidate["window"]["t_min"]),
-                int(candidate["window"]["t_max"]),
+                int(candidate["window"]["tmin"]),
+                int(candidate["window"]["tmax"]),
             )
             for candidate in candidates
             if candidate.get("method") == "qda"
@@ -141,8 +141,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                 values, z_coordinates, application_fit = matrix_element_samples(
                     correlators,
                     method="qda",
-                    t_min=int(selected["window"]["t_min"]),
-                    t_max=int(selected["window"]["t_max"]),
+                    tmin=int(selected["window"]["tmin"]),
+                    tmax=int(selected["window"]["tmax"]),
                     tau_min=None,
                     lsqfit=settings,
                     sample_error_mode=str(context.manifest["metadata"]["sample_error_mode"]),
@@ -187,8 +187,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                     "fitting_form": str(settings["fitting_form"]),
                     "fit_scope": str(selected["fit_scope"]),
                     "components": {"re": "real", "im": "imag", "both": "both"}[str(context.params["component"])],
-                    "t_min": int(selected["window"]["t_min"]),
-                    "t_max": int(selected["window"]["t_max"]),
+                    "tmin": int(selected["window"]["tmin"]),
+                    "tmax": int(selected["window"]["tmax"]),
                     "tsep_values": [int(value) for value in selected["tsep_values"]],
                     "tau_min": int(selected["window"]["tau_min"]),
                     "n_states": int(selected["nstate"]),

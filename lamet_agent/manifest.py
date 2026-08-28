@@ -365,7 +365,7 @@ def _load_stage_contract(stage_id: str, stage_root: str | Path | None = None) ->
     if not contract_path.is_file():
         raise ValueError(f"Stage '{stage_id}' has no contract.py")
     digest = __import__("hashlib").sha256(str(contract_path).encode("utf-8")).hexdigest()[:16]
-    module_name = f"_lamet_agent_neo_contract_{stage_id}_{digest}"
+    module_name = f"_lamet_agent_contract_{stage_id}_{digest}"
     spec = importlib.util.spec_from_file_location(module_name, contract_path)
     if spec is None or spec.loader is None:
         raise ValueError(f"Cannot load contract for stage '{stage_id}'")
@@ -390,7 +390,7 @@ def _load_stage_systematics(stage_id: str, stage_root: str | Path | None = None)
     if not path.is_file():
         raise ValueError(f"stage '{stage_id}' does not support systematics declarations")
     digest = __import__("hashlib").sha256(str(path).encode("utf-8")).hexdigest()[:16]
-    module_name = f"_lamet_agent_neo_systematics_{stage_id}_{digest}"
+    module_name = f"_lamet_agent_systematics_{stage_id}_{digest}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ValueError(f"cannot load systematics compiler for stage '{stage_id}'")

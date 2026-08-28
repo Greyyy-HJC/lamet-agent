@@ -1,4 +1,4 @@
-"""Focused physics boundary checks for the independent neo stages."""
+"""Focused physics boundary checks for independent stages."""
 
 from __future__ import annotations
 

@@ -330,8 +330,8 @@ def fit_matrix_element_samples(
     fitting_form: str,
     fit_scope: str,
     components: str,
-    t_min: int,
-    t_max: int,
+    tmin: int,
+    tmax: int,
     tsep_values: list[int],
     tau_min: int,
     n_states: int,
@@ -398,7 +398,7 @@ def fit_matrix_element_samples(
     if extent < 1:
         raise ValueError("matrix-element fitting requires the temporal extent")
     times = np.asarray(initial.coords["t"], dtype=int)
-    pt2_mask = (times >= t_min) & (times < t_max)
+    pt2_mask = (times >= tmin) & (times < tmax)
     if np.count_nonzero(pt2_mask) < 2 * n_states:
         raise ValueError("the two-point window must contain at least 2*n_states points")
     available_tseps = np.asarray(three_point.coords["tsep"], dtype=int)
@@ -708,8 +708,8 @@ def fit_matrix_element_samples(
                 "fitting_form": fitting_form,
                 "fit_scope": fit_scope,
                 "n_states": n_states,
-                "t_min": t_min,
-                "t_max": t_max,
+                "tmin": tmin,
+                "tmax": tmax,
                 "tau_min": tau_min,
                 "correlator_rescale": correlator_rescale,
                 "sample_error_mode": sample_error_mode,
@@ -849,8 +849,8 @@ def matrix_element_samples(
     correlators: dict[str, object],
     *,
     method: str,
-    t_min: int,
-    t_max: int,
+    tmin: int,
+    tmax: int,
     tau_min: int | None,
     lsqfit: Mapping[str, Any] | None = None,
     sample_error_mode: str = "covariance",
@@ -893,7 +893,7 @@ def matrix_element_samples(
         origin = np.flatnonzero(np.isclose(z, 0.0, rtol=0.0, atol=1e-12))
         if origin.size != 1:
             raise ValueError("qDA fitting requires one unique z=0 denominator")
-        selected = np.flatnonzero((t >= t_min) & (t < t_max))
+        selected = np.flatnonzero((t >= tmin) & (t < tmax))
         if selected.size < 2:
             raise ValueError("qDA fit window must contain at least two time points")
         source_values = np.asarray(source.values)
@@ -1150,9 +1150,9 @@ def matrix_element_samples(
         series: list[np.ndarray] = []
         series_t: list[float] = []
         for tsep_index, tsep_value in enumerate(tsep):
-            if tsep_value < t_min or tsep_value > t_max:
+            if tsep_value < tmin or tsep_value > tmax:
                 continue
-            tau_mask = (tau >= (tau_min if tau_min is not None else t_min)) & (
+            tau_mask = (tau >= (tau_min if tau_min is not None else tmin)) & (
                 tau <= tsep_value - (tau_min if tau_min is not None else 0)
             )
             if not np.any(tau_mask):

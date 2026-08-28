@@ -34,7 +34,7 @@ def list_kernel_ids(root: str | Path | None = None) -> list[str]:
 
 def _load_module(path: Path) -> ModuleType:
     digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()
-    name = f"_lamet_agent_neo_kernel_{path.stem}_{digest}"
+    name = f"_lamet_agent_kernel_{path.stem}_{digest}"
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ValueError(f"Cannot load kernel '{path.stem}'")

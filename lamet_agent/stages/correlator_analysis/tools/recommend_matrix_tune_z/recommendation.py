@@ -11,12 +11,22 @@ from lamet_agent.stages.correlator_analysis.tools._correlator_evidence import en
 from lamet_agent.structured import annotation_schema, json_compatible, validate_value
 
 
+class Pt2Window(TypedDict):
+    tmin: int
+    tmax: int
+
+
+class Pt3Window(TypedDict):
+    tsep_ls: list[int]
+    tau_cut: int
+
+
 class MatrixFitSuggestion(TypedDict, total=False):
     """Joint ordinary matrix-element fit-parameter suggestion."""
 
     tune_z_values: list[float]
-    pt2_windows: list[dict[str, int]]
-    pt3_windows: list[dict[str, Any]]
+    pt2_windows: list[Pt2Window]
+    pt3_windows: list[Pt3Window]
 
 
 def recommend(
@@ -40,6 +50,16 @@ def recommend(
         )
     schema, _nullable = annotation_schema(MatrixFitSuggestion)
     requested = requested_fields or {"tune_z_values"}
+    schema["properties"]["tune_z_values"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["pt2_windows"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["pt3_windows"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["pt2_windows"]["items"]["properties"]["tmin"]["minimum"] = 0
+    schema["properties"]["pt2_windows"]["items"]["properties"]["tmax"]["minimum"] = 1
+    schema["properties"]["pt3_windows"]["items"]["properties"]["tau_cut"]["minimum"] = 0
+    schema["properties"]["pt3_windows"]["items"]["properties"]["tsep_ls"].update(
+        {"minItems": 1, "uniqueItems": True}
+    )
+    schema["properties"]["pt3_windows"]["items"]["properties"]["tsep_ls"]["items"]["minimum"] = 1
     schema["properties"] = {name: value for name, value in schema["properties"].items() if name in requested}
     schema["required"] = sorted(requested)
     response = session.complete(

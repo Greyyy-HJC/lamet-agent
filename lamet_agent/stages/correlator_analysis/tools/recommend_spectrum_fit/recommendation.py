@@ -14,8 +14,8 @@ from lamet_agent.structured import annotation_schema, json_compatible, validate_
 class SpectrumSuggestion(TypedDict):
     """One complete direct-spectrum fit suggestion."""
 
-    t_min: int
-    t_max: int
+    tmin: int
+    tmax: int
     n_states: int
     prior_means: dict[str, float]
     prior_widths: dict[str, float]
@@ -40,6 +40,21 @@ def recommend(
             "Make a conservative adjustment using the parameter-to-quality mapping in previous_attempts."
         )
     schema, _nullable = annotation_schema(SpectrumSuggestion)
+    schema["properties"]["tmin"]["minimum"] = 0
+    schema["properties"]["tmax"]["minimum"] = 1
+    schema["properties"]["n_states"].update({"minimum": 1, "enum": sorted(set(context.params["nstate"]))})
+    schema["properties"]["prior_means"].update(
+        {
+            "minProperties": 1,
+            "additionalProperties": {"type": "number", "exclusiveMinimum": 0.0},
+        }
+    )
+    schema["properties"]["prior_widths"].update(
+        {
+            "minProperties": 1,
+            "additionalProperties": {"type": "number", "exclusiveMinimum": 0.0},
+        }
+    )
     response = session.complete(
         label="spectrum fit recommendation",
         user_message=json.dumps(

@@ -73,7 +73,7 @@ def _spectrum_attempt(
 
 
 def _spectrum_parameters(suggestion: dict[str, Any]) -> dict[str, Any]:
-    return {name: suggestion[name] for name in ("t_min", "t_max", "n_states", "prior_means", "prior_widths")}
+    return {name: suggestion[name] for name in ("tmin", "tmax", "n_states", "prior_means", "prior_widths")}
 
 
 def _qda_quality_is_low(context: ToolContext) -> bool:

@@ -1,8 +1,8 @@
 {
   "metadata": {
-    "run_id": "pion_pdf_cg_neo",
+    "run_id": "pion_pdf_cg_lanczos",
     "root_directory": "..",
-    "artifacts_directory": "runs/pion_pdf_cg_neo/artifacts",
+    "artifacts_directory": "runs/pion_pdf_cg_lanczos/artifacts",
     "random_seed": 1984,
     "workers": 4,
     "target_observable": "pdf",
@@ -14,60 +14,22 @@
   "stages": {
     "correlator_analysis": {
       "defaults": {
-        "component": "re",
+        "analysis_method": "lanczos",
+        "component": "both",
         "nstate": [
           2
         ],
-        "fit_scope": [
-          "3pt_ratio"
-        ],
-        "fit_strategy": [
-          "joint"
-        ],
-        "fitting_form": "Breit",
-        "model_average": false,
-        "pt2_windows": [
-          {
-            "tmin": 3,
-            "tmax": 12
-          },
-          {
-            "tmin": 4,
-            "tmax": 12
-          },
-          {
-            "tmin": 5,
-            "tmax": 12
-          }
-        ],
-        "pt3_windows": [
-          {
-            "tsep_ls": [
-              8,
-              10,
-              12
-            ],
-            "tau_cut": 3
-          },
-          {
-            "tsep_ls": [
-              8,
-              10,
-              12
-            ],
-            "tau_cut": 4
-          }
-        ],
-        "svdcut": 0.000001,
-        "posterior_prior_error_scale": 10.0,
-        "q_min": 0.05
+        "scope": "3pt_matrix",
+        "precision": 100,
+        "t0": 4,
+        "time_step": 2
       },
       "jobs": [
         {
           "id": "ca_p0",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_pdf_cg_correlators_neo.json"
+              "file": "examples/pion_pdf_cg_correlators.json"
             }
           },
           "correlator_ids": [
@@ -79,7 +41,7 @@
           "id": "ca_p5",
           "inputs": {
             "correlators": {
-              "file": "examples/pion_pdf_cg_correlators_neo.json"
+              "file": "examples/pion_pdf_cg_correlators.json"
             }
           },
           "correlator_ids": [
@@ -92,7 +54,7 @@
     "renormalization": {
       "defaults": {
         "strategy": "external_denominator",
-        "normalization": true,
+        "normalization": false,
         "scheme": "hybrid",
         "zs_fm": 0.18,
         "m0_gev": 0.0,
@@ -155,12 +117,16 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "kernel_id": "quark_pdf_cg_gt_hybrid_nlo",
+        "kernel_id": "quark_pdf_cg_gt_hybrid_rgr_nlo_re",
         "scheme": "hybrid",
         "mu": 2.0,
         "lc_x_ls": {
           "start": 0.0,
           "stop": 1.0
+        },
+        "kernel_parameters": {
+          "kappa": 1.0,
+          "mu_min_gev": 0.6
         },
         "zs_fm": 0.18
       },

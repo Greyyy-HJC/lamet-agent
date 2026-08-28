@@ -1,4 +1,4 @@
-"""Focused checks for the independent ``lamet_agent_neo`` architecture."""
+"""Focused checks for the independent ``lamet_agent`` architecture."""
 
 from __future__ import annotations
 
@@ -184,7 +184,7 @@ def _null_hook_rules(hook=_recommend_interval):
     )
 
 
-def test_neo_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path) -> None:
+def test_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path) -> None:
     import gvar
     from matplotlib import rcParams
 
@@ -253,7 +253,7 @@ def test_plotting_series_colors_wrap() -> None:
     assert series_color(len(COLOR_CYCLE)) == COLOR_CYCLE[0]
 
 
-def test_neo_core_exports_are_minimal() -> None:
+def test_core_exports_are_minimal() -> None:
     from lamet_agent import agent, contract, data, llm, manifest, parallel, plotting
     from lamet_agent.parallel import lanczos
 
@@ -299,7 +299,7 @@ def test_neo_core_exports_are_minimal() -> None:
     assert lanczos.__all__ == ["prepare_lanczos_data", "analyze_prepared_lanczos"]
 
 
-def test_neo_cli_uses_provider_and_optional_model() -> None:
+def test_cli_uses_provider_and_optional_model() -> None:
     args = _build_parser().parse_args(["run", "manifest.json", "--provider", "codex"])
     assert args.provider == "codex"
     assert args.model is None
@@ -316,7 +316,7 @@ def test_auto_progress_uses_stage_mode_only_for_authored_systematics() -> None:
     assert _resolve_progress_mode("none", has_systematics=True) == "none"
 
 
-def test_neo_manifest_loader_accepts_jsonc_comments(tmp_path: Path) -> None:
+def test_manifest_loader_accepts_jsonc_comments(tmp_path: Path) -> None:
     path = tmp_path / "manifest.jsonc"
     path.write_text(
         """{
@@ -358,14 +358,14 @@ def test_base_rules_own_manifest_envelope_types(tmp_path: Path, field: str, valu
     assert any(issue.path == expected_path for issue in issues)
 
 
-def test_neo_manifest_loader_rejects_unterminated_jsonc_comment(tmp_path: Path) -> None:
+def test_manifest_loader_rejects_unterminated_jsonc_comment(tmp_path: Path) -> None:
     path = tmp_path / "manifest.jsonc"
     path.write_text('{"metadata": {} /* unfinished', encoding="utf-8")
     with pytest.raises(json.JSONDecodeError, match="Unterminated block comment"):
         load_manifest(path)
 
 
-def test_neo_provider_selection_has_one_public_backend_factory(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provider_selection_has_one_public_backend_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "key")
     monkeypatch.setattr(
         "urllib.request.urlopen", lambda request, **kwargs: _ModelsResponse(["gpt-5.6-luna", "gpt-test"])
@@ -405,7 +405,7 @@ class _ChatResponse:
         return self._payload
 
 
-def test_neo_api_model_is_checked_against_models_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_model_is_checked_against_models_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "key")
     monkeypatch.setattr("urllib.request.urlopen", lambda request, **kwargs: _ModelsResponse(["gpt-a", "gpt-b"]))
     assert create_backend("openai", "gpt-a").identity.endswith(":gpt-a")
@@ -413,7 +413,7 @@ def test_neo_api_model_is_checked_against_models_endpoint(monkeypatch: pytest.Mo
         create_backend("openai", "missing")
 
 
-def test_neo_backend_factory_owns_api_key_file_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_backend_factory_owns_api_key_file_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("urllib.request.urlopen", lambda request, **kwargs: _ModelsResponse(["gpt-a"]))
     key_file = tmp_path / "provider.key"
     key_file.write_text("key-from-file\n", encoding="utf-8")
@@ -427,14 +427,14 @@ def test_neo_backend_factory_owns_api_key_file_validation(tmp_path: Path, monkey
         create_backend("codex", api_key_file=key_file)
 
 
-def test_neo_local_api_infers_its_only_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_local_api_infers_its_only_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     key_file = tmp_path / "provider.key"
     key_file.write_text("key\n", encoding="utf-8")
     monkeypatch.setattr("urllib.request.urlopen", lambda request: _ModelsResponse(["local-model"]))
     assert create_backend("http://localhost:11434/v1", api_key_file=key_file).identity.endswith(":local-model")
 
 
-def test_neo_local_api_rejects_ambiguous_model_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_local_api_rejects_ambiguous_model_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     key_file = tmp_path / "provider.key"
     key_file.write_text("key\n", encoding="utf-8")
     monkeypatch.setattr("urllib.request.urlopen", lambda request: _ModelsResponse(["local-a", "local-b"]))
@@ -1240,7 +1240,7 @@ def test_manifest_rejects_legacy_sampling_abbreviations(tmp_path: Path) -> None:
 
 
 def test_correlator_manifest_accepts_missing_hook_windows() -> None:
-    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json")
+    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest.json")
     defaults = manifest.document["stages"]["correlator_analysis"]["defaults"]
     defaults.pop("pt2_windows")
 
@@ -1248,7 +1248,7 @@ def test_correlator_manifest_accepts_missing_hook_windows() -> None:
 
 
 def test_fourier_manifest_accepts_missing_recommended_tail_ranges() -> None:
-    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json")
+    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest.json")
     defaults = manifest.document["stages"]["fourier_transform"]["defaults"]
     defaults.pop("zmin_fm")
     defaults.pop("zmax_fm")
@@ -1257,7 +1257,7 @@ def test_fourier_manifest_accepts_missing_recommended_tail_ranges() -> None:
 
 
 def test_extrapolation_term_partitions_are_disjoint_and_individually_optional() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest.json"
     dependent_only = load_manifest(path)
     dependent_only.document["systematics"] = {}
     dependent_only.document["stages"]["extrapolation"]["defaults"].pop("x_independent_terms")
@@ -1277,7 +1277,7 @@ def test_extrapolation_term_partitions_are_disjoint_and_individually_optional() 
 
 @pytest.mark.parametrize("stem", ("pion_da_gi", "kaon_da_gi"))
 def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> None:
-    manifest = load_manifest(Path(__file__).parents[2] / "examples" / f"{stem}_manifest_neo.json")
+    manifest = load_manifest(Path(__file__).parents[2] / "examples" / f"{stem}_manifest.json")
     assert manifest.has_systematics is True
     authored_stages = manifest.document["stages"]
     assert len(authored_stages["fourier_transform"]["jobs"]) == 9
@@ -1352,7 +1352,7 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
 
 
 def test_job_source_object_is_rejected_at_the_input_role() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json"
+    path = Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest.json"
     manifest = load_manifest(path)
     document = copy.deepcopy(manifest.document)
     document["stages"]["fourier_transform"]["jobs"][0]["inputs"]["input"] = {"job": "rn_p4"}
@@ -1366,7 +1366,7 @@ def test_job_source_object_is_rejected_at_the_input_role() -> None:
 
 
 def test_systematics_compiler_rejects_explicit_variation_jobs() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest.json"
     manifest = load_manifest(path)
     document = copy.deepcopy(manifest.document)
     explicit = copy.deepcopy(document["stages"]["fourier_transform"]["jobs"][0])
@@ -1381,7 +1381,7 @@ def test_systematics_compiler_rejects_explicit_variation_jobs() -> None:
 
 
 def test_systematics_schema_errors_use_stage_contract_paths() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest.json"
 
     unknown = load_manifest(path)
     unknown.document["systematics"]["fourier_transform"]["extra"] = 1
@@ -1405,7 +1405,7 @@ def test_systematics_schema_errors_use_stage_contract_paths() -> None:
 
 
 def test_empty_systematics_is_a_noop_and_does_not_enable_stage_progress() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest_neo.json"
+    path = Path(__file__).parents[2] / "examples" / "pion_pdf_gi_manifest.json"
     manifest = load_manifest(path)
     manifest.document["systematics"] = {}
 
@@ -1415,7 +1415,7 @@ def test_empty_systematics_is_a_noop_and_does_not_enable_stage_progress() -> Non
 
 
 def test_systematics_propagate_without_downstream_declarations() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest.json"
     manifest = load_manifest(path)
     manifest.document["systematics"].pop("perturbative_matching")
     manifest.document["systematics"].pop("extrapolation")
@@ -1551,7 +1551,7 @@ def test_fourier_systematics_reject_missing_lattice_spacing(tmp_path: Path) -> N
 
 
 def test_systematics_defaults_fill_variants_before_compilation() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest.json"
     manifest = load_manifest(path)
     matching = manifest.document["systematics"]["perturbative_matching"]
     matching["defaults"] = {"mu_factor": 0.5}
@@ -1629,14 +1629,16 @@ def test_each_shipped_stage_contract_reports_incomplete_params_instead_of_crashi
         assert issues
 
 
-def test_neo_correlator_descriptors_use_physical_field_names() -> None:
+def test_correlator_descriptors_use_physical_field_names() -> None:
     examples = Path(__file__).parents[2] / "examples"
-    for path in examples.glob("*correlators_neo.json"):
-        descriptor = json.loads(path.read_text(encoding="utf-8"))
-        ensemble = descriptor["ensemble"]
-        assert "m_pi" in ensemble
-        assert "m_pi_gev" not in ensemble
-        for record in descriptor["correlators"]:
+    for path in examples.glob("*correlators.json"):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        assert set(document) == {"correlators"}
+        for record in document["correlators"]:
+            ensemble = record["ensemble"]
+            assert "m_pi" in ensemble
+            assert "m_pi_gev" not in ensemble
+            assert isinstance(record["count"], int) and record["count"] >= 2
             assert "correlator_type" in record
             assert "kind" not in record
             current = record.get("current")
@@ -1709,7 +1711,7 @@ def test_matching_kernel_parameters_follow_the_selected_signature() -> None:
 
 
 def test_matching_kernel_parameter_rules_require_a_dict_and_required_signature_values() -> None:
-    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_cg_manifest_neo.json")
+    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_pdf_cg_manifest.json")
     manifest.document["stages"]["perturbative_matching"]["defaults"]["kernel_parameters"] = []
     assert any(
         issue.path.endswith("kernel_parameters") and "expected dict" in issue.message for issue in manifest.validate()
@@ -1761,7 +1763,7 @@ def test_matching_check_requires_zs_fm_exactly_for_hybrid_kernels(monkeypatch) -
 
 def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
     examples = Path(__file__).parents[2] / "examples"
-    manifest = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    manifest = load_manifest(examples / "pion_da_gi_manifest.json")
     assert manifest.validate() == []
     jobs = manifest.jobs_by_stage["renormalization"]
     fit = jobs[0].params
@@ -1782,43 +1784,43 @@ def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
     assert fit["z_coverage_policy"] == apply["z_coverage_policy"] == "extrapolate"
     assert fit["kernel_parameters"] == apply["kernel_parameters"] == {}
 
-    strict = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    strict = load_manifest(examples / "pion_da_gi_manifest.json")
     strict.document["stages"]["renormalization"]["defaults"]["z_coverage_policy"] = "strict"
     assert strict.validate() == []
     assert all(job.params["z_coverage_policy"] == "strict" for job in strict.jobs_by_stage["renormalization"])
 
-    invalid_coverage = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    invalid_coverage = load_manifest(examples / "pion_da_gi_manifest.json")
     invalid_coverage.document["stages"]["renormalization"]["defaults"]["z_coverage_policy"] = "freeze"
     assert any(
         issue.path.endswith("z_coverage_policy") and "must be one of" in issue.message
         for issue in invalid_coverage.validate()
     )
 
-    kernel_override = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    kernel_override = load_manifest(examples / "pion_da_gi_manifest.json")
     kernel_override.document["stages"]["renormalization"]["defaults"]["kernel_parameters"] = {"mu": 3.0}
     with pytest.warns(RuntimeWarning, match="overrides stage context"):
         assert kernel_override.validate() == []
 
-    data_override = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    data_override = load_manifest(examples / "pion_da_gi_manifest.json")
     data_override.document["stages"]["renormalization"]["defaults"]["kernel_parameters"] = {"z_fm": 0.2}
     assert any(
         issue.path.endswith("kernel_parameters.z_fm") and "data" in issue.message for issue in data_override.validate()
     )
 
-    wrong_type = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    wrong_type = load_manifest(examples / "pion_da_gi_manifest.json")
     wrong_type.document["stages"]["renormalization"]["jobs"][0]["type"] = "apply"
     assert any(issue.path.endswith("inputs.target") and "required" in issue.message for issue in wrong_type.validate())
 
-    missing_kernel = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    missing_kernel = load_manifest(examples / "pion_da_gi_manifest.json")
     missing_kernel.document["stages"]["renormalization"]["defaults"].pop("kernel_id")
     assert any(issue.path.endswith("kernel_id") for issue in missing_kernel.validate())
 
-    wrong_signature = load_manifest(examples / "pion_da_gi_manifest_neo.json")
+    wrong_signature = load_manifest(examples / "pion_da_gi_manifest.json")
     fit_params = wrong_signature.document["stages"]["renormalization"]["jobs"][0]
     fit_params["kernel_id"] = "da_gi_gzg5_ratio_nlo"
     assert any(issue.path.endswith("kernel_id") and "z_fm" in issue.message for issue in wrong_signature.validate())
 
-    redundant_type = load_manifest(examples / "pion_pdf_gi_manifest_neo.json")
+    redundant_type = load_manifest(examples / "pion_pdf_gi_manifest.json")
     redundant_type.document["stages"]["renormalization"]["jobs"][0]["type"] = "apply"
     assert redundant_type.validate() == []
     assert redundant_type.jobs_by_stage["renormalization"][0].params["type"] == "apply"
@@ -2231,7 +2233,12 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
     assert backend.calls[0][1] == []
     schema = backend.response_schemas[0]["schema"]
     assert schema["required"] == ["tune_z_values"]
-    assert schema["properties"]["tune_z_values"]["items"] == {"type": "number"}
+    assert schema["properties"]["tune_z_values"] == {
+        "type": "array",
+        "items": {"type": "number", "not": {"const": 0}},
+        "minItems": 1,
+        "uniqueItems": True,
+    }
 
 
 def test_recommendation_sends_data_on_first_human_failure_but_not_on_retry(tmp_path: Path) -> None:
@@ -2328,6 +2335,9 @@ def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path)
     assert pt2_windows(context, session) == [{"tmin": 2, "tmax": 8}]
     assert initial(context, session)["tune_z_values"] == [0.1]
     assert session.recommendation_calls == 1
+    window_schema = backend.response_schemas[0]["schema"]["properties"]["pt2_windows"]["items"]
+    assert window_schema["required"] == ["tmax", "tmin"]
+    assert window_schema["additionalProperties"] is False
 
 
 def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(tmp_path: Path) -> None:
@@ -2452,7 +2462,7 @@ def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Pa
                 "id": f"matrix_{len(attempts):03d}",
                 "fit_strategy": "independent",
                 "fit_scope": "qda_ratio",
-                "window": {"t_min": 2, "t_max": 8, "tau_min": None},
+                "window": {"tmin": 2, "tmax": 8, "tau_min": None},
                 "nstate": 1,
                 "prior_width": 1.0,
                 "min_Q": quality,
@@ -2494,8 +2504,8 @@ def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Pa
     assert recommendations[0] is None
     assert recommendations[1]["matrix_001"]["min_Q"] == 0.01
     assert recommendations[1]["matrix_001"]["parameters"]["window"] == {
-        "t_min": 2,
-        "t_max": 8,
+        "tmin": 2,
+        "tmax": 8,
         "tau_min": None,
     }
     assert recommendations[1]["matrix_001"]["by_tune_z"]["1.0"]["Q"] == 0.01

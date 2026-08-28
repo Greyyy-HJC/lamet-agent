@@ -1,4 +1,4 @@
-"""The shared sample-bearing numerical exchange type for the neo pipeline.
+"""The shared sample-bearing numerical exchange type for the pipeline.
 
 This module preserves the approved ``EnsembleData`` wrapper and serialization
 behavior.  Stage code adds stricter physical checks at its own boundary rather

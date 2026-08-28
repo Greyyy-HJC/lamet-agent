@@ -56,8 +56,8 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
             "fit_scope": "qda_ratio",
             "observable": "matrix_element",
             "window": {
-                "t_min": int(window["tmin"]),
-                "t_max": int(window["tmax"]),
+                "tmin": int(window["tmin"]),
+                "tmax": int(window["tmax"]),
                 "tau_min": None,
             },
             "component": context.params["component"],
@@ -71,8 +71,8 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
                 values, _coordinates, fit = matrix_element_samples(
                     correlators,
                     method="qda",
-                    t_min=int(window["tmin"]),
-                    t_max=int(window["tmax"]),
+                    tmin=int(window["tmin"]),
+                    tmax=int(window["tmax"]),
                     tau_min=None,
                     lsqfit=settings,
                     sample_error_mode=str(context.manifest["metadata"]["sample_error_mode"]),

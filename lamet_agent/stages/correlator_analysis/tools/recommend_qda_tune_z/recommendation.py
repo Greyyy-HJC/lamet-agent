@@ -11,11 +11,16 @@ from lamet_agent.stages.correlator_analysis.tools._correlator_evidence import en
 from lamet_agent.structured import annotation_schema, json_compatible, validate_value
 
 
+class Pt2Window(TypedDict):
+    tmin: int
+    tmax: int
+
+
 class QdaFitSuggestion(TypedDict, total=False):
     """Joint qDA fit-parameter suggestion."""
 
     tune_z_values: list[float]
-    pt2_windows: list[dict[str, int]]
+    pt2_windows: list[Pt2Window]
 
 
 def recommend(
@@ -39,6 +44,11 @@ def recommend(
         )
     schema, _nullable = annotation_schema(QdaFitSuggestion)
     requested = requested_fields or {"tune_z_values"}
+    schema["properties"]["tune_z_values"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["tune_z_values"]["items"]["not"] = {"const": 0}
+    schema["properties"]["pt2_windows"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["pt2_windows"]["items"]["properties"]["tmin"]["minimum"] = 0
+    schema["properties"]["pt2_windows"]["items"]["properties"]["tmax"]["minimum"] = 1
     schema["properties"] = {name: value for name, value in schema["properties"].items() if name in requested}
     schema["required"] = sorted(requested)
     response = session.complete(
@@ -54,8 +64,7 @@ def recommend(
     if response.structured is None:
         raise RuntimeError("qDA tuning recommendation returned no structured response")
     result = dict(response.structured)
-    restricted_type = QdaFitSuggestion
-    validate_value(restricted_type, result, "qda_tune_z_recommendation")
+    validate_value(QdaFitSuggestion, result, "qda_tune_z_recommendation")
     if set(result) != requested:
         raise ValueError(f"qDA recommendation must return exactly {sorted(requested)}")
     return result

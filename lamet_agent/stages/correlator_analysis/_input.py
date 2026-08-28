@@ -19,18 +19,38 @@ import numpy as np
 from lamet_agent.data import EnsembleData, EnsembleInfo
 
 
-def load_descriptor(path: Path) -> dict[str, Any]:
-    """Load one JSON descriptor and its HDF5 datasets into raw ``EnsembleData``."""
+def load_descriptor(path: Path, *, correlator_ids: set[str] | None = None) -> dict[str, Any]:
+    """Load the selected ensemble from one project correlator descriptor."""
     if path.suffix.lower() != ".json" or not path.is_file():
         raise ValueError(f"correlator descriptor must be an existing .json file: {path}")
-    descriptor = json.loads(path.read_text(encoding="utf-8"))
-    if (
-        not isinstance(descriptor, dict)
-        or set(descriptor) != {"ensemble", "configuration_count", "correlators"}
-        or not isinstance(descriptor.get("ensemble"), dict)
-        or not isinstance(descriptor.get("correlators"), list)
-    ):
-        raise ValueError("descriptor requires ensemble, configuration_count, and correlators")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or set(document) != {"correlators"}:
+        raise ValueError("project correlator descriptor requires exactly one correlators list")
+    records = document["correlators"]
+    if not isinstance(records, list) or not records or any(not isinstance(record, dict) for record in records):
+        raise ValueError("project correlator descriptor requires a nonempty correlators list")
+    record_ids = [record.get("id") for record in records]
+    if any(not isinstance(value, str) or not value for value in record_ids) or len(set(record_ids)) != len(record_ids):
+        raise ValueError("project correlator ids must be nonempty and unique")
+    requested = set(record_ids) if correlator_ids is None else correlator_ids
+    selected = [record for record in records if record["id"] in requested]
+    if {record["id"] for record in selected} != requested:
+        raise ValueError("selected correlator_ids are not present in the project descriptor")
+    ensembles = [record.get("ensemble") for record in selected]
+    counts = [record.get("count") for record in selected]
+    if any(not isinstance(value, dict) for value in ensembles) or any(value != ensembles[0] for value in ensembles[1:]):
+        raise ValueError("selected correlators must share exactly one ensemble")
+    if any(not isinstance(value, int) or isinstance(value, bool) or value < 2 for value in counts):
+        raise ValueError("correlator count must be an integer of at least two")
+    if any(value != counts[0] for value in counts[1:]):
+        raise ValueError("selected correlators must share one configuration count")
+    descriptor = {
+        "ensemble": ensembles[0],
+        "configuration_count": counts[0],
+        "correlators": [
+            {key: value for key, value in record.items() if key not in {"ensemble", "count"}} for record in selected
+        ],
+    }
     try:
         ensemble = EnsembleInfo(**descriptor["ensemble"])
     except (TypeError, ValueError) as exc:
@@ -309,7 +329,7 @@ def ensure_raw_correlators(
     if not requested:
         raise ValueError("at least one correlator must be selected")
 
-    loaded = load_descriptor(source)
+    loaded = load_descriptor(source, correlator_ids=requested)
     unknown = requested - set(loaded["correlators"])
     if unknown:
         raise ValueError(f"unknown correlator ids: {sorted(unknown)}")

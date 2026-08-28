@@ -1,8 +1,8 @@
-"""Checks for deterministic, sample-parallel neo nonlinear fitting.
+"""Checks for deterministic, sample-parallel nonlinear fitting.
 
 Purpose: verify the lsqfit-like API, bootstrap seeding, and worker-independent
 results. Inputs are deterministic toy ensembles; outputs are fitted parameter
-samples. Example: ``pytest tests/unit/test_neo_fitting.py``.
+samples. Example: ``pytest tests/unit/test_fitting.py``.
 """
 
 from __future__ import annotations

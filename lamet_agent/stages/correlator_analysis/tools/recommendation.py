@@ -34,11 +34,11 @@ def initial(context: ToolContext, session: LlmSession) -> dict[str, Any]:
         fixed = {"pt2_windows": pt2} if pt2 else {}
         result = dict(recommend_spectrum(context, session, fixed_parameters=fixed))
         if pt2 and not any(
-            int(window["tmin"]) == int(result["t_min"]) and int(window["tmax"]) == int(result["t_max"])
+            int(window["tmin"]) == int(result["tmin"]) and int(window["tmax"]) == int(result["tmax"])
             for window in pt2
         ):
             raise ValueError("initial spectrum recommendation must select an authored pt2 window")
-        result["pt2_windows"] = [{"tmin": int(result["t_min"]), "tmax": int(result["t_max"])}]
+        result["pt2_windows"] = [{"tmin": int(result["tmin"]), "tmax": int(result["tmax"])}]
     else:
         ordinary = scopes != {"qda_ratio"}
         requested = {"tune_z_values"}
@@ -86,7 +86,7 @@ def revise(
     scopes = _scopes(context)
     if scopes == {"spectrum"}:
         result = dict(recommend_spectrum(context, session, previous_attempts=previous_attempts))
-        result["pt2_windows"] = [{"tmin": int(result["t_min"]), "tmax": int(result["t_max"])}]
+        result["pt2_windows"] = [{"tmin": int(result["tmin"]), "tmax": int(result["tmax"])}]
     elif scopes == {"qda_ratio"}:
         result = dict(
             recommend_qda(

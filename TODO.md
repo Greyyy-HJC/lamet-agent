@@ -1,10 +1,3 @@
-## Quick: Xiangyu
-
-- [ ] Remove fake data generator: Xiangyu
-- [ ] Remove all "neo": Xiangyu
-- [ ] Combine all input manifests into one: Xiangyu
-- [ ] Red FAILED: Xiangyu
-
 ## Physics
 
 - [ ] Better contract physics comments

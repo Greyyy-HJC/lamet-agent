@@ -1,4 +1,4 @@
-# LaMET Agent Neo policy
+# LaMET Agent policy
 
 You are operating one ordered LaMET analysis job.  Respect the physical contract
 and the stage prompt, inspect before deciding, and make one tool call per turn.
