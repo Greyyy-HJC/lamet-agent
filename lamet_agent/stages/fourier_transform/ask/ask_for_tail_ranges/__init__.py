@@ -36,7 +36,7 @@ def recommend(
         evidence["previous_attempts"] = previous_attempts
     schema, _nullable = annotation_schema(TailRangeSuggestion)
     schema["properties"]["zmin_fm"].update({"minItems": 1, "uniqueItems": True})
-    schema["properties"]["zmin_fm"]["items"]["minimum"] = 0.0
+    schema["properties"]["zmin_fm"]["items"]["minimum"] = 0.5
     schema["properties"]["zmax_fm"].update({"minItems": 1, "uniqueItems": True})
     schema["properties"]["zmax_fm"]["items"].update(
         {"exclusiveMinimum": 0.0, "maximum": float(context.params["zmax_ext_fm"])}
