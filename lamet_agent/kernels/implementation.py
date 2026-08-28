@@ -13,7 +13,7 @@ TF: Final[float] = 1.0 / 2.0
 
 def ZMSbar(z_fm: np.ndarray | float, *, mu: float, offset: float) -> np.ndarray:
     z_arr = np.asarray(z_fm, dtype=float)
-    alphas = alpha_s(float(mu))
+    alphas = alpha_s(ALPHAS_N_LOOP, float(mu), "running")
     log_term = np.log(mu**2 * (z_arr / GEV_FM) ** 2 * np.exp(2.0 * np.euler_gamma) / 4.0)
     return 1.0 + alphas * CF / (2.0 * np.pi) * (1.5 * log_term + offset)
 
@@ -165,7 +165,7 @@ def build_matching_matrix(
         raise ValueError("`quasi_y_ls` spacing must be non-zero.")
     if not np.allclose(y_step, y_step[0], rtol=0.0, atol=eps):
         raise ValueError("`quasi_y_ls` must be uniformly spaced.")
-    alphas = alpha_s(float(mu))
+    alphas = alpha_s(ALPHAS_N_LOOP, float(mu), "running")
     nx, ny = (len(x_grid), len(y_grid))
     nlo_matrix = np.zeros((nx, ny))
     identity = _lo_interp_matrix(x_grid, y_grid)
@@ -291,7 +291,7 @@ def _build_pdf_matrix(
         raise ValueError("every x must lie inside the y grid to place its delta term.")
     if plus_coeff is None:
         plus_coeff = coeff
-    alphas = alpha_s(float(mu))
+    alphas = alpha_s(ALPHAS_N_LOOP, float(mu), "running")
     nx, ny = (len(x_grid), len(y_grid))
     identity = _lo_interp_matrix(x_grid, y_grid)
     nlo_matrix = np.zeros((nx, ny))
@@ -586,7 +586,7 @@ def _lrr_improve(
         if x_ls.shape == y_ls.shape and np.allclose(x_ls, y_ls, rtol=0.0, atol=1e-12)
         else _plus_prescription_matrix(y_ls, y_ls, density_cz, eps)
     )
-    alphas = alpha_s(float(mu))
+    alphas = alpha_s(ALPHAS_N_LOOP, float(mu), "running")
     rsum_pv = dPVasym(1.0, mu, nf, alphas)
     r0 = rnasym(0, 1.0, mu, nf) * alphas
     return (fixed_order_matrix + r0 * m_cz_sum) @ expm(-m_cz_exp * rsum_pv)
@@ -616,7 +616,7 @@ _M_Z: Final = 91.1876
 _M_B: Final = 4.18
 _M_C: Final = 1.27
 _RUNNING_STEPS: Final = 100
-_BETA_ORDER: Final = 2
+ALPHAS_N_LOOP: Final = 2
 _SPLIT_CF: Final = 4.0 / 3.0
 _SPLIT_CA: Final = 3.0
 _SPLIT_NF: Final = 4.0
@@ -651,16 +651,32 @@ def _run_alpha(nf: float, mu_from: float, mu_to: float, alpha_from: float, order
 
 
 @functools.lru_cache(maxsize=4096)
-def alpha_s(mu: float) -> float:
+def alpha_s(n_loop: int, mu: float, n_f: int | str) -> float:
     if mu <= 0.0:
         raise ValueError("alpha_s needs a positive scale.")
-    if mu >= _M_B:
-        return _run_alpha(5.0, _M_Z, mu, _ALPHAS_MZ, _BETA_ORDER)
-    alpha_mb = _run_alpha(5.0, _M_Z, _M_B, _ALPHAS_MZ, _BETA_ORDER)
-    if mu >= _M_C:
-        return _run_alpha(4.0, _M_B, mu, alpha_mb, _BETA_ORDER)
-    alpha_mc = _run_alpha(4.0, _M_B, _M_C, alpha_mb, _BETA_ORDER)
-    return _run_alpha(3.0, _M_C, mu, alpha_mc, _BETA_ORDER)
+    if n_loop not in (1, 2, 3, 4):
+        raise ValueError(f"alpha_s runs the beta function at 1 to 4 loops, not n_loop={n_loop!r}.")
+    if n_f != "running" and n_f not in (3, 4, 5):
+        raise ValueError(f"alpha_s takes n_f in {{3, 4, 5}} or 'running', not {n_f!r}.")
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        if n_f != "running":
+            value = _run_alpha(float(n_f), _M_Z, mu, _ALPHAS_MZ, n_loop)
+        elif mu >= _M_B:
+            value = _run_alpha(5.0, _M_Z, mu, _ALPHAS_MZ, n_loop)
+        else:
+            alpha_mb = _run_alpha(5.0, _M_Z, _M_B, _ALPHAS_MZ, n_loop)
+            if mu >= _M_C:
+                value = _run_alpha(4.0, _M_B, mu, alpha_mb, n_loop)
+            else:
+                alpha_mc = _run_alpha(4.0, _M_B, _M_C, alpha_mb, n_loop)
+                value = _run_alpha(3.0, _M_C, mu, alpha_mc, n_loop)
+    if not np.isfinite(value):
+        raise ValueError(
+            f"alpha_s(n_loop={n_loop}, mu={mu}, n_f={n_f!r}) ran into the Landau pole: "
+            "this configuration has no perturbative coupling at that scale."
+        )
+    return float(value)
 
 
 def _dilog(z: np.ndarray) -> np.ndarray:
@@ -763,7 +779,8 @@ _ZPSI_REF_GEV: Final = 2.0
 def _zpsi_msbar_ratio(mu: float, mu_ref: float = _ZPSI_REF_GEV, nf: float = 3.0) -> float:
     b0 = _beta_coefficient(0, nf)
     b1 = _beta_coefficient(1, nf)
-    alpha, alpha_ref = (alpha_s(float(mu)), alpha_s(float(mu_ref)))
+    alpha = alpha_s(ALPHAS_N_LOOP, float(mu), "running")
+    alpha_ref = alpha_s(ALPHAS_N_LOOP, float(mu_ref), "running")
     ratio = alpha / (b0 + b1 * alpha) / (alpha_ref / (b0 + b1 * alpha_ref))
     return float(ratio ** (1.0 / (3.0 * np.pi * b0)))
 
@@ -791,7 +808,7 @@ def _evolution_operator(
     operator = np.eye(evo_lo.shape[0])
     for index in range(steps):
         mu_mid = float(np.exp((t0 + dt * (index + 0.5)) / 2.0))
-        a = alpha_s(mu_mid) / (4.0 * np.pi)
+        a = alpha_s(ALPHAS_N_LOOP, mu_mid, "running") / (4.0 * np.pi)
         operator = operator @ expm((a * evo_lo + a**2 * evo_nlo) * dt)
     return operator
 
