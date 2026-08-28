@@ -399,6 +399,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     f"| pt3 windows | {format_value(settings.get('pt3_windows'))} |",
                     f"| SVD cutoff | {format_value(settings['svdcut'])} |",
                     f"| Q threshold | {format_value(settings['q_min'])} |",
+                    f"| fallback_no_q_passing | {format_value(diagnostics.get('fallback_no_q_passing', False))} |",
                 ]
             )
             candidates = diagnostics.get("candidates", [])
@@ -469,6 +470,14 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     f"- Center preflight: {format_value(diagnostics.get('selected_preflight_fit'))}",
                 ]
             )
+            if diagnostics.get("fallback_no_q_passing"):
+                lines.extend(
+                    [
+                        "",
+                        "ATTENTION: no candidate passed `q_min` after the allowed attempts; "
+                        "the deterministic best candidate was published anyway.",
+                    ]
+                )
         else:
             inspection = diagnostics.get("inspection", {})
             lines.extend(
@@ -497,6 +506,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "| `candidate_id` | Deterministic id of one complete authored fit candidate. |",
                 "| `Q`, `chi2_dof`, `logGBF` | Sample-average goodness-of-fit and evidence diagnostics used by the selection rule. |",
                 "| `tune_z_diagnostics` | Fits used only to select a common model/window before full-z resample application. |",
+                "| `fallback_no_q_passing` | True when no candidate passed `q_min` after the allowed attempts "
+                "and the best candidate was published anyway. |",
                 "| `sample_fit_quality` | Successful production-resample Q and chi2/dof values used by the stage "
                 "statistics. |",
                 "| `dispersion_energy` | Aligned ground-state energy resamples in lattice units used only for the stage "

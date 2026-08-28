@@ -11,7 +11,8 @@ inspection from each job's two-point magnitudes and is not an LLM decision or a
 manifest parameter. Spectral-model candidate tools deterministically scan every
 authored strategy, scope, state count, prior width, and fit window using only
 sample averages at the tool-call `tune_z_values`; qDA tuning must use nonzero z
-because z=0 is its exact denominator. Candidate tools do not fit every sample
+because z=0 is the local current and can have different excited-state
+contamination. Candidate tools do not fit every sample
 or the full z grid. Call the one grid tool appropriate to the authored scope,
 then applies its exact recommended candidate automatically. Publishing applies the original
 information-preserving data-window rule and fits only the selected candidate to

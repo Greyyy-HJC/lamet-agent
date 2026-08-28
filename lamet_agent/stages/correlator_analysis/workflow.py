@@ -155,9 +155,15 @@ def run(context: ToolContext, session: LlmSession) -> None:
             if scopes == {"qda_ratio"}
             else bool(observation["metrics"].get("fallback_no_q_passing", False))
         )
-        if final_low_quality:
-            raise FitNumericalError("all correlator fit candidates remain below q_min after the allowed attempts")
+        context.state["fallback_no_q_passing"] = final_low_quality
         candidate_id = observation["metrics"]["recommended_candidate_id"]
+        if final_low_quality:
+            print(
+                "ATTENTION: all correlator fit candidates remain below "
+                f"q_min={context.params['q_min']} after the allowed attempts; "
+                f"continuing with {candidate_id}.",
+                flush=True,
+            )
     publish(context, candidate_id=str(candidate_id))
 
 

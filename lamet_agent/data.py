@@ -8,7 +8,6 @@ than changing this numerical base.
 from __future__ import annotations
 
 import json
-import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Sequence, Union, get_args
 
@@ -228,7 +227,7 @@ class EnsembleData:
         if bin_size <= 0 or bin_size >= self.n_sample:
             raise ValueError("bin_size must be positive and smaller than the sample count.")
         if self.n_sample % bin_size:
-            warnings.warn("The final incomplete bin is dropped.", RuntimeWarning)
+            print("ATTENTION: The final incomplete bin is dropped.", flush=True)
         n_bins = self.n_sample // bin_size
         values = [self.array.values[index * bin_size : (index + 1) * bin_size].mean(axis=0) for index in range(n_bins)]
         return EnsembleData(self.ensemble, "raw", values, self.dims, self.coords, self.attrs, self.name)

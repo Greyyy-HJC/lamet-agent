@@ -23,7 +23,6 @@
   - [ ] `extrapolation`: Dianjun
   - `<stage>/prompts.md`
   - `<stage>/tools/<tool>/prompts.md`
-  - Correlator analysis recommendation (too many `tune_z`)
 
 ## Artifacts
 
@@ -40,10 +39,6 @@
 
 ## UI/UX
 
-- [ ] Output optimization: Jinchen
-  - [ ] Suppress "with * LLM turn(s)"
-  - [ ] Suppress "LLM response received"
-  - [ ] Suppress "RuntimeWarning" (data, matching, renormalization) to print
 - [ ] Better banner logo: Anyone interested
   - `banner.py`
 

@@ -109,7 +109,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
         candidates.append(candidate)
     context.state["matrix_element_candidates"] = candidates
     try:
-        recommended, _fallback = select_tuned_candidate(
+        recommended, fallback = select_tuned_candidate(
             candidates,
             q_min=float(settings["q_min"]),
             chi2_dof_tolerance=float(settings["chi2_dof_tolerance"]),
@@ -123,6 +123,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
             "candidate_count": len(candidates),
             "tune_z_values": tune_z_values,
             "recommended_candidate_id": recommended["id"],
+            "fallback_no_q_passing": fallback,
         },
         "state_keys": ["matrix_element_candidates"],
         "artifacts": [],

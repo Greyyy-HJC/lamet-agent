@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import math
 import types
-import warnings
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 import numpy as np
@@ -282,11 +281,7 @@ def check_kernel(context: CheckContext) -> list[Issue] | Issue | None:
     issues = _kernel_parameter_issues(kernel, values)
     overridden = sorted({"mu"}.intersection(values))
     if not issues and overridden:
-        warnings.warn(
-            f"renormalization kernel_parameters overrides stage context: {overridden}",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        print(f"ATTENTION: renormalization kernel_parameters overrides stage context: {overridden}", flush=True)
     return issues
 
 

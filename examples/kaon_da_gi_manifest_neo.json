@@ -44,16 +44,16 @@
           ],
           "pt2_windows": [
             {
-              "tmin": 13,
+              "tmin": 12,
+              "tmax": 15
+            },
+            {
+              "tmin": 12,
               "tmax": 16
             },
             {
-              "tmin": 13,
+              "tmin": 12,
               "tmax": 17
-            },
-            {
-              "tmin": 13,
-              "tmax": 18
             }
           ]
         },
@@ -119,16 +119,16 @@
           ],
           "pt2_windows": [
             {
-              "tmin": 9,
+              "tmin": 8,
+              "tmax": 11
+            },
+            {
+              "tmin": 8,
               "tmax": 12
             },
             {
-              "tmin": 9,
+              "tmin": 8,
               "tmax": 13
-            },
-            {
-              "tmin": 9,
-              "tmax": 14
             }
           ]
         },
@@ -650,11 +650,10 @@
     "extrapolation": {
       "defaults": {
         "x_independent_terms": [
-          "a"
         ],
         "x_dependent_terms": [
+          "a2",
           "inv_p2",
-          "inv_p4",
           "ap2"
         ],
         "pdep_gev": [
@@ -776,11 +775,11 @@
       "variants": [
         {
           "id": "a_model",
-          "append_x_independent_terms": ["a2"]
+          "append_x_independent_terms": ["a4"]
         },
         {
           "id": "inv_p_model",
-          "remove_x_dependent_terms": ["inv_p4"]
+          "append_x_dependent_terms": ["inv_p4"]
         },
         {
           "id": "ap_model",

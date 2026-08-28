@@ -640,11 +640,10 @@
     "extrapolation": {
       "defaults": {
         "x_independent_terms": [
-          "a"
         ],
         "x_dependent_terms": [
+          "a2",
           "inv_p2",
-          "inv_p4",
           "ap2"
         ],
         "pdep_gev": [
@@ -766,11 +765,11 @@
       "variants": [
         {
           "id": "a_model",
-          "append_x_independent_terms": ["a2"]
+          "append_x_independent_terms": ["a4"]
         },
         {
           "id": "inv_p_model",
-          "remove_x_dependent_terms": ["inv_p4"]
+          "append_x_dependent_terms": ["inv_p4"]
         },
         {
           "id": "ap_model",

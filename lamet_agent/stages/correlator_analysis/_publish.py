@@ -102,7 +102,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
             qda=is_qda,
         )
         selection_rule = (
-            "original_qda_robust_rule(min_Q_then_worst_chi2_dof)"
+            f"original_qda_robust_rule(min_Q_then_worst_chi2_dof, fallback_no_q_passing={fallback})"
             if is_qda
             else f"original_data_window_rule(fallback_no_q_passing={fallback})"
         )
@@ -118,6 +118,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
 
         deterministic = min(acceptable, key=rank)
         selection_rule = "highest_quality_then_lowest_chi2_dof_then_id"
+        fallback = False
     if candidate_id != deterministic["id"]:
         raise ValueError(f"candidate_id must be the deterministic best acceptable candidate '{deterministic['id']}'")
     selected = deterministic
@@ -296,10 +297,12 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         sample_fit_quality = fit_result.sample_fit_quality
         dispersion_energy = fit_result.dispersion_energy
         selected["application_fit"] = fit_result.application_fit
+    fallback_no_q_passing = bool(context.state.get("fallback_no_q_passing", fallback))
     diagnostics = {
         "candidate_id": candidate_id,
         "method": selected.get("method"),
         "selection_rule": selection_rule,
+        "fallback_no_q_passing": fallback_no_q_passing,
         "recommended_defaults": context.state.get("recommended_defaults", {}),
         "correlator_scale_inspection": context.state.get("correlator_scale_inspection", {}),
         "selected_preflight_fit": selected.get("preflight_fit"),
@@ -336,7 +339,16 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         configure_plot(xlabel=xlabel, ylabel=str(data.name or "result").replace("_", " "))
         save_figure(context.artifact_directory / "plots" / "result.pdf")
         plot_artifact = "plots/result.pdf"
-    report = f"# Correlator result\n\nSelected candidate: `{candidate_id}`.\nMethod: `{selected.get('method')}`.\n"
+    report = (
+        f"# Correlator result\n\nSelected candidate: `{candidate_id}`.\n"
+        f"Method: `{selected.get('method')}`.\n"
+        f"fallback_no_q_passing: `{str(fallback_no_q_passing).lower()}`.\n"
+    )
+    if fallback_no_q_passing:
+        report += (
+            "\nATTENTION: no candidate passed `q_min` after the allowed attempts; "
+            "the deterministic best candidate was published anyway.\n"
+        )
     (context.artifact_directory / "report.md").write_text(report, encoding="utf-8")
     artifacts = (
         ["output.nc", "diagnostics/candidates.json", "report.md"]
@@ -347,7 +359,11 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         "stage_id": context.stage_id,
         "job_id": context.job_id,
         "result": str(data.name or "correlator_result"),
-        "decisions": {"candidate_id": candidate_id, "method": selected.get("method")},
+        "decisions": {
+            "candidate_id": candidate_id,
+            "method": selected.get("method"),
+            "fallback_no_q_passing": fallback_no_q_passing,
+        },
         "diagnostics": diagnostics,
         "artifacts": artifacts,
     }

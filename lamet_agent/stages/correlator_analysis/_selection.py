@@ -66,4 +66,4 @@ def select_tuned_candidate(
             float(candidate["worst_chi2_dof"]),
         ),
     )
-    return selected, False
+    return selected, not any(float(candidate["min_Q"]) >= q_min for candidate in usable)

@@ -174,7 +174,6 @@ class LlmSession:
             prompt_digest=prompt_digest,
             response_schema=response_schema,
         )
-        _emit_progress("LLM response received.")
         assistant_message = Message("assistant", response.text, tool_calls=response.calls)
         _append_transcript(
             self.transcript_path,
@@ -631,7 +630,7 @@ class _AgentSession:
         (context.artifact_directory / "summary.json").write_text(
             json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
         )
-        _emit_progress(f"Job {context.stage_id}/{context.job_id} finished with {llm_turns} LLM turn(s).")
+        _emit_progress(f"Job {context.stage_id}/{context.job_id} finished")
         return context.output, context.summary
 
     def _run_context(
@@ -781,6 +780,7 @@ class _AgentSession:
                     _emit_progress(f"Stage: {stage_id}")
                     if progress_mode == "stage":
                         stage_progress = tqdm(total=len(stage_jobs), desc=stage_id, unit="job")
+                _emit_progress("")
                 _emit_progress(f"Job: {stage_id}/{job.job_id}")
                 job.artifact_directory.mkdir(parents=True, exist_ok=False)
                 resolved_inputs: dict[str, Any] = {}

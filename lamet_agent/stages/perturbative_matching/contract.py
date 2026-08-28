@@ -7,7 +7,6 @@ import math
 from pathlib import Path
 import re
 import types
-import warnings
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 import numpy as np
@@ -298,11 +297,7 @@ def check_kernel_parameters(context: CheckContext) -> list[Issue] | Issue | None
         issues = _kernel_parameter_issues(kernel, values)
         overridden = sorted(_CONTEXT_KERNEL_ARGUMENTS.intersection(values))
         if not issues and overridden:
-            warnings.warn(
-                f"matching kernel_parameters overrides stage context: {overridden}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+            print(f"ATTENTION: matching kernel_parameters overrides stage context: {overridden}", flush=True)
         return issues
     except (TypeError, ValueError) as exc:
         return Issue(

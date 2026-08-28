@@ -152,6 +152,7 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
     assert "Selection Policy" in text
     assert "Per-tuning-z Fit Summary" in text
     assert "Field Definitions" in text
+    assert "fallback_no_q_passing" in text
     assert "[output.nc](ca/output.nc)" in text
 
 
