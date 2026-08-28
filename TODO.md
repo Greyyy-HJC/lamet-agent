@@ -3,16 +3,19 @@
 - [ ] Better contract physics comments
   - [ ] `correlator_analys`: Xiangyu
   - [ ] `renormalization`: Jinchen
-  - [ ] `fourier_transform`: Dianjun
+  - [x] `fourier_transform`: Dianjun
   - [ ] `perturbative_matching`: Fei
-  - [ ] `extrapolation`: Dianjun
+  - [x] `extrapolation`: Dianjun
   - `manifest.py`
   - `<stage>/contract.py`
 - [ ] Better prompts
   - [ ] `correlator_analys`: Xiangyu
+  - [ ] `renormalization`: Jinchen
   - [ ] `fourier_transform`: Dianjun
-  - `<stage>/ask/prompts.md`
-  - `<stage>/ask/<ask>/prompts.md`
+  - [ ] `perturbative_matching`: Fei
+  - [ ] `extrapolation`: Dianjun
+  - `<stage>/prompts.md`
+  - `<stage>/tools/<tool>/prompts.md`
 
 ## Artifacts
 
