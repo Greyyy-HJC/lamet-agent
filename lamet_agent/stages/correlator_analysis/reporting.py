@@ -197,7 +197,7 @@ def _dispersion_lines(records: tuple[StageReportRecord, ...], artifact_directory
         momentum = attrs.get("momentum_gev")
         ensemble = getattr(record.output, "ensemble", None)
         samples = energy.get("E0_samples", []) if isinstance(energy, dict) else []
-        if ensemble is None or momentum is None or not samples:
+        if momentum is None or not samples:
             continue
         lattice_samples = np.asarray(samples, dtype=float)
         if lattice_samples.ndim != 1 or np.any(~np.isfinite(lattice_samples)):
@@ -496,7 +496,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 f"- Ensemble: `{attrs.get('ensemble', getattr(record.output, 'ensemble', None))}`",
                 f"- Momentum: {format_value(attrs.get('momentum_gev'))} GeV",
-                f"- Lattice spacing: {format_value(attrs.get('lattice_spacing_fm'))} fm",
+                f"- Lattice spacing: {format_value(record.output.ensemble.a_s)} fm",
                 f"- Output grid: {describe_grid(next(iter(record.output.coords.values())), symbol=next(iter(record.output.coords)))}",
                 "",
                 "### Field Definitions",

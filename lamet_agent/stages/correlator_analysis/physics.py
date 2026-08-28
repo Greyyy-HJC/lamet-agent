@@ -394,7 +394,7 @@ def fit_matrix_element_samples(
     resample_ids = {value.attrs.get("resample_id") for value in aligned}
     if len(resample_ids) != 1 or None in resample_ids:
         raise ValueError("all correlators must share one nonempty resample_id")
-    extent = int(initial.ensemble.L_t) if initial.ensemble is not None else 0
+    extent = int(initial.ensemble.L_t)
     if extent < 1:
         raise ValueError("matrix-element fitting requires the temporal extent")
     times = np.asarray(initial.coords["t"], dtype=int)
@@ -902,7 +902,7 @@ def matrix_element_samples(
         if np.any(denominator == 0):
             raise ValueError("qDA z=0 denominator contains zero values in the fit window")
         ratios = window_values / denominator[:, :, None]
-        plot_upper = float(source.ensemble.L_t) / 2.0 if source.ensemble is not None else float(np.max(t))
+        plot_upper = float(source.ensemble.L_t) / 2.0
         plot_selected = np.flatnonzero((t >= 0.0) & (t <= plot_upper))
         plot_denominator = source_values[:, plot_selected, int(origin[0])]
         plot_selected = plot_selected[np.all(plot_denominator != 0, axis=0)]

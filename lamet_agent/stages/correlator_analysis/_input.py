@@ -211,16 +211,12 @@ def load_descriptor(path: Path, *, correlator_ids: set[str] | None = None) -> di
         current = record.get("current") if isinstance(record.get("current"), dict) else {}
         attrs = {
             "correlator_id": record["id"],
-            "ensemble_id": ensemble.id,
-            "L_s": int(ensemble.L_s),
-            "m_pi": float(ensemble.m_pi),
             "correlator_type": record["correlator_type"],
             "hadron": record.get("hadron", {}).get("name")
             if isinstance(record.get("hadron"), dict)
             else record.get("hadron"),
             "source_momentum": json.dumps(record["source_momentum"]),
             "sink_momentum": json.dumps(record["sink_momentum"]),
-            "lattice_spacing_fm": float(ensemble.a_s),
             "momentum_gev": float(np.linalg.norm(record["sink_momentum"]) * ensemble.k_s),
             "units": json.dumps({"values": "dimensionless", **{dim: "lattice" for dim in dims[1:]}}),
             "coord_unit": "lattice",

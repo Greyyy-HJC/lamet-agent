@@ -133,9 +133,7 @@ def run(context: ToolContext) -> dict[str, object]:
         factor = aligned.get("zR")
         if not isinstance(factor, EnsembleData):
             raise ValueError("zR must be one numerical source")
-        spacing = target.attrs.get("lattice_spacing_fm")
-        if not isinstance(spacing, (int, float)) or isinstance(spacing, bool):
-            raise ValueError("self-renormalization target requires lattice_spacing_fm")
+        spacing = float(target.ensemble.a_s)
         if "a" in factor.dims:
             matches = [
                 index for index, value in enumerate(factor.coords["a"]) if abs(float(value) - float(spacing)) <= 1e-12

@@ -1266,11 +1266,14 @@ def test_extrapolation_term_partitions_are_disjoint_and_individually_optional() 
 
     independent_only = load_manifest(path)
     independent_only.document["systematics"] = {}
+    independent_only.document["stages"]["extrapolation"]["defaults"]["x_independent_terms"] = ["a"]
     independent_only.document["stages"]["extrapolation"]["defaults"].pop("x_dependent_terms")
     assert independent_only.validate() == []
+    assert independent_only.jobs_by_stage["extrapolation"][0].params["x_independent_terms"] == ["a"]
     assert independent_only.jobs_by_stage["extrapolation"][0].params["x_dependent_terms"] == []
 
     overlap = load_manifest(path)
+    overlap.document["stages"]["extrapolation"]["defaults"]["x_independent_terms"] = ["a"]
     overlap.document["stages"]["extrapolation"]["defaults"]["x_dependent_terms"].append("a")
     assert any(issue.path.endswith("x_dependent_terms") and "disjoint" in issue.message for issue in overlap.validate())
 
@@ -1327,14 +1330,11 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
     assert extrapolation["extrapolate_inv_p_model"]["x_dependent_terms"] == dependent + ["inv_p4"]
     assert extrapolation["extrapolate_ap_model"]["x_dependent_terms"] == dependent + ["ap4"]
     fourier = {job["id"]: job for job in stages["fourier_transform"]["jobs"]}
-    correlators = Path(__file__).parents[2] / "examples" / f"{stem}_a06m130_correlators_neo.json"
-    spacing = json.loads(correlators.read_text(encoding="utf-8"))["ensemble"]["a_s"]
     authored_zmin = next(
         job["zmin_fm"] for job in authored_stages["fourier_transform"]["jobs"] if job["id"] == "ft_a06m130_pz6"
     )
-    assert fourier["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == [
-        round(float(value) - float(spacing), 12) for value in authored_zmin
-    ]
+    assert fourier["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == authored_zmin
+    assert fourier["ft_a06m130_pz6_lambda_low"]["tail_window_step_offset"] == -1
     matching = {job["id"]: job for job in stages["perturbative_matching"]["jobs"]}
     assert matching["mt_a06m130_pz6_lambda_low"]["inputs"]["quasi"] == "ft_a06m130_pz6_lambda_low"
     assert matching["mt_a06m130_pz6_mu_low"]["mu"] == pytest.approx(2.0**0.5)
@@ -1432,122 +1432,17 @@ def test_systematics_propagate_without_downstream_declarations() -> None:
     ]
 
 
-def test_fourier_systematics_accept_a_single_zmin_candidate() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
-    manifest = load_manifest(path)
+def test_fourier_systematics_accept_single_zmin_without_resolving_data() -> None:
+    manifest = load_manifest(Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest.json")
     for job in manifest.document["stages"]["fourier_transform"]["jobs"]:
         job["zmin_fm"] = [job["zmin_fm"][0]]
 
     assert manifest.validate() == []
 
     jobs = {job["id"]: job for job in manifest.document["stages"]["fourier_transform"]["jobs"]}
-    spacing = json.loads(
-        (Path(__file__).parents[2] / "examples" / "pion_da_gi_a06m130_correlators_neo.json").read_text(encoding="utf-8")
-    )["ensemble"]["a_s"]
     assert jobs["ft_a06m130_pz6"]["zmin_fm"] == [0.5166]
-    assert jobs["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == [round(0.5166 - float(spacing), 12)]
-    assert jobs["ft_a06m130_pz6_lambda_high"]["zmin_fm"] == [round(0.5166 + float(spacing), 12)]
-
-
-def test_fourier_systematics_do_not_treat_zmin_candidates_as_a_lattice_grid() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
-    manifest = load_manifest(path)
-    for job in manifest.document["stages"]["fourier_transform"]["jobs"]:
-        job["zmin_fm"] = [0.4, 0.8]
-
-    assert manifest.validate() == []
-
-    jobs = {job["id"]: job for job in manifest.document["stages"]["fourier_transform"]["jobs"]}
-    spacing = json.loads(
-        (Path(__file__).parents[2] / "examples" / "pion_da_gi_a06m130_correlators_neo.json").read_text(encoding="utf-8")
-    )["ensemble"]["a_s"]
-    assert jobs["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == [
-        round(0.4 - float(spacing), 12),
-        round(0.8 - float(spacing), 12),
-    ]
-
-
-def test_fourier_systematics_read_spacing_from_input_netcdf(tmp_path: Path) -> None:
-    from lamet_agent.data import EnsembleData, EnsembleInfo
-    from lamet_agent.stages.fourier_transform.systematics import expand
-
-    spacing = 0.0574
-    source = tmp_path / "renormalized.nc"
-    EnsembleData(
-        EnsembleInfo("HISQ", "a06m130", spacing, spacing, 96, 192, 0.135),
-        "bootstrap",
-        [np.array([1.0, 0.5])],
-        ["z"],
-        {"z": [0.0, spacing]},
-        attrs={"lattice_spacing_fm": spacing, "coord_unit": "fm"},
-        name="renormalized_matrix_element",
-    ).to_netcdf(source)
-    document = {
-        "metadata": {"root_directory": str(tmp_path)},
-        "stages": {
-            "fourier_transform": {
-                "jobs": [
-                    {
-                        "id": "ft_mid",
-                        "inputs": {"input": {"file": "renormalized.nc"}},
-                        "zmin_fm": [0.6314],
-                        "zmax_fm": [0.9758],
-                    }
-                ]
-            }
-        },
-    }
-
-    expand(
-        document,
-        {
-            "variants": [
-                {"id": "lambda_low", "tail_window_step_offset": -1},
-                {"id": "lambda_high", "tail_window_step_offset": 1},
-            ]
-        },
-        {"root_directory": tmp_path},
-    )
-
-    jobs = {job["id"]: job for job in document["stages"]["fourier_transform"]["jobs"]}
-    assert jobs["ft_mid_lambda_low"]["zmin_fm"] == [round(0.6314 - spacing, 12)]
-    assert jobs["ft_mid_lambda_high"]["zmin_fm"] == [round(0.6314 + spacing, 12)]
-
-
-def test_fourier_systematics_reject_missing_lattice_spacing(tmp_path: Path) -> None:
-    from lamet_agent.data import EnsembleData
-    from lamet_agent.stages.fourier_transform.systematics import expand
-
-    source = tmp_path / "anonymous.nc"
-    EnsembleData(
-        None,
-        "bootstrap",
-        [np.array([1.0, 0.5])],
-        ["z"],
-        {"z": [0.0, 0.1]},
-        name="renormalized_matrix_element",
-    ).to_netcdf(source)
-    document = {
-        "metadata": {"root_directory": str(tmp_path)},
-        "stages": {
-            "fourier_transform": {
-                "jobs": [
-                    {
-                        "id": "ft_mid",
-                        "inputs": {"input": {"file": "anonymous.nc"}},
-                        "zmin_fm": [0.2],
-                    }
-                ]
-            }
-        },
-    }
-
-    with pytest.raises(ValueError, match="needs lattice spacing"):
-        expand(
-            document,
-            {"variants": [{"id": "lambda_low", "tail_window_step_offset": -1}]},
-            {"root_directory": tmp_path},
-        )
+    assert jobs["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == [0.5166]
+    assert jobs["ft_a06m130_pz6_lambda_low"]["tail_window_step_offset"] == -1
 
 
 def test_systematics_defaults_fill_variants_before_compilation() -> None:
@@ -1662,7 +1557,7 @@ def test_matching_check_reports_the_exact_parameter_path() -> None:
     ]
 
 
-def test_matching_kernel_parameters_follow_the_selected_signature() -> None:
+def test_matching_kernel_parameters_follow_the_selected_signature(capsys) -> None:
     contract = _load_stage_contract("perturbative_matching")
 
     def issues(kernel_id: str, scheme: str, parameters: dict[str, object], **extra: object):
@@ -1698,16 +1593,16 @@ def test_matching_kernel_parameters_follow_the_selected_signature() -> None:
     for coordinate in ("x_out", "x_in"):
         current = issues(rgr, "hybrid", {coordinate: [0.0, 1.0]}, hybrid={"zs_fm": 0.18})
         assert any(issue.path == f"kernel_parameters.{coordinate}" and "data" in issue.message for issue in current)
-    with pytest.warns(RuntimeWarning, match="overrides stage context"):
-        assert (
-            issues(
-                rgr,
-                "hybrid",
-                {"momentum_gev": 2.5, "scale_gev": 3.0, "zs_fm": 0.2},
-                hybrid={"zs_fm": 0.18},
-            )
-            == []
+    assert (
+        issues(
+            rgr,
+            "hybrid",
+            {"momentum_gev": 2.5, "scale_gev": 3.0, "zs_fm": 0.2},
+            hybrid={"zs_fm": 0.18},
         )
+        == []
+    )
+    assert "ATTENTION: matching kernel_parameters overrides stage context" in capsys.readouterr().out
 
 
 def test_matching_kernel_parameter_rules_require_a_dict_and_required_signature_values() -> None:
@@ -1761,7 +1656,7 @@ def test_matching_check_requires_zs_fm_exactly_for_hybrid_kernels(monkeypatch) -
     assert isinstance(issue, Issue) and "must omit" in issue.message
 
 
-def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
+def test_renormalization_type_controls_inputs_and_requires_a_kernel(capsys) -> None:
     examples = Path(__file__).parents[2] / "examples"
     manifest = load_manifest(examples / "pion_da_gi_manifest.json")
     assert manifest.validate() == []
@@ -1798,8 +1693,8 @@ def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
 
     kernel_override = load_manifest(examples / "pion_da_gi_manifest.json")
     kernel_override.document["stages"]["renormalization"]["defaults"]["kernel_parameters"] = {"mu": 3.0}
-    with pytest.warns(RuntimeWarning, match="overrides stage context"):
-        assert kernel_override.validate() == []
+    assert kernel_override.validate() == []
+    assert "ATTENTION: renormalization kernel_parameters overrides stage context" in capsys.readouterr().out
 
     data_override = load_manifest(examples / "pion_da_gi_manifest.json")
     data_override.document["stages"]["renormalization"]["defaults"]["kernel_parameters"] = {"z_fm": 0.2}
@@ -2341,11 +2236,11 @@ def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path)
 
 
 def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(tmp_path: Path) -> None:
-    from lamet_agent.data import EnsembleData
+    from lamet_agent.data import EnsembleData, EnsembleInfo
     from lamet_agent.stages.fourier_transform.tools.recommendation import initial, revise
 
     data = EnsembleData(
-        None,
+        EnsembleInfo("test", "test", 0.1, 0.1, 32, 64, 0.14),
         "bootstrap",
         [np.asarray([0.8, 1.0, 0.8], dtype=complex), np.asarray([0.7, 1.0, 0.7], dtype=complex)],
         ["z"],
@@ -2369,7 +2264,7 @@ def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(t
         },
         {},
         {},
-        {"fourier_input": data, "tail_inspection": {"spacing_fm": 0.1}},
+        {"fourier_input": data, "tail_inspection": {"z_grid_step_fm": 0.1}},
         tmp_path,
         np.random.default_rng(1),
     )
@@ -2531,7 +2426,7 @@ def test_correlator_workflow_publishes_best_candidate_when_q_min_is_never_met(
                 "id": "matrix_001",
                 "fit_strategy": "independent",
                 "fit_scope": "qda_ratio",
-                "window": {"t_min": 2, "t_max": 8, "tau_min": None},
+                "window": {"tmin": 2, "tmax": 8, "tau_min": None},
                 "nstate": 1,
                 "prior_width": 1.0,
                 "min_Q": 0.01,

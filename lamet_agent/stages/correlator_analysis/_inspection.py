@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gvar as gv
 import numpy as np
 
 from lamet_agent.agent import ToolContext
+from lamet_agent.data import format_gvar
 from lamet_agent.stages.correlator_analysis._input import ensure_correlators
 
 
@@ -91,20 +93,17 @@ def run(context: ToolContext, *, correlator_ids: list[str] | None = None) -> dic
             samples = samples.reshape(samples.shape[0], samples.shape[1], -1).mean(axis=2)
             central = np.mean(samples, axis=0)
             usable = np.isfinite(central) & (central > 0)
+            averaged = value.real.average(context.manifest["metadata"]["sample_error_mode"])
+            averaged = np.moveaxis(np.asarray(averaged, dtype=object), value.dims.index("t"), 0)
+            averaged = averaged.reshape(averaged.shape[0], -1).mean(axis=1)
             effective_mass = (
-                -np.diff(np.log(central[usable])) / np.diff(times[usable])
+                -np.diff(gv.log(averaged[usable])) / np.diff(times[usable])
                 if np.count_nonzero(usable) > 1
-                else np.asarray([], dtype=float)
-            )
-            relative_noise = (
-                np.std(samples, axis=0, ddof=1) / np.maximum(np.abs(central), np.finfo(float).eps)
-                if samples.shape[0] > 1
-                else np.zeros_like(central)
+                else np.asarray([], dtype=object)
             )
             metrics.update(
                 {
-                    "effective_mass": effective_mass.tolist(),
-                    "relative_noise": relative_noise.tolist(),
+                    "effective_mass": format_gvar(effective_mass),
                     "usable_time_count": int(np.count_nonzero(usable)),
                 }
             )
@@ -114,7 +113,7 @@ def run(context: ToolContext, *, correlator_ids: list[str] | None = None) -> dic
         "correlator_count": len(resampled),
         "resample_id": next(iter(resampled.values())).attrs.get("resample_id") if resampled else None,
         "diagnostics": {
-            key: {name: value for name, value in item.items() if name not in {"effective_mass", "relative_noise"}}
+            key: {name: value for name, value in item.items() if name != "effective_mass"}
             for key, item in inspection.items()
         },
     }

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from lamet_agent.agent import LlmSession, ToolContext
+from lamet_agent.data import format_gvar
 from lamet_agent.stages.fourier_transform._inspection import prepare
 from lamet_agent.structured import annotation_schema, json_compatible, validate_value
 
@@ -21,16 +22,17 @@ class TailRangeSuggestion(TypedDict, total=False):
 def _ensure_context(context: ToolContext, session: LlmSession) -> None:
     if session.has_context("fourier_tail_fit_data"):
         return
-    data, spacing = prepare(context)
+    data, z_grid_step = prepare(context)
     mode = str(context.manifest["metadata"]["sample_error_mode"])
     components = {}
     for name, selected in (("real", data.real), ("imag", data.imag)):
-        components[name] = str(selected.average(mode))
+        components[name] = format_gvar(selected.average(mode))
     session.add_context(
         "fourier_tail_fit_data",
         {
             "z_fm": [float(value) for value in data.coords["z"]],
-            "spacing_fm": spacing,
+            "z_grid_step_fm": z_grid_step,
+            "lattice_spacing_fm": data.ensemble.a_s,
             "momentum_gev": data.attrs.get("momentum_gev"),
             "components": components,
         },

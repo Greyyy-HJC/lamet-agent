@@ -46,14 +46,7 @@ def physical_z_coordinates(data: EnsembleData) -> EnsembleData:
         raise ValueError("renormalization input requires coord_unit='fm' or 'lattice'")
     if coord_unit == "fm":
         return data
-    spacing = attrs.get("lattice_spacing_fm")
-    if (
-        not isinstance(spacing, (int, float))
-        or isinstance(spacing, bool)
-        or not math.isfinite(float(spacing))
-        or float(spacing) <= 0
-    ):
-        raise ValueError("lattice-coordinate renormalization input requires positive lattice_spacing_fm")
+    spacing = float(data.ensemble.a_s)
     coords = data.coords
     coords["z"] = [float(value) * float(spacing) for value in coords["z"]]
     attrs.update({"coord_unit": "fm", "input_coord_unit": "lattice"})
@@ -274,10 +267,7 @@ def _fit_factor_result(
         if len(references) < 2 or any(item.dims != ["z"] for item in references):
             raise ValueError("self-renormalization requires an (a,z) source or at least two z sources")
         source = references[0]
-        spacings = [
-            float(item.attrs.get("lattice_spacing_fm", item.ensemble.a_s if item.ensemble is not None else np.nan))
-            for item in references
-        ]
+        spacings = [float(item.ensemble.a_s) for item in references]
         z = np.asarray(source.coords["z"], dtype=float)
         if any(not np.allclose(item.coords["z"], z, rtol=0.0, atol=1e-12) for item in references[1:]):
             raise ValueError("self-renormalization references must share one z grid")
@@ -294,7 +284,7 @@ def _fit_factor_result(
     ):
         raise ValueError("reference lattice spacings are outside the authored fit range")
     log_data = EnsembleData(
-        source.ensemble,
+        None,
         source.resample,
         [np.log(np.abs(sample)) for sample in values],
         ["a", "z"],
@@ -310,7 +300,7 @@ def _fit_factor_result(
             fit_x["z"].append(float(coordinate))
             fit_x["a"].append(float(spacing))
     fit_data = EnsembleData(
-        source.ensemble,
+        None,
         source.resample,
         [np.asarray(sample).reshape(-1) for sample in log_data.values],
         ["point"],
@@ -386,7 +376,9 @@ def _fit_factor_result(
         )
         factor_gvar[spacing_index] = gv.exp(known + finite * spacing / HBAR_C_GEV_FM + m0 * z)
     factor = np.asarray(gv.mean(factor_gvar), dtype=float)
-    source_ids = [str(source.attrs.get("resample_id", source.attrs.get("ensemble_id", "reference")))]
+    source_ids = [
+        str(source.attrs.get("resample_id", source.ensemble.id if source.ensemble is not None else "reference"))
+    ]
     attrs = dict(source.attrs)
     attrs.update(
         {

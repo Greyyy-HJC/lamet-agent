@@ -143,13 +143,12 @@ def _record_momentum_label(record: StageReportRecord) -> str:
 
 
 def _record_spacing_label(record: StageReportRecord) -> str:
-    return lattice_spacing_label(output_attrs(record).get("lattice_spacing_fm"), default=record.job_id)
+    return lattice_spacing_label(record.output.ensemble.a_s)
 
 
 def _combined_series_label(record: StageReportRecord) -> str:
-    attrs = output_attrs(record)
     momentum = _record_momentum_label(record)
-    spacing = attrs.get("lattice_spacing_fm")
+    spacing = record.output.ensemble.a_s
     if isinstance(spacing, (int, float)) and not isinstance(spacing, bool) and math.isfinite(float(spacing)):
         return f"{momentum}, {_record_spacing_label(record)}"
     return momentum
@@ -253,7 +252,7 @@ def _grouped_overlay_lines(records: tuple[StageReportRecord, ...], artifact_dire
     lines: list[str] = []
     by_spacing: dict[float, list[StageReportRecord]] = {}
     for record in apply_records:
-        spacing = output_attrs(record).get("lattice_spacing_fm")
+        spacing = record.output.ensemble.a_s
         if isinstance(spacing, (int, float)) and not isinstance(spacing, bool) and math.isfinite(float(spacing)):
             by_spacing.setdefault(round(float(spacing), 12), []).append(record)
     spacing_groups = [(spacing, group) for spacing, group in sorted(by_spacing.items()) if len(group) >= 2]

@@ -25,12 +25,12 @@ def load_data(value: Any) -> EnsembleData:
     raise TypeError("extrapolation input is neither EnsembleData nor a NetCDF Path")
 
 
-def basis_terms(attrs: dict[str, object], terms: list[str], physical_mass: float | None) -> list[float]:
+def basis_terms(data: EnsembleData, terms: list[str], physical_mass: float | None) -> list[float]:
     """Evaluate the authored dimensionless correction basis at one input."""
-    a = float(attrs["lattice_spacing_fm"])
-    length = float(attrs["L_s"]) * a
-    pion_mass = float(attrs["m_pi"])
-    momentum = float(attrs["momentum_gev"])
+    a = float(data.ensemble.a_s)
+    length = float(data.ensemble.L_s) * a
+    pion_mass = float(data.ensemble.m_pi)
+    momentum = float(data.attrs["momentum_gev"])
     if a <= 0 or length <= 0 or pion_mass <= 0 or momentum <= 0:
         raise ValueError("extrapolation kinematics must be finite and positive")
     r = pion_mass * pion_mass
@@ -89,16 +89,14 @@ def extrapolation_fcn(x: dict[str, object], parameters: dict[str, object]) -> np
 
 
 def _ensemble_groups(data: list[EnsembleData]) -> list[list[int]]:
-    """Group inputs that share one resampling source; absent provenance stays independent."""
-    grouped: dict[tuple[str, object], list[int]] = {}
+    """Group only inputs from one ensemble and one explicit resampling plan."""
+    grouped: dict[tuple[object, ...], list[int]] = {}
     for index, item in enumerate(data):
         resample_id = item.attrs.get("resample_id")
-        ensemble_id = item.attrs.get("ensemble_id")
+        ensemble_id = item.ensemble.id
         key = (
-            ("resample_id", resample_id)
+            ("ensemble_resample", ensemble_id, resample_id)
             if resample_id not in {None, ""}
-            else ("ensemble_id", ensemble_id)
-            if ensemble_id not in {None, ""}
             else ("input", index)
         )
         grouped.setdefault(key, []).append(index)
@@ -468,7 +466,7 @@ def fit_candidate(
             raise ValueError("reference extrapolation consumes the real matching channel")
         values = np.real(values)
     design = np.asarray(
-        [basis_terms(item.attrs, terms, physical_mass) for item in data],
+        [basis_terms(item, terms, physical_mass) for item in data],
         dtype=float,
     )
     sample_error_modes = {str(item.attrs.get("sample_error_mode", "covariance")) for item in data}

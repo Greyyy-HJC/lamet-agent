@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lamet_agent.data import EnsembleData
+from lamet_agent.data import EnsembleData, EnsembleInfo
 from lamet_agent.parallel import fourier_transform
 from lamet_agent.stages.fourier_transform.physics import complete_signed_z
 from lamet_agent.stages.renormalization.physics import normalize_at_origin, physical_z_coordinates
@@ -33,12 +33,12 @@ def test_fourier_uses_declared_phase_and_prefactor() -> None:
 
 def test_lattice_z_is_converted_once() -> None:
     data = EnsembleData(
-        None,
+        EnsembleInfo("test", "test", 0.12, 0.12, 32, 64, 0.14),
         "bootstrap",
         [np.array([1.0, 2.0])],
         ["z"],
         {"z": [0.0, 2.0]},
-        attrs={"coord_unit": "lattice", "lattice_spacing_fm": 0.12},
+        attrs={"coord_unit": "lattice"},
     )
     converted = physical_z_coordinates(data)
     assert converted.coords["z"] == [0.0, 0.24]

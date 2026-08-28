@@ -9,8 +9,14 @@ from typing import Any
 import numpy as np
 
 from lamet_agent.agent import ToolContext
-from lamet_agent.data import lattice_spacing_fm
 from lamet_agent.stages.fourier_transform.physics import complete_signed_z, load_data
+
+
+def effective_zmin_fm(context: ToolContext, data: Any) -> list[float]:
+    """Apply the job's lattice-site offset to its current lower-range candidates."""
+    offset = int(context.params["tail_window_step_offset"])
+    spacing = float(data.ensemble.a_s)
+    return [round(float(value) + offset * spacing, 12) for value in context.params["zmin_fm"]]
 
 
 def derive_conventions(attrs: Mapping[str, object], *, target_observable: str, sector: str) -> dict[str, object]:
@@ -56,7 +62,7 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
     existing = context.state.get("fourier_input")
     inspection = context.state.get("tail_inspection")
     if existing is not None and isinstance(inspection, dict):
-        return existing, float(inspection["spacing_fm"])
+        return existing, float(inspection["z_grid_step_fm"])
     value = context.inputs["input"]
     if isinstance(value, list):
         if len(value) != 1:
@@ -91,13 +97,6 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
     grid_step = float(differences[0])
     if grid_step <= 0 or not np.allclose(differences, grid_step, rtol=0.0, atol=1e-12):
         raise ValueError("Fourier input z coordinates must be uniformly spaced")
-    stored = lattice_spacing_fm(attrs=data.attrs, ensemble=data.ensemble)
-    if stored is None:
-        spacing = grid_step
-    elif not math.isclose(stored, grid_step, rel_tol=0.0, abs_tol=1e-12):
-        raise ValueError("Fourier input lattice_spacing_fm does not match the z-grid step")
-    else:
-        spacing = stored
     context.state["fourier_input"] = data
     context.state["fourier_conventions"] = conventions
     context.state["tail_inspection"] = {
@@ -106,24 +105,28 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
         "n_z": len(data.coords["z"]),
         "n_sample": data.n_sample,
         "coord_unit": data.attrs["coord_unit"],
-        "spacing_fm": spacing,
+        "z_grid_step_fm": grid_step,
     }
-    return data, spacing
+    return data, grid_step
 
 
 def run(context: ToolContext) -> dict[str, object]:
     """Inspect the prepared input and validate the effective fit ranges."""
-    data, spacing = prepare(context)
+    data, z_grid_step = prepare(context)
     z = np.asarray(data.coords["z"], dtype=float)
     parameters = context.params
+    effective_zmin = effective_zmin_fm(context, data)
+    if any(value < 0 for value in effective_zmin):
+        raise ValueError("tail_window_step_offset shifts zmin_fm below zero")
     if float(parameters["zmax_ext_fm"]) < float(np.max(np.abs(z))) - 1e-12:
         raise ValueError("zmax_ext_fm cannot be smaller than the input z coverage")
-    grid_values = [*parameters["zmin_fm"], *parameters["zmax_fm"]]
+    positive_z = z[z >= 0]
+    grid_values = [*effective_zmin, *parameters["zmax_fm"]]
     if any(
-        not math.isclose(round(float(value) / spacing) * spacing, float(value), rel_tol=0.0, abs_tol=1e-12)
+        not np.any(np.isclose(positive_z, float(value), rtol=0.0, atol=1e-12))
         for value in grid_values
     ):
-        raise ValueError("Fourier fit boundaries and tail extent must lie on the input z grid")
+        raise ValueError("effective Fourier fit boundaries must lie on the input z grid")
     input_max = float(np.max(np.abs(z)))
     if any(float(value) > input_max + 1e-12 for value in parameters["zmax_fm"]):
         raise ValueError("every zmax_fm candidate must be covered by the input z grid")
@@ -135,4 +138,4 @@ def run(context: ToolContext) -> dict[str, object]:
     }
 
 
-__all__ = ["derive_conventions", "prepare", "run"]
+__all__ = ["derive_conventions", "effective_zmin_fm", "prepare", "run"]

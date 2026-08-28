@@ -29,9 +29,6 @@ def run(context: ToolContext) -> dict[str, object]:
     ):
         raise ValueError("all distributions must have identical x coordinates")
     required_attrs = (
-        "lattice_spacing_fm",
-        "L_s",
-        "m_pi",
         "momentum_gev",
         "gfix",
         "kernel_operator",
@@ -41,7 +38,7 @@ def run(context: ToolContext) -> dict[str, object]:
         "kernel_id",
     )
     missing = {
-        str(item.attrs.get("ensemble_id", index)): [key for key in required_attrs if key not in item.attrs]
+        str(item.ensemble.id): [key for key in required_attrs if key not in item.attrs]
         for index, item in enumerate(data)
     }
     missing = {key: value for key, value in missing.items() if value}
@@ -53,25 +50,20 @@ def run(context: ToolContext) -> dict[str, object]:
             if item.attrs.get(key) != first_attrs.get(key):
                 raise ValueError(f"extrapolation provenance field {key} differs at distribution {index}")
     for item in data:
-        for key in ("lattice_spacing_fm", "m_pi", "momentum_gev"):
-            if (
-                not isinstance(item.attrs.get(key), Real)
-                or not math.isfinite(float(item.attrs[key]))
-                or float(item.attrs[key]) <= 0
-            ):
-                raise ValueError(f"{key} must be finite and positive on every extrapolation input")
+        momentum = item.attrs["momentum_gev"]
         if (
-            not isinstance(item.attrs.get("L_s"), Real)
-            or not math.isfinite(float(item.attrs["L_s"]))
-            or float(item.attrs["L_s"]) <= 0
+            not isinstance(momentum, Real)
+            or isinstance(momentum, bool)
+            or not math.isfinite(float(momentum))
+            or float(momentum) <= 0
         ):
-            raise ValueError("L_s must be finite and positive on every extrapolation input")
+            raise ValueError("momentum_gev must be finite and positive on every extrapolation input")
     context.state["scaling_data"] = data
     context.state["scaling_inspection"] = {
         "distribution_count": len(data),
         "x_count": len(x),
         "sample_count": data[0].n_sample,
-        "ensembles": [item.attrs.get("ensemble", item.attrs.get("ensemble_id")) for item in data],
+        "ensembles": [item.ensemble.id for item in data],
     }
     return {
         "summary": f"aligned {len(data)} distributions on one x grid",

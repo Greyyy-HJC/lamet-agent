@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from lamet_agent.agent import LlmSession, ToolContext
+from lamet_agent.data import format_gvar
 from lamet_agent.stages.correlator_analysis._input import ensure_correlators
 
 
@@ -29,7 +30,7 @@ def prepare(context: ToolContext) -> dict[str, Any]:
         for component in selected_components:
             selected = data.imag if component == "imag" else data.real
             average = selected.average(sample_error_mode)
-            components[component] = str(average)
+            components[component] = format_gvar(average)
         correlators[name] = {
             "dims": data.dims,
             "coords": data.coords,

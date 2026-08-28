@@ -61,10 +61,12 @@ def _input_rows(record: StageReportRecord) -> list[str]:
     for index, source in enumerate(values):
         data = load_data(source)
         attrs = data.attrs
+        ensemble = data.ensemble
         rows.append(
-            f"| {index} | `{attrs.get('ensemble', attrs.get('ensemble_id', 'n/a'))}` | "
-            f"{format_value(attrs.get('lattice_spacing_fm'))} | {format_value(attrs.get('momentum_gev'))} | "
-            f"{format_value(attrs.get('m_pi'))} | `{attrs.get('kernel_id', 'n/a')}` |"
+            f"| {index} | `{ensemble.id}` | "
+            f"{format_value(ensemble.a_s)} | "
+            f"{format_value(attrs.get('momentum_gev'))} | "
+            f"{format_value(ensemble.m_pi)} | `{attrs.get('kernel_id', 'n/a')}` |"
         )
     return rows
 

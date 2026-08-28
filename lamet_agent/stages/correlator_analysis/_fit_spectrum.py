@@ -56,8 +56,6 @@ def run(
         workers=context.workers,
         _parallel=context._parallel,
     )
-    if source.ensemble is None:
-        raise ValueError("spectrum input requires ensemble temporal spacing")
     energy_samples = [energies * HBAR_C_GEV_FM / float(source.ensemble.a_t) for energies in energy_samples]
     attrs = dict(source.attrs)
     attrs.update(

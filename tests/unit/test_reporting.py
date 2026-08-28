@@ -8,10 +8,12 @@ import numpy as np
 from lamet_agent.data import EnsembleData, EnsembleInfo
 from lamet_agent.stages._reporting import StageReportRecord
 
+_TEST_ENSEMBLE = EnsembleInfo("test", "a06", 0.06, 0.06, 64, 128, 0.13)
+
 
 def _data(*, attrs=None, values=None) -> EnsembleData:
     values = values or [[0.8, 1.0], [0.9, 1.1]]
-    return EnsembleData(None, "bootstrap", values, ["x"], {"x": [-0.2, 0.2]}, attrs=attrs or {})
+    return EnsembleData(_TEST_ENSEMBLE, "bootstrap", values, ["x"], {"x": [-0.2, 0.2]}, attrs=attrs or {})
 
 
 def _correlator_lsqfit_params() -> dict:
@@ -40,7 +42,6 @@ def _correlator_dispersion_record(stage: Path, job_id: str, ensemble, momentum, 
             "momentum_gev": momentum,
             "sample_error_mode": "covariance",
             "resample_id": "shared",
-            "lattice_spacing_fm": 0.06,
         },
     )
     summary = {
@@ -108,7 +109,12 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
 
     stage = tmp_path / "01_correlator_analysis"
     output = EnsembleData(
-        None, "bootstrap", [[0.8, 1.0], [0.9, 1.1]], ["z"], {"z": [0, 1]}, attrs={"momentum_gev": 2.0}
+        _TEST_ENSEMBLE,
+        "bootstrap",
+        [[0.8, 1.0], [0.9, 1.1]],
+        ["z"],
+        {"z": [0, 1]},
+        attrs={"momentum_gev": 2.0},
     )
     params = {
         "analysis_method": "lsqfit",
@@ -339,7 +345,12 @@ def test_renormalization_stage_report_contains_scheme_formula(tmp_path: Path) ->
 
     stage = tmp_path / "02_renormalization"
     output = EnsembleData(
-        None, "bootstrap", [[1.0, 0.8], [1.0, 0.9]], ["z"], {"z": [0.0, 0.1]}, attrs={"coord_unit": "fm"}
+        _TEST_ENSEMBLE,
+        "bootstrap",
+        [[1.0, 0.8], [1.0, 0.9]],
+        ["z"],
+        {"z": [0.0, 0.1]},
+        attrs={"coord_unit": "fm"},
     )
     params = {
         "strategy": "external_denominator",
@@ -520,11 +531,8 @@ def test_extrapolation_stage_report_contains_model_and_budget(tmp_path: Path) ->
 
     stage = tmp_path / "05_extrapolation"
     provenance = {
-        "ensemble": "a06",
-        "lattice_spacing_fm": 0.06,
         "momentum_gev": 2.0,
-        "m_pi": 0.13,
-        "kernel_id": "da_gi_gzg5_ratio_nlo",
+        "kernel_id": "GI_gzg5_DA_ratio_NLO",
     }
     source = _data(attrs=provenance)
     output = _data(

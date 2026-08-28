@@ -22,6 +22,7 @@ def _summary(value):
             "coords": {key: list(values) for key, values in value.coords.items()},
             "n_sample": value.n_sample,
             "resample": value.resample,
+            "ensemble": None if value.ensemble is None else value.ensemble._asdict(),
             "attrs": value.attrs,
         }
     return {"type": type(value).__name__, "value": str(value)}

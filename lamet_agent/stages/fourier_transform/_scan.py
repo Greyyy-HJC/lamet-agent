@@ -18,6 +18,7 @@ from lamet_agent.plotting import (
     vline,
 )
 from lamet_agent.stages.fourier_transform.physics import scan_fourier_transform
+from lamet_agent.stages.fourier_transform._inspection import effective_zmin_fm
 
 
 def attempt(context: ToolContext) -> dict[str, object]:
@@ -53,7 +54,7 @@ def attempt(context: ToolContext) -> dict[str, object]:
         transform=conventions["transform"],
         tail={
             "models": conventions["tail_models"],
-            "z_min_fm": context.params["zmin_fm"],
+            "z_min_fm": effective_zmin_fm(context, source),
             "z_max_fm": context.params["zmax_fm"],
             "extent_fm": context.params["zmax_ext_fm"],
             "smoothing_method": context.params["smooth"],

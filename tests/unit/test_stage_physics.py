@@ -43,6 +43,10 @@ from lamet_agent.stages.renormalization.physics import (
 from lamet_agent.stages.fourier_transform.physics import fourier_transform as stage_fourier_transform
 
 
+def _ensemble(spacing: float, identifier: str = "test", *, L_s: int = 64, m_pi: float = 0.14) -> EnsembleInfo:
+    return EnsembleInfo("test", identifier, spacing, spacing, L_s, 2 * L_s, m_pi)
+
+
 def test_matrix_ratio_uses_declared_tsep_and_tau_coordinates() -> None:
     t = np.arange(1.0, 7.0)
     tsep = np.array([2.0, 3.0, 4.0])
@@ -290,7 +294,12 @@ def test_qda_fit_divides_by_nonlocal_origin_and_fits_each_sample() -> None:
         ratio = target + rng.normal(0.0, 0.003, times.size) + 1j * rng.normal(0.0, 0.003, times.size)
         samples.append(np.column_stack([denominator, denominator * ratio]))
     source = EnsembleData(
-        None, "bootstrap", samples, ["t", "z"], {"t": times.tolist(), "z": z}, attrs={"correlator_type": "qda"}
+        _ensemble(0.1),
+        "bootstrap",
+        samples,
+        ["t", "z"],
+        {"t": times.tolist(), "z": z},
+        attrs={"correlator_type": "qda"},
     )
     values, coordinates, diagnostics = matrix_element_samples(
         {"qda": source},
@@ -487,6 +496,7 @@ def test_inspect_correlators_does_not_write_raw_correlator_plots(tmp_path) -> No
     )
     observation = run(context)
     assert observation["artifacts"] == []
+    assert isinstance(context.state["inspection"]["two_point"]["effective_mass"], str)
     assert not list((tmp_path / "plots").glob("correlator_*.pdf"))
 
 
@@ -649,7 +659,7 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
     import lamet_agent.stages.correlator_analysis._fit_qda as tool
 
     source = EnsembleData(
-        None,
+        _ensemble(0.1),
         "bootstrap",
         [np.ones((8, 3)), np.ones((8, 3))],
         ["t", "z"],
@@ -1163,15 +1173,12 @@ def test_extrapolation_supports_block_and_full_x_covariance() -> None:
         samples = [center + rng.normal(0.0, 0.01, 2) for _ in range(40)]
         data.append(
             EnsembleData(
-                None,
+                _ensemble(spacing, f"ensemble_{index}"),
                 "bootstrap",
                 samples,
                 ["x"],
                 {"x": x},
                 attrs={
-                    "lattice_spacing_fm": spacing,
-                    "L_s": 64,
-                    "m_pi": 0.14,
                     "momentum_gev": 2.0,
                     "resample_id": f"ensemble_{index}",
                 },
@@ -1208,14 +1215,16 @@ def test_extrapolation_covariance_is_blocked_by_ensemble_source() -> None:
 
     base = np.arange(12.0).reshape(6, 2)
     values = np.stack([base, 2.0 * base, 3.0 * base, 4.0 * base])
+    ensemble_a = EnsembleInfo("test", "A", 0.1, 0.1, 32, 64, 0.14)
+    ensemble_b = EnsembleInfo("test", "B", 0.1, 0.1, 32, 64, 0.14)
     data = [
         EnsembleData(
-            None,
+            ensemble_a if index < 2 else ensemble_b,
             "bootstrap",
             list(item),
             ["x"],
             {"x": [0.0, 1.0]},
-            attrs={"resample_id": "A" if index < 2 else "B"},
+            attrs={"resample_id": "shared"},
         )
         for index, item in enumerate(values)
     ]
@@ -1266,12 +1275,12 @@ def test_self_renormalization_factor_is_not_a_placeholder() -> None:
         center = np.exp(known + g + f)
         references.append(
             EnsembleData(
-                None,
+                _ensemble(spacing, f"r{spacing}"),
                 "bootstrap",
                 [center * (1.0 + shift) for shift in (-0.002, 0.0, 0.002)],
                 ["z"],
                 {"z": z.tolist()},
-                attrs={"lattice_spacing_fm": spacing, "resample_id": f"r{spacing}"},
+                attrs={"resample_id": f"r{spacing}"},
             )
         )
     factor = fit_factor(
@@ -1332,7 +1341,7 @@ def test_explicit_zmsbar_kernels_preserve_pdf_and_da_finite_terms() -> None:
         load_renormalization_kernel("missing_renormalization_formula")
 
 
-def test_renormalization_kernel_mu_override_warns_and_replaces_context() -> None:
+def test_renormalization_kernel_mu_override_warns_and_replaces_context(capsys) -> None:
     import lamet_agent.stages.renormalization.contract as contract
     from lamet_agent.contract import CheckContext
     from lamet_agent.stages.renormalization.physics import zmsbar_log
@@ -1349,8 +1358,8 @@ def test_renormalization_kernel_mu_override_warns_and_replaces_context() -> None
         "kernel_parameters": {"mu": 3.0},
     }
     context = CheckContext({}, "renormalization", "apply", params, {})
-    with pytest.warns(RuntimeWarning, match="overrides stage context"):
-        assert contract.check_kernel(context) == []
+    assert contract.check_kernel(context) == []
+    assert "ATTENTION: renormalization kernel_parameters overrides stage context" in capsys.readouterr().out
     overrides = params["kernel_parameters"]
     result = zmsbar_log(kernel, np.asarray([0.1, 0.2]), scale_gev=2.0, kernel_parameters=overrides)
 
@@ -1507,7 +1516,7 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
 
     z = [-0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4]
     source = EnsembleData(
-        None,
+        _ensemble(0.1),
         "bootstrap",
         [np.exp(-np.abs(z)) + 0.1j * np.asarray(z), np.exp(-np.abs(z)) + 0.2j * np.asarray(z)],
         ["z"],
@@ -1516,7 +1525,7 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
     )
     extended = source.copy()
     output = EnsembleData(
-        None,
+        _ensemble(0.1),
         "bootstrap",
         [np.ones(3), 1.1 * np.ones(3)],
         ["x"],
@@ -1564,6 +1573,7 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
         "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "pz_over_2pi"},
         "tail_models": ["gi_nla"],
         "zmin_fm": [0.2],
+        "tail_window_step_offset": 0,
         "zmax_fm": [0.3],
         "zmax_ext_fm": 0.4,
         "smooth": "linear",
@@ -1620,6 +1630,51 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
     assert [item["xlabel"] for item in configured[-2:]] == [r"$\lambda = zP^z$", r"$\lambda = zP^z$"]
     assert configured[0]["xlabel"] == r"$x$"
     assert configured[0]["ylabel"] == r"$\tilde q(x)$"
+
+
+def test_fourier_inspection_applies_systematic_offset_from_ensemble(tmp_path: Path) -> None:
+    from lamet_agent.stages.fourier_transform._inspection import effective_zmin_fm, run
+
+    data = EnsembleData(
+        _ensemble(0.1),
+        "bootstrap",
+        [np.ones(11), np.ones(11)],
+        ["z"],
+        {"z": [-0.25, -0.2, -0.15, -0.1, -0.05, 0.0, 0.05, 0.1, 0.15, 0.2, 0.25]},
+        attrs={
+            "coord_unit": "fm",
+            "momentum_gev": 2.0,
+            "parton": "quark",
+            "gfix": "GI",
+            "polarization": "unpolarized",
+        },
+    )
+    source = tmp_path / "input.nc"
+    data.to_netcdf(source)
+    data = EnsembleData.from_netcdf(source)
+    context = ToolContext(
+        {"metadata": {"target_observable": "pdf", "parton": "quark"}},
+        Path("manifest.json"),
+        "fourier_transform",
+        "offset",
+        {
+            "zmin_fm": [0.05],
+            "zmax_fm": [0.2],
+            "zmax_ext_fm": 0.25,
+            "tail_window_step_offset": 1,
+            "scheme_scan": {"sector": "full"},
+        },
+        {"input": data},
+        {},
+        {},
+        Path("."),
+        np.random.default_rng(1),
+    )
+
+    run(context)
+
+    assert effective_zmin_fm(context, data) == [0.15]
+    assert context.state["tail_inspection"]["z_grid_step_fm"] == 0.05
 
 
 def test_fourier_model_choice_is_made_per_sample() -> None:
@@ -1682,13 +1737,15 @@ def test_fourier_scan_uses_original_fixed_first_pass_priors() -> None:
 
 
 def test_extrapolation_lattice_spacing_basis_uses_original_units() -> None:
-    attrs = {
-        "lattice_spacing_fm": 0.08,
-        "L_s": 32,
-        "m_pi": 0.14,
-        "momentum_gev": 2.0,
-    }
-    assert basis_terms(attrs, ["a", "a2", "a4", "ap4"], 0.135) == pytest.approx(
+    data = EnsembleData(
+        _ensemble(0.08, L_s=32),
+        "bootstrap",
+        [[1.0], [1.0]],
+        ["x"],
+        {"x": [0.0]},
+        attrs={"momentum_gev": 2.0},
+    )
+    assert basis_terms(data, ["a", "a2", "a4", "ap4"], 0.135) == pytest.approx(
         [0.08, 0.08**2, 0.08**4, (0.08 * 2.0) ** 4]
     )
 
@@ -1817,20 +1874,20 @@ def test_external_renormalization_terminal_writes_publication_artifacts(tmp_path
     from lamet_agent.stages.renormalization._inspection import run as inspect
 
     target = EnsembleData(
-        None,
+        _ensemble(0.1),
         "bootstrap",
         [np.array([2.0, 4.0]), np.array([2.2, 4.4])],
         ["z"],
         {"z": [0.0, 0.1]},
-        attrs={"coord_unit": "fm", "resample_id": "shared", "lattice_spacing_fm": 0.1},
+        attrs={"coord_unit": "fm", "resample_id": "shared"},
     )
     denominator = EnsembleData(
-        None,
+        _ensemble(0.1),
         "bootstrap",
         [np.array([2.0, 2.0]), np.array([2.2, 2.2])],
         ["z"],
         {"z": [0.0, 0.1]},
-        attrs={"coord_unit": "fm", "resample_id": "shared", "lattice_spacing_fm": 0.1},
+        attrs={"coord_unit": "fm", "resample_id": "shared"},
     )
     context = ToolContext(
         {"metadata": {"sample_error_mode": "covariance"}},
@@ -1862,22 +1919,22 @@ def _self_coverage_context(tmp_path, *, policy: str, scheme: str = "msbar") -> T
         attrs={"coord_unit": "fm", "d": 0.0, "m0_gev": 0.0, "k": 0.65, "n_f": 3, "scale_gev": 2.0},
     )
     target = EnsembleData(
-        None,
+        _ensemble(0.1),
         "bootstrap",
         [np.asarray([1.0, 2.0, 4.0, 8.0]), np.asarray([1.0, 2.0, 4.0, 8.0])],
         ["z"],
         {"z": [0.0, 0.1, 0.2, 0.3]},
-        attrs={"coord_unit": "fm", "lattice_spacing_fm": 0.1},
+        attrs={"coord_unit": "fm"},
     )
     inputs = {"target": target, "zR": factor}
     if scheme == "hybrid":
         inputs["denominator"] = EnsembleData(
-            None,
+            _ensemble(0.1),
             "bootstrap",
             [np.full(4, 2.0), np.full(4, 2.0)],
             ["z"],
             {"z": [0.0, 0.1, 0.2, 0.3]},
-            attrs={"coord_unit": "fm", "lattice_spacing_fm": 0.1},
+            attrs={"coord_unit": "fm"},
         )
     params = {
         "type": "apply",
@@ -1972,12 +2029,12 @@ def test_self_renormalization_completes_the_authored_long_distance_ansatz(tmp_pa
         attrs={"coord_unit": "fm", "d": d, "m0_gev": m0, "k": k, "n_f": 3, "scale_gev": scale},
     )
     target = EnsembleData(
-        None,
+        _ensemble(spacing),
         "bootstrap",
         [np.ones(4), np.ones(4)],
         ["z"],
         {"z": z_target.tolist()},
-        attrs={"coord_unit": "fm", "lattice_spacing_fm": spacing},
+        attrs={"coord_unit": "fm"},
     )
     params = {
         "type": "apply",
@@ -2106,14 +2163,20 @@ def test_extrapolation_fit_uses_reference_median_covariance(monkeypatch) -> None
         center = physical + 0.3 * spacing / 0.1
         samples = [center + rng.normal(0.0, 0.003, 2) for _ in range(60)]
         attrs = {
-            "lattice_spacing_fm": spacing,
-            "L_s": 32,
-            "m_pi": 0.2,
             "momentum_gev": 2.0,
             "resample_id": f"ensemble-{index}",
             "sample_error_mode": "one_sigma",
         }
-        data.append(EnsembleData(None, "bootstrap", samples, ["x"], {"x": x}, attrs=attrs))
+        data.append(
+            EnsembleData(
+                _ensemble(spacing, f"ensemble-{index}", L_s=32, m_pi=0.2),
+                "bootstrap",
+                samples,
+                ["x"],
+                {"x": x},
+                attrs=attrs,
+            )
+        )
     result, diagnostics = fit_candidate(
         data,
         ["a"],

@@ -19,7 +19,7 @@ def run(context: ToolContext) -> dict[str, object]:
         groups = {
             "identity": ("hadron", "current", "observable", "parton", "construction", "kernel_operator"),
             "units": ("units",),
-            "kinematics": ("momentum_gev", "lattice_spacing_fm", "L_s", "m_pi_gev"),
+            "kinematics": ("momentum_gev",),
             "schemes": ("renormalization_scheme", "strategy", "kernel_id"),
             "resampling": ("resample_id", "resample"),
             "extrapolation": ("physical_point", "physical_pion_mass_gev"),
@@ -39,6 +39,17 @@ def run(context: ToolContext) -> dict[str, object]:
                             "right": right.get(attr),
                         }
                     )
+        if "kinematics" in checks and first.get("ensemble") != current.get("ensemble"):
+            findings.append(
+                {
+                    "kind": "mismatch",
+                    "group": "kinematics",
+                    "index": index,
+                    "field": "ensemble",
+                    "left": first.get("ensemble"),
+                    "right": current.get("ensemble"),
+                }
+            )
         if "grids" in checks and (
             first.get("dims") != current.get("dims") or first.get("coords") != current.get("coords")
         ):

@@ -41,7 +41,7 @@ def run(context: ToolContext) -> dict[str, object]:
         {
             float(value)
             for item in items
-            for value in (item.coords["a"] if "a" in item.dims else [item.attrs.get("lattice_spacing_fm")])
+            for value in (item.coords["a"] if "a" in item.dims else [item.ensemble.a_s])
             if isinstance(value, (int, float)) and not isinstance(value, bool)
         }
     )
