@@ -146,7 +146,7 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "kernel_id": "GI_gt_quark_PDF_hybrid_NLO",
+        "kernel_id": "quark_pdf_gi_gt_hybrid_nlo",
         "scheme": "hybrid",
         "mu": 2.0,
         "lc_x_ls": {

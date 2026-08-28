@@ -1532,12 +1532,12 @@ def test_matching_check_reports_the_exact_parameter_path() -> None:
         {},
         "perturbative_matching",
         "job",
-        {"kernel_id": "CG_gt_quark_PDF_hybrid_NLO", "scheme": "ratio", "zs_fm": 0.2},
+        {"kernel_id": "quark_pdf_cg_gt_hybrid_nlo", "scheme": "ratio", "zs_fm": 0.2},
         {"quasi": "earlier"},
     )
     issues = evaluate_checks(contract.CHECKS, context)
     assert [(issue.path, issue.message) for issue in issues] == [
-        ("scheme", "must equal 'hybrid' for kernel 'CG_gt_quark_PDF_hybrid_NLO'")
+        ("scheme", "must equal 'hybrid' for kernel 'quark_pdf_cg_gt_hybrid_nlo'")
     ]
 
 
@@ -1556,8 +1556,8 @@ def test_matching_kernel_parameters_follow_the_selected_signature() -> None:
         context = CheckContext({}, "perturbative_matching", "job", params, {"quasi": "earlier"})
         return evaluate_checks(contract.CHECKS, context)
 
-    ratio = "CG_gt_quark_PDF_ratio_NLO"
-    rgr = "CG_gt_quark_PDF_hybrid_RGR_re_NLO"
+    ratio = "quark_pdf_cg_gt_ratio_nlo"
+    rgr = "quark_pdf_cg_gt_hybrid_rgr_nlo_re"
     rgr_parameters = {"kappa": 1, "mu_min_gev": 0.6}
     assert issues(rgr, "hybrid", rgr_parameters, hybrid={"zs_fm": 0.18}) == []
     assert issues(ratio, "ratio", {}, hybrid={"zs_fm": 0.18}) == []
@@ -1622,7 +1622,7 @@ def test_matching_check_requires_zs_fm_exactly_for_hybrid_kernels(monkeypatch) -
         "perturbative_matching",
         "job",
         {
-            "kernel_id": "CG_gt_quark_PDF_hybrid_NLO",
+            "kernel_id": "quark_pdf_cg_gt_hybrid_nlo",
             "scheme": "hybrid",
             "kernel_parameters": {},
             "zs_fm": 0.18,
@@ -1633,7 +1633,7 @@ def test_matching_check_requires_zs_fm_exactly_for_hybrid_kernels(monkeypatch) -
     issue = contract.check_kernel_parameters(context)
     assert isinstance(issue, Issue) and "must include" in issue.message
 
-    context.params["kernel_id"] = "CG_gt_quark_PDF_ratio_NLO"
+    context.params["kernel_id"] = "quark_pdf_cg_gt_ratio_nlo"
     context.params["scheme"] = "ratio"
     monkeypatch.setattr(contract, "load_kernel", lambda _kernel_id: with_zs)
     issue = contract.check_kernel_parameters(context)
@@ -1696,7 +1696,7 @@ def test_renormalization_type_controls_inputs_and_requires_a_kernel() -> None:
 
     wrong_signature = load_manifest(examples / "pion_da_gi_manifest_neo.json")
     fit_params = wrong_signature.document["stages"]["renormalization"]["jobs"][0]
-    fit_params["kernel_id"] = "GI_gzg5_DA_ratio_NLO"
+    fit_params["kernel_id"] = "da_gi_gzg5_ratio_nlo"
     assert any(issue.path.endswith("kernel_id") and "z_fm" in issue.message for issue in wrong_signature.validate())
 
     redundant_type = load_manifest(examples / "pion_pdf_gi_manifest_neo.json")
@@ -2027,7 +2027,7 @@ def test_deterministic_stage_workflow_bypasses_the_backend(tmp_path: Path, monke
         "perturbative_matching",
         "matching",
         {
-            "kernel_id": "CG_gt_quark_PDF_ratio_NLO",
+            "kernel_id": "quark_pdf_cg_gt_ratio_nlo",
             "scheme": "ratio",
             "mu": 2.0,
             "lc_x_ls": [0.0, 1.0],

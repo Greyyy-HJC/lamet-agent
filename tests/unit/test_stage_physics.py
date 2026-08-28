@@ -1776,7 +1776,7 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
         return np.asarray([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 
     params = {
-        "kernel_id": "CG_gt_quark_PDF_ratio_NLO",
+        "kernel_id": "quark_pdf_cg_gt_ratio_nlo",
         "scheme": "ratio",
         "mu": 2.0,
         "lc_x_ls": [-0.5, 0.5],
@@ -2090,7 +2090,7 @@ def test_migrated_kernel_code_has_no_legacy_imports_or_embedded_documentation() 
 
 
 def test_ratio_kernel_executes_the_migrated_physics_function() -> None:
-    kernel = load_kernel("CG_gt_quark_PDF_ratio_NLO")
+    kernel = load_kernel("quark_pdf_cg_gt_ratio_nlo")
     grid = np.array([-0.5, 0.5])
     matrix = kernel(grid, grid, momentum_gev=2.0, scale_gev=2.0)
     assert matrix.shape == (2, 2)

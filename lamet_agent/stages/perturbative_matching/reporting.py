@@ -66,24 +66,23 @@ def _scheme_text(scheme: str) -> str:
 
 def _kernel_structure(kernel_id: str) -> dict[str, object]:
     tokens = kernel_id.split("_")
-    if len(tokens) < 5 or tokens[0] not in {"GI", "CG"}:
+    gauge_index = next((index for index, token in enumerate(tokens) if token in {"gi", "cg"}), None)
+    if gauge_index is None or len(tokens) < 5 or gauge_index + 1 >= len(tokens):
         raise ValueError(f"kernel id has no recognized gauge/operator structure: {kernel_id}")
     scheme_tokens = [token for token in tokens if token in {"ratio", "hybrid", "msbar"}]
     if len(scheme_tokens) != 1:
         raise ValueError(f"kernel id must contain exactly one scheme: {kernel_id}")
-    distribution = "DA" if "DA" in tokens else "PDF" if "PDF" in tokens else None
+    distribution = "DA" if "da" in tokens[:gauge_index] else "PDF" if "pdf" in tokens[:gauge_index] else None
     if distribution is None:
         raise ValueError(f"kernel id has no PDF/DA target: {kernel_id}")
-    distribution_index = tokens.index(distribution)
-    parton_index = tokens.index("quark") if "quark" in tokens else distribution_index
     return {
-        "gauge": tokens[0],
-        "operator": "_".join(tokens[1:parton_index]),
+        "gauge": tokens[gauge_index].upper(),
+        "operator": tokens[gauge_index + 1],
         "distribution": distribution,
         "scheme": scheme_tokens[0],
-        "order": next((token for token in reversed(tokens) if token in {"LO", "NLO", "NNLO"}), "not encoded"),
+        "order": next((token.upper() for token in reversed(tokens) if token in {"lo", "nlo", "nnlo"}), "not encoded"),
         "component": next((token for token in tokens if token in {"re", "im"}), "full"),
-        "resummation": "RGR" if "RGR" in tokens else "none",
+        "resummation": "RGR" if "rgr" in tokens else "none",
     }
 
 
