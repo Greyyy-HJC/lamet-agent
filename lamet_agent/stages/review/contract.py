@@ -22,7 +22,7 @@ PARAM_RULES = (
     Depends("", "checks", physics="Requested consistency checks are explicit."),
     Value("catalog", str, physics="Catalog is builtin or a root-relative path."),
     Value("max_papers", int, physics="Maximum selected papers is positive.", validator=_positive),
-    Value("report_language", str, physics="Report language is a string."),
+    Value("report_language", Literal["en", "ch"], physics="Review prose is generated directly in English or Chinese."),
     List("checks", "check", physics="At least one review check is requested.", validator=_nonempty),
     Value("checks.check", Literal["identity", "units", "kinematics", "schemes", "grids", "resampling", "extrapolation"], physics="Review check ids are controlled."),
 )

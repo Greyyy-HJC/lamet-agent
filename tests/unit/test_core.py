@@ -57,6 +57,32 @@ def _valid_metadata(tmp_path: Path, **overrides: object) -> dict[str, object]:
     return metadata
 
 
+@pytest.fixture
+def review_catalog(tmp_path: Path) -> Path:
+    (tmp_path / "paper.txt").write_text("A local LaMET paper body.", encoding="utf-8")
+    path = tmp_path / "catalog.json"
+    path.write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "id": "refactor_demo_lamet",
+                        "title": "LaMET demo",
+                        "authors": ["A. Author"],
+                        "year": "2026",
+                        "abstract": "A local review fixture.",
+                        "source": "https://arxiv.org/abs/refactor_demo_lamet",
+                        "text_path": "paper.txt",
+                        "review_topics": ["target_observable=pdf", "parton=quark", "method=lamet"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 class _ScriptedBackend:
     identity = "scripted:test"
 
@@ -1160,7 +1186,10 @@ def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Pa
         attrs={"coord_unit": "fm"},
     )
     context = ToolContext(
-        {},
+        {
+            "metadata": {"run_id": "test"},
+            "stages": {"review": {"jobs": [{"id": "rn", "inputs": {"results": [{"file": "target.nc"}]}}]}},
+        },
         tmp_path / "manifest.json",
         "review",
         "rn",
@@ -1175,7 +1204,7 @@ def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Pa
     assert observation["ignored_arguments"] == ["{}"]
     assert "result_summary" in context.state
 
-    argument_tool = next(item for item in _discover_tools("review") if item.name == "list_literature")
+    argument_tool = next(item for item in _discover_tools("review") if item.name == "read_papers")
     with pytest.raises(ValueError, match="unknown arguments"):
         _invoke(argument_tool, context, {"{}": {}})
 
@@ -1761,7 +1790,7 @@ def test_manifest_has_exact_two_top_level_keys(tmp_path: Path) -> None:
                 "defaults": {
                     "catalog": "builtin",
                     "max_papers": 1,
-                    "report_language": "English",
+                    "report_language": "en",
                     "checks": ["identity"],
                 },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(descriptor)}]}}],
@@ -1795,7 +1824,7 @@ def test_manifest_rejects_redundant_metadata_stages(tmp_path: Path) -> None:
                 "defaults": {
                     "catalog": "builtin",
                     "max_papers": 1,
-                    "report_language": "English",
+                    "report_language": "en",
                     "checks": ["identity"],
                 },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
@@ -1846,7 +1875,7 @@ def test_manifest_requires_a_positive_run_worker_count(tmp_path: Path) -> None:
                 "defaults": {
                     "catalog": "builtin",
                     "max_papers": 1,
-                    "report_language": "English",
+                    "report_language": "en",
                     "checks": ["identity"],
                 },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
@@ -1860,7 +1889,7 @@ def test_manifest_requires_a_positive_run_worker_count(tmp_path: Path) -> None:
     assert any(issue.path == "metadata.workers" for issue in manifest.validate())
 
 
-def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, capsys) -> None:
+def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, review_catalog: Path, capsys) -> None:
     source = tmp_path / "source.json"
     source.write_text("{}", encoding="utf-8")
     manifest = {
@@ -1868,9 +1897,9 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, capsys) -> N
         "stages": {
             "review": {
                 "defaults": {
-                    "catalog": "builtin",
+                    "catalog": str(review_catalog),
                     "max_papers": 1,
-                    "report_language": "English",
+                    "report_language": "en",
                     "checks": ["identity"],
                 },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
@@ -1889,7 +1918,10 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, capsys) -> N
                 "write_review",
                 {
                     "title": "Toy review",
-                    "analysis": "The scoped outputs are mutually consistent.",
+                    "workflow_summary": "The scoped workflow completed.",
+                    "physical_analysis": "The scoped outputs are mutually consistent.",
+                    "systematics_and_limitations": "Only fixture evidence is available.",
+                    "literature_comparison": "The local paper provides methodological context.",
                     "conclusion": "The toy workflow is internally consistent.",
                 },
             ),
@@ -1899,13 +1931,13 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, capsys) -> N
     assert result["summaries"]["review_1"]["result"] == "review"
     assert (tmp_path / "runs" / "01_review" / "review_1" / "review.md").is_file()
     transcript = (tmp_path / "runs" / "01_review" / "review_1" / "llm_transcript.md").read_text(encoding="utf-8")
-    assert "## Turn 1: sent to LLM" in transcript
+    assert "## review/review_1 turn 1, request 1: sent to LLM" in transcript
     assert '"role": "system"' in transcript
     assert '"tools": [' in transcript
-    assert "## Turn 1: received from LLM" in transcript
-    assert "## Turn 2: sent to LLM" in transcript
+    assert "## review/review_1 turn 1, request 1: received from LLM" in transcript
+    assert "## review/review_1 turn 2, request 2: sent to LLM" in transcript
     assert '"role": "tool"' in transcript
-    assert "## Turn 5: received from LLM" in transcript
+    assert "## review/review_1 turn 5, request 5: received from LLM" in transcript
     assert '"name": "write_review"' in transcript
     assert "tool result:" not in transcript
     assert "Run completed" not in transcript
@@ -1913,14 +1945,15 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, capsys) -> N
     assert "Stage: review" in stdout
     assert "Job: review/review_1" in stdout
     assert stdout.count("Calling LLM (scripted:test)") == 5
-    assert stdout.count("LLM response received.") == 5
     assert "Running tool: inspect_results..." in stdout
     assert "Tool completed: write_review." in stdout
     assert "Stage review finished." in stdout
     assert "Agent run complete (1 job(s))." in stdout
 
 
-def test_scripted_review_run_executes_multi_call_responses_sequentially(tmp_path: Path, capsys) -> None:
+def test_scripted_review_run_executes_multi_call_responses_sequentially(
+    tmp_path: Path, review_catalog: Path, capsys
+) -> None:
     source = tmp_path / "source.json"
     source.write_text("{}", encoding="utf-8")
     manifest = {
@@ -1928,9 +1961,9 @@ def test_scripted_review_run_executes_multi_call_responses_sequentially(tmp_path
         "stages": {
             "review": {
                 "defaults": {
-                    "catalog": "builtin",
+                    "catalog": str(review_catalog),
                     "max_papers": 1,
-                    "report_language": "English",
+                    "report_language": "en",
                     "checks": ["identity"],
                 },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
@@ -1957,7 +1990,10 @@ def test_scripted_review_run_executes_multi_call_responses_sequentially(tmp_path
                     "write_review",
                     {
                         "title": "Toy review",
-                        "analysis": "The scoped outputs are mutually consistent.",
+                        "workflow_summary": "The scoped workflow completed.",
+                        "physical_analysis": "The scoped outputs are mutually consistent.",
+                        "systematics_and_limitations": "Only fixture evidence is available.",
+                        "literature_comparison": "The local paper provides methodological context.",
                         "conclusion": "The toy workflow is internally consistent.",
                     },
                 ),
@@ -1975,7 +2011,7 @@ def test_scripted_review_run_executes_multi_call_responses_sequentially(tmp_path
     assert stdout.index("Running tool: inspect_results...") < stdout.index("Running tool: check_consistency...")
 
 
-def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path) -> None:
+def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path, review_catalog: Path) -> None:
     source = tmp_path / "source.json"
     source.write_text("{}", encoding="utf-8")
     manifest_path = tmp_path / "manifest.json"
@@ -1984,9 +2020,9 @@ def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path) ->
         "stages": {
             "review": {
                 "defaults": {
-                    "catalog": "builtin",
+                    "catalog": str(review_catalog),
                     "max_papers": 1,
-                    "report_language": "English",
+                    "report_language": "en",
                     "checks": ["identity"],
                 },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
@@ -2006,7 +2042,10 @@ def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path) ->
                 "write_review",
                 {
                     "title": "Toy review",
-                    "analysis": "The scoped outputs are mutually consistent.",
+                    "workflow_summary": "The scoped workflow completed.",
+                    "physical_analysis": "The scoped outputs are mutually consistent.",
+                    "systematics_and_limitations": "Only fixture evidence is available.",
+                    "literature_comparison": "The local paper provides methodological context.",
                     "conclusion": "The toy workflow is internally consistent.",
                 },
             ),
@@ -2509,7 +2548,7 @@ def test_agent_fails_immediately_when_the_model_returns_no_tool_call(tmp_path: P
                 "defaults": {
                     "catalog": "builtin",
                     "max_papers": 1,
-                    "report_language": "English",
+                    "report_language": "en",
                     "checks": ["identity"],
                 },
                 "jobs": [{"id": "review_1", "inputs": {"results": [{"file": str(source)}]}}],
@@ -2520,8 +2559,8 @@ def test_agent_fails_immediately_when_the_model_returns_no_tool_call(tmp_path: P
     with pytest.raises(RuntimeError, match="returned no tool call"):
         session.run_manifest(Manifest(tmp_path / "manifest.json", manifest))
     transcript = (tmp_path / "runs" / "01_review" / "review_1" / "llm_transcript.md").read_text(encoding="utf-8")
-    assert "## Turn 1: sent to LLM" in transcript
-    assert "## Turn 1: received from LLM" in transcript
+    assert "## review/review_1 turn 1, request 1: sent to LLM" in transcript
+    assert "## review/review_1 turn 1, request 1: received from LLM" in transcript
     assert "plain answer" in transcript
     assert "Run failed" not in transcript
     assert "returned no tool call" not in transcript

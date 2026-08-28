@@ -37,11 +37,11 @@
 
 ## Review: Dianjun
 
-- [ ] Implement review
-- [ ] Include all previous reports
-- [ ] Include related papers (`https://ar5iv.labs.arxiv.org/html/`)
-- [ ] Rely on `literature` module
-- [ ] Prompts engineering
+- [x] Implement review
+- [x] Include all previous reports
+- [x] Include related papers (`https://ar5iv.labs.arxiv.org/html/`)
+- [x] Rely on `literature` module
+- [x] Prompts engineering
 
 ## Plan: Xiangyu
 
