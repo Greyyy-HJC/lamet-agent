@@ -18,8 +18,8 @@ from lamet_agent.contract import (
     Value,
     stage_job_rules,
 )
-from lamet_agent.stages.fourier_transform.tools.recommendation import zmax_fm as recommend_zmax_fm
-from lamet_agent.stages.fourier_transform.tools.recommendation import zmin_fm as recommend_zmin_fm
+from lamet_agent.stages.fourier_transform.ask import zmax_fm as recommend_zmax_fm
+from lamet_agent.stages.fourier_transform.ask import zmin_fm as recommend_zmin_fm
 
 
 def _positive(value: int | float) -> bool:
