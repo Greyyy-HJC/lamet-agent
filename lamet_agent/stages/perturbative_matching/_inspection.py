@@ -47,12 +47,14 @@ def run(context: ToolContext) -> dict[str, object]:
     required_tokens = {
         "gfix": attrs.get("gfix"),
         "kernel_operator": attrs.get("kernel_operator"),
-        "target_observable": str(attrs.get("target_observable", "")).upper(),
+        "target_observable": attrs.get("target_observable"),
         "renormalization_scheme": attrs.get("renormalization_scheme"),
     }
     tokens = set(context.params["kernel_id"].split("_"))
     missing_tokens = [
-        key for key, value in required_tokens.items() if not isinstance(value, str) or not value or value not in tokens
+        key
+        for key, value in required_tokens.items()
+        if not isinstance(value, str) or not value or value.lower() not in tokens
     ]
     if missing_tokens:
         raise ValueError(f"kernel id does not match quasi provenance fields: {missing_tokens}")

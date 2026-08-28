@@ -572,7 +572,7 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "kernel_id": "GI_gzg5_DA_ratio_NLO",
+        "kernel_id": "da_gi_gzg5_ratio_nlo",
         "scheme": "ratio",
         "mu": 2.0,
         "lc_x_ls": {
