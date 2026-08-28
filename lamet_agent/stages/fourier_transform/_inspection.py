@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from lamet_agent.agent import ToolContext
+from lamet_agent.data import lattice_spacing_fm
 from lamet_agent.stages.fourier_transform.physics import complete_signed_z, load_data
 
 
@@ -86,9 +87,17 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
     positive = z[z >= 0]
     if positive.size < 2:
         raise ValueError("Fourier input requires at least two nonnegative z coordinates")
-    spacing = float(np.diff(positive)[0])
-    if spacing <= 0 or not np.allclose(np.diff(positive), spacing, rtol=0.0, atol=1e-12):
+    differences = np.diff(positive)
+    grid_step = float(differences[0])
+    if grid_step <= 0 or not np.allclose(differences, grid_step, rtol=0.0, atol=1e-12):
         raise ValueError("Fourier input z coordinates must be uniformly spaced")
+    stored = lattice_spacing_fm(attrs=data.attrs, ensemble=data.ensemble)
+    if stored is None:
+        spacing = grid_step
+    elif not math.isclose(stored, grid_step, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError("Fourier input lattice_spacing_fm does not match the z-grid step")
+    else:
+        spacing = stored
     context.state["fourier_input"] = data
     context.state["fourier_conventions"] = conventions
     context.state["tail_inspection"] = {

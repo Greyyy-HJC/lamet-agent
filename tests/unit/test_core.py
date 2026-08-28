@@ -1320,15 +1320,20 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
         "other_extrapolations": [5, 6, 7],
     }
     extrapolation = {job["id"]: job for job in stages["extrapolation"]["jobs"]}
-    assert extrapolation["extrapolate_a_model"]["x_independent_terms"] == ["a", "a2"]
-    assert extrapolation["extrapolate_inv_p_model"]["x_dependent_terms"] == ["inv_p2", "ap2"]
-    assert extrapolation["extrapolate_ap_model"]["x_dependent_terms"] == ["inv_p2", "inv_p4", "ap2", "ap4"]
+    authored_extrap = authored_stages["extrapolation"]["defaults"]
+    independent = list(authored_extrap.get("x_independent_terms", []))
+    dependent = list(authored_extrap.get("x_dependent_terms", []))
+    assert extrapolation["extrapolate_a_model"]["x_independent_terms"] == independent + ["a4"]
+    assert extrapolation["extrapolate_inv_p_model"]["x_dependent_terms"] == dependent + ["inv_p4"]
+    assert extrapolation["extrapolate_ap_model"]["x_dependent_terms"] == dependent + ["ap4"]
     fourier = {job["id"]: job for job in stages["fourier_transform"]["jobs"]}
+    correlators = Path(__file__).parents[2] / "examples" / f"{stem}_a06m130_correlators_neo.json"
+    spacing = json.loads(correlators.read_text(encoding="utf-8"))["ensemble"]["a_s"]
+    authored_zmin = next(
+        job["zmin_fm"] for job in authored_stages["fourier_transform"]["jobs"] if job["id"] == "ft_a06m130_pz6"
+    )
     assert fourier["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == [
-        0.4592,
-        0.5166,
-        0.574,
-        0.6314,
+        round(float(value) - float(spacing), 12) for value in authored_zmin
     ]
     matching = {job["id"]: job for job in stages["perturbative_matching"]["jobs"]}
     assert matching["mt_a06m130_pz6_lambda_low"]["inputs"]["quasi"] == "ft_a06m130_pz6_lambda_low"
@@ -1340,12 +1345,8 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
     parsed = load_manifest(manifest.path)
     assert parsed.validate() == []
     assert "systematics" not in parsed.document
-    assert parsed.document["stages"]["extrapolation"]["defaults"]["x_independent_terms"] == ["a"]
-    assert parsed.document["stages"]["extrapolation"]["defaults"]["x_dependent_terms"] == [
-        "inv_p2",
-        "inv_p4",
-        "ap2",
-    ]
+    assert parsed.document["stages"]["extrapolation"]["defaults"]["x_independent_terms"] == independent
+    assert parsed.document["stages"]["extrapolation"]["defaults"]["x_dependent_terms"] == dependent
     assert parsed.document["stages"]["extrapolation"]["jobs"][0]["priors"] == {"mean": 0.0, "sdev": 3.0}
     assert parsed.document["stages"]["extrapolation"]["jobs"][0]["x_covariance"] is False
 
@@ -1429,6 +1430,124 @@ def test_systematics_propagate_without_downstream_declarations() -> None:
         "extrapolate_lambda_high",
         "extrapolation_systematics_budget",
     ]
+
+
+def test_fourier_systematics_accept_a_single_zmin_candidate() -> None:
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    manifest = load_manifest(path)
+    for job in manifest.document["stages"]["fourier_transform"]["jobs"]:
+        job["zmin_fm"] = [job["zmin_fm"][0]]
+
+    assert manifest.validate() == []
+
+    jobs = {job["id"]: job for job in manifest.document["stages"]["fourier_transform"]["jobs"]}
+    spacing = json.loads(
+        (Path(__file__).parents[2] / "examples" / "pion_da_gi_a06m130_correlators_neo.json").read_text(encoding="utf-8")
+    )["ensemble"]["a_s"]
+    assert jobs["ft_a06m130_pz6"]["zmin_fm"] == [0.5166]
+    assert jobs["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == [round(0.5166 - float(spacing), 12)]
+    assert jobs["ft_a06m130_pz6_lambda_high"]["zmin_fm"] == [round(0.5166 + float(spacing), 12)]
+
+
+def test_fourier_systematics_do_not_treat_zmin_candidates_as_a_lattice_grid() -> None:
+    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest_neo.json"
+    manifest = load_manifest(path)
+    for job in manifest.document["stages"]["fourier_transform"]["jobs"]:
+        job["zmin_fm"] = [0.4, 0.8]
+
+    assert manifest.validate() == []
+
+    jobs = {job["id"]: job for job in manifest.document["stages"]["fourier_transform"]["jobs"]}
+    spacing = json.loads(
+        (Path(__file__).parents[2] / "examples" / "pion_da_gi_a06m130_correlators_neo.json").read_text(encoding="utf-8")
+    )["ensemble"]["a_s"]
+    assert jobs["ft_a06m130_pz6_lambda_low"]["zmin_fm"] == [
+        round(0.4 - float(spacing), 12),
+        round(0.8 - float(spacing), 12),
+    ]
+
+
+def test_fourier_systematics_read_spacing_from_input_netcdf(tmp_path: Path) -> None:
+    from lamet_agent.data import EnsembleData, EnsembleInfo
+    from lamet_agent.stages.fourier_transform.systematics import expand
+
+    spacing = 0.0574
+    source = tmp_path / "renormalized.nc"
+    EnsembleData(
+        EnsembleInfo("HISQ", "a06m130", spacing, spacing, 96, 192, 0.135),
+        "bootstrap",
+        [np.array([1.0, 0.5])],
+        ["z"],
+        {"z": [0.0, spacing]},
+        attrs={"lattice_spacing_fm": spacing, "coord_unit": "fm"},
+        name="renormalized_matrix_element",
+    ).to_netcdf(source)
+    document = {
+        "metadata": {"root_directory": str(tmp_path)},
+        "stages": {
+            "fourier_transform": {
+                "jobs": [
+                    {
+                        "id": "ft_mid",
+                        "inputs": {"input": {"file": "renormalized.nc"}},
+                        "zmin_fm": [0.6314],
+                        "zmax_fm": [0.9758],
+                    }
+                ]
+            }
+        },
+    }
+
+    expand(
+        document,
+        {
+            "variants": [
+                {"id": "lambda_low", "tail_window_step_offset": -1},
+                {"id": "lambda_high", "tail_window_step_offset": 1},
+            ]
+        },
+        {"root_directory": tmp_path},
+    )
+
+    jobs = {job["id"]: job for job in document["stages"]["fourier_transform"]["jobs"]}
+    assert jobs["ft_mid_lambda_low"]["zmin_fm"] == [round(0.6314 - spacing, 12)]
+    assert jobs["ft_mid_lambda_high"]["zmin_fm"] == [round(0.6314 + spacing, 12)]
+
+
+def test_fourier_systematics_reject_missing_lattice_spacing(tmp_path: Path) -> None:
+    from lamet_agent.data import EnsembleData
+    from lamet_agent.stages.fourier_transform.systematics import expand
+
+    source = tmp_path / "anonymous.nc"
+    EnsembleData(
+        None,
+        "bootstrap",
+        [np.array([1.0, 0.5])],
+        ["z"],
+        {"z": [0.0, 0.1]},
+        name="renormalized_matrix_element",
+    ).to_netcdf(source)
+    document = {
+        "metadata": {"root_directory": str(tmp_path)},
+        "stages": {
+            "fourier_transform": {
+                "jobs": [
+                    {
+                        "id": "ft_mid",
+                        "inputs": {"input": {"file": "anonymous.nc"}},
+                        "zmin_fm": [0.2],
+                    }
+                ]
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="needs lattice spacing"):
+        expand(
+            document,
+            {"variants": [{"id": "lambda_low", "tail_window_step_offset": -1}]},
+            {"root_directory": tmp_path},
+        )
 
 
 def test_systematics_defaults_fill_variants_before_compilation() -> None:

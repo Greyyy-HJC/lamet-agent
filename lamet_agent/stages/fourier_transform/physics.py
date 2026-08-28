@@ -11,7 +11,7 @@ import gvar as gv
 import numpy as np
 from tqdm import tqdm
 
-from lamet_agent.data import EnsembleData
+from lamet_agent.data import EnsembleData, lattice_spacing_fm
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
 from lamet_agent.parallel import FitNumericalError, fourier_transform, nonlinear_fit
 from lamet_agent.parallel._pool import _ParallelPool
@@ -708,7 +708,10 @@ def extend_tail(
     positive = z[z >= 0]
     if positive.size < 2:
         raise ValueError("tail extension requires at least two nonnegative z points")
-    spacing = float(np.min(np.diff(positive)))
+    stored = lattice_spacing_fm(attrs=data.attrs, ensemble=data.ensemble)
+    spacing = stored if stored is not None else float(np.min(np.diff(positive)))
+    if not math.isfinite(spacing) or spacing <= 0:
+        raise ValueError("tail extension requires a positive lattice spacing")
     steps = int(math.floor(float(z_max_fm) / spacing + 0.5))
     if steps < 1:
         raise ValueError("tail extent does not reach one input-grid step")

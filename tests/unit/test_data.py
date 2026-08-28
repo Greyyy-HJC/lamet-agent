@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import gvar as gv
 import pytest
 
-from lamet_agent.data import EnsembleData
+from lamet_agent.data import EnsembleData, EnsembleInfo, lattice_spacing_fm, lattice_spacing_from_path
 
 
 def test_sample_bearing_data_keeps_leading_resample_dimension() -> None:
@@ -34,6 +36,28 @@ def test_netcdf_roundtrip(tmp_path) -> None:
     restored = EnsembleData.from_netcdf(netcdf)
     assert restored.resample == data.resample
     assert np.allclose(restored.values, data.values)
+
+
+def test_netcdf_roundtrip_preserves_ensemble_lattice_spacing(tmp_path) -> None:
+    ensemble = EnsembleInfo("HISQ", "a06m130", 0.0574, 0.0574, 96, 192, 0.135)
+    data = EnsembleData(
+        ensemble,
+        "bootstrap",
+        [np.array([1.0, 2.0]), np.array([2.0, 4.0])],
+        ["z"],
+        {"z": [0.0, 0.0574]},
+        attrs={"lattice_spacing_fm": 0.0574, "coord_unit": "fm"},
+        name="toy",
+    )
+    netcdf = tmp_path / "ensemble.nc"
+    data.to_netcdf(netcdf)
+    restored = EnsembleData.from_netcdf(netcdf)
+    assert restored.ensemble == ensemble
+    assert lattice_spacing_fm(attrs=restored.attrs, ensemble=restored.ensemble) == pytest.approx(0.0574)
+    assert lattice_spacing_from_path(netcdf) == pytest.approx(0.0574)
+    descriptor = tmp_path / "correlators.json"
+    descriptor.write_text(json.dumps({"ensemble": ensemble._asdict()}), encoding="utf-8")
+    assert lattice_spacing_from_path(descriptor) == pytest.approx(0.0574)
 
 
 @pytest.mark.parametrize("resample", ["raw", "jackknife", "bootstrap"])

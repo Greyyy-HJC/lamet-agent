@@ -8,8 +8,9 @@ than changing this numerical base.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Sequence, Union, get_args
+from typing import Any, Callable, Dict, List, Literal, Mapping, NamedTuple, Optional, Sequence, Union, get_args
 
 import gvar
 import numpy
@@ -46,6 +47,86 @@ class EnsembleInfo(NamedTuple):
     @property
     def k_t(self) -> float:
         return 2 * numpy.pi / self.L_t * _kernel_implementation.HBAR_C_GEV_FM / self.a_t
+
+
+def _positive_spacing(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    spacing = float(value)
+    if math.isfinite(spacing) and spacing > 0:
+        return spacing
+    return None
+
+
+def lattice_spacing_fm(
+    *,
+    attrs: Mapping[str, Any] | None = None,
+    ensemble: EnsembleInfo | Mapping[str, Any] | str | None = None,
+) -> float | None:
+    """Return one positive lattice spacing from attrs and/or ensemble metadata."""
+    if attrs is not None:
+        spacing = _positive_spacing(attrs.get("lattice_spacing_fm"))
+        if spacing is not None:
+            return spacing
+        if ensemble is None:
+            ensemble = attrs.get("ensemble")
+    if isinstance(ensemble, EnsembleInfo):
+        return _positive_spacing(ensemble.a_s)
+    if isinstance(ensemble, str):
+        try:
+            ensemble = json.loads(ensemble)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(ensemble, Mapping):
+        spacing = _positive_spacing(ensemble.get("a_s"))
+        if spacing is not None:
+            return spacing
+        return _positive_spacing(ensemble.get("lattice_spacing_fm"))
+    return None
+
+
+def lattice_spacing_from_path(path: Path) -> float | None:
+    """Read lattice spacing from a NetCDF artifact or correlator descriptor JSON."""
+    if not path.is_file():
+        return None
+    suffix = path.suffix.lower()
+    if suffix == ".nc":
+        return _lattice_spacing_from_netcdf(path)
+    if suffix == ".json":
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        return lattice_spacing_fm(attrs=payload, ensemble=payload.get("ensemble"))
+    return None
+
+
+def _lattice_spacing_from_netcdf(path: Path) -> float | None:
+    try:
+        dataset = xarray.open_dataset(path)
+    except (OSError, ValueError, TypeError):
+        dataset = None
+    if dataset is not None:
+        try:
+            attrs = dict(dataset.attrs)
+            for variable in dataset.data_vars.values():
+                attrs = {**attrs, **dict(variable.attrs)}
+                spacing = lattice_spacing_fm(attrs=attrs)
+                if spacing is not None:
+                    return spacing
+            return lattice_spacing_fm(attrs=attrs)
+        finally:
+            dataset.close()
+    try:
+        array = xarray.open_dataarray(path, auto_complex=True)
+    except (OSError, ValueError, TypeError):
+        return None
+    try:
+        return lattice_spacing_fm(attrs=dict(array.attrs))
+    finally:
+        array.close()
 
 
 def _is_gvar_values(values: object) -> bool:

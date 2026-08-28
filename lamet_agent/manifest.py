@@ -186,7 +186,7 @@ class Manifest:
             raise ValueError("; ".join(f"{issue.path}: {issue.message}" for issue in contract_issues))
         declarations = document["systematics"]
         stages = document["stages"]
-        state: dict[str, Any] = {}
+        state: dict[str, Any] = {"root_directory": self.root_directory}
         for stage_id in stages:
             systematics_path = _default_stage_root(stage_root) / stage_id / "systematics.py"
             if not systematics_path.is_file():
