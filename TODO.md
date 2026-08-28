@@ -10,12 +10,9 @@
   - `<stage>/contract.py`
 - [ ] Better prompts
   - [ ] `correlator_analys`: Xiangyu
-  - [ ] `renormalization`: Jinchen
   - [ ] `fourier_transform`: Dianjun
-  - [ ] `perturbative_matching`: Fei
-  - [ ] `extrapolation`: Dianjun
-  - `<stage>/prompts.md`
-  - `<stage>/tools/<tool>/prompts.md`
+  - `<stage>/ask/prompts.md`
+  - `<stage>/ask/<ask>/prompts.md`
 
 ## Artifacts
 
