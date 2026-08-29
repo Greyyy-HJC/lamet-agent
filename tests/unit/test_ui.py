@@ -13,13 +13,13 @@ from lamet_agent.agent import create_session
 from lamet_agent.banner import BANNER
 from lamet_agent.manifest import Manifest
 from prompt_toolkit.shortcuts.progress_bar.formatters import IterationsPerSecond, TimeLeft
+from prompt_toolkit.output import ColorDepth
 
 from lamet_agent.ui import (
     PlainUi,
     ProgressTask,
     TerminalUi,
     UiCancelled,
-    _ANSI_RAINBOW,
     _PROGRESS_STYLE,
     _progress_formatters,
     current_ui,
@@ -130,7 +130,8 @@ def test_terminal_progress_formatters_keep_eta_and_add_iteration_speed() -> None
 
 
 def test_progress_color_is_neutral_gray() -> None:
-    assert str(_PROGRESS_STYLE.get_attrs_for_style_str("class:percentage").color) == "ansibrightblack"
+    assert str(_PROGRESS_STYLE.get_attrs_for_style_str("class:percentage").color) == "808080"
+    assert ColorDepth.DEPTH_8_BIT.value == "DEPTH_8_BIT"
 
 
 def test_track_marks_interrupted_progress_unsuccessful() -> None:
@@ -178,13 +179,10 @@ def test_terminal_ui_renders_banner_with_left_to_right_rainbow(capsys) -> None:
 
     output = capsys.readouterr().out
     assert "\033[38;2;" not in output
-    assert "\033[38;5;" not in output
-    for color in (31, 91, 33, 93, 32, 92, 36, 96, 34, 94, 35, 95):
-        assert f"\033[{color}m" in output
+    assert output.count("\033[38;5;") > 20
+    colors = set(re.findall(r"\x1b\[38;5;(\d+)m", output))
+    assert len(colors) >= 20
     assert BANNER in re.sub(r"\x1b\[[0-9;]*m", "", output)
-    assert _ANSI_RAINBOW == tuple(
-        f"\033[{color}m" for color in (91, 31, 33, 93, 92, 32, 36, 96, 94, 34, 35, 95, 91)
-    )
 
 
 def test_plain_ui_ctrl_c_cancels_interaction(monkeypatch) -> None:

@@ -9,6 +9,7 @@ Example: ``session = create_session(backend, ui=TerminalUi())``.
 
 from __future__ import annotations
 
+import colorsys
 import json
 import os
 import shlex
@@ -26,6 +27,7 @@ from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.output import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import ProgressBar
 from prompt_toolkit.shortcuts.progress_bar.formatters import (
@@ -43,21 +45,6 @@ _ANSI_STYLES = {
     "running": "\033[32m",
 }
 _ANSI_RESET = "\033[0m"
-_ANSI_RAINBOW = (
-    "\033[91m",
-    "\033[31m",
-    "\033[33m",
-    "\033[93m",
-    "\033[92m",
-    "\033[32m",
-    "\033[36m",
-    "\033[96m",
-    "\033[94m",
-    "\033[34m",
-    "\033[35m",
-    "\033[95m",
-    "\033[91m",
-)
 _STATUS_PREFIXES = {
     "attention": ("ATTENTION", "Execution failed"),
     "llm": ("LLM usage", "Reasoning"),
@@ -67,8 +54,8 @@ _STATUS_PREFIXES = {
 
 _PROGRESS_STYLE = Style.from_dict(
     {
-        "": "ansibrightblack",
-        "bottom-toolbar": "ansibrightblack",
+        "": "#808080",
+        "bottom-toolbar": "#808080",
     }
 )
 
@@ -87,7 +74,7 @@ def _progress_formatters():
 
 
 def _render_rainbow_banner(message: str) -> str:
-    """Approximate a cyclic gradient with portable 16-color ANSI SGR codes."""
+    """Render a smooth cyclic hue gradient with the xterm ANSI-256 cube."""
     lines = message.splitlines()
     width = max((len(line) for line in lines), default=0)
     if width == 0:
@@ -99,9 +86,11 @@ def _render_rainbow_banner(message: str) -> str:
             if character == " ":
                 parts.append(character)
                 continue
-            color_index = round(column * (len(_ANSI_RAINBOW) - 1) / max(width - 1, 1))
-            color = _ANSI_RAINBOW[color_index]
-            parts.append(f"{color}{character}")
+            hue = column / max(width - 1, 1)
+            red, green, blue = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+            red_level, green_level, blue_level = (round(value * 5) for value in (red, green, blue))
+            color_index = 16 + 36 * red_level + 6 * green_level + blue_level
+            parts.append(f"\033[38;5;{color_index}m{character}")
         rendered.append("".join(parts) + _ANSI_RESET)
     return "\n".join(rendered)
 
@@ -253,6 +242,7 @@ class TerminalUi(PlainUi):
                 formatters=_progress_formatters(),
                 bottom_toolbar=" LaMET Agent running ",
                 style=_PROGRESS_STYLE,
+                color_depth=ColorDepth.DEPTH_8_BIT,
             )
             self._progress_bar.__enter__()
         return self._progress_bar
