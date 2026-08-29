@@ -85,6 +85,15 @@ def _tail_parameter_names_base(
         if order == "NLA":
             names.extend([name + "p" for name in names])
         names.append("Lambda")
+    elif observable == "GPD":
+        # Non-forward quark GPDs retain the independent endpoint structures of
+        # the legacy pion/nucleon parameterization.  The phase conventions are
+        # supplied by the paired-flow completion; these names only define the
+        # fit amplitudes and their LA/NLA extension.
+        names = ["A1", "phi1", "A3", "phi3", "A2", "phi2", "At2", "phit2"]
+        if order == "NLA":
+            names.extend([name + "p" for name in names])
+        names.append("Lambda")
     else:
         names = ["A2", "phi2"]
         if order == "NLA":
@@ -105,6 +114,7 @@ def _tail_model_values_base(
     momentum_gev: float | None = None,
     psi1_flavor_class: str = "heavy",
     psi2_flavor_class: str = "heavy",
+    hadron: str = "",
 ) -> np.ndarray:
     """Evaluate the locked GI/CG LA or NLA tail family on signed coordinates.
 
@@ -120,12 +130,14 @@ def _tail_model_values_base(
     if order not in {"LA", "NLA"}:
         raise ValueError("tail order must be LA or NLA")
     if (
-        observable not in {"PDF", "DA"}
+        observable not in {"PDF", "DA", "GPD"}
         or psi1_flavor_class not in {"light", "heavy"}
         or psi2_flavor_class not in {"light", "heavy"}
     ):
         raise ValueError("tail observable and DA flavor classes are invalid")
-    expected = _tail_parameter_names(model_id, order, observable, psi1_flavor_class, psi2_flavor_class)
+    expected = _tail_parameter_names(
+        model_id, order, observable, psi1_flavor_class, psi2_flavor_class, hadron=hadron
+    )
     if set(parameters) != set(expected):
         raise ValueError(f"tail parameters must contain exactly {expected}")
     z = np.asarray(z_fm, dtype=float)
@@ -179,6 +191,20 @@ def _tail_model_values_base(
             )
             result = result + (first_prime + second_prime) / absolute
         result = np.real(result) + 1j * sign * np.imag(result)
+    elif observable == "GPD":
+        # The paired-flow endpoint convention has already been applied to the
+        # data.  Fit the four independent pion/nucleon GPD structures with the
+        # average hadron momentum as the oscillatory scale.
+        terms = ("2", "t2") if str(hadron).lower() in {"nucleon", "proton"} else ("1", "3", "2", "t2")
+        phase_scale = float(momentum_gev or 0.0) / HBAR_C_GEV_FM
+        result = np.zeros_like(z, dtype=complex)
+        for index, term in enumerate(terms):
+            phase = float(parameters[f"phi{term}"]) + (phase_scale if index == 1 else -phase_scale if index == 0 else 0.0) * absolute
+            result = result + float(parameters[f"A{term}"]) * np.exp(1j * phase)
+        if order == "NLA":
+            for index, term in enumerate(terms):
+                phase = float(parameters[f"phi{term}p"]) + (phase_scale if index == 1 else -phase_scale if index == 0 else 0.0) * absolute
+                result = result + float(parameters[f"A{term}p"]) * np.exp(1j * phase) / absolute
     else:
         result = float(parameters["A2"]) * np.exp(1j * float(parameters["phi2"]) * sign)
         if order == "NLA":
@@ -240,6 +266,22 @@ def _tail_fit_fcn_base(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> n
                 / absolute
             )
         imag = sign * imag
+    elif x["observable"] == "GPD":
+        terms = ("1", "3", "2", "t2")
+        phase_scale = float(x.get("momentum_gev", 0.0)) / HBAR_C_GEV_FM
+        real = np.zeros_like(absolute, dtype=object)
+        imag = np.zeros_like(absolute, dtype=object)
+        for index, term in enumerate(terms):
+            frequency = phase_scale if index == 1 else -phase_scale if index == 0 else 0.0
+            phase = parameters[f"phi{term}"] + frequency * absolute
+            real = real + parameters[f"A{term}"] * gv.cos(phase)
+            imag = imag + parameters[f"A{term}"] * gv.sin(phase)
+        if x["order"] == "NLA":
+            for index, term in enumerate(terms):
+                frequency = phase_scale if index == 1 else -phase_scale if index == 0 else 0.0
+                phase = parameters[f"phi{term}p"] + frequency * absolute
+                real = real + parameters[f"A{term}p"] * gv.cos(phase) / absolute
+                imag = imag + parameters[f"A{term}p"] * gv.sin(phase) / absolute
     else:
         real = parameters["A2"] * np.cos(parameters["phi2"] * sign)
         imag = parameters["A2"] * np.sin(parameters["phi2"] * sign)
@@ -276,6 +318,15 @@ def _tail_parameter_names(
         if model_id == "cg_nla":
             names.append("n")
         return names
+    if observable == "GPD":
+        terms = ("2", "t2") if hadron.lower() in {"nucleon", "proton"} else ("1", "3", "2", "t2")
+        names = [item for term in terms for item in (f"A{term}", f"phi{term}")]
+        if order.upper() == "NLA":
+            names.extend([name + "p" for name in names])
+        names.append("Lambda")
+        if model_id == "cg_nla":
+            names.append("n")
+        return names
     return _tail_parameter_names_base(model_id, order, observable, psi1_flavor_class, psi2_flavor_class)
 
 
@@ -303,6 +354,7 @@ def tail_model_values(
             momentum_gev=momentum_gev,
             psi1_flavor_class=psi1_flavor_class,
             psi2_flavor_class=psi2_flavor_class,
+            hadron=hadron,
         )
     expected = _tail_parameter_names(model_id, order, observable, psi1_flavor_class, psi2_flavor_class, sector, hadron)
     if set(parameters) != set(expected):
@@ -463,7 +515,7 @@ def fit_tail_parameters(
     if not math.isfinite(lambda0_gev) or lambda0_gev < 0:
         raise ValueError("lambda0_gev must be finite and nonnegative")
     if (
-        observable not in {"PDF", "DA"}
+        observable not in {"PDF", "DA", "GPD"}
         or psi1_flavor_class not in {"light", "heavy"}
         or psi2_flavor_class not in {"light", "heavy"}
     ):
@@ -927,6 +979,8 @@ def scan_fourier_transform(
     phase_transfer_da: bool = False,
     psi1_flavor_class: str = "heavy",
     psi2_flavor_class: str = "heavy",
+    gpd_projection_grid: list[float] | None = None,
+    gpd_polarization: str | None = None,
     workers: int = 1,
     show_progress: bool = False,
     _parallel: _ParallelPool | None = None,
@@ -949,7 +1003,7 @@ def scan_fourier_transform(
         raise ValueError("Fourier transform, tail, and scan mappings do not match the native interface")
     if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
         raise ValueError("workers must be a positive integer")
-    if observable not in {"PDF", "DA"} or not isinstance(phase_transfer_da, bool):
+    if observable not in {"PDF", "DA", "GPD"} or not isinstance(phase_transfer_da, bool):
         raise ValueError("observable and phase_transfer_da are invalid")
     if psi1_flavor_class not in {"light", "heavy"} or psi2_flavor_class not in {"light", "heavy"}:
         raise ValueError("DA flavor classes must be light or heavy")
@@ -990,6 +1044,12 @@ def scan_fourier_transform(
     ):
         raise ValueError("Fourier scan requires finite positive momentum_gev")
     hadron = str(data.attrs.get("hadron", ""))
+    requested_gpd_grid = None if gpd_projection_grid is None else np.asarray(gpd_projection_grid, dtype=float)
+    if observable == "GPD" and requested_gpd_grid is not None:
+        if requested_gpd_grid.ndim != 1 or requested_gpd_grid.size == 0 or np.any(~np.isfinite(requested_gpd_grid)):
+            raise ValueError("gpd_projection_grid must be a nonempty finite one-dimensional grid")
+        if str(scan["sector"]).lower() != "full":
+            x_grid = np.sort(np.unique(np.concatenate([requested_gpd_grid, -requested_gpd_grid]))).tolist()
     if observable == "DA" and phase_transfer_da:
         z = np.asarray(data.coords["z"], dtype=float)
         phase = np.exp(0.5j * z * float(momentum) / HBAR_C_GEV_FM)[None, :]
@@ -1201,6 +1261,32 @@ def scan_fourier_transform(
             parallel.close()
     if not candidates:
         raise ValueError("the selected Fourier range produces no model candidates")
+    if observable == "GPD" and requested_gpd_grid is not None and str(scan["sector"]).lower() != "full":
+        evaluated_grid = np.asarray(x_grid, dtype=float)
+        direct = np.asarray([int(np.argmin(np.abs(evaluated_grid - value))) for value in requested_gpd_grid])
+        reflected = np.asarray([int(np.argmin(np.abs(evaluated_grid + value))) for value in requested_gpd_grid])
+        polarization = str(gpd_polarization or data.attrs.get("polarization", "unpolarized")).lower()
+        sea_sign = 1.0 if polarization == "helicity" else -1.0
+        sector = str(scan["sector"]).lower()
+        for candidate in candidates:
+            full = np.asarray(candidate["data"].values)
+            if sector == "sea":
+                projected = sea_sign * full[:, reflected]
+            elif sector == "valence":
+                projected = full[:, direct] - sea_sign * full[:, reflected]
+            elif sector == "singlet":
+                projected = full[:, direct] + sea_sign * full[:, reflected]
+            else:
+                projected = full[:, direct]
+            candidate["data"] = EnsembleData(
+                candidate["data"].ensemble,
+                candidate["data"].resample,
+                list(projected),
+                ["x"],
+                {"x": requested_gpd_grid.tolist()},
+                attrs=candidate["data"].attrs,
+                name=candidate["data"].name,
+            )
     center_passing = [
         candidate
         for candidate in candidates
@@ -1231,6 +1317,11 @@ def scan_fourier_transform(
             "phase_transfer_da": str(observable == "DA" and phase_transfer_da).lower(),
             "psi1_flavor_class": psi1_flavor_class,
             "psi2_flavor_class": psi2_flavor_class,
+            "gpd_projection_mode": (
+                "post_ft_signed_y"
+                if observable == "GPD" and requested_gpd_grid is not None and str(scan["sector"]).lower() != "full"
+                else "full_complex"
+            ),
         }
     )
     output = EnsembleData(

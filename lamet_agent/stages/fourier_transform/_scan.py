@@ -46,8 +46,11 @@ def attempt(context: ToolContext) -> dict[str, object]:
     grid = context.params["quasi_y_ls"]
     if isinstance(grid, dict):
         grid = np.linspace(float(grid["start"]), float(grid["stop"]), int(grid["num"])).tolist()
-    is_da = str(context.manifest["metadata"]["target_observable"]).lower() == "da"
+    target = str(context.manifest["metadata"]["target_observable"]).lower()
+    is_da = target == "da"
+    is_gpd = target == "gpd"
     da = context.params if is_da else None
+    requested_grid = list(grid)
     result = scan_fourier_transform(
         source,
         grid,
@@ -60,10 +63,12 @@ def attempt(context: ToolContext) -> dict[str, object]:
             "smoothing_method": context.params["smooth"],
         },
         scan=scan,
-        observable=context.manifest["metadata"]["target_observable"].upper(),
+        observable=target.upper(),
         phase_transfer_da=da["phase_transfer_da"] if da is not None else False,
         psi1_flavor_class=da["psi1_flavor_class"] if da is not None else "heavy",
         psi2_flavor_class=da["psi2_flavor_class"] if da is not None else "heavy",
+        gpd_projection_grid=requested_grid if is_gpd else None,
+        gpd_polarization=str(source.attrs.get("polarization", "unpolarized")) if is_gpd else None,
         workers=context.workers,
         show_progress=bool(context.state.get("show_job_progress", False)),
         _parallel=context._parallel,

@@ -221,6 +221,21 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| target observable | `{attrs.get('target_observable', 'n/a')}` |",
                 f"| parton / construction | `{attrs.get('parton', 'n/a')}` / `{attrs.get('gfix', 'n/a')}` |",
                 f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
+                *(
+                    [
+                        "| GPD initial/final Pz | "
+                        f"{format_value(attrs.get('initial_momentum'))} / "
+                        f"{format_value(attrs.get('final_momentum'))} |",
+                        "| GPD xi / t | "
+                        f"{format_value(attrs.get('xi'))} / "
+                        f"{format_value(attrs.get('t_gev2'))} GeV^2 |",
+                        "| GPD bilocal anchor / completion | "
+                        f"`{attrs.get('bilocal_anchor', 'n/a')}` / "
+                        f"`{attrs.get('gpd_completion_mode', 'n/a')}` |",
+                    ]
+                    if str(attrs.get("target_observable", "")).lower() == "gpd"
+                    else []
+                ),
                 f"| x grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
                 f"| candidate $z_{{\\min}}$ [fm] | {format_value(params['zmin_fm'])} |",
                 f"| candidate $z_{{\\max}}$ [fm] | {format_value(params['zmax_fm'])} |",

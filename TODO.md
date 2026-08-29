@@ -1,7 +1,7 @@
 ## Physics
 
 - [ ] Better contract physics comments
-  - [ ] `correlator_analys`: Xiangyu
+  - [x] `correlator_analys`: Xiangyu
   - [x] `renormalization`: Jinchen
   - [x] `fourier_transform`: Dianjun
   - [ ] `perturbative_matching`: Fei
@@ -28,7 +28,7 @@
 
 ## UI/UX
 
-- [ ] Better banner logo: Anyone interested
+- [x] Better banner logo: Anyone interested
   - `banner.py`
 
 ## Review: Dianjun

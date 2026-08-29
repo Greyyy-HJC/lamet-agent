@@ -732,7 +732,7 @@ def _walk_rules(
             for logical, concrete, parent in mapping_parents:
                 declare(logical, concrete, parent, rule.child)
                 missing_or_null = rule.child not in parent or parent[rule.child] is None
-                if active and isinstance(rule, Recommends) and missing_or_null:
+                if active and isinstance(rule, Recommends) and missing_or_null and rule.default is not None:
                     if apply_defaults and isinstance(parent, dict):
                         value = copy.deepcopy(rule.default)
                         parent[rule.child] = value
