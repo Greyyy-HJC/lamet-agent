@@ -88,6 +88,27 @@ def describe_grid(values: Any, *, symbol: str = "x") -> str:
     return f"{grid.size} nonuniform points from ${symbol}={grid.min():.6g}$ to ${symbol}={grid.max():.6g}$"
 
 
+_OVERLAY_SERIES_LIMIT = 6
+
+
+def overlay_groups(items: list[Any], *, limit: int = _OVERLAY_SERIES_LIMIT) -> list[list[Any]]:
+    """Split overlay series into even groups that never exceed the series limit."""
+    if limit < 1:
+        raise ValueError("overlay series limit must be a positive integer")
+    count = len(items)
+    if count == 0:
+        return []
+    n_groups = math.ceil(count / limit)
+    base, extra = divmod(count, n_groups)
+    groups: list[list[Any]] = []
+    start = 0
+    for index in range(n_groups):
+        size = base + (1 if index < extra else 0)
+        groups.append(items[start : start + size])
+        start += size
+    return groups
+
+
 def stage_overlay_lines(
     records: tuple[StageReportRecord, ...],
     artifact_directory: Path,
@@ -105,46 +126,48 @@ def stage_overlay_lines(
     usable = [record for record in records if getattr(record.output, "dims", None) == [coordinate]]
     if not usable:
         return ["No compatible one-dimensional outputs were available for a stage overlay."]
+    groups = overlay_groups(usable)
     complex_output = any(np.iscomplexobj(record.output.values) for record in usable)
     components = (("real", "Re"), ("imag", "Im")) if complex_output else (("real", ""),)
     draw = errorband if band else errorline
     lines: list[str] = []
     for component, suffix in components:
-        start_plot()
-        plotted = 0
-        for record in usable:
-            data = getattr(record.output, component) if np.iscomplexobj(record.output.values) else record.output
-            mode = str(data.attrs.get("sample_error_mode", "covariance"))
-            average = data.average(mode)
-            draw(
-                data.coords[coordinate],
-                average,
-                label=series_label(record) if series_label is not None else record.job_id,
-            )
-            plotted += 1
         if isinstance(ylabel, Mapping):
             axis_ylabel = str(ylabel[component])
             caption = suffix or axis_ylabel
         else:
             axis_ylabel = f"{suffix} {ylabel}".strip()
             caption = suffix or ylabel
-        configure_plot(
-            xlabel=xlabel or coordinate,
-            ylabel=axis_ylabel,
-            legend=plotted <= 15,
-        )
         suffix_name = f"_{component}" if complex_output else ""
-        pdf = artifact_directory / "plots" / f"{stem}{suffix_name}.pdf"
-        svg = artifact_directory / "plots" / f"{stem}{suffix_name}.svg"
-        save_figure(pdf, svg)
-        lines.extend(
-            [
-                f"![{caption} stage overlay](plots/{svg.name})",
-                "",
-                f"[{caption} stage overlay (PDF)](plots/{pdf.name})",
-                "",
-            ]
-        )
+        for group_index, group in enumerate(groups, start=1):
+            start_plot()
+            for record in group:
+                data = getattr(record.output, component) if np.iscomplexobj(record.output.values) else record.output
+                mode = str(data.attrs.get("sample_error_mode", "covariance"))
+                average = data.average(mode)
+                draw(
+                    data.coords[coordinate],
+                    average,
+                    label=series_label(record) if series_label is not None else record.job_id,
+                )
+            configure_plot(xlabel=xlabel or coordinate, ylabel=axis_ylabel, legend=True)
+            if len(groups) == 1:
+                plot_stem = f"{stem}{suffix_name}"
+                plot_caption = f"{caption} stage overlay"
+            else:
+                plot_stem = f"{stem}{suffix_name}_{group_index}"
+                plot_caption = f"{caption} stage overlay ({group_index}/{len(groups)})"
+            pdf = artifact_directory / "plots" / f"{plot_stem}.pdf"
+            svg = artifact_directory / "plots" / f"{plot_stem}.svg"
+            save_figure(pdf, svg)
+            lines.extend(
+                [
+                    f"![{plot_caption}](plots/{svg.name})",
+                    "",
+                    f"[{plot_caption} (PDF)](plots/{pdf.name})",
+                    "",
+                ]
+            )
     return lines
 
 

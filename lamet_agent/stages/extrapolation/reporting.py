@@ -163,6 +163,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 stem="extrapolation_overview",
                 ylabel="physical distribution",
                 xlabel=r"$x$",
+                band=True,
             ),
         ]
     )

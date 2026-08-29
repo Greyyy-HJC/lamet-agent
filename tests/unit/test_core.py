@@ -234,6 +234,7 @@ def test_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path) -> 
         errorline,
         hband,
         hline,
+        histogram,
         line,
         save_figure,
         start_plot,
@@ -250,6 +251,9 @@ def test_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path) -> 
     assert vband(0.2, 0.4, color="0.7", label="vband") is None
     assert hband(0.9, 1.1, color="0.6", label="hband") is None
     assert bar([0.25, 0.75], [0.2, 0.3], width=0.1, color="0.5", label="bar") is None
+    assert histogram([0.1, 0.2, 0.2, 0.4], [0.0, 0.2, 0.4, 0.6], histtype="stepfilled", alpha=0.45, label="filled") is None
+    with pytest.raises(ValueError, match="unsupported histogram type"):
+        histogram([0.1], [0.0, 1.0], histtype="violin")
     with pytest.raises(ValueError, match="unsupported marker"):
         errorline([0.0, 1.0], values, marker="r--")
     with pytest.raises(ValueError, match="unsupported marker"):

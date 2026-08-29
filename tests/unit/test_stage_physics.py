@@ -323,6 +323,7 @@ def test_qda_fit_divides_by_nonlocal_origin_and_fits_each_sample() -> None:
     assert len(production_fit["E0_samples"]) == source.n_sample
     assert production_fit["sample0_plot"]["plots"][0]["kind"] == "qda_ratio"
     assert production_fit["sample0_plot"]["plots"][0]["series"][0]["x"] == times.tolist()
+    assert production_fit["sample0_plot"]["plots"][0]["series"][0]["fit_x"] == [1.5, 6.5]
 
 
 def test_correlator_publish_requires_complete_scan_and_deterministic_best_candidate(tmp_path, monkeypatch) -> None:
@@ -1620,9 +1621,11 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
     assert len(input_curves) == 2
     assert len(extrapolation_curves) == 2
     for coordinates in input_curves:
-        np.testing.assert_allclose(coordinates, np.asarray(z) * scale)
+        np.testing.assert_allclose(coordinates, np.asarray([0.0, 0.1, 0.2, 0.3, 0.4]) * scale)
+        assert all(value >= -1e-12 for value in coordinates)
     for coordinates in extrapolation_curves:
         np.testing.assert_allclose(coordinates, np.asarray([0.2, 0.3, 0.4]) * scale)
+        assert all(value >= -1e-12 for value in coordinates)
     np.testing.assert_allclose([value for value, _ in boundaries], np.asarray([0.2, 0.3, 0.2, 0.3]) * scale)
     assert all(item == {"color": "black", "linestyle": "dashed"} for _, item in boundaries)
     assert [item["xlabel"] for item in configured[-2:]] == [r"$\lambda = zP^z$", r"$\lambda = zP^z$"]
@@ -1748,9 +1751,10 @@ def test_extrapolation_lattice_spacing_basis_uses_original_units() -> None:
     )
 
 
-def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(tmp_path) -> None:
+def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(monkeypatch, tmp_path) -> None:
     import xarray as xr
 
+    from lamet_agent.plotting import COLOR_CYCLE
     from lamet_agent.stages.extrapolation._systematics_budget import run
 
     x = [0.0, 0.5, 1.0]
@@ -1770,6 +1774,29 @@ def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(tmp_path
     lambda_low = distribution([0.8, 1.8, 2.8], [1.0, 2.0, 3.0])
     lambda_high = distribution([1.3, 2.3, 3.3], [1.5, 2.5, 3.5])
     mu = distribution([1.0, 1.9, 3.0], [1.2, 2.1, 3.2])
+    bar_colors: list[str] = []
+    band_colors: list[str] = []
+    line_colors: list[str] = []
+    import lamet_agent.stages.extrapolation._systematics_budget as tool
+
+    original_bar = tool.bar
+    original_band = tool.band
+    original_line = tool.line
+    monkeypatch.setattr(
+        tool,
+        "bar",
+        lambda *args, **kwargs: bar_colors.append(str(kwargs.get("color"))) or original_bar(*args, **kwargs),
+    )
+    monkeypatch.setattr(
+        tool,
+        "band",
+        lambda *args, **kwargs: band_colors.append(str(kwargs.get("color"))) or original_band(*args, **kwargs),
+    )
+    monkeypatch.setattr(
+        tool,
+        "line",
+        lambda *args, **kwargs: line_colors.append(str(kwargs.get("color"))) or original_line(*args, **kwargs),
+    )
     context = ToolContext(
         {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
         tmp_path / "manifest.json",
@@ -1808,6 +1835,9 @@ def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(tmp_path
     )
     assert context.output is main
     assert context.summary["result"] == "systematics_budget"
+    assert bar_colors == [COLOR_CYCLE[0], COLOR_CYCLE[1]]
+    assert band_colors == [COLOR_CYCLE[1], COLOR_CYCLE[0]]
+    assert line_colors == [COLOR_CYCLE[0]]
 
 
 def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> None:
@@ -1862,9 +1892,142 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
     assert "[PDF](plots/result.pdf)" in report
     result_svg = (tmp_path / "plots" / "result.svg").read_text(encoding="utf-8")
     assert "FillBetweenPolyCollection" in result_svg
+    assert "quasi" in result_svg
     assert r"$P_z=1.72\,\mathrm{GeV}$" in result_svg
     assert r"$x$" in result_svg
     np.testing.assert_allclose(context.output.values, quasi.values[:, [0, 2]])
+
+
+def test_matching_plot_crops_even_quasi_to_nonnegative_x(monkeypatch, tmp_path) -> None:
+    import lamet_agent.stages.perturbative_matching._apply as tool
+
+    x = [-0.5, 0.0, 0.5]
+    quasi = EnsembleData(
+        None,
+        "bootstrap",
+        [np.array([0.3, 1.0, 0.3]), np.array([0.4, 1.1, 0.4])],
+        ["x"],
+        {"x": x},
+        attrs={"momentum_gev": 1.722, "sample_error_mode": "covariance"},
+        name="quasi_distribution",
+    )
+
+    def identity_kernel(x_out, x_in, *, momentum_gev, scale_gev):
+        return np.eye(len(x_out), len(x_in))
+
+    plotted = []
+    limits = []
+    monkeypatch.setattr(tool, "start_plot", lambda: None)
+    monkeypatch.setattr(tool, "hline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tool, "errorband", lambda x_values, values, **kwargs: plotted.append((kwargs["label"], list(x_values))))
+    monkeypatch.setattr(tool, "configure_plot", lambda **kwargs: limits.append(kwargs))
+    monkeypatch.setattr(tool, "save_figure", lambda *paths: [Path(path).parent.mkdir(parents=True, exist_ok=True) or Path(path).touch() for path in paths])
+    params = {
+        "kernel_id": "quark_pdf_cg_gt_ratio_nlo",
+        "scheme": "ratio",
+        "mu": 2.0,
+        "lc_x_ls": x,
+        "kernel_parameters": {},
+    }
+    context = ToolContext(
+        {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "perturbative_matching",
+        "match",
+        params,
+        {},
+        {},
+        {"kernel": identity_kernel, "quasi": quasi, "kernel_inspection": {"document": ""}},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    tool.run(context)
+    assert plotted[0][0] == r"quasi, $P_z=1.72\,\mathrm{GeV}$"
+    assert plotted[1][0] == "light-cone"
+    for _label, coordinates in plotted:
+        np.testing.assert_allclose(coordinates, [0.0, 0.5])
+    assert limits[0]["xlim"][0] >= -0.01
+
+
+def test_extrapolation_terminal_writes_one_pdf_per_lattice_spacing(monkeypatch, tmp_path) -> None:
+    import lamet_agent.stages.extrapolation._publish as tool
+
+    x = [-0.5, 0.0, 0.5]
+    inputs = []
+    momenta = [1.0, 2.0, 3.0]
+    for spacing_index, spacing in enumerate([0.06, 0.09, 0.12]):
+        for momentum_index, momentum in enumerate(momenta):
+            center = np.asarray([0.2, 1.0, 0.3]) + 0.01 * spacing_index + 0.02 * momentum_index
+            inputs.append(
+                EnsembleData(
+                    EnsembleInfo("test", f"a{spacing_index}p{momentum_index}", spacing, spacing, 64, 128, 0.13),
+                    "bootstrap",
+                    [center, center + 0.01],
+                    ["x"],
+                    {"x": x},
+                    attrs={"momentum_gev": momentum, "sample_error_mode": "one_sigma"},
+                )
+            )
+    output = EnsembleData(
+        None,
+        "bootstrap",
+        [np.asarray([0.2, 1.0, 0.3]), np.asarray([0.21, 1.01, 0.31])],
+        ["x"],
+        {"x": x},
+        attrs={"extrapolation_terms": "a2,inv_p2", "sample_error_mode": "one_sigma"},
+    )
+    comparison = {
+        "candidate_ids": ["extrapolation_001"],
+        "candidates": [
+            {
+                "momentum_dependence": {
+                    f"{momentum:g}": {
+                        "momentum_gev": momentum,
+                        "mean": [0.2, 1.0, 0.3],
+                        "sdev": [0.01, 0.01, 0.01],
+                    }
+                    for momentum in [1.5, 2.0, 2.5]
+                }
+            }
+        ],
+    }
+    labels: list[str | None] = []
+    original_errorband = tool.errorband
+
+    def capture_errorband(x_values, values, **kwargs):
+        labels.append(kwargs.get("label"))
+        return original_errorband(x_values, values, **kwargs)
+
+    monkeypatch.setattr(tool, "errorband", capture_errorband)
+    context = ToolContext(
+        {"metadata": {"workers": 1, "sample_error_mode": "one_sigma"}},
+        tmp_path / "manifest.json",
+        "extrapolation",
+        "fit",
+        {"operation": "fit", "pdep_gev": [1.5, 2.0, 2.5]},
+        {},
+        {},
+        {"scaling_data": inputs, "extrapolation_selected_data": output, "extrapolation_comparison": comparison},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    observation = tool.run(context)
+
+    assert not (tmp_path / "plots" / "distribution.pdf").exists()
+    assert (tmp_path / "plots" / "momentum_dependence.pdf").is_file()
+    assert not (tmp_path / "plots" / "momentum_dependence.svg").exists()
+    for spacing in ["0p06", "0p09", "0p12"]:
+        assert (tmp_path / "plots" / f"distribution_a_{spacing}.pdf").is_file()
+        assert not (tmp_path / "plots" / f"distribution_a_{spacing}.svg").exists()
+    assert observation["artifacts"].count("plots/distribution_a_0p06.pdf") == 1
+    assert "plots/distribution.pdf" not in observation["artifacts"]
+    assert not any(item.endswith(".svg") for item in observation["artifacts"])
+    assert any(label and "P_z=1" in label for label in labels)
+    assert any(label and "P_z=2" in label for label in labels)
+    assert any(label and "P_z=3" in label for label in labels)
+    assert any(label == r"$P_z\to\infty$" for label in labels)
+    assert any(label == r"$a\to0,\;P_z\to\infty$" for label in labels)
 
 
 def test_external_renormalization_terminal_writes_publication_artifacts(tmp_path) -> None:

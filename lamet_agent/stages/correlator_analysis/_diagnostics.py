@@ -23,10 +23,9 @@ QDA_TIME_LABEL = r"$t/a$"
 QDA_RATIO_REAL_LABEL = r"$\Re\left[R_{\mathrm{qDA}}(t)\right]$"
 QDA_RATIO_IMAG_LABEL = r"$\Im\left[R_{\mathrm{qDA}}(t)\right]$"
 
-# Match the legacy fit-log framing: the data/error envelope occupies the
-# central part of the panel, leaving asymmetric room for bands and legends.
-_FIT_LOG_BOTTOM_MARGIN_FACTOR = 0.75
-_FIT_LOG_TOP_MARGIN_FACTOR = 1.25
+# Leave asymmetric room above the data for the legend, without emptying the panel.
+_FIT_LOG_BOTTOM_MARGIN_FACTOR = 0.35
+_FIT_LOG_TOP_MARGIN_FACTOR = 0.70
 
 
 @dataclass(frozen=True)
@@ -103,13 +102,12 @@ def _write_sample0_plot(path: Path, payload: Mapping[str, Any], *, job_id: str) 
     if not isinstance(series, list) or not series:
         raise ValueError("sample-0 plot payload requires at least one series")
     start_plot()
-    x_values: list[float] = []
+    fit_x_values: list[float] = []
     for index, item in enumerate(series):
         color = series_color(index)
         x = np.asarray(item["x"], dtype=float)
         fit_x = np.asarray(item["fit_x"], dtype=float)
-        x_values.extend(x.tolist())
-        x_values.extend(fit_x.tolist())
+        fit_x_values.extend(fit_x.tolist())
         errorline(
             x,
             gv.gvar(np.asarray(item["y"], dtype=float), np.asarray(item["yerr"], dtype=float)),
@@ -121,8 +119,8 @@ def _write_sample0_plot(path: Path, payload: Mapping[str, Any], *, job_id: str) 
             gv.gvar(np.asarray(item["fit_mean"], dtype=float), np.asarray(item["fit_sdev"], dtype=float)),
             color=color,
         )
-    if x_values:
-        plateau_x = np.asarray([min(x_values), max(x_values)], dtype=float)
+    if fit_x_values:
+        plateau_x = np.asarray([min(fit_x_values), max(fit_x_values)], dtype=float)
         errorband(
             plateau_x,
             gv.gvar(

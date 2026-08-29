@@ -8,6 +8,7 @@ import numpy as np
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels import load_kernel_document
+from lamet_agent.stages.perturbative_matching.physics import is_even_about_zero
 from lamet_agent.stages._reporting import (
     StageReportRecord,
     artifact_rows,
@@ -84,19 +85,6 @@ def _kernel_structure(kernel_id: str) -> dict[str, object]:
         "component": next((token for token in tokens if token in {"re", "im"}), "full"),
         "resummation": "RGR" if "rgr" in tokens else "none",
     }
-
-
-def _is_even_about_zero(data: EnsembleData) -> bool:
-    x = np.asarray(data.coords["x"], dtype=float)
-    values = np.real(np.asarray(data.mean))
-    if x.size < 3 or np.min(x) >= 0 or np.max(x) <= 0:
-        return False
-    order = np.argsort(x)
-    x, values = x[order], values[order]
-    scale = float(np.max(np.abs(values)))
-    if not np.isfinite(scale) or scale == 0:
-        return False
-    return bool(np.max(np.abs(values - np.interp(-x, x, values))) <= 1e-6 * scale)
 
 
 def _has_interior_gap(data: EnsembleData) -> bool:
@@ -181,7 +169,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         quasi_integral, matched_integral, relative = cached_diagnostics[record.job_id]
         quasi = record.inputs["quasi"]
         scale = float(attrs.get("output_scale", 1.0))
-        mirrored = abs(scale - 1.0) > 1e-12 and _is_even_about_zero(record.output)
+        mirrored = abs(scale - 1.0) > 1e-12 and is_even_about_zero(record.output)
         gap = _has_interior_gap(record.output)
         lines.extend(
             [

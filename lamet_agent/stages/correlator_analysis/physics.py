@@ -1014,7 +1014,7 @@ def matrix_element_samples(
                 sample0_plot = None
                 if fit_samples and result.sample_posteriors and result.sample_posteriors[0] is not None:
                     posterior = result.sample_posteriors[0]
-                    fit_x = [float(t[selected][0]), float(t[selected][-1])]
+                    fit_x = [float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5]
                     plots = []
                     for component, samples_for_component in (
                         ("re", real_plot_samples),

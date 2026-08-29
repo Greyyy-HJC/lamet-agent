@@ -52,6 +52,20 @@ def inspect_callable(kernel, *, parameter_values: dict[str, Any]) -> tuple[list[
     return accepted, required
 
 
+def is_even_about_zero(data: EnsembleData) -> bool:
+    """Return True when the real mean is even on a grid that straddles x=0."""
+    x = np.asarray(data.coords["x"], dtype=float)
+    values = np.real(np.asarray(data.mean))
+    if x.size < 3 or np.min(x) >= 0 or np.max(x) <= 0:
+        return False
+    order = np.argsort(x)
+    x, values = x[order], values[order]
+    scale = float(np.max(np.abs(values)))
+    if not np.isfinite(scale) or scale == 0:
+        return False
+    return bool(np.max(np.abs(values - np.interp(-x, x, values))) <= 1e-6 * scale)
+
+
 def apply_matrix(data: EnsembleData, matrix: np.ndarray, x_out: list[float]) -> EnsembleData:
     """Apply ``matched[...,i]=sum_j matrix[i,j]*quasi[...,j]`` sample-wise."""
     if "x" not in data.dims:

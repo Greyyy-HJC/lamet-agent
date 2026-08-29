@@ -251,8 +251,11 @@ def errorband(
     """Plot a central line over its one-sigma error band."""
     mean, sdev = _unpack_gvar(values)
     selected_color = _resolve_color(color)
-    band(x, mean - sdev, mean + sdev, color=selected_color, label=label)
-    line(x, mean, color=selected_color)
+    band(x, mean - sdev, mean + sdev, color=selected_color)
+    line(x, mean, color=selected_color, label=label)
+
+
+_HIST_TYPES = {"bar", "barstacked", "step", "stepfilled"}
 
 
 def histogram(
@@ -262,15 +265,22 @@ def histogram(
     color: str | None = None,
     label: str | None = None,
     linewidth: float = 1.4,
+    histtype: str = "step",
+    alpha: float = 1.0,
 ) -> None:
-    """Plot one unfilled step histogram with explicitly shared bins."""
+    """Plot one histogram with explicitly shared bins."""
+    if histtype not in _HIST_TYPES:
+        raise ValueError(f"unsupported histogram type {histtype!r}")
+    selected = _resolve_color(color)
     _axis().hist(
         values,
         bins=bins,
-        histtype="step",
-        color=_resolve_color(color),
+        histtype=histtype,
+        color=selected,
+        edgecolor=selected,
         label=label,
         linewidth=linewidth,
+        alpha=alpha,
     )
 
 

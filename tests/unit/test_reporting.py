@@ -268,7 +268,12 @@ def test_correlator_sample0_plot_restores_legacy_physical_labels(monkeypatch, tm
 
     assert configured["xlabel"] == diagnostics.TAU_CENTER_LABEL
     assert configured["ylabel"] == diagnostics.RATIO_REAL_LABEL
-    assert configured["ylim"] is not None
+    low, high = configured["ylim"]
+    data_min = 0.80 - 0.02
+    data_max = 0.82 + 0.02
+    assert low < data_min < data_max < high
+    assert (data_max - data_min) / (high - low) > 0.45
+    assert (high - data_max) > (data_min - low)
     assert diagnostics._sample0_plot_labels("fh", "im") == (
         diagnostics.TSEP_LABEL,
         diagnostics.FH_IMAG_LABEL,
@@ -279,7 +284,43 @@ def test_correlator_sample0_plot_restores_legacy_physical_labels(monkeypatch, tm
     )
 
 
+def test_correlator_sample0_plot_draws_bands_only_on_fit_region(monkeypatch, tmp_path: Path) -> None:
+    import lamet_agent.stages.correlator_analysis._diagnostics as diagnostics
+
+    bands = []
+    monkeypatch.setattr(diagnostics, "start_plot", lambda: None)
+    monkeypatch.setattr(diagnostics, "errorline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        diagnostics, "errorband", lambda x, values, **kwargs: bands.append((list(x), kwargs.get("label")))
+    )
+    monkeypatch.setattr(diagnostics, "configure_plot", lambda **kwargs: None)
+    monkeypatch.setattr(diagnostics, "save_figure", lambda *args: None)
+    payload = {
+        "kind": "qda_ratio",
+        "component": "im",
+        "z": 5.0,
+        "series": [
+            {
+                "label": "qDA ratio",
+                "x": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+                "y": [0.1] * 8,
+                "yerr": [0.02] * 8,
+                "fit_x": [3.5, 6.5],
+                "fit_mean": [0.81, 0.81],
+                "fit_sdev": [0.01, 0.01],
+            }
+        ],
+        "plateau_mean": 0.81,
+        "plateau_sdev": 0.01,
+    }
+
+    diagnostics._write_sample0_plot(tmp_path / "sample0.pdf", payload, job_id="ca_a06m130_pz6")
+
+    assert bands == [([3.5, 6.5], None), ([3.5, 6.5], "Sample-0 fit matrix element")]
+
+
 def test_correlator_stage_report_writes_quality_and_physical_dispersion_plots(tmp_path: Path) -> None:
+    from lamet_agent.plotting import COLOR_CYCLE
     from lamet_agent.stages.correlator_analysis.reporting import write_stage_report
 
     stage = tmp_path / "01_correlator_analysis"
@@ -291,10 +332,15 @@ def test_correlator_stage_report_writes_quality_and_physical_dispersion_plots(tm
     report = write_stage_report(records=tuple(records), artifact_directory=stage)
     text = report.read_text(encoding="utf-8")
     assert "## Sample Fit Quality" in text
-    assert "goodness-of-fit p-value" in text
-    for stem in ("sample_fit_quality_Q", "sample_fit_quality_chi2", "dispersion_relation"):
+    assert "sample_fit_quality_Q" not in text
+    for stem in ("sample_fit_quality_chi2", "dispersion_relation"):
         assert (stage / "plots" / f"{stem}.pdf").is_file()
         assert (stage / "plots" / f"{stem}.svg").is_file()
+    chi2_svg = (stage / "plots" / "sample_fit_quality_chi2.svg").read_text(encoding="utf-8")
+    assert r"$\chi^2/\mathrm{d.o.f.}$" in chi2_svg
+    assert "Per-sample fit" not in chi2_svg
+    assert COLOR_CYCLE[3].lower() in chi2_svg.lower()
+    assert "fill" in chi2_svg.lower()
     dispersion_svg = (stage / "plots" / "dispersion_relation.svg").read_text(encoding="utf-8")
     assert "Dispersion relation" in dispersion_svg
     assert "E^2=p^2" in dispersion_svg
@@ -382,7 +428,7 @@ def test_fourier_stage_report_contains_tail_and_selection(tmp_path: Path) -> Non
 
     stage = tmp_path / "03_fourier_transform"
     output = EnsembleData(
-        None,
+        _TEST_ENSEMBLE,
         "bootstrap",
         [[0.8 + 0.1j, 1.0 + 0.2j], [0.9 + 0.12j, 1.1 + 0.18j]],
         ["x"],
@@ -406,6 +452,7 @@ def test_fourier_stage_report_contains_tail_and_selection(tmp_path: Path) -> Non
         "zmax_fm": [0.4],
         "zmax_ext_fm": 1.0,
         "smooth": "linear",
+        "tail_window_step_offset": 0,
         "scheme_scan": {
             "sector": "full",
             "order": ["LA", "NLA"],
@@ -484,7 +531,70 @@ def test_fourier_stage_report_contains_tail_and_selection(tmp_path: Path) -> Non
     assert r"$x$" in real_svg
     assert r"$P_z=1.72\,\mathrm{GeV}$" in real_svg
     assert r"$P_z=1.72\,\mathrm{GeV}$" in imag_svg
+    assert r"$a=0.06\,\mathrm{fm}$" in real_svg
+    assert r"$a=0.06\,\mathrm{fm}$" in imag_svg
     assert "quasi distribution" not in real_svg
+    assert "ft" not in real_svg
+
+
+def test_overlay_groups_are_even_and_capped() -> None:
+    from lamet_agent.stages._reporting import overlay_groups
+
+    assert overlay_groups(list(range(6))) == [list(range(6))]
+    assert overlay_groups(list(range(7))) == [list(range(4)), list(range(4, 7))]
+    assert overlay_groups(list(range(9))) == [list(range(5)), list(range(5, 9))]
+    assert overlay_groups(list(range(20))) == [
+        list(range(5)),
+        list(range(5, 10)),
+        list(range(10, 15)),
+        list(range(15, 20)),
+    ]
+    assert overlay_groups(list(range(27))) == [
+        list(range(6)),
+        list(range(6, 12)),
+        list(range(12, 17)),
+        list(range(17, 22)),
+        list(range(22, 27)),
+    ]
+    assert all(len(group) <= 6 for group in overlay_groups(list(range(27))))
+
+
+def test_stage_overlay_splits_crowded_series_into_even_figures(tmp_path: Path) -> None:
+    from lamet_agent.stages._reporting import stage_overlay_lines
+
+    records = tuple(
+        StageReportRecord(
+            f"job_{index}",
+            {},
+            {},
+            _data(attrs={"momentum_gev": 1.0 + 0.05 * index, "sample_error_mode": "covariance"}),
+            {"result": "overlay", "artifacts": ["output.nc"]},
+            tmp_path / f"job_{index}",
+        )
+        for index in range(9)
+    )
+
+    lines = stage_overlay_lines(
+        records,
+        tmp_path,
+        coordinate="x",
+        stem="renormalization_overview",
+        xlabel=r"$x$",
+        ylabel="overlay",
+        band=True,
+    )
+    text = "".join(lines)
+    first = (tmp_path / "plots" / "renormalization_overview_1.svg").read_text(encoding="utf-8")
+    second = (tmp_path / "plots" / "renormalization_overview_2.svg").read_text(encoding="utf-8")
+
+    assert "renormalization_overview_1.svg" in text
+    assert "renormalization_overview_2.svg" in text
+    assert "renormalization_overview_1.pdf" in text
+    assert not (tmp_path / "plots" / "renormalization_overview.svg").exists()
+    assert "job_0" in first and "job_4" in first and "job_5" not in first
+    assert "job_5" in second and "job_8" in second and "job_0" not in second
+    assert r"$x$" in first
+    assert "overlay" in first
 
 
 def test_matching_stage_report_embeds_shipped_kernel_document(tmp_path: Path) -> None:
@@ -610,3 +720,7 @@ def test_extrapolation_stage_report_contains_model_and_budget(tmp_path: Path) ->
     assert "maximum absolute size" in text
     assert "Momentum Dependence" in text
     assert "pdep_gev" in text
+    overview_svg = (stage / "plots" / "extrapolation_overview.svg").read_text(encoding="utf-8")
+    assert "FillBetweenPolyCollection" in overview_svg
+    assert "Errorbar" not in overview_svg
+    assert r"$x$" in overview_svg

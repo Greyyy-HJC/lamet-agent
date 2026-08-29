@@ -225,15 +225,23 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
     if not extension_coords:
         raise RuntimeError("selected Fourier extension does not reach z_min_fm")
     extension_segment = extended.at("z", extension_coords)
+    input_z = np.asarray(source.coords["z"], dtype=float)
+    input_coords = input_z[input_z >= -1e-12].tolist()
+    if not input_coords:
+        raise RuntimeError("Fourier input has no nonnegative z coordinates")
+    input_segment = source.at("z", input_coords)
     ioffe_time_scale = float(source.attrs["momentum_gev"]) / HBAR_C_GEV_FM
-    input_lambda = np.asarray(source.coords["z"], dtype=float) * ioffe_time_scale
+    input_lambda = np.asarray(input_segment.coords["z"], dtype=float) * ioffe_time_scale
     extension_lambda = np.asarray(extension_segment.coords["z"], dtype=float) * ioffe_time_scale
     lambda_min = z_min_fm * ioffe_time_scale
     lambda_max = z_max_fm * ioffe_time_scale
     for component, filename in (("real", "output_re.pdf"), ("imag", "output_im.pdf")):
         start_plot()
         errorband(
-            input_lambda, getattr(source, component).average(sample_error_mode), color=series_color(0), label="input"
+            input_lambda,
+            getattr(input_segment, component).average(sample_error_mode),
+            color=series_color(0),
+            label="input",
         )
         errorband(
             extension_lambda,

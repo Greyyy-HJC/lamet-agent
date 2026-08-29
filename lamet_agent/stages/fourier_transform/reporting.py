@@ -19,11 +19,48 @@ from lamet_agent.stages._reporting import (
 )
 
 
-def _momentum_series_label(record: StageReportRecord) -> str:
+def _momentum_series_label(record: StageReportRecord) -> str | None:
     value = output_attrs(record).get("momentum_gev")
     if isinstance(value, Real) and not isinstance(value, bool) and math.isfinite(float(value)):
         return rf"$P_z={round(float(value), 2):g}\,\mathrm{{GeV}}$"
-    return record.job_id
+    return None
+
+
+def _spacing_series_label(record: StageReportRecord) -> str | None:
+    ensemble = getattr(record.output, "ensemble", None)
+    spacing = getattr(ensemble, "a_s", None)
+    if (
+        isinstance(spacing, Real)
+        and not isinstance(spacing, bool)
+        and math.isfinite(float(spacing))
+        and float(spacing) > 0
+    ):
+        return rf"$a={float(spacing):.4g}\,\mathrm{{fm}}$"
+    return None
+
+
+def _variation_series_label(record: StageReportRecord) -> str | None:
+    offset = record.params.get("tail_window_step_offset", 0)
+    try:
+        steps = int(offset)
+    except (TypeError, ValueError):
+        return None
+    if steps == 0:
+        return None
+    return rf"$\Delta n_z={steps:+d}$"
+
+
+def _combined_series_label(record: StageReportRecord) -> str:
+    parts = [
+        label
+        for label in (
+            _momentum_series_label(record),
+            _spacing_series_label(record),
+            _variation_series_label(record),
+        )
+        if label
+    ]
+    return ", ".join(parts) if parts else record.job_id
 
 
 _TAIL_FORMULA = r"""
@@ -173,7 +210,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     "imag": r"$\mathrm{Im}\,\tilde q(x)$",
                 },
                 band=True,
-                series_label=_momentum_series_label,
+                series_label=_combined_series_label,
             ),
         ]
     )

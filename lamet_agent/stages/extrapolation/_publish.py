@@ -3,11 +3,38 @@
 from __future__ import annotations
 
 import json
+import math
+from collections import defaultdict
 
 import gvar
+import numpy as np
 
+from lamet_agent.data import EnsembleData
 from lamet_agent.agent import ToolContext
-from lamet_agent.plotting import configure_plot, errorband, save_figure, start_plot
+from lamet_agent.plotting import configure_plot, errorband, save_figure, series_color, start_plot
+
+
+def _spacing_slug(spacing: float) -> str:
+    """Return a stable, filesystem-safe label for one lattice spacing."""
+    return f"{spacing:.6g}".replace("-", "m").replace(".", "p")
+
+
+def _inputs_by_spacing(inputs: object) -> list[tuple[float, list[EnsembleData]]]:
+    """Group the fitted input distributions by their lattice spacing."""
+    if not isinstance(inputs, list) or not inputs:
+        raise RuntimeError("extrapolation inputs are unavailable for lattice-spacing plots")
+    grouped: defaultdict[float, list[EnsembleData]] = defaultdict(list)
+    for item in inputs:
+        if not isinstance(item, EnsembleData) or item.ensemble is None:
+            raise RuntimeError("extrapolation inputs must retain ensemble metadata for lattice-spacing plots")
+        spacing = float(item.ensemble.a_s)
+        if not math.isfinite(spacing) or spacing <= 0:
+            raise RuntimeError("extrapolation input lattice spacings must be finite and positive")
+        grouped[spacing].append(item)
+    return sorted(
+        (spacing, sorted(values, key=lambda item: float(item.attrs["momentum_gev"])))
+        for spacing, values in grouped.items()
+    )
 
 
 def run(context: ToolContext) -> dict[str, object]:
@@ -24,12 +51,8 @@ def run(context: ToolContext) -> dict[str, object]:
     (context.artifact_directory / "diagnostics" / "extrapolation.json").write_text(
         json.dumps(comparison, indent=2), encoding="utf-8"
     )
-    start_plot()
     plot_data = data.at("component", "real") if "component" in data.dims else data
     sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
-    errorband(data.coords["x"], plot_data.average(sample_error_mode))
-    configure_plot(xlabel=r"$x$", ylabel="physical distribution")
-    save_figure(context.artifact_directory / "plots" / "distribution.pdf")
     candidate = comparison["candidates"][0]
     momentum_dependence = candidate.get("momentum_dependence")
     params = context.params
@@ -44,12 +67,36 @@ def run(context: ToolContext) -> dict[str, object]:
             gvar.gvar(record["mean"], record["sdev"]),
             label=rf"$P_z={round(float(record['momentum_gev']), 2):g}\,\mathrm{{GeV}}$",
         )
-    errorband(data.coords["x"], plot_data.average(sample_error_mode), label="Pz→∞")
+    errorband(data.coords["x"], plot_data.average(sample_error_mode), label=r"$P_z\to\infty$")
     configure_plot(xlabel=r"$x$", ylabel="physical distribution", legend=True)
-    save_figure(
-        context.artifact_directory / "plots" / "momentum_dependence.pdf",
-        context.artifact_directory / "plots" / "momentum_dependence.svg",
-    )
+    save_figure(context.artifact_directory / "plots" / "momentum_dependence.pdf")
+    spacing_plot_artifacts: list[str] = []
+    for spacing, inputs in _inputs_by_spacing(context.state.get("scaling_data")):
+        start_plot()
+        for index, input_data in enumerate(inputs):
+            plotted = input_data.real if np.iscomplexobj(input_data.values) else input_data
+            errorband(
+                plotted.coords["x"],
+                plotted.average(sample_error_mode),
+                color=series_color(index),
+                label=rf"$P_z={round(float(plotted.attrs['momentum_gev']), 2):g}\,\mathrm{{GeV}}$",
+            )
+        errorband(
+            data.coords["x"],
+            plot_data.average(sample_error_mode),
+            color="black",
+            label=r"$a\to0,\;P_z\to\infty$",
+        )
+        configure_plot(
+            xlabel=r"$x$",
+            ylabel="physical distribution",
+            legend=True,
+            title=rf"$a={spacing:.4g}\,\mathrm{{fm}}$",
+        )
+        stem = f"distribution_a_{_spacing_slug(spacing)}"
+        pdf = context.artifact_directory / "plots" / f"{stem}.pdf"
+        save_figure(pdf)
+        spacing_plot_artifacts.append(f"plots/{pdf.name}")
     mass_text = (
         f" and physical pion mass {float(data.attrs['physical_pion_mass_gev']):g} GeV"
         if "physical_pion_mass_gev" in data.attrs
@@ -70,9 +117,8 @@ def run(context: ToolContext) -> dict[str, object]:
         "artifacts": [
             "output.nc",
             "diagnostics/extrapolation.json",
-            "plots/distribution.pdf",
             "plots/momentum_dependence.pdf",
-            "plots/momentum_dependence.svg",
+            *spacing_plot_artifacts,
             "report.md",
         ],
     }

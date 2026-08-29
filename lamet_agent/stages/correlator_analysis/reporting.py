@@ -68,106 +68,55 @@ performed before the median Lanczos result is published.
 
 
 def _sample_quality_lines(records: tuple[StageReportRecord, ...], artifact_directory: Path) -> list[str]:
-    """Plot selected-production per-sample Q and chi2/dof distributions."""
+    """Plot selected-production per-sample chi2/dof distributions."""
     import numpy as np
 
-    from lamet_agent.plotting import configure_plot, histogram, line, save_figure, series_color, start_plot
+    from lamet_agent.plotting import COLOR_CYCLE, configure_plot, histogram, save_figure, series_color, start_plot
 
-    def series(key: str) -> list[tuple[str, np.ndarray]]:
-        result = []
-        for record in records:
-            quality = record.summary.get("diagnostics", {}).get("sample_fit_quality", {})
-            values = np.asarray(quality.get(key, []), dtype=float) if isinstance(quality, dict) else np.asarray([])
-            values = values[np.isfinite(values)]
-            if values.size:
-                result.append((record.job_id, values))
-        return result
-
-    q_series = series("Q")
-    chi2_series = series("chi2_dof")
-    if not q_series and not chi2_series:
+    chi2_series: list[tuple[str, np.ndarray]] = []
+    for record in records:
+        quality = record.summary.get("diagnostics", {}).get("sample_fit_quality", {})
+        values = np.asarray(quality.get("chi2_dof", []), dtype=float) if isinstance(quality, dict) else np.asarray([])
+        values = values[np.isfinite(values)]
+        if values.size:
+            chi2_series.append((record.job_id, values))
+    if not chi2_series:
         return ["No successful production sample-fit quality diagnostics were available."]
     lines = [
-        "The LSQFit $Q$ value is the goodness-of-fit p-value. Distributions include successful production "
-        "sample fits only; numerical failures remain counted in the job diagnostics.",
+        "Distributions include successful production sample fits only; numerical failures remain counted in the job "
+        "diagnostics.",
         "",
     ]
-    if q_series:
-        start_plot()
-        pooled = []
-        for index, (label, values) in enumerate(q_series):
-            pooled.append(values)
-            ordered = np.sort(values)
-            cdf = np.arange(1, ordered.size + 1, dtype=float) / ordered.size
-            line(
-                np.r_[ordered[0], ordered],
-                np.r_[0.0, cdf],
-                color=series_color(index),
-                label=label,
-                linewidth=1.4,
-                drawstyle="steps-post",
-            )
-        all_values = np.sort(np.concatenate(pooled))
-        all_cdf = np.arange(1, all_values.size + 1, dtype=float) / all_values.size
-        line(
-            np.r_[all_values[0], all_values],
-            np.r_[0.0, all_cdf],
-            color="0.15",
-            label="All",
-            linewidth=2.0,
-            drawstyle="steps-post",
-        )
-        configure_plot(
-            xlabel=r"$Q$",
-            ylabel=r"CDF of $Q$",
-            xlim=(0.0, 1.0),
-            ylim=(0.0, 1.0),
-            legend=True,
-            title=r"Per-sample fit $Q$",
-        )
-        q_pdf = artifact_directory / "plots" / "sample_fit_quality_Q.pdf"
-        q_svg = artifact_directory / "plots" / "sample_fit_quality_Q.svg"
-        save_figure(q_pdf, q_svg)
-        lines.extend(
-            [
-                "![CDF of per-sample Q](plots/sample_fit_quality_Q.svg)",
-                "",
-                "[CDF of per-sample Q (PDF)](plots/sample_fit_quality_Q.pdf)",
-                "",
-            ]
-        )
-    if chi2_series:
-        pooled_values = np.concatenate([values for _label, values in chi2_series])
-        low = float(np.min(pooled_values))
-        high = float(np.max(pooled_values))
-        if high <= low:
-            padding = 0.05 if low == 0.0 else abs(low) * 0.05
-            low, high = low - padding, high + padding
-        automatic = max(1, int(np.histogram_bin_edges(pooled_values, bins="auto").size - 1))
-        bins = np.linspace(low, high, max(1, int(np.round(automatic * 1.5))) + 1)
-        start_plot()
-        for index, (label, values) in enumerate(chi2_series):
-            histogram(values, bins, color=series_color(index), label=label)
-        histogram(pooled_values, bins, color="0.15", label="All", linewidth=2.0)
-        span = float(bins[-1] - bins[0])
-        padding = 0.02 * span if span > 0 else 0.05
-        configure_plot(
-            xlabel=r"$\chi^2/\mathrm{dof}$",
-            ylabel="Counts",
-            xlim=(float(bins[0]) - padding, float(bins[-1]) + padding),
-            legend=True,
-            title=r"Per-sample fit $\chi^2/\mathrm{dof}$",
-        )
-        chi2_pdf = artifact_directory / "plots" / "sample_fit_quality_chi2.pdf"
-        chi2_svg = artifact_directory / "plots" / "sample_fit_quality_chi2.svg"
-        save_figure(chi2_pdf, chi2_svg)
-        lines.extend(
-            [
-                r"![Histogram of per-sample chi2/dof](plots/sample_fit_quality_chi2.svg)",
-                "",
-                "[Histogram of per-sample chi2/dof (PDF)](plots/sample_fit_quality_chi2.pdf)",
-            ]
-        )
+    pooled_values = np.concatenate([values for _label, values in chi2_series])
+    low = float(np.min(pooled_values))
+    high = float(np.max(pooled_values))
+    if high <= low:
+        padding = 0.05 if low == 0.0 else abs(low) * 0.05
+        low, high = low - padding, high + padding
+    automatic = max(1, int(np.histogram_bin_edges(pooled_values, bins="auto").size - 1))
+    bins = np.linspace(low, high, max(1, int(np.round(automatic * 1.5))) + 1)
+    start_plot()
+    for index, (label, values) in enumerate(chi2_series):
+        histogram(values, bins, color=series_color(index), label=label, histtype="stepfilled", alpha=0.45, linewidth=0.8)
+    histogram(pooled_values, bins, color=COLOR_CYCLE[3], label="All", histtype="step", linewidth=2.2)
+    span = float(bins[-1] - bins[0])
+    padding = 0.02 * span if span > 0 else 0.05
+    configure_plot(
+        xlabel=r"$\chi^2/\mathrm{d.o.f.}$",
+        ylabel="Counts",
+        xlim=(float(bins[0]) - padding, float(bins[-1]) + padding),
+        legend=True,
+    )
+    chi2_pdf = artifact_directory / "plots" / "sample_fit_quality_chi2.pdf"
+    chi2_svg = artifact_directory / "plots" / "sample_fit_quality_chi2.svg"
+    save_figure(chi2_pdf, chi2_svg)
+    lines.extend(
+        [
+            r"![Histogram of per-sample chi2/dof](plots/sample_fit_quality_chi2.svg)",
+            "",
+            "[Histogram of per-sample chi2/dof (PDF)](plots/sample_fit_quality_chi2.pdf)",
+        ]
+    )
     return lines
 
 
