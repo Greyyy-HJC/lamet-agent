@@ -73,9 +73,17 @@ def _kernel_structure(kernel_id: str) -> dict[str, object]:
     scheme_tokens = [token for token in tokens if token in {"ratio", "hybrid", "msbar"}]
     if len(scheme_tokens) != 1:
         raise ValueError(f"kernel id must contain exactly one scheme: {kernel_id}")
-    distribution = "DA" if "da" in tokens[:gauge_index] else "PDF" if "pdf" in tokens[:gauge_index] else None
+    distribution = (
+        "DA"
+        if "da" in tokens[:gauge_index]
+        else "PDF"
+        if "pdf" in tokens[:gauge_index]
+        else "GPD"
+        if "gpd" in tokens[:gauge_index]
+        else None
+    )
     if distribution is None:
-        raise ValueError(f"kernel id has no PDF/DA target: {kernel_id}")
+        raise ValueError(f"kernel id has no PDF/DA/GPD target: {kernel_id}")
     return {
         "gauge": tokens[gauge_index].upper(),
         "operator": tokens[gauge_index + 1],
