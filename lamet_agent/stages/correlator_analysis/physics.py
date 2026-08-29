@@ -7,11 +7,11 @@ from typing import Any, Mapping
 
 import gvar as gv
 import numpy as np
-from tqdm import tqdm
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.parallel import FitNumericalError, nonlinear_fit
 from lamet_agent.parallel._pool import _ParallelPool
+from lamet_agent.ui import track
 
 
 def _state_energies(parameters: Mapping[str, Any], n_states: int, suffix: str = "") -> list[Any]:
@@ -502,8 +502,11 @@ def fit_matrix_element_samples(
     sample_failures = []
     parallel = _parallel or _ParallelPool(min(workers, three_point.n_sample))
     try:
-        fit_indices = (
-            tqdm(z_indices, desc="Matrix-element fits", unit="z") if fit_samples and show_progress else z_indices
+        fit_indices = track(
+            z_indices,
+            label="Matrix-element fits",
+            unit="z",
+            enabled=fit_samples and show_progress,
         )
         for z_index in fit_indices:
             z_value = z_values[z_index]
@@ -928,7 +931,7 @@ def matrix_element_samples(
 
         parallel = _parallel or _ParallelPool(min(workers, source.n_sample))
         try:
-            fit_indices = tqdm(z_indices, desc="qDA fits", unit="z") if fit_samples and show_progress else z_indices
+            fit_indices = track(z_indices, label="qDA fits", unit="z", enabled=fit_samples and show_progress)
             for z_index in fit_indices:
                 component_values = ratios[:, :, z_index]
                 plot_component_values = plot_ratios[:, :, z_index]

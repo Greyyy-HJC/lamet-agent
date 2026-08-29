@@ -17,7 +17,7 @@ dependencies = [
   "xarray",
   "h5py",
   "netCDF4",
-  "tqdm",
+  "prompt_toolkit",
 ]
 
 [project.optional-dependencies]

@@ -9,6 +9,7 @@ from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.parallel import FitNumericalError
 from lamet_agent.plotting import configure_plot, errorline, save_figure, start_plot
+from lamet_agent.ui import log
 from lamet_agent.stages.correlator_analysis._diagnostics import write_fit_artifacts
 from lamet_agent.stages.correlator_analysis.physics import (
     fit_matrix_element_samples,
@@ -134,10 +135,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         preflight_fit = None
         try:
             if selected_method == "qda":
-                print(
-                    f"Running full qDA sample fits for matrix candidate {selected['id']}...",
-                    flush=True,
-                )
+                log(f"Running: full qDA sample fits for matrix candidate {selected['id']}...")
                 values, z_coordinates, application_fit = matrix_element_samples(
                     correlators,
                     method="qda",
@@ -201,7 +199,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                     "show_progress": bool(context.state.get("show_job_progress", False)),
                     "_parallel": context._parallel,
                 }
-                print(f"Preflighting matrix candidate {selected['id']} on the full z grid...", flush=True)
+                log(f"Preflighting matrix candidate {selected['id']} on the full z grid...")
                 preflight_data, preflight_fit = fit_matrix_element_samples(
                     correlators,
                     **application_kwargs,
@@ -210,7 +208,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                 )
                 if preflight_data is not None:
                     raise RuntimeError("full-grid center preflight unexpectedly produced sample data")
-                print(f"Running full sample fits for matrix candidate {selected['id']}...", flush=True)
+                log(f"Running: full sample fits for matrix candidate {selected['id']}...")
                 data, application_fit = fit_matrix_element_samples(correlators, **application_kwargs)
         except FitNumericalError as exc:
             error = str(exc)

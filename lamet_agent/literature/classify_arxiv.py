@@ -19,6 +19,8 @@ import re
 from bs4 import BeautifulSoup
 import requests
 
+from lamet_agent.ui import log
+
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 SCHEMA_VERSION = 2
@@ -413,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:
 
     pending_papers = [paper for paper in papers if args.force or paper["arxiv_id"] not in classified]
     if not pending_papers:
-        print(f"All {len(papers)} selected papers are already classified.")
+        log(f"All {len(papers)} selected papers are already classified.")
         return 0
 
     model_response = requests.get(f"{args.api_base}/models", timeout=30)
@@ -424,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
         for index, paper in enumerate(papers, start=1):
             arxiv_id = paper["arxiv_id"]
             if arxiv_id in classified and not args.force:
-                print(f"[{index}/{len(papers)}] {arxiv_id}: skipped", flush=True)
+                log(f"[{index}/{len(papers)}] {arxiv_id}: skipped")
                 continue
 
             html_path = args.html_dir / f"{arxiv_id.replace('/', '_')}.html"
@@ -709,10 +711,7 @@ def main(argv: list[str] | None = None) -> int:
                 encoding="utf-8",
             )
             temporary_output.replace(args.output)
-            print(
-                f"[{index}/{len(papers)}] {arxiv_id}: {result['relevance']} ({result['paper_type']})",
-                flush=True,
-            )
+            log(f"[{index}/{len(papers)}] {arxiv_id}: {result['relevance']} ({result['paper_type']})")
 
     return 0
 

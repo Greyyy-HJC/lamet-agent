@@ -9,22 +9,24 @@ import importlib.util
 import inspect
 import json
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Literal, Mapping, get_args, get_origin, get_type_hints
+from typing import Any, Callable, Literal, Mapping, Sequence, get_args, get_origin, get_type_hints
 
 import numpy as np
-from tqdm import tqdm
 
 from .banner import BANNER
 from .llm import LlmBackend, Message
-from .manifest import Job, Manifest, _load_stage_contract
+from .manifest import Job, Manifest, _load_stage_contract, load_manifest
 from .parallel._pool import _ParallelPool
 from .stages._reporting import StageReportRecord
 from .structured import annotation_schema, json_compatible, validate_value
+from .ui import PlainUi, create_ui, current_ui, use_ui
 from .contract import (
     CheckContext,
+    Issue,
     _apply_recommended_defaults,
     _unresolved_null_hooks,
     evaluate_checks,
@@ -49,9 +51,9 @@ def _resolve_progress_mode(mode: str, *, has_systematics: bool) -> str:
     return mode
 
 
-def _emit_progress(message: str = "", *, end: str = "\n") -> None:
-    """Write one immediately visible runtime progress line to stdout."""
-    print(message, end=end, flush=True)
+def _emit_progress(message: str = "", *, style: str | None = None) -> None:
+    """Route one immediately visible runtime progress event through the active UI."""
+    current_ui().log(message, style=style)
 
 
 def _message_payload(message: Message) -> dict[str, Any]:
@@ -82,18 +84,26 @@ def _append_transcript(path: Path, title: str, payload: Any) -> None:
 
 
 def _format_token_usage(usage: Mapping[str, int] | None) -> str:
-    """Format one backend-normalized token usage record for runtime logs."""
+    """Format weighted token-usage estimates in thousands of tokens."""
     if not usage:
-        return "tokens unavailable"
-    total = usage.get("total_tokens")
-    if total is None:
-        total = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
-    details = [f"input={usage.get('input_tokens', 0)}", f"output={usage.get('output_tokens', 0)}"]
-    if "cached_input_tokens" in usage:
-        details.append(f"cached={usage['cached_input_tokens']}")
+        return "usage unavailable"
+    input_tokens = max(int(usage.get("input_tokens", 0)), 0)
+    cached_tokens = min(max(int(usage.get("cached_input_tokens", 0)), 0), input_tokens)
+    uncached_tokens = input_tokens - cached_tokens
+    output_tokens = max(int(usage.get("output_tokens", 0)), 0)
+    estimated = 0.1 * cached_tokens + uncached_tokens + 5.0 * output_tokens
+
+    def in_k(tokens: int | float) -> str:
+        return f"{tokens / 1000:.2f}K"
+
+    details = [
+        f"input: {input_tokens}",
+        f"cached input: {cached_tokens}",
+        f"output: {output_tokens}",
+    ]
     if "reasoning_output_tokens" in usage:
-        details.append(f"reasoning={usage['reasoning_output_tokens']}")
-    return f"tokens={total} ({', '.join(details)})"
+        details.append(f"reasoning: {max(int(usage['reasoning_output_tokens']), 0)}")
+    return f"LLM usage: {in_k(estimated)} ({', '.join(details)})"
 
 
 def _compact_review_diagnostics(value: Any) -> dict[str, Any]:
@@ -254,7 +264,7 @@ class LlmSession:
     """One generic recorded LLM channel bound to a job transcript."""
 
     backend: LlmBackend
-    transcript_path: Path
+    transcript_path: Path | None
     history: list[Message] = field(default_factory=list)
     calls: int = 0
     max_recommendation_calls: int = 2
@@ -347,11 +357,12 @@ class LlmSession:
             "tools": tool_schemas,
             "response_schema": response_schema,
         }
-        _append_transcript(
-            self.transcript_path,
-            f"{label}, request {self.calls}: sent to LLM",
-            request_payload,
-        )
+        if self.transcript_path is not None:
+            _append_transcript(
+                self.transcript_path,
+                f"{label}, request {self.calls}: sent to LLM",
+                request_payload,
+            )
         if prompt_digest is None:
             system_prefix = []
             for message in request_messages:
@@ -370,19 +381,24 @@ class LlmSession:
                 ensure_ascii=False,
             )
             prompt_digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
-        _emit_progress(f"Calling LLM ({self.backend.identity}) for {label}...", end="")
+        _emit_progress(f"Reasoning: {label} ({self.backend.identity})...", style="llm")
         response = self.backend.complete(
             messages=request_messages,
             tools=tool_schemas,
             prompt_digest=prompt_digest,
             response_schema=response_schema,
         )
-        _emit_progress(f" {_format_token_usage(response.usage)}.")
+        _emit_progress(f"{_format_token_usage(response.usage)}.", style="llm")
         assistant_message = Message("assistant", response.text, tool_calls=response.calls)
         received_payload = _message_payload(assistant_message)
         if response.usage:
             received_payload["usage"] = dict(response.usage)
-        _append_transcript(self.transcript_path, f"{label}, request {self.calls}: received from LLM", received_payload)
+        if self.transcript_path is not None:
+            _append_transcript(
+                self.transcript_path,
+                f"{label}, request {self.calls}: received from LLM",
+                received_payload,
+            )
         if retain_history:
             self.history.extend((request_messages[-1], assistant_message))
             self._pending_context.clear()
@@ -833,17 +849,86 @@ def _invoke(tool: _Tool, context: ToolContext, arguments: Mapping[str, Any]) -> 
     return observation
 
 
+def _run_conversation(
+    *,
+    session: LlmSession,
+    messages: list[Message],
+    tool_schemas: list[dict[str, Any]],
+    tool_names: set[str],
+    prompt_digest: str,
+    label: str,
+    invoke_call: Callable[[str, Mapping[str, Any]], Mapping[str, Any]],
+    handle_text: Callable[[str], str | None],
+    is_terminal: Callable[[], bool],
+    max_turns: int,
+    max_tool_steps: int,
+) -> tuple[int, int]:
+    """Run the single shared assistant/tool/user loop for framework extensions."""
+    tool_steps = 0
+    for turn in range(1, max_turns + 1):
+        response = session.complete(
+            label=f"{label} turn {turn}",
+            messages=messages,
+            tools=tool_schemas,
+            prompt_digest=prompt_digest,
+        )
+        calls = response.calls
+        messages.append(Message("assistant", response.text, tool_calls=calls))
+        unavailable = [call.name for call in calls if call.name not in tool_names]
+        if unavailable:
+            raise ValueError(f"model requested unavailable tool '{unavailable[0]}'")
+        if calls:
+            for call in calls:
+                tool_steps += 1
+                if tool_steps > max_tool_steps:
+                    raise RuntimeError(f"{label} exceeded {max_tool_steps} tool steps")
+                observation = invoke_call(call.name, call.arguments)
+                messages.append(
+                    Message(
+                        "tool",
+                        json.dumps(observation, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+                        tool_call_id=call.id,
+                    )
+                )
+                if is_terminal():
+                    return turn, tool_steps
+            continue
+        reply = handle_text(response.text.strip())
+        if is_terminal():
+            return turn, tool_steps
+        if not isinstance(reply, str) or not reply.strip():
+            raise RuntimeError(f"{label} returned neither a tool call nor a user-facing question")
+        messages.append(Message("user", reply.strip()))
+    raise RuntimeError(f"{label} exceeded {max_turns} LLM turns")
+
+
 @dataclass
 class _AgentSession:
     """One ordered run with fresh state and conversation per job."""
 
     backend: LlmBackend
+    ui: PlainUi = field(default_factory=create_ui)
     stage_root: str | Path | None = None
     max_tool_steps: int = _MAX_ASSISTANT_TURNS
     progress_mode: Literal["auto", "stage", "job", "none"] = "auto"
     _outputs: dict[str, Any] = field(default_factory=dict, init=False)
     _summaries: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
     _stage_bundles: dict[str, tuple[list[_Tool], str, str]] = field(default_factory=dict, init=False)
+    _banner_shown: bool = field(default=False, init=False)
+
+    def _show_banner(self) -> None:
+        if self._banner_shown:
+            return
+        _emit_progress(BANNER, style="banner")
+        _emit_progress("")
+        self._banner_shown = True
+
+    def validate_manifest(self, manifest: Manifest, *, show_banner: bool = False) -> list[Issue]:
+        """Validate through the session UI, optionally starting Run presentation."""
+        with use_ui(self.ui):
+            if show_banner:
+                self._show_banner()
+            return manifest.validate(stage_root=self.stage_root)
 
     @staticmethod
     def _finish_context(context: ToolContext, *, llm_turns: int) -> tuple[Any, dict[str, Any]]:
@@ -860,7 +945,6 @@ class _AgentSession:
         (context.artifact_directory / "summary.json").write_text(
             json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
         )
-        _emit_progress(f"Job: {context.stage_id}/{context.job_id}... completed.\n")
         return context.output, context.summary
 
     def _run_context(
@@ -931,77 +1015,267 @@ class _AgentSession:
         ]
         tool_schemas = [tool.schema for tool in tools]
         tool_map = {tool.name: tool for tool in tools}
-        tool_steps = 0
-        try:
-            for turn in range(1, self.max_tool_steps + 1):
-                response = llm_session.complete(
-                    label=f"{context.stage_id}/{context.job_id} turn {turn}",
-                    messages=messages,
-                    tools=tool_schemas,
-                    prompt_digest=digest,
-                )
-                calls = response.calls
-                assistant_message = Message("assistant", response.text, tool_calls=calls)
-                messages.append(assistant_message)
-                if not calls:
-                    raise RuntimeError(f"job '{context.job_id}' returned no tool call")
-                unavailable = [call.name for call in calls if call.name not in tool_map]
-                if unavailable:
-                    raise ValueError(f"model requested unavailable tool '{unavailable[0]}'")
-                for call in calls:
-                    tool_steps += 1
-                    if tool_steps > self.max_tool_steps:
-                        raise RuntimeError(f"job '{context.job_id}' exceeded {self.max_tool_steps} tool steps")
-                    _emit_progress(f"Running tool: {call.name}...", end="")
-                    try:
-                        observation = _invoke(tool_map[call.name], context, call.arguments)
-                    except Exception:
-                        _emit_progress(" failed.")
-                        raise
-                    _emit_progress(" completed.")
-                    tool_message = Message(
-                        "tool",
-                        json.dumps(observation, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
-                        tool_call_id=call.id,
-                    )
-                    messages.append(tool_message)
-                    if context.summary is not None:
-                        remaining = _unresolved_null_hooks(
-                            context.params,
-                            context._param_rules,
-                            root_document=context.manifest,
-                        )
-                        if remaining:
-                            paths = [rule.path for rule in remaining]
-                            raise RuntimeError(f"job '{context.job_id}' finished with unresolved null hooks: {paths}")
-                        (context.artifact_directory / "summary.json").write_text(
-                            json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
-                        )
-                        _emit_progress(f"Job: {context.stage_id}/{context.job_id}... completed.\n")
-                        return context.output, context.summary
-            raise RuntimeError(
-                f"job '{context.job_id}' did not call a terminal tool within {self.max_tool_steps} turns"
+
+        def invoke_call(name: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:
+            _emit_progress(f"Executing: {name}...", style="running")
+            try:
+                observation = _invoke(tool_map[name], context, arguments)
+            except Exception:
+                _emit_progress(f"Execution failed: {name}.", style="attention")
+                raise
+            return observation
+
+        def reject_text(_text: str) -> str | None:
+            raise RuntimeError(f"job '{context.job_id}' returned no tool call")
+
+        _run_conversation(
+            session=llm_session,
+            messages=messages,
+            tool_schemas=tool_schemas,
+            tool_names=set(tool_map),
+            prompt_digest=digest,
+            label=f"{context.stage_id}/{context.job_id}",
+            invoke_call=invoke_call,
+            handle_text=reject_text,
+            is_terminal=lambda: context.summary is not None,
+            max_turns=self.max_tool_steps,
+            max_tool_steps=self.max_tool_steps,
+        )
+        if context.summary is None or context.output is None:
+            raise RuntimeError(f"job '{context.job_id}' did not call a terminal tool")
+        remaining = _unresolved_null_hooks(
+            context.params,
+            context._param_rules,
+            root_document=context.manifest,
+        )
+        if remaining:
+            paths = [rule.path for rule in remaining]
+            raise RuntimeError(f"job '{context.job_id}' finished with unresolved null hooks: {paths}")
+        (context.artifact_directory / "summary.json").write_text(
+            json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        return context.output, context.summary
+
+    def plan_manifest(
+        self,
+        manifest_path: str | Path,
+        *,
+        output_path: str | Path | None = None,
+        in_place: bool = False,
+        tui: Any | None = None,
+        max_turns: int = 60,
+    ) -> Path | None:
+        """Run the Plan extension within the same active UI and conversation framework."""
+        selected_ui = tui or self.ui
+        with use_ui(selected_ui):
+            return self._plan_manifest(
+                manifest_path,
+                output_path=output_path,
+                in_place=in_place,
+                tui=selected_ui,
+                max_turns=max_turns,
             )
-        except Exception:
-            raise
+
+    def _plan_manifest(
+        self,
+        manifest_path: str | Path,
+        *,
+        output_path: str | Path | None = None,
+        in_place: bool = False,
+        tui: Any | None = None,
+        max_turns: int = 60,
+    ) -> Path | None:
+        """Repair and confirm one authored manifest through the shared agent loop."""
+        from .plan.state import PlanState, _acceptance_question, _default_output_path
+        from .plan.tools import planning_controller_prompt, planning_tool_schemas, run_planning_tool
+
+        source = Path(manifest_path).expanduser().resolve()
+        if output_path is not None and in_place:
+            raise ValueError("output_path and in_place are mutually exclusive")
+        manifest = load_manifest(source)
+        target = (
+            source
+            if in_place
+            else Path(output_path).expanduser().resolve()
+            if output_path
+            else _default_output_path(source)
+        )
+        if target.parent != source.parent:
+            raise ValueError(
+                "planned output must remain beside the source manifest so relative paths keep their meaning"
+            )
+        state = PlanState(source, target, copy.deepcopy(manifest.document), copy.deepcopy(manifest.document))
+        state.refresh()
+        tui.write(f"Planning {source}")
+        tui.write(f"Planned manifest: {target}")
+        initial_revision: str | None = None
+
+        def review_plan(question: str) -> bool | str | None:
+            reviewer = getattr(tui, "review_plan", None)
+            return reviewer(question, state) if callable(reviewer) else tui.confirm(question)
+
+        if not state.issues:
+            tui.write("Manifest is already valid; no LLM repair is required.")
+            decision = review_plan(_acceptance_question(source, target))
+            if decision is True:
+                return source if target == source else state.save()
+            if not isinstance(decision, str) or not decision.strip():
+                return None
+            initial_revision = decision.strip()
+
+        system_prompt = planning_controller_prompt()
+        tool_schemas = planning_tool_schemas()
+        initial = json.dumps(
+            {
+                "task": "Complete this authored manifest through conversation with the user.",
+                "manifest_path": str(source),
+                "output_path": str(target),
+                "manifest": state.candidate,
+                "issue_count": len(state.issues),
+                "issues": state.packets,
+            },
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        messages = [Message("system", system_prompt), Message("user", initial)]
+        if initial_revision is not None:
+            messages.append(Message("user", initial_revision))
+        digest = hashlib.sha256(
+            json.dumps(
+                {"system": system_prompt, "tools": tool_schemas, "backend": self.backend.identity},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        llm_session = LlmSession(self.backend, None)
+        terminal: dict[str, Any] = {}
+
+        def invoke_call(name: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:
+            observation = run_planning_tool(state, name, arguments)
+            if name == "apply_manifest_patch" and observation.get("ok"):
+                tui.show_patch(observation.get("edits", []), state)
+            if name == "finish_plan" and observation.get("ready"):
+                raw_changes = observation.get("changes")
+                terminal.update(
+                    {
+                        "ready": True,
+                        "summary": str(observation.get("summary") or "Plan is ready."),
+                        "changes": [str(item) for item in raw_changes] if isinstance(raw_changes, list) else [],
+                    }
+                )
+            if name == "cancel_plan" and observation.get("cancelled"):
+                terminal["cancelled"] = True
+            return observation
+
+        def handle_text(text: str) -> str:
+            return tui.ask(text, state)
+
+        while llm_session.calls < max_turns:
+            terminal.clear()
+            _run_conversation(
+                session=llm_session,
+                messages=messages,
+                tool_schemas=tool_schemas,
+                tool_names={schema["function"]["name"] for schema in tool_schemas},
+                prompt_digest=digest,
+                label="plan",
+                invoke_call=invoke_call,
+                handle_text=handle_text,
+                is_terminal=lambda: bool(terminal),
+                max_turns=max_turns - llm_session.calls,
+                max_tool_steps=max_turns,
+            )
+            if terminal.get("cancelled"):
+                tui.write("Planning cancelled; run mode was not started.")
+                return None
+            if terminal.get("ready"):
+                tui.write("\nProposed plan")
+                tui.write(terminal["summary"])
+                for change in terminal["changes"]:
+                    tui.write(f"- {change}")
+                decision = review_plan(_acceptance_question(source, target))
+                if decision is True:
+                    saved = state.save()
+                    tui.write(f"Saved {saved}")
+                    return saved
+                if isinstance(decision, str) and decision.strip():
+                    messages.append(Message("user", decision.strip()))
+                    continue
+                return None
+        raise RuntimeError(f"plan exceeded {max_turns} LLM turns")
 
     def run_manifest(self, manifest: Manifest) -> dict[str, Any]:
+        """Run one manifest within the session UI and close session resources."""
+        with use_ui(self.ui):
+            try:
+                return self._run_manifest(manifest)
+            finally:
+                self.close()
+
+    @staticmethod
+    def _artifact_root(jobs: Sequence[Job]) -> Path:
+        if not jobs:
+            raise ValueError("manifest has no jobs")
+        return jobs[0].artifact_directory.parents[1]
+
+    @staticmethod
+    def _assert_safe_artifact_root(path: Path, manifest: Manifest) -> None:
+        resolved = path.resolve()
+        forbidden = {
+            Path("/").resolve(),
+            Path.home().resolve(),
+            manifest.path.parent.resolve(),
+            manifest.root_directory.resolve(),
+        }
+        if resolved in forbidden or len(resolved.parts) < 3:
+            raise ValueError(f"refusing to overwrite unsafe artifacts directory: {resolved}")
+        if path.is_symlink():
+            raise ValueError(f"refusing to overwrite symlinked artifacts directory: {path}")
+
+    def _prepare_artifact_directory(self, manifest: Manifest) -> tuple[list[Job], Path]:
+        """Resolve an empty/new artifact root or ask before replacing nonempty output."""
+        while True:
+            jobs = list(manifest.jobs)
+            root = self._artifact_root(jobs)
+            if root.exists() and not root.is_dir():
+                raise ValueError(f"artifacts_directory is not a directory: {root}")
+            nonempty = root.is_dir() and next(root.iterdir(), None) is not None
+            if not nonempty:
+                return jobs, root
+            self.ui.warning(f"artifacts directory is not empty: {root}")
+            if self.ui.confirm(f"Overwrite all contents of {root}?"):
+                self._assert_safe_artifact_root(root, manifest)
+                shutil.rmtree(root)
+                return jobs, root
+            replacement = self.ui.ask(
+                "Enter a new artifacts_directory path (relative to metadata.root_directory or absolute):",
+                None,
+            ).strip()
+            if not replacement:
+                self.ui.log("A nonempty artifacts path is required.", level="error")
+                continue
+            manifest.document["metadata"]["artifacts_directory"] = replacement
+            manifest.jobs = ()
+            issues = manifest.validate(stage_root=self.stage_root)
+            if issues:
+                detail = "\n".join(f"{issue.path}: {issue.message}" for issue in issues)
+                raise ValueError("new artifacts path made the manifest invalid:\n" + detail)
+
+    def _run_manifest(self, manifest: Manifest) -> dict[str, Any]:
         """Validate and run one already-loaded manifest in authored order."""
         if not isinstance(manifest, Manifest):
             raise TypeError("run_manifest requires a loaded Manifest")
+        self._show_banner()
         self._outputs.clear()
         self._summaries.clear()
         self._stage_bundles.clear()
         issues = manifest.validate(stage_root=self.stage_root)
         if issues:
             raise ValueError("\n".join(f"{issue.path}: {issue.message}" for issue in issues))
+        jobs, _artifact_root = self._prepare_artifact_directory(manifest)
         document = manifest.document
-        jobs = list(manifest.jobs)
         jobs_by_stage = manifest.jobs_by_stage
         progress_mode = _resolve_progress_mode(self.progress_mode, has_systematics=manifest.has_systematics)
-        collisions = [job.artifact_directory for job in jobs if job.artifact_directory.exists()]
-        if collisions:
-            raise FileExistsError(f"selected job artifact directory already exists: {collisions[0]}")
         artifact_base = jobs[0].artifact_directory.parent
         artifact_base.mkdir(parents=True, exist_ok=True)
         (artifact_base / "resolved_manifest.json").write_text(
@@ -1010,8 +1284,6 @@ class _AgentSession:
         manifest_file = manifest.path
         metadata = document["metadata"]
         stage_ids = [str(stage_id) for stage_id in document["stages"]]
-        _emit_progress(BANNER)
-        _emit_progress("")
         _emit_progress(f"Run: {metadata['run_id']}  backend={self.backend.identity}")
         _emit_progress(f"Stages: {', '.join(stage_ids)}")
         _emit_progress("")
@@ -1031,7 +1303,8 @@ class _AgentSession:
                     _emit_progress("")
                     _emit_progress(f"Stage: {stage_id}")
                     if progress_mode == "stage":
-                        stage_progress = tqdm(total=len(stage_jobs), desc=stage_id, unit="job")
+                        stage_progress = self.ui.start_progress(stage_id, total=len(stage_jobs), unit="job")
+                _emit_progress(f"Job: {stage_id}/{job.job_id}")
                 job.artifact_directory.mkdir(parents=True, exist_ok=False)
                 resolved_inputs: dict[str, Any] = {}
                 input_summaries: dict[str, Any] = {}
@@ -1093,7 +1366,7 @@ class _AgentSession:
                     )
                 )
                 if stage_progress is not None:
-                    stage_progress.update(1)
+                    self.ui.advance_progress(stage_progress)
                 if job is stage_jobs[-1]:
                     _emit_progress(f"Writing stage report: {stage_id}...")
                     report = _write_stage_report(stage_id, stage_records, stage_root=self.stage_root)
@@ -1102,30 +1375,35 @@ class _AgentSession:
                     _emit_progress(f"Stage {stage_id} finished.")
                     stage_records = []
                     if stage_progress is not None:
-                        stage_progress.close()
+                        self.ui.finish_progress(stage_progress)
                         stage_progress = None
             if stage_records:
                 raise RuntimeError("final stage did not reach its indexed report boundary")
         finally:
             if stage_progress is not None:
-                stage_progress.close()
+                self.ui.finish_progress(stage_progress, success=False)
             parallel.close()
-            close_backend = getattr(self.backend, "close", None)
-            if callable(close_backend):
-                close_backend()
         _emit_progress("=" * 60)
         _emit_progress(f"Agent run complete ({len(jobs)} job(s)).")
         _emit_progress("=" * 60)
         return {"outputs": dict(self._outputs), "summaries": dict(self._summaries), "stage_reports": stage_reports}
 
+    def close(self) -> None:
+        """Close the shared backend and UI; repeated calls are safe."""
+        close_backend = getattr(self.backend, "close", None)
+        if callable(close_backend):
+            close_backend()
+        self.ui.close()
+
 
 def create_session(
     backend: LlmBackend,
     *,
+    ui: PlainUi | None = None,
     progress_mode: Literal["auto", "stage", "job", "none"] = "auto",
 ) -> _AgentSession:
     """Create an isolated workflow session for one resolved LLM backend."""
-    return _AgentSession(backend, progress_mode=progress_mode)
+    return _AgentSession(backend, ui=ui or create_ui(), progress_mode=progress_mode)
 
 
 __all__ = [

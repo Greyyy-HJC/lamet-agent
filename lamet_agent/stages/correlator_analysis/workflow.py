@@ -6,6 +6,7 @@ from typing import Any
 
 from lamet_agent.agent import LlmSession, ToolContext
 from lamet_agent.parallel import FitNumericalError
+from lamet_agent.ui import warning
 from lamet_agent.stages.correlator_analysis._fit_matrix import run as fit_matrix
 from lamet_agent.stages.correlator_analysis._fit_qda import run as fit_qda
 from lamet_agent.stages.correlator_analysis._fit_spectrum import run as fit_spectrum
@@ -158,11 +159,9 @@ def run(context: ToolContext, session: LlmSession) -> None:
         context.state["fallback_no_q_passing"] = final_low_quality
         candidate_id = observation["metrics"]["recommended_candidate_id"]
         if final_low_quality:
-            print(
-                "ATTENTION: all correlator fit candidates remain below "
-                f"q_min={context.params['q_min']} after the allowed attempts; "
-                f"continuing with {candidate_id}.",
-                flush=True,
+            warning(
+                "all correlator fit candidates remain below "
+                f"q_min={context.params['q_min']} after the allowed attempts; continuing with {candidate_id}."
             )
     publish(context, candidate_id=str(candidate_id))
 

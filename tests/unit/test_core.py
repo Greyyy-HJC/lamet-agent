@@ -16,6 +16,7 @@ from lamet_agent.agent import (
     ToolContext,
     _discover_tools,
     _ensure_stage_ask,
+    _format_token_usage,
     _resolve_progress_mode,
     _resolve_runtime_null_hooks,
     _write_transcript_header,
@@ -123,6 +124,20 @@ class _RecommendedInterval(TypedDict):
 
 class _PlateauAssessment(TypedDict):
     stable_start: int
+
+
+def test_token_usage_uses_weighted_k_estimate() -> None:
+    assert _format_token_usage(
+        {
+            "input_tokens": 10_000,
+            "cached_input_tokens": 4_000,
+            "output_tokens": 1_000,
+            "reasoning_output_tokens": 600,
+        }
+    ) == (
+        "LLM usage: 11.40K "
+        "(input: 10000, cached input: 4000, output: 1000, reasoning: 600)"
+    )
 
 
 def test_llm_session_appends_structured_recommendations_to_job_history(tmp_path: Path) -> None:
@@ -1980,10 +1995,11 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, review_catal
     }
     stdout = capsys.readouterr().out
     assert "Stage: review" in stdout
-    assert "Job: review/review_1... completed." in stdout
-    assert stdout.count("Calling LLM (scripted:test)") == 2
-    assert "Running tool: read_papers... completed." in stdout
-    assert "Running tool: write_review... completed." in stdout
+    assert "Job: review/review_1" in stdout
+    assert stdout.count("Reasoning:") == 2
+    assert "Executing: read_papers..." in stdout
+    assert "Executing: write_review..." in stdout
+    assert "completed." not in stdout
     assert "Stage review finished." in stdout
     assert "Agent run complete (1 job(s))." in stdout
 
@@ -2036,8 +2052,8 @@ def test_scripted_review_run_executes_multi_call_responses_sequentially(
     assert result["summaries"]["review_1"]["result"] == "review"
     assert len(backend.calls) == 1
     stdout = capsys.readouterr().out
-    assert stdout.count("Calling LLM (scripted:test)") == 1
-    assert stdout.index("Running tool: read_papers...") < stdout.index("Running tool: write_review...")
+    assert stdout.count("Reasoning:") == 1
+    assert stdout.index("Executing: read_papers...") < stdout.index("Executing: write_review...")
 
 
 def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path, review_catalog: Path) -> None:

@@ -11,6 +11,7 @@ import numpy as np
 
 from lamet_agent.contract import CheckContext, Depends, Issue, Provides, Recommends, Source, Value, stage_job_rules
 from lamet_agent.kernels import load_renormalization_kernel
+from lamet_agent.ui import warning
 
 
 def _annotation_accepts(annotation: Any, value: Any) -> bool:
@@ -281,7 +282,7 @@ def check_kernel(context: CheckContext) -> list[Issue] | Issue | None:
     issues = _kernel_parameter_issues(kernel, values)
     overridden = sorted({"mu"}.intersection(values))
     if not issues and overridden:
-        print(f"ATTENTION: renormalization kernel_parameters overrides stage context: {overridden}", flush=True)
+        warning(f"renormalization kernel_parameters overrides stage context: {overridden}")
     return issues
 
 

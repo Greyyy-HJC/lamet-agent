@@ -40,8 +40,8 @@
 
 ## Plan: Xiangyu
 
-- [ ] TUI
-- [ ] Agentic workflow to set up the manifest
+- [x] TUI
+- [x] Agentic workflow to set up the manifest
 
 ## Kernel: Fei
 

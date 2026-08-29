@@ -4,6 +4,8 @@ import time
 
 import requests
 
+from lamet_agent.ui import log
+
 FALLBACK_PDF = False
 
 with open("inspirehep.json", "r", encoding="utf-8") as f:
@@ -22,7 +24,7 @@ with requests.Session() as session:
 
     for index, arxiv_id in enumerate(arxiv_ids):
         if arxiv_id["arxiv_id"] is None:
-            print(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: skipped (no arXiv ID)")
+            log(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: skipped (no arXiv ID)")
             continue
 
         file_stem = arxiv_id["arxiv_id"].replace("/", "_")
@@ -31,7 +33,7 @@ with requests.Session() as session:
         md_path = f"arxiv/{file_stem}.md"
 
         if os.path.exists(html_path) or os.path.exists(pdf_path):
-            print(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: skipped (HTML or PDF file exists)")
+            log(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: skipped (HTML or PDF file exists)")
             continue
 
         response = session.get(f"https://ar5iv.labs.arxiv.org/html/{arxiv_id['arxiv_id']}", timeout=60)
@@ -40,17 +42,17 @@ with requests.Session() as session:
         if response.status_code == 200 and "text/html" in response.headers.get("Content-Type", ""):
             with open(html_path, "wb") as f:
                 f.write(response.content)
-            print(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: downloaded (HTML)")
+            log(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: downloaded (HTML)")
         else:
             if FALLBACK_PDF:
-                print(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: HTML unavailable, trying PDF")
+                log(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: HTML unavailable, trying PDF")
                 response = session.get(f"https://arxiv.org/pdf/{arxiv_id['arxiv_id']}", timeout=60)
                 response.raise_for_status()
                 time.sleep(3)
 
                 with open(pdf_path, "wb") as f:
                     f.write(response.content)
-                print(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: downloaded (PDF)")
+                log(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: downloaded (PDF)")
             else:
-                print(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: skipped (HTML unavailable)")
+                log(f"[{index}/{len(arxiv_ids)}] {arxiv_id['id']}: skipped (HTML unavailable)")
                 continue

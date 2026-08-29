@@ -24,6 +24,7 @@ from lamet_agent.contract import (
     stage_job_rules,
 )
 from lamet_agent.kernels import load_kernel
+from lamet_agent.ui import warning
 
 
 _DATA_KERNEL_ARGUMENTS = frozenset({"x_out", "x_in"})
@@ -297,7 +298,7 @@ def check_kernel_parameters(context: CheckContext) -> list[Issue] | Issue | None
         issues = _kernel_parameter_issues(kernel, values)
         overridden = sorted(_CONTEXT_KERNEL_ARGUMENTS.intersection(values))
         if not issues and overridden:
-            print(f"ATTENTION: matching kernel_parameters overrides stage context: {overridden}", flush=True)
+            warning(f"matching kernel_parameters overrides stage context: {overridden}")
         return issues
     except (TypeError, ValueError) as exc:
         return Issue(

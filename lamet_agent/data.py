@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 import xarray
 
 from .kernels import implementation as _kernel_implementation
+from .ui import warning
 
 _DimType = str
 _DimsType = Sequence[_DimType]
@@ -232,7 +233,7 @@ class EnsembleData:
         if bin_size <= 0 or bin_size >= self.n_sample:
             raise ValueError("bin_size must be positive and smaller than the sample count.")
         if self.n_sample % bin_size:
-            print("ATTENTION: The final incomplete bin is dropped.", flush=True)
+            warning("The final incomplete bin is dropped.")
         n_bins = self.n_sample // bin_size
         values = [self.array.values[index * bin_size : (index + 1) * bin_size].mean(axis=0) for index in range(n_bins)]
         return EnsembleData(self.ensemble, "raw", values, self.dims, self.coords, self.attrs, self.name)

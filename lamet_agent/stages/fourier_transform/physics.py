@@ -9,12 +9,12 @@ from typing import Any, Literal, Mapping
 
 import gvar as gv
 import numpy as np
-from tqdm import tqdm
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
 from lamet_agent.parallel import FitNumericalError, fourier_transform, nonlinear_fit
 from lamet_agent.parallel._pool import _ParallelPool
+from lamet_agent.ui import track
 
 
 def load_data(value: Any) -> EnsembleData:
@@ -1156,7 +1156,7 @@ def scan_fourier_transform(
     parallel = _parallel or _ParallelPool(min(workers, data.n_sample))
     try:
         candidates = []
-        model_specs = tqdm(fit_model_specs, desc="Fourier models", unit="model") if show_progress else fit_model_specs
+        model_specs = track(fit_model_specs, label="Fourier models", unit="model", enabled=show_progress)
         for order, prior_width in model_specs:
             means, widths = _scan_tail_priors(
                 model_id=selected_model_id,
