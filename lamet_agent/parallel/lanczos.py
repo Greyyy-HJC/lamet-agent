@@ -583,6 +583,7 @@ def prepare_lanczos_data(
             time_step=time_step,
         )
         three_point_id = None
+        three_point = None
     else:
         if len(three_points) != 1:
             raise ValueError("Lanczos 3pt_matrix requires exactly one three-point correlator")
@@ -678,6 +679,7 @@ def prepare_lanczos_data(
         "sink": sink,
         "source_data": source_data,
         "sink_data": sink_data,
+        "three_point": three_point,
         "c3_by_z": c3_by_z,
         "z_values": z_values,
     }

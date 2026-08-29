@@ -138,7 +138,9 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
                 {
                     "candidate_id": "matrix_001",
                     "method": "joint",
+                    "fit_scope": "3pt_ratio",
                     "window": {"tmin": 3, "tmax": 8},
+                    "tsep_values": [8],
                     "nstate": 2,
                     "Q": 0.8,
                     "chi2_dof": 0.9,
@@ -154,12 +156,180 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
     )
     text = path.read_text(encoding="utf-8")
     assert "Correlator Analysis Stage Report" in text
-    assert "matrix_001" in text
+    assert "matrix_001" not in text
+    assert "| result |" not in text
+    assert "2pt + 3pt ratio joint fit" in text
+    assert "2pt window [3, 8)" in text
     assert "Selection Policy" in text
     assert "Per-tuning-z Fit Summary" in text
-    assert "Field Definitions" in text
-    assert "fallback_no_q_passing" in text
+    assert "Analysis Settings" not in text
+    assert "Runtime-resolved Defaults and Scale Inspection" not in text
+    assert "Artifacts\n\n| job | artifact |" not in text
     assert "[output.nc](ca/output.nc)" in text
+
+
+def test_lanczos_report_uses_configuration_language_and_readable_provenance(tmp_path: Path) -> None:
+    from lamet_agent.stages.correlator_analysis.reporting import write_stage_report
+
+    stage = tmp_path / "01_correlator_analysis"
+    output = EnsembleData(
+        _TEST_ENSEMBLE,
+        "jackknife",
+        [[0.8 + 0.1j, 0.7 + 0.2j], [0.82 + 0.1j, 0.72 + 0.2j]],
+        ["z"],
+        {"z": [0, 1]},
+        attrs={"momentum_gev": 0.0, "coord_unit": "lattice", "sample_error_mode": "covariance"},
+    )
+    summary = {
+        "result": "bare_matrix_element",
+        "decisions": {"method": "lanczos", "scope": "3pt_matrix"},
+        "diagnostics": {
+            "outer_samples": 109,
+            "states": 2,
+            "inspection": {
+                "iterations": 2,
+                "lanczos_t0": 4,
+                "lanczos_time_step": 2,
+                "point_usage": {"used_per_z": 4, "discarded_per_z": 29},
+                "sampling_plan": {
+                    "selected_tseps": [8, 10, 12],
+                    "used_point_count": 4,
+                    "total_point_count": 33,
+                    "discarded_point_count": 29,
+                },
+            },
+        },
+        "artifacts": ["output.nc", "plots/result.pdf", "plots/result.svg", "diagnostics/lanczos.json"],
+    }
+    params = {
+        "analysis_method": "lanczos",
+        "component": "both",
+        "nstate": [2],
+        "scope": "3pt_matrix",
+        "inner_samples": 200,
+        "precision": 100,
+    }
+    record = _record(stage, "ca_p0", params=params, output=output, summary=summary)
+    text = write_stage_report(records=(record,), artifact_directory=stage).read_text(encoding="utf-8")
+
+    assert "| job | fit method | configuration | samples |" in text
+    assert "Selected Configuration" in text
+    assert "Fit/window" not in text
+    assert "window not recorded" not in text
+    assert "Source/sink separations: $t_{\\mathrm{sep}} = 8, 10, 12$" in text
+    assert "Point usage: 4 of 33 available three-point (t_sep, tau) points per z retained; 29 omitted" in text
+    assert "center Q" not in text
+    assert "complete Krylov square" in text
+    assert "T**2" not in text
+    assert "Lanczos production uses nested resampling" in text
+    assert "EnsembleInfo(" not in text
+
+
+def test_correlator_report_renders_only_the_authored_kinematic_formula(tmp_path: Path) -> None:
+    from lamet_agent.stages.correlator_analysis.reporting import write_stage_report
+
+    def make_record(stage: Path, form: str) -> StageReportRecord:
+        params = {
+            **_correlator_lsqfit_params(),
+            "fitting_form": form,
+            "fit_scope": ["3pt_ratio"],
+        }
+        summary = {
+            "result": "bare_matrix_element",
+            "decisions": {"method": "joint"},
+            "diagnostics": {},
+            "artifacts": ["output.nc"],
+        }
+        return _record(stage, form, params=params, output=_data(), summary=summary)
+
+    breit_stage = tmp_path / "breit"
+    breit = write_stage_report(records=(make_record(breit_stage, "Breit"),), artifact_directory=breit_stage).read_text(
+        encoding="utf-8"
+    )
+    assert "The published Breit matrix element" in breit
+    assert "R_{\\rm NB}" not in breit
+
+    nonbreit_stage = tmp_path / "nonbreit"
+    nonbreit = write_stage_report(
+        records=(make_record(nonbreit_stage, "NonBreit"),), artifact_directory=nonbreit_stage
+    ).read_text(encoding="utf-8")
+    assert "R_{\\rm NB}" in nonbreit
+    assert "The published Breit matrix element" not in nonbreit
+
+
+def test_correlator_report_includes_per_z_sample_quality_statistics(tmp_path: Path) -> None:
+    from lamet_agent.stages.correlator_analysis.reporting import write_stage_report
+
+    output = _data()
+    summary = {
+        "result": "bare_matrix_element",
+        "decisions": {"candidate_id": "matrix_001", "method": "joint"},
+        "diagnostics": {
+            "Q": 0.8,
+            "chi2_dof": 0.9,
+            "candidates": [
+                {
+                    "candidate_id": "matrix_001",
+                    "method": "joint",
+                    "fit_scope": "3pt_ratio",
+                    "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
+                    "tsep_values": [8, 10],
+                    "nstate": 2,
+                }
+            ],
+            "selected_application_fit": {
+                "fits": [
+                    {"z": 0, "Q": 0.8, "chi2_dof": 0.9, "E0": 0.4, "E0_sdev": 0.01},
+                ]
+            },
+            "sample_fit_quality": {
+                "chi2_dof": [0.8, 1.0],
+                "Q": [0.8, 0.01],
+                "by_z": {
+                    "0": {
+                        "successful_samples": 100,
+                        "attempted_samples": 100,
+                        "numerical_failures": 0,
+                        "q_below_threshold": 5,
+                        "q_threshold": 0.05,
+                        "median_chi2_dof": 0.9,
+                    }
+                },
+            },
+        },
+        "artifacts": ["output.nc"],
+    }
+    stage = tmp_path / "01_correlator_analysis"
+    text = write_stage_report(
+        records=(_record(stage, "ca", params=_correlator_lsqfit_params(), output=output, summary=summary),),
+        artifact_directory=stage,
+    ).read_text(encoding="utf-8")
+    assert "median sample chi2/dof" in text
+    assert "5/100" in text
+    assert "Q values below 0.05 are retained" in text
+    assert "2pt window [3, 8); t_sep=8, 10; tau cut=2" in text
+
+
+def test_correlator_report_limits_job_figures_to_first_middle_and_last_z(tmp_path: Path) -> None:
+    from lamet_agent.stages.correlator_analysis.reporting import write_stage_report
+
+    artifacts = ["output.nc"]
+    for z_value in (1, 2, 3, 4):
+        artifacts.append(f"fit_logs/plots/ca_joint_3pt_ratio_z{z_value}_sample0_pt3_ratio_re.pdf")
+    summary = {
+        "result": "bare_matrix_element",
+        "decisions": {"method": "joint"},
+        "diagnostics": {},
+        "artifacts": artifacts,
+    }
+    stage = tmp_path / "01_correlator_analysis"
+    record = _record(stage, "ca", params=_correlator_lsqfit_params(), output=_data(), summary=summary)
+    text = write_stage_report(records=(record,), artifact_directory=stage).read_text(encoding="utf-8")
+    assert "_z1_sample0" in text
+    assert "_z3_sample0" in text
+    assert "_z4_sample0" in text
+    assert "_z2_sample0" not in text
+    assert "Representative full-z fit plots are shown for z = 1, 3, 4." in text
 
 
 def test_correlator_fit_artifacts_write_logs_and_pdf_only(tmp_path: Path) -> None:
@@ -231,6 +401,14 @@ def test_correlator_fit_artifacts_write_logs_and_pdf_only(tmp_path: Path) -> Non
     assert not list((tmp_path / "fit_logs" / "plots").glob("*.svg"))
     assert "Good sample=0" in (tmp_path / "fit_logs" / "ca_p0_joint_3pt_ratio_samples.log").read_text()
     assert result.sample_fit_quality["Q"] == [0.8, 0.8]
+    assert result.sample_fit_quality["by_z"]["0"] == {
+        "successful_samples": 1,
+        "attempted_samples": 1,
+        "numerical_failures": 0,
+        "q_below_threshold": 0,
+        "q_threshold": 0.05,
+        "median_chi2_dof": 0.5,
+    }
     assert result.dispersion_energy["z"] == 0.0
     assert "sample_diagnostics" not in result.application_fit["fits"][0]
     assert "sample0_plot" not in result.application_fit["fits"][0]
@@ -352,6 +530,29 @@ def test_correlator_stage_report_writes_quality_and_physical_dispersion_plots(tm
     assert "bare_matrix_element" not in overview_svg
 
 
+def test_sample_chi2_histogram_xlim_does_not_exceed_four(tmp_path: Path, monkeypatch) -> None:
+    import lamet_agent.plotting as plotting
+    from lamet_agent.stages.correlator_analysis.reporting import write_stage_report
+
+    captured: list[dict] = []
+    original = plotting.configure_plot
+
+    def capture(**kwargs):
+        captured.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(plotting, "configure_plot", capture)
+    stage = tmp_path / "01_correlator_analysis"
+    ensemble = EnsembleInfo("HISQ", "HISQa060_X", 0.06, 0.06, 48, 64, 0.3)
+    record = _correlator_dispersion_record(stage, "ca_p0", ensemble, 0.0, [0.090, 0.092, 0.089, 0.091])
+    record.summary["diagnostics"]["sample_fit_quality"]["chi2_dof"] = [0.5, 1.2, 100.0]
+    write_stage_report(records=(record,), artifact_directory=stage)
+    chi2_calls = [item for item in captured if "chi" in str(item.get("xlabel", ""))]
+    assert chi2_calls
+    assert chi2_calls[0]["xlim"][1] <= 4.0
+    assert chi2_calls[0]["xlim"][1] > 1.0
+
+
 def test_correlator_dispersion_fit_requires_more_momenta_than_parameters(tmp_path: Path, monkeypatch) -> None:
     import gvar as gv
 
@@ -417,10 +618,67 @@ def test_renormalization_stage_report_contains_scheme_formula(tmp_path: Path) ->
         records=(_record(stage, "rn", params=params, output=output, summary=summary),), artifact_directory=stage
     )
     text = path.read_text(encoding="utf-8")
-    assert "external_denominator" in text
+    assert "External denominator (hybrid prescription)" in text
     assert "h_s^R(z)" in text
-    assert "Coverage and Statistical Semantics" in text
-    assert "Field Definitions" in text
+    assert "| result |" not in text
+    assert "external_denominator" not in text
+    assert "strategy" not in text
+    assert "Field Definitions" not in text
+    assert "Parameters and Provenance" not in text
+    assert "| job | artifact |" not in text
+
+
+def test_renormalization_report_uses_physical_labels_and_fit_figures(tmp_path: Path) -> None:
+    from lamet_agent.stages.renormalization.reporting import write_stage_report
+
+    stage = tmp_path / "02_renormalization"
+    output = EnsembleData(
+        _TEST_ENSEMBLE,
+        "bootstrap",
+        [np.ones((2, 3)), np.ones((2, 3))],
+        ["a", "z"],
+        {"a": [0.06, 0.12], "z": [0.05, 0.1, 0.15]},
+        attrs={"coord_unit": "fm"},
+    )
+    plot_stems = ("factor", "fit_lnM_vs_inv_a", "fit_mR_zmsbar", "fit_m_over_zR", "fit_f1")
+    artifacts = ["output.nc", "diagnostics/self_renormalization.json"]
+    for stem in plot_stems:
+        artifacts.extend([f"plots/{stem}.pdf", f"plots/{stem}.svg"])
+    summary = {
+        "result": "renormalization_factor",
+        "decisions": {},
+        "diagnostics": {
+            "z_range_fm": [0.05, 0.15],
+            "lattice_spacing_range_fm": [0.06, 0.12],
+            "reference_sample_count": 100,
+            "fit_quality": {
+                "reference": {"chi2_dof": 1.1, "Q": 0.42},
+                "m0_matching": {"chi2_dof": 0.8, "Q": 0.73},
+            },
+        },
+        "artifacts": artifacts,
+    }
+    params = {
+        "strategy": "self_renormalization",
+        "type": "fit",
+        "normalization": False,
+        "scheme": "msbar",
+    }
+    record = _record(stage, "rn_zr_fit", params=params, output=output, summary=summary)
+    text = write_stage_report(records=(record,), artifact_directory=stage).read_text(encoding="utf-8")
+
+    assert "Self-renormalization (MSbar prescription)" in text
+    assert "Reference fit quality" in text
+    assert "chi2/dof=1.1, Q=0.42" in text
+    assert "fit versus" in text
+    assert "rn_zr_fit/plots/factor.svg" in text
+    assert "rn_zr_fit/plots/factor.pdf" in text
+    assert "rn_zr_fit/plots/fit_lnM_vs_inv_a.svg" in text
+    assert "rn_zr_fit/plots/fit_m_over_zR.svg" in text
+    assert "rn_zr_fit/plots/fit_mR_zmsbar.svg" not in text
+    assert "rn_zr_fit/plots/fit_f1.svg" not in text
+    assert "renormalization_factor" not in text
+    assert "| job | artifact |" not in text
 
 
 def test_fourier_stage_report_contains_tail_and_selection(tmp_path: Path) -> None:

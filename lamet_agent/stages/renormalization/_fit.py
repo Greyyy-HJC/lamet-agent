@@ -32,6 +32,7 @@ def run(context: ToolContext) -> dict[str, object]:
     else:
         prepared = normalize_at_origin(source) if params["normalization"] else source
     items = prepared if isinstance(prepared, list) else [prepared]
+    reference_sample_count = items[0].n_sample
     positive_z = sorted({float(value) for item in items for value in item.coords["z"] if float(value) > 0})
     if len(positive_z) < 3:
         raise ValueError("self-renormalization reference requires at least three positive z coordinates")
@@ -106,6 +107,8 @@ def run(context: ToolContext) -> dict[str, object]:
         "kernel_parameters": kernel_parameters,
         "formula": factor.attrs["formula"],
         "factor_dims": factor.dims,
+        "reference_sample_count": reference_sample_count,
+        "fit_quality": fit_result.fit_quality,
     }
     diagnostic_payload = {**diagnostics, "plot_data": fit_result.plot_data}
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
@@ -115,12 +118,7 @@ def run(context: ToolContext) -> dict[str, object]:
     rendered = render_fit_diagnostics(
         fit_result.plot_data,
         directory=context.artifact_directory / "plots",
-        formats=("pdf",),
-    )
-    (context.artifact_directory / "report.md").write_text(
-        "# Self-renormalization factor\n\n"
-        "A reusable sample-bearing factor was fitted on the authored reference grid.\n",
-        encoding="utf-8",
+        formats=("pdf", "svg"),
     )
     summary = {
         "stage_id": context.stage_id,
@@ -132,7 +130,7 @@ def run(context: ToolContext) -> dict[str, object]:
             "output.nc",
             "diagnostics/self_renormalization.json",
             *[f"plots/{stem}.pdf" for stem, _caption in rendered],
-            "report.md",
+            *[f"plots/{stem}.svg" for stem, _caption in rendered],
         ],
     }
     context.finish(factor, summary)

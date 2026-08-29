@@ -128,6 +128,7 @@ def test_migrated_lanczos_recovers_exact_spectrum_and_matrix() -> None:
 
 def test_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     n_configurations = 6
     energies = np.asarray([0.25, 0.7])
@@ -180,6 +181,10 @@ def test_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
             "correlator_type": "three_point",
             "source_momentum": momentum,
             "sink_momentum": momentum,
+            "parton": "quark",
+            "gfix": "CG",
+            "polarization": "unpolarized",
+            "kernel_operator": "gt",
         },
         name="c3",
     )
@@ -242,15 +247,22 @@ def test_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
         tmp_path,
         np.random.default_rng(1),
     )
-    with pytest.warns(UserWarning, match="30 points are discarded"):
-        inspect_lanczos(context)
+    inspect_lanczos(context)
+    captured = capsys.readouterr().out
+    assert "ATTENTION: Lanczos uses" in captured
+    assert "30 points are discarded" in captured
     observation = run_lanczos(context)
 
     assert context.output.values[:, 0] == pytest.approx(np.full(n_configurations, current[0, 0]))
     assert observation["summary"] == "published bare_matrix_element"
+    assert context.output.attrs["parton"] == "quark"
+    assert context.output.attrs["gfix"] == "CG"
+    assert context.output.attrs["polarization"] == "unpolarized"
+    assert context.output.attrs["kernel_operator"] == "gt"
     assert (tmp_path / "output.nc").is_file()
     assert (tmp_path / "diagnostics" / "state_matrices.nc").is_file()
     assert (tmp_path / "plots" / "result.pdf").is_file()
+    assert not (tmp_path / "report.md").exists()
 
     spectrum_dir = tmp_path / "spectrum"
     spectrum_dir.mkdir()
@@ -419,6 +431,8 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
     tool.run(context, candidate_id="matrix_002")
     assert context.output is high
     assert (tmp_path / "diagnostics" / "candidates.json").is_file()
+    assert "report.md" not in context.summary["artifacts"]
+    assert not (tmp_path / "report.md").exists()
     assert labels[-1]["xlabel"] == r"$z~/~a$"
     assert labels[-1]["ylabel"] == "bare matrix element"
 
@@ -1919,9 +1933,15 @@ def test_matching_plot_crops_even_quasi_to_nonnegative_x(monkeypatch, tmp_path) 
     limits = []
     monkeypatch.setattr(tool, "start_plot", lambda: None)
     monkeypatch.setattr(tool, "hline", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tool, "errorband", lambda x_values, values, **kwargs: plotted.append((kwargs["label"], list(x_values))))
+    monkeypatch.setattr(
+        tool, "errorband", lambda x_values, values, **kwargs: plotted.append((kwargs["label"], list(x_values)))
+    )
     monkeypatch.setattr(tool, "configure_plot", lambda **kwargs: limits.append(kwargs))
-    monkeypatch.setattr(tool, "save_figure", lambda *paths: [Path(path).parent.mkdir(parents=True, exist_ok=True) or Path(path).touch() for path in paths])
+    monkeypatch.setattr(
+        tool,
+        "save_figure",
+        lambda *paths: [Path(path).parent.mkdir(parents=True, exist_ok=True) or Path(path).touch() for path in paths],
+    )
     params = {
         "kernel_id": "quark_pdf_cg_gt_ratio_nlo",
         "scheme": "ratio",
@@ -2067,7 +2087,63 @@ def test_external_renormalization_terminal_writes_publication_artifacts(tmp_path
     assert observation["summary"] == "published renormalized matrix element"
     assert (tmp_path / "output.nc").is_file()
     assert (tmp_path / "plots" / "result.pdf").is_file()
+    assert "report.md" not in observation["artifacts"]
+    assert not (tmp_path / "report.md").exists()
     assert np.allclose(context.output.values, [[1.0, 2.0], [1.0, 2.0]])
+
+
+def test_self_renormalization_fit_publishes_pdf_svg_diagnostics_without_job_report(tmp_path) -> None:
+    from lamet_agent.stages.renormalization._fit import run
+
+    z = np.asarray([0.0, 0.1, 0.2, 0.3])
+    spacings = [0.06, 0.12, 0.18]
+    grids = []
+    for spacing in spacings:
+        known = log_m(z, spacing, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0)
+        grids.append(np.exp(known + 0.15 * z / HBAR_C_GEV_FM + 0.4 * spacing))
+    reference = EnsembleData(
+        None,
+        "bootstrap",
+        [np.stack(grids), np.stack(grids) * 1.001],
+        ["a", "z"],
+        {"a": spacings, "z": z.tolist()},
+        attrs={"coord_unit": "fm"},
+    )
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "renormalization",
+        "rn_zr_fit",
+        {
+            "type": "fit",
+            "scheme": "msbar",
+            "strategy": "self_renormalization",
+            "kernel_id": "z_msbar_pdf_nlo",
+            "kernel_parameters": {},
+            "normalization": False,
+            "mu": 2.0,
+            "LambdaQCD_gev": 0.2,
+            "d": 0.0,
+            "svdcut": 1e-12,
+        },
+        {"reference": reference},
+        {},
+        {"aligned_inputs": {"reference": reference}},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    observation = run(context)
+
+    stems = ("factor", "fit_lnM_vs_inv_a", "fit_mR_zmsbar", "fit_m_over_zR", "fit_f1")
+    for stem in stems:
+        assert (tmp_path / "plots" / f"{stem}.pdf").is_file()
+        assert (tmp_path / "plots" / f"{stem}.svg").is_file()
+        assert f"plots/{stem}.pdf" in observation["artifacts"]
+        assert f"plots/{stem}.svg" in observation["artifacts"]
+    assert "report.md" not in observation["artifacts"]
+    assert not (tmp_path / "report.md").exists()
+    assert set(context.summary["diagnostics"]["fit_quality"]) == {"reference", "m0_matching"}
 
 
 def _self_coverage_context(tmp_path, *, policy: str, scheme: str = "msbar") -> ToolContext:

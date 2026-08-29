@@ -142,7 +142,7 @@ def render_fit_diagnostics(
     line(z[finite], zmsbar[finite], color="0.2", label=r"$Z_{\overline{\mathrm{MS}}}(z,\mu)$")
     errorline(z, m_r, color=series_color(0), label=r"$m_R(z)=\exp[g(z)-m_0z]$")
     errorline(
-        z[finite], m_r_ratio[finite], color=series_color(1), marker="s", label=r"$m_R/Z_{\overline{\mathrm{MS}}}$"
+        z[finite], m_r_ratio, color=series_color(1), marker="s", label=r"$m_R/Z_{\overline{\mathrm{MS}}}$"
     )
     configure_plot(xlabel=Z_FM_LABEL, ylabel="factor", legend=True)
     save_figure(*_output_paths(directory, stem, formats))

@@ -37,12 +37,22 @@ def test_review_collects_preceding_stage_and_job_reports(tmp_path: Path) -> None
     (variation_directory / "report.md").write_text("# Correlator variation\n", encoding="utf-8")
     variation_terminal = {**terminal, "job_id": "ca__fit_high"}
     (variation_directory / "summary.json").write_text(json.dumps(variation_terminal), encoding="utf-8")
+    missing_directory = source_directory.parent / "ca__no_job_report"
+    missing_directory.mkdir()
+    missing_terminal = {**terminal, "job_id": "ca__no_job_report", "artifacts": []}
+    (missing_directory / "summary.json").write_text(json.dumps(missing_terminal), encoding="utf-8")
     review_directory = artifact_base / "02_review" / "review"
     review_directory.mkdir(parents=True)
     manifest = {
         "metadata": {"run_id": "review", "target_observable": "pdf", "parton": "quark"},
         "stages": {
-            "correlator_analysis": {"jobs": [{"id": "ca", "inputs": {}}, {"id": "ca__fit_high", "inputs": {}}]},
+            "correlator_analysis": {
+                "jobs": [
+                    {"id": "ca", "inputs": {}},
+                    {"id": "ca__fit_high", "inputs": {}},
+                    {"id": "ca__no_job_report", "inputs": {}},
+                ]
+            },
             "review": {"jobs": [{"id": "review", "inputs": {"results": ["ca"]}}]},
         },
     }
@@ -74,6 +84,8 @@ def test_review_collects_preceding_stage_and_job_reports(tmp_path: Path) -> None
     assert bundle["stage_reports"][0]["text"] == "# Correlator stage\n"
     assert bundle["job_reports"][0]["text"] == "# Correlator job\n"
     assert bundle["job_reports"][1]["text"] == "# Correlator variation\n"
+    assert bundle["job_reports"][2]["available"] is False
+    assert bundle["job_reports"][2]["text"] == ""
     assert bundle["stage_reports"][0]["path"] == "../../01_correlator_analysis/report.md"
     assert bundle["results"][0]["job_id"] == "ca"
     assert bundle["results"][0]["ensemble"] == ensemble._asdict()

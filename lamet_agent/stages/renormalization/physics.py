@@ -21,6 +21,7 @@ from lamet_agent.parallel import nonlinear_fit
 class _FactorFitResult:
     factor: EnsembleData
     plot_data: dict[str, Any]
+    fit_quality: dict[str, dict[str, float]]
 
 
 def load_data(value: Any) -> EnsembleData:
@@ -465,7 +466,23 @@ def _fit_factor_result(
         "m_over_zR_mean": np.asarray(gv.mean(m_over_zr), dtype=float).tolist(),
         "m_over_zR_sdev": np.asarray(gv.sdev(m_over_zr), dtype=float).tolist(),
     }
-    return _FactorFitResult(factor=factor_data, plot_data=plot_data)
+    fit_quality = {
+        "reference": {
+            "chi2": float(fit.chi2),
+            "dof": float(fit.dof),
+            "chi2_dof": float(fit.chi2 / fit.dof) if fit.dof else float("nan"),
+            "Q": float(fit.Q),
+            "logGBF": float(fit.logGBF),
+        },
+        "m0_matching": {
+            "chi2": float(m0_fit.chi2),
+            "dof": float(m0_fit.dof),
+            "chi2_dof": float(m0_fit.chi2 / m0_fit.dof) if m0_fit.dof else float("nan"),
+            "Q": float(m0_fit.Q),
+            "logGBF": float(m0_fit.logGBF),
+        },
+    }
+    return _FactorFitResult(factor=factor_data, plot_data=plot_data, fit_quality=fit_quality)
 
 
 def fit_factor(

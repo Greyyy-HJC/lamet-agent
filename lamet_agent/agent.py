@@ -860,7 +860,7 @@ class _AgentSession:
         (context.artifact_directory / "summary.json").write_text(
             json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
         )
-        _emit_progress(f"Job: {context.stage_id}/{context.job_id}... completed.")
+        _emit_progress(f"Job: {context.stage_id}/{context.job_id}... completed.\n")
         return context.output, context.summary
 
     def _run_context(
@@ -977,7 +977,7 @@ class _AgentSession:
                         (context.artifact_directory / "summary.json").write_text(
                             json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
                         )
-                        _emit_progress(f"Job: {context.stage_id}/{context.job_id}... completed.")
+                        _emit_progress(f"Job: {context.stage_id}/{context.job_id}... completed.\n")
                         return context.output, context.summary
             raise RuntimeError(
                 f"job '{context.job_id}' did not call a terminal tool within {self.max_tool_steps} turns"

@@ -19,8 +19,8 @@
 - [x] Plots: Jinchen
   - [x] Check: ALL
 - [ ] Reports
-  - [ ] `correlator_analys`: Jinchen
-  - [ ] `renormalization`: Jinchen
+  - [x] `correlator_analys`: Jinchen
+  - [x] `renormalization`: Jinchen
   - [ ] `fourier_transform`: Dianjun
   - [ ] `perturbative_matching`: Fei
   - [ ] `extrapolation`: Dianjun
@@ -45,5 +45,5 @@
 
 ## Kernel: Fei
 
-- [ ] New `alpha_s()` with more arguments
-- [ ] Rename all kernels to `"[<parton>_]<observable>_<gauge>_<current>_<scheme>_<order>"`
+- [x] New `alpha_s()` with more arguments
+- [x] Rename all kernels to `"[<parton>_]<observable>_<gauge>_<current>_<scheme>_<order>"`

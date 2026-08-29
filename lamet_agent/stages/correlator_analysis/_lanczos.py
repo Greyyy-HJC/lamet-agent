@@ -51,8 +51,11 @@ def run(context: ToolContext) -> dict[str, object]:
     )
     inspection = prepared["inspection"]
     source_data = prepared["source_data"]
+    provenance = prepared.get("three_point") if settings["scope"] == "3pt_matrix" else source_data
+    if provenance is None:
+        raise RuntimeError("Lanczos 3pt_matrix results require three-point correlator provenance")
     attrs = {
-        **source_data.attrs,
+        **provenance.attrs,
         "analysis_method": "lanczos",
         "lanczos_scope": str(settings["scope"]),
         "lanczos_iterations": int(inspection["iterations"]),
@@ -62,7 +65,7 @@ def run(context: ToolContext) -> dict[str, object]:
         "lanczos_time_step": int(inspection["lanczos_time_step"]),
         "sample_error_mode": str(context.manifest["metadata"]["sample_error_mode"]),
     }
-    artifacts = ["output.nc", "plots/result.pdf", "plots/result.svg", "diagnostics/lanczos.json", "report.md"]
+    artifacts = ["output.nc", "plots/result.pdf", "plots/result.svg", "diagnostics/lanczos.json"]
     start_plot()
     if settings["scope"] == "2pt_spectrum":
         values = np.asarray(result["values"], dtype=float)
@@ -95,7 +98,7 @@ def run(context: ToolContext) -> dict[str, object]:
         values = np.asarray(result["values"])
         z_values = list(prepared["z_values"])
         output = EnsembleData(
-            source_data.ensemble,
+            provenance.ensemble,
             resampling,
             [sample for sample in values],
             ["z"],
@@ -139,13 +142,6 @@ def run(context: ToolContext) -> dict[str, object]:
     diagnostics_path = context.artifact_directory / "diagnostics" / "lanczos.json"
     diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
     diagnostics_path.write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
-    (context.artifact_directory / "report.md").write_text(
-        "# Lanczos correlator result\n\n"
-        f"Scope: `{settings['scope']}`.\n\n"
-        f"Iterations: {inspection['iterations']}.\n\n"
-        + (f"{inspection.get('point_usage_warning')}\n" if inspection.get("point_usage_warning") else ""),
-        encoding="utf-8",
-    )
     context.state["correlator_result"] = output
     summary = {
         "stage_id": context.stage_id,

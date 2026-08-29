@@ -202,6 +202,7 @@ def write_fit_artifacts(
     sample_lines = [f"job={job_id} selected_candidate={selected.get('id')} strategy={strategy} scope={scope}"]
     q_values: list[float] = []
     chi2_values: list[float] = []
+    quality_by_z: dict[str, dict[str, Any]] = {}
     failed_count = 0
     allowed_components = {"re": {"re"}, "im": {"im"}, "both": {"re", "im"}}[component]
     plot_artifacts: list[str] = []
@@ -212,19 +213,33 @@ def write_fit_artifacts(
         z_value = fit.get("z")
         sample_lines.append(f"=== z={z_value} ===")
         sample_lines.append(f"center {_metric_text(fit)}")
+        z_q_values: list[float] = []
+        z_chi2_values: list[float] = []
+        z_sample_count = 0
         for record in fit.get("sample_diagnostics", []):
             if not isinstance(record, Mapping):
                 continue
+            z_sample_count += 1
             status = "Good" if float(record["Q"]) >= q_min else "Bad"
             sample_lines.append(f"{status} sample={record['sample']} {_metric_text(record)}")
             q = float(record["Q"])
             chi2_dof = float(record["chi2_dof"])
             if np.isfinite(q):
                 q_values.append(q)
+                z_q_values.append(q)
             if np.isfinite(chi2_dof):
                 chi2_values.append(chi2_dof)
+                z_chi2_values.append(chi2_dof)
         failed_here = int(fit.get("n_failed_samples", 0))
         failed_count += failed_here
+        quality_by_z[str(z_value)] = {
+            "successful_samples": z_sample_count,
+            "attempted_samples": z_sample_count + failed_here,
+            "numerical_failures": failed_here,
+            "q_below_threshold": int(sum(value < q_min for value in z_q_values)),
+            "q_threshold": q_min,
+            "median_chi2_dof": float(np.median(z_chi2_values)) if z_chi2_values else None,
+        }
         sample_lines.append(f"summary z={z_value} failed={failed_here}")
         plot_payload = fit.get("sample0_plot")
         if isinstance(plot_payload, Mapping):
@@ -286,6 +301,7 @@ def write_fit_artifacts(
             "chi2_dof": chi2_values,
             "n_successful": len(q_values),
             "n_failed": failed_count,
+            "by_z": quality_by_z,
         },
         dispersion_energy=dispersion_energy,
         application_fit=compact_application,

@@ -393,8 +393,6 @@ def run(context: ToolContext) -> dict[str, object]:
             sample_error_mode=sample_error_mode,
         )
     ]
-    report = f"# Renormalized matrix element\n\nScheme: `{scheme}`.\nStrategy: `{strategy}`.\n"
-    (context.artifact_directory / "report.md").write_text(report, encoding="utf-8")
     summary = {
         "stage_id": context.stage_id,
         "job_id": context.job_id,
@@ -412,7 +410,6 @@ def run(context: ToolContext) -> dict[str, object]:
             "output.nc",
             "diagnostics/renormalization.json",
             *[f"plots/{stem}.pdf" for stem, _caption in rendered],
-            "report.md",
         ],
     }
     context.finish(result, summary)

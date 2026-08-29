@@ -245,7 +245,9 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         {
             "candidate_id": candidate["id"],
             "method": candidate.get("method"),
+            "fit_scope": candidate.get("fit_scope"),
             "window": candidate.get("window"),
+            "tsep_values": candidate.get("tsep_values"),
             "nstate": candidate.get("nstate"),
             "prior_width": candidate.get("prior_width"),
             "correlator_rescale": candidate.get("correlator_rescale"),
@@ -339,21 +341,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         configure_plot(xlabel=xlabel, ylabel=str(data.name or "result").replace("_", " "))
         save_figure(context.artifact_directory / "plots" / "result.pdf")
         plot_artifact = "plots/result.pdf"
-    report = (
-        f"# Correlator result\n\nSelected candidate: `{candidate_id}`.\n"
-        f"Method: `{selected.get('method')}`.\n"
-        f"fallback_no_q_passing: `{str(fallback_no_q_passing).lower()}`.\n"
-    )
-    if fallback_no_q_passing:
-        report += (
-            "\nATTENTION: no candidate passed `q_min` after the allowed attempts; "
-            "the deterministic best candidate was published anyway.\n"
-        )
-    (context.artifact_directory / "report.md").write_text(report, encoding="utf-8")
     artifacts = (
-        ["output.nc", "diagnostics/candidates.json", "report.md"]
-        + ([plot_artifact] if plot_artifact else [])
-        + fit_artifacts
+        ["output.nc", "diagnostics/candidates.json"] + ([plot_artifact] if plot_artifact else []) + fit_artifacts
     )
     summary = {
         "stage_id": context.stage_id,
