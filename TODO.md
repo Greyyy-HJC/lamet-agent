@@ -16,9 +16,8 @@
 
 ## Artifacts
 
-- [ ] Plots: Jinchen
-  - [ ] Check: ALL
-  - [ ] Missing extrapolation plots
+- [x] Plots: Jinchen
+  - [x] Check: ALL
 - [ ] Reports
   - [ ] `correlator_analys`: Jinchen
   - [ ] `renormalization`: Jinchen
