@@ -11,7 +11,10 @@ def run(
     context: ToolContext,
     *,
     title: str,
+    scope_and_provenance: str,
     workflow_summary: str,
+    data_and_parameter_coverage: str,
+    consistency_analysis: str,
     physical_analysis: str,
     systematics_and_limitations: str,
     literature_comparison: str,
@@ -54,6 +57,8 @@ def run(
         "",
         f"## {headings['scope']}",
         "",
+        scope_and_provenance.strip(),
+        "",
         (
             f"本综述检查了 `{bundle['run_id']}` 中显式选择的 {len(bundle['results'])} 个结果，"
             f"并纳入 Review 之前的 {len(bundle['stage_reports'])} 份阶段报告。"
@@ -67,6 +72,8 @@ def run(
         workflow_summary.strip(),
         "",
         f"## {headings['coverage']}",
+        "",
+        data_and_parameter_coverage.strip(),
         "",
         "| Stage/job | Dimensions | Samples | Physical metadata |",
         "| --- | --- | ---: | --- |",
@@ -100,16 +107,9 @@ def run(
             "",
             f"## {headings['consistency']}",
             "",
+            consistency_analysis.strip(),
+            "",
         ]
-    )
-    lines.extend(
-        [
-            f"- **{finding['status']}** `{finding['source_job'] or '-'} -> {finding['consumer_job']}` "
-            f"(`{finding['group']}{'/' + str(finding['field']) if finding['field'] else ''}`): "
-            f"{finding['message']}"
-            for finding in consistency["findings"]
-        ]
-        or ["- 未发现确定性一致性问题。" if chinese else "- No deterministic consistency findings were recorded."]
     )
     lines.extend(
         [

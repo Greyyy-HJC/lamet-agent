@@ -1170,6 +1170,12 @@ def test_review_tools_have_provider_schemas() -> None:
     tools = _discover_tools("review")
     assert tools
     assert all(tool.schema["function"]["name"] == tool.name for tool in tools)
+    write_review = next(tool for tool in tools if tool.name == "write_review")
+    assert {
+        "scope_and_provenance",
+        "data_and_parameter_coverage",
+        "consistency_analysis",
+    } <= set(write_review.schema["function"]["parameters"]["required"])
 
 
 def test_workflow_asks_are_not_model_visible_tool_directories() -> None:
@@ -1187,10 +1193,14 @@ def test_workflow_asks_are_not_model_visible_tool_directories() -> None:
 
 
 def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Path) -> None:
-    from lamet_agent.agent import _invoke
+    from lamet_agent.agent import _Tool, _invoke
     from lamet_agent.data import EnsembleData
 
-    tool = next(item for item in _discover_tools("review") if item.name == "inspect_results")
+    def no_argument(context):
+        context.state["no_argument_called"] = True
+        return {"summary": "called no-argument tool"}
+
+    tool = _Tool("no_argument", no_argument, "", {})
     target = EnsembleData(
         None,
         "bootstrap",
@@ -1216,7 +1226,7 @@ def test_no_argument_tool_ignores_provider_empty_object_placeholder(tmp_path: Pa
     )
     observation = _invoke(tool, context, {"{}": {}})
     assert observation["ignored_arguments"] == ["{}"]
-    assert "result_summary" in context.state
+    assert context.state["no_argument_called"] is True
 
     argument_tool = next(item for item in _discover_tools("review") if item.name == "read_papers")
     with pytest.raises(ValueError, match="unknown arguments"):
@@ -1926,18 +1936,18 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, review_catal
         },
     }
     responses = [
-        _AssistantResponse("inspect", _ToolCall("1", "inspect_results", {})),
-        _AssistantResponse("check", _ToolCall("2", "check_consistency", {})),
-        _AssistantResponse("list", _ToolCall("3", "list_literature", {})),
-        _AssistantResponse("read", _ToolCall("4", "read_papers", {"paper_ids": ["refactor_demo_lamet"]})),
+        _AssistantResponse("read", _ToolCall("1", "read_papers", {"paper_ids": ["refactor_demo_lamet"]})),
         _AssistantResponse(
             "write",
             _ToolCall(
-                "5",
+                "2",
                 "write_review",
                 {
                     "title": "Toy review",
+                    "scope_and_provenance": "The selected results and their provenance define the review scope.",
                     "workflow_summary": "The scoped workflow completed.",
+                    "data_and_parameter_coverage": "The available fixture records the selected data coverage.",
+                    "consistency_analysis": "No deterministic consistency finding was recorded.",
                     "physical_analysis": "The scoped outputs are mutually consistent.",
                     "systematics_and_limitations": "Only fixture evidence is available.",
                     "literature_comparison": "The local paper provides methodological context.",
@@ -1946,7 +1956,8 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, review_catal
             ),
         ),
     ]
-    result = create_session(_ScriptedBackend(responses)).run_manifest(Manifest(tmp_path / "manifest.json", manifest))
+    backend = _ScriptedBackend(responses)
+    result = create_session(backend).run_manifest(Manifest(tmp_path / "manifest.json", manifest))
     assert result["summaries"]["review_1"]["result"] == "review"
     assert (tmp_path / "runs" / "01_review" / "review_1" / "review.md").is_file()
     transcript = (tmp_path / "runs" / "01_review" / "review_1" / "llm_transcript.md").read_text(encoding="utf-8")
@@ -1956,16 +1967,23 @@ def test_scripted_review_run_uses_one_tool_per_turn(tmp_path: Path, review_catal
     assert "## review/review_1 turn 1, request 1: received from LLM" in transcript
     assert "## review/review_1 turn 2, request 2: sent to LLM" in transcript
     assert '"role": "tool"' in transcript
-    assert "## review/review_1 turn 5, request 5: received from LLM" in transcript
+    assert "## review/review_1 turn 2, request 2: received from LLM" in transcript
     assert '"name": "write_review"' in transcript
     assert "tool result:" not in transcript
     assert "Run completed" not in transcript
+    initial_job = json.loads(backend.calls[0][0][-1].content.split("\n\n", 1)[1])
+    assert initial_job["review_context"]["consistency"]["counts"] == {
+        "error": 0,
+        "warning": 0,
+        "info": 0,
+        "not_checkable": 0,
+    }
     stdout = capsys.readouterr().out
     assert "Stage: review" in stdout
-    assert "Job: review/review_1" in stdout
-    assert stdout.count("Calling LLM (scripted:test)") == 5
-    assert "Running tool: inspect_results..." in stdout
-    assert "Tool completed: write_review." in stdout
+    assert "Job: review/review_1... completed." in stdout
+    assert stdout.count("Calling LLM (scripted:test)") == 2
+    assert "Running tool: read_papers... completed." in stdout
+    assert "Running tool: write_review... completed." in stdout
     assert "Stage review finished." in stdout
     assert "Agent run complete (1 job(s))." in stdout
 
@@ -1992,42 +2010,34 @@ def test_scripted_review_run_executes_multi_call_responses_sequentially(
     backend = _ScriptedBackend(
         [
             _AssistantResponse(
-                "inspect and check",
-                tool_calls=(_ToolCall("1", "inspect_results", {}), _ToolCall("2", "check_consistency", {})),
-            ),
-            _AssistantResponse(
-                "list and read",
+                "read and write",
                 tool_calls=(
-                    _ToolCall("3", "list_literature", {}),
-                    _ToolCall("4", "read_papers", {"paper_ids": ["refactor_demo_lamet"]}),
-                ),
-            ),
-            _AssistantResponse(
-                "write",
-                _ToolCall(
-                    "5",
-                    "write_review",
-                    {
-                        "title": "Toy review",
-                        "workflow_summary": "The scoped workflow completed.",
-                        "physical_analysis": "The scoped outputs are mutually consistent.",
-                        "systematics_and_limitations": "Only fixture evidence is available.",
-                        "literature_comparison": "The local paper provides methodological context.",
-                        "conclusion": "The toy workflow is internally consistent.",
-                    },
+                    _ToolCall("1", "read_papers", {"paper_ids": ["refactor_demo_lamet"]}),
+                    _ToolCall(
+                        "2",
+                        "write_review",
+                        {
+                            "title": "Toy review",
+                            "scope_and_provenance": "The selected results define the review scope.",
+                            "workflow_summary": "The scoped workflow completed.",
+                            "data_and_parameter_coverage": "The fixture records the available coverage.",
+                            "consistency_analysis": "No deterministic consistency finding was recorded.",
+                            "physical_analysis": "The scoped outputs are mutually consistent.",
+                            "systematics_and_limitations": "Only fixture evidence is available.",
+                            "literature_comparison": "The local paper provides methodological context.",
+                            "conclusion": "The toy workflow is internally consistent.",
+                        },
+                    ),
                 ),
             ),
         ]
     )
     result = create_session(backend).run_manifest(Manifest(tmp_path / "manifest.json", manifest))
     assert result["summaries"]["review_1"]["result"] == "review"
-    assert len(backend.calls) == 3
-    second_turn_messages = backend.calls[1][0]
-    assert [message.role for message in second_turn_messages[-3:]] == ["assistant", "tool", "tool"]
-    assert [call.name for call in second_turn_messages[-3].calls] == ["inspect_results", "check_consistency"]
+    assert len(backend.calls) == 1
     stdout = capsys.readouterr().out
-    assert stdout.count("Calling LLM (scripted:test)") == 3
-    assert stdout.index("Running tool: inspect_results...") < stdout.index("Running tool: check_consistency...")
+    assert stdout.count("Calling LLM (scripted:test)") == 1
+    assert stdout.index("Running tool: read_papers...") < stdout.index("Running tool: write_review...")
 
 
 def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path, review_catalog: Path) -> None:
@@ -2050,18 +2060,18 @@ def test_manifest_run_accepts_a_path_as_the_public_entrypoint(tmp_path: Path, re
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     responses = [
-        _AssistantResponse("inspect", _ToolCall("1", "inspect_results", {})),
-        _AssistantResponse("check", _ToolCall("2", "check_consistency", {})),
-        _AssistantResponse("list", _ToolCall("3", "list_literature", {})),
-        _AssistantResponse("read", _ToolCall("4", "read_papers", {"paper_ids": ["refactor_demo_lamet"]})),
+        _AssistantResponse("read", _ToolCall("1", "read_papers", {"paper_ids": ["refactor_demo_lamet"]})),
         _AssistantResponse(
             "write",
             _ToolCall(
-                "5",
+                "2",
                 "write_review",
                 {
                     "title": "Toy review",
+                    "scope_and_provenance": "The selected results and their provenance define the review scope.",
                     "workflow_summary": "The scoped workflow completed.",
+                    "data_and_parameter_coverage": "The available fixture records the selected data coverage.",
+                    "consistency_analysis": "No deterministic consistency finding was recorded.",
                     "physical_analysis": "The scoped outputs are mutually consistent.",
                     "systematics_and_limitations": "Only fixture evidence is available.",
                     "literature_comparison": "The local paper provides methodological context.",

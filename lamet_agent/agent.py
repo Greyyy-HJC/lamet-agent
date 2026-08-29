@@ -49,9 +49,9 @@ def _resolve_progress_mode(mode: str, *, has_systematics: bool) -> str:
     return mode
 
 
-def _emit_progress(message: str = "") -> None:
+def _emit_progress(message: str = "", *, end: str = "\n") -> None:
     """Write one immediately visible runtime progress line to stdout."""
-    print(message, flush=True)
+    print(message, end=end, flush=True)
 
 
 def _message_payload(message: Message) -> dict[str, Any]:
@@ -79,6 +79,174 @@ def _append_transcript(path: Path, title: str, payload: Any) -> None:
         handle.write(
             f"\n## {title}\n\n```json\n" + json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n```\n"
         )
+
+
+def _format_token_usage(usage: Mapping[str, int] | None) -> str:
+    """Format one backend-normalized token usage record for runtime logs."""
+    if not usage:
+        return "tokens unavailable"
+    total = usage.get("total_tokens")
+    if total is None:
+        total = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+    details = [f"input={usage.get('input_tokens', 0)}", f"output={usage.get('output_tokens', 0)}"]
+    if "cached_input_tokens" in usage:
+        details.append(f"cached={usage['cached_input_tokens']}")
+    if "reasoning_output_tokens" in usage:
+        details.append(f"reasoning={usage['reasoning_output_tokens']}")
+    return f"tokens={total} ({', '.join(details)})"
+
+
+def _compact_review_diagnostics(value: Any) -> dict[str, Any]:
+    """Keep only scalar or short final-fit diagnostics for Review."""
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if isinstance(item, Mapping):
+            continue
+        if isinstance(item, list):
+            if len(item) > 12 or any(isinstance(child, (Mapping, list)) for child in item):
+                continue
+        result[str(key)] = item
+    return result
+
+
+_REVIEW_PLOT_POINTS = 60
+_FIT_QUALITY_KEYS = ("Q", "chi2", "dof", "chi2_dof", "aic", "logGBF")
+
+
+def _review_fit_quality(stage_id: str, summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Return normalized selected-fit quality without sample-level diagnostics."""
+    if stage_id == "perturbative_matching":
+        return {"status": "not_applicable"}
+    diagnostics = summary.get("diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return {"status": "not_available"}
+    values = {key: diagnostics[key] for key in _FIT_QUALITY_KEYS if key in diagnostics}
+    aliases = {
+        "selected_Q": "Q",
+        "selected_chi2": "chi2",
+        "selected_dof": "dof",
+        "selected_chi2_dof": "chi2_dof",
+        "selected_aic": "aic",
+        "selected_logGBF": "logGBF",
+    }
+    for source, target in aliases.items():
+        if source in diagnostics:
+            values[target] = diagnostics[source]
+    candidates = diagnostics.get("candidates")
+    if isinstance(candidates, list):
+        candidate_id = summary.get("decisions", {}).get("candidate_id")
+        selected = next(
+            (
+                candidate
+                for candidate in candidates
+                if isinstance(candidate, Mapping)
+                and candidate_id is not None
+                and candidate.get("candidate_id", candidate.get("id")) == candidate_id
+            ),
+            candidates[0] if len(candidates) == 1 and isinstance(candidates[0], Mapping) else None,
+        )
+        if isinstance(selected, Mapping):
+            values.update({key: selected[key] for key in _FIT_QUALITY_KEYS if key in selected})
+    return {"status": "available", **values} if values else {"status": "not_available"}
+
+
+def _review_output_summary(output: Any, mode: str, *, max_points: int | None) -> dict[str, Any]:
+    """Summarize the plotted output at bounded or full coordinate resolution."""
+    from .data import format_gvar
+
+    selected = output
+    if "component" in selected.dims and "real" in selected.coords.get("component", []):
+        selected = selected.at("component", "real")
+    plot_dim = next((name for name in ("x", "z", "state") if name in selected.dims), selected.dims[-1])
+    original_count = len(selected.coords[plot_dim])
+    if max_points is not None and original_count > max_points:
+        indices = np.rint(np.linspace(0, original_count - 1, max_points)).astype(int)
+        coordinates = [selected.coords[plot_dim][index] for index in indices]
+        selected = selected.at(plot_dim, coordinates)
+        method = "uniform_plot_indices"
+    else:
+        method = "full_resolution"
+    record = {
+        "name": selected.name,
+        "dims": selected.dims,
+        "coords": {
+            dim: [round(float(item), 12) if isinstance(item, (int, float)) else item for item in values]
+            for dim, values in selected.coords.items()
+        },
+        "n_sample": selected.n_sample,
+        "resample": selected.resample,
+        "sampling": {
+            "dimension": plot_dim,
+            "method": method,
+            "original_points": original_count,
+            "sent_points": len(selected.coords[plot_dim]),
+            "full_resolution_available": True,
+        },
+        "center_error": {},
+    }
+    if selected.ensemble is not None:
+        record["ensemble"] = selected.ensemble._asdict()
+    if np.iscomplexobj(selected.values):
+        record["center_error"] = {
+            "real": format_gvar(selected.real.average(mode)),
+            "imag": format_gvar(selected.imag.average(mode)),
+        }
+    else:
+        record["center_error"] = {"value": format_gvar(selected.average(mode))}
+    return record
+
+
+def _review_summary(context: ToolContext, summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the compact per-job evidence record consumed by Review."""
+    record: dict[str, Any] = {
+        "stage_id": context.stage_id,
+        "job_id": context.job_id,
+        "result": summary.get("result"),
+        "decisions": summary.get("decisions", {}),
+        "diagnostics": _compact_review_diagnostics(summary.get("diagnostics", {})),
+        "fit_quality": _review_fit_quality(context.stage_id, summary),
+    }
+    output = context.output
+    if output is None or output.__class__.__name__ != "EnsembleData":
+        return record
+    mode = str(context.manifest["metadata"]["sample_error_mode"])
+    record["output"] = _review_output_summary(output, mode, max_points=_REVIEW_PLOT_POINTS)
+    selected_attrs = {
+        key: output.attrs[key]
+        for key in (
+            "target_observable",
+            "observable",
+            "hadron",
+            "parton",
+            "polarization",
+            "gfix",
+            "momentum_gev",
+            "initial_momentum",
+            "final_momentum",
+            "xi",
+            "t_gev2",
+            "sector",
+            "renormalization_scheme",
+            "kernel_id",
+            "bilocal_anchor",
+            "hermitian_partner_id",
+            "gpd_completion_mode",
+            "coord_unit",
+        )
+        if key in output.attrs
+    }
+    if selected_attrs:
+        record["physical_metadata"] = selected_attrs
+    return record
+
+
+def _write_review_summary(context: ToolContext, summary: Mapping[str, Any]) -> None:
+    """Write the compact Review evidence beside the canonical job summary."""
+    path = context.artifact_directory / "review_summary.json"
+    payload = json.dumps(_review_summary(context, summary), indent=2, sort_keys=True, ensure_ascii=False)
+    path.write_text(payload, encoding="utf-8")
 
 
 @dataclass
@@ -202,19 +370,19 @@ class LlmSession:
                 ensure_ascii=False,
             )
             prompt_digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
-        _emit_progress(f"Calling LLM ({self.backend.identity}) for {label}...")
+        _emit_progress(f"Calling LLM ({self.backend.identity}) for {label}...", end="")
         response = self.backend.complete(
             messages=request_messages,
             tools=tool_schemas,
             prompt_digest=prompt_digest,
             response_schema=response_schema,
         )
+        _emit_progress(f" {_format_token_usage(response.usage)}.")
         assistant_message = Message("assistant", response.text, tool_calls=response.calls)
-        _append_transcript(
-            self.transcript_path,
-            f"{label}, request {self.calls}: received from LLM",
-            _message_payload(assistant_message),
-        )
+        received_payload = _message_payload(assistant_message)
+        if response.usage:
+            received_payload["usage"] = dict(response.usage)
+        _append_transcript(self.transcript_path, f"{label}, request {self.calls}: received from LLM", received_payload)
         if retain_history:
             self.history.extend((request_messages[-1], assistant_message))
             self._pending_context.clear()
@@ -692,7 +860,7 @@ class _AgentSession:
         (context.artifact_directory / "summary.json").write_text(
             json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
         )
-        _emit_progress(f"Job {context.stage_id}/{context.job_id} finished")
+        _emit_progress(f"Job: {context.stage_id}/{context.job_id}... completed.")
         return context.output, context.summary
 
     def _run_context(
@@ -723,6 +891,20 @@ class _AgentSession:
             contract=contract,
             session=llm_session,
         )
+        if context.stage_id == "review":
+            from .stages.review._check_consistency import run as run_consistency
+            from .stages.review._inspect_results import run as inspect_results
+            from .stages.review._list_literature import run as list_literature
+
+            inspected = inspect_results(context)
+            run_consistency(context)
+            literature = list_literature(context)
+            context.state["review_preflight"] = {
+                "results": inspected.get("results", []),
+                "reports": inspected.get("reports", []),
+                "consistency": copy.deepcopy(context.state["consistency"]),
+                "literature_candidates": literature.get("candidates", []),
+            }
         if context.stage_id in _WORKFLOW_STAGES:
             workflow = importlib.import_module(f"lamet_agent.stages.{context.stage_id}.workflow")
             workflow.run(context, llm_session)
@@ -732,10 +914,13 @@ class _AgentSession:
             "stage_id": context.stage_id,
             "job_id": context.job_id,
             "params": _summarize(context.params),
-            "inputs": _summarize(context.inputs),
-            "input_summaries": _summarize(context.input_summaries),
             "artifact_directory": str(context.artifact_directory),
         }
+        if context.stage_id == "review":
+            dynamic_job["review_context"] = context.state["review_preflight"]
+        else:
+            dynamic_job["inputs"] = _summarize(context.inputs)
+            dynamic_job["input_summaries"] = _summarize(context.input_summaries)
         messages = [
             Message("system", static_prompt),
             Message(
@@ -767,13 +952,13 @@ class _AgentSession:
                     tool_steps += 1
                     if tool_steps > self.max_tool_steps:
                         raise RuntimeError(f"job '{context.job_id}' exceeded {self.max_tool_steps} tool steps")
-                    _emit_progress(f"Running tool: {call.name}...")
+                    _emit_progress(f"Running tool: {call.name}...", end="")
                     try:
                         observation = _invoke(tool_map[call.name], context, call.arguments)
                     except Exception:
-                        _emit_progress(f"Tool failed: {call.name}.")
+                        _emit_progress(" failed.")
                         raise
-                    _emit_progress(f"Tool completed: {call.name}.")
+                    _emit_progress(" completed.")
                     tool_message = Message(
                         "tool",
                         json.dumps(observation, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
@@ -792,7 +977,7 @@ class _AgentSession:
                         (context.artifact_directory / "summary.json").write_text(
                             json.dumps(context.summary, indent=2, sort_keys=True), encoding="utf-8"
                         )
-                        _emit_progress(f"Job {context.stage_id}/{context.job_id} finished after {turn} turn(s).")
+                        _emit_progress(f"Job: {context.stage_id}/{context.job_id}... completed.")
                         return context.output, context.summary
             raise RuntimeError(
                 f"job '{context.job_id}' did not call a terminal tool within {self.max_tool_steps} turns"
@@ -847,8 +1032,6 @@ class _AgentSession:
                     _emit_progress(f"Stage: {stage_id}")
                     if progress_mode == "stage":
                         stage_progress = tqdm(total=len(stage_jobs), desc=stage_id, unit="job")
-                _emit_progress("")
-                _emit_progress(f"Job: {stage_id}/{job.job_id}")
                 job.artifact_directory.mkdir(parents=True, exist_ok=False)
                 resolved_inputs: dict[str, Any] = {}
                 input_summaries: dict[str, Any] = {}
@@ -890,6 +1073,13 @@ class _AgentSession:
                 else:
                     tools, static_prompt, digest = bundle
                 output, summary = self._run_context(context, tools, static_prompt, digest)
+                _write_review_summary(context, summary)
+                summary = copy.deepcopy(summary)
+                if "review_summary.json" not in summary["artifacts"]:
+                    summary["artifacts"].append("review_summary.json")
+                (context.artifact_directory / "summary.json").write_text(
+                    json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
+                )
                 self._outputs[job.job_id] = output
                 self._summaries[job.job_id] = summary
                 stage_records.append(
@@ -920,6 +1110,9 @@ class _AgentSession:
             if stage_progress is not None:
                 stage_progress.close()
             parallel.close()
+            close_backend = getattr(self.backend, "close", None)
+            if callable(close_backend):
+                close_backend()
         _emit_progress("=" * 60)
         _emit_progress(f"Agent run complete ({len(jobs)} job(s)).")
         _emit_progress("=" * 60)

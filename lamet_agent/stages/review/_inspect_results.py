@@ -1,4 +1,4 @@
-"""Assemble the complete upstream evidence bundle for Review."""
+"""Assemble compact final-value evidence and the complete upstream bundle for Review."""
 
 from __future__ import annotations
 
@@ -69,7 +69,13 @@ def run(context: ToolContext) -> dict[str, object]:
             job_directory = stage_directory / job_id
             report_path = job_directory / "report.md"
             summary_path = job_directory / "summary.json"
+            review_summary_path = job_directory / "review_summary.json"
             terminal = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else None
+            review_summary = (
+                json.loads(review_summary_path.read_text(encoding="utf-8"))
+                if review_summary_path.is_file()
+                else None
+            )
             declared = terminal.get("artifacts", []) if terminal else []
             artifacts = [
                 {
@@ -95,12 +101,17 @@ def run(context: ToolContext) -> dict[str, object]:
                     "sha256": hashlib.sha256(report_path.read_bytes()).hexdigest() if report_path.is_file() else None,
                     "text": report_path.read_text(encoding="utf-8") if report_path.is_file() else "",
                     "terminal_summary": terminal,
+                    "review_summary": review_summary,
                     "artifacts": artifacts,
                 }
             )
 
     summaries = []
-    terminal_summaries = context.input_summaries.get("results", [])
+    review_by_job = {
+        str(item["job_id"]): item["review_summary"]
+        for item in job_reports
+        if item.get("job_id") is not None and item.get("review_summary") is not None
+    }
     for index, value in enumerate(results):
         item = _summary(value)
         source = authored_sources[index]
@@ -108,7 +119,7 @@ def run(context: ToolContext) -> dict[str, object]:
             item.update({"job_id": source, "stage_id": jobs[source]["stage_id"]})
         else:
             item.update({"job_id": None, "stage_id": "external", "source": source})
-        item["terminal_summary"] = terminal_summaries[index] if index < len(terminal_summaries) else None
+        item["review_summary"] = review_by_job.get(source) if isinstance(source, str) else None
         summaries.append(item)
 
     bundle = {
@@ -125,6 +136,10 @@ def run(context: ToolContext) -> dict[str, object]:
     )
     context.state["result_summary"] = summaries
     context.state["review_bundle"] = bundle
+    response_summaries = [
+        item.get("review_summary", item)
+        for item in summaries
+    ]
     return {
         "summary": f"inspected {len(summaries)} results and collected {len(stage_reports)} stage reports",
         "metrics": {
@@ -134,9 +149,10 @@ def run(context: ToolContext) -> dict[str, object]:
             "missing_stage_reports": [item["stage_id"] for item in stage_reports if not item["available"]],
         },
         "reports": [
-            {"stage_id": item["stage_id"], "path": item["path"], "text": item["text"]} for item in stage_reports
+            {"stage_id": item["stage_id"], "path": item["path"], "available": item["available"]}
+            for item in stage_reports
         ],
-        "results": summaries,
+        "results": response_summaries,
         "state_keys": ["result_summary", "review_bundle"],
         "artifacts": ["review_bundle.json"],
     }

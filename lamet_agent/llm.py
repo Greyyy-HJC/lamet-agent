@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import hashlib
 import json
 import os
 import urllib.request
@@ -103,7 +104,8 @@ def _validate_provider_model(provider: _ResolvedProvider, api_key: str) -> _Reso
         return replace(provider, model=available[0])
     if provider.model not in available:
         raise ValueError(
-            f"model {provider.model!r} is not available from {provider.base_url!r}; available models: {', '.join(available)}"
+            f"model {provider.model!r} is not available from {provider.base_url!r}; "
+            f"available models: {', '.join(available)}"
         )
     return provider
 
@@ -180,6 +182,7 @@ class _AssistantResponse:
     tool_call: _ToolCall | None = None
     tool_calls: tuple[_ToolCall, ...] = ()
     structured: Mapping[str, Any] | None = None
+    usage: Mapping[str, int] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.text, str):
@@ -188,6 +191,12 @@ class _AssistantResponse:
             raise TypeError("tool_calls must be a tuple of internal tool-call values")
         if self.structured is not None and not isinstance(self.structured, Mapping):
             raise TypeError("structured response must be an object")
+        if self.usage is not None:
+            if not isinstance(self.usage, Mapping) or any(
+                not isinstance(key, str) or not isinstance(value, int) or isinstance(value, bool)
+                for key, value in self.usage.items()
+            ):
+                raise TypeError("response usage must be a mapping of token names to integers")
         if self.tool_call is None and len(self.tool_calls) == 1:
             object.__setattr__(self, "tool_call", self.tool_calls[0])
             object.__setattr__(self, "tool_calls", ())
@@ -203,6 +212,46 @@ class _AssistantResponse:
         """Return all calls while preserving the single-call test interface."""
         return self.tool_calls or ((self.tool_call,) if self.tool_call is not None else ())
 
+
+def _normalise_usage(value: Any) -> dict[str, int] | None:
+    """Extract a compact token-usage mapping from API or Codex response data."""
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(by_alias=False)
+    elif not isinstance(value, Mapping) and hasattr(value, "__dict__"):
+        value = vars(value)
+    if not isinstance(value, Mapping):
+        return None
+    if isinstance(value.get("last"), Mapping):
+        value = value["last"]
+    aliases = {
+        "prompt_tokens": "input_tokens",
+        "completion_tokens": "output_tokens",
+        "total_tokens": "total_tokens",
+        "inputTokens": "input_tokens",
+        "outputTokens": "output_tokens",
+        "totalTokens": "total_tokens",
+        "cachedInputTokens": "cached_input_tokens",
+        "reasoningOutputTokens": "reasoning_output_tokens",
+        "cacheWriteInputTokens": "cache_write_input_tokens",
+    }
+    result = {
+        aliases.get(str(key), str(key)): int(raw)
+        for key, raw in value.items()
+        if aliases.get(str(key), str(key))
+        in {
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cached_input_tokens",
+            "reasoning_output_tokens",
+            "cache_write_input_tokens",
+        }
+        and isinstance(raw, int)
+        and not isinstance(raw, bool)
+    }
+    return result or None
 
 class LlmBackend(Protocol):
     """Synchronous interface used by an agent workflow session."""
@@ -318,7 +367,12 @@ class _OpenAICompatibleBackend:
                     structured = json.loads(text)
                     if not isinstance(structured, dict):
                         raise TypeError("provider structured response must decode to an object")
-                return _AssistantResponse(text, tool_calls=tuple(calls), structured=structured)
+                return _AssistantResponse(
+                    text,
+                    tool_calls=tuple(calls),
+                    structured=structured,
+                    usage=_normalise_usage(payload.get("usage")),
+                )
             except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
                 last_protocol_error = exc
         raise ValueError(
@@ -327,12 +381,21 @@ class _OpenAICompatibleBackend:
 
 
 class _CodexBackend:
-    """Stateless adapter for the installed openai-codex thread SDK."""
+    """Persistent per-job adapter for the installed openai-codex thread SDK."""
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model
         self.identity = f"codex:{model or 'default'}"
         self._turn = 0
+        self._codex = None
+        self._threads: dict[str, Any] = {}
+
+    @staticmethod
+    def _thread_key(messages: list[Message], prompt_digest: str) -> str:
+        """Identify one job conversation from its stable prompt and first request."""
+        first_user = next((message.content for message in messages if message.role == "user"), "")
+        payload = f"{prompt_digest}\0{first_user}".encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
 
     def complete(
         self,
@@ -342,9 +405,12 @@ class _CodexBackend:
         prompt_digest: str,
         response_schema: Mapping[str, Any] | None = None,
     ) -> _AssistantResponse:
+        thread_key = self._thread_key(messages, prompt_digest)
+        existing_thread = thread_key in self._threads
         transcript = []
-        start = 1 if messages and messages[0].role == "system" else 0
-        for message in messages[start:]:
+        source_messages = messages[-1:] if existing_thread else messages
+        start = 1 if source_messages and source_messages[0].role == "system" and not existing_thread else 0
+        for message in source_messages[start:]:
             item: dict[str, Any] = {"role": message.role, "content": message.content}
             if message.tool_call_id:
                 item["tool_call_id"] = message.tool_call_id
@@ -390,15 +456,20 @@ class _CodexBackend:
                 "</OUTPUT_CONSTRAINT>",
             ]
         )
-        developer_instructions = messages[0].content if messages and messages[0].role == "system" else ""
-        with Codex() as codex:
-            thread = codex.thread_start(
+        if self._codex is None:
+            self._codex = Codex()
+        if not existing_thread:
+            developer_instructions = messages[0].content if messages and messages[0].role == "system" else ""
+            thread = self._codex.thread_start(
                 developer_instructions=developer_instructions,
                 sandbox=Sandbox.read_only,
                 ephemeral=True,
                 model=self.model,
             )
-            result = thread.run(task_input, sandbox=Sandbox.read_only)
+            self._threads[thread_key] = thread
+        else:
+            thread = self._threads[thread_key]
+        result = thread.run(task_input, sandbox=Sandbox.read_only)
         raw = result.final_response
         if not isinstance(raw, str) or not raw.strip():
             raise RuntimeError(f"Codex returned no final response: {result}")
@@ -411,7 +482,7 @@ class _CodexBackend:
         if response_schema is not None:
             if not isinstance(payload, dict):
                 raise TypeError("Codex structured response must decode to an object")
-            return _AssistantResponse(raw, structured=payload)
+            return _AssistantResponse(raw, structured=payload, usage=_normalise_usage(result.usage))
 
         if not isinstance(payload, dict) or set(payload) != {"text", "tool_calls"}:
             raise ValueError("Codex response must contain exactly text and tool_calls")
@@ -434,7 +505,14 @@ class _CodexBackend:
             if tool_payload["name"] not in known_names:
                 raise ValueError(f"Codex response requested unavailable tool '{tool_payload['name']}'")
             calls.append(_ToolCall(f"turn-{self._turn}-{index}", tool_payload["name"], tool_payload["arguments"]))
-        return _AssistantResponse(payload["text"], tool_calls=tuple(calls))
+        return _AssistantResponse(payload["text"], tool_calls=tuple(calls), usage=_normalise_usage(result.usage))
+
+    def close(self) -> None:
+        """Close the persistent Codex client after the owning agent run."""
+        if self._codex is not None:
+            self._codex.close()
+            self._codex = None
+            self._threads.clear()
 
 
 def create_backend(

@@ -36,11 +36,6 @@ def recommend(
         evidence["previous_attempts"] = previous_attempts
     prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
     request = {"evidence": json_compatible(evidence)}
-    if previous_attempts is not None:
-        request["instruction"] = (
-            "The previous tuning coordinates were tried across every authored fit combination. "
-            "Make a conservative adjustment using the parameter-to-quality mapping in previous_attempts."
-        )
     schema, _nullable = annotation_schema(QdaFitSuggestion)
     requested = requested_fields or {"tune_z_values"}
     schema["properties"]["tune_z_values"].update({"minItems": 1, "uniqueItems": True})

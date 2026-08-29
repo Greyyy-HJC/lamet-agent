@@ -10,9 +10,9 @@ import numpy as np
 
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData, EnsembleInfo
-from lamet_agent.stages.review.tools.check_consistency import run as check_consistency
-from lamet_agent.stages.review.tools.inspect_results import run as inspect_results
-from lamet_agent.stages.review.tools.list_literature import run as list_literature
+from lamet_agent.stages.review._check_consistency import run as check_consistency
+from lamet_agent.stages.review._inspect_results import run as inspect_results
+from lamet_agent.stages.review._list_literature import run as list_literature
 from lamet_agent.stages.review.tools.read_papers import run as read_papers
 from lamet_agent.stages.review.tools.write_review import run as write_review
 
@@ -381,8 +381,17 @@ def test_review_renderer_uses_chinese_headings_and_selected_references(tmp_path:
                 "job_reports": [],
             },
             "consistency": {
-                "findings": [],
-                "counts": {"error": 0, "warning": 0, "info": 0, "not_checkable": 0},
+                "findings": [
+                    {
+                        "status": "warning",
+                        "group": "units",
+                        "source_job": "source",
+                        "consumer_job": "consumer",
+                        "field": "coord_unit",
+                        "message": "deterministic finding text",
+                    }
+                ],
+                "counts": {"error": 0, "warning": 1, "info": 0, "not_checkable": 0},
             },
             "selected_papers": [
                 {
@@ -404,7 +413,10 @@ def test_review_renderer_uses_chinese_headings_and_selected_references(tmp_path:
     write_review(
         context,
         title="综述",
+        scope_and_provenance="结果范围及来源清楚。",
         workflow_summary="工作流完成。",
+        data_and_parameter_coverage="数据与参数覆盖已检查。",
+        consistency_analysis="LLM 对结构化一致性警告进行了物理解读。",
         physical_analysis="物理结果。",
         systematics_and_limitations="系统误差。",
         literature_comparison="文献比较。",
@@ -413,6 +425,8 @@ def test_review_renderer_uses_chinese_headings_and_selected_references(tmp_path:
 
     report = (tmp_path / "review.md").read_text(encoding="utf-8")
     assert "## 范围与溯源" in report
+    assert "LLM 对结构化一致性警告进行了物理解读。" in report
+    assert "deterministic finding text" not in report
     assert "## 参考文献" in report
     assert "arXiv:2401.00001" in report
     assert "../../03_fourier_transform/report.md" in report

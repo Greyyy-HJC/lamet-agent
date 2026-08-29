@@ -33,11 +33,6 @@ def recommend(
         evidence["previous_attempts"] = previous_attempts
     prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
     request = {"evidence": json_compatible(evidence)}
-    if previous_attempts is not None:
-        request["instruction"] = (
-            "The previous spectrum parameters were fitted and did not satisfy the quality policy. "
-            "Make a conservative adjustment using the parameter-to-quality mapping in previous_attempts."
-        )
     schema, _nullable = annotation_schema(SpectrumSuggestion)
     schema["properties"]["tmin"]["minimum"] = 0
     schema["properties"]["tmax"]["minimum"] = 1

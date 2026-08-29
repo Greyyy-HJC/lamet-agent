@@ -109,7 +109,10 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         "fit_model_weights": result["weights"],
         "selected_fit_model_labels": result["selected_labels"],
         "selected_Q": result["selected_candidate"]["Q"],
+        "selected_chi2": result["selected_candidate"]["chi2"],
+        "selected_dof": result["selected_candidate"]["dof"],
         "selected_chi2_dof": result["selected_candidate"]["chi2_dof"],
+        "selected_logGBF": result["selected_candidate"]["logGBF"],
         "range_candidate_count": len(result["range_candidates"]),
         "model_candidate_count": len(result["model_candidates"]),
         "sample_count": output.n_sample,
@@ -258,7 +261,8 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         )
         save_figure(context.artifact_directory / filename)
     (context.artifact_directory / "report.md").write_text(
-        f"# Fourier transform\n\nSelected range: `{selected_range_label}`.\n\nSelected models: {', '.join(result['selected_labels'])}.\n",
+        f"# Fourier transform\n\nSelected range: `{selected_range_label}`.\n\n"
+        f"Selected models: {', '.join(result['selected_labels'])}.\n",
         encoding="utf-8",
     )
     artifacts.append("report.md")
