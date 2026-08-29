@@ -27,6 +27,7 @@ from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.output import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import ProgressBar
@@ -50,6 +51,22 @@ _STATUS_PREFIXES = {
     "llm": ("LLM usage", "Reasoning"),
     "running": ("Executing", "Running"),
 }
+_SHIFT_ENTER_SEQUENCES = {
+    "\x1b[27;2;13~",  # xterm modifyOtherKeys
+    "\x1b[13;2u",  # CSI u / extended keyboard protocol
+}
+
+_CONVERSATION_KEY_BINDINGS = KeyBindings()
+
+
+@_CONVERSATION_KEY_BINDINGS.add("enter")
+def _submit_or_insert_newline(event) -> None:
+    """Submit on Enter while preserving distinct Shift+Enter sequences."""
+    key_data = event.key_sequence[-1].data
+    if key_data in _SHIFT_ENTER_SEQUENCES:
+        event.current_buffer.newline()
+    else:
+        event.current_buffer.validate_and_handle()
 
 
 _PROGRESS_STYLE = Style.from_dict(
@@ -269,7 +286,7 @@ class TerminalUi(PlainUi):
     def _help(self) -> None:
         self.log(
             "Commands: /show [JSON pointer], /issues, /undo, /edit, /save, /help, /quit. "
-            "Use Esc+Enter (or Alt+Enter) to submit multiline answers; Tab opens completion."
+            "Enter submits; Shift+Enter inserts a newline; Tab opens completion."
         )
 
     def _edit(self, state: Any) -> None:
@@ -328,8 +345,11 @@ class TerminalUi(PlainUi):
                 answer = self.session.prompt(
                     HTML("<b>You</b>&gt; "),
                     multiline=True,
+                    key_bindings=_CONVERSATION_KEY_BINDINGS,
                     prompt_continuation="... ",
-                    bottom_toolbar=" Esc+Enter submit | Tab complete | Ctrl+C cancel | /help commands ",
+                    bottom_toolbar=(
+                        " Enter submit | Shift+Enter newline | Tab complete | Ctrl+C cancel | /help commands "
+                    ),
                 ).strip()
             except (KeyboardInterrupt, EOFError) as exc:
                 raise UiCancelled("interaction cancelled by user") from exc
@@ -354,7 +374,13 @@ class TerminalUi(PlainUi):
     def review_plan(self, question: str, state: Any) -> bool | str | None:
         self.completer.state = state
         try:
-            answer = self.session.prompt(f"{question} [y/N or describe a revision] ").strip()
+            answer = self.session.prompt(
+                f"{question} [y/N or describe a revision] ",
+                multiline=True,
+                key_bindings=_CONVERSATION_KEY_BINDINGS,
+                prompt_continuation="... ",
+                bottom_toolbar=" Enter submit | Shift+Enter newline | Ctrl+C cancel ",
+            ).strip()
         except (KeyboardInterrupt, EOFError) as exc:
             raise UiCancelled("interaction cancelled by user") from exc
         if answer.lower() in {"y", "yes"}:

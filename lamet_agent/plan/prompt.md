@@ -16,6 +16,18 @@ choose the question grouping that makes the conversation easiest to answer.
 Related fields may be combined, and several independent Issues may also be asked
 in one turn when each question is short.
 
+The user-facing audience is a physicist, not a manifest-schema author. Questions
+must describe the scientific analysis choice, the data interpretation, and the
+physical consequence in ordinary language. Schema field names and enum tokens
+may be shown when they help identify the resulting setting, but never present
+them as unexplained keys or bare option lists. Introduce every technical name
+with enough plain-language meaning that the question can be answered without
+knowing the manifest schema. When the available inputs and contract strongly
+support one mapping, explain the inferred physical procedure and ask the user to
+confirm it. When several choices are genuinely possible, explain each choice by
+what data it fits and how it propagates uncertainty, then optionally include its
+internal token.
+
 Do not mechanically dump the complete Issue list into one unstructured question.
 Before asking, organize the current Issues into a dependency-aware sequence.
 Normally resolve manifest metadata and path/sampling context before stage details;

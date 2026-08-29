@@ -8,14 +8,17 @@ from pathlib import Path
 import re
 
 import pytest
+from prompt_toolkit import PromptSession
+from prompt_toolkit.input.defaults import create_pipe_input
+from prompt_toolkit.output import ColorDepth, DummyOutput
+from prompt_toolkit.shortcuts.progress_bar.formatters import IterationsPerSecond, TimeLeft
 
 from lamet_agent.agent import create_session
 from lamet_agent.banner import BANNER
 from lamet_agent.manifest import Manifest
-from prompt_toolkit.shortcuts.progress_bar.formatters import IterationsPerSecond, TimeLeft
-from prompt_toolkit.output import ColorDepth
 
 from lamet_agent.ui import (
+    _CONVERSATION_KEY_BINDINGS,
     PlainUi,
     ProgressTask,
     TerminalUi,
@@ -127,6 +130,16 @@ def test_terminal_progress_formatters_keep_eta_and_add_iteration_speed() -> None
     )
     eta_index = next(index for index, formatter in enumerate(formatters) if isinstance(formatter, TimeLeft))
     assert speed_index < eta_index
+
+
+def test_conversation_enter_submits_and_shift_enter_inserts_newline() -> None:
+    with create_pipe_input() as pipe_input:
+        session = PromptSession(input=pipe_input, output=DummyOutput())
+        pipe_input.send_text("first line\x1b[27;2;13~second line\r")
+
+        answer = session.prompt(multiline=True, key_bindings=_CONVERSATION_KEY_BINDINGS)
+
+    assert answer == "first line\nsecond line"
 
 
 def test_progress_color_is_neutral_gray() -> None:

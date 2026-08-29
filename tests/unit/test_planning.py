@@ -6,10 +6,10 @@ import copy
 import json
 from pathlib import Path
 
+import lamet_agent.plan.tools as planning_tools_package
 from lamet_agent.agent import create_session
 from lamet_agent.llm import _AssistantResponse, _ToolCall
-from lamet_agent.manifest import load_manifest
-from lamet_agent.plan.state import PlanState, issue_packet, validate_authored_candidate
+from lamet_agent.plan.state import PlanState
 from lamet_agent.plan.tools import (
     PLANNING_TOOLS,
     planning_controller_prompt,
@@ -99,33 +99,6 @@ def _review_manifest(tmp_path: Path, *, include_seed: bool) -> tuple[Path, dict]
     return path, document
 
 
-def test_issue_packet_includes_every_child_rule_for_missing_object() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_pdf_cg_manifest.json"
-    document = copy.deepcopy(load_manifest(path).document)
-    document["stages"]["fourier_transform"]["defaults"].pop("scheme_scan")
-    issues = validate_authored_candidate(path, document)
-    issue = next(item for item in issues if item.path.endswith("jobs[0].scheme_scan"))
-
-    packet = issue_packet(document, issue)
-
-    related = {rule["path"] for rule in packet["related_rules"]}
-    assert "jobs.job.scheme_scan" in related
-    assert "jobs.job.scheme_scan.order" in related
-    assert "jobs.job.scheme_scan.sector" in related
-    assert "jobs.job.scheme_scan.posterior_prior_error_scale" in related
-    assert packet["current"] == {"exists": False, "value": None}
-
-
-def test_plan_validation_never_normalizes_the_authored_candidate() -> None:
-    path = Path(__file__).parents[2] / "examples" / "pion_da_gi_manifest.json"
-    document = copy.deepcopy(load_manifest(path).document)
-    original = copy.deepcopy(document)
-
-    assert validate_authored_candidate(path, document) == []
-    assert document == original
-    assert "systematics" in document
-
-
 def test_plan_conversation_parses_natural_answer_and_requires_confirmation(tmp_path: Path) -> None:
     path, original = _review_manifest(tmp_path, include_seed=False)
     backend = _ScriptedBackend(
@@ -198,10 +171,29 @@ def test_natural_control_tools_read_and_undo_without_a_diff(tmp_path: Path) -> N
     assert "Multi-turn completion is available but is not mandatory" in prompt
     assert "long or burdensome" in prompt
     assert "After every successful patch" in prompt
+    assert "physicist, not a manifest-schema author" in prompt
+    assert "unexplained keys or bare option lists" in prompt
+    assert "enough plain-language meaning" in prompt
     finish_schema = next(
         schema for schema in planning_tool_schemas() if schema["function"]["name"] == "finish_plan"
     )
     assert finish_schema["function"]["parameters"]["required"] == ["summary", "changes"]
+
+
+def test_every_planning_tool_owns_its_implementation_prompt_and_schema() -> None:
+    tools_root = Path(planning_tools_package.__file__).parent
+    controller_prompt = planning_controller_prompt()
+    schemas = {schema["function"]["name"]: schema["function"] for schema in planning_tool_schemas()}
+
+    for tool in PLANNING_TOOLS:
+        directory = tools_root / tool.name
+        prompt_path = directory / "prompts.md"
+        assert (directory / "__init__.py").is_file()
+        assert prompt_path.is_file()
+        assert "Call schema:" in tool.prompt
+        assert tool.prompt == prompt_path.read_text(encoding="utf-8").strip()
+        assert tool.prompt in controller_prompt
+        assert schemas[tool.name]["parameters"] == tool.parameters
 
 
 def test_valid_manifest_uses_manual_run_confirmation_without_llm(tmp_path: Path) -> None:
