@@ -456,6 +456,19 @@ def _source_issues(value: Any, path: str, seen_jobs: set[str], root: Path) -> li
         if value not in seen_jobs:
             return [_issue(path, f"must reference an earlier job, not '{value}'")]
         return []
+    if (
+        isinstance(value, Mapping)
+        and set(value) == {"json", "id"}
+        and isinstance(value.get("json"), str)
+        and isinstance(value.get("id"), str)
+    ):
+        resolved = Path(value["json"]).expanduser()
+        if not resolved.is_absolute():
+            resolved = root / resolved
+        resolved = resolved.resolve()
+        if not resolved.is_file():
+            return [_issue(f"{path}.json", f"file does not exist: {resolved}")]
+        return []
     if not isinstance(value, Mapping) or set(value) != {"file"} or not isinstance(value.get("file"), str):
         return issues
     file_value = value["file"]
@@ -694,6 +707,10 @@ def _resolve_source(
         if source not in outputs:
             raise RuntimeError(f"Job output '{source}' is not available")
         return outputs[source], summaries.get(source)
+    if isinstance(source, Mapping) and set(source) == {"json", "id"}:
+        path = Path(source["json"]).expanduser()
+        resolved = path if path.is_absolute() else (root / path).resolve()
+        return {"json": resolved, "id": source["id"]}, None
     if not isinstance(source, Mapping) or set(source) != {"file"}:
         raise ValueError("Invalid input source")
     path = Path(source["file"]).expanduser()

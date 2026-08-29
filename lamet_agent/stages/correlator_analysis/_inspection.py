@@ -65,9 +65,9 @@ def _automatic_correlator_rescale(
     }
 
 
-def run(context: ToolContext, *, correlator_ids: list[str] | None = None) -> dict[str, object]:
+def run(context: ToolContext, *, selected_ids: list[str] | None = None) -> dict[str, object]:
     """Load, resample, and summarize selected correlators."""
-    resampled = ensure_correlators(context, correlator_ids)
+    resampled = ensure_correlators(context, selected_ids)
     fit_scopes = set(context.params.get("fit_scope", []))
     scale_inspection = None
     if fit_scopes & {"3pt_ratio", "FH", "3pt_ratio+FH"}:

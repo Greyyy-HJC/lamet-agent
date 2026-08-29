@@ -66,26 +66,20 @@
         {
           "id": "ca_p0",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_pdf_cg_correlators.json"
-            }
-          },
-          "correlator_ids": [
-            "p0_2pt",
-            "p0_3pt"
-          ]
+            "correlators": [
+              {"json": "examples/pion_pdf_cg_correlators.json", "id": "p0_2pt"},
+              {"json": "examples/pion_pdf_cg_correlators.json", "id": "p0_3pt"}
+            ]
+          }
         },
         {
           "id": "ca_p5",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_pdf_cg_correlators.json"
-            }
-          },
-          "correlator_ids": [
-            "p5_2pt",
-            "p5_3pt"
-          ]
+            "correlators": [
+              {"json": "examples/pion_pdf_cg_correlators.json", "id": "p5_2pt"},
+              {"json": "examples/pion_pdf_cg_correlators.json", "id": "p5_3pt"}
+            ]
+          }
         }
       ]
     },

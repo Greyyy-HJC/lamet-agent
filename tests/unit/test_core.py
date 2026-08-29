@@ -1340,34 +1340,43 @@ def test_da_examples_expand_the_reference_systematics_branches(stem: str) -> Non
     )
     budget_job = next(job for job in extrapolation_jobs if job.params["operation"] == "systematics_budget")
     assert "priors" not in budget_job.params
-    assert len(stages["fourier_transform"]["jobs"]) == 27
-    assert len(stages["perturbative_matching"]["jobs"]) == 45
+    variant_count = len(manifest.document["systematics"]["fourier_transform"]["variants"])
+    assert len(stages["fourier_transform"]["jobs"]) == 9 * (1 + variant_count)
+    matching_variants = len(manifest.document["systematics"]["perturbative_matching"]["variants"])
+    assert len(stages["perturbative_matching"]["jobs"]) == 9 * (1 + variant_count + matching_variants)
+    labels = [
+        variant["id"]
+        for stage_id in ("fourier_transform", "perturbative_matching", "extrapolation")
+        for variant in manifest.document["systematics"][stage_id]["variants"]
+    ]
     assert [job["id"] for job in stages["extrapolation"]["jobs"]] == [
         "extrapolate_all",
-        "extrapolate_lambda_low",
-        "extrapolate_lambda_high",
-        "extrapolate_mu_low",
-        "extrapolate_mu_high",
-        "extrapolate_a_model",
-        "extrapolate_inv_p_model",
-        "extrapolate_ap_model",
+        *(f"extrapolate_{label}" for label in labels),
         "extrapolation_systematics_budget",
     ]
     budget = stages["extrapolation"]["jobs"][-1]
+    extrapolation_variants = len(manifest.document["systematics"]["extrapolation"]["variants"])
     assert budget["systematics_groups"] == {
         "main": 0,
         "zs": [],
-        "lambda_extrapolation": [1, 2],
-        "lamet_scale": [3, 4],
-        "other_extrapolations": [5, 6, 7],
+        "lambda_extrapolation": list(range(1, 1 + variant_count)),
+        "lamet_scale": list(range(1 + variant_count, 1 + variant_count + matching_variants)),
+        "other_extrapolations": list(
+            range(1 + variant_count + matching_variants, 1 + variant_count + matching_variants + extrapolation_variants)
+        ),
     }
     extrapolation = {job["id"]: job for job in stages["extrapolation"]["jobs"]}
     authored_extrap = authored_stages["extrapolation"]["defaults"]
     independent = list(authored_extrap.get("x_independent_terms", []))
     dependent = list(authored_extrap.get("x_dependent_terms", []))
-    assert extrapolation["extrapolate_a_model"]["x_independent_terms"] == independent + ["a4"]
-    assert extrapolation["extrapolate_inv_p_model"]["x_dependent_terms"] == dependent + ["inv_p4"]
-    assert extrapolation["extrapolate_ap_model"]["x_dependent_terms"] == dependent + ["ap4"]
+    for variant in manifest.document["systematics"]["extrapolation"]["variants"]:
+        job = extrapolation[f"extrapolate_{variant['id']}"]
+        assert job["x_independent_terms"] == [
+            term for term in independent if term not in variant.get("remove_x_independent_terms", [])
+        ] + variant.get("append_x_independent_terms", [])
+        assert job["x_dependent_terms"] == [
+            term for term in dependent if term not in variant.get("remove_x_dependent_terms", [])
+        ] + variant.get("append_x_dependent_terms", [])
     fourier = {job["id"]: job for job in stages["fourier_transform"]["jobs"]}
     authored_zmin = next(
         job["zmin_fm"] for job in authored_stages["fourier_transform"]["jobs"] if job["id"] == "ft_a06m130_pz6"
@@ -1502,10 +1511,7 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
         "analysis_method": "lanczos",
         "component": "both",
         "nstate": [2],
-        "correlator_ids": ["c2", "c3"],
         "scope": "3pt_matrix",
-        "t0": 4,
-        "time_step": 2,
     }
     assert evaluate_rules(lanczos, contract.PARAM_RULES) == []
     context = CheckContext({}, "correlator_analysis", "job", lanczos, {})
@@ -1519,7 +1525,6 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
-        "correlator_ids": ["c2"],
         "fit_scope": ["spectrum"],
         "fit_strategy": ["independent"],
         "fitting_form": "Breit",
@@ -2151,7 +2156,6 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
             "analysis_method": "lsqfit",
             "fit_scope": ["qda_ratio"],
             "component": "re",
-            "correlator_ids": ["qda"],
             "pt2_windows": [{"tmin": 2, "tmax": 8}],
         },
         {},
@@ -2200,7 +2204,7 @@ def test_recommendation_sends_data_on_first_human_failure_but_not_on_retry(tmp_p
         tmp_path / "manifest.json",
         "correlator_analysis",
         "correlator",
-        {"component": "re", "correlator_ids": ["qda"]},
+        {"component": "re"},
         {},
         {},
         {
@@ -2257,7 +2261,6 @@ def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path)
         "correlator",
         {
             "component": "re",
-            "correlator_ids": ["qda"],
             "fit_scope": ["qda_ratio"],
             "nstate": [1],
         },

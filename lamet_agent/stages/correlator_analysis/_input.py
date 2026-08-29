@@ -19,7 +19,7 @@ import numpy as np
 from lamet_agent.data import EnsembleData, EnsembleInfo
 
 
-def load_descriptor(path: Path, *, correlator_ids: set[str] | None = None) -> dict[str, Any]:
+def load_descriptor(path: Path, *, selected_ids: set[str] | None = None) -> dict[str, Any]:
     """Load the selected ensemble from one project correlator descriptor."""
     if path.suffix.lower() != ".json" or not path.is_file():
         raise ValueError(f"correlator descriptor must be an existing .json file: {path}")
@@ -32,10 +32,10 @@ def load_descriptor(path: Path, *, correlator_ids: set[str] | None = None) -> di
     record_ids = [record.get("id") for record in records]
     if any(not isinstance(value, str) or not value for value in record_ids) or len(set(record_ids)) != len(record_ids):
         raise ValueError("project correlator ids must be nonempty and unique")
-    requested = set(record_ids) if correlator_ids is None else correlator_ids
+    requested = set(record_ids) if selected_ids is None else selected_ids
     selected = [record for record in records if record["id"] in requested]
     if {record["id"] for record in selected} != requested:
-        raise ValueError("selected correlator_ids are not present in the project descriptor")
+        raise ValueError("selected record ids are not present in the project descriptor")
     ensembles = [record.get("ensemble") for record in selected]
     counts = [record.get("count") for record in selected]
     if any(not isinstance(value, dict) for value in ensembles) or any(value != ensembles[0] for value in ensembles[1:]):
@@ -305,55 +305,77 @@ def resample_correlators(
 
 def ensure_raw_correlators(
     context: Any,
-    correlator_ids: list[str] | None = None,
+    selected_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Load the selected configuration-level correlators once for a job."""
-    requested = set(correlator_ids if correlator_ids is not None else context.params["correlator_ids"])
     existing = context.state.get("raw_correlators")
     if isinstance(existing, dict):
-        if requested != set(existing):
+        if selected_ids is not None and set(selected_ids) != set(existing):
             raise ValueError("correlators were already prepared with a different selection")
         return existing
 
     source = context.inputs["correlators"]
-    if isinstance(source, list):
-        if len(source) != 1:
-            raise ValueError("one correlator descriptor source is required")
-        source = source[0]
-    if not isinstance(source, Path):
-        raise TypeError("correlators input must resolve to a descriptor Path")
-    if not requested:
+    if not isinstance(source, list):
+        raise TypeError("correlators input must be a list of descriptor record selections")
+    selections = source
+    requested = set(selected_ids if selected_ids is not None else [item["id"] for item in selections])
+    if not selections or not requested:
         raise ValueError("at least one correlator must be selected")
 
-    loaded = load_descriptor(source, correlator_ids=requested)
-    unknown = requested - set(loaded["correlators"])
-    if unknown:
-        raise ValueError(f"unknown correlator ids: {sorted(unknown)}")
-    context.state["correlator_descriptor_path"] = source
-    ensemble = loaded["descriptor"].get("ensemble", {})
-    context.state["correlator_resample_group"] = str(ensemble.get("id", context.job_id))
-    context.state["correlator_records"] = {
-        record["id"]: record for record in loaded["descriptor"]["correlators"] if record["id"] in requested
-    }
-    selected = {key: value for key, value in loaded["correlators"].items() if key in requested}
-    context.state["correlator_configuration_ids"] = list(loaded.get("configuration_ids", []))
+    by_path: dict[Path, list[str]] = {}
+    for selection in selections:
+        if not isinstance(selection, dict) or set(selection) != {"json", "id"}:
+            raise TypeError("each correlator input must contain exactly json and id")
+        path = selection["json"]
+        identifier = selection["id"]
+        if not isinstance(path, Path) or not isinstance(identifier, str):
+            raise TypeError("correlator json must resolve to a Path and id must be a string")
+        if identifier in requested:
+            by_path.setdefault(path, []).append(identifier)
+    selected: dict[str, Any] = {}
+    records: dict[str, Any] = {}
+    loaded_paths: list[Path] = []
+    configuration_ids: list[str] | None = None
+    ensemble: dict[str, Any] | None = None
+    configuration_count: int | None = None
+    for path, ids in by_path.items():
+        loaded = load_descriptor(path, selected_ids=set(ids))
+        loaded_paths.append(path)
+        descriptor = loaded["descriptor"]
+        current_ensemble = descriptor["ensemble"]
+        current_count = descriptor["configuration_count"]
+        if ensemble is None:
+            ensemble = current_ensemble
+            configuration_count = current_count
+            configuration_ids = list(loaded["configuration_ids"])
+        elif current_ensemble != ensemble or current_count != configuration_count:
+            raise ValueError("selected correlators must share one ensemble and configuration count")
+        selected.update(loaded["correlators"])
+        records.update({record["id"]: record for record in descriptor["correlators"]})
+    if set(selected) != requested:
+        raise ValueError(
+            f"selected correlator ids are not present in the project descriptors: {sorted(requested - set(selected))}"
+        )
+    context.state["correlator_descriptor_path"] = loaded_paths[0] if len(loaded_paths) == 1 else loaded_paths
+    context.state["correlator_resample_group"] = str((ensemble or {}).get("id", context.job_id))
+    context.state["correlator_records"] = records
+    context.state["correlator_configuration_ids"] = configuration_ids or []
     context.state["raw_correlators"] = selected
     return selected
 
 
 def ensure_correlators(
     context: Any,
-    correlator_ids: list[str] | None = None,
+    selected_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Load and resample the selected correlators once for a job."""
-    requested = set(correlator_ids if correlator_ids is not None else context.params["correlator_ids"])
     existing = context.state.get("correlators")
     if isinstance(existing, dict):
-        if requested != set(existing):
+        if selected_ids is not None and set(selected_ids) != set(existing):
             raise ValueError("correlators were already prepared with a different selection")
         return existing
 
-    raw = ensure_raw_correlators(context, correlator_ids)
+    raw = ensure_raw_correlators(context, selected_ids)
     resampled = resample_correlators(
         {
             "correlators": raw,

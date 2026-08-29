@@ -215,7 +215,6 @@ def test_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
 
     params = {
         "analysis_method": "lanczos",
-        "correlator_ids": ["c2", "c3"],
         "component": "both",
         "nstate": [2],
         "scope": "3pt_matrix",
@@ -257,7 +256,6 @@ def test_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
     spectrum_dir.mkdir()
     spectrum_params = {
         **params,
-        "correlator_ids": ["c2"],
         "component": "re",
         "scope": "2pt_spectrum",
         "inner_samples": 4,
@@ -487,7 +485,7 @@ def test_inspect_correlators_does_not_write_raw_correlator_plots(tmp_path) -> No
         tmp_path / "manifest.json",
         "correlator_analysis",
         "inspect",
-        {"correlator_ids": ["two_point"]},
+        {},
         {},
         {},
         {"correlators": {"two_point": data}},

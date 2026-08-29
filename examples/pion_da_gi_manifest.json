@@ -41,13 +41,10 @@
         {
           "id": "ca_a06m130_pz6",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_da_gi_correlators.json"
-            }
+            "correlators": [
+              {"json": "examples/pion_da_gi_correlators.json", "id": "a06m130_qda_pz6"}
+            ]
           },
-          "correlator_ids": [
-            "a06m130_qda_pz6"
-          ],
           "pt2_windows": [
             {
               "tmin": 13,
@@ -66,13 +63,10 @@
         {
           "id": "ca_a09m130_pz6",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_da_gi_correlators.json"
-            }
+            "correlators": [
+              {"json": "examples/pion_da_gi_correlators.json", "id": "a09m130_qda_pz6"}
+            ]
           },
-          "correlator_ids": [
-            "a09m130_qda_pz6"
-          ],
           "pt2_windows": [
             {
               "tmin": 8,
@@ -91,13 +85,10 @@
         {
           "id": "ca_a12m130_pz6",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_da_gi_correlators.json"
-            }
+            "correlators": [
+              {"json": "examples/pion_da_gi_correlators.json", "id": "a12m130_qda_pz6"}
+            ]
           },
-          "correlator_ids": [
-            "a12m130_qda_pz6"
-          ],
           "pt2_windows": [
             {
               "tmin": 6,
@@ -116,13 +107,10 @@
         {
           "id": "ca_a06m130_pz8",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_da_gi_correlators.json"
-            }
+            "correlators": [
+              {"json": "examples/pion_da_gi_correlators.json", "id": "a06m130_qda_pz8"}
+            ]
           },
-          "correlator_ids": [
-            "a06m130_qda_pz8"
-          ],
           "pt2_windows": [
             {
               "tmin": 9,
@@ -141,13 +129,10 @@
         {
           "id": "ca_a09m130_pz8",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_da_gi_correlators.json"
-            }
+            "correlators": [
+              {"json": "examples/pion_da_gi_correlators.json", "id": "a09m130_qda_pz8"}
+            ]
           },
-          "correlator_ids": [
-            "a09m130_qda_pz8"
-          ],
           "pt2_windows": [
             {
               "tmin": 6,
@@ -166,13 +151,10 @@
         {
           "id": "ca_a12m130_pz8",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_da_gi_correlators.json"
-            }
+            "correlators": [
+              {"json": "examples/pion_da_gi_correlators.json", "id": "a12m130_qda_pz8"}
+            ]
           },
-          "correlator_ids": [
-            "a12m130_qda_pz8"
-          ],
           "pt2_windows": [
             {
               "tmin": 4,
@@ -191,13 +173,10 @@
         {
           "id": "ca_a06m130_pz10",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_da_gi_correlators.json"
-            }
+            "correlators": [
+              {"json": "examples/pion_da_gi_correlators.json", "id": "a06m130_qda_pz10"}
+            ]
           },
-          "correlator_ids": [
-            "a06m130_qda_pz10"
-          ],
           "pt2_windows": [
             {
               "tmin": 7,
@@ -216,13 +195,10 @@
         {
           "id": "ca_a09m130_pz10",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_da_gi_correlators.json"
-            }
+            "correlators": [
+              {"json": "examples/pion_da_gi_correlators.json", "id": "a09m130_qda_pz10"}
+            ]
           },
-          "correlator_ids": [
-            "a09m130_qda_pz10"
-          ],
           "pt2_windows": [
             {
               "tmin": 5,
@@ -241,13 +217,10 @@
         {
           "id": "ca_a12m130_pz10",
           "inputs": {
-            "correlators": {
-              "file": "examples/pion_da_gi_correlators.json"
-            }
+            "correlators": [
+              {"json": "examples/pion_da_gi_correlators.json", "id": "a12m130_qda_pz10"}
+            ]
           },
-          "correlator_ids": [
-            "a12m130_qda_pz10"
-          ],
           "pt2_windows": [
             {
               "tmin": 3,
