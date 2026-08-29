@@ -78,7 +78,7 @@ def _gpd_signed_pair(
     primary: Any,
     partner: Any,
     *,
-    bilocal_anchor: str,
+    phase_transfer_gpd: str,
     delta_momentum_gev: float,
 ) -> Any:
     """Complete a GPD matrix element with its exchanged-flow Hermitian partner."""
@@ -90,8 +90,8 @@ def _gpd_signed_pair(
     partner_z = np.asarray(partner.coords["z"], dtype=float)
     if z.shape != partner_z.shape or not np.allclose(z, partner_z, rtol=0.0, atol=1e-12):
         raise ValueError("GPD input and hermitian_partner must share the z grid")
-    if bilocal_anchor not in {"mid_at_0", "barpsi_at_0", "psi_at_0"}:
-        raise ValueError("bilocal_anchor must be mid_at_0, barpsi_at_0, or psi_at_0")
+    if phase_transfer_gpd not in {"mid_at_0", "barpsi_at_0", "psi_at_0"}:
+        raise ValueError("phase_transfer_gpd must be mid_at_0, barpsi_at_0, or psi_at_0")
     positive_indices = np.where(z >= 0)[0]
     positive_z = z[positive_indices]
     if positive_z.size < 2 or np.any(np.diff(positive_z) <= 0):
@@ -99,10 +99,10 @@ def _gpd_signed_pair(
     primary_values = np.asarray(primary.values)[:, positive_indices].astype(complex)
     partner_values = np.asarray(partner.values)[:, positive_indices].astype(complex)
     phase = np.exp(0.5j * float(delta_momentum_gev) * positive_z / HBAR_C_GEV_FM)[None, :]
-    if bilocal_anchor == "mid_at_0":
+    if phase_transfer_gpd == "mid_at_0":
         target = primary_values * phase
         exchanged = partner_values * np.conjugate(phase)
-    elif bilocal_anchor == "barpsi_at_0":
+    elif phase_transfer_gpd == "barpsi_at_0":
         target = primary_values
         exchanged = partner_values
     else:
@@ -123,7 +123,7 @@ def _gpd_signed_pair(
         {
             "symmetry": json.dumps({"real": "explicit", "imag": "explicit"}, sort_keys=True),
             "signed_z_completion": "gpd_hermitian_partner",
-            "bilocal_anchor": bilocal_anchor,
+            "phase_transfer_gpd": phase_transfer_gpd,
             "hermitian_partner_id": str(partner.attrs.get("correlator_id", partner.name or "")),
             "delta_momentum_gev": float(delta_momentum_gev),
             "gpd_completion_mode": "paired_flow",
@@ -248,7 +248,7 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
             data = _gpd_signed_pair(
                 data,
                 partner,
-                bilocal_anchor=str(context.params["bilocal_anchor"]),
+                phase_transfer_gpd=str(context.params["phase_transfer_gpd"]),
                 delta_momentum_gev=delta_momentum,
             )
             attrs = dict(data.attrs)

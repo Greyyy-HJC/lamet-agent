@@ -230,7 +230,7 @@ def _review_summary(context: ToolContext, summary: Mapping[str, Any]) -> dict[st
             "sector",
             "renormalization_scheme",
             "kernel_id",
-            "bilocal_anchor",
+            "phase_transfer_gpd",
             "hermitian_partner_id",
             "gpd_completion_mode",
             "coord_unit",

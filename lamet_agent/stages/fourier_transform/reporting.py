@@ -266,8 +266,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                         "| GPD xi / t | "
                         f"{format_value(attrs.get('xi'))} / "
                         f"{format_value(attrs.get('t_gev2'))} GeV^2 |",
-                        "| GPD bilocal anchor / completion | "
-                        f"`{attrs.get('bilocal_anchor', 'n/a')}` / "
+                        "| GPD phase transfer / completion | "
+                        f"`{attrs.get('phase_transfer_gpd', 'n/a')}` / "
                         f"`{attrs.get('gpd_completion_mode', 'n/a')}` |",
                     ]
                     if str(attrs.get("target_observable", "")).lower() == "gpd"
