@@ -43,10 +43,16 @@ def recommend(
     )
     schema["properties"] = {name: value for name, value in schema["properties"].items() if name in requested_fields}
     schema["required"] = sorted(requested_fields)
+    request = {
+        "task": "fourier_tail_range_tuning",
+        "phase": "retry" if previous_attempts is not None else "initial",
+        "requested_fields": sorted(requested_fields),
+        "evidence": json_compatible(evidence),
+    }
     response = session.complete(
         label="Fourier tail-range recommendation",
         user_message=json.dumps(
-            {"evidence": json_compatible(evidence)},
+            request,
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -12,7 +11,6 @@ from lamet_agent.data import format_gvar
 from lamet_agent.stages.correlator_analysis._input import ensure_correlators
 
 
-_PROMPT_KEY = "correlator_analysis_ask_prompt"
 _CONTEXT_KEY = "correlator_fit_data"
 _CACHE_KEY = "joint_fit_parameter_suggestion"
 
@@ -46,10 +44,7 @@ def _context(context: ToolContext) -> dict[str, Any]:
 
 
 def ensure(context: ToolContext, session: LlmSession) -> None:
-    """Initialize this job's base prompt and correlator evidence exactly once."""
-    if not session.has_system_prompt(_PROMPT_KEY):
-        prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
-        session.add_system_prompt(_PROMPT_KEY, prompt)
+    """Initialize this job's correlator evidence exactly once."""
     if not session.has_context(_CONTEXT_KEY):
         session.add_context(_CONTEXT_KEY, _context(context))
 

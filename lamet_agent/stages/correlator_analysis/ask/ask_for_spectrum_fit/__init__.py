@@ -32,7 +32,6 @@ def recommend(
     if previous_attempts is not None:
         evidence["previous_attempts"] = previous_attempts
     prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
-    request = {"evidence": json_compatible(evidence)}
     schema, _nullable = annotation_schema(SpectrumSuggestion)
     schema["properties"]["tmin"]["minimum"] = 0
     schema["properties"]["tmax"]["minimum"] = 1
@@ -49,6 +48,12 @@ def recommend(
             "additionalProperties": {"type": "number", "exclusiveMinimum": 0.0},
         }
     )
+    request = {
+        "task": "direct_spectrum_fit",
+        "phase": "retry" if previous_attempts is not None else "initial",
+        "requested_fields": sorted(schema["required"]),
+        "evidence": json_compatible(evidence),
+    }
     response = session.complete(
         label="spectrum fit recommendation",
         user_message=json.dumps(

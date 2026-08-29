@@ -174,6 +174,8 @@ def test_natural_control_tools_read_and_undo_without_a_diff(tmp_path: Path) -> N
     assert "physicist, not a manifest-schema author" in prompt
     assert "unexplained keys or bare option lists" in prompt
     assert "enough plain-language meaning" in prompt
+    assert "informational question does not authorize" in prompt
+    assert "never skip a pending user question" in prompt
     finish_schema = next(
         schema for schema in planning_tool_schemas() if schema["function"]["name"] == "finish_plan"
     )

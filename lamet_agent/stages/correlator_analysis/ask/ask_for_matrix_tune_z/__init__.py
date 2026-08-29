@@ -41,7 +41,6 @@ def recommend(
     if previous_attempts is not None:
         evidence["previous_attempts"] = previous_attempts
     prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
-    request = {"evidence": json_compatible(evidence)}
     schema, _nullable = annotation_schema(MatrixFitSuggestion)
     requested = requested_fields or {"tune_z_values"}
     schema["properties"]["tune_z_values"].update({"minItems": 1, "uniqueItems": True})
@@ -54,6 +53,12 @@ def recommend(
     schema["properties"]["pt3_windows"]["items"]["properties"]["tsep_ls"]["items"]["minimum"] = 1
     schema["properties"] = {name: value for name, value in schema["properties"].items() if name in requested}
     schema["required"] = sorted(requested)
+    request = {
+        "task": "matrix_element_fit_tuning",
+        "phase": "retry" if previous_attempts is not None else "initial",
+        "requested_fields": sorted(requested),
+        "evidence": json_compatible(evidence),
+    }
     response = session.complete(
         label="matrix-element tuning-coordinate recommendation",
         user_message=json.dumps(

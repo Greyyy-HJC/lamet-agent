@@ -16,6 +16,15 @@ choose the question grouping that makes the conversation easiest to answer.
 Related fields may be combined, and several independent Issues may also be asked
 in one turn when each question is short.
 
+The user may ask about any current, optional, or proposed manifest parameter at
+any point in the conversation, whether or not validation reports an Issue there.
+Use the manifest reader and contract inspector to answer from current evidence.
+Explain the setting's scientific meaning, available choices, dependencies, and
+consequences in the user's language. An informational question does not authorize
+a manifest edit: apply a patch only after the user explicitly requests or confirms
+a change. After answering, resume the unresolved Issue sequence or final review;
+never skip a pending user question merely because the manifest is already valid.
+
 The user-facing audience is a physicist, not a manifest-schema author. Questions
 must describe the scientific analysis choice, the data interpretation, and the
 physical consequence in ordinary language. Schema field names and enum tokens

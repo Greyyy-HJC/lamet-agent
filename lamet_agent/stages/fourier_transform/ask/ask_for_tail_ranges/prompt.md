@@ -1,6 +1,14 @@
-Recommend compact candidate lists for the missing Fourier tail-fit boundaries.
-Use only coordinates present in the supplied positive-z grid. Follow this
-selection policy in order of priority:
+The supplied evidence describes a coordinate-space matrix element `h(z)` on a
+physical z grid. The real and imaginary component entries contain pointwise
+central values with their uncertainties. The lattice spacing identifies the
+measured grid resolution, while the momentum sets the scale of physically
+expected oscillations. `zmin_fm` is the lower measured separation at which the
+long-distance tail ansatz begins to constrain the fit; `zmax_fm` is the largest
+measured separation retained in that fit, not the later extension endpoint.
+
+Recommend compact candidate lists for whichever Fourier tail-fit boundaries are
+requested by the response schema. Use only exact coordinates present in the
+supplied positive-z grid. Follow this selection policy in order of priority:
 
 1. Keep zmax_fm as large as the usable measured positive-z coverage permits,
    preferably the largest valid grid point. Include essentially all effective
@@ -38,21 +46,23 @@ selection policy in order of priority:
    justified fallback when the largest-z data are visibly unusable; it must not
    be the default recommendation.
 
-Each valid pair must satisfy zmin_fm < zmax_fm, retain enough points for the
-configured tail models, and use exact input-grid coordinates. Before returning
-the lists, count the positive-z observations in every candidate pair and check
-the number of independent real/imag observations against the number of fit
-parameters for every configured order/model. Do not recommend a pair that
-cannot support the configured model; for the present light-light DA NLA tail,
-five parameters are fitted from two channels, so at least three positive-z
-points are required. Because the implementation forms the Cartesian product
-of the two lists, this check applies to every ordered zmin/zmax pair that will
-be formed, not only to the largest-zmax pair. If a shorter zmax would make a
-large-zmin candidate underdetermined, omit that shorter zmax or omit the
-incompatible high-zmin candidate. Do not rely on the runtime scan silently
-discarding underdetermined pairs. Return compact lists, but include the grid
-point nearest 0.5 fm and 4--5 successive zmin points when available. Fixed
-parameters are authored values and must not be changed on the initial attempt.
-When previous attempts are supplied, make a conservative runtime adjustment
-using their Q and chi2 diagnostics while preserving the large-zmax-first
-policy; do not alter scheme_scan.
+Every Cartesian-product pair formed from the returned lists must satisfy
+`zmin_fm < zmax_fm` and retain a nontrivial run of measured positive-z points.
+More flexible asymptotic expansions generally need more data support, so avoid
+minimal windows chosen only to move deeper into the apparent long-distance
+region. Do not assume one universal parameter count when the request does not
+supply it; exact model feasibility is checked deterministically by the runtime.
+If a shorter zmax would leave a high-zmin candidate visibly underconstrained,
+omit the shorter zmax or the incompatible high-zmin candidate. Return compact
+lists, but include the grid point nearest 0.5 fm and 4--5 successive zmin points
+when available.
+
+Values under `fixed_parameters` are authored and must not be changed on the
+initial attempt. On a retry, `previous_attempts` may contain Q, chi2, degrees of
+freedom, chi2/dof, logGBF, fit success, or a numerical error. Exclude failed
+configurations, prefer acceptable Q and chi2/dof, and use logGBF only as a
+relative comparison between compatible fits. Make conservative range changes
+while preserving the large-zmax-first policy, and do not alter `scheme_scan`.
+
+Use only the supplied numerical evidence; do not treat growing uncertainty alone
+as proof that physically plausible long-distance data should be discarded.

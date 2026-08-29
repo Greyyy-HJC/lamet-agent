@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from lamet_agent.agent import LlmSession, ToolContext
@@ -10,16 +9,12 @@ from lamet_agent.data import format_gvar
 from lamet_agent.stages.fourier_transform._inspection import prepare
 
 
-_PROMPT_KEY = "fourier_transform_ask_prompt"
 _CONTEXT_KEY = "fourier_tail_fit_data"
 _CACHE_KEY = "fourier_tail_range_suggestion"
 
 
 def ensure(context: ToolContext, session: LlmSession) -> None:
-    """Initialize this job's base prompt and Fourier evidence exactly once."""
-    if not session.has_system_prompt(_PROMPT_KEY):
-        prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
-        session.add_system_prompt(_PROMPT_KEY, prompt)
+    """Initialize this job's Fourier evidence exactly once."""
     if session.has_context(_CONTEXT_KEY):
         return
     data, z_grid_step = prepare(context)

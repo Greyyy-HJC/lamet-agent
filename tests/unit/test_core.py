@@ -2258,8 +2258,13 @@ def test_recommendation_sends_data_on_first_human_failure_but_not_on_retry(tmp_p
     assert recommend(context, session, previous_attempts=attempts) == {"tune_z_values": [0.2]}
 
     first_payload = json.loads(backend.calls[0][0][-1].content)
-    first_evidence = first_payload["request"]["evidence"]
-    second_evidence = json.loads(backend.calls[1][0][-1].content)["evidence"]
+    first_request = first_payload["request"]
+    second_request = json.loads(backend.calls[1][0][-1].content)
+    first_evidence = first_request["evidence"]
+    second_evidence = second_request["evidence"]
+    assert first_request["task"] == second_request["task"] == "qda_fit_tuning"
+    assert first_request["phase"] == second_request["phase"] == "retry"
+    assert first_request["requested_fields"] == second_request["requested_fields"] == ["tune_z_values"]
     assert set(first_evidence) == {"fixed_parameters", "previous_attempts"}
     assert set(second_evidence) == {"fixed_parameters", "previous_attempts"}
     assert first_evidence["previous_attempts"] == attempts
@@ -2267,8 +2272,8 @@ def test_recommendation_sends_data_on_first_human_failure_but_not_on_retry(tmp_p
     correlator_context = first_payload["context"][0]["content"]
     assert "correlators" in correlator_context
     assert isinstance(correlator_context["correlators"]["qda"]["components"]["real"], str)
-    assert [message.role for message in backend.calls[0][0][:3]] == ["system", "system", "user"]
-    assert backend.calls[0][0][0].content.startswith("# Correlator analysis")
+    assert [message.role for message in backend.calls[0][0][:2]] == ["system", "user"]
+    assert backend.calls[0][0][0].content.startswith("The supplied qDA evidence")
     assert backend.calls[0][2] == backend.calls[1][2]
 
 
@@ -2315,9 +2320,70 @@ def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path)
     assert pt2_windows(context, session) == [{"tmin": 2, "tmax": 8}]
     assert initial(context, session)["tune_z_values"] == [0.1]
     assert session.recommendation_calls == 1
+    request = json.loads(backend.calls[0][0][-1].content)["request"]
+    assert request["task"] == "qda_fit_tuning"
+    assert request["phase"] == "initial"
+    assert request["requested_fields"] == ["pt2_windows", "tune_z_values"]
     window_schema = backend.response_schemas[0]["schema"]["properties"]["pt2_windows"]["items"]
     assert window_schema["required"] == ["tmax", "tmin"]
     assert window_schema["additionalProperties"] is False
+
+
+def test_spectrum_recommendation_describes_its_initial_request(tmp_path: Path) -> None:
+    from lamet_agent.data import EnsembleData
+    from lamet_agent.stages.correlator_analysis.ask.ask_for_spectrum_fit import recommend
+
+    backend = _ScriptedBackend(
+        [
+            _AssistantResponse(
+                "",
+                structured={
+                    "tmin": 1,
+                    "tmax": 4,
+                    "n_states": 1,
+                    "prior_means": {"E0": 0.3, "A0": 1.0},
+                    "prior_widths": {"E0": 0.1, "A0": 0.5},
+                },
+            )
+        ]
+    )
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "spectrum",
+        {"component": "re", "nstate": [1, 2]},
+        {},
+        {},
+        {
+            "correlators": {
+                "two_point": EnsembleData(
+                    None,
+                    "bootstrap",
+                    [np.asarray([1.0, 0.8, 0.6, 0.5]), np.asarray([1.0, 0.82, 0.62, 0.51])],
+                    ["t"],
+                    {"t": [0, 1, 2, 3]},
+                    attrs={"correlator_type": "two_point"},
+                )
+            }
+        },
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    fixed = {"pt2_windows": [{"tmin": 1, "tmax": 4}]}
+
+    result = recommend(context, _ask_session(backend, tmp_path / "spectrum.md", context), fixed_parameters=fixed)
+
+    assert result["n_states"] == 1
+    request = json.loads(backend.calls[0][0][-1].content)["request"]
+    assert request == {
+        "task": "direct_spectrum_fit",
+        "phase": "initial",
+        "requested_fields": ["n_states", "prior_means", "prior_widths", "tmax", "tmin"],
+        "evidence": {"fixed_parameters": fixed},
+    }
+    assert [message.role for message in backend.calls[0][0][:2]] == ["system", "user"]
+    assert backend.calls[0][0][0].content.startswith("The supplied correlator evidence")
 
 
 def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(tmp_path: Path) -> None:
@@ -2327,15 +2393,18 @@ def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(t
     data = EnsembleData(
         EnsembleInfo("test", "test", 0.1, 0.1, 32, 64, 0.14),
         "bootstrap",
-        [np.asarray([0.8, 1.0, 0.8], dtype=complex), np.asarray([0.7, 1.0, 0.7], dtype=complex)],
+        [
+            np.asarray([0.3, 0.5, 0.7, 0.9, 1.0, 0.9, 0.7, 0.5, 0.3], dtype=complex),
+            np.asarray([0.28, 0.48, 0.68, 0.88, 1.0, 0.88, 0.68, 0.48, 0.28], dtype=complex),
+        ],
         ["z"],
-        {"z": [-0.1, 0.0, 0.1]},
+        {"z": [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]},
         attrs={"coord_unit": "fm", "momentum_gev": 2.0},
     )
     backend = _ScriptedBackend(
         [
-            _AssistantResponse("", structured={"zmin_fm": [0.05], "zmax_fm": [0.1]}),
-            _AssistantResponse("", structured={"zmin_fm": [0.04], "zmax_fm": [0.1]}),
+            _AssistantResponse("", structured={"zmin_fm": [0.6], "zmax_fm": [0.8]}),
+            _AssistantResponse("", structured={"zmin_fm": [0.6], "zmax_fm": [0.8]}),
         ]
     )
     context = ToolContext(
@@ -2345,30 +2414,37 @@ def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(t
         "fourier",
         {
             "scheme_scan": {"order": ["LA"], "posterior_prior_error_scale": [3.0]},
-            "zmax_ext_fm": 0.2,
+            "zmax_ext_fm": 1.0,
         },
         {},
         {},
-        {"fourier_input": data, "tail_inspection": {"z_grid_step_fm": 0.1}},
+        {"fourier_input": data, "tail_inspection": {"z_grid_step_fm": 0.2}},
         tmp_path,
         np.random.default_rng(1),
     )
     session = _ask_session(backend, tmp_path / "fourier.md", context, max_recommendation_calls=2)
 
-    assert initial(context, session) == {"zmin_fm": [0.05], "zmax_fm": [0.1]}
+    assert initial(context, session) == {"zmin_fm": [0.6], "zmax_fm": [0.8]}
     attempts = {"candidate": {"parameters": {"order": "LA"}, "Q": 0.01, "chi2_dof": 2.0}}
-    assert revise(context, session, attempts) == {"zmin_fm": [0.04], "zmax_fm": [0.1]}
+    assert revise(context, session, attempts) == {"zmin_fm": [0.6], "zmax_fm": [0.8]}
     with pytest.raises(RuntimeError, match="limit exceeded"):
         revise(context, session, attempts)
 
     first_payload = json.loads(backend.calls[0][0][-1].content)
     second_payload = json.loads(backend.calls[1][0][-1].content)
+    assert first_payload["request"]["task"] == second_payload["task"] == "fourier_tail_range_tuning"
+    assert first_payload["request"]["phase"] == "initial"
+    assert second_payload["phase"] == "retry"
+    assert first_payload["request"]["requested_fields"] == second_payload["requested_fields"] == [
+        "zmax_fm",
+        "zmin_fm",
+    ]
     assert first_payload["context"][0]["key"] == "fourier_tail_fit_data"
     assert isinstance(first_payload["context"][0]["content"]["components"]["real"], str)
     assert "context" not in second_payload
     assert second_payload["evidence"]["previous_attempts"] == attempts
-    assert [message.role for message in backend.calls[0][0][:3]] == ["system", "system", "user"]
-    assert backend.calls[0][0][0].content.startswith("# Fourier transform")
+    assert [message.role for message in backend.calls[0][0][:2]] == ["system", "user"]
+    assert backend.calls[0][0][0].content.startswith("The supplied evidence describes")
     assert backend.calls[0][2] == backend.calls[1][2]
 
 

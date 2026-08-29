@@ -198,7 +198,7 @@ class PlainUi:
 
     def review_plan(self, question: str, _state: Any) -> bool | str | None:
         try:
-            answer = input(f"{question} [y/N or describe a revision] ").strip()
+            answer = input(f"{question} [y/N, ask a question, or describe a revision] ").strip()
         except (KeyboardInterrupt, EOFError) as exc:
             raise UiCancelled("interaction cancelled by user") from exc
         if answer.lower() in {"y", "yes"}:
@@ -375,7 +375,7 @@ class TerminalUi(PlainUi):
         self.completer.state = state
         try:
             answer = self.session.prompt(
-                f"{question} [y/N or describe a revision] ",
+                f"{question} [y/N, ask a question, or describe a revision] ",
                 multiline=True,
                 key_bindings=_CONVERSATION_KEY_BINDINGS,
                 prompt_continuation="... ",
