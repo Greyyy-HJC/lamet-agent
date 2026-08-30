@@ -9,17 +9,17 @@ description = "Minimal LaMET agent scaffold."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "numpy",
-  "scipy",
-  "matplotlib",
-  "gvar",
-  "gmpy2",
-  "mpmath",
-  "lsqfit",
-  "xarray",
-  "h5py",
-  "netCDF4",
-  "prompt_toolkit",
+  "numpy>=2,<3",
+  "scipy>=1.13,<2",
+  "matplotlib>=3.8,<4",
+  "gvar>=13,<14",
+  "lsqfit>=13,<14",
+  "gmpy2>=2.2,<3",
+  "mpmath>=1.3,<2",
+  "xarray>=2024.11",
+  "h5py>=3.11,<4",
+  "netCDF4>=1.7,<2",
+  "prompt_toolkit>=3.0.52,<4",
 ]
 
 [project.optional-dependencies]
