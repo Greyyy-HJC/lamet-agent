@@ -22,7 +22,7 @@
   - [x] `correlator_analys`: Jinchen
   - [x] `renormalization`: Jinchen
   - [ ] `fourier_transform`: Dianjun
-  - [ ] `perturbative_matching`: Fei
+  - [x] `perturbative_matching`: Fei
   - [ ] `extrapolation`: Dianjun
 
 ## UI/UX
