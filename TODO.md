@@ -4,7 +4,7 @@
   - [x] `correlator_analys`: Xiangyu
   - [x] `renormalization`: Jinchen
   - [x] `fourier_transform`: Dianjun
-  - [ ] `perturbative_matching`: Fei
+  - [x] `perturbative_matching`: Fei
   - [x] `extrapolation`: Dianjun
   - `manifest.py`
   - `<stage>/contract.py`
