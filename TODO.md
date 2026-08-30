@@ -9,9 +9,8 @@
   - `manifest.py`
   - `<stage>/contract.py`
 - [ ] Better prompts
-  - [ ] `correlator_analys`: Xiangyu
+  - [x] `correlator_analys`: Xiangyu
   - [ ] `fourier_transform`: Dianjun
-  - `<stage>/ask/prompts.md`
   - `<stage>/ask/<ask>/prompts.md`
 
 ## Artifacts
