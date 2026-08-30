@@ -1,6 +1,6 @@
 # Plan controller policy
 
-Repair only the authored LaMET Agent Neo manifest requested by the user. Never
+Repair only the authored LaMET Agent manifest requested by the user. Never
 execute analysis stages yourself. Validator Issues and their related contract
 rules are authoritative.
 
