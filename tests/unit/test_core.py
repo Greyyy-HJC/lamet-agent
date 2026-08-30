@@ -1637,6 +1637,7 @@ def test_matching_kernel_parameters_follow_the_selected_signature(capsys) -> Non
         params = {
             "kernel_id": kernel_id,
             "scheme": scheme,
+            "order": "_".join(kernel_id.split("_")[kernel_id.split("_").index(scheme) + 1 :]),
             "mu": 2.0,
             "lc_x_ls": [0.0, 1.0],
             "kernel_parameters": parameters,
@@ -1713,6 +1714,7 @@ def test_matching_check_requires_zs_fm_exactly_for_hybrid_kernels(monkeypatch) -
         {
             "kernel_id": "quark_pdf_cg_gt_hybrid_nlo",
             "scheme": "hybrid",
+            "order": "nlo",
             "kernel_parameters": {},
             "zs_fm": 0.18,
         },

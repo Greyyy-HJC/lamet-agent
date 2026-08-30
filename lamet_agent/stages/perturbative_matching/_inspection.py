@@ -10,6 +10,22 @@ from lamet_agent.kernels import load_kernel, load_kernel_document
 from lamet_agent.stages.perturbative_matching.physics import load_data, inspect_callable
 
 
+_COMPONENT_ALIASES = {"re": "re", "real": "re", "im": "im", "imag": "im", "imaginary": "im"}
+_ORDER_COMPONENTS = {"rgr_nlo_re": "re", "rgr_nlo_im": "im"}
+
+
+def _matching_component(order: str, attrs: dict) -> str:
+    """Return the quasi component matched by one kernel order."""
+    required = _ORDER_COMPONENTS.get(order)
+    declared = _COMPONENT_ALIASES.get(str(attrs.get("component", "")).lower())
+    if required is not None and declared is not None and declared != required:
+        raise ValueError(
+            f"kernel order '{order}' matches the {required} component "
+            f"but the quasi input declares component '{declared}'"
+        )
+    return required or declared or "re"
+
+
 def _one(value):
     if isinstance(value, list):
         if len(value) != 1:
@@ -21,11 +37,10 @@ def _one(value):
 def run(context: ToolContext) -> dict[str, object]:
     """Load one kernel module and store its input/output grid summary."""
     data = load_data(_one(context.inputs["quasi"]))
+    component = _matching_component(str(context.params["order"]), data.attrs)
     if np.iscomplexobj(data.values):
-        component = str(data.attrs.get("component", "re")).lower()
-        data = data.imag if component in {"im", "imag", "imaginary"} else data.real
-        attrs = data.attrs
-        attrs["matching_component"] = "im" if component in {"im", "imag", "imaginary"} else "re"
+        data = data.imag if component == "im" else data.real
+    data.array.attrs["matching_component"] = component
     momentum = data.attrs.get("momentum_gev")
     if (
         not isinstance(momentum, (int, float))
@@ -67,6 +82,7 @@ def run(context: ToolContext) -> dict[str, object]:
         "x_count": len(data.coords.get("x", [])),
         "dims": data.dims,
         "momentum_gev": float(momentum),
+        "matching_component": component,
         "document": document,
     }
     return {

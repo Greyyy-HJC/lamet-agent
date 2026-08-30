@@ -185,23 +185,25 @@ def _kernel_parameter_issues(kernel: Any, values: dict[str, Any]) -> list[Issue]
 # ruff: disable[E501]
 # fmt: off
 PARAM_RULES = (
-    Depends("", "kernel_id", physics="The matching kernel is selected by one public filename stem."),
-    Depends("", "scheme", physics="The matching scheme is explicit and must agree with the selected kernel."),
-    Value("scheme", Literal["ratio", "hybrid", "msbar"], physics="Scheme is ratio, hybrid, or MSbar."),
-    Depends("", "mu", physics="The matching scale is an explicit physical choice."),
-    Depends("", "lc_x_ls", physics="The output grid is an explicit list or a start/stop window on the quasi grid."),
-    Recommends("", "kernel_parameters", physics="Kernels without scheme-specific controls receive an empty explicit parameter mapping.", default={}),
-    Provides("", "hybrid", "scheme", physics="Hybrid matching owns its Wilson-line switching distance."),
-    Depends("hybrid", "zs_fm", physics="Hybrid matching switch is a per-job parameter."),
+    Depends("", "kernel_id", physics="The matching kernel is one public filename stem observable_gauge_current_scheme_order; the file is the kernel identity and there is no alias registry, so its tokens must match the quasi input provenance."),
+    Depends("", "scheme", physics="The matching scheme is explicit and must agree with the scheme token of the selected kernel, because the coefficient function and the upstream renormalization convention are one physical choice."),
+    Value("scheme", Literal["ratio", "hybrid", "msbar"], physics="The three schemes differ by their coefficient function: MSbar adds 0.5/|1-xi| to the ratio kernel, and hybrid instead adds the Wilson-line term set by the switching distance."),
+    Depends("", "order", physics="The perturbative order and its resummation are one explicit choice, and equal the kernel filename tail after the scheme token."),
+    Value("order", Literal["nlo", "rgr_nlo_re", "rgr_nlo_im", "lrr_nlo"], physics="Fixed-order NLO applies one matrix at mu; rgr_nlo_re and rgr_nlo_im resum the running coupling by building each row at its own mu0 and evolving it to mu, and additionally select the real or imaginary quasi component; lrr_nlo resums the leading renormalon."),
+    Depends("", "mu", physics="The matching scale is the MS-bar scale of the published light-cone distribution in GeV, conventionally 2 GeV, and enters every coefficient function through the logarithm ln(4 y^2 Pz^2 / mu^2)."),
+    Depends("", "lc_x_ls", physics="A list is the exact light-cone output grid; a start/stop mapping instead keeps the quasi-grid points inside the closed window, and never interpolates."),
+    Recommends("", "kernel_parameters", physics="Kernel-specific controls are explicit and are validated against the selected kernel signature; every kernel accepts eps, the regulator keeping plus-prescription denominators finite, and rgr_nlo_* kernels add kappa and mu_min_gev, which build row x at mu0=2*kappa*x*Pz and zero every row with mu0 below mu_min_gev, so together they impose the cutoff x_min=mu_min_gev/(2*kappa*Pz) and keep mu0 above the Landau pole.", default={}),
+    Provides("", "hybrid", "scheme", physics="Only hybrid matching owns a Wilson-line switching distance, because only its coefficient function contains that term."),
+    Depends("hybrid", "zs_fm", physics="The switching distance in fm is where the ratio scheme gives way to Wilson-line subtraction; the kernel uses the dimensionless zs*Pz, and it is the same physical distance the hybrid renormalization applied to this input."),
     Value("kernel_id", str, physics="Kernel ids are safe public filename stems.", validator=_valid_kernel_id),
-    Value("mu", (int, float), physics="The matching scale is finite and positive.", validator=_positive),
+    Value("mu", (int, float), physics="The matching scale is finite and positive, and must stay far enough above LambdaQCD for a perturbative coupling to exist.", validator=_positive),
     Value("lc_x_ls", (list, dict), physics="The light-cone grid is increasing or has finite start/stop bounds.", validator=_valid_lc_x_ls),
     Value("kernel_parameters", dict, physics="Kernel parameters are an explicit mapping."),
     Value("hybrid.zs_fm", (int, float), physics="Hybrid switch distance is finite and positive.", validator=_positive),
 )
 
 INPUT_RULES = (
-    Depends("", "quasi", physics="Matching consumes one quasi-distribution source."),
+    Depends("", "quasi", physics="Matching consumes exactly one quasi distribution, whose attrs supply the momentum Pz and the provenance tokens the kernel filename must reproduce."),
     Source("quasi", physics="The quasi input is one prior job or external file source."),
 )
 
@@ -211,8 +213,8 @@ SYSTEMATICS_RULES = (
     Value("defaults", dict, physics="Matching systematics defaults form an object."),
     List("variants", "variant", physics="Matching systematic variants preserve authored order."),
     Suggests("", "defaults", "variants.variant", physics="Systematics defaults fill each matching variant."),
-    Depends("variants.variant", "id", physics="Every matching variation has one safe label."),
-    Depends("variants.variant", "mu_factor", physics="Every matching variation has one noncentral scale multiplier."),
+    Depends("variants.variant", "id", physics="Every matching variation has one safe label, which becomes the suffix of every generated job id."),
+    Depends("variants.variant", "mu_factor", physics="Every matching variation multiplies the central mu by one noncentral factor, conventionally sqrt(2) and 1/sqrt(2), and the generated jobs become the lamet_scale component of the systematics budget."),
     Value("variants.variant.id", str, physics="Matching variation labels are safe identifiers.", validator=_safe_systematics_id),
     Value("variants.variant.mu_factor", (int, float), physics="Matching scale multipliers are finite, positive, and not one.", validator=_valid_mu_factor),
 )
@@ -237,6 +239,13 @@ def check_kernel_shape(context: CheckContext) -> Issue | None:
             "scheme",
             f"must equal {schemes[0]!r} for kernel {kernel_id!r}",
             "The stage scheme and filename scheme are the same physical choice.",
+        )
+    order = "_".join(tokens[tokens.index(schemes[0]) + 1 :])
+    if context.params.get("order") != order:
+        return Issue(
+            "order",
+            f"must equal {order!r} for kernel {kernel_id!r}",
+            "Kernel filenames are observable_gauge_current_scheme_order, so the tail after the scheme is the order.",
         )
     return None
 

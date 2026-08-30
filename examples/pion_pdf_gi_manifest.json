@@ -142,6 +142,7 @@
       "defaults": {
         "kernel_id": "quark_pdf_gi_gt_hybrid_nlo",
         "scheme": "hybrid",
+        "order": "nlo",
         "mu": 2.0,
         "lc_x_ls": {
           "start": 0.0,

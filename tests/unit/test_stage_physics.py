@@ -1854,6 +1854,67 @@ def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(monkeypa
     assert line_colors == [COLOR_CYCLE[0]]
 
 
+def test_matching_component_follows_the_kernel_order() -> None:
+    from lamet_agent.stages.perturbative_matching._inspection import _matching_component
+
+    assert _matching_component("rgr_nlo_re", {}) == "re"
+    assert _matching_component("rgr_nlo_im", {}) == "im"
+    assert _matching_component("rgr_nlo_im", {"component": "imaginary"}) == "im"
+    assert _matching_component("rgr_nlo_re", {"component": "both"}) == "re"
+    assert _matching_component("nlo", {"component": "im"}) == "im"
+    assert _matching_component("lrr_nlo", {}) == "re"
+    for order, declared in (("rgr_nlo_re", "im"), ("rgr_nlo_im", "real")):
+        with pytest.raises(ValueError, match="component"):
+            _matching_component(order, {"component": declared})
+
+
+def test_matching_inspection_reduces_the_component_named_by_the_order(tmp_path) -> None:
+    from lamet_agent.stages.perturbative_matching._inspection import run
+
+    values = [np.array([1.0 + 4.0j, 2.0 + 5.0j]), np.array([1.5 + 4.5j, 2.5 + 5.5j])]
+    quasi = EnsembleData(
+        None,
+        "bootstrap",
+        values,
+        ["x"],
+        {"x": [0.25, 0.75]},
+        attrs={
+            "momentum_gev": 2.0,
+            "gfix": "CG",
+            "kernel_operator": "gt",
+            "target_observable": "pdf",
+            "renormalization_scheme": "msbar",
+        },
+        name="quasi_distribution",
+    )
+    params = {
+        "kernel_id": "quark_pdf_cg_gt_msbar_rgr_nlo_im",
+        "scheme": "msbar",
+        "order": "rgr_nlo_im",
+        "mu": 2.0,
+        "lc_x_ls": [0.25, 0.75],
+        "kernel_parameters": {},
+    }
+    context = ToolContext(
+        {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "perturbative_matching",
+        "match",
+        params,
+        {"quasi": quasi},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    run(context)
+    reduced = context.state["quasi"]
+    assert not np.iscomplexobj(reduced.values)
+    assert np.allclose(np.asarray(reduced.values)[0], [4.0, 5.0])
+    assert reduced.attrs["matching_component"] == "im"
+    assert context.state["kernel_inspection"]["matching_component"] == "im"
+
+
 def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> None:
     from lamet_agent.stages.perturbative_matching._apply import run
 
