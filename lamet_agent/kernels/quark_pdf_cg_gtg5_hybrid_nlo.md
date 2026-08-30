@@ -17,7 +17,7 @@ Here the plus functions on a domain $D$ are defined as
 
 $$\left[g(x)\right]^D_{+(x_0)} = g(x) - \delta(x-x_0)\int_D dx'\ g(x')\,,$$
 
-with the subtraction point $x_0=1$ (i.e., $+(1)$). The arctan term is analytic at $\xi=1/2$; for $\xi<1/2$ it uses $\arctan(\sqrt{1-2\xi}/|\xi|)/\sqrt{1-2\xi}$, and for $\xi>1/2$ it uses $\arctanh(\sqrt{2\xi-1}/|\xi|)/\sqrt{2\xi-1}$.
+with the subtraction point $x_0=1$ (i.e., $+(1)$). The arctan term is analytic at $\xi=1/2$; for $\xi<1/2$ it uses $\arctan(\sqrt{1-2\xi}/|\xi|)/\sqrt{1-2\xi}$, and for $\xi>1/2$ it uses $\operatorname{arctanh}(\sqrt{2\xi-1}/|\xi|)/\sqrt{2\xi-1}$.
 
 #### Consistency check
 

@@ -7,7 +7,7 @@ where the $\gamma^t$ kernel is
 $$C^{(1)}_{\overline{\rm MS},\gamma^t}(\xi,L) = C^{(1)}_{\rm ratio}(\xi,L) + \frac{1}{2}\left[\frac{1}{|1-\xi|}\right]_{+(1)}^{[0,2]},$$
 and the ratio-scheme coefficient is
 $$C^{(1)}_{\rm ratio}(\xi,L) = \frac{\alpha_s C_F}{2\pi}\left[\left(\frac{1+\xi^2}{1-\xi}\right)\left(L+\ln\frac{\xi}{1-\xi}\right) + \xi - 1 + \frac{3\xi-1}{\xi-1}\frac{\arctan\sqrt{1-2\xi}}{\sqrt{1-2\xi}} - \frac{3}{2|1-\xi|}\right]_{+(1)}^{[0,1]},$$
-with the branch switching to $\arctanh\sqrt{2\xi-1}$ for $\xi>1/2$.  
+with the branch switching to $\operatorname{arctanh}\sqrt{2\xi-1}$ for $\xi>1/2$.  
 The plus prescription is the paper's $[g(\xi)]^{D}_{+(x_0)}$, with $x_0=1$ and domain $D$ as indicated; the code restores it by subtracting each column's integral, and the $\delta(1-\xi)$ term is carried on the diagonal.  
 The resummation evolves each row from $\mu_0(x)$ to $\mu$ via the path-ordered matrix exponential of the two-loop (NLL) non-singlet splitting function $P_{qq}^{(1)}+P_{qq}^{(2)}$ (the code uses the full unpolarized $q+\bar q$ channel), and rows with $\mu_0(x)<\mu_{\min}$ are set to zero, implementing the paper's $x_{\min}$ cutoff.
 

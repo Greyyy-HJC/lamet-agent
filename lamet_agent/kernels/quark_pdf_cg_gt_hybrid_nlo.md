@@ -31,7 +31,7 @@ $$
 \frac{\tan^{-1}\left(\sqrt{1-2 \xi}/|\xi|\right)}{\sqrt{1-2 \xi}} \to
 \begin{cases}
 \arctan\!\big(\sqrt{1-2\xi}/|\xi|\big)/\sqrt{1-2\xi}, & \xi < 1/2,\\[2pt]
-\arctanh\!\big(\sqrt{2\xi-1}/|\xi|\big)/\sqrt{2\xi-1}, & \xi > 1/2,
+\operatorname{arctanh}\!\big(\sqrt{2\xi-1}/|\xi|\big)/\sqrt{2\xi-1}, & \xi > 1/2,
 \end{cases}
 $$
 

@@ -9,7 +9,7 @@ with the plus functions defined as
 
 $$\left[g(x)\right]^D_{+(x_0)} = g(x) - \delta(x-x_0)\int_D dx'\ g(x').$$
 
-The $\gamma^z$ shift $2(1-\xi)$ is taken from Eq. (2.15) of the paper, which pairs it with a $+\delta(1-\xi)$ term in the $\overline{\mathrm{MS}}$ scheme. In the ratio scheme, that delta is omitted because the scheme divides out the normalization; the shift remains plus-prescribed by the shared discretization. The arctan/arctanh branch is chosen by where $\xi$ sits relative to $1/2$: for $\xi<1/2$ use $\arctan(\sqrt{1-2\xi}/|\xi|)/\sqrt{1-2\xi}$, for $\xi>1/2$ use $\arctanh(\sqrt{2\xi-1}/|\xi|)/\sqrt{2\xi-1}$, and at $\xi=1/2$ the analytic limit is $1/|\xi|$.
+The $\gamma^z$ shift $2(1-\xi)$ is taken from Eq. (2.15) of the paper, which pairs it with a $+\delta(1-\xi)$ term in the $\overline{\mathrm{MS}}$ scheme. In the ratio scheme, that delta is omitted because the scheme divides out the normalization; the shift remains plus-prescribed by the shared discretization. The arctan/arctanh branch is chosen by where $\xi$ sits relative to $1/2$: for $\xi<1/2$ use $\arctan(\sqrt{1-2\xi}/|\xi|)/\sqrt{1-2\xi}$, for $\xi>1/2$ use $\operatorname{arctanh}(\sqrt{2\xi-1}/|\xi|)/\sqrt{2\xi-1}$, and at $\xi=1/2$ the analytic limit is $1/|\xi|$.
 
 #### Consistency check
 

@@ -9,7 +9,7 @@ where the plus functions on a domain $D$ are defined as
 
 $$\left[g(x)\right]^D_{+(x_0)} = g(x) - \delta(x-x_0)\int_D dx'\ g(x')\,.$$
 
-The arctan branch is chosen by $\xi$ relative to $1/2$: for $\xi<1/2$ use $\arctan(\sqrt{1-2\xi}/|\xi|)/\sqrt{1-2\xi}$; for $\xi>1/2$ use $\arctanh(\sqrt{2\xi-1}/|\xi|)/\sqrt{2\xi-1}$; at $\xi=1/2$ the analytic limit is $1/|\xi|$.
+The arctan branch is chosen by $\xi$ relative to $1/2$: for $\xi<1/2$ use $\arctan(\sqrt{1-2\xi}/|\xi|)/\sqrt{1-2\xi}$; for $\xi>1/2$ use $\operatorname{arctanh}(\sqrt{2\xi-1}/|\xi|)/\sqrt{2\xi-1}$; at $\xi=1/2$ the analytic limit is $1/|\xi|$.
 
 #### Consistency check
 

@@ -9,7 +9,7 @@ where the plus functions on a domain $D$ are defined as
 
 $$\left[g(x)\right]^D_{+(x_0)} = g(x) - \delta(x-x_0)\int_D dx'\ g(x')\,.$$
 
-The code implements exactly this $C^{(1)}_r$ (the `C_ratio` function), with the $\tan^{-1}$ branch chosen as $\arctan$ for $\xi<1/2$ and $\arctanh$ for $\xi>1/2$, and the analytic limit at $\xi=1/2$. The scheme-specific correction is the $+{1\over 2|1-\xi|}$ term and the $\delta(1-\xi)$ term with its integral counterterm, which the code adds via the `diagonal_extra` mechanism in the matching matrix construction.
+The code implements exactly this $C^{(1)}_r$ (the `C_ratio` function), with the $\tan^{-1}$ branch chosen as $\arctan$ for $\xi<1/2$ and $\operatorname{arctanh}$ for $\xi>1/2$, and the analytic limit at $\xi=1/2$. The scheme-specific correction is the $+{1\over 2|1-\xi|}$ term and the $\delta(1-\xi)$ term with its integral counterterm, which the code adds via the `diagonal_extra` mechanism in the matching matrix construction.
 
 #### Consistency check
 

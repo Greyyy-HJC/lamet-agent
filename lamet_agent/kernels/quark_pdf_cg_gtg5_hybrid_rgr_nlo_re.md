@@ -11,7 +11,7 @@ with $L=\ln(4y^2P_z^2/\mu^2)$, and
 
 $$C_{\rm ratio}(\xi,L) = \frac{1+\xi^2}{1-\xi}\left[L + \ln\frac{\xi}{1-\xi}\right] + \xi - 1 + \frac{3\xi-1}{\xi-1}\frac{\arctan\sqrt{1-2\xi}}{\sqrt{1-2\xi}} - \frac{3}{2|1-\xi|},$$
 
-for $0<\xi<1$, with the branch switching to $\arctanh\sqrt{2\xi-1}$ for $\xi>1/2$ (analytic across $\xi=1/2$). The scheme-specific hybrid correction is
+for $0<\xi<1$, with the branch switching to $\operatorname{arctanh}\sqrt{2\xi-1}$ for $\xi>1/2$ (analytic across $\xi=1/2$). The scheme-specific hybrid correction is
 
 $$\Delta_{\rm hybrid}(\xi,y) = \frac{1}{2}\left[\frac{1}{|1-\xi|} - \frac{2\,{\rm Si}[(1-\xi)|y|z_sP_z]}{\pi(1-\xi)}\right],$$
 
