@@ -21,8 +21,6 @@ def run(context: ToolContext, *, excluded_ensembles: list[str]) -> dict[str, obj
     if excluded:
         raise ValueError("the reference extrapolation uses every authored input")
     selected = list(data)
-    if len(selected) <= len(terms) + 1:
-        raise ValueError("candidate needs more inputs than its intercept and correction coefficients")
     x_coordinates = [float(value) for value in selected[0].coords["x"]]
     x_range = (min(x_coordinates), max(x_coordinates))
     priors = params["priors"]
