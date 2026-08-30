@@ -13,6 +13,8 @@ dependencies = [
   "scipy",
   "matplotlib",
   "gvar",
+  "gmpy2",
+  "mpmath",
   "lsqfit",
   "xarray",
   "h5py",

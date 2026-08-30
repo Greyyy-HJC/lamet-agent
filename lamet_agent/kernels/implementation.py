@@ -1,6 +1,7 @@
 from __future__ import annotations
 import functools
 from typing import Callable, Final
+import mpmath
 import numpy as np
 
 HBAR_C_GEV_FM = 0.1973269804
@@ -489,12 +490,6 @@ def rnasym(n: int, z: float, mu: float, nf: int = 3) -> float:
 
 
 def dPVasym(z: float, mu: float, nf: int, alphas: float) -> float:
-    try:
-        import mpmath
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "The LRR matching kernels need mpmath for the exponential-integral E_nu; install the 'analysis' extra (pip install -e '.[analysis]')."
-        ) from exc
     beta0, b, c1, c2 = _renormalon_params(nf)
     w = -2.0 * np.pi / (alphas * beta0)
     borel = mpmath.expint(1.0 + b, w) + c1 * mpmath.expint(b, w) + c2 * mpmath.expint(-1.0 + b, w)

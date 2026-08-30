@@ -126,6 +126,20 @@ def test_migrated_lanczos_recovers_exact_spectrum_and_matrix() -> None:
     assert matrix == pytest.approx(current)
 
 
+def test_lanczos_gmpy2_recurrence_matches_numpy_reference() -> None:
+    from lamet_agent.parallel.lanczos import _transfer_matrix
+
+    transfer_values = np.exp(-np.asarray([0.2, 0.5, 0.9]))
+    weights = np.asarray([1.0, 0.4, 0.15])
+    correlator = np.asarray([np.sum(weights * transfer_values**time) for time in range(6)])
+
+    reference = _transfer_matrix(correlator, precision=0)
+    high_precision = _transfer_matrix(correlator, precision=100)
+
+    for expected, actual in zip(reference, high_precision):
+        np.testing.assert_allclose(actual, expected, rtol=1e-11, atol=1e-13)
+
+
 def test_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

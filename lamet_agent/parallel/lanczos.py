@@ -229,21 +229,25 @@ def _transfer_matrix_numpy(c2: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.n
     return matrix, a[1], b[1], g[1]
 
 
-def _transfer_matrix_mpmath(c2: np.ndarray, precision: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Build the recurrence with ``precision`` decimal digits using mpmath."""
-    import mpmath as mp
+def _transfer_matrix_gmpy2(c2: np.ndarray, precision: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build the recurrence with ``precision`` decimal digits using gmpy2."""
+    from gmpy2 import context as gmpy2_context
+    from gmpy2 import get_context as gmpy2_get_context
+    from gmpy2 import mpfr, sqrt
 
     k = len(c2)
     m = k // 2
-    with mp.workdps(precision):
-        zero = mp.mpf("0")
+    bits = int(np.ceil(precision * np.log2(10)))
+    with gmpy2_context(gmpy2_get_context(), precision=bits):
+        zero = mpfr(0)
+        one = mpfr(1)
         a = [[zero for _ in range(m)] for _ in range(k)]
         b = [[zero for _ in range(m)] for _ in range(k)]
         g = [[zero for _ in range(m)] for _ in range(k)]
         matrix = [[zero for _ in range(m)] for _ in range(m)]
-        c2_zero = mp.mpf(float(c2[0]))
+        c2_zero = mpfr(float(c2[0]))
         for t, value in enumerate(c2):
-            a[t][0] = mp.mpf(float(value)) / c2_zero
+            a[t][0] = mpfr(float(value)) / c2_zero
 
         def arrays(stop: int):
             return (
@@ -261,20 +265,20 @@ def _transfer_matrix_mpmath(c2: np.ndarray, precision: int) -> tuple[np.ndarray,
             if product == 0:
                 matrix[j][j] = alpha
                 return arrays(j + 1)
-            gamma_next = mp.sqrt(abs(product))
+            gamma_next = sqrt(abs(product))
             beta_next = product / gamma_next
             k -= 2
             for t in range(k):
-                a[t][j + 1] = (
+                a[t][j + 1] = (one / product) * (
                     a[t + 2][j]
                     - 2 * alpha * a[t + 1][j]
                     + alpha**2 * a[t][j]
                     + alpha * (beta * g[t][j] + gamma * b[t][j])
                     - (beta * g[t + 1][j] + gamma * b[t + 1][j])
                     + gamma * beta * a[t][j - 1]
-                ) / product
-                g[t][j + 1] = (a[t + 1][j] - alpha * a[t][j] - gamma * b[t][j]) / beta_next
-                b[t][j + 1] = (a[t + 1][j] - alpha * a[t][j] - beta * g[t][j]) / gamma_next
+                )
+                g[t][j + 1] = (one / beta_next) * (a[t + 1][j] - alpha * a[t][j] - gamma * b[t][j])
+                b[t][j + 1] = (one / gamma_next) * (a[t + 1][j] - alpha * a[t][j] - beta * g[t][j])
             matrix[j][j] = alpha
             matrix[j][j + 1] = beta_next
             matrix[j + 1][j] = gamma_next
@@ -293,7 +297,7 @@ def _transfer_matrix(c2: np.ndarray, precision: int = 0) -> tuple[np.ndarray, np
         raise ValueError("Lanczos normalization requires the ensemble-average C(0) to be positive")
     if precision < 0:
         raise ValueError("Lanczos precision must be nonnegative")
-    return _transfer_matrix_numpy(values) if precision == 0 else _transfer_matrix_mpmath(values, precision)
+    return _transfer_matrix_numpy(values) if precision == 0 else _transfer_matrix_gmpy2(values, precision)
 
 
 def _ritz_spectrum(matrix: np.ndarray, epsilon_float: float = 1e-12) -> _Ritz:
