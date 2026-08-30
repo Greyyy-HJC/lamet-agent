@@ -21,17 +21,17 @@ from lamet_agent.stages.extrapolation.physics import load_data
 
 
 _TERM_FORMULAS = {
-    "a": "a",
-    "a2": "a^2",
-    "a4": "a^4",
-    "ap2": "(aP_z)^2",
-    "ap4": "(aP_z)^4",
-    "inv_p2": "1/P_z^2",
-    "inv_p4": "1/P_z^4",
-    "mpi2": "m_\\pi^2-m_{\\pi,\\rm phys}^2",
-    "mpi4_log_mpi2": "m_\\pi^4\\log m_\\pi^2-m_{\\pi,\\rm phys}^4\\log m_{\\pi,\\rm phys}^2",
-    "exp_mpi_L": "e^{-m_\\pi L}",
-    "exp_sqrt2_mpi_L": "e^{-\\sqrt2m_\\pi L}",
+    "a": "a_s [fm]",
+    "a2": "a_s^2 [fm^2]",
+    "a4": "a_s^4 [fm^4]",
+    "ap2": "(a_s P_z)^2 [raw]",
+    "ap4": "(a_s P_z)^4 [raw]",
+    "inv_p2": "P_z^{-2} [GeV^{-2}]",
+    "inv_p4": "P_z^{-4} [GeV^{-4}]",
+    "mpi2": "m_\\pi^2-m_{\\pi,\\rm phys}^2 [GeV^2]",
+    "mpi4_log_mpi2": "m_\\pi^4\\log(m_\\pi^2)-m_{\\pi,\\rm phys}^4\\log(m_{\\pi,\\rm phys}^2) [numerical GeV units]",
+    "exp_mpi_L": "e^{-m_\\pi L/(\\hbar c)}",
+    "exp_sqrt2_mpi_L": "e^{-\\sqrt2m_\\pi L/(\\hbar c)}",
 }
 
 
@@ -41,7 +41,7 @@ def _formula(terms: list[str], independent_terms: set[str]) -> str:
         coefficient = f"c_{{{term}}}" if term in independent_terms else f"c_{{{term}}}(x)"
         pieces.append(f"{coefficient}{_TERM_FORMULAS[term]}")
     correction = " + ".join(pieces)
-    return f"$$h(x,a,P_z)=h(x,0,\\infty)+{correction}.$$"
+    return f"$$h(x,a,P_z)=h_0(x)+{correction}.$$"
 
 
 def _term_list(attrs: dict[str, object], params: dict[str, object], name: str) -> list[str]:
@@ -65,8 +65,11 @@ def _input_rows(record: StageReportRecord) -> list[str]:
         rows.append(
             f"| {index} | `{ensemble.id}` | "
             f"{format_value(ensemble.a_s)} | "
+            f"{format_value(ensemble.L_s * ensemble.a_s)} | "
             f"{format_value(attrs.get('momentum_gev'))} | "
             f"{format_value(ensemble.m_pi)} | `{attrs.get('kernel_id', 'n/a')}` |"
+            f" `{data.resample}` / {data.n_sample} | "
+            f"[{format_value(data.coords['x'][0])}, {format_value(data.coords['x'][-1])}] |"
         )
     return rows
 
@@ -98,7 +101,8 @@ def _parameter_rows(record: StageReportRecord, candidate: dict[str, object]) -> 
             if not isinstance(raw_sdev, list) or len(raw_mean) != len(x) or len(raw_sdev) != len(x):
                 raise ValueError(f"extrapolation parameter '{name}' does not match the x grid")
             rows.extend(
-                f"| `{name}` | {format_value(x[index])} | {format_value(raw_mean[index])} | {format_value(raw_sdev[index])} |"
+                f"| `{name}` | {format_value(x[index])} | "
+                f"{format_value(raw_mean[index])} | {format_value(raw_sdev[index])} |"
                 for index in indices
             )
         else:
@@ -119,7 +123,8 @@ def _momentum_rows(record: StageReportRecord, candidate: dict[str, object]) -> l
         if len(mean) != len(x) or len(sdev) != len(x):
             raise ValueError("momentum-dependence diagnostics do not match the x grid")
         rows.extend(
-            f"| {format_value(value['momentum_gev'])} | {format_value(x[index])} | {format_value(mean[index])} | {format_value(sdev[index])} |"
+                f"| {format_value(value['momentum_gev'])} | {format_value(x[index])} | "
+                f"{format_value(mean[index])} | {format_value(sdev[index])} |"
             for index in indices
         )
     return rows
@@ -131,7 +136,22 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
     lines = [
         "# Extrapolation Stage Report",
         "",
-        "This stage fits the lattice-spacing and finite-momentum dependence of matched distributions and publishes the continuum, infinite-momentum result.",
+        ("This stage fits authored lattice-spacing, finite-momentum, chiral, and finite-volume "
+         "bases and publishes the fitted intercept h_0(x). The report calls this the "
+         "continuum/infinite-momentum result; the actual limit is exactly the intercept of "
+         "the selected ansatz, not an additional post-fit physics correction."),
+        "",
+        "## Method",
+        "",
+        ("The fitted form is h_0(x) plus the authored correction bases. Coefficients marked "
+         "x-dependent are fitted independently at each common x point; constant coefficients "
+         "are shared across the grid. Basis values use a_s and P_z from input metadata, with "
+         "L=L_s a_s and m_pi in GeV."),
+        ("The implementation uses a_s in fm for a, a^2, and a^4; raw numerical (a_s P_z)^2 "
+         "and (a_s P_z)^4 without an hbar-c conversion; P_z^{-2} and P_z^{-4}; "
+         "physical-mass-subtracted pion-mass terms; and finite-volume exponentials with "
+         "m_pi L/(hbar c). Coefficients carry the inverse units of their basis when h "
+         "is dimensionless."),
         "",
         "## Job Summary",
         "",
@@ -183,19 +203,20 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 f"## `{record.job_id}`",
                 "",
-                "### Extrapolation Form",
+                "### Selected Fit",
+                "",
+                "#### Extrapolation Form",
                 "",
                 _formula(terms, set(independent_terms)),
                 "",
-                "The intercept is the published continuum/infinite-momentum distribution.  Coefficients marked as x-dependent are fitted independently across the common x grid; constant coefficients are shared across x.",
-                "",
                 "### Input Coverage",
                 "",
-                "| index | ensemble | a [fm] | momentum [GeV] | pion mass [GeV] | matching kernel |",
-                "|---:|---|---:|---:|---:|---|",
+                ("| index | ensemble | a [fm] | L [fm] | momentum [GeV] | pion mass [GeV] | "
+                 "matching kernel | resampling / N | x coverage |"),
+                "|---:|---|---:|---:|---:|---:|---|---|---|",
                 *_input_rows(record),
                 "",
-                "### Fit Settings and Quality",
+                "### Candidate Diagnostics",
                 "",
                 "| quantity | value |",
                 "|---|---|",
@@ -210,11 +231,12 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| Q | {format_value(candidate.get('Q'))} |",
                 f"| chi2/dof | {format_value(candidate.get('chi2_dof'))} |",
                 f"| failed resamples | {format_value(candidate.get('n_failed_samples'))} |",
-                f"| output grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
                 "",
                 "### Fit-model Parameter Table",
                 "",
-                "Vector coefficients are shown at the first, central, and last x coordinates; scalar coefficients are shared across the complete grid.",
+                ("Vector coefficients are shown at the first, central, and last x coordinates; scalar "
+                 "coefficients are shared across the complete grid. The joint fit uses the declared "
+                 "covariance mode, including cross-x covariance only when `x_covariance=true`."),
                 "",
                 "| parameter | x | mean | sdev across resamples |",
                 "|---|---:|---:|---:|",
@@ -222,11 +244,19 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "### Momentum Dependence",
                 "",
-                "At each requested momentum the fitted model is evaluated at a=0, retaining the finite-momentum inverse-power terms; the infinite-momentum curve is the published intercept.",
+                ("For each requested diagnostic momentum, the implementation evaluates h_0(x) and "
+                 "adds only the fitted `inv_p2` and `inv_p4` terms when present. Other authored bases "
+                 "are not re-evaluated in this diagnostic; the P_z -> infinity curve is the "
+                 "published intercept h_0(x)."),
                 "",
                 "| Pz [GeV] | x | mean | sdev across resamples |",
                 "|---:|---:|---:|---:|",
                 *_momentum_rows(record, candidate),
+                "",
+                "### Result Context",
+                "",
+                "- Published output: the fitted intercept $h_0(x)$ at the continuum/infinite-momentum limit.",
+                f"- Output grid: {describe_grid(record.output.coords['x'], symbol='x')}.",
                 "",
                 "### Field Definitions",
                 "",
@@ -235,9 +265,14 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "| `x_independent_terms` | Correction coefficients shared across the complete x grid. |",
                 "| `x_dependent_terms` | Correction coefficients fitted independently at every x. |",
                 "| `x_covariance` | Whether cross-x covariance is retained within each ensemble source. |",
-                "| `priors` | Shared initial Gaussian prior for the intercept and correction coefficients. |",
-                "| `posterior_prior_error_scale` | Widening applied when the sample-average posterior seeds resample fits. |",
-                "| `pdep_gev` | Requested momenta for the post-fit diagnostic only; it does not select inputs or alter the infinite-momentum result. |",
+                ("| `priors` | One common numerical Gaussian mean and width used for h_0 and all "
+                 "correction coefficients in their native units. |"),
+                ("| `posterior_prior_error_scale` | Multiplier applied to center-fit posterior widths "
+                 "when seeding resample fits. |"),
+                ("| `pdep_gev` | Requested momenta for the post-fit diagnostic only; it does not select "
+                 "inputs or alter the infinite-momentum result. |"),
+                ("| `physical_pion_mass_gev` | Reference mass that zeros the two pion-mass correction "
+                 "bases when they are selected. |"),
                 "",
                 "### Figures",
                 "",
@@ -256,9 +291,13 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "## Systematics Budget",
                 "",
-                "For every declared source, the pointwise systematic is the larger absolute displacement from the central result.  Independent source groups are combined in quadrature, followed by the statistical uncertainty:",
+                ("For each declared source, only variant central values are used. One variant gives "
+                 "|variant - main|; several variants give max(variant) - min(variant), after "
+                 "interpolation to the main x grid. Source components are then combined in "
+                 "quadrature, followed by the main statistical uncertainty:"),
                 "",
-                r"$$\sigma_{\rm sys}(x)=\sqrt{\sum_k\Delta_k(x)^2},\qquad \sigma_{\rm total}(x)=\sqrt{\sigma_{\rm stat}(x)^2+\sigma_{\rm sys}(x)^2}.$$",
+                (r"$$\sigma_{\rm sys}(x)=\sqrt{\sum_k\Delta_k(x)^2},\qquad "
+                 r"\sigma_{\rm total}(x)=\sqrt{\sigma_{\rm stat}(x)^2+\sigma_{\rm sys}(x)^2}.$$"),
             ]
         )
         for record in budget_records:

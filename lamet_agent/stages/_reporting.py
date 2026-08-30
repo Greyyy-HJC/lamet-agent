@@ -64,7 +64,7 @@ def figure_lines(record: StageReportRecord, stage_directory: Path) -> list[str]:
         raise TypeError(f"job '{record.job_id}' summary.artifacts must be a list")
     lines: list[str] = []
     for relative in raw:
-        if not isinstance(relative, str) or "/plots/" not in f"/{relative}" and not relative.startswith("plots/"):
+        if not isinstance(relative, str) or Path(relative).suffix.lower() not in {".pdf", ".svg"}:
             continue
         path = (record.artifact_directory / relative).resolve()
         if not path.is_file():
@@ -84,7 +84,10 @@ def describe_grid(values: Any, *, symbol: str = "x") -> str:
         return f"one point at ${symbol}={grid[0]:.6g}$"
     spacing = np.diff(grid)
     if np.allclose(spacing, spacing[0], rtol=1e-7, atol=1e-12):
-        return f"{grid.size} points from ${symbol}={grid[0]:.6g}$ to ${symbol}={grid[-1]:.6g}$ with $\\Delta {symbol}={spacing[0]:.6g}$"
+        return (
+            f"{grid.size} points from ${symbol}={grid[0]:.6g}$ to ${symbol}={grid[-1]:.6g}$ "
+            f"with $\\Delta {symbol}={spacing[0]:.6g}$"
+        )
     return f"{grid.size} nonuniform points from ${symbol}={grid.min():.6g}$ to ${symbol}={grid.max():.6g}$"
 
 

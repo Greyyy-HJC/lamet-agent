@@ -1,6 +1,6 @@
 ## Physics
 
-- [ ] Better contract physics comments
+- [x] Better contract physics comments
   - [x] `correlator_analys`: Xiangyu
   - [x] `renormalization`: Jinchen
   - [x] `fourier_transform`: Dianjun
@@ -8,21 +8,21 @@
   - [x] `extrapolation`: Dianjun
   - `manifest.py`
   - `<stage>/contract.py`
-- [ ] Better prompts
+- [x] Better prompts
   - [x] `correlator_analys`: Xiangyu
-  - [ ] `fourier_transform`: Dianjun
+  - [x] `fourier_transform`: Dianjun
   - `<stage>/ask/<ask>/prompts.md`
 
 ## Artifacts
 
 - [x] Plots: Jinchen
   - [x] Check: ALL
-- [ ] Reports
+- [x] Reports
   - [x] `correlator_analys`: Jinchen
   - [x] `renormalization`: Jinchen
-  - [ ] `fourier_transform`: Dianjun
+  - [x] `fourier_transform`: Dianjun
   - [x] `perturbative_matching`: Fei
-  - [ ] `extrapolation`: Dianjun
+  - [x] `extrapolation`: Dianjun
 
 ## UI/UX
 

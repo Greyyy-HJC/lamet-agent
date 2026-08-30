@@ -64,7 +64,9 @@ def _combined_series_label(record: StageReportRecord) -> str:
 
 
 _TAIL_FORMULA = r"""
-For a PDF, the GI LA/NLA tail family used away from the origin is
+The fitted long-distance branch is used only away from the origin and is
+connected to the measured/interpolated branch before the transform.  For the
+generic PDF family, the GI/CG LA/NLA ansatz is
 
 $$
 h(z)=\left[A_2e^{i\phi_2\operatorname{sgn}z}
@@ -72,11 +74,20 @@ h(z)=\left[A_2e^{i\phi_2\operatorname{sgn}z}
 e^{-\Lambda |z|/(\hbar c)},
 $$
 
-where the primed term is omitted at LA.  The CG family divides this expression
-by the fitted power $|z|^n$.  Meson-DA jobs use the corresponding two-endpoint
-phase structure fixed by `psi1_flavor_class`, `psi2_flavor_class`, and the
-hadron momentum.  The measured short-distance data are never replaced by this
-asymptotic ansatz.
+where the primed term is omitted at LA.  The CG family divides the result by
+the fitted power $|z|^n$.  A pion valence-PDF fit instead uses its dedicated
+two-endpoint form
+
+$$
+h(z)=\left[A_2+2A_1\cos\left(\phi_1-\frac{P_z|z|}{\hbar c}\right)
+ +\frac{\hbar c}{|z|}\left(A'_2+2A'_1\cos\left(\phi'_1-\frac{P_z|z|}{\hbar c}\right)\right)\right]
+e^{-\Lambda |z|/(\hbar c)},
+$$
+
+with the CG power applied afterward.  GPD tails use the endpoint structures
+selected by the hadron and the paired-flow convention.  Thus the parameter
+names are model- and observable-dependent; short-distance data are never
+replaced by the asymptotic ansatz.
 
 For a DA the two endpoint contributions retain the momentum phase explicitly,
 
@@ -87,28 +98,36 @@ e^{-\Lambda|z|/(\hbar c)},
 $$
 
 with flavor-class constraints removing or identifying endpoint amplitudes.  If
-`phase_transfer_da=true`, the input is first rotated by
-$e^{+izP_z/2}$, projected onto its real symmetry channel, and rotated back.
+`phase_transfer_da=true`, the input is first multiplied by
+$e^{+izP_z/(2\hbar c)}$, projected onto the real midpoint-symmetric channel,
+and rotated back; if false, the complex input is retained.
 """.strip()
 
 
 _TRANSFORM_FORMULA = r"""
 After the selected tail is connected to the measured matrix element, each
-resample is transformed with the reference convention
+resample is transformed with
 
 $$
-\widetilde q(x,P_z)=\frac{P_z}{2\pi}
-\int dz\,e^{+ixP_zz}\,h(z).
+\widetilde q(x,P_z)=N\sum_z w_z\,
+e^{+i(x-x_{\rm shift})P_z z/(\hbar c)}h(z),
+\qquad
+N=\begin{cases}P_z/(2\pi\hbar c)&\texttt{pz\_over\_2pi},\\
+1/(2\pi)&\texttt{one\_over\_2pi},\\1&\texttt{none}.
+\end{cases}
 $$
 
-Negative-$z$ completion, component selection, and the final projection factor
-are derived from upstream observable, polarization, sector, and gauge-link
-provenance.  Range selection is performed on sample-average fits; the selected
-range is then fixed for all resamples and LA/NLA prior-width candidates.
+The default has phase sign $+1$ and $x_{\rm shift}=0$.  Uniform grids use the
+full endpoint rectangle weights; nonuniform grids use trapezoidal weights.
+Negative-$z$ completion and the final sector projection follow the target
+observable, polarization, and GPD flow provenance.  Range selection is done
+on center fits; its selected range is then fixed for all resamples and
+LA/NLA-prior candidates.
 
-For `smooth=linear`, measured data and the fitted tail are linearly blended
-over the selected interval.  For `smooth=none`, the measured branch switches
-directly to the extrapolated branch at the selected boundary.
+For `smooth=linear`, the measured weight falls linearly from one at the
+selected $z_{\min}$ to zero at $z_{\max}$.  For `smooth=none`, measured data
+retain unit weight through the requested extent and the fitted tail is used
+only beyond it (including a possible grid-rounded outer point).
 """.strip()
 
 
@@ -116,6 +135,7 @@ def _json_attr(attrs: dict[str, object], name: str) -> object:
     value = attrs.get(name)
     if not isinstance(value, str):
         return value
+    return json.loads(value)
 
 
 def _candidate_records(record: StageReportRecord) -> list[dict[str, object]]:
@@ -158,10 +178,6 @@ def _range_records(record: StageReportRecord) -> list[dict[str, object]]:
     if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
         raise TypeError("Fourier ranges.json must contain a list of objects")
     return value
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return value
 
 
 def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_directory: Path) -> Path:
@@ -170,25 +186,30 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         "",
         "This stage fits the finite-distance tail and transforms every resample to a quasi-distribution.",
         "",
-        "## Large-Distance Extrapolation",
+        "## Method",
+        "",
+        "### Large-Distance Extrapolation",
         "",
         _TAIL_FORMULA,
         "",
-        "## Fourier Transform and Projection",
+        "### Fourier Transform and Projection",
         "",
         _TRANSFORM_FORMULA,
         "",
         "## Job Summary",
         "",
-        "| job | momentum [GeV] | construction | sector | selected range | selected models | Q | chi2/dof | samples |",
+        ("| job | target / polarization | momentum [GeV] | sector / component | "
+         "selected range [fm] | selected models | Q | chi2/dof | samples |"),
         "|---|---:|---|---|---|---|---:|---:|---:|",
     ]
     for record in records:
         attrs = dict(output_attrs(record))
         diagnostics = record.summary.get("diagnostics", {})
         lines.append(
-            f"| `{record.job_id}` | {format_value(attrs.get('momentum_gev'))} | `{attrs.get('gfix', 'n/a')}` | "
-            f"`{attrs.get('sector', record.params['scheme_scan']['sector'])}` | "
+            f"| `{record.job_id}` | `{attrs.get('target_observable', 'n/a')}` / "
+            f"`{attrs.get('polarization', 'n/a')}` | {format_value(attrs.get('momentum_gev'))} | "
+            f"`{attrs.get('sector', record.params['scheme_scan']['sector'])}` / "
+            f"`{attrs.get('component', 'n/a')}` | "
             f"{format_value(_json_attr(attrs, 'selected_range'))} | "
             f"{format_value(diagnostics.get('selected_fit_model_labels'))} | "
             f"{format_value(diagnostics.get('selected_Q'))} | {format_value(diagnostics.get('selected_chi2_dof'))} | "
@@ -214,6 +235,20 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             ),
         ]
     )
+    lines.extend(
+        [
+            "",
+            "## Selection Policy",
+            "",
+            ("The range scan uses the first authored order and prior width. Runtime enumerates the authored "
+             "model x zmin x zmax prefix up to `max_schemes`, keeps feasible center fits, and selects the "
+             "largest-logGBF fit with Q >= `q_min`, falling back to the largest Q. With that interval fixed, "
+             "every feasible authored LA/NLA and prior-width model is refitted. `model_average=false` chooses "
+             "per-resample models with the same Q/logGBF rule and maximum-Q fallback; `model_average=true` uses "
+             "normalized exp(logGBF) weights over all finite-logGBF candidates and adds no separate between-model "
+             "variance. The candidate diagnostics below preserve both the selected result and the alternatives."),
+        ]
+    )
     for record in records:
         params = record.params
         scan = params["scheme_scan"]
@@ -230,9 +265,11 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             for candidate in candidates
         ]
         range_rows = [
-            f"| `{item.get('model_id')}` | {format_value(item.get('z_min_fm'))} | {format_value(item.get('z_max_fm'))} | "
-            f"{format_value(item.get('fit_success'))} | {format_value(item.get('Q'))} | {format_value(item.get('chi2_dof'))} | "
-            f"{format_value(item.get('logGBF'))} | {format_value(item.get('selected'))} | {format_value(item.get('error'))} |"
+            f"| `{item.get('model_id')}` | {format_value(item.get('z_min_fm'))} | "
+            f"{format_value(item.get('z_max_fm'))} | {format_value(item.get('fit_success'))} | "
+            f"{format_value(item.get('Q'))} | {format_value(item.get('chi2_dof'))} | "
+            f"{format_value(item.get('logGBF'))} | {format_value(item.get('selected'))} | "
+            f"{format_value(item.get('error'))} |"
             for item in ranges
         ]
         parameter_names = sorted(
@@ -244,19 +281,29 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             sdevs = dict(candidate.get("parameter_sdev", {}))
             for name in parameter_names:
                 parameter_rows.append(
-                    f"| `{candidate.get('label')}` | `{name}` | {format_value(means.get(name))} | {format_value(sdevs.get(name))} |"
+                    f"| `{candidate.get('label')}` | `{name}` | "
+                    f"{format_value(means.get(name))} | {format_value(sdevs.get(name))} |"
                 )
         lines.extend(
             [
                 "",
                 f"## `{record.job_id}`",
                 "",
-                "### Analysis Settings",
+                "### Selected Fit",
+                "",
+                f"- Selected range: `{diagnostics.get('selected_range_label', 'n/a')}`",
+                f"- Selected models: {format_value(diagnostics.get('selected_fit_model_labels'))}",
+                f"- Model weights: {format_value(diagnostics.get('fit_model_weights'))}",
+                f"- DA phase transfer: {format_value(attrs.get('phase_transfer_da'))}",
+                "",
+                "### Result Context",
                 "",
                 "| quantity | value |",
                 "|---|---|",
                 f"| target observable | `{attrs.get('target_observable', 'n/a')}` |",
-                f"| parton / construction | `{attrs.get('parton', 'n/a')}` / `{attrs.get('gfix', 'n/a')}` |",
+                f"| hadron / parton | `{attrs.get('hadron', 'n/a')}` / `{attrs.get('parton', 'n/a')}` |",
+                f"| polarization / construction | `{attrs.get('polarization', 'n/a')}` / "
+                f"`{attrs.get('gfix', 'n/a')}` |",
                 f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
                 *(
                     [
@@ -279,22 +326,20 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| extension [fm] | {format_value(params['zmax_ext_fm'])} |",
                 f"| smoothing | `{params['smooth']}` |",
                 f"| orders | {format_value(scan['order'])} |",
+                f"| Lambda0 [GeV] | {format_value(scan.get('Lambda0_gev', 0.0))} |",
                 f"| tail-prior scales | {format_value(scan['posterior_prior_error_scale'])} |",
                 f"| model average | {format_value(scan['model_average'])} |",
-                f"| component / output scale | `{attrs.get('component', 'n/a')}` / {format_value(attrs.get('output_scale'))} |",
+                f"| component / output scale | `{attrs.get('component', 'n/a')}` / "
+                f"{format_value(attrs.get('output_scale'))} |",
+                f"| transform | `{attrs.get('fourier_convention', 'n/a')}`; "
+                f"prefactor `{attrs.get('prefactor', 'n/a')}` |",
+                f"| quadrature | `{attrs.get('quadrature', 'n/a')}` |",
                 f"| range candidates | {format_value(diagnostics.get('range_candidate_count'))} |",
                 f"| model candidates | {format_value(diagnostics.get('model_candidate_count'))} |",
                 "",
-                "### Selected Model Diagnostics",
+                "### Candidate Diagnostics",
                 "",
-                f"- Selected range: `{diagnostics.get('selected_range_label', 'n/a')}`",
-                f"- Selected models: {format_value(diagnostics.get('selected_fit_model_labels'))}",
-                f"- Model weights: {format_value(diagnostics.get('fit_model_weights'))}",
-                f"- DA phase transfer: {format_value(attrs.get('phase_transfer_da'))}",
-                "",
-                "### Range and Fit-model Candidates",
-                "",
-                "The range scan uses the first authored order and prior width to select one physical interval. With that interval fixed, every authored LA/NLA and prior-width model is refitted. `model_average=false` selects the best successful model; `model_average=true` combines successful candidates per resample using their recorded weights.",
+                "#### Range and Fit-model Candidates",
                 "",
                 "#### Range-selection fits",
                 "",
@@ -316,15 +361,29 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "### Projection and Field Definitions",
                 "",
-                f"The output records sector `{attrs.get('sector', 'n/a')}`, component `{attrs.get('component', 'n/a')}`, and multiplicative projection scale {format_value(attrs.get('output_scale'))}. These values are derived from upstream observable and polarization provenance rather than independently authored controls.",
+                (f"The output records sector `{attrs.get('sector', 'n/a')}`, component "
+                 f"`{attrs.get('component', 'n/a')}`, and multiplicative scale "
+                 f"{format_value(attrs.get('output_scale'))}. Sector is authored in "
+                 "`scheme_scan`; component and scale are derived from the target, polarization, "
+                 "and sector. For a non-full GPD, the signed-y transform is projected afterward "
+                 "using the polarization relation; a full GPD leaves the complex Fourier result "
+                 "unprojected."),
                 "",
                 "| field | meaning |",
                 "|---|---|",
                 "| `selected_range` | Sample-average tail interval held fixed during all resample fits. |",
-                "| `selected_models`, `model_weights` | LA/NLA/prior candidates retained by selection or model averaging. |",
-                "| `component`, `output_scale` | Sector-derived complex channel and normalization of the stored quasi-distribution. |",
-                "| `phase_transfer_da` | Whether the midpoint DA phase/symmetry projection was applied before tail fitting. |",
-                "| `zmax_ext_fm` | Maximum physical separation of the finite transform, distinct from the fitted data interval. |",
+                ("| `selected_models`, `model_weights` | LA/NLA/prior candidates retained by "
+                 "selection or model averaging. |"),
+                ("| `component`, `output_scale` | Fourier channel and normalization selected "
+                 "from target, polarization, and sector. |"),
+                ("| `phase_transfer_da` | Whether the midpoint DA phase/symmetry projection "
+                 "was applied before tail fitting. |"),
+                ("| `phase_transfer_gpd`, `gpd_completion_mode` | GPD endpoint convention and "
+                 "whether an exchanged-flow Hermitian partner completed signed z. |"),
+                ("| `zmax_ext_fm` | Maximum physical separation of the finite transform, "
+                 "distinct from the fitted data interval. |"),
+                ("| `Q`, `chi2/dof` | Fit p-value and normalized chi-square diagnostic; neither "
+                 "is a Fourier-distribution uncertainty. |"),
                 "",
                 "### Figures",
                 "",
