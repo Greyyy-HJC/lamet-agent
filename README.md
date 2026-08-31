@@ -1,50 +1,54 @@
 # lamet-agent
 
+<p align="center">
+  <img src="docs/lamet-agent-demo.gif" alt="lamet-agent demo" width="800" />
+</p>
+
 `lamet-agent` is a Python-first framework for reproducible **La**rge **M**omentum **E**ffective **T**heory (LaMET) and lattice QCD
 analysis workflows.
 
 ## Quick Start
 
-### Install
-
-#### uv
-
-Create and activate an environment, then install the project:
+Requires a logged-in Codex CLI on this machine. Codex does not use
+`--api-key-file`.
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e .
+git clone https://github.com/Greyyy-HJC/lamet-agent.git && cd lamet-agent
+python3 -m venv .venv && source .venv/bin/activate
+python3 -m pip install --upgrade pip && python3 -m pip install -e ".[codex]"
+wget --user=download --password=protonpdf -r -np -nH --no-check-certificate \
+  https://149.28.115.134:43999/data_pion_pdf_cg.zip && unzip data_pion_pdf_cg.zip
+lamet-agent run examples/pion_pdf_cg_manifest.json \
+  --provider codex --model gpt-5.6-luna
 ```
 
-Install optional dependency groups as needed:
+To compare the run against the reference result:
 
 ```bash
-uv pip install -e ".[literature]"
+cd runs/pion_pdf_cg/ && wget --user=download --password=protonpdf -r -np -nH --no-check-certificate \
+  https://149.28.115.134:43999/plot_pion_pdf_compare.py && python plot_pion_pdf_compare.py
 ```
 
-#### venv and pip
+The archive unpacks to `data_pion_pdf_cg/` at the repository root. The same
+files can be downloaded in a browser at
+[https://149.28.115.134:43999](https://149.28.115.134:43999) with user
+`download` and password `protonpdf`. The server has no trusted certificate:
+`wget` uses `--no-check-certificate`, and a browser must trust the self-signed
+certificate.
 
-The standard-library environment workflow is equivalent:
+Alternatively with uv:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
+uv venv && source .venv/bin/activate
+uv pip install -e ".[codex]"
 ```
 
-Install optional dependency groups as needed:
+### Other providers
 
-```bash
-python -m pip install -e ".[literature]"
-```
-
-### Run
-
-Create `api.key` in the project root and place only the OpenAI API key in the
-file.
-
-Execute a workflow:
+API providers (`openai`, `anthropic`, `gemini`, `grok`, `deepseek`, or a custom
+HTTP(S) OpenAI-compatible URL) need `python3 -m pip install -e .` (no `[codex]`
+extra) and a key via `--api-key-file` or the provider's environment variable.
+See [Providers and models](#providers-and-models) for details.
 
 ```bash
 lamet-agent run examples/pion_pdf_cg_manifest.json \
@@ -52,24 +56,7 @@ lamet-agent run examples/pion_pdf_cg_manifest.json \
   --api-key-file api.key
 ```
 
-Provider choices are `openai`, `anthropic`, `gemini`, `grok`,
-`deepseek`, or a custom HTTP(S) OpenAI-compatible URL. For API providers, supply
-the key through `--api-key-file` or the provider's environment variable.
-`--model` selects the model used by the agent.
-
-Alternatively, install the optional Codex integration to reuse the cached Codex
-login on the current machine:
-
-```bash
-uv pip install -e ".[codex]"
-lamet-agent run examples/pion_pdf_cg_manifest.json \
-  --provider codex --model gpt-5.6-luna
-```
-
-Codex does not require `--api-key-file`. Add `--model MODEL` to override the
-Codex SDK default model.
-
-Bundled executable references are:
+### Example manifests
 
 | Manifest                                     | Workflow                                                       | Data reference |
 | -------------------------------------------- | -------------------------------------------------------------- | -------------- |
@@ -79,8 +66,9 @@ Bundled executable references are:
 | `examples/pion_da_gi_manifest.json`          | Gauge-invariant pion DA with systematic variants.              | [^2]           |
 | `examples/kaon_da_gi_manifest.json`          | Gauge-invariant kaon DA with systematic variants.              | [^2]           |
 
-The correlator datasets used by these examples are not public yet; a public
-release is planned.
+Other example archives are on the same host; pick the zip that matches the
+`data_*` directory used by that manifest (`data_pion_pdf_cg`,
+`data_pion_pdf_gi`, `data_pion_da_gi`, `data_kaon_da_gi`).
 
 [^1]: Xiang Gao, Wei-Yang Liu, and Yong Zhao, [*Parton Distributions from Boosted Fields in the Coulomb Gauge*](https://arxiv.org/pdf/2306.14960), arXiv:2306.14960.
 [^2]: Jun Hua et al., [*Pion and Kaon Distribution Amplitudes from Lattice QCD*](https://arxiv.org/pdf/2201.09173), arXiv:2201.09173.
