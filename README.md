@@ -613,3 +613,7 @@ python -m pip install -e ".[dev]"
 
 Architecture, file ownership, testing, and contributor workflows are documented
 in [`DEVELOPMENT.md`](DEVELOPMENT.md).
+
+## Related Links
+
+- [LQCD_Master](https://github.com/sjtu-sai-agents/LQCD_Master) ([arXiv:2607.15001](https://arxiv.org/abs/2607.15001))
