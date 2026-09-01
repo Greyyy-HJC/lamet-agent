@@ -71,8 +71,8 @@ def _submit_or_insert_newline(event) -> None:
 
 _PROGRESS_STYLE = Style.from_dict(
     {
-        "": "#808080",
-        "bottom-toolbar": "#808080",
+        "": "ansiyellow",
+        "bottom-toolbar": "ansibrightblack",
     }
 )
 
@@ -207,6 +207,12 @@ class PlainUi:
             return None
         return answer
 
+    def start_run(self) -> None:
+        pass
+
+    def set_running_job(self, stage: str | None, job: str | None) -> None:
+        pass
+
     def start_progress(self, label: str, *, total: int, unit: str) -> ProgressTask:
         return ProgressTask(label, total, unit)
 
@@ -234,6 +240,8 @@ class TerminalUi(PlainUi):
         )
         self._progress_bar: ProgressBar | None = None
         self._stdout_context: Any | None = None
+        self._running_stage: str | None = None
+        self._running_job: str | None = None
 
     def log(self, message: str = "", *, level: str = "info", style: str | None = None) -> None:
         stream = sys.stderr if level == "error" else sys.stdout
@@ -251,13 +259,27 @@ class TerminalUi(PlainUi):
                 rendered = f"{color}{prefix}{_ANSI_RESET}{message[len(prefix):]}"
         print(rendered, file=stream, flush=True)
 
+    def _status_toolbar(self) -> str:
+        return f" Stage: {self._running_stage or 'idle'} Job: {self._running_job or 'idle'} "
+
+    def start_run(self) -> None:
+        self._running_stage = None
+        self._running_job = None
+        self._ensure_progress_bar()
+
+    def set_running_job(self, stage: str | None, job: str | None) -> None:
+        self._running_stage = stage
+        self._running_job = job
+        if self._progress_bar is not None:
+            self._progress_bar.app.invalidate()
+
     def _ensure_progress_bar(self) -> ProgressBar:
         if self._progress_bar is None:
             self._stdout_context = patch_stdout(raw=True)
             self._stdout_context.__enter__()
             self._progress_bar = ProgressBar(
                 formatters=_progress_formatters(),
-                bottom_toolbar=" LaMET Agent running ",
+                bottom_toolbar=self._status_toolbar,
                 style=_PROGRESS_STYLE,
                 color_depth=ColorDepth.DEPTH_8_BIT,
             )

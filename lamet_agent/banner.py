@@ -124,7 +124,7 @@ _LIGHT_CONE = (
 
 def _compose_word(letters: tuple[Glyph, ...]) -> tuple[str, ...]:
     """Lay out fixed-width glyphs on a shared column grid."""
-    return tuple(" ".join(glyph[row] for glyph in letters) for row in range(9))
+    return tuple(" ".join(glyph[row] for glyph in letters) for row in range(len(letters[0])))
 
 
 _LAMET_LINES = _compose_word((_L, _a, _M, _E, _T))

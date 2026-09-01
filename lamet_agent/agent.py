@@ -1281,6 +1281,7 @@ class _AgentSession:
         (artifact_base / "resolved_manifest.json").write_text(
             json.dumps(document, indent=2, sort_keys=True), encoding="utf-8"
         )
+        self.ui.start_run()
         manifest_file = manifest.path
         metadata = document["metadata"]
         stage_ids = [str(stage_id) for stage_id in document["stages"]]
@@ -1304,6 +1305,7 @@ class _AgentSession:
                     _emit_progress(f"Stage: {stage_id}")
                     if progress_mode == "stage":
                         stage_progress = self.ui.start_progress(stage_id, total=len(stage_jobs), unit="job")
+                self.ui.set_running_job(stage_id, job.job_id)
                 _emit_progress(f"Job: {stage_id}/{job.job_id}")
                 job.artifact_directory.mkdir(parents=True, exist_ok=False)
                 resolved_inputs: dict[str, Any] = {}

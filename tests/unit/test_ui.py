@@ -142,9 +142,23 @@ def test_conversation_enter_submits_and_shift_enter_inserts_newline() -> None:
     assert answer == "first line\nsecond line"
 
 
-def test_progress_color_is_neutral_gray() -> None:
-    assert str(_PROGRESS_STYLE.get_attrs_for_style_str("class:percentage").color) == "808080"
+def test_progress_color_uses_terminal_yellow() -> None:
+    assert str(_PROGRESS_STYLE.get_attrs_for_style_str("class:percentage").color) == "ansiyellow"
+    assert str(_PROGRESS_STYLE.get_attrs_for_style_str("class:bottom-toolbar").color) == "ansibrightblack"
     assert ColorDepth.DEPTH_8_BIT.value == "DEPTH_8_BIT"
+
+
+def test_terminal_status_toolbar_tracks_running_job() -> None:
+    ui = TerminalUi.__new__(TerminalUi)
+    ui._progress_bar = None
+    ui._running_stage = None
+    ui._running_job = None
+
+    assert ui._status_toolbar() == " Stage: idle Job: idle "
+
+    ui.set_running_job("review", "review")
+
+    assert ui._status_toolbar() == " Stage: review Job: review "
 
 
 def test_track_marks_interrupted_progress_unsuccessful() -> None:
@@ -176,7 +190,7 @@ def test_terminal_ui_applies_semantic_colors_without_changing_plain_output(capsy
     ui.log("Executing: read data", style="running")
 
     output = capsys.readouterr().out
-    assert "\033[91mATTENTION\033[0m: low fit quality" in output
+    assert "\033[91mAttention\033[0m: low fit quality" in output
     assert "\033[94mReasoning\033[0m: recommendation" in output
     assert "\033[94mLLM usage\033[0m: 1.00K" in output
     assert "\033[32mExecuting\033[0m: read data" in output
