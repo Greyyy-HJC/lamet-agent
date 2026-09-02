@@ -28,5 +28,6 @@ artifacts/
 examples/artifacts/
 lamet_literature/arxiv/
 **/temp*
+.wiki/
 
 examples/workflow_cg_qpdf_complete_manifest.json
