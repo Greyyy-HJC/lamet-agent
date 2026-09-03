@@ -252,13 +252,6 @@ def _review_summary(context: ToolContext, summary: Mapping[str, Any]) -> dict[st
     return record
 
 
-def _write_review_summary(context: ToolContext, summary: Mapping[str, Any]) -> None:
-    """Write the compact Review evidence beside the canonical job summary."""
-    path = context.artifact_directory / "review_summary.json"
-    payload = json.dumps(_review_summary(context, summary), indent=2, sort_keys=True, ensure_ascii=False)
-    path.write_text(payload, encoding="utf-8")
-
-
 @dataclass
 class LlmSession:
     """One generic recorded LLM channel bound to a job transcript."""
@@ -424,6 +417,7 @@ class ToolContext:
     _param_rules: tuple[Any, ...] = field(default=(), repr=False)
     _checks: tuple[Callable[..., Any], ...] = field(default=(), repr=False)
     _parallel: _ParallelPool | None = field(default=None, repr=False)
+    runtime_records: Mapping[str, Mapping[str, Any]] = field(default_factory=dict, kw_only=True, repr=False)
 
     @property
     def workers(self) -> int:
@@ -913,6 +907,7 @@ class _AgentSession:
     progress_mode: Literal["auto", "stage", "job", "none"] = "auto"
     _outputs: dict[str, Any] = field(default_factory=dict, init=False)
     _summaries: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
+    _review_summaries: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
     _stage_bundles: dict[str, tuple[list[_Tool], str, str]] = field(default_factory=dict, init=False)
     _banner_shown: bool = field(default=False, init=False)
 
@@ -1268,6 +1263,7 @@ class _AgentSession:
         self._show_banner()
         self._outputs.clear()
         self._summaries.clear()
+        self._review_summaries.clear()
         self._stage_bundles.clear()
         issues = manifest.validate(stage_root=self.stage_root)
         if issues:
@@ -1277,6 +1273,7 @@ class _AgentSession:
         jobs_by_stage = manifest.jobs_by_stage
         progress_mode = _resolve_progress_mode(self.progress_mode, has_systematics=manifest.has_systematics)
         artifact_base = jobs[0].artifact_directory.parent
+        jobs_by_id = {job.job_id: job for job in jobs}
         artifact_base.mkdir(parents=True, exist_ok=True)
         (artifact_base / "resolved_manifest.json").write_text(
             json.dumps(document, indent=2, sort_keys=True), encoding="utf-8"
@@ -1331,6 +1328,15 @@ class _AgentSession:
                     job.artifact_directory,
                     np.random.default_rng(seed_sequence),
                     _parallel=parallel,
+                    runtime_records={
+                        job_id: {
+                            "output": self._outputs[job_id],
+                            "summary": self._summaries[job_id],
+                            "review_summary": self._review_summaries[job_id],
+                            "artifact_directory": jobs_by_id[job_id].artifact_directory,
+                        }
+                        for job_id in self._outputs
+                    },
                 )
                 bundle = self._stage_bundles.get(stage_id)
                 if bundle is None:
@@ -1348,15 +1354,13 @@ class _AgentSession:
                 else:
                     tools, static_prompt, digest = bundle
                 output, summary = self._run_context(context, tools, static_prompt, digest)
-                _write_review_summary(context, summary)
                 summary = copy.deepcopy(summary)
-                if "review_summary.json" not in summary["artifacts"]:
-                    summary["artifacts"].append("review_summary.json")
                 (context.artifact_directory / "summary.json").write_text(
                     json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
                 )
                 self._outputs[job.job_id] = output
                 self._summaries[job.job_id] = summary
+                self._review_summaries[job.job_id] = _review_summary(context, summary)
                 stage_records.append(
                     StageReportRecord(
                         job_id=job.job_id,

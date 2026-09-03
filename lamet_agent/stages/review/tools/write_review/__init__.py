@@ -140,11 +140,6 @@ def run(
         else f"- `{item['stage_id']}`: not available"
         for item in bundle["stage_reports"]
     )
-    lines.extend(
-        f"- `{item['stage_id']}/{item['job_id']}`: [{item['path']}]({item['path']})"
-        for item in bundle["job_reports"]
-        if item["available"]
-    )
     lines.extend(["", f"## {headings['references']}", ""])
     lines.extend(
         [

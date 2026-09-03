@@ -190,7 +190,7 @@ def test_terminal_ui_applies_semantic_colors_without_changing_plain_output(capsy
     ui.log("Executing: read data", style="running")
 
     output = capsys.readouterr().out
-    assert "\033[91mAttention\033[0m: low fit quality" in output
+    assert "\033[91mATTENTION\033[0m: low fit quality" in output
     assert "\033[94mReasoning\033[0m: recommendation" in output
     assert "\033[94mLLM usage\033[0m: 1.00K" in output
     assert "\033[32mExecuting\033[0m: read data" in output

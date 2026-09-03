@@ -223,13 +223,13 @@ Typical per-job files are:
 | --------------------- | ----------------------------------------------------- |
 | `output.nc`           | Primary sample-bearing numerical result.              |
 | `summary.json`        | Decisions, diagnostics, and declared artifacts.       |
-| `review_summary.json` | Compact evidence prepared for Review.                 |
 | `llm_transcript.md`   | Recorded LLM requests and responses, when applicable. |
 | `diagnostics/*`       | Candidate tables and numerical diagnostics.           |
 | `plots/*`             | PDF/SVG result and fit-quality figures.               |
 
-Stage directories also receive an aggregate `report.md`. Review writes its final
-`review.md` together with consistency and literature evidence.
+Stage directories also receive an aggregate `report.md`; job directories do not
+write report files. Review writes its final `review.md`, `review_bundle.json`,
+and consistency/literature evidence.
 
 ### Inspect or read without lamet-agent
 
