@@ -2632,6 +2632,69 @@ def test_correlator_workflow_publishes_best_candidate_when_q_min_is_never_met(
     assert "ATTENTION: all correlator fit candidates remain below q_min=0.05" in capsys.readouterr().out
 
 
+def test_correlator_workflow_skips_revise_when_recommendation_budget_is_spent(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+
+    def initial(_context, session):
+        session.recommendation_calls += 1
+        return {"tune_z_values": [1.0]}
+
+    def revise(_context, _session, _attempts):
+        raise AssertionError("revise must not run after the recommendation budget is spent")
+
+    def fit(context, *, tune_z_values):
+        context.state["matrix_element_candidates"] = [
+            {
+                "id": "matrix_001",
+                "fit_strategy": "independent",
+                "fit_scope": "qda_ratio",
+                "window": {"tmin": 2, "tmax": 8, "tau_min": None},
+                "nstate": 1,
+                "prior_width": 1.0,
+                "min_Q": 0.01,
+                "worst_chi2_dof": 1.0,
+                "feasible_at_all_tune_z": True,
+                "numerical_failure": False,
+                "tune_z_values": tune_z_values,
+            }
+        ]
+        return {"metrics": {"recommended_candidate_id": "matrix_001"}}
+
+    published = []
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "fit_qda", fit)
+    monkeypatch.setattr(workflow, "publish", lambda _context, *, candidate_id: published.append(candidate_id))
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "correlator",
+        {
+            "analysis_method": "lsqfit",
+            "fit_scope": ["qda_ratio"],
+            "q_min": 0.05,
+            "pt2_windows": [{"tmin": 2, "tmax": 8}],
+        },
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=1))
+
+    assert published == ["matrix_001"]
+    assert context.params["pt2_windows"] == [{"tmin": 2, "tmax": 8}]
+    assert context.state["fallback_no_q_passing"] is True
+    assert "ATTENTION: all correlator fit candidates remain below q_min=0.05" in capsys.readouterr().out
+
+
 def test_renormalization_workflow_routes_virtual_provider_type(tmp_path: Path, monkeypatch) -> None:
     import lamet_agent.stages.renormalization.workflow as workflow
 

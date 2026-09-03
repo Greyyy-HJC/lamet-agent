@@ -91,6 +91,10 @@ def _qda_quality_is_low(context: ToolContext) -> bool:
     )
 
 
+def _can_revise(session: LlmSession) -> bool:
+    return session.recommendation_calls < session.max_recommendation_calls
+
+
 def run(context: ToolContext, session: LlmSession) -> None:
     """Run deterministic analysis around one optional typed fit suggestion."""
     if context.params["analysis_method"] == "lanczos":
@@ -106,6 +110,8 @@ def run(context: ToolContext, session: LlmSession) -> None:
         try:
             observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
         except FitNumericalError as exc:
+            if not _can_revise(session):
+                raise
             retried = True
             suggestion = revise(
                 context,
@@ -114,13 +120,14 @@ def run(context: ToolContext, session: LlmSession) -> None:
             )
             observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
         if not retried and float(observation["metrics"].get("Q", 1.0)) < float(context.params["q_min"]):
-            suggestion = revise(
-                context,
-                session,
-                _spectrum_attempt(suggestion, metrics=dict(observation["metrics"])),
-            )
-            observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
-            retried = True
+            if _can_revise(session):
+                suggestion = revise(
+                    context,
+                    session,
+                    _spectrum_attempt(suggestion, metrics=dict(observation["metrics"])),
+                )
+                observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
+                retried = True
         if float(observation["metrics"].get("Q", 0.0)) < float(context.params["q_min"]):
             raise FitNumericalError("spectrum fit remains below q_min after the allowed recommendation attempts")
         candidate_id = observation["metrics"]["candidate_id"]
@@ -131,6 +138,8 @@ def run(context: ToolContext, session: LlmSession) -> None:
         try:
             observation = fit(context, tune_z_values=tune_z_values)
         except FitNumericalError:
+            if not _can_revise(session):
+                raise
             retried = True
             suggestion = revise(context, session, _candidate_attempts(context))
             context.params["pt2_windows"] = list(suggestion["pt2_windows"])
@@ -143,7 +152,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
             if scopes == {"qda_ratio"}
             else bool(observation["metrics"].get("fallback_no_q_passing", False))
         )
-        if low_quality and not retried:
+        if low_quality and not retried and _can_revise(session):
             suggestion = revise(context, session, _candidate_attempts(context))
             context.params["pt2_windows"] = list(suggestion["pt2_windows"])
             if scopes != {"qda_ratio"}:
