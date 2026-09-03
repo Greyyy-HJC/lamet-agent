@@ -17,30 +17,23 @@ from lamet_agent.stages.review.tools.read_papers import run as read_papers
 from lamet_agent.stages.review.tools.write_review import run as write_review
 
 
-def test_review_collects_preceding_stage_and_job_reports(tmp_path: Path) -> None:
+def test_review_collects_preceding_stage_reports_only(tmp_path: Path) -> None:
     artifact_base = tmp_path / "runs"
     source_directory = artifact_base / "01_correlator_analysis" / "ca"
     source_directory.mkdir(parents=True)
     (source_directory.parent / "report.md").write_text("# Correlator stage\n", encoding="utf-8")
-    (source_directory / "report.md").write_text("# Correlator job\n", encoding="utf-8")
     terminal = {
         "stage_id": "correlator_analysis",
         "job_id": "ca",
         "result": "matrix_element",
         "decisions": {},
         "diagnostics": {},
-        "artifacts": ["report.md"],
+        "artifacts": [],
     }
-    (source_directory / "summary.json").write_text(json.dumps(terminal), encoding="utf-8")
     variation_directory = source_directory.parent / "ca__fit_high"
     variation_directory.mkdir()
-    (variation_directory / "report.md").write_text("# Correlator variation\n", encoding="utf-8")
-    variation_terminal = {**terminal, "job_id": "ca__fit_high"}
-    (variation_directory / "summary.json").write_text(json.dumps(variation_terminal), encoding="utf-8")
     missing_directory = source_directory.parent / "ca__no_job_report"
     missing_directory.mkdir()
-    missing_terminal = {**terminal, "job_id": "ca__no_job_report", "artifacts": []}
-    (missing_directory / "summary.json").write_text(json.dumps(missing_terminal), encoding="utf-8")
     review_directory = artifact_base / "02_review" / "review"
     review_directory.mkdir(parents=True)
     manifest = {
@@ -76,16 +69,22 @@ def test_review_collects_preceding_stage_and_job_reports(tmp_path: Path) -> None
         {},
         review_directory,
         np.random.default_rng(1),
+        runtime_records={
+            "ca": {
+                "summary": terminal,
+                "review_summary": {"job_id": "ca", "result": "matrix_element"},
+                "output": data,
+                "artifact_directory": source_directory,
+            }
+        },
     )
 
     inspect_results(context)
 
     bundle = json.loads((review_directory / "review_bundle.json").read_text(encoding="utf-8"))
     assert bundle["stage_reports"][0]["text"] == "# Correlator stage\n"
-    assert bundle["job_reports"][0]["text"] == "# Correlator job\n"
-    assert bundle["job_reports"][1]["text"] == "# Correlator variation\n"
-    assert bundle["job_reports"][2]["available"] is False
-    assert bundle["job_reports"][2]["text"] == ""
+    assert "job_reports" not in bundle
+    assert bundle["review_summaries"]["ca"]["result"] == "matrix_element"
     assert bundle["stage_reports"][0]["path"] == "../../01_correlator_analysis/report.md"
     assert bundle["results"][0]["job_id"] == "ca"
     assert bundle["results"][0]["ensemble"] == ensemble._asdict()
@@ -390,7 +389,7 @@ def test_review_renderer_uses_chinese_headings_and_selected_references(tmp_path:
                 "stage_reports": [
                     {"stage_id": "fourier_transform", "path": "../../03_fourier_transform/report.md", "available": True}
                 ],
-                "job_reports": [],
+                "review_summaries": {},
             },
             "consistency": {
                 "findings": [

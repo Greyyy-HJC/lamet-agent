@@ -87,15 +87,11 @@ def run(context: ToolContext, *, selected_ids: list[str] | None = None) -> dict[
         }
         if "t" in value.dims:
             times = np.asarray(value.coords["t"], dtype=float)
-            samples = np.asarray(value.real.values if np.iscomplexobj(value.values) else value.values)
-            time_axis = value.array.dims.index("t")
-            samples = np.moveaxis(samples, time_axis, 1)
-            samples = samples.reshape(samples.shape[0], samples.shape[1], -1).mean(axis=2)
-            central = np.mean(samples, axis=0)
-            usable = np.isfinite(central) & (central > 0)
             averaged = value.real.average(context.manifest["metadata"]["sample_error_mode"])
             averaged = np.moveaxis(np.asarray(averaged, dtype=object), value.dims.index("t"), 0)
             averaged = averaged.reshape(averaged.shape[0], -1).mean(axis=1)
+            central = np.asarray(gv.mean(averaged), dtype=float)
+            usable = np.isfinite(central) & (central > 0)
             effective_mass = (
                 -np.diff(gv.log(averaged[usable])) / np.diff(times[usable])
                 if np.count_nonzero(usable) > 1

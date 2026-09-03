@@ -98,10 +98,6 @@ def run(context: ToolContext) -> dict[str, object]:
     configure_plot(xlabel=r"$x$", ylabel="physical distribution", legend=True)
     save_figure(context.artifact_directory / "plots" / "distribution_with_systematics.pdf")
 
-    (context.artifact_directory / "report.md").write_text(
-        "# Extrapolation systematics budget\n\nVariant envelopes are combined in quadrature with the statistical uncertainty.\n",
-        encoding="utf-8",
-    )
     summary = {
         "stage_id": context.stage_id,
         "job_id": context.job_id,
@@ -113,7 +109,6 @@ def run(context: ToolContext) -> dict[str, object]:
             "diagnostics/systematics_budget.json",
             "plots/systematics_budget.pdf",
             "plots/distribution_with_systematics.pdf",
-            "report.md",
         ],
     }
     context.state["systematics_budget"] = dataset

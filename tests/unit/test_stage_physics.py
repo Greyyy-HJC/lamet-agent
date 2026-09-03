@@ -527,6 +527,49 @@ def test_inspect_correlators_does_not_write_raw_correlator_plots(tmp_path) -> No
     assert not list((tmp_path / "plots").glob("correlator_*.pdf"))
 
 
+def test_inspect_effective_mass_mask_follows_average_center(tmp_path) -> None:
+    from lamet_agent.stages.correlator_analysis._inspection import run
+
+    times = list(range(4))
+    samples = [
+        np.array([1.0, 1.0, 1.0, -1.0]),
+        np.array([1.0, 1.0, 1.0, -1.0]),
+        np.array([1.0, 1.0, 1.0, -1.0]),
+        np.array([1.0, 1.0, 1.0, 10.0]),
+        np.array([1.0, 1.0, 1.0, 10.0]),
+    ]
+    data = EnsembleData(
+        None,
+        "bootstrap",
+        samples,
+        ["t"],
+        {"t": times},
+        attrs={"correlator_type": "two_point"},
+    )
+
+    def _inspect(mode: str) -> dict[str, object]:
+        context = ToolContext(
+            {"metadata": {"workers": 1, "sample_error_mode": mode}},
+            tmp_path / "manifest.json",
+            "correlator_analysis",
+            "inspect",
+            {},
+            {},
+            {},
+            {"correlators": {"two_point": data}},
+            tmp_path,
+            np.random.default_rng(1),
+        )
+        run(context)
+        return context.state["inspection"]["two_point"]
+
+    covariance = _inspect("covariance")
+    one_sigma = _inspect("one_sigma")
+    assert covariance["usable_time_count"] == 4
+    assert one_sigma["usable_time_count"] == 3
+    assert "nan" not in one_sigma["effective_mass"]
+
+
 def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, tmp_path) -> None:
     import lamet_agent.stages.correlator_analysis._fit_matrix as tool
 
@@ -1977,8 +2020,8 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
     assert (tmp_path / "plots" / "result.svg").is_file()
     assert "plots/result.pdf" in context.summary["artifacts"]
     assert "plots/result.svg" in observation["artifacts"]
-    report = (tmp_path / "report.md").read_text(encoding="utf-8")
-    assert "[PDF](plots/result.pdf)" in report
+    assert "report.md" not in context.summary["artifacts"]
+    assert not (tmp_path / "report.md").exists()
     result_svg = (tmp_path / "plots" / "result.svg").read_text(encoding="utf-8")
     assert "FillBetweenPolyCollection" in result_svg
     assert "quasi" in result_svg

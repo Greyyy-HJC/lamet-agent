@@ -97,17 +97,6 @@ def run(context: ToolContext) -> dict[str, object]:
         pdf = context.artifact_directory / "plots" / f"{stem}.pdf"
         save_figure(pdf)
         spacing_plot_artifacts.append(f"plots/{pdf.name}")
-    mass_text = (
-        f" and physical pion mass {float(data.attrs['physical_pion_mass_gev']):g} GeV"
-        if "physical_pion_mass_gev" in data.attrs
-        else ""
-    )
-    (context.artifact_directory / "report.md").write_text(
-        "# Extrapolated physical distribution\n\n"
-        f"The selected model was evaluated at the continuum, infinite-momentum point{mass_text}.\n\n"
-        f"Momentum-dependence diagnostics were evaluated at Pz={params['pdep_gev']} GeV.\n",
-        encoding="utf-8",
-    )
     summary = {
         "stage_id": context.stage_id,
         "job_id": context.job_id,
@@ -119,7 +108,6 @@ def run(context: ToolContext) -> dict[str, object]:
             "diagnostics/extrapolation.json",
             "plots/momentum_dependence.pdf",
             *spacing_plot_artifacts,
-            "report.md",
         ],
     }
     context.finish(data, summary)

@@ -235,7 +235,7 @@ The lifecycle is:
    dependency order.
 4. Run the deterministic workflow, or the Review preflight and tool loop.
 5. Require `context.finish()` and verify every declared artifact exists.
-6. Write `summary.json` and compact `review_summary.json`.
+6. Write the canonical job `summary.json` and retain bounded Review evidence in memory.
 7. Retain output and summary for downstream source resolution.
 8. At the end of the stage, pass all `StageReportRecord` objects to its reporter.
 
@@ -260,7 +260,6 @@ artifacts/
 │   ├── <job-id>/
 │   │   ├── output.nc
 │   │   ├── summary.json
-│   │   ├── review_summary.json
 │   │   ├── llm_transcript.md
 │   │   ├── diagnostics/
 │   │   └── plots/
@@ -269,9 +268,12 @@ artifacts/
 ```
 
 Not every job produces every optional directory. `summary.json` is the
-canonical terminal record; `review_summary.json` is the bounded evidence view
-used by Review. Stage reports aggregate completed records but do not replace
-job-level diagnostics.
+canonical terminal record. Review evidence is assembled from completed
+in-memory job records and persisted once in the Review `review_bundle.json`.
+`report.md` is owned by the stage directory; job directories do not emit
+report files.
+Stage reports aggregate completed records but do not replace job-level
+diagnostics.
 
 ## Extending a stage
 
@@ -439,9 +441,10 @@ inspect selected results and reports
 ```
 
 The preflight outputs, including consistency findings, are injected into the
-initial Review context. Ordinary `review_summary.json` evidence is capped to 60
+initial Review context. Ordinary bounded Review evidence is capped to 60
 plot-grid points; `read_full_resolution` lets the model request one selected
-job's complete grid. `read_papers` controls full-text literature access, and
+job's complete grid. All job-level Review evidence is carried in memory and
+the single `review_bundle.json` snapshot. `read_papers` controls full-text literature access, and
 `write_review` is the terminal tool that authors and publishes the report.
 Deterministic preflight functions stay private and are never exposed as tools.
 

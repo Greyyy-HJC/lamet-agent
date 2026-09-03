@@ -134,9 +134,6 @@ def run(context: ToolContext) -> dict[str, object]:
     plot_pdf = context.artifact_directory / "plots" / "result.pdf"
     plot_svg = context.artifact_directory / "plots" / "result.svg"
     save_figure(plot_pdf, plot_svg)
-    document = str(context.state.get("kernel_inspection", {}).get("document", "")).strip()
-    report = f"# Perturbative matching\n\nKernel: `{context.params['kernel_id']}`.\nScheme: `{context.params['scheme']}`.\n\nPlot: [PDF](plots/result.pdf) ([SVG](plots/result.svg)).\n\n{document}\n"
-    (context.artifact_directory / "report.md").write_text(report, encoding="utf-8")
     summary = {
         "stage_id": context.stage_id,
         "job_id": context.job_id,
@@ -147,7 +144,7 @@ def run(context: ToolContext) -> dict[str, object]:
             "mu": context.params["mu"],
         },
         "diagnostics": diagnostics,
-        "artifacts": ["output.nc", "diagnostics/matching.json", "plots/result.pdf", "plots/result.svg", "report.md"],
+        "artifacts": ["output.nc", "diagnostics/matching.json", "plots/result.pdf", "plots/result.svg"],
     }
     context.finish(result, summary)
     return {

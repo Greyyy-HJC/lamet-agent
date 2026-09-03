@@ -48,7 +48,8 @@ def run(context: ToolContext) -> dict[str, object]:
     artifact_base = context.artifact_directory.parent.parent
     jobs: dict[str, dict[str, object]] = {}
     stage_reports = []
-    job_reports = []
+    review_summaries = {}
+    runtime_records = context.runtime_records
 
     for stage_index, (stage_id, block) in enumerate(stages.items(), start=1):
         if stage_id == context.stage_id:
@@ -67,23 +68,19 @@ def run(context: ToolContext) -> dict[str, object]:
         for job in block["jobs"]:
             job_id = job["id"]
             job_directory = stage_directory / job_id
-            report_path = job_directory / "report.md"
-            summary_path = job_directory / "summary.json"
-            review_summary_path = job_directory / "review_summary.json"
-            terminal = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else None
-            review_summary = (
-                json.loads(review_summary_path.read_text(encoding="utf-8"))
-                if review_summary_path.is_file()
-                else None
-            )
-            declared = terminal.get("artifacts", []) if terminal else []
-            artifacts = [
-                {
-                    "path": Path(os.path.relpath(job_directory / relative, context.artifact_directory)).as_posix(),
-                    "available": (job_directory / relative).is_file(),
-                }
-                for relative in declared
-            ]
+            runtime = runtime_records.get(job_id)
+            if runtime is not None:
+                review_summary = runtime.get("review_summary")
+                runtime_directory = runtime.get("artifact_directory")
+                if isinstance(runtime_directory, Path):
+                    job_directory = runtime_directory
+            else:
+                review_summary_path = job_directory / "review_summary.json"
+                review_summary = (
+                    json.loads(review_summary_path.read_text(encoding="utf-8"))
+                    if review_summary_path.is_file()
+                    else None
+                )
             jobs[job_id] = {
                 "job_id": job_id,
                 "stage_id": stage_id,
@@ -92,26 +89,10 @@ def run(context: ToolContext) -> dict[str, object]:
                 "params": {key: value for key, value in job.items() if key not in {"id", "inputs"}},
                 "artifact_directory": Path(os.path.relpath(job_directory, context.artifact_directory)).as_posix(),
             }
-            job_reports.append(
-                {
-                    "stage_id": stage_id,
-                    "job_id": job_id,
-                    "path": Path(os.path.relpath(report_path, context.artifact_directory)).as_posix(),
-                    "available": report_path.is_file(),
-                    "sha256": hashlib.sha256(report_path.read_bytes()).hexdigest() if report_path.is_file() else None,
-                    "text": report_path.read_text(encoding="utf-8") if report_path.is_file() else "",
-                    "terminal_summary": terminal,
-                    "review_summary": review_summary,
-                    "artifacts": artifacts,
-                }
-            )
+            if review_summary is not None:
+                review_summaries[job_id] = review_summary
 
     summaries = []
-    review_by_job = {
-        str(item["job_id"]): item["review_summary"]
-        for item in job_reports
-        if item.get("job_id") is not None and item.get("review_summary") is not None
-    }
     for index, value in enumerate(results):
         item = _summary(value)
         source = authored_sources[index]
@@ -119,7 +100,7 @@ def run(context: ToolContext) -> dict[str, object]:
             item.update({"job_id": source, "stage_id": jobs[source]["stage_id"]})
         else:
             item.update({"job_id": None, "stage_id": "external", "source": source})
-        item["review_summary"] = review_by_job.get(source) if isinstance(source, str) else None
+        item["review_summary"] = review_summaries.get(source) if isinstance(source, str) else None
         summaries.append(item)
 
     bundle = {
@@ -127,7 +108,7 @@ def run(context: ToolContext) -> dict[str, object]:
         "review_job_id": context.job_id,
         "manifest_path": str(context.manifest_path),
         "stage_reports": stage_reports,
-        "job_reports": job_reports,
+        "review_summaries": review_summaries,
         "results": summaries,
         "jobs": jobs,
     }
@@ -145,7 +126,6 @@ def run(context: ToolContext) -> dict[str, object]:
         "metrics": {
             "result_count": len(summaries),
             "stage_report_count": len(stage_reports),
-            "job_report_count": len(job_reports),
             "missing_stage_reports": [item["stage_id"] for item in stage_reports if not item["available"]],
         },
         "reports": [

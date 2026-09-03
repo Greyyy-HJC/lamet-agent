@@ -260,12 +260,6 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
             legend=True,
         )
         save_figure(context.artifact_directory / filename)
-    (context.artifact_directory / "report.md").write_text(
-        f"# Fourier transform\n\nSelected range: `{selected_range_label}`.\n\n"
-        f"Selected models: {', '.join(result['selected_labels'])}.\n",
-        encoding="utf-8",
-    )
-    artifacts.append("report.md")
     summary = {
         "stage_id": context.stage_id,
         "job_id": context.job_id,
