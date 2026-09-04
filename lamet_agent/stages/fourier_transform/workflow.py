@@ -46,13 +46,13 @@ def _accepted(result: dict[str, Any], q_min: float) -> bool:
     )
 
 
-def _best_quality(result: dict[str, Any]) -> float:
+def _best_quality(result: dict[str, Any]) -> float | None:
     qualities = [
         float(candidate["Q"])
         for candidate in result.get("model_candidates", [])
         if candidate.get("error") is None and candidate.get("Q") is not None and math.isfinite(float(candidate["Q"]))
     ]
-    return max(qualities, default=-math.inf)
+    return max(qualities) if qualities else None
 
 
 def run(context: ToolContext, session: LlmSession) -> None:
@@ -61,7 +61,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
     q_min = float(context.params["scheme_scan"]["q_min"])
     history = []
     best_result: dict[str, Any] | None = None
-    best_quality = -math.inf
+    best_quality: float | None = None
     best_parameters: tuple[list[Any], list[Any]] | None = None
     while True:
         try:
@@ -82,7 +82,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
         history.append(attempts)
         if result is not None:
             quality = _best_quality(result)
-            if quality >= best_quality:
+            if quality is not None and (best_quality is None or quality >= best_quality):
                 best_result = result
                 best_quality = quality
                 best_parameters = (list(context.params["zmin_fm"]), list(context.params["zmax_fm"]))

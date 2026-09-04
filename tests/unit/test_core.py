@@ -3048,6 +3048,86 @@ def test_fourier_workflow_falls_back_to_an_earlier_success_after_a_failed_retry(
     assert "continuing with the best available scan" in capsys.readouterr().out
 
 
+def test_fourier_workflow_keeps_an_earlier_finite_q_result_after_a_nonfinite_retry(tmp_path: Path, monkeypatch) -> None:
+    import lamet_agent.stages.fourier_transform.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    attempts = []
+
+    def attempt(context):
+        attempts.append(list(context.params["zmin_fm"]))
+        quality = 0.01 if len(attempts) == 1 else float("nan")
+        return {
+            "range_candidates": [],
+            "model_candidates": [{"label": f"candidate_{len(attempts)}", "Q": quality}],
+        }
+
+    def revise(_context, session, _previous_attempts):
+        session.recommendation_calls += 1
+        return {"zmin_fm": [0.3], "zmax_fm": [0.8]}
+
+    published = []
+    monkeypatch.setattr(workflow, "attempt", attempt)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "publish", lambda _context, result: published.append(result))
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {"zmin_fm": [0.2], "zmax_fm": [0.8], "scheme_scan": {"q_min": 0.05}},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "fourier.md", max_recommendation_calls=1))
+
+    assert published[0]["model_candidates"][0]["label"] == "candidate_1"
+    assert context.params["zmin_fm"] == [0.2]
+
+
+def test_fourier_workflow_rejects_fallback_when_no_attempt_has_a_finite_q(tmp_path: Path, monkeypatch) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    import lamet_agent.stages.fourier_transform.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    attempts = []
+
+    def attempt(_context):
+        attempts.append(None)
+        quality = None if len(attempts) == 1 else float("nan")
+        return {
+            "range_candidates": [],
+            "model_candidates": [{"label": f"candidate_{len(attempts)}", "Q": quality}],
+        }
+
+    def revise(_context, session, _previous_attempts):
+        session.recommendation_calls += 1
+        return {"zmin_fm": [0.3], "zmax_fm": [0.8]}
+
+    monkeypatch.setattr(workflow, "attempt", attempt)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "publish", lambda *_args, **_kwargs: pytest.fail("nonfinite Q must not publish"))
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {"zmin_fm": [0.2], "zmax_fm": [0.8], "scheme_scan": {"q_min": 0.05}},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    with pytest.raises(FitNumericalError, match="no Fourier scan produced a publishable numerical result"):
+        workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "fourier.md", max_recommendation_calls=1))
+
+
 def test_fourier_workflow_raises_when_budget_is_spent_without_a_numerical_result(tmp_path: Path, monkeypatch) -> None:
     from lamet_agent.parallel import FitNumericalError
     import lamet_agent.stages.fourier_transform.workflow as workflow
