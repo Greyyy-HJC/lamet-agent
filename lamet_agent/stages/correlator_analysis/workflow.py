@@ -132,6 +132,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
     scopes = set(context.params["fit_scope"])
     suggestion = initial(context, session)
     if scopes == {"spectrum"}:
+        _apply_spectrum_suggestion(context, suggestion)
         q_min = float(context.params["q_min"])
         observation: dict[str, Any] | None = None
         best: tuple[float, dict[str, Any], dict[str, Any]] | None = None

@@ -2825,6 +2825,55 @@ def test_spectrum_workflow_publishes_when_recommendation_budget_is_spent(tmp_pat
     assert "ATTENTION: all correlator fit candidates remain below q_min=0.05" in capsys.readouterr().out
 
 
+def test_spectrum_workflow_applies_initial_window_before_successful_first_fit(tmp_path: Path, monkeypatch) -> None:
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+
+    def initial(_context, session):
+        session.recommendation_calls += 1
+        return {"tmin": 2, "tmax": 8, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    expected_window = [{"tmin": 2, "tmax": 8}]
+
+    def fit(context, **parameters):
+        assert context.params["pt2_windows"] == expected_window
+        assert {name: parameters[name] for name in ("tmin", "tmax")} == {"tmin": 2, "tmax": 8}
+        return {"metrics": {"candidate_id": "spectrum_001", "Q": 0.8}}
+
+    published = []
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", lambda *_args: pytest.fail("passing first fit must not retry"))
+    monkeypatch.setattr(workflow, "fit_spectrum", fit)
+    monkeypatch.setattr(
+        workflow,
+        "publish",
+        lambda context, *, candidate_id: published.append((candidate_id, context.params["pt2_windows"])),
+    )
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "spectrum",
+        {
+            "analysis_method": "lsqfit",
+            "fit_scope": ["spectrum"],
+            "q_min": 0.05,
+            "pt2_windows": [{"tmin": 1, "tmax": 6}, {"tmin": 2, "tmax": 8}],
+        },
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=3))
+
+    assert published == [("spectrum_001", expected_window)]
+    assert context.state["fallback_no_q_passing"] is False
+
+
 def test_spectrum_workflow_raises_when_budget_is_spent_without_a_numerical_result(tmp_path: Path, monkeypatch) -> None:
     from lamet_agent.parallel import FitNumericalError
     import lamet_agent.stages.correlator_analysis.workflow as workflow
