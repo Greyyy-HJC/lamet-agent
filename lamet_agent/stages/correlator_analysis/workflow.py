@@ -153,11 +153,15 @@ def run(context: ToolContext, session: LlmSession) -> None:
                 _apply_spectrum_suggestion(context, suggestion)
                 continue
             quality = _finite_quality(observation["metrics"].get("Q"))
-            if best is None or quality >= best[0]:
+            if quality != -math.inf and (best is None or quality >= best[0]):
                 best = (quality, observation, copy.deepcopy(suggestion))
             if quality >= q_min:
                 break
             if not _can_revise(session):
+                if best is None:
+                    raise FitNumericalError(
+                        "no spectrum fit produced a publishable finite-Q result after the allowed attempts"
+                    )
                 _quality, observation, suggestion = best
                 _apply_spectrum_suggestion(context, suggestion)
                 break
@@ -206,7 +210,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
                 _finite_quality(selected.get("min_Q" if scopes == {"qda_ratio"} else "Q")),
                 _inverse_finite_quality(selected.get("worst_chi2_dof" if scopes == {"qda_ratio"} else "chi2_dof")),
             )
-            if best is None or score >= best[0]:
+            if score[0] != -math.inf and (best is None or score >= best[0]):
                 parameter_snapshot = {"pt2_windows": copy.deepcopy(context.params["pt2_windows"])}
                 if scopes != {"qda_ratio"}:
                     parameter_snapshot["pt3_windows"] = copy.deepcopy(context.params["pt3_windows"])
@@ -221,9 +225,14 @@ def run(context: ToolContext, session: LlmSession) -> None:
                 if scopes == {"qda_ratio"}
                 else bool(observation["metrics"].get("fallback_no_q_passing", False))
             )
+            low_quality = low_quality or score[0] == -math.inf
             if not low_quality:
                 break
             if not _can_revise(session):
+                if best is None:
+                    raise FitNumericalError(
+                        "no correlator fit produced a publishable finite-Q result after the allowed attempts"
+                    )
                 _score, observation, candidates, parameters = best
                 context.state["matrix_element_candidates"] = candidates
                 context.params.update(parameters)

@@ -2156,8 +2156,17 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
     events = []
     monkeypatch.setattr(workflow, "inspect", lambda _context: events.append("inspect"))
 
-    def fit(_context, *, tune_z_values):
+    def fit(context, *, tune_z_values):
         events.append(("fit", tune_z_values))
+        context.state["matrix_element_candidates"] = [
+            {
+                "id": "matrix_001",
+                "min_Q": 0.8,
+                "worst_chi2_dof": 1.0,
+                "feasible_at_all_tune_z": True,
+                "numerical_failure": False,
+            }
+        ]
         return {"metrics": {"recommended_candidate_id": "matrix_001"}}
 
     def publish(context, *, candidate_id):
@@ -2188,6 +2197,7 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
             "fit_scope": ["qda_ratio"],
             "component": "re",
             "pt2_windows": [{"tmin": 2, "tmax": 8}],
+            "q_min": 0.05,
         },
         {},
         {},
@@ -2900,6 +2910,92 @@ def test_spectrum_workflow_falls_back_to_an_earlier_success_after_a_failed_retry
     assert context.params["pt2_windows"] == [{"tmin": 2, "tmax": 8}]
     assert context.state["fallback_no_q_passing"] is True
     assert "ATTENTION: all correlator fit candidates remain below q_min=0.05" in capsys.readouterr().out
+
+
+def test_spectrum_workflow_keeps_an_earlier_finite_q_result_after_a_nonfinite_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    attempts = []
+
+    def initial(_context, session):
+        session.recommendation_calls += 1
+        return {"tmin": 2, "tmax": 8, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    def revise(_context, session, _attempts):
+        session.recommendation_calls += 1
+        return {"tmin": 3, "tmax": 9, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    def fit(_context, **_parameters):
+        attempts.append(None)
+        quality = 0.01 if len(attempts) == 1 else float("nan")
+        return {"metrics": {"candidate_id": f"spectrum_{len(attempts):03d}", "Q": quality}}
+
+    published = []
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "fit_spectrum", fit)
+    monkeypatch.setattr(workflow, "publish", lambda _context, *, candidate_id: published.append(candidate_id))
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "spectrum",
+        {"analysis_method": "lsqfit", "fit_scope": ["spectrum"], "q_min": 0.05},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=2))
+
+    assert published == ["spectrum_001"]
+    assert context.params["pt2_windows"] == [{"tmin": 2, "tmax": 8}]
+
+
+def test_spectrum_workflow_rejects_fallback_when_no_attempt_has_a_finite_q(tmp_path: Path, monkeypatch) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    attempts = []
+
+    def initial(_context, session):
+        session.recommendation_calls += 1
+        return {"tmin": 2, "tmax": 8, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    def revise(_context, session, _attempts):
+        session.recommendation_calls += 1
+        return {"tmin": 3, "tmax": 9, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    def fit(_context, **_parameters):
+        attempts.append(None)
+        quality = None if len(attempts) == 1 else float("nan")
+        return {"metrics": {"candidate_id": f"spectrum_{len(attempts):03d}", "Q": quality}}
+
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "fit_spectrum", fit)
+    monkeypatch.setattr(workflow, "publish", lambda *_args, **_kwargs: pytest.fail("nonfinite Q must not publish"))
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "spectrum",
+        {"analysis_method": "lsqfit", "fit_scope": ["spectrum"], "q_min": 0.05},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    with pytest.raises(FitNumericalError, match="no spectrum fit produced a publishable finite-Q result"):
+        workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=2))
 
 
 def test_qda_workflow_falls_back_to_an_earlier_success_after_a_failed_retry(tmp_path: Path, monkeypatch) -> None:
