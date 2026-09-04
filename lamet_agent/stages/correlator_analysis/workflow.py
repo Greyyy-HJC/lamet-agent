@@ -182,11 +182,21 @@ def run(context: ToolContext, session: LlmSession) -> None:
                     raise FitNumericalError(
                         "no correlator fit produced a publishable finite-Q result after the allowed attempts"
                     ) from last_error
-                representatives = [attempt[0] for attempt in attempts]
+                retained_candidates = []
+                for attempt_number, (_representative, candidates, _parameters) in enumerate(attempts, start=1):
+                    for candidate in candidates:
+                        if len(attempts) > 1:
+                            candidate["id"] = f"attempt_{attempt_number:03d}_{candidate['id']}"
+                        retained_candidates.append(candidate)
                 selected, _fallback = select_tuned_candidate(
-                    representatives, q_min=q_min, chi2_dof_tolerance=tolerance, qda=qda
+                    retained_candidates, q_min=q_min, chi2_dof_tolerance=tolerance, qda=qda
                 )
-                chosen = next(attempt for attempt in attempts if attempt[0] is selected)
+                parameters = next(
+                    parameters
+                    for _representative, candidates, parameters in attempts
+                    if any(candidate is selected for candidate in candidates)
+                )
+                chosen = (selected, retained_candidates, parameters)
                 final_low_quality = True
                 break
             suggestion = revise(context, session, _candidate_attempts(context))

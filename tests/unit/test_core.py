@@ -2664,8 +2664,8 @@ def test_correlator_workflow_publishes_best_candidate_when_q_min_is_never_met(
 
     workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=2))
 
-    assert published == ["matrix_001"]
-    assert context.state["matrix_element_candidates"][0]["min_Q"] == 0.02
+    assert published == ["attempt_002_matrix_001"]
+    assert [candidate["min_Q"] for candidate in context.state["matrix_element_candidates"]] == [0.01, 0.02]
     assert context.params["tune_z_values"] == [2.0]
     assert context.state["fallback_no_q_passing"] is True
     assert "ATTENTION: all correlator fit candidates remain below q_min=0.05" in capsys.readouterr().out
@@ -2810,17 +2810,39 @@ def test_matrix_retry_uses_the_same_cross_scan_selector_as_publication(tmp_path:
 
     def fit(context, *, tune_z_values):
         second = tune_z_values == [2.0]
-        context.state["matrix_element_candidates"] = [
-            {
-                "id": "matrix_001",
-                "Q": 0.01 if second else 0.04,
-                "chi2_dof": 1.1 if second else 1.0,
-                "n_data": 20 if second else 10,
-                "n_params": 5,
-                "feasible_at_all_tune_z": True,
-            }
-        ]
-        return {"metrics": {"recommended_candidate_id": "matrix_001"}}
+        # Attempt 1 locally selects matrix_002, while the global tolerance rule selects its matrix_001.
+        context.state["matrix_element_candidates"] = (
+            [
+                {
+                    "id": "matrix_001",
+                    "Q": 0.01,
+                    "chi2_dof": 0.9,
+                    "n_data": 20,
+                    "n_params": 5,
+                    "feasible_at_all_tune_z": True,
+                }
+            ]
+            if second
+            else [
+                {
+                    "id": "matrix_001",
+                    "Q": 0.01,
+                    "chi2_dof": 1.0,
+                    "n_data": 50,
+                    "n_params": 5,
+                    "feasible_at_all_tune_z": True,
+                },
+                {
+                    "id": "matrix_002",
+                    "Q": 0.01,
+                    "chi2_dof": 1.2,
+                    "n_data": 100,
+                    "n_params": 5,
+                    "feasible_at_all_tune_z": True,
+                },
+            ]
+        )
+        return {"metrics": {"recommended_candidate_id": "matrix_001" if second else "matrix_002"}}
 
     published = []
 
@@ -2860,10 +2882,11 @@ def test_matrix_retry_uses_the_same_cross_scan_selector_as_publication(tmp_path:
 
     workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=2))
 
-    assert published == ["matrix_001"]
-    assert context.params["pt2_windows"] == [{"tmin": 3, "tmax": 9}]
-    assert context.params["tune_z_values"] == [2.0]
-    assert context.state["matrix_element_candidates"][0]["n_data"] == 20
+    assert published == ["attempt_001_matrix_001"]
+    assert context.params["pt2_windows"] == [{"tmin": 2, "tmax": 8}]
+    assert context.params["tune_z_values"] == [1.0]
+    assert len(context.state["matrix_element_candidates"]) == 3
+    assert len({candidate["id"] for candidate in context.state["matrix_element_candidates"]}) == 3
     assert context.state["fallback_no_q_passing"] is True
 
 
