@@ -394,7 +394,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
             "worst_chi2_dof": 1.2,
             "n_data": 6,
             "n_params": 5,
-            "quality_passed": True,
+            "quality_passed": False,
             "feasible_at_all_tune_z": True,
         },
         {
@@ -412,7 +412,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
             "worst_chi2_dof": 0.9,
             "n_data": 6,
             "n_params": 5,
-            "quality_passed": True,
+            "quality_passed": False,
             "feasible_at_all_tune_z": True,
         },
     ]
@@ -423,7 +423,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
         "fit_scope": ["qda_ratio"],
         "fit_strategy": ["independent"],
         "prior_width": [1.0],
-        "q_min": 0.05,
+        "q_min": 0.9,
         "chi2_dof_tolerance": 0.25,
         "tune_z_values": [1],
         "pt2_windows": [{"tmin": 2, "tmax": 5}, {"tmin": 3, "tmax": 6}],
@@ -444,6 +444,8 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
         tool.run(context, candidate_id="matrix_001")
     tool.run(context, candidate_id="matrix_002")
     assert context.output is high
+    assert context.summary["decisions"]["fallback_no_q_passing"] is True
+    assert context.summary["diagnostics"]["fallback_no_q_passing"] is True
     assert (tmp_path / "diagnostics" / "candidates.json").is_file()
     assert "report.md" not in context.summary["artifacts"]
     assert not (tmp_path / "report.md").exists()
@@ -452,7 +454,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
 
 
 def test_correlator_window_selection_preserves_original_information_rule() -> None:
-    from lamet_agent.stages.correlator_analysis._selection import select_data_window
+    from lamet_agent.stages.correlator_analysis._selection import select_data_window, select_spectrum_candidate
 
     candidates = [
         {"id": "largest", "n_data": 24, "n_params": 10, "Q": 0.8, "chi2_dof": 0.70},
@@ -466,6 +468,24 @@ def test_correlator_window_selection_preserves_original_information_rule() -> No
     selected, fallback = select_data_window(candidates, q_min=0.05, chi2_dof_tolerance=0.25)
     assert selected["id"] == "best_chi2"
     assert fallback is False
+    with pytest.raises(ValueError, match="no overdetermined"):
+        select_data_window(
+            [{"id": "invalid", "n_data": 2, "n_params": 1, "Q": None, "chi2_dof": 1.0}],
+            q_min=0.05,
+            chi2_dof_tolerance=0.25,
+        )
+
+    spectrum = [
+        {"id": "nonfinite", "Q": float("nan"), "chi2_dof": 0.0},
+        {"id": "higher_chi2", "Q": 0.01, "chi2_dof": 2.0},
+        {"id": "first_tie", "Q": 0.01, "chi2_dof": 1.0},
+        {"id": "later_tie", "Q": 0.01, "chi2_dof": 1.0},
+    ]
+    selected, fallback = select_spectrum_candidate(spectrum, q_min=0.05)
+    assert selected["id"] == "first_tie"
+    assert fallback is True
+    with pytest.raises(ValueError, match="finite Q"):
+        select_spectrum_candidate([{"id": "failed", "Q": None, "error": "failed"}], q_min=0.05)
 
 
 def test_matrix_element_prior_keeps_original_inactive_component_parameters() -> None:
@@ -1656,7 +1676,7 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
             "max_schemes": 1,
             "component": "both",
             "output_scale": 1.0,
-            "q_min": 0.0,
+            "q_min": 0.9,
         },
     }
     context = ToolContext(
@@ -1685,6 +1705,10 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
     )
 
     tool.run(context)
+
+    assert context.summary is not None
+    assert context.summary["decisions"]["fallback_no_q_passing"] is True
+    assert context.summary["diagnostics"]["fallback_no_q_passing"] is True
 
     scale = 2.0 / HBAR_C_GEV_FM
     input_curves = [x for label, x in plotted if label == "input"]
@@ -1787,6 +1811,58 @@ def test_fourier_range_selection_matches_original_q_and_loggbf_rule() -> None:
         {"id": "lower_q", "fit_success": True, "Q": 0.03, "logGBF": 20.0},
     ]
     assert _select_fourier_range(fallback, q_min=0.05)["id"] == "largest_q"
+
+
+def test_fourier_model_selection_requires_finite_q_and_preserves_the_evidence_rule() -> None:
+    from lamet_agent.parallel import FitNumericalError
+    from lamet_agent.stages.fourier_transform.physics import _select_fourier_model
+
+    fallback = [
+        {"id": "nonfinite", "Q": float("nan"), "logGBF": 30.0},
+        {"id": "failed", "Q": 0.9, "logGBF": 40.0, "error": "fit failed"},
+        {"id": "largest_q", "Q": 0.04, "logGBF": 1.0},
+        {"id": "lower_q", "Q": 0.03, "logGBF": 20.0},
+    ]
+    assert _select_fourier_model(fallback, q_min=0.05)["id"] == "largest_q"
+
+    passing = [
+        {"id": "largest_q", "Q": 0.8, "logGBF": 1.0},
+        {"id": "largest_evidence", "Q": 0.2, "logGBF": 4.0},
+    ]
+    assert _select_fourier_model(passing, q_min=0.05)["id"] == "largest_evidence"
+
+    with pytest.raises(FitNumericalError, match="no Fourier model candidate has a usable center fit"):
+        _select_fourier_model([{"id": "invalid", "Q": None}], q_min=0.05)
+
+
+@pytest.mark.parametrize(
+    "selected",
+    [
+        {"Q": None},
+        {"Q": float("nan")},
+        {"Q": float("inf")},
+        {"Q": 0.8, "error": "fit failed"},
+    ],
+)
+def test_fourier_publish_rejects_an_invalid_selection_before_writing(tmp_path: Path, selected: dict) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    from lamet_agent.stages.fourier_transform._scan import publish
+
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {"scheme_scan": {"q_min": 0.05}},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    with pytest.raises(FitNumericalError, match="selected Fourier model candidate"):
+        publish(context, {"selected_candidate": selected})
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_fourier_scan_uses_original_fixed_first_pass_priors() -> None:

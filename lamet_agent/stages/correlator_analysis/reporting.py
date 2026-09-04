@@ -371,7 +371,9 @@ def _selection_policy_lines(records: tuple[StageReportRecord, ...]) -> list[str]
         lines.append(
             "Candidate selection is performed on sample-average fits over the authored strategies, scopes, state "
             "counts, prior widths, and time windows. The selected window and fit method are then held fixed for "
-            "the full-z production fits; numerical failures remain counted in diagnostics."
+            "the full-z production fits. If recommendation retries are exhausted, the same deterministic selector "
+            "is applied once across every retained numerical candidate; numerical failures remain counted in "
+            "diagnostics."
         )
     if has_lanczos:
         if has_lsqfit:

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 
 import numpy as np
 
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
+from lamet_agent.parallel import FitNumericalError
 from lamet_agent.plotting import (
     configure_plot,
     errorband,
@@ -78,6 +80,17 @@ def attempt(context: ToolContext) -> dict[str, object]:
 
 def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object]:
     """Publish one already accepted deterministic scan result."""
+    selected_candidate = result.get("selected_candidate")
+    if not isinstance(selected_candidate, dict):
+        raise FitNumericalError("Fourier scan did not select a model candidate")
+    if selected_candidate.get("error") is not None:
+        raise FitNumericalError("selected Fourier model candidate is not numerically valid")
+    try:
+        selected_q = float(selected_candidate["Q"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FitNumericalError("selected Fourier model candidate has no usable Q") from exc
+    if not math.isfinite(selected_q):
+        raise FitNumericalError("selected Fourier model candidate has no usable Q")
     conventions = context.state["fourier_conventions"]
     source = context.state["fourier_input"]
     scan = {"component": conventions["component"]}
@@ -103,21 +116,24 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
     selected_range = result["selected_range"]
     selected_range_label = f"zmin_{selected_range['z_min_fm']:g}_zmax_{selected_range['z_max_fm']:g}".replace(".", "p")
     model_labels = [candidate["label"] for candidate in result["model_candidates"]]
+    fallback_no_q_passing = selected_q < float(context.params["scheme_scan"]["q_min"])
+    context.state["fallback_no_q_passing"] = fallback_no_q_passing
     diagnostics = {
         "selected_range_label": selected_range_label,
         "fit_model_labels": model_labels,
         "fit_model_weights": result["weights"],
         "selected_fit_model_labels": result["selected_labels"],
-        "selected_Q": result["selected_candidate"]["Q"],
-        "selected_chi2": result["selected_candidate"]["chi2"],
-        "selected_dof": result["selected_candidate"]["dof"],
-        "selected_chi2_dof": result["selected_candidate"]["chi2_dof"],
-        "selected_logGBF": result["selected_candidate"]["logGBF"],
+        "selected_Q": selected_q,
+        "selected_chi2": selected_candidate["chi2"],
+        "selected_dof": selected_candidate["dof"],
+        "selected_chi2_dof": selected_candidate["chi2_dof"],
+        "selected_logGBF": selected_candidate["logGBF"],
         "range_candidate_count": len(result["range_candidates"]),
         "model_candidate_count": len(result["model_candidates"]),
         "sample_count": output.n_sample,
         "x_count": len(output.coords["x"]),
         "workers": result["workers"],
+        "fallback_no_q_passing": fallback_no_q_passing,
     }
     model_weights = dict(zip(model_labels, result["weights"]))
     selected_labels = set(result["selected_labels"])
@@ -220,7 +236,7 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         legend=True,
     )
     save_figure(context.artifact_directory / "output_xdep.pdf")
-    extended = result["selected_candidate"]["extended"]
+    extended = selected_candidate["extended"]
     z_min_fm = float(selected_range["z_min_fm"])
     z_max_fm = float(selected_range["z_max_fm"])
     extension_z = np.asarray(extended.coords["z"], dtype=float)
@@ -264,7 +280,11 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         "stage_id": context.stage_id,
         "job_id": context.job_id,
         "result": "quasi_distribution",
-        "decisions": {"selected_range_label": selected_range_label, "fit_model_labels": result["selected_labels"]},
+        "decisions": {
+            "selected_range_label": selected_range_label,
+            "fit_model_labels": result["selected_labels"],
+            "fallback_no_q_passing": fallback_no_q_passing,
+        },
         "diagnostics": diagnostics,
         "artifacts": artifacts,
     }

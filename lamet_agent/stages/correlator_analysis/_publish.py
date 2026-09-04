@@ -16,6 +16,7 @@ from lamet_agent.stages.correlator_analysis.physics import (
     matrix_element_samples,
 )
 from lamet_agent.stages.correlator_analysis._selection import (
+    select_spectrum_candidate,
     select_tuned_candidate,
 )
 
@@ -108,18 +109,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
             else f"original_data_window_rule(fallback_no_q_passing={fallback})"
         )
     else:
-        acceptable = [candidate for candidate in candidates if candidate.get("quality_passed", True)]
-        if not acceptable:
-            raise ValueError("no candidate passes the authored quality threshold")
-
-        def rank(candidate: dict[str, object]) -> tuple[float, float, str]:
-            quality = float(candidate.get("Q", candidate.get("min_Q", 1.0)))
-            chi2_dof = float(candidate.get("max_chi2_dof", candidate.get("chi2_dof", 0.0)))
-            return (-quality, chi2_dof, str(candidate["id"]))
-
-        deterministic = min(acceptable, key=rank)
+        deterministic, fallback = select_spectrum_candidate(candidates, q_min=float(lsqfit["q_min"]))
         selection_rule = "highest_quality_then_lowest_chi2_dof_then_id"
-        fallback = False
     if candidate_id != deterministic["id"]:
         raise ValueError(f"candidate_id must be the deterministic best acceptable candidate '{deterministic['id']}'")
     selected = deterministic

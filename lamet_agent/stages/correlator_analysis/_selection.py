@@ -5,6 +5,34 @@ from __future__ import annotations
 import numpy as np
 
 
+def _is_finite(value: object) -> bool:
+    try:
+        return bool(np.isfinite(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
+def select_spectrum_candidate(candidates: list[dict[str, object]], *, q_min: float) -> tuple[dict[str, object], bool]:
+    """Select the deterministic best finite-Q spectrum candidate."""
+    usable = [
+        candidate
+        for candidate in candidates
+        if not candidate.get("numerical_failure", False)
+        and candidate.get("error") is None
+        and _is_finite(candidate.get("Q"))
+    ]
+    if not usable:
+        raise ValueError("no numerical spectrum candidate has finite Q")
+
+    def rank(candidate: dict[str, object]) -> tuple[float, float, str]:
+        value = candidate.get("chi2_dof")
+        chi2_dof = float(value) if _is_finite(value) else np.inf
+        return (-float(candidate["Q"]), chi2_dof, str(candidate["id"]))
+
+    selected = min(usable, key=rank)
+    return selected, float(selected["Q"]) < q_min
+
+
 def select_data_window(
     candidates: list[dict[str, object]], *, q_min: float, chi2_dof_tolerance: float
 ) -> tuple[dict[str, object], bool]:
@@ -13,8 +41,10 @@ def select_data_window(
         candidate
         for candidate in candidates
         if not candidate.get("numerical_failure", False)
+        and candidate.get("error") is None
         and int(candidate.get("n_data", 0)) > int(candidate.get("n_params", 0))
-        and np.isfinite(float(candidate.get("chi2_dof", np.inf)))
+        and _is_finite(candidate.get("Q"))
+        and _is_finite(candidate.get("chi2_dof"))
     ]
     if not eligible:
         raise ValueError("no overdetermined matrix-fit candidate is available")
@@ -40,7 +70,9 @@ def select_tuned_candidate(
     feasible = [
         candidate
         for candidate in candidates
-        if candidate.get("feasible_at_all_tune_z", True) and not candidate.get("numerical_failure", False)
+        if candidate.get("feasible_at_all_tune_z", True)
+        and not candidate.get("numerical_failure", False)
+        and candidate.get("error") is None
     ]
     if not feasible:
         raise ValueError("no candidate is feasible at every tune_z value")
@@ -54,8 +86,8 @@ def select_tuned_candidate(
         candidate
         for candidate in feasible
         if int(candidate.get("n_data", 0)) > int(candidate.get("n_params", 0))
-        and np.isfinite(float(candidate.get("min_Q", np.nan)))
-        and np.isfinite(float(candidate.get("worst_chi2_dof", np.nan)))
+        and _is_finite(candidate.get("min_Q"))
+        and _is_finite(candidate.get("worst_chi2_dof"))
     ]
     if not usable:
         raise ValueError("no overdetermined qDA candidate is feasible at every tune_z value")

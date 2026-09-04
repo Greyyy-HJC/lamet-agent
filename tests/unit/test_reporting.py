@@ -726,6 +726,7 @@ def test_fourier_stage_report_contains_tail_and_selection(tmp_path: Path) -> Non
         "selected_chi2_dof": 0.9,
         "range_candidate_count": 1,
         "model_candidate_count": 2,
+        "fallback_no_q_passing": True,
     }
     summary = {
         "result": "quasi_distribution",
@@ -780,6 +781,7 @@ def test_fourier_stage_report_contains_tail_and_selection(tmp_path: Path) -> Non
     assert "Projection and Field Definitions" in text
     assert "Tail posterior parameters" in text
     assert "Range-selection fits" in text
+    assert "ATTENTION: no center model passed `q_min`" in text
     real_svg = (stage / "plots" / "fourier_overview_real.svg").read_text(encoding="utf-8")
     imag_svg = (stage / "plots" / "fourier_overview_imag.svg").read_text(encoding="utf-8")
     assert "FillBetweenPolyCollection" in real_svg

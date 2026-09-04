@@ -242,7 +242,9 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             "",
             ("The range scan uses the first authored order and prior width. Runtime enumerates the authored "
              "model x zmin x zmax prefix up to `max_schemes`, keeps feasible center fits, and selects the "
-             "largest-logGBF fit with Q >= `q_min`, falling back to the largest Q. With that interval fixed, "
+             "largest-logGBF fit with Q >= `q_min`, falling back to the largest Q. If no center model reaches "
+             "`q_min`, range recommendations continue until the job budget is exhausted; a numerically valid "
+             "maximum-Q result is then published with an explicit fallback warning. With that interval fixed, "
              "every feasible authored LA/NLA and prior-width model is refitted. `model_average=false` chooses "
              "per-resample models with the same Q/logGBF rule and maximum-Q fallback; `model_average=true` uses "
              "normalized exp(logGBF) weights over all finite-logGBF candidates and adds no separate between-model "
@@ -284,6 +286,15 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     f"| `{candidate.get('label')}` | `{name}` | "
                     f"{format_value(means.get(name))} | {format_value(sdevs.get(name))} |"
                 )
+        fallback_notice = (
+            [
+                "",
+                "ATTENTION: no center model passed `q_min` after the allowed recommendation attempts; "
+                "the numerically valid maximum-Q result was published anyway.",
+            ]
+            if diagnostics.get("fallback_no_q_passing")
+            else []
+        )
         lines.extend(
             [
                 "",
@@ -295,6 +306,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"- Selected models: {format_value(diagnostics.get('selected_fit_model_labels'))}",
                 f"- Model weights: {format_value(diagnostics.get('fit_model_weights'))}",
                 f"- DA phase transfer: {format_value(attrs.get('phase_transfer_da'))}",
+                *fallback_notice,
                 "",
                 "### Result Context",
                 "",

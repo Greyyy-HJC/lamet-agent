@@ -10,7 +10,8 @@
     "resample_mode": "bootstrap",
     "bin_size": 10,
     "sample_error_mode": "one_sigma",
-    "samples": 100
+    "samples": 100,
+    "parameter_recommendation_retries": 0
   },
   "stages": {
     "correlator_analysis": {
@@ -42,14 +43,6 @@
           "pt2_windows": [
             {
               "tmin": 12,
-              "tmax": 15
-            },
-            {
-              "tmin": 12,
-              "tmax": 16
-            },
-            {
-              "tmin": 12,
               "tmax": 17
             }
           ]
@@ -64,15 +57,7 @@
           "pt2_windows": [
             {
               "tmin": 8,
-              "tmax": 11
-            },
-            {
-              "tmin": 8,
               "tmax": 12
-            },
-            {
-              "tmin": 8,
-              "tmax": 13
             }
           ]
         },
@@ -84,14 +69,6 @@
             ]
           },
           "pt2_windows": [
-            {
-              "tmin": 6,
-              "tmax": 9
-            },
-            {
-              "tmin": 6,
-              "tmax": 10
-            },
             {
               "tmin": 6,
               "tmax": 11
@@ -109,14 +86,6 @@
             {
               "tmin": 8,
               "tmax": 11
-            },
-            {
-              "tmin": 8,
-              "tmax": 12
-            },
-            {
-              "tmin": 8,
-              "tmax": 13
             }
           ]
         },
@@ -131,14 +100,6 @@
             {
               "tmin": 6,
               "tmax": 9
-            },
-            {
-              "tmin": 6,
-              "tmax": 10
-            },
-            {
-              "tmin": 6,
-              "tmax": 11
             }
           ]
         },
@@ -153,14 +114,6 @@
             {
               "tmin": 4,
               "tmax": 7
-            },
-            {
-              "tmin": 4,
-              "tmax": 8
-            },
-            {
-              "tmin": 4,
-              "tmax": 9
             }
           ]
         },
@@ -172,14 +125,6 @@
             ]
           },
           "pt2_windows": [
-            {
-              "tmin": 7,
-              "tmax": 10
-            },
-            {
-              "tmin": 7,
-              "tmax": 11
-            },
             {
               "tmin": 7,
               "tmax": 12
@@ -197,14 +142,6 @@
             {
               "tmin": 5,
               "tmax": 8
-            },
-            {
-              "tmin": 5,
-              "tmax": 9
-            },
-            {
-              "tmin": 5,
-              "tmax": 10
             }
           ]
         },
@@ -219,14 +156,6 @@
             {
               "tmin": 3,
               "tmax": 6
-            },
-            {
-              "tmin": 3,
-              "tmax": 7
-            },
-            {
-              "tmin": 3,
-              "tmax": 8
             }
           ]
         }
