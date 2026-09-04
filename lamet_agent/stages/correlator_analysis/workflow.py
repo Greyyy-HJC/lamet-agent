@@ -108,13 +108,13 @@ def run(context: ToolContext, session: LlmSession) -> None:
     if scopes == {"spectrum"}:
         _apply_spectrum_suggestion(context, suggestion)
         q_min = float(context.params["q_min"])
-        last_error: FitNumericalError | None = None
+        last_error: Exception | None = None
         while True:
             try:
                 observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
-            except FitNumericalError as exc:
+            except (FitNumericalError, ValueError) as exc:
                 last_error = exc
-                previous = _spectrum_attempt(suggestion, error=str(exc))
+                previous = _spectrum_attempt(suggestion, error=f"{type(exc).__name__}: {exc}")
             else:
                 last_error = None
                 previous = _spectrum_attempt(suggestion, metrics=dict(observation["metrics"]))
@@ -153,7 +153,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
         while True:
             try:
                 fit(context, tune_z_values=tune_z_values)
-            except FitNumericalError as exc:
+            except (FitNumericalError, ValueError) as exc:
                 last_error = exc
             else:
                 candidates = list(context.state.get("matrix_element_candidates", []))
