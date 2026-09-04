@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import ipaddress
+import asyncio
 import hashlib
+import ipaddress
 import json
 import os
 import urllib.request
@@ -52,7 +53,7 @@ def _resolve_provider(provider: str, model: str | None = None) -> _ResolvedProvi
     selected_model = model.strip() if model and model.strip() else None
     if not name:
         raise ValueError("provider must not be empty")
-    if name == "codex":
+    if name in {"codex", "claude"}:
         return _ResolvedProvider("cli", name, selected_model)
     if name in _OPENAI_COMPATIBLE_API:
         base_url, key_env, default_model = _OPENAI_COMPATIBLE_API[name]
@@ -62,7 +63,7 @@ def _resolve_provider(provider: str, model: str | None = None) -> _ResolvedProvi
         if selected_model is None and not _is_local_url(name):
             raise ValueError("a custom OpenAI-compatible API URL requires a model")
         return _ResolvedProvider("api", name, selected_model, name)
-    registered = sorted(["codex", *_OPENAI_COMPATIBLE_API])
+    registered = sorted(["codex", "claude", *_OPENAI_COMPATIBLE_API])
     raise ValueError(f"unknown provider {name!r}; use one of {registered} or an HTTP(S) OpenAI-compatible API URL")
 
 
@@ -214,7 +215,7 @@ class _AssistantResponse:
 
 
 def _normalise_usage(value: Any) -> dict[str, int] | None:
-    """Extract a compact token-usage mapping from API or Codex response data."""
+    """Extract a compact token-usage mapping from API or CLI-agent response data."""
     if value is None:
         return None
     if hasattr(value, "model_dump"):
@@ -235,6 +236,8 @@ def _normalise_usage(value: Any) -> dict[str, int] | None:
         "cachedInputTokens": "cached_input_tokens",
         "reasoningOutputTokens": "reasoning_output_tokens",
         "cacheWriteInputTokens": "cache_write_input_tokens",
+        "cacheCreationInputTokens": "cache_creation_input_tokens",
+        "cacheReadInputTokens": "cache_read_input_tokens",
     }
     result = {
         aliases.get(str(key), str(key)): int(raw)
@@ -247,6 +250,8 @@ def _normalise_usage(value: Any) -> dict[str, int] | None:
             "cached_input_tokens",
             "reasoning_output_tokens",
             "cache_write_input_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
         }
         and isinstance(raw, int)
         and not isinstance(raw, bool)
@@ -515,6 +520,180 @@ class _CodexBackend:
             self._threads.clear()
 
 
+class _ClaudeCodeBackend:
+    """Per-job Claude Code adapter using the installed Python Agent SDK."""
+
+    def __init__(self, model: str | None = None) -> None:
+        self.model = model
+        self.identity = f"claude:{model or 'default'}"
+        self._turn = 0
+        self._sessions: dict[str, str] = {}
+
+    @staticmethod
+    def _thread_key(messages: list[Message], prompt_digest: str) -> str:
+        """Identify one job conversation from its stable prompt and first request."""
+        first_user = next((message.content for message in messages if message.role == "user"), "")
+        payload = f"{prompt_digest}\0{first_user}".encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def complete(
+        self,
+        *,
+        messages: list[Message],
+        tools: list[dict[str, Any]],
+        prompt_digest: str,
+        response_schema: Mapping[str, Any] | None = None,
+    ) -> _AssistantResponse:
+        if response_schema is not None and tools:
+            raise ValueError("structured responses cannot be combined with tools")
+        try:
+            from claude_agent_sdk import ClaudeAgentOptions, query  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("the claude provider requires the claude-agent-sdk package") from exc
+
+        thread_key = self._thread_key(messages, prompt_digest)
+        session_id = self._sessions.get(thread_key)
+        existing_session = session_id is not None
+        source_messages = messages[-1:] if existing_session else messages
+        transcript = []
+        for message in source_messages:
+            if message.role == "system":
+                continue
+            item: dict[str, Any] = {"role": message.role, "content": message.content}
+            if message.tool_call_id:
+                item["tool_call_id"] = message.tool_call_id
+            if len(message.calls) == 1:
+                call = message.calls[0]
+                item["tool_call"] = {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
+            elif message.calls:
+                item["tool_calls"] = [
+                    {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
+                    for call in message.calls
+                ]
+            transcript.append(item)
+        task = {
+            "messages": transcript,
+            "tools": tools,
+            "prompt_digest": prompt_digest,
+            "response_schema": response_schema,
+        }
+        if response_schema is not None:
+            output_constraint = (
+                "Return exactly one JSON object matching this schema and no other text:\n"
+                + json.dumps(response_schema["schema"], separators=(",", ":"), ensure_ascii=False)
+            )
+        else:
+            output_constraint = (
+                "Return exactly one JSON object with keys 'text' and 'tool_calls'. "
+                "'text' must be a string. 'tool_calls' must be a list of objects containing exactly "
+                "'name' and object 'arguments'. Do not call tools yourself."
+            )
+        task_input = "\n\n".join(
+            [
+                "<TASK_INPUT>",
+                json.dumps(task, separators=(",", ":"), ensure_ascii=False),
+                "</TASK_INPUT>",
+                "<OUTPUT_CONSTRAINT>",
+                output_constraint,
+                "Do not use markdown. Do not run shell commands. Do not edit files.",
+                "</OUTPUT_CONSTRAINT>",
+            ]
+        )
+        options_values: dict[str, Any] = {
+            "model": self.model,
+            "tools": [],
+            "disallowed_tools": ["*"],
+            "permission_mode": "dontAsk",
+            "strict_mcp_config": True,
+            "setting_sources": [],
+            "max_turns": 1,
+        }
+        if not existing_session:
+            system_prompt = "\n\n".join(message.content for message in messages if message.role == "system")
+            options_values["system_prompt"] = system_prompt
+        else:
+            options_values["resume"] = session_id
+        if response_schema is not None:
+            options_values["output_format"] = {
+                "type": "json_schema",
+                "schema": response_schema["schema"],
+            }
+        options = ClaudeAgentOptions(**options_values)
+
+        async def run_query() -> Any:
+            final_message = None
+            async for message in query(prompt=task_input, options=options):
+                if hasattr(message, "result") and hasattr(message, "session_id"):
+                    final_message = message
+            return final_message
+
+        result = asyncio.run(run_query())
+        if result is None:
+            raise RuntimeError("Claude Code returned no final response")
+        if getattr(result, "is_error", False):
+            errors = getattr(result, "errors", None)
+            detail = "; ".join(str(error) for error in errors) if isinstance(errors, (list, tuple)) else None
+            message = "Claude Code returned an error"
+            if detail:
+                message += f": {detail}"
+            raise RuntimeError(message)
+        returned_session_id = getattr(result, "session_id", None)
+        if not isinstance(returned_session_id, str) or not returned_session_id:
+            raise RuntimeError(f"Claude Code returned no session ID: {result}")
+        self._sessions[thread_key] = returned_session_id
+
+        usage = _normalise_usage(getattr(result, "usage", None))
+        if response_schema is not None:
+            structured = getattr(result, "structured_output", None)
+            raw = getattr(result, "result", None)
+            if structured is None and isinstance(raw, str):
+                try:
+                    structured = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Claude Code returned malformed structured JSON: {raw}") from exc
+            if not isinstance(structured, Mapping):
+                raise TypeError("Claude Code structured response must be an object")
+            text = raw if isinstance(raw, str) and raw.strip() else json.dumps(structured, ensure_ascii=False)
+            self._turn += 1
+            return _AssistantResponse(text, structured=structured, usage=usage)
+
+        raw = getattr(result, "result", None)
+        if not isinstance(raw, str) or not raw.strip():
+            raise RuntimeError(f"Claude Code returned no final response: {result}")
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Claude Code returned malformed JSON: {raw}") from exc
+
+        self._turn += 1
+        if not isinstance(payload, dict) or set(payload) != {"text", "tool_calls"}:
+            raise ValueError("Claude Code response must contain exactly text and tool_calls")
+        if not isinstance(payload["text"], str) or not isinstance(payload["tool_calls"], list):
+            raise TypeError("Claude Code text must be a string and tool_calls must be a list")
+        known_names = {
+            item.get("function", {}).get("name")
+            for item in tools
+            if isinstance(item, dict) and isinstance(item.get("function"), dict)
+        }
+        calls = []
+        for index, tool_payload in enumerate(payload["tool_calls"], start=1):
+            if (
+                not isinstance(tool_payload, dict)
+                or set(tool_payload) != {"name", "arguments"}
+                or not isinstance(tool_payload["name"], str)
+                or not isinstance(tool_payload["arguments"], dict)
+            ):
+                raise ValueError("Claude Code tool calls must contain exactly name and object arguments")
+            if tool_payload["name"] not in known_names:
+                raise ValueError(f"Claude Code response requested unavailable tool '{tool_payload['name']}'")
+            calls.append(_ToolCall(f"turn-{self._turn}-{index}", tool_payload["name"], tool_payload["arguments"]))
+        return _AssistantResponse(payload["text"], tool_calls=tuple(calls), usage=usage)
+
+    def close(self) -> None:
+        """Forget in-process Claude Code session handles after the owning run."""
+        self._sessions.clear()
+
+
 def create_backend(
     provider: str,
     model: str | None = None,
@@ -531,7 +710,9 @@ def create_backend(
     if resolved.kind == "cli":
         if api_key_file is not None:
             raise ValueError("api_key_file is only valid for API providers")
-        return _CodexBackend(resolved.model)
+        if resolved.provider == "codex":
+            return _CodexBackend(resolved.model)
+        return _ClaudeCodeBackend(resolved.model)
 
     if api_key_file is not None:
         key_path = Path(api_key_file)

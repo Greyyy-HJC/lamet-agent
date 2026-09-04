@@ -25,6 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
 codex = ["openai-codex"]
+claude = ["claude-agent-sdk"]
 literature = ["beautifulsoup4", "requests"]
 
 [project.scripts]

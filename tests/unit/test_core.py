@@ -5,7 +5,9 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 import json
+import sys
 from types import SimpleNamespace
+import types
 from typing import Literal, TypedDict
 
 import numpy as np
@@ -430,6 +432,77 @@ def test_provider_selection_has_one_public_backend_factory(monkeypatch: pytest.M
     assert create_backend("codex").identity == "codex:default"
     with pytest.raises(ValueError, match="requires a model"):
         create_backend("https://llm.example.test/v1")
+
+
+def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    options = []
+    results = iter(
+        [
+            SimpleNamespace(
+                result=json.dumps(
+                    {"text": "fit one candidate", "tool_calls": [{"name": "fit", "arguments": {"window": 3}}]}
+                ),
+                session_id="claude-session",
+                usage={"input_tokens": 4, "output_tokens": 5, "cache_read_input_tokens": 6},
+                is_error=False,
+                errors=None,
+                structured_output=None,
+            ),
+            SimpleNamespace(
+                result=json.dumps({"text": "finished", "tool_calls": []}),
+                session_id="claude-session",
+                usage=None,
+                is_error=False,
+                errors=None,
+                structured_output=None,
+            ),
+        ]
+    )
+
+    class FakeOptions:
+        def __init__(self, **values: object) -> None:
+            self.values = values
+            options.append(self)
+
+    async def fake_query(*, prompt: str, options: FakeOptions):
+        options.prompt = prompt
+        yield next(results)
+
+    sdk = types.ModuleType("claude_agent_sdk")
+    sdk.ClaudeAgentOptions = FakeOptions
+    sdk.query = fake_query
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", sdk)
+
+    backend = create_backend("claude", "sonnet")
+    tool = {"type": "function", "function": {"name": "fit", "parameters": {}}}
+    first = backend.complete(
+        messages=[Message("system", "system prompt"), Message("user", "request")],
+        tools=[tool],
+        prompt_digest="digest",
+    )
+    second = backend.complete(
+        messages=[
+            Message("system", "system prompt"),
+            Message("user", "request"),
+            Message("assistant", first.text, tool_calls=first.calls),
+            Message("tool", '{"ok":true}', tool_call_id=first.calls[0].id),
+        ],
+        tools=[tool],
+        prompt_digest="digest",
+    )
+
+    assert backend.identity == "claude:sonnet"
+    assert first.text == "fit one candidate"
+    assert first.calls[0].arguments == {"window": 3}
+    assert first.usage == {"input_tokens": 4, "output_tokens": 5, "cache_read_input_tokens": 6}
+    assert second.text == "finished"
+    assert not second.calls
+    assert options[0].values["tools"] == []
+    assert options[0].values["disallowed_tools"] == ["*"]
+    assert options[0].values["system_prompt"] == "system prompt"
+    assert "resume" not in options[0].values
+    assert options[1].values["resume"] == "claude-session"
+    assert options[1].values["tools"] == []
 
 
 class _ModelsResponse:
