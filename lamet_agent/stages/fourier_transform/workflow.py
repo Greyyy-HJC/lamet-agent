@@ -48,9 +48,11 @@ def _selected_quality(result: dict[str, Any]) -> float | None:
 
 
 def run(context: ToolContext, session: LlmSession) -> None:
-    """Try authored/recommended ranges, then at most the job recommendation budget."""
+    """Try the authored ranges, then at most the configured number of revisions."""
     inspect(context)
     q_min = float(context.params["scheme_scan"]["q_min"])
+    revision_limit = max(session.max_recommendation_calls - 1, 0)
+    revision_count = 0
     history = []
     best_result: dict[str, Any] | None = None
     best_quality: float | None = None
@@ -84,7 +86,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
             context.state["fallback_no_q_passing"] = False
             publish(context, result)
             return
-        if session.recommendation_calls >= session.max_recommendation_calls:
+        if revision_count >= revision_limit:
             context.state["fourier_parameter_attempts"] = history
             if best_result is None:
                 raise FitNumericalError(
@@ -101,6 +103,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
             publish(context, best_result)
             return
         suggestion = revise(context, session, attempts)
+        revision_count += 1
         context.params["zmin_fm"] = list(suggestion["zmin_fm"])
         context.params["zmax_fm"] = list(suggestion["zmax_fm"])
         inspect(context)

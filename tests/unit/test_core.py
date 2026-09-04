@@ -2466,7 +2466,11 @@ def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(t
     assert backend.calls[0][2] == backend.calls[1][2]
 
 
-def test_fourier_workflow_allows_user_attempt_plus_two_job_recommendations(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("retries", [0, 1, 2])
+@pytest.mark.parametrize("initial_calls", [0, 1])
+def test_fourier_workflow_uses_exactly_the_configured_retry_budget(
+    tmp_path: Path, monkeypatch, retries: int, initial_calls: int
+) -> None:
     import lamet_agent.stages.fourier_transform.workflow as workflow
 
     monkeypatch.setattr(workflow, "inspect", lambda _context: None)
@@ -2507,14 +2511,16 @@ def test_fourier_workflow_allows_user_attempt_plus_two_job_recommendations(tmp_p
         tmp_path,
         np.random.default_rng(1),
     )
-    session = LlmSession(_ScriptedBackend([]), tmp_path / "fourier.md", max_recommendation_calls=2)
+    session = LlmSession(_ScriptedBackend([]), tmp_path / "fourier.md", max_recommendation_calls=1 + retries)
+    session.recommendation_calls = initial_calls
 
     workflow.run(context, session)
 
-    assert len(attempted_ranges) == 3
-    assert len(revisions) == 2
-    assert session.recommendation_calls == 2
-    assert published[0]["model_candidates"][0]["Q"] == 0.8
+    assert len(attempted_ranges) == 1 + retries
+    assert len(revisions) == retries
+    assert session.recommendation_calls == initial_calls + retries
+    assert published[0]["model_candidates"][0]["Q"] == qualities[retries]
+    assert context.state["fallback_no_q_passing"] is (retries < 2)
 
 
 def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Path, monkeypatch) -> None:
@@ -2898,7 +2904,7 @@ def test_fourier_retry_publishes_only_a_retained_finite_selection(
         tmp_path,
         np.random.default_rng(1),
     )
-    session = LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=1)
+    session = LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=2)
 
     if qualities[0] is None:
         with pytest.raises(FitNumericalError, match="no Fourier scan produced"):
