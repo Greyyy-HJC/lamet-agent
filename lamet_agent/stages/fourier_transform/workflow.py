@@ -36,23 +36,15 @@ def _attempts(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return records
 
 
-def _accepted(result: dict[str, Any], q_min: float) -> bool:
-    return any(
-        candidate.get("error") is None
-        and candidate.get("Q") is not None
-        and math.isfinite(float(candidate["Q"]))
-        and float(candidate["Q"]) >= q_min
-        for candidate in result.get("model_candidates", [])
-    )
-
-
-def _best_quality(result: dict[str, Any]) -> float | None:
-    qualities = [
-        float(candidate["Q"])
-        for candidate in result.get("model_candidates", [])
-        if candidate.get("error") is None and candidate.get("Q") is not None and math.isfinite(float(candidate["Q"]))
-    ]
-    return max(qualities) if qualities else None
+def _selected_quality(result: dict[str, Any]) -> float | None:
+    candidate = result.get("selected_candidate")
+    if not isinstance(candidate, dict) or candidate.get("error") is not None or candidate.get("Q") is None:
+        return None
+    try:
+        quality = float(candidate["Q"])
+    except (TypeError, ValueError):
+        return None
+    return quality if math.isfinite(quality) else None
 
 
 def run(context: ToolContext, session: LlmSession) -> None:
@@ -80,13 +72,14 @@ def run(context: ToolContext, session: LlmSession) -> None:
                 }
             }
         history.append(attempts)
+        quality = None
         if result is not None:
-            quality = _best_quality(result)
-            if quality is not None and (best_quality is None or quality >= best_quality):
+            quality = _selected_quality(result)
+            if quality is not None and (best_quality is None or quality > best_quality):
                 best_result = result
                 best_quality = quality
                 best_parameters = (list(context.params["zmin_fm"]), list(context.params["zmax_fm"]))
-        if result is not None and _accepted(result, q_min):
+        if result is not None and quality is not None and quality >= q_min:
             context.state["fourier_parameter_attempts"] = history
             context.state["fallback_no_q_passing"] = False
             publish(context, result)

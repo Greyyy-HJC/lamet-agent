@@ -198,10 +198,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         "",
         "## Job Summary",
         "",
-        (
-            "| job | target / polarization | momentum [GeV] | sector / component | "
-            "selected range [fm] | selected models | Q | chi2/dof | samples |"
-        ),
+        ("| job | target / polarization | momentum [GeV] | sector / component | "
+         "selected range [fm] | selected models | Q | chi2/dof | samples |"),
         "|---|---:|---|---|---|---|---:|---:|---:|",
     ]
     for record in records:
@@ -242,17 +240,15 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             "",
             "## Selection Policy",
             "",
-            (
-                "The range scan uses the first authored order and prior width. Runtime enumerates the authored "
-                "model x zmin x zmax prefix up to `max_schemes`, keeps feasible center fits, and selects the "
-                "largest-logGBF fit with Q >= `q_min`, falling back to the largest Q. If no center model reaches "
-                "`q_min`, range recommendations continue until the job budget is exhausted; a numerically valid "
-                "maximum-Q result is then published with an explicit fallback warning. With that interval fixed, "
-                "every feasible authored LA/NLA and prior-width model is refitted. `model_average=false` chooses "
-                "per-resample models with the same Q/logGBF rule and maximum-Q fallback; `model_average=true` uses "
-                "normalized exp(logGBF) weights over all finite-logGBF candidates and adds no separate between-model "
-                "variance. The candidate diagnostics below preserve both the selected result and the alternatives."
-            ),
+            ("The range scan uses the first authored order and prior width. Runtime enumerates the authored "
+             "model x zmin x zmax prefix up to `max_schemes`, keeps feasible center fits, and selects the "
+             "largest-logGBF fit with Q >= `q_min`, falling back to the largest Q. If no center model reaches "
+             "`q_min`, range recommendations continue until the job budget is exhausted; a numerically valid "
+             "maximum-Q result is then published with an explicit fallback warning. With that interval fixed, "
+             "every feasible authored LA/NLA and prior-width model is refitted. `model_average=false` chooses "
+             "per-resample models with the same Q/logGBF rule and maximum-Q fallback; `model_average=true` uses "
+             "normalized exp(logGBF) weights over all finite-logGBF candidates and adds no separate between-model "
+             "variance. The candidate diagnostics below preserve both the selected result and the alternatives."),
         ]
     )
     for record in records:
@@ -326,7 +322,9 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                         "| GPD initial/final Pz | "
                         f"{format_value(attrs.get('initial_momentum'))} / "
                         f"{format_value(attrs.get('final_momentum'))} |",
-                        f"| GPD xi / t | {format_value(attrs.get('xi'))} / {format_value(attrs.get('t_gev2'))} GeV^2 |",
+                        "| GPD xi / t | "
+                        f"{format_value(attrs.get('xi'))} / "
+                        f"{format_value(attrs.get('t_gev2'))} GeV^2 |",
                         "| GPD phase transfer / completion | "
                         f"`{attrs.get('phase_transfer_gpd', 'n/a')}` / "
                         f"`{attrs.get('gpd_completion_mode', 'n/a')}` |",
@@ -375,43 +373,29 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "### Projection and Field Definitions",
                 "",
-                (
-                    f"The output records sector `{attrs.get('sector', 'n/a')}`, component "
-                    f"`{attrs.get('component', 'n/a')}`, and multiplicative scale "
-                    f"{format_value(attrs.get('output_scale'))}. Sector is authored in "
-                    "`scheme_scan`; component and scale are derived from the target, polarization, "
-                    "and sector. For a non-full GPD, the signed-y transform is projected afterward "
-                    "using the polarization relation; a full GPD leaves the complex Fourier result "
-                    "unprojected."
-                ),
+                (f"The output records sector `{attrs.get('sector', 'n/a')}`, component "
+                 f"`{attrs.get('component', 'n/a')}`, and multiplicative scale "
+                 f"{format_value(attrs.get('output_scale'))}. Sector is authored in "
+                 "`scheme_scan`; component and scale are derived from the target, polarization, "
+                 "and sector. For a non-full GPD, the signed-y transform is projected afterward "
+                 "using the polarization relation; a full GPD leaves the complex Fourier result "
+                 "unprojected."),
                 "",
                 "| field | meaning |",
                 "|---|---|",
                 "| `selected_range` | Sample-average tail interval held fixed during all resample fits. |",
-                (
-                    "| `selected_models`, `model_weights` | LA/NLA/prior candidates retained by "
-                    "selection or model averaging. |"
-                ),
-                (
-                    "| `component`, `output_scale` | Fourier channel and normalization selected "
-                    "from target, polarization, and sector. |"
-                ),
-                (
-                    "| `phase_transfer_da` | Whether the midpoint DA phase/symmetry projection "
-                    "was applied before tail fitting. |"
-                ),
-                (
-                    "| `phase_transfer_gpd`, `gpd_completion_mode` | GPD endpoint convention and "
-                    "whether an exchanged-flow Hermitian partner completed signed z. |"
-                ),
-                (
-                    "| `zmax_ext_fm` | Maximum physical separation of the finite transform, "
-                    "distinct from the fitted data interval. |"
-                ),
-                (
-                    "| `Q`, `chi2/dof` | Fit p-value and normalized chi-square diagnostic; neither "
-                    "is a Fourier-distribution uncertainty. |"
-                ),
+                ("| `selected_models`, `model_weights` | LA/NLA/prior candidates retained by "
+                 "selection or model averaging. |"),
+                ("| `component`, `output_scale` | Fourier channel and normalization selected "
+                 "from target, polarization, and sector. |"),
+                ("| `phase_transfer_da` | Whether the midpoint DA phase/symmetry projection "
+                 "was applied before tail fitting. |"),
+                ("| `phase_transfer_gpd`, `gpd_completion_mode` | GPD endpoint convention and "
+                 "whether an exchanged-flow Hermitian partner completed signed z. |"),
+                ("| `zmax_ext_fm` | Maximum physical separation of the finite transform, "
+                 "distinct from the fitted data interval. |"),
+                ("| `Q`, `chi2/dof` | Fit p-value and normalized chi-square diagnostic; neither "
+                 "is a Fourier-distribution uncertainty. |"),
                 "",
                 "### Figures",
                 "",

@@ -135,7 +135,9 @@ def _tail_model_values_base(
         or psi2_flavor_class not in {"light", "heavy"}
     ):
         raise ValueError("tail observable and DA flavor classes are invalid")
-    expected = _tail_parameter_names(model_id, order, observable, psi1_flavor_class, psi2_flavor_class, hadron=hadron)
+    expected = _tail_parameter_names(
+        model_id, order, observable, psi1_flavor_class, psi2_flavor_class, hadron=hadron
+    )
     if set(parameters) != set(expected):
         raise ValueError(f"tail parameters must contain exactly {expected}")
     z = np.asarray(z_fm, dtype=float)
