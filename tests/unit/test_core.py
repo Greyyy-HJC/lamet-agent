@@ -499,6 +499,9 @@ def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: p
     assert not second.calls
     assert options[0].values["tools"] == []
     assert options[0].values["disallowed_tools"] == ["*"]
+    assert options[0].values["setting_sources"] == ["user"]
+    assert options[0].values["max_turns"] == 1
+    assert "output_format" not in options[0].values
     assert options[0].values["system_prompt"] == "system prompt"
     assert "resume" not in options[0].values
     assert options[1].values["resume"] == "claude-session"

@@ -605,7 +605,14 @@ class _ClaudeCodeBackend:
             "disallowed_tools": ["*"],
             "permission_mode": "dontAsk",
             "strict_mcp_config": True,
-            "setting_sources": [],
+            # Load user-level Claude Code settings so authentication and
+            # endpoint configuration match the `claude` CLI invocation.
+            # Project/local settings stay disabled because this backend
+            # supplies its own prompt and deliberately has no native tools or
+            # MCP servers.
+            "setting_sources": ["user"],
+            # Native tools are disabled and the response contract is carried
+            # in the prompt below, so one Claude Code turn is sufficient.
             "max_turns": 1,
         }
         if not existing_session:
@@ -613,11 +620,12 @@ class _ClaudeCodeBackend:
             options_values["system_prompt"] = system_prompt
         else:
             options_values["resume"] = session_id
-        if response_schema is not None:
-            options_values["output_format"] = {
-                "type": "json_schema",
-                "schema": response_schema["schema"],
-            }
+        # Do not pass Claude Code's --json-schema option here.  The selected
+        # model may be served through an OpenAI-compatible Azure endpoint that
+        # does not support Claude Code's structured-output protocol; Claude
+        # then retries internally until max_turns and reports a misleading
+        # "Reached maximum number of turns" error.  The prompt's explicit JSON
+        # contract is parsed and validated below instead.
         options = ClaudeAgentOptions(**options_values)
 
         async def run_query() -> Any:

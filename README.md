@@ -153,6 +153,18 @@ The `codex` provider uses the optional `openai-codex` package and the cached
 Codex login on the current machine. It does not use an API key. `--model` is
 optional and overrides the Codex SDK default.
 
+#### Claude Code CLI
+
+The `claude` provider uses the optional `claude-agent-sdk` package and the
+user-level Claude Code configuration, just like `claude -p`. This includes
+authentication and endpoint settings from `~/.claude/settings.json`. `--model`
+is optional and overrides the Claude Code default; for example:
+
+```shell
+lamet-agent run examples/pion_pdf_cg_manifest.json \
+  --provider claude --model azure/claude-sonnet-4-6
+```
+
 #### OpenAI-compatible APIs
 
 The registered API providers are `openai`, `anthropic`, `gemini`, `grok`, and
