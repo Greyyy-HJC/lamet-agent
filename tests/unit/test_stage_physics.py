@@ -1793,6 +1793,94 @@ def test_fourier_range_selection_matches_original_q_and_loggbf_rule() -> None:
     assert _select_fourier_range(fallback, q_min=0.05)["id"] == "largest_q"
 
 
+def test_fourier_model_selection_uses_only_finite_q_candidates_for_fallback() -> None:
+    from lamet_agent.stages.fourier_transform.physics import _select_fourier_model
+
+    candidates = [
+        {"id": "nonfinite_first", "Q": float("nan"), "logGBF": 30.0},
+        {"id": "failed_high_q", "Q": 0.9, "logGBF": 40.0, "error": "fit failed"},
+        {"id": "largest_finite_q", "Q": 0.04, "logGBF": 1.0},
+        {"id": "lower_finite_q", "Q": 0.03, "logGBF": 20.0},
+    ]
+
+    assert _select_fourier_model(candidates, q_min=0.05)["id"] == "largest_finite_q"
+
+
+def test_fourier_model_selection_prefers_evidence_among_candidates_passing_q_min() -> None:
+    from lamet_agent.stages.fourier_transform.physics import _select_fourier_model
+
+    candidates = [
+        {"id": "largest_q", "Q": 0.8, "logGBF": 1.0},
+        {"id": "largest_evidence", "Q": 0.2, "logGBF": 4.0},
+        {"id": "nonfinite_evidence", "Q": 0.9, "logGBF": float("nan")},
+    ]
+
+    assert _select_fourier_model(candidates, q_min=0.05)["id"] == "largest_evidence"
+
+
+def test_fourier_model_selection_rejects_an_entirely_nonfinite_scan() -> None:
+    from lamet_agent.parallel import FitNumericalError
+    from lamet_agent.stages.fourier_transform.physics import _select_fourier_model
+
+    candidates = [
+        {"id": "missing_q", "Q": None, "logGBF": 2.0},
+        {"id": "nan_q", "Q": float("nan"), "logGBF": 1.0},
+    ]
+
+    with pytest.raises(FitNumericalError, match="no Fourier model candidate has a usable center fit"):
+        _select_fourier_model(candidates, q_min=0.05)
+
+
+@pytest.mark.parametrize("quality", [None, float("nan"), float("inf")])
+def test_fourier_publish_rejects_a_nonfinite_selected_q_before_writing_artifacts(
+    tmp_path: Path, quality: float | None
+) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    from lamet_agent.stages.fourier_transform._scan import publish
+
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {"scheme_scan": {"q_min": 0.05}},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    with pytest.raises(FitNumericalError, match="selected Fourier model candidate has no usable Q"):
+        publish(context, {"selected_candidate": {"Q": quality}})
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fourier_publish_rejects_a_failed_selected_candidate_before_writing_artifacts(tmp_path: Path) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    from lamet_agent.stages.fourier_transform._scan import publish
+
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {"scheme_scan": {"q_min": 0.05}},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    selected = {"Q": 0.8, "error": "fit failed"}
+    with pytest.raises(FitNumericalError, match="selected Fourier model candidate is not numerically valid"):
+        publish(context, {"selected_candidate": selected})
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_fourier_scan_uses_original_fixed_first_pass_priors() -> None:
     from lamet_agent.stages.fourier_transform.physics import _scan_tail_priors
 

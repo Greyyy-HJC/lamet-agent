@@ -135,9 +135,7 @@ def _tail_model_values_base(
         or psi2_flavor_class not in {"light", "heavy"}
     ):
         raise ValueError("tail observable and DA flavor classes are invalid")
-    expected = _tail_parameter_names(
-        model_id, order, observable, psi1_flavor_class, psi2_flavor_class, hadron=hadron
-    )
+    expected = _tail_parameter_names(model_id, order, observable, psi1_flavor_class, psi2_flavor_class, hadron=hadron)
     if set(parameters) != set(expected):
         raise ValueError(f"tail parameters must contain exactly {expected}")
     z = np.asarray(z_fm, dtype=float)
@@ -199,11 +197,17 @@ def _tail_model_values_base(
         phase_scale = float(momentum_gev or 0.0) / HBAR_C_GEV_FM
         result = np.zeros_like(z, dtype=complex)
         for index, term in enumerate(terms):
-            phase = float(parameters[f"phi{term}"]) + (phase_scale if index == 1 else -phase_scale if index == 0 else 0.0) * absolute
+            phase = (
+                float(parameters[f"phi{term}"])
+                + (phase_scale if index == 1 else -phase_scale if index == 0 else 0.0) * absolute
+            )
             result = result + float(parameters[f"A{term}"]) * np.exp(1j * phase)
         if order == "NLA":
             for index, term in enumerate(terms):
-                phase = float(parameters[f"phi{term}p"]) + (phase_scale if index == 1 else -phase_scale if index == 0 else 0.0) * absolute
+                phase = (
+                    float(parameters[f"phi{term}p"])
+                    + (phase_scale if index == 1 else -phase_scale if index == 0 else 0.0) * absolute
+                )
                 result = result + float(parameters[f"A{term}p"]) * np.exp(1j * phase) / absolute
     else:
         result = float(parameters["A2"]) * np.exp(1j * float(parameters["phi2"]) * sign)
@@ -934,6 +938,25 @@ def _select_fourier_range(candidates: list[dict[str, Any]], *, q_min: float) -> 
     return max(successful, key=lambda candidate: float(candidate["Q"]))
 
 
+def _select_fourier_model(candidates: list[dict[str, Any]], *, q_min: float) -> dict[str, Any]:
+    """Select a usable center model, preferring evidence above the Q threshold."""
+    usable = [
+        candidate
+        for candidate in candidates
+        if candidate.get("error") is None and candidate.get("Q") is not None and math.isfinite(float(candidate["Q"]))
+    ]
+    if not usable:
+        raise FitNumericalError("no Fourier model candidate has a usable center fit")
+    passing = [
+        candidate
+        for candidate in usable
+        if float(candidate["Q"]) >= q_min and math.isfinite(float(candidate.get("logGBF", float("nan"))))
+    ]
+    if passing:
+        return max(passing, key=lambda candidate: float(candidate["logGBF"]))
+    return max(usable, key=lambda candidate: float(candidate["Q"]))
+
+
 def _sample_model_weights(
     candidates: list[dict[str, Any]],
     *,
@@ -1287,15 +1310,7 @@ def scan_fourier_transform(
                 attrs=candidate["data"].attrs,
                 name=candidate["data"].name,
             )
-    center_passing = [
-        candidate
-        for candidate in candidates
-        if float(candidate["Q"]) >= q_min and math.isfinite(float(candidate["logGBF"]))
-    ]
-    if center_passing:
-        best = max(center_passing, key=lambda candidate: float(candidate["logGBF"]))
-    else:
-        best = max(candidates, key=lambda candidate: float(candidate["Q"]))
+    best = _select_fourier_model(candidates, q_min=q_min)
     sample_weights = _sample_model_weights(
         candidates, n_sample=data.n_sample, q_min=q_min, model_average=bool(scan["model_average"])
     )
