@@ -7,6 +7,7 @@ from typing import Any
 
 from lamet_agent.agent import LlmSession, ToolContext
 from lamet_agent.parallel import FitNumericalError
+from lamet_agent.ui import warning
 from lamet_agent.stages.fourier_transform._inspection import run as inspect
 from lamet_agent.stages.fourier_transform._scan import attempt, publish
 from lamet_agent.stages.fourier_transform.ask import revise
@@ -45,11 +46,23 @@ def _accepted(result: dict[str, Any], q_min: float) -> bool:
     )
 
 
+def _best_quality(result: dict[str, Any]) -> float:
+    qualities = [
+        float(candidate["Q"])
+        for candidate in result.get("model_candidates", [])
+        if candidate.get("error") is None and candidate.get("Q") is not None and math.isfinite(float(candidate["Q"]))
+    ]
+    return max(qualities, default=-math.inf)
+
+
 def run(context: ToolContext, session: LlmSession) -> None:
     """Try authored/recommended ranges, then at most the job recommendation budget."""
     inspect(context)
     q_min = float(context.params["scheme_scan"]["q_min"])
     history = []
+    best_result: dict[str, Any] | None = None
+    best_quality = -math.inf
+    best_parameters: tuple[list[Any], list[Any]] | None = None
     while True:
         try:
             result = attempt(context)
@@ -67,13 +80,33 @@ def run(context: ToolContext, session: LlmSession) -> None:
                 }
             }
         history.append(attempts)
+        if result is not None:
+            quality = _best_quality(result)
+            if quality >= best_quality:
+                best_result = result
+                best_quality = quality
+                best_parameters = (list(context.params["zmin_fm"]), list(context.params["zmax_fm"]))
         if result is not None and _accepted(result, q_min):
             context.state["fourier_parameter_attempts"] = history
+            context.state["fallback_no_q_passing"] = False
             publish(context, result)
             return
         if session.recommendation_calls >= session.max_recommendation_calls:
             context.state["fourier_parameter_attempts"] = history
-            raise FitNumericalError("all Fourier candidates remain below q_min after the allowed attempts")
+            if best_result is None:
+                raise FitNumericalError(
+                    "no Fourier scan produced a publishable numerical result after the allowed attempts"
+                )
+            if best_parameters is None:
+                raise RuntimeError("a retained Fourier result must include its effective range parameters")
+            context.params["zmin_fm"], context.params["zmax_fm"] = best_parameters
+            context.state["fallback_no_q_passing"] = True
+            warning(
+                "all Fourier candidates remain below "
+                f"q_min={q_min} after the allowed attempts; continuing with the best available scan."
+            )
+            publish(context, best_result)
+            return
         suggestion = revise(context, session, attempts)
         context.params["zmin_fm"] = list(suggestion["zmin_fm"])
         context.params["zmax_fm"] = list(suggestion["zmax_fm"])

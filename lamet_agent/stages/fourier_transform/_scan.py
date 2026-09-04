@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import numpy as np
 
@@ -103,12 +104,15 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
     selected_range = result["selected_range"]
     selected_range_label = f"zmin_{selected_range['z_min_fm']:g}_zmax_{selected_range['z_max_fm']:g}".replace(".", "p")
     model_labels = [candidate["label"] for candidate in result["model_candidates"]]
+    selected_q = float(result["selected_candidate"]["Q"])
+    fallback_no_q_passing = not math.isfinite(selected_q) or selected_q < float(context.params["scheme_scan"]["q_min"])
+    context.state["fallback_no_q_passing"] = fallback_no_q_passing
     diagnostics = {
         "selected_range_label": selected_range_label,
         "fit_model_labels": model_labels,
         "fit_model_weights": result["weights"],
         "selected_fit_model_labels": result["selected_labels"],
-        "selected_Q": result["selected_candidate"]["Q"],
+        "selected_Q": selected_q,
         "selected_chi2": result["selected_candidate"]["chi2"],
         "selected_dof": result["selected_candidate"]["dof"],
         "selected_chi2_dof": result["selected_candidate"]["chi2_dof"],
@@ -118,6 +122,7 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         "sample_count": output.n_sample,
         "x_count": len(output.coords["x"]),
         "workers": result["workers"],
+        "fallback_no_q_passing": fallback_no_q_passing,
     }
     model_weights = dict(zip(model_labels, result["weights"]))
     selected_labels = set(result["selected_labels"])
@@ -264,7 +269,11 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         "stage_id": context.stage_id,
         "job_id": context.job_id,
         "result": "quasi_distribution",
-        "decisions": {"selected_range_label": selected_range_label, "fit_model_labels": result["selected_labels"]},
+        "decisions": {
+            "selected_range_label": selected_range_label,
+            "fit_model_labels": result["selected_labels"],
+            "fallback_no_q_passing": fallback_no_q_passing,
+        },
         "diagnostics": diagnostics,
         "artifacts": artifacts,
     }

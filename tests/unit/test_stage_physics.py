@@ -1656,7 +1656,7 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
             "max_schemes": 1,
             "component": "both",
             "output_scale": 1.0,
-            "q_min": 0.0,
+            "q_min": 0.9,
         },
     }
     context = ToolContext(
@@ -1685,6 +1685,10 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
     )
 
     tool.run(context)
+
+    assert context.summary is not None
+    assert context.summary["decisions"]["fallback_no_q_passing"] is True
+    assert context.summary["diagnostics"]["fallback_no_q_passing"] is True
 
     scale = 2.0 / HBAR_C_GEV_FM
     input_curves = [x for label, x in plotted if label == "input"]

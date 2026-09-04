@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import math
 from typing import Any
 
 from lamet_agent.agent import LlmSession, ToolContext
@@ -77,6 +79,10 @@ def _spectrum_parameters(suggestion: dict[str, Any]) -> dict[str, Any]:
     return {name: suggestion[name] for name in ("tmin", "tmax", "n_states", "prior_means", "prior_widths")}
 
 
+def _apply_spectrum_suggestion(context: ToolContext, suggestion: dict[str, Any]) -> None:
+    context.params["pt2_windows"] = [{"tmin": int(suggestion["tmin"]), "tmax": int(suggestion["tmax"])}]
+
+
 def _qda_quality_is_low(context: ToolContext) -> bool:
     candidates = context.state.get("matrix_element_candidates", [])
     if not candidates:
@@ -95,8 +101,28 @@ def _can_revise(session: LlmSession) -> bool:
     return session.recommendation_calls < session.max_recommendation_calls
 
 
+def _finite_quality(value: Any) -> float:
+    try:
+        quality = float(value)
+    except (TypeError, ValueError):
+        return -math.inf
+    return quality if math.isfinite(quality) else -math.inf
+
+
+def _inverse_finite_quality(value: Any) -> float:
+    quality = _finite_quality(value)
+    return -quality if quality != -math.inf else -math.inf
+
+
+def _apply_matrix_suggestion(context: ToolContext, scopes: set[str], suggestion: dict[str, Any]) -> list[Any]:
+    context.params["pt2_windows"] = list(suggestion["pt2_windows"])
+    if scopes != {"qda_ratio"}:
+        context.params["pt3_windows"] = list(suggestion["pt3_windows"])
+    return list(suggestion["tune_z_values"])
+
+
 def run(context: ToolContext, session: LlmSession) -> None:
-    """Run deterministic analysis around one optional typed fit suggestion."""
+    """Scan authored candidates, then revise until quality passes or the job budget is spent."""
     if context.params["analysis_method"] == "lanczos":
         inspect_lanczos(context)
         run_lanczos(context)
@@ -106,73 +132,117 @@ def run(context: ToolContext, session: LlmSession) -> None:
     scopes = set(context.params["fit_scope"])
     suggestion = initial(context, session)
     if scopes == {"spectrum"}:
-        retried = False
-        try:
-            observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
-        except FitNumericalError as exc:
-            if not _can_revise(session):
-                raise
-            retried = True
-            suggestion = revise(
-                context,
-                session,
-                _spectrum_attempt(suggestion, error=str(exc)),
-            )
-            observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
-        if not retried and float(observation["metrics"].get("Q", 1.0)) < float(context.params["q_min"]):
-            if _can_revise(session):
+        q_min = float(context.params["q_min"])
+        observation: dict[str, Any] | None = None
+        best: tuple[float, dict[str, Any], dict[str, Any]] | None = None
+        while True:
+            try:
+                observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
+            except FitNumericalError as exc:
+                if not _can_revise(session):
+                    if best is None:
+                        raise
+                    _quality, observation, suggestion = best
+                    _apply_spectrum_suggestion(context, suggestion)
+                    break
                 suggestion = revise(
                     context,
                     session,
-                    _spectrum_attempt(suggestion, metrics=dict(observation["metrics"])),
+                    _spectrum_attempt(suggestion, error=str(exc)),
                 )
-                observation = fit_spectrum(context, **_spectrum_parameters(suggestion))
-                retried = True
-        if float(observation["metrics"].get("Q", 0.0)) < float(context.params["q_min"]):
-            raise FitNumericalError("spectrum fit remains below q_min after the allowed recommendation attempts")
-        candidate_id = observation["metrics"]["candidate_id"]
+                _apply_spectrum_suggestion(context, suggestion)
+                continue
+            quality = _finite_quality(observation["metrics"].get("Q"))
+            if best is None or quality >= best[0]:
+                best = (quality, observation, copy.deepcopy(suggestion))
+            if quality >= q_min:
+                break
+            if not _can_revise(session):
+                _quality, observation, suggestion = best
+                _apply_spectrum_suggestion(context, suggestion)
+                break
+            suggestion = revise(
+                context,
+                session,
+                _spectrum_attempt(suggestion, metrics=dict(observation["metrics"])),
+            )
+            _apply_spectrum_suggestion(context, suggestion)
+        candidate_id = str(observation["metrics"]["candidate_id"])
+        final_low_quality = _finite_quality(observation["metrics"].get("Q")) < q_min
     else:
         fit = fit_qda if scopes == {"qda_ratio"} else fit_matrix
         tune_z_values = list(suggestion["tune_z_values"])
-        retried = False
-        try:
-            observation = fit(context, tune_z_values=tune_z_values)
-        except FitNumericalError:
+        observation = None
+        best: (
+            tuple[
+                tuple[float, float],
+                dict[str, Any],
+                list[dict[str, Any]],
+                dict[str, Any],
+            ]
+            | None
+        ) = None
+        while True:
+            try:
+                observation = fit(context, tune_z_values=tune_z_values)
+            except FitNumericalError:
+                if not _can_revise(session):
+                    if best is None:
+                        raise
+                    _score, observation, candidates, parameters = best
+                    context.state["matrix_element_candidates"] = candidates
+                    context.params.update(parameters)
+                    break
+                suggestion = revise(context, session, _candidate_attempts(context))
+                tune_z_values = _apply_matrix_suggestion(context, scopes, suggestion)
+                continue
+            candidate_id = str(observation["metrics"]["recommended_candidate_id"])
+            candidates = list(context.state.get("matrix_element_candidates", []))
+            selected = next(
+                (candidate for candidate in candidates if str(candidate.get("id")) == candidate_id),
+                observation["metrics"],
+            )
+            score = (
+                _finite_quality(selected.get("min_Q" if scopes == {"qda_ratio"} else "Q")),
+                _inverse_finite_quality(selected.get("worst_chi2_dof" if scopes == {"qda_ratio"} else "chi2_dof")),
+            )
+            if best is None or score >= best[0]:
+                parameter_snapshot = {"pt2_windows": copy.deepcopy(context.params["pt2_windows"])}
+                if scopes != {"qda_ratio"}:
+                    parameter_snapshot["pt3_windows"] = copy.deepcopy(context.params["pt3_windows"])
+                best = (
+                    score,
+                    observation,
+                    copy.deepcopy(candidates),
+                    parameter_snapshot,
+                )
+            low_quality = (
+                _qda_quality_is_low(context)
+                if scopes == {"qda_ratio"}
+                else bool(observation["metrics"].get("fallback_no_q_passing", False))
+            )
+            if not low_quality:
+                break
             if not _can_revise(session):
-                raise
-            retried = True
+                _score, observation, candidates, parameters = best
+                context.state["matrix_element_candidates"] = candidates
+                context.params.update(parameters)
+                break
             suggestion = revise(context, session, _candidate_attempts(context))
-            context.params["pt2_windows"] = list(suggestion["pt2_windows"])
-            if scopes != {"qda_ratio"}:
-                context.params["pt3_windows"] = list(suggestion["pt3_windows"])
-            tune_z_values = list(suggestion["tune_z_values"])
-            observation = fit(context, tune_z_values=tune_z_values)
-        low_quality = (
-            _qda_quality_is_low(context)
-            if scopes == {"qda_ratio"}
-            else bool(observation["metrics"].get("fallback_no_q_passing", False))
-        )
-        if low_quality and not retried and _can_revise(session):
-            suggestion = revise(context, session, _candidate_attempts(context))
-            context.params["pt2_windows"] = list(suggestion["pt2_windows"])
-            if scopes != {"qda_ratio"}:
-                context.params["pt3_windows"] = list(suggestion["pt3_windows"])
-            tune_z_values = list(suggestion["tune_z_values"])
-            observation = fit(context, tune_z_values=tune_z_values)
-            retried = True
+            tune_z_values = _apply_matrix_suggestion(context, scopes, suggestion)
+        candidate_id = str(observation["metrics"]["recommended_candidate_id"])
         final_low_quality = (
             _qda_quality_is_low(context)
             if scopes == {"qda_ratio"}
             else bool(observation["metrics"].get("fallback_no_q_passing", False))
         )
-        context.state["fallback_no_q_passing"] = final_low_quality
-        candidate_id = observation["metrics"]["recommended_candidate_id"]
-        if final_low_quality:
-            warning(
-                "all correlator fit candidates remain below "
-                f"q_min={context.params['q_min']} after the allowed attempts; continuing with {candidate_id}."
-            )
-    publish(context, candidate_id=str(candidate_id))
+    context.state["fallback_no_q_passing"] = final_low_quality
+    if final_low_quality:
+        warning(
+            "all correlator fit candidates remain below "
+            f"q_min={context.params['q_min']} after the allowed attempts; continuing with {candidate_id}."
+        )
+    publish(context, candidate_id=candidate_id)
 
 
 __all__ = ["run"]

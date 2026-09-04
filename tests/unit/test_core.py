@@ -134,10 +134,7 @@ def test_token_usage_uses_weighted_k_estimate() -> None:
             "output_tokens": 1_000,
             "reasoning_output_tokens": 600,
         }
-    ) == (
-        "LLM usage: 11.40K "
-        "(input: 10000, cached input: 4000, output: 1000, reasoning: 600)"
-    )
+    ) == ("LLM usage: 11.40K (input: 10000, cached input: 4000, output: 1000, reasoning: 600)")
 
 
 def test_llm_session_appends_structured_recommendations_to_job_history(tmp_path: Path) -> None:
@@ -266,7 +263,9 @@ def test_plotting_owns_the_figure_and_clears_it_after_saving(tmp_path: Path) -> 
     assert vband(0.2, 0.4, color="0.7", label="vband") is None
     assert hband(0.9, 1.1, color="0.6", label="hband") is None
     assert bar([0.25, 0.75], [0.2, 0.3], width=0.1, color="0.5", label="bar") is None
-    assert histogram([0.1, 0.2, 0.2, 0.4], [0.0, 0.2, 0.4, 0.6], histtype="stepfilled", alpha=0.45, label="filled") is None
+    assert (
+        histogram([0.1, 0.2, 0.2, 0.4], [0.0, 0.2, 0.4, 0.6], histtype="stepfilled", alpha=0.45, label="filled") is None
+    )
     with pytest.raises(ValueError, match="unsupported histogram type"):
         histogram([0.1], [0.0, 1.0], histtype="violin")
     with pytest.raises(ValueError, match="unsupported marker"):
@@ -2437,10 +2436,14 @@ def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(t
     assert first_payload["request"]["task"] == second_payload["task"] == "fourier_tail_range_tuning"
     assert first_payload["request"]["phase"] == "initial"
     assert second_payload["phase"] == "retry"
-    assert first_payload["request"]["requested_fields"] == second_payload["requested_fields"] == [
-        "zmax_fm",
-        "zmin_fm",
-    ]
+    assert (
+        first_payload["request"]["requested_fields"]
+        == second_payload["requested_fields"]
+        == [
+            "zmax_fm",
+            "zmin_fm",
+        ]
+    )
     assert first_payload["context"][0]["key"] == "fourier_tail_fit_data"
     assert isinstance(first_payload["context"][0]["content"]["components"]["real"], str)
     assert "context" not in second_payload
@@ -2580,11 +2583,12 @@ def test_correlator_workflow_publishes_best_candidate_when_q_min_is_never_met(
 
     monkeypatch.setattr(workflow, "inspect", lambda _context: None)
     monkeypatch.setattr(workflow, "initial", lambda _context, _session: {"tune_z_values": [1.0]})
-    monkeypatch.setattr(
-        workflow,
-        "revise",
-        lambda _context, _session, _attempts: {"pt2_windows": [{"tmin": 2, "tmax": 8}], "tune_z_values": [2.0]},
-    )
+
+    def revise(_context, session, _attempts):
+        session.recommendation_calls += 1
+        return {"pt2_windows": [{"tmin": 2, "tmax": 8}], "tune_z_values": [2.0]}
+
+    monkeypatch.setattr(workflow, "revise", revise)
 
     def fit(context, *, tune_z_values):
         context.state["matrix_element_candidates"] = [
@@ -2693,6 +2697,390 @@ def test_correlator_workflow_skips_revise_when_recommendation_budget_is_spent(
     assert context.params["pt2_windows"] == [{"tmin": 2, "tmax": 8}]
     assert context.state["fallback_no_q_passing"] is True
     assert "ATTENTION: all correlator fit candidates remain below q_min=0.05" in capsys.readouterr().out
+
+
+def test_correlator_workflow_revises_until_recommendation_budget_is_spent(tmp_path: Path, monkeypatch, capsys) -> None:
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    qualities = [0.01, 0.02, 0.03]
+    revisions = []
+
+    def initial(_context, session):
+        session.recommendation_calls += 1
+        return {"tune_z_values": [1.0]}
+
+    def revise(_context, session, _attempts):
+        session.recommendation_calls += 1
+        tune_z = float(len(revisions) + 2)
+        revisions.append(tune_z)
+        return {"pt2_windows": [{"tmin": 2, "tmax": 8}], "tune_z_values": [tune_z]}
+
+    def fit(context, *, tune_z_values):
+        quality = qualities[min(len(revisions), len(qualities) - 1)]
+        context.state["matrix_element_candidates"] = [
+            {
+                "id": f"matrix_{len(revisions) + 1:03d}",
+                "fit_strategy": "independent",
+                "fit_scope": "qda_ratio",
+                "window": {"tmin": 2, "tmax": 8, "tau_min": None},
+                "nstate": 1,
+                "prior_width": 1.0,
+                "min_Q": quality,
+                "worst_chi2_dof": 1.0,
+                "feasible_at_all_tune_z": True,
+                "numerical_failure": False,
+                "tune_z_values": tune_z_values,
+            }
+        ]
+        return {"metrics": {"recommended_candidate_id": f"matrix_{len(revisions) + 1:03d}"}}
+
+    published = []
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "fit_qda", fit)
+    monkeypatch.setattr(workflow, "publish", lambda _context, *, candidate_id: published.append(candidate_id))
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "correlator",
+        {
+            "analysis_method": "lsqfit",
+            "fit_scope": ["qda_ratio"],
+            "q_min": 0.05,
+            "pt2_windows": [{"tmin": 2, "tmax": 8}],
+        },
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=3))
+
+    assert revisions == [2.0, 3.0]
+    assert published == ["matrix_003"]
+    assert context.state["fallback_no_q_passing"] is True
+    assert "ATTENTION: all correlator fit candidates remain below q_min=0.05" in capsys.readouterr().out
+
+
+def test_spectrum_workflow_publishes_when_recommendation_budget_is_spent(tmp_path: Path, monkeypatch, capsys) -> None:
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    revisions = []
+
+    def initial(_context, session):
+        session.recommendation_calls += 1
+        return {"tmin": 2, "tmax": 8, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    def revise(_context, session, _attempts):
+        session.recommendation_calls += 1
+        revisions.append(session.recommendation_calls)
+        return {"tmin": 3, "tmax": 9, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    def fit(_context, **_parameters):
+        return {"metrics": {"candidate_id": f"spectrum_{len(revisions) + 1:03d}", "Q": 0.01}}
+
+    published = []
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "fit_spectrum", fit)
+    monkeypatch.setattr(workflow, "publish", lambda _context, *, candidate_id: published.append(candidate_id))
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "spectrum",
+        {
+            "analysis_method": "lsqfit",
+            "fit_scope": ["spectrum"],
+            "q_min": 0.05,
+        },
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=2))
+
+    assert revisions == [2]
+    assert published == ["spectrum_002"]
+    assert context.params["pt2_windows"] == [{"tmin": 3, "tmax": 9}]
+    assert context.state["fallback_no_q_passing"] is True
+    assert "ATTENTION: all correlator fit candidates remain below q_min=0.05" in capsys.readouterr().out
+
+
+def test_spectrum_workflow_raises_when_budget_is_spent_without_a_numerical_result(tmp_path: Path, monkeypatch) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+
+    def initial(_context, session):
+        session.recommendation_calls += 1
+        return {"tmin": 2, "tmax": 8, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    def fail_fit(*_args, **_kwargs):
+        raise FitNumericalError("failed")
+
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", lambda *_args: pytest.fail("revise must not exceed the job budget"))
+    monkeypatch.setattr(workflow, "fit_spectrum", fail_fit)
+    monkeypatch.setattr(workflow, "publish", lambda *_args, **_kwargs: pytest.fail("no result must be published"))
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "spectrum",
+        {
+            "analysis_method": "lsqfit",
+            "fit_scope": ["spectrum"],
+            "q_min": 0.05,
+        },
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    with pytest.raises(FitNumericalError, match="failed"):
+        workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=1))
+
+
+def test_spectrum_workflow_falls_back_to_an_earlier_success_after_a_failed_retry(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    attempts = []
+
+    def initial(_context, session):
+        session.recommendation_calls += 1
+        return {"tmin": 2, "tmax": 8, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    def revise(_context, session, _attempts):
+        session.recommendation_calls += 1
+        return {"tmin": 3, "tmax": 9, "n_states": 1, "prior_means": [0.3], "prior_widths": [0.2]}
+
+    def fit(_context, **parameters):
+        attempts.append(parameters)
+        if len(attempts) == 2:
+            raise FitNumericalError("failed retry")
+        return {"metrics": {"candidate_id": "spectrum_001", "Q": 0.01}}
+
+    published = []
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "fit_spectrum", fit)
+    monkeypatch.setattr(workflow, "publish", lambda _context, *, candidate_id: published.append(candidate_id))
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "spectrum",
+        {"analysis_method": "lsqfit", "fit_scope": ["spectrum"], "q_min": 0.05},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=2))
+
+    assert published == ["spectrum_001"]
+    assert context.params["pt2_windows"] == [{"tmin": 2, "tmax": 8}]
+    assert context.state["fallback_no_q_passing"] is True
+    assert "ATTENTION: all correlator fit candidates remain below q_min=0.05" in capsys.readouterr().out
+
+
+def test_qda_workflow_falls_back_to_an_earlier_success_after_a_failed_retry(tmp_path: Path, monkeypatch) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    import lamet_agent.stages.correlator_analysis.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    attempts = []
+
+    def initial(_context, session):
+        session.recommendation_calls += 1
+        return {"tune_z_values": [1.0]}
+
+    def revise(_context, session, _attempts):
+        session.recommendation_calls += 1
+        return {"pt2_windows": [{"tmin": 3, "tmax": 9}], "tune_z_values": [2.0]}
+
+    def fit(context, *, tune_z_values):
+        attempts.append(tune_z_values)
+        if len(attempts) == 2:
+            raise FitNumericalError("failed retry")
+        context.state["matrix_element_candidates"] = [
+            {
+                "id": "matrix_001",
+                "min_Q": 0.01,
+                "worst_chi2_dof": 1.0,
+                "feasible_at_all_tune_z": True,
+                "numerical_failure": False,
+            }
+        ]
+        return {"metrics": {"recommended_candidate_id": "matrix_001"}}
+
+    published = []
+    monkeypatch.setattr(workflow, "initial", initial)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "fit_qda", fit)
+    monkeypatch.setattr(workflow, "publish", lambda _context, *, candidate_id: published.append(candidate_id))
+    context = ToolContext(
+        {"metadata": {"sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "correlator",
+        {
+            "analysis_method": "lsqfit",
+            "fit_scope": ["qda_ratio"],
+            "q_min": 0.05,
+            "pt2_windows": [{"tmin": 2, "tmax": 8}],
+        },
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=2))
+
+    assert published == ["matrix_001"]
+    assert context.params["pt2_windows"] == [{"tmin": 2, "tmax": 8}]
+    assert context.state["fallback_no_q_passing"] is True
+
+
+def test_fourier_workflow_publishes_when_q_min_is_never_met(tmp_path: Path, monkeypatch, capsys) -> None:
+    import lamet_agent.stages.fourier_transform.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    attempted = []
+
+    def attempt(context):
+        attempted.append((list(context.params["zmin_fm"]), list(context.params["zmax_fm"])))
+        return {
+            "range_candidates": [],
+            "model_candidates": [{"label": f"candidate_{len(attempted)}", "Q": 0.01}],
+        }
+
+    def revise(_context, session, _previous_attempts):
+        session.recommendation_calls += 1
+        return {"zmin_fm": [0.2 + 0.1 * session.recommendation_calls], "zmax_fm": [0.8]}
+
+    published = []
+    monkeypatch.setattr(workflow, "attempt", attempt)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "publish", lambda _context, result: published.append(result))
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {"zmin_fm": [0.2], "zmax_fm": [0.8], "scheme_scan": {"q_min": 0.05}},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "fourier.md", max_recommendation_calls=2))
+
+    assert len(attempted) == 3
+    assert published[0]["model_candidates"][0]["Q"] == 0.01
+    assert context.state["fallback_no_q_passing"] is True
+    assert "ATTENTION: all Fourier candidates remain below q_min=0.05" in capsys.readouterr().out
+
+
+def test_fourier_workflow_falls_back_to_an_earlier_success_after_a_failed_retry(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    import lamet_agent.stages.fourier_transform.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+    attempts = []
+
+    def attempt(context):
+        attempts.append(list(context.params["zmin_fm"]))
+        if len(attempts) == 2:
+            raise FitNumericalError("failed retry")
+        return {"range_candidates": [], "model_candidates": [{"label": "candidate_1", "Q": 0.01}]}
+
+    def revise(_context, session, _previous_attempts):
+        session.recommendation_calls += 1
+        return {"zmin_fm": [0.3], "zmax_fm": [0.8]}
+
+    published = []
+    monkeypatch.setattr(workflow, "attempt", attempt)
+    monkeypatch.setattr(workflow, "revise", revise)
+    monkeypatch.setattr(workflow, "publish", lambda _context, result: published.append(result))
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {"zmin_fm": [0.2], "zmax_fm": [0.8], "scheme_scan": {"q_min": 0.05}},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "fourier.md", max_recommendation_calls=1))
+
+    assert published[0]["model_candidates"][0]["label"] == "candidate_1"
+    assert context.params["zmin_fm"] == [0.2]
+    assert context.state["fallback_no_q_passing"] is True
+    assert "continuing with the best available scan" in capsys.readouterr().out
+
+
+def test_fourier_workflow_raises_when_budget_is_spent_without_a_numerical_result(tmp_path: Path, monkeypatch) -> None:
+    from lamet_agent.parallel import FitNumericalError
+    import lamet_agent.stages.fourier_transform.workflow as workflow
+
+    monkeypatch.setattr(workflow, "inspect", lambda _context: None)
+
+    def fail_attempt(_context):
+        raise FitNumericalError("failed")
+
+    monkeypatch.setattr(workflow, "attempt", fail_attempt)
+    monkeypatch.setattr(workflow, "revise", lambda *_args: pytest.fail("revise must not exceed the job budget"))
+    monkeypatch.setattr(workflow, "publish", lambda *_args, **_kwargs: pytest.fail("no result must be published"))
+    context = ToolContext(
+        {"metadata": {}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "fourier",
+        {"zmin_fm": [0.2], "zmax_fm": [0.8], "scheme_scan": {"q_min": 0.05}},
+        {},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+    session = LlmSession(
+        _ScriptedBackend([]),
+        tmp_path / "fourier.md",
+        max_recommendation_calls=1,
+        recommendation_calls=1,
+    )
+
+    with pytest.raises(FitNumericalError, match="no Fourier scan produced a publishable numerical result"):
+        workflow.run(context, session)
 
 
 def test_renormalization_workflow_routes_virtual_provider_type(tmp_path: Path, monkeypatch) -> None:
