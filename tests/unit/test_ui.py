@@ -23,7 +23,17 @@ from lamet_agent.ui import (
     ProgressTask,
     TerminalUi,
     UiCancelled,
+    _LIGHT_CONE_COLOR,
+    _LIGHT_CONE_BLOCKS,
+    _MINECRAFT_DIAMOND,
+    _MINECRAFT_DIRT,
+    _MINECRAFT_GOLD,
+    _MINECRAFT_GRASS,
+    _LIGHT_CONE_QUARKS_COLOR,
+    _MINECRAFT_FIRE,
+    _MINECRAFT_STONE,
     _PROGRESS_STYLE,
+    _render_minecraft_banner,
     _progress_formatters,
     current_ui,
     track,
@@ -142,10 +152,19 @@ def test_conversation_enter_submits_and_shift_enter_inserts_newline() -> None:
     assert answer == "first line\nsecond line"
 
 
-def test_progress_color_uses_terminal_yellow() -> None:
-    assert str(_PROGRESS_STYLE.get_attrs_for_style_str("class:percentage").color) == "ansiyellow"
-    assert str(_PROGRESS_STYLE.get_attrs_for_style_str("class:bottom-toolbar").color) == "ansibrightblack"
+def test_progress_colors_use_minecraft_gold_and_stone() -> None:
+    assert str(_PROGRESS_STYLE.get_attrs_for_style_str("class:percentage").color) == "ffff5f"
+    assert str(_PROGRESS_STYLE.get_attrs_for_style_str("class:bottom-toolbar").color) == "6c6c6c"
+    assert _MINECRAFT_GOLD == 227
     assert ColorDepth.DEPTH_8_BIT.value == "DEPTH_8_BIT"
+
+
+def test_minecraft_materials_use_current_theme_colors() -> None:
+    assert _MINECRAFT_GRASS == 70
+    assert _MINECRAFT_DIRT == 137
+    assert _MINECRAFT_STONE == _MINECRAFT_STONE == 242
+    assert _MINECRAFT_DIAMOND == 80
+    assert _MINECRAFT_FIRE == 196
 
 
 def test_terminal_status_toolbar_tracks_running_job() -> None:
@@ -190,16 +209,16 @@ def test_terminal_ui_applies_semantic_colors_without_changing_plain_output(capsy
     ui.log("Executing: read data", style="running")
 
     output = capsys.readouterr().out
-    assert "\033[91mATTENTION\033[0m: low fit quality" in output
-    assert "\033[94mReasoning\033[0m: recommendation" in output
-    assert "\033[94mLLM usage\033[0m: 1.00K" in output
-    assert "\033[32mExecuting\033[0m: read data" in output
+    assert "\033[38;5;196mATTENTION\033[0m: low fit quality" in output
+    assert "\033[38;5;80mReasoning\033[0m: recommendation" in output
+    assert "\033[38;5;80mLLM usage\033[0m: 1.00K" in output
+    assert "\033[38;5;70mExecuting\033[0m: read data" in output
     assert "low fit quality\033[0m" not in output
     assert "recommendation\033[0m" not in output
     assert "read data\033[0m" not in output
 
 
-def test_terminal_ui_renders_banner_with_left_to_right_rainbow(capsys) -> None:
+def test_terminal_ui_renders_banner_with_minecraft_palette(capsys) -> None:
     ui = TerminalUi.__new__(TerminalUi)
 
     ui.log(BANNER, style="banner")
@@ -208,8 +227,100 @@ def test_terminal_ui_renders_banner_with_left_to_right_rainbow(capsys) -> None:
     assert "\033[38;2;" not in output
     assert output.count("\033[38;5;") > 20
     colors = set(re.findall(r"\x1b\[38;5;(\d+)m", output))
-    assert len(colors) >= 20
+    assert colors <= {
+        str(color)
+        for color in (
+            _MINECRAFT_GRASS,
+            _MINECRAFT_DIRT,
+            _MINECRAFT_STONE,
+            _MINECRAFT_STONE,
+            _MINECRAFT_DIAMOND,
+            _MINECRAFT_FIRE,
+            _LIGHT_CONE_COLOR,
+            _LIGHT_CONE_QUARKS_COLOR,
+        )
+    }
+    assert len(colors) > 1
     assert BANNER in re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+
+def test_banner_has_no_outer_frame() -> None:
+    lines = BANNER.splitlines()
+
+    assert len(lines) == 19
+    assert not lines[0].startswith("|--")
+    assert not lines[-1].startswith("|--")
+    assert not lines[0].endswith("|")
+    assert not lines[-1].endswith("|")
+
+
+def test_banner_uses_terminal_foreground_for_unclassified_characters() -> None:
+    rows = _render_minecraft_banner("AB\nAB").splitlines()
+
+    assert rows == ["\033[39mA\033[39mB\033[0m", "\033[39mA\033[39mB\033[0m"]
+
+
+def test_banner_uses_separate_light_cone_layers() -> None:
+    rendered = _render_minecraft_banner(BANNER)
+    banner_lines = BANNER.splitlines()
+    rendered_lines = rendered.splitlines()
+    ansi_color = re.compile(r"\x1b\[(?:38;5;(\d+)|39)m")
+
+    assert _LIGHT_CONE_COLOR == _MINECRAFT_STONE
+    assert _LIGHT_CONE_QUARKS_COLOR == _MINECRAFT_FIRE
+
+    def color_at(row: int, column: int) -> str:
+        line = rendered_lines[row]
+        for match in ansi_color.finditer(line):
+            plain_column = len(re.sub(r"\x1b\[[0-9;]*m", "", line[: match.start()]))
+            if plain_column == column:
+                return match.group(1) or "foreground"
+        raise AssertionError(f"no color at ({row}, {column})")
+
+    base_block_position = next(
+        position
+        for position in BANNER.base_positions - BANNER.overlay_positions
+        if banner_lines[position[0]][position[1]] in _LIGHT_CONE_BLOCKS
+    )
+    coordinate_position = next(
+        position
+        for position in BANNER.base_positions - BANNER.overlay_positions
+        if banner_lines[position[0]][position[1]] not in _LIGHT_CONE_BLOCKS
+    )
+    overlay_rows = sorted({row for row, _ in BANNER.overlay_positions})
+    endpoint_positions = {
+        max(
+            (position for position in BANNER.overlay_positions if position[0] == overlay_rows[0]),
+            key=lambda position: position[1],
+        ),
+        min(
+            (position for position in BANNER.overlay_positions if position[0] == overlay_rows[-1]),
+            key=lambda position: position[1],
+        ),
+    }
+    overlay_position = next(
+        position for position in BANNER.overlay_positions if position not in endpoint_positions
+    )
+    assert color_at(*base_block_position) == str(_LIGHT_CONE_COLOR)
+    assert color_at(*coordinate_position) == "foreground"
+    assert color_at(*overlay_position) == str(_LIGHT_CONE_QUARKS_COLOR)
+    diamond_positions = {
+        position
+        for position in BANNER.overlay_positions
+        if color_at(*position) == str(_MINECRAFT_DIAMOND)
+    }
+    assert diamond_positions == endpoint_positions
+
+
+def test_banner_uses_distinct_letter_and_shadow_colors() -> None:
+    rows = _render_minecraft_banner("█▒\n█▒\n█▒\n█▒\n█▒\n█▒\n█▒\n▒▒").splitlines()
+    upper_colors = re.findall(r"\x1b\[38;5;(\d+)m", rows[0])
+    lower_colors = re.findall(r"\x1b\[38;5;(\d+)m", rows[2])
+    shadow_colors = re.findall(r"\x1b\[38;5;(\d+)m", rows[7])
+
+    assert upper_colors == [str(_MINECRAFT_GRASS), str(_MINECRAFT_STONE)]
+    assert lower_colors == [str(_MINECRAFT_DIRT), str(_MINECRAFT_STONE)]
+    assert shadow_colors == [str(_MINECRAFT_STONE), str(_MINECRAFT_STONE)]
 
 
 def test_plain_ui_ctrl_c_cancels_interaction(monkeypatch) -> None:

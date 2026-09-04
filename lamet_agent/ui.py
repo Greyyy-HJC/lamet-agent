@@ -9,7 +9,6 @@ Example: ``session = create_session(backend, ui=TerminalUi())``.
 
 from __future__ import annotations
 
-import colorsys
 import json
 import os
 import shlex
@@ -40,11 +39,6 @@ from prompt_toolkit.shortcuts.progress_bar.formatters import (
 from prompt_toolkit.styles import Style
 
 _COMMANDS = ("/show", "/issues", "/undo", "/edit", "/save", "/help", "/quit")
-_ANSI_STYLES = {
-    "attention": "\033[91m",
-    "llm": "\033[94m",
-    "running": "\033[32m",
-}
 _ANSI_RESET = "\033[0m"
 _STATUS_PREFIXES = {
     "attention": ("ATTENTION", "Execution failed"),
@@ -54,6 +48,21 @@ _STATUS_PREFIXES = {
 _SHIFT_ENTER_SEQUENCES = {
     "\x1b[27;2;13~",  # xterm modifyOtherKeys
     "\x1b[13;2u",  # CSI u / extended keyboard protocol
+}
+_MINECRAFT_GRASS = 70
+_MINECRAFT_DIRT = 137
+_MINECRAFT_STONE = 242
+_MINECRAFT_FIRE = 196
+_MINECRAFT_DIAMOND = 80
+_MINECRAFT_GOLD = 227
+_LIGHT_CONE_COLOR = _MINECRAFT_STONE
+_LIGHT_CONE_QUARKS_COLOR = _MINECRAFT_FIRE
+_LIGHT_CONE_BLOCKS = frozenset(("▀", "▄", "█"))
+_LETTER_PIXELS = frozenset(("█", "▒"))
+_ANSI_STYLES = {
+    "attention": f"\033[38;5;{_MINECRAFT_FIRE}m",
+    "llm": f"\033[38;5;{_MINECRAFT_DIAMOND}m",
+    "running": f"\033[38;5;{_MINECRAFT_GRASS}m",
 }
 
 _CONVERSATION_KEY_BINDINGS = KeyBindings()
@@ -71,8 +80,8 @@ def _submit_or_insert_newline(event) -> None:
 
 _PROGRESS_STYLE = Style.from_dict(
     {
-        "": "ansiyellow",
-        "bottom-toolbar": "ansibrightblack",
+        "": "#ffff5f",
+        "bottom-toolbar": "#6c6c6c",
     }
 )
 
@@ -90,25 +99,65 @@ def _progress_formatters():
     ]
 
 
-def _render_rainbow_banner(message: str) -> str:
-    """Render a smooth cyclic hue gradient with the xterm ANSI-256 cube."""
+def _render_minecraft_banner(message: str) -> str:
+    """Render Minecraft-inspired banner layers and color bands with ANSI-256 colors."""
     lines = message.splitlines()
-    width = max((len(line) for line in lines), default=0)
-    if width == 0:
+    height = len(lines)
+    if height == 0:
         return message
     rendered = []
-    for line in lines:
+    base_positions = getattr(message, "base_positions", frozenset())
+    overlay_positions = getattr(message, "overlay_positions", frozenset())
+    endpoint_positions = set()
+    if overlay_positions:
+        first_row = min(row for row, _ in overlay_positions)
+        last_row = max(row for row, _ in overlay_positions)
+        endpoint_positions.add(
+            max(
+                (position for position in overlay_positions if position[0] == first_row),
+                key=lambda position: position[1],
+            )
+        )
+        endpoint_positions.add(
+            min(
+                (position for position in overlay_positions if position[0] == last_row),
+                key=lambda position: position[1],
+            )
+        )
+    glyph_row = None
+    previous_glyph_line = False
+    for row, line in enumerate(lines):
+        has_glyph_line = any(character in _LETTER_PIXELS for character in line)
+        if has_glyph_line:
+            glyph_row = glyph_row + 1 if previous_glyph_line else 0
+        else:
+            glyph_row = None
         parts = []
         for column, character in enumerate(line):
             if character == " ":
                 parts.append(character)
                 continue
-            hue = column / max(width - 1, 1)
-            red, green, blue = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
-            red_level, green_level, blue_level = (round(value * 5) for value in (red, green, blue))
-            color_index = 16 + 36 * red_level + 6 * green_level + blue_level
-            parts.append(f"\033[38;5;{color_index}m{character}")
+            position = (row, column)
+            in_light_cone = position in base_positions or position in overlay_positions
+            if in_light_cone and character not in _LIGHT_CONE_BLOCKS:
+                parts.append(f"\033[39m{character}")
+                continue
+            if position in overlay_positions:
+                character_color = _MINECRAFT_DIAMOND if position in endpoint_positions else _LIGHT_CONE_QUARKS_COLOR
+            elif position in base_positions:
+                character_color = _LIGHT_CONE_COLOR
+            elif glyph_row is not None and character in _LETTER_PIXELS:
+                upper_section = glyph_row < 2
+                if character == "▒":
+                    character_color = _MINECRAFT_STONE
+                else:
+                    character_color = _MINECRAFT_GRASS if upper_section else _MINECRAFT_DIRT
+            else:
+                parts.append(f"\033[39m{character}")
+                continue
+            parts.append(f"\033[38;5;{character_color}m{character}")
         rendered.append("".join(parts) + _ANSI_RESET)
+        previous_glyph_line = has_glyph_line
     return "\n".join(rendered)
 
 
@@ -246,7 +295,7 @@ class TerminalUi(PlainUi):
     def log(self, message: str = "", *, level: str = "info", style: str | None = None) -> None:
         stream = sys.stderr if level == "error" else sys.stdout
         if style == "banner":
-            print(_render_rainbow_banner(message), file=stream, flush=True)
+            print(_render_minecraft_banner(message), file=stream, flush=True)
             return
         color = _ANSI_STYLES.get(style or "")
         rendered = message

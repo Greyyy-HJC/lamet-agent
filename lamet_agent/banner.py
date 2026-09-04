@@ -7,95 +7,88 @@ letters are vertically centered independently.
 
 from __future__ import annotations
 
-Glyph = tuple[str, str, str, str, str, str, str, str, str]
+# ░ ▒ ▓ █ ▄ ▀
+Glyph = tuple[str, str, str, str, str, str, str, str]
 
 _L: Glyph = (
-    "L        ",
-    "L        ",
-    "L        ",
-    "L        ",
-    "L        ",
-    "L        ",
-    "L        ",
-    "L        ",
-    "LLLLLLLLL",
-)
-_A: Glyph = (
-    "    A    ",
-    "   A A   ",
-    "  A   A  ",
-    " A     A ",
-    "A       A",
-    "AAAAAAAAA",
-    "A       A",
-    "A       A",
-    "A       A",
+    "██          ",
+    "██▒▒        ",
+    "██▒▒        ",
+    "██▒▒        ",
+    "██▒▒        ",
+    "██▒▒        ",
+    "██████████  ",
+    "  ▒▒▒▒▒▒▒▒▒▒",
 )
 _a: Glyph = (
-    "         ",
-    "         ",
-    " aaaaaaa ",
-    "a       a",
-    "        a",
-    " aaaaaaaa",
-    "a       a",
-    "a      aa",
-    " aaaaaa a",
+    "            ",
+    "            ",
+    "  ██████    ",
+    "    ▒▒▒▒██  ",
+    "  ████████▒▒",
+    "██  ▒▒▒▒██▒▒",
+    "  ████████▒▒",
+    "    ▒▒▒▒▒▒▒▒",
 )
 _M: Glyph = (
-    "M       M",
-    "MM     MM",
-    "M M   M M",
-    "M  M M  M",
-    "M   M   M",
-    "M       M",
-    "M       M",
-    "M       M",
-    "M       M",
+    "██      ██  ",
+    "████  ████▒▒",
+    "██▒▒██  ██▒▒",
+    "██▒▒  ▒▒██▒▒",
+    "██▒▒    ██▒▒",
+    "██▒▒    ██▒▒",
+    "██▒▒    ██▒▒",
+    "  ▒▒      ▒▒",
 )
 _E: Glyph = (
-    "EEEEEEEEE",
-    "E        ",
-    "E        ",
-    "E        ",
-    "EEEEEEEE ",
-    "E        ",
-    "E        ",
-    "E        ",
-    "EEEEEEEEE",
+    "██████████  ",
+    "██▒▒▒▒▒▒▒▒▒▒",
+    "██████      ",
+    "██▒▒▒▒▒▒    ",
+    "██▒▒        ",
+    "██▒▒        ",
+    "██████████  ",
+    "  ▒▒▒▒▒▒▒▒▒▒",
 )
 _T: Glyph = (
-    "TTTTTTTTT",
-    "    T    ",
-    "    T    ",
-    "    T    ",
-    "    T    ",
-    "    T    ",
-    "    T    ",
-    "    T    ",
-    "    T    ",
+    "██████████  ",
+    "  ▒▒██▒▒▒▒▒▒",
+    "    ██▒▒    ",
+    "    ██▒▒    ",
+    "    ██▒▒    ",
+    "    ██▒▒    ",
+    "    ██▒▒    ",
+    "      ▒▒    ",
+)
+_A: Glyph = (
+    "  ██████    ",
+    "██  ▒▒▒▒██  ",
+    "██████████▒▒",
+    "██▒▒▒▒▒▒██▒▒",
+    "██▒▒    ██▒▒",
+    "██▒▒    ██▒▒",
+    "██▒▒    ██▒▒",
+    "  ▒▒      ▒▒",
 )
 _G: Glyph = (
-    "  GGGGGG ",
-    " G      G",
-    "G        ",
-    "G        ",
-    "G    GGGG",
-    "G       G",
-    "G       G",
-    " G      G",
-    "  GGGGGG ",
+    "  ████████  ",
+    "██  ▒▒▒▒▒▒▒▒",
+    "██▒▒  ████  ",
+    "██▒▒    ██▒▒",
+    "██▒▒    ██▒▒",
+    "██▒▒    ██▒▒",
+    "  ██████  ▒▒",
+    "    ▒▒▒▒▒▒  ",
 )
 _N: Glyph = (
-    "N       N",
-    "NN      N",
-    "N N     N",
-    "N  N    N",
-    "N   N   N",
-    "N    N  N",
-    "N     N N",
-    "N      NN",
-    "N       N",
+    "██      ██  ",
+    "████    ██▒▒",
+    "██▒▒██  ██▒▒",
+    "██▒▒  ████▒▒",
+    "██▒▒    ██▒▒",
+    "██▒▒    ██▒▒",
+    "██▒▒    ██▒▒",
+    "  ▒▒      ▒▒",
 )
 
 # Future and past light cones joined at the origin, with elliptical bases.
@@ -119,6 +112,51 @@ _LIGHT_CONE = (
     R"  '._        |        _,'  ",
     R"     `-.___________,-'     ",
     R"             |             ",
+)
+
+# ░ ▒ ▓ █ ▄ ▀
+_LIGHT_CONE = (
+    R"             ^ t             ",
+    R"      ▄▄▄▄▄▄▄│▄▄▄▄▄▄▄        ",
+    R"   ▄▀▀       │       ▀▀▄     ",
+    R"  █          │          █    ",
+    R"   █▄▄       │       ▄▄█     ",
+    R"    ▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀      ",
+    R"      ▀▄     ¦     ▄▀        ",
+    R"     ╔══▀▄   ¦   ▄▀══╗       ",
+    R"    ╔╝    ▀▄ ¦ ▄▀    ╚╗      ",
+    R"   ╔╝       ▀▄▀       Sxyz   ",
+    R"  ╔╝       ▄▀¦▀▄       ╚╗    ",
+    R" ╔╝      ▄▀  ¦  ▀▄      ╚╗   ",
+    R" ╚═══════════════════════╝   ",
+    R"     ▄▀      ¦      ▀▄       ",
+    R"   ▄▀        ¦        ▀▄     ",
+    R"  █          ¦          █    ",
+    R"   ▀▄▄       ¦       ▄▄▀     ",
+    R"      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀        ",
+    R"             │               ",
+)
+
+_LIGHT_CONE_QUARKS = (
+    R"                             ",
+    R"                             ",
+    R"                             ",
+    R"                             ",
+    R"                             ",
+    R"                             ",
+    R"                             ",
+    R"                 ▄▀          ",
+    R"               ▄▀            ",
+    R"             ▄▀              ",
+    R"           ▄▀                ",
+    R"         ▄▀                  ",
+    R"                             ",
+    R"                             ",
+    R"                             ",
+    R"                             ",
+    R"                             ",
+    R"                             ",
+    R"                             ",
 )
 
 
@@ -156,27 +194,59 @@ def _vcenter(icon: tuple[str, ...], height: int) -> tuple[str, ...]:
     return tuple([" " * width] * top + rows + [" " * width] * (extra - top))
 
 
-def _frame_banner(icon: tuple[str, ...], lamet: tuple[str, ...], agent: tuple[str, ...]) -> str:
-    """Place the light-cone icon on the left of the letter stack in a GRID box."""
+class _LayeredBanner(str):
+    base_positions: frozenset[tuple[int, int]]
+    overlay_positions: frozenset[tuple[int, int]]
+
+    def __new__(
+        cls,
+        text: str,
+        base_positions: frozenset[tuple[int, int]],
+        overlay_positions: frozenset[tuple[int, int]],
+    ) -> _LayeredBanner:
+        banner = super().__new__(cls, text)
+        banner.base_positions = base_positions
+        banner.overlay_positions = overlay_positions
+        return banner
+
+
+def _frame_banner(
+    icon: tuple[str, ...],
+    lamet: tuple[str, ...],
+    agent: tuple[str, ...],
+    overlay: tuple[str, ...] | None = None,
+) -> _LayeredBanner:
+    """Place the light-cone icon on the left of the letter stack without a frame."""
     text = (*lamet, "", *agent)
     height = max(len(icon), len(text))
     icon_lines = _vcenter(icon, height)
+    overlay_lines = (
+        _vcenter(overlay, height)
+        if overlay is not None
+        else tuple(" " * len(icon_lines[0]) for _ in icon_lines)
+    )
     text_lines = _vcenter(text, height)
-    icon_width = max(len(line) for line in icon_lines)
+    icon_width = max(max(len(line) for line in icon_lines), max(len(line) for line in overlay_lines))
+    icon_lines = tuple(line.ljust(icon_width) for line in icon_lines)
+    overlay_lines = tuple(line.ljust(icon_width) for line in overlay_lines)
     text_width = max(len(line) for line in text_lines)
     inner_width = icon_width + 1 + text_width
-    total_width = inner_width + 2
-    remainder = total_width % 3
-    if remainder != 1:
-        total_width += (1 - remainder) % 3
-        inner_width = total_width - 2
-    border = _grid_border(total_width)
-    framed = [border, border, border]
-    for icon_line, text_line in zip(icon_lines, text_lines, strict=True):
-        body = f"{icon_line.ljust(icon_width)} {text_line.ljust(text_width)}"
-        framed.append(f"|{body.ljust(inner_width)}|")
-    framed.extend([border, border, border])
-    return "\n".join(framed)
+    framed = []
+    base_positions = set()
+    overlay_positions = set()
+    for row, (icon_line, overlay_line, text_line) in enumerate(zip(icon_lines, overlay_lines, text_lines, strict=True)):
+        merged_icon = []
+        for column, (base_character, overlay_character) in enumerate(zip(icon_line, overlay_line, strict=True)):
+            if base_character != " ":
+                base_positions.add((row, column))
+            if overlay_character != " ":
+                overlay_positions.add((row, column))
+                merged_icon.append(overlay_character)
+            else:
+                merged_icon.append(base_character)
+        body = f"{''.join(merged_icon)} {text_line.ljust(text_width)}"
+        framed.append(body.ljust(inner_width))
+    return _LayeredBanner("\n".join(framed), frozenset(base_positions), frozenset(overlay_positions))
 
 
-BANNER = _frame_banner(_LIGHT_CONE, _LAMET_LINES, _AGENT_LINES)
+BANNER = _frame_banner(_LIGHT_CONE, _LAMET_LINES, _AGENT_LINES, overlay=_LIGHT_CONE_QUARKS)
