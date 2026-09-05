@@ -21,11 +21,10 @@ python3 -m venv .venv && source .venv/bin/activate
 python3 -m pip install --upgrade pip && python3 -m pip install -e ".[codex]"
 ```
 
-请使用夸克网盘下载原始数据，链接：https://pan.quark.cn/s/e72c425c0f7f；提取码：Ua6r。
-
+请使用夸克网盘下载原始数据，链接为：https://pan.quark.cn/s/e72c425c0f7f?pwd=Ua6r
+。请自行解压缩 data_lamet_agent.zip 包，进入该目录后解压缩 data_pion_pdf_cg.zip 包。
+最后将文件夹 data_pion_pdf_cg 和文件 plot_pion_pdf_compare.py 放入 lamet-agent 根目录下。
 ```bash
-unzip data_lamet_agent.zip && \
-cd data_lamet_agent && unzip data_pion_pdf_cg.zip
 lamet-agent run examples/pion_pdf_cg_manifest.json \
   --provider codex --model gpt-5.6-luna
 ```
