@@ -9,39 +9,75 @@ analysis workflows.
 
 ## Quick Start
 
-Requires a logged-in Codex CLI on this machine. Codex does not use
-`--api-key-file`.
+<table>
+<thead>
+<tr>
+<th width="50%" align="left">For General Users</th>
+<th width="50%" align="left">对非科学网络环境下的中国大陆用户</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td valign="top">
 
-```bash
-git clone https://github.com/Greyyy-HJC/lamet-agent.git && cd lamet-agent
-python3 -m venv .venv && source .venv/bin/activate
-python3 -m pip install --upgrade pip && python3 -m pip install -e ".[codex]"
+Requires a logged-in Codex CLI on this machine. Codex does not use
+<code>--api-key-file</code>.
+
+<pre><code class="language-bash">git clone https://github.com/Greyyy-HJC/lamet-agent.git &amp;&amp; cd lamet-agent
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+python3 -m pip install --upgrade pip &amp;&amp; python3 -m pip install -e ".[codex]"
 wget --user=download --password=protonpdf -r -np -nH --no-check-certificate \
-  https://149.28.115.134:43999/data_pion_pdf_cg.zip && unzip data_pion_pdf_cg.zip
+  https://149.28.115.134:43999/data_pion_pdf_cg.zip &amp;&amp; unzip data_pion_pdf_cg.zip
 lamet-agent run examples/pion_pdf_cg_manifest.json \
-  --provider codex --model gpt-5.6-luna
-```
+  --provider codex --model gpt-5.6-luna</code></pre>
 
 To compare the run against the reference result:
 
-```bash
-cd runs/pion_pdf_cg/ && wget --user=download --password=protonpdf -r -np -nH --no-check-certificate \
-  https://149.28.115.134:43999/plot_pion_pdf_compare.py && python plot_pion_pdf_compare.py
-```
+<pre><code class="language-bash">cd runs/pion_pdf_cg/ &amp;&amp; wget --user=download --password=protonpdf -r -np -nH --no-check-certificate \
+  https://149.28.115.134:43999/plot_pion_pdf_compare.py &amp;&amp; python plot_pion_pdf_compare.py</code></pre>
 
-The archive unpacks to `data_pion_pdf_cg/` at the repository root. The same
-files can be downloaded in a browser at
-[https://149.28.115.134:43999](https://149.28.115.134:43999) with user
-`download` and password `protonpdf`. The server has no trusted certificate:
-`wget` uses `--no-check-certificate`, and a browser must trust the self-signed
+The archive unpacks to <code>data_pion_pdf_cg/</code> at the repository root.
+The same files can be downloaded in a browser at
+<a href="https://149.28.115.134:43999">https://149.28.115.134:43999</a>
+with user <code>download</code> and password <code>protonpdf</code>.
+The server has no trusted certificate: <code>wget</code> uses
+<code>--no-check-certificate</code>, and a browser must trust the self-signed
 certificate.
 
-Alternatively with uv:
+Alternatively with <code>uv</code>:
 
-```bash
-uv venv && source .venv/bin/activate
-uv pip install -e ".[codex]"
-```
+<pre><code class="language-bash">uv venv &amp;&amp; source .venv/bin/activate
+uv pip install -e ".[codex]"</code></pre>
+
+</td>
+<td valign="top">
+
+本机需要已登录的 Codex CLI。Codex 不使用
+<code>--api-key-file</code>。
+
+<pre><code class="language-bash">git clone https://github.com/Greyyy-HJC/lamet-agent.git &amp;&amp; cd lamet-agent
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+python3 -m pip install --upgrade pip &amp;&amp; python3 -m pip install -e ".[codex]"</code></pre>
+
+请使用夸克网盘下载原始数据，链接：https://pan.quark.cn/s/e72c425c0f7f；提取码：Ua6r。
+<pre><code class="language-bash">unzip data_lamet_agent.zip &amp;&amp; \
+cd data_lamet_agent &amp;&amp; unzip data_pion_pdf_cg.zip 
+lamet-agent run examples/pion_pdf_cg_manifest.json \
+  --provider codex --model gpt-5.6-luna</code></pre>
+
+如需将本次运行结果与参考结果进行比较：
+
+<pre><code class="language-bash">python plot_pion_pdf_compare.py</code></pre>
+
+也可以使用 <code>uv</code> 创建环境并安装：
+
+<pre><code class="language-bash">uv venv &amp;&amp; source .venv/bin/activate
+uv pip install -e ".[codex]"</code></pre>
+
+</td>
+</tr>
+</tbody>
+</table>
 
 ### Other providers
 
