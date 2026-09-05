@@ -149,6 +149,13 @@ def validate_value(annotation: Any, value: Any, path: str) -> None:
     raise TypeError(f"unsupported structured annotation for '{path}'")
 
 
+def validate_unique_items(value: list[Any], path: str) -> None:
+    """Validate the ``uniqueItems`` semantics omitted from provider schemas."""
+    for index, item in enumerate(value):
+        if any(item == previous for previous in value[:index]):
+            raise ValueError(f"structured value '{path}' must contain unique items")
+
+
 def json_compatible(value: Any) -> Any:
     """Convert a value to the supported JSON-compatible surface."""
     if value is None or isinstance(value, (str, int, float, bool)):
@@ -163,5 +170,6 @@ def json_compatible(value: Any) -> Any:
 __all__ = [
     "annotation_schema",
     "json_compatible",
+    "validate_unique_items",
     "validate_value",
 ]

@@ -42,7 +42,7 @@ from lamet_agent.contract import (
 from lamet_agent.__main__ import _build_parser
 from lamet_agent.llm import Message, _AssistantResponse, _ToolCall, create_backend
 from lamet_agent.manifest import Manifest, _load_stage_contract, load_manifest
-from lamet_agent.structured import annotation_schema
+from lamet_agent.structured import annotation_schema, validate_unique_items
 
 
 def _valid_metadata(tmp_path: Path, **overrides: object) -> dict[str, object]:
@@ -139,6 +139,61 @@ def test_token_usage_uses_weighted_k_estimate() -> None:
     ) == ("LLM usage: 11.40K (input: 10000, cached input: 4000, output: 1000, reasoning: 600)")
 
 
+def test_backend_usage_normalizers_return_common_fields() -> None:
+    from lamet_agent.llm import (
+        _ClaudeCodeBackend,
+        _CodexBackend,
+        _OpenAICompatibleBackend,
+    )
+
+    assert _OpenAICompatibleBackend._normalise_usage(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "prompt_tokens_details": {"cached_tokens": 40},
+            "completion_tokens_details": {"reasoning_tokens": 5},
+        }
+    ) == {
+        "input_tokens": 100,
+        "cached_input_tokens": 40,
+        "output_tokens": 20,
+        "reasoning_output_tokens": 5,
+        "total_tokens": 120,
+    }
+    assert _CodexBackend._normalise_usage(
+        {
+            "last": {
+                "inputTokens": 100,
+                "cachedInputTokens": 40,
+                "outputTokens": 20,
+                "reasoningOutputTokens": 5,
+                "totalTokens": 120,
+            }
+        }
+    ) == {
+        "input_tokens": 100,
+        "cached_input_tokens": 40,
+        "output_tokens": 20,
+        "reasoning_output_tokens": 5,
+        "total_tokens": 120,
+    }
+    assert _ClaudeCodeBackend._normalise_usage(
+        {
+            "input_tokens": 4,
+            "cache_creation_input_tokens": 2,
+            "cache_read_input_tokens": 6,
+            "output_tokens": 5,
+        }
+    ) == {
+        "input_tokens": 12,
+        "cached_input_tokens": 6,
+        "cache_write_input_tokens": 2,
+        "output_tokens": 5,
+        "total_tokens": 17,
+    }
+
+
 def test_llm_session_appends_structured_recommendations_to_job_history(tmp_path: Path) -> None:
     backend = _ScriptedBackend(
         [
@@ -169,6 +224,12 @@ def test_llm_session_appends_structured_recommendations_to_job_history(tmp_path:
     assert backend.calls[1][0][-1].content == "second question"
     assert backend.calls[0][2] == backend.calls[1][2]
     assert session.calls == 2
+
+
+def test_structured_unique_items_rejects_deep_duplicates() -> None:
+    validate_unique_items([{"start": 1, "stop": 3}, {"start": 2, "stop": 4}], "windows")
+    with pytest.raises(ValueError, match="windows.*unique items"):
+        validate_unique_items([{"start": 1, "stop": 3}, {"start": 1, "stop": 3}], "windows")
 
 
 class _IntervalSuggestion(TypedDict):
@@ -429,9 +490,70 @@ def test_provider_selection_has_one_public_backend_factory(monkeypatch: pytest.M
     )
     assert create_backend("openai").identity.endswith(":gpt-5.6-luna")
     assert create_backend("openai", "gpt-test").identity.endswith(":gpt-test")
-    assert create_backend("codex").identity == "codex:default"
+    assert create_backend("codex").identity == "codex:gpt-5.6-luna"
+    assert create_backend("claude").identity == "claude:haiku"
+    assert create_backend("codex", "gpt-test").identity == "codex:gpt-test"
+    assert create_backend("claude", "sonnet").identity == "claude:sonnet"
     with pytest.raises(ValueError, match="requires a model"):
         create_backend("https://llm.example.test/v1")
+
+
+def test_codex_provider_passes_response_schema_to_the_python_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    thread_options = []
+    run_calls = []
+
+    class FakeSandbox:
+        read_only = object()
+
+    class FakeThread:
+        def run(self, prompt: str, **options: object) -> SimpleNamespace:
+            run_calls.append((prompt, options))
+            return SimpleNamespace(final_response='{"value":7}', usage={"input_tokens": 4, "output_tokens": 5})
+
+    class FakeCodex:
+        def thread_start(self, **options: object) -> FakeThread:
+            thread_options.append(options)
+            return FakeThread()
+
+        def close(self) -> None:
+            return None
+
+    sdk = types.ModuleType("openai_codex")
+    sdk.Codex = FakeCodex
+    sdk.Sandbox = FakeSandbox
+    monkeypatch.setitem(sys.modules, "openai_codex", sdk)
+
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "integer"}},
+        "required": ["value"],
+        "additionalProperties": False,
+    }
+    response = create_backend("codex").complete(
+        messages=[Message("system", "system prompt"), Message("user", "request")],
+        tools=[],
+        prompt_digest="digest",
+        response_schema={"name": "integer_recommendation", "schema": schema},
+    )
+
+    assert response.structured == {"value": 7}
+    assert response.usage == {"input_tokens": 4, "output_tokens": 5}
+    assert thread_options[0]["base_instructions"] == "system prompt"
+    assert "developer_instructions" not in thread_options[0]
+    thread_config = thread_options[0]["config"]
+    assert thread_config["project_doc_max_bytes"] == 0
+    assert thread_config["include_environment_context"] is False
+    assert thread_config["include_permissions_instructions"] is False
+    assert thread_config["include_apps_instructions"] is False
+    assert thread_config["include_collaboration_mode_instructions"] is False
+    assert thread_config["skills"]["include_instructions"] is False
+    assert thread_config["agents"]["enabled"] is False
+    assert thread_config["orchestrator"] == {"skills": {"enabled": False}, "mcp": {"enabled": False}}
+    prompt, options = run_calls[0]
+    assert options == {"sandbox": FakeSandbox.read_only, "output_schema": schema}
+    assert "<OUTPUT_CONSTRAINT>" not in prompt
+    assert "response_schema" not in prompt
+    assert "<EXECUTION_CONSTRAINT>" in prompt
 
 
 def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -443,7 +565,12 @@ def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: p
                     {"text": "fit one candidate", "tool_calls": [{"name": "fit", "arguments": {"window": 3}}]}
                 ),
                 session_id="claude-session",
-                usage={"input_tokens": 4, "output_tokens": 5, "cache_read_input_tokens": 6},
+                usage={
+                    "input_tokens": 4,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 2,
+                    "cache_read_input_tokens": 6,
+                },
                 is_error=False,
                 errors=None,
                 structured_output=None,
@@ -494,11 +621,18 @@ def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: p
     assert backend.identity == "claude:sonnet"
     assert first.text == "fit one candidate"
     assert first.calls[0].arguments == {"window": 3}
-    assert first.usage == {"input_tokens": 4, "output_tokens": 5, "cache_read_input_tokens": 6}
+    assert first.usage == {
+        "input_tokens": 12,
+        "cached_input_tokens": 6,
+        "cache_write_input_tokens": 2,
+        "output_tokens": 5,
+        "total_tokens": 17,
+    }
     assert second.text == "finished"
     assert not second.calls
     assert options[0].values["tools"] == []
-    assert options[0].values["disallowed_tools"] == ["*"]
+    assert options[0].values["skills"] == []
+    assert "setting_sources" not in options[0].values
     assert options[0].values["system_prompt"] == "system prompt"
     assert "resume" not in options[0].values
     assert options[1].values["resume"] == "claude-session"
@@ -2300,9 +2434,8 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
     assert schema["required"] == ["tune_z_values"]
     assert schema["properties"]["tune_z_values"] == {
         "type": "array",
-        "items": {"type": "number", "not": {"const": 0}},
+        "items": {"type": "number", "exclusiveMinimum": 0},
         "minItems": 1,
-        "uniqueItems": True,
     }
 
 
@@ -2428,8 +2561,8 @@ def test_spectrum_recommendation_describes_its_initial_request(tmp_path: Path) -
                     "tmin": 1,
                     "tmax": 4,
                     "n_states": 1,
-                    "prior_means": {"E0": 0.3, "A0": 1.0},
-                    "prior_widths": {"E0": 0.1, "A0": 0.5},
+                    "prior_means": [0.3, 1.0],
+                    "prior_widths": [0.1, 0.5],
                 },
             )
         ]
@@ -2462,6 +2595,15 @@ def test_spectrum_recommendation_describes_its_initial_request(tmp_path: Path) -
     result = recommend(context, _ask_session(backend, tmp_path / "spectrum.md", context), fixed_parameters=fixed)
 
     assert result["n_states"] == 1
+    assert result["prior_means"] == {"E0": 0.3, "A0": 1.0}
+    assert result["prior_widths"] == {"E0": 0.1, "A0": 0.5}
+    schema = backend.response_schemas[0]["schema"]
+    assert schema["properties"]["prior_means"] == {
+        "type": "array",
+        "items": {"type": "number", "exclusiveMinimum": 0.0},
+        "minItems": 2,
+        "maxItems": 4,
+    }
     request = json.loads(backend.calls[0][0][-1].content)["request"]
     assert request == {
         "task": "direct_spectrum_fit",

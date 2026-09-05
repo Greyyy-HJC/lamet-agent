@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from lamet_agent.agent import LlmSession, ToolContext
-from lamet_agent.structured import annotation_schema, json_compatible, validate_value
+from lamet_agent.structured import annotation_schema, json_compatible, validate_unique_items, validate_value
 
 
 class TailRangeSuggestion(TypedDict, total=False):
@@ -35,9 +35,9 @@ def recommend(
     if previous_attempts is not None:
         evidence["previous_attempts"] = previous_attempts
     schema, _nullable = annotation_schema(TailRangeSuggestion)
-    schema["properties"]["zmin_fm"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["zmin_fm"]["minItems"] = 1
     schema["properties"]["zmin_fm"]["items"]["minimum"] = 0.5
-    schema["properties"]["zmax_fm"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["zmax_fm"]["minItems"] = 1
     schema["properties"]["zmax_fm"]["items"].update(
         {"exclusiveMinimum": 0.0, "maximum": float(context.params["zmax_ext_fm"])}
     )
@@ -67,6 +67,9 @@ def recommend(
     validate_value(TailRangeSuggestion, result, "fourier_tail_range_recommendation")
     if set(result) != requested_fields:
         raise ValueError(f"Fourier recommendation must return exactly {sorted(requested_fields)}")
+    for name in ("zmin_fm", "zmax_fm"):
+        if name in result:
+            validate_unique_items(result[name], f"fourier_tail_range_recommendation.{name}")
     return result
 
 

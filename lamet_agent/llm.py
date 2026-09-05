@@ -22,6 +22,11 @@ _OPENAI_COMPATIBLE_API = {
     "deepseek": ("https://api.deepseek.com/", "DEEPSEEK_API_KEY", "deepseek-v4-flash"),
 }
 
+_AGENT_CLI = {
+    "codex": "gpt-5.6-luna",
+    "claude": "haiku",
+}
+
 
 @dataclass(frozen=True)
 class _ResolvedProvider:
@@ -53,8 +58,8 @@ def _resolve_provider(provider: str, model: str | None = None) -> _ResolvedProvi
     selected_model = model.strip() if model and model.strip() else None
     if not name:
         raise ValueError("provider must not be empty")
-    if name in {"codex", "claude"}:
-        return _ResolvedProvider("cli", name, selected_model)
+    if name in _AGENT_CLI:
+        return _ResolvedProvider("cli", name, selected_model or _AGENT_CLI[name])
     if name in _OPENAI_COMPATIBLE_API:
         base_url, key_env, default_model = _OPENAI_COMPATIBLE_API[name]
         return _ResolvedProvider("api", name, selected_model or default_model, base_url, key_env)
@@ -63,7 +68,7 @@ def _resolve_provider(provider: str, model: str | None = None) -> _ResolvedProvi
         if selected_model is None and not _is_local_url(name):
             raise ValueError("a custom OpenAI-compatible API URL requires a model")
         return _ResolvedProvider("api", name, selected_model, name)
-    registered = sorted(["codex", "claude", *_OPENAI_COMPATIBLE_API])
+    registered = sorted([*_AGENT_CLI, *_OPENAI_COMPATIBLE_API])
     raise ValueError(f"unknown provider {name!r}; use one of {registered} or an HTTP(S) OpenAI-compatible API URL")
 
 
@@ -214,50 +219,6 @@ class _AssistantResponse:
         return self.tool_calls or ((self.tool_call,) if self.tool_call is not None else ())
 
 
-def _normalise_usage(value: Any) -> dict[str, int] | None:
-    """Extract a compact token-usage mapping from API or CLI-agent response data."""
-    if value is None:
-        return None
-    if hasattr(value, "model_dump"):
-        value = value.model_dump(by_alias=False)
-    elif not isinstance(value, Mapping) and hasattr(value, "__dict__"):
-        value = vars(value)
-    if not isinstance(value, Mapping):
-        return None
-    if isinstance(value.get("last"), Mapping):
-        value = value["last"]
-    aliases = {
-        "prompt_tokens": "input_tokens",
-        "completion_tokens": "output_tokens",
-        "total_tokens": "total_tokens",
-        "inputTokens": "input_tokens",
-        "outputTokens": "output_tokens",
-        "totalTokens": "total_tokens",
-        "cachedInputTokens": "cached_input_tokens",
-        "reasoningOutputTokens": "reasoning_output_tokens",
-        "cacheWriteInputTokens": "cache_write_input_tokens",
-        "cacheCreationInputTokens": "cache_creation_input_tokens",
-        "cacheReadInputTokens": "cache_read_input_tokens",
-    }
-    result = {
-        aliases.get(str(key), str(key)): int(raw)
-        for key, raw in value.items()
-        if aliases.get(str(key), str(key))
-        in {
-            "input_tokens",
-            "output_tokens",
-            "total_tokens",
-            "cached_input_tokens",
-            "reasoning_output_tokens",
-            "cache_write_input_tokens",
-            "cache_creation_input_tokens",
-            "cache_read_input_tokens",
-        }
-        and isinstance(raw, int)
-        and not isinstance(raw, bool)
-    }
-    return result or None
-
 class LlmBackend(Protocol):
     """Synchronous interface used by an agent workflow session."""
 
@@ -301,6 +262,34 @@ class _OpenAICompatibleBackend:
         self.model = model
         self._api_key = api_key
         self.identity = f"openai-compatible:{self.base_url}:{self.model}"
+
+    @staticmethod
+    def _normalise_usage(value: Any) -> dict[str, int] | None:
+        """Normalize OpenAI-style chat token usage."""
+        if not isinstance(value, Mapping):
+            return None
+        aliases = {
+            "prompt_tokens": "input_tokens",
+            "completion_tokens": "output_tokens",
+        }
+        result = {
+            aliases.get(str(key), str(key)): raw
+            for key, raw in value.items()
+            if aliases.get(str(key), str(key)) in {"input_tokens", "output_tokens", "total_tokens"}
+            and isinstance(raw, int)
+            and not isinstance(raw, bool)
+        }
+        prompt_details = value.get("prompt_tokens_details")
+        if isinstance(prompt_details, Mapping):
+            cached_tokens = prompt_details.get("cached_tokens")
+            if isinstance(cached_tokens, int) and not isinstance(cached_tokens, bool):
+                result["cached_input_tokens"] = cached_tokens
+        completion_details = value.get("completion_tokens_details")
+        if isinstance(completion_details, Mapping):
+            reasoning_tokens = completion_details.get("reasoning_tokens")
+            if isinstance(reasoning_tokens, int) and not isinstance(reasoning_tokens, bool):
+                result["reasoning_output_tokens"] = reasoning_tokens
+        return result or None
 
     def complete(
         self,
@@ -376,13 +365,77 @@ class _OpenAICompatibleBackend:
                     text,
                     tool_calls=tuple(calls),
                     structured=structured,
-                    usage=_normalise_usage(payload.get("usage")),
+                    usage=self._normalise_usage(payload.get("usage")),
                 )
             except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
                 last_protocol_error = exc
         raise ValueError(
             f"provider returned malformed tool JSON after 3 attempts: {last_protocol_error}"
         ) from last_protocol_error
+
+
+def _cli_task_input(
+    *,
+    transcript: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    prompt_digest: str,
+    structured: bool,
+) -> str:
+    """Build the common prompt envelope for CLI-agent backends."""
+    task = {
+        "messages": transcript,
+        "tools": tools,
+        "prompt_digest": prompt_digest,
+    }
+    sections = [
+        "<TASK_INPUT>",
+        json.dumps(task, separators=(",", ":"), ensure_ascii=False),
+        "</TASK_INPUT>",
+    ]
+    if not structured:
+        sections.extend(
+            [
+                "<OUTPUT_CONSTRAINT>",
+                "Return exactly one JSON object with keys 'text' and 'tool_calls'. "
+                "'text' must be a string. 'tool_calls' must be a list of objects containing exactly "
+                "'name' and object 'arguments'. Do not call tools yourself.",
+                "Do not use markdown.",
+                "</OUTPUT_CONSTRAINT>",
+            ]
+        )
+    sections.extend(
+        [
+            "<EXECUTION_CONSTRAINT>",
+            "Do not run shell commands. Do not edit files.",
+            "</EXECUTION_CONSTRAINT>",
+        ]
+    )
+    return "\n\n".join(sections)
+
+
+_CODEX_LLM_CONFIG = {
+    "project_doc_max_bytes": 0,
+    "include_environment_context": False,
+    "include_permissions_instructions": False,
+    "include_apps_instructions": False,
+    "include_collaboration_mode_instructions": False,
+    "skills": {"include_instructions": False},
+    "agents": {"enabled": False},
+    "orchestrator": {"skills": {"enabled": False}, "mcp": {"enabled": False}},
+    "features": {
+        "apps": False,
+        "goals": False,
+        "hooks": False,
+        "image_generation": False,
+        "memories": False,
+        "plugins": False,
+        "shell_tool": False,
+        "skill_search": False,
+        "view_image": False,
+    },
+    "memories": {"use_memories": False},
+    "web_search": "disabled",
+}
 
 
 class _CodexBackend:
@@ -402,6 +455,42 @@ class _CodexBackend:
         payload = f"{prompt_digest}\0{first_user}".encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
+    @staticmethod
+    def _normalise_usage(value: Any) -> dict[str, int] | None:
+        """Normalize the Codex SDK's last-turn token usage."""
+        if value is None:
+            return None
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(by_alias=False)
+        elif not isinstance(value, Mapping) and hasattr(value, "__dict__"):
+            value = vars(value)
+        if not isinstance(value, Mapping):
+            return None
+        if isinstance(value.get("last"), Mapping):
+            value = value["last"]
+        aliases = {
+            "inputTokens": "input_tokens",
+            "outputTokens": "output_tokens",
+            "totalTokens": "total_tokens",
+            "cachedInputTokens": "cached_input_tokens",
+            "reasoningOutputTokens": "reasoning_output_tokens",
+            "cacheWriteInputTokens": "cache_write_input_tokens",
+        }
+        fields = {
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cached_input_tokens",
+            "reasoning_output_tokens",
+            "cache_write_input_tokens",
+        }
+        result = {
+            aliases.get(str(key), str(key)): raw
+            for key, raw in value.items()
+            if aliases.get(str(key), str(key)) in fields and isinstance(raw, int) and not isinstance(raw, bool)
+        }
+        return result or None
+
     def complete(
         self,
         *,
@@ -410,12 +499,20 @@ class _CodexBackend:
         prompt_digest: str,
         response_schema: Mapping[str, Any] | None = None,
     ) -> _AssistantResponse:
+        if response_schema is not None and tools:
+            raise ValueError("structured responses cannot be combined with tools")
+        try:
+            from openai_codex import Codex, Sandbox  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("the codex provider requires the openai-codex package") from exc
+
         thread_key = self._thread_key(messages, prompt_digest)
         existing_thread = thread_key in self._threads
         transcript = []
         source_messages = messages[-1:] if existing_thread else messages
-        start = 1 if source_messages and source_messages[0].role == "system" and not existing_thread else 0
-        for message in source_messages[start:]:
+        for message in source_messages:
+            if message.role == "system":
+                continue
             item: dict[str, Any] = {"role": message.role, "content": message.content}
             if message.tool_call_id:
                 item["tool_call_id"] = message.tool_call_id
@@ -427,46 +524,19 @@ class _CodexBackend:
                     {"id": call.id, "name": call.name, "arguments": dict(call.arguments)} for call in message.calls
                 ]
             transcript.append(item)
-        task = {
-            "messages": transcript,
-            "tools": tools,
-            "prompt_digest": prompt_digest,
-            "response_schema": response_schema,
-        }
-        try:
-            from openai_codex import Codex, Sandbox  # type: ignore
-        except ImportError as exc:
-            raise RuntimeError("the codex provider requires the openai-codex package") from exc
-
-        if response_schema is not None:
-            if tools:
-                raise ValueError("structured responses cannot be combined with tools")
-            output_constraint = "Return exactly one JSON object matching this schema and no other text:\n" + json.dumps(
-                response_schema["schema"], separators=(",", ":"), ensure_ascii=False
-            )
-        else:
-            output_constraint = (
-                "Return exactly one JSON object with keys 'text' and 'tool_calls'. "
-                "'text' must be a string. 'tool_calls' must be a list of objects containing exactly "
-                "'name' and object 'arguments'. Do not call tools yourself."
-            )
-        task_input = "\n\n".join(
-            [
-                "<TASK_INPUT>",
-                json.dumps(task, separators=(",", ":"), ensure_ascii=False),
-                "</TASK_INPUT>",
-                "<OUTPUT_CONSTRAINT>",
-                output_constraint,
-                "Do not use markdown. Do not run shell commands. Do not edit files.",
-                "</OUTPUT_CONSTRAINT>",
-            ]
+        task_input = _cli_task_input(
+            transcript=transcript,
+            tools=tools,
+            prompt_digest=prompt_digest,
+            structured=response_schema is not None,
         )
         if self._codex is None:
             self._codex = Codex()
         if not existing_thread:
-            developer_instructions = messages[0].content if messages and messages[0].role == "system" else ""
+            system_prompt = "\n\n".join(message.content for message in messages if message.role == "system")
             thread = self._codex.thread_start(
-                developer_instructions=developer_instructions,
+                base_instructions=system_prompt,
+                config=_CODEX_LLM_CONFIG,
                 sandbox=Sandbox.read_only,
                 ephemeral=True,
                 model=self.model,
@@ -474,7 +544,10 @@ class _CodexBackend:
             self._threads[thread_key] = thread
         else:
             thread = self._threads[thread_key]
-        result = thread.run(task_input, sandbox=Sandbox.read_only)
+        run_options: dict[str, Any] = {"sandbox": Sandbox.read_only}
+        if response_schema is not None:
+            run_options["output_schema"] = response_schema["schema"]
+        result = thread.run(task_input, **run_options)
         raw = result.final_response
         if not isinstance(raw, str) or not raw.strip():
             raise RuntimeError(f"Codex returned no final response: {result}")
@@ -487,7 +560,7 @@ class _CodexBackend:
         if response_schema is not None:
             if not isinstance(payload, dict):
                 raise TypeError("Codex structured response must decode to an object")
-            return _AssistantResponse(raw, structured=payload, usage=_normalise_usage(result.usage))
+            return _AssistantResponse(raw, structured=payload, usage=self._normalise_usage(result.usage))
 
         if not isinstance(payload, dict) or set(payload) != {"text", "tool_calls"}:
             raise ValueError("Codex response must contain exactly text and tool_calls")
@@ -510,7 +583,7 @@ class _CodexBackend:
             if tool_payload["name"] not in known_names:
                 raise ValueError(f"Codex response requested unavailable tool '{tool_payload['name']}'")
             calls.append(_ToolCall(f"turn-{self._turn}-{index}", tool_payload["name"], tool_payload["arguments"]))
-        return _AssistantResponse(payload["text"], tool_calls=tuple(calls), usage=_normalise_usage(result.usage))
+        return _AssistantResponse(payload["text"], tool_calls=tuple(calls), usage=self._normalise_usage(result.usage))
 
     def close(self) -> None:
         """Close the persistent Codex client after the owning agent run."""
@@ -535,6 +608,42 @@ class _ClaudeCodeBackend:
         first_user = next((message.content for message in messages if message.role == "user"), "")
         payload = f"{prompt_digest}\0{first_user}".encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
+
+    @staticmethod
+    def _normalise_usage(value: Any) -> dict[str, int] | None:
+        """Normalize Claude's disjoint uncached, cache-write, and cache-read inputs."""
+        if value is None:
+            return None
+        if not isinstance(value, Mapping) and hasattr(value, "__dict__"):
+            value = vars(value)
+        if not isinstance(value, Mapping):
+            return None
+        aliases = {
+            "inputTokens": "input_tokens",
+            "outputTokens": "output_tokens",
+            "cacheCreationInputTokens": "cache_creation_input_tokens",
+            "cacheReadInputTokens": "cache_read_input_tokens",
+        }
+        usage = {
+            aliases.get(str(key), str(key)): raw
+            for key, raw in value.items()
+            if aliases.get(str(key), str(key))
+            in {"input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"}
+            and isinstance(raw, int)
+            and not isinstance(raw, bool)
+        }
+        uncached_tokens = max(usage.get("input_tokens", 0), 0)
+        cache_write_tokens = max(usage.get("cache_creation_input_tokens", 0), 0)
+        cached_tokens = max(usage.get("cache_read_input_tokens", 0), 0)
+        input_tokens = uncached_tokens + cache_write_tokens + cached_tokens
+        output_tokens = max(usage.get("output_tokens", 0), 0)
+        return {
+            "input_tokens": input_tokens,
+            "cached_input_tokens": cached_tokens,
+            "cache_write_input_tokens": cache_write_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
 
     def complete(
         self,
@@ -567,45 +676,21 @@ class _ClaudeCodeBackend:
                 item["tool_call"] = {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
             elif message.calls:
                 item["tool_calls"] = [
-                    {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
-                    for call in message.calls
+                    {"id": call.id, "name": call.name, "arguments": dict(call.arguments)} for call in message.calls
                 ]
             transcript.append(item)
-        task = {
-            "messages": transcript,
-            "tools": tools,
-            "prompt_digest": prompt_digest,
-            "response_schema": response_schema,
-        }
-        if response_schema is not None:
-            output_constraint = (
-                "Return exactly one JSON object matching this schema and no other text:\n"
-                + json.dumps(response_schema["schema"], separators=(",", ":"), ensure_ascii=False)
-            )
-        else:
-            output_constraint = (
-                "Return exactly one JSON object with keys 'text' and 'tool_calls'. "
-                "'text' must be a string. 'tool_calls' must be a list of objects containing exactly "
-                "'name' and object 'arguments'. Do not call tools yourself."
-            )
-        task_input = "\n\n".join(
-            [
-                "<TASK_INPUT>",
-                json.dumps(task, separators=(",", ":"), ensure_ascii=False),
-                "</TASK_INPUT>",
-                "<OUTPUT_CONSTRAINT>",
-                output_constraint,
-                "Do not use markdown. Do not run shell commands. Do not edit files.",
-                "</OUTPUT_CONSTRAINT>",
-            ]
+        task_input = _cli_task_input(
+            transcript=transcript,
+            tools=tools,
+            prompt_digest=prompt_digest,
+            structured=response_schema is not None,
         )
         options_values: dict[str, Any] = {
             "model": self.model,
             "tools": [],
-            "disallowed_tools": ["*"],
+            "skills": [],
             "permission_mode": "dontAsk",
             "strict_mcp_config": True,
-            "setting_sources": [],
             "max_turns": 1,
         }
         if not existing_session:
@@ -642,7 +727,7 @@ class _ClaudeCodeBackend:
             raise RuntimeError(f"Claude Code returned no session ID: {result}")
         self._sessions[thread_key] = returned_session_id
 
-        usage = _normalise_usage(getattr(result, "usage", None))
+        usage = self._normalise_usage(getattr(result, "usage", None))
         if response_schema is not None:
             structured = getattr(result, "structured_output", None)
             raw = getattr(result, "result", None)

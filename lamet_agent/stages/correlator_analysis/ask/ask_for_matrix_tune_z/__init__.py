@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from lamet_agent.agent import LlmSession, ToolContext
-from lamet_agent.structured import annotation_schema, json_compatible, validate_value
+from lamet_agent.structured import annotation_schema, json_compatible, validate_unique_items, validate_value
 
 
 class Pt2Window(TypedDict):
@@ -43,13 +43,13 @@ def recommend(
     prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
     schema, _nullable = annotation_schema(MatrixFitSuggestion)
     requested = requested_fields or {"tune_z_values"}
-    schema["properties"]["tune_z_values"].update({"minItems": 1, "uniqueItems": True})
-    schema["properties"]["pt2_windows"].update({"minItems": 1, "uniqueItems": True})
-    schema["properties"]["pt3_windows"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["tune_z_values"]["minItems"] = 1
+    schema["properties"]["pt2_windows"]["minItems"] = 1
+    schema["properties"]["pt3_windows"]["minItems"] = 1
     schema["properties"]["pt2_windows"]["items"]["properties"]["tmin"]["minimum"] = 0
     schema["properties"]["pt2_windows"]["items"]["properties"]["tmax"]["minimum"] = 1
     schema["properties"]["pt3_windows"]["items"]["properties"]["tau_cut"]["minimum"] = 0
-    schema["properties"]["pt3_windows"]["items"]["properties"]["tsep_ls"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["pt3_windows"]["items"]["properties"]["tsep_ls"]["minItems"] = 1
     schema["properties"]["pt3_windows"]["items"]["properties"]["tsep_ls"]["items"]["minimum"] = 1
     schema["properties"] = {name: value for name, value in schema["properties"].items() if name in requested}
     schema["required"] = sorted(requested)
@@ -77,6 +77,11 @@ def recommend(
     validate_value(MatrixFitSuggestion, result, "matrix_tune_z_recommendation")
     if set(result) != requested:
         raise ValueError(f"matrix recommendation must return exactly {sorted(requested)}")
+    for name in ("tune_z_values", "pt2_windows", "pt3_windows"):
+        if name in result:
+            validate_unique_items(result[name], f"matrix_tune_z_recommendation.{name}")
+    for index, window in enumerate(result.get("pt3_windows", [])):
+        validate_unique_items(window["tsep_ls"], f"matrix_tune_z_recommendation.pt3_windows[{index}].tsep_ls")
     return result
 
 

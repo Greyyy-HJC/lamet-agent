@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from lamet_agent.agent import LlmSession, ToolContext
-from lamet_agent.structured import annotation_schema, json_compatible, validate_value
+from lamet_agent.structured import annotation_schema, json_compatible, validate_unique_items, validate_value
 
 
 class Pt2Window(TypedDict):
@@ -37,9 +37,9 @@ def recommend(
     prompt = Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
     schema, _nullable = annotation_schema(QdaFitSuggestion)
     requested = requested_fields or {"tune_z_values"}
-    schema["properties"]["tune_z_values"].update({"minItems": 1, "uniqueItems": True})
-    schema["properties"]["tune_z_values"]["items"]["not"] = {"const": 0}
-    schema["properties"]["pt2_windows"].update({"minItems": 1, "uniqueItems": True})
+    schema["properties"]["tune_z_values"]["minItems"] = 1
+    schema["properties"]["tune_z_values"]["items"]["exclusiveMinimum"] = 0
+    schema["properties"]["pt2_windows"]["minItems"] = 1
     schema["properties"]["pt2_windows"]["items"]["properties"]["tmin"]["minimum"] = 0
     schema["properties"]["pt2_windows"]["items"]["properties"]["tmax"]["minimum"] = 1
     schema["properties"] = {name: value for name, value in schema["properties"].items() if name in requested}
@@ -68,6 +68,9 @@ def recommend(
     validate_value(QdaFitSuggestion, result, "qda_tune_z_recommendation")
     if set(result) != requested:
         raise ValueError(f"qDA recommendation must return exactly {sorted(requested)}")
+    for name in ("tune_z_values", "pt2_windows"):
+        if name in result:
+            validate_unique_items(result[name], f"qda_tune_z_recommendation.{name}")
     return result
 
 
