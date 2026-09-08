@@ -6,14 +6,14 @@ from lamet_agent.kernels.implementation import (
     _p_nlo_transversity,
     _pdf_density,
     _rgr_from_fixed_order,
-    build_matching_matrix,
+    build_matching_matrix_column_plus,
 )
 
 
 def _fixed_order(
     lc_x_ls: np.ndarray, momentum_gev: float, mu: float = 2.0, quasi_y_ls: np.ndarray | None = None, eps: float = 1e-12
 ) -> np.ndarray:
-    return build_matching_matrix(
+    return build_matching_matrix_column_plus(
         lc_x_ls,
         mu,
         quasi_y_ls,

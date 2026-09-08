@@ -7,5 +7,5 @@ with $x_0=1$ and $D=[0,1]$ for the first bracket, $D=(-\infty,\infty)$ for the s
 
 #### Consistency check
 
-The code implements exactly the coefficient above: the splitting function $(1+\xi^2)/(1-\xi)$, the log $L+\ln(4\xi(1-\xi))$ (with the $\ln 4$ removed from $L$ as in the code), the $+1$ constant, the $3/(2|1-\xi|)$ tail, and the $+2(1-\xi)$ shift. The plus-prescription is restored by the column-sum in `build_matching_matrix`, matching the paper's $[\,\cdot\,]^{D}_{+(1)}$ with the correct domain split. No discrepancies found.
+The code implements exactly the coefficient above: the splitting function $(1+\xi^2)/(1-\xi)$, the log $L+\ln(4\xi(1-\xi))$ (with the $\ln 4$ removed from $L$ as in the code), the $+1$ constant, the $3/(2|1-\xi|)$ tail, and the $+2(1-\xi)$ shift. The plus-prescription is restored by the column-sum in `build_matching_matrix_column_plus`, matching the paper's $[\,\cdot\,]^{D}_{+(1)}$ with the correct domain split. No discrepancies found.
 

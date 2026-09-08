@@ -142,7 +142,7 @@ def _lo_interp_matrix(x_grid: np.ndarray, y_grid: np.ndarray) -> np.ndarray:
     return lo
 
 
-def build_matching_matrix(
+def build_matching_matrix_column_plus(
     lc_x_ls: np.ndarray,
     mu: float,
     quasi_y_ls: np.ndarray | None,
@@ -254,15 +254,20 @@ def _uncovered_ksi_intervals(x_val: float, y_grid: np.ndarray, dy: float, eps: f
         edge = hi
     gaps.append((edge, np.inf))
     guard = 0.5 * dy / np.abs(x_val)
+    unity_gap = min(range(len(gaps)), key=lambda i: max(gaps[i][0] - 1.0, 1.0 - gaps[i][1], 0.0))
     clipped = []
-    for lo, hi in gaps:
-        for piece_lo, piece_hi in ((lo, min(hi, 1.0 - guard)), (max(lo, 1.0 + guard), hi)):
+    for index, (lo, hi) in enumerate(gaps):
+        if index == unity_gap:
+            pieces = ((lo, min(hi, 1.0 - guard)), (max(lo, 1.0 + guard), hi))
+        else:
+            pieces = ((lo, hi),)
+        for piece_lo, piece_hi in pieces:
             if piece_hi > piece_lo:
                 clipped.append((piece_lo, piece_hi))
     return clipped
 
 
-def _build_pdf_matrix(
+def build_matching_matrix_row_plus(
     x_ls: np.ndarray,
     momentum_gev: float,
     mu: float,
@@ -443,7 +448,7 @@ def _da_matrix(
             return 0.0
         return 0.5 * coefficient(x, y, momentum_gev, mu, eps) + wilson_line(x, y)
 
-    return build_matching_matrix(lc_x_ls, mu, quasi_y_ls, eps, density=density)
+    return build_matching_matrix_column_plus(lc_x_ls, mu, quasi_y_ls, eps, density=density)
 
 
 def _da_wilson_line(scheme: str, zspz: float | None, eps: float) -> Callable[[float, float], float]:

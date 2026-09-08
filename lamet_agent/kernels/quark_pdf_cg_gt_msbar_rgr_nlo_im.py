@@ -4,9 +4,9 @@ import numpy as np
 from lamet_agent.kernels.implementation import (
     C_msbar,
     C_msbar_plus,
-    _build_pdf_matrix,
     _p_nlo_full_unpolarized,
     _rgr_from_fixed_order,
+    build_matching_matrix_row_plus,
 )
 
 
@@ -18,7 +18,7 @@ def _fixed_order(
     eps: float = 1e-12,
     zspz: float | None = None,
 ) -> np.ndarray:
-    return _build_pdf_matrix(
+    return build_matching_matrix_row_plus(
         lc_x_ls,
         momentum_gev,
         mu,

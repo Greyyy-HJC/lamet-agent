@@ -11,5 +11,5 @@ with the domain $D$ being $[0,1]$ for the first bracket and $(-\infty,\infty)$ f
 
 #### Consistency check
 
-The code implements exactly the coefficient above. The regular coefficient matches: for $0<\xi<1$, the code gives $S(L - \ln 4 + \ln(4\xi(1-\xi)) - 1) + 1$ with $S=(1+\xi^2)/(1-\xi)$, which equals the paper's $S(\ln(y^2P_z^2/\mu^2) + \ln(4\xi(1-\xi)) - 1) + 1$ after the code's $\ln 4$ removal. The $3/(2|1-\xi|)$ tail and the $2(1-\xi)$ correction are present. The plus-prescription is restored by the column-sum in `build_matching_matrix`, matching the paper's $[g]^{D}_{+(1)}$ with domain $[0,1]$ for the first branch and $(-\infty,\infty)$ for the second. No discrepancies found.
+The code implements exactly the coefficient above. The regular coefficient matches: for $0<\xi<1$, the code gives $S(L - \ln 4 + \ln(4\xi(1-\xi)) - 1) + 1$ with $S=(1+\xi^2)/(1-\xi)$, which equals the paper's $S(\ln(y^2P_z^2/\mu^2) + \ln(4\xi(1-\xi)) - 1) + 1$ after the code's $\ln 4$ removal. The $3/(2|1-\xi|)$ tail and the $2(1-\xi)$ correction are present. The plus-prescription is restored by the column-sum in `build_matching_matrix_column_plus`, matching the paper's $[g]^{D}_{+(1)}$ with domain $[0,1]$ for the first branch and $(-\infty,\infty)$ for the second. No discrepancies found.
 

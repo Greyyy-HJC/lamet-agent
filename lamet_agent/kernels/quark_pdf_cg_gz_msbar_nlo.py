@@ -4,7 +4,7 @@ import numpy as np
 from lamet_agent.kernels.implementation import (
     C_msbar_gz,
     C_msbar_gz_plus,
-    _build_pdf_matrix,
+    build_matching_matrix_row_plus,
 )
 
 
@@ -14,7 +14,7 @@ def kernel(
     lc_x_ls = np.asarray(x_out, dtype=float)
     quasi_y_ls = np.asarray(x_in, dtype=float)
     mu = scale_gev
-    return _build_pdf_matrix(
+    return build_matching_matrix_row_plus(
         lc_x_ls,
         momentum_gev,
         mu,
