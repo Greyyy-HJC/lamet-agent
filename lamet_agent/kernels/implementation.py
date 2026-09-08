@@ -253,9 +253,14 @@ def _uncovered_ksi_intervals(x_val: float, y_grid: np.ndarray, dy: float, eps: f
         edge = hi
     gaps.append((edge, np.inf))
     guard = 0.5 * dy / np.abs(x_val)
+    unity_gap = min(range(len(gaps)), key=lambda i: max(gaps[i][0] - 1.0, 1.0 - gaps[i][1], 0.0))
     clipped = []
-    for lo, hi in gaps:
-        for piece_lo, piece_hi in ((lo, min(hi, 1.0 - guard)), (max(lo, 1.0 + guard), hi)):
+    for index, (lo, hi) in enumerate(gaps):
+        if index == unity_gap:
+            pieces = ((lo, min(hi, 1.0 - guard)), (max(lo, 1.0 + guard), hi))
+        else:
+            pieces = ((lo, hi),)
+        for piece_lo, piece_hi in pieces:
             if piece_hi > piece_lo:
                 clipped.append((piece_lo, piece_hi))
     return clipped
