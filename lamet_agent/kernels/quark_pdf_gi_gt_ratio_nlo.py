@@ -4,7 +4,7 @@ import numpy as np
 from lamet_agent.kernels.implementation import (
     C_ratio_gi,
     _pdf_density,
-    build_matching_matrix,
+    build_matching_matrix_column_plus,
 )
 
 
@@ -14,7 +14,7 @@ def kernel(
     lc_x_ls = np.asarray(x_out, dtype=float)
     quasi_y_ls = np.asarray(x_in, dtype=float)
     mu = scale_gev
-    return build_matching_matrix(
+    return build_matching_matrix_column_plus(
         lc_x_ls,
         mu,
         quasi_y_ls,

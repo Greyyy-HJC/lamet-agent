@@ -6,7 +6,7 @@ from lamet_agent.kernels.implementation import (
     GEV_FM,
     _lrr_from_fixed_order,
     _pdf_density,
-    build_matching_matrix,
+    build_matching_matrix_column_plus,
 )
 
 
@@ -21,7 +21,7 @@ def _fixed_order(
     if zspz is None:
         raise ValueError("`zspz` is required for the hybrid matching kernel.")
     z = float(zspz)
-    return build_matching_matrix(
+    return build_matching_matrix_column_plus(
         lc_x_ls,
         mu,
         quasi_y_ls,

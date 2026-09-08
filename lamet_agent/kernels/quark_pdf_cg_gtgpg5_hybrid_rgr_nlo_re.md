@@ -9,7 +9,7 @@ with the regular coefficient (the code’s `C_ratio_perp`):
 
 $$C^{\rm ratio,(1)}_{\perp}(\xi,L) = \frac{2\xi}{1-\xi}L + \frac{2\xi}{1-\xi}\Big[\operatorname{sgn}(\xi)\ln|\xi|+\operatorname{sgn}(1-\xi)\ln|1-\xi|\Big] + \frac{3\xi-1}{\xi-1}\frac{\arctan\!\big(\sqrt{|1-2\xi|}/|\xi|\big)}{\sqrt{|1-2\xi|}} - \frac{1}{|1-\xi|},$$
 
-with the branch of the arctan/arctanh term chosen by $\xi\lessgtr 1/2$ (analytic at $\xi=1/2$). The plus prescription is applied by the column-sum subtraction in `build_matching_matrix`, which makes each $y$-column integrate to zero; in the paper’s notation this is the bracket $[\,\cdot\,]^{[-\infty,\infty]}_{+(1)}$ (the paper writes the domain as superscript and the subtraction point as subscript, e.g. $[g]^{[0,1]}_{+(1)}$). There is no $\delta(1-\xi)$ term beyond the LO identity.
+with the branch of the arctan/arctanh term chosen by $\xi\lessgtr 1/2$ (analytic at $\xi=1/2$). The plus prescription is applied by the column-sum subtraction in `build_matching_matrix_column_plus`, which makes each $y$-column integrate to zero; in the paper’s notation this is the bracket $[\,\cdot\,]^{[-\infty,\infty]}_{+(1)}$ (the paper writes the domain as superscript and the subtraction point as subscript, e.g. $[g]^{[0,1]}_{+(1)}$). There is no $\delta(1-\xi)$ term beyond the LO identity.
 
 The resummation: each row $x_i$ is matched at its own scale $\mu_0(x_i)=2\kappa x_i P_z$ (with $\kappa$ the scale-variation knob, $c'$ in the paper), then evolved to $\mu$ by the path-ordered matrix exponential
 
