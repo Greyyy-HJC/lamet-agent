@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
+
 
 def _is_finite(value: object) -> bool:
     try:
@@ -106,17 +108,20 @@ def select_tuned_candidate(
 def dataset_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     """Identity of the observations used by one correlator candidate.
 
-    Window, strategy, and scope freeze the likelihood data. nstate and prior_width
-    are excluded so model averaging can combine those variants on one dataset.
+    Window and the complete scope pipeline freeze the likelihood data. nstate and
+    prior_width are excluded so model averaging can combine those variants on one
+    dataset.
     """
     window = candidate.get("window") if isinstance(candidate.get("window"), dict) else {}
     tseps = candidate.get("tsep_values")
     tsep_key = tuple(int(value) for value in tseps) if isinstance(tseps, (list, tuple)) else ()
     tau_min = window.get("tau_min")
+    scope = candidate.get("fit_scope", [])
+    scope_values = list(scope) if isinstance(scope, (list, tuple)) else [str(scope)]
+    scope_key = parse_fit_scope(scope_values).key()
     return (
         str(candidate.get("method", "")),
-        str(candidate.get("fit_strategy", "")),
-        str(candidate.get("fit_scope", "")),
+        scope_key,
         int(window["tmin"]) if window.get("tmin") is not None else -1,
         int(window["tmax"]) if window.get("tmax") is not None else -1,
         int(tau_min) if tau_min is not None else -1,

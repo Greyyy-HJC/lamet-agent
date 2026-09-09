@@ -12,6 +12,7 @@ from lamet_agent.data import EnsembleData
 from lamet_agent.parallel import FitNumericalError, nonlinear_fit
 from lamet_agent.parallel._pool import _ParallelPool
 from lamet_agent.ui import track
+from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
 
 
 def _state_energies(parameters: Mapping[str, Any], n_states: int, suffix: str = "") -> list[Any]:
@@ -34,6 +35,61 @@ def _two_point_model(
     return values
 
 
+def pt2_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
+    """Evaluate one periodic raw two-point correlator."""
+    return _two_point_model(
+        np.asarray(x["times"]),
+        parameters,
+        int(x["extent"]),
+        int(x["n_states"]),
+        str(x.get("suffix", "")),
+    )
+
+
+def _three_point_model(
+    times: np.ndarray,
+    insertions: np.ndarray,
+    parameters: Mapping[str, Any],
+    n_states: int,
+    form: str,
+    component: str,
+) -> np.ndarray:
+    """Evaluate a raw three-point spectral decomposition."""
+    if form == "Breit":
+        energies = _state_energies(parameters, n_states)
+        value = 0.0
+        for source, source_energy in enumerate(energies):
+            for sink, sink_energy in enumerate(energies):
+                matrix = parameters[f"O{min(source, sink)}{max(source, sink)}_{component}"]
+                value = value + matrix * parameters[f"z{source}"] * parameters[f"z{sink}"] * np.exp(
+                    -source_energy * (times - insertions)
+                ) * np.exp(-sink_energy * insertions) / (2 * source_energy) / (2 * sink_energy)
+        return value
+    energies_i = _state_energies(parameters, n_states, "_i")
+    energies_f = _state_energies(parameters, n_states, "_f")
+    value = 0.0
+    for sink, sink_energy in enumerate(energies_f):
+        for source, source_energy in enumerate(energies_i):
+            value = value + parameters[f"O{sink}{source}_{component}"] * parameters[f"z{sink}_f"] * parameters[
+                f"z{source}_i"
+            ] * np.exp(-sink_energy * (times - insertions)) * np.exp(-source_energy * insertions) / (
+                2 * sink_energy
+            ) / (2 * source_energy)
+    return value
+
+
+def pt3_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
+    """Evaluate one component of a raw three-point correlator."""
+    return _three_point_model(
+        np.asarray(x["times"]),
+        np.asarray(x["insertions"]),
+        parameters,
+        int(x["n_states"]),
+        str(x["form"]),
+        str(x["component"]),
+    )
+
+
 def _ratio_model(
     times: np.ndarray,
     insertions: np.ndarray,
@@ -43,26 +99,9 @@ def _ratio_model(
     form: str,
     component: str,
 ) -> np.ndarray:
+    numerator = _three_point_model(times, insertions, parameters, n_states, form, component)
     if form == "Breit":
-        energies = _state_energies(parameters, n_states)
-        numerator = 0.0
-        for source, source_energy in enumerate(energies):
-            for sink, sink_energy in enumerate(energies):
-                matrix = parameters[f"O{min(source, sink)}{max(source, sink)}_{component}"]
-                numerator = numerator + matrix * parameters[f"z{source}"] * parameters[f"z{sink}"] * np.exp(
-                    -source_energy * (times - insertions)
-                ) * np.exp(-sink_energy * insertions) / (2 * source_energy) / (2 * sink_energy)
         return numerator / _two_point_model(times, parameters, extent, n_states)
-    energies_i = _state_energies(parameters, n_states, "_i")
-    energies_f = _state_energies(parameters, n_states, "_f")
-    numerator = 0.0
-    for sink, sink_energy in enumerate(energies_f):
-        for source, source_energy in enumerate(energies_i):
-            numerator = numerator + parameters[f"O{sink}{source}_{component}"] * parameters[f"z{sink}_f"] * parameters[
-                f"z{source}_i"
-            ] * np.exp(-sink_energy * (times - insertions)) * np.exp(-source_energy * insertions) / (
-                2 * sink_energy
-            ) / (2 * source_energy)
     c2_i_t_tau = _two_point_model(times - insertions, parameters, extent, n_states, "_i")
     c2_i_tau = _two_point_model(insertions, parameters, extent, n_states, "_i")
     c2_i_t = _two_point_model(times, parameters, extent, n_states, "_i")
@@ -89,41 +128,67 @@ def _summed_ratio_model(
 
 
 def matrix_element_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
-    """Evaluate the ordered channels of one matrix-element fit."""
-    values = []
+    """Evaluate the ordered observation blocks of one joint fit stage."""
+    values: list[np.ndarray] = []
     n_states = int(x["n_states"])
     extent = int(x["extent"])
-    strategy = str(x["strategy"])
     form = str(x["form"])
-    scope = str(x["scope"])
+    atoms = tuple(x["atoms"])
     components = tuple(x["components"])
-    if strategy == "joint":
-        if form == "Breit":
-            values.append(_two_point_model(x["pt2_t"], parameters, extent, n_states))
+    for atom in atoms:
+        if atom == "2pt":
+            if x.get("family") == "qda" and x.get("denominator_kind") == "qda_z0":
+                values.append(_qda_correlator(x["pt2_t"], parameters, extent, n_states, "zprime"))
+            elif form == "Breit":
+                values.append(_two_point_model(x["pt2_t"], parameters, extent, n_states))
+            else:
+                values.append(_two_point_model(x["pt2_t"], parameters, extent, n_states, "_i"))
+                values.append(_two_point_model(x["pt2_t"], parameters, extent, n_states, "_f"))
+        elif atom == "3pt":
+            for component in components:
+                values.append(_three_point_model(x["ratio_t"], x["ratio_tau"], parameters, n_states, form, component))
+        elif atom == "3pt_ratio":
+            for component in components:
+                values.append(_ratio_model(x["ratio_t"], x["ratio_tau"], parameters, extent, n_states, form, component))
+        elif atom == "qda":
+            for component in components:
+                values.append(_qda_correlator(x["qda_t"], parameters, extent, n_states, component))
+        elif atom == "qda_ratio":
+            denominator_key = "zprime" if x.get("denominator_kind") == "qda_z0" else None
+            denominator = (
+                _qda_correlator(x["qda_t"], parameters, extent, n_states, denominator_key)
+                if denominator_key is not None
+                else _two_point_model(x["qda_t"], parameters, extent, n_states)
+            )
+            for component in components:
+                values.append(_qda_correlator(x["qda_t"], parameters, extent, n_states, component) / denominator)
+        elif atom == "FH":
+            for component in components:
+                after = _summed_ratio_model(x["fh_t"] + x["fh_dt"], int(x["tau_min"]), parameters, n_states, component)
+                before = _summed_ratio_model(x["fh_t"], int(x["tau_min"]), parameters, n_states, component)
+                values.append((after - before) / x["fh_dt"])
         else:
-            values.append(_two_point_model(x["pt2_t"], parameters, extent, n_states, "_i"))
-            values.append(_two_point_model(x["pt2_t"], parameters, extent, n_states, "_f"))
-    if scope in {"3pt_ratio", "3pt_ratio+FH"}:
-        for component in components:
-            values.append(_ratio_model(x["ratio_t"], x["ratio_tau"], parameters, extent, n_states, form, component))
-    if scope in {"FH", "3pt_ratio+FH"}:
-        for component in components:
-            after = _summed_ratio_model(x["fh_t"] + x["fh_dt"], int(x["tau_min"]), parameters, n_states, component)
-            before = _summed_ratio_model(x["fh_t"], int(x["tau_min"]), parameters, n_states, component)
-            values.append((after - before) / x["fh_dt"])
+            raise ValueError(f"unsupported fit-scope atom {atom!r}")
     return np.concatenate([np.atleast_1d(value) for value in values])
 
 
 def matrix_element_prior(
-    n_states: int, *, form: str, scope: str, components: tuple[str, ...], width_scale: float
+    n_states: int,
+    *,
+    form: str,
+    scope: str | tuple[str, ...] | list[str],
+    components: tuple[str, ...],
+    width_scale: float,
+    denominator_kind: str = "external_2pt",
 ) -> gv.BufferDict:
     """Build the explicit spectral and matrix-element prior for one fit model."""
     if n_states < 1 or not np.isfinite(width_scale) or width_scale <= 0:
         raise ValueError("n_states and width_scale must be positive")
-    if form not in {"Breit", "NonBreit"} or scope not in {"3pt_ratio", "FH", "3pt_ratio+FH"}:
+    atoms = set(scope.split("+")) if isinstance(scope, str) else set(scope)
+    if form not in {"Breit", "NonBreit"} or not atoms:
         raise ValueError("unsupported fitting form or scope")
-    if form == "NonBreit" and scope != "3pt_ratio":
-        raise ValueError("NonBreit fitting supports only 3pt_ratio")
+    if form == "NonBreit" and atoms - {"2pt", "3pt", "3pt_ratio"}:
+        raise ValueError("NonBreit fitting supports only 2pt, 3pt, and 3pt_ratio")
     prior = gv.BufferDict()
     suffixes = ("",) if form == "Breit" else ("_i", "_f")
     for suffix in suffixes:
@@ -132,7 +197,7 @@ def matrix_element_prior(
             prior[f"log(dE{state}{suffix})"] = gv.gvar(0.0, width_scale)
         for state in range(n_states):
             prior[f"z{state}{suffix}"] = gv.gvar(1.0, 10.0 * width_scale) / 3**state
-    if scope in {"3pt_ratio", "3pt_ratio+FH"}:
+    if atoms & {"3pt", "3pt_ratio"}:
         if form == "Breit":
             matrix_indices = [(row, column) for row in range(n_states) for column in range(row, n_states)]
         else:
@@ -140,7 +205,7 @@ def matrix_element_prior(
         for row, column in matrix_indices:
             for component in ("re", "im"):
                 prior[f"O{row}{column}_{component}"] = gv.gvar(1.0, 10.0 * width_scale)
-    if scope in {"FH", "3pt_ratio+FH"}:
+    if "FH" in atoms:
         for component in ("re", "im"):
             prior.setdefault(f"O00_{component}", gv.gvar(1.0, 10.0 * width_scale))
             if n_states > 1:
@@ -149,6 +214,18 @@ def matrix_element_prior(
                 prior[f"sum_{component}_exp_offset"] = gv.gvar(0.0, 10.0 * width_scale)
         if n_states > 1:
             prior["sum_den_exp_coeff"] = gv.gvar(0.0, 10.0 * width_scale)
+    if denominator_kind == "qda_z0" and "2pt" in atoms:
+        for state in range(n_states):
+            prior[f"zprime{state}"] = gv.gvar(1.0, 10.0 * width_scale) / 3**state
+    if atoms & {"qda", "qda_ratio"}:
+        if form != "Breit":
+            raise ValueError("qDA fitting supports only Breit kinematics")
+        if denominator_kind == "qda_z0" and "2pt" not in atoms:
+            for state in range(n_states):
+                prior[f"zprime{state}"] = gv.gvar(1.0, 10.0 * width_scale) / 3**state
+        for state in range(n_states):
+            prior[f"O0{state}_re"] = gv.gvar(1.0, 10.0 * width_scale)
+            prior[f"O0{state}_im"] = gv.gvar(0.0, 10.0 * width_scale)
     return prior
 
 
@@ -323,12 +400,23 @@ def _momentum(data: EnsembleData, name: str) -> tuple[int, int, int]:
     return tuple(int(component) for component in value)
 
 
+def _optional_momentum(data: EnsembleData, name: str) -> tuple[int, int, int] | None:
+    value = data.attrs.get(name)
+    if value is None:
+        return None
+    try:
+        decoded = json.loads(value) if isinstance(value, str) else value
+        momentum = tuple(int(component) for component in decoded)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return momentum if len(momentum) == 3 else None
+
+
 def fit_matrix_element_samples(
     correlators: Mapping[str, EnsembleData],
     *,
-    strategy: str,
     fitting_form: str,
-    fit_scope: str,
+    fit_scope: list[str] | tuple[str, ...],
     components: str,
     tmin: int,
     tmax: int,
@@ -346,16 +434,15 @@ def fit_matrix_element_samples(
     show_progress: bool = False,
     _parallel: _ParallelPool | None = None,
 ) -> tuple[EnsembleData | None, dict[str, Any]]:
-    """Fit one tuning point or apply one model to all z values and samples."""
-    if strategy not in {"joint", "chained", "independent"}:
-        raise ValueError("strategy must be joint, chained, or independent")
+    """Fit one ordinary three-point scope pipeline."""
+    pipeline = parse_fit_scope(fit_scope)
+    if pipeline.is_qda or pipeline.is_spectrum or not pipeline.needs_pt3_data:
+        raise ValueError("ordinary matrix-element fitting requires a three-point or FH fit_scope")
     if fitting_form not in {"Breit", "NonBreit"}:
         raise ValueError("fitting_form must be Breit or NonBreit")
-    if fit_scope not in {"3pt_ratio", "FH", "3pt_ratio+FH"}:
-        raise ValueError("fit_scope must be 3pt_ratio, FH, or 3pt_ratio+FH")
-    if fitting_form == "NonBreit" and fit_scope != "3pt_ratio":
-        raise ValueError("NonBreit fitting supports only 3pt_ratio")
-    if n_states > 2 and "FH" in fit_scope:
+    if fitting_form == "NonBreit" and pipeline.atom_set - {"2pt", "3pt", "3pt_ratio"}:
+        raise ValueError("NonBreit fitting supports only 2pt, 3pt, and 3pt_ratio")
+    if n_states > 2 and "FH" in pipeline.atom_set:
         raise ValueError("FH fitting supports at most two states")
     selected_components = {"real": ("re",), "imag": ("im",), "both": ("re", "im")}.get(components)
     if selected_components is None:
@@ -443,50 +530,6 @@ def fit_matrix_element_samples(
             )
             ratios[tsep] = ratio
 
-    base_prior = matrix_element_prior(
-        n_states, form=fitting_form, scope=fit_scope, components=selected_components, width_scale=prior_width
-    )
-    chained_prior = None
-    if strategy == "chained":
-        spectral_x = {
-            "n_states": n_states,
-            "extent": extent,
-            "strategy": "joint",
-            "form": fitting_form,
-            "scope": "spectrum",
-            "components": (),
-            "pt2_t": times[pt2_mask],
-        }
-        spectral_parts = [np.real(initial_values[:, pt2_mask]) * correlator_rescale]
-        if fitting_form == "NonBreit":
-            spectral_parts.append(np.real(final_values[:, pt2_mask]) * correlator_rescale)
-        spectral_values = np.concatenate(spectral_parts, axis=1)
-        spectral_data = EnsembleData(
-            initial.ensemble,
-            initial.resample,
-            list(spectral_values),
-            ["observation"],
-            {"observation": list(range(spectral_values.shape[1]))},
-        )
-        spectral_prior = matrix_element_prior(
-            n_states, form=fitting_form, scope="3pt_ratio", components=selected_components, width_scale=prior_width
-        )
-        spectral_prior = gv.BufferDict({key: value for key, value in spectral_prior.items() if not key.startswith("O")})
-        spectral_fit = nonlinear_fit(
-            (spectral_x, spectral_data),
-            matrix_element_fcn,
-            spectral_prior,
-            workers=workers,
-            sample_error_mode=sample_error_mode,
-            mode="center",
-            svdcut=svdcut,
-            maxit=10000,
-        )
-        chained_prior = gv.BufferDict(base_prior)
-        for key in spectral_prior:
-            value = spectral_fit.p[key]
-            chained_prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * posterior_prior_error_scale)
-
     z_values = list(three_point.coords["z"])
     if tune_z is None:
         z_indices = list(range(len(z_values)))
@@ -510,70 +553,107 @@ def fit_matrix_element_samples(
         )
         for z_index in fit_indices:
             z_value = z_values[z_index]
-            pieces = []
-            x: dict[str, Any] = {
-                "n_states": n_states,
-                "extent": extent,
-                "strategy": strategy,
-                "form": fitting_form,
-                "scope": fit_scope,
-                "components": selected_components,
-                "tau_min": tau_min,
-            }
-            if strategy == "joint":
-                x["pt2_t"] = times[pt2_mask]
-                pieces.append(np.real(initial_values[:, pt2_mask]) * correlator_rescale)
-                if fitting_form == "NonBreit":
-                    pieces.append(np.real(final_values[:, pt2_mask]) * correlator_rescale)
-            if fit_scope in {"3pt_ratio", "3pt_ratio+FH"}:
-                ratio_t = []
-                ratio_tau = []
-                selected_ratio = []
-                for tsep in tsep_values:
-                    tau_mask = (available_tau >= tau_min) & (available_tau <= tsep - tau_min)
-                    ratio_t.extend([tsep] * int(np.count_nonzero(tau_mask)))
-                    ratio_tau.extend(available_tau[tau_mask].tolist())
-                    selected_ratio.append(ratios[tsep][:, tau_mask, z_index])
-                x["ratio_t"] = np.asarray(ratio_t, dtype=float)
-                x["ratio_tau"] = np.asarray(ratio_tau, dtype=float)
-                for component in selected_components:
-                    pieces.extend(
-                        np.real(values) if component == "re" else np.imag(values) for values in selected_ratio
-                    )
-            if fit_scope in {"FH", "3pt_ratio+FH"}:
-                summed = []
-                for tsep in tsep_values:
-                    tau_mask = (available_tau >= tau_min) & (available_tau <= tsep - tau_min)
-                    summed.append(np.sum(ratios[tsep][:, tau_mask, z_index], axis=1))
-                summed_values = np.stack(summed, axis=1)
-                differences = np.diff(summed_values, axis=1) / np.diff(np.asarray(tsep_values, dtype=float))[None, :]
-                x["fh_t"] = np.asarray(tsep_values[:-1], dtype=float)
-                x["fh_dt"] = np.diff(np.asarray(tsep_values, dtype=float))
-                for component in selected_components:
-                    pieces.append(np.real(differences) if component == "re" else np.imag(differences))
-            observations = np.concatenate(pieces, axis=1)
-            fit_data = EnsembleData(
-                initial.ensemble,
-                initial.resample,
-                list(observations),
-                ["observation"],
-                {"observation": list(range(observations.shape[1]))},
-            )
-            fit_prior = chained_prior if chained_prior is not None else base_prior
-            result = nonlinear_fit(
-                (x, fit_data),
-                matrix_element_fcn,
-                fit_prior,
-                workers=workers,
-                sample_prior_scale=posterior_prior_error_scale * prior_width,
-                sample_error_mode=sample_error_mode,
-                mode="resamples" if fit_samples else "center",
-                tolerate_sample_failures=True,
-                capture_sample_posteriors=(0,) if fit_samples else (),
-                _parallel=parallel,
-                svdcut=svdcut,
-                maxit=10000,
-            )
+            ratio_t: list[int] = []
+            ratio_tau: list[int] = []
+            selected_ratio: list[np.ndarray] = []
+            selected_raw: list[np.ndarray] = []
+            for tsep in tsep_values:
+                tau_mask = (available_tau >= tau_min) & (available_tau <= tsep - tau_min)
+                ratio_t.extend([tsep] * int(np.count_nonzero(tau_mask)))
+                ratio_tau.extend(available_tau[tau_mask].tolist())
+                selected_ratio.append(ratios[tsep][:, tau_mask, z_index])
+                tsep_index = int(np.flatnonzero(available_tseps == tsep)[0])
+                selected_raw.append(three_values[:, tsep_index, tau_mask, z_index])
+            summed = [np.sum(values, axis=1) for values in selected_ratio]
+            summed_values = np.stack(summed, axis=1)
+            differences = np.diff(summed_values, axis=1) / np.diff(np.asarray(tsep_values, dtype=float))[None, :]
+
+            previous_posterior: Mapping[str, Any] | None = None
+            stage_diagnostics: list[dict[str, Any]] = []
+            result = None
+            fit_prior = None
+            observations = None
+            for stage_index, atoms in enumerate(pipeline.stages):
+                x: dict[str, Any] = {
+                    "n_states": n_states,
+                    "extent": extent,
+                    "form": fitting_form,
+                    "atoms": atoms,
+                    "components": selected_components,
+                    "tau_min": tau_min,
+                    "family": "ordinary",
+                    "pt2_t": times[pt2_mask],
+                    "ratio_t": np.asarray(ratio_t, dtype=float),
+                    "ratio_tau": np.asarray(ratio_tau, dtype=float),
+                    "fh_t": np.asarray(tsep_values[:-1], dtype=float),
+                    "fh_dt": np.diff(np.asarray(tsep_values, dtype=float)),
+                }
+                pieces: list[np.ndarray] = []
+                for atom in atoms:
+                    if atom == "2pt":
+                        pieces.append(np.real(initial_values[:, pt2_mask]) * correlator_rescale)
+                        if fitting_form == "NonBreit":
+                            pieces.append(np.real(final_values[:, pt2_mask]) * correlator_rescale)
+                    elif atom in {"3pt", "3pt_ratio"}:
+                        source_values = selected_raw if atom == "3pt" else selected_ratio
+                        for component in selected_components:
+                            component_parts = [
+                                np.real(values) if component == "re" else np.imag(values) for values in source_values
+                            ]
+                            scale = correlator_rescale if atom == "3pt" else 1.0
+                            pieces.append(np.concatenate(component_parts, axis=1) * scale)
+                    elif atom == "FH":
+                        for component in selected_components:
+                            pieces.append(np.real(differences) if component == "re" else np.imag(differences))
+                observations = np.concatenate(pieces, axis=1)
+                fit_data = EnsembleData(
+                    initial.ensemble,
+                    initial.resample,
+                    list(observations),
+                    ["observation"],
+                    {"observation": list(range(observations.shape[1]))},
+                )
+                fit_prior = matrix_element_prior(
+                    n_states,
+                    form=fitting_form,
+                    scope=atoms,
+                    components=selected_components,
+                    width_scale=prior_width,
+                )
+                if previous_posterior is not None:
+                    for key in fit_prior:
+                        if key in previous_posterior:
+                            value = previous_posterior[key]
+                            fit_prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * posterior_prior_error_scale)
+                is_final = stage_index == len(pipeline.stages) - 1
+                result = nonlinear_fit(
+                    (x, fit_data),
+                    matrix_element_fcn,
+                    fit_prior,
+                    workers=workers,
+                    sample_prior_scale=posterior_prior_error_scale * prior_width,
+                    sample_error_mode=sample_error_mode,
+                    mode="resamples" if is_final and fit_samples else "center",
+                    tolerate_sample_failures=is_final and fit_samples,
+                    capture_sample_posteriors=(0,) if is_final and fit_samples else (),
+                    _parallel=parallel if is_final else None,
+                    svdcut=svdcut,
+                    maxit=10000,
+                )
+                previous_posterior = result.p
+                stage_diagnostics.append(
+                    {
+                        "stage": "+".join(atoms),
+                        "chi2": result.chi2,
+                        "dof": result.dof,
+                        "chi2_dof": result.chi2 / result.dof,
+                        "Q": result.Q,
+                        "logGBF": result.logGBF,
+                        "n_data": int(observations.shape[1]),
+                    }
+                )
+            if result is None or fit_prior is None or observations is None:
+                raise RuntimeError("fit_scope produced no ordinary fit stage")
             n_params = sum(int(np.size(gv.mean(fit_prior[key]))) for key in fit_prior)
             energy_keys = ("E0_i", "E0_f") if fitting_form == "NonBreit" else ("E0",)
             energy_summary = {}
@@ -602,6 +682,13 @@ def fit_matrix_element_samples(
                 )
                 energy_summary[f"{energy_key}_samples"] = energy_samples
             sample_diagnostics = _sample_diagnostic_records(result) if fit_samples else []
+            plot_scope = (
+                "3pt_ratio+FH"
+                if "FH" in pipeline.final_stage and pipeline.atom_set & {"3pt", "3pt_ratio"}
+                else "FH"
+                if "FH" in pipeline.final_stage
+                else "3pt_ratio"
+            )
             sample0_plot = (
                 _matrix_sample0_plot_payload(
                     ratios=ratios,
@@ -609,7 +696,7 @@ def fit_matrix_element_samples(
                     z_index=z_index,
                     posterior=result.sample_posteriors[0] if result.sample_posteriors else None,
                     selected_components=selected_components,
-                    fit_scope=fit_scope,
+                    fit_scope=plot_scope,
                     fitting_form=fitting_form,
                     extent=extent,
                     n_states=n_states,
@@ -636,6 +723,7 @@ def fit_matrix_element_samples(
                     "n_failed_samples": 0,
                     "sample_diagnostics": sample_diagnostics,
                     "sample0_plot": sample0_plot,
+                    "stages": stage_diagnostics,
                     **energy_summary,
                 }
             )
@@ -686,9 +774,9 @@ def fit_matrix_element_samples(
         attrs = dict(three_point.attrs)
         attrs.update(
             {
-                "method": strategy,
+                "method": "lsqfit",
                 "fitting_form": fitting_form,
-                "fit_scope": fit_scope,
+                "fit_scope": json.dumps(pipeline.as_list()),
                 "n_states": n_states,
                 "tmin": tmin,
                 "tmax": tmax,
@@ -708,8 +796,7 @@ def fit_matrix_element_samples(
         )
     tuning_fit = center_metrics[0] if not fit_samples and tune_z is not None else None
     diagnostics = {
-        "fit_scope": fit_scope,
-        "strategy": strategy,
+        "fit_scope": pipeline.as_list(),
         "fitting_form": fitting_form,
         "workers": workers,
         "min_Q": min(record["Q"] for record in center_metrics),
@@ -755,41 +842,34 @@ def _qda_correlator(
     return values
 
 
+def qda_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
+    """Evaluate one component of a raw qDA correlator."""
+    component = str(x["component"])
+    if component not in {"re", "im"}:
+        raise ValueError("qDA component must be re or im")
+    return _qda_correlator(
+        np.asarray(x["times"]),
+        parameters,
+        int(x["extent"]),
+        int(x["n_states"]),
+        component,
+    )
+
+
 def qda_ratio_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
-    """Evaluate the nonlocal-to-local qDA ratio, constant at one state."""
+    """Evaluate the selected qDA components divided by their local two-point model."""
     times = x["times"]
     n_states = int(x.get("n_states", 1))
-    size = len(times)
-    if n_states == 1:
-        return np.concatenate(
-            [
-                np.full(size, parameters["O00_re"] / parameters["zprime0"]),
-                np.full(size, parameters["O00_im"] / parameters["zprime0"]),
-            ]
-        )
     extent = int(x["extent"])
-    denominator = _qda_correlator(times, parameters, extent, n_states, "zprime")
+    denominator = (
+        _qda_correlator(times, parameters, extent, n_states, "zprime")
+        if x.get("denominator_kind", "qda_z0") == "qda_z0"
+        else _two_point_model(times, parameters, extent, n_states)
+    )
+    components = tuple(x.get("components", ("re", "im")))
     return np.concatenate(
-        [
-            _qda_correlator(times, parameters, extent, n_states, "re") / denominator,
-            _qda_correlator(times, parameters, extent, n_states, "im") / denominator,
-        ]
+        [_qda_correlator(times, parameters, extent, n_states, component) / denominator for component in components]
     )
-
-
-def _qda_denominator_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
-    """Evaluate the rescaled local qDA two-point denominator."""
-    return float(x["correlator_rescale"]) * _qda_correlator(
-        x["times"], parameters, int(x["extent"]), int(x["n_states"]), "zprime"
-    )
-
-
-def _qda_fit_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
-    """Evaluate the observations selected by one qDA fit strategy."""
-    ratio = qda_ratio_fcn(x, parameters)
-    if x["strategy"] == "joint":
-        return np.concatenate([_qda_denominator_fcn(x, parameters), ratio])
-    return ratio
 
 
 def _qda_correlator_rescale(values: np.ndarray) -> float:
@@ -803,20 +883,6 @@ def _qda_correlator_rescale(values: np.ndarray) -> float:
     if not np.isfinite(scale) or scale <= 0.0:
         raise ValueError("qDA local-denominator rescale is outside the finite float range")
     return scale
-
-
-def _qda_ratio_prior(n_states: int, prior_width: float) -> gv.BufferDict:
-    prior = gv.BufferDict()
-    prior["log(E0)"] = gv.gvar(0.0, 3.0 * prior_width)
-    for state in range(1, n_states):
-        prior[f"log(dE{state})"] = gv.gvar(0.0, prior_width)
-    for state in range(n_states):
-        scale = 3**state
-        prior[f"z{state}"] = gv.gvar(1.0, 10.0 * prior_width) / scale
-        prior[f"zprime{state}"] = gv.gvar(1.0, 10.0 * prior_width) / scale
-        prior[f"O0{state}_re"] = gv.gvar(1.0, 10.0 * prior_width)
-        prior[f"O0{state}_im"] = gv.gvar(0.0, 10.0 * prior_width)
-    return prior
 
 
 def fit_spectrum_samples(
@@ -894,6 +960,356 @@ def fit_spectrum_samples(
     }
 
 
+def _qda_two_point_source(records: list[EnsembleData], source: EnsembleData) -> tuple[EnsembleData | None, str]:
+    """Prefer one compatible explicit two-point correlator, else use qDA z=0."""
+    explicit = [value for value in records if value.attrs.get("correlator_type") == "two_point"]
+    if not explicit:
+        return None, "qda_z0"
+    if len(explicit) != 1:
+        raise ValueError("qDA fitting accepts at most one explicit two-point input")
+    source_momentum = _optional_momentum(source, "sink_momentum")
+    compatible = [
+        value
+        for value in explicit
+        if value.dims == ["t"]
+        and value.resample == source.resample
+        and value.n_sample == source.n_sample
+        and value.attrs.get("resample_id") == source.attrs.get("resample_id")
+        and _optional_momentum(value, "sink_momentum") == source_momentum
+    ]
+    if len(compatible) != 1:
+        raise ValueError("the explicit qDA two-point input is incompatible with the qDA correlator")
+    return compatible[0], "external_2pt"
+
+
+def fit_qda_samples(
+    correlators: Mapping[str, EnsembleData],
+    *,
+    fit_scope: list[str] | tuple[str, ...],
+    components: str,
+    tmin: int,
+    tmax: int,
+    n_states: int,
+    prior_width: float,
+    svdcut: float,
+    posterior_prior_error_scale: float,
+    sample_error_mode: str = "covariance",
+    workers: int = 1,
+    tune_z: int | float | None = None,
+    fit_samples: bool = True,
+    show_progress: bool = False,
+    _parallel: _ParallelPool | None = None,
+) -> tuple[EnsembleData | None, dict[str, Any]]:
+    """Fit one raw/ratio qDA scope pipeline and return normalized samples."""
+    pipeline = parse_fit_scope(fit_scope)
+    if not pipeline.is_qda:
+        raise ValueError("qDA fitting requires a qda or qda_ratio atom")
+    selected_components = {"real": ("re",), "imag": ("im",), "both": ("re", "im")}.get(components)
+    if selected_components is None:
+        raise ValueError("components must be real, imag, or both")
+    if isinstance(n_states, bool) or not isinstance(n_states, int) or n_states < 1:
+        raise ValueError("qDA fitting requires a positive state count")
+    if not np.isfinite(prior_width) or prior_width <= 0:
+        raise ValueError("qDA prior_width must be finite and positive")
+    if fit_samples and tune_z is not None:
+        raise ValueError("tune_z is only valid for sample-average qDA tuning")
+    if not fit_samples and tune_z is None:
+        raise ValueError("sample-average qDA tuning requires tune_z")
+    records = [value for value in correlators.values() if isinstance(value, EnsembleData)]
+    sources = [value for value in records if value.attrs.get("correlator_type") == "qda"]
+    if len(sources) != 1 or sources[0].dims != ["t", "z"]:
+        raise ValueError("qDA fitting requires exactly one qDA correlator with dimensions ['t', 'z']")
+    source = sources[0]
+    if source.ensemble is None:
+        raise ValueError("qDA fitting requires the temporal extent")
+    extent = int(source.ensemble.L_t)
+    t = np.asarray(source.coords["t"], dtype=float)
+    z = np.asarray(source.coords["z"], dtype=float)
+    selected = np.flatnonzero((t >= tmin) & (t < tmax))
+    if selected.size < 2 * n_states:
+        raise ValueError("qDA fit window must contain at least 2*n_states times")
+    source_values = np.asarray(source.values)
+    two_point, denominator_kind = _qda_two_point_source(records, source)
+    if two_point is None:
+        origin = np.flatnonzero(np.isclose(z, 0.0, rtol=0.0, atol=1e-12))
+        if origin.size != 1:
+            raise ValueError("qDA fitting without an explicit two-point input requires one unique z=0 coordinate")
+        origin_index: int | None = int(origin[0])
+        denominator_values = source_values[:, :, origin_index]
+    else:
+        origin_index = None
+        pt2_t = np.asarray(two_point.coords["t"], dtype=float)
+        indices = []
+        for value in t:
+            matches = np.flatnonzero(np.isclose(pt2_t, value, rtol=0.0, atol=1e-12))
+            if matches.size != 1:
+                raise ValueError("explicit qDA two-point input must cover every qDA time exactly once")
+            indices.append(int(matches[0]))
+        denominator_values = np.asarray(two_point.values)[:, indices]
+    if np.any(denominator_values[:, selected] == 0):
+        raise ValueError("qDA denominator contains zero values in the fit window")
+    raw_scale = _qda_correlator_rescale(np.real(denominator_values[:, selected]))
+    plot_upper = float(extent) / 2.0
+    plot_selected = np.flatnonzero((t >= 0.0) & (t <= plot_upper))
+    plot_selected = plot_selected[np.all(denominator_values[:, plot_selected] != 0, axis=0)]
+    if plot_selected.size == 0:
+        plot_selected = selected
+    window_ratios = source_values[:, selected, :] / denominator_values[:, selected, None]
+    plot_ratios = source_values[:, plot_selected, :] / denominator_values[:, plot_selected, None]
+    output_values = np.ones((source.n_sample, len(z)), dtype=complex) if fit_samples else None
+    if tune_z is None:
+        z_indices = list(range(len(z)))
+        if origin_index is not None:
+            z_indices.remove(origin_index)
+    else:
+        matches = np.flatnonzero(np.isclose(z, float(tune_z), rtol=0.0, atol=1e-12))
+        if matches.size != 1 or (origin_index is not None and int(matches[0]) == origin_index):
+            raise ValueError("tune_z must name one fitted non-denominator qDA separation")
+        z_indices = [int(matches[0])]
+
+    fit_metrics: list[dict[str, Any]] = []
+    sample_failures: list[dict[str, Any]] = []
+    parallel = _parallel or _ParallelPool(min(workers, source.n_sample))
+    try:
+        fit_indices = track(z_indices, label="qDA fits", unit="z", enabled=fit_samples and show_progress)
+        for z_index in fit_indices:
+            previous_posterior: Mapping[str, Any] | None = None
+            stage_diagnostics: list[dict[str, Any]] = []
+            result = None
+            fit_prior = None
+            observations = None
+            for stage_index, atoms in enumerate(pipeline.stages):
+                x = {
+                    "n_states": n_states,
+                    "extent": extent,
+                    "form": "Breit",
+                    "atoms": atoms,
+                    "components": selected_components,
+                    "family": "qda",
+                    "denominator_kind": denominator_kind,
+                    "pt2_t": t[selected],
+                    "qda_t": t[selected],
+                }
+                pieces: list[np.ndarray] = []
+                for atom in atoms:
+                    if atom == "2pt":
+                        pieces.append(np.real(denominator_values[:, selected]) * raw_scale)
+                    elif atom in {"qda", "qda_ratio"}:
+                        selected_values = (
+                            source_values[:, selected, z_index] if atom == "qda" else window_ratios[:, :, z_index]
+                        )
+                        for component in selected_components:
+                            values = np.real(selected_values) if component == "re" else np.imag(selected_values)
+                            pieces.append(values * (raw_scale if atom == "qda" else 1.0))
+                observations = np.concatenate(pieces, axis=1)
+                fit_data = EnsembleData(
+                    source.ensemble,
+                    source.resample,
+                    list(observations),
+                    ["observation"],
+                    {"observation": list(range(observations.shape[1]))},
+                )
+                fit_prior = matrix_element_prior(
+                    n_states,
+                    form="Breit",
+                    scope=atoms,
+                    components=selected_components,
+                    width_scale=prior_width,
+                    denominator_kind=denominator_kind,
+                )
+                if previous_posterior is not None:
+                    for key in fit_prior:
+                        if key in previous_posterior:
+                            value = previous_posterior[key]
+                            fit_prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * posterior_prior_error_scale)
+                is_final = stage_index == len(pipeline.stages) - 1
+                result = nonlinear_fit(
+                    (x, fit_data),
+                    matrix_element_fcn,
+                    fit_prior,
+                    workers=workers,
+                    sample_prior_scale=(
+                        None if is_final and atoms == ("qda_ratio",) else posterior_prior_error_scale * prior_width
+                    ),
+                    sample_error_mode=sample_error_mode,
+                    mode="resamples" if is_final and fit_samples else "center",
+                    tolerate_sample_failures=is_final and fit_samples,
+                    capture_sample_posteriors=(0,) if is_final and fit_samples else (),
+                    _parallel=parallel if is_final else None,
+                    svdcut=svdcut,
+                    maxit=10000,
+                )
+                previous_posterior = result.p
+                stage_diagnostics.append(
+                    {
+                        "stage": "+".join(atoms),
+                        "chi2": result.chi2,
+                        "dof": result.dof,
+                        "chi2_dof": result.chi2 / result.dof,
+                        "Q": result.Q,
+                        "logGBF": result.logGBF,
+                        "n_data": int(observations.shape[1]),
+                    }
+                )
+            if result is None or fit_prior is None or observations is None:
+                raise RuntimeError("fit_scope produced no qDA fit stage")
+            denominator_key = "zprime0" if denominator_kind == "qda_z0" else "z0"
+            energy_samples = [float(p["E0"]) if p is not None else None for p in result.samples] if fit_samples else []
+            finite_energy_samples = [value for value in energy_samples if value is not None]
+            energy_sdev = (
+                float(
+                    gv.sdev(
+                        EnsembleData(
+                            source.ensemble,
+                            source.resample,
+                            [[value] for value in finite_energy_samples],
+                            ["energy"],
+                            {"energy": [0]},
+                        ).average(sample_error_mode)[0]
+                    )
+                )
+                if len(finite_energy_samples) == len(energy_samples) and len(energy_samples) > 1
+                else None
+            )
+            sample0_plot = None
+            if fit_samples and result.sample_posteriors and result.sample_posteriors[0] is not None:
+                posterior = result.sample_posteriors[0]
+                fit_t = (
+                    np.asarray([float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5])
+                    if n_states == 1
+                    else np.linspace(float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5, 200)
+                )
+                fit_ratio = qda_ratio_fcn(
+                    {
+                        "times": fit_t,
+                        "n_states": n_states,
+                        "extent": extent,
+                        "denominator_kind": denominator_kind,
+                        "components": selected_components,
+                    },
+                    posterior,
+                )
+                plots = []
+                for component_index, component in enumerate(selected_components):
+                    plot_samples = (
+                        np.real(plot_ratios[:, :, z_index])
+                        if component == "re"
+                        else np.imag(plot_ratios[:, :, z_index])
+                    )
+                    average = EnsembleData(
+                        source.ensemble,
+                        source.resample,
+                        list(plot_samples),
+                        ["t"],
+                        {"t": t[plot_selected].tolist()},
+                    ).average(sample_error_mode)
+                    curve = fit_ratio[component_index * fit_t.size : (component_index + 1) * fit_t.size]
+                    plateau = posterior[f"O00_{component}"] / posterior[denominator_key]
+                    fit_mean, fit_sdev = _gvar_payload(curve)
+                    plots.append(
+                        {
+                            "kind": "qda_ratio",
+                            "component": component,
+                            "series": [
+                                {
+                                    "label": "qDA ratio",
+                                    "x": t[plot_selected].astype(float).tolist(),
+                                    "y": np.asarray(plot_samples[0], dtype=float).tolist(),
+                                    "yerr": np.asarray(gv.sdev(average), dtype=float).tolist(),
+                                    "fit_x": fit_t.tolist(),
+                                    "fit_mean": fit_mean,
+                                    "fit_sdev": fit_sdev,
+                                }
+                            ],
+                            "plateau_mean": float(gv.mean(plateau)),
+                            "plateau_sdev": float(gv.sdev(plateau)),
+                        }
+                    )
+                sample0_plot = {"z": float(z[z_index]), "plots": plots}
+            fit_metrics.append(
+                {
+                    "z": float(z[z_index]),
+                    "chi2": result.chi2,
+                    "dof": result.dof,
+                    "chi2_dof": result.chi2 / result.dof,
+                    "Q": result.Q,
+                    "logGBF": result.logGBF,
+                    "E0": float(result.pmean["E0"]),
+                    "E0_sdev": energy_sdev,
+                    "E0_samples": energy_samples,
+                    "n_data": int(observations.shape[1]),
+                    "n_params": sum(int(np.size(gv.mean(value))) for value in fit_prior.values()),
+                    "sample_diagnostics": _sample_diagnostic_records(result) if fit_samples else [],
+                    "sample0_plot": sample0_plot,
+                    "stages": stage_diagnostics,
+                }
+            )
+            if output_values is not None:
+                for sample_index, parameters in enumerate(result.samples):
+                    if parameters is None:
+                        output_values[sample_index, z_index] = np.nan + 1j * np.nan
+                        sample_failures.append({"z": float(z[z_index]), "sample": sample_index})
+                        continue
+                    real = (
+                        float(parameters["O00_re"] / parameters[denominator_key])
+                        if "re" in selected_components
+                        else 0.0
+                    )
+                    imag = (
+                        float(parameters["O00_im"] / parameters[denominator_key])
+                        if "im" in selected_components
+                        else 0.0
+                    )
+                    output_values[sample_index, z_index] = real + 1j * imag
+    finally:
+        if _parallel is None:
+            parallel.close()
+    diagnostics: dict[str, Any] = {
+        "fit_scope": pipeline.as_list(),
+        "denominator_kind": denominator_kind,
+        "correlator_rescale": raw_scale,
+        "min_Q": min(record["Q"] for record in fit_metrics),
+        "max_chi2_dof": max(record["chi2_dof"] for record in fit_metrics),
+        "n_failed_samples": len(sample_failures),
+        "sample_failures": sample_failures,
+        "fits": fit_metrics,
+        "n_data": int(fit_metrics[0]["n_data"]),
+        "n_params": int(fit_metrics[0]["n_params"]),
+    }
+    if tune_z is not None:
+        fit = fit_metrics[0]
+        quality_keys = ("z", "chi2", "dof", "chi2_dof", "Q", "logGBF", "n_data", "n_params")
+        diagnostics.update({key: fit[key] for key in quality_keys})
+        diagnostics["tune_z"] = diagnostics.pop("z")
+    if output_values is None:
+        return None, diagnostics
+    attrs = dict(source.attrs)
+    attrs.update(
+        {
+            "method": "lsqfit",
+            "fit_scope": json.dumps(pipeline.as_list()),
+            "n_states": n_states,
+            "tmin": tmin,
+            "tmax": tmax,
+            "denominator_kind": denominator_kind,
+            "sample_error_mode": sample_error_mode,
+        }
+    )
+    published_values = (
+        output_values.real if components == "real" else output_values.imag if components == "imag" else output_values
+    )
+    output = EnsembleData(
+        source.ensemble,
+        source.resample,
+        list(published_values),
+        ["z"],
+        {"z": z.tolist()},
+        attrs=attrs,
+        name="bare_matrix_element",
+    )
+    return output, diagnostics
+
+
 def matrix_element_samples(
     correlators: dict[str, object],
     *,
@@ -909,7 +1325,7 @@ def matrix_element_samples(
     show_progress: bool = False,
     n_states: int = 1,
     prior_width: float = 1.0,
-    fit_strategy: str = "independent",
+    fit_scope: list[str] | tuple[str, ...] = ("qda_ratio",),
     _parallel: _ParallelPool | None = None,
 ) -> tuple[np.ndarray | None, list[float], dict[str, Any]]:
     """Extract ratio/summation-style matrix-element samples from correlators.
@@ -932,284 +1348,31 @@ def matrix_element_samples(
     if source is None:
         raise ValueError("matrix-element fitting requires a three-point or qDA correlator")
     if source.attrs.get("correlator_type") == "qda":
-        if method != "qda" or source.dims != ["t", "z"] or lsqfit is None:
-            raise ValueError("qDA fitting requires method='qda', dimensions ['t', 'z'], and lsqfit settings")
-        if fit_strategy not in {"independent", "joint", "chained"}:
-            raise ValueError("qDA fit_strategy must be independent, joint, or chained")
-        if isinstance(n_states, bool) or not isinstance(n_states, int) or n_states < 1:
-            raise ValueError("qDA ratio fitting requires a positive state count")
-        if not np.isfinite(prior_width) or prior_width <= 0:
-            raise ValueError("qDA prior_width must be finite and positive")
-        if fit_samples and tune_z is not None:
-            raise ValueError("tune_z is only valid for a sample-average qDA fit")
-        if not fit_samples and tune_z is None:
-            raise ValueError("sample-average qDA tuning requires tune_z")
-        if source.ensemble is None:
-            raise ValueError("qDA fitting requires the temporal extent")
-        extent = int(source.ensemble.L_t)
-        if extent < 1:
-            raise ValueError("qDA fitting requires a positive temporal extent")
-        t = np.asarray(source.coords["t"], dtype=float)
-        z = np.asarray(source.coords["z"], dtype=float)
-        origin = np.flatnonzero(np.isclose(z, 0.0, rtol=0.0, atol=1e-12))
-        if origin.size != 1:
-            raise ValueError("qDA fitting requires one unique z=0 denominator")
-        selected = np.flatnonzero((t >= tmin) & (t < tmax))
-        if selected.size < 2:
-            raise ValueError("qDA fit window must contain at least two time points")
-        if selected.size < 2 * n_states:
-            raise ValueError("qDA fit window must contain at least 2*n_states times")
-        n_observations = (3 if fit_strategy == "joint" else 2) * selected.size
-        if n_states > 1 and n_observations <= 5 * n_states:
-            raise ValueError("qDA fit window must be overdetermined for the selected state count")
-        source_values = np.asarray(source.values)
-        window_values = source_values[:, selected, :]
-        denominator = window_values[:, :, int(origin[0])]
-        if np.any(denominator == 0):
-            raise ValueError("qDA z=0 denominator contains zero values in the fit window")
-        ratios = window_values / denominator[:, :, None]
-        denominator_real = np.real(denominator)
-        correlator_rescale = (
-            _qda_correlator_rescale(denominator_real)
-            if fit_strategy in {"joint", "chained"}
-            else 1.0
+        if method != "qda" or lsqfit is None:
+            raise ValueError("qDA fitting requires method='qda' and lsqfit settings")
+        component = {"re": "real", "im": "imag", "both": "both"}[str(lsqfit.get("component", "both"))]
+        data, diagnostics = fit_qda_samples(
+            {key: value for key, value in correlators.items() if isinstance(value, EnsembleData)},
+            fit_scope=fit_scope,
+            components=component,
+            tmin=tmin,
+            tmax=tmax,
+            n_states=n_states,
+            prior_width=prior_width,
+            svdcut=float(lsqfit["svdcut"]),
+            posterior_prior_error_scale=float(lsqfit["posterior_prior_error_scale"]),
+            sample_error_mode=sample_error_mode,
+            workers=workers,
+            tune_z=tune_z,
+            fit_samples=fit_samples,
+            show_progress=show_progress,
+            _parallel=_parallel,
         )
-        plot_upper = float(source.ensemble.L_t) / 2.0
-        plot_selected = np.flatnonzero((t >= 0.0) & (t <= plot_upper))
-        plot_denominator = source_values[:, plot_selected, int(origin[0])]
-        plot_selected = plot_selected[np.all(plot_denominator != 0, axis=0)]
-        if plot_selected.size == 0:
-            plot_selected = selected
-        plot_values = source_values[:, plot_selected, :]
-        plot_ratios = plot_values / plot_values[:, :, int(origin[0]), None]
-        values = np.ones((source.n_sample, len(z)), dtype=complex) if fit_samples else None
-        prior_scale = float(lsqfit["posterior_prior_error_scale"])
-        svdcut = float(lsqfit["svdcut"])
-        q_min = float(lsqfit["q_min"])
-        if tune_z is None:
-            z_indices = [index for index in range(len(z)) if index != int(origin[0])]
-        else:
-            tune_matches = np.flatnonzero(np.isclose(z, float(tune_z), rtol=0.0, atol=1e-12))
-            if tune_matches.size != 1:
-                raise ValueError("tune_z must name exactly one available qDA z coordinate")
-            tune_index = int(tune_matches[0])
-            if tune_index == int(origin[0]):
-                raise ValueError("qDA tuning cannot use its exact z=0 denominator")
-            z_indices = [tune_index]
-        fit_metrics = []
-        base_prior = _qda_ratio_prior(n_states, prior_width)
-        chained_prior = None
-        if fit_strategy == "chained":
-            spectral_prior = gv.BufferDict(
-                {key: value for key, value in base_prior.items() if not key.startswith("O")}
-            )
-            spectral_data = EnsembleData(
-                source.ensemble,
-                source.resample,
-                list(denominator_real * correlator_rescale),
-                ["t"],
-                {"t": t[selected].tolist()},
-            )
-            spectral_fit = nonlinear_fit(
-                (
-                    {
-                        "times": t[selected],
-                        "n_states": n_states,
-                        "extent": extent,
-                        "correlator_rescale": correlator_rescale,
-                    },
-                    spectral_data,
-                ),
-                _qda_denominator_fcn,
-                spectral_prior,
-                workers=workers,
-                sample_error_mode=sample_error_mode,
-                mode="center",
-                svdcut=svdcut,
-                maxit=10000,
-            )
-            chained_prior = gv.BufferDict(base_prior)
-            for key in spectral_prior:
-                value = spectral_fit.p[key]
-                chained_prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * prior_scale)
-
-        parallel = _parallel or _ParallelPool(min(workers, source.n_sample))
-        try:
-            fit_indices = track(z_indices, label="qDA fits", unit="z", enabled=fit_samples and show_progress)
-            for z_index in fit_indices:
-                component_values = ratios[:, :, z_index]
-                plot_component_values = plot_ratios[:, :, z_index]
-                real_plot_samples = EnsembleData(
-                    source.ensemble,
-                    source.resample,
-                    [np.real(sample) for sample in plot_component_values],
-                    ["t"],
-                    {"t": t[plot_selected].tolist()},
-                )
-                imag_plot_samples = EnsembleData(
-                    source.ensemble,
-                    source.resample,
-                    [np.imag(sample) for sample in plot_component_values],
-                    ["t"],
-                    {"t": t[plot_selected].tolist()},
-                )
-                observations = [np.real(component_values), np.imag(component_values)]
-                if fit_strategy == "joint":
-                    observations.insert(0, denominator_real * correlator_rescale)
-                combined_values = np.concatenate(observations, axis=1)
-                combined = EnsembleData(
-                    source.ensemble,
-                    source.resample,
-                    list(combined_values),
-                    ["observation"],
-                    {"observation": list(range(combined_values.shape[1]))},
-                )
-                prior = chained_prior if chained_prior is not None else base_prior
-                result = nonlinear_fit(
-                    (
-                        {
-                            "times": t[selected],
-                            "n_states": n_states,
-                            "extent": extent,
-                            "strategy": fit_strategy,
-                            "correlator_rescale": correlator_rescale,
-                        },
-                        combined,
-                    ),
-                    _qda_fit_fcn,
-                    prior,
-                    workers=workers,
-                    sample_prior_scale=prior_scale,
-                    sample_error_mode=sample_error_mode,
-                    svdcut=svdcut,
-                    maxit=10000,
-                    mode="resamples" if fit_samples else "center",
-                    capture_sample_posteriors=(0,) if fit_samples else (),
-                    _parallel=parallel,
-                )
-                energy_samples = (
-                    [float(parameters["E0"]) if parameters is not None else None for parameters in result.samples]
-                    if fit_samples
-                    else []
-                )
-                finite_energy_samples = [value for value in energy_samples if value is not None]
-                energy_sdev = (
-                    float(
-                        gv.sdev(
-                            EnsembleData(
-                                source.ensemble,
-                                source.resample,
-                                [[value] for value in finite_energy_samples],
-                                ["energy"],
-                                {"energy": [0]},
-                            ).average(sample_error_mode)[0]
-                        )
-                    )
-                    if len(finite_energy_samples) == len(energy_samples) and len(energy_samples) > 1
-                    else None
-                )
-                sample0_plot = None
-                if fit_samples and result.sample_posteriors and result.sample_posteriors[0] is not None:
-                    posterior = result.sample_posteriors[0]
-                    plateau = {
-                        "re": posterior["O00_re"] / posterior["zprime0"],
-                        "im": posterior["O00_im"] / posterior["zprime0"],
-                    }
-                    if n_states == 1:
-                        fit_x = [float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5]
-                        fit_curves = {
-                            "re": (fit_x, [float(gv.mean(plateau["re"]))] * 2, [float(gv.sdev(plateau["re"]))] * 2),
-                            "im": (fit_x, [float(gv.mean(plateau["im"]))] * 2, [float(gv.sdev(plateau["im"]))] * 2),
-                        }
-                    else:
-                        fit_t = np.linspace(float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5, 200)
-                        fit_values = qda_ratio_fcn({"times": fit_t, "n_states": n_states, "extent": extent}, posterior)
-                        split = fit_t.size
-                        fit_curves = {
-                            "re": (fit_t.tolist(), *_gvar_payload(fit_values[:split])),
-                            "im": (fit_t.tolist(), *_gvar_payload(fit_values[split:])),
-                        }
-                    plots = []
-                    for component, samples_for_component in (
-                        ("re", real_plot_samples),
-                        ("im", imag_plot_samples),
-                    ):
-                        fit_x, fit_mean, fit_sdev = fit_curves[component]
-                        plots.append(
-                            {
-                                "kind": "qda_ratio",
-                                "component": component,
-                                "series": [
-                                    {
-                                        "label": "qDA ratio",
-                                        "x": t[plot_selected].astype(float).tolist(),
-                                        "y": np.asarray(samples_for_component.values[0], dtype=float).tolist(),
-                                        "yerr": np.asarray(
-                                            gv.sdev(samples_for_component.average(sample_error_mode)), dtype=float
-                                        ).tolist(),
-                                        "fit_x": fit_x,
-                                        "fit_mean": fit_mean,
-                                        "fit_sdev": fit_sdev,
-                                    }
-                                ],
-                                "plateau_mean": float(gv.mean(plateau[component])),
-                                "plateau_sdev": float(gv.sdev(plateau[component])),
-                            }
-                        )
-                    sample0_plot = {"z": float(z[z_index]), "plots": plots}
-                fit_metrics.append(
-                    {
-                        "z": float(z[z_index]),
-                        "chi2": result.chi2,
-                        "dof": result.dof,
-                        "chi2_dof": result.chi2 / result.dof,
-                        "Q": result.Q,
-                        "logGBF": result.logGBF,
-                        "E0": float(result.pmean["E0"]),
-                        "E0_sdev": energy_sdev,
-                        "E0_samples": energy_samples,
-                        "sample_diagnostics": _sample_diagnostic_records(result) if fit_samples else [],
-                        "sample0_plot": sample0_plot,
-                    }
-                )
-                if values is not None:
-                    values[:, z_index] = np.asarray(
-                        [
-                            float(parameters["O00_re"] / parameters["zprime0"])
-                            + 1j * float(parameters["O00_im"] / parameters["zprime0"])
-                            for parameters in result.samples
-                        ]
-                    )
-        finally:
-            if _parallel is None:
-                parallel.close()
-        diagnostics = {
-            "min_Q": min(record["Q"] for record in fit_metrics),
-            "max_chi2_dof": max(record["chi2_dof"] for record in fit_metrics),
-            "fits": fit_metrics,
-            "q_min": q_min,
-            "fit_strategy": fit_strategy,
-            "correlator_rescale": correlator_rescale,
-            "n_data": int(n_observations),
-            "n_params": sum(int(np.size(gv.mean(value))) for value in base_prior.values()),
-        }
-        primary_z = tune_z
-        if primary_z is not None:
-            tune_fit = next(
-                record for record in fit_metrics if np.isclose(record["z"], float(primary_z), rtol=0.0, atol=1e-12)
-            )
-            diagnostics.update(
-                {
-                    "tune_z": tune_fit["z"],
-                    "chi2": tune_fit["chi2"],
-                    "dof": tune_fit["dof"],
-                    "Q": tune_fit["Q"],
-                    "chi2_dof": tune_fit["chi2_dof"],
-                    "logGBF": tune_fit["logGBF"],
-                    "quality_passed": tune_fit["Q"] >= q_min,
-                }
-            )
-        return values, z.tolist(), diagnostics
+        return (
+            np.asarray(data.values) if data is not None else None,
+            [float(value) for value in source.coords["z"]],
+            diagnostics,
+        )
     if "tau" not in source.dims:
         array = np.asarray(source.values)
         physical_dims = [dim for dim in source.dims if dim in {"z", "x"}]

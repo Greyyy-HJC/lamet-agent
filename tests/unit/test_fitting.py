@@ -26,6 +26,16 @@ def linear_model(x: np.ndarray, p: gv.BufferDict) -> np.ndarray:
     return p["intercept"] + p["slope"] * x
 
 
+def amplitude_model(p: gv.BufferDict) -> np.ndarray:
+    """Evaluate a constant amplitude for process-pool posterior capture."""
+    return np.asarray([p["amplitude"]])
+
+
+def exponential_model(x: np.ndarray, p: gv.BufferDict) -> np.ndarray:
+    """Evaluate a two-parameter exponential used by the correlated-capture test."""
+    return p["z0"] ** 2 / (2 * p["E0"]) * np.exp(-p["E0"] * x)
+
+
 def test_center_mode_accepts_gvar_ensemble_data() -> None:
     x = np.linspace(-1.0, 1.0, 5)
     data = EnsembleData(None, "gvar", gv.gvar(1.2 + 0.7 * x, np.full(x.size, 0.02)), ["x"], {"x": x})
@@ -116,10 +126,10 @@ def test_tolerated_sample_failure_preserves_sample_alignment(monkeypatch) -> Non
 def test_sample_posterior_capture_is_explicit_and_indexed() -> None:
     data = EnsembleData(None, "bootstrap", [[1.0], [1.1], [0.9]], ["x"], {"x": [0]})
     prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
-    default = nonlinear_fit(data, lambda p: np.asarray([p["amplitude"]]), prior, workers=1)
+    default = nonlinear_fit(data, amplitude_model, prior, workers=1)
     captured = nonlinear_fit(
         data,
-        lambda p: np.asarray([p["amplitude"]]),
+        amplitude_model,
         prior,
         workers=1,
         capture_sample_posteriors=(0,),
@@ -128,6 +138,64 @@ def test_sample_posterior_capture_is_explicit_and_indexed() -> None:
     assert captured.sample_posteriors[0] is not None
     assert captured.sample_posteriors[1:] == (None, None)
     assert isinstance(captured.sample_posteriors[0]["amplitude"], gv.GVar)
+
+
+def test_sample_tasks_send_pickle_safe_prior_payloads() -> None:
+    data = EnsembleData(None, "bootstrap", [[1.0], [1.1]], ["x"], {"x": [0]})
+    prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
+    seen: list[object] = []
+
+    class InspectingParallel:
+        def map(self, function, tasks):
+            seen.extend(tasks)
+            return [function(task) for task in tasks]
+
+    nonlinear_fit(data, amplitude_model, prior, workers=4, _parallel=InspectingParallel())
+    assert seen
+    for task in seen:
+        mean, sdev = task[4]["amplitude"]
+        assert isinstance(mean, np.ndarray)
+        assert isinstance(sdev, np.ndarray)
+        np.testing.assert_allclose(mean, gv.mean(prior["amplitude"]))
+        np.testing.assert_allclose(sdev, gv.sdev(prior["amplitude"]))
+
+
+def test_sample_posterior_capture_survives_process_workers() -> None:
+    data = EnsembleData(None, "bootstrap", [[1.0], [1.1], [0.9]], ["x"], {"x": [0]})
+    prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
+    serial = nonlinear_fit(data, amplitude_model, prior, workers=1, capture_sample_posteriors=(0,))
+    parallel = nonlinear_fit(data, amplitude_model, prior, workers=2, capture_sample_posteriors=(0,))
+    assert isinstance(parallel.sample_posteriors[0]["amplitude"], gv.GVar)
+    np.testing.assert_allclose(
+        gv.mean(parallel.sample_posteriors[0]["amplitude"]),
+        gv.mean(serial.sample_posteriors[0]["amplitude"]),
+    )
+    np.testing.assert_allclose(
+        gv.sdev(parallel.sample_posteriors[0]["amplitude"]),
+        gv.sdev(serial.sample_posteriors[0]["amplitude"]),
+    )
+    assert gv.sdev(parallel.sample_posteriors[0]["amplitude"]) > 0
+
+
+def test_sample_posterior_capture_uses_hessian_when_data_are_correlated() -> None:
+    x = np.linspace(0.0, 4.0, 24)
+    rng = np.random.default_rng(3)
+    values = [0.4 * np.exp(-0.8 * x) + rng.normal(0.0, 0.02, x.size) for _ in range(16)]
+    data = EnsembleData(None, "bootstrap", values, ["x"], {"x": x.tolist()})
+    prior = gv.BufferDict({"log(E0)": gv.gvar(0.0, 1.0), "z0": gv.gvar(1.0, 1.0)})
+    result = nonlinear_fit(
+        (x, data),
+        exponential_model,
+        prior,
+        workers=2,
+        capture_sample_posteriors=(0,),
+        sample_error_mode="covariance",
+        svdcut=1e-6,
+    )
+    posterior = result.sample_posteriors[0]
+    assert isinstance(posterior["E0"], gv.GVar)
+    assert gv.sdev(posterior["E0"]) > 0
+    assert gv.sdev(posterior["z0"]) > 0
 
 
 def test_center_mode_averages_raw_source_without_scheduling_resamples(monkeypatch) -> None:

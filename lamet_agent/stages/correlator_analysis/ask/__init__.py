@@ -9,6 +9,7 @@ import numpy as np
 from lamet_agent.agent import LlmSession, ToolContext
 from lamet_agent.data import format_gvar
 from lamet_agent.stages.correlator_analysis._input import ensure_correlators
+from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
 
 
 _CONTEXT_KEY = "correlator_fit_data"
@@ -50,8 +51,8 @@ def ensure(context: ToolContext, session: LlmSession) -> None:
         session.add_context(_CONTEXT_KEY, _context(context))
 
 
-def _scopes(context: ToolContext) -> set[str]:
-    return set(context.params["fit_scope"])
+def _scope(context: ToolContext):
+    return parse_fit_scope(context.params["fit_scope"])
 
 
 def initial(context: ToolContext, session: LlmSession) -> dict[str, Any]:
@@ -59,9 +60,9 @@ def initial(context: ToolContext, session: LlmSession) -> dict[str, Any]:
     cached = context.state.get(_CACHE_KEY)
     if isinstance(cached, dict):
         return cached
-    scopes = _scopes(context)
+    scope = _scope(context)
     pt2 = context.params.get("pt2_windows")
-    if scopes == {"spectrum"}:
+    if scope.is_spectrum:
         from .ask_for_spectrum_fit import recommend
 
         fixed = {"pt2_windows": pt2} if pt2 else {}
@@ -72,7 +73,7 @@ def initial(context: ToolContext, session: LlmSession) -> dict[str, Any]:
             raise ValueError("initial spectrum recommendation must select an authored pt2 window")
         result["pt2_windows"] = [{"tmin": int(result["tmin"]), "tmax": int(result["tmax"])}]
     else:
-        ordinary = scopes != {"qda_ratio"}
+        ordinary = not scope.is_qda
         requested = {"tune_z_values"}
         fixed = {}
         if pt2:
@@ -111,13 +112,13 @@ def revise(
     previous_attempts: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     """Request one runtime override after an unsuccessful complete scan."""
-    scopes = _scopes(context)
-    if scopes == {"spectrum"}:
+    scope = _scope(context)
+    if scope.is_spectrum:
         from .ask_for_spectrum_fit import recommend
 
         result = dict(recommend(context, session, previous_attempts=previous_attempts))
         result["pt2_windows"] = [{"tmin": int(result["tmin"]), "tmax": int(result["tmax"])}]
-    elif scopes == {"qda_ratio"}:
+    elif scope.is_qda:
         from .ask_for_qda_tune_z import recommend
 
         result = dict(
@@ -153,7 +154,8 @@ def pt2_windows(context: ToolContext, session: LlmSession) -> list[dict[str, int
 
 def pt3_windows(context: ToolContext, session: LlmSession) -> list[dict[str, Any]]:
     """Return no three-point windows for scopes without three-point data."""
-    if _scopes(context) in ({"spectrum"}, {"qda_ratio"}):
+    scope = _scope(context)
+    if scope.is_spectrum or scope.is_qda:
         return []
     return list(initial(context, session)["pt3_windows"])
 

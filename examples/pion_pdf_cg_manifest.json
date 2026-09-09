@@ -19,10 +19,7 @@
           2
         ],
         "fit_scope": [
-          "3pt_ratio"
-        ],
-        "fit_strategy": [
-          "joint"
+          "2pt+3pt_ratio"
         ],
         "fitting_form": "Breit",
         "model_average": false,

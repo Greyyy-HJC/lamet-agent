@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
 from lamet_agent.agent import ToolContext
@@ -21,8 +23,8 @@ def run(
 ) -> dict[str, object]:
     """Fit a positive two-point correlator and append a candidate."""
     lsqfit = context.params
-    if "spectrum" not in lsqfit["fit_scope"]:
-        raise ValueError("spectrum fitting is not allowed for this job")
+    if lsqfit["fit_scope"] != ["2pt"]:
+        raise ValueError("spectrum fitting requires fit_scope=['2pt']")
     if tmin >= tmax:
         raise ValueError("spectrum fit window must be increasing")
     if n_states not in context.params["nstate"]:
@@ -66,6 +68,7 @@ def run(
         {
             "observable": "spectrum",
             "method": "direct_fit",
+            "fit_scope": json.dumps(["2pt"]),
             "fit_energy_unit": "lattice",
             "sample_error_mode": context.manifest["metadata"]["sample_error_mode"],
             "units": '{"values":"GeV","state":"index"}',
@@ -86,6 +89,7 @@ def run(
         {
             "id": candidate_id,
             "method": "direct_fit",
+            "fit_scope": ["2pt"],
             "observable": "spectrum",
             "window": {"tmin": tmin, "tmax": tmax},
             "data": candidate,

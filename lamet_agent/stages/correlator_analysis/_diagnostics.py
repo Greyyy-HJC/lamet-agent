@@ -44,12 +44,21 @@ def _slug(value: object) -> str:
 
 
 def _metric_text(metrics: Mapping[str, Any]) -> str:
+    def render(key: str) -> str:
+        value = metrics.get(key)
+        if value is None:
+            return "n/a"
+        try:
+            return f"{float(value):.6g}"
+        except (TypeError, ValueError):
+            return "n/a"
+
     return (
-        f"Q={float(metrics['Q']):.6g} "
-        f"chi2/dof={float(metrics['chi2_dof']):.6g} "
-        f"chi2={float(metrics['chi2']):.6g} "
-        f"dof={float(metrics['dof']):.6g} "
-        f"logGBF={float(metrics['logGBF']):.6g}"
+        f"Q={render('Q')} "
+        f"chi2/dof={render('chi2_dof')} "
+        f"chi2={render('chi2')} "
+        f"dof={render('dof')} "
+        f"logGBF={render('logGBF')}"
     )
 
 
@@ -151,7 +160,8 @@ def _candidate_log_lines(candidates: list[Mapping[str, Any]]) -> list[str]:
         if all(key in candidate for key in ("Q", "chi2", "dof", "chi2_dof", "logGBF")):
             metrics = " " + _metric_text(candidate)
         lines.append(
-            f"candidate={candidate_id} method={candidate.get('method')} window={candidate.get('window')} "
+            f"candidate={candidate_id} method={candidate.get('method')} scope={candidate.get('fit_scope')} "
+            f"window={candidate.get('window')} "
             f"nstate={candidate.get('nstate')} prior_width={candidate.get('prior_width')} "
             f"accepted={candidate.get('quality_passed')} "
             f"numerical_failure={candidate.get('numerical_failure')}{metrics}"
@@ -161,6 +171,17 @@ def _candidate_log_lines(candidates: list[Mapping[str, Any]]) -> list[str]:
             for z_value, fit in sorted(tuning.items(), key=lambda item: float(item[0])):
                 if isinstance(fit, Mapping) and all(key in fit for key in ("Q", "chi2", "dof", "chi2_dof", "logGBF")):
                     lines.append(f"  tune_z={z_value} {_metric_text(fit)}")
+    return lines
+
+
+def _stage_log_lines(fit: Mapping[str, Any], *, prefix: str) -> list[str]:
+    lines = []
+    stages = fit.get("stages", [])
+    if not isinstance(stages, list):
+        return lines
+    for index, stage in enumerate(stages, start=1):
+        if isinstance(stage, Mapping) and all(key in stage for key in ("Q", "chi2", "dof", "chi2_dof", "logGBF")):
+            lines.append(f"{prefix} stage={index}:{stage.get('stage')} {_metric_text(stage)}")
     return lines
 
 
@@ -180,16 +201,18 @@ def write_fit_artifacts(
     averaged_ids: list[str] | None = None,
 ) -> FitArtifactResult:
     """Write logs/PDFs and return compact diagnostics for persisted summaries."""
-    strategy = str(selected.get("fit_strategy", selected.get("method", "fit")))
-    scope = str(selected.get("fit_scope", "fit"))
-    stem = f"{job_id}_{strategy}_{scope}"
+    scope_values = selected.get("fit_scope", ["fit"])
+    if not isinstance(scope_values, (list, tuple)):
+        scope_values = [scope_values]
+    scope = "_then_".join(str(value).replace("+", "_plus_") for value in scope_values)
+    stem = f"{job_id}_{scope}"
     log_directory = artifact_directory / "fit_logs"
     log_directory.mkdir(parents=True, exist_ok=True)
     tuning_path = log_directory / f"{stem}_tuning.log"
     sample_path = log_directory / f"{stem}_samples.log"
 
     tuning_lines = [
-        f"job={job_id} selected_candidate={selected.get('id')} strategy={strategy} scope={scope}",
+        f"job={job_id} selected_candidate={selected.get('id')} scope={scope_values}",
         f"window={selected.get('window')} nstate={selected.get('nstate')} prior_width={selected.get('prior_width')}",
         f"model_average={str(model_average).lower()} averaged={averaged_ids or [selected.get('id')]} "
         f"weights={fit_model_weights or [1.0]}",
@@ -200,11 +223,12 @@ def write_fit_artifacts(
         for fit in preflight_fit.get("fits", []):
             if isinstance(fit, Mapping):
                 tuning_lines.append(f"z={fit.get('z')} {_metric_text(fit)}")
+                tuning_lines.extend(_stage_log_lines(fit, prefix=f"  z={fit.get('z')}"))
     if application_rejections:
         tuning_lines.append(f"application_rejections={application_rejections}")
     tuning_path.write_text("\n".join(tuning_lines).rstrip() + "\n", encoding="utf-8")
 
-    sample_lines = [f"job={job_id} selected_candidate={selected.get('id')} strategy={strategy} scope={scope}"]
+    sample_lines = [f"job={job_id} selected_candidate={selected.get('id')} scope={scope_values}"]
     q_values: list[float] = []
     chi2_values: list[float] = []
     quality_by_z: dict[str, dict[str, Any]] = {}
@@ -218,6 +242,7 @@ def write_fit_artifacts(
         z_value = fit.get("z")
         sample_lines.append(f"=== z={z_value} ===")
         sample_lines.append(f"center {_metric_text(fit)}")
+        sample_lines.extend(_stage_log_lines(fit, prefix="center"))
         z_q_values: list[float] = []
         z_chi2_values: list[float] = []
         z_sample_count = 0
@@ -266,7 +291,8 @@ def write_fit_artifacts(
     sample_path.write_text("\n".join(sample_lines).rstrip() + "\n", encoding="utf-8")
 
     dispersion_energy: dict[str, Any] = {}
-    if strategy != "qda":
+    scope_atoms = {atom for value in scope_values for atom in str(value).split("+")}
+    if not scope_atoms & {"qda", "qda_ratio"}:
         energy_fits = [
             fit
             for fit in fits

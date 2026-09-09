@@ -41,30 +41,23 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
         "both": "both",
     }[context.params["component"]]
     candidates: list[dict[str, object]] = []
-    ordinary_scopes = [scope for scope in settings["fit_scope"] if scope in {"3pt_ratio", "FH", "3pt_ratio+FH"}]
     authored = sorted(
         product(
-            settings["fit_strategy"],
-            ordinary_scopes,
             context.params["nstate"],
             settings["prior_width"],
             settings["pt2_windows"],
             settings["pt3_windows"],
         ),
         key=lambda item: (
-            str(item[0]),
-            str(item[1]),
-            int(item[2]),
-            float(item[3]),
-            int(item[4]["tmin"]),
-            int(item[4]["tmax"]),
-            tuple(int(value) for value in item[5]["tsep_ls"]),
-            int(item[5]["tau_cut"]),
+            int(item[0]),
+            float(item[1]),
+            int(item[2]["tmin"]),
+            int(item[2]["tmax"]),
+            tuple(int(value) for value in item[3]["tsep_ls"]),
+            int(item[3]["tau_cut"]),
         ),
     )
     for (
-        strategy,
-        fit_scope,
         nstate,
         prior_width,
         pt2_window,
@@ -76,8 +69,8 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
         candidate_id = f"matrix_{len(candidates) + 1:03d}"
         metadata = {
             "id": candidate_id,
-            "method": str(strategy),
-            "fit_scope": str(fit_scope),
+            "method": "lsqfit",
+            "fit_scope": list(settings["fit_scope"]),
             "observable": "matrix_element",
             "window": {
                 "tmin": int(pt2_window["tmin"]),
@@ -96,9 +89,8 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
             try:
                 data, fit = fit_matrix_element_samples(
                     correlators,
-                    strategy=str(strategy),
                     fitting_form=str(settings["fitting_form"]),
-                    fit_scope=str(fit_scope),
+                    fit_scope=list(settings["fit_scope"]),
                     components=component,
                     tmin=int(pt2_window["tmin"]),
                     tmax=int(pt2_window["tmax"]),

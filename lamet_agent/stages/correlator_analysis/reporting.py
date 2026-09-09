@@ -19,17 +19,19 @@ from lamet_agent.stages._reporting import (
 
 _BREIT_METHOD = r"""
 The least-squares branch fixes its candidate grid on sample-average data and
-then applies the selected model to every resample.  For an ordinary forward
-matrix element the two-point and ratio models are
+then applies the selected model to every resample. For an ordinary forward
+matrix element the independent raw two-point and raw three-point models are
 
 $$
 C_2(t)=\sum_n \frac{z_n^2}{2E_n}\left(e^{-E_nt}+e^{-E_n(L_t-t)}\right),
 \qquad
-R(t,\tau,z)=\frac{1}{C_2(t)}\sum_{m,n}
+C_3(t,\tau,z)=\sum_{m,n}
 \frac{O_{mn}(z)z_mz_n}{(2E_m)(2E_n)}
 e^{-E_m(t-\tau)}e^{-E_n\tau}.
 $$
 
+An explicit `3pt_ratio` scope instead uses $R=C_3/C_2$ as its likelihood;
+raw `3pt` scopes use $C_3$ itself. Both paths retain ratio diagnostics.
 The published Breit matrix element is $O_{00}(z)/(2E_0)$.
 Candidate quality is evaluated at the tool-selected tuning z values; the
 chosen window and model are held fixed for the full-z sample fits.
@@ -51,13 +53,14 @@ h_{\rm NB}(z)=\operatorname{sign}(z_{0,i}z_{0,f})
 
 
 _QDA_METHOD = r"""
-The qDA fit uses the nonlocal/local two-point ratio at each spatial separation.
-A one-state fit extracts a constant plateau $O_{00}/z'_0$.  Multi-state fits
-use the periodic spectral decomposition of the numerator and $z=0$ denominator,
-while the published matrix element remains the ground-state ratio $O_{00}/z'_0$.
-The independent strategy fits only this ratio, the joint strategy includes the
-local denominator in the same correlated fit, and the chained strategy first
-fits that denominator and propagates its widened spectral posterior.
+The qDA fit uses periodic raw nonlocal and local two-point decompositions.
+When a unique momentum- and resampling-compatible `two_point` input is selected,
+it supplies the denominator and the published matrix element is $O_{00}/z_0$.
+Otherwise the qDA $z=0$ slice supplies an independent local overlap $z'_0$ and
+the published matrix element is $O_{00}/z'_0$. Raw `qda` scopes fit the raw
+nonlocal correlator; explicit `qda_ratio` scopes fit the derived ratio. Both
+paths retain ratio diagnostics. A `+` joins likelihoods in one correlated fit,
+while successive list entries propagate widened posteriors.
 The selected time window is applied to every production sample.
 """.strip()
 
@@ -82,41 +85,28 @@ performed before the median Lanczos result is published.
 """.strip()
 
 
-def _scope_name(scope: object) -> str:
+def _atom_name(scope: object) -> str:
     return {
-        "spectrum": "2pt spectrum",
+        "2pt": "2pt spectrum",
+        "3pt": "raw 3pt correlator",
+        "qda": "raw qDA correlator",
         "3pt_ratio": "3pt ratio",
         "FH": "Feynman--Hellmann",
-        "3pt_ratio+FH": "3pt ratio + Feynman--Hellmann",
         "qda_ratio": "qDA nonlocal/local ratio",
         "2pt_spectrum": "2pt spectrum",
         "3pt_matrix": "3pt matrix element",
     }.get(str(scope), str(scope))
 
 
+def _scope_name(scope: object) -> str:
+    values = list(scope) if isinstance(scope, (list, tuple)) else [scope]
+    stages = [" + ".join(_atom_name(atom) for atom in str(value).split("+")) for value in values]
+    return " → ".join(stages)
+
+
 def _method_name(method: object, scope: object) -> str:
-    method_text = str(method)
-    scope_text = str(scope)
-    if scope_text == "qda_ratio":
-        if method_text == "joint":
-            return "local 2pt + qDA ratio joint fit"
-        if method_text == "chained":
-            return "local 2pt → qDA ratio chained fit"
-        if method_text == "independent":
-            return "qDA nonlocal/local ratio independent fit"
-        return "qDA nonlocal/local ratio fit"
-    if method_text == "qda":
-        return "qDA nonlocal/local ratio fit"
-    if method_text == "lanczos":
+    if str(method) == "lanczos":
         return f"Lanczos {_scope_name(scope)} extraction"
-    if scope_text == "spectrum":
-        return "2pt spectrum fit"
-    if method_text == "joint":
-        return f"2pt + {_scope_name(scope)} joint fit"
-    if method_text == "chained":
-        return f"2pt + {_scope_name(scope)} chained fit"
-    if method_text == "independent":
-        return f"{_scope_name(scope)} independent fit"
     return f"{_scope_name(scope)} fit"
 
 
@@ -133,13 +123,13 @@ def _candidate_for_record(record: StageReportRecord) -> Mapping[str, object] | N
     return None
 
 
-def _candidate_scope(candidate: Mapping[str, object] | None, record: StageReportRecord) -> str:
+def _candidate_scope(candidate: Mapping[str, object] | None, record: StageReportRecord) -> object:
     if candidate is not None and candidate.get("fit_scope") is not None:
-        return str(candidate["fit_scope"])
+        return candidate["fit_scope"]
     scopes = record.params.get("fit_scope", record.params.get("scope", []))
     if isinstance(scopes, (list, tuple)):
-        return str(scopes[0]) if scopes else "n/a"
-    return str(scopes)
+        return list(scopes) if scopes else ["n/a"]
+    return [str(scopes)]
 
 
 def _window_text(candidate: Mapping[str, object] | None) -> str:
@@ -165,15 +155,7 @@ def _window_text(candidate: Mapping[str, object] | None) -> str:
 def _selected_fit_text(record: StageReportRecord) -> str:
     candidate = _candidate_for_record(record)
     decisions = record.summary.get("decisions", {})
-    method = (
-        candidate.get("fit_strategy", candidate.get("method"))
-        if candidate is not None
-        else (
-            decisions.get("fit_strategy", decisions.get("method"))
-            if isinstance(decisions, Mapping)
-            else record.params.get("analysis_method")
-        )
-    )
+    method = candidate.get("method") if candidate is not None else decisions.get("method")
     scope = _candidate_scope(candidate, record)
     description = _method_name(method, scope)
     if candidate is not None:
@@ -198,24 +180,21 @@ def _method_lines(records: tuple[StageReportRecord, ...]) -> list[str]:
     lines = ["## Method", ""]
     lsq_records = [record for record in records if record.params.get("analysis_method") == "lsqfit"]
     forms = {str(record.params.get("fitting_form")) for record in lsq_records if record.params.get("fitting_form")}
-    scopes = {str(scope) for record in lsq_records for scope in record.params.get("fit_scope", [])}
-    strategies = {str(strategy) for record in lsq_records for strategy in record.params.get("fit_strategy", [])}
+    scopes = {
+        atom for record in lsq_records for stage in record.params.get("fit_scope", []) for atom in str(stage).split("+")
+    }
     if "Breit" in forms:
         lines.extend([_BREIT_METHOD, ""])
     if "NonBreit" in forms:
         lines.extend([_NONBREIT_METHOD, ""])
-    if "qda_ratio" in scopes:
+    if scopes & {"qda", "qda_ratio"}:
         lines.extend([_QDA_METHOD, ""])
-    if scopes & {"FH", "3pt_ratio+FH"}:
+    if "FH" in scopes:
         lines.extend([_FH_METHOD, ""])
-    if strategies:
-        strategy_text = {
-            "joint": "2pt and matrix-element data are fit jointly with shared parameters",
-            "chained": "the matrix-element fit uses the preceding 2pt posterior as propagated input",
-            "independent": "the selected ratio or spectrum is fit without a shared 2pt likelihood",
-        }
+    if lsq_records:
         lines.append(
-            "Fit strategy: " + "; ".join(strategy_text.get(strategy, strategy) for strategy in sorted(strategies)) + "."
+            "Within each fit scope, `+` denotes one correlated joint likelihood and successive list entries "
+            "denote chained posterior propagation."
         )
         lines.append("")
     if any(record.params.get("analysis_method") == "lanczos" for record in records):
@@ -637,7 +616,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         decisions = summary.get("decisions", {})
         candidate = _candidate_for_record(record)
         method = (
-            decisions.get("fit_strategy", decisions.get("method", record.params.get("analysis_method")))
+            decisions.get("method", record.params.get("analysis_method"))
             if isinstance(decisions, Mapping)
             else record.params.get("analysis_method")
         )
@@ -697,7 +676,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         grid_symbol = "z/a" if params.get("analysis_method") == "lanczos" else output_coordinate
         output_grid = describe_grid(record.output.coords[output_coordinate], symbol=grid_symbol)
         selected_method = (
-            candidate.get("fit_strategy", candidate.get("method"))
+            candidate.get("method")
             if candidate
             else decisions.get("method", params.get("analysis_method"))
             if isinstance(decisions, Mapping)
@@ -734,7 +713,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 tsep_text = ", ".join(str(value) for value in tseps) if isinstance(tseps, (list, tuple)) else "n/a"
                 selected_marker = candidate.get("candidate_id") == summary.get("decisions", {}).get("candidate_id")
                 candidate_method = _method_name(
-                    candidate.get("fit_strategy", candidate.get("method")),
+                    candidate.get("method"),
                     candidate.get("fit_scope", _candidate_scope(None, record)),
                 )
                 lines.append(
@@ -760,7 +739,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     if not isinstance(fit, dict):
                         continue
                     candidate_method = _method_name(
-                        candidate.get("fit_strategy", candidate.get("method")),
+                        candidate.get("method"),
                         candidate.get("fit_scope", _candidate_scope(None, record)),
                     )
                     tune_rows.append(

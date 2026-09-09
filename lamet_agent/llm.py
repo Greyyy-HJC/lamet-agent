@@ -413,6 +413,78 @@ def _cli_task_input(
     return "\n\n".join(sections)
 
 
+def _strip_json_fence(text: str) -> str:
+    """Drop a single markdown fence if the model wrapped the JSON payload."""
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    body = lines[1:]
+    if body and body[-1].strip() == "```":
+        body = body[:-1]
+    return "\n".join(body).strip()
+
+
+def _repair_json_wrappers(text: str) -> str:
+    """Keep the first JSON value and drop extra or type-mismatched closers."""
+    starts = [index for index in (text.find("{"), text.find("[")) if index >= 0]
+    if not starts:
+        return text
+    output: list[str] = []
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for char in text[min(starts) :]:
+        if in_string:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            output.append(char)
+            continue
+        if char in "{[":
+            stack.append(char)
+            output.append(char)
+            continue
+        if char == "}":
+            if stack and stack[-1] == "{":
+                stack.pop()
+                output.append(char)
+                if not stack:
+                    break
+            continue
+        if char == "]":
+            if stack and stack[-1] == "[":
+                stack.pop()
+                output.append(char)
+                if not stack:
+                    break
+            continue
+        output.append(char)
+    return "".join(output)
+
+
+def _decode_json_payload(raw: str) -> Any:
+    """Parse one JSON value, tolerating fenced or extra-closer CLI-agent output."""
+    text = _strip_json_fence(raw)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        repaired = _repair_json_wrappers(text)
+        if repaired != text:
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                pass
+        raise
+
+
 _CODEX_LLM_CONFIG = {
     "project_doc_max_bytes": 0,
     "include_environment_context": False,
@@ -552,7 +624,7 @@ class _CodexBackend:
         if not isinstance(raw, str) or not raw.strip():
             raise RuntimeError(f"Codex returned no final response: {result}")
         try:
-            payload = json.loads(raw)
+            payload = _decode_json_payload(raw)
         except json.JSONDecodeError as exc:
             raise ValueError(f"Codex returned malformed JSON: {raw}") from exc
 
@@ -733,7 +805,7 @@ class _ClaudeCodeBackend:
             raw = getattr(result, "result", None)
             if structured is None and isinstance(raw, str):
                 try:
-                    structured = json.loads(raw)
+                    structured = _decode_json_payload(raw)
                 except json.JSONDecodeError as exc:
                     raise ValueError(f"Claude Code returned malformed structured JSON: {raw}") from exc
             if not isinstance(structured, Mapping):
@@ -746,7 +818,7 @@ class _ClaudeCodeBackend:
         if not isinstance(raw, str) or not raw.strip():
             raise RuntimeError(f"Claude Code returned no final response: {result}")
         try:
-            payload = json.loads(raw)
+            payload = _decode_json_payload(raw)
         except json.JSONDecodeError as exc:
             raise ValueError(f"Claude Code returned malformed JSON: {raw}") from exc
 

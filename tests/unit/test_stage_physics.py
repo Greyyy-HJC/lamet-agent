@@ -12,6 +12,7 @@ import io
 import json
 from pathlib import Path
 import tokenize
+import warnings
 
 import numpy as np
 import pytest
@@ -21,8 +22,18 @@ from lamet_agent.agent import ToolContext
 from lamet_agent.parallel import FitNumericalError
 from lamet_agent.kernels import list_kernel_ids, load_kernel, load_kernel_document, load_renormalization_kernel
 from lamet_agent.kernels.implementation import HBAR_C_GEV_FM
-from lamet_agent.stages.correlator_analysis.physics import fit_spectrum_samples, matrix_element_samples
-from lamet_agent.stages.correlator_analysis.physics import fit_matrix_element_samples, matrix_element_prior
+from lamet_agent.stages.correlator_analysis.physics import (
+    fit_matrix_element_samples,
+    fit_qda_samples,
+    fit_spectrum_samples,
+    matrix_element_fcn,
+    matrix_element_prior,
+    matrix_element_samples,
+    pt2_fcn,
+    pt3_fcn,
+    qda_fcn,
+    qda_ratio_fcn,
+)
 from lamet_agent.parallel.lanczos import (
     _analyze_threept,
     _analyze_twopt,
@@ -45,6 +56,90 @@ from lamet_agent.stages.fourier_transform.physics import fourier_transform as st
 
 def _ensemble(spacing: float, identifier: str = "test", *, L_s: int = 64, m_pi: float = 0.14) -> EnsembleInfo:
     return EnsembleInfo("test", identifier, spacing, spacing, L_s, 2 * L_s, m_pi)
+
+
+def test_raw_correlator_fcns_match_lametlat_reference_formulas() -> None:
+    """Cross-check the split FCNs against temp/LaMETLat's explicit equations."""
+    times = np.asarray([4.0, 6.0])
+    insertions = np.asarray([1.0, 2.0])
+    extent = 64
+    parameters = {
+        "E0": 0.25,
+        "dE1": 0.4,
+        "z0": 1.2,
+        "z1": 0.45,
+        "O00_re": 0.72,
+        "O01_re": 0.31,
+        "O11_re": 0.18,
+    }
+    energies = (parameters["E0"], parameters["E0"] + parameters["dE1"])
+    overlaps = (parameters["z0"], parameters["z1"])
+    expected_pt2 = sum(
+        overlap**2 / (2 * energy) * (np.exp(-energy * times) + np.exp(-energy * (extent - times)))
+        for energy, overlap in zip(energies, overlaps, strict=True)
+    )
+    expected_pt3 = sum(
+        parameters[f"O{min(source, sink)}{max(source, sink)}_re"]
+        * overlaps[source]
+        * overlaps[sink]
+        * np.exp(-energies[source] * (times - insertions))
+        * np.exp(-energies[sink] * insertions)
+        / (2 * energies[source])
+        / (2 * energies[sink])
+        for source in range(2)
+        for sink in range(2)
+    )
+    expected_qda = sum(
+        overlaps[state]
+        * parameters[f"O0{state}_re"]
+        / (2 * energies[state])
+        * (np.exp(-energies[state] * times) + np.exp(-energies[state] * (extent - times)))
+        for state in range(2)
+    )
+
+    common = {"n_states": 2, "extent": extent}
+    np.testing.assert_allclose(pt2_fcn({**common, "times": times}, parameters), expected_pt2)
+    np.testing.assert_allclose(
+        pt3_fcn(
+            {
+                "n_states": 2,
+                "form": "Breit",
+                "component": "re",
+                "times": times,
+                "insertions": insertions,
+            },
+            parameters,
+        ),
+        expected_pt3,
+    )
+    np.testing.assert_allclose(
+        qda_fcn({**common, "times": times, "component": "re"}, parameters),
+        expected_qda,
+    )
+    ratio = matrix_element_fcn(
+        {
+            **common,
+            "form": "Breit",
+            "atoms": ("3pt_ratio",),
+            "components": ("re",),
+            "ratio_t": times,
+            "ratio_tau": insertions,
+        },
+        parameters,
+    )
+    np.testing.assert_allclose(ratio, expected_pt3 / expected_pt2)
+    np.testing.assert_allclose(
+        qda_ratio_fcn(
+            {
+                **common,
+                "times": times,
+                "components": ("re",),
+                "denominator_kind": "external_2pt",
+            },
+            parameters,
+        ),
+        expected_qda / expected_pt2,
+    )
 
 
 def test_matrix_ratio_uses_declared_tsep_and_tau_coordinates() -> None:
@@ -408,17 +503,165 @@ def test_qda_two_state_ratio_recovers_ground_state_plateau() -> None:
     assert len(series["fit_x"]) > 2
 
 
-@pytest.mark.parametrize(("fit_strategy", "expected_n_data"), [("joint", 15), ("chained", 10)])
-def test_qda_spectral_strategies_use_local_denominator(
-    fit_strategy: str, expected_n_data: int
+@pytest.mark.parametrize(
+    ("use_explicit_two_point", "expected_denominator"),
+    [(False, "qda_z0"), (True, "external_2pt")],
+)
+def test_raw_qda_joint_fit_supports_both_denominator_sources(
+    use_explicit_two_point: bool, expected_denominator: str
 ) -> None:
+    rng = np.random.default_rng(121)
+    ensemble = _ensemble(0.1)
+    times = np.arange(9.0)
+    energy = 0.25
+    overlap = 1.2
+    target = 0.72
+    periodic = np.exp(-energy * times) + np.exp(-energy * (ensemble.L_t - times))
+    denominator = overlap**2 / (2 * energy) * periodic
+    numerator = overlap * (target * overlap) / (2 * energy) * periodic
+    qda_samples = []
+    pt2_samples = []
+    for _ in range(24):
+        shared = 1.0 + rng.normal(0.0, 0.006)
+        point_noise = rng.normal(0.0, 0.0005, times.size)
+        pt2 = denominator * shared * (1.0 + point_noise)
+        target_sample = numerator * shared * (1.0 + point_noise)
+        qda_samples.append(target_sample[:, None] if use_explicit_two_point else np.column_stack([pt2, target_sample]))
+        pt2_samples.append(pt2)
+    common = {"sink_momentum": "[0, 0, 3]", "resample_id": "shared"}
+    qda = EnsembleData(
+        ensemble,
+        "bootstrap",
+        qda_samples,
+        ["t", "z"],
+        {"t": times.tolist(), "z": [1.0] if use_explicit_two_point else [0.0, 1.0]},
+        attrs={**common, "correlator_type": "qda"},
+    )
+    correlators = {"qda": qda}
+    if use_explicit_two_point:
+        correlators["two_point"] = EnsembleData(
+            ensemble,
+            "bootstrap",
+            pt2_samples,
+            ["t"],
+            {"t": times.tolist()},
+            attrs={**common, "correlator_type": "two_point"},
+        )
+
+    output, diagnostics = fit_qda_samples(
+        correlators,
+        fit_scope=["2pt+qda"],
+        components="real",
+        tmin=2,
+        tmax=7,
+        n_states=1,
+        prior_width=1.0,
+        svdcut=1e-8,
+        posterior_prior_error_scale=3.0,
+        sample_error_mode="variance",
+        workers=1,
+    )
+
+    assert output is not None
+    assert diagnostics["denominator_kind"] == expected_denominator
+    assert output.attrs["denominator_kind"] == expected_denominator
+    target_index = 0 if use_explicit_two_point else 1
+    assert np.mean(output.values[:, target_index]) == pytest.approx(target, abs=0.02)
+    assert diagnostics["fits"][0]["sample0_plot"]["plots"][0]["kind"] == "qda_ratio"
+
+
+def test_qda_ratio_division_skips_zero_denominator_times_outside_the_window() -> None:
+    rng = np.random.default_rng(19)
+    times = np.arange(8.0)
+    samples = []
+    for _ in range(16):
+        denominator = np.exp(-0.25 * times) * (1.0 + rng.normal(0.0, 0.01))
+        denominator[-1] = 0.0
+        ratio = 0.7 + rng.normal(0.0, 0.003, times.size)
+        samples.append(np.column_stack([denominator, denominator * ratio]))
+    source = EnsembleData(
+        _ensemble(0.1),
+        "bootstrap",
+        samples,
+        ["t", "z"],
+        {"t": times.tolist(), "z": [0.0, 1.0]},
+        attrs={"correlator_type": "qda"},
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        output, diagnostics = fit_qda_samples(
+            {"qda": source},
+            fit_scope=["2pt+qda"],
+            components="real",
+            tmin=2,
+            tmax=7,
+            n_states=1,
+            prior_width=1.0,
+            svdcut=1e-8,
+            posterior_prior_error_scale=3.0,
+            sample_error_mode="variance",
+            workers=1,
+        )
+    assert not any("invalid value encountered in divide" in str(item.message) for item in caught)
+    assert output is not None
+    assert np.isfinite(np.mean(output.values[:, 1]))
+    assert diagnostics["fits"][0]["sample0_plot"]["plots"][0]["kind"] == "qda_ratio"
+
+
+def test_qda_rejects_multiple_or_incompatible_explicit_two_point_inputs() -> None:
+    ensemble = _ensemble(0.1)
+    times = np.arange(6.0)
+    values = np.tile(np.exp(-0.25 * times), (4, 1))
+    qda = EnsembleData(
+        ensemble,
+        "bootstrap",
+        [np.column_stack([sample, 0.7 * sample]) for sample in values],
+        ["t", "z"],
+        {"t": times.tolist(), "z": [0.0, 1.0]},
+        attrs={"correlator_type": "qda", "sink_momentum": "[0, 0, 3]", "resample_id": "shared"},
+    )
+
+    def two_point(momentum: str) -> EnsembleData:
+        return EnsembleData(
+            ensemble,
+            "bootstrap",
+            list(values),
+            ["t"],
+            {"t": times.tolist()},
+            attrs={"correlator_type": "two_point", "sink_momentum": momentum, "resample_id": "shared"},
+        )
+
+    kwargs = {
+        "fit_scope": ["2pt+qda"],
+        "components": "real",
+        "tmin": 1,
+        "tmax": 5,
+        "n_states": 1,
+        "prior_width": 1.0,
+        "svdcut": 1e-8,
+        "posterior_prior_error_scale": 3.0,
+        "fit_samples": False,
+        "tune_z": 1.0,
+    }
+    with pytest.raises(ValueError, match="incompatible"):
+        fit_qda_samples({"qda": qda, "two_point": two_point("[0, 0, 2]")}, **kwargs)
+    with pytest.raises(ValueError, match="at most one"):
+        fit_qda_samples(
+            {"qda": qda, "two_point_a": two_point("[0, 0, 3]"), "two_point_b": two_point("[0, 0, 3]")},
+            **kwargs,
+        )
+
+
+@pytest.mark.parametrize(
+    ("fit_scope", "expected_n_data"),
+    [(["2pt+qda_ratio"], 15), (["2pt", "qda_ratio"], 10)],
+)
+def test_qda_scope_pipeline_uses_local_denominator(fit_scope: list[str], expected_n_data: int) -> None:
     rng = np.random.default_rng(23)
     ensemble = _ensemble(0.1)
     times = np.arange(8.0)
     energy = 0.25
-    local = 1.2 / (2 * energy) * (
-        np.exp(-energy * times) + np.exp(-energy * (ensemble.L_t - times))
-    )
+    local = 1.2 / (2 * energy) * (np.exp(-energy * times) + np.exp(-energy * (ensemble.L_t - times)))
     target = 0.72 + 0.18j
     samples = []
     for _ in range(40):
@@ -445,11 +688,11 @@ def test_qda_spectral_strategies_use_local_denominator(
         workers=1,
         tune_z=1.0,
         fit_samples=False,
-        fit_strategy=fit_strategy,
+        fit_scope=fit_scope,
     )
 
     assert values is None
-    assert diagnostics["fit_strategy"] == fit_strategy
+    assert diagnostics["fit_scope"] == fit_scope
     assert diagnostics["n_data"] == expected_n_data
     assert np.isclose(diagnostics["fits"][0]["E0"], energy, atol=0.03)
 
@@ -506,9 +749,8 @@ def test_matrix_and_qda_fits_keep_same_ensemble_off_diagonal_covariance(monkeypa
                 attrs={**common, "correlator_type": "three_point"},
             ),
         },
-        strategy="joint",
         fitting_form="Breit",
-        fit_scope="3pt_ratio",
+        fit_scope=["2pt+3pt_ratio"],
         components="real",
         tmin=3,
         tmax=8,
@@ -595,8 +837,8 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
     candidates = [
         {
             "id": "matrix_001",
-            "method": "qda",
-            "fit_strategy": "independent",
+            "method": "lsqfit",
+            "fit_scope": ["qda_ratio"],
             "nstate": 1,
             "prior_width": 1.0,
             "observable": "matrix_element",
@@ -613,8 +855,8 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
         },
         {
             "id": "matrix_002",
-            "method": "qda",
-            "fit_strategy": "independent",
+            "method": "lsqfit",
+            "fit_scope": ["qda_ratio"],
             "nstate": 1,
             "prior_width": 1.0,
             "observable": "matrix_element",
@@ -635,7 +877,6 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
         "analysis_method": "lsqfit",
         "nstate": [1],
         "fit_scope": ["qda_ratio"],
-        "fit_strategy": ["independent"],
         "prior_width": [1.0],
         "q_min": 0.9,
         "chi2_dof_tolerance": 0.25,
@@ -706,8 +947,8 @@ def test_correlator_dataset_key_groups_nstate_and_prior_on_one_window() -> None:
     from lamet_agent.stages.correlator_analysis._selection import dataset_key, models_on_dataset
 
     shared = {
-        "method": "joint",
-        "fit_scope": "3pt_ratio",
+        "method": "lsqfit",
+        "fit_scope": ["3pt_ratio"],
         "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
         "tsep_values": [8],
     }
@@ -720,12 +961,22 @@ def test_correlator_dataset_key_groups_nstate_and_prior_on_one_window() -> None:
         **shared,
         "window": {"tmin": 3, "tmax": 8, "tau_min": 3},
     }
-    other_scope = {"id": "matrix_004", "nstate": 1, "prior_width": 1.0, **shared, "fit_scope": "FH"}
+    other_scope = {"id": "matrix_004", "nstate": 1, "prior_width": 1.0, **shared, "fit_scope": ["FH"]}
+    reordered_joint = {
+        "id": "matrix_005",
+        "nstate": 1,
+        "prior_width": 1.0,
+        **shared,
+        "fit_scope": ["3pt_ratio"],
+    }
     grouped = models_on_dataset([anchor, same_dataset, other_window, other_scope], anchor)
     assert [candidate["id"] for candidate in grouped] == ["matrix_001", "matrix_002"]
     assert dataset_key(anchor) == dataset_key(same_dataset)
     assert dataset_key(anchor) != dataset_key(other_window)
     assert dataset_key(anchor) != dataset_key(other_scope)
+    joint_a = {**anchor, "fit_scope": ["2pt+3pt"]}
+    joint_b = {**reordered_joint, "fit_scope": ["3pt+2pt"]}
+    assert dataset_key(joint_a) == dataset_key(joint_b)
 
 
 def test_loggbf_weights_normalise_and_favour_high_loggbf() -> None:
@@ -908,7 +1159,6 @@ def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, t
     settings = {
         "fitting_form": "Breit",
         "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
         "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
         "svdcut": 1e-6,
@@ -945,7 +1195,7 @@ def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, t
             raise FitNumericalError("sample-average fit failed: ZeroDivisionError: float division")
         return None, {
             "tune_z": kwargs["tune_z"],
-            "fit_scope": "3pt_ratio",
+            "fit_scope": ["3pt_ratio"],
             "Q": 0.8,
             "chi2": 8.0,
             "dof": 10,
@@ -981,7 +1231,6 @@ def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp
     settings = {
         "fitting_form": "Breit",
         "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
         "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
         "pt3_windows": [
             {"tsep_ls": [8], "tau_cut": 2},
@@ -1021,7 +1270,7 @@ def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp
         calls.append((kwargs["tmin"], kwargs["tau_min"], kwargs["tune_z"]))
         return None, {
             "tune_z": kwargs["tune_z"],
-            "fit_scope": "3pt_ratio",
+            "fit_scope": ["3pt_ratio"],
             "Q": 0.8,
             "chi2": 8.0,
             "dof": 10,
@@ -1062,7 +1311,6 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
     )
     settings = {
         "fit_scope": ["qda_ratio"],
-        "fit_strategy": ["independent", "joint", "chained"],
         "pt2_windows": [{"tmin": 2, "tmax": 6}, {"tmin": 2, "tmax": 7}],
         "prior_width": [1.0],
         "posterior_prior_error_scale": 3.0,
@@ -1092,11 +1340,10 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
     calls = []
 
     def tune(*args, **kwargs):
-        calls.append((kwargs["fit_strategy"], kwargs["tmin"], kwargs["tmax"], kwargs["tune_z"]))
+        calls.append((kwargs["fit_scope"], kwargs["tmin"], kwargs["tmax"], kwargs["tune_z"]))
         q_value = 0.6 if kwargs["tmax"] == 6 else 0.8
         return (
             None,
-            [0, 1, 2],
             {
                 "tune_z": kwargs["tune_z"],
                 "Q": q_value,
@@ -1109,24 +1356,16 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
             },
         )
 
-    monkeypatch.setattr(tool, "matrix_element_samples", tune)
+    monkeypatch.setattr(tool, "fit_qda_samples", tune)
     observation = tool.run(context, tune_z_values=[1, 2])
 
     assert calls == [
-        ("chained", 2, 6, 1.0),
-        ("chained", 2, 6, 2.0),
-        ("chained", 2, 7, 1.0),
-        ("chained", 2, 7, 2.0),
-        ("independent", 2, 6, 1.0),
-        ("independent", 2, 6, 2.0),
-        ("independent", 2, 7, 1.0),
-        ("independent", 2, 7, 2.0),
-        ("joint", 2, 6, 1.0),
-        ("joint", 2, 6, 2.0),
-        ("joint", 2, 7, 1.0),
-        ("joint", 2, 7, 2.0),
+        (["qda_ratio"], 2, 6, 1.0),
+        (["qda_ratio"], 2, 6, 2.0),
+        (["qda_ratio"], 2, 7, 1.0),
+        (["qda_ratio"], 2, 7, 2.0),
     ]
-    assert observation["metrics"]["candidate_count"] == 6
+    assert observation["metrics"]["candidate_count"] == 2
     assert observation["metrics"]["recommended_candidate_id"] == "matrix_002"
     assert all(candidate.get("data") is None for candidate in context.state["matrix_element_candidates"])
 
@@ -1145,8 +1384,8 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
     )
     candidate = {
         "id": "matrix_001",
-        "method": "joint",
-        "fit_scope": "3pt_ratio",
+        "method": "lsqfit",
+        "fit_scope": ["3pt_ratio"],
         "observable": "matrix_element",
         "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
         "tsep_values": [8],
@@ -1163,7 +1402,6 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
     settings = {
         "fitting_form": "Breit",
         "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
         "pt2_windows": [{"tmin": 3, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
         "svdcut": 1e-6,
@@ -1216,8 +1454,8 @@ def test_publish_model_average_applies_every_sibling_on_the_selected_dataset(mon
     def _candidate(candidate_id: str, nstate: int, chi2_dof: float) -> dict[str, object]:
         return {
             "id": candidate_id,
-            "method": "joint",
-            "fit_scope": "3pt_ratio",
+            "method": "lsqfit",
+            "fit_scope": ["3pt_ratio"],
             "observable": "matrix_element",
             "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
@@ -1237,7 +1475,6 @@ def test_publish_model_average_applies_every_sibling_on_the_selected_dataset(mon
     settings = {
         "fitting_form": "Breit",
         "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
         "pt2_windows": [{"tmin": 3, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
         "svdcut": 1e-6,
@@ -1318,8 +1555,8 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
     candidates = [
         {
             "id": "matrix_001",
-            "method": "joint",
-            "fit_scope": "3pt_ratio",
+            "method": "lsqfit",
+            "fit_scope": ["3pt_ratio"],
             "observable": "matrix_element",
             "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
@@ -1335,8 +1572,8 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
         },
         {
             "id": "matrix_002",
-            "method": "joint",
-            "fit_scope": "3pt_ratio",
+            "method": "lsqfit",
+            "fit_scope": ["3pt_ratio"],
             "observable": "matrix_element",
             "window": {"tmin": 4, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
@@ -1354,7 +1591,6 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
     settings = {
         "fitting_form": "Breit",
         "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
         "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
         "svdcut": 1e-6,
@@ -1417,10 +1653,11 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
     candidates = [
         {
             "id": "matrix_001",
-            "method": "joint",
-            "fit_scope": "3pt_ratio",
+            "method": "lsqfit",
+            "fit_scope": ["3pt_ratio"],
             "observable": "matrix_element",
             "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
+            "tsep_values": [8],
             "nstate": 2,
             "prior_width": 1.0,
             "quality_passed": False,
@@ -1429,10 +1666,11 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
         },
         {
             "id": "matrix_002",
-            "method": "joint",
-            "fit_scope": "3pt_ratio",
+            "method": "lsqfit",
+            "fit_scope": ["3pt_ratio"],
             "observable": "matrix_element",
             "window": {"tmin": 4, "tmax": 8, "tau_min": 2},
+            "tsep_values": [8],
             "nstate": 2,
             "prior_width": 1.0,
             "quality_passed": True,
@@ -1449,7 +1687,6 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
         "analysis_method": "lsqfit",
         "nstate": [2],
         "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
         "prior_width": [1.0],
         "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
@@ -1474,9 +1711,19 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
     assert table[0]["error"] == "sample-average fit failed"
 
 
-@pytest.mark.parametrize("strategy", ["joint", "chained", "independent"])
-@pytest.mark.parametrize("scope", ["3pt_ratio", "FH", "3pt_ratio+FH"])
-def test_native_matrix_element_fit_supports_authored_strategies_and_scopes(strategy: str, scope: str) -> None:
+@pytest.mark.parametrize(
+    "fit_scope",
+    [
+        ["2pt+3pt"],
+        ["2pt", "3pt"],
+        ["3pt"],
+        ["FH"],
+        ["3pt+FH"],
+        ["3pt_ratio"],
+        ["3pt_ratio+FH"],
+    ],
+)
+def test_native_matrix_element_fit_supports_composable_scopes(fit_scope: list[str]) -> None:
     ensemble = EnsembleInfo("toy", "toy", 0.1, 0.1, 32, 32, 0.2)
     times = np.arange(16)
     tseps = np.asarray([8, 10])
@@ -1516,9 +1763,8 @@ def test_native_matrix_element_fit_supports_authored_strategies_and_scopes(strat
     )
     result, diagnostics = fit_matrix_element_samples(
         {"c2": c2_data, "c3": c3_data},
-        strategy=strategy,
         fitting_form="Breit",
-        fit_scope=scope,
+        fit_scope=fit_scope,
         components="real",
         tmin=3,
         tmax=8,
@@ -1529,18 +1775,21 @@ def test_native_matrix_element_fit_supports_authored_strategies_and_scopes(strat
         correlator_rescale=1.0,
         svdcut=1e-8,
         posterior_prior_error_scale=3.0,
-        workers=2 if strategy == "joint" and scope == "3pt_ratio" else 1,
+        workers=1,
     )
     assert result.dims == ["z"]
     assert np.all(np.isfinite(result.values))
-    if scope == "3pt_ratio":
-        assert np.isclose(np.mean(np.real(result.values[:, 0])), 0.8 / 0.6, atol=0.12)
-    assert diagnostics["strategy"] == strategy
-    assert diagnostics["fit_scope"] == scope
+    atoms = {atom for stage in fit_scope for atom in stage.split("+")}
+    if "3pt_ratio" in atoms or {"2pt", "3pt"}.issubset(atoms):
+        assert np.isclose(np.mean(np.real(result.values[:, 0])), 0.8 / 0.6, atol=0.16)
+    assert diagnostics["fit_scope"] == fit_scope
     production_fit = diagnostics["fits"][0]
     assert len(production_fit["sample_diagnostics"]) == result.n_sample
     assert len(production_fit["E0_samples"]) == result.n_sample
-    expected_kinds = {"pt3_ratio"} if scope == "3pt_ratio" else {"fh"} if scope == "FH" else {"pt3_ratio", "fh"}
+    final_atoms = set(fit_scope[-1].split("+"))
+    expected_kinds = ({"pt3_ratio"} if final_atoms & {"3pt", "3pt_ratio"} else set()) | (
+        {"fh"} if "FH" in final_atoms else set()
+    )
     assert {plot["kind"] for plot in production_fit["sample0_plot"]["plots"]} == expected_kinds
     if "pt3_ratio" in expected_kinds:
         ratio_plot = next(plot for plot in production_fit["sample0_plot"]["plots"] if plot["kind"] == "pt3_ratio")
@@ -1550,12 +1799,11 @@ def test_native_matrix_element_fit_supports_authored_strategies_and_scopes(strat
             fit_x = np.asarray(series["fit_x"], dtype=float)
             assert np.isclose(float(np.min(x) + np.max(x)), 0.0)
             assert np.isclose(float(np.min(fit_x) + np.max(fit_x)), 0.0)
-    if strategy == "joint" and scope == "3pt_ratio":
+    if fit_scope == ["2pt+3pt"]:
         tuned, tuning = fit_matrix_element_samples(
             {"c2": c2_data, "c3": c3_data},
-            strategy=strategy,
             fitting_form="Breit",
-            fit_scope=scope,
+            fit_scope=fit_scope,
             components="real",
             tmin=3,
             tmax=8,
@@ -1640,9 +1888,8 @@ def test_native_nonbreit_fit_uses_distinct_source_and_sink_spectra() -> None:
     )
     result, diagnostics = fit_matrix_element_samples(
         {"initial": initial_data, "final": final_data, "three_point": three_point_data},
-        strategy="joint",
         fitting_form="NonBreit",
-        fit_scope="3pt_ratio",
+        fit_scope=["2pt+3pt_ratio"],
         components="real",
         tmin=3,
         tmax=8,

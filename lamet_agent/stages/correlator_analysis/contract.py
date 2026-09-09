@@ -19,6 +19,7 @@ from lamet_agent.stages.correlator_analysis.ask import (
     pt2_windows as recommend_pt2_windows,
     pt3_windows as recommend_pt3_windows,
 )
+from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope, valid_scope_stage
 
 
 def _positive(value: int | float) -> bool:
@@ -72,19 +73,17 @@ PARAM_RULES = (
     Depends("", "component", physics="The fit needs an explicit real, imaginary, or complex channel selection."),
     Depends("", "nstate", physics="The fitting model needs candidate state counts, while Lanczos uses one authored exported Ritz-state count and infers its internal order."),
     Depends("lsqfit", "fit_scope", physics="The fit scope selects the observable-specific data and model function used by the least-squares fit."),
-    List("lsqfit.fit_scope", "scope", physics="Multiple scopes allow the candidate scan to compare distinct observable models.", validator=_nonempty),
-    Value("lsqfit.fit_scope.scope", Literal["spectrum", "3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"], physics="'spectrum' fits two-point energies; '3pt_ratio' fits the ratio of a three-point correlator to a two-point correlator; 'FH' extracts the matrix element from the slope of the summed ratio with respect to source-sink separation; '3pt_ratio+FH' combines both; 'qda_ratio' fits a nonlocal-to-local two-point ratio."),
-    Depends("lsqfit", "fit_strategy", physics="Matrix-element fits need an explicit strategy for handling two-point information and propagating its uncertainty to the matrix element."),
+    List("lsqfit.fit_scope", "scope", physics="The ordered entries form chained fit stages; atoms joined with '+' inside one entry share a correlated joint likelihood.", validator=_nonempty),
+    Value("lsqfit.fit_scope.scope", str, physics="Each list entry is one joint fit stage whose atoms are separated by '+'. List order denotes chained posterior propagation. Supported atoms are 2pt, 3pt, qda, FH, 3pt_ratio, and qda_ratio.", validator=valid_scope_stage),
     Depends("lsqfit", "fitting_form", physics="The matrix-element model needs a forward or non-forward spectral decomposition selected by the kinematics."),
     Recommends("lsqfit", "prior_width", physics="A default prior scale is needed to set the uncertainty of underconstrained spectral and matrix-element parameters.", default=[1.0]),
-    Depends("lsqfit", "model_average", physics="At a fixed data window, strategy, and scope, false publishes the selected nstate/prior-width model; true forms per-resample, per-z logGBF-weighted means over those models."),
+    Depends("lsqfit", "model_average", physics="At a fixed data window and fit-scope pipeline, false publishes the selected nstate/prior-width model; true forms per-resample, per-z logGBF-weighted means over those models."),
     Depends("lsqfit", "pt2_windows", physics="Two-point spectrum information needs candidate time windows chosen from the observed signal and uncertainty.", null_hook=recommend_pt2_windows),
     Depends("lsqfit", "pt3_windows", physics="Three-point and Feynman-Hellmann observables need candidate source-sink and insertion-time windows.", null_hook=recommend_pt3_windows),
     Recommends("lsqfit", "svdcut", physics="Correlated fits need a relative covariance singular-value cutoff to suppress numerically unresolved directions.", default=1e-12),
     Depends("lsqfit", "posterior_prior_error_scale", physics="The fit needs a scale for propagating prior uncertainty; chained fits also use it to widen the preceding spectrum posterior."),
     Depends("lsqfit", "q_min", physics="Candidate comparison needs a preferred fit-quality probability; after recommendation retries are exhausted, selection falls back across all retained numerical candidates."),
     Recommends("lsqfit", "chi2_dof_tolerance", physics="The information-preserving window rule needs a tolerance for retaining fits near the best chi2/dof.", default=0.25),
-    List("lsqfit.fit_strategy", "strategy", physics="Multiple strategies let the candidate scan compare alternative two-point/spectral uncertainty-propagation paths.", validator=_nonempty),
     List("nstate", "state_count", physics="Multiple state counts let the candidate scan compare spectral truncations.", validator=_nonempty),
     List("lsqfit.prior_width", "width", physics="Multiple prior widths let the candidate scan test prior sensitivity.", validator=_nonempty),
     List("lsqfit.pt2_windows", "window", physics="Multiple two-point windows let the candidate scan test fit-range stability.", validator=_nonempty),
@@ -101,7 +100,6 @@ PARAM_RULES = (
     Depends("lanczos", "scope", physics="The Lanczos algorithm needs to know whether to analyze a two-point spectrum or a three-point matrix element."),
     Recommends("lanczos", "inner_samples", physics="Each outer sample needs an inner bootstrap ensemble for CW filtering and median aggregation.", default=200),
     Recommends("lanczos", "precision", physics="Lanczos recurrence arithmetic needs an explicit numeric precision; zero selects the normal NumPy double-precision path.", default=0),
-    Value("lsqfit.fit_strategy.strategy", Literal["joint", "chained", "independent"], physics="'joint' propagates correlated two-point and matrix-element uncertainties in one fit; 'chained' transfers spectrum posterior uncertainties as widened priors; 'independent' omits a separate two-point model term."),
     Value("component", Literal["re", "im", "both"], physics="'re' selects the real channel, 'im' the imaginary channel, and 'both' fits both channels."),
     Value("nstate.state_count", int, physics="The number of retained spectral states in the correlator decomposition; it must be a positive integer.", validator=_positive),
     Value("lsqfit.prior_width.width", float, physics="The scale of Gaussian prior uncertainties for a fit candidate; it must be a positive floating-point value.", validator=_positive),
@@ -131,27 +129,13 @@ INPUT_RULES = (
 def check_method_family(context: CheckContext) -> Issue | None:
     if context.params["analysis_method"] != "lsqfit":
         return None
-    settings = context.params
-    scopes = set(settings["fit_scope"])
-    strategies = set(settings["fit_strategy"])
-    if "spectrum" in scopes:
-        if scopes != {"spectrum"}:
-            return Issue(
-                "fit_scope",
-                "spectrum must be the only scope in a spectrum job",
-                "Spectrum and matrix-element jobs expose disjoint fit scopes.",
-            )
-        if strategies != {"independent"}:
-            return Issue(
-                "fit_strategy",
-                "must contain only 'independent' for a spectrum job",
-                "A direct two-point spectrum fit has no separate matrix-element covariance propagation.",
-            )
-    if "qda_ratio" in scopes and len(scopes) != 1:
+    try:
+        parse_fit_scope(context.params["fit_scope"])
+    except (TypeError, ValueError) as exc:
         return Issue(
             "fit_scope",
-            "qda_ratio must be the only fit scope in a qDA job",
-            "The qDA channel supports independent, joint, and chained handling of its local two-point denominator.",
+            str(exc),
+            "The ordered scope pipeline must identify compatible joint and chained likelihoods.",
         )
     return None
 
@@ -160,19 +144,22 @@ def check_lsqfit_windows(context: CheckContext) -> Issue | None:
     if context.params["analysis_method"] != "lsqfit":
         return None
     lsqfit = context.params
-    scopes = set(lsqfit["fit_scope"])
-    ordinary_scopes = scopes & {"3pt_ratio", "FH", "3pt_ratio+FH"}
-    if ordinary_scopes and not lsqfit.get("pt3_windows"):
+    try:
+        scope = parse_fit_scope(lsqfit["fit_scope"])
+    except (TypeError, ValueError):
+        return None
+    if scope.needs_pt3_data and not lsqfit.get("pt3_windows"):
         return Issue(
             "pt3_windows",
             "is required for three-point and FH fit scopes",
             "The matrix-element fitter needs authored source-sink and insertion-time candidates.",
         )
-    if lsqfit["fitting_form"] == "NonBreit" and ordinary_scopes != {"3pt_ratio"}:
+    nonbreit_atoms = scope.atom_set & {"3pt", "3pt_ratio"}
+    if lsqfit["fitting_form"] == "NonBreit" and (not nonbreit_atoms or scope.atom_set - {"2pt", "3pt", "3pt_ratio"}):
         return Issue(
             "fit_scope",
-            "must contain only '3pt_ratio' for NonBreit fitting",
-            "The implemented non-forward model is the three-point ratio decomposition.",
+            "NonBreit requires a raw 3pt or 3pt_ratio path and permits only an accompanying 2pt atom",
+            "qDA and FH models currently use the forward spectral decomposition.",
         )
     for index, window in enumerate(lsqfit.get("pt2_windows") or []):
         if window["tmin"] >= window["tmax"]:
@@ -204,19 +191,23 @@ def check_qda_scope(context: CheckContext) -> Issue | None:
     if context.params["analysis_method"] != "lsqfit":
         return None
     lsqfit = context.params
-    if "qda_ratio" not in set(lsqfit["fit_scope"]):
+    try:
+        scope = parse_fit_scope(lsqfit["fit_scope"])
+    except (TypeError, ValueError):
+        return None
+    if not scope.is_qda:
         return None
     if lsqfit["fitting_form"] != "Breit":
         return Issue(
             "fitting_form",
-            "must be 'Breit' for qda_ratio",
-            "The implemented qDA ratio uses the forward spectral decomposition.",
+            "must be 'Breit' for qDA fitting",
+            "The implemented qDA correlator uses the forward spectral decomposition.",
         )
     if lsqfit.get("pt3_windows"):
         return Issue(
             "pt3_windows",
-            "must be omitted for qda_ratio",
-            "The qDA ratio consumes only nonlocal/local two-point correlators.",
+            "must be omitted for qDA fit scopes",
+            "qDA fits consume only time-dependent local and nonlocal two-point correlators.",
         )
     return None
 

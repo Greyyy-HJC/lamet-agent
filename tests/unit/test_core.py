@@ -40,7 +40,7 @@ from lamet_agent.contract import (
     stage_job_rules,
 )
 from lamet_agent.__main__ import _build_parser
-from lamet_agent.llm import Message, _AssistantResponse, _ToolCall, create_backend
+from lamet_agent.llm import Message, _AssistantResponse, _ToolCall, _decode_json_payload, create_backend
 from lamet_agent.manifest import Manifest, _load_stage_contract, load_manifest
 from lamet_agent.structured import annotation_schema, validate_unique_items
 
@@ -554,6 +554,54 @@ def test_codex_provider_passes_response_schema_to_the_python_sdk(monkeypatch: py
     assert "<OUTPUT_CONSTRAINT>" not in prompt
     assert "response_schema" not in prompt
     assert "<EXECUTION_CONSTRAINT>" in prompt
+
+
+def test_decode_json_payload_tolerates_extra_cli_agent_closers() -> None:
+    payload = {
+        "text": "",
+        "tool_calls": [{"name": "write_review", "arguments": {"title": "review", "conclusion": "ok"}}],
+    }
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    assert _decode_json_payload(raw) == payload
+    assert _decode_json_payload(raw + "]}") == payload
+    assert _decode_json_payload(raw[:-2] + "}" + raw[-2:]) == payload
+    assert _decode_json_payload(f"```json\n{raw}\n```") == payload
+    assert _decode_json_payload(f"Here is the JSON:\n{raw}") == payload
+    with pytest.raises(json.JSONDecodeError):
+        _decode_json_payload("{not json")
+
+
+def test_codex_provider_accepts_extra_closers_on_tool_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"text": "done", "tool_calls": [{"name": "write_review", "arguments": {"title": "review"}}]}
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "]}"
+
+    class FakeSandbox:
+        read_only = object()
+
+    class FakeThread:
+        def run(self, prompt: str, **options: object) -> SimpleNamespace:
+            return SimpleNamespace(final_response=raw, usage={"input_tokens": 4, "output_tokens": 5})
+
+    class FakeCodex:
+        def thread_start(self, **options: object) -> FakeThread:
+            return FakeThread()
+
+        def close(self) -> None:
+            return None
+
+    sdk = types.ModuleType("openai_codex")
+    sdk.Codex = FakeCodex
+    sdk.Sandbox = FakeSandbox
+    monkeypatch.setitem(sys.modules, "openai_codex", sdk)
+
+    response = create_backend("codex").complete(
+        messages=[Message("user", "request")],
+        tools=[{"type": "function", "function": {"name": "write_review", "parameters": {}}}],
+        prompt_digest="digest",
+    )
+    assert response.text == "done"
+    assert response.calls[0].name == "write_review"
+    assert response.calls[0].arguments == {"title": "review"}
 
 
 def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1525,6 +1573,51 @@ def test_correlator_contract_rejects_global_sampling_controls(name: str, value: 
     assert [(issue.path, issue.message) for issue in issues] == [(name, f"unknown key {name!r}")]
 
 
+def test_correlator_contract_rejects_removed_fit_strategy() -> None:
+    contract = _load_stage_contract("correlator_analysis")
+    issues = evaluate_rules({"fit_strategy": ["joint"]}, contract.PARAM_RULES, complete=False)
+    assert [(issue.path, issue.message) for issue in issues] == [("fit_strategy", "unknown key 'fit_strategy'")]
+
+
+@pytest.mark.parametrize(
+    "fit_scope",
+    [
+        ["2pt"],
+        ["2pt", "3pt"],
+        ["2pt+3pt"],
+        ["2pt", "3pt+FH"],
+        ["FH"],
+        ["3pt_ratio"],
+        ["qda_ratio"],
+        ["2pt", "qda"],
+        ["2pt+qda"],
+    ],
+)
+def test_correlator_fit_scope_accepts_ordered_joint_and_chained_pipelines(fit_scope: list[str]) -> None:
+    from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
+
+    assert parse_fit_scope(fit_scope).as_list() == fit_scope
+
+
+@pytest.mark.parametrize(
+    "fit_scope",
+    [
+        ["spectrum"],
+        ["qda", "3pt"],
+        ["2pt", "2pt+3pt"],
+        ["3pt", "2pt"],
+        ["qda+qda_ratio"],
+        ["3pt", "3pt_ratio"],
+        ["2pt++3pt"],
+    ],
+)
+def test_correlator_fit_scope_rejects_legacy_mixed_and_duplicate_pipelines(fit_scope: list[str]) -> None:
+    from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
+
+    with pytest.raises(ValueError):
+        parse_fit_scope(fit_scope)
+
+
 def test_manifest_enforces_global_sampling_relationships(tmp_path: Path) -> None:
     metadata = _valid_metadata(tmp_path, resample_mode="bootstrap")
     manifest = Manifest(tmp_path / "manifest.json", {"metadata": metadata, "stages": {}})
@@ -1789,7 +1882,7 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
     context = CheckContext({}, "correlator_analysis", "job", lanczos, {})
     assert evaluate_checks(contract.CHECKS, context) == []
 
-    mixed = {**lanczos, "fit_scope": ["spectrum"]}
+    mixed = {**lanczos, "fit_scope": ["2pt"]}
     assert evaluate_rules(mixed, contract.PARAM_RULES) == []
     assert "fit_scope" not in mixed
 
@@ -1797,8 +1890,7 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
-        "fit_scope": ["spectrum"],
-        "fit_strategy": ["independent"],
+        "fit_scope": ["2pt"],
         "fitting_form": "Breit",
         "model_average": False,
         "pt2_windows": [{"tmin": 2, "tmax": 8}],
@@ -1818,17 +1910,14 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
 
 
 @pytest.mark.parametrize("state_counts", [[2], [1, 2]])
-@pytest.mark.parametrize("fit_strategy", [["independent"], ["joint"], ["chained"], ["independent", "joint", "chained"]])
-def test_correlator_contract_allows_qda_candidate_grid(
-    state_counts: list[int], fit_strategy: list[str]
-) -> None:
+@pytest.mark.parametrize("fit_scope", [["qda_ratio"], ["2pt", "qda"], ["2pt+qda"]])
+def test_correlator_contract_allows_qda_candidate_grid(state_counts: list[int], fit_scope: list[str]) -> None:
     contract = _load_stage_contract("correlator_analysis")
     qda_fit = {
         "analysis_method": "lsqfit",
         "component": "both",
         "nstate": state_counts,
-        "fit_scope": ["qda_ratio"],
-        "fit_strategy": fit_strategy,
+        "fit_scope": fit_scope,
         "fitting_form": "Breit",
         "model_average": False,
         "pt2_windows": [{"tmin": 2, "tmax": 14}],
@@ -1839,10 +1928,13 @@ def test_correlator_contract_allows_qda_candidate_grid(
     }
 
     assert evaluate_rules(qda_fit, contract.PARAM_RULES) == []
-    assert evaluate_checks(
-        contract.CHECKS,
-        CheckContext({}, "correlator_analysis", "qda", qda_fit, {}),
-    ) == []
+    assert (
+        evaluate_checks(
+            contract.CHECKS,
+            CheckContext({}, "correlator_analysis", "qda", qda_fit, {}),
+        )
+        == []
+    )
 
 
 def test_correlator_contract_allows_model_average() -> None:
@@ -1851,8 +1943,7 @@ def test_correlator_contract_allows_model_average() -> None:
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [1, 2],
-        "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
+        "fit_scope": ["2pt+3pt"],
         "fitting_form": "Breit",
         "model_average": True,
         "pt2_windows": [{"tmin": 3, "tmax": 8}],
@@ -1869,6 +1960,26 @@ def test_correlator_contract_allows_model_average() -> None:
         )
         == []
     )
+
+
+def test_correlator_contract_rejects_nonbreit_without_a_three_point_path() -> None:
+    contract = _load_stage_contract("correlator_analysis")
+    params = {
+        "analysis_method": "lsqfit",
+        "component": "re",
+        "nstate": [1],
+        "fit_scope": ["2pt"],
+        "fitting_form": "NonBreit",
+        "model_average": False,
+        "pt2_windows": [{"tmin": 2, "tmax": 8}],
+        "prior_width": [1.0],
+        "svdcut": 1e-8,
+        "posterior_prior_error_scale": 3.0,
+        "q_min": 0.05,
+    }
+    assert evaluate_rules(params, contract.PARAM_RULES) == []
+    issues = evaluate_checks(contract.CHECKS, CheckContext({}, "correlator_analysis", "job", params, {}))
+    assert any(issue.path == "fit_scope" and "requires a raw 3pt" in issue.message for issue in issues)
 
 
 def test_each_shipped_stage_contract_reports_incomplete_params_instead_of_crashing(tmp_path: Path) -> None:
@@ -2855,8 +2966,7 @@ def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Pa
         context.state["matrix_element_candidates"] = [
             {
                 "id": f"matrix_{len(attempts):03d}",
-                "fit_strategy": "independent",
-                "fit_scope": "qda_ratio",
+                "fit_scope": ["qda_ratio"],
                 "window": {"tmin": 2, "tmax": 8, "tau_min": None},
                 "nstate": 1,
                 "prior_width": 1.0,
@@ -2934,8 +3044,7 @@ def test_correlator_workflow_publishes_best_candidate_when_q_min_is_never_met(
         context.state["matrix_element_candidates"] = [
             {
                 "id": "matrix_001",
-                "fit_strategy": "independent",
-                "fit_scope": "qda_ratio",
+                "fit_scope": ["qda_ratio"],
                 "window": {"tmin": 2, "tmax": 8, "tau_min": None},
                 "nstate": 1,
                 "prior_width": 1.0,
@@ -3069,7 +3178,7 @@ def test_spectrum_retry_uses_the_publisher_selector_and_synchronizes_windows(
         "spectrum",
         {
             "analysis_method": "lsqfit",
-            "fit_scope": ["spectrum"],
+            "fit_scope": ["2pt"],
             "q_min": 0.05,
             "pt2_windows": [{"tmin": 1, "tmax": 7}],
         },
@@ -3235,8 +3344,7 @@ def test_qda_retry_treats_invalid_recommendations_as_failed_attempts(
         context.state["matrix_element_candidates"] = [
             {
                 "id": "matrix_001",
-                "fit_strategy": "independent",
-                "fit_scope": "qda_ratio",
+                "fit_scope": ["qda_ratio"],
                 "window": {"tmin": 2, "tmax": 8, "tau_min": None},
                 "nstate": 1,
                 "prior_width": 1.0,

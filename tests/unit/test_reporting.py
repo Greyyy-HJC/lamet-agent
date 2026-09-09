@@ -11,12 +11,12 @@ from lamet_agent.stages._reporting import StageReportRecord
 _TEST_ENSEMBLE = EnsembleInfo("test", "a06", 0.06, 0.06, 64, 128, 0.13)
 
 
-def test_qda_report_labels_keep_scope_and_spectral_strategy_orthogonal() -> None:
+def test_correlator_report_labels_render_joint_and_chained_scopes() -> None:
     from lamet_agent.stages.correlator_analysis.reporting import _method_name
 
-    assert _method_name("independent", "qda_ratio") == "qDA nonlocal/local ratio independent fit"
-    assert _method_name("joint", "qda_ratio") == "local 2pt + qDA ratio joint fit"
-    assert _method_name("chained", "qda_ratio") == "local 2pt → qDA ratio chained fit"
+    assert _method_name("lsqfit", ["qda_ratio"]) == "qDA nonlocal/local ratio fit"
+    assert _method_name("lsqfit", ["2pt+qda"]) == "2pt spectrum + raw qDA correlator fit"
+    assert _method_name("lsqfit", ["2pt", "qda"]) == "2pt spectrum → raw qDA correlator fit"
 
 
 def _data(*, attrs=None, values=None) -> EnsembleData:
@@ -29,8 +29,7 @@ def _correlator_lsqfit_params() -> dict:
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
-        "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
+        "fit_scope": ["2pt+3pt"],
         "fitting_form": "Breit",
         "pt2_windows": [{"tmin": 3, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
@@ -54,7 +53,7 @@ def _correlator_dispersion_record(stage: Path, job_id: str, ensemble, momentum, 
     )
     summary = {
         "result": "bare_matrix_element",
-        "decisions": {"candidate_id": "matrix_001", "method": "joint"},
+        "decisions": {"candidate_id": "matrix_001", "method": "lsqfit"},
         "diagnostics": {
             "Q": 0.8,
             "chi2_dof": 0.9,
@@ -128,8 +127,7 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
         "analysis_method": "lsqfit",
         "component": "re",
         "nstate": [2],
-        "fit_scope": ["3pt_ratio"],
-        "fit_strategy": ["joint"],
+        "fit_scope": ["2pt+3pt"],
         "fitting_form": "Breit",
         "pt2_windows": [{"tmin": 3, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
@@ -138,15 +136,15 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
     }
     summary = {
         "result": "bare_matrix_element",
-        "decisions": {"candidate_id": "matrix_001", "method": "joint"},
+        "decisions": {"candidate_id": "matrix_001", "method": "lsqfit"},
         "diagnostics": {
             "Q": 0.8,
             "chi2_dof": 0.9,
             "candidates": [
                 {
                     "candidate_id": "matrix_001",
-                    "method": "joint",
-                    "fit_scope": "3pt_ratio",
+                    "method": "lsqfit",
+                    "fit_scope": ["2pt+3pt"],
                     "window": {"tmin": 3, "tmax": 8},
                     "tsep_values": [8],
                     "nstate": 2,
@@ -166,7 +164,7 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
     assert "Correlator Analysis Stage Report" in text
     assert "matrix_001" not in text
     assert "| result |" not in text
-    assert "2pt + 3pt ratio joint fit" in text
+    assert "2pt spectrum + raw 3pt correlator fit" in text
     assert "2pt window [3, 8)" in text
     assert "Selection Policy" in text
     assert "`model_average=true`" in text
@@ -242,11 +240,11 @@ def test_correlator_report_renders_only_the_authored_kinematic_formula(tmp_path:
         params = {
             **_correlator_lsqfit_params(),
             "fitting_form": form,
-            "fit_scope": ["3pt_ratio"],
+            "fit_scope": ["2pt+3pt_ratio"],
         }
         summary = {
             "result": "bare_matrix_element",
-            "decisions": {"method": "joint"},
+            "decisions": {"method": "lsqfit"},
             "diagnostics": {},
             "artifacts": ["output.nc"],
         }
@@ -273,15 +271,15 @@ def test_correlator_report_includes_per_z_sample_quality_statistics(tmp_path: Pa
     output = _data()
     summary = {
         "result": "bare_matrix_element",
-        "decisions": {"candidate_id": "matrix_001", "method": "joint"},
+        "decisions": {"candidate_id": "matrix_001", "method": "lsqfit"},
         "diagnostics": {
             "Q": 0.8,
             "chi2_dof": 0.9,
             "candidates": [
                 {
                     "candidate_id": "matrix_001",
-                    "method": "joint",
-                    "fit_scope": "3pt_ratio",
+                    "method": "lsqfit",
+                    "fit_scope": ["2pt+3pt"],
                     "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
                     "tsep_values": [8, 10],
                     "nstate": 2,
@@ -328,7 +326,7 @@ def test_correlator_report_limits_job_figures_to_first_middle_and_last_z(tmp_pat
         artifacts.append(f"fit_logs/plots/ca_joint_3pt_ratio_z{z_value}_sample0_pt3_ratio_re.pdf")
     summary = {
         "result": "bare_matrix_element",
-        "decisions": {"method": "joint"},
+        "decisions": {"method": "lsqfit"},
         "diagnostics": {},
         "artifacts": artifacts,
     }
@@ -389,8 +387,8 @@ def test_correlator_fit_artifacts_write_logs_and_pdf_only(tmp_path: Path) -> Non
         )
     selected = {
         "id": "matrix_001",
-        "method": "joint",
-        "fit_scope": "3pt_ratio",
+        "method": "lsqfit",
+        "fit_scope": ["2pt+3pt"],
         "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
         "nstate": 1,
         "prior_width": 1.0,
@@ -409,7 +407,7 @@ def test_correlator_fit_artifacts_write_logs_and_pdf_only(tmp_path: Path) -> Non
     assert len(result.artifacts) == 4
     assert len(list((tmp_path / "fit_logs" / "plots").glob("*.pdf"))) == 2
     assert not list((tmp_path / "fit_logs" / "plots").glob("*.svg"))
-    assert "Good sample=0" in (tmp_path / "fit_logs" / "ca_p0_joint_3pt_ratio_samples.log").read_text()
+    assert "Good sample=0" in (tmp_path / "fit_logs" / "ca_p0_2pt_plus_3pt_samples.log").read_text()
     assert result.sample_fit_quality["Q"] == [0.8, 0.8]
     assert result.sample_fit_quality["by_z"]["0"] == {
         "successful_samples": 1,

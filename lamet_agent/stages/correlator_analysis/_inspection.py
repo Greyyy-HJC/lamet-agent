@@ -8,6 +8,7 @@ import numpy as np
 from lamet_agent.agent import ToolContext
 from lamet_agent.data import format_gvar
 from lamet_agent.stages.correlator_analysis._input import ensure_correlators
+from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
 
 
 _RESCALED_TYPICAL_ABS_RANGE = (1.0e-4, 1.0e-2)
@@ -68,9 +69,9 @@ def _automatic_correlator_rescale(
 def run(context: ToolContext, *, selected_ids: list[str] | None = None) -> dict[str, object]:
     """Load, resample, and summarize selected correlators."""
     resampled = ensure_correlators(context, selected_ids)
-    fit_scopes = set(context.params.get("fit_scope", []))
+    fit_scope = parse_fit_scope(context.params["fit_scope"]) if context.params.get("fit_scope") else None
     scale_inspection = None
-    if fit_scopes & {"3pt_ratio", "FH", "3pt_ratio+FH"}:
+    if fit_scope is not None and fit_scope.needs_pt3_data:
         scale_inspection = _automatic_correlator_rescale(
             resampled,
             context.params["pt2_windows"],

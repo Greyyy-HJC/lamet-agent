@@ -22,9 +22,6 @@
         "fit_scope": [
           "qda_ratio"
         ],
-        "fit_strategy": [
-          "independent"
-        ],
         "fitting_form": "Breit",
         "model_average": false,
         "pt2_windows": [

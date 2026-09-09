@@ -70,17 +70,54 @@ def _fit_warning_scope():
         yield
 
 
+def _prior_payload(prior: Mapping[str, Any]) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Pack independent Gaussian priors as pickle-safe mean and width arrays."""
+    payload: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for key, value in prior.items():
+        mean = np.asarray(gv.mean(value), dtype=float)
+        sdev = np.asarray(gv.sdev(value), dtype=float)
+        if mean.shape != sdev.shape or np.any(~np.isfinite(mean)) or np.any(~np.isfinite(sdev)) or np.any(sdev <= 0):
+            raise ValueError(f"prior '{key}' is not a finite positive-width Gaussian")
+        payload[key] = (mean, sdev)
+    return payload
+
+
+def _prior_from_payload(payload: Mapping[str, tuple[np.ndarray, np.ndarray]]) -> gv.BufferDict:
+    """Rebuild independent Gaussian priors in the local gvar covariance buffer."""
+    prior = gv.BufferDict()
+    for key, (mean, sdev) in payload.items():
+        mean = np.asarray(mean, dtype=float)
+        sdev = np.asarray(sdev, dtype=float)
+        if mean.shape != sdev.shape or np.any(~np.isfinite(mean)) or np.any(~np.isfinite(sdev)) or np.any(sdev <= 0):
+            raise ValueError(f"prior '{key}' is not a finite positive-width Gaussian")
+        prior[key] = gv.gvar(mean.item(), sdev.item()) if mean.ndim == 0 else gv.gvar(mean, sdev)
+    return prior
+
+
 def _sample_fit(
-    task: tuple[Any, np.ndarray, np.ndarray, Callable[..., Any], Mapping[str, Any], Mapping[str, Any], bool],
+    task: tuple[
+        Any,
+        np.ndarray,
+        np.ndarray,
+        Callable[..., Any],
+        Mapping[str, tuple[np.ndarray, np.ndarray]],
+        Mapping[str, Any],
+        bool,
+    ],
 ) -> tuple[gv.BufferDict | None, str | None, dict[str, float] | None, gv.BufferDict | None]:
-    x, mean, covariance, fcn, prior, options, capture_posterior = task
+    x, mean, covariance, fcn, prior_payload, options, capture_posterior = task
     import lsqfit
 
     sample_data = gv.gvar(mean, covariance)
     fit_data = sample_data if x is None else (x, sample_data)
     try:
         with _fit_warning_scope():
-            fit = lsqfit.nonlinear_fit(data=fit_data, fcn=fcn, prior=prior, **dict(options))
+            fit = lsqfit.nonlinear_fit(
+                data=fit_data,
+                fcn=fcn,
+                prior=_prior_from_payload(prior_payload),
+                **dict(options),
+            )
     except _NUMERICAL_FIT_ERRORS as exc:
         return None, f"{type(exc).__name__}: {exc}", None, None
     return (
@@ -92,7 +129,7 @@ def _sample_fit(
             "Q": float(fit.Q),
             "logGBF": float(fit.logGBF),
         },
-        fit.p if capture_posterior else None,
+        fit.palt if capture_posterior else None,
     )
 
 
@@ -134,7 +171,7 @@ def nonlinear_fit(
     corresponding covariance and performs no sample scheduling. Resamples mode
     accepts existing jackknife/bootstrap samples, or creates them from raw data
     when ``resampling`` is supplied, then fits every stored sample in order.
-    ``capture_sample_posteriors`` retains full gvar posteriors only for the
+    ``capture_sample_posteriors`` retains Hessian posteriors only for the
     requested sample indices; ordinary callers continue to receive means only.
     """
     if isinstance(data, tuple):
@@ -219,8 +256,9 @@ def nonlinear_fit(
     if any(index >= samples.n_sample for index in capture_indices):
         raise ValueError("capture_sample_posteriors contains an out-of-range sample index")
     capture_set = set(capture_indices)
+    prior_payload = _prior_payload(sample_prior)
     tasks = [
-        (x, np.asarray(sample), covariance, fcn, sample_prior, sample_options, index in capture_set)
+        (x, np.asarray(sample), covariance, fcn, prior_payload, sample_options, index in capture_set)
         for index, sample in enumerate(samples.values)
     ]
     if _parallel is None:

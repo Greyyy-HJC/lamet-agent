@@ -13,8 +13,9 @@ from lamet_agent.ui import log
 from lamet_agent.stages.correlator_analysis._diagnostics import write_fit_artifacts
 from lamet_agent.stages.correlator_analysis.physics import (
     fit_matrix_element_samples,
-    matrix_element_samples,
+    fit_qda_samples,
 )
+from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
 from lamet_agent.stages.correlator_analysis._model_average import combine_matrix_samples
 from lamet_agent.stages.correlator_analysis._selection import (
     models_on_dataset,
@@ -43,50 +44,30 @@ def _apply_qda_candidate(
     correlators: dict[str, object],
 ) -> tuple[EnsembleData, None, dict[str, object]]:
     log(f"Running: full qDA sample fits for matrix candidate {candidate['id']}...")
-    values, z_coordinates, application_fit = matrix_element_samples(
+    data, application_fit = fit_qda_samples(
         correlators,
-        method="qda",
+        fit_scope=list(settings["fit_scope"]),
+        components={"re": "real", "im": "imag", "both": "both"}[str(context.params["component"])],
         tmin=int(candidate["window"]["tmin"]),
         tmax=int(candidate["window"]["tmax"]),
-        tau_min=None,
-        lsqfit=settings,
+        n_states=int(candidate["nstate"]),
+        prior_width=float(candidate["prior_width"]),
+        svdcut=float(settings["svdcut"]),
+        posterior_prior_error_scale=float(settings["posterior_prior_error_scale"]),
         sample_error_mode=str(context.manifest["metadata"]["sample_error_mode"]),
         workers=context.workers,
         fit_samples=True,
         show_progress=bool(context.state.get("show_job_progress", False)),
-        n_states=int(candidate["nstate"]),
-        prior_width=float(candidate["prior_width"]),
-        fit_strategy=str(candidate["fit_strategy"]),
         _parallel=context._parallel,
     )
-    if values is None:
+    if data is None:
         raise RuntimeError("full qDA fitting produced no sample values")
-    component = str(context.params["component"])
-    if component == "re":
-        values = values.real
-    elif component == "im":
-        values = values.imag
-    source = next(value for value in correlators.values() if value.attrs.get("correlator_type") == "qda")
-    attrs = dict(source.attrs)
-    attrs.update(
+    data.array.attrs.update(
         {
             "observable": "matrix_element",
-            "method": "qda",
-            "fit_strategy": str(candidate["fit_strategy"]),
-            "n_states": int(candidate["nstate"]),
             "prior_width": float(candidate["prior_width"]),
-            "sample_error_mode": context.manifest["metadata"]["sample_error_mode"],
             "units": '{"values":"dimensionless","z":"lattice"}',
         }
-    )
-    data = EnsembleData(
-        source.ensemble,
-        source.resample,
-        [sample for sample in values],
-        ["z"],
-        {"z": z_coordinates},
-        attrs=attrs,
-        name="bare_matrix_element",
     )
     return data, None, application_fit
 
@@ -99,9 +80,8 @@ def _apply_ordinary_candidate(
     correlators: dict[str, object],
 ) -> tuple[EnsembleData, dict[str, object] | None, dict[str, object]]:
     application_kwargs = {
-        "strategy": str(candidate["method"]),
         "fitting_form": str(settings["fitting_form"]),
-        "fit_scope": str(candidate["fit_scope"]),
+        "fit_scope": list(candidate["fit_scope"]),
         "components": {"re": "real", "im": "imag", "both": "both"}[str(context.params["component"])],
         "tmin": int(candidate["window"]["tmin"]),
         "tmax": int(candidate["window"]["tmax"]),
@@ -131,9 +111,7 @@ def _apply_ordinary_candidate(
     return data, preflight_fit, application_fit
 
 
-def _usable_average_models(
-    candidates: list[dict[str, object]], selected: dict[str, object]
-) -> list[dict[str, object]]:
+def _usable_average_models(candidates: list[dict[str, object]], selected: dict[str, object]) -> list[dict[str, object]]:
     siblings = [
         candidate
         for candidate in models_on_dataset(candidates, selected)
@@ -147,14 +125,18 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     lsqfit = context.params if context.params["analysis_method"] == "lsqfit" else None
     if not isinstance(lsqfit, dict):
         raise ValueError("publish_correlator_result is only available for lsqfit jobs")
+    scope = parse_fit_scope(lsqfit["fit_scope"])
     candidates = [*context.state.get("spectrum_candidates", []), *context.state.get("matrix_element_candidates", [])]
-    ordinary_scopes = [scope for scope in lsqfit["fit_scope"] if scope in {"3pt_ratio", "FH", "3pt_ratio+FH"}]
-    spectral_methods = list(lsqfit["fit_strategy"]) if ordinary_scopes else []
-    if spectral_methods:
+    if scope.needs_pt3_data:
         expected = {
-            (method, scope, int(pt2["tmin"]), int(pt2["tmax"]), int(pt3["tau_cut"]), int(nstate), float(width))
-            for method in spectral_methods
-            for scope in ordinary_scopes
+            (
+                int(pt2["tmin"]),
+                int(pt2["tmax"]),
+                int(pt3["tau_cut"]),
+                tuple(int(value) for value in pt3["tsep_ls"]),
+                int(nstate),
+                float(width),
+            )
             for pt2 in lsqfit["pt2_windows"]
             for pt3 in lsqfit["pt3_windows"]
             for nstate in context.params["nstate"]
@@ -162,46 +144,42 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         }
         observed = {
             (
-                candidate["method"],
-                candidate.get("fit_scope"),
                 candidate["window"]["tmin"],
                 candidate["window"]["tmax"],
                 candidate["window"]["tau_min"],
+                tuple(int(value) for value in candidate.get("tsep_values", [])),
                 candidate.get("nstate"),
                 candidate.get("prior_width"),
             )
             for candidate in candidates
-            if candidate.get("method") in spectral_methods
+            if candidate.get("observable") == "matrix_element"
         }
         missing = sorted(expected - observed)
         if missing:
             raise ValueError(
                 f"all authored matrix-fit candidates must be evaluated before publishing; missing {missing[:3]}"
             )
-    if "qda_ratio" in lsqfit["fit_scope"]:
+    if scope.is_qda:
         expected_qda = {
             (
-                str(strategy),
                 int(nstate),
                 float(width),
                 int(window["tmin"]),
                 int(window["tmax"]),
             )
-            for strategy in lsqfit["fit_strategy"]
             for nstate in context.params["nstate"]
             for width in lsqfit["prior_width"]
             for window in lsqfit["pt2_windows"]
         }
         observed_qda = {
             (
-                str(candidate.get("fit_strategy")),
                 int(candidate.get("nstate", context.params["nstate"][0])),
                 float(candidate.get("prior_width", lsqfit["prior_width"][0])),
                 int(candidate["window"]["tmin"]),
                 int(candidate["window"]["tmax"]),
             )
             for candidate in candidates
-            if candidate.get("method") == "qda"
+            if candidate.get("observable") == "matrix_element"
         }
         missing_qda = sorted(expected_qda - observed_qda)
         if missing_qda:
@@ -211,22 +189,17 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     by_id = {candidate["id"]: candidate for candidate in candidates}
     if candidate_id not in by_id:
         raise ValueError("candidate_id must name an existing candidate")
-    matrix_candidates = [
-        candidate
-        for candidate in candidates
-        if candidate.get("method") in spectral_methods or candidate.get("method") == "qda"
-    ]
+    matrix_candidates = [candidate for candidate in candidates if candidate.get("observable") == "matrix_element"]
     if matrix_candidates:
-        is_qda = bool(matrix_candidates) and all(candidate.get("method") == "qda" for candidate in matrix_candidates)
         deterministic, fallback = select_tuned_candidate(
             matrix_candidates,
             q_min=float(lsqfit["q_min"]),
             chi2_dof_tolerance=float(lsqfit["chi2_dof_tolerance"]),
-            qda=is_qda,
+            qda=scope.is_qda,
         )
         selection_rule = (
             f"original_qda_robust_rule(min_Q_then_worst_chi2_dof, fallback_no_q_passing={fallback})"
-            if is_qda
+            if scope.is_qda
             else f"original_data_window_rule(fallback_no_q_passing={fallback})"
         )
     else:
@@ -239,11 +212,10 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     correlators = context.state.get("correlators")
     settings = lsqfit
     model_average = bool(lsqfit.get("model_average"))
-    selected_method = selected.get("method")
     targets = _usable_average_models(candidates, selected) if model_average else [selected]
     artifact_source = selected
     combined_result: dict[str, object] | None = None
-    needs_application = selected_method in spectral_methods or selected_method == "qda"
+    needs_application = selected.get("observable") == "matrix_element"
     if needs_application:
         missing_data = any(not isinstance(candidate.get("data"), EnsembleData) for candidate in targets)
         if missing_data:
@@ -253,7 +225,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
             if isinstance(candidate.get("data"), EnsembleData):
                 continue
             try:
-                if candidate.get("method") == "qda":
+                if scope.is_qda:
                     data, preflight_fit, application_fit = _apply_qda_candidate(
                         context, candidate, settings=settings, correlators=correlators
                     )
@@ -313,9 +285,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     mean_weights: list[float] = [1.0]
     if combined_result is not None:
         mean_weights = [float(weight) for weight in combined_result["mean_weights"]]
-        weight_by_id = {
-            str(candidate["id"]): float(weight) for candidate, weight in zip(applied, mean_weights)
-        }
+        weight_by_id = {str(candidate["id"]): float(weight) for candidate, weight in zip(applied, mean_weights)}
         averaged_ids = [str(value) for value in combined_result["selected_models"]]
         primary_quality = combined_result["center_quality"][int(combined_result["primary_index"])]
         for key in ("Q", "chi2_dof", "logGBF"):
@@ -327,7 +297,6 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         {
             "candidate_id": candidate["id"],
             "method": candidate.get("method"),
-            "fit_strategy": candidate.get("fit_strategy"),
             "fit_scope": candidate.get("fit_scope"),
             "window": candidate.get("window"),
             "tsep_values": candidate.get("tsep_values"),
@@ -446,7 +415,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         "decisions": {
             "candidate_id": candidate_id,
             "method": selected.get("method"),
-            "fit_strategy": selected.get("fit_strategy"),
+            "fit_scope": selected.get("fit_scope"),
             "model_average": model_average,
             "fallback_no_q_passing": fallback_no_q_passing,
         },

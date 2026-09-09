@@ -16,6 +16,7 @@ from lamet_agent.stages.correlator_analysis._lanczos import run as run_lanczos
 from lamet_agent.stages.correlator_analysis._lanczos_inspection import run as inspect_lanczos
 from lamet_agent.stages.correlator_analysis._publish import run as publish
 from lamet_agent.stages.correlator_analysis._selection import select_spectrum_candidate, select_tuned_candidate
+from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
 from lamet_agent.stages.correlator_analysis.ask import initial, revise
 
 
@@ -24,7 +25,6 @@ def _candidate_attempts(context: ToolContext) -> dict[str, dict[str, Any]]:
     attempts = {}
     parameter_fields = (
         "method",
-        "fit_strategy",
         "fit_scope",
         "window",
         "tsep_values",
@@ -87,9 +87,9 @@ def _can_revise(session: LlmSession) -> bool:
     return session.recommendation_calls < session.max_recommendation_calls
 
 
-def _apply_matrix_suggestion(context: ToolContext, scopes: set[str], suggestion: dict[str, Any]) -> list[Any]:
+def _apply_matrix_suggestion(context: ToolContext, *, qda: bool, suggestion: dict[str, Any]) -> list[Any]:
     context.params["pt2_windows"] = list(suggestion["pt2_windows"])
-    if scopes != {"qda_ratio"}:
+    if not qda:
         context.params["pt3_windows"] = list(suggestion["pt3_windows"])
     context.params["tune_z_values"] = list(suggestion["tune_z_values"])
     return list(context.params["tune_z_values"])
@@ -103,9 +103,9 @@ def run(context: ToolContext, session: LlmSession) -> None:
         return
 
     inspect(context)
-    scopes = set(context.params["fit_scope"])
+    scope = parse_fit_scope(context.params["fit_scope"])
     suggestion = initial(context, session)
-    if scopes == {"spectrum"}:
+    if scope.is_spectrum:
         _apply_spectrum_suggestion(context, suggestion)
         q_min = float(context.params["q_min"])
         last_error: Exception | None = None
@@ -142,8 +142,8 @@ def run(context: ToolContext, session: LlmSession) -> None:
         window = dict(selected["window"])
         context.params["pt2_windows"] = [{"tmin": int(window["tmin"]), "tmax": int(window["tmax"])}]
     else:
-        fit = fit_qda if scopes == {"qda_ratio"} else fit_matrix
-        qda = scopes == {"qda_ratio"}
+        fit = fit_qda if scope.is_qda else fit_matrix
+        qda = scope.is_qda
         q_min = float(context.params["q_min"])
         tolerance = float(context.params["chi2_dof_tolerance"])
         tune_z_values = list(suggestion["tune_z_values"])
@@ -200,7 +200,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
                 final_low_quality = True
                 break
             suggestion = revise(context, session, _candidate_attempts(context))
-            tune_z_values = _apply_matrix_suggestion(context, scopes, suggestion)
+            tune_z_values = _apply_matrix_suggestion(context, qda=qda, suggestion=suggestion)
         selected, candidates, parameters = chosen
         context.state["matrix_element_candidates"] = candidates
         context.params.update(parameters)
