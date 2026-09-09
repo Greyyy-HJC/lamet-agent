@@ -8,6 +8,19 @@ oscillations. `zmin_fm` is the lower measured separation constraining the tail
 fit; `zmax_fm` is the largest measured separation retained in that fit, not the
 later extension endpoint.
 
+The tail family is selected by the physical channel carried by the evidence:
+target observable (`PDF`, `DA`, or `GPD`), hadron (especially pion versus
+proton/nucleon), and GI/CG construction. Do not describe every non-pion or
+non-valence case as an unstructured generic tail. Pion valence PDF uses its
+symmetry-reduced two-endpoint form; a forward proton/nucleon PDF is a complex
+forward form; DA retains ordered meson endpoints and flavor constraints; GPD
+retains its hadron-dependent non-forward endpoint structures. GI and CG share
+the selected channel base family, while CG adds the phenomenological
+algebraic factor $|z|^{-n}$; this does not assert that GI and CG matrix
+elements are the same physical quantity. The existing model-coordinate
+normalization is part of the fit convention, and `z` in the evidence and
+returned ranges is in fm.
+
 Recommend compact candidate lists for whichever Fourier tail-fit boundaries are
 requested by the response schema. Use only exact coordinates present in the
 supplied positive-z grid. Follow this selection policy in order of priority:

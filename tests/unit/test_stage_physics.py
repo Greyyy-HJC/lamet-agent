@@ -1516,6 +1516,40 @@ def test_da_tail_uses_two_endpoint_phases_and_light_light_alias() -> None:
     assert np.isclose(np.mean([record["Lambda"] for record in fitted]), parameters["Lambda"], atol=2e-2)
 
 
+def test_tail_value_and_fit_evaluator_share_the_proton_gpd_endpoint_family() -> None:
+    from lamet_agent.stages.fourier_transform.physics import tail_fit_fcn
+
+    z = np.asarray([-0.6, -0.3, 0.3, 0.6])
+    parameters = {"A2": 0.8, "phi2": 0.2, "At2": -0.1, "phit2": -0.3, "Lambda": 0.7}
+    values = tail_model_values(z, "gi_nla", parameters, order="LA", observable="GPD", hadron="proton")
+    fitted = tail_fit_fcn(
+        {
+            "z": z,
+            "model_id": "gi_nla",
+            "order": "LA",
+            "component": "both",
+            "lambda0_gev": 0.0,
+            "observable": "GPD",
+            "momentum_gev": 0.0,
+            "psi1_flavor_class": "heavy",
+            "psi2_flavor_class": "heavy",
+            "sector": "full",
+            "hadron": "proton",
+        },
+        parameters,
+    )
+    np.testing.assert_allclose(values, np.asarray(fitted[: z.size] + 1j * fitted[z.size :], dtype=complex))
+
+
+def test_cg_tail_applies_one_common_terminal_power_in_each_model_coordinate() -> None:
+    z = np.asarray([0.2, 0.4, 0.8])
+    base = {"A2": 0.8, "A2p": -0.1, "phi2": 0.2, "phi2p": -0.3, "Lambda": 0.7}
+    cg = {**base, "n": 1.5}
+    gi_values = tail_model_values(z, "gi_nla", base, order="NLA", observable="PDF", hadron="proton")
+    cg_values = tail_model_values(z, "cg_nla", cg, order="NLA", observable="PDF", hadron="proton")
+    np.testing.assert_allclose(cg_values, gi_values / z**1.5)
+
+
 def test_fourier_transform_parallel_chunks_match_serial_order() -> None:
     z = np.linspace(-0.5, 0.5, 11)
     x = np.linspace(-1.0, 1.0, 13).tolist()

@@ -66,7 +66,7 @@ def _combined_series_label(record: StageReportRecord) -> str:
 _TAIL_FORMULA = r"""
 The fitted long-distance branch is used only away from the origin and is
 connected to the measured/interpolated branch before the transform.  For the
-generic PDF family, the GI/CG LA/NLA ansatz is
+selected observable/hadron channel, the GI/CG LA/NLA ansatz is
 
 $$
 h(z)=\left[A_2e^{i\phi_2\operatorname{sgn}z}
@@ -74,9 +74,16 @@ h(z)=\left[A_2e^{i\phi_2\operatorname{sgn}z}
 e^{-\Lambda |z|/(\hbar c)},
 $$
 
-where the primed term is omitted at LA.  The CG family divides the result by
-the fitted power $|z|^n$.  A pion valence-PDF fit instead uses its dedicated
-two-endpoint form
+where the primed term is omitted at LA.  The CG family divides the selected
+base family by the fitted power $|z|^n$ in the model coordinate.  The
+channel-specific base structures are:
+
+* pion valence PDF: the symmetry-reduced two-endpoint form;
+* proton/nucleon PDF: the complex forward form above;
+* DA: the two ordered meson endpoints with flavor-class constraints;
+* GPD: the hadron-dependent non-forward endpoint structures.
+
+The pion valence-PDF branch uses its dedicated two-endpoint form
 
 $$
 h(z)=\left[A_2+2A_1\cos\left(\phi_1-\frac{P_z|z|}{\hbar c}\right)
@@ -101,6 +108,13 @@ with flavor-class constraints removing or identifying endpoint amplitudes.  If
 `phase_transfer_da=true`, the input is first multiplied by
 $e^{+izP_z/(2\hbar c)}$, projected onto the real midpoint-symmetric channel,
 and rotated back; if false, the complex input is retained.
+
+The CG power is a phenomenological algebraic-decay factor, not a claim that a
+CG matrix element is physically identical to a GI matrix element.  The
+historical model-coordinate normalization is retained so existing fitted
+distributions remain numerically unchanged: the pion-valence branch uses
+$|z|/(\hbar c)$, while the other legacy branches use their existing $|z|$
+coordinate.  Here $z$ in the input and range tables remains in fm.
 """.strip()
 
 
