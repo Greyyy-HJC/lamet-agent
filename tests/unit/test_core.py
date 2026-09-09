@@ -1817,6 +1817,31 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
     )
 
 
+@pytest.mark.parametrize("state_counts", [[2], [1, 2]])
+def test_correlator_contract_allows_multistate_qda_candidates(state_counts: list[int]) -> None:
+    contract = _load_stage_contract("correlator_analysis")
+    qda_fit = {
+        "analysis_method": "lsqfit",
+        "component": "both",
+        "nstate": state_counts,
+        "fit_scope": ["qda_ratio"],
+        "fit_strategy": ["independent"],
+        "fitting_form": "Breit",
+        "model_average": False,
+        "pt2_windows": [{"tmin": 2, "tmax": 14}],
+        "pt3_windows": [],
+        "svdcut": 1e-8,
+        "posterior_prior_error_scale": 3.0,
+        "q_min": 0.05,
+    }
+
+    assert evaluate_rules(qda_fit, contract.PARAM_RULES) == []
+    assert evaluate_checks(
+        contract.CHECKS,
+        CheckContext({}, "correlator_analysis", "qda", qda_fit, {}),
+    ) == []
+
+
 def test_each_shipped_stage_contract_reports_incomplete_params_instead_of_crashing(tmp_path: Path) -> None:
     for stage_id in (
         "correlator_analysis",
@@ -2587,7 +2612,7 @@ def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path)
 
 
 def test_spectrum_recommendation_describes_its_initial_request(tmp_path: Path) -> None:
-    from lamet_agent.data import EnsembleData
+    from lamet_agent.data import EnsembleData, EnsembleInfo
     from lamet_agent.stages.correlator_analysis.ask.ask_for_spectrum_fit import recommend
 
     backend = _ScriptedBackend(
@@ -2615,7 +2640,7 @@ def test_spectrum_recommendation_describes_its_initial_request(tmp_path: Path) -
         {
             "correlators": {
                 "two_point": EnsembleData(
-                    None,
+                    EnsembleInfo("test", "test", 0.1, 0.1, 32, 64, 0.14),
                     "bootstrap",
                     [np.asarray([1.0, 0.8, 0.6, 0.5]), np.asarray([1.0, 0.82, 0.62, 0.51])],
                     ["t"],
@@ -2632,8 +2657,8 @@ def test_spectrum_recommendation_describes_its_initial_request(tmp_path: Path) -
     result = recommend(context, _ask_session(backend, tmp_path / "spectrum.md", context), fixed_parameters=fixed)
 
     assert result["n_states"] == 1
-    assert result["prior_means"] == {"E0": 0.3, "A0": 1.0}
-    assert result["prior_widths"] == {"E0": 0.1, "A0": 0.5}
+    assert result["prior_means"] == {"E0": 0.3, "z0": 1.0}
+    assert result["prior_widths"] == {"E0": 0.1, "z0": 0.5}
     schema = backend.response_schemas[0]["schema"]
     assert schema["properties"]["prior_means"] == {
         "type": "array",
@@ -2641,15 +2666,19 @@ def test_spectrum_recommendation_describes_its_initial_request(tmp_path: Path) -
         "minItems": 2,
         "maxItems": 4,
     }
-    request = json.loads(backend.calls[0][0][-1].content)["request"]
+    payload = json.loads(backend.calls[0][0][-1].content)
+    request = payload["request"]
     assert request == {
         "task": "direct_spectrum_fit",
         "phase": "initial",
         "requested_fields": ["n_states", "prior_means", "prior_widths", "tmax", "tmin"],
         "evidence": {"fixed_parameters": fixed},
     }
+    correlator_context = payload["context"][0]["content"]["correlators"]["two_point"]
+    assert correlator_context["temporal_extent"] == 64
     assert [message.role for message in backend.calls[0][0][:2]] == ["system", "user"]
     assert backend.calls[0][0][0].content.startswith("The supplied correlator evidence")
+    assert "z_n^2/(2 E_n)" in backend.calls[0][0][0].content
 
 
 def test_fourier_tail_range_recommendation_reuses_context_and_obeys_job_budget(tmp_path: Path) -> None:
@@ -2960,8 +2989,8 @@ def test_spectrum_retry_uses_the_publisher_selector_and_synchronizes_windows(
             "tmin": 2 + index,
             "tmax": 8 + index,
             "n_states": 1,
-            "prior_means": {"E0": 0.3, "A0": 1.0},
-            "prior_widths": {"E0": 0.1, "A0": 0.5},
+            "prior_means": {"E0": 0.3, "z0": 1.0},
+            "prior_widths": {"E0": 0.1, "z0": 0.5},
         }
 
     def initial(_context, session):

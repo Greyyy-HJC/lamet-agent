@@ -45,10 +45,14 @@ def run(
         raise ValueError("spectrum fit window must contain at least 2*n_states times")
     if source.dims != ["t"]:
         raise ValueError("direct spectrum fitting requires only the t physical dimension")
+    if source.ensemble is None:
+        raise ValueError("spectrum fitting requires the temporal extent")
+    extent = int(source.ensemble.L_t)
     energy_samples, fit = fit_spectrum_samples(
         np.asarray(source.values)[:, selection],
         time[selection],
         n_states,
+        extent=extent,
         resample=source.resample,
         prior_means=prior_means,
         prior_widths=prior_widths,

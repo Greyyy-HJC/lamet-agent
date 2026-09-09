@@ -210,7 +210,7 @@ def check_qda_scope(context: CheckContext) -> Issue | None:
         return Issue(
             "fitting_form",
             "must be 'Breit' for qda_ratio",
-            "The implemented qDA ratio uses the forward one-state decomposition.",
+            "The implemented qDA ratio uses the forward spectral decomposition.",
         )
     if lsqfit.get("pt3_windows"):
         return Issue(
@@ -230,12 +230,6 @@ def check_candidate_policy(context: CheckContext) -> Issue | None:
             "model_average",
             "must be false until weighted candidate averaging is implemented",
             "Publishing one candidate and model averaging are distinct statistical procedures.",
-        )
-    if "qda_ratio" in set(settings.get("fit_scope", [])) and context.params.get("nstate") != [1]:
-        return Issue(
-            "nstate",
-            "must be [1] for qDA ratio fitting",
-            "The implemented qDA ratio model is a one-state constant fit.",
         )
     return None
 

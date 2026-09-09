@@ -51,9 +51,11 @@ h_{\rm NB}(z)=\operatorname{sign}(z_{0,i}z_{0,f})
 
 
 _QDA_METHOD = r"""
-The qDA fit uses the nonlocal/local two-point ratio at each spatial separation
-and extracts the corresponding matrix element from its constant one-state
-ratio.  The selected time window is applied to every production sample.
+The qDA fit uses the nonlocal/local two-point ratio at each spatial separation.
+A one-state fit extracts a constant plateau $O_{00}/z'_0$.  Multi-state fits
+use the periodic spectral decomposition of the numerator and $z=0$ denominator,
+while the published matrix element remains the ground-state ratio $O_{00}/z'_0$.
+The selected time window is applied to every production sample.
 """.strip()
 
 

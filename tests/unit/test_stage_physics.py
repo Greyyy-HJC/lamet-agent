@@ -350,6 +350,174 @@ def test_qda_fit_divides_by_nonlocal_origin_and_fits_each_sample() -> None:
     assert production_fit["sample0_plot"]["plots"][0]["kind"] == "qda_ratio"
     assert production_fit["sample0_plot"]["plots"][0]["series"][0]["x"] == times.tolist()
     assert production_fit["sample0_plot"]["plots"][0]["series"][0]["fit_x"] == [1.5, 6.5]
+    assert diagnostics["n_params"] == 5
+
+
+def test_qda_two_state_ratio_recovers_ground_state_plateau() -> None:
+    rng = np.random.default_rng(21)
+    ensemble = _ensemble(0.1)
+    times = np.arange(16.0)
+    extent = ensemble.L_t
+    energies = (0.25, 0.65)
+    overlaps = (1.2, 0.5)
+    local = (1.0, 0.4)
+    o_re = (0.72, 0.30)
+    o_im = (0.18, 0.10)
+
+    def correlator(matrices: tuple[float, float]) -> np.ndarray:
+        values = 0.0
+        for energy, overlap, matrix in zip(energies, overlaps, matrices, strict=True):
+            values = values + overlap / (2 * energy) * matrix * (
+                np.exp(-energy * times) + np.exp(-energy * (extent - times))
+            )
+        return values
+
+    local_c = correlator(local)
+    samples = []
+    for _ in range(48):
+        scale = 1.0 + rng.normal(0.0, 0.004)
+        numerator = correlator(o_re) + 1j * correlator(o_im)
+        samples.append(np.column_stack([local_c * scale, numerator * scale]))
+    source = EnsembleData(
+        ensemble,
+        "bootstrap",
+        samples,
+        ["t", "z"],
+        {"t": times.tolist(), "z": [0.0, 1.0]},
+        attrs={"correlator_type": "qda"},
+    )
+    values, _coordinates, diagnostics = matrix_element_samples(
+        {"qda": source},
+        method="qda",
+        tmin=2,
+        tmax=14,
+        tau_min=None,
+        lsqfit={
+            "pt2_windows": [{"tmin": 2, "tmax": 14}],
+            "svdcut": 1e-8,
+            "posterior_prior_error_scale": 3.0,
+            "q_min": 0.0,
+        },
+        n_states=2,
+        workers=1,
+    )
+    target = o_re[0] / local[0] + 1j * o_im[0] / local[0]
+    assert np.isclose(np.mean(values[:, 1]), target, atol=0.05)
+    assert diagnostics["n_params"] == 10
+    series = diagnostics["fits"][0]["sample0_plot"]["plots"][0]["series"][0]
+    assert len(series["fit_x"]) > 2
+
+
+def test_matrix_and_qda_fits_keep_same_ensemble_off_diagonal_covariance(monkeypatch) -> None:
+    import gvar as gv
+    import lamet_agent.stages.correlator_analysis.physics as physics
+
+    captured: list[object] = []
+    original = physics.nonlinear_fit
+
+    def capture(data, *args, **kwargs):
+        captured.append((data, kwargs.get("covariance")))
+        return original(data, *args, **kwargs)
+
+    monkeypatch.setattr(physics, "nonlinear_fit", capture)
+
+    ensemble = EnsembleInfo("toy", "toy", 0.1, 0.1, 32, 32, 0.2)
+    times = np.arange(12)
+    tseps = np.asarray([8, 10])
+    tau = np.arange(11)
+    rng = np.random.default_rng(11)
+    c2_samples = []
+    c3_samples = []
+    for _ in range(40):
+        shared = rng.normal(0.0, 0.02)
+        energy = 0.3 + shared
+        overlap = 1.4 + shared
+        matrix = 0.8 + shared
+        c2 = overlap**2 / (2 * energy) * (np.exp(-energy * times) + np.exp(-energy * (ensemble.L_t - times)))
+        c3 = np.zeros((tseps.size, tau.size, 1), dtype=complex)
+        for tsep_index, tsep in enumerate(tseps):
+            valid = tau <= tsep
+            c3[tsep_index, valid, 0] = matrix / (2 * energy) * c2[tsep]
+        c2_samples.append(c2.astype(complex))
+        c3_samples.append(c3)
+    common = {"source_momentum": "[1, 0, 0]", "sink_momentum": "[1, 0, 0]", "resample_id": "shared"}
+    fit_matrix_element_samples(
+        {
+            "c2": EnsembleData(
+                ensemble,
+                "bootstrap",
+                c2_samples,
+                ["t"],
+                {"t": times.tolist()},
+                attrs={**common, "correlator_type": "two_point"},
+            ),
+            "c3": EnsembleData(
+                ensemble,
+                "bootstrap",
+                c3_samples,
+                ["tsep", "tau", "z"],
+                {"tsep": tseps.tolist(), "tau": tau.tolist(), "z": [0]},
+                attrs={**common, "correlator_type": "three_point"},
+            ),
+        },
+        strategy="joint",
+        fitting_form="Breit",
+        fit_scope="3pt_ratio",
+        components="real",
+        tmin=3,
+        tmax=8,
+        tsep_values=tseps.tolist(),
+        tau_min=2,
+        n_states=1,
+        prior_width=1.0,
+        correlator_rescale=1.0,
+        svdcut=1e-8,
+        posterior_prior_error_scale=3.0,
+        workers=1,
+        fit_samples=False,
+        tune_z=0,
+    )
+    data, covariance = captured[0]
+    assert covariance is None
+    fit_data = data[1]
+    cov = np.asarray(gv.evalcov(fit_data.average("covariance")), dtype=float)
+    n_pt2 = 5
+    assert np.any(np.abs(cov[:n_pt2, n_pt2:]) > 1e-18)
+
+    captured.clear()
+    qda_times = np.arange(8.0)
+    qda_samples = []
+    for _ in range(24):
+        shared = rng.normal(0.0, 0.02)
+        denominator = np.exp(-0.25 * qda_times) * (1.0 + shared)
+        ratio = (0.72 + shared) + 1j * (0.18 + shared)
+        qda_samples.append(np.column_stack([denominator, denominator * ratio]))
+    matrix_element_samples(
+        {
+            "qda": EnsembleData(
+                _ensemble(0.1),
+                "bootstrap",
+                qda_samples,
+                ["t", "z"],
+                {"t": qda_times.tolist(), "z": [0.0, 1.0]},
+                attrs={"correlator_type": "qda"},
+            )
+        },
+        method="qda",
+        tmin=2,
+        tmax=7,
+        tau_min=None,
+        lsqfit={"svdcut": 1e-8, "posterior_prior_error_scale": 3.0, "q_min": 0.0},
+        workers=1,
+        fit_samples=False,
+        tune_z=1.0,
+    )
+    data, covariance = captured[0]
+    assert covariance is None
+    fit_data = data[1]
+    cov = np.asarray(gv.evalcov(fit_data.average("covariance")), dtype=float)
+    split = 5
+    assert np.any(np.abs(cov[:split, split:]) > 1e-18)
 
 
 def test_correlator_publish_requires_complete_scan_and_deterministic_best_candidate(tmp_path, monkeypatch) -> None:
@@ -1243,10 +1411,19 @@ def test_native_nonbreit_fit_uses_distinct_source_and_sink_spectra() -> None:
 def test_correlated_spectrum_fit_uses_authored_priors_and_sample_covariance() -> None:
     rng = np.random.default_rng(8)
     times = np.arange(2.0, 10.0)
-    center = 1.4 * np.exp(-0.27 * times)
+    extent = 64
+    energy = 0.27
+    overlap = 0.87
+    center = overlap**2 / (2 * energy) * (np.exp(-energy * times) + np.exp(-energy * (extent - times)))
     samples = np.asarray([center + rng.normal(0.0, 2e-4, times.size) for _ in range(80)])
     energies, diagnostics = fit_spectrum_samples(
-        samples, times, 1, resample="bootstrap", prior_means={"E0": 0.3, "A0": 1.3}, prior_widths={"E0": 0.2, "A0": 0.5}
+        samples,
+        times,
+        1,
+        extent=extent,
+        resample="bootstrap",
+        prior_means={"E0": 0.3, "z0": 0.9},
+        prior_widths={"E0": 0.2, "z0": 0.5},
     )
     assert np.isclose(np.mean(energies), 0.27, atol=5e-3)
     assert diagnostics["dof"] == 8

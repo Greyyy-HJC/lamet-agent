@@ -73,9 +73,9 @@ def recommend(
     wire_result = dict(response.structured)
     validate_value(_SpectrumResponse, wire_result, "spectrum_fit_recommendation")
     n_states = wire_result["n_states"]
-    prior_names = [*[f"E{index}" for index in range(n_states)], *[f"A{index}" for index in range(n_states)]]
+    prior_names = [*[f"E{index}" for index in range(n_states)], *[f"z{index}" for index in range(n_states)]]
     if len(wire_result["prior_means"]) != len(prior_names) or len(wire_result["prior_widths"]) != len(prior_names):
-        raise ValueError("spectrum recommendation must provide one mean and width for every energy and amplitude")
+        raise ValueError("spectrum recommendation must provide one mean and width for every energy and overlap")
     return {
         "tmin": wire_result["tmin"],
         "tmax": wire_result["tmax"],

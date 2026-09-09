@@ -9,7 +9,7 @@
     "parton": "quark",
     "resample_mode": "jackknife",
     "bin_size": 1,
-    "sample_error_mode": "covariance"
+    "sample_error_mode": "variance"
   },
   "stages": {
     "correlator_analysis": {

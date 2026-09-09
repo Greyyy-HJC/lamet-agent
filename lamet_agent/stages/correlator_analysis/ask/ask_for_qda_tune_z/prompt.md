@@ -11,7 +11,10 @@ as `tune_z_values`: the smallest trusted z>0, one mid-range z, and one larger z
 when the grid is wide. Do not enumerate the full z grid. When `pt2_windows` is
 requested, balance early-time excited-state contamination against late-time
 noise and select a compact ordered set of stable half-open windows with enough
-points for every authored state count. Parameters listed under
+points for every authored state count. One-state fits are a constant
+nonlocal/local ratio; multi-state fits describe the same ratio with a periodic
+spectral model, so the window must remain overdetermined for the selected
+`nstate`. Parameters listed under
 `fixed_parameters` are user-authored for the initial attempt and must not be
 changed.
 

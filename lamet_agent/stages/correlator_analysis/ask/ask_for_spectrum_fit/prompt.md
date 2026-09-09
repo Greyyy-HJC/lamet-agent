@@ -10,9 +10,13 @@ state content is underconstrained; the half-open window must contain at least
 twice as many time points as states. When `fixed_parameters` contains authored
 two-point windows, select exactly one of those windows and do not alter its
 bounds. Select an allowed state count and supply prior means and widths in lattice
-units as arrays ordered `[E0,...,E{n-1},A0,...,A{n-1}]`, with exactly one entry
-per energy and amplitude. Energies and amplitudes must be positive, energy means
-strictly ordered, and every width positive.
+units as arrays ordered `[E0,...,E{n-1},z0,...,z{n-1}]`, with exactly one entry
+per energy and overlap. The fitted normalization is
+`C2(t) = sum_n z_n^2/(2 E_n) [exp(-E_n t) + exp(-E_n (L_t-t))]`, where the
+`temporal_extent` supplied with the correlator is $L_t$. Thus `z_n` is the
+state overlap, not the coefficient multiplying a single forward exponential.
+Energies and overlaps must be positive, energy means strictly ordered, and
+every width positive.
 
 On a retry, `previous_attempts` may contain Q, chi2, degrees of freedom,
 chi2/dof, logGBF, or a numerical failure. Prefer a numerically viable fit with an

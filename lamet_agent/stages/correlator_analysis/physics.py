@@ -559,26 +559,6 @@ def fit_matrix_element_samples(
                 ["observation"],
                 {"observation": list(range(observations.shape[1]))},
             )
-            block_covariances = []
-            for piece in pieces:
-                block = EnsembleData(
-                    initial.ensemble,
-                    initial.resample,
-                    list(piece),
-                    ["observation"],
-                    {"observation": list(range(piece.shape[1]))},
-                )
-                block_covariances.append(
-                    np.asarray(gv.evalcov(block.average(sample_error_mode)), dtype=float).reshape(
-                        piece.shape[1], piece.shape[1]
-                    )
-                )
-            covariance = np.zeros((observations.shape[1], observations.shape[1]), dtype=float)
-            offset = 0
-            for block in block_covariances:
-                stop = offset + block.shape[0]
-                covariance[offset:stop, offset:stop] = block
-                offset = stop
             fit_prior = chained_prior if chained_prior is not None else base_prior
             result = nonlinear_fit(
                 (x, fit_data),
@@ -586,7 +566,6 @@ def fit_matrix_element_samples(
                 fit_prior,
                 workers=workers,
                 sample_prior_scale=posterior_prior_error_scale * prior_width,
-                covariance=covariance,
                 sample_error_mode=sample_error_mode,
                 mode="resamples" if fit_samples else "center",
                 tolerate_sample_failures=True,
@@ -756,24 +735,60 @@ def fit_matrix_element_samples(
 
 
 def spectrum_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
-    """Evaluate an ordered positive-energy spectral model."""
-    energies = [parameters["E0"]]
-    for state in range(1, int(x["n_states"])):
-        energies.append(energies[-1] + parameters[f"dE{state}"])
-    return np.sum(
-        [parameters[f"A{state}"] * np.exp(-energy * x["times"]) for state, energy in enumerate(energies)], axis=0
-    )
+    """Evaluate the periodic two-point spectral model."""
+    return _two_point_model(x["times"], parameters, int(x["extent"]), int(x["n_states"]))
+
+
+def _qda_correlator(
+    times: np.ndarray,
+    parameters: Mapping[str, Any],
+    extent: int,
+    n_states: int,
+    matrix_key: str,
+) -> np.ndarray:
+    values = 0.0
+    for state, energy in enumerate(_state_energies(parameters, n_states)):
+        matrix = parameters[f"zprime{state}"] if matrix_key == "zprime" else parameters[f"O0{state}_{matrix_key}"]
+        values = values + parameters[f"z{state}"] / (2 * energy) * matrix * (
+            np.exp(-energy * times) + np.exp(-energy * (extent - times))
+        )
+    return values
 
 
 def qda_ratio_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
-    """Evaluate the reference one-state nonlocal-z0 qDA ratio."""
-    size = len(x["times"])
+    """Evaluate the nonlocal-to-local qDA ratio, constant at one state."""
+    times = x["times"]
+    n_states = int(x.get("n_states", 1))
+    size = len(times)
+    if n_states == 1:
+        return np.concatenate(
+            [
+                np.full(size, parameters["O00_re"] / parameters["zprime0"]),
+                np.full(size, parameters["O00_im"] / parameters["zprime0"]),
+            ]
+        )
+    extent = int(x["extent"])
+    denominator = _qda_correlator(times, parameters, extent, n_states, "zprime")
     return np.concatenate(
         [
-            np.full(size, parameters["O00_re"] / parameters["zprime0"]),
-            np.full(size, parameters["O00_im"] / parameters["zprime0"]),
+            _qda_correlator(times, parameters, extent, n_states, "re") / denominator,
+            _qda_correlator(times, parameters, extent, n_states, "im") / denominator,
         ]
     )
+
+
+def _qda_ratio_prior(n_states: int, prior_width: float) -> gv.BufferDict:
+    prior = gv.BufferDict()
+    prior["log(E0)"] = gv.gvar(0.0, 3.0 * prior_width)
+    for state in range(1, n_states):
+        prior[f"log(dE{state})"] = gv.gvar(0.0, prior_width)
+    for state in range(n_states):
+        scale = 3**state
+        prior[f"z{state}"] = gv.gvar(1.0, 10.0 * prior_width) / scale
+        prior[f"zprime{state}"] = gv.gvar(1.0, 10.0 * prior_width) / scale
+        prior[f"O0{state}_re"] = gv.gvar(1.0, 10.0 * prior_width)
+        prior[f"O0{state}_im"] = gv.gvar(0.0, 10.0 * prior_width)
+    return prior
 
 
 def fit_spectrum_samples(
@@ -781,6 +796,7 @@ def fit_spectrum_samples(
     times: np.ndarray,
     n_states: int,
     *,
+    extent: int,
     resample: str,
     prior_means: dict[str, float],
     prior_widths: dict[str, float],
@@ -791,6 +807,8 @@ def fit_spectrum_samples(
     """Perform one correlated, prior-constrained multi-state spectral fit."""
     samples = np.asarray(values)
     times = np.asarray(times, dtype=float)
+    if isinstance(extent, bool) or not isinstance(extent, int) or extent < 1:
+        raise ValueError("spectrum fitting requires a positive temporal extent")
     if samples.ndim != 2 or samples.shape[1] != times.size or samples.shape[0] < 2 or times.size < 2 * n_states:
         raise ValueError("spectrum fit requires a two-dimensional sample/time array with at least 2*n_states times")
     if np.iscomplexobj(samples):
@@ -798,7 +816,7 @@ def fit_spectrum_samples(
             raise ValueError("direct spectrum fitting requires real two-point data")
         samples = np.real(samples)
     samples = np.asarray(samples, dtype=float)
-    names = [*[f"E{index}" for index in range(n_states)], *[f"A{index}" for index in range(n_states)]]
+    names = [*[f"E{index}" for index in range(n_states)], *[f"z{index}" for index in range(n_states)]]
     if set(prior_means) != set(names) or set(prior_widths) != set(names):
         raise ValueError(f"spectrum priors must contain exactly {names}")
     mean = np.asarray([float(prior_means[name]) for name in names])
@@ -812,7 +830,7 @@ def fit_spectrum_samples(
         or np.any(np.diff(energies) <= 0)
         or np.any(mean[n_states:] <= 0)
     ):
-        raise ValueError("spectrum priors require ordered positive energies, positive amplitudes, and positive widths")
+        raise ValueError("spectrum priors require ordered positive energies, positive overlaps, and positive widths")
     if resample not in {"raw", "jackknife", "bootstrap"}:
         raise ValueError("spectrum fitting requires raw, jackknife, or bootstrap samples")
     prior = gv.BufferDict()
@@ -821,10 +839,10 @@ def fit_spectrum_samples(
         gap = mean[state] - mean[state - 1]
         prior[f"log(dE{state})"] = gv.log(gv.gvar(gap, np.hypot(widths[state], widths[state - 1])))
     for state in range(n_states):
-        prior[f"log(A{state})"] = gv.log(gv.gvar(mean[n_states + state], widths[n_states + state]))
+        prior[f"z{state}"] = gv.gvar(mean[n_states + state], widths[n_states + state])
     fit_data = EnsembleData(None, resample, list(samples), ["t"], {"t": times.tolist()})
     result = nonlinear_fit(
-        ({"times": times, "n_states": n_states}, fit_data),
+        ({"times": times, "n_states": n_states, "extent": extent}, fit_data),
         spectrum_fcn,
         prior,
         workers=workers,
@@ -872,7 +890,9 @@ def matrix_element_samples(
     the selected insertion window; summation fits the slope of the summed
     ratio versus ``tsep``. qDA coordinate-space two-point numerators are
     divided by the aligned ``z=0`` nonlocal denominator, then their real and
-    imaginary one-state ratios are fitted together on the selected window.
+    imaginary ratios are fitted together on the selected window. One-state
+    fits remain a constant plateau; multi-state fits use the periodic spectral
+    ratio.
     """
     from lamet_agent.data import EnsembleData
 
@@ -883,14 +903,19 @@ def matrix_element_samples(
     if source.attrs.get("correlator_type") == "qda":
         if method != "qda" or source.dims != ["t", "z"] or lsqfit is None:
             raise ValueError("qDA fitting requires method='qda', dimensions ['t', 'z'], and lsqfit settings")
-        if n_states != 1:
-            raise ValueError("qDA ratio fitting supports exactly one state")
+        if isinstance(n_states, bool) or not isinstance(n_states, int) or n_states < 1:
+            raise ValueError("qDA ratio fitting requires a positive state count")
         if not np.isfinite(prior_width) or prior_width <= 0:
             raise ValueError("qDA prior_width must be finite and positive")
         if fit_samples and tune_z is not None:
             raise ValueError("tune_z is only valid for a sample-average qDA fit")
         if not fit_samples and tune_z is None:
             raise ValueError("sample-average qDA tuning requires tune_z")
+        if source.ensemble is None:
+            raise ValueError("qDA fitting requires the temporal extent")
+        extent = int(source.ensemble.L_t)
+        if extent < 1:
+            raise ValueError("qDA fitting requires a positive temporal extent")
         t = np.asarray(source.coords["t"], dtype=float)
         z = np.asarray(source.coords["z"], dtype=float)
         origin = np.flatnonzero(np.isclose(z, 0.0, rtol=0.0, atol=1e-12))
@@ -899,6 +924,10 @@ def matrix_element_samples(
         selected = np.flatnonzero((t >= tmin) & (t < tmax))
         if selected.size < 2:
             raise ValueError("qDA fit window must contain at least two time points")
+        if selected.size < 2 * n_states:
+            raise ValueError("qDA fit window must contain at least 2*n_states times")
+        if n_states > 1 and 2 * selected.size <= 5 * n_states:
+            raise ValueError("qDA fit window must be overdetermined for the selected state count")
         source_values = np.asarray(source.values)
         window_values = source_values[:, selected, :]
         denominator = window_values[:, :, int(origin[0])]
@@ -935,13 +964,6 @@ def matrix_element_samples(
             for z_index in fit_indices:
                 component_values = ratios[:, :, z_index]
                 plot_component_values = plot_ratios[:, :, z_index]
-                real_samples = EnsembleData(
-                    source.ensemble,
-                    source.resample,
-                    [np.real(sample) for sample in component_values],
-                    ["t"],
-                    {"t": t[selected].tolist()},
-                )
                 real_plot_samples = EnsembleData(
                     source.ensemble,
                     source.resample,
@@ -956,13 +978,6 @@ def matrix_element_samples(
                     ["t"],
                     {"t": t[plot_selected].tolist()},
                 )
-                imag_samples = EnsembleData(
-                    source.ensemble,
-                    source.resample,
-                    [np.imag(sample) for sample in component_values],
-                    ["t"],
-                    {"t": t[selected].tolist()},
-                )
                 combined = EnsembleData(
                     source.ensemble,
                     source.resample,
@@ -970,22 +985,13 @@ def matrix_element_samples(
                     ["observation"],
                     {"observation": list(range(2 * selected.size))},
                 )
-                covariance = np.zeros((2 * selected.size, 2 * selected.size), dtype=float)
-                covariance[: selected.size, : selected.size] = gv.evalcov(real_samples.average(sample_error_mode))
-                covariance[selected.size :, selected.size :] = gv.evalcov(imag_samples.average(sample_error_mode))
-                prior = gv.BufferDict()
-                prior["log(E0)"] = gv.gvar(0.0, 3.0 * prior_width)
-                prior["z0"] = gv.gvar(1.0, 10.0 * prior_width)
-                prior["zprime0"] = gv.gvar(1.0, 10.0 * prior_width)
-                prior["O00_re"] = gv.gvar(1.0, 10.0 * prior_width)
-                prior["O00_im"] = gv.gvar(0.0, 10.0 * prior_width)
+                prior = _qda_ratio_prior(n_states, prior_width)
                 result = nonlinear_fit(
-                    ({"times": t[selected]}, combined),
+                    ({"times": t[selected], "n_states": n_states, "extent": extent}, combined),
                     qda_ratio_fcn,
                     prior,
                     workers=workers,
                     sample_prior_scale=prior_scale,
-                    covariance=covariance,
                     sample_error_mode=sample_error_mode,
                     svdcut=svdcut,
                     maxit=10000,
@@ -1017,13 +1023,30 @@ def matrix_element_samples(
                 sample0_plot = None
                 if fit_samples and result.sample_posteriors and result.sample_posteriors[0] is not None:
                     posterior = result.sample_posteriors[0]
-                    fit_x = [float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5]
+                    plateau = {
+                        "re": posterior["O00_re"] / posterior["zprime0"],
+                        "im": posterior["O00_im"] / posterior["zprime0"],
+                    }
+                    if n_states == 1:
+                        fit_x = [float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5]
+                        fit_curves = {
+                            "re": (fit_x, [float(gv.mean(plateau["re"]))] * 2, [float(gv.sdev(plateau["re"]))] * 2),
+                            "im": (fit_x, [float(gv.mean(plateau["im"]))] * 2, [float(gv.sdev(plateau["im"]))] * 2),
+                        }
+                    else:
+                        fit_t = np.linspace(float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5, 200)
+                        fit_values = qda_ratio_fcn({"times": fit_t, "n_states": n_states, "extent": extent}, posterior)
+                        split = fit_t.size
+                        fit_curves = {
+                            "re": (fit_t.tolist(), *_gvar_payload(fit_values[:split])),
+                            "im": (fit_t.tolist(), *_gvar_payload(fit_values[split:])),
+                        }
                     plots = []
                     for component, samples_for_component in (
                         ("re", real_plot_samples),
                         ("im", imag_plot_samples),
                     ):
-                        ratio = posterior[f"O00_{component}"] / posterior["zprime0"]
+                        fit_x, fit_mean, fit_sdev = fit_curves[component]
                         plots.append(
                             {
                                 "kind": "qda_ratio",
@@ -1037,12 +1060,12 @@ def matrix_element_samples(
                                             gv.sdev(samples_for_component.average(sample_error_mode)), dtype=float
                                         ).tolist(),
                                         "fit_x": fit_x,
-                                        "fit_mean": [float(gv.mean(ratio))] * 2,
-                                        "fit_sdev": [float(gv.sdev(ratio))] * 2,
+                                        "fit_mean": fit_mean,
+                                        "fit_sdev": fit_sdev,
                                     }
                                 ],
-                                "plateau_mean": float(gv.mean(ratio)),
-                                "plateau_sdev": float(gv.sdev(ratio)),
+                                "plateau_mean": float(gv.mean(plateau[component])),
+                                "plateau_sdev": float(gv.sdev(plateau[component])),
                             }
                         )
                     sample0_plot = {"z": float(z[z_index]), "plots": plots}
@@ -1078,7 +1101,7 @@ def matrix_element_samples(
             "fits": fit_metrics,
             "q_min": q_min,
             "n_data": int(2 * selected.size),
-            "n_params": 5,
+            "n_params": sum(int(np.size(gv.mean(value))) for value in _qda_ratio_prior(n_states, prior_width).values()),
         }
         primary_z = tune_z
         if primary_z is not None:

@@ -35,6 +35,7 @@ def _context(context: ToolContext) -> dict[str, Any]:
             "dims": data.dims,
             "coords": data.coords,
             "components": components,
+            "temporal_extent": int(data.ensemble.L_t) if data.ensemble is not None else None,
         }
     return {
         "inspection": context.state.get("inspection", {}),
