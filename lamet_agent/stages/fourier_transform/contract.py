@@ -108,7 +108,7 @@ PARAM_RULES = (
     Value("smooth", Literal["linear", "none"], physics="linear blends data and tail over [selected zmin,selected zmax]; none keeps data weight one for |z| <= requested zmax_ext_fm and uses the tail only at any rounded-up outer endpoint."),
     Value("zmax_ext_fm", (int, float), physics="Finite positive requested extent in fm that covers the input and all fit candidates; the represented largest |z| is the nearest input-spacing multiple.", validator=_positive),
     Value("scheme_scan.order.order", Literal["LA", "NLA"], physics="LA/NLA truncation within the GI or CG tail family selected by upstream gfix provenance: LA keeps the leading structure and NLA adds the next inverse-|z| term."),
-    Value("scheme_scan.sector", Literal["valence", "singlet", "full"], physics="'valence' forms quark-minus-antiquark, 'singlet' forms quark-plus-antiquark, and 'full' keeps both complex channels; for GPD, non-full projection is applied after the signed-y transform using the polarization-dependent negative-x relation, while DA allows only full."),
+    Value("scheme_scan.sector", Literal["sea", "valence", "singlet", "full"], physics="'sea', 'valence', and 'singlet' select the corresponding quark combination, while 'full' keeps both complex channels; sea is available only for GPD, whose non-full projection is applied after the signed-y transform, while DA allows only full."),
     Value("scheme_scan.Lambda0_gev", (int, float), physics="Finite nonnegative offset in GeV added to the fitted decay rate, making the suppression exponent (Lambda+Lambda0_gev)|z|/(hbar c).", validator=_nonnegative),
     Value("scheme_scan.posterior_prior_error_scale.width", (int, float), physics="Finite positive multiplier of bounded-internal-coordinate posterior widths; zero and negative values are rejected.", validator=_positive),
     Value("scheme_scan.model_average", bool, physics="Whether to form per-resample evidence-weighted means over valid models or choose one model using q_min, logGBF, and maximum-Q fallback; no separate between-model variance is added."),
@@ -156,22 +156,29 @@ def check_tail_ranges(context: CheckContext) -> Issue | None:
     return None
 
 
-def check_da_sector(context: CheckContext) -> Issue | None:
+def check_observable_sector(context: CheckContext) -> Issue | None:
     scan = context.params.get("scheme_scan")
     if scan is None:
         return None
-    if context.manifest["metadata"]["target_observable"] == "da" and scan["sector"] != "full":
+    observable = str(context.manifest["metadata"]["target_observable"]).lower()
+    if observable == "da" and scan["sector"] != "full":
         return Issue(
             "scheme_scan.sector",
             "must be full for a DA",
             "The migrated DA transform retains the full complex distribution.",
+        )
+    if observable == "pdf" and scan["sector"] == "sea":
+        return Issue(
+            "scheme_scan.sector",
+            "must be valence, singlet, or full for a PDF",
+            "The PDF transform has no standalone sea projection; sea is a GPD-only sector.",
         )
     return None
 
 
 JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 
-CHECKS = (check_tail_ranges, check_da_sector)
+CHECKS = (check_tail_ranges, check_observable_sector)
 
 
 def check_systematics(context: CheckContext) -> list[Issue]:

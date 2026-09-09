@@ -1461,13 +1461,15 @@ def test_renormalization_kernel_mu_override_warns_and_replaces_context(capsys) -
 def test_nla_tail_fit_recovers_a_complex_toy() -> None:
     z = np.arange(-1.0, 1.01, 0.1)
     parameters = {"A2": 0.8, "A2p": -0.2, "phi2": 0.25, "phi2p": -0.1, "Lambda": 0.7}
-    values = tail_model_values(np.where(np.abs(z) < 1e-12, 1e-6, z), "gi_nla", parameters)
+    values = tail_model_values(np.where(np.abs(z) < 1e-12, 1e-6, z), "gi_nla", parameters, hadron="proton")
     values[np.isclose(z, 0.0)] = 1.0
     rng = np.random.default_rng(4)
     samples = [
         values + rng.normal(0.0, 2e-4, values.shape) + 1j * rng.normal(0.0, 2e-4, values.shape) for _ in range(32)
     ]
-    data = EnsembleData(None, "bootstrap", samples, ["z"], {"z": z.tolist()}, attrs={"coord_unit": "fm"})
+    data = EnsembleData(
+        None, "bootstrap", samples, ["z"], {"z": z.tolist()}, attrs={"coord_unit": "fm", "hadron": "proton"}
+    )
     fitted, diagnostics = fit_tail_parameters(
         data,
         model_id="gi_nla",
@@ -1475,6 +1477,7 @@ def test_nla_tail_fit_recovers_a_complex_toy() -> None:
         z_max_fm=1.0,
         prior_means=parameters,
         prior_widths={key: 1.0 for key in parameters},
+        hadron="proton",
     )
     assert diagnostics["dof"] > 0
     assert np.isclose(np.mean([record["Lambda"] for record in fitted]), parameters["Lambda"], atol=2e-2)
@@ -1493,12 +1496,18 @@ def test_da_tail_uses_two_endpoint_phases_and_light_light_alias() -> None:
         momentum_gev=2.0,
         psi1_flavor_class="light",
         psi2_flavor_class="light",
+        hadron="pion",
     )
     values[np.isclose(z, 0.0)] = 1.0
     rng = np.random.default_rng(23)
     samples = [values + rng.normal(0.0, 2e-4, z.size) + 1j * rng.normal(0.0, 2e-4, z.size) for _ in range(32)]
     data = EnsembleData(
-        None, "bootstrap", samples, ["z"], {"z": z.tolist()}, attrs={"coord_unit": "fm", "momentum_gev": 2.0}
+        None,
+        "bootstrap",
+        samples,
+        ["z"],
+        {"z": z.tolist()},
+        attrs={"coord_unit": "fm", "momentum_gev": 2.0, "hadron": "pion"},
     )
     fitted, diagnostics = fit_tail_parameters(
         data,
@@ -1511,9 +1520,321 @@ def test_da_tail_uses_two_endpoint_phases_and_light_light_alias() -> None:
         observable="DA",
         psi1_flavor_class="light",
         psi2_flavor_class="light",
+        hadron="pion",
     )
     assert diagnostics["Q"] >= 0.0
     assert np.isclose(np.mean([record["Lambda"] for record in fitted]), parameters["Lambda"], atol=2e-2)
+
+
+@pytest.mark.parametrize(
+    ("observable", "hadron", "sector", "flavors", "family", "la_names"),
+    [
+        ("PDF", "pion", "valence", ("heavy", "heavy"), "pion_pdf_valence", ["A2", "A1", "phi1"]),
+        (
+            "PDF",
+            "pion",
+            "full",
+            ("heavy", "heavy"),
+            "pion_pdf",
+            ["A2", "phi2", "A1", "phi1", "A3", "phi3"],
+        ),
+        ("PDF", "proton", "singlet", ("heavy", "heavy"), "nucleon_pdf", ["A2", "phi2"]),
+        ("DA", "pion", "full", ("light", "light"), "pion_da", ["A1", "phi1"]),
+        ("DA", "kaon", "full", ("light", "light"), "meson_da", ["A1", "phi1", "A2", "phi2"]),
+        ("DA", "kaon", "full", ("light", "heavy"), "meson_da", ["A2", "phi2"]),
+        (
+            "GPD",
+            "pion",
+            "valence",
+            ("heavy", "heavy"),
+            "pion_gpd",
+            ["A1", "phi1", "A3", "phi3", "A2", "phi2", "At2", "phit2"],
+        ),
+        ("GPD", "pion", "sea", ("heavy", "heavy"), "pion_gpd_sea", ["A2", "phi2", "At2", "phit2"]),
+        ("GPD", "nucleon", "full", ("heavy", "heavy"), "nucleon_gpd", ["A2", "phi2", "At2", "phit2"]),
+    ],
+)
+def test_tail_dispatcher_selects_paper_family_and_parameters(
+    observable, hadron, sector, flavors, family, la_names
+) -> None:
+    from lamet_agent.stages.fourier_transform.physics import _tail_family, _tail_parameter_names
+
+    assert _tail_family(observable, hadron, sector, *flavors) == family
+    assert _tail_parameter_names("gi_nla", "LA", observable, *flavors, sector, hadron) == [*la_names, "Lambda"]
+    assert _tail_parameter_names("cg_nla", "NLA", observable, *flavors, sector, hadron) == [
+        *la_names,
+        *(name + "p" for name in la_names),
+        "Lambda",
+        "n",
+    ]
+
+
+def test_tail_dispatcher_rejects_unimplemented_pdf_and_gpd_hadrons() -> None:
+    from lamet_agent.stages.fourier_transform.physics import _tail_family
+
+    with pytest.raises(ValueError, match="PDF tails are not implemented"):
+        _tail_family("PDF", "kaon", "valence", "light", "light")
+    with pytest.raises(ValueError, match="GPD tails are not implemented"):
+        _tail_family("GPD", "kaon", "full", "light", "light")
+
+
+def test_pion_and_kaon_da_use_constrained_and_independent_endpoints() -> None:
+    z = np.asarray([-0.5, 0.5])
+    momentum = 1.7
+    pion = {"A1": 0.7, "phi1": 0.2, "Lambda": 0.6}
+    pion_values = tail_model_values(
+        z,
+        "gi_nla",
+        pion,
+        order="LA",
+        observable="DA",
+        momentum_gev=momentum,
+        psi1_flavor_class="light",
+        psi2_flavor_class="light",
+        hadron="pion",
+    )
+    pion_phase = np.sign(z) * pion["phi1"] - momentum * z / HBAR_C_GEV_FM
+    pion_expected = (
+        pion["A1"] * np.exp(1j * pion_phase) + pion["A1"] * np.exp(-1j * np.sign(z) * pion["phi1"])
+    ) * np.exp(-pion["Lambda"] * np.abs(z) / HBAR_C_GEV_FM)
+    np.testing.assert_allclose(pion_values, pion_expected)
+
+    kaon = {"A1": 0.7, "phi1": 0.2, "A2": 0.3, "phi2": -0.4, "Lambda": 0.6}
+    kaon_values = tail_model_values(
+        z,
+        "gi_nla",
+        kaon,
+        order="LA",
+        observable="DA",
+        momentum_gev=momentum,
+        psi1_flavor_class="light",
+        psi2_flavor_class="light",
+        hadron="kaon",
+    )
+    kaon_expected = (
+        kaon["A1"] * np.exp(1j * (np.sign(z) * kaon["phi1"] - momentum * z / HBAR_C_GEV_FM))
+        + kaon["A2"] * np.exp(1j * np.sign(z) * kaon["phi2"])
+    ) * np.exp(-kaon["Lambda"] * np.abs(z) / HBAR_C_GEV_FM)
+    np.testing.assert_allclose(kaon_values, kaon_expected)
+
+
+def test_pion_valence_nla_inverse_distance_uses_fm_coordinate() -> None:
+    z = np.asarray([0.4, 0.8])
+    parameters = {
+        "A2": 0.0,
+        "A1": 0.0,
+        "phi1": 0.0,
+        "A2p": 1.0,
+        "A1p": 0.0,
+        "phi1p": 0.0,
+        "Lambda": 0.7,
+    }
+    values = tail_model_values(
+        z,
+        "gi_nla",
+        parameters,
+        observable="PDF",
+        momentum_gev=2.0,
+        sector="valence",
+        hadron="pion",
+    )
+    np.testing.assert_allclose(values, np.exp(-parameters["Lambda"] * z / HBAR_C_GEV_FM) / z)
+
+
+def test_pion_full_pdf_uses_all_three_endpoint_frequencies() -> None:
+    z = np.asarray([-0.5, 0.5])
+    momentum = 1.6
+    parameters = {
+        "A2": 0.8,
+        "phi2": 0.2,
+        "A1": 0.3,
+        "phi1": -0.1,
+        "A3": -0.2,
+        "phi3": 0.4,
+        "Lambda": 0.7,
+    }
+    values = tail_model_values(
+        z,
+        "gi_nla",
+        parameters,
+        order="LA",
+        observable="PDF",
+        momentum_gev=momentum,
+        sector="full",
+        hadron="pion",
+    )
+    sign = np.sign(z)
+    expected = (
+        parameters["A2"] * np.exp(1j * sign * parameters["phi2"])
+        + parameters["A1"] * np.exp(1j * (sign * parameters["phi1"] - momentum * z / HBAR_C_GEV_FM))
+        + parameters["A3"] * np.exp(1j * (sign * parameters["phi3"] + momentum * z / HBAR_C_GEV_FM))
+    ) * np.exp(-parameters["Lambda"] * np.abs(z) / HBAR_C_GEV_FM)
+    np.testing.assert_allclose(values, expected)
+
+
+def test_pion_gpd_uses_initial_final_and_transfer_frequencies() -> None:
+    z = np.asarray([-0.4, 0.4])
+    initial, final = 0.9, 1.5
+    delta = final - initial
+    parameters = {
+        "A1": 0.5,
+        "phi1": 0.1,
+        "A3": 0.4,
+        "phi3": -0.2,
+        "A2": 0.3,
+        "phi2": 0.25,
+        "At2": -0.15,
+        "phit2": -0.35,
+        "Lambda": 0.6,
+    }
+    values = tail_model_values(
+        z,
+        "gi_nla",
+        parameters,
+        order="LA",
+        observable="GPD",
+        hadron="pion",
+        initial_momentum_gev=initial,
+        final_momentum_gev=final,
+        delta_momentum_gev=delta,
+        phase_transfer_gpd="barpsi_at_0",
+    )
+    sign = np.sign(z)
+    expected = (
+        parameters["A1"] * np.exp(1j * (sign * parameters["phi1"] - final * z / HBAR_C_GEV_FM))
+        + parameters["A3"] * np.exp(1j * (sign * parameters["phi3"] + initial * z / HBAR_C_GEV_FM))
+        + parameters["A2"] * np.exp(1j * sign * parameters["phi2"])
+        + parameters["At2"] * np.exp(1j * (sign * parameters["phit2"] - delta * z / HBAR_C_GEV_FM))
+    ) * np.exp(-parameters["Lambda"] * np.abs(z) / HBAR_C_GEV_FM)
+    np.testing.assert_allclose(values, expected)
+
+
+@pytest.mark.parametrize(
+    ("observable", "hadron", "sector", "flavors", "momentum", "gpd"),
+    [
+        ("PDF", "pion", "valence", ("heavy", "heavy"), 1.8, {}),
+        ("PDF", "pion", "full", ("heavy", "heavy"), 1.8, {}),
+        ("PDF", "proton", "full", ("heavy", "heavy"), None, {}),
+        ("DA", "pion", "full", ("light", "light"), 1.8, {}),
+        ("DA", "kaon", "full", ("light", "light"), 1.8, {}),
+        (
+            "GPD",
+            "pion",
+            "valence",
+            ("heavy", "heavy"),
+            1.2,
+            {"initial_momentum_gev": 1.0, "final_momentum_gev": 1.4, "delta_momentum_gev": 0.4},
+        ),
+        (
+            "GPD",
+            "proton",
+            "full",
+            ("heavy", "heavy"),
+            1.2,
+            {"initial_momentum_gev": 1.0, "final_momentum_gev": 1.4, "delta_momentum_gev": 0.4},
+        ),
+    ],
+)
+def test_cg_is_gi_times_one_common_fm_power(observable, hadron, sector, flavors, momentum, gpd) -> None:
+    from lamet_agent.stages.fourier_transform.physics import _tail_parameter_names
+
+    names = _tail_parameter_names("gi_nla", "LA", observable, *flavors, sector, hadron)
+    base = {name: 0.6 if name.startswith("A") else 0.2 if name.startswith("phi") else 0.7 for name in names}
+    cg = {**base, "n": 1.3}
+    kwargs = {
+        "order": "LA",
+        "observable": observable,
+        "momentum_gev": momentum,
+        "psi1_flavor_class": flavors[0],
+        "psi2_flavor_class": flavors[1],
+        "sector": sector,
+        "hadron": hadron,
+        **gpd,
+    }
+    z = np.asarray([0.3, 0.6, 0.9])
+    gi_values = tail_model_values(z, "gi_nla", base, **kwargs)
+    cg_values = tail_model_values(z, "cg_nla", cg, **kwargs)
+    np.testing.assert_allclose(cg_values, gi_values / z ** cg["n"])
+
+
+@pytest.mark.parametrize(
+    ("observable", "hadron", "sector", "flavors", "momentum", "gpd"),
+    [
+        ("PDF", "pion", "valence", ("heavy", "heavy"), 1.8, {}),
+        ("PDF", "pion", "full", ("heavy", "heavy"), 1.8, {}),
+        ("PDF", "proton", "full", ("heavy", "heavy"), None, {}),
+        ("DA", "pion", "full", ("light", "light"), 1.8, {}),
+        ("DA", "kaon", "full", ("light", "light"), 1.8, {}),
+        (
+            "GPD",
+            "pion",
+            "valence",
+            ("heavy", "heavy"),
+            1.2,
+            {"initial_momentum_gev": 1.0, "final_momentum_gev": 1.4, "delta_momentum_gev": 0.4},
+        ),
+        (
+            "GPD",
+            "proton",
+            "full",
+            ("heavy", "heavy"),
+            1.2,
+            {"initial_momentum_gev": 1.0, "final_momentum_gev": 1.4, "delta_momentum_gev": 0.4},
+        ),
+    ],
+)
+def test_every_nla_family_uses_the_same_inverse_fm_coordinate(
+    observable, hadron, sector, flavors, momentum, gpd
+) -> None:
+    from lamet_agent.stages.fourier_transform.physics import _tail_parameter_names
+
+    names = _tail_parameter_names("gi_nla", "LA", observable, *flavors, sector, hadron)
+    leading = {name: 0.6 if name.startswith("A") else 0.2 if name.startswith("phi") else 0.7 for name in names}
+    nla = {
+        **{name: 0.0 for name in names if name.startswith("A")},
+        **{name: 0.0 for name in names if name.startswith("phi")},
+        **{name + "p": value for name, value in leading.items() if name != "Lambda"},
+        "Lambda": leading["Lambda"],
+    }
+    kwargs = {
+        "observable": observable,
+        "momentum_gev": momentum,
+        "psi1_flavor_class": flavors[0],
+        "psi2_flavor_class": flavors[1],
+        "sector": sector,
+        "hadron": hadron,
+        **gpd,
+    }
+    z = np.asarray([0.3, 0.6, 0.9])
+    leading_values = tail_model_values(z, "gi_nla", leading, order="LA", **kwargs)
+    nla_values = tail_model_values(z, "gi_nla", nla, order="NLA", **kwargs)
+    np.testing.assert_allclose(nla_values, leading_values / z)
+
+
+@pytest.mark.parametrize("phase_transfer,shift_factor", [("barpsi_at_0", 0.0), ("mid_at_0", 0.5), ("psi_at_0", 1.0)])
+def test_proton_gpd_uses_signed_delta_momentum_and_global_phase_transfer(phase_transfer, shift_factor) -> None:
+    z = np.asarray([-0.6, -0.3, 0.3, 0.6])
+    initial, final = 1.0, 1.4
+    delta = final - initial
+    parameters = {"A2": 0.8, "phi2": 0.2, "At2": -0.1, "phit2": -0.3, "Lambda": 0.7}
+    values = tail_model_values(
+        z,
+        "gi_nla",
+        parameters,
+        order="LA",
+        observable="GPD",
+        hadron="proton",
+        initial_momentum_gev=initial,
+        final_momentum_gev=final,
+        delta_momentum_gev=delta,
+        phase_transfer_gpd=phase_transfer,
+    )
+    shift = shift_factor * delta
+    expected = (
+        parameters["A2"] * np.exp(1j * (np.sign(z) * parameters["phi2"] + shift * z / HBAR_C_GEV_FM))
+        + parameters["At2"] * np.exp(1j * (np.sign(z) * parameters["phit2"] + (-delta + shift) * z / HBAR_C_GEV_FM))
+    ) * np.exp(-parameters["Lambda"] * np.abs(z) / HBAR_C_GEV_FM)
+    np.testing.assert_allclose(values, expected)
 
 
 def test_tail_value_and_fit_evaluator_share_the_proton_gpd_endpoint_family() -> None:
@@ -1521,7 +1842,17 @@ def test_tail_value_and_fit_evaluator_share_the_proton_gpd_endpoint_family() -> 
 
     z = np.asarray([-0.6, -0.3, 0.3, 0.6])
     parameters = {"A2": 0.8, "phi2": 0.2, "At2": -0.1, "phit2": -0.3, "Lambda": 0.7}
-    values = tail_model_values(z, "gi_nla", parameters, order="LA", observable="GPD", hadron="proton")
+    values = tail_model_values(
+        z,
+        "gi_nla",
+        parameters,
+        order="LA",
+        observable="GPD",
+        hadron="proton",
+        initial_momentum_gev=1.0,
+        final_momentum_gev=1.3,
+        delta_momentum_gev=0.3,
+    )
     fitted = tail_fit_fcn(
         {
             "z": z,
@@ -1530,11 +1861,15 @@ def test_tail_value_and_fit_evaluator_share_the_proton_gpd_endpoint_family() -> 
             "component": "both",
             "lambda0_gev": 0.0,
             "observable": "GPD",
-            "momentum_gev": 0.0,
+            "momentum_gev": 1.15,
             "psi1_flavor_class": "heavy",
             "psi2_flavor_class": "heavy",
             "sector": "full",
             "hadron": "proton",
+            "initial_momentum_gev": 1.0,
+            "final_momentum_gev": 1.3,
+            "delta_momentum_gev": 0.3,
+            "phase_transfer_gpd": "barpsi_at_0",
         },
         parameters,
     )
@@ -1575,7 +1910,7 @@ def test_native_fourier_scan_fits_and_transforms_with_one_parallel_entry(monkeyp
 
     z = np.linspace(-1.0, 1.0, 21)
     parameters = {"A2": 0.8, "A2p": -0.05, "phi2": 0.2, "phi2p": -0.1, "Lambda": 0.7}
-    center = tail_model_values(np.where(np.isclose(z, 0.0), 1e-6, z), "gi_nla", parameters)
+    center = tail_model_values(np.where(np.isclose(z, 0.0), 1e-6, z), "gi_nla", parameters, hadron="proton")
     center[np.isclose(z, 0.0)] = 1.0
     rng = np.random.default_rng(19)
     samples = [center + rng.normal(0.0, 2e-3, z.size) + 1j * rng.normal(0.0, 2e-3, z.size) for _ in range(20)]
@@ -1585,7 +1920,12 @@ def test_native_fourier_scan_fits_and_transforms_with_one_parallel_entry(monkeyp
         samples,
         ["z"],
         {"z": z.tolist()},
-        attrs={"coord_unit": "fm", "momentum_gev": 2.0, "symmetry": '{"imag":"odd","real":"even"}'},
+        attrs={
+            "coord_unit": "fm",
+            "momentum_gev": 2.0,
+            "hadron": "proton",
+            "symmetry": '{"imag":"odd","real":"even"}',
+        },
     )
     modes = []
     actual_fit_tail_parameters = fourier_physics.fit_tail_parameters
@@ -1622,11 +1962,17 @@ def test_native_fourier_scan_fits_and_transforms_with_one_parallel_entry(monkeyp
     assert result["data"].dims == ["x"]
     assert result["data"].n_sample == data.n_sample
     assert np.all(np.isfinite(result["data"].values))
+    assert result["data"].attrs["tail_family"] == "nucleon_pdf"
+    assert result["data"].attrs["power_coordinate_unit"] == "fm"
+    assert result["data"].attrs["cg_power_applied"] == "false"
     assert 1 <= len(result["selected_labels"]) <= 2
     assert np.sum(result["weights"]) == pytest.approx(1.0)
     assert len(result["range_candidates"]) == 3
     assert len(result["model_candidates"]) == 2
     assert all("fit_parameters" in candidate for candidate in result["range_candidates"] if candidate["fit_success"])
+    assert all(candidate["tail_family"] == "nucleon_pdf" for candidate in result["range_candidates"])
+    assert all(candidate["power_coordinate_unit"] == "fm" for candidate in result["model_candidates"])
+    assert all(candidate["cg_power_applied"] is False for candidate in result["model_candidates"])
     assert all(
         set(candidate["parameter_mean"]) == set(candidate["parameter_sdev"]) for candidate in result["model_candidates"]
     )
@@ -1807,6 +2153,59 @@ def test_fourier_inspection_applies_systematic_offset_from_ensemble(tmp_path: Pa
     assert context.state["tail_inspection"]["z_grid_step_fm"] == 0.05
 
 
+def test_gpd_fourier_preparation_records_signed_longitudinal_momenta(tmp_path: Path) -> None:
+    from lamet_agent.stages.fourier_transform._inspection import prepare
+
+    ensemble = _ensemble(0.1)
+    z = [0.0, 0.1, 0.2]
+    common_attrs = {
+        "coord_unit": "fm",
+        "momentum_gev": 1.0,
+        "parton": "quark",
+        "gfix": "GI",
+        "polarization": "unpolarized",
+        "hadron": "pion",
+    }
+    primary = EnsembleData(
+        ensemble,
+        "bootstrap",
+        [np.ones(3, dtype=complex), np.ones(3, dtype=complex)],
+        ["z"],
+        {"z": z},
+        attrs={**common_attrs, "source_momentum": [0, 0, 2], "sink_momentum": [0, 0, 3]},
+    )
+    partner = EnsembleData(
+        ensemble,
+        "bootstrap",
+        [np.ones(3, dtype=complex), np.ones(3, dtype=complex)],
+        ["z"],
+        {"z": z},
+        attrs={**common_attrs, "source_momentum": [0, 0, 3], "sink_momentum": [0, 0, 2]},
+    )
+    context = ToolContext(
+        {"metadata": {"workers": 1, "target_observable": "gpd", "parton": "quark"}},
+        tmp_path / "manifest.json",
+        "fourier_transform",
+        "gpd",
+        {"phase_transfer_gpd": "mid_at_0", "scheme_scan": {"sector": "valence"}},
+        {"input": primary, "hermitian_partner": partner},
+        {},
+        {},
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    prepared, spacing = prepare(context)
+
+    expected_initial = 2.0 * ensemble.k_s
+    expected_final = 3.0 * ensemble.k_s
+    assert spacing == pytest.approx(0.1)
+    assert prepared.attrs["initial_momentum_gev"] == pytest.approx(expected_initial)
+    assert prepared.attrs["final_momentum_gev"] == pytest.approx(expected_final)
+    assert prepared.attrs["delta_momentum_gev"] == pytest.approx(expected_final - expected_initial)
+    assert prepared.attrs["phase_transfer_gpd"] == "mid_at_0"
+
+
 def test_fourier_model_choice_is_made_per_sample() -> None:
     from lamet_agent.stages.fourier_transform.physics import _sample_model_weights
 
@@ -1906,6 +2305,7 @@ def test_fourier_scan_uses_original_fixed_first_pass_priors() -> None:
         model_id="cg_nla",
         order="NLA",
         lambda0_gev=0.1,
+        hadron="proton",
     )
     assert means == {
         "A2": 1.0,

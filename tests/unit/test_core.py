@@ -1383,8 +1383,20 @@ def test_fourier_scan_intrinsic_values_are_owned_by_rules() -> None:
     issues = evaluate_rules({"scheme_scan": scheme_scan}, contract.PARAM_RULES, complete=False)
 
     assert [(issue.path, issue.message) for issue in issues] == [
-        ("scheme_scan.sector", "must be one of 'valence', 'singlet', 'full'")
+        ("scheme_scan.sector", "must be one of 'sea', 'valence', 'singlet', 'full'")
     ]
+
+
+def test_fourier_sea_sector_is_available_only_for_gpd() -> None:
+    contract = _load_stage_contract("fourier_transform")
+    params = {"scheme_scan": {"sector": "sea"}}
+
+    pdf = CheckContext({"metadata": {"target_observable": "pdf"}}, "fourier_transform", "job", params, {})
+    assert [(issue.path, issue.message) for issue in evaluate_checks(contract.CHECKS, pdf)] == [
+        ("scheme_scan.sector", "must be valence, singlet, or full for a PDF")
+    ]
+    gpd = CheckContext({"metadata": {"target_observable": "gpd"}}, "fourier_transform", "job", params, {})
+    assert evaluate_checks(contract.CHECKS, gpd) == []
 
 
 def test_review_tools_have_provider_schemas() -> None:

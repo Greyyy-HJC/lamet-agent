@@ -128,6 +128,9 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         "selected_dof": selected_candidate["dof"],
         "selected_chi2_dof": selected_candidate["chi2_dof"],
         "selected_logGBF": selected_candidate["logGBF"],
+        "tail_family": output.attrs.get("tail_family"),
+        "power_coordinate_unit": output.attrs.get("power_coordinate_unit"),
+        "cg_power_applied": output.attrs.get("cg_power_applied"),
         "range_candidate_count": len(result["range_candidates"]),
         "model_candidate_count": len(result["model_candidates"]),
         "sample_count": output.n_sample,
@@ -143,6 +146,9 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
             for key in (
                 "label",
                 "model_id",
+                "tail_family",
+                "power_coordinate_unit",
+                "cg_power_applied",
                 "z_min_fm",
                 "z_max_fm",
                 "order",
@@ -169,6 +175,9 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
             key: candidate[key]
             for key in (
                 "model_id",
+                "tail_family",
+                "power_coordinate_unit",
+                "cg_power_applied",
                 "z_min_fm",
                 "z_max_fm",
                 "order",

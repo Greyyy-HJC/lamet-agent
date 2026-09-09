@@ -179,20 +179,14 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
         delta_momentum = float(data.ensemble.k_s) * (sink_momentum[2] - source_momentum[2])
         initial_pz = float(source_momentum[2]) * float(data.ensemble.k_s)
         final_pz = float(sink_momentum[2]) * float(data.ensemble.k_s)
-        average_momentum = 0.5 * float(data.ensemble.k_s) * (
-            np.linalg.norm(source_momentum) + np.linalg.norm(sink_momentum)
+        average_momentum = (
+            0.5 * float(data.ensemble.k_s) * (np.linalg.norm(source_momentum) + np.linalg.norm(sink_momentum))
         )
         initial_energy = float(
-            np.sqrt(
-                float(data.ensemble.m_pi) ** 2
-                + (float(data.ensemble.k_s) * np.linalg.norm(source_momentum)) ** 2
-            )
+            np.sqrt(float(data.ensemble.m_pi) ** 2 + (float(data.ensemble.k_s) * np.linalg.norm(source_momentum)) ** 2)
         )
         final_energy = float(
-            np.sqrt(
-                float(data.ensemble.m_pi) ** 2
-                + (float(data.ensemble.k_s) * np.linalg.norm(sink_momentum)) ** 2
-            )
+            np.sqrt(float(data.ensemble.m_pi) ** 2 + (float(data.ensemble.k_s) * np.linalg.norm(sink_momentum)) ** 2)
         )
         delta_spatial_sq = (float(data.ensemble.k_s) ** 2) * sum(
             (sink - source) ** 2 for sink, source in zip(sink_momentum, source_momentum)
@@ -202,6 +196,8 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
             {
                 "initial_momentum": json.dumps(source_momentum),
                 "final_momentum": json.dumps(sink_momentum),
+                "initial_momentum_gev": initial_pz,
+                "final_momentum_gev": final_pz,
                 "delta_momentum_gev": delta_momentum,
                 "phase_momentum_source": "ensemble_discrete_momentum",
                 "momentum_gev": average_momentum,
@@ -227,7 +223,13 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
                 raise ValueError("non-forward GPD input requires hermitian_partner")
             data = complete_signed_z(data, conventions["symmetry"])
             attrs = dict(data.attrs)
-            attrs.update({"gpd_completion_mode": "single_flow", "hermitian_partner_id": ""})
+            attrs.update(
+                {
+                    "gpd_completion_mode": "single_flow",
+                    "hermitian_partner_id": "",
+                    "phase_transfer_gpd": str(context.params["phase_transfer_gpd"]),
+                }
+            )
             data = EnsembleData(
                 data.ensemble,
                 data.resample,
@@ -302,10 +304,7 @@ def run(context: ToolContext) -> dict[str, object]:
         raise ValueError("zmax_ext_fm cannot be smaller than the input z coverage")
     positive_z = z[z >= 0]
     grid_values = [*effective_zmin, *parameters["zmax_fm"]]
-    if any(
-        not np.any(np.isclose(positive_z, float(value), rtol=0.0, atol=1e-12))
-        for value in grid_values
-    ):
+    if any(not np.any(np.isclose(positive_z, float(value), rtol=0.0, atol=1e-12)) for value in grid_values):
         raise ValueError("effective Fourier fit boundaries must lie on the input z grid")
     input_max = float(np.max(np.abs(z)))
     if any(float(value) > input_max + 1e-12 for value in parameters["zmax_fm"]):

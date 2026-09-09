@@ -75,19 +75,22 @@ e^{-\Lambda |z|/(\hbar c)},
 $$
 
 where the primed term is omitted at LA.  The CG family divides the selected
-base family by the fitted power $|z|^n$ in the model coordinate.  The
+base family by the fitted power $(|z|/1\,\mathrm{fm})^n$.  The algebraic
+coordinate is therefore the numerical input coordinate in fm; only momentum
+phases and the exponential decay use $\hbar c$.  The
 channel-specific base structures are:
 
 * pion valence PDF: the symmetry-reduced two-endpoint form;
+* other pion PDF sectors: the three endpoint form;
 * proton/nucleon PDF: the complex forward form above;
-* DA: the two ordered meson endpoints with flavor-class constraints;
+* DA: two ordered meson endpoints, with pion-only isospin constraints;
 * GPD: the hadron-dependent non-forward endpoint structures.
 
 The pion valence-PDF branch uses its dedicated two-endpoint form
 
 $$
 h(z)=\left[A_2+2A_1\cos\left(\phi_1-\frac{P_z|z|}{\hbar c}\right)
- +\frac{\hbar c}{|z|}\left(A'_2+2A'_1\cos\left(\phi'_1-\frac{P_z|z|}{\hbar c}\right)\right)\right]
+ +\frac{1}{|z|}\left(A'_2+2A'_1\cos\left(\phi'_1-\frac{P_z|z|}{\hbar c}\right)\right)\right]
 e^{-\Lambda |z|/(\hbar c)},
 $$
 
@@ -99,22 +102,24 @@ replaced by the asymptotic ansatz.
 For a DA the two endpoint contributions retain the momentum phase explicitly,
 
 $$
-h_{\rm DA}(z)=\left[A_1e^{i(\phi_1-P_z|z|)}+A_2e^{i\phi_2}
-+\frac{A'_1e^{i(\phi'_1-P_z|z|)}+A'_2e^{i\phi'_2}}{|z|}\right]
+h_{\rm DA}(z)=\left[A_1e^{i(\phi_1-P_z|z|/(\hbar c))}+A_2e^{i\phi_2}
++\frac{A'_1e^{i(\phi'_1-P_z|z|/(\hbar c))}+A'_2e^{i\phi'_2}}{|z|}\right]
 e^{-\Lambda|z|/(\hbar c)},
 $$
 
-with flavor-class constraints removing or identifying endpoint amplitudes.  If
+Flavor classes remove the suppressed endpoint for light-heavy orderings. Only
+pion light-light DA identifies the two endpoints;
+kaon retains independent endpoint amplitudes and phases. If
 `phase_transfer_da=true`, the input is first multiplied by
 $e^{+izP_z/(2\hbar c)}$, projected onto the real midpoint-symmetric channel,
 and rotated back; if false, the complex input is retained.
 
-The CG power is a phenomenological algebraic-decay factor, not a claim that a
-CG matrix element is physically identical to a GI matrix element.  The
-historical model-coordinate normalization is retained so existing fitted
-distributions remain numerically unchanged: the pion-valence branch uses
-$|z|/(\hbar c)$, while the other legacy branches use their existing $|z|$
-coordinate.  Here $z$ in the input and range tables remains in fm.
+GPD phases use the initial momentum, final momentum, and their signed
+difference for the endpoint factors in the paper; the selected endpoint
+phase-transfer convention is then applied to the whole base family. The CG
+power is a phenomenological algebraic-decay factor, not a claim that a CG
+matrix element is physically identical to a GI matrix element. Here $z$ in
+the formula's algebraic factors, input, and range tables is in fm.
 """.strip()
 
 
@@ -212,8 +217,10 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         "",
         "## Job Summary",
         "",
-        ("| job | target / polarization | momentum [GeV] | sector / component | "
-         "selected range [fm] | selected models | Q | chi2/dof | samples |"),
+        (
+            "| job | target / polarization | momentum [GeV] | sector / component | "
+            "selected range [fm] | selected models | Q | chi2/dof | samples |"
+        ),
         "|---|---:|---|---|---|---|---:|---:|---:|",
     ]
     for record in records:
@@ -254,15 +261,17 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             "",
             "## Selection Policy",
             "",
-            ("The range scan uses the first authored order and prior width. Runtime enumerates the authored "
-             "model x zmin x zmax prefix up to `max_schemes`, keeps feasible center fits, and selects the "
-             "largest-logGBF fit with Q >= `q_min`, falling back to the largest Q. If no center model reaches "
-             "`q_min`, range recommendations continue until the job budget is exhausted; a numerically valid "
-             "maximum-Q result is then published with an explicit fallback warning. With that interval fixed, "
-             "every feasible authored LA/NLA and prior-width model is refitted. `model_average=false` chooses "
-             "per-resample models with the same Q/logGBF rule and maximum-Q fallback; `model_average=true` uses "
-             "normalized exp(logGBF) weights over all finite-logGBF candidates and adds no separate between-model "
-             "variance. The candidate diagnostics below preserve both the selected result and the alternatives."),
+            (
+                "The range scan uses the first authored order and prior width. Runtime enumerates the authored "
+                "model x zmin x zmax prefix up to `max_schemes`, keeps feasible center fits, and selects the "
+                "largest-logGBF fit with Q >= `q_min`, falling back to the largest Q. If no center model reaches "
+                "`q_min`, range recommendations continue until the job budget is exhausted; a numerically valid "
+                "maximum-Q result is then published with an explicit fallback warning. With that interval fixed, "
+                "every feasible authored LA/NLA and prior-width model is refitted. `model_average=false` chooses "
+                "per-resample models with the same Q/logGBF rule and maximum-Q fallback; `model_average=true` uses "
+                "normalized exp(logGBF) weights over all finite-logGBF candidates and adds no separate between-model "
+                "variance. The candidate diagnostics below preserve both the selected result and the alternatives."
+            ),
         ]
     )
     for record in records:
@@ -331,14 +340,17 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| polarization / construction | `{attrs.get('polarization', 'n/a')}` / "
                 f"`{attrs.get('gfix', 'n/a')}` |",
                 f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
+                f"| tail family | `{attrs.get('tail_family', 'n/a')}` |",
+                "| algebraic coordinate / CG modifier | "
+                f"`{attrs.get('power_coordinate_unit', 'n/a')}` / "
+                f"`{attrs.get('cg_power_applied', 'n/a')}` |",
                 *(
                     [
-                        "| GPD initial/final Pz | "
-                        f"{format_value(attrs.get('initial_momentum'))} / "
-                        f"{format_value(attrs.get('final_momentum'))} |",
-                        "| GPD xi / t | "
-                        f"{format_value(attrs.get('xi'))} / "
-                        f"{format_value(attrs.get('t_gev2'))} GeV^2 |",
+                        "| GPD initial/final/delta Pz [GeV] | "
+                        f"{format_value(attrs.get('initial_momentum_gev'))} / "
+                        f"{format_value(attrs.get('final_momentum_gev'))} / "
+                        f"{format_value(attrs.get('delta_momentum_gev'))} |",
+                        f"| GPD xi / t | {format_value(attrs.get('xi'))} / {format_value(attrs.get('t_gev2'))} GeV^2 |",
                         "| GPD phase transfer / completion | "
                         f"`{attrs.get('phase_transfer_gpd', 'n/a')}` / "
                         f"`{attrs.get('gpd_completion_mode', 'n/a')}` |",
@@ -387,29 +399,47 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "### Projection and Field Definitions",
                 "",
-                (f"The output records sector `{attrs.get('sector', 'n/a')}`, component "
-                 f"`{attrs.get('component', 'n/a')}`, and multiplicative scale "
-                 f"{format_value(attrs.get('output_scale'))}. Sector is authored in "
-                 "`scheme_scan`; component and scale are derived from the target, polarization, "
-                 "and sector. For a non-full GPD, the signed-y transform is projected afterward "
-                 "using the polarization relation; a full GPD leaves the complex Fourier result "
-                 "unprojected."),
+                (
+                    f"The output records sector `{attrs.get('sector', 'n/a')}`, component "
+                    f"`{attrs.get('component', 'n/a')}`, and multiplicative scale "
+                    f"{format_value(attrs.get('output_scale'))}. Sector is authored in "
+                    "`scheme_scan`; component and scale are derived from the target, polarization, "
+                    "and sector. For a non-full GPD, the signed-y transform is projected afterward "
+                    "using the polarization relation; a full GPD leaves the complex Fourier result "
+                    "unprojected."
+                ),
                 "",
                 "| field | meaning |",
                 "|---|---|",
                 "| `selected_range` | Sample-average tail interval held fixed during all resample fits. |",
-                ("| `selected_models`, `model_weights` | LA/NLA/prior candidates retained by "
-                 "selection or model averaging. |"),
-                ("| `component`, `output_scale` | Fourier channel and normalization selected "
-                 "from target, polarization, and sector. |"),
-                ("| `phase_transfer_da` | Whether the midpoint DA phase/symmetry projection "
-                 "was applied before tail fitting. |"),
-                ("| `phase_transfer_gpd`, `gpd_completion_mode` | GPD endpoint convention and "
-                 "whether an exchanged-flow Hermitian partner completed signed z. |"),
-                ("| `zmax_ext_fm` | Maximum physical separation of the finite transform, "
-                 "distinct from the fitted data interval. |"),
-                ("| `Q`, `chi2/dof` | Fit p-value and normalized chi-square diagnostic; neither "
-                 "is a Fourier-distribution uncertainty. |"),
+                (
+                    "| `tail_family`, `power_coordinate_unit`, `cg_power_applied` | Paper formula selected from "
+                    "observable/hadron/sector provenance and the common fm-coordinate algebraic modifier. |"
+                ),
+                (
+                    "| `selected_models`, `model_weights` | LA/NLA/prior candidates retained by "
+                    "selection or model averaging. |"
+                ),
+                (
+                    "| `component`, `output_scale` | Fourier channel and normalization selected "
+                    "from target, polarization, and sector. |"
+                ),
+                (
+                    "| `phase_transfer_da` | Whether the midpoint DA phase/symmetry projection "
+                    "was applied before tail fitting. |"
+                ),
+                (
+                    "| `phase_transfer_gpd`, `gpd_completion_mode` | GPD endpoint convention and "
+                    "whether an exchanged-flow Hermitian partner completed signed z. |"
+                ),
+                (
+                    "| `zmax_ext_fm` | Maximum physical separation of the finite transform, "
+                    "distinct from the fitted data interval. |"
+                ),
+                (
+                    "| `Q`, `chi2/dof` | Fit p-value and normalized chi-square diagnostic; neither "
+                    "is a Fourier-distribution uncertainty. |"
+                ),
                 "",
                 "### Figures",
                 "",

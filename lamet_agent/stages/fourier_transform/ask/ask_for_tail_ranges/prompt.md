@@ -17,9 +17,9 @@ forward form; DA retains ordered meson endpoints and flavor constraints; GPD
 retains its hadron-dependent non-forward endpoint structures. GI and CG share
 the selected channel base family, while CG adds the phenomenological
 algebraic factor $|z|^{-n}$; this does not assert that GI and CG matrix
-elements are the same physical quantity. The existing model-coordinate
-normalization is part of the fit convention, and `z` in the evidence and
-returned ranges is in fm.
+elements are the same physical quantity. All inverse-distance NLA terms and
+the CG power use the numerical `z` coordinate in fm. Only decay exponents and
+momentum phases convert GeV and fm with $\hbar c$.
 
 Recommend compact candidate lists for whichever Fourier tail-fit boundaries are
 requested by the response schema. Use only exact coordinates present in the

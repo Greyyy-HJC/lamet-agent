@@ -71,126 +71,43 @@ def _signed_from_positive(
     return np.concatenate([real + 1j * imag, positive_values[~negative_mask]])
 
 
-def _tail_parameter_names_base(
-    model_id: str, order: str, observable: str, psi1_flavor_class: str, psi2_flavor_class: str
-) -> list[str]:
-    """Return the independent parameters of one forward PDF or meson-DA tail."""
+_NUCLEON_HADRONS = {"nucleon", "proton"}
+
+
+def _tail_family(
+    observable: str,
+    hadron: str,
+    sector: str,
+    psi1_flavor_class: str,
+    psi2_flavor_class: str,
+) -> str:
+    """Select the paper's large-distance family from physical provenance."""
+    observable = observable.upper()
+    hadron = hadron.lower()
+    sector = sector.lower()
+    if observable == "PDF":
+        if sector not in {"valence", "singlet", "full"}:
+            raise ValueError("PDF tail sector must be valence, singlet, or full")
+        if hadron == "pion":
+            return "pion_pdf_valence" if sector == "valence" else "pion_pdf"
+        if hadron in _NUCLEON_HADRONS:
+            return "nucleon_pdf"
+        raise ValueError(f"PDF tails are not implemented for hadron '{hadron or '<missing>'}'")
     if observable == "DA":
-        names = []
-        if psi1_flavor_class != "light" or psi2_flavor_class != "heavy":
-            names.extend(["A1", "phi1"])
-        if psi1_flavor_class != "heavy" or psi2_flavor_class != "light":
-            if not (psi1_flavor_class == "light" and psi2_flavor_class == "light"):
-                names.extend(["A2", "phi2"])
-        if order == "NLA":
-            names.extend([name + "p" for name in names])
-        names.append("Lambda")
-    else:
-        names = ["A2", "phi2"]
-        if order == "NLA":
-            names.extend(["A2p", "phi2p"])
-        names.append("Lambda")
-    if model_id == "cg_nla":
-        names.append("n")
-    return names
-
-
-def _tail_fit_fcn_base(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
-    """Evaluate one channel-specific GI/CG tail for the fitter."""
-    z = np.asarray(x["z"], dtype=float)
-    absolute = np.abs(z)
-    sign = np.sign(z)
-    decay = np.exp(-(parameters["Lambda"] + float(x["lambda0_gev"])) * absolute / HBAR_C_GEV_FM)
-    pion_valence = (
-        x["observable"] == "PDF"
-        and str(x.get("hadron", "")).lower() == "pion"
-        and str(x.get("sector", "")).lower() == "valence"
-    )
-    if pion_valence:
-        phase = parameters["phi1"] - float(x["momentum_gev"]) * absolute / HBAR_C_GEV_FM
-        real = parameters["A2"] + 2.0 * parameters["A1"] * gv.cos(phase)
-        imag = np.zeros_like(absolute)
-        if x["order"] == "NLA":
-            phase_prime = parameters["phi1p"] - float(x["momentum_gev"]) * absolute / HBAR_C_GEV_FM
-            real = real + (
-                parameters["A2p"] + 2.0 * parameters["A1p"] * gv.cos(phase_prime)
-            ) * HBAR_C_GEV_FM / absolute
-    elif x["observable"] == "DA":
-        light_light = x["psi1_flavor_class"] == "light" and x["psi2_flavor_class"] == "light"
-        first_phase = parameters.get("phi1", 0.0) - float(x["momentum_gev"]) * absolute / HBAR_C_GEV_FM
-        first_amplitude = (
-            0.0 if x["psi1_flavor_class"] == "light" and x["psi2_flavor_class"] == "heavy" else parameters["A1"]
-        )
-        second_phase = -parameters["phi1"] if light_light else parameters.get("phi2", 0.0)
-        second_amplitude = (
-            0.0
-            if x["psi1_flavor_class"] == "heavy" and x["psi2_flavor_class"] == "light"
-            else (parameters["A1"] if light_light else parameters["A2"])
-        )
-        real = first_amplitude * gv.cos(first_phase) + second_amplitude * gv.cos(second_phase)
-        imag = first_amplitude * gv.sin(first_phase) + second_amplitude * gv.sin(second_phase)
-        if x["order"] == "NLA":
-            first_prime_phase = parameters.get("phi1p", 0.0) - float(x["momentum_gev"]) * absolute / HBAR_C_GEV_FM
-            first_prime_amplitude = (
-                0.0 if x["psi1_flavor_class"] == "light" and x["psi2_flavor_class"] == "heavy" else parameters["A1p"]
-            )
-            second_prime_phase = -parameters["phi1p"] if light_light else parameters.get("phi2p", 0.0)
-            second_prime_amplitude = (
-                0.0
-                if x["psi1_flavor_class"] == "heavy" and x["psi2_flavor_class"] == "light"
-                else (parameters["A1p"] if light_light else parameters["A2p"])
-            )
-            real = (
-                real
-                + (
-                    first_prime_amplitude * gv.cos(first_prime_phase)
-                    + second_prime_amplitude * gv.cos(second_prime_phase)
-                )
-                / absolute
-            )
-            imag = (
-                imag
-                + (
-                    first_prime_amplitude * gv.sin(first_prime_phase)
-                    + second_prime_amplitude * gv.sin(second_prime_phase)
-                )
-                / absolute
-            )
-        imag = sign * imag
-    elif x["observable"] == "GPD":
-        terms = ("2", "t2") if str(x.get("hadron", "")).lower() in {"nucleon", "proton"} else ("1", "3", "2", "t2")
-        phase_scale = float(x.get("momentum_gev", 0.0)) / HBAR_C_GEV_FM
-        real = np.zeros_like(absolute, dtype=object)
-        imag = np.zeros_like(absolute, dtype=object)
-        for index, term in enumerate(terms):
-            frequency = phase_scale if index == 1 else -phase_scale if index == 0 else 0.0
-            phase = parameters[f"phi{term}"] + frequency * absolute
-            real = real + parameters[f"A{term}"] * gv.cos(phase)
-            imag = imag + parameters[f"A{term}"] * gv.sin(phase)
-        if x["order"] == "NLA":
-            for index, term in enumerate(terms):
-                frequency = phase_scale if index == 1 else -phase_scale if index == 0 else 0.0
-                phase = parameters[f"phi{term}p"] + frequency * absolute
-                real = real + parameters[f"A{term}p"] * gv.cos(phase) / absolute
-                imag = imag + parameters[f"A{term}p"] * gv.sin(phase) / absolute
-    else:
-        real = parameters["A2"] * np.cos(parameters["phi2"] * sign)
-        imag = parameters["A2"] * np.sin(parameters["phi2"] * sign)
-        if x["order"] == "NLA":
-            real = real + parameters["A2p"] * np.cos(parameters["phi2p"] * sign) / absolute
-            imag = imag + parameters["A2p"] * np.sin(parameters["phi2p"] * sign) / absolute
-    real = real * decay
-    imag = imag * decay
-    if x["model_id"] == "cg_nla":
-        exponent = parameters["n"]
-        power_coordinate = absolute / HBAR_C_GEV_FM if pion_valence else absolute
-        real = real / power_coordinate**exponent
-        imag = imag / power_coordinate**exponent
-    if x["component"] == "re":
-        return real
-    if x["component"] == "im":
-        return imag
-    return np.concatenate([real, imag])
+        if sector != "full":
+            raise ValueError("DA tail sector must be full")
+        if hadron == "pion" and psi1_flavor_class == psi2_flavor_class == "light":
+            return "pion_da"
+        return "meson_da"
+    if observable == "GPD":
+        if sector not in {"sea", "valence", "singlet", "full"}:
+            raise ValueError("GPD tail sector must be sea, valence, singlet, or full")
+        if hadron == "pion":
+            return "pion_gpd_sea" if sector == "sea" else "pion_gpd"
+        if hadron in _NUCLEON_HADRONS:
+            return "nucleon_gpd"
+        raise ValueError(f"GPD tails are not implemented for hadron '{hadron or '<missing>'}'")
+    raise ValueError(f"unsupported tail observable '{observable}'")
 
 
 def _tail_parameter_names(
@@ -202,25 +119,137 @@ def _tail_parameter_names(
     sector: str = "full",
     hadron: str = "",
 ) -> list[str]:
-    """Return the reference endpoint parameter set for the selected observable."""
-    if observable == "PDF" and hadron.lower() == "pion" and sector.lower() == "valence":
+    """Return the independent parameters for the selected paper family."""
+    if model_id not in {"gi_nla", "cg_nla"}:
+        raise ValueError(f"unsupported tail model '{model_id}'")
+    order = order.upper()
+    if order not in {"LA", "NLA"}:
+        raise ValueError("tail order must be LA or NLA")
+    family = _tail_family(observable, hadron, sector, psi1_flavor_class, psi2_flavor_class)
+    if family == "pion_pdf_valence":
         names = ["A2", "A1", "phi1"]
-        if order.upper() == "NLA":
-            names.extend(["A2p", "A1p", "phi1p"])
-        names.append("Lambda")
-        if model_id == "cg_nla":
-            names.append("n")
-        return names
-    if observable == "GPD":
-        terms = ("2", "t2") if hadron.lower() in {"nucleon", "proton"} else ("1", "3", "2", "t2")
-        names = [item for term in terms for item in (f"A{term}", f"phi{term}")]
-        if order.upper() == "NLA":
-            names.extend([name + "p" for name in names])
-        names.append("Lambda")
-        if model_id == "cg_nla":
-            names.append("n")
-        return names
-    return _tail_parameter_names_base(model_id, order, observable, psi1_flavor_class, psi2_flavor_class)
+    elif family == "pion_pdf":
+        names = ["A2", "phi2", "A1", "phi1", "A3", "phi3"]
+    elif family == "nucleon_pdf":
+        names = ["A2", "phi2"]
+    elif family == "pion_da":
+        names = ["A1", "phi1"]
+    elif family == "meson_da":
+        names = []
+        if not (psi1_flavor_class == "light" and psi2_flavor_class == "heavy"):
+            names.extend(["A1", "phi1"])
+        if not (psi1_flavor_class == "heavy" and psi2_flavor_class == "light"):
+            names.extend(["A2", "phi2"])
+    elif family in {"pion_gpd_sea", "nucleon_gpd"}:
+        names = ["A2", "phi2", "At2", "phit2"]
+    else:
+        names = ["A1", "phi1", "A3", "phi3", "A2", "phi2", "At2", "phit2"]
+    if order == "NLA":
+        names.extend([name + "p" for name in names])
+    names.append("Lambda")
+    if model_id == "cg_nla":
+        names.append("n")
+    return names
+
+
+def _tail_fit_fcn_base(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
+    """Evaluate one channel-specific GI/CG tail for the fitter."""
+    z = np.asarray(x["z"], dtype=float)
+    absolute = np.abs(z)
+    sign = np.sign(z)
+    z_gev_inv = z / HBAR_C_GEV_FM
+    decay = gv.exp(-(parameters["Lambda"] + float(x["lambda0_gev"])) * absolute / HBAR_C_GEV_FM)
+    family = _tail_family(
+        str(x["observable"]),
+        str(x.get("hadron", "")),
+        str(x.get("sector", "full")),
+        str(x["psi1_flavor_class"]),
+        str(x["psi2_flavor_class"]),
+    )
+    if family == "pion_pdf_valence":
+        phase = parameters["phi1"] - float(x["momentum_gev"]) * absolute / HBAR_C_GEV_FM
+        real = parameters["A2"] + 2.0 * parameters["A1"] * gv.cos(phase)
+        imag = np.zeros_like(absolute)
+        if x["order"] == "NLA":
+            phase_prime = parameters["phi1p"] - float(x["momentum_gev"]) * absolute / HBAR_C_GEV_FM
+            real = real + (parameters["A2p"] + 2.0 * parameters["A1p"] * gv.cos(phase_prime)) / absolute
+    elif family in {"pion_pdf", "nucleon_pdf"}:
+        terms = (
+            (("2", 0.0),)
+            if family == "nucleon_pdf"
+            else (
+                ("2", 0.0),
+                ("1", -float(x["momentum_gev"])),
+                ("3", float(x["momentum_gev"])),
+            )
+        )
+        real = np.zeros_like(absolute, dtype=object)
+        imag = np.zeros_like(absolute, dtype=object)
+        for term, frequency in terms:
+            phase = sign * parameters[f"phi{term}"] + frequency * z_gev_inv
+            real = real + parameters[f"A{term}"] * gv.cos(phase)
+            imag = imag + parameters[f"A{term}"] * gv.sin(phase)
+        if x["order"] == "NLA":
+            for term, frequency in terms:
+                phase = sign * parameters[f"phi{term}p"] + frequency * z_gev_inv
+                real = real + parameters[f"A{term}p"] * gv.cos(phase) / absolute
+                imag = imag + parameters[f"A{term}p"] * gv.sin(phase) / absolute
+    elif family in {"pion_da", "meson_da"}:
+        terms = []
+        if "A1" in parameters:
+            terms.append((parameters["A1"], sign * parameters["phi1"] - float(x["momentum_gev"]) * z_gev_inv))
+        if family == "pion_da":
+            terms.append((parameters["A1"], -sign * parameters["phi1"]))
+        elif "A2" in parameters:
+            terms.append((parameters["A2"], sign * parameters["phi2"]))
+        real = sum(amplitude * gv.cos(phase) for amplitude, phase in terms)
+        imag = sum(amplitude * gv.sin(phase) for amplitude, phase in terms)
+        if x["order"] == "NLA":
+            prime_terms = []
+            if "A1p" in parameters:
+                prime_terms.append(
+                    (parameters["A1p"], sign * parameters["phi1p"] - float(x["momentum_gev"]) * z_gev_inv)
+                )
+            if family == "pion_da":
+                prime_terms.append((parameters["A1p"], -sign * parameters["phi1p"]))
+            elif "A2p" in parameters:
+                prime_terms.append((parameters["A2p"], sign * parameters["phi2p"]))
+            real = real + sum(amplitude * gv.cos(phase) for amplitude, phase in prime_terms) / absolute
+            imag = imag + sum(amplitude * gv.sin(phase) for amplitude, phase in prime_terms) / absolute
+    else:
+        initial = float(x["initial_momentum_gev"])
+        final = float(x["final_momentum_gev"])
+        delta = float(x["delta_momentum_gev"])
+        phase_transfer = str(x["phase_transfer_gpd"])
+        shift = {"barpsi_at_0": 0.0, "mid_at_0": 0.5 * delta, "psi_at_0": delta}[phase_transfer]
+        base_terms = {
+            "1": -final,
+            "3": initial,
+            "2": 0.0,
+            "t2": -delta,
+        }
+        terms = ("2", "t2") if family in {"pion_gpd_sea", "nucleon_gpd"} else ("1", "3", "2", "t2")
+        real = np.zeros_like(absolute, dtype=object)
+        imag = np.zeros_like(absolute, dtype=object)
+        for term in terms:
+            phase = sign * parameters[f"phi{term}"] + (base_terms[term] + shift) * z_gev_inv
+            real = real + parameters[f"A{term}"] * gv.cos(phase)
+            imag = imag + parameters[f"A{term}"] * gv.sin(phase)
+        if x["order"] == "NLA":
+            for term in terms:
+                phase = sign * parameters[f"phi{term}p"] + (base_terms[term] + shift) * z_gev_inv
+                real = real + parameters[f"A{term}p"] * gv.cos(phase) / absolute
+                imag = imag + parameters[f"A{term}p"] * gv.sin(phase) / absolute
+    real = real * decay
+    imag = imag * decay
+    if x["model_id"] == "cg_nla":
+        real = real / absolute ** parameters["n"]
+        imag = imag / absolute ** parameters["n"]
+    if x["component"] == "re":
+        return real
+    if x["component"] == "im":
+        return imag
+    return np.concatenate([real, imag])
 
 
 def tail_model_values(
@@ -235,6 +264,10 @@ def tail_model_values(
     psi2_flavor_class: str = "heavy",
     sector: str = "full",
     hadron: str = "",
+    initial_momentum_gev: float | None = None,
+    final_momentum_gev: float | None = None,
+    delta_momentum_gev: float | None = None,
+    phase_transfer_gpd: str = "barpsi_at_0",
 ) -> np.ndarray:
     """Evaluate the same channel-specific tail used by the fitter."""
     if model_id not in {"gi_nla", "cg_nla"}:
@@ -255,13 +288,14 @@ def tail_model_values(
     absolute = np.abs(z)
     if np.any(absolute <= 0):
         raise ValueError("tail model is undefined at z=0")
-    if observable == "DA" and (
+    family = _tail_family(observable, hadron, sector, psi1_flavor_class, psi2_flavor_class)
+    if family in {"pion_pdf_valence", "pion_pdf", "pion_da", "meson_da"} and (
         not isinstance(momentum_gev, (int, float))
         or isinstance(momentum_gev, bool)
         or not math.isfinite(float(momentum_gev))
         or float(momentum_gev) <= 0
     ):
-        raise ValueError("DA tails require finite positive momentum_gev")
+        raise ValueError(f"{family} tails require finite positive momentum_gev")
     lambda_value = float(parameters["Lambda"])
     if not math.isfinite(lambda_value) or lambda_value <= 0:
         raise ValueError("tail Lambda must be finite and positive")
@@ -269,14 +303,17 @@ def tail_model_values(
         exponent = float(parameters["n"])
         if not math.isfinite(exponent) or exponent <= 0:
             raise ValueError("CG tail power n must be finite and positive")
-    pion_valence = observable == "PDF" and hadron.lower() == "pion" and sector.lower() == "valence"
-    if pion_valence and (
-        not isinstance(momentum_gev, (int, float))
-        or isinstance(momentum_gev, bool)
-        or not math.isfinite(float(momentum_gev))
-        or float(momentum_gev) <= 0
-    ):
-        raise ValueError("pion PDF tails require finite positive momentum_gev")
+    if observable == "GPD":
+        gpd_momenta = (initial_momentum_gev, final_momentum_gev, delta_momentum_gev)
+        if any(
+            not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value))
+            for value in gpd_momenta
+        ):
+            raise ValueError("GPD tails require finite initial, final, and delta momenta")
+        if not np.isclose(float(final_momentum_gev) - float(initial_momentum_gev), float(delta_momentum_gev)):
+            raise ValueError("GPD delta momentum must equal final minus initial momentum")
+        if phase_transfer_gpd not in {"mid_at_0", "barpsi_at_0", "psi_at_0"}:
+            raise ValueError("phase_transfer_gpd must be mid_at_0, barpsi_at_0, or psi_at_0")
     values = tail_fit_fcn(
         {
             "z": z,
@@ -290,6 +327,10 @@ def tail_model_values(
             "psi2_flavor_class": psi2_flavor_class,
             "sector": sector,
             "hadron": hadron,
+            "initial_momentum_gev": initial_momentum_gev,
+            "final_momentum_gev": final_momentum_gev,
+            "delta_momentum_gev": delta_momentum_gev,
+            "phase_transfer_gpd": phase_transfer_gpd,
         },
         parameters,
     )
@@ -412,14 +453,30 @@ def fit_tail_parameters(
         or psi2_flavor_class not in {"light", "heavy"}
     ):
         raise ValueError("tail observable and DA flavor classes are invalid")
+    family = _tail_family(observable, hadron, sector, psi1_flavor_class, psi2_flavor_class)
     momentum = data.attrs.get("momentum_gev")
-    if observable == "DA" and (
+    if family in {"pion_pdf_valence", "pion_pdf", "pion_da", "meson_da"} and (
         not isinstance(momentum, (int, float))
         or isinstance(momentum, bool)
         or not math.isfinite(float(momentum))
         or float(momentum) <= 0
     ):
-        raise ValueError("DA tail fitting requires finite positive momentum_gev")
+        raise ValueError(f"{family} tail fitting requires finite positive momentum_gev")
+    initial_momentum = data.attrs.get("initial_momentum_gev")
+    final_momentum = data.attrs.get("final_momentum_gev")
+    delta_momentum = data.attrs.get("delta_momentum_gev")
+    phase_transfer_gpd = str(data.attrs.get("phase_transfer_gpd", "barpsi_at_0"))
+    if observable == "GPD":
+        gpd_momenta = (initial_momentum, final_momentum, delta_momentum)
+        if any(
+            not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value))
+            for value in gpd_momenta
+        ):
+            raise ValueError("GPD tail fitting requires finite initial, final, and delta momenta")
+        if not np.isclose(float(final_momentum) - float(initial_momentum), float(delta_momentum)):
+            raise ValueError("GPD delta momentum must equal final minus initial momentum")
+        if phase_transfer_gpd not in {"mid_at_0", "barpsi_at_0", "psi_at_0"}:
+            raise ValueError("phase_transfer_gpd must be mid_at_0, barpsi_at_0, or psi_at_0")
     names = _tail_parameter_names(model_id, order, observable, psi1_flavor_class, psi2_flavor_class, sector, hadron)
     channel_count = 2 if component == "both" else 1
     required_points = max(int(math.ceil(len(names) / channel_count)), 2)
@@ -495,6 +552,10 @@ def fit_tail_parameters(
         "psi2_flavor_class": psi2_flavor_class,
         "sector": sector,
         "hadron": hadron,
+        "initial_momentum_gev": initial_momentum,
+        "final_momentum_gev": final_momentum,
+        "delta_momentum_gev": delta_momentum,
+        "phase_transfer_gpd": phase_transfer_gpd,
         "parameter_names": names,
         "lower_bounds": bounds[0],
         "upper_bounds": bounds[1],
@@ -748,6 +809,10 @@ def extend_tail(
             psi2_flavor_class=psi2_flavor_class,
             sector=sector,
             hadron=hadron,
+            initial_momentum_gev=data.attrs.get("initial_momentum_gev"),
+            final_momentum_gev=data.attrs.get("final_momentum_gev"),
+            delta_momentum_gev=data.attrs.get("delta_momentum_gev"),
+            phase_transfer_gpd=str(data.attrs.get("phase_transfer_gpd", "barpsi_at_0")),
         )
         extension[np.abs(extended_z) <= np.finfo(float).eps] = measured[np.abs(extended_z) <= np.finfo(float).eps]
         u = (np.abs(extended_z) - tail_start) / smoothing_width_fm
@@ -762,6 +827,15 @@ def extend_tail(
         {
             "tail_model": model_id,
             "tail_order": order.upper(),
+            "tail_family": _tail_family(
+                observable,
+                hadron,
+                sector,
+                psi1_flavor_class,
+                psi2_flavor_class,
+            ),
+            "power_coordinate_unit": "fm",
+            "cg_power_applied": str(model_id == "cg_nla").lower(),
             "tail_extent_fm": float(z_max_fm),
             "smoothing_method": smoothing_method,
         }
@@ -955,6 +1029,7 @@ def scan_fourier_transform(
     ):
         raise ValueError("Fourier scan requires finite positive momentum_gev")
     hadron = str(data.attrs.get("hadron", ""))
+    tail_family = _tail_family(observable, hadron, str(scan["sector"]), psi1_flavor_class, psi2_flavor_class)
     requested_gpd_grid = None if gpd_projection_grid is None else np.asarray(gpd_projection_grid, dtype=float)
     if observable == "GPD" and requested_gpd_grid is not None:
         if requested_gpd_grid.ndim != 1 or requested_gpd_grid.size == 0 or np.any(~np.isfinite(requested_gpd_grid)):
@@ -1010,6 +1085,9 @@ def scan_fourier_transform(
         )
         record = {
             "model_id": model_id,
+            "tail_family": tail_family,
+            "power_coordinate_unit": "fm",
+            "cg_power_applied": model_id == "cg_nla",
             "z_min_fm": z_min_fm,
             "z_max_fm": z_max_fm,
             "order": range_order,
@@ -1152,6 +1230,9 @@ def scan_fourier_transform(
                 {
                     "label": label,
                     "model_id": selected_model_id,
+                    "tail_family": tail_family,
+                    "power_coordinate_unit": "fm",
+                    "cg_power_applied": selected_model_id == "cg_nla",
                     "z_min_fm": selected_z_min,
                     "z_max_fm": selected_z_max,
                     "order": order,
@@ -1220,6 +1301,9 @@ def scan_fourier_transform(
             "phase_transfer_da": str(observable == "DA" and phase_transfer_da).lower(),
             "psi1_flavor_class": psi1_flavor_class,
             "psi2_flavor_class": psi2_flavor_class,
+            "tail_family": tail_family,
+            "power_coordinate_unit": "fm",
+            "cg_power_applied": str(selected_model_id == "cg_nla").lower(),
             "gpd_projection_mode": (
                 "post_ft_signed_y"
                 if observable == "GPD" and requested_gpd_grid is not None and str(scan["sector"]).lower() != "full"
