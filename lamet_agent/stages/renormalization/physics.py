@@ -213,7 +213,7 @@ def log_m(
     m0_gev: float = 0.0,
     delta_m_gev: float = 0.0,
     k: float | None = None,
-    lambda_qcd_gev: float = 0.2,
+    lambda_qcd_gev: float = 0.1,
     d: float = 0.0,
     n_f: int = 3,
     scale_gev: float = 2.0,

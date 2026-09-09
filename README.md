@@ -154,7 +154,7 @@ The default progress mode is `auto`:
 
 #### Codex CLI
 
-The `codex` provider uses the optional `openai-codex` package and the cached
+The `codex` provider uses the optional `openai-codex>=0.147` package and the cached
 Codex login on the current machine. It does not use an API key. `--model` is
 optional and overrides the Codex SDK default.
 

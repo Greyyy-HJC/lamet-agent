@@ -1359,7 +1359,7 @@ def test_self_renormalization_factor_is_not_a_placeholder() -> None:
     spacings = [0.06, 0.12, 0.18]
     references = []
     for spacing in spacings:
-        known = log_m(z, spacing, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0)
+        known = log_m(z, spacing, k=0.4, lambda_qcd_gev=0.1, d=0.0, n_f=3, scale_gev=2.0)
         g = 0.15 * z / 0.1973269804
         f = 0.4 * spacing
         center = np.exp(known + g + f)
@@ -1377,7 +1377,7 @@ def test_self_renormalization_factor_is_not_a_placeholder() -> None:
         references,
         short_distance_max_fm=0.2,
         k=0.4,
-        lambda_qcd_gev=0.2,
+        lambda_qcd_gev=0.1,
         d=0.0,
         n_f=3,
         scale_gev=2.0,
@@ -1398,7 +1398,7 @@ def test_self_renormalization_accepts_one_sample_bearing_a_z_reference() -> None
     spacings = [0.06, 0.12, 0.18]
     grids = []
     for spacing in spacings:
-        known = log_m(z, spacing, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0)
+        known = log_m(z, spacing, k=0.4, lambda_qcd_gev=0.1, d=0.0, n_f=3, scale_gev=2.0)
         grids.append(np.exp(known + 0.15 * z / HBAR_C_GEV_FM + 0.4 * spacing))
     reference = EnsembleData(
         None, "bootstrap", [np.stack(grids), np.stack(grids) * 1.001], ["a", "z"], {"a": spacings, "z": z.tolist()}
@@ -1407,7 +1407,7 @@ def test_self_renormalization_accepts_one_sample_bearing_a_z_reference() -> None
         reference,
         short_distance_max_fm=0.2,
         k=0.4,
-        lambda_qcd_gev=0.2,
+        lambda_qcd_gev=0.1,
         d=0.0,
         n_f=3,
         scale_gev=2.0,
@@ -2293,7 +2293,7 @@ def test_self_renormalization_fit_publishes_pdf_svg_diagnostics_without_job_repo
     spacings = [0.06, 0.12, 0.18]
     grids = []
     for spacing in spacings:
-        known = log_m(z, spacing, k=0.4, lambda_qcd_gev=0.2, d=0.0, n_f=3, scale_gev=2.0)
+        known = log_m(z, spacing, k=0.4, lambda_qcd_gev=0.1, d=0.0, n_f=3, scale_gev=2.0)
         grids.append(np.exp(known + 0.15 * z / HBAR_C_GEV_FM + 0.4 * spacing))
     reference = EnsembleData(
         None,
@@ -2316,7 +2316,7 @@ def test_self_renormalization_fit_publishes_pdf_svg_diagnostics_without_job_repo
             "kernel_parameters": {},
             "normalization": False,
             "mu": 2.0,
-            "LambdaQCD_gev": 0.2,
+            "LambdaQCD_gev": 0.1,
             "d": 0.0,
             "svdcut": 1e-12,
         },

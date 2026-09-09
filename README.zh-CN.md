@@ -132,7 +132,7 @@ Run 在执行数值 stages 前先进行验证。如果验证失败，它会使�
 
 #### Codex CLI
 
-`codex` 提供商使用可选的 `openai-codex` 包以及当前机器上缓存的 Codex 登录状态。它不使用 API key。`--model` 是可选项，用于覆盖 Codex SDK 的默认模型。
+`codex` 提供商使用可选的 `openai-codex>=0.147` 包以及当前机器上缓存的 Codex 登录状态。它不使用 API key。`--model` 是可选项，用于覆盖 Codex SDK 的默认模型。
 
 #### 兼容 OpenAI 的 API
 
