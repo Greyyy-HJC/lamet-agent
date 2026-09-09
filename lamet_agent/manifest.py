@@ -489,6 +489,104 @@ def _resolve_root(manifest_path: Path, value: Any) -> Path:
     return root.resolve() if root.is_absolute() else (manifest_path.parent / root).resolve()
 
 
+def _normalise_hadron(value: object) -> str | None:
+    if isinstance(value, dict):
+        value = value.get("name")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip().lower()
+
+
+def _resolve_input_hadrons(
+    document: Mapping[str, Any], manifest_path: Path, source: object, seen_jobs: set[str] | None = None
+) -> set[str] | None:
+    """Resolve hadrons for a Fourier input during manifest validation."""
+    if seen_jobs is None:
+        seen_jobs = set()
+    if isinstance(source, str):
+        if source in seen_jobs:
+            return None
+        seen_jobs.add(source)
+        stages = document.get("stages")
+        if not isinstance(stages, Mapping):
+            return None
+        resolved_job: tuple[str, Mapping[str, Any]] | None = None
+        for stage_id, block in stages.items():
+            jobs = block.get("jobs") if isinstance(block, Mapping) else None
+            if not isinstance(jobs, list):
+                continue
+            for job in jobs:
+                if isinstance(job, Mapping) and job.get("id") == source:
+                    resolved_job = (str(stage_id), job)
+                    break
+            if resolved_job is not None:
+                break
+        if resolved_job is None:
+            return None
+        stage_id, job = resolved_job
+        inputs = job.get("inputs")
+        if stage_id == "correlator_analysis" and isinstance(inputs, Mapping):
+            records = inputs.get("correlators")
+            if isinstance(records, list):
+                hadrons: set[str] = set()
+                metadata = document.get("metadata")
+                root = _resolve_root(manifest_path, metadata["root_directory"]) if (
+                    isinstance(metadata, Mapping) and isinstance(metadata.get("root_directory"), str)
+                ) else manifest_path.parent
+                for record in records:
+                    if not isinstance(record, Mapping) or set(record) != {"json", "id"}:
+                        continue
+                    try:
+                        descriptor_path = Path(str(record["json"])).expanduser()
+                        if not descriptor_path.is_absolute():
+                            descriptor_path = root / descriptor_path
+                        descriptor = json.loads(
+                            descriptor_path.resolve().read_text(encoding="utf-8")
+                        )
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                    descriptor_records = descriptor.get("correlators") if isinstance(descriptor, Mapping) else None
+                    if not isinstance(descriptor_records, list):
+                        continue
+                    hadrons.update(
+                        _normalise_hadron(item.get("hadron")) or "<missing>"
+                        for item in descriptor_records
+                        if isinstance(item, Mapping) and item.get("id") == record["id"]
+                    )
+                return hadrons or None
+        if not isinstance(inputs, Mapping):
+            return None
+        values = [inputs["target"]] if "target" in inputs else list(inputs.values())
+        hadrons: set[str] = set()
+        for value in values:
+            entries = value if isinstance(value, list) else [value]
+            for entry in entries:
+                resolved = _resolve_input_hadrons(document, manifest_path, entry, seen_jobs)
+                if resolved is not None:
+                    hadrons.update(resolved)
+        return hadrons or None
+    if isinstance(source, Mapping) and set(source) == {"file"} and isinstance(source.get("file"), str):
+        try:
+            from netCDF4 import Dataset
+
+            path = Path(source["file"]).expanduser()
+            if not path.is_absolute():
+                metadata = document.get("metadata")
+                root_value = metadata.get("root_directory") if isinstance(metadata, Mapping) else None
+                root = _resolve_root(manifest_path, root_value) if isinstance(root_value, str) else manifest_path.parent
+                path = root / path
+            with Dataset(path.resolve()) as dataset:
+                hadrons = {
+                    _normalise_hadron(variable.getncattr("hadron")) or "<missing>"
+                    for variable in dataset.variables.values()
+                    if "hadron" in variable.ncattrs()
+                }
+            return hadrons or {"<missing>"}
+        except (ImportError, OSError, RuntimeError, ValueError):
+            return None
+    return None
+
+
 def _validate_document(
     document: Mapping[str, Any],
     *,
@@ -586,6 +684,13 @@ def _validate_document(
                 ]
                 if job_id is not None and not job_rule_issues and isinstance(inputs, Mapping):
                     unresolved = frozenset(rule.path for rule in _unresolved_null_hooks(params, contract.PARAM_RULES))
+                    metadata = document.get("metadata")
+                    observable = metadata.get("target_observable") if isinstance(metadata, Mapping) else None
+                    input_hadrons = frozenset()
+                    if stage_id == "fourier_transform" and str(observable).lower() in {"pdf", "gpd"}:
+                        input_hadrons = frozenset(
+                            _resolve_input_hadrons(document, manifest_path, inputs.get("input")) or ()
+                        )
                     context = CheckContext(
                         document,
                         stage_id,
@@ -593,6 +698,7 @@ def _validate_document(
                         params,
                         inputs,
                         unresolved,
+                        input_hadrons,
                     )
                     issues.extend(_prefix_issues(evaluate_checks(contract.CHECKS, context), job_path))
     jobs_for_graph = _build_jobs_from_document(document, manifest_path=manifest_path)

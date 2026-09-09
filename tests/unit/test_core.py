@@ -1399,6 +1399,31 @@ def test_fourier_sea_sector_is_available_only_for_gpd() -> None:
     assert evaluate_checks(contract.CHECKS, gpd) == []
 
 
+def test_fourier_manifest_validation_rejects_unsupported_pdf_hadron(tmp_path: Path) -> None:
+    examples = Path(__file__).parents[2] / "examples"
+    document = json.loads((examples / "pion_pdf_gi_manifest.json").read_text(encoding="utf-8"))
+    document["metadata"]["root_directory"] = str(examples.parents[0])
+    document["metadata"]["artifacts_directory"] = str(tmp_path / "runs")
+
+    descriptor = json.loads((examples / "pion_pdf_gi_correlators.json").read_text(encoding="utf-8"))
+    for record in descriptor["correlators"]:
+        record["hadron"]["name"] = "kaon"
+    descriptor_path = tmp_path / "unsupported_hadron_correlators.json"
+    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    for job in document["stages"]["correlator_analysis"]["jobs"]:
+        for record in job["inputs"]["correlators"]:
+            record["json"] = str(descriptor_path)
+
+    issues = Manifest(tmp_path / "manifest.json", document).validate()
+
+    assert any(
+        issue.path == "stages.fourier_transform.jobs[0].inputs.input"
+        and "hadron must be one of" in issue.message
+        and "kaon" in issue.message
+        for issue in issues
+    )
+
+
 def test_review_tools_have_provider_schemas() -> None:
     tools = _discover_tools("review")
     assert tools
