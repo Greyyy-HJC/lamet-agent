@@ -11,6 +11,14 @@ from lamet_agent.stages._reporting import StageReportRecord
 _TEST_ENSEMBLE = EnsembleInfo("test", "a06", 0.06, 0.06, 64, 128, 0.13)
 
 
+def test_qda_report_labels_keep_scope_and_spectral_strategy_orthogonal() -> None:
+    from lamet_agent.stages.correlator_analysis.reporting import _method_name
+
+    assert _method_name("independent", "qda_ratio") == "qDA nonlocal/local ratio independent fit"
+    assert _method_name("joint", "qda_ratio") == "local 2pt + qDA ratio joint fit"
+    assert _method_name("chained", "qda_ratio") == "local 2pt → qDA ratio chained fit"
+
+
 def _data(*, attrs=None, values=None) -> EnsembleData:
     values = values or [[0.8, 1.0], [0.9, 1.1]]
     return EnsembleData(_TEST_ENSEMBLE, "bootstrap", values, ["x"], {"x": [-0.2, 0.2]}, attrs=attrs or {})
@@ -161,6 +169,8 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
     assert "2pt + 3pt ratio joint fit" in text
     assert "2pt window [3, 8)" in text
     assert "Selection Policy" in text
+    assert "`model_average=true`" in text
+    assert "| selected | averaged | weight |" in text
     assert "Per-tuning-z Fit Summary" in text
     assert "Analysis Settings" not in text
     assert "Runtime-resolved Defaults and Scale Inspection" not in text

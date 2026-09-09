@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 
@@ -99,3 +101,30 @@ def select_tuned_candidate(
         ),
     )
     return selected, not any(float(candidate["min_Q"]) >= q_min for candidate in usable)
+
+
+def dataset_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
+    """Identity of the observations used by one correlator candidate.
+
+    Window, strategy, and scope freeze the likelihood data. nstate and prior_width
+    are excluded so model averaging can combine those variants on one dataset.
+    """
+    window = candidate.get("window") if isinstance(candidate.get("window"), dict) else {}
+    tseps = candidate.get("tsep_values")
+    tsep_key = tuple(int(value) for value in tseps) if isinstance(tseps, (list, tuple)) else ()
+    tau_min = window.get("tau_min")
+    return (
+        str(candidate.get("method", "")),
+        str(candidate.get("fit_strategy", "")),
+        str(candidate.get("fit_scope", "")),
+        int(window["tmin"]) if window.get("tmin") is not None else -1,
+        int(window["tmax"]) if window.get("tmax") is not None else -1,
+        int(tau_min) if tau_min is not None else -1,
+        tsep_key,
+    )
+
+
+def models_on_dataset(candidates: list[dict[str, Any]], anchor: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return every candidate that shares the anchor's frozen dataset."""
+    key = dataset_key(anchor)
+    return [candidate for candidate in candidates if dataset_key(candidate) == key]

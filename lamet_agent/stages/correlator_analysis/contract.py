@@ -74,10 +74,10 @@ PARAM_RULES = (
     Depends("lsqfit", "fit_scope", physics="The fit scope selects the observable-specific data and model function used by the least-squares fit."),
     List("lsqfit.fit_scope", "scope", physics="Multiple scopes allow the candidate scan to compare distinct observable models.", validator=_nonempty),
     Value("lsqfit.fit_scope.scope", Literal["spectrum", "3pt_ratio", "FH", "3pt_ratio+FH", "qda_ratio"], physics="'spectrum' fits two-point energies; '3pt_ratio' fits the ratio of a three-point correlator to a two-point correlator; 'FH' extracts the matrix element from the slope of the summed ratio with respect to source-sink separation; '3pt_ratio+FH' combines both; 'qda_ratio' fits a nonlocal-to-local two-point ratio."),
-    Depends("lsqfit", "fit_strategy", physics="Ordinary matrix-element fits need an explicit strategy for handling two-point information and propagating its uncertainty to the matrix element."),
+    Depends("lsqfit", "fit_strategy", physics="Matrix-element fits need an explicit strategy for handling two-point information and propagating its uncertainty to the matrix element."),
     Depends("lsqfit", "fitting_form", physics="The matrix-element model needs a forward or non-forward spectral decomposition selected by the kinematics."),
     Recommends("lsqfit", "prior_width", physics="A default prior scale is needed to set the uncertainty of underconstrained spectral and matrix-element parameters.", default=[1.0]),
-    Depends("lsqfit", "model_average", physics="Candidate selection needs an explicit choice between publishing one fit and averaging successful fits."),
+    Depends("lsqfit", "model_average", physics="At a fixed data window, strategy, and scope, false publishes the selected nstate/prior-width model; true forms per-resample, per-z logGBF-weighted means over those models."),
     Depends("lsqfit", "pt2_windows", physics="Two-point spectrum information needs candidate time windows chosen from the observed signal and uncertainty.", null_hook=recommend_pt2_windows),
     Depends("lsqfit", "pt3_windows", physics="Three-point and Feynman-Hellmann observables need candidate source-sink and insertion-time windows.", null_hook=recommend_pt3_windows),
     Recommends("lsqfit", "svdcut", physics="Correlated fits need a relative covariance singular-value cutoff to suppress numerically unresolved directions.", default=1e-12),
@@ -105,7 +105,7 @@ PARAM_RULES = (
     Value("component", Literal["re", "im", "both"], physics="'re' selects the real channel, 'im' the imaginary channel, and 'both' fits both channels."),
     Value("nstate.state_count", int, physics="The number of retained spectral states in the correlator decomposition; it must be a positive integer.", validator=_positive),
     Value("lsqfit.prior_width.width", float, physics="The scale of Gaussian prior uncertainties for a fit candidate; it must be a positive floating-point value.", validator=_positive),
-    Value("lsqfit.model_average", bool, physics="true statistically averages successful candidates; false publishes one selected candidate. The current policy requires false because weighted averaging is not implemented."),
+    Value("lsqfit.model_average", bool, physics="false publishes the window-selected nstate/prior-width model; true forms per-resample, per-z normalized exp(logGBF-max(logGBF)) means over nstate and prior_width at that frozen window, strategy, and scope, without Q filtering. Between-model spread of center values is recorded separately and is not mixed into the resampled samples."),
     Value("lsqfit.fitting_form", Literal["Breit", "NonBreit"], physics="'Breit' is the equal-momentum forward decomposition; 'NonBreit' is the distinct source/sink momentum decomposition."),
     Value("lsqfit.svdcut", (int, float), physics="The relative covariance singular-value cutoff used to stabilize correlated fits; it must be finite and positive.", validator=_positive),
     Value("lsqfit.posterior_prior_error_scale", (int, float), physics="The factor used to widen propagated posterior or prior uncertainties; it must be finite and positive.", validator=_positive),
@@ -147,11 +147,11 @@ def check_method_family(context: CheckContext) -> Issue | None:
                 "must contain only 'independent' for a spectrum job",
                 "A direct two-point spectrum fit has no separate matrix-element covariance propagation.",
             )
-    if "qda_ratio" in scopes and (len(scopes) != 1 or strategies != {"independent"}):
+    if "qda_ratio" in scopes and len(scopes) != 1:
         return Issue(
             "fit_scope",
-            "qda_ratio requires the exclusive fit_scope ['qda_ratio'] and fit_strategy ['independent']",
-            "The migrated qDA path fits each nonlocal/local two-point ratio independently.",
+            "qda_ratio must be the only fit scope in a qDA job",
+            "The qDA channel supports independent, joint, and chained handling of its local two-point denominator.",
         )
     return None
 
@@ -221,19 +221,6 @@ def check_qda_scope(context: CheckContext) -> Issue | None:
     return None
 
 
-def check_candidate_policy(context: CheckContext) -> Issue | None:
-    if context.params["analysis_method"] != "lsqfit":
-        return None
-    settings = context.params
-    if settings.get("model_average") is True:
-        return Issue(
-            "model_average",
-            "must be false until weighted candidate averaging is implemented",
-            "Publishing one candidate and model averaging are distinct statistical procedures.",
-        )
-    return None
-
-
 def check_lanczos_branch(context: CheckContext) -> Issue | None:
     if context.params.get("analysis_method") != "lanczos":
         return None
@@ -248,4 +235,4 @@ def check_lanczos_branch(context: CheckContext) -> Issue | None:
 
 JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 
-CHECKS = (check_method_family, check_lanczos_branch, check_lsqfit_windows, check_qda_scope, check_candidate_policy)
+CHECKS = (check_method_family, check_lanczos_branch, check_lsqfit_windows, check_qda_scope)

@@ -777,6 +777,34 @@ def qda_ratio_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.nda
     )
 
 
+def _qda_denominator_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
+    """Evaluate the rescaled local qDA two-point denominator."""
+    return float(x["correlator_rescale"]) * _qda_correlator(
+        x["times"], parameters, int(x["extent"]), int(x["n_states"]), "zprime"
+    )
+
+
+def _qda_fit_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
+    """Evaluate the observations selected by one qDA fit strategy."""
+    ratio = qda_ratio_fcn(x, parameters)
+    if x["strategy"] == "joint":
+        return np.concatenate([_qda_denominator_fcn(x, parameters), ratio])
+    return ratio
+
+
+def _qda_correlator_rescale(values: np.ndarray) -> float:
+    """Return a deterministic power-of-ten scale for a local qDA correlator."""
+    absolute = np.abs(np.asarray(values, dtype=float)).reshape(-1)
+    usable = absolute[np.isfinite(absolute) & (absolute > 0.0)]
+    if not usable.size:
+        raise ValueError("qDA local denominator has no finite nonzero real values in the fit window")
+    exponent = -int(np.floor(np.log10(float(np.median(usable)))))
+    scale = float(10.0**exponent)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("qDA local-denominator rescale is outside the finite float range")
+    return scale
+
+
 def _qda_ratio_prior(n_states: int, prior_width: float) -> gv.BufferDict:
     prior = gv.BufferDict()
     prior["log(E0)"] = gv.gvar(0.0, 3.0 * prior_width)
@@ -881,6 +909,7 @@ def matrix_element_samples(
     show_progress: bool = False,
     n_states: int = 1,
     prior_width: float = 1.0,
+    fit_strategy: str = "independent",
     _parallel: _ParallelPool | None = None,
 ) -> tuple[np.ndarray | None, list[float], dict[str, Any]]:
     """Extract ratio/summation-style matrix-element samples from correlators.
@@ -892,7 +921,9 @@ def matrix_element_samples(
     divided by the aligned ``z=0`` nonlocal denominator, then their real and
     imaginary ratios are fitted together on the selected window. One-state
     fits remain a constant plateau; multi-state fits use the periodic spectral
-    ratio.
+    ratio. Independent qDA fits use only the ratio, joint fits include the
+    local denominator, and chained fits propagate a denominator-spectrum
+    posterior to the ratio fit.
     """
     from lamet_agent.data import EnsembleData
 
@@ -903,6 +934,8 @@ def matrix_element_samples(
     if source.attrs.get("correlator_type") == "qda":
         if method != "qda" or source.dims != ["t", "z"] or lsqfit is None:
             raise ValueError("qDA fitting requires method='qda', dimensions ['t', 'z'], and lsqfit settings")
+        if fit_strategy not in {"independent", "joint", "chained"}:
+            raise ValueError("qDA fit_strategy must be independent, joint, or chained")
         if isinstance(n_states, bool) or not isinstance(n_states, int) or n_states < 1:
             raise ValueError("qDA ratio fitting requires a positive state count")
         if not np.isfinite(prior_width) or prior_width <= 0:
@@ -926,7 +959,8 @@ def matrix_element_samples(
             raise ValueError("qDA fit window must contain at least two time points")
         if selected.size < 2 * n_states:
             raise ValueError("qDA fit window must contain at least 2*n_states times")
-        if n_states > 1 and 2 * selected.size <= 5 * n_states:
+        n_observations = (3 if fit_strategy == "joint" else 2) * selected.size
+        if n_states > 1 and n_observations <= 5 * n_states:
             raise ValueError("qDA fit window must be overdetermined for the selected state count")
         source_values = np.asarray(source.values)
         window_values = source_values[:, selected, :]
@@ -934,6 +968,12 @@ def matrix_element_samples(
         if np.any(denominator == 0):
             raise ValueError("qDA z=0 denominator contains zero values in the fit window")
         ratios = window_values / denominator[:, :, None]
+        denominator_real = np.real(denominator)
+        correlator_rescale = (
+            _qda_correlator_rescale(denominator_real)
+            if fit_strategy in {"joint", "chained"}
+            else 1.0
+        )
         plot_upper = float(source.ensemble.L_t) / 2.0
         plot_selected = np.flatnonzero((t >= 0.0) & (t <= plot_upper))
         plot_denominator = source_values[:, plot_selected, int(origin[0])]
@@ -957,6 +997,41 @@ def matrix_element_samples(
                 raise ValueError("qDA tuning cannot use its exact z=0 denominator")
             z_indices = [tune_index]
         fit_metrics = []
+        base_prior = _qda_ratio_prior(n_states, prior_width)
+        chained_prior = None
+        if fit_strategy == "chained":
+            spectral_prior = gv.BufferDict(
+                {key: value for key, value in base_prior.items() if not key.startswith("O")}
+            )
+            spectral_data = EnsembleData(
+                source.ensemble,
+                source.resample,
+                list(denominator_real * correlator_rescale),
+                ["t"],
+                {"t": t[selected].tolist()},
+            )
+            spectral_fit = nonlinear_fit(
+                (
+                    {
+                        "times": t[selected],
+                        "n_states": n_states,
+                        "extent": extent,
+                        "correlator_rescale": correlator_rescale,
+                    },
+                    spectral_data,
+                ),
+                _qda_denominator_fcn,
+                spectral_prior,
+                workers=workers,
+                sample_error_mode=sample_error_mode,
+                mode="center",
+                svdcut=svdcut,
+                maxit=10000,
+            )
+            chained_prior = gv.BufferDict(base_prior)
+            for key in spectral_prior:
+                value = spectral_fit.p[key]
+                chained_prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * prior_scale)
 
         parallel = _parallel or _ParallelPool(min(workers, source.n_sample))
         try:
@@ -978,17 +1053,30 @@ def matrix_element_samples(
                     ["t"],
                     {"t": t[plot_selected].tolist()},
                 )
+                observations = [np.real(component_values), np.imag(component_values)]
+                if fit_strategy == "joint":
+                    observations.insert(0, denominator_real * correlator_rescale)
+                combined_values = np.concatenate(observations, axis=1)
                 combined = EnsembleData(
                     source.ensemble,
                     source.resample,
-                    [np.concatenate([np.real(sample), np.imag(sample)]) for sample in component_values],
+                    list(combined_values),
                     ["observation"],
-                    {"observation": list(range(2 * selected.size))},
+                    {"observation": list(range(combined_values.shape[1]))},
                 )
-                prior = _qda_ratio_prior(n_states, prior_width)
+                prior = chained_prior if chained_prior is not None else base_prior
                 result = nonlinear_fit(
-                    ({"times": t[selected], "n_states": n_states, "extent": extent}, combined),
-                    qda_ratio_fcn,
+                    (
+                        {
+                            "times": t[selected],
+                            "n_states": n_states,
+                            "extent": extent,
+                            "strategy": fit_strategy,
+                            "correlator_rescale": correlator_rescale,
+                        },
+                        combined,
+                    ),
+                    _qda_fit_fcn,
                     prior,
                     workers=workers,
                     sample_prior_scale=prior_scale,
@@ -1100,8 +1188,10 @@ def matrix_element_samples(
             "max_chi2_dof": max(record["chi2_dof"] for record in fit_metrics),
             "fits": fit_metrics,
             "q_min": q_min,
-            "n_data": int(2 * selected.size),
-            "n_params": sum(int(np.size(gv.mean(value))) for value in _qda_ratio_prior(n_states, prior_width).values()),
+            "fit_strategy": fit_strategy,
+            "correlator_rescale": correlator_rescale,
+            "n_data": int(n_observations),
+            "n_params": sum(int(np.size(gv.mean(value))) for value in base_prior.values()),
         }
         primary_z = tune_z
         if primary_z is not None:

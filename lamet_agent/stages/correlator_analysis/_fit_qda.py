@@ -81,6 +81,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
                     fit_samples=False,
                     n_states=int(nstate),
                     prior_width=float(prior_width),
+                    fit_strategy=str(strategy),
                     _parallel=context._parallel,
                 )
             except FitNumericalError as exc:

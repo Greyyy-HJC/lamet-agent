@@ -408,6 +408,52 @@ def test_qda_two_state_ratio_recovers_ground_state_plateau() -> None:
     assert len(series["fit_x"]) > 2
 
 
+@pytest.mark.parametrize(("fit_strategy", "expected_n_data"), [("joint", 15), ("chained", 10)])
+def test_qda_spectral_strategies_use_local_denominator(
+    fit_strategy: str, expected_n_data: int
+) -> None:
+    rng = np.random.default_rng(23)
+    ensemble = _ensemble(0.1)
+    times = np.arange(8.0)
+    energy = 0.25
+    local = 1.2 / (2 * energy) * (
+        np.exp(-energy * times) + np.exp(-energy * (ensemble.L_t - times))
+    )
+    target = 0.72 + 0.18j
+    samples = []
+    for _ in range(40):
+        denominator = local * (1.0 + rng.normal(0.0, 0.01, times.size))
+        ratio = target + rng.normal(0.0, 0.003, times.size) + 1j * rng.normal(0.0, 0.003, times.size)
+        samples.append(np.column_stack([denominator, denominator * ratio]))
+    source = EnsembleData(
+        ensemble,
+        "bootstrap",
+        samples,
+        ["t", "z"],
+        {"t": times.tolist(), "z": [0.0, 1.0]},
+        attrs={"correlator_type": "qda"},
+    )
+
+    values, _coordinates, diagnostics = matrix_element_samples(
+        {"qda": source},
+        method="qda",
+        tmin=2,
+        tmax=7,
+        tau_min=None,
+        lsqfit={"svdcut": 1e-8, "posterior_prior_error_scale": 3.0, "q_min": 0.0},
+        sample_error_mode="variance",
+        workers=1,
+        tune_z=1.0,
+        fit_samples=False,
+        fit_strategy=fit_strategy,
+    )
+
+    assert values is None
+    assert diagnostics["fit_strategy"] == fit_strategy
+    assert diagnostics["n_data"] == expected_n_data
+    assert np.isclose(diagnostics["fits"][0]["E0"], energy, atol=0.03)
+
+
 def test_matrix_and_qda_fits_keep_same_ensemble_off_diagonal_covariance(monkeypatch) -> None:
     import gvar as gv
     import lamet_agent.stages.correlator_analysis.physics as physics
@@ -654,6 +700,96 @@ def test_correlator_window_selection_preserves_original_information_rule() -> No
     assert fallback is True
     with pytest.raises(ValueError, match="finite Q"):
         select_spectrum_candidate([{"id": "failed", "Q": None, "error": "failed"}], q_min=0.05)
+
+
+def test_correlator_dataset_key_groups_nstate_and_prior_on_one_window() -> None:
+    from lamet_agent.stages.correlator_analysis._selection import dataset_key, models_on_dataset
+
+    shared = {
+        "method": "joint",
+        "fit_scope": "3pt_ratio",
+        "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
+        "tsep_values": [8],
+    }
+    anchor = {"id": "matrix_001", "nstate": 1, "prior_width": 1.0, **shared}
+    same_dataset = {"id": "matrix_002", "nstate": 2, "prior_width": 2.0, **shared}
+    other_window = {
+        "id": "matrix_003",
+        "nstate": 1,
+        "prior_width": 1.0,
+        **shared,
+        "window": {"tmin": 3, "tmax": 8, "tau_min": 3},
+    }
+    other_scope = {"id": "matrix_004", "nstate": 1, "prior_width": 1.0, **shared, "fit_scope": "FH"}
+    grouped = models_on_dataset([anchor, same_dataset, other_window, other_scope], anchor)
+    assert [candidate["id"] for candidate in grouped] == ["matrix_001", "matrix_002"]
+    assert dataset_key(anchor) == dataset_key(same_dataset)
+    assert dataset_key(anchor) != dataset_key(other_window)
+    assert dataset_key(anchor) != dataset_key(other_scope)
+
+
+def test_loggbf_weights_normalise_and_favour_high_loggbf() -> None:
+    from lamet_agent.stages.correlator_analysis._model_average import loggbf_weights
+
+    weights = loggbf_weights(np.array([1.0, 4.0]))
+    assert float(np.sum(weights)) == pytest.approx(1.0)
+    assert weights[1] > weights[0]
+    assert weights[1] == pytest.approx(np.exp(3.0) / (1.0 + np.exp(3.0)))
+
+
+def test_combine_matrix_samples_weights_per_sample_and_skips_failed_siblings() -> None:
+    from lamet_agent.stages.correlator_analysis._model_average import combine_matrix_samples
+
+    def _model(candidate_id: str, values: list[list[float]], log_gbf: list[float | None]) -> dict[str, object]:
+        diagnostics = [
+            {"sample": index, "chi2": 1.0, "dof": 1.0, "chi2_dof": 1.0, "Q": 0.8, "logGBF": value}
+            for index, value in enumerate(log_gbf)
+            if value is not None
+        ]
+        return {
+            "id": candidate_id,
+            "data": EnsembleData(
+                None,
+                "bootstrap",
+                [np.array(sample, dtype=complex) for sample in values],
+                ["z"],
+                {"z": [0.0]},
+                name="bare_matrix_element",
+            ),
+            "application_fit": {
+                "fits": [
+                    {
+                        "z": 0.0,
+                        "Q": 0.8,
+                        "chi2_dof": 0.9,
+                        "logGBF": next((value for value in log_gbf if value is not None), float("nan")),
+                        "sample_diagnostics": diagnostics,
+                    }
+                ]
+            },
+        }
+
+    combined = combine_matrix_samples(
+        [
+            _model("low", [[1.0], [1.0]], [1.0, None]),
+            _model("high", [[3.0], [5.0]], [4.0, 4.0]),
+        ]
+    )
+    weights = np.exp(np.array([1.0, 4.0]) - 4.0)
+    weights = weights / weights.sum()
+    assert combined["primary_id"] == "high"
+    assert combined["data"].values[0, 0] == pytest.approx(weights[0] * 1.0 + weights[1] * 3.0)
+    assert combined["data"].values[1, 0] == pytest.approx(5.0)
+    assert combined["mean_weights"][1] > combined["mean_weights"][0]
+    assert combined["real_sys_sdev"][0] > 0.0
+
+    with pytest.raises(FitNumericalError, match="all averaged models failed"):
+        combine_matrix_samples(
+            [
+                _model("a", [[np.nan], [np.nan]], [None, None]),
+                _model("b", [[np.nan], [np.nan]], [None, None]),
+            ]
+        )
 
 
 def test_matrix_element_prior_keeps_original_inactive_component_parameters() -> None:
@@ -926,7 +1062,7 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
     )
     settings = {
         "fit_scope": ["qda_ratio"],
-        "fit_strategy": ["independent"],
+        "fit_strategy": ["independent", "joint", "chained"],
         "pt2_windows": [{"tmin": 2, "tmax": 6}, {"tmin": 2, "tmax": 7}],
         "prior_width": [1.0],
         "posterior_prior_error_scale": 3.0,
@@ -956,7 +1092,7 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
     calls = []
 
     def tune(*args, **kwargs):
-        calls.append((kwargs["tmin"], kwargs["tmax"], kwargs["tune_z"]))
+        calls.append((kwargs["fit_strategy"], kwargs["tmin"], kwargs["tmax"], kwargs["tune_z"]))
         q_value = 0.6 if kwargs["tmax"] == 6 else 0.8
         return (
             None,
@@ -976,8 +1112,21 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
     monkeypatch.setattr(tool, "matrix_element_samples", tune)
     observation = tool.run(context, tune_z_values=[1, 2])
 
-    assert calls == [(2, 6, 1.0), (2, 6, 2.0), (2, 7, 1.0), (2, 7, 2.0)]
-    assert observation["metrics"]["candidate_count"] == 2
+    assert calls == [
+        ("chained", 2, 6, 1.0),
+        ("chained", 2, 6, 2.0),
+        ("chained", 2, 7, 1.0),
+        ("chained", 2, 7, 2.0),
+        ("independent", 2, 6, 1.0),
+        ("independent", 2, 6, 2.0),
+        ("independent", 2, 7, 1.0),
+        ("independent", 2, 7, 2.0),
+        ("joint", 2, 6, 1.0),
+        ("joint", 2, 6, 2.0),
+        ("joint", 2, 7, 1.0),
+        ("joint", 2, 7, 2.0),
+    ]
+    assert observation["metrics"]["candidate_count"] == 6
     assert observation["metrics"]["recommended_candidate_id"] == "matrix_002"
     assert all(candidate.get("data") is None for candidate in context.state["matrix_element_candidates"])
 
@@ -1059,6 +1208,108 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
     assert "tune_z" not in calls[1]
     assert "fit_samples" not in calls[1]
     assert context.output is data
+
+
+def test_publish_model_average_applies_every_sibling_on_the_selected_dataset(monkeypatch, tmp_path) -> None:
+    import lamet_agent.stages.correlator_analysis._publish as tool
+
+    def _candidate(candidate_id: str, nstate: int, chi2_dof: float) -> dict[str, object]:
+        return {
+            "id": candidate_id,
+            "method": "joint",
+            "fit_scope": "3pt_ratio",
+            "observable": "matrix_element",
+            "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
+            "tsep_values": [8],
+            "nstate": nstate,
+            "prior_width": 1.0,
+            "correlator_rescale": 1.0,
+            "quality_passed": True,
+            "numerical_failure": False,
+            "n_data": 8,
+            "n_params": 4,
+            "Q": 0.8,
+            "chi2_dof": chi2_dof,
+            "logGBF": float(nstate),
+        }
+
+    candidates = [_candidate("matrix_001", 1, 0.9), _candidate("matrix_002", 2, 0.7)]
+    settings = {
+        "fitting_form": "Breit",
+        "fit_scope": ["3pt_ratio"],
+        "fit_strategy": ["joint"],
+        "pt2_windows": [{"tmin": 3, "tmax": 8}],
+        "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
+        "svdcut": 1e-6,
+        "posterior_prior_error_scale": 10.0,
+        "q_min": 0.05,
+        "chi2_dof_tolerance": 0.25,
+        "model_average": True,
+        "tune_z_values": [0],
+    }
+    params = {
+        "observable": "matrix_element",
+        "analysis_method": "lsqfit",
+        "component": "re",
+        "nstate": [1, 2],
+        "prior_width": [1.0],
+        **settings,
+    }
+    context = ToolContext(
+        {"metadata": {"workers": 2, "sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "correlator_analysis",
+        "matrix",
+        params,
+        {},
+        {},
+        {"correlators": {"placeholder": object()}, "matrix_element_candidates": candidates},
+        tmp_path,
+        np.random.default_rng(2),
+    )
+    calls = []
+
+    def apply_fit(*args, **kwargs):
+        calls.append(kwargs)
+        nstate = int(kwargs["n_states"])
+        log_gbf = 1.0 if nstate == 1 else 4.0
+        value = 1.0 if nstate == 1 else 3.0
+        fit = {
+            "z": 0.0,
+            "Q": 0.8,
+            "chi2": 0.9,
+            "dof": 1.0,
+            "chi2_dof": 0.9,
+            "logGBF": log_gbf,
+            "sample_diagnostics": [
+                {"sample": 0, "chi2": 1.0, "dof": 1.0, "chi2_dof": 1.0, "Q": 0.8, "logGBF": log_gbf},
+                {"sample": 1, "chi2": 1.0, "dof": 1.0, "chi2_dof": 1.0, "Q": 0.8, "logGBF": log_gbf},
+            ],
+        }
+        if kwargs.get("fit_samples") is False:
+            return None, {"n_failed_samples": 0, "sample_failures": [], "fits": [fit]}
+        data = EnsembleData(
+            None,
+            "bootstrap",
+            [np.array([value]), np.array([value])],
+            ["z"],
+            {"z": [0.0]},
+            attrs={"observable": "matrix_element"},
+            name="bare_matrix_element",
+        )
+        return data, {"n_failed_samples": 0, "sample_failures": [], "fits": [fit]}
+
+    monkeypatch.setattr(tool, "fit_matrix_element_samples", apply_fit)
+    tool.run(context, candidate_id="matrix_002")
+    applied_nstates = sorted(call["n_states"] for call in calls if call.get("fit_samples") is not False)
+    assert applied_nstates == [1, 2]
+    assert context.summary["decisions"]["candidate_id"] == "matrix_002"
+    assert context.summary["decisions"]["model_average"] is True
+    assert set(context.summary["diagnostics"]["selected_models"]) == {"matrix_001", "matrix_002"}
+    weights = np.exp(np.array([1.0, 4.0]) - 4.0)
+    weights = weights / weights.sum()
+    assert context.output.values[0, 0] == pytest.approx(weights[0] * 1.0 + weights[1] * 3.0)
+    assert context.output.attrs["model_average"] == "true"
 
 
 def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monkeypatch, tmp_path) -> None:

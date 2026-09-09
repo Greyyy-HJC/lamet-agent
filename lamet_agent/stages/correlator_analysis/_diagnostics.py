@@ -175,10 +175,13 @@ def write_fit_artifacts(
     artifact_directory: Path,
     component: str,
     q_min: float,
+    model_average: bool = False,
+    fit_model_weights: list[float] | None = None,
+    averaged_ids: list[str] | None = None,
 ) -> FitArtifactResult:
     """Write logs/PDFs and return compact diagnostics for persisted summaries."""
-    strategy = str(selected.get("method", selected.get("fit_strategy", "fit")))
-    scope = str(selected.get("fit_scope", "qda_ratio" if strategy == "qda" else "fit"))
+    strategy = str(selected.get("fit_strategy", selected.get("method", "fit")))
+    scope = str(selected.get("fit_scope", "fit"))
     stem = f"{job_id}_{strategy}_{scope}"
     log_directory = artifact_directory / "fit_logs"
     log_directory.mkdir(parents=True, exist_ok=True)
@@ -188,6 +191,8 @@ def write_fit_artifacts(
     tuning_lines = [
         f"job={job_id} selected_candidate={selected.get('id')} strategy={strategy} scope={scope}",
         f"window={selected.get('window')} nstate={selected.get('nstate')} prior_width={selected.get('prior_width')}",
+        f"model_average={str(model_average).lower()} averaged={averaged_ids or [selected.get('id')]} "
+        f"weights={fit_model_weights or [1.0]}",
         *_candidate_log_lines(candidates),
         "Full-grid center preflight",
     ]

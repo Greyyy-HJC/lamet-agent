@@ -55,6 +55,9 @@ The qDA fit uses the nonlocal/local two-point ratio at each spatial separation.
 A one-state fit extracts a constant plateau $O_{00}/z'_0$.  Multi-state fits
 use the periodic spectral decomposition of the numerator and $z=0$ denominator,
 while the published matrix element remains the ground-state ratio $O_{00}/z'_0$.
+The independent strategy fits only this ratio, the joint strategy includes the
+local denominator in the same correlated fit, and the chained strategy first
+fits that denominator and propagates its widened spectral posterior.
 The selected time window is applied to every production sample.
 """.strip()
 
@@ -94,7 +97,15 @@ def _scope_name(scope: object) -> str:
 def _method_name(method: object, scope: object) -> str:
     method_text = str(method)
     scope_text = str(scope)
-    if method_text == "qda" or scope_text == "qda_ratio":
+    if scope_text == "qda_ratio":
+        if method_text == "joint":
+            return "local 2pt + qDA ratio joint fit"
+        if method_text == "chained":
+            return "local 2pt → qDA ratio chained fit"
+        if method_text == "independent":
+            return "qDA nonlocal/local ratio independent fit"
+        return "qDA nonlocal/local ratio fit"
+    if method_text == "qda":
         return "qDA nonlocal/local ratio fit"
     if method_text == "lanczos":
         return f"Lanczos {_scope_name(scope)} extraction"
@@ -155,9 +166,13 @@ def _selected_fit_text(record: StageReportRecord) -> str:
     candidate = _candidate_for_record(record)
     decisions = record.summary.get("decisions", {})
     method = (
-        candidate.get("method")
+        candidate.get("fit_strategy", candidate.get("method"))
         if candidate is not None
-        else (decisions.get("method") if isinstance(decisions, Mapping) else record.params.get("analysis_method"))
+        else (
+            decisions.get("fit_strategy", decisions.get("method"))
+            if isinstance(decisions, Mapping)
+            else record.params.get("analysis_method")
+        )
     )
     scope = _candidate_scope(candidate, record)
     description = _method_name(method, scope)
@@ -372,9 +387,13 @@ def _selection_policy_lines(records: tuple[StageReportRecord, ...]) -> list[str]
     if has_lsqfit:
         lines.append(
             "Candidate selection is performed on sample-average fits over the authored strategies, scopes, state "
-            "counts, prior widths, and time windows. The selected window and fit method are then held fixed for "
-            "the full-z production fits. If recommendation retries are exhausted, the same deterministic selector "
-            "is applied once across every retained numerical candidate; numerical failures remain counted in "
+            "counts, prior widths, and time windows. The selected window, strategy, and scope are then held fixed "
+            "for the full-z production fits. `model_average=false` publishes that window's selected nstate/prior "
+            "model. `model_average=true` refits every authored nstate and prior width on the same frozen dataset "
+            "and forms per-resample, per-z normalized exp(logGBF) means over numerically valid models, without Q "
+            "filtering; between-model spread of center values is recorded separately and is not mixed into the "
+            "resampled samples. If recommendation retries are exhausted, the same deterministic selector is "
+            "applied once across every retained numerical candidate; numerical failures remain counted in "
             "diagnostics."
         )
     if has_lanczos:
@@ -618,7 +637,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         decisions = summary.get("decisions", {})
         candidate = _candidate_for_record(record)
         method = (
-            decisions.get("method", record.params.get("analysis_method"))
+            decisions.get("fit_strategy", decisions.get("method", record.params.get("analysis_method")))
             if isinstance(decisions, Mapping)
             else record.params.get("analysis_method")
         )
@@ -678,7 +697,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         grid_symbol = "z/a" if params.get("analysis_method") == "lanczos" else output_coordinate
         output_grid = describe_grid(record.output.coords[output_coordinate], symbol=grid_symbol)
         selected_method = (
-            candidate.get("method")
+            candidate.get("fit_strategy", candidate.get("method"))
             if candidate
             else decisions.get("method", params.get("analysis_method"))
             if isinstance(decisions, Mapping)
@@ -700,9 +719,9 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     "",
                     "### Candidate Diagnostics",
                     "",
-                    "| selected | fit method | 2pt window | t_sep | tau cut | states | Q | "
-                    "chi2/dof | accepted | numerical failure |",
-                    "|---|---|---|---|---:|---:|---:|---:|---|---|",
+                    "| selected | averaged | weight | fit method | 2pt window | t_sep | tau cut | states | "
+                    "prior | Q | chi2/dof | accepted | numerical failure |",
+                    "|---|---|---:|---|---|---|---:|---:|---:|---:|---:|---|---|",
                 ]
             )
             for candidate in candidates:
@@ -715,12 +734,16 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 tsep_text = ", ".join(str(value) for value in tseps) if isinstance(tseps, (list, tuple)) else "n/a"
                 selected_marker = candidate.get("candidate_id") == summary.get("decisions", {}).get("candidate_id")
                 candidate_method = _method_name(
-                    candidate.get("method"), candidate.get("fit_scope", _candidate_scope(None, record))
+                    candidate.get("fit_strategy", candidate.get("method")),
+                    candidate.get("fit_scope", _candidate_scope(None, record)),
                 )
                 lines.append(
-                    f"| {'yes' if selected_marker else ''} | {candidate_method} | "
+                    f"| {'yes' if selected_marker else ''} | "
+                    f"{'yes' if candidate.get('averaged') else ''} | "
+                    f"{format_value(candidate.get('model_weight'))} | {candidate_method} | "
                     f"[{format_value(window.get('tmin'))}, {format_value(window.get('tmax'))}) | {tsep_text} | "
                     f"{format_value(window.get('tau_min'))} | {format_value(candidate.get('nstate'))} | "
+                    f"{format_value(candidate.get('prior_width'))} | "
                     f"{format_value(candidate.get('Q', candidate.get('min_Q')))} | "
                     f"{format_value(candidate.get('chi2_dof', candidate.get('worst_chi2_dof')))} | "
                     f"{format_value(candidate.get('quality_passed'))} | "
@@ -737,7 +760,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     if not isinstance(fit, dict):
                         continue
                     candidate_method = _method_name(
-                        candidate.get("method"), candidate.get("fit_scope", _candidate_scope(None, record))
+                        candidate.get("fit_strategy", candidate.get("method")),
+                        candidate.get("fit_scope", _candidate_scope(None, record)),
                     )
                     tune_rows.append(
                         f"| {candidate_method} | "

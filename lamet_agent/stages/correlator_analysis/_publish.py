@@ -15,10 +15,131 @@ from lamet_agent.stages.correlator_analysis.physics import (
     fit_matrix_element_samples,
     matrix_element_samples,
 )
+from lamet_agent.stages.correlator_analysis._model_average import combine_matrix_samples
 from lamet_agent.stages.correlator_analysis._selection import (
+    models_on_dataset,
     select_spectrum_candidate,
     select_tuned_candidate,
 )
+
+
+def _json_ready(value: object) -> object:
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    return value
+
+
+def _apply_qda_candidate(
+    context: ToolContext,
+    candidate: dict[str, object],
+    *,
+    settings: dict[str, object],
+    correlators: dict[str, object],
+) -> tuple[EnsembleData, None, dict[str, object]]:
+    log(f"Running: full qDA sample fits for matrix candidate {candidate['id']}...")
+    values, z_coordinates, application_fit = matrix_element_samples(
+        correlators,
+        method="qda",
+        tmin=int(candidate["window"]["tmin"]),
+        tmax=int(candidate["window"]["tmax"]),
+        tau_min=None,
+        lsqfit=settings,
+        sample_error_mode=str(context.manifest["metadata"]["sample_error_mode"]),
+        workers=context.workers,
+        fit_samples=True,
+        show_progress=bool(context.state.get("show_job_progress", False)),
+        n_states=int(candidate["nstate"]),
+        prior_width=float(candidate["prior_width"]),
+        fit_strategy=str(candidate["fit_strategy"]),
+        _parallel=context._parallel,
+    )
+    if values is None:
+        raise RuntimeError("full qDA fitting produced no sample values")
+    component = str(context.params["component"])
+    if component == "re":
+        values = values.real
+    elif component == "im":
+        values = values.imag
+    source = next(value for value in correlators.values() if value.attrs.get("correlator_type") == "qda")
+    attrs = dict(source.attrs)
+    attrs.update(
+        {
+            "observable": "matrix_element",
+            "method": "qda",
+            "fit_strategy": str(candidate["fit_strategy"]),
+            "n_states": int(candidate["nstate"]),
+            "prior_width": float(candidate["prior_width"]),
+            "sample_error_mode": context.manifest["metadata"]["sample_error_mode"],
+            "units": '{"values":"dimensionless","z":"lattice"}',
+        }
+    )
+    data = EnsembleData(
+        source.ensemble,
+        source.resample,
+        [sample for sample in values],
+        ["z"],
+        {"z": z_coordinates},
+        attrs=attrs,
+        name="bare_matrix_element",
+    )
+    return data, None, application_fit
+
+
+def _apply_ordinary_candidate(
+    context: ToolContext,
+    candidate: dict[str, object],
+    *,
+    settings: dict[str, object],
+    correlators: dict[str, object],
+) -> tuple[EnsembleData, dict[str, object] | None, dict[str, object]]:
+    application_kwargs = {
+        "strategy": str(candidate["method"]),
+        "fitting_form": str(settings["fitting_form"]),
+        "fit_scope": str(candidate["fit_scope"]),
+        "components": {"re": "real", "im": "imag", "both": "both"}[str(context.params["component"])],
+        "tmin": int(candidate["window"]["tmin"]),
+        "tmax": int(candidate["window"]["tmax"]),
+        "tsep_values": [int(value) for value in candidate["tsep_values"]],
+        "tau_min": int(candidate["window"]["tau_min"]),
+        "n_states": int(candidate["nstate"]),
+        "prior_width": float(candidate["prior_width"]),
+        "correlator_rescale": float(candidate["correlator_rescale"]),
+        "svdcut": float(settings["svdcut"]),
+        "posterior_prior_error_scale": float(settings["posterior_prior_error_scale"]),
+        "sample_error_mode": str(context.manifest["metadata"]["sample_error_mode"]),
+        "workers": context.workers,
+        "show_progress": bool(context.state.get("show_job_progress", False)),
+        "_parallel": context._parallel,
+    }
+    log(f"Preflighting matrix candidate {candidate['id']} on the full z grid...")
+    preflight_data, preflight_fit = fit_matrix_element_samples(
+        correlators,
+        **application_kwargs,
+        tune_z=None,
+        fit_samples=False,
+    )
+    if preflight_data is not None:
+        raise RuntimeError("full-grid center preflight unexpectedly produced sample data")
+    log(f"Running: full sample fits for matrix candidate {candidate['id']}...")
+    data, application_fit = fit_matrix_element_samples(correlators, **application_kwargs)
+    return data, preflight_fit, application_fit
+
+
+def _usable_average_models(
+    candidates: list[dict[str, object]], selected: dict[str, object]
+) -> list[dict[str, object]]:
+    siblings = [
+        candidate
+        for candidate in models_on_dataset(candidates, selected)
+        if not candidate.get("numerical_failure", False) and candidate.get("error") is None
+    ]
+    return siblings or [selected]
 
 
 def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
@@ -117,123 +238,96 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     application_rejections: list[dict[str, object]] = []
     correlators = context.state.get("correlators")
     settings = lsqfit
-    data = selected.get("data")
+    model_average = bool(lsqfit.get("model_average"))
     selected_method = selected.get("method")
-    if not isinstance(data, EnsembleData) and (selected_method in spectral_methods or selected_method == "qda"):
-        if not isinstance(correlators, dict):
-            raise RuntimeError("inspect_correlators must run before publishing a matrix-element model")
-        application_fit = None
-        preflight_fit = None
-        try:
-            if selected_method == "qda":
-                log(f"Running: full qDA sample fits for matrix candidate {selected['id']}...")
-                values, z_coordinates, application_fit = matrix_element_samples(
-                    correlators,
-                    method="qda",
-                    tmin=int(selected["window"]["tmin"]),
-                    tmax=int(selected["window"]["tmax"]),
-                    tau_min=None,
-                    lsqfit=settings,
-                    sample_error_mode=str(context.manifest["metadata"]["sample_error_mode"]),
-                    workers=context.workers,
-                    fit_samples=True,
-                    show_progress=bool(context.state.get("show_job_progress", False)),
-                    n_states=int(selected["nstate"]),
-                    prior_width=float(selected["prior_width"]),
-                    _parallel=context._parallel,
-                )
-                if values is None:
-                    raise RuntimeError("full qDA fitting produced no sample values")
-                component = str(context.params["component"])
-                if component == "re":
-                    values = values.real
-                elif component == "im":
-                    values = values.imag
-                source = next(value for value in correlators.values() if value.attrs.get("correlator_type") == "qda")
-                attrs = dict(source.attrs)
-                attrs.update(
+    targets = _usable_average_models(candidates, selected) if model_average else [selected]
+    artifact_source = selected
+    combined_result: dict[str, object] | None = None
+    needs_application = selected_method in spectral_methods or selected_method == "qda"
+    if needs_application:
+        missing_data = any(not isinstance(candidate.get("data"), EnsembleData) for candidate in targets)
+        if missing_data:
+            if not isinstance(correlators, dict):
+                raise RuntimeError("inspect_correlators must run before publishing a matrix-element model")
+        for candidate in targets:
+            if isinstance(candidate.get("data"), EnsembleData):
+                continue
+            try:
+                if candidate.get("method") == "qda":
+                    data, preflight_fit, application_fit = _apply_qda_candidate(
+                        context, candidate, settings=settings, correlators=correlators
+                    )
+                else:
+                    data, preflight_fit, application_fit = _apply_ordinary_candidate(
+                        context, candidate, settings=settings, correlators=correlators
+                    )
+            except FitNumericalError as exc:
+                error = str(exc)
+                candidate.update({"quality_passed": False, "numerical_failure": True, "error": error})
+                application_rejections.append({"candidate_id": str(candidate["id"]), "error": error})
+                if not model_average:
+                    raise FitNumericalError(
+                        f"selected candidate {candidate['id']} failed full-grid application: {error}"
+                    ) from exc
+                continue
+            if not model_average and application_fit is not None and int(application_fit.get("n_failed_samples", 0)):
+                error = f"{application_fit['n_failed_samples']} sample fit(s) failed numerically"
+                candidate.update(
                     {
-                        "observable": "matrix_element",
-                        "method": "qda",
-                        "n_states": int(selected["nstate"]),
-                        "prior_width": float(selected["prior_width"]),
-                        "sample_error_mode": context.manifest["metadata"]["sample_error_mode"],
-                        "units": '{"values":"dimensionless","z":"lattice"}',
+                        "quality_passed": False,
+                        "numerical_failure": True,
+                        "error": error,
+                        "application_fit": application_fit,
                     }
                 )
-                data = EnsembleData(
-                    source.ensemble,
-                    source.resample,
-                    [sample for sample in values],
-                    ["z"],
-                    {"z": z_coordinates},
-                    attrs=attrs,
-                    name="bare_matrix_element",
-                )
-            else:
-                application_kwargs = {
-                    "strategy": str(selected_method),
-                    "fitting_form": str(settings["fitting_form"]),
-                    "fit_scope": str(selected["fit_scope"]),
-                    "components": {"re": "real", "im": "imag", "both": "both"}[str(context.params["component"])],
-                    "tmin": int(selected["window"]["tmin"]),
-                    "tmax": int(selected["window"]["tmax"]),
-                    "tsep_values": [int(value) for value in selected["tsep_values"]],
-                    "tau_min": int(selected["window"]["tau_min"]),
-                    "n_states": int(selected["nstate"]),
-                    "prior_width": float(selected["prior_width"]),
-                    "correlator_rescale": float(selected["correlator_rescale"]),
-                    "svdcut": float(settings["svdcut"]),
-                    "posterior_prior_error_scale": float(settings["posterior_prior_error_scale"]),
-                    "sample_error_mode": str(context.manifest["metadata"]["sample_error_mode"]),
-                    "workers": context.workers,
-                    "show_progress": bool(context.state.get("show_job_progress", False)),
-                    "_parallel": context._parallel,
-                }
-                log(f"Preflighting matrix candidate {selected['id']} on the full z grid...")
-                preflight_data, preflight_fit = fit_matrix_element_samples(
-                    correlators,
-                    **application_kwargs,
-                    tune_z=None,
-                    fit_samples=False,
-                )
-                if preflight_data is not None:
-                    raise RuntimeError("full-grid center preflight unexpectedly produced sample data")
-                log(f"Running: full sample fits for matrix candidate {selected['id']}...")
-                data, application_fit = fit_matrix_element_samples(correlators, **application_kwargs)
-        except FitNumericalError as exc:
-            error = str(exc)
-            selected.update({"quality_passed": False, "numerical_failure": True, "error": error})
-            application_rejections.append({"candidate_id": str(selected["id"]), "error": error})
-            raise FitNumericalError(
-                f"selected candidate {selected['id']} failed full-grid application: {error}"
-            ) from exc
-        if application_fit is not None and int(application_fit.get("n_failed_samples", 0)):
-            error = f"{application_fit['n_failed_samples']} sample fit(s) failed numerically"
-            selected.update(
-                {
-                    "quality_passed": False,
-                    "numerical_failure": True,
-                    "error": error,
-                    "application_fit": application_fit,
-                }
-            )
-            application_rejections.append({"candidate_id": str(selected["id"]), "error": error})
-            raise FitNumericalError(f"selected candidate {selected['id']} failed full-grid application: {error}")
-        if not isinstance(data, EnsembleData) or application_fit is None:
-            raise RuntimeError("full-grid matrix-element fitting produced no sample result")
-        selected["data"] = data
-        selected["preflight_fit"] = preflight_fit
-        selected["application_fit"] = application_fit
+                application_rejections.append({"candidate_id": str(candidate["id"]), "error": error})
+                raise FitNumericalError(f"selected candidate {candidate['id']} failed full-grid application: {error}")
+            if not isinstance(data, EnsembleData) or application_fit is None:
+                raise RuntimeError("full-grid matrix-element fitting produced no sample result")
+            candidate["data"] = data
+            candidate["preflight_fit"] = preflight_fit
+            candidate["application_fit"] = application_fit
+    applied = [candidate for candidate in targets if isinstance(candidate.get("data"), EnsembleData)]
+    data = selected.get("data")
+    if model_average and len(applied) > 1:
+        try:
+            combined_result = combine_matrix_samples(applied)
+        except ValueError:
+            combined_result = None
+        if combined_result is not None:
+            data = combined_result["data"]
+            artifact_source = combined_result["primary_model"]
+    elif not isinstance(data, EnsembleData) and applied:
+        data = applied[0]["data"]
+    if combined_result is None and isinstance(data, EnsembleData):
+        data.array.attrs["model_average"] = "true" if model_average else "false"
+        data.array.attrs["selected_models"] = json.dumps([str(selected["id"])])
+        data.array.attrs["model_weights"] = json.dumps([1.0])
     candidate_id = str(selected["id"])
     if not isinstance(data, EnsembleData):
+        if model_average and needs_application:
+            raise FitNumericalError("all averaged models failed full-grid application")
         raise TypeError("selected candidate has no EnsembleData result")
+    weight_by_id = {str(selected["id"]): 1.0}
+    averaged_ids = [str(selected["id"])]
+    mean_weights: list[float] = [1.0]
+    if combined_result is not None:
+        mean_weights = [float(weight) for weight in combined_result["mean_weights"]]
+        weight_by_id = {
+            str(candidate["id"]): float(weight) for candidate, weight in zip(applied, mean_weights)
+        }
+        averaged_ids = [str(value) for value in combined_result["selected_models"]]
+        primary_quality = combined_result["center_quality"][int(combined_result["primary_index"])]
+        for key in ("Q", "chi2_dof", "logGBF"):
+            if primary_quality.get(key) is not None:
+                selected[key] = primary_quality[key]
     context.state["correlator_result"] = data
     data.to_netcdf(context.artifact_directory / "output.nc")
     candidate_table = [
         {
             "candidate_id": candidate["id"],
             "method": candidate.get("method"),
+            "fit_strategy": candidate.get("fit_strategy"),
             "fit_scope": candidate.get("fit_scope"),
             "window": candidate.get("window"),
             "tsep_values": candidate.get("tsep_values"),
@@ -242,6 +336,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
             "correlator_rescale": candidate.get("correlator_rescale"),
             "quality_passed": candidate.get("quality_passed", True),
             "numerical_failure": candidate.get("numerical_failure", False),
+            "model_weight": weight_by_id.get(str(candidate["id"]), 0.0),
+            "averaged": str(candidate["id"]) in averaged_ids,
             **{
                 key: candidate[key]
                 for key in (
@@ -271,33 +367,43 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     fit_artifacts: list[str] = []
     sample_fit_quality: dict[str, object] = {}
     dispersion_energy: dict[str, object] = {}
-    application_fit = selected.get("application_fit")
+    application_fit = artifact_source.get("application_fit")
     if isinstance(application_fit, dict):
         fit_result = write_fit_artifacts(
             job_id=context.job_id,
-            selected=selected,
+            selected=artifact_source,
             candidates=candidates,
-            preflight_fit=selected.get("preflight_fit"),
+            preflight_fit=artifact_source.get("preflight_fit"),
             application_fit=application_fit,
             application_rejections=application_rejections,
             artifact_directory=context.artifact_directory,
             component=str(context.params["component"]),
             q_min=float(settings["q_min"]),
+            model_average=model_average,
+            fit_model_weights=mean_weights,
+            averaged_ids=averaged_ids,
         )
         fit_artifacts = list(fit_result.artifacts)
         sample_fit_quality = fit_result.sample_fit_quality
         dispersion_energy = fit_result.dispersion_energy
-        selected["application_fit"] = fit_result.application_fit
+        artifact_source["application_fit"] = fit_result.application_fit
+        if artifact_source is selected:
+            selected["application_fit"] = fit_result.application_fit
     fallback_no_q_passing = bool(context.state.get("fallback_no_q_passing", fallback))
     diagnostics = {
         "candidate_id": candidate_id,
         "method": selected.get("method"),
         "selection_rule": selection_rule,
         "fallback_no_q_passing": fallback_no_q_passing,
+        "model_average": model_average,
+        "selected_models": averaged_ids,
+        "fit_model_weights": mean_weights,
+        "real_sys_sdev": combined_result.get("real_sys_sdev") if combined_result else None,
+        "imag_sys_sdev": combined_result.get("imag_sys_sdev") if combined_result else None,
         "recommended_defaults": context.state.get("recommended_defaults", {}),
         "correlator_scale_inspection": context.state.get("correlator_scale_inspection", {}),
-        "selected_preflight_fit": selected.get("preflight_fit"),
-        "selected_application_fit": selected.get("application_fit"),
+        "selected_preflight_fit": artifact_source.get("preflight_fit"),
+        "selected_application_fit": artifact_source.get("application_fit"),
         "candidates": candidate_table,
         "sample_fit_quality": sample_fit_quality,
         "dispersion_energy": dispersion_energy,
@@ -305,7 +411,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     }
     (context.artifact_directory / "diagnostics").mkdir(exist_ok=True)
     (context.artifact_directory / "diagnostics" / "candidates.json").write_text(
-        json.dumps(diagnostics, indent=2), encoding="utf-8"
+        json.dumps(_json_ready(diagnostics), indent=2), encoding="utf-8"
     )
     plot_dim = "z" if "z" in data.dims else "state" if "state" in data.dims else data.dims[0]
     plot_samples = np.asarray(data.real.values if np.iscomplexobj(data.values) else data.values)
@@ -340,6 +446,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         "decisions": {
             "candidate_id": candidate_id,
             "method": selected.get("method"),
+            "fit_strategy": selected.get("fit_strategy"),
+            "model_average": model_average,
             "fallback_no_q_passing": fallback_no_q_passing,
         },
         "diagnostics": diagnostics,

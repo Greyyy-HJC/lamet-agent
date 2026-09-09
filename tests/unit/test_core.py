@@ -1818,14 +1818,17 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
 
 
 @pytest.mark.parametrize("state_counts", [[2], [1, 2]])
-def test_correlator_contract_allows_multistate_qda_candidates(state_counts: list[int]) -> None:
+@pytest.mark.parametrize("fit_strategy", [["independent"], ["joint"], ["chained"], ["independent", "joint", "chained"]])
+def test_correlator_contract_allows_qda_candidate_grid(
+    state_counts: list[int], fit_strategy: list[str]
+) -> None:
     contract = _load_stage_contract("correlator_analysis")
     qda_fit = {
         "analysis_method": "lsqfit",
         "component": "both",
         "nstate": state_counts,
         "fit_scope": ["qda_ratio"],
-        "fit_strategy": ["independent"],
+        "fit_strategy": fit_strategy,
         "fitting_form": "Breit",
         "model_average": False,
         "pt2_windows": [{"tmin": 2, "tmax": 14}],
@@ -1840,6 +1843,32 @@ def test_correlator_contract_allows_multistate_qda_candidates(state_counts: list
         contract.CHECKS,
         CheckContext({}, "correlator_analysis", "qda", qda_fit, {}),
     ) == []
+
+
+def test_correlator_contract_allows_model_average() -> None:
+    contract = _load_stage_contract("correlator_analysis")
+    params = {
+        "analysis_method": "lsqfit",
+        "component": "re",
+        "nstate": [1, 2],
+        "fit_scope": ["3pt_ratio"],
+        "fit_strategy": ["joint"],
+        "fitting_form": "Breit",
+        "model_average": True,
+        "pt2_windows": [{"tmin": 3, "tmax": 8}],
+        "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
+        "svdcut": 1e-6,
+        "posterior_prior_error_scale": 1.0,
+        "q_min": 0.05,
+    }
+    assert evaluate_rules(params, contract.PARAM_RULES) == []
+    assert (
+        evaluate_checks(
+            contract.CHECKS,
+            CheckContext({}, "correlator_analysis", "job", params, {}),
+        )
+        == []
+    )
 
 
 def test_each_shipped_stage_contract_reports_incomplete_params_instead_of_crashing(tmp_path: Path) -> None:

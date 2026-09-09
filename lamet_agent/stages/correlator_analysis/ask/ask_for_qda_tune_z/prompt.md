@@ -14,7 +14,10 @@ noise and select a compact ordered set of stable half-open windows with enough
 points for every authored state count. One-state fits are a constant
 nonlocal/local ratio; multi-state fits describe the same ratio with a periodic
 spectral model, so the window must remain overdetermined for the selected
-`nstate`. Parameters listed under
+`nstate`. An `independent` strategy fits the ratio alone, `joint` includes the
+local $z=0$ two-point denominator in the same correlated fit, and `chained`
+first fits that denominator and propagates its widened spectral posterior to
+the ratio fit. Parameters listed under
 `fixed_parameters` are user-authored for the initial attempt and must not be
 changed.
 
