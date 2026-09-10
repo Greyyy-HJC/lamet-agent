@@ -10,8 +10,10 @@ import os
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlparse
+
+from jsonschema import Draft7Validator, FormatChecker
 
 
 _OPENAI_COMPATIBLE_API = {
@@ -374,6 +376,196 @@ class _OpenAICompatibleBackend:
         ) from last_protocol_error
 
 
+_CLI_LOCAL_CONSTRAINTS = {
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "format",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+}
+
+
+@dataclass
+class _CliSchema:
+    schema: dict[str, Any]
+    decode: Callable[[Any], Any]
+
+
+def _compile_cli_schema(original: Mapping[str, Any], provider: str) -> _CliSchema:
+    schema = {key: original[key] for key in ("title", "description", "default") if key in original}
+    deferred = {}
+    for key in _CLI_LOCAL_CONSTRAINTS & original.keys():
+        supported = (
+            key not in {"minLength", "maxLength", "uniqueItems"}
+            if provider == "codex"
+            else key == "minItems" and original[key] in (0, 1)
+        )
+        if supported:
+            schema[key] = original[key]
+        else:
+            deferred[key] = original[key]
+    if deferred:
+        schema["description"] = (
+            schema.get("description", "") + " Application validates: " + json.dumps(deferred, sort_keys=True)
+        ).strip()
+
+    kind = original.get("type")
+    if kind == "array" and original.get("maxItems") == 0:
+        return _CliSchema(
+            {"type": "null", "description": "Return null to represent the required empty array."},
+            lambda value: [],
+        )
+
+    # Unconstrained JSON and open dictionaries cannot be expressed as closed
+    # provider objects. A JSON string preserves arbitrary keys and JSON null.
+    untyped = not any(key in original for key in ("type", "anyOf", "enum", "const"))
+    open_object = kind == "object" and original.get("additionalProperties", True) is not False
+    complex_enum = any(isinstance(value, (dict, list)) for value in original.get("enum", []))
+    if untyped or open_object or complex_enum:
+        return _CliSchema(
+            {
+                "type": "string",
+                "description": "Return a JSON-encoded value (not Markdown) satisfying this application schema: "
+                + json.dumps(original, sort_keys=True, ensure_ascii=False),
+            },
+            json.loads,
+        )
+
+    if "anyOf" in original:
+        children = [_compile_cli_schema(child, provider) for child in original["anyOf"]]
+        schema["anyOf"] = [child.schema for child in children]
+
+        def decode_union(value: Any) -> Any:
+            child = next(child for child in children if Draft7Validator(child.schema).is_valid(value))
+            return child.decode(value)
+
+        decode = decode_union
+    elif kind == "object":
+        properties = original.get("properties", {})
+        required = original.get("required", [])
+        children = {key: _compile_cli_schema(child, provider) for key, child in properties.items()}
+        wire_properties = {key: child.schema for key, child in children.items()}
+        optional = set(properties) - set(required) if provider == "codex" else set()
+        for key in optional:
+            # A wrapper distinguishes an omitted property (null) from a present
+            # property whose actual value is null ({"value": null}).
+            wire_properties[key] = {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {"value": children[key].schema},
+                        "required": ["value"],
+                        "additionalProperties": False,
+                    },
+                    {"type": "null"},
+                ],
+                "description": (
+                    "Return null to omit this optional field; otherwise put its value in the value property."
+                ),
+            }
+        schema.update(
+            type="object",
+            properties=wire_properties,
+            required=list(properties) if provider == "codex" else list(required),
+            additionalProperties=False,
+        )
+
+        def decode_object(value: Any) -> Any:
+            result = {}
+            for key, item in value.items():
+                if key in optional:
+                    if item is None:
+                        continue
+                    item = item["value"]
+                result[key] = children[key].decode(item)
+            return result
+
+        decode = decode_object
+    elif kind == "array":
+        child = _compile_cli_schema(original.get("items", {}), provider)
+        schema.update(type="array", items=child.schema)
+
+        def decode_array(value: Any) -> Any:
+            return [child.decode(item) for item in value]
+
+        decode = decode_array
+    else:
+
+        def decode_scalar(value: Any) -> Any:
+            return value
+
+        decode = decode_scalar
+
+    for key in ("type", "enum", "const"):
+        if key in original:
+            schema[key] = original[key]
+    if "type" not in schema and ("enum" in schema or "const" in schema):
+        values = schema.get("enum", [schema.get("const")])
+        kinds = {
+            "null"
+            if value is None
+            else "boolean"
+            if isinstance(value, bool)
+            else "string"
+            if isinstance(value, str)
+            else "number"
+            for value in values
+        }
+        schema["type"] = next(iter(kinds)) if len(kinds) == 1 else sorted(kinds)
+    return _CliSchema(schema, decode)
+
+
+def _prepare_cli_schema(
+    tools: list[dict[str, Any]], response_schema: Mapping[str, Any] | None, *, provider: str
+) -> _CliSchema:
+    """Build an ask or tool response schema, adapt it, and prepare validated decoding."""
+    if response_schema is not None:
+        original = response_schema["schema"]
+    else:
+        variants = [
+            {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "enum": [tool["function"]["name"]]},
+                    "arguments": tool["function"]["parameters"],
+                },
+                "required": ["name", "arguments"],
+                "additionalProperties": False,
+            }
+            for tool in tools
+        ]
+        calls: dict[str, Any] = {
+            "type": "array",
+            "items": {"anyOf": variants} if variants else {"type": "string"},
+        }
+        if not variants:
+            calls["maxItems"] = 0
+        original = {
+            "type": "object",
+            "properties": {"text": {"type": "string"}, "tool_calls": calls},
+            "required": ["text", "tool_calls"],
+            "additionalProperties": False,
+        }
+    node = _compile_cli_schema(original, provider)
+    wire_validator = Draft7Validator(node.schema)
+    original_validator = Draft7Validator(original, format_checker=FormatChecker())
+
+    def decode(value: Any) -> Any:
+        wire_validator.validate(value)
+        restored = node.decode(value)
+        original_validator.validate(restored)
+        return restored
+
+    return _CliSchema(node.schema, decode)
+
+
 def _cli_task_input(
     *,
     transcript: list[dict[str, Any]],
@@ -393,15 +585,8 @@ def _cli_task_input(
         "</TASK_INPUT>",
     ]
     if not structured:
-        sections.extend(
-            [
-                "<OUTPUT_CONSTRAINT>",
-                "Return exactly one JSON object with keys 'text' and 'tool_calls'. "
-                "'text' must be a string. 'tool_calls' must be a list of objects containing exactly "
-                "'name' and object 'arguments'. Do not call tools yourself.",
-                "Do not use markdown.",
-                "</OUTPUT_CONSTRAINT>",
-            ]
+        sections.append(
+            "Request application tools through tool_calls; the application executes them. Do not call tools yourself."
         )
     sections.extend(
         [
@@ -501,6 +686,7 @@ class _CodexBackend:
     ) -> _AssistantResponse:
         if response_schema is not None and tools:
             raise ValueError("structured responses cannot be combined with tools")
+        output_contract = _prepare_cli_schema(tools, response_schema, provider="codex")
         try:
             from openai_codex import Codex, Sandbox  # type: ignore
         except ImportError as exc:
@@ -544,9 +730,10 @@ class _CodexBackend:
             self._threads[thread_key] = thread
         else:
             thread = self._threads[thread_key]
-        run_options: dict[str, Any] = {"sandbox": Sandbox.read_only}
-        if response_schema is not None:
-            run_options["output_schema"] = response_schema["schema"]
+        run_options: dict[str, Any] = {
+            "sandbox": Sandbox.read_only,
+            "output_schema": output_contract.schema,
+        }
         result = thread.run(task_input, **run_options)
         raw = result.final_response
         if not isinstance(raw, str) or not raw.strip():
@@ -556,6 +743,7 @@ class _CodexBackend:
         except json.JSONDecodeError as exc:
             raise ValueError(f"Codex returned malformed JSON: {raw}") from exc
 
+        payload = output_contract.decode(payload)
         self._turn += 1
         if response_schema is not None:
             if not isinstance(payload, dict):
@@ -655,6 +843,7 @@ class _ClaudeCodeBackend:
     ) -> _AssistantResponse:
         if response_schema is not None and tools:
             raise ValueError("structured responses cannot be combined with tools")
+        output_contract = _prepare_cli_schema(tools, response_schema, provider="claude")
         try:
             from claude_agent_sdk import ClaudeAgentOptions, query  # type: ignore
         except ImportError as exc:
@@ -698,11 +887,10 @@ class _ClaudeCodeBackend:
             options_values["system_prompt"] = system_prompt
         else:
             options_values["resume"] = session_id
-        if response_schema is not None:
-            options_values["output_format"] = {
-                "type": "json_schema",
-                "schema": response_schema["schema"],
-            }
+        options_values["output_format"] = {
+            "type": "json_schema",
+            "schema": output_contract.schema,
+        }
         options = ClaudeAgentOptions(**options_values)
 
         async def run_query() -> Any:
@@ -728,22 +916,15 @@ class _ClaudeCodeBackend:
         self._sessions[thread_key] = returned_session_id
 
         usage = self._normalise_usage(getattr(result, "usage", None))
+        payload = getattr(result, "structured_output", None)
+        if not isinstance(payload, Mapping):
+            raise TypeError("Claude Code structured response must be an object")
+        payload = output_contract.decode(payload)
         if response_schema is not None:
-            structured = getattr(result, "structured_output", None)
             raw = getattr(result, "result", None)
-            if not isinstance(structured, Mapping):
-                raise TypeError("Claude Code structured response must be an object")
-            text = raw if isinstance(raw, str) and raw.strip() else json.dumps(structured, ensure_ascii=False)
+            text = raw if isinstance(raw, str) and raw.strip() else json.dumps(payload, ensure_ascii=False)
             self._turn += 1
-            return _AssistantResponse(text, structured=structured, usage=usage)
-
-        raw = getattr(result, "result", None)
-        if not isinstance(raw, str) or not raw.strip():
-            raise RuntimeError(f"Claude Code returned no final response: {result}")
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Claude Code returned malformed JSON: {raw}") from exc
+            return _AssistantResponse(text, structured=payload, usage=usage)
 
         self._turn += 1
         if not isinstance(payload, dict) or set(payload) != {"text", "tool_calls"}:

@@ -592,9 +592,7 @@ def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: p
     results = iter(
         [
             SimpleNamespace(
-                result=json.dumps(
-                    {"text": "fit one candidate", "tool_calls": [{"name": "fit", "arguments": {"window": 3}}]}
-                ),
+                result="ordinary text is not the protocol payload",
                 session_id="claude-session",
                 usage={
                     "input_tokens": 4,
@@ -604,7 +602,9 @@ def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: p
                 },
                 is_error=False,
                 errors=None,
-                structured_output=None,
+                structured_output={
+                    "text": "fit one candidate", "tool_calls": [{"name": "fit", "arguments": {"window": 3}}],
+                },
             ),
             SimpleNamespace(
                 result=json.dumps({"text": "finished", "tool_calls": []}),
@@ -612,7 +612,7 @@ def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: p
                 usage=None,
                 is_error=False,
                 errors=None,
-                structured_output=None,
+                structured_output={"text": "finished", "tool_calls": []},
             ),
         ]
     )
@@ -632,7 +632,10 @@ def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: p
     monkeypatch.setitem(sys.modules, "claude_agent_sdk", sdk)
 
     backend = create_backend("claude", "sonnet")
-    tool = {"type": "function", "function": {"name": "fit", "parameters": {}}}
+    tool = {"type": "function", "function": {"name": "fit", "parameters": {
+        "type": "object", "properties": {"window": {"type": "integer"}},
+        "required": ["window"], "additionalProperties": False,
+    }}}
     first = backend.complete(
         messages=[Message("system", "system prompt"), Message("user", "request")],
         tools=[tool],
@@ -670,7 +673,8 @@ def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: p
     assert options[1].values["tools"] == []
 
 
-def test_claude_structured_response_requires_native_result(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("ask", [True, False])
+def test_claude_structured_response_requires_native_result(monkeypatch: pytest.MonkeyPatch, ask: bool) -> None:
     class FakeOptions:
         def __init__(self, **values: object) -> None:
             pass
@@ -695,8 +699,94 @@ def test_claude_structured_response_requires_native_result(monkeypatch: pytest.M
                     "type": "object", "properties": {"answer": {"type": "string"}},
                     "required": ["answer"], "additionalProperties": False,
                 },
-            },
+            } if ask else None,
         )
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+@pytest.mark.parametrize("with_tools", [True, False])
+def test_cli_tool_envelope_reaches_native_schema(provider, with_tools, monkeypatch) -> None:
+    captured = []
+    arguments = {
+        "type": "object",
+        "properties": {
+            "window": {"type": "integer", "minimum": 2},
+            "options": {
+                "type": "object", "properties": {"mode": {"enum": ["fast", "full"]}},
+                "required": ["mode"], "additionalProperties": False,
+            },
+        },
+        "required": ["window", "options"], "additionalProperties": False,
+    }
+    tools = [
+        {"type": "function", "function": {"name": "fit", "parameters": arguments}},
+        {"type": "function", "function": {"name": "finish", "parameters": {
+            "type": "object", "properties": {}, "required": [], "additionalProperties": False,
+        }}},
+    ] if with_tools else []
+    payload = {
+        "text": "done",
+        "tool_calls": [{"name": "fit", "arguments": {"window": 3, "options": {"mode": "fast"}}}]
+        if with_tools else None,
+    }
+
+    class FakeSandbox:
+        read_only = object()
+
+    class FakeThread:
+        def run(self, prompt, **options):
+            captured.append(options["output_schema"])
+            return SimpleNamespace(final_response=json.dumps(payload), usage=None)
+
+    class FakeCodex:
+        def thread_start(self, **options):
+            return FakeThread()
+
+    class FakeOptions:
+        def __init__(self, **values):
+            captured.append(values["output_format"]["schema"])
+            assert values["output_format"]["type"] == "json_schema"
+
+    async def fake_query(**kwargs):
+        yield SimpleNamespace(
+            result="not JSON", structured_output=payload, session_id="session",
+            usage=None, is_error=False, errors=None,
+        )
+
+    codex_sdk = types.ModuleType("openai_codex")
+    codex_sdk.Codex, codex_sdk.Sandbox = FakeCodex, FakeSandbox
+    claude_sdk = types.ModuleType("claude_agent_sdk")
+    claude_sdk.ClaudeAgentOptions, claude_sdk.query = FakeOptions, fake_query
+    monkeypatch.setitem(sys.modules, "openai_codex", codex_sdk)
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", claude_sdk)
+    response = create_backend(provider).complete(
+        messages=[Message("user", "request")], tools=tools, prompt_digest="digest",
+    )
+    assert response.text == "done"
+    assert len(response.calls) == int(with_tools)
+    schema = captured[0]
+    assert schema["required"] == ["text", "tool_calls"]
+    assert schema["additionalProperties"] is False
+    calls = schema["properties"]["tool_calls"]
+    if with_tools:
+        variants = calls["items"]["anyOf"]
+        assert [variant["properties"]["name"]["enum"] for variant in variants] == [["fit"], ["finish"]]
+        wire_arguments = variants[0]["properties"]["arguments"]
+        assert wire_arguments["required"] == arguments["required"]
+        assert wire_arguments["additionalProperties"] is False
+        window = wire_arguments["properties"]["window"]
+        assert window["type"] == "integer"
+        if provider == "codex":
+            assert window["minimum"] == 2
+        else:
+            assert "minimum" not in window
+            assert "minimum" in window["description"]
+        assert all(variant["required"] == ["name", "arguments"] for variant in variants)
+        assert all(variant["additionalProperties"] is False for variant in variants)
+        assert response.calls[0].arguments == payload["tool_calls"][0]["arguments"]
+    else:
+        assert calls["type"] == "null"
+        assert "maxItems" not in calls
 
 
 class _ModelsResponse:
