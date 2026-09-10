@@ -73,6 +73,9 @@ def run(context: ToolContext) -> dict[str, object]:
     attrs.update(
         {
             "kernel_id": context.params["kernel_id"],
+            "order": context.params.get("order", "nlo"),
+            "resummation": context.params.get("resummation", ""),
+            "resummation_part": context.params.get("resummation_part", ""),
             "mu": float(context.params["mu"]),
             "kernel_parameters": json.dumps(context.params["kernel_parameters"], sort_keys=True),
             "units": '{"values":"dimensionless","x":"dimensionless"}',
@@ -91,6 +94,9 @@ def run(context: ToolContext) -> dict[str, object]:
     result.to_netcdf(context.artifact_directory / "output.nc")
     diagnostics = {
         "kernel_id": context.params["kernel_id"],
+        "order": context.params.get("order", "nlo"),
+        "resummation": context.params.get("resummation", ""),
+        "resummation_part": context.params.get("resummation_part", ""),
         "matrix_shape": list(matrix.shape),
         "x_in_count": len(x_in),
         "x_out_count": len(x_out),
@@ -141,6 +147,9 @@ def run(context: ToolContext) -> dict[str, object]:
         "decisions": {
             "kernel_id": context.params["kernel_id"],
             "scheme": context.params["scheme"],
+            "order": context.params.get("order", "nlo"),
+            "resummation": context.params.get("resummation", ""),
+            "resummation_part": context.params.get("resummation_part", ""),
             "mu": context.params["mu"],
         },
         "diagnostics": diagnostics,

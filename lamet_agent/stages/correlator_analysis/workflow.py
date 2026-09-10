@@ -145,7 +145,6 @@ def run(context: ToolContext, session: LlmSession) -> None:
         fit = fit_qda if scope.is_qda else fit_matrix
         qda = scope.is_qda
         q_min = float(context.params["q_min"])
-        tolerance = float(context.params["chi2_dof_tolerance"])
         tune_z_values = list(suggestion["tune_z_values"])
         context.params["tune_z_values"] = list(tune_z_values)
         attempts: list[tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]] = []
@@ -159,7 +158,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
                 candidates = list(context.state.get("matrix_element_candidates", []))
                 try:
                     selected, fallback = select_tuned_candidate(
-                        candidates, q_min=q_min, chi2_dof_tolerance=tolerance, qda=qda
+                        candidates, q_min=q_min
                     )
                 except ValueError as exc:
                     last_error = exc
@@ -189,7 +188,7 @@ def run(context: ToolContext, session: LlmSession) -> None:
                             candidate["id"] = f"attempt_{attempt_number:03d}_{candidate['id']}"
                         retained_candidates.append(candidate)
                 selected, _fallback = select_tuned_candidate(
-                    retained_candidates, q_min=q_min, chi2_dof_tolerance=tolerance, qda=qda
+                    retained_candidates, q_min=q_min
                 )
                 parameters = next(
                     parameters

@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=da_gi_gzg5_hybrid_nlo; arxiv=2405.20120; equations=Eq. (4.5), the gamma^z gamma_5 coefficient (V_qq_p below), with the hybrid-scheme Wilson-line term 3 Si(z_s P_z (y-x))/(pi (y-x)); digest=5654810ed7cd3fc1; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_da_gi_gzg5_hybrid_nlo; arxiv=2405.20120; equations=Eq. (4.5), the gamma^z gamma_5 coefficient (V_qq_p below), with the hybrid-scheme Wilson-line term 3 Si(z_s P_z (y-x))/(pi (y-x)); digest=5654810ed7cd3fc1; paper_used=true -->
 The matching coefficient for the `gzg5` operator in the hybrid scheme is given by Eq. (4.5) of arXiv:2405.20120, with the Wilson-line term $3\,\mathrm{Si}(z_s P_z (y-x))/(\pi (y-x))$. The kernel is written as a plus-distribution in $x$ at fixed $y$, with the plus prescription defined over $[-\infty,\infty]$:
 
 $$
@@ -44,4 +44,3 @@ The code implements exactly the coefficient above. Comparing term by term with E
 - **Scheme correction**: The hybrid Wilson-line term is exactly $3\,\mathrm{Si}(z_s P_z (y-x))/(\pi (y-x))$, as specified. The code's `_hybrid_gi_delta` with strength $3/2$ reproduces this term, and the ratio-scheme term $3/(2|x-y|)$ is correctly subtracted in the hybrid case.
 
 No discrepancies were found between the code and the paper for this coefficient.
-

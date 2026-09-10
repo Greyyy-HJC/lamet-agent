@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=da_gi_gzg5_ratio_nlo; arxiv=2212.14415; equations=Eq. (4.15) V_qq,p (the gamma^z gamma_5 coefficient), with the ratio-scheme Wilson-line term 3/(2|x-y|) (the z_s -> infinity limit of the hybrid Si term; see V_qq_rto); digest=24f91e7e0b84644b; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_da_gi_gzg5_ratio_nlo; arxiv=2212.14415; equations=Eq. (4.15) V_qq,p (the gamma^z gamma_5 coefficient), with the ratio-scheme Wilson-line term 3/(2|x-y|) (the z_s -> infinity limit of the hybrid Si term; see V_qq_rto); digest=24f91e7e0b84644b; paper_used=true -->
 $$V_{qq,p}^{(1)}(x,y) = V_{qq,h}^{(1)}(x,y) + 2a_s C_F \left\{ \frac{|x|}{y} + \frac{|1-x|}{1-y} + \frac{|x-y|}{(y-1)y} \right\},$$
 
 with  
@@ -31,4 +31,3 @@ The code implements exactly the coefficient $V_{qq,p}$ of Eq. (4.15) (second lin
 - **Scheme-specific correction**: The ratio-scheme Wilson-line term $3/(2|x-y|)$ is exactly `V_qq_rto` in the code, and it is added to the density as specified. The hybrid scheme's Si term is correctly implemented as the finite-$z_s$ version, with the ratio term as its $z_s \to \infty$ limit.
 
 No discrepancies found. The code reproduces Eq. (4.15) $V_{qq,p}$ with the ratio-scheme Wilson-line term $3/(2|x-y|)$ exactly as presented in arXiv:2212.14415.
-

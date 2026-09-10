@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gtgpg5_msbar_rgr_nlo_im; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=d7e9efa3fc3151aa; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gtgpg5_msbar_nlo_rgr_im; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=d7e9efa3fc3151aa; paper_used=true -->
 $$C_{\rm RGR}^{\perp,(1)}\left(\xi,\frac{\mu}{|x|P_z}\right) = \left[\,C_r^{\perp,(1)}(\xi,L)\,\right]_{+(1)}^{[0,1]} + \left[\,C_r^{\perp,(1)}(\xi,L)\,\right]_{+(1)}^{[1,\infty]} + \left[\,C_r^{\perp,(1)}(\xi,L)\,\right]_{+(1)}^{[-\infty,0]},$$
 
 with $\xi=x/y$ and $L=\ln(4y^2P_z^2/\mu^2)$. The regular coefficient is
@@ -12,4 +12,3 @@ The RGR kernel is built row-by-row: for each light-cone $x$, the fixed-order mat
 #### Consistency check
 
 The code reproduces App. 'A Method Solving RG Equation' (Eq. matchingRGI) of arXiv:2209.01236. The regular coefficient matches Eq. (2.18) term-by-term: the $2\xi/(1-\xi)L$ log, the signed-log combination, the arctan/arctanh branch, and the $-1/|1-\xi|$ tail are all present with correct signs and arguments. The plus prescription uses the paper's exact notation $[\,\cdot\,]_{+(1)}^{D}$ with the three domains as written. The RGR construction (per-row scale, DGLAP evolution, cutoff) follows the paper's method exactly. No discrepancies found.
-

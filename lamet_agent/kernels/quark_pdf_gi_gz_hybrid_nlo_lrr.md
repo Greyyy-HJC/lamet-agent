@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_gi_gz_hybrid_lrr_nlo; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=48120a8d0c91e835; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_gi_gz_hybrid_nlo_lrr; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=48120a8d0c91e835; paper_used=true -->
 $$C^{\mathrm{LRR}}(\xi,\mu,p_z,\tau) = \left[\,C^{\mathrm{fix}}(\xi,\mu,p_z) + r_0\, C_z(\xi)\,\right] \exp\!\left(-M_{C_z}\, r_{\mathrm{sumPV}}\right),$$
 
 where the fixed-order part is the NLO hybrid $\gamma^z$ coefficient (Eq. (C7) of the paper, with the $+2(1-\xi)$ term), and the renormalon resummation is implemented as a matrix exponential acting on the quasi-$y$ grid.
@@ -30,4 +30,3 @@ with $w = -2\pi/(\alpha_s\beta_0)$, $N_m=0.575$ for $n_f=3$, and $E_\nu$ the exp
 #### Consistency check
 
 The code reproduces Eqs. (12)–(17) of arXiv:2305.05212 term by term: the splitting function $(1+\xi^2)/(1-\xi)$, the logarithms $\ln(4y^2P_z^2/\mu^2)$ and $\ln(4\xi(1-\xi))$, the plus-prescription with domain $[0,1]$ and subtraction at $x_0=1$, the $\delta(1-\xi)$ term, and the Wilson-line correction with $\mathrm{Si}$ and the $3/2$ prefactor all match the paper. The renormalon shape $C_z(\xi)$ and the PV Borel sum $r_{\mathrm{sumPV}}$ follow Eq. (17) and Eq. (13) exactly, including the $\epsilon_m$ regulator and the $N_m$ normalization. The only discrepancy is notational: the code writes the plus-prescription as a column-sum-to-zero condition rather than the paper’s explicit $[g]^{D}_{+(x_0)}$ bracket, but the numerical effect is identical. No other discrepancies found.
-

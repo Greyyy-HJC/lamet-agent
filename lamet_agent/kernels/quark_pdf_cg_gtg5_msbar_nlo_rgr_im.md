@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gtg5_msbar_rgr_nlo_im; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=029196f8f4e063bb; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gtg5_msbar_nlo_rgr_im; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=029196f8f4e063bb; paper_used=true -->
 The matching coefficient for the `gtg5` operator in the `msbar` scheme, as implemented by the kernel, is the NLO+RGR (next-to-leading-order plus renormalization-group-resummed) coefficient. It is not a fixed-order expression; rather, each row $x$ is constructed by evaluating the fixed-order NLO $\overline{\rm MS}$ kernel at the row’s own scale $\mu_0(x) = 2\kappa x P_z$ and then DGLAP-evolving that row from $\mu_0(x)$ to the final scale $\mu$ via a path-ordered matrix exponential of the two-loop (NLL) non-singlet splitting function. Rows whose $\mu_0(x)$ falls below the perturbative cutoff $\mu_{\min}$ are set to zero, implementing the paper’s $x_{\min}$.
 
 Define $\xi = x/y$ and $L = \ln(4y^2P_z^2/\mu^2)$. The fixed-order NLO $\overline{\rm MS}$ kernel (Eq. 2.14 of the paper) that seeds each row is:
@@ -24,4 +24,3 @@ where $P_{\rm LO}$ is the one-loop non-singlet splitting function and $P_{\rm NL
 #### Consistency check
 
 The code reproduces the paper’s Eq. (2.14) and (2.16) for the fixed-order NLO $\overline{\rm MS}$ kernel: the regular coefficient, the logarithms (with argument $4y^2P_z^2/\mu^2$), the arctan/arctanh branch, and the $+\frac{1}{2|\xi-1|}$ scheme correction all match the paper’s expressions. The plus prescription is implemented with the paper’s exact bracket notation, including the domain split $[0,1]$ and $(-\infty,\infty)$ and the subtraction point $+(1)$. The RGR construction follows the paper’s App. A method (Eq. matchingRGI): each row is matched at its own scale $2xP_z$ and DGLAP-evolved, with the cutoff implementing $x_{\min}$. No discrepancies were found between the code and the paper for the terms checked.
-

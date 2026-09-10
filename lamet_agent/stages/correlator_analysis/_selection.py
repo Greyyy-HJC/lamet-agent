@@ -37,40 +37,10 @@ def select_spectrum_candidate(candidates: list[dict[str, object]], *, q_min: flo
     return selected, float(selected["Q"]) < q_min
 
 
-def select_data_window(
-    candidates: list[dict[str, object]], *, q_min: float, chi2_dof_tolerance: float
-) -> tuple[dict[str, object], bool]:
-    """Apply the original information-preserving primary-z rule."""
-    eligible = [
-        candidate
-        for candidate in candidates
-        if not candidate.get("numerical_failure", False)
-        and candidate.get("error") is None
-        and int(candidate.get("n_data", 0)) > int(candidate.get("n_params", 0))
-        and _is_finite(candidate.get("Q"))
-        and _is_finite(candidate.get("chi2_dof"))
-    ]
-    if not eligible:
-        raise ValueError("no overdetermined matrix-fit candidate is available")
-    passing = [candidate for candidate in eligible if float(candidate.get("Q", 0.0)) >= q_min]
-    pool = passing or eligible
-    best_chi2_dof = min(float(candidate["chi2_dof"]) for candidate in pool)
-    comparable = [candidate for candidate in pool if float(candidate["chi2_dof"]) <= best_chi2_dof + chi2_dof_tolerance]
-    selected = max(
-        comparable,
-        key=lambda candidate: (
-            int(candidate["n_data"]),
-            -float(candidate["chi2_dof"]),
-            float(candidate.get("Q", 0.0)),
-        ),
-    )
-    return selected, not bool(passing)
-
-
 def select_tuned_candidate(
-    candidates: list[dict[str, object]], *, q_min: float, chi2_dof_tolerance: float, qda: bool
+    candidates: list[dict[str, object]], *, q_min: float
 ) -> tuple[dict[str, object], bool]:
-    """Select among candidates usable at every authored tuning separation."""
+    """Select the robust best candidate usable at every authored tuning separation."""
     feasible = [
         candidate
         for candidate in candidates
@@ -80,12 +50,6 @@ def select_tuned_candidate(
     ]
     if not feasible:
         raise ValueError("no candidate is feasible at every tune_z value")
-    if not qda:
-        return select_data_window(
-            feasible,
-            q_min=q_min,
-            chi2_dof_tolerance=chi2_dof_tolerance,
-        )
     usable = [
         candidate
         for candidate in feasible
@@ -94,7 +58,7 @@ def select_tuned_candidate(
         and _is_finite(candidate.get("worst_chi2_dof"))
     ]
     if not usable:
-        raise ValueError("no overdetermined qDA candidate is feasible at every tune_z value")
+        raise ValueError("no overdetermined candidate is feasible at every tune_z value")
     selected = min(
         usable,
         key=lambda candidate: (

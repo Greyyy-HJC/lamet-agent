@@ -387,7 +387,7 @@ $$
 
 denominator 可以是先前的 job、NetCDF 文件，或者 contract 允许的有限非零常量。Hybrid jobs 还使用 `zs_fm`、`m0_gev` 和 `delta_m_gev` 来衔接短程与长程 prescription。
 
-Perturbative matching 有自己的 `scheme`，它必须与 `kernel_id` 中编码的 scheme token 一致。为 matching kernel 提供的参数会根据该 kernel 的要求进行验证。
+Perturbative matching 使用 `scheme`、`order`、`resummation` 和 `resummation_part`。目前 `order` 只支持 `nlo`。kernel id 会在运行时根据这些参数和上游 NetCDF attrs（`parton`、`target_observable`、`gfix`、`kernel_operator`）自动拼接。两个 resummation 字段都为空时使用固定阶 NLO；`rgr` 必须选择 `re` 或 `im`，`lrr` 不带 component 后缀。
 
 ### `inputs.correlators[].polarization` 和 Fourier sectors
 

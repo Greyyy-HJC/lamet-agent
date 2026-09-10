@@ -136,8 +136,6 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
         recommended, fallback = select_tuned_candidate(
             candidates,
             q_min=float(settings["q_min"]),
-            chi2_dof_tolerance=float(settings["chi2_dof_tolerance"]),
-            qda=False,
         )
     except ValueError as exc:
         raise FitNumericalError("no ordinary matrix-fit candidate is feasible across tune_z_values") from exc

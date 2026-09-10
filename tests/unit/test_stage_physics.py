@@ -879,7 +879,6 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
         "fit_scope": ["qda_ratio"],
         "prior_width": [1.0],
         "q_min": 0.9,
-        "chi2_dof_tolerance": 0.25,
         "tune_z_values": [1],
         "pt2_windows": [{"tmin": 2, "tmax": 5}, {"tmin": 3, "tmax": 6}],
     }
@@ -908,26 +907,44 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
     assert labels[-1]["ylabel"] == "bare matrix element"
 
 
-def test_correlator_window_selection_preserves_original_information_rule() -> None:
-    from lamet_agent.stages.correlator_analysis._selection import select_data_window, select_spectrum_candidate
+def test_correlator_candidate_selection_uses_robust_qda_rule() -> None:
+    from lamet_agent.stages.correlator_analysis._selection import select_spectrum_candidate, select_tuned_candidate
 
     candidates = [
-        {"id": "largest", "n_data": 24, "n_params": 10, "Q": 0.8, "chi2_dof": 0.70},
-        {"id": "best_chi2", "n_data": 18, "n_params": 10, "Q": 0.9, "chi2_dof": 0.50},
-        {"id": "outside_tolerance", "n_data": 25, "n_params": 10, "Q": 0.9, "chi2_dof": 0.76},
+        {
+            "id": "higher_min_q",
+            "n_data": 18,
+            "n_params": 10,
+            "min_Q": 0.9,
+            "worst_chi2_dof": 1.2,
+            "feasible_at_all_tune_z": True,
+        },
+        {
+            "id": "lower_min_q",
+            "n_data": 24,
+            "n_params": 10,
+            "min_Q": 0.8,
+            "worst_chi2_dof": 0.5,
+            "feasible_at_all_tune_z": True,
+        },
     ]
-    selected, fallback = select_data_window(candidates, q_min=0.05, chi2_dof_tolerance=0.25)
-    assert selected["id"] == "largest"
+    selected, fallback = select_tuned_candidate(candidates, q_min=0.05)
+    assert selected["id"] == "higher_min_q"
     assert fallback is False
-    candidates[0]["numerical_failure"] = True
-    selected, fallback = select_data_window(candidates, q_min=0.05, chi2_dof_tolerance=0.25)
-    assert selected["id"] == "best_chi2"
+
+    candidates[0]["min_Q"] = 0.8
+    selected, fallback = select_tuned_candidate(candidates, q_min=0.05)
+    assert selected["id"] == "lower_min_q"
     assert fallback is False
+
+    candidates[1]["worst_chi2_dof"] = 1.3
+    selected, fallback = select_tuned_candidate(candidates, q_min=0.05)
+    assert selected["id"] == "higher_min_q"
+
     with pytest.raises(ValueError, match="no overdetermined"):
-        select_data_window(
-            [{"id": "invalid", "n_data": 2, "n_params": 1, "Q": None, "chi2_dof": 1.0}],
+        select_tuned_candidate(
+            [{"id": "invalid", "n_data": 1, "n_params": 1, "min_Q": 0.8, "worst_chi2_dof": 1.0}],
             q_min=0.05,
-            chi2_dof_tolerance=0.25,
         )
 
     spectrum = [
@@ -1164,7 +1181,6 @@ def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, t
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 10.0,
         "q_min": 0.05,
-        "chi2_dof_tolerance": 0.25,
     }
     params = {
         "observable": "matrix_element",
@@ -1240,7 +1256,6 @@ def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 10.0,
         "q_min": 0.05,
-        "chi2_dof_tolerance": 0.25,
     }
     params = {
         "observable": "matrix_element",
@@ -1316,7 +1331,6 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
         "posterior_prior_error_scale": 3.0,
         "svdcut": 1e-6,
         "q_min": 0.05,
-        "chi2_dof_tolerance": 0.25,
     }
     params = {
         "observable": "matrix_element",
@@ -1398,6 +1412,8 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
         "n_params": 4,
         "Q": 0.8,
         "chi2_dof": 0.9,
+        "min_Q": 0.8,
+        "worst_chi2_dof": 0.9,
     }
     settings = {
         "fitting_form": "Breit",
@@ -1407,7 +1423,6 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 10.0,
         "q_min": 0.05,
-        "chi2_dof_tolerance": 0.25,
         "tune_z_values": [0],
     }
     params = {
@@ -1468,6 +1483,8 @@ def test_publish_model_average_applies_every_sibling_on_the_selected_dataset(mon
             "n_params": 4,
             "Q": 0.8,
             "chi2_dof": chi2_dof,
+            "min_Q": 0.8,
+            "worst_chi2_dof": chi2_dof,
             "logGBF": float(nstate),
         }
 
@@ -1480,7 +1497,6 @@ def test_publish_model_average_applies_every_sibling_on_the_selected_dataset(mon
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 10.0,
         "q_min": 0.05,
-        "chi2_dof_tolerance": 0.25,
         "model_average": True,
         "tune_z_values": [0],
     }
@@ -1569,6 +1585,8 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
             "n_params": 4,
             "Q": 0.8,
             "chi2_dof": 0.9,
+            "min_Q": 0.9,
+            "worst_chi2_dof": 0.9,
         },
         {
             "id": "matrix_002",
@@ -1586,6 +1604,8 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
             "n_params": 4,
             "Q": 0.9,
             "chi2_dof": 0.8,
+            "min_Q": 0.8,
+            "worst_chi2_dof": 0.8,
         },
     ]
     settings = {
@@ -1596,7 +1616,6 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
         "svdcut": 1e-6,
         "posterior_prior_error_scale": 10.0,
         "q_min": 0.05,
-        "chi2_dof_tolerance": 0.25,
         "tune_z_values": [0],
     }
     params = {
@@ -1680,6 +1699,8 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
             "n_params": 4,
             "Q": 0.8,
             "chi2_dof": 0.9,
+            "min_Q": 0.8,
+            "worst_chi2_dof": 0.9,
         },
     ]
     params = {
@@ -1691,7 +1712,6 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
         "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
         "q_min": 0.05,
-        "chi2_dof_tolerance": 0.25,
     }
     context = ToolContext(
         {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
@@ -3096,21 +3116,44 @@ def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(monkeypa
     assert line_colors == [COLOR_CYCLE[0]]
 
 
-def test_matching_component_follows_the_kernel_order() -> None:
+def test_matching_component_follows_resummation_part() -> None:
     from lamet_agent.stages.perturbative_matching._inspection import _matching_component
 
-    assert _matching_component("rgr_nlo_re", {}) == "re"
-    assert _matching_component("rgr_nlo_im", {}) == "im"
-    assert _matching_component("rgr_nlo_im", {"component": "imaginary"}) == "im"
-    assert _matching_component("rgr_nlo_re", {"component": "both"}) == "re"
-    assert _matching_component("nlo", {"component": "im"}) == "im"
-    assert _matching_component("lrr_nlo", {}) == "re"
-    for order, declared in (("rgr_nlo_re", "im"), ("rgr_nlo_im", "real")):
+    assert _matching_component("re", {}) == "re"
+    assert _matching_component("im", {}) == "im"
+    assert _matching_component("im", {"component": "imaginary"}) == "im"
+    assert _matching_component("re", {"component": "both"}) == "re"
+    assert _matching_component("", {"component": "im"}) == "im"
+    assert _matching_component("", {}) == "re"
+    for part, declared in (("re", "im"), ("im", "real")):
         with pytest.raises(ValueError, match="component"):
-            _matching_component(order, {"component": declared})
+            _matching_component(part, {"component": declared})
 
 
-def test_matching_inspection_reduces_the_component_named_by_the_order(tmp_path) -> None:
+def test_matching_kernel_id_uses_upstream_provenance_and_new_suffix_order() -> None:
+    from lamet_agent.kernels import matching_kernel_id
+
+    attrs = {
+        "parton": "quark",
+        "target_observable": "pdf",
+        "gfix": "CG",
+        "kernel_operator": "gt",
+    }
+    assert matching_kernel_id(attrs, scheme="hybrid", order="nlo") == "quark_pdf_cg_gt_hybrid_nlo"
+    assert (
+        matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="rgr", resummation_part="re")
+        == "quark_pdf_cg_gt_hybrid_nlo_rgr_re"
+    )
+    assert matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="lrr") == "quark_pdf_cg_gt_hybrid_nlo_lrr"
+    with pytest.raises(ValueError, match="only 'nlo'"):
+        matching_kernel_id(attrs, scheme="hybrid", order="nnlo")
+    with pytest.raises(ValueError, match="require.*resummation_part"):
+        matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="rgr")
+    with pytest.raises(ValueError, match="(?i)lrr"):
+        matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="lrr", resummation_part="im")
+
+
+def test_matching_inspection_reduces_the_component_named_by_resummation_part(tmp_path) -> None:
     from lamet_agent.stages.perturbative_matching._inspection import run
 
     values = [np.array([1.0 + 4.0j, 2.0 + 5.0j]), np.array([1.5 + 4.5j, 2.5 + 5.5j])]
@@ -3123,6 +3166,7 @@ def test_matching_inspection_reduces_the_component_named_by_the_order(tmp_path) 
         attrs={
             "momentum_gev": 2.0,
             "gfix": "CG",
+            "parton": "quark",
             "kernel_operator": "gt",
             "target_observable": "pdf",
             "renormalization_scheme": "msbar",
@@ -3130,9 +3174,10 @@ def test_matching_inspection_reduces_the_component_named_by_the_order(tmp_path) 
         name="quasi_distribution",
     )
     params = {
-        "kernel_id": "quark_pdf_cg_gt_msbar_rgr_nlo_im",
         "scheme": "msbar",
-        "order": "rgr_nlo_im",
+        "order": "nlo",
+        "resummation": "rgr",
+        "resummation_part": "im",
         "mu": 2.0,
         "lc_x_ls": [0.25, 0.75],
         "kernel_parameters": {},
@@ -3180,6 +3225,7 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
     params = {
         "kernel_id": "quark_pdf_cg_gt_ratio_nlo",
         "scheme": "ratio",
+        "order": "nlo",
         "mu": 2.0,
         "lc_x_ls": [-0.5, 0.5],
         "kernel_parameters": {"momentum_gev": 2.5, "scale_gev": 3.0},
@@ -3248,6 +3294,7 @@ def test_matching_plot_crops_even_quasi_to_nonnegative_x(monkeypatch, tmp_path) 
     params = {
         "kernel_id": "quark_pdf_cg_gt_ratio_nlo",
         "scheme": "ratio",
+        "order": "nlo",
         "mu": 2.0,
         "lc_x_ls": x,
         "kernel_parameters": {},

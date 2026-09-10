@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import math
-from pathlib import Path
 import re
 import types
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
@@ -23,8 +22,6 @@ from lamet_agent.contract import (
     Value,
     stage_job_rules,
 )
-from lamet_agent.kernels import load_kernel
-from lamet_agent.ui import warning
 
 
 _DATA_KERNEL_ARGUMENTS = frozenset({"x_out", "x_in"})
@@ -185,17 +182,19 @@ def _kernel_parameter_issues(kernel: Any, values: dict[str, Any]) -> list[Issue]
 # ruff: disable[E501]
 # fmt: off
 PARAM_RULES = (
-    Depends("", "kernel_id", physics="The matching kernel is one public filename stem observable_gauge_current_scheme_order; the file is the kernel identity and there is no alias registry, so its tokens must match the quasi input provenance."),
-    Depends("", "scheme", physics="The matching scheme is explicit and must agree with the scheme token of the selected kernel, because the coefficient function and the upstream renormalization convention are one physical choice."),
+    Depends("", "scheme", physics="The matching scheme is explicit and selects the coefficient function and upstream renormalization convention."),
     Value("scheme", Literal["ratio", "hybrid", "msbar"], physics="The three schemes differ by their coefficient function: MSbar adds 0.5/|1-xi| to the ratio kernel, and hybrid instead adds the Wilson-line term set by the switching distance."),
-    Depends("", "order", physics="The perturbative order and its resummation are one explicit choice, and equal the kernel filename tail after the scheme token."),
-    Value("order", Literal["nlo", "rgr_nlo_re", "rgr_nlo_im", "lrr_nlo"], physics="Fixed-order NLO applies one matrix at mu; rgr_nlo_re and rgr_nlo_im resum the running coupling by building each row at its own mu0 and evolving it to mu, and additionally select the real or imaginary quasi component; lrr_nlo resums the leading renormalon."),
+    Depends("", "order", physics="The perturbative order remains explicit in the manifest and is encoded in the runtime-derived kernel filename."),
+    Value("order", Literal["nlo"], physics="Only next-to-leading order matching kernels are currently available."),
+    Recommends("", "resummation", physics="Matching uses fixed-order NLO unless an explicit resummation is selected.", default=""),
+    Value("resummation", Literal["", "rgr", "lrr"], physics="Empty selects fixed-order NLO; rgr resums the running coupling and lrr resums the leading renormalon."),
+    Recommends("", "resummation_part", physics="The component suffix is only used by RGR kernels.", default=""),
+    Value("resummation_part", Literal["", "re", "im"], physics="RGR selects either the real or imaginary component; fixed-order and LRR kernels have no component suffix."),
     Depends("", "mu", physics="The matching scale is the MS-bar scale of the published light-cone distribution in GeV, conventionally 2 GeV, and enters every coefficient function through the logarithm ln(4 y^2 Pz^2 / mu^2)."),
     Depends("", "lc_x_ls", physics="A list is the exact light-cone output grid; a start/stop mapping instead keeps the quasi-grid points inside the closed window, and never interpolates."),
-    Recommends("", "kernel_parameters", physics="Kernel-specific controls are explicit and are validated against the selected kernel signature; every kernel accepts eps, the regulator keeping plus-prescription denominators finite, and rgr_nlo_* kernels add kappa and mu_min_gev, which build row x at mu0=2*kappa*x*Pz and zero every row with mu0 below mu_min_gev, so together they impose the cutoff x_min=mu_min_gev/(2*kappa*Pz) and keep mu0 above the Landau pole.", default={}),
+    Recommends("", "kernel_parameters", physics="Kernel-specific controls are explicit and are validated against the selected kernel signature; every kernel accepts eps, the regulator keeping plus-prescription denominators finite, and nlo_rgr_* kernels add kappa and mu_min_gev, which build row x at mu0=2*kappa*x*Pz and zero every row with mu0 below mu_min_gev, so together they impose the cutoff x_min=mu_min_gev/(2*kappa*Pz) and keep mu0 above the Landau pole.", default={}),
     Provides("", "hybrid", "scheme", physics="Only hybrid matching owns a Wilson-line switching distance, because only its coefficient function contains that term."),
     Depends("hybrid", "zs_fm", physics="The switching distance in fm is where the ratio scheme gives way to Wilson-line subtraction; the kernel uses the dimensionless zs*Pz, and it is the same physical distance the hybrid renormalization applied to this input."),
-    Value("kernel_id", str, physics="Kernel ids are safe public filename stems.", validator=_valid_kernel_id),
     Value("mu", (int, float), physics="The matching scale is finite and positive, and must stay far enough above LambdaQCD for a perturbative coupling to exist.", validator=_positive),
     Value("lc_x_ls", (list, dict), physics="The light-cone grid is increasing or has finite start/stop bounds.", validator=_valid_lc_x_ls),
     Value("kernel_parameters", dict, physics="Kernel parameters are an explicit mapping."),
@@ -223,30 +222,14 @@ SYSTEMATICS_RULES = (
 
 
 def check_kernel_shape(context: CheckContext) -> Issue | None:
-    kernel_id = context.params["kernel_id"]
-    if kernel_id.startswith("_") or "/" in kernel_id or "\\" in kernel_id:
-        return Issue(
-            "kernel_id", "must be a public filename stem", "Kernel selection is lexical and has no alias registry."
-        )
-    tokens = kernel_id.split("_")
-    schemes = [scheme for scheme in ("ratio", "hybrid", "msbar") if scheme in tokens]
-    if len(schemes) != 1:
-        return Issue(
-            "kernel_id", "must contain exactly one scheme token", "The filename carries the kernel's physical scheme."
-        )
-    if context.params.get("scheme") != schemes[0]:
-        return Issue(
-            "scheme",
-            f"must equal {schemes[0]!r} for kernel {kernel_id!r}",
-            "The stage scheme and filename scheme are the same physical choice.",
-        )
-    order = "_".join(tokens[tokens.index(schemes[0]) + 1 :])
-    if context.params.get("order") != order:
-        return Issue(
-            "order",
-            f"must equal {order!r} for kernel {kernel_id!r}",
-            "Kernel filenames are observable_gauge_current_scheme_order, so the tail after the scheme is the order.",
-        )
+    resummation = context.params.get("resummation", "")
+    part = context.params.get("resummation_part", "")
+    if resummation == "" and part:
+        return Issue("resummation_part", "requires resummation='rgr'", "Only RGR kernels select a real or imaginary component.")
+    if resummation == "rgr" and part not in {"re", "im"}:
+        return Issue("resummation_part", "must be 're' or 'im' for RGR", "RGR kernels are component-specific.")
+    if resummation == "lrr" and part:
+        return Issue("resummation_part", "must be empty for LRR", "LRR kernels have no component suffix.")
     return None
 
 
@@ -257,69 +240,9 @@ def check_x_output(context: CheckContext) -> Issue | None:
     return None
 
 
-def check_kernel_resources(context: CheckContext) -> Issue | None:
-    kernel_id = context.params.get("kernel_id")
-    if not isinstance(kernel_id, str) or not _valid_kernel_id(kernel_id):
-        return None
-    root = Path(__file__).parents[2] / "kernels"
-    if not (root / f"{kernel_id}.py").is_file():
-        return Issue(
-            "kernel_id",
-            f"kernel implementation does not exist: {kernel_id}.py",
-            "Every selected kernel has one shipped implementation module.",
-        )
-    if not (root / f"{kernel_id}.md").is_file():
-        return Issue(
-            "kernel_id",
-            f"kernel formula document does not exist: {kernel_id}.md",
-            "Every selected kernel ships its formula provenance.",
-        )
-    return None
-
-
-def check_kernel_parameters(context: CheckContext) -> list[Issue] | Issue | None:
-    """Validate the explicit parameter mapping against the selected kernel."""
-    values = context.params.get("kernel_parameters")
-    kernel_id = context.params.get("kernel_id")
-    if not isinstance(values, dict) or not isinstance(kernel_id, str) or not _valid_kernel_id(kernel_id):
-        return None
-    if check_kernel_shape(context) is not None or check_kernel_resources(context) is not None:
-        return None
-    try:
-        kernel = load_kernel(kernel_id)
-    except Exception as exc:
-        return Issue(
-            "kernel_id",
-            f"cannot load kernel signature: {exc}",
-            "The selected kernel must expose an inspectable kernel() callable.",
-        )
-    try:
-        signature = inspect.signature(kernel)
-        kernel_uses_zs = "zs_fm" in signature.parameters
-        stage_supplies_zs = context.params.get("scheme") == "hybrid"
-        if kernel_uses_zs != stage_supplies_zs:
-            expected = "include" if stage_supplies_zs else "omit"
-            return Issue(
-                "kernel_id",
-                f"kernel signature must {expected} stage-managed zs_fm for scheme {context.params.get('scheme')!r}",
-                "The matching scheme determines whether the stage injects a Wilson-line switching distance.",
-            )
-        issues = _kernel_parameter_issues(kernel, values)
-        overridden = sorted(_CONTEXT_KERNEL_ARGUMENTS.intersection(values))
-        if not issues and overridden:
-            warning(f"matching kernel_parameters overrides stage context: {overridden}")
-        return issues
-    except (TypeError, ValueError) as exc:
-        return Issue(
-            "kernel_id",
-            f"cannot inspect kernel signature: {exc}",
-            "The selected kernel must expose an inspectable kernel() callable.",
-        )
-
-
 JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 
-CHECKS = (check_kernel_shape, check_x_output, check_kernel_resources, check_kernel_parameters)
+CHECKS = (check_kernel_shape, check_x_output)
 
 
 def check_systematics(context: CheckContext) -> Issue | None:

@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_gi_gtg5_hybrid_lrr_nlo; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=ef7e5216c3ffc113; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_gi_gtg5_hybrid_nlo_lrr; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=ef7e5216c3ffc113; paper_used=true -->
 $$C_{\rm gtg5}^{(\rm hybrid,LRR)}(\xi,L,y,P_z,\mu,z_s) = \left[\,C_{\rm gtg5}^{(\rm hybrid,NLO)}(\xi,L,y,P_z,\mu,z_s) + r_0\, C_z(\xi,y,P_z,z_s)\,\right]^{D}_{+(1)} \exp\!\left(-\,r_{\rm sumPV}\, C_z(\xi,y,P_z,z_s)\right)$$
 
 with $\xi=x/y$, $L=\ln(4y^2P_z^2/\mu^2)$, and the plus-prescription defined as in the paper:
@@ -25,4 +25,3 @@ The matrix implementation is $M_{\rm LRR} = (M_{\rm fix} + r_0 M_{C_z})\exp(-M_{
 
 #### Consistency check
 The code reproduces Eqs. (12)–(17) of arXiv:2305.05212 term by term: the splitting function $(1+\xi^2)/(1-\xi)$, the logarithms $\ln(y^2P_z^2/\mu^2)$ and $\ln(4\xi(1-\xi))$ (with the $\ln 4$ constant removed as documented), the $\pm1$ constants, the $3/(2|1-\xi|)$ tail, the Si-term with strength $3/2$, the plus-prescription with domain $(-\infty,\infty)$ and subtraction at $x_0=1$, the renormalon shape $C_z$ of Eq. (17) with $\epsilon_m$ regulator, and the PV Borel sum $r_{\rm sumPV}$ of Eq. (13). The only discrepancy is notational: the paper writes the plus-prescription as $[\,\cdot\,]^{D}_{+(x_0)}$ with $D$ as a superscript and $x_0$ as a subscript, which the code implements numerically via column-sum-to-zero; the code's $r_0$ uses $N_m=0.575$ (paper's $n_f=3$ value) and the paper's Eq. (12) with $n=0$, which matches. No other discrepancies found.
-

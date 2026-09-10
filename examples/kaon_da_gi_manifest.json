@@ -418,9 +418,10 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "kernel_id": "da_gi_gzg5_ratio_nlo",
         "scheme": "ratio",
         "order": "nlo",
+        "resummation": "",
+        "resummation_part": "",
         "mu": 2.0,
         "lc_x_ls": {
           "start": -1.0,

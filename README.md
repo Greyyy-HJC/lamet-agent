@@ -454,9 +454,11 @@ The denominator may be an earlier job, a NetCDF file, or a finite nonzero
 constant where the contract permits it. Hybrid jobs additionally use `zs_fm`,
 `m0_gev`, and `delta_m_gev` to join short- and long-distance prescriptions.
 
-Perturbative matching has its own `scheme`, which must agree with the scheme
-token encoded in `kernel_id`. The parameters supplied for a matching kernel are
-validated against that kernel's requirements.
+Perturbative matching has its own `scheme`, `order`, `resummation`, and
+`resummation_part`. The matching kernel id is derived at runtime from those
+choices and the upstream NetCDF provenance (`parton`, `target_observable`,
+`gfix`, and `kernel_operator`). Empty resummation fields select fixed-order
+NLO; `rgr` requires `re` or `im`, while `lrr` has no component suffix.
 
 ### `inputs.correlators[].polarization` and Fourier sectors
 

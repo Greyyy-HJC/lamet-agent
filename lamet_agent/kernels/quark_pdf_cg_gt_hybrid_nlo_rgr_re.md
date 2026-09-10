@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gt_hybrid_rgr_nlo_re; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=82c229e154ae2499; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gt_hybrid_nlo_rgr_re; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=82c229e154ae2499; paper_used=true -->
 $$C_{\rm RGR}^{(1)}\left(\xi,\frac{\mu}{|x|P_z}\right) = \left[\,C^{\rm ratio(1)}\left(\xi,\frac{\mu}{|x|P_z}\right) + \frac{\alpha_s C_F}{2\pi}\frac{3}{2}\left(-\frac{1}{|1-\xi|}+\frac{2\,{\rm Si}[(1-\xi)|y|z_sP_z]}{\pi(1-\xi)}\right)\,\right]_{+(1)}^{[-\infty,\infty]} + \delta(1-\xi),$$
 
 where $\xi=x/y$, $L=\ln(4y^2P_z^2/\mu^2)$, and the ratio-scheme coefficient is
@@ -16,4 +16,3 @@ The RGR kernel is built row-by-row: for each light-cone $x$, the fixed-order mat
 #### Consistency check
 
 The code reproduces App. 'A Method Solving RG Equation' (Eq. matchingRGI) of arXiv:2209.01236 exactly for the NLO hybrid kernel: the regular coefficient $C^{\rm ratio(1)}$ matches Eq. (2.16) term-by-term (the splitting function, the $L$ log with argument $4y^2P_z^2/\mu^2$, the $\ln[(1-\xi)/\xi]$ and $\ln[\xi/(\xi-1)]$ branches, the $3/2$ terms, and the $\arctan/\operatorname{arctanh}$ piece via the code's `_atan_piece`), the plus-prescription domains and subtraction point $+(1)$ match the paper's bracket structure verbatim, and the hybrid correction (the ${\rm Si}$ term with $z_s|y|P_z$ argument) matches Eq. (2.20). The $\delta(1-\xi)$ term is implicit in the plus prescription and restored by the column-sum. No discrepancies found.
-

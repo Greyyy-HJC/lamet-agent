@@ -146,7 +146,6 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "kernel_id": "quark_pdf_cg_gt_hybrid_nlo",
         "scheme": "hybrid",
         "order": "nlo",
         "mu": 2.0,

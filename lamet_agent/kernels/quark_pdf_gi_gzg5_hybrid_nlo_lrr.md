@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_gi_gzg5_hybrid_lrr_nlo; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=a588104a073109ef; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_gi_gzg5_hybrid_nlo_lrr; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=a588104a073109ef; paper_used=true -->
 $$C_{g_5}^{(1)}(\xi,L,\mu,P_z,z_s) = \frac{\alpha_s C_F}{2\pi} \left[ \frac{1+\xi^2}{1-\xi} \left( L - \ln 4 + \ln(4\xi(1-\xi)) - 1 \right) + 1 + \frac{3}{2}\frac{1}{|1-\xi|} + \frac{3}{2}\left( -\frac{1}{|1-\xi|} + \frac{2\,\mathrm{Si}((1-\xi)|y|z_s P_z)}{\pi(1-\xi)} \right) \right]^{(-\infty,\infty)}_{+(1)}$$
 
 with $\xi = x/y$, $L = \ln(4y^2P_z^2/\mu^2)$, and the plus-prescription defined as in the paper:
@@ -22,4 +22,3 @@ with $w = -2\pi/(\alpha_s\beta_0)$, $N_m = 0.575$ for $n_f=3$, and $b, c_1, c_2$
 #### Consistency check
 
 The code reproduces Eqs. (12)–(17) of arXiv:2305.05212 with the following observations: (i) the fixed-order part matches Eq. (C7) of the companion paper (arXiv:2604.00143) with the $\ln 4$ constant removed from the log, consistent with the paper's notation; (ii) the hybrid correction matches Eq. (C8) with strength $3/2$; (iii) the renormalon shape $C_z$ matches Eq. (17) exactly, including the $\epsilon_m$ regularization; (iv) the PV Borel sum $r_{\mathrm{sumPV}}$ matches Eq. (13) with the real-part prescription; (v) the matrix-exponential assembly matches the paper's LRR prescription. No discrepancies found.
-

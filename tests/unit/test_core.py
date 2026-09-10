@@ -2023,68 +2023,51 @@ def test_correlator_descriptors_use_physical_field_names() -> None:
                 assert "observable" not in current
 
 
-def test_matching_check_reports_the_exact_parameter_path() -> None:
+def test_matching_check_reports_resummation_part_constraints() -> None:
     contract = _load_stage_contract("perturbative_matching")
     context = CheckContext(
         {},
         "perturbative_matching",
         "job",
-        {"kernel_id": "quark_pdf_cg_gt_hybrid_nlo", "scheme": "ratio", "zs_fm": 0.2},
+        {
+            "scheme": "ratio",
+            "order": "nlo",
+            "resummation": "",
+            "resummation_part": "re",
+            "zs_fm": 0.2,
+        },
         {"quasi": "earlier"},
     )
     issues = evaluate_checks(contract.CHECKS, context)
     assert [(issue.path, issue.message) for issue in issues] == [
-        ("scheme", "must equal 'hybrid' for kernel 'quark_pdf_cg_gt_hybrid_nlo'")
+        ("resummation_part", "requires resummation='rgr'")
     ]
 
 
-def test_matching_kernel_parameters_follow_the_selected_signature(capsys) -> None:
+def test_matching_contract_accepts_resummation_combinations() -> None:
     contract = _load_stage_contract("perturbative_matching")
 
-    def issues(kernel_id: str, scheme: str, parameters: dict[str, object], **extra: object):
+    def issues(resummation: str, part: str):
         params = {
-            "kernel_id": kernel_id,
-            "scheme": scheme,
-            "order": "_".join(kernel_id.split("_")[kernel_id.split("_").index(scheme) + 1 :]),
+            "scheme": "hybrid",
+            "order": "nlo",
+            "resummation": resummation,
+            "resummation_part": part,
             "mu": 2.0,
             "lc_x_ls": [0.0, 1.0],
-            "kernel_parameters": parameters,
-            **extra,
+            "kernel_parameters": {},
+            "zs_fm": 0.18,
         }
         context = CheckContext({}, "perturbative_matching", "job", params, {"quasi": "earlier"})
         return evaluate_checks(contract.CHECKS, context)
 
-    ratio = "quark_pdf_cg_gt_ratio_nlo"
-    rgr = "quark_pdf_cg_gt_hybrid_rgr_nlo_re"
-    rgr_parameters = {"kappa": 1, "mu_min_gev": 0.6}
-    assert issues(rgr, "hybrid", rgr_parameters, hybrid={"zs_fm": 0.18}) == []
-    assert issues(ratio, "ratio", {}, hybrid={"zs_fm": 0.18}) == []
-    switched = issues(ratio, "ratio", rgr_parameters)
-    assert {issue.path for issue in switched} == {
-        "kernel_parameters.kappa",
-        "kernel_parameters.mu_min_gev",
-    }
-    assert any(
-        issue.path == "kernel_parameters.rgr_kappa"
-        for issue in issues(rgr, "hybrid", {"rgr_kappa": 1.0}, hybrid={"zs_fm": 0.18})
-    )
-    assert any(
-        issue.path == "kernel_parameters.kappa"
-        for issue in issues(rgr, "hybrid", {"kappa": True}, hybrid={"zs_fm": 0.18})
-    )
-    for coordinate in ("x_out", "x_in"):
-        current = issues(rgr, "hybrid", {coordinate: [0.0, 1.0]}, hybrid={"zs_fm": 0.18})
-        assert any(issue.path == f"kernel_parameters.{coordinate}" and "data" in issue.message for issue in current)
-    assert (
-        issues(
-            rgr,
-            "hybrid",
-            {"momentum_gev": 2.5, "scale_gev": 3.0, "zs_fm": 0.2},
-            hybrid={"zs_fm": 0.18},
-        )
-        == []
-    )
-    assert "ATTENTION: matching kernel_parameters overrides stage context" in capsys.readouterr().out
+    assert issues("", "") == []
+    assert issues("rgr", "re") == []
+    assert issues("rgr", "im") == []
+    assert issues("lrr", "") == []
+    assert issues("", "re")[0].path == "resummation_part"
+    assert issues("lrr", "im")[0].path == "resummation_part"
+    assert issues("rgr", "")[0].path == "resummation_part"
 
 
 def test_matching_kernel_parameter_rules_require_a_dict_and_required_signature_values() -> None:
@@ -2104,39 +2087,6 @@ def test_matching_kernel_parameter_rules_require_a_dict_and_required_signature_v
         ("kernel_parameters.cutoff", "is required by the selected kernel signature")
     ]
     assert contract._kernel_parameter_issues(kernel, {"cutoff": 2, "enabled": False}) == []
-
-
-def test_matching_check_requires_zs_fm_exactly_for_hybrid_kernels(monkeypatch) -> None:
-    contract = _load_stage_contract("perturbative_matching")
-
-    def without_zs(x_out, x_in, *, momentum_gev: float, scale_gev: float):
-        return None
-
-    def with_zs(x_out, x_in, *, momentum_gev: float, scale_gev: float, zs_fm: float):
-        return None
-
-    context = CheckContext(
-        {},
-        "perturbative_matching",
-        "job",
-        {
-            "kernel_id": "quark_pdf_cg_gt_hybrid_nlo",
-            "scheme": "hybrid",
-            "order": "nlo",
-            "kernel_parameters": {},
-            "zs_fm": 0.18,
-        },
-        {"quasi": "earlier"},
-    )
-    monkeypatch.setattr(contract, "load_kernel", lambda _kernel_id: without_zs)
-    issue = contract.check_kernel_parameters(context)
-    assert isinstance(issue, Issue) and "must include" in issue.message
-
-    context.params["kernel_id"] = "quark_pdf_cg_gt_ratio_nlo"
-    context.params["scheme"] = "ratio"
-    monkeypatch.setattr(contract, "load_kernel", lambda _kernel_id: with_zs)
-    issue = contract.check_kernel_parameters(context)
-    assert isinstance(issue, Issue) and "must omit" in issue.message
 
 
 def test_renormalization_type_controls_inputs_and_requires_a_kernel(capsys) -> None:
@@ -2195,7 +2145,7 @@ def test_renormalization_type_controls_inputs_and_requires_a_kernel(capsys) -> N
 
     wrong_signature = load_manifest(examples / "pion_da_gi_manifest.json")
     fit_params = wrong_signature.document["stages"]["renormalization"]["jobs"][0]
-    fit_params["kernel_id"] = "da_gi_gzg5_ratio_nlo"
+    fit_params["kernel_id"] = "quark_da_gi_gzg5_ratio_nlo"
     assert any(issue.path.endswith("kernel_id") and "z_fm" in issue.message for issue in wrong_signature.validate())
 
     redundant_type = load_manifest(examples / "pion_pdf_gi_manifest.json")
@@ -2537,8 +2487,9 @@ def test_deterministic_stage_workflow_bypasses_the_backend(tmp_path: Path, monke
         "perturbative_matching",
         "matching",
         {
-            "kernel_id": "quark_pdf_cg_gt_ratio_nlo",
             "scheme": "ratio",
+            "resummation": "",
+            "resummation_part": "",
             "mu": 2.0,
             "lc_x_ls": [0.0, 1.0],
             "kernel_parameters": {},
@@ -2609,7 +2560,6 @@ def test_correlator_workflow_asks_only_for_typed_fit_parameters(tmp_path: Path, 
             "component": "re",
             "pt2_windows": [{"tmin": 2, "tmax": 8}],
             "q_min": 0.05,
-            "chi2_dof_tolerance": 0.25,
         },
         {},
         {},
@@ -2996,7 +2946,6 @@ def test_correlator_workflow_recommends_once_more_after_low_quality(tmp_path: Pa
             "analysis_method": "lsqfit",
             "fit_scope": ["qda_ratio"],
             "q_min": 0.05,
-            "chi2_dof_tolerance": 0.25,
             "pt2_windows": [{"tmin": 2, "tmax": 8}],
         },
         {},
@@ -3071,7 +3020,6 @@ def test_correlator_workflow_publishes_best_candidate_when_q_min_is_never_met(
             "analysis_method": "lsqfit",
             "fit_scope": ["qda_ratio"],
             "q_min": 0.05,
-            "chi2_dof_tolerance": 0.25,
             "pt2_windows": [{"tmin": 2, "tmax": 8}],
         },
         {},
@@ -3229,13 +3177,13 @@ def test_matrix_retry_uses_the_same_cross_scan_selector_as_publication(tmp_path:
 
     def fit(context, *, tune_z_values):
         second = tune_z_values == [2.0]
-        # Attempt 1 locally selects matrix_002, while the global tolerance rule selects its matrix_001.
+        # Attempt 1 locally selects matrix_002, while the global robust rule selects its matrix_001.
         context.state["matrix_element_candidates"] = (
             [
                 {
                     "id": "matrix_001",
-                    "Q": 0.01,
-                    "chi2_dof": 0.9,
+                    "min_Q": 0.01,
+                    "worst_chi2_dof": 0.9,
                     "n_data": 20,
                     "n_params": 5,
                     "feasible_at_all_tune_z": True,
@@ -3245,16 +3193,16 @@ def test_matrix_retry_uses_the_same_cross_scan_selector_as_publication(tmp_path:
             else [
                 {
                     "id": "matrix_001",
-                    "Q": 0.01,
-                    "chi2_dof": 1.0,
+                    "min_Q": 0.01,
+                    "worst_chi2_dof": 1.0,
                     "n_data": 50,
                     "n_params": 5,
                     "feasible_at_all_tune_z": True,
                 },
                 {
                     "id": "matrix_002",
-                    "Q": 0.01,
-                    "chi2_dof": 1.2,
+                    "min_Q": 0.01,
+                    "worst_chi2_dof": 1.2,
                     "n_data": 100,
                     "n_params": 5,
                     "feasible_at_all_tune_z": True,
@@ -3269,8 +3217,6 @@ def test_matrix_retry_uses_the_same_cross_scan_selector_as_publication(tmp_path:
         selected, _fallback = select_tuned_candidate(
             context.state["matrix_element_candidates"],
             q_min=0.05,
-            chi2_dof_tolerance=0.25,
-            qda=False,
         )
         assert candidate_id == selected["id"]
         published.append(candidate_id)
@@ -3288,7 +3234,6 @@ def test_matrix_retry_uses_the_same_cross_scan_selector_as_publication(tmp_path:
             "analysis_method": "lsqfit",
             "fit_scope": ["3pt_ratio"],
             "q_min": 0.05,
-            "chi2_dof_tolerance": 0.25,
             "pt2_windows": [{"tmin": 2, "tmax": 8}],
             "pt3_windows": [{"tau_cut": 1}],
         },
@@ -3301,9 +3246,9 @@ def test_matrix_retry_uses_the_same_cross_scan_selector_as_publication(tmp_path:
 
     workflow.run(context, LlmSession(_ScriptedBackend([]), tmp_path / "llm.md", max_recommendation_calls=2))
 
-    assert published == ["attempt_001_matrix_001"]
-    assert context.params["pt2_windows"] == [{"tmin": 2, "tmax": 8}]
-    assert context.params["tune_z_values"] == [1.0]
+    assert published == ["attempt_002_matrix_001"]
+    assert context.params["pt2_windows"] == [{"tmin": 3, "tmax": 9}]
+    assert context.params["tune_z_values"] == [2.0]
     assert len(context.state["matrix_element_candidates"]) == 3
     assert len({candidate["id"] for candidate in context.state["matrix_element_candidates"]}) == 3
     assert context.state["fallback_no_q_passing"] is True
@@ -3372,7 +3317,6 @@ def test_qda_retry_treats_invalid_recommendations_as_failed_attempts(
             "analysis_method": "lsqfit",
             "fit_scope": ["qda_ratio"],
             "q_min": 0.05,
-            "chi2_dof_tolerance": 0.25,
             "pt2_windows": [{"tmin": 2, "tmax": 8}],
         },
         {},

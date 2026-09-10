@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=da_gi_gtg5_hybrid_lrr_nlo; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=74ae10e71ca9cc53; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_da_gi_gtg5_hybrid_nlo_lrr; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=74ae10e71ca9cc53; paper_used=true -->
 $$M_{\mathrm{LRR}} = \left(M_{\mathrm{fix}} + r_0\, M_{C_z}\right) \exp\!\left(-M_{C_z}\, r_{\mathrm{sumPV}}\right),$$
 
 where $M_{\mathrm{fix}}$ is the fixed-order hybrid-scheme kernel for the $\gamma^t\gamma_5$ meson-DA operator, discretized as
@@ -44,4 +44,3 @@ with $N_m(n_f=3)=0.575$, $\beta_0 = 9$, $b = \beta_1/(2\beta_0^2)$, $c_1 = (\bet
 #### Consistency check
 
 The code implements Eqs. (12)–(17) of arXiv:2305.05212 as follows: Eq. (12) ($r_n$) matches the paper’s form with $N_m=0.575$ for $n_f=3$; Eq. (13) ($r_{\mathrm{sumPV}}$) matches the PV Borel integral with the exponential-integral evaluation; Eq. (17) ($C_z$) matches the paper’s Fourier transform of the regularized linear-$z$ tail, including the $\epsilon_m$ regulator and the plus-function structure. The fixed-order kernel $V_{qq,h}^{(1)}$ is taken from arXiv:2212.14415 (Eq. (4.15)), not from 2305.05212, and the hybrid Wilson-line term $3\,\mathrm{Si}(z_s P_z (y-x))/(\pi(y-x))$ is the paper’s scheme-specific correction. The code’s plus prescription (column-sum-to-zero over the full quasi grid) matches the paper’s bracket definition with the subtraction domain $[0,1]$. No discrepancies were found between the code and the paper for the renormalon resummation; the fixed-order DA coefficient is from a different reference, which the code states explicitly.
-

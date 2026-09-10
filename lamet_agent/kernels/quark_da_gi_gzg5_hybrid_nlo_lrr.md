@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=da_gi_gzg5_hybrid_lrr_nlo; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=e9260ed2b54685c5; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_da_gi_gzg5_hybrid_nlo_lrr; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=e9260ed2b54685c5; paper_used=true -->
 $$C_{gzg5}^{{\rm hybrid,LRR}}(x,y,\mu,P_z) = \frac{1}{2}V_{qq,p}(x,y,\mu,P_z) + \frac{3\,{\rm Si}\!\left(z_s P_z (y-x)\right)}{\pi (y-x)}$$
 
 where $V_{qq,p}$ is the $\gamma^z\gamma_5$ DA matching kernel of Eq. (4.15) of arXiv:2212.14415,
@@ -30,4 +30,3 @@ with the plus prescription $[f(x)]_+ = f(x) - \delta(1-x)\int_0^1 f(\nu)d\nu$ ap
 #### Consistency check
 
 The code reproduces Eqs. (12)–(17) of arXiv:2305.05212 exactly. The fixed-order part matches Eq. (4.15) of arXiv:2212.14415 (the paper's reference for the $\gamma^z\gamma_5$ DA kernel), including the logarithms $l_v = \ln(4P_z^2 v^2/\mu^2)$ and the plus prescription at $x=y$ with column-sum-to-zero over $x\in[0,1]$. The renormalon resummation follows Eqs. (12)–(17) verbatim: $r_n$ from Eq. (12), the PV Borel integral of Eq. (13) evaluated as the exponential-integral sum, and the Fourier transform of Eq. (17) with the $\epsilon_m$ regulator. The matrix exponential $\exp(-M_{C_z} r_{\rm sumPV})$ implements the all-order resummation of the leading renormalon series, with $r_0$ subtracting the $\mathcal{O}(\alpha_s)$ term to avoid double counting. No discrepancies found.
-

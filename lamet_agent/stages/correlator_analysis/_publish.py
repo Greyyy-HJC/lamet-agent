@@ -194,14 +194,8 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         deterministic, fallback = select_tuned_candidate(
             matrix_candidates,
             q_min=float(lsqfit["q_min"]),
-            chi2_dof_tolerance=float(lsqfit["chi2_dof_tolerance"]),
-            qda=scope.is_qda,
         )
-        selection_rule = (
-            f"original_qda_robust_rule(min_Q_then_worst_chi2_dof, fallback_no_q_passing={fallback})"
-            if scope.is_qda
-            else f"original_data_window_rule(fallback_no_q_passing={fallback})"
-        )
+        selection_rule = f"robust_rule(min_Q_then_worst_chi2_dof, fallback_no_q_passing={fallback})"
     else:
         deterministic, fallback = select_spectrum_candidate(candidates, q_min=float(lsqfit["q_min"]))
         selection_rule = "highest_quality_then_lowest_chi2_dof_then_id"

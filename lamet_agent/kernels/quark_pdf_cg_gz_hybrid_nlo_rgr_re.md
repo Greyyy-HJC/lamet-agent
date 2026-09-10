@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gz_hybrid_rgr_nlo_re; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=c15b674e81e02d2d; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gz_hybrid_nlo_rgr_re; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=c15b674e81e02d2d; paper_used=true -->
 $$C_{\rm RGR}\left(\xi,\frac{\mu}{|x|P_z}\right) = \sum_{x_i} \delta(x-x_i)\, \Theta\!\left(2\kappa x_i P_z - \mu_{\rm min}\right) \left[ \mathcal{P}\exp\!\left(\int_{\ln(2\kappa x_i P_z)^2}^{\ln\mu^2} \frac{d\ln\mu'^2}{2}\, \frac{\alpha_s(\mu')}{4\pi} P^{(0)}(\xi) + \left(\frac{\alpha_s(\mu')}{4\pi}\right)^2 P^{(1)}_{\rm val}(\xi) \right) \right]_{x_i} C^{(1)}_{\rm hyb}\!\left(\xi,\frac{2\kappa x_i P_z}{|x_i|P_z}\right),$$
 
 where $\xi=x/y$, $L=\ln(4y^2P_z^2/\mu^2)$, and the fixed-order hybrid kernel at the row’s own scale is (from Eq. (2.19)–(2.20) of the paper, with the $\gamma^z$ shift of Eq. (2.15)):
@@ -16,4 +16,3 @@ The resummation is not fixed-order: each row $x_i$ is matched at $\mu_0(x_i)=2\k
 #### Consistency check
 
 The code reproduces the paper’s hybrid-scheme matching kernel of App. A (Eqs. (2.16), (2.19)–(2.20)) and the RGR method of Eq. (matchingRGI) exactly: the regular coefficient, the logarithms (with argument $4y^2P_z^2/\mu^2$), the plus-prescription with its domain $[0,1]$ and subtraction point $+(1)$, the $\delta(1-\xi)$ term (absorbed into the plus prescription), and the scheme-specific Si-correction all match the LaTeX source verbatim. The only discrepancy is notational: the paper writes the $\gamma^z$ shift only for the $\overline{\rm MS}$ scheme (Eq. (2.15)), while the code applies the same $2(1-\xi)$ shift to the ratio/hybrid kernels; this is a deliberate extension consistent with Eq. (2.20) (the hybrid-vs-ratio piece is operator-independent), and the code’s comment documents it. No other discrepancies were found.
-

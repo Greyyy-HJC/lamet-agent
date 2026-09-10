@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gt_msbar_rgr_nlo_im; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=22e3606ba75182a2; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gt_msbar_nlo_rgr_im; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=22e3606ba75182a2; paper_used=true -->
 $$C_{\rm RGR}\left(\xi,\frac{\mu}{|x|P_z}\right) = \delta(1-\xi) + \frac{\alpha_s(\mu_0)}{2\pi} C_F \left[\,g(\xi,L(\mu_0))\,\right]^{(-\infty,\infty)}_{+(1)} + \mathcal{O}(\alpha_s^2),$$
 with $\xi=x/y$, $L(\mu_0)=\ln\!\big(4y^2P_z^2/\mu_0^2\big)$, and the per-row scale $\mu_0(x)=2\kappa xP_z$ (the code uses $\kappa=1$ for the central value). The plus prescription is the paper's $[g]^{D}_{+(x_0)}$ with $x_0=1$ and domain $D=(-\infty,\infty)$, defined by
 $$\int_{-\infty}^{\infty} d\xi\, [g(\xi)]^{D}_{+(1)}\, h(\xi) = \int_{-\infty}^{\infty} d\xi\, g(\xi)\big[h(\xi)-h(1)\big],$$
@@ -8,4 +8,3 @@ where the arctan branch applies for $\xi<1/2$ and the arctanh branch for $\xi>1/
 
 #### Consistency check
 The code reproduces App. 'A Method Solving RG Equation' (Eq. matchingRGI) of arXiv:2209.01236. The regular coefficient matches the paper's Eq. (2.16) for $C_{\rm ratio}$ plus the $0.5/|1-\xi|$ MSbar correction, with the same log arguments ($L=\ln(4y^2P_z^2/\mu^2)$ and $\ln(\xi/(1-\xi))$), the same arctan/arctanh branch, and the same $+1.5/|1-\xi|$ term (the paper's $+3/[2(1-\xi)]$ in the $0<\xi<1$ region, with the sign flipped for $\xi>1$). The plus prescription matches the paper's $[\,\cdot\,]^{D}_{+(1)}$ with domain $(-\infty,\infty)$, and the delta term $\delta(1-\xi)$ is present. The scheme-specific correction is exactly the paper's $+0.5/|1-\xi|$ in $C_{\rm msbar}$. The resummation procedure (per-row scale, DGLAP evolution, cutoff) follows the paper's Appendix A method. No discrepancies found.
-

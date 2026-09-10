@@ -25,6 +25,13 @@ def _kernel_document(kernel_id: str) -> str:
     return load_kernel_document(kernel_id)
 
 
+def _record_kernel_id(record: StageReportRecord) -> str:
+    value = output_attrs(record).get("kernel_id", record.params.get("kernel_id"))
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"matching record '{record.job_id}' has no derived kernel_id")
+    return value
+
+
 def _integral(data: EnsembleData, *, lo: float, hi: float) -> float:
     if data.dims != ["x"]:
         raise ValueError("matching report requires one-dimensional x distributions")
@@ -91,7 +98,10 @@ def _kernel_structure(kernel_id: str) -> dict[str, object]:
         "scheme": scheme_tokens[0],
         "order": next((token.upper() for token in reversed(tokens) if token in {"lo", "nlo", "nnlo"}), "not encoded"),
         "component": next((token for token in tokens if token in {"re", "im"}), "full"),
-        "resummation": "RGR" if "rgr" in tokens else "none",
+        "resummation": next(
+            (token.upper() for token in ("rgr", "lrr") if token in tokens),
+            "none",
+        ),
     }
 
 
@@ -105,7 +115,7 @@ def _has_interior_gap(data: EnsembleData) -> bool:
 
 
 def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_directory: Path) -> Path:
-    kernel_ids = list(dict.fromkeys(str(record.params["kernel_id"]) for record in records))
+    kernel_ids = list(dict.fromkeys(_record_kernel_id(record) for record in records))
     lines = [
         "# Perturbative Matching Stage Report",
         "",
@@ -122,7 +132,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         quasi_integral, matched_integral, relative = _diagnostics(record)
         cached_diagnostics[record.job_id] = (quasi_integral, matched_integral, relative)
         lines.append(
-            f"| `{record.job_id}` | `{record.params['kernel_id']}` | `{record.params['scheme']}` | "
+            f"| `{record.job_id}` | `{_record_kernel_id(record)}` | `{record.params['scheme']}` | "
             f"{format_value(attrs.get('momentum_gev'))} | {format_value(record.params['mu'])} | "
             f"{format_value(quasi_integral)} | {format_value(matched_integral)} | {format_value(100.0 * relative)}% |"
         )
@@ -135,7 +145,9 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             "",
             "| field | meaning |",
             "|---|---|",
-            "| `kernel_id` | Public kernel filename stem encoding gauge construction, Dirac operator, target distribution, renormalization scheme, resummation options, component, and perturbative order. |",
+            "| `order` | Explicit perturbative order; currently only `nlo` is supported and it is encoded in the kernel filename. |",
+            "| `kernel_id` | Runtime-derived public kernel filename stem built from upstream provenance, `scheme`, `order`, and resummation options. |",
+            "| `resummation` / `resummation_part` | Empty selects fixed-order NLO; `rgr` selects `re` or `im`; `lrr` has no component suffix. |",
             "| `mu` | MSbar renormalization/matching scale in GeV. |",
             "| `zs_fm` | Hybrid Wilson-line switching distance; absent for ratio/MSbar kernels. |",
             "| `kernel_parameters` | Kernel-signature parameters not supplied by the stage, such as `kappa` "
@@ -188,8 +200,9 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "| quantity | value |",
                 "|---|---|",
-                f"| kernel | `{record.params['kernel_id']}` |",
+                f"| kernel | `{_record_kernel_id(record)}` |",
                 f"| scheme | `{record.params['scheme']}` |",
+                f"| order | `{record.params.get('order', 'nlo')}` |",
                 f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
                 f"| renormalization scale | {format_value(record.params['mu'])} GeV |",
                 f"| hybrid switch | {format_value(record.params.get('zs_fm'))} fm |",

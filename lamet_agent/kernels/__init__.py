@@ -9,9 +9,17 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.util
+import re
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Mapping
+
+
+_SAFE_TOKEN = re.compile(r"[a-z][a-z0-9]*")
+_VALID_GAUGES = frozenset({"gi", "cg"})
+_VALID_SCHEMES = frozenset({"ratio", "hybrid", "msbar"})
+_VALID_RESUMMATIONS = frozenset({"", "rgr", "lrr"})
+_VALID_RESUMMATION_PARTS = frozenset({"", "re", "im"})
 
 
 def _root(root: str | Path | None) -> Path:
@@ -30,6 +38,62 @@ def list_kernel_ids(root: str | Path | None = None) -> list[str]:
         and path.stem.isidentifier()
         and (directory / f"{path.stem}.md").is_file()
     )
+
+
+def matching_kernel_id(
+    attrs: Mapping[str, Any],
+    *,
+    scheme: str,
+    order: str,
+    resummation: str = "",
+    resummation_part: str = "",
+) -> str:
+    """Build one matching kernel id from upstream provenance and stage choices."""
+    parton = attrs.get("parton")
+    observable = attrs.get("target_observable", attrs.get("observable"))
+    gauge = attrs.get("gfix")
+    operator = attrs.get("kernel_operator", attrs.get("operator"))
+    values = {
+        "parton": parton,
+        "observable": observable,
+        "gfix": gauge,
+        "kernel_operator": operator,
+        "scheme": scheme,
+        "order": order,
+    }
+    for name, value in values.items():
+        if not isinstance(value, str) or not _SAFE_TOKEN.fullmatch(value.strip().lower()):
+            raise ValueError(f"matching provenance '{name}' must be a lowercase-safe token")
+    parton = str(parton).strip().lower()
+    observable = str(observable).strip().lower()
+    gauge = str(gauge).strip().lower()
+    operator = str(operator).strip().lower()
+    scheme = str(scheme).strip().lower()
+    order = str(order).strip().lower()
+    resummation = str(resummation).strip().lower()
+    resummation_part = str(resummation_part).strip().lower()
+    if gauge not in _VALID_GAUGES:
+        raise ValueError(f"matching provenance gfix must be 'gi' or 'cg', got {gauge!r}")
+    if scheme not in _VALID_SCHEMES:
+        raise ValueError(f"matching scheme is not supported: {scheme!r}")
+    if order != "nlo":
+        raise ValueError(f"matching order is not supported: {order!r}; only 'nlo' is available")
+    if resummation not in _VALID_RESUMMATIONS:
+        raise ValueError(f"resummation must be '', 'rgr', or 'lrr', got {resummation!r}")
+    if resummation_part not in _VALID_RESUMMATION_PARTS:
+        raise ValueError(f"resummation_part must be '', 're', or 'im', got {resummation_part!r}")
+    if resummation == "" and resummation_part:
+        raise ValueError("resummation_part requires resummation='rgr'")
+    if resummation == "lrr" and resummation_part:
+        raise ValueError("lrr kernels do not accept resummation_part")
+    if resummation == "rgr" and not resummation_part:
+        raise ValueError("rgr kernels require resummation_part='re' or 'im'")
+    tokens = [parton, observable, gauge, operator, scheme, order]
+    if resummation:
+        tokens.append(resummation)
+    if resummation_part:
+        tokens.append(resummation_part)
+    return "_".join(tokens)
 
 
 def _load_module(path: Path) -> ModuleType:
@@ -86,6 +150,7 @@ def load_kernel_document(kernel_id: str, root: str | Path | None = None) -> str:
 
 __all__ = [
     "list_kernel_ids",
+    "matching_kernel_id",
     "load_kernel",
     "load_renormalization_kernel",
     "load_kernel_document",

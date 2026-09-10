@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gtgpg5_hybrid_rgr_nlo_re; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=2b21f4164e344a55; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gtgpg5_hybrid_nlo_rgr_re; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=2b21f4164e344a55; paper_used=true -->
 $$C_{\rm RGR}^{\rm gtgpg5}\left(\xi,\frac{\mu}{|x|P_z}\right) = \sum_{x_i} \Theta\!\left(2\kappa x_i P_z - \mu_{\rm min}\right) \left[ \mathcal{U}(\mu_0(x_i),\mu) \, C^{\rm hyb,(1)}_{\rm gtgpg5}\!\left(\xi,\frac{\mu_0(x_i)}{|x|P_z}\right) \right]_{x_i},$$
 
 where $\xi=x/y$, $L=\ln(4y^2P_z^2/\mu^2)$, and the fixed-order hybrid kernel is (Eq. (2.21) of the paper, with $\delta C_{\rm hyb}=0$ so it equals the ratio-scheme coefficient of Eq. (2.18)):
@@ -20,4 +20,3 @@ using the LO and NLO non-singlet splitting functions; the code uses the transver
 #### Consistency check
 
 The code reproduces App. “A Method Solving RG Equation” (Eq. matchingRGI) of arXiv:2209.01236: the per-row scale $\mu_0=2\kappa xP_z$ matches the paper’s $Q_{\rm eff}=2xP_zc'$, the evolution operator is the DGLAP solution of Eq. (matchingRGI), and the cutoff $\mu_{\rm min}$ implements the paper’s $x_{\rm min}$. The fixed-order input matches Eq. (2.18) of the paper (the transversity ratio coefficient) with the same log argument $L=\ln(4y^2P_z^2/\mu^2)$, the same $2\xi/(1-\xi)$ splitting, the same arctan/arctanh branch, and the same $-1/|1-\xi|$ tail. The plus prescription is the paper’s $[\,\cdot\,]^{[-\infty,\infty]}_{+(1)}$ (domain superscript, subtraction point subscript), restored by column-sum subtraction. No discrepancies found: the code’s `C_ratio_perp` matches Eq. (2.18) term by term, and the RGR construction follows the paper’s method exactly.
-

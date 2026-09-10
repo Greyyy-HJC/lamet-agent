@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gzg5_hybrid_rgr_nlo_re; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=e05ac695c72b48ba; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_cg_gzg5_hybrid_nlo_rgr_re; arxiv=2209.01236; equations=App. 'A Method Solving RG Equation' (Eq. matchingRGI); digest=e05ac695c72b48ba; paper_used=true -->
 $$C^{(1)}_{\rm RGR}\left(\xi,\frac{\mu}{|x|P_z}\right) = \left[\,C^{(1)}_{\rm hybrid}\left(\xi,\frac{\mu_0(x)}{|x|P_z}\right)\right]_{+(1)}^{[-\infty,\infty]} \otimes \mathcal{E}\left(\mu_0(x),\mu\right), \qquad \mu_0(x) = 2\kappa x P_z,$$
 
 where $\xi = x/y$, $L = \ln(4y^2P_z^2/\mu^2)$, and the fixed-order hybrid kernel is
@@ -24,4 +24,3 @@ where $P^{(1)}_{\rm NS}$ is the LO non-singlet splitting function and $P^{(2)}_{
 #### Consistency check
 
 The code reproduces the paper's App. 'A Method Solving RG Equation' (Eq. matchingRGI) structure: the per-row scale $\mu_0(x)=2\kappa xP_z$, the DGLAP evolution from $\mu_0$ to $\mu$, and the cutoff at small $x$ all match the paper's description. The fixed-order hybrid kernel matches the paper's Eq. (2.19)–(2.20) with the $\gamma^z$ shift of Eq. (2.15) applied to the ratio backbone. The plus prescription and its domain split ($[0,1]$, $[1,\infty]$, $[-\infty,0]$, and the overall $[-\infty,\infty]$ for the Wilson-line correction) follow the paper's notation exactly. The one discrepancy: the paper's Eq. (2.15) writes the $\gamma^z$ shift as $[2(1-\xi)]_+ + \delta(1-\xi)$ for MSbar, while the code applies the bare $2(1-\xi)$ (without the delta) in the ratio/hybrid schemes, arguing the delta is an MSbar normalization term. This is a deliberate scheme-interpretation choice, not an error, but it differs from a literal reading of the paper. No other discrepancies found.
-

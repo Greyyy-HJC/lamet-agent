@@ -109,9 +109,10 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "kernel_id": "quark_pdf_cg_gt_hybrid_rgr_nlo_re",
         "scheme": "hybrid",
-        "order": "rgr_nlo_re",
+        "order": "nlo",
+        "resummation": "rgr",
+        "resummation_part": "re",
         "mu": 2.0,
         "lc_x_ls": {
           "start": 0.0,

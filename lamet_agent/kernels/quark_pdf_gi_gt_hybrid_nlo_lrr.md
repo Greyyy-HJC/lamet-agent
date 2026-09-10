@@ -1,4 +1,4 @@
-<!-- lamet-agent formula cache; kernel=quark_pdf_gi_gt_hybrid_lrr_nlo; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=627f4a4b6708e699; paper_used=true -->
+<!-- lamet-agent formula cache; kernel=quark_pdf_gi_gt_hybrid_nlo_lrr; arxiv=2305.05212; equations=Eqs. (12)-(17); digest=627f4a4b6708e699; paper_used=true -->
 $$[\,g(\xi)\,]^{D}_{+(x_0)} = g(\xi) - \delta(1-\xi)\int_{D} d\nu\, g(\nu)$$
 
 The matching coefficient for the `gt` operator in the `hybrid` scheme, with the leading renormalon resummation (LRR), is
@@ -18,4 +18,3 @@ with $\bar{\xi} = 1-\xi$, $p_z = |y|P_z$, $z_s = z_{\mathrm{spz}}/P_z$, and $\ep
 #### Consistency check
 
 The code reproduces Eqs. (12)–(17) of arXiv:2305.05212 term by term: the splitting function $(1+\xi^2)/(1-\xi)$, the logarithms with arguments $4y^2P_z^2/\mu^2$ and $4\xi(1-\xi)$, the constant $+1$, the hybrid Si-term with strength $3/2$, the renormalon shape $C_z$ with the $\epsilon_m$ regulator, the PV Borel sum $r_{\mathrm{sumPV}}$ via exponential integrals, and the matrix-exponential resummation. The plus-prescription matches the paper's $[g]^{(-\infty,\infty)}_{+(1)}$ with the column-sum-to-zero implementation. One minor discrepancy: the code's fixed-order log uses $\ln(4y^2P_z^2/\mu^2)$ while the paper's Eq. (23) writes $\ln(y^2P_z^2/\mu^2)$; the code removes the $\ln 4$ constant explicitly, so the physical content is identical. No other discrepancies found.
-

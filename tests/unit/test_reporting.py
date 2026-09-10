@@ -878,8 +878,22 @@ def test_matching_stage_report_embeds_shipped_kernel_document(tmp_path: Path) ->
         {"x": quasi.coords["x"]},
         attrs={"momentum_gev": 2.0, "output_scale": 1.0, "component": "both"},
     )
-    output = _data(attrs={"momentum_gev": 2.0, "output_scale": 1.0}, values=[[0.7, 0.9], [0.8, 1.0]])
-    params = {"kernel_id": "da_gi_gzg5_ratio_nlo", "scheme": "ratio", "mu": 2.0, "kernel_parameters": {}}
+    output = _data(
+        attrs={
+            "momentum_gev": 2.0,
+            "output_scale": 1.0,
+            "kernel_id": "quark_da_gi_gzg5_ratio_nlo",
+        },
+        values=[[0.7, 0.9], [0.8, 1.0]],
+    )
+    params = {
+        "scheme": "ratio",
+        "order": "nlo",
+        "resummation": "",
+        "resummation_part": "",
+        "mu": 2.0,
+        "kernel_parameters": {},
+    }
     summary = {
         "result": "matched_distribution",
         "decisions": {},
@@ -891,7 +905,7 @@ def test_matching_stage_report_embeds_shipped_kernel_document(tmp_path: Path) ->
         artifact_directory=stage,
     )
     text = path.read_text(encoding="utf-8")
-    assert "da_gi_gzg5_ratio_nlo" in text
+    assert "quark_da_gi_gzg5_ratio_nlo" in text
     assert "Matching" in text
     assert "Relative change" in text
     assert "Kernel-id and Field Definitions" in text
