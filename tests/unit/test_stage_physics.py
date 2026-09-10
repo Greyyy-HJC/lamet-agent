@@ -1978,6 +1978,8 @@ def test_extrapolation_supports_block_and_full_x_covariance() -> None:
     assert np.allclose(np.asarray(result.mean), physical, atol=0.05)
     assert diagnostics["dof"] > 0
     assert 0.0 <= diagnostics["Q"] <= 1.0
+    assert [record["x"] for record in diagnostics["x_fit_quality"]] == x
+    assert all(0.0 <= record["Q"] <= 1.0 for record in diagnostics["x_fit_quality"])
     assert set(diagnostics["parameter_mean"]) == {"h0", "a"}
     assert set(diagnostics["parameter_sdev"]) == {"h0", "a"}
     assert set(diagnostics["momentum_dependence"]) == {"1.5", "2"}
@@ -1994,6 +1996,8 @@ def test_extrapolation_supports_block_and_full_x_covariance() -> None:
     assert full_result.attrs["x_covariance"] == 1
     assert np.allclose(np.asarray(full_result.mean), physical, atol=0.05)
     assert full_diagnostics["x_covariance"] is True
+    assert [record["x"] for record in full_diagnostics["x_fit_quality"]] == x
+    assert all(0.0 <= record["Q"] <= 1.0 for record in full_diagnostics["x_fit_quality"])
     assert np.asarray(full_diagnostics["parameter_mean"]["a"]).ndim == 0
 
 

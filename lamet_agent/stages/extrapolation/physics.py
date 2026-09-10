@@ -301,6 +301,48 @@ def _block_fit_diagnostics(
     }
 
 
+def _quality_record(x: float, chi2: float, dof: int) -> dict[str, float]:
+    """Build one pointwise fit-quality record using the fit's existing convention."""
+    from scipy.special import gammaincc
+
+    return {
+        "x": float(x),
+        "chi2": float(chi2),
+        "dof": float(dof),
+        "chi2_dof": float(chi2 / dof),
+        "Q": float(gammaincc(dof / 2.0, chi2 / 2.0)),
+    }
+
+
+def _block_x_fit_quality(
+    system: dict[str, object],
+    observations: np.ndarray,
+    local_values: np.ndarray,
+    global_values: np.ndarray,
+    x: np.ndarray,
+) -> list[dict[str, float]]:
+    """Compute pointwise diagnostics for the block-diagonal x fit."""
+    global_prior = (
+        float(np.sum(((global_values - system["global_means"]) / system["global_sdevs"]) ** 2))
+        if global_values.size
+        else 0.0
+    )
+    n_x = len(x)
+    records = []
+    for x_index, weight in enumerate(system["weights"]):
+        prediction = system["local_design"] @ local_values[x_index] + system["global_design"] @ global_values
+        residual = observations[:, x_index] - prediction
+        chi2 = float(residual @ weight @ residual)
+        chi2 += float(
+            np.sum(((local_values[x_index] - system["local_means"][x_index]) / system["local_sdevs"][x_index]) ** 2)
+        )
+        # A shared coefficient prior has no unique x assignment. Split it evenly so
+        # the pointwise diagnostics retain the same total chi2 as the global one.
+        chi2 += global_prior / n_x
+        records.append(_quality_record(float(x[x_index]), chi2, observations.shape[0]))
+    return records
+
+
 def _full_design_matrix(
     design: np.ndarray,
     terms: list[str],
@@ -421,6 +463,61 @@ def _full_fit_diagnostics(
     }
 
 
+def _full_x_fit_quality(
+    system: dict[str, object],
+    observations: np.ndarray,
+    parameters: np.ndarray,
+    x: np.ndarray,
+    parameter_layout: dict[str, slice],
+    x_dependence: dict[str, bool],
+    terms: list[str],
+) -> list[dict[str, float]]:
+    """Compute marginal pointwise diagnostics for a correlated-x fit."""
+    n_x = len(x)
+    residual = observations - system["design"] @ parameters
+    global_terms = [term for term in terms if not x_dependence[term]]
+    global_prior = sum(
+        float(
+            ((parameters[parameter_layout[term]][0] - system["prior_means"][parameter_layout[term]][0])
+             / system["prior_sdevs"][parameter_layout[term]][0])
+            ** 2
+        )
+        for term in global_terms
+    )
+    point_data_chi2 = np.zeros(n_x, dtype=float)
+    point_dof = np.zeros(n_x, dtype=int)
+    for indices, weight in system["covariance_blocks"]:
+        # The stored weight is for the full source block. Invert it to recover
+        # the regulated covariance, then form the marginal covariance at one x.
+        covariance = np.linalg.inv(weight)
+        for x_index in range(n_x):
+            positions = np.flatnonzero(indices % n_x == x_index)
+            point_covariance = covariance[np.ix_(positions, positions)]
+            point_weight, _ = _regulated_inverse(point_covariance)
+            point_residual = residual[indices[positions]]
+            point_data_chi2[x_index] += float(point_residual @ point_weight @ point_residual)
+            point_dof[x_index] += len(positions)
+    for x_index in range(n_x):
+        local_prior = float(
+            ((parameters[parameter_layout["h0"]][x_index] - system["prior_means"][parameter_layout["h0"]][x_index])
+             / system["prior_sdevs"][parameter_layout["h0"]][x_index])
+            ** 2
+        )
+        for term in terms:
+            if x_dependence[term]:
+                parameter_slice = parameter_layout[term]
+                local_prior += float(
+                    ((parameters[parameter_slice][x_index] - system["prior_means"][parameter_slice][x_index])
+                     / system["prior_sdevs"][parameter_slice][x_index])
+                    ** 2
+                )
+        point_data_chi2[x_index] += local_prior + global_prior / n_x
+    return [
+        _quality_record(float(x[index]), float(point_data_chi2[index]), int(point_dof[index]))
+        for index in range(n_x)
+    ]
+
+
 def fit_candidate(
     data: list[EnsembleData],
     terms: list[str],
@@ -498,6 +595,7 @@ def fit_candidate(
         )
         center_local, center_global = _solve_block_system(center_system, centers)
         fit_diagnostics = _block_fit_diagnostics(center_system, centers, center_local, center_global)
+        x_fit_quality = _block_x_fit_quality(center_system, centers, center_local, center_global, x)
         posterior_local_sdevs, posterior_global_sdevs = _block_posterior_sdevs(center_system)
         sample_system = _prepare_block_system(
             design,
@@ -542,6 +640,15 @@ def fit_candidate(
         )
         center_parameters = _solve_full_system(center_system, centers.reshape(-1))
         fit_diagnostics = _full_fit_diagnostics(center_system, centers.reshape(-1), center_parameters)
+        x_fit_quality = _full_x_fit_quality(
+            center_system,
+            centers.reshape(-1),
+            center_parameters,
+            x,
+            parameter_layout,
+            x_dependence,
+            terms,
+        )
         posterior_sdevs = _full_posterior_sdevs(center_system)
         sample_system = _prepare_full_system(
             design_matrix,
@@ -624,6 +731,7 @@ def fit_candidate(
         "dof": float(fit_diagnostics["dof"]),
         "chi2_dof": float(fit_diagnostics["chi2"] / fit_diagnostics["dof"]),
         "Q": float(fit_diagnostics["Q"]),
+        "x_fit_quality": x_fit_quality,
         "logGBF": float(fit_diagnostics["logGBF"]),
         "aic": float(fit_diagnostics["chi2"] + 2.0 * parameter_count),
         "n_failed_samples": n_failed_samples,

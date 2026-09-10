@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +37,8 @@ _TERM_FORMULAS = {
     "exp_mpi_L": r"e^{-m_\pi L/(\hbar c)}",
     "exp_sqrt2_mpi_L": r"e^{-\sqrt{2}\,m_\pi L/(\hbar c)}",
 }
+
+_SUMMARY_X_POINTS = (0.3, 0.5, 0.7)
 
 
 def _formula(terms: list[str], independent_terms: set[str]) -> str:
@@ -133,6 +136,30 @@ def _momentum_rows(record: StageReportRecord, candidate: dict[str, object]) -> l
     return rows
 
 
+def _point_quality(candidate: dict[str, object], x: float, quantity: str) -> object:
+    """Return the quality at x, using the nearest fitted grid point when needed."""
+    records = candidate.get("x_fit_quality")
+    if not isinstance(records, list):
+        return None
+    valid_records = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        try:
+            record_x = float(record["x"])
+            if math.isfinite(record_x):
+                valid_records.append((abs(record_x - x), record_x, record))
+        except (TypeError, ValueError):
+            continue
+    if not valid_records:
+        return None
+    _distance, selected_x, selected = min(valid_records, key=lambda item: item[0])
+    value = selected.get(quantity)
+    if np.isclose(selected_x, x, rtol=0.0, atol=1e-10):
+        return value
+    return f"{format_value(value)} (grid x={format_value(selected_x)})"
+
+
 def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_directory: Path) -> Path:
     fit_records = [record for record in records if record.summary.get("result") == "physical_distribution"]
     budget_records = [record for record in records if record.summary.get("result") == "systematics_budget"]
@@ -158,8 +185,14 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         "",
         "## Job Summary",
         "",
-        "| job | result | terms / sources | $Q$ | $\\chi^2/\\mathrm{dof}$ | samples |",
-        "|---|---|---|---:|---:|---:|",
+        ("The summary reports pointwise fit quality at the requested $x$ values; it does not use the "
+         "global Q or $\\chi^2/\\mathrm{dof}$ over the complete x grid. If a requested point is "
+         "absent, the nearest fitted x point is used and labelled in the cell."),
+        "",
+        ("| job | result | terms / sources | $Q$ ($x=0.3$) | $\\chi^2/\\mathrm{dof}$ ($x=0.3$) | "
+         "$Q$ ($x=0.5$) | $\\chi^2/\\mathrm{dof}$ ($x=0.5$) | $Q$ ($x=0.7$) | "
+         "$\\chi^2/\\mathrm{dof}$ ($x=0.7$) | samples |"),
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for record in records:
         summary = record.summary
@@ -169,9 +202,16 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         candidate = (
             (diagnostics.get("candidates") or [{}])[0] if summary.get("result") == "physical_distribution" else {}
         )
+        point_quality = [
+            _point_quality(candidate, x, quantity)
+            for x in _SUMMARY_X_POINTS
+            for quantity in ("Q", "chi2_dof")
+        ]
         lines.append(
             f"| `{record.job_id}` | `{summary.get('result')}` | {format_value(terms)} | "
-            f"{format_value(candidate.get('Q'))} | {format_value(candidate.get('chi2_dof'))} | "
+            f"{format_value(point_quality[0])} | {format_value(point_quality[1])} | "
+            f"{format_value(point_quality[2])} | {format_value(point_quality[3])} | "
+            f"{format_value(point_quality[4])} | {format_value(point_quality[5])} | "
             f"{format_value(getattr(record.output, 'n_sample', None))} |"
         )
     lines.extend(
@@ -231,8 +271,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| $P_z$ diagnostic points [GeV] | {format_value(fit['pdep_gev'])} |",
                 f"| inputs | {format_value(candidate.get('n_inputs', candidate.get('input_count')))} |",
                 f"| parameters | {format_value(candidate.get('n_params'))} |",
-                f"| $Q$ | {format_value(candidate.get('Q'))} |",
-                f"| $\\chi^2/\\mathrm{{dof}}$ | {format_value(candidate.get('chi2_dof'))} |",
+                f"| global $Q$ (full x grid) | {format_value(candidate.get('Q'))} |",
+                f"| global $\\chi^2/\\mathrm{{dof}}$ (full x grid) | {format_value(candidate.get('chi2_dof'))} |",
                 f"| failed resamples | {format_value(candidate.get('n_failed_samples'))} |",
                 "",
                 "### Fit-model Parameter Table",

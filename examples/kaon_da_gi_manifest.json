@@ -21,7 +21,7 @@
           1
         ],
         "fit_scope": [
-          "qda_ratio"
+          "2pt+qda"
         ],
         "fitting_form": "Breit",
         "model_average": false,

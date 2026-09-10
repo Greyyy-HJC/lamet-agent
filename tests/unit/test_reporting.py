@@ -956,6 +956,11 @@ def test_extrapolation_stage_report_contains_model_and_budget(tmp_path: Path) ->
             {
                 "Q": 0.8,
                 "chi2_dof": 0.9,
+                "x_fit_quality": [
+                    {"x": 0.28, "Q": 0.11, "chi2_dof": 1.1},
+                    {"x": 0.52, "Q": 0.22, "chi2_dof": 1.2},
+                    {"x": 0.68, "Q": 0.33, "chi2_dof": 1.3},
+                ],
                 "n_failed_samples": 0,
                 "parameter_mean": {"h0": [0.8, 1.0], "a": 0.2, "inv_p2": [0.1, 0.2]},
                 "parameter_sdev": {"h0": [0.05, 0.05], "a": 0.03, "inv_p2": [0.02, 0.02]},
@@ -1002,6 +1007,9 @@ def test_extrapolation_stage_report_contains_model_and_budget(tmp_path: Path) ->
     assert "maximum absolute size" in text
     assert "Momentum Dependence" in text
     assert "pdep_gev" in text
+    assert "$Q$ ($x=0.3$)" in text
+    assert "0.11 (grid x=0.28)" in text
+    assert "0.33 (grid x=0.68)" in text
     overview_svg = (stage / "plots" / "extrapolation_overview.svg").read_text(encoding="utf-8")
     assert "FillBetweenPolyCollection" in overview_svg
     assert "Errorbar" not in overview_svg

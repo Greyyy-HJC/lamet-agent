@@ -35,6 +35,7 @@ def select_single_candidate(candidates: Sequence[Mapping[str, Any]]) -> tuple[An
                 "dof": candidate["dof"],
                 "chi2_dof": candidate["chi2_dof"],
                 "Q": candidate["Q"],
+                "x_fit_quality": candidate.get("x_fit_quality", []),
                 "aic": candidate["aic"],
                 "parameter_mean": candidate["parameter_mean"],
                 "parameter_sdev": candidate["parameter_sdev"],
