@@ -47,9 +47,15 @@ def run(context: ToolContext) -> dict[str, object]:
         precision=int(settings["precision"]),
         seed=int(context.manifest["metadata"]["random_seed"]),
         workers=context.workers,
+        final_iteration=settings.get("final_iteration"),
         _parallel=context._parallel,
     )
     inspection = prepared["inspection"]
+    final_iteration = int(
+        settings.get("final_iteration")
+        if settings.get("final_iteration") is not None
+        else max(1, int(inspection["iterations"]) - 1)
+    )
     source_data = prepared["source_data"]
     provenance = prepared.get("three_point") if settings["scope"] == "3pt_matrix" else source_data
     if provenance is None:
@@ -63,6 +69,7 @@ def run(context: ToolContext) -> dict[str, object]:
         "lanczos_precision": int(settings["precision"]),
         "lanczos_t0": int(inspection["lanczos_t0"]),
         "lanczos_time_step": int(inspection["lanczos_time_step"]),
+        "lanczos_final_iteration": final_iteration,
         "sample_error_mode": str(context.manifest["metadata"]["sample_error_mode"]),
     }
     artifacts = ["output.nc", "plots/result.pdf", "plots/result.svg", "diagnostics/lanczos.json"]

@@ -99,6 +99,7 @@ PARAM_RULES = (
     Depends("lanczos", "scope", physics="The Lanczos algorithm needs to know whether to analyze a two-point spectrum or a three-point matrix element."),
     Recommends("lanczos", "inner_samples", physics="Each outer sample needs an inner bootstrap ensemble for CW filtering and median aggregation.", default=200),
     Recommends("lanczos", "precision", physics="Lanczos recurrence arithmetic needs an explicit numeric precision; zero selects the normal NumPy double-precision path.", default=0),
+    Recommends("lanczos", "final_iteration", physics="The published three-point matrix uses the final Lanczos iteration; omitted values follow korr_dev and select the second-to-last usable iteration.", default=None),
     Value("component", Literal["re", "im", "both"], physics="'re' selects the real channel, 'im' the imaginary channel, and 'both' fits both channels."),
     Value("nstate.state_count", int, physics="The number of retained spectral states in the correlator decomposition; it must be a positive integer.", validator=_positive),
     Value("lsqfit.prior_width.width", float, physics="The scale of Gaussian prior uncertainties for a fit candidate; it must be a positive floating-point value.", validator=_positive),
@@ -110,6 +111,7 @@ PARAM_RULES = (
     Value("lanczos.scope", Literal["2pt_spectrum", "3pt_matrix"], physics="'2pt_spectrum' extracts a two-point spectrum; '3pt_matrix' extracts a three-point matrix element with the Lanczos algorithm."),
     Value("lanczos.inner_samples", int, physics="The number of inner bootstrap replicas used for each outer sample; it must be a positive integer.", validator=_positive),
     Value("lanczos.precision", int, physics="The number of decimal digits used for Lanczos recurrence arithmetic; it must be a nonnegative integer, with zero selecting NumPy double precision.", validator=_nonnegative),
+    Value("lanczos.final_iteration", int, physics="The published three-point matrix iteration; it must be within the usable Lanczos iterations.", validator=_positive),
 )
 
 INPUT_RULES = (

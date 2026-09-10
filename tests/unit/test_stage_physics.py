@@ -310,6 +310,7 @@ def test_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
         precision=0,
         seed=0,
         workers=1,
+        final_iteration=2,
     )
 
     inspection = prepared["inspection"]
@@ -334,6 +335,7 @@ def test_lanczos_uses_raw_nested_resampling_and_standard_tsep_conversion(
         "scope": "3pt_matrix",
         "inner_samples": 4,
         "precision": 0,
+        "final_iteration": 2,
     }
     context = ToolContext(
         {

@@ -15,6 +15,22 @@ import numpy as np
 from ._pool import _ParallelPool
 
 
+_MISSINGNESS_THRESHOLD = 0.95
+
+
+def _is_real(values: np.ndarray, *, rtol: float = 1e-5, atol: float = 1e-8) -> np.ndarray:
+    """Return the ``korr_dev``-style numerical reality mask."""
+    values = np.asarray(values)
+    return np.abs(values.imag) <= atol + rtol * np.abs(values.real)
+
+
+def _retain_supported_samples(values: np.ndarray, *, axis: int = 0) -> np.ndarray:
+    """Mask values whose finite support is below the nested-bootstrap threshold."""
+    count = np.count_nonzero(np.isfinite(values), axis=axis, keepdims=True)
+    required = int(np.ceil(_MISSINGNESS_THRESHOLD * values.shape[axis]))
+    return np.where(count >= required, values, np.nan)
+
+
 def _plan_tsep_tau_conversion(
     tseps: list[int] | tuple[int, ...],
     *,
@@ -179,7 +195,13 @@ class _Ritz(NamedTuple):
 
     def filter_spurious(self, epsilon: float) -> "_Ritz":
         """Apply a Cullum-Willoughby distance threshold."""
-        keep = (self.cullum_willoughby_distance > epsilon) & (self.values < 1.0)
+        if self.cullum_willoughby_distance.size == 0:
+            return self
+        keep = (
+            (self.cullum_willoughby_distance > epsilon)
+            & (self.values > 0.0)
+            & (self.values < 1.0)
+        )
         return _Ritz(
             self.values[keep],
             self.right_vectors[:, keep],
@@ -300,25 +322,8 @@ def _transfer_matrix(c2: np.ndarray, precision: int = 0) -> tuple[np.ndarray, np
     return _transfer_matrix_numpy(values) if precision == 0 else _transfer_matrix_gmpy2(values, precision)
 
 
-def _ritz_spectrum(matrix: np.ndarray, epsilon_float: float = 1e-12) -> _Ritz:
-    """Compute real Ritz values and their Cullum-Willoughby distances."""
-    m = len(matrix)
-    if m == 0:
-        empty = np.empty(0, dtype=float)
-        return _Ritz(empty, np.empty((0, 0)), np.empty((0, 0)), empty)
-    if m == 1:
-        value = np.asarray([matrix[0, 0]], dtype=float)
-        return _Ritz(value, np.ones((1, 1)), np.ones((1, 1)), np.abs(value))
-    values = np.linalg.eigvals(matrix)
-    real = (np.abs(np.angle(values)) <= epsilon_float) & (values != 0)
-    values = values[real].real
-    reduced = np.linalg.eigvals(matrix[1:, 1:])
-    distances = np.min(np.abs(values[:, None] - reduced[None, :]), axis=1) if len(values) else np.empty(0, dtype=float)
-    return _Ritz(values, np.identity(len(values)), np.identity(len(values)), distances)
-
-
-def _ritz_hermitian(matrix: np.ndarray, a_cw: float = 10.0, b_cw: float = 1.0, epsilon_float: float = 1e-8) -> _Ritz:
-    """Keep the Hermitian Ritz subspace and apply the iteration-local CW cut."""
+def _ritz_spectrum(matrix: np.ndarray, epsilon_float: float = 1e-8) -> _Ritz:
+    """Compute normalizable physical Ritz values and CW distances."""
     m = len(matrix)
     if m == 0:
         empty = np.empty(0, dtype=float)
@@ -328,9 +333,11 @@ def _ritz_hermitian(matrix: np.ndarray, a_cw: float = 10.0, b_cw: float = 1.0, e
     inverse = np.linalg.inv(right)
     norms_squared = inverse[:, 0].conj() / right[0, :]
     keep = (
-        (np.abs(values.imag) <= epsilon_float * np.abs(values))
-        & (np.abs(norms_squared.imag) <= epsilon_float * np.abs(norms_squared))
+        _is_real(values, rtol=1e-5, atol=epsilon_float)
+        & _is_real(norms_squared, rtol=1e-5, atol=epsilon_float)
         & (norms_squared.real > 0.0)
+        & np.isfinite(values)
+        & np.isfinite(norms_squared)
         & (values != 0)
     )
     values = values[keep].real
@@ -340,35 +347,66 @@ def _ritz_hermitian(matrix: np.ndarray, a_cw: float = 10.0, b_cw: float = 1.0, e
         return _Ritz(values, right, inverse, np.empty(0, dtype=float))
 
     reduced = np.linalg.eigvals(matrix[1:, 1:])
-    reduced = reduced[np.abs(reduced.imag) <= epsilon_float * np.abs(reduced)].real
-    if len(reduced):
-        distances = np.min(np.abs(values[:, None] - reduced[None, :]), axis=1)
-        epsilon_cw = (np.max(distances) - np.min(distances)) / (a_cw * len(values) + b_cw)
-        keep = distances > epsilon_cw
-        values = values[keep]
-        right = right[:, keep]
-        inverse = inverse[keep, :]
-    return _Ritz(values, right, inverse, np.empty(0, dtype=float))
+    reduced = reduced[_is_real(reduced, rtol=1e-5, atol=epsilon_float)].real
+    distances = np.min(np.abs(values[:, None] - reduced[None, :]), axis=1) if len(reduced) else np.empty(0, dtype=float)
+    return _Ritz(values, right, inverse, distances)
+
+
+def _ritz_hermitian(matrix: np.ndarray, epsilon_float: float = 1e-8) -> _Ritz:
+    """Keep the normalizable real Ritz subspace and return CW distances."""
+    m = len(matrix)
+    if m == 0:
+        empty = np.empty(0, dtype=float)
+        return _Ritz(empty, np.empty((0, 0)), np.empty((0, 0)), empty)
+    values, right = np.linalg.eig(matrix)
+    right = right * np.exp(-1j * np.angle(right[0, :]))[None, :]
+    inverse = np.linalg.inv(right)
+    norms_squared = inverse[:, 0].conj() / right[0, :]
+    keep = (
+        _is_real(values, rtol=1e-5, atol=epsilon_float)
+        & _is_real(norms_squared, rtol=1e-5, atol=epsilon_float)
+        & (norms_squared.real > 0.0)
+        & (values != 0)
+        & np.isfinite(values)
+        & np.isfinite(norms_squared)
+    )
+    values = values[keep].real
+    right = right[:, keep]
+    inverse = inverse[keep, :]
+    if not len(values):
+        return _Ritz(values, right, inverse, np.empty(0, dtype=float))
+
+    reduced = np.linalg.eigvals(matrix[1:, 1:])
+    reduced = reduced[_is_real(reduced, rtol=1e-5, atol=epsilon_float)].real
+    distances = np.min(np.abs(values[:, None] - reduced[None, :]), axis=1) if len(reduced) else np.empty(0, dtype=float)
+    return _Ritz(values, right, inverse, distances)
 
 
 def _filter_twopt_cw(results: list[list[_Ritz]]) -> list[list[_Ritz]]:
     """Apply the bootstrap-histogram CW prescription to a nested result."""
     n_boot = len(results)
     n_iterations = max((len(result) for result in results), default=0)
+    n_plus = sum(len(ritz.values) for result in results for ritz in result)
     distances = [
         value
         for result in results
         for ritz in result
+        if ritz.cullum_willoughby_distance.size
         for value in ritz.cullum_willoughby_distance
         if np.isfinite(value) and value > 0.0
     ]
-    if not distances or n_boot == 0 or n_iterations == 0:
+    if not distances or n_boot == 0 or n_iterations == 0 or n_plus == 0:
         return results
-    n_lambda = max(1, round(len(distances) / n_boot / n_iterations))
+    n_lambda = max(1, round(n_plus / n_boot / n_iterations))
     delta = n_boot * max(n_iterations - n_lambda, 0) * 3 / 4
     hist, edges = np.histogram(np.log(distances), bins=max(1, 4 * n_lambda))
-    crossing = next((index for index, count in enumerate(hist) if count > delta), len(hist))
-    epsilon = np.exp(edges[min(crossing, len(edges) - 1)]) / 50
+    crossing = next((index for index, count in enumerate(hist) if count > delta), None)
+    if crossing is None:
+        return results
+    # ``korr_dev`` uses the lower edge of the crossing bin.  When the first
+    # bin is already over threshold there is no lower finite edge, so retain
+    # every nonzero distance instead of indexing the final upper edge.
+    epsilon = 0.0 if crossing == 0 else np.exp(edges[crossing - 1])
     return [[ritz.filter_spurious(epsilon) for ritz in result] for result in results]
 
 
@@ -452,7 +490,12 @@ def _analyze_threept(
         raise ValueError("Lanczos inner bootstrap count must be positive")
 
     rng = np.random.default_rng(seed)
-    results: list[list[np.ndarray]] = []
+    sink_ritz_samples: list[list[_Ritz]] = []
+    source_ritz_samples: list[list[_Ritz]] = []
+    c3_means: list[np.ndarray] = []
+    sink_krylov_samples: list[tuple[np.ndarray, np.ndarray]] = []
+    source_krylov_samples: list[tuple[np.ndarray, np.ndarray]] = []
+    usable_samples: list[int] = []
     for _ in range(n_bootstrap):
         indices = rng.integers(0, c3.shape[0], c3.shape[0])
         c2_sink_mean = c2_sink[indices].mean(axis=0)[: 2 * requested]
@@ -461,20 +504,31 @@ def _analyze_threept(
 
         sink_matrix, sink_alpha, sink_beta, sink_gamma = _transfer_matrix(c2_sink_mean, precision=precision)
         source_matrix, source_alpha, source_beta, source_gamma = _transfer_matrix(c2_source_mean, precision=precision)
-        sink_krylov = _krylov_polynomial(sink_alpha, sink_beta, sink_gamma)
-        source_krylov = _krylov_polynomial(source_alpha, source_beta, source_gamma)
+        sink_krylov_samples.append(_krylov_polynomial(sink_alpha, sink_beta, sink_gamma))
+        source_krylov_samples.append(_krylov_polynomial(source_alpha, source_beta, source_gamma))
         usable = min(requested, len(sink_matrix), len(source_matrix))
+        usable_samples.append(usable)
+        c3_means.append(c3_mean)
+        sink_ritz_samples.append([_ritz_hermitian(sink_matrix[:m, :m]) for m in range(1, usable + 1)])
+        source_ritz_samples.append([_ritz_hermitian(source_matrix[:m, :m]) for m in range(1, usable + 1)])
+
+    sink_ritz_samples = _filter_twopt_cw(sink_ritz_samples)
+    source_ritz_samples = _filter_twopt_cw(source_ritz_samples)
+    results: list[list[np.ndarray]] = []
+    for index in range(n_bootstrap):
         matrices: list[np.ndarray] = []
-        for m in range(1, usable + 1):
-            sink_ritz = _ritz_hermitian(sink_matrix[:m, :m])
-            source_ritz = _ritz_hermitian(source_matrix[:m, :m])
+        for m in range(1, usable_samples[index] + 1):
+            sink_ritz = sink_ritz_samples[index][m - 1]
+            source_ritz = source_ritz_samples[index][m - 1]
+            sink_krylov = sink_krylov_samples[index]
+            source_krylov = source_krylov_samples[index]
             sink_left = _ritz_rotator(sink_ritz, sink_krylov[0][:m, :m], sink_krylov[1][:m, :m])[1]
             source_right = _ritz_rotator(source_ritz, source_krylov[0][:m, :m], source_krylov[1][:m, :m])[0]
             matrices.append(
                 np.einsum(
                     "fs,st,it->fi",
                     sink_left[sink_ritz.physical_order()],
-                    c3_mean[:m, :m],
+                    c3_means[index][:m, :m],
                     source_right[source_ritz.physical_order()],
                 )
             )
@@ -490,13 +544,13 @@ def _median_twopt_energies(results: list[list[_Ritz]], *, max_states: int, time_
     energies = np.full((n_iterations, max_states), np.nan, dtype=float)
     for m in range(n_iterations):
         for state in range(max_states):
-            values = np.asarray(
-                [result[m].physical_value(state) for result in results if m < len(result)],
-                dtype=float,
-            )
-            values = values[np.isfinite(values) & (values > 0.0) & (values < 1.0)]
-            if values.size:
-                energies[m, state] = -np.log(np.median(values)) / time_step
+            values = np.full(len(results), np.nan, dtype=float)
+            for index, result in enumerate(results):
+                if m < len(result):
+                    values[index] = result[m].physical_value(state)
+            finite = np.isfinite(values) & (values > 0.0) & (values < 1.0)
+            if finite.sum() / len(results) >= _MISSINGNESS_THRESHOLD:
+                energies[m, state] = -np.log(np.median(values[finite])) / time_step
     return energies
 
 
@@ -514,9 +568,9 @@ def _median_threept_matrix(results: list[list[np.ndarray]], *, iteration: int, m
     for final in range(max_states):
         for initial in range(max_states):
             values = samples[:, final, initial]
-            values = values[np.isfinite(values)]
-            if values.size:
-                out[final, initial] = np.median(values)
+            finite = np.isfinite(values)
+            if finite.sum() / len(results) >= _MISSINGNESS_THRESHOLD:
+                out[final, initial] = np.median(values[finite])
     return out
 
 
@@ -755,6 +809,7 @@ def _threept_outer_result(task: tuple[Any, ...]) -> tuple[int, np.ndarray]:
         precision,
         iterations,
         max_states,
+        final_iteration,
     ) = task
     values = np.full(
         (len(c3_by_z), len(components), max_states, max_states),
@@ -775,7 +830,7 @@ def _threept_outer_result(task: tuple[Any, ...]) -> tuple[int, np.ndarray]:
             )
             values[z_index, component_index] = _median_threept_matrix(
                 inner,
-                iteration=iterations,
+                iteration=final_iteration,
                 max_states=max_states,
             )
     return outer, values
@@ -793,6 +848,7 @@ def analyze_prepared_lanczos(
     precision: int,
     seed: int,
     workers: int,
+    final_iteration: int | None = None,
     _parallel: _ParallelPool | None = None,
 ) -> dict[str, Any]:
     """Run the original nested outer/inner Lanczos resampling procedure."""
@@ -816,6 +872,12 @@ def analyze_prepared_lanczos(
     )
     iterations = int(inspection["iterations"])
     time_step = int(inspection["lanczos_time_step"])
+    if final_iteration is None:
+        final_iteration = max(1, iterations - 1)
+    if type(final_iteration) is not int or not 1 <= final_iteration <= iterations:
+        raise ValueError(
+            f"Lanczos final_iteration must be in [1, {iterations}], got {final_iteration}"
+        )
     if inspection["scope"] == "2pt_spectrum":
         channels = [source] if np.array_equal(source, sink) else [source, sink]
         labels = ["source"] if len(channels) == 1 else ["source", "sink"]
@@ -852,6 +914,7 @@ def analyze_prepared_lanczos(
             )
         for index, result in results:
             values[index] = result
+        values = _retain_supported_samples(values, axis=0)
         return {"values": values, "channels": labels, "outer_samples": len(outer)}
 
     selected_components = {
@@ -878,6 +941,7 @@ def analyze_prepared_lanczos(
             precision,
             iterations,
             max_states,
+            final_iteration,
         )
         for index, indices in enumerate(outer)
     ]
@@ -894,6 +958,7 @@ def analyze_prepared_lanczos(
         )
     for index, result in results:
         matrices[index] = result
+    matrices = _retain_supported_samples(matrices, axis=0)
     real = (
         matrices[:, :, selected_components.index("real"), 0, 0]
         if "real" in selected_components
