@@ -154,6 +154,14 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
             raise ValueError("Fourier input accepts one source")
         value = value[0]
     data = load_data(value)
+    target = str(context.manifest["metadata"]["target_observable"]).lower()
+    if target in {"pdf", "gpd"}:
+        hadron = str(data.attrs.get("hadron", "")).strip().lower()
+        if hadron not in {"pion", "proton", "nucleon"}:
+            raise ValueError(
+                f"Fourier input hadron must be one of nucleon, pion, proton for {target.upper()} tails; "
+                f"got {hadron or '<missing>'}"
+            )
     if data.attrs.get("coord_unit") != "fm":
         raise ValueError("Fourier input coordinates must be in fm")
     momentum = data.attrs.get("momentum_gev")
@@ -164,7 +172,6 @@ def prepare(context: ToolContext) -> tuple[Any, float]:
         or float(momentum) <= 0
     ):
         raise ValueError("Fourier input requires finite positive momentum_gev")
-    target = str(context.manifest["metadata"]["target_observable"]).lower()
     conventions = derive_conventions(
         data.attrs,
         target_observable=str(context.manifest["metadata"]["target_observable"]),

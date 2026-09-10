@@ -2815,6 +2815,7 @@ def test_fourier_inspection_applies_systematic_offset_from_ensemble(tmp_path: Pa
         ["z"],
         {"z": [-0.25, -0.2, -0.15, -0.1, -0.05, 0.0, 0.05, 0.1, 0.15, 0.2, 0.25]},
         attrs={
+            "hadron": "pion",
             "coord_unit": "fm",
             "momentum_gev": 2.0,
             "parton": "quark",
@@ -2848,6 +2849,26 @@ def test_fourier_inspection_applies_systematic_offset_from_ensemble(tmp_path: Pa
 
     assert effective_zmin_fm(context, data) == [0.15]
     assert context.state["tail_inspection"]["z_grid_step_fm"] == 0.05
+
+
+@pytest.mark.parametrize("observable", ["pdf", "gpd"])
+@pytest.mark.parametrize("hadron", ["kaon", ""])
+def test_fourier_input_rejects_unsupported_hadron_before_recommendation(observable, hadron) -> None:
+    from types import SimpleNamespace
+
+    from lamet_agent.stages.fourier_transform.ask import ensure
+
+    data = EnsembleData(
+        None, "bootstrap", [np.ones(2), np.ones(2)], ["z"], {"z": [0.0, 0.1]},
+        attrs={"hadron": hadron} if hadron else {},
+    )
+    context = SimpleNamespace(
+        state={}, inputs={"input": data}, manifest={"metadata": {"target_observable": observable}},
+    )
+    session = SimpleNamespace(has_context=lambda key: False)
+    with pytest.raises(ValueError, match=f"Fourier input hadron.*got {hadron or '<missing>'}"):
+        ensure(context, session)
+    assert "fourier_input" not in context.state
 
 
 def test_gpd_fourier_preparation_records_signed_longitudinal_momenta(tmp_path: Path) -> None:
@@ -3202,6 +3223,13 @@ def test_matching_inspection_reduces_the_component_named_by_resummation_part(tmp
     assert np.allclose(np.asarray(reduced.values)[0], [4.0, 5.0])
     assert reduced.attrs["matching_component"] == "im"
     assert context.state["kernel_inspection"]["matching_component"] == "im"
+
+    context.params["resummation_part"] = "both"
+    context.state.clear()
+    with pytest.raises(ValueError, match="kernel 'quark_pdf_cg_gt_msbar_nlo_rgr_both' is not available"):
+        run(context)
+    assert context.params["kernel_id"] == "quark_pdf_cg_gt_msbar_nlo_rgr_both"
+    assert "matching_result" not in context.state
 
 
 def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> None:

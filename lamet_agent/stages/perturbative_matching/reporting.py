@@ -147,7 +147,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             "|---|---|",
             "| `order` | Explicit perturbative order; currently only `nlo` is supported and it is encoded in the kernel filename. |",
             "| `kernel_id` | Runtime-derived public kernel filename stem built from upstream provenance, `scheme`, `order`, and resummation options. |",
-            "| `resummation` / `resummation_part` | Empty selects fixed-order NLO; `rgr` selects `re` or `im`; `lrr` has no component suffix. |",
+            "| `resummation` / `resummation_part` | Empty selects fixed-order NLO; `rgr` requires `re`, `im`, or `both` and the corresponding kernel file; `lrr` has no component suffix. |",
             "| `mu` | MSbar renormalization/matching scale in GeV. |",
             "| `zs_fm` | Hybrid Wilson-line switching distance; absent for ratio/MSbar kernels. |",
             "| `kernel_parameters` | Kernel-signature parameters not supplied by the stage, such as `kappa` "

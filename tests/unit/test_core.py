@@ -40,7 +40,7 @@ from lamet_agent.contract import (
     stage_job_rules,
 )
 from lamet_agent.__main__ import _build_parser
-from lamet_agent.llm import Message, _AssistantResponse, _ToolCall, _decode_json_payload, create_backend
+from lamet_agent.llm import Message, _AssistantResponse, _ToolCall, create_backend
 from lamet_agent.manifest import Manifest, _load_stage_contract, load_manifest
 from lamet_agent.structured import annotation_schema, validate_unique_items
 
@@ -556,22 +556,7 @@ def test_codex_provider_passes_response_schema_to_the_python_sdk(monkeypatch: py
     assert "<EXECUTION_CONSTRAINT>" in prompt
 
 
-def test_decode_json_payload_tolerates_extra_cli_agent_closers() -> None:
-    payload = {
-        "text": "",
-        "tool_calls": [{"name": "write_review", "arguments": {"title": "review", "conclusion": "ok"}}],
-    }
-    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-    assert _decode_json_payload(raw) == payload
-    assert _decode_json_payload(raw + "]}") == payload
-    assert _decode_json_payload(raw[:-2] + "}" + raw[-2:]) == payload
-    assert _decode_json_payload(f"```json\n{raw}\n```") == payload
-    assert _decode_json_payload(f"Here is the JSON:\n{raw}") == payload
-    with pytest.raises(json.JSONDecodeError):
-        _decode_json_payload("{not json")
-
-
-def test_codex_provider_accepts_extra_closers_on_tool_json(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_codex_provider_rejects_extra_closers_on_tool_json(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {"text": "done", "tool_calls": [{"name": "write_review", "arguments": {"title": "review"}}]}
     raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "]}"
 
@@ -594,14 +579,12 @@ def test_codex_provider_accepts_extra_closers_on_tool_json(monkeypatch: pytest.M
     sdk.Sandbox = FakeSandbox
     monkeypatch.setitem(sys.modules, "openai_codex", sdk)
 
-    response = create_backend("codex").complete(
-        messages=[Message("user", "request")],
-        tools=[{"type": "function", "function": {"name": "write_review", "parameters": {}}}],
-        prompt_digest="digest",
-    )
-    assert response.text == "done"
-    assert response.calls[0].name == "write_review"
-    assert response.calls[0].arguments == {"title": "review"}
+    with pytest.raises(ValueError, match="Codex returned malformed JSON"):
+        create_backend("codex").complete(
+            messages=[Message("user", "request")],
+            tools=[{"type": "function", "function": {"name": "write_review", "parameters": {}}}],
+            prompt_digest="digest",
+        )
 
 
 def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -685,6 +668,35 @@ def test_claude_provider_uses_the_python_sdk_without_native_tools(monkeypatch: p
     assert "resume" not in options[0].values
     assert options[1].values["resume"] == "claude-session"
     assert options[1].values["tools"] == []
+
+
+def test_claude_structured_response_requires_native_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeOptions:
+        def __init__(self, **values: object) -> None:
+            pass
+
+    async def fake_query(**kwargs):
+        yield SimpleNamespace(
+            result='{"answer": "ok"}', structured_output=None,
+            session_id="claude-session", usage=None, is_error=False, errors=None,
+        )
+
+    sdk = types.ModuleType("claude_agent_sdk")
+    sdk.ClaudeAgentOptions = FakeOptions
+    sdk.query = fake_query
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", sdk)
+
+    with pytest.raises(TypeError, match="Claude Code structured response must be an object"):
+        create_backend("claude").complete(
+            messages=[Message("user", "request")], tools=[], prompt_digest="digest",
+            response_schema={
+                "name": "answer",
+                "schema": {
+                    "type": "object", "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"], "additionalProperties": False,
+                },
+            },
+        )
 
 
 class _ModelsResponse:
@@ -1447,7 +1459,7 @@ def test_fourier_sea_sector_is_available_only_for_gpd() -> None:
     assert evaluate_checks(contract.CHECKS, gpd) == []
 
 
-def test_fourier_manifest_validation_rejects_unsupported_pdf_hadron(tmp_path: Path) -> None:
+def test_fourier_manifest_validation_defers_input_hadron_check(tmp_path: Path) -> None:
     examples = Path(__file__).parents[2] / "examples"
     document = json.loads((examples / "pion_pdf_gi_manifest.json").read_text(encoding="utf-8"))
     document["metadata"]["root_directory"] = str(examples.parents[0])
@@ -1464,12 +1476,7 @@ def test_fourier_manifest_validation_rejects_unsupported_pdf_hadron(tmp_path: Pa
 
     issues = Manifest(tmp_path / "manifest.json", document).validate()
 
-    assert any(
-        issue.path == "stages.fourier_transform.jobs[0].inputs.input"
-        and "hadron must be one of" in issue.message
-        and "kaon" in issue.message
-        for issue in issues
-    )
+    assert issues == []
 
 
 def test_review_tools_have_provider_schemas() -> None:
@@ -2064,6 +2071,7 @@ def test_matching_contract_accepts_resummation_combinations() -> None:
     assert issues("", "") == []
     assert issues("rgr", "re") == []
     assert issues("rgr", "im") == []
+    assert issues("rgr", "both") == []
     assert issues("lrr", "") == []
     assert issues("", "re")[0].path == "resummation_part"
     assert issues("lrr", "im")[0].path == "resummation_part"

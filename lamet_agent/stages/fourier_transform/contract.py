@@ -173,16 +173,6 @@ def check_observable_sector(context: CheckContext) -> Issue | None:
             "must be valence, singlet, or full for a PDF",
             "The PDF transform has no standalone sea projection; sea is a GPD-only sector.",
         )
-    if observable in {"pdf", "gpd"}:
-        allowed_hadrons = {"pion", "proton", "nucleon"}
-        unsupported = sorted(hadron for hadron in context.input_hadrons if hadron not in allowed_hadrons)
-        if unsupported:
-            allowed = ", ".join(sorted(allowed_hadrons))
-            return Issue(
-                "inputs.input",
-                f"hadron must be one of {allowed} for {observable.upper()} Fourier tails; got {', '.join(unsupported)}",
-                "The selected PDF/GPD tail family is implemented only for pion and nucleon/proton provenance.",
-            )
     return None
 
 

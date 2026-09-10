@@ -17,6 +17,8 @@ _COMPONENT_ALIASES = {"re": "re", "real": "re", "im": "im", "imag": "im", "imagi
 
 def _matching_component(resummation_part: str, attrs: dict) -> str:
     """Return the quasi component matched by one resummation choice."""
+    if resummation_part == "both":
+        return "both"
     required = resummation_part or None
     declared = _COMPONENT_ALIASES.get(str(attrs.get("component", "")).lower())
     if required is not None and declared is not None and declared != required:
@@ -39,7 +41,7 @@ def run(context: ToolContext) -> dict[str, object]:
     """Load one kernel module and store its input/output grid summary."""
     data = load_data(_one(context.inputs["quasi"]))
     component = _matching_component(str(context.params.get("resummation_part", "")), data.attrs)
-    if np.iscomplexobj(data.values):
+    if np.iscomplexobj(data.values) and component != "both":
         data = data.imag if component == "im" else data.real
     data.array.attrs["matching_component"] = component
     momentum = data.attrs.get("momentum_gev")

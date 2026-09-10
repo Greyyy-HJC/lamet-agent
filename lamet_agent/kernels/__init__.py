@@ -19,7 +19,7 @@ _SAFE_TOKEN = re.compile(r"[a-z][a-z0-9]*")
 _VALID_GAUGES = frozenset({"gi", "cg"})
 _VALID_SCHEMES = frozenset({"ratio", "hybrid", "msbar"})
 _VALID_RESUMMATIONS = frozenset({"", "rgr", "lrr"})
-_VALID_RESUMMATION_PARTS = frozenset({"", "re", "im"})
+_VALID_RESUMMATION_PARTS = frozenset({"", "re", "im", "both"})
 
 
 def _root(root: str | Path | None) -> Path:
@@ -81,13 +81,13 @@ def matching_kernel_id(
     if resummation not in _VALID_RESUMMATIONS:
         raise ValueError(f"resummation must be '', 'rgr', or 'lrr', got {resummation!r}")
     if resummation_part not in _VALID_RESUMMATION_PARTS:
-        raise ValueError(f"resummation_part must be '', 're', or 'im', got {resummation_part!r}")
+        raise ValueError(f"resummation_part must be '', 're', 'im', or 'both', got {resummation_part!r}")
     if resummation == "" and resummation_part:
         raise ValueError("resummation_part requires resummation='rgr'")
     if resummation == "lrr" and resummation_part:
         raise ValueError("lrr kernels do not accept resummation_part")
     if resummation == "rgr" and not resummation_part:
-        raise ValueError("rgr kernels require resummation_part='re' or 'im'")
+        raise ValueError("rgr kernels require resummation_part='re', 'im', or 'both'")
     tokens = [parton, observable, gauge, operator, scheme, order]
     if resummation:
         tokens.append(resummation)

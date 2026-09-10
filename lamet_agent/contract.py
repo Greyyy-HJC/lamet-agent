@@ -141,7 +141,6 @@ class CheckContext:
     params: Mapping[str, Any]
     inputs: Mapping[str, Any]
     unresolved: frozenset[str] = frozenset()
-    input_hadrons: frozenset[str] = frozenset()
 
 
 def _path_join(parent: str, child: str) -> str:
