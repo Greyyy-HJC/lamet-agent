@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from lamet_agent.data import EnsembleData, EnsembleInfo
 from lamet_agent.stages._reporting import StageReportRecord
@@ -593,6 +594,38 @@ def test_correlator_dispersion_fit_requires_more_momenta_than_parameters(tmp_pat
     assert "fit band was omitted" not in text
     assert band_widths
     assert all(width < 1.0 for width in band_widths)
+
+
+@pytest.mark.parametrize("second_spacing", [0.06, 0.06000000000001, 0.09])
+def test_renormalization_discrete_effect_requires_distinct_spacings(tmp_path: Path, second_spacing: float) -> None:
+    from lamet_agent.stages.renormalization.reporting import _grouped_overlay_lines
+
+    records = []
+    for job_id, scheme, spacing in [("rn_p4_re", "hybrid", 0.06), ("rn_p4_im", "msbar", second_spacing)]:
+        output = EnsembleData(
+            EnsembleInfo("test", job_id, spacing, spacing, 64, 128, 0.13),
+            "bootstrap",
+            [[0.8 + 0.1j, 0.7 + 0.2j], [0.9 + 0.2j, 0.8 + 0.3j]],
+            ["z"],
+            {"z": [0, 1]},
+            attrs={"momentum": "PX4PY4PZ0"},
+        )
+        records.append(_record(
+            tmp_path, job_id, params={"type": "apply", "scheme": scheme},
+            output=output, summary={"artifacts": []},
+        ))
+
+    text = "\n".join(_grouped_overlay_lines(tuple(records), tmp_path))
+
+    expected = second_spacing == 0.09
+    assert ("Fixed momentum: lattice-spacing dependence" in text) == expected
+    for component in ("real", "imag"):
+        for extension in ("svg", "pdf"):
+            filename = f"discrete_effect_px4py4pz0_{component}.{extension}"
+            assert (filename in text) == expected
+            assert (tmp_path / "plots" / filename).is_file() == expected
+    if not expected:
+        assert "renormalized_a0p06fm" in text
 
 
 def test_renormalization_stage_report_contains_scheme_formula(tmp_path: Path) -> None:

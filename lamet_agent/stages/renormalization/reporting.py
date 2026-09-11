@@ -396,7 +396,13 @@ def _grouped_overlay_lines(records: tuple[StageReportRecord, ...], artifact_dire
     momentum_groups = [
         group
         for _key, group in sorted(by_momentum.items(), key=lambda item: str(item[0]))
-        if len(group) >= 2
+        if len({
+            round(float(record.output.ensemble.a_s), 12)
+            for record in group
+            if isinstance(record.output.ensemble.a_s, (int, float))
+            and not isinstance(record.output.ensemble.a_s, bool)
+            and math.isfinite(float(record.output.ensemble.a_s))
+        }) >= 2
     ]
     if momentum_groups:
         lines.extend(["### Fixed momentum: lattice-spacing dependence", ""])
