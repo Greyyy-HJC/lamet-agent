@@ -16,12 +16,12 @@
     "correlator_analysis": {
       "defaults": {
         "component": "both",
-        "nstate": [
-          1
-        ],
         "fit_scope": [
           "qda_ratio"
         ],
+        "nstate": {
+          "qda_ratio": [1]
+        },
         "fitting_form": "Breit",
         "model_average": false,
         "pt2_windows": [

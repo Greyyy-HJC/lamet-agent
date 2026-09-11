@@ -29,8 +29,8 @@ def _correlator_lsqfit_params() -> dict:
     return {
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [2],
         "fit_scope": ["2pt+3pt"],
+        "nstate": {"2pt+3pt": [2]},
         "fitting_form": "Breit",
         "pt2_windows": [{"tmin": 3, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
@@ -127,8 +127,8 @@ def test_correlator_stage_report_contains_method_candidates_and_artifacts(tmp_pa
     params = {
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [2],
         "fit_scope": ["2pt+3pt"],
+        "nstate": {"2pt+3pt": [2]},
         "fitting_form": "Breit",
         "pt2_windows": [{"tmin": 3, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],

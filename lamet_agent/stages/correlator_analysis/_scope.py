@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import product
 
 
 FIT_SCOPE_ORDER = ("2pt", "3pt", "qda", "FH", "3pt_ratio", "qda_ratio")
@@ -101,13 +102,79 @@ def parse_fit_scope(values: Sequence[str] | Iterable[str]) -> FitScope:
     return FitScope(stages)
 
 
+def resolve_stage_n_states(n_states: Mapping[str, int] | int, pipeline: FitScope) -> dict[str, int]:
+    """Normalize a shared or per-stage state count onto the parsed pipeline."""
+    stages = pipeline.as_list()
+    if isinstance(n_states, Mapping):
+        missing = [stage for stage in stages if stage not in n_states]
+        extra = [stage for stage in n_states if stage not in stages]
+        if missing or extra:
+            raise ValueError("n_states keys must match fit_scope stages")
+        resolved = {stage: int(n_states[stage]) for stage in stages}
+    elif isinstance(n_states, bool) or not isinstance(n_states, int) or n_states < 1:
+        raise ValueError("n_states must be a positive integer or a per-stage mapping")
+    else:
+        resolved = {stage: n_states for stage in stages}
+    if any(isinstance(count, bool) or count < 1 for count in resolved.values()):
+        raise ValueError("each stage n_states must be a positive integer")
+    return resolved
+
+
+def nstate_key(nstate: Mapping[str, int] | int) -> tuple[tuple[str, int], ...]:
+    """Stable identity for one concrete per-stage or scalar state-count choice."""
+    if isinstance(nstate, Mapping):
+        return tuple(sorted((str(stage), int(count)) for stage, count in nstate.items()))
+    return (("__scalar__", int(nstate)),)
+
+
+def nstate_combinations(
+    nstate: Mapping[str, Sequence[int]], fit_scope: Sequence[str]
+) -> list[dict[str, int]]:
+    """Expand one authored per-stage nstate grid into concrete count mappings."""
+    stages = list(fit_scope)
+    missing = [stage for stage in stages if stage not in nstate]
+    if missing:
+        raise ValueError(f"nstate is missing fit_scope stage {missing[0]!r}")
+    extra = [stage for stage in nstate if stage not in stages]
+    if extra:
+        raise ValueError(f"nstate has unexpected stage {extra[0]!r}")
+    return [
+        {stage: int(count) for stage, count in zip(stages, combo, strict=True)}
+        for combo in product(*(list(nstate[stage]) for stage in stages))
+    ]
+
+
+def stage_state_count(n_states: Mapping[str, int], atoms: Sequence[str]) -> int:
+    """Return the authored state count for one joint stage."""
+    key = "+".join(atoms)
+    if key not in n_states:
+        raise ValueError(f"n_states is missing fit_scope stage {key!r}")
+    count = n_states[key]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ValueError(f"n_states[{key!r}] must be a positive integer")
+    return count
+
+
+def atom_state_count(n_states: Mapping[str, int], pipeline: FitScope, atom: str) -> int:
+    """Return the state count of the stage that contains ``atom``."""
+    for atoms in pipeline.stages:
+        if atom in atoms:
+            return stage_state_count(n_states, atoms)
+    raise ValueError(f"fit_scope does not contain {atom}")
+
+
 __all__ = [
     "FIT_SCOPE_ATOMS",
     "FIT_SCOPE_ORDER",
     "FitScope",
     "ORDINARY_ATOMS",
     "QDA_ATOMS",
+    "atom_state_count",
+    "nstate_combinations",
+    "nstate_key",
     "parse_fit_scope",
+    "resolve_stage_n_states",
     "split_scope_stage",
+    "stage_state_count",
     "valid_scope_stage",
 ]

@@ -1986,8 +1986,8 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
     ground_fit = {
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [2],
         "fit_scope": ["2pt"],
+        "nstate": {"2pt": [2]},
         "fitting_form": "Breit",
         "model_average": False,
         "pt2_windows": [{"tmin": 2, "tmax": 8}],
@@ -2013,8 +2013,8 @@ def test_correlator_contract_allows_qda_candidate_grid(state_counts: list[int], 
     qda_fit = {
         "analysis_method": "lsqfit",
         "component": "both",
-        "nstate": state_counts,
         "fit_scope": fit_scope,
+        "nstate": {stage: state_counts for stage in fit_scope},
         "fitting_form": "Breit",
         "model_average": False,
         "pt2_windows": [{"tmin": 2, "tmax": 14}],
@@ -2034,13 +2034,33 @@ def test_correlator_contract_allows_qda_candidate_grid(state_counts: list[int], 
     )
 
 
+def test_correlator_contract_requires_nstate_keys_to_match_fit_scope() -> None:
+    contract = _load_stage_contract("correlator_analysis")
+    params = {
+        "analysis_method": "lsqfit",
+        "component": "re",
+        "fit_scope": ["2pt", "3pt_ratio"],
+        "nstate": {"2pt": [2]},
+        "fitting_form": "Breit",
+        "model_average": False,
+        "pt2_windows": [{"tmin": 3, "tmax": 8}],
+        "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
+        "svdcut": 1e-6,
+        "posterior_prior_error_scale": 1.0,
+        "q_min": 0.05,
+    }
+    assert evaluate_rules(params, contract.PARAM_RULES) == []
+    issues = evaluate_checks(contract.CHECKS, CheckContext({}, "correlator_analysis", "job", params, {}))
+    assert any(issue.path == "nstate" and "fit_scope" in issue.message for issue in issues)
+
+
 def test_correlator_contract_allows_model_average() -> None:
     contract = _load_stage_contract("correlator_analysis")
     params = {
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [1, 2],
         "fit_scope": ["2pt+3pt"],
+        "nstate": {"2pt+3pt": [1, 2]},
         "fitting_form": "Breit",
         "model_average": True,
         "pt2_windows": [{"tmin": 3, "tmax": 8}],
@@ -2064,8 +2084,8 @@ def test_correlator_contract_rejects_nonbreit_without_a_three_point_path() -> No
     params = {
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [1],
         "fit_scope": ["2pt"],
+        "nstate": {"2pt": [1]},
         "fitting_form": "NonBreit",
         "model_average": False,
         "pt2_windows": [{"tmin": 2, "tmax": 8}],
@@ -2767,7 +2787,7 @@ def test_joint_qda_null_hook_and_tune_z_share_one_recommendation(tmp_path: Path)
         {
             "component": "re",
             "fit_scope": ["qda_ratio"],
-            "nstate": [1],
+            "nstate": {"qda_ratio": [1]},
         },
         {},
         {},
@@ -2822,7 +2842,7 @@ def test_spectrum_recommendation_describes_its_initial_request(tmp_path: Path) -
         tmp_path / "manifest.json",
         "correlator_analysis",
         "spectrum",
-        {"component": "re", "nstate": [1, 2]},
+        {"component": "re", "fit_scope": ["2pt"], "nstate": {"2pt": [1, 2]}},
         {},
         {},
         {

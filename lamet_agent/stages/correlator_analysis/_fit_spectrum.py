@@ -27,7 +27,7 @@ def run(
         raise ValueError("spectrum fitting requires fit_scope=['2pt']")
     if tmin >= tmax:
         raise ValueError("spectrum fit window must be increasing")
-    if n_states not in context.params["nstate"]:
+    if n_states not in context.params["nstate"]["2pt"]:
         raise ValueError("n_states must be selected from the authored candidate list")
     correlators = context.state.get("correlators")
     if not correlators:

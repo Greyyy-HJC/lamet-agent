@@ -54,6 +54,18 @@ def _stored_symmetry(attrs: Mapping[str, object]) -> dict[str, str]:
     return _symmetry_mapping(value)
 
 
+def _zero_odd_origin_imag(values: np.ndarray, z: np.ndarray, symmetry: Mapping[str, str]) -> np.ndarray:
+    """Force Im(z=0)=0 so an odd imaginary part remains odd at the origin."""
+    if symmetry.get("imag") != "odd":
+        return values
+    origin = np.isclose(np.asarray(z, dtype=float), 0.0)
+    if not np.any(origin):
+        return values
+    output = np.array(values, copy=True)
+    output[origin] = np.real(output[origin]) + 0.0j
+    return output
+
+
 def _signed_from_positive(
     positive_values: np.ndarray, extended_z: np.ndarray, symmetry: Mapping[str, str]
 ) -> np.ndarray:
@@ -68,7 +80,11 @@ def _signed_from_positive(
         real = -real
     if symmetry["imag"] == "odd":
         imag = -imag
-    return np.concatenate([real + 1j * imag, positive_values[~negative_mask]])
+    return _zero_odd_origin_imag(
+        np.concatenate([real + 1j * imag, positive_values[~negative_mask]]),
+        extended_z,
+        symmetry,
+    )
 
 
 _NUCLEON_HADRONS = {"nucleon", "proton"}
@@ -669,7 +685,7 @@ def complete_signed_z(data: EnsembleData, symmetry: Mapping[str, str]) -> Ensemb
         if convention["imag"] == "odd":
             negative_imag = -negative_imag
         negative = negative_real + 1j * negative_imag
-        values.append(np.concatenate([negative, positive]))
+        values.append(_zero_odd_origin_imag(np.concatenate([negative, positive]), output_z, convention))
     attrs = data.attrs
     attrs["signed_z_completion"] = json.dumps(convention, sort_keys=True)
     attrs["symmetry"] = json.dumps(convention, sort_keys=True)

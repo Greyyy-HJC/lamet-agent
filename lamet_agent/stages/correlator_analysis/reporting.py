@@ -147,9 +147,14 @@ def _window_text(candidate: Mapping[str, object] | None) -> str:
     if window.get("tau_min") is not None:
         details.append(f"tau cut={window['tau_min']}")
     if candidate.get("nstate") is not None:
-        state_count = candidate["nstate"]
-        details.append(f"{state_count} state" + ("s" if str(state_count) != "1" else ""))
+        details.append(_nstate_text(candidate["nstate"]))
     return "; ".join(details) or "window not recorded"
+
+
+def _nstate_text(value: object) -> str:
+    if isinstance(value, Mapping):
+        return "states " + ", ".join(f"{stage}={count}" for stage, count in value.items())
+    return f"{value} state" + ("" if str(value) == "1" else "s")
 
 
 def _selected_fit_text(record: StageReportRecord) -> str:

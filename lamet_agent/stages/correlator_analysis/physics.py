@@ -12,7 +12,12 @@ from lamet_agent.data import EnsembleData
 from lamet_agent.parallel import FitNumericalError, nonlinear_fit
 from lamet_agent.parallel._pool import _ParallelPool
 from lamet_agent.ui import track
-from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
+from lamet_agent.stages.correlator_analysis._scope import (
+    atom_state_count,
+    parse_fit_scope,
+    resolve_stage_n_states,
+    stage_state_count,
+)
 
 
 def _state_energies(parameters: Mapping[str, Any], n_states: int, suffix: str = "") -> list[Any]:
@@ -249,6 +254,37 @@ def _sample_diagnostic_records(result: Any) -> list[dict[str, float | int]]:
     return records
 
 
+def _overlay_posterior(
+    prior: Mapping[str, Any], posterior: Mapping[str, Any], scale: float
+) -> gv.BufferDict:
+    """Copy overlapping posterior keys into an authored prior, widening the widths."""
+    updated = gv.BufferDict()
+    for key, authored in prior.items():
+        if key not in posterior:
+            updated[key] = authored
+            continue
+        value = posterior[key]
+        width = np.asarray(gv.sdev(value)) * scale
+        if np.any(~np.isfinite(width)) or np.any(width <= 0):
+            raise FitNumericalError(f"propagated posterior width for '{key}' is invalid")
+        updated[key] = gv.gvar(gv.mean(value), width)
+    return updated
+
+
+def _sample_posteriors_from_result(result: Any) -> list[gv.BufferDict | None]:
+    """Rebuild independent per-sample posteriors from stored means and widths."""
+    posteriors: list[gv.BufferDict | None] = []
+    for pmean, sdevs in zip(result.samples, result.sample_sdevs, strict=True):
+        if pmean is None or sdevs is None:
+            posteriors.append(None)
+            continue
+        posterior = gv.BufferDict()
+        for key in pmean:
+            posterior[key] = gv.gvar(np.asarray(gv.mean(pmean[key])), np.asarray(sdevs[key]))
+        posteriors.append(posterior)
+    return posteriors
+
+
 def _gvar_payload(values: Any) -> tuple[list[float], list[float]]:
     return (
         np.asarray(gv.mean(values), dtype=float).reshape(-1).tolist(),
@@ -422,7 +458,7 @@ def fit_matrix_element_samples(
     tmax: int,
     tsep_values: list[int],
     tau_min: int,
-    n_states: int,
+    n_states: Mapping[str, int] | int,
     prior_width: float,
     correlator_rescale: float,
     svdcut: float,
@@ -436,13 +472,14 @@ def fit_matrix_element_samples(
 ) -> tuple[EnsembleData | None, dict[str, Any]]:
     """Fit one ordinary three-point scope pipeline."""
     pipeline = parse_fit_scope(fit_scope)
+    stage_counts = resolve_stage_n_states(n_states, pipeline)
     if pipeline.is_qda or pipeline.is_spectrum or not pipeline.needs_pt3_data:
         raise ValueError("ordinary matrix-element fitting requires a three-point or FH fit_scope")
     if fitting_form not in {"Breit", "NonBreit"}:
         raise ValueError("fitting_form must be Breit or NonBreit")
     if fitting_form == "NonBreit" and pipeline.atom_set - {"2pt", "3pt", "3pt_ratio"}:
         raise ValueError("NonBreit fitting supports only 2pt, 3pt, and 3pt_ratio")
-    if n_states > 2 and "FH" in pipeline.atom_set:
+    if "FH" in pipeline.atom_set and atom_state_count(stage_counts, pipeline, "FH") > 2:
         raise ValueError("FH fitting supports at most two states")
     selected_components = {"real": ("re",), "imag": ("im",), "both": ("re", "im")}.get(components)
     if selected_components is None:
@@ -486,7 +523,12 @@ def fit_matrix_element_samples(
         raise ValueError("matrix-element fitting requires the temporal extent")
     times = np.asarray(initial.coords["t"], dtype=int)
     pt2_mask = (times >= tmin) & (times < tmax)
-    if np.count_nonzero(pt2_mask) < 2 * n_states:
+    pt2_n_states = (
+        atom_state_count(stage_counts, pipeline, "2pt")
+        if "2pt" in pipeline.atom_set
+        else max(stage_counts.values())
+    )
+    if np.count_nonzero(pt2_mask) < 2 * pt2_n_states:
         raise ValueError("the two-point window must contain at least 2*n_states points")
     available_tseps = np.asarray(three_point.coords["tsep"], dtype=int)
     available_tau = np.asarray(three_point.coords["tau"], dtype=int)
@@ -569,13 +611,15 @@ def fit_matrix_element_samples(
             differences = np.diff(summed_values, axis=1) / np.diff(np.asarray(tsep_values, dtype=float))[None, :]
 
             previous_posterior: Mapping[str, Any] | None = None
+            previous_sample_posteriors: list[gv.BufferDict | None] | None = None
             stage_diagnostics: list[dict[str, Any]] = []
             result = None
             fit_prior = None
             observations = None
             for stage_index, atoms in enumerate(pipeline.stages):
+                stage_n_states = stage_state_count(stage_counts, atoms)
                 x: dict[str, Any] = {
-                    "n_states": n_states,
+                    "n_states": stage_n_states,
                     "extent": extent,
                     "form": fitting_form,
                     "atoms": atoms,
@@ -613,34 +657,48 @@ def fit_matrix_element_samples(
                     ["observation"],
                     {"observation": list(range(observations.shape[1]))},
                 )
-                fit_prior = matrix_element_prior(
-                    n_states,
+                authored_prior = matrix_element_prior(
+                    stage_n_states,
                     form=fitting_form,
                     scope=atoms,
                     components=selected_components,
                     width_scale=prior_width,
                 )
-                if previous_posterior is not None:
-                    for key in fit_prior:
-                        if key in previous_posterior:
-                            value = previous_posterior[key]
-                            fit_prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * posterior_prior_error_scale)
+                fit_prior = (
+                    authored_prior
+                    if previous_posterior is None
+                    else _overlay_posterior(authored_prior, previous_posterior, posterior_prior_error_scale)
+                )
                 is_final = stage_index == len(pipeline.stages) - 1
+                sample_priors = (
+                    [
+                        None
+                        if posterior is None
+                        else _overlay_posterior(authored_prior, posterior, posterior_prior_error_scale)
+                        for posterior in previous_sample_posteriors
+                    ]
+                    if fit_samples and previous_sample_posteriors is not None
+                    else None
+                )
                 result = nonlinear_fit(
                     (x, fit_data),
                     matrix_element_fcn,
                     fit_prior,
                     workers=workers,
-                    sample_prior_scale=posterior_prior_error_scale * prior_width,
+                    sample_prior_scale=(
+                        None if sample_priors is not None else posterior_prior_error_scale * prior_width
+                    ),
+                    sample_priors=sample_priors,
                     sample_error_mode=sample_error_mode,
-                    mode="resamples" if is_final and fit_samples else "center",
-                    tolerate_sample_failures=is_final and fit_samples,
+                    mode="resamples" if fit_samples else "center",
+                    tolerate_sample_failures=fit_samples,
                     capture_sample_posteriors=(0,) if is_final and fit_samples else (),
-                    _parallel=parallel if is_final else None,
+                    _parallel=parallel if fit_samples else None,
                     svdcut=svdcut,
                     maxit=10000,
                 )
                 previous_posterior = result.p
+                previous_sample_posteriors = _sample_posteriors_from_result(result) if fit_samples else None
                 stage_diagnostics.append(
                     {
                         "stage": "+".join(atoms),
@@ -699,7 +757,7 @@ def fit_matrix_element_samples(
                     fit_scope=plot_scope,
                     fitting_form=fitting_form,
                     extent=extent,
-                    n_states=n_states,
+                    n_states=stage_state_count(stage_counts, pipeline.final_stage),
                     tsep_values=tsep_values,
                     available_tau=available_tau,
                     tau_min=tau_min,
@@ -777,7 +835,7 @@ def fit_matrix_element_samples(
                 "method": "lsqfit",
                 "fitting_form": fitting_form,
                 "fit_scope": json.dumps(pipeline.as_list()),
-                "n_states": n_states,
+                "n_states": json.dumps(stage_counts),
                 "tmin": tmin,
                 "tmax": tmax,
                 "tau_min": tau_min,
@@ -989,7 +1047,7 @@ def fit_qda_samples(
     components: str,
     tmin: int,
     tmax: int,
-    n_states: int,
+    n_states: Mapping[str, int] | int,
     prior_width: float,
     svdcut: float,
     posterior_prior_error_scale: float,
@@ -1002,13 +1060,12 @@ def fit_qda_samples(
 ) -> tuple[EnsembleData | None, dict[str, Any]]:
     """Fit one raw/ratio qDA scope pipeline and return normalized samples."""
     pipeline = parse_fit_scope(fit_scope)
+    stage_counts = resolve_stage_n_states(n_states, pipeline)
     if not pipeline.is_qda:
         raise ValueError("qDA fitting requires a qda or qda_ratio atom")
     selected_components = {"real": ("re",), "imag": ("im",), "both": ("re", "im")}.get(components)
     if selected_components is None:
         raise ValueError("components must be real, imag, or both")
-    if isinstance(n_states, bool) or not isinstance(n_states, int) or n_states < 1:
-        raise ValueError("qDA fitting requires a positive state count")
     if not np.isfinite(prior_width) or prior_width <= 0:
         raise ValueError("qDA prior_width must be finite and positive")
     if fit_samples and tune_z is not None:
@@ -1026,7 +1083,7 @@ def fit_qda_samples(
     t = np.asarray(source.coords["t"], dtype=float)
     z = np.asarray(source.coords["z"], dtype=float)
     selected = np.flatnonzero((t >= tmin) & (t < tmax))
-    if selected.size < 2 * n_states:
+    if selected.size < 2 * max(stage_counts.values()):
         raise ValueError("qDA fit window must contain at least 2*n_states times")
     source_values = np.asarray(source.values)
     two_point, denominator_kind = _qda_two_point_source(records, source)
@@ -1074,13 +1131,15 @@ def fit_qda_samples(
         fit_indices = track(z_indices, label="qDA fits", unit="z", enabled=fit_samples and show_progress)
         for z_index in fit_indices:
             previous_posterior: Mapping[str, Any] | None = None
+            previous_sample_posteriors: list[gv.BufferDict | None] | None = None
             stage_diagnostics: list[dict[str, Any]] = []
             result = None
             fit_prior = None
             observations = None
             for stage_index, atoms in enumerate(pipeline.stages):
+                stage_n_states = stage_state_count(stage_counts, atoms)
                 x = {
-                    "n_states": n_states,
+                    "n_states": stage_n_states,
                     "extent": extent,
                     "form": "Breit",
                     "atoms": atoms,
@@ -1109,37 +1168,49 @@ def fit_qda_samples(
                     ["observation"],
                     {"observation": list(range(observations.shape[1]))},
                 )
-                fit_prior = matrix_element_prior(
-                    n_states,
+                authored_prior = matrix_element_prior(
+                    stage_n_states,
                     form="Breit",
                     scope=atoms,
                     components=selected_components,
                     width_scale=prior_width,
                     denominator_kind=denominator_kind,
                 )
-                if previous_posterior is not None:
-                    for key in fit_prior:
-                        if key in previous_posterior:
-                            value = previous_posterior[key]
-                            fit_prior[key] = gv.gvar(gv.mean(value), gv.sdev(value) * posterior_prior_error_scale)
+                fit_prior = (
+                    authored_prior
+                    if previous_posterior is None
+                    else _overlay_posterior(authored_prior, previous_posterior, posterior_prior_error_scale)
+                )
                 is_final = stage_index == len(pipeline.stages) - 1
+                sample_priors = (
+                    [
+                        None
+                        if posterior is None
+                        else _overlay_posterior(authored_prior, posterior, posterior_prior_error_scale)
+                        for posterior in previous_sample_posteriors
+                    ]
+                    if fit_samples and previous_sample_posteriors is not None
+                    else None
+                )
                 result = nonlinear_fit(
                     (x, fit_data),
                     matrix_element_fcn,
                     fit_prior,
                     workers=workers,
                     sample_prior_scale=(
-                        None if is_final and atoms == ("qda_ratio",) else posterior_prior_error_scale * prior_width
+                        None if sample_priors is not None else posterior_prior_error_scale * prior_width
                     ),
+                    sample_priors=sample_priors,
                     sample_error_mode=sample_error_mode,
-                    mode="resamples" if is_final and fit_samples else "center",
-                    tolerate_sample_failures=is_final and fit_samples,
+                    mode="resamples" if fit_samples else "center",
+                    tolerate_sample_failures=fit_samples,
                     capture_sample_posteriors=(0,) if is_final and fit_samples else (),
-                    _parallel=parallel if is_final else None,
+                    _parallel=parallel if fit_samples else None,
                     svdcut=svdcut,
                     maxit=10000,
                 )
                 previous_posterior = result.p
+                previous_sample_posteriors = _sample_posteriors_from_result(result) if fit_samples else None
                 stage_diagnostics.append(
                     {
                         "stage": "+".join(atoms),
@@ -1174,15 +1245,16 @@ def fit_qda_samples(
             sample0_plot = None
             if fit_samples and result.sample_posteriors and result.sample_posteriors[0] is not None:
                 posterior = result.sample_posteriors[0]
+                final_n_states = stage_state_count(stage_counts, pipeline.final_stage)
                 fit_t = (
                     np.asarray([float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5])
-                    if n_states == 1
+                    if final_n_states == 1
                     else np.linspace(float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5, 200)
                 )
                 fit_ratio = qda_ratio_fcn(
                     {
                         "times": fit_t,
-                        "n_states": n_states,
+                        "n_states": final_n_states,
                         "extent": extent,
                         "denominator_kind": denominator_kind,
                         "components": selected_components,
@@ -1288,7 +1360,7 @@ def fit_qda_samples(
         {
             "method": "lsqfit",
             "fit_scope": json.dumps(pipeline.as_list()),
-            "n_states": n_states,
+            "n_states": json.dumps(stage_counts),
             "tmin": tmin,
             "tmax": tmax,
             "denominator_kind": denominator_kind,
@@ -1323,7 +1395,7 @@ def matrix_element_samples(
     tune_z: int | float | None = None,
     fit_samples: bool = True,
     show_progress: bool = False,
-    n_states: int = 1,
+    n_states: Mapping[str, int] | int = 1,
     prior_width: float = 1.0,
     fit_scope: list[str] | tuple[str, ...] = ("qda_ratio",),
     _parallel: _ParallelPool | None = None,
@@ -1339,7 +1411,8 @@ def matrix_element_samples(
     fits remain a constant plateau; multi-state fits use the periodic spectral
     ratio. Independent qDA fits use only the ratio, joint fits include the
     local denominator, and chained fits propagate a denominator-spectrum
-    posterior to the ratio fit.
+    posterior to the ratio fit. Sample fits always start from the sample-average
+    posterior of the current or preceding stage.
     """
     from lamet_agent.data import EnsembleData
 

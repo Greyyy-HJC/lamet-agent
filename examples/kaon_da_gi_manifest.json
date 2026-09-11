@@ -17,12 +17,12 @@
     "correlator_analysis": {
       "defaults": {
         "component": "both",
-        "nstate": [
-          1
-        ],
         "fit_scope": [
           "2pt+qda"
         ],
+        "nstate": {
+          "2pt+qda": [1]
+        },
         "fitting_form": "Breit",
         "model_average": false,
         "svdcut": 1e-06,

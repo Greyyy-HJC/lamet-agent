@@ -105,8 +105,14 @@ def test_tolerated_sample_failure_preserves_sample_alignment(monkeypatch) -> Non
     class FailedSampleParallel:
         def map(self, _function, _tasks):
             return [
-                (successful, None, {"chi2": 1.0, "dof": 1.0, "Q": 0.5, "logGBF": 0.0}, None),
-                (None, "ZeroDivisionError: float division", None, None),
+                (
+                    successful,
+                    None,
+                    {"chi2": 1.0, "dof": 1.0, "Q": 0.5, "logGBF": 0.0},
+                    None,
+                    {"amplitude": np.array(0.1)},
+                ),
+                (None, "ZeroDivisionError: float division", None, None, None),
             ]
 
     result = nonlinear_fit(
@@ -121,6 +127,8 @@ def test_tolerated_sample_failure_preserves_sample_alignment(monkeypatch) -> Non
     assert result.sample_errors == (None, "ZeroDivisionError: float division")
     assert result.sample_diagnostics[0]["Q"] == 0.5
     assert result.n_failed_samples == 1
+    assert result.sample_sdevs[0]["amplitude"] == pytest.approx(0.1)
+    assert result.sample_sdevs[1] is None
 
 
 def test_sample_posterior_capture_is_explicit_and_indexed() -> None:
@@ -135,6 +143,7 @@ def test_sample_posterior_capture_is_explicit_and_indexed() -> None:
         capture_sample_posteriors=(0,),
     )
     assert default.sample_posteriors == (None, None, None)
+    assert all(sdevs is not None for sdevs in default.sample_sdevs)
     assert captured.sample_posteriors[0] is not None
     assert captured.sample_posteriors[1:] == (None, None)
     assert isinstance(captured.sample_posteriors[0]["amplitude"], gv.GVar)
@@ -272,3 +281,57 @@ def test_resamples_mode_rejects_unresampled_source_data() -> None:
     prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
     with pytest.raises(ValueError, match="requires jackknife or bootstrap"):
         nonlinear_fit(data, lambda p: np.asarray([p["amplitude"]]), prior)
+
+
+def test_sample_priors_are_used_instead_of_a_shared_center_prior() -> None:
+    data = EnsembleData(None, "bootstrap", [[1.0], [1.1]], ["x"], {"x": [0]})
+    prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
+    sample_priors = [
+        gv.BufferDict({"amplitude": gv.gvar(0.5, 0.2)}),
+        gv.BufferDict({"amplitude": gv.gvar(1.5, 0.3)}),
+    ]
+    seen: list[object] = []
+
+    class InspectingParallel:
+        def map(self, function, tasks):
+            seen.extend(tasks)
+            return [function(task) for task in tasks]
+
+    result = nonlinear_fit(
+        data,
+        amplitude_model,
+        prior,
+        workers=1,
+        sample_priors=sample_priors,
+        _parallel=InspectingParallel(),
+    )
+    assert len(seen) == 2
+    np.testing.assert_allclose(seen[0][4]["amplitude"][0], 0.5)
+    np.testing.assert_allclose(seen[0][4]["amplitude"][1], 0.2)
+    np.testing.assert_allclose(seen[1][4]["amplitude"][0], 1.5)
+    np.testing.assert_allclose(seen[1][4]["amplitude"][1], 0.3)
+    assert result.sample_sdevs[0] is not None
+    assert result.sample_sdevs[1] is not None
+
+
+def test_null_sample_prior_skips_that_sample() -> None:
+    data = EnsembleData(None, "bootstrap", [[1.0], [1.1]], ["x"], {"x": [0]})
+    prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
+    result = nonlinear_fit(
+        data,
+        amplitude_model,
+        prior,
+        workers=1,
+        sample_priors=[prior, None],
+        tolerate_sample_failures=True,
+    )
+    assert result.samples[0] is not None
+    assert result.samples[1] is None
+    assert result.sample_errors[1] == "previous stage sample failed"
+
+
+def test_sample_priors_cannot_combine_with_sample_prior_scale() -> None:
+    data = EnsembleData(None, "bootstrap", [[1.0], [1.1]], ["x"], {"x": [0]})
+    prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
+    with pytest.raises(ValueError, match="cannot be combined"):
+        nonlinear_fit(data, amplitude_model, prior, sample_prior_scale=2.0, sample_priors=[prior, prior])

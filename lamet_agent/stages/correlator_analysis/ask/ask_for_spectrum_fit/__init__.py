@@ -45,7 +45,7 @@ def recommend(
     schema, _nullable = annotation_schema(_SpectrumResponse)
     schema["properties"]["tmin"]["minimum"] = 0
     schema["properties"]["tmax"]["minimum"] = 1
-    allowed_n_states = sorted(set(context.params["nstate"]))
+    allowed_n_states = sorted(set(context.params["nstate"]["2pt"]))
     schema["properties"]["n_states"].update({"minimum": 1, "enum": allowed_n_states})
     for name in ("prior_means", "prior_widths"):
         schema["properties"][name].update({"minItems": 2, "maxItems": 2 * max(allowed_n_states)})

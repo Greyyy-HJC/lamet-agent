@@ -9,6 +9,7 @@ from lamet_agent.parallel import FitNumericalError
 from lamet_agent.stages.correlator_analysis.physics import (
     fit_qda_samples,
 )
+from lamet_agent.stages.correlator_analysis._scope import nstate_combinations
 from lamet_agent.stages.correlator_analysis._selection import (
     select_tuned_candidate,
 )
@@ -31,14 +32,15 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
     if any(not any(abs(value - available) <= 1e-12 for available in available_z) for value in tune_z_values):
         raise ValueError("every tune_z_values entry must name an available qDA z coordinate")
     candidates: list[dict[str, object]] = []
+    fit_scope = list(settings["fit_scope"])
     authored = sorted(
         product(
-            context.params["nstate"],
+            nstate_combinations(context.params["nstate"], fit_scope),
             settings["prior_width"],
             settings["pt2_windows"],
         ),
         key=lambda item: (
-            int(item[0]),
+            tuple(int(item[0][stage]) for stage in fit_scope),
             float(item[1]),
             int(item[2]["tmin"]),
             int(item[2]["tmax"]),
@@ -49,7 +51,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
         metadata = {
             "id": candidate_id,
             "method": "lsqfit",
-            "fit_scope": list(settings["fit_scope"]),
+            "fit_scope": fit_scope,
             "observable": "matrix_element",
             "window": {
                 "tmin": int(window["tmin"]),
@@ -57,7 +59,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
                 "tau_min": None,
             },
             "component": context.params["component"],
-            "nstate": int(nstate),
+            "nstate": dict(nstate),
             "prior_width": float(prior_width),
         }
         per_z: dict[str, dict[str, object]] = {}
@@ -66,11 +68,11 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
             try:
                 data, fit = fit_qda_samples(
                     correlators,
-                    fit_scope=list(settings["fit_scope"]),
+                    fit_scope=fit_scope,
                     components=component,
                     tmin=int(window["tmin"]),
                     tmax=int(window["tmax"]),
-                    n_states=int(nstate),
+                    n_states=dict(nstate),
                     prior_width=float(prior_width),
                     svdcut=float(settings["svdcut"]),
                     posterior_prior_error_scale=float(settings["posterior_prior_error_scale"]),

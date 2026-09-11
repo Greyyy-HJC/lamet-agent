@@ -16,7 +16,7 @@ def test_componentwise_signed_z_completion() -> None:
     )
     completed = complete_signed_z(data, {"real": "even", "imag": "odd"})
     assert completed.coords["z"] == [-1.0, 0.0, 1.0]
-    assert np.allclose(completed.values[0], [1.0 - 2.0j, 2.0 + 3.0j, 1.0 + 2.0j])
+    assert np.allclose(completed.values[0], [1.0 - 2.0j, 2.0 + 0.0j, 1.0 + 2.0j])
 
 
 def test_fourier_uses_declared_phase_and_prefactor() -> None:

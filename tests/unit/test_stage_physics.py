@@ -473,8 +473,9 @@ def test_qda_two_state_ratio_recovers_ground_state_plateau() -> None:
     samples = []
     for _ in range(48):
         scale = 1.0 + rng.normal(0.0, 0.004)
+        point_noise = 1.0 + rng.normal(0.0, 0.002, times.size)
         numerator = correlator(o_re) + 1j * correlator(o_im)
-        samples.append(np.column_stack([local_c * scale, numerator * scale]))
+        samples.append(np.column_stack([local_c * scale * point_noise, numerator * scale * point_noise]))
     source = EnsembleData(
         ensemble,
         "bootstrap",
@@ -841,7 +842,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
             "id": "matrix_001",
             "method": "lsqfit",
             "fit_scope": ["qda_ratio"],
-            "nstate": 1,
+            "nstate": {"qda_ratio": 1},
             "prior_width": 1.0,
             "observable": "matrix_element",
             "window": {"tmin": 2, "tmax": 5, "tau_min": None},
@@ -859,7 +860,7 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
             "id": "matrix_002",
             "method": "lsqfit",
             "fit_scope": ["qda_ratio"],
-            "nstate": 1,
+            "nstate": {"qda_ratio": 1},
             "prior_width": 1.0,
             "observable": "matrix_element",
             "window": {"tmin": 3, "tmax": 6, "tau_min": None},
@@ -877,8 +878,8 @@ def test_correlator_publish_requires_complete_scan_and_deterministic_best_candid
     params = {
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
-        "nstate": [1],
         "fit_scope": ["qda_ratio"],
+        "nstate": {"qda_ratio": [1]},
         "prior_width": [1.0],
         "q_min": 0.9,
         "tune_z_values": [1],
@@ -1188,7 +1189,7 @@ def test_matrix_fit_tool_records_a_numerically_rejected_candidate(monkeypatch, t
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [2],
+        "nstate": {settings["fit_scope"][0]: [2]},
         "prior_width": [1.0],
         **settings,
     }
@@ -1263,7 +1264,7 @@ def test_matrix_fit_tool_scans_authored_grid_in_reference_order(monkeypatch, tmp
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [2],
+        "nstate": {settings["fit_scope"][0]: [2]},
         **settings,
     }
     context = ToolContext(
@@ -1338,7 +1339,7 @@ def test_qda_fit_tool_tunes_every_window_before_full_application(monkeypatch, tm
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
         "component": "both",
-        "nstate": [1],
+        "nstate": {settings["fit_scope"][0]: [1]},
         **settings,
     }
     context = ToolContext(
@@ -1405,7 +1406,7 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
         "observable": "matrix_element",
         "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
         "tsep_values": [8],
-        "nstate": 2,
+        "nstate": {"3pt_ratio": 2},
         "prior_width": 1.0,
         "correlator_rescale": 1.0,
         "quality_passed": True,
@@ -1431,7 +1432,7 @@ def test_publish_applies_only_the_selected_tuned_candidate_to_all_samples(monkey
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [2],
+        "nstate": {settings["fit_scope"][0]: [2]},
         "prior_width": [1.0],
         **settings,
     }
@@ -1476,7 +1477,7 @@ def test_publish_model_average_applies_every_sibling_on_the_selected_dataset(mon
             "observable": "matrix_element",
             "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
-            "nstate": nstate,
+            "nstate": {"3pt_ratio": nstate},
             "prior_width": 1.0,
             "correlator_rescale": 1.0,
             "quality_passed": True,
@@ -1506,7 +1507,7 @@ def test_publish_model_average_applies_every_sibling_on_the_selected_dataset(mon
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [1, 2],
+        "nstate": {settings["fit_scope"][0]: [1, 2]},
         "prior_width": [1.0],
         **settings,
     }
@@ -1526,7 +1527,7 @@ def test_publish_model_average_applies_every_sibling_on_the_selected_dataset(mon
 
     def apply_fit(*args, **kwargs):
         calls.append(kwargs)
-        nstate = int(kwargs["n_states"])
+        nstate = int(kwargs["n_states"]["3pt_ratio"])
         log_gbf = 1.0 if nstate == 1 else 4.0
         value = 1.0 if nstate == 1 else 3.0
         fit = {
@@ -1556,7 +1557,7 @@ def test_publish_model_average_applies_every_sibling_on_the_selected_dataset(mon
 
     monkeypatch.setattr(tool, "fit_matrix_element_samples", apply_fit)
     tool.run(context, candidate_id="matrix_002")
-    applied_nstates = sorted(call["n_states"] for call in calls if call.get("fit_samples") is not False)
+    applied_nstates = sorted(call["n_states"]["3pt_ratio"] for call in calls if call.get("fit_samples") is not False)
     assert applied_nstates == [1, 2]
     assert context.summary["decisions"]["candidate_id"] == "matrix_002"
     assert context.summary["decisions"]["model_average"] is True
@@ -1578,7 +1579,7 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
             "observable": "matrix_element",
             "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
-            "nstate": 2,
+            "nstate": {"3pt_ratio": 2},
             "prior_width": 1.0,
             "correlator_rescale": 1.0,
             "quality_passed": True,
@@ -1597,7 +1598,7 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
             "observable": "matrix_element",
             "window": {"tmin": 4, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
-            "nstate": 2,
+            "nstate": {"3pt_ratio": 2},
             "prior_width": 1.0,
             "correlator_rescale": 1.0,
             "quality_passed": True,
@@ -1624,7 +1625,7 @@ def test_publish_fails_immediately_when_selected_candidate_fails_full_grid(monke
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
         "component": "re",
-        "nstate": [2],
+        "nstate": {settings["fit_scope"][0]: [2]},
         "prior_width": [1.0],
         **settings,
     }
@@ -1679,7 +1680,7 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
             "observable": "matrix_element",
             "window": {"tmin": 3, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
-            "nstate": 2,
+            "nstate": {"3pt_ratio": 2},
             "prior_width": 1.0,
             "quality_passed": False,
             "numerical_failure": True,
@@ -1692,7 +1693,7 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
             "observable": "matrix_element",
             "window": {"tmin": 4, "tmax": 8, "tau_min": 2},
             "tsep_values": [8],
-            "nstate": 2,
+            "nstate": {"3pt_ratio": 2},
             "prior_width": 1.0,
             "quality_passed": True,
             "numerical_failure": False,
@@ -1708,8 +1709,8 @@ def test_numerically_rejected_matrix_fit_counts_as_an_evaluated_candidate(tmp_pa
     params = {
         "observable": "matrix_element",
         "analysis_method": "lsqfit",
-        "nstate": [2],
         "fit_scope": ["3pt_ratio"],
+        "nstate": {"3pt_ratio": [2]},
         "prior_width": [1.0],
         "pt2_windows": [{"tmin": 3, "tmax": 8}, {"tmin": 4, "tmax": 8}],
         "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
@@ -1926,6 +1927,145 @@ def test_native_nonbreit_fit_uses_distinct_source_and_sink_spectra() -> None:
     )
     assert np.isclose(np.mean(np.real(result.values[:, 0])), 1.2, atol=0.05)
     assert diagnostics["fitting_form"] == "NonBreit"
+
+
+def test_chained_matrix_fit_transfers_posteriors_sample_by_sample(monkeypatch) -> None:
+    import gvar as gv
+    import lamet_agent.stages.correlator_analysis.physics as physics
+
+    ensemble = EnsembleInfo("toy", "toy", 0.1, 0.1, 32, 32, 0.2)
+    times = np.arange(16)
+    tseps = np.asarray([8, 10])
+    tau = np.arange(11)
+    rng = np.random.default_rng(81)
+    c2_samples = []
+    c3_samples = []
+    for _ in range(16):
+        energy = 0.3 + rng.normal(0.0, 0.003)
+        overlap = 1.4 + rng.normal(0.0, 0.01)
+        matrix = 0.8 + rng.normal(0.0, 0.01)
+        c2 = overlap**2 / (2 * energy) * (np.exp(-energy * times) + np.exp(-energy * (ensemble.L_t - times)))
+        c2 = c2 + rng.normal(0.0, 2e-4, c2.shape)
+        c3 = np.zeros((tseps.size, tau.size, 1), dtype=complex)
+        for tsep_index, tsep in enumerate(tseps):
+            valid = tau <= tsep
+            ratio = matrix / (2 * energy) + rng.normal(0.0, 0.002, np.count_nonzero(valid))
+            c3[tsep_index, valid, 0] = ratio * c2[tsep]
+        c2_samples.append(c2.astype(complex))
+        c3_samples.append(c3)
+    common = {"source_momentum": "[1, 0, 0]", "sink_momentum": "[1, 0, 0]", "resample_id": "shared"}
+    correlators = {
+        "c2": EnsembleData(
+            ensemble,
+            "bootstrap",
+            c2_samples,
+            ["t"],
+            {"t": times.tolist()},
+            attrs={**common, "correlator_type": "two_point"},
+        ),
+        "c3": EnsembleData(
+            ensemble,
+            "bootstrap",
+            c3_samples,
+            ["tsep", "tau", "z"],
+            {"tsep": tseps.tolist(), "tau": tau.tolist(), "z": [0]},
+            attrs={**common, "correlator_type": "three_point"},
+        ),
+    }
+    calls: list[dict[str, object]] = []
+    real_fit = physics.nonlinear_fit
+
+    def wrapped(data, fcn, prior, **kwargs):
+        result = real_fit(data, fcn, prior, **kwargs)
+        x = data[0]
+        calls.append(
+            {
+                "atoms": tuple(x["atoms"]),
+                "sample_prior_scale": kwargs.get("sample_prior_scale"),
+                "sample_priors": kwargs.get("sample_priors"),
+                "e0": [None if parameters is None else float(parameters["E0"]) for parameters in result.samples],
+            }
+        )
+        return result
+
+    monkeypatch.setattr(physics, "nonlinear_fit", wrapped)
+    fit_matrix_element_samples(
+        correlators,
+        fitting_form="Breit",
+        fit_scope=["2pt", "3pt_ratio"],
+        components="real",
+        tmin=3,
+        tmax=8,
+        tsep_values=tseps.tolist(),
+        tau_min=2,
+        n_states={"2pt": 1, "3pt_ratio": 1},
+        prior_width=1.0,
+        correlator_rescale=1.0,
+        svdcut=1e-8,
+        posterior_prior_error_scale=3.0,
+        workers=1,
+    )
+    assert [call["atoms"] for call in calls] == [("2pt",), ("3pt_ratio",)]
+    assert calls[0]["sample_priors"] is None
+    assert calls[0]["sample_prior_scale"] == 3.0
+    assert calls[1]["sample_prior_scale"] is None
+    sample_priors = calls[1]["sample_priors"]
+    assert sample_priors is not None
+    assert len(sample_priors) == len(calls[0]["e0"])
+    for prior, energy in zip(sample_priors, calls[0]["e0"], strict=True):
+        assert prior is not None
+        assert energy is not None
+        assert np.isclose(gv.mean(prior["E0"]), energy)
+        assert gv.sdev(prior["E0"]) > 0
+
+
+def test_qda_ratio_samples_use_the_center_posterior_prior(monkeypatch) -> None:
+    import lamet_agent.stages.correlator_analysis.physics as physics
+
+    rng = np.random.default_rng(17)
+    times = np.arange(8.0)
+    samples = []
+    for _ in range(12):
+        denominator = np.exp(-0.25 * times) * (1.0 + rng.normal(0.0, 0.01))
+        ratio = 0.72 + rng.normal(0.0, 0.003, times.size)
+        samples.append(np.column_stack([denominator, denominator * ratio]))
+    source = EnsembleData(
+        _ensemble(0.1),
+        "bootstrap",
+        samples,
+        ["t", "z"],
+        {"t": times.tolist(), "z": [0.0, 1.0]},
+        attrs={"correlator_type": "qda"},
+    )
+    calls: list[dict[str, object]] = []
+    real_fit = physics.nonlinear_fit
+
+    def wrapped(*args, **kwargs):
+        calls.append(
+            {
+                "sample_prior_scale": kwargs.get("sample_prior_scale"),
+                "sample_priors": kwargs.get("sample_priors"),
+            }
+        )
+        return real_fit(*args, **kwargs)
+
+    monkeypatch.setattr(physics, "nonlinear_fit", wrapped)
+    fit_qda_samples(
+        {"qda": source},
+        fit_scope=["qda_ratio"],
+        components="real",
+        tmin=2,
+        tmax=7,
+        n_states={"qda_ratio": 1},
+        prior_width=1.0,
+        svdcut=1e-8,
+        posterior_prior_error_scale=3.0,
+        sample_error_mode="variance",
+        workers=1,
+    )
+    assert calls
+    assert all(call["sample_priors"] is None for call in calls)
+    assert all(call["sample_prior_scale"] == 3.0 for call in calls)
 
 
 def test_correlated_spectrum_fit_uses_authored_priors_and_sample_covariance() -> None:

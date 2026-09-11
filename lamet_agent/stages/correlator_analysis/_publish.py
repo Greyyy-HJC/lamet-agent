@@ -15,7 +15,7 @@ from lamet_agent.stages.correlator_analysis.physics import (
     fit_matrix_element_samples,
     fit_qda_samples,
 )
-from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
+from lamet_agent.stages.correlator_analysis._scope import nstate_combinations, nstate_key, parse_fit_scope
 from lamet_agent.stages.correlator_analysis._model_average import combine_matrix_samples
 from lamet_agent.stages.correlator_analysis._selection import (
     models_on_dataset,
@@ -50,7 +50,7 @@ def _apply_qda_candidate(
         components={"re": "real", "im": "imag", "both": "both"}[str(context.params["component"])],
         tmin=int(candidate["window"]["tmin"]),
         tmax=int(candidate["window"]["tmax"]),
-        n_states=int(candidate["nstate"]),
+        n_states=candidate["nstate"],
         prior_width=float(candidate["prior_width"]),
         svdcut=float(settings["svdcut"]),
         posterior_prior_error_scale=float(settings["posterior_prior_error_scale"]),
@@ -87,7 +87,7 @@ def _apply_ordinary_candidate(
         "tmax": int(candidate["window"]["tmax"]),
         "tsep_values": [int(value) for value in candidate["tsep_values"]],
         "tau_min": int(candidate["window"]["tau_min"]),
-        "n_states": int(candidate["nstate"]),
+        "n_states": candidate["nstate"],
         "prior_width": float(candidate["prior_width"]),
         "correlator_rescale": float(candidate["correlator_rescale"]),
         "svdcut": float(settings["svdcut"]),
@@ -134,12 +134,12 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                 int(pt2["tmax"]),
                 int(pt3["tau_cut"]),
                 tuple(int(value) for value in pt3["tsep_ls"]),
-                int(nstate),
+                nstate_key(nstate),
                 float(width),
             )
             for pt2 in lsqfit["pt2_windows"]
             for pt3 in lsqfit["pt3_windows"]
-            for nstate in context.params["nstate"]
+            for nstate in nstate_combinations(context.params["nstate"], lsqfit["fit_scope"])
             for width in lsqfit["prior_width"]
         }
         observed = {
@@ -148,7 +148,7 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
                 candidate["window"]["tmax"],
                 candidate["window"]["tau_min"],
                 tuple(int(value) for value in candidate.get("tsep_values", [])),
-                candidate.get("nstate"),
+                nstate_key(candidate["nstate"]) if candidate.get("nstate") is not None else None,
                 candidate.get("prior_width"),
             )
             for candidate in candidates
@@ -162,18 +162,20 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
     if scope.is_qda:
         expected_qda = {
             (
-                int(nstate),
+                nstate_key(nstate),
                 float(width),
                 int(window["tmin"]),
                 int(window["tmax"]),
             )
-            for nstate in context.params["nstate"]
+            for nstate in nstate_combinations(context.params["nstate"], lsqfit["fit_scope"])
             for width in lsqfit["prior_width"]
             for window in lsqfit["pt2_windows"]
         }
         observed_qda = {
             (
-                int(candidate.get("nstate", context.params["nstate"][0])),
+                nstate_key(candidate["nstate"])
+                if candidate.get("nstate") is not None
+                else nstate_key(nstate_combinations(context.params["nstate"], lsqfit["fit_scope"])[0]),
                 float(candidate.get("prior_width", lsqfit["prior_width"][0])),
                 int(candidate["window"]["tmin"]),
                 int(candidate["window"]["tmax"]),

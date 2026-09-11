@@ -23,6 +23,7 @@ class _FitResult:
     sample_errors: tuple[str | None, ...] = ()
     sample_diagnostics: tuple[dict[str, float] | None, ...] = ()
     sample_posteriors: tuple[gv.BufferDict | None, ...] = ()
+    sample_sdevs: tuple[dict[str, np.ndarray] | None, ...] = ()
 
     @property
     def n_failed_samples(self) -> int:
@@ -94,20 +95,32 @@ def _prior_from_payload(payload: Mapping[str, tuple[np.ndarray, np.ndarray]]) ->
     return prior
 
 
+def _sample_sdevs(fit: Any) -> dict[str, np.ndarray]:
+    return {key: np.asarray(gv.sdev(fit.p[key]), dtype=float) for key in fit.pmean}
+
+
 def _sample_fit(
     task: tuple[
         Any,
         np.ndarray,
         np.ndarray,
         Callable[..., Any],
-        Mapping[str, tuple[np.ndarray, np.ndarray]],
+        Mapping[str, tuple[np.ndarray, np.ndarray]] | None,
         Mapping[str, Any],
         bool,
     ],
-) -> tuple[gv.BufferDict | None, str | None, dict[str, float] | None, gv.BufferDict | None]:
+) -> tuple[
+    gv.BufferDict | None,
+    str | None,
+    dict[str, float] | None,
+    gv.BufferDict | None,
+    dict[str, np.ndarray] | None,
+]:
     x, mean, covariance, fcn, prior_payload, options, capture_posterior = task
     import lsqfit
 
+    if prior_payload is None:
+        return None, "previous stage sample failed", None, None, None
     sample_data = gv.gvar(mean, covariance)
     fit_data = sample_data if x is None else (x, sample_data)
     try:
@@ -119,7 +132,7 @@ def _sample_fit(
                 **dict(options),
             )
     except _NUMERICAL_FIT_ERRORS as exc:
-        return None, f"{type(exc).__name__}: {exc}", None, None
+        return None, f"{type(exc).__name__}: {exc}", None, None, None
     return (
         fit.pmean,
         None,
@@ -130,6 +143,7 @@ def _sample_fit(
             "logGBF": float(fit.logGBF),
         },
         fit.palt if capture_posterior else None,
+        _sample_sdevs(fit),
     )
 
 
@@ -156,6 +170,7 @@ def nonlinear_fit(
     seed: int | None = None,
     workers: int = 1,
     sample_prior_scale: float | None = None,
+    sample_priors: Sequence[Mapping[str, Any] | None] | None = None,
     covariance: np.ndarray | None = None,
     sample_error_mode: Literal["covariance", "variance", "one_sigma"] = "covariance",
     mode: Literal["center", "resamples"] = "resamples",
@@ -171,8 +186,11 @@ def nonlinear_fit(
     corresponding covariance and performs no sample scheduling. Resamples mode
     accepts existing jackknife/bootstrap samples, or creates them from raw data
     when ``resampling`` is supplied, then fits every stored sample in order.
-    ``capture_sample_posteriors`` retains Hessian posteriors only for the
-    requested sample indices; ordinary callers continue to receive means only.
+    ``sample_priors`` supplies an independent prior for each resample and
+    disables the shared center-derived sample prior. ``None`` entries skip that
+    sample. ``capture_sample_posteriors`` retains Hessian posteriors only for
+    the requested sample indices; every successful sample still reports
+    independent posterior widths in ``sample_sdevs``.
     """
     if isinstance(data, tuple):
         if len(data) != 2 or not isinstance(data[1], EnsembleData):
@@ -235,16 +253,24 @@ def nonlinear_fit(
             fitted_center = lsqfit.nonlinear_fit(data=fit_data, fcn=fcn, prior=prior, **options)
     except _NUMERICAL_FIT_ERRORS as exc:
         raise FitNumericalError(f"sample-average fit failed: {type(exc).__name__}: {exc}") from exc
-    try:
-        sample_prior = (
-            prior if sample_prior_scale is None else _posterior_prior(fitted_center, prior, sample_prior_scale)
-        )
-    except (FloatingPointError, OverflowError, ZeroDivisionError, ValueError) as exc:
-        raise FitNumericalError(f"sample-average posterior is unusable: {type(exc).__name__}: {exc}") from exc
+    if sample_priors is not None:
+        if sample_prior_scale is not None:
+            raise ValueError("sample_priors cannot be combined with sample_prior_scale")
+        if mode != "resamples":
+            raise ValueError("sample_priors requires mode='resamples'")
+        if len(sample_priors) != samples.n_sample:
+            raise ValueError("sample_priors must contain one mapping or None per sample")
+    elif sample_prior_scale is not None:
+        try:
+            sample_prior = _posterior_prior(fitted_center, prior, sample_prior_scale)
+        except (FloatingPointError, OverflowError, ZeroDivisionError, ValueError) as exc:
+            raise FitNumericalError(f"sample-average posterior is unusable: {type(exc).__name__}: {exc}") from exc
+    else:
+        sample_prior = prior
     if mode == "center":
         if capture_indices:
             raise ValueError("capture_sample_posteriors requires mode='resamples'")
-        return _FitResult(fitted_center, (), samples.resample, (), (), ())
+        return _FitResult(fitted_center, (), samples.resample, (), (), (), ())
     sample_options = dict(options)
     sample_options["p0"] = {
         key: np.asarray(gv.mean(fitted_center.p[key])).item()
@@ -256,9 +282,21 @@ def nonlinear_fit(
     if any(index >= samples.n_sample for index in capture_indices):
         raise ValueError("capture_sample_posteriors contains an out-of-range sample index")
     capture_set = set(capture_indices)
-    prior_payload = _prior_payload(sample_prior)
+    shared_prior_payload = None if sample_priors is not None else _prior_payload(sample_prior)
     tasks = [
-        (x, np.asarray(sample), covariance, fcn, prior_payload, sample_options, index in capture_set)
+        (
+            x,
+            np.asarray(sample),
+            covariance,
+            fcn,
+            None
+            if sample_priors is not None and sample_priors[index] is None
+            else _prior_payload(sample_priors[index])
+            if sample_priors is not None
+            else shared_prior_payload,
+            sample_options,
+            index in capture_set,
+        )
         for index, sample in enumerate(samples.values)
     ]
     if _parallel is None:
@@ -272,10 +310,11 @@ def nonlinear_fit(
             _sample_fit,
             tasks,
         )
-    fitted_samples = tuple(parameters for parameters, _error, _diagnostics, _posterior in outcomes)
-    sample_errors = tuple(error for _parameters, error, _diagnostics, _posterior in outcomes)
-    sample_diagnostics = tuple(diagnostics for _parameters, _error, diagnostics, _posterior in outcomes)
-    sample_posteriors = tuple(posterior for _parameters, _error, _diagnostics, posterior in outcomes)
+    fitted_samples = tuple(parameters for parameters, _error, _diagnostics, _posterior, _sdevs in outcomes)
+    sample_errors = tuple(error for _parameters, error, _diagnostics, _posterior, _sdevs in outcomes)
+    sample_diagnostics = tuple(diagnostics for _parameters, _error, diagnostics, _posterior, _sdevs in outcomes)
+    sample_posteriors = tuple(posterior for _parameters, _error, _diagnostics, posterior, _sdevs in outcomes)
+    sample_sdevs = tuple(sdevs for _parameters, _error, _diagnostics, _posterior, sdevs in outcomes)
     if not tolerate_sample_failures and any(error is not None for error in sample_errors):
         failed_index = next(index for index, error in enumerate(sample_errors) if error is not None)
         raise FitNumericalError(f"sample fit {failed_index} failed: {sample_errors[failed_index]}")
@@ -286,6 +325,7 @@ def nonlinear_fit(
         sample_errors,
         sample_diagnostics,
         sample_posteriors,
+        sample_sdevs,
     )
 
 
