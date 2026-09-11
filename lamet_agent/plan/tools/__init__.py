@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import locale
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -84,8 +87,23 @@ def planning_tool_schemas() -> list[dict[str, Any]]:
 def planning_controller_prompt() -> str:
     """Compose the controller policy with every tool-owned prompts.md file."""
     base = Path(__file__).parents[1].joinpath("prompt.md").read_text(encoding="utf-8").strip()
+    language_locale = next(
+        (os.environ[name] for name in ("LC_ALL", "LC_MESSAGES", "LANG") if os.environ.get(name)),
+        None,
+    )
+    if language_locale is None:
+        language_locale = locale.getlocale()[0] or "C"
+    language_context = (
+        "# User language context\n\n"
+        f"Terminal locale: {json.dumps(language_locale)}. "
+        "Use its language as the initial response language. For C, POSIX, or an "
+        "unrecognized locale, use English initially. This is a default hint, not "
+        "a confirmed user preference. Follow the user's natural-language messages "
+        "once available, and give explicit language requests priority. Do not infer "
+        "the user's language from generated manifest payloads, tool results, or code."
+    )
     catalog = "\n\n".join(f"## `{tool.name}`\n\n{tool.prompt}" for tool in PLANNING_TOOLS)
-    return f"{base}\n\n# Planning tools\n\n{catalog}"
+    return f"{base}\n\n{language_context}\n\n# Planning tools\n\n{catalog}"
 
 
 def run_planning_tool(state: Any, name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
