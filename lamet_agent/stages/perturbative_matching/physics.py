@@ -21,6 +21,16 @@ def load_data(value: Any) -> EnsembleData:
     raise TypeError("matching input is neither EnsembleData nor a NetCDF Path")
 
 
+def select_output_component(data: EnsembleData) -> EnsembleData:
+    """Return the numerical x-space component declared by Fourier provenance."""
+    output_component = str(data.attrs.get("output_component", "")).strip().lower()
+    if output_component == "re":
+        return data.real if np.iscomplexobj(data.values) else data
+    if output_component == "both":
+        return data
+    raise ValueError("quasi input requires output_component='re' or 'both'")
+
+
 def inspect_callable(kernel, *, parameter_values: dict[str, Any]) -> tuple[list[str], list[str]]:
     """Validate explicit kernel keyword parameters against its signature."""
     import inspect

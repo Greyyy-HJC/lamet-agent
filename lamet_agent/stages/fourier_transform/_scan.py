@@ -38,7 +38,7 @@ def attempt(context: ToolContext) -> dict[str, object]:
         "prior_widths": scheme_scan["posterior_prior_error_scale"],
         "model_average": scheme_scan["model_average"],
         "max_schemes": scheme_scan["max_schemes"],
-        "component": conventions["component"],
+        "source_component": conventions["source_component"],
         "output_scale": conventions["output_scale"],
         "q_min": scheme_scan["q_min"],
     }
@@ -93,7 +93,7 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         raise FitNumericalError("selected Fourier model candidate has no usable Q")
     conventions = context.state["fourier_conventions"]
     source = context.state["fourier_input"]
-    scan = {"component": conventions["component"]}
+    scan = {"source_component": conventions["source_component"]}
     scanned = result["data"]
     output_attrs = dict(scanned.attrs)
     output_attrs.update(
@@ -218,15 +218,19 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
     sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
     momentum = float(source.attrs["momentum_gev"])
     pz_label = rf"$P_z={round(momentum, 2):g}\,\mathrm{{GeV}}$"
-    component = str(scan["component"])
-    component_series = {
-        "re": (("real", pz_label, 0),),
-        "im": (("imag", pz_label, 1),),
-        "both": (
+    source_component = str(scan["source_component"])
+    if output.attrs["output_component"] == "re":
+        source_label = {
+            "re": rf"from $\mathrm{{Re}}\,h$, {pz_label}",
+            "im": rf"from $\mathrm{{Im}}\,h$, {pz_label}",
+            "both": rf"from $\mathrm{{Re}}\,h$ and $\mathrm{{Im}}\,h$, {pz_label}",
+        }[source_component]
+        component_series = (("real", source_label, 1 if source_component == "im" else 0),)
+    else:
+        component_series = (
             ("real", "Re", 0),
             ("imag", "Im", 1),
-        ),
-    }[component]
+        )
     start_plot()
     for data_component, label, color_index in component_series:
         errorband(
@@ -237,11 +241,7 @@ def publish(context: ToolContext, result: dict[str, object]) -> dict[str, object
         )
     configure_plot(
         xlabel=r"$x$",
-        ylabel={
-            "re": r"$\mathrm{Re}\,\tilde q(x)$",
-            "im": r"$\mathrm{Im}\,\tilde q(x)$",
-            "both": r"$\tilde q(x)$",
-        }[component],
+        ylabel=r"$\tilde q(x)$",
         legend=True,
     )
     save_figure(context.artifact_directory / "output_xdep.pdf")

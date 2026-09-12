@@ -17,7 +17,7 @@ from lamet_agent.plotting import (
     series_color,
     start_plot,
 )
-from lamet_agent.stages.perturbative_matching.physics import apply_matrix, is_even_about_zero
+from lamet_agent.stages.perturbative_matching.physics import apply_matrix, is_even_about_zero, select_output_component
 
 
 def _one(value):
@@ -69,13 +69,14 @@ def run(context: ToolContext) -> dict[str, object]:
     if matrix.shape != (len(x_out), len(x_in)) or not np.all(np.isfinite(matrix)):
         raise ValueError("kernel returned an invalid matching matrix shape or value")
     result = apply_matrix(data, matrix, x_out)
-    attrs = result.attrs
+    attrs = dict(result.attrs)
+    for legacy_key in ("component", "matching_component", "resummation_part"):
+        attrs.pop(legacy_key, None)
     attrs.update(
         {
             "kernel_id": context.params["kernel_id"],
             "order": context.params.get("order", "nlo"),
             "resummation": context.params.get("resummation", ""),
-            "resummation_part": context.params.get("resummation_part", ""),
             "mu": float(context.params["mu"]),
             "kernel_parameters": json.dumps(context.params["kernel_parameters"], sort_keys=True),
             "units": '{"values":"dimensionless","x":"dimensionless"}',
@@ -96,7 +97,8 @@ def run(context: ToolContext) -> dict[str, object]:
         "kernel_id": context.params["kernel_id"],
         "order": context.params.get("order", "nlo"),
         "resummation": context.params.get("resummation", ""),
-        "resummation_part": context.params.get("resummation_part", ""),
+        "source_component": data.attrs["source_component"],
+        "output_component": data.attrs["output_component"],
         "matrix_shape": list(matrix.shape),
         "x_in_count": len(x_in),
         "x_out_count": len(x_out),
@@ -113,17 +115,28 @@ def run(context: ToolContext) -> dict[str, object]:
     plotted_x: list[float] = []
     sample_error_mode = str(context.manifest["metadata"]["sample_error_mode"])
     quasi_label = rf"quasi, $P_z={round(float(momentum), 2):g}\,\mathrm{{GeV}}$"
-    series = (
-        (data, x_in, quasi_label, series_color(0)),
-        (result, x_out, "light-cone", series_color(1)),
+    base_series = (
+        (data, x_in, quasi_label),
+        (result, x_out, "light-cone"),
     )
     if is_even_about_zero(data):
-        series = tuple(
-            (*_nonnegative_x(values, list(x_values)), label, color) for values, x_values, label, color in series
+        base_series = tuple(
+            (*_nonnegative_x(values, list(x_values)), label) for values, x_values, label in base_series
         )
+    series = []
+    for base_index, (values, x_values, label) in enumerate(base_series):
+        selected = select_output_component(values)
+        if selected.attrs["output_component"] == "both" and np.iscomplexobj(selected.values):
+            series.extend(
+                (
+                    (selected.real, x_values, f"{label}, Re", series_color(2 * base_index)),
+                    (selected.imag, x_values, f"{label}, Im", series_color(2 * base_index + 1)),
+                )
+            )
+        else:
+            series.append((selected, x_values, label, series_color(base_index)))
     for values, x_values, label, color in series:
-        plotted = values.real if np.iscomplexobj(values.values) else values
-        average = plotted.average(sample_error_mode)
+        average = values.average(sample_error_mode)
         center = np.asarray(gvar.mean(average), dtype=float)
         error = np.asarray(gvar.sdev(average), dtype=float)
         plot_min = min(plot_min, float(np.min(center - error)))
@@ -149,7 +162,6 @@ def run(context: ToolContext) -> dict[str, object]:
             "scheme": context.params["scheme"],
             "order": context.params.get("order", "nlo"),
             "resummation": context.params.get("resummation", ""),
-            "resummation_part": context.params.get("resummation_part", ""),
             "mu": context.params["mu"],
         },
         "diagnostics": diagnostics,

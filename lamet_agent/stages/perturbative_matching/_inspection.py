@@ -5,28 +5,9 @@ from __future__ import annotations
 import inspect
 import math
 
-import numpy as np
-
 from lamet_agent.agent import ToolContext
 from lamet_agent.kernels import load_kernel, load_kernel_document, matching_kernel_id
-from lamet_agent.stages.perturbative_matching.physics import load_data, inspect_callable
-
-
-_COMPONENT_ALIASES = {"re": "re", "real": "re", "im": "im", "imag": "im", "imaginary": "im"}
-
-
-def _matching_component(resummation_part: str, attrs: dict) -> str:
-    """Return the quasi component matched by one resummation choice."""
-    if resummation_part == "both":
-        return "both"
-    required = resummation_part or None
-    declared = _COMPONENT_ALIASES.get(str(attrs.get("component", "")).lower())
-    if required is not None and declared is not None and declared != required:
-        raise ValueError(
-            f"resummation_part '{resummation_part}' matches the {required} component "
-            f"but the quasi input declares component '{declared}'"
-        )
-    return required or declared or "re"
+from lamet_agent.stages.perturbative_matching.physics import inspect_callable, load_data, select_output_component
 
 
 def _one(value):
@@ -40,10 +21,10 @@ def _one(value):
 def run(context: ToolContext) -> dict[str, object]:
     """Load one kernel module and store its input/output grid summary."""
     data = load_data(_one(context.inputs["quasi"]))
-    component = _matching_component(str(context.params.get("resummation_part", "")), data.attrs)
-    if np.iscomplexobj(data.values) and component != "both":
-        data = data.imag if component == "im" else data.real
-    data.array.attrs["matching_component"] = component
+    source_component = str(data.attrs.get("source_component", "")).strip().lower()
+    if source_component not in {"re", "im", "both"}:
+        raise ValueError("quasi input requires source_component='re', 'im', or 'both'")
+    data = select_output_component(data)
     momentum = data.attrs.get("momentum_gev")
     if (
         not isinstance(momentum, (int, float))
@@ -60,7 +41,6 @@ def run(context: ToolContext) -> dict[str, object]:
         scheme=str(context.params["scheme"]),
         order=str(context.params.get("order", "nlo")),
         resummation=str(context.params.get("resummation", "")),
-        resummation_part=str(context.params.get("resummation_part", "")),
     )
     context.params["kernel_id"] = kernel_id
     kernel = load_kernel(kernel_id, root=root)
@@ -83,7 +63,8 @@ def run(context: ToolContext) -> dict[str, object]:
         "x_count": len(data.coords.get("x", [])),
         "dims": data.dims,
         "momentum_gev": float(momentum),
-        "matching_component": component,
+        "source_component": source_component,
+        "output_component": data.attrs["output_component"],
         "document": document,
     }
     return {

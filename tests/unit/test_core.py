@@ -27,7 +27,6 @@ from lamet_agent.agent import (
 from lamet_agent.contract import (
     CheckContext,
     Depends,
-    Issue,
     List,
     Provides,
     Recommends,
@@ -2197,36 +2196,30 @@ def test_correlator_descriptors_use_physical_field_names() -> None:
                 assert "observable" not in current
 
 
-def test_matching_check_reports_resummation_part_constraints() -> None:
+def test_matching_contract_rejects_removed_resummation_part() -> None:
     contract = _load_stage_contract("perturbative_matching")
-    context = CheckContext(
-        {},
-        "perturbative_matching",
-        "job",
-        {
-            "scheme": "ratio",
-            "order": "nlo",
-            "resummation": "",
-            "resummation_part": "re",
-            "zs_fm": 0.2,
-        },
-        {"quasi": "earlier"},
-    )
-    issues = evaluate_checks(contract.CHECKS, context)
-    assert [(issue.path, issue.message) for issue in issues] == [
-        ("resummation_part", "requires resummation='rgr'")
-    ]
+    params = {
+        "scheme": "hybrid",
+        "order": "nlo",
+        "resummation": "rgr",
+        "resummation_part": "re",
+        "mu": 2.0,
+        "lc_x_ls": [0.0, 1.0],
+        "kernel_parameters": {},
+        "zs_fm": 0.18,
+    }
+    issues = evaluate_rules(params, contract.PARAM_RULES)
+    assert [(issue.path, issue.message) for issue in issues] == [("resummation_part", "unknown key 'resummation_part'")]
 
 
 def test_matching_contract_accepts_resummation_combinations() -> None:
     contract = _load_stage_contract("perturbative_matching")
 
-    def issues(resummation: str, part: str):
+    def issues(resummation: str):
         params = {
             "scheme": "hybrid",
             "order": "nlo",
             "resummation": resummation,
-            "resummation_part": part,
             "mu": 2.0,
             "lc_x_ls": [0.0, 1.0],
             "kernel_parameters": {},
@@ -2235,14 +2228,9 @@ def test_matching_contract_accepts_resummation_combinations() -> None:
         context = CheckContext({}, "perturbative_matching", "job", params, {"quasi": "earlier"})
         return evaluate_checks(contract.CHECKS, context)
 
-    assert issues("", "") == []
-    assert issues("rgr", "re") == []
-    assert issues("rgr", "im") == []
-    assert issues("rgr", "both") == []
-    assert issues("lrr", "") == []
-    assert issues("", "re")[0].path == "resummation_part"
-    assert issues("lrr", "im")[0].path == "resummation_part"
-    assert issues("rgr", "")[0].path == "resummation_part"
+    assert issues("") == []
+    assert issues("rgr") == []
+    assert issues("lrr") == []
 
 
 def test_matching_kernel_parameter_rules_require_a_dict_and_required_signature_values() -> None:
@@ -2664,7 +2652,6 @@ def test_deterministic_stage_workflow_bypasses_the_backend(tmp_path: Path, monke
         {
             "scheme": "ratio",
             "resummation": "",
-            "resummation_part": "",
             "mu": 2.0,
             "lc_x_ls": [0.0, 1.0],
             "kernel_parameters": {},

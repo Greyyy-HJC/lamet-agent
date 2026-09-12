@@ -422,7 +422,6 @@
         "scheme": "ratio",
         "order": "nlo",
         "resummation": "",
-        "resummation_part": "",
         "mu": 2.0,
         "lc_x_ls": {
           "start": -1.0,

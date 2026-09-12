@@ -34,12 +34,12 @@ def derive_conventions(attrs: Mapping[str, object], *, target_observable: str, s
     if target == "da":
         if sector != "full":
             raise ValueError("DA Fourier transformation requires sector='full'")
-        component, output_scale = "both", 1.0
+        source_component, output_scale = "both", 1.0
     elif target == "pdf":
         if polarization not in {"unpolarized", "helicity", "transversity"}:
             raise ValueError("PDF Fourier input must carry supported polarization provenance")
         try:
-            component, output_scale = {
+            source_component, output_scale = {
                 "valence": ("im" if polarization == "helicity" else "re", 2.0),
                 "singlet": ("re" if polarization == "helicity" else "im", 2.0),
                 "full": ("both", 1.0),
@@ -51,7 +51,7 @@ def derive_conventions(attrs: Mapping[str, object], *, target_observable: str, s
             raise ValueError("GPD Fourier input must carry supported polarization provenance")
         if sector not in {"sea", "valence", "singlet", "full"}:
             raise ValueError("GPD Fourier sector must be sea, valence, singlet, or full")
-        component, output_scale = "both", 1.0
+        source_component, output_scale = "both", 1.0
     else:
         raise ValueError("the migrated Fourier conventions support PDF, DA, and GPD targets")
     return {
@@ -60,7 +60,7 @@ def derive_conventions(attrs: Mapping[str, object], *, target_observable: str, s
         "symmetry": {"real": "even", "imag": "odd"},
         "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "pz_over_2pi"},
         "tail_models": ["gi_nla" if gfix == "GI" else "cg_nla"],
-        "component": component,
+        "source_component": source_component,
         "output_scale": output_scale,
     }
 

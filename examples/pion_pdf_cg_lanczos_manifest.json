@@ -112,7 +112,6 @@
         "scheme": "hybrid",
         "order": "nlo",
         "resummation": "rgr",
-        "resummation_part": "re",
         "mu": 2.0,
         "lc_x_ls": {
           "start": 0.0,

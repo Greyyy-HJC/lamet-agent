@@ -454,11 +454,18 @@ The denominator may be an earlier job, a NetCDF file, or a finite nonzero
 constant where the contract permits it. Hybrid jobs additionally use `zs_fm`,
 `m0_gev`, and `delta_m_gev` to join short- and long-distance prescriptions.
 
-Perturbative matching has its own `scheme`, `order`, `resummation`, and
-`resummation_part`. The matching kernel id is derived at runtime from those
-choices and the upstream NetCDF provenance (`parton`, `target_observable`,
-`gfix`, and `kernel_operator`). Empty resummation fields select fixed-order
-NLO; `rgr` requires `re` or `im`, while `lrr` has no component suffix.
+Perturbative matching has its own `scheme`, `order`, and `resummation`. The
+matching kernel id is derived at runtime from those choices and the upstream
+NetCDF provenance (`parton`, `target_observable`, `gfix`, `kernel_operator`,
+and `source_component`). Empty resummation selects fixed-order NLO; `rgr`
+automatically uses the upstream `re` or `im` source component as its kernel
+suffix, while `lrr` has no component suffix. Fourier outputs distinguish that
+matrix-element provenance from `output_component`: standard Hermitian
+coordinate-space completions publish a real x-space quasi-distribution even
+when its contribution came from the imaginary matrix element, while paired
+non-forward GPD flows may remain complex.
+Manifests containing the removed `resummation_part` field must be migrated, and
+Fourier artifacts that only carry the former `component` attr must be regenerated.
 
 ### `inputs.correlators[].polarization` and Fourier sectors
 

@@ -8,7 +8,7 @@ import numpy as np
 
 from lamet_agent.data import EnsembleData
 from lamet_agent.kernels import load_kernel_document
-from lamet_agent.stages.perturbative_matching.physics import is_even_about_zero
+from lamet_agent.stages.perturbative_matching.physics import is_even_about_zero, select_output_component
 from lamet_agent.stages._reporting import (
     StageReportRecord,
     artifact_rows,
@@ -32,27 +32,24 @@ def _record_kernel_id(record: StageReportRecord) -> str:
     return value
 
 
-def _integral(data: EnsembleData, *, lo: float, hi: float) -> float:
+def _integral(data: EnsembleData, *, lo: float, hi: float) -> float | complex:
     if data.dims != ["x"]:
         raise ValueError("matching report requires one-dimensional x distributions")
     x = np.asarray(data.coords["x"], dtype=float)
-    selected = data
-    if np.iscomplexobj(data.values):
-        component = str(data.attrs.get("matching_component", data.attrs.get("component", ""))).lower()
-        if component in {"im", "imag", "imaginary"}:
-            selected = data.imag
-        elif component in {"re", "real", "both"}:
-            selected = data.real
-        else:
-            raise ValueError("complex matching-report input requires explicit real/imag component provenance")
-    values = np.asarray(selected.mean, dtype=float)
+    selected = select_output_component(data)
+    values = (
+        np.mean(np.asarray(selected.values), axis=0)
+        if np.iscomplexobj(selected.values)
+        else np.asarray(selected.mean)
+    )
     mask = (x >= lo) & (x <= hi)
     if np.count_nonzero(mask) < 2:
         raise ValueError("matching report integration window has fewer than two points")
-    return float(np.trapezoid(values[mask], x[mask]))
+    integral = np.trapezoid(values[mask], x[mask])
+    return complex(integral) if np.iscomplexobj(values) else float(integral)
 
 
-def _diagnostics(record: StageReportRecord) -> tuple[float, float, float]:
+def _diagnostics(record: StageReportRecord) -> tuple[float | complex, float | complex, float]:
     quasi = record.inputs.get("quasi")
     if not isinstance(quasi, EnsembleData) or not isinstance(record.output, EnsembleData):
         raise TypeError("matching report requires numerical quasi and matched distributions")
@@ -68,7 +65,10 @@ def _scheme_text(scheme: str) -> str:
     return {
         "ratio": "The ratio kernel uses the regular coefficient without an additional finite conversion.",
         "msbar": "The MSbar kernel includes the finite MSbar conversion at the declared scale.",
-        "hybrid": "The hybrid kernel adds the Wilson-line sine-integral correction and depends on the dimensionless product $z_sP_z$.",
+        "hybrid": (
+            "The hybrid kernel adds the Wilson-line sine-integral correction and depends on the dimensionless "
+            "product $z_sP_z$."
+        ),
     }[scheme]
 
 
@@ -119,14 +119,16 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
     lines = [
         "# Perturbative Matching Stage Report",
         "",
-        "This stage applies the selected NLO matching kernel sample by sample to convert quasi-distributions into light-cone distributions.",
+        "This stage applies the selected NLO matching kernel sample by sample to convert quasi-distributions "
+        "into light-cone distributions.",
         "",
         "## Job Summary",
         "",
-        r"| job | kernel | scheme | momentum [GeV] | $\mu$ [GeV] | quasi integral | matched integral | relative change |",
+        r"| job | kernel | scheme | momentum [GeV] | $\mu$ [GeV] | quasi integral | matched integral | "
+        "relative change |",
         "|---|---|---|---:|---:|---:|---:|---:|",
     ]
-    cached_diagnostics: dict[str, tuple[float, float, float]] = {}
+    cached_diagnostics: dict[str, tuple[float | complex, float | complex, float]] = {}
     for record in records:
         attrs = output_attrs(record)
         quasi_integral, matched_integral, relative = _diagnostics(record)
@@ -139,20 +141,26 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
     lines.extend(
         [
             "",
-            "The integrals use the light-cone output range for both arrays.  They are diagnostics, not a normalization verdict: the expected normalization is fixed upstream by the coordinate-space matrix element and its projection convention.",
+            "The integrals use the light-cone output range for both arrays. They are diagnostics, not a "
+            "normalization verdict: the expected normalization is fixed upstream by the coordinate-space matrix "
+            "element and its projection convention.",
             "",
             "## Kernel-id and Field Definitions",
             "",
             "| field | meaning |",
             "|---|---|",
-            "| `order` | Explicit perturbative order; currently only `nlo` is supported and it is encoded in the kernel filename. |",
-            "| `kernel_id` | Runtime-derived public kernel filename stem built from upstream provenance, `scheme`, `order`, and resummation options. |",
-            "| `resummation` / `resummation_part` | Empty selects fixed-order NLO; `rgr` requires `re`, `im`, or `both` and the corresponding kernel file; `lrr` has no component suffix. |",
+            "| `order` | Explicit perturbative order; currently only `nlo` is supported and it is encoded in the "
+            "kernel filename. |",
+            "| `kernel_id` | Runtime-derived public kernel filename stem built from upstream provenance, `scheme`, "
+            "`order`, and resummation options. |",
+            "| `resummation` | Empty selects fixed-order NLO; `rgr` derives its `re` or `im` kernel suffix "
+            "from upstream `source_component`; `lrr` has no component suffix. |",
             "| `mu` | MSbar renormalization/matching scale in GeV. |",
             "| `zs_fm` | Hybrid Wilson-line switching distance; absent for ratio/MSbar kernels. |",
             "| `kernel_parameters` | Kernel-signature parameters not supplied by the stage, such as `kappa` "
             "and `mu_min_gev`. |",
-            "| matching matrix | Discretized convolution from the quasi input grid to the requested light-cone output grid. |",
+            "| matching matrix | Discretized convolution from the quasi input grid to the requested light-cone "
+            "output grid. |",
             "",
             "## Stage Overview",
             "",
@@ -210,7 +218,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| light-cone grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
                 f"| kernel parameters | {format_value(record.params['kernel_parameters'])} |",
                 f"| matching matrix shape | {format_value(diagnostics.get('matrix_shape'))} |",
-                f"| resampling | `{getattr(record.output, 'resample', 'n/a')}` with {format_value(getattr(record.output, 'n_sample', None))} samples |",
+                f"| resampling | `{getattr(record.output, 'resample', 'n/a')}` with "
+                f"{format_value(getattr(record.output, 'n_sample', None))} samples |",
                 "",
                 "### Integral Diagnostic",
                 "",
@@ -220,25 +229,31 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"- Fourier projection scale: {format_value(scale)}",
                 *(
                     [
-                        f"- The stored matched distribution is symmetric about x=0; one-sided quasi/matched integrals after removing the projection scale are {format_value(quasi_integral / scale)} / {format_value(matched_integral / scale)}."
+                        "- The stored matched distribution is symmetric about x=0; one-sided quasi/matched "
+                        "integrals after removing the projection scale are "
+                        f"{format_value(quasi_integral / scale)} / {format_value(matched_integral / scale)}."
                     ]
                     if mirrored
                     else []
                 ),
                 *(
                     [
-                        "- The matched grid contains an interior gap. The trapezoid diagnostic bridges that interval linearly, so part of the integral is interpolation."
+                        "- The matched grid contains an interior gap. The trapezoid diagnostic bridges that "
+                        "interval linearly, so part of the integral is interpolation."
                     ]
                     if gap
                     else []
                 ),
-                "- Compare these values with the normalization convention fixed upstream (`normalization=true` gives unity only for the corresponding operator/projection convention).",
+                "- Compare these values with the normalization convention fixed upstream (`normalization=true` "
+                "gives unity only for the corresponding operator/projection convention).",
                 "",
                 "### Matching Scheme",
                 "",
                 _scheme_text(str(record.params["scheme"])),
                 "",
-                "The LO contribution is the identity. The shipped kernel document above is the source of truth for the implemented NLO coefficient, plus prescription, support regions, and any RGR or hybrid correction.",
+                "The LO contribution is the identity. The shipped kernel document above is the source of truth "
+                "for the implemented NLO coefficient, plus prescription, support regions, and any RGR or hybrid "
+                "correction.",
                 "",
                 "### Figures",
                 "",

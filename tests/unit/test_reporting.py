@@ -902,19 +902,28 @@ def test_matching_stage_report_embeds_shipped_kernel_document(tmp_path: Path) ->
     from lamet_agent.stages.perturbative_matching.reporting import write_stage_report
 
     stage = tmp_path / "04_perturbative_matching"
-    quasi = _data(attrs={"momentum_gev": 2.0, "output_scale": 1.0, "component": "both"})
+    quasi = _data(
+        attrs={"momentum_gev": 2.0, "output_scale": 1.0, "source_component": "both", "output_component": "both"}
+    )
     quasi = EnsembleData(
         None,
         "bootstrap",
         [np.asarray(sample) + 0.2j * np.asarray(sample) for sample in quasi.values],
         ["x"],
         {"x": quasi.coords["x"]},
-        attrs={"momentum_gev": 2.0, "output_scale": 1.0, "component": "both"},
+        attrs={
+            "momentum_gev": 2.0,
+            "output_scale": 1.0,
+            "source_component": "both",
+            "output_component": "both",
+        },
     )
     output = _data(
         attrs={
             "momentum_gev": 2.0,
             "output_scale": 1.0,
+            "source_component": "both",
+            "output_component": "both",
             "kernel_id": "quark_da_gi_gzg5_ratio_nlo",
         },
         values=[[0.7, 0.9], [0.8, 1.0]],
@@ -923,7 +932,6 @@ def test_matching_stage_report_embeds_shipped_kernel_document(tmp_path: Path) ->
         "scheme": "ratio",
         "order": "nlo",
         "resummation": "",
-        "resummation_part": "",
         "mu": 2.0,
         "kernel_parameters": {},
     }

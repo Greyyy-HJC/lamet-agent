@@ -387,7 +387,7 @@ $$
 
 denominator 可以是先前的 job、NetCDF 文件，或者 contract 允许的有限非零常量。Hybrid jobs 还使用 `zs_fm`、`m0_gev` 和 `delta_m_gev` 来衔接短程与长程 prescription。
 
-Perturbative matching 使用 `scheme`、`order`、`resummation` 和 `resummation_part`。目前 `order` 只支持 `nlo`。kernel id 会在运行时根据这些参数和上游 NetCDF attrs（`parton`、`target_observable`、`gfix`、`kernel_operator`）自动拼接。两个 resummation 字段都为空时使用固定阶 NLO；`rgr` 必须选择 `re` 或 `im`，`lrr` 不带 component 后缀。
+Perturbative matching 使用 `scheme`、`order` 和 `resummation`。目前 `order` 只支持 `nlo`。kernel id 会在运行时根据这些参数和上游 NetCDF attrs（`parton`、`target_observable`、`gfix`、`kernel_operator`、`source_component`）自动拼接。`resummation` 为空时使用固定阶 NLO；`rgr` 自动使用上游 `re` 或 `im` 来源通道作为 kernel 后缀，`lrr` 不带 component 后缀。Fourier 输出用 `source_component` 记录矩阵元来源、用 `output_component` 记录 x 空间数值分量：标准 Hermitian 坐标空间补全总是发布实数 quasi-distribution，即使贡献来自矩阵元虚部；成对的非前向 GPD flow 则可以保留复数。包含已删除 `resummation_part` 的 manifest 必须迁移，只有旧 `component` attr 的 Fourier artifact 必须重新生成。
 
 ### `inputs.correlators[].polarization` 和 Fourier sectors
 

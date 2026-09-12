@@ -218,7 +218,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         "## Job Summary",
         "",
         (
-            "| job | target / polarization | momentum [GeV] | sector / component | "
+            "| job | target / polarization | momentum [GeV] | sector / source / output component | "
             "selected range [fm] | selected models | Q | chi2/dof | samples |"
         ),
         "|---|---:|---|---|---|---|---:|---:|---:|",
@@ -230,7 +230,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             f"| `{record.job_id}` | `{attrs.get('target_observable', 'n/a')}` / "
             f"`{attrs.get('polarization', 'n/a')}` | {format_value(attrs.get('momentum_gev'))} | "
             f"`{attrs.get('sector', record.params['scheme_scan']['sector'])}` / "
-            f"`{attrs.get('component', 'n/a')}` | "
+            f"`{attrs.get('source_component', 'n/a')}` / `{attrs.get('output_component', 'n/a')}` | "
             f"{format_value(_json_attr(attrs, 'selected_range'))} | "
             f"{format_value(diagnostics.get('selected_fit_model_labels'))} | "
             f"{format_value(diagnostics.get('selected_Q'))} | {format_value(diagnostics.get('selected_chi2_dof'))} | "
@@ -367,7 +367,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 f"| Lambda0 [GeV] | {format_value(scan.get('Lambda0_gev', 0.0))} |",
                 f"| tail-prior scales | {format_value(scan['posterior_prior_error_scale'])} |",
                 f"| model average | {format_value(scan['model_average'])} |",
-                f"| component / output scale | `{attrs.get('component', 'n/a')}` / "
+                f"| source / output component / output scale | `{attrs.get('source_component', 'n/a')}` / "
+                f"`{attrs.get('output_component', 'n/a')}` / "
                 f"{format_value(attrs.get('output_scale'))} |",
                 f"| transform | `{attrs.get('fourier_convention', 'n/a')}`; "
                 f"prefactor `{attrs.get('prefactor', 'n/a')}` |",
@@ -400,10 +401,11 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "### Projection and Field Definitions",
                 "",
                 (
-                    f"The output records sector `{attrs.get('sector', 'n/a')}`, component "
-                    f"`{attrs.get('component', 'n/a')}`, and multiplicative scale "
+                    f"The output records sector `{attrs.get('sector', 'n/a')}`, source component "
+                    f"`{attrs.get('source_component', 'n/a')}`, x-space output component "
+                    f"`{attrs.get('output_component', 'n/a')}`, and multiplicative scale "
                     f"{format_value(attrs.get('output_scale'))}. Sector is authored in "
-                    "`scheme_scan`; component and scale are derived from the target, polarization, "
+                    "`scheme_scan`; source component and scale are derived from the target, polarization, "
                     "and sector. For a non-full GPD, the signed-y transform is projected afterward "
                     "using the polarization relation; a full GPD leaves the complex Fourier result "
                     "unprojected."
@@ -421,8 +423,8 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                     "selection or model averaging. |"
                 ),
                 (
-                    "| `component`, `output_scale` | Fourier channel and normalization selected "
-                    "from target, polarization, and sector. |"
+                    "| `source_component`, `output_component`, `output_scale` | Matrix-element source channel, "
+                    "x-space numerical component, and normalization selected by the Fourier conventions. |"
                 ),
                 (
                     "| `phase_transfer_da` | Whether the midpoint DA phase/symmetry projection "

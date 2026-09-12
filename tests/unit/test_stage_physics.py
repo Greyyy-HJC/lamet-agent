@@ -2722,7 +2722,7 @@ def test_tail_value_and_fit_evaluator_share_the_proton_gpd_endpoint_family() -> 
             "z": z,
             "model_id": "gi_nla",
             "order": "LA",
-            "component": "both",
+            "source_component": "both",
             "lambda0_gev": 0.0,
             "observable": "GPD",
             "momentum_gev": 1.15,
@@ -2767,6 +2767,39 @@ def test_fourier_transform_uses_dimensionless_lambda_measure_on_uniform_grid() -
     transformed = fourier_transform(data, [0.0], momentum_gev=momentum, prefactor="pz_over_2pi")
     expected = momentum * 0.1 * len(z) / (2.0 * np.pi * HBAR_C_GEV_FM)
     assert np.allclose(transformed.values, [[expected]], rtol=1e-13, atol=1e-13)
+
+
+@pytest.mark.parametrize("source_component", ["re", "im", "both"])
+def test_fourier_xspace_projection_is_real_independently_of_source_component(source_component: str) -> None:
+    from lamet_agent.stages.fourier_transform.physics import _project_xspace_output
+
+    data = EnsembleData(
+        None,
+        "bootstrap",
+        [np.array([1.0 + 4.0j, 2.0 + 5.0j]), np.array([1.5 + 4.5j, 2.5 + 5.5j])],
+        ["x"],
+        {"x": [0.25, 0.75]},
+        attrs={"component": source_component, "matching_component": "re", "resummation_part": "re"},
+    )
+    projected = _project_xspace_output(
+        data,
+        source_component=source_component,
+        output_component="re",
+    )
+    assert not np.iscomplexobj(projected.values)
+    np.testing.assert_allclose(projected.values[0], [1.0, 2.0])
+    assert projected.attrs == {"source_component": source_component, "output_component": "re"}
+
+
+def test_fourier_xspace_projection_preserves_paired_flow_gpd_complex_values() -> None:
+    from lamet_agent.stages.fourier_transform.physics import _project_xspace_output
+
+    values = [np.array([1.0 + 4.0j, 2.0 + 5.0j]), np.array([1.5 + 4.5j, 2.5 + 5.5j])]
+    data = EnsembleData(None, "bootstrap", values, ["x"], {"x": [0.25, 0.75]})
+    projected = _project_xspace_output(data, source_component="both", output_component="both")
+    assert np.iscomplexobj(projected.values)
+    np.testing.assert_allclose(projected.values, values)
+    assert projected.attrs == {"source_component": "both", "output_component": "both"}
 
 
 def test_native_fourier_scan_fits_and_transforms_with_one_parallel_entry(monkeypatch) -> None:
@@ -2817,7 +2850,7 @@ def test_native_fourier_scan_fits_and_transforms_with_one_parallel_entry(monkeyp
             "prior_widths": [1.0],
             "model_average": False,
             "max_schemes": 3,
-            "component": "both",
+            "source_component": "both",
             "output_scale": 1.0,
             "q_min": 0.0,
         },
@@ -2826,6 +2859,9 @@ def test_native_fourier_scan_fits_and_transforms_with_one_parallel_entry(monkeyp
     assert result["data"].dims == ["x"]
     assert result["data"].n_sample == data.n_sample
     assert np.all(np.isfinite(result["data"].values))
+    assert not np.iscomplexobj(result["data"].values)
+    assert result["data"].attrs["source_component"] == "both"
+    assert result["data"].attrs["output_component"] == "re"
     assert result["data"].attrs["tail_family"] == "nucleon_pdf"
     assert result["data"].attrs["power_coordinate_unit"] == "fm"
     assert result["data"].attrs["cg_power_applied"] == "false"
@@ -2864,6 +2900,7 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
         [np.ones(3), 1.1 * np.ones(3)],
         ["x"],
         {"x": [-0.5, 0.0, 0.5]},
+        attrs={"source_component": "both", "output_component": "re"},
     )
     candidate = {
         "label": "gi_nla_NLA_w1_linear_0p1",
@@ -2918,7 +2955,6 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
             "posterior_prior_error_scale": [1.0],
             "model_average": False,
             "max_schemes": 1,
-            "component": "both",
             "output_scale": 1.0,
             "q_min": 0.9,
         },
@@ -2939,7 +2975,7 @@ def test_fourier_scan_plot_draws_extrapolation_only_from_selected_zmin(monkeypat
                 "gfix": "GI",
                 "transform": {"phase_sign": 1, "x_shift": 0.0, "prefactor": "pz_over_2pi"},
                 "tail_models": ["gi_nla"],
-                "component": "both",
+                "source_component": "both",
                 "output_scale": 1.0,
                 "q_min": 0.05,
             },
@@ -3306,20 +3342,6 @@ def test_extrapolation_systematics_budget_uses_envelopes_and_quadrature(monkeypa
     assert line_colors == [COLOR_CYCLE[0]]
 
 
-def test_matching_component_follows_resummation_part() -> None:
-    from lamet_agent.stages.perturbative_matching._inspection import _matching_component
-
-    assert _matching_component("re", {}) == "re"
-    assert _matching_component("im", {}) == "im"
-    assert _matching_component("im", {"component": "imaginary"}) == "im"
-    assert _matching_component("re", {"component": "both"}) == "re"
-    assert _matching_component("", {"component": "im"}) == "im"
-    assert _matching_component("", {}) == "re"
-    for part, declared in (("re", "im"), ("im", "real")):
-        with pytest.raises(ValueError, match="component"):
-            _matching_component(part, {"component": declared})
-
-
 def test_matching_kernel_id_uses_upstream_provenance_and_new_suffix_order() -> None:
     from lamet_agent.kernels import matching_kernel_id
 
@@ -3328,22 +3350,26 @@ def test_matching_kernel_id_uses_upstream_provenance_and_new_suffix_order() -> N
         "target_observable": "pdf",
         "gfix": "CG",
         "kernel_operator": "gt",
+        "source_component": "re",
     }
     assert matching_kernel_id(attrs, scheme="hybrid", order="nlo") == "quark_pdf_cg_gt_hybrid_nlo"
     assert (
-        matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="rgr", resummation_part="re")
+        matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="rgr")
         == "quark_pdf_cg_gt_hybrid_nlo_rgr_re"
     )
-    assert matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="lrr") == "quark_pdf_cg_gt_hybrid_nlo_lrr"
+    assert (
+        matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="lrr")
+        == "quark_pdf_cg_gt_hybrid_nlo_lrr"
+    )
     with pytest.raises(ValueError, match="only 'nlo'"):
         matching_kernel_id(attrs, scheme="hybrid", order="nnlo")
-    with pytest.raises(ValueError, match="require.*resummation_part"):
-        matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="rgr")
-    with pytest.raises(ValueError, match="(?i)lrr"):
-        matching_kernel_id(attrs, scheme="hybrid", order="nlo", resummation="lrr", resummation_part="im")
+    for source_component in ("", "both"):
+        invalid = {**attrs, "source_component": source_component}
+        with pytest.raises(ValueError, match="source_component='re' or 'im'"):
+            matching_kernel_id(invalid, scheme="hybrid", order="nlo", resummation="rgr")
 
 
-def test_matching_inspection_reduces_the_component_named_by_resummation_part(tmp_path) -> None:
+def test_matching_inspection_uses_real_xspace_quasi_and_source_component_for_rgr(tmp_path) -> None:
     from lamet_agent.stages.perturbative_matching._inspection import run
 
     values = [np.array([1.0 + 4.0j, 2.0 + 5.0j]), np.array([1.5 + 4.5j, 2.5 + 5.5j])]
@@ -3360,6 +3386,8 @@ def test_matching_inspection_reduces_the_component_named_by_resummation_part(tmp
             "kernel_operator": "gt",
             "target_observable": "pdf",
             "renormalization_scheme": "msbar",
+            "source_component": "im",
+            "output_component": "re",
         },
         name="quasi_distribution",
     )
@@ -3367,7 +3395,6 @@ def test_matching_inspection_reduces_the_component_named_by_resummation_part(tmp
         "scheme": "msbar",
         "order": "nlo",
         "resummation": "rgr",
-        "resummation_part": "im",
         "mu": 2.0,
         "lc_x_ls": [0.25, 0.75],
         "kernel_parameters": {},
@@ -3387,16 +3414,66 @@ def test_matching_inspection_reduces_the_component_named_by_resummation_part(tmp
     run(context)
     reduced = context.state["quasi"]
     assert not np.iscomplexobj(reduced.values)
-    assert np.allclose(np.asarray(reduced.values)[0], [4.0, 5.0])
-    assert reduced.attrs["matching_component"] == "im"
-    assert context.state["kernel_inspection"]["matching_component"] == "im"
+    assert np.allclose(np.asarray(reduced.values)[0], [1.0, 2.0])
+    assert reduced.attrs["source_component"] == "im"
+    assert reduced.attrs["output_component"] == "re"
+    assert context.state["kernel_inspection"]["source_component"] == "im"
+    assert context.params["kernel_id"] == "quark_pdf_cg_gt_msbar_nlo_rgr_im"
 
-    context.params["resummation_part"] = "both"
+    quasi.array.attrs["source_component"] = "both"
     context.state.clear()
-    with pytest.raises(ValueError, match="kernel 'quark_pdf_cg_gt_msbar_nlo_rgr_both' is not available"):
+    with pytest.raises(ValueError, match="source_component='re' or 'im'"):
         run(context)
-    assert context.params["kernel_id"] == "quark_pdf_cg_gt_msbar_nlo_rgr_both"
     assert "matching_result" not in context.state
+
+
+def test_matching_output_drops_legacy_component_attrs(tmp_path) -> None:
+    from lamet_agent.stages.perturbative_matching._apply import run
+
+    quasi = EnsembleData(
+        None,
+        "bootstrap",
+        [np.array([1.0, 2.0]), np.array([1.1, 2.1])],
+        ["x"],
+        {"x": [-0.5, 0.5]},
+        attrs={
+            "momentum_gev": 2.0,
+            "source_component": "re",
+            "output_component": "re",
+            "component": "re",
+            "matching_component": "re",
+            "resummation_part": "re",
+        },
+        name="quasi_distribution",
+    )
+    context = ToolContext(
+        {"metadata": {"workers": 1, "sample_error_mode": "covariance"}},
+        tmp_path / "manifest.json",
+        "perturbative_matching",
+        "match",
+        {
+            "kernel_id": "quark_pdf_cg_gt_ratio_nlo",
+            "scheme": "ratio",
+            "order": "nlo",
+            "mu": 2.0,
+            "lc_x_ls": [-0.5, 0.5],
+            "kernel_parameters": {},
+        },
+        {},
+        {},
+        {
+            "kernel": lambda x_out, x_in, *, momentum_gev, scale_gev: np.eye(2),
+            "quasi": quasi,
+            "kernel_inspection": {"document": ""},
+        },
+        tmp_path,
+        np.random.default_rng(1),
+    )
+
+    run(context)
+
+    assert context.output is not None
+    assert not {"component", "matching_component", "resummation_part"} & context.output.attrs.keys()
 
 
 def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> None:
@@ -3409,7 +3486,12 @@ def test_matching_terminal_writes_original_quasi_matched_plot_pair(tmp_path) -> 
         [np.array([0.2, 1.0, 0.3]), np.array([0.3, 1.1, 0.4])],
         ["x"],
         {"x": x},
-        attrs={"momentum_gev": 1.722, "sample_error_mode": "covariance"},
+        attrs={
+            "momentum_gev": 1.722,
+            "sample_error_mode": "covariance",
+            "source_component": "re",
+            "output_component": "re",
+        },
         name="quasi_distribution",
     )
 
@@ -3468,7 +3550,12 @@ def test_matching_plot_crops_even_quasi_to_nonnegative_x(monkeypatch, tmp_path) 
         [np.array([0.3, 1.0, 0.3]), np.array([0.4, 1.1, 0.4])],
         ["x"],
         {"x": x},
-        attrs={"momentum_gev": 1.722, "sample_error_mode": "covariance"},
+        attrs={
+            "momentum_gev": 1.722,
+            "sample_error_mode": "covariance",
+            "source_component": "re",
+            "output_component": "re",
+        },
         name="quasi_distribution",
     )
 

@@ -188,9 +188,6 @@ PARAM_RULES = (
     Value("order", Literal["nlo"], physics="Only next-to-leading order matching kernels are currently available."),
     Recommends("", "resummation", physics="Matching uses fixed-order NLO unless an explicit resummation is selected.", default=""),
     Value("resummation", Literal["", "rgr", "lrr"], physics="Empty selects fixed-order NLO; rgr resums the running coupling and lrr resums the leading renormalon."),
-    Provides("", "rgr", "resummation", physics="Only RGR kernels require an explicit component choice."),
-    Depends("rgr", "resummation_part", physics="RGR matching requires an explicit choice of real, imaginary, or both quasi components."),
-    Value("rgr.resummation_part", Literal["re", "im", "both"], physics="RGR selects the real, imaginary, or both components using the corresponding kernel file."),
     Depends("", "mu", physics="The matching scale is the MS-bar scale of the published light-cone distribution in GeV, conventionally 2 GeV, and enters every coefficient function through the logarithm ln(4 y^2 Pz^2 / mu^2)."),
     Depends("", "lc_x_ls", physics="A list is the exact light-cone output grid; a start/stop mapping instead keeps the quasi-grid points inside the closed window, and never interpolates."),
     Recommends("", "kernel_parameters", physics="Kernel-specific controls are explicit and are validated against the selected kernel signature; every kernel accepts eps, the regulator keeping plus-prescription denominators finite, and nlo_rgr_* kernels add kappa and mu_min_gev, which build row x at mu0=2*kappa*x*Pz and zero every row with mu0 below mu_min_gev, so together they impose the cutoff x_min=mu_min_gev/(2*kappa*Pz) and keep mu0 above the Landau pole.", default={}),
@@ -203,7 +200,7 @@ PARAM_RULES = (
 )
 
 INPUT_RULES = (
-    Depends("", "quasi", physics="Matching consumes exactly one quasi distribution, whose attrs supply the momentum Pz and the provenance tokens the kernel filename must reproduce."),
+    Depends("", "quasi", physics="Matching consumes exactly one quasi distribution, whose attrs supply momentum Pz, source/output component provenance, and the tokens the kernel filename must reproduce; RGR derives its re/im kernel suffix from source_component."),
     Source("quasi", physics="The quasi input is one prior job or external file source."),
 )
 
@@ -222,18 +219,6 @@ SYSTEMATICS_RULES = (
 # ruff: enable[E501]
 
 
-def check_kernel_shape(context: CheckContext) -> Issue | None:
-    resummation = context.params.get("resummation", "")
-    part = context.params.get("resummation_part", "")
-    if resummation == "" and part:
-        return Issue("resummation_part", "requires resummation='rgr'", "Only RGR kernels select a real or imaginary component.")
-    if resummation == "rgr" and part not in {"re", "im", "both"}:
-        return Issue("resummation_part", "must be 're', 'im', or 'both' for RGR", "RGR kernels are component-specific.")
-    if resummation == "lrr" and part:
-        return Issue("resummation_part", "must be empty for LRR", "LRR kernels have no component suffix.")
-    return None
-
-
 def check_x_output(context: CheckContext) -> Issue | None:
     window = context.params.get("lc_x_ls")
     if isinstance(window, dict) and window["start"] >= window["stop"]:
@@ -243,7 +228,7 @@ def check_x_output(context: CheckContext) -> Issue | None:
 
 JOB_RULES = stage_job_rules(PARAM_RULES, INPUT_RULES)
 
-CHECKS = (check_kernel_shape, check_x_output)
+CHECKS = (check_x_output,)
 
 
 def check_systematics(context: CheckContext) -> Issue | None:
