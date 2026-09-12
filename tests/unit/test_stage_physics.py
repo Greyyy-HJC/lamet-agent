@@ -1071,6 +1071,29 @@ def test_matrix_element_prior_keeps_original_inactive_component_parameters() -> 
     assert float(prior["E0"].mean) > 0.0
 
 
+def test_matrix_element_prior_unions_per_atom_state_counts() -> None:
+    two_plus_one = matrix_element_prior(
+        {"2pt": 2, "3pt_ratio": 1},
+        form="Breit",
+        scope=("2pt", "3pt_ratio"),
+        components=("re",),
+        width_scale=1.0,
+    )
+    assert "log(dE1)" in two_plus_one and "z1" in two_plus_one
+    assert "O00_re" in two_plus_one
+    assert "O01_re" not in two_plus_one and "O11_re" not in two_plus_one
+
+    one_plus_two = matrix_element_prior(
+        {"2pt": 1, "3pt_ratio": 2},
+        form="Breit",
+        scope=("2pt", "3pt_ratio"),
+        components=("re",),
+        width_scale=1.0,
+    )
+    assert "log(dE1)" in one_plus_two and "z1" in one_plus_two
+    assert "O00_re" in one_plus_two and "O01_re" in one_plus_two and "O11_re" in one_plus_two
+
+
 @pytest.mark.parametrize(
     ("typical_abs", "expected_scale"),
     [(3.64e-19, 1.0e15), (3.25e-22, 1.0e18)],

@@ -21,7 +21,8 @@
           "2pt+qda"
         ],
         "nstate": {
-          "2pt+qda": [1]
+          "2pt": [1],
+          "qda": [1]
         },
         "fitting_form": "Breit",
         "model_average": false,

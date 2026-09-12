@@ -9,7 +9,7 @@ from lamet_agent.parallel import FitNumericalError
 from lamet_agent.stages.correlator_analysis.physics import (
     fit_qda_samples,
 )
-from lamet_agent.stages.correlator_analysis._scope import nstate_combinations
+from lamet_agent.stages.correlator_analysis._scope import nstate_combinations, parse_fit_scope
 from lamet_agent.stages.correlator_analysis._selection import (
     select_tuned_candidate,
 )
@@ -40,7 +40,7 @@ def run(context: ToolContext, *, tune_z_values: list[float]) -> dict[str, object
             settings["pt2_windows"],
         ),
         key=lambda item: (
-            tuple(int(item[0][stage]) for stage in fit_scope),
+            tuple(int(item[0][atom]) for atom in parse_fit_scope(fit_scope).atoms),
             float(item[1]),
             int(item[2]["tmin"]),
             int(item[2]["tmax"]),

@@ -19,7 +19,7 @@ from lamet_agent.stages.correlator_analysis.ask import (
     pt2_windows as recommend_pt2_windows,
     pt3_windows as recommend_pt3_windows,
 )
-from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope, valid_scope_stage
+from lamet_agent.stages.correlator_analysis._scope import FIT_SCOPE_ATOMS, parse_fit_scope, valid_scope_stage
 
 
 def _positive(value: int | float) -> bool:
@@ -67,7 +67,7 @@ def _valid_nstate_map(value: object) -> bool:
     if not isinstance(value, dict) or not value:
         return False
     for key, counts in value.items():
-        if not isinstance(key, str) or not key:
+        if not isinstance(key, str) or key not in FIT_SCOPE_ATOMS:
             return False
         if not isinstance(counts, list) or not counts:
             return False
@@ -85,7 +85,7 @@ PARAM_RULES = (
     Provides("", "lanczos", "analysis_method", physics="The Lanczos algorithm owns Krylov analysis and nested resampling."),
     Depends("", "component", physics="The fit needs an explicit real, imaginary, or complex channel selection."),
     Depends("lsqfit", "fit_scope", physics="The fit scope selects the observable-specific data and model function used by the least-squares fit."),
-    Depends("lsqfit", "nstate", physics="Each fit-scope stage needs its own candidate state-count list so chained or joint stages can use different truncations."),
+    Depends("lsqfit", "nstate", physics="Each correlator atom in fit_scope needs its own candidate state-count list so joint or chained stages can assign different truncations to different correlators."),
     Depends("lanczos", "nstate", physics="Lanczos uses one authored exported Ritz-state count and infers its internal order."),
     List("lsqfit.fit_scope", "scope", physics="The ordered entries form chained fit stages; atoms joined with '+' inside one entry share a correlated joint likelihood.", validator=_nonempty),
     Value("lsqfit.fit_scope.scope", str, physics="Each list entry is one joint fit stage whose atoms are separated by '+'. List order denotes chained posterior propagation. Supported atoms are 2pt, 3pt, qda, FH, 3pt_ratio, and qda_ratio.", validator=valid_scope_stage),
@@ -97,7 +97,7 @@ PARAM_RULES = (
     Recommends("lsqfit", "svdcut", physics="Correlated fits need a relative covariance singular-value cutoff to suppress numerically unresolved directions.", default=1e-12),
     Depends("lsqfit", "posterior_prior_error_scale", physics="The fit needs a scale for propagating prior uncertainty; chained fits also use it to widen the preceding spectrum posterior."),
     Depends("lsqfit", "q_min", physics="Candidate comparison needs a preferred fit-quality probability; after recommendation retries are exhausted, selection falls back across all retained numerical candidates."),
-    Value("lsqfit.nstate", dict, physics="A mapping from each fit_scope entry to the positive state counts scanned for that stage. Joint stages use the full '+' string as the key.", validator=_valid_nstate_map),
+    Value("lsqfit.nstate", dict, physics="A mapping from each correlator atom in fit_scope to the positive state counts scanned for that correlator. Keys must be atoms such as 2pt or 3pt_ratio, never a joint '+' stage string.", validator=_valid_nstate_map),
     List("lanczos.nstate", "state_count", physics="Lanczos exports one authored Ritz-state count.", validator=_nonempty),
     List("lsqfit.prior_width", "width", physics="Multiple prior widths let the candidate scan test prior sensitivity.", validator=_nonempty),
     List("lsqfit.pt2_windows", "window", physics="Multiple two-point windows let the candidate scan test fit-range stability.", validator=_nonempty),
@@ -145,7 +145,7 @@ def check_method_family(context: CheckContext) -> Issue | None:
     if context.params["analysis_method"] != "lsqfit":
         return None
     try:
-        parse_fit_scope(context.params["fit_scope"])
+        scope = parse_fit_scope(context.params["fit_scope"])
     except (TypeError, ValueError) as exc:
         return Issue(
             "fit_scope",
@@ -153,12 +153,11 @@ def check_method_family(context: CheckContext) -> Issue | None:
             "The ordered scope pipeline must identify compatible joint and chained likelihoods.",
         )
     nstate = context.params.get("nstate")
-    fit_scope = context.params.get("fit_scope")
-    if isinstance(nstate, dict) and isinstance(fit_scope, list) and set(nstate) != set(fit_scope):
+    if isinstance(nstate, dict) and set(nstate) != scope.atom_set:
         return Issue(
             "nstate",
-            "keys must match the authored fit_scope stages",
-            "Each fit_scope entry needs its own nstate list, including joint stages named with '+'.",
+            "keys must match the correlator atoms in fit_scope",
+            "Each atom such as 2pt or 3pt_ratio needs its own nstate list; joint stage strings are not keys.",
         )
     return None
 

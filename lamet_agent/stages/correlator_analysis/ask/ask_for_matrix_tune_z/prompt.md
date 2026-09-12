@@ -13,8 +13,11 @@ z, one mid-range z, and the largest z when the grid is wide. Do not enumerate th
 full z grid. When requested, choose stable half-open `pt2_windows` and compatible
 `pt3_windows`. Every three-point window contains `tsep_ls` and a nonnegative
 `tau_cut`; retain enough insertion-time support after the endpoint cut and obey
-`2*tau_cut <= tsep`. Parameters listed under `fixed_parameters` are user-authored
-for the initial attempt and must not be changed.
+`2*tau_cut <= tsep`. `nstate` is keyed by individual correlator atoms such as
+`2pt` and `3pt_ratio`, never by a joint `'+'` stage string; atoms in one joint
+likelihood may use different state counts. Parameters listed under
+`fixed_parameters` are user-authored for the initial attempt and must not be
+changed.
 
 On a retry, `previous_attempts` describes every authored strategy, scope, state,
 prior-width, and window combination. It may include feasibility at every tuning

@@ -19,7 +19,8 @@
           "2pt+3pt_ratio"
         ],
         "nstate": {
-          "2pt+3pt_ratio": [2]
+          "2pt": [2],
+          "3pt_ratio": [2]
         },
         "fitting_form": "Breit",
         "model_average": false,

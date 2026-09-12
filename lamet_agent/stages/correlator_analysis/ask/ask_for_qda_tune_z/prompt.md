@@ -19,6 +19,9 @@ spectral model, so the window must remain overdetermined for the selected
 fit jointly in one stage: for example, `["qda_ratio"]` fits the ratio directly,
 `["2pt+qda"]` jointly fits the local two-point and raw qDA correlators, and
 `["2pt", "qda"]` propagates a widened two-point posterior into the raw qDA fit.
+`nstate` is keyed by those atoms (`2pt`, `qda`, `qda_ratio`), never by a joint
+`'+'` stage string; a joint `["2pt+qda"]` fit still writes `"2pt"` and `"qda"`
+separately and may give them different state counts.
 Parameters listed under
 `fixed_parameters` are user-authored for the initial attempt and must not be
 changed.

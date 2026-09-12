@@ -15,8 +15,7 @@ from lamet_agent.ui import track
 from lamet_agent.stages.correlator_analysis._scope import (
     atom_state_count,
     parse_fit_scope,
-    resolve_stage_n_states,
-    stage_state_count,
+    resolve_atom_n_states,
 )
 
 
@@ -132,53 +131,87 @@ def _summed_ratio_model(
     return numerator / (2 * parameters["E0"] * (1 + parameters["sum_den_exp_coeff"] * exponential))
 
 
+def _lookup_atom_n_states(n_states: Mapping[str, int] | int, atom: str) -> int:
+    if isinstance(n_states, Mapping):
+        return atom_state_count(n_states, atom)
+    if isinstance(n_states, bool) or not isinstance(n_states, int) or n_states < 1:
+        raise ValueError("n_states must be a positive integer or a per-atom mapping")
+    return n_states
+
+
+def _plotted_three_point_n_states(n_states: Mapping[str, int] | int) -> int:
+    if isinstance(n_states, Mapping):
+        if "3pt_ratio" in n_states:
+            return atom_state_count(n_states, "3pt_ratio")
+        if "3pt" in n_states:
+            return atom_state_count(n_states, "3pt")
+        raise ValueError("n_states is missing a three-point atom")
+    return _lookup_atom_n_states(n_states, "3pt_ratio")
+
+
 def matrix_element_fcn(x: Mapping[str, Any], parameters: Mapping[str, Any]) -> np.ndarray:
     """Evaluate the ordered observation blocks of one joint fit stage."""
     values: list[np.ndarray] = []
-    n_states = int(x["n_states"])
+    n_states = x["n_states"]
     extent = int(x["extent"])
     form = str(x["form"])
     atoms = tuple(x["atoms"])
     components = tuple(x["components"])
     for atom in atoms:
+        atom_n_states = _lookup_atom_n_states(n_states, atom)
         if atom == "2pt":
             if x.get("family") == "qda" and x.get("denominator_kind") == "qda_z0":
-                values.append(_qda_correlator(x["pt2_t"], parameters, extent, n_states, "zprime"))
+                values.append(_qda_correlator(x["pt2_t"], parameters, extent, atom_n_states, "zprime"))
             elif form == "Breit":
-                values.append(_two_point_model(x["pt2_t"], parameters, extent, n_states))
+                values.append(_two_point_model(x["pt2_t"], parameters, extent, atom_n_states))
             else:
-                values.append(_two_point_model(x["pt2_t"], parameters, extent, n_states, "_i"))
-                values.append(_two_point_model(x["pt2_t"], parameters, extent, n_states, "_f"))
+                values.append(_two_point_model(x["pt2_t"], parameters, extent, atom_n_states, "_i"))
+                values.append(_two_point_model(x["pt2_t"], parameters, extent, atom_n_states, "_f"))
         elif atom == "3pt":
             for component in components:
-                values.append(_three_point_model(x["ratio_t"], x["ratio_tau"], parameters, n_states, form, component))
+                values.append(
+                    _three_point_model(x["ratio_t"], x["ratio_tau"], parameters, atom_n_states, form, component)
+                )
         elif atom == "3pt_ratio":
             for component in components:
-                values.append(_ratio_model(x["ratio_t"], x["ratio_tau"], parameters, extent, n_states, form, component))
+                values.append(
+                    _ratio_model(x["ratio_t"], x["ratio_tau"], parameters, extent, atom_n_states, form, component)
+                )
         elif atom == "qda":
             for component in components:
-                values.append(_qda_correlator(x["qda_t"], parameters, extent, n_states, component))
+                values.append(_qda_correlator(x["qda_t"], parameters, extent, atom_n_states, component))
         elif atom == "qda_ratio":
             denominator_key = "zprime" if x.get("denominator_kind") == "qda_z0" else None
             denominator = (
-                _qda_correlator(x["qda_t"], parameters, extent, n_states, denominator_key)
+                _qda_correlator(x["qda_t"], parameters, extent, atom_n_states, denominator_key)
                 if denominator_key is not None
-                else _two_point_model(x["qda_t"], parameters, extent, n_states)
+                else _two_point_model(x["qda_t"], parameters, extent, atom_n_states)
             )
             for component in components:
-                values.append(_qda_correlator(x["qda_t"], parameters, extent, n_states, component) / denominator)
+                values.append(_qda_correlator(x["qda_t"], parameters, extent, atom_n_states, component) / denominator)
         elif atom == "FH":
             for component in components:
-                after = _summed_ratio_model(x["fh_t"] + x["fh_dt"], int(x["tau_min"]), parameters, n_states, component)
-                before = _summed_ratio_model(x["fh_t"], int(x["tau_min"]), parameters, n_states, component)
+                after = _summed_ratio_model(
+                    x["fh_t"] + x["fh_dt"], int(x["tau_min"]), parameters, atom_n_states, component
+                )
+                before = _summed_ratio_model(x["fh_t"], int(x["tau_min"]), parameters, atom_n_states, component)
                 values.append((after - before) / x["fh_dt"])
         else:
             raise ValueError(f"unsupported fit-scope atom {atom!r}")
     return np.concatenate([np.atleast_1d(value) for value in values])
 
 
+def _add_spectrum_prior(prior: gv.BufferDict, n_states: int, width_scale: float, suffixes: tuple[str, ...]) -> None:
+    for suffix in suffixes:
+        prior.setdefault(f"log(E0{suffix})", gv.gvar(0.0, 3.0 * width_scale))
+        for state in range(1, n_states):
+            prior.setdefault(f"log(dE{state}{suffix})", gv.gvar(0.0, width_scale))
+        for state in range(n_states):
+            prior.setdefault(f"z{state}{suffix}", gv.gvar(1.0, 10.0 * width_scale) / 3**state)
+
+
 def matrix_element_prior(
-    n_states: int,
+    n_states: Mapping[str, int] | int,
     *,
     form: str,
     scope: str | tuple[str, ...] | list[str],
@@ -187,50 +220,50 @@ def matrix_element_prior(
     denominator_kind: str = "external_2pt",
 ) -> gv.BufferDict:
     """Build the explicit spectral and matrix-element prior for one fit model."""
-    if n_states < 1 or not np.isfinite(width_scale) or width_scale <= 0:
-        raise ValueError("n_states and width_scale must be positive")
+    if not np.isfinite(width_scale) or width_scale <= 0:
+        raise ValueError("width_scale must be positive")
     atoms = set(scope.split("+")) if isinstance(scope, str) else set(scope)
     if form not in {"Breit", "NonBreit"} or not atoms:
         raise ValueError("unsupported fitting form or scope")
     if form == "NonBreit" and atoms - {"2pt", "3pt", "3pt_ratio"}:
         raise ValueError("NonBreit fitting supports only 2pt, 3pt, and 3pt_ratio")
+    counts = {atom: _lookup_atom_n_states(n_states, atom) for atom in atoms}
     prior = gv.BufferDict()
     suffixes = ("",) if form == "Breit" else ("_i", "_f")
-    for suffix in suffixes:
-        prior[f"log(E0{suffix})"] = gv.gvar(0.0, 3.0 * width_scale)
-        for state in range(1, n_states):
-            prior[f"log(dE{state}{suffix})"] = gv.gvar(0.0, width_scale)
-        for state in range(n_states):
-            prior[f"z{state}{suffix}"] = gv.gvar(1.0, 10.0 * width_scale) / 3**state
+    for atom in atoms:
+        _add_spectrum_prior(prior, counts[atom], width_scale, suffixes)
     if atoms & {"3pt", "3pt_ratio"}:
+        matrix_n_states = max(counts[atom] for atom in atoms if atom in {"3pt", "3pt_ratio"})
         if form == "Breit":
-            matrix_indices = [(row, column) for row in range(n_states) for column in range(row, n_states)]
+            matrix_indices = [(row, column) for row in range(matrix_n_states) for column in range(row, matrix_n_states)]
         else:
-            matrix_indices = [(sink, source) for sink in range(n_states) for source in range(n_states)]
+            matrix_indices = [(sink, source) for sink in range(matrix_n_states) for source in range(matrix_n_states)]
         for row, column in matrix_indices:
             for component in ("re", "im"):
-                prior[f"O{row}{column}_{component}"] = gv.gvar(1.0, 10.0 * width_scale)
+                prior.setdefault(f"O{row}{column}_{component}", gv.gvar(1.0, 10.0 * width_scale))
     if "FH" in atoms:
+        fh_n_states = counts["FH"]
         for component in ("re", "im"):
             prior.setdefault(f"O00_{component}", gv.gvar(1.0, 10.0 * width_scale))
-            if n_states > 1:
-                prior[f"sum_{component}_excited_coeff"] = gv.gvar(0.0, 10.0 * width_scale)
-                prior[f"sum_{component}_offset"] = gv.gvar(0.0, 10.0 * width_scale)
-                prior[f"sum_{component}_exp_offset"] = gv.gvar(0.0, 10.0 * width_scale)
-        if n_states > 1:
-            prior["sum_den_exp_coeff"] = gv.gvar(0.0, 10.0 * width_scale)
+            if fh_n_states > 1:
+                prior.setdefault(f"sum_{component}_excited_coeff", gv.gvar(0.0, 10.0 * width_scale))
+                prior.setdefault(f"sum_{component}_offset", gv.gvar(0.0, 10.0 * width_scale))
+                prior.setdefault(f"sum_{component}_exp_offset", gv.gvar(0.0, 10.0 * width_scale))
+        if fh_n_states > 1:
+            prior.setdefault("sum_den_exp_coeff", gv.gvar(0.0, 10.0 * width_scale))
     if denominator_kind == "qda_z0" and "2pt" in atoms:
-        for state in range(n_states):
-            prior[f"zprime{state}"] = gv.gvar(1.0, 10.0 * width_scale) / 3**state
+        for state in range(counts["2pt"]):
+            prior.setdefault(f"zprime{state}", gv.gvar(1.0, 10.0 * width_scale) / 3**state)
     if atoms & {"qda", "qda_ratio"}:
         if form != "Breit":
             raise ValueError("qDA fitting supports only Breit kinematics")
+        qda_n_states = max(counts[atom] for atom in atoms if atom in {"qda", "qda_ratio"})
         if denominator_kind == "qda_z0" and "2pt" not in atoms:
-            for state in range(n_states):
-                prior[f"zprime{state}"] = gv.gvar(1.0, 10.0 * width_scale) / 3**state
-        for state in range(n_states):
-            prior[f"O0{state}_re"] = gv.gvar(1.0, 10.0 * width_scale)
-            prior[f"O0{state}_im"] = gv.gvar(0.0, 10.0 * width_scale)
+            for state in range(qda_n_states):
+                prior.setdefault(f"zprime{state}", gv.gvar(1.0, 10.0 * width_scale) / 3**state)
+        for state in range(qda_n_states):
+            prior.setdefault(f"O0{state}_re", gv.gvar(1.0, 10.0 * width_scale))
+            prior.setdefault(f"O0{state}_im", gv.gvar(0.0, 10.0 * width_scale))
     return prior
 
 
@@ -302,7 +335,7 @@ def _matrix_sample0_plot_payload(
     fit_scope: str,
     fitting_form: str,
     extent: int,
-    n_states: int,
+    n_states: Mapping[str, int] | int,
     tsep_values: list[int],
     available_tau: np.ndarray,
     tau_min: int,
@@ -348,7 +381,7 @@ def _matrix_sample0_plot_payload(
                         fit_tau,
                         posterior,
                         extent,
-                        n_states,
+                        _plotted_three_point_n_states(n_states),
                         fitting_form,
                         component,
                     )
@@ -405,8 +438,9 @@ def _matrix_sample0_plot_payload(
                 ["tsep"],
                 {"tsep": fh_t.tolist()},
             ).average(sample_error_mode)
-            after = _summed_ratio_model(fit_t + fit_dt, tau_min, posterior, n_states, component)
-            before = _summed_ratio_model(fit_t, tau_min, posterior, n_states, component)
+            fh_n_states = _lookup_atom_n_states(n_states, "FH")
+            after = _summed_ratio_model(fit_t + fit_dt, tau_min, posterior, fh_n_states, component)
+            before = _summed_ratio_model(fit_t, tau_min, posterior, fh_n_states, component)
             fit_mean, fit_sdev = _gvar_payload((after - before) / fit_dt)
             plateau = posterior[f"O00_{component}"] / (2.0 * posterior["E0"])
             plots.append(
@@ -472,14 +506,14 @@ def fit_matrix_element_samples(
 ) -> tuple[EnsembleData | None, dict[str, Any]]:
     """Fit one ordinary three-point scope pipeline."""
     pipeline = parse_fit_scope(fit_scope)
-    stage_counts = resolve_stage_n_states(n_states, pipeline)
+    atom_counts = resolve_atom_n_states(n_states, pipeline)
     if pipeline.is_qda or pipeline.is_spectrum or not pipeline.needs_pt3_data:
         raise ValueError("ordinary matrix-element fitting requires a three-point or FH fit_scope")
     if fitting_form not in {"Breit", "NonBreit"}:
         raise ValueError("fitting_form must be Breit or NonBreit")
     if fitting_form == "NonBreit" and pipeline.atom_set - {"2pt", "3pt", "3pt_ratio"}:
         raise ValueError("NonBreit fitting supports only 2pt, 3pt, and 3pt_ratio")
-    if "FH" in pipeline.atom_set and atom_state_count(stage_counts, pipeline, "FH") > 2:
+    if "FH" in pipeline.atom_set and atom_state_count(atom_counts, "FH") > 2:
         raise ValueError("FH fitting supports at most two states")
     selected_components = {"real": ("re",), "imag": ("im",), "both": ("re", "im")}.get(components)
     if selected_components is None:
@@ -524,9 +558,7 @@ def fit_matrix_element_samples(
     times = np.asarray(initial.coords["t"], dtype=int)
     pt2_mask = (times >= tmin) & (times < tmax)
     pt2_n_states = (
-        atom_state_count(stage_counts, pipeline, "2pt")
-        if "2pt" in pipeline.atom_set
-        else max(stage_counts.values())
+        atom_state_count(atom_counts, "2pt") if "2pt" in pipeline.atom_set else max(atom_counts.values())
     )
     if np.count_nonzero(pt2_mask) < 2 * pt2_n_states:
         raise ValueError("the two-point window must contain at least 2*n_states points")
@@ -617,7 +649,7 @@ def fit_matrix_element_samples(
             fit_prior = None
             observations = None
             for stage_index, atoms in enumerate(pipeline.stages):
-                stage_n_states = stage_state_count(stage_counts, atoms)
+                stage_n_states = {atom: atom_counts[atom] for atom in atoms}
                 x: dict[str, Any] = {
                     "n_states": stage_n_states,
                     "extent": extent,
@@ -757,7 +789,7 @@ def fit_matrix_element_samples(
                     fit_scope=plot_scope,
                     fitting_form=fitting_form,
                     extent=extent,
-                    n_states=stage_state_count(stage_counts, pipeline.final_stage),
+                    n_states=atom_counts,
                     tsep_values=tsep_values,
                     available_tau=available_tau,
                     tau_min=tau_min,
@@ -835,7 +867,7 @@ def fit_matrix_element_samples(
                 "method": "lsqfit",
                 "fitting_form": fitting_form,
                 "fit_scope": json.dumps(pipeline.as_list()),
-                "n_states": json.dumps(stage_counts),
+                "n_states": json.dumps(atom_counts),
                 "tmin": tmin,
                 "tmax": tmax,
                 "tau_min": tau_min,
@@ -1060,7 +1092,7 @@ def fit_qda_samples(
 ) -> tuple[EnsembleData | None, dict[str, Any]]:
     """Fit one raw/ratio qDA scope pipeline and return normalized samples."""
     pipeline = parse_fit_scope(fit_scope)
-    stage_counts = resolve_stage_n_states(n_states, pipeline)
+    atom_counts = resolve_atom_n_states(n_states, pipeline)
     if not pipeline.is_qda:
         raise ValueError("qDA fitting requires a qda or qda_ratio atom")
     selected_components = {"real": ("re",), "imag": ("im",), "both": ("re", "im")}.get(components)
@@ -1083,7 +1115,7 @@ def fit_qda_samples(
     t = np.asarray(source.coords["t"], dtype=float)
     z = np.asarray(source.coords["z"], dtype=float)
     selected = np.flatnonzero((t >= tmin) & (t < tmax))
-    if selected.size < 2 * max(stage_counts.values()):
+    if selected.size < 2 * max(atom_counts.values()):
         raise ValueError("qDA fit window must contain at least 2*n_states times")
     source_values = np.asarray(source.values)
     two_point, denominator_kind = _qda_two_point_source(records, source)
@@ -1137,7 +1169,7 @@ def fit_qda_samples(
             fit_prior = None
             observations = None
             for stage_index, atoms in enumerate(pipeline.stages):
-                stage_n_states = stage_state_count(stage_counts, atoms)
+                stage_n_states = {atom: atom_counts[atom] for atom in atoms}
                 x = {
                     "n_states": stage_n_states,
                     "extent": extent,
@@ -1245,7 +1277,8 @@ def fit_qda_samples(
             sample0_plot = None
             if fit_samples and result.sample_posteriors and result.sample_posteriors[0] is not None:
                 posterior = result.sample_posteriors[0]
-                final_n_states = stage_state_count(stage_counts, pipeline.final_stage)
+                qda_atom = next(atom for atom in pipeline.atoms if atom in {"qda", "qda_ratio"})
+                final_n_states = atom_counts[qda_atom]
                 fit_t = (
                     np.asarray([float(t[selected][0]) - 0.5, float(t[selected][-1]) + 0.5])
                     if final_n_states == 1
@@ -1360,7 +1393,7 @@ def fit_qda_samples(
         {
             "method": "lsqfit",
             "fit_scope": json.dumps(pipeline.as_list()),
-            "n_states": json.dumps(stage_counts),
+            "n_states": json.dumps(atom_counts),
             "tmin": tmin,
             "tmax": tmax,
             "denominator_kind": denominator_kind,

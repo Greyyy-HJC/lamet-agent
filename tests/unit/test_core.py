@@ -1715,6 +1715,17 @@ def test_correlator_fit_scope_rejects_legacy_mixed_and_duplicate_pipelines(fit_s
         parse_fit_scope(fit_scope)
 
 
+def test_nstate_combinations_expand_per_atom_grids() -> None:
+    from lamet_agent.stages.correlator_analysis._scope import nstate_combinations
+
+    assert nstate_combinations({"2pt": [1, 2], "3pt_ratio": [1]}, ["2pt+3pt_ratio"]) == [
+        {"2pt": 1, "3pt_ratio": 1},
+        {"2pt": 2, "3pt_ratio": 1},
+    ]
+    with pytest.raises(ValueError, match="individual correlator atoms"):
+        nstate_combinations({"2pt+3pt_ratio": [2]}, ["2pt+3pt_ratio"])
+
+
 def test_manifest_enforces_global_sampling_relationships(tmp_path: Path) -> None:
     metadata = _valid_metadata(tmp_path, resample_mode="bootstrap")
     manifest = Manifest(tmp_path / "manifest.json", {"metadata": metadata, "stages": {}})
@@ -2009,12 +2020,14 @@ def test_correlator_contract_keeps_lanczos_and_ground_fit_parameters_exclusive()
 @pytest.mark.parametrize("state_counts", [[2], [1, 2]])
 @pytest.mark.parametrize("fit_scope", [["qda_ratio"], ["2pt", "qda"], ["2pt+qda"]])
 def test_correlator_contract_allows_qda_candidate_grid(state_counts: list[int], fit_scope: list[str]) -> None:
+    from lamet_agent.stages.correlator_analysis._scope import parse_fit_scope
+
     contract = _load_stage_contract("correlator_analysis")
     qda_fit = {
         "analysis_method": "lsqfit",
         "component": "both",
         "fit_scope": fit_scope,
-        "nstate": {stage: state_counts for stage in fit_scope},
+        "nstate": {atom: state_counts for atom in parse_fit_scope(fit_scope).atoms},
         "fitting_form": "Breit",
         "model_average": False,
         "pt2_windows": [{"tmin": 2, "tmax": 14}],
@@ -2054,13 +2067,57 @@ def test_correlator_contract_requires_nstate_keys_to_match_fit_scope() -> None:
     assert any(issue.path == "nstate" and "fit_scope" in issue.message for issue in issues)
 
 
+def test_correlator_contract_rejects_joint_nstate_keys() -> None:
+    contract = _load_stage_contract("correlator_analysis")
+    params = {
+        "analysis_method": "lsqfit",
+        "component": "re",
+        "fit_scope": ["2pt+3pt_ratio"],
+        "nstate": {"2pt+3pt_ratio": [2]},
+        "fitting_form": "Breit",
+        "model_average": False,
+        "pt2_windows": [{"tmin": 3, "tmax": 8}],
+        "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
+        "svdcut": 1e-6,
+        "posterior_prior_error_scale": 1.0,
+        "q_min": 0.05,
+    }
+    issues = evaluate_rules(params, contract.PARAM_RULES)
+    assert any(issue.path == "nstate" for issue in issues)
+
+
+def test_correlator_contract_allows_unequal_atom_nstates() -> None:
+    contract = _load_stage_contract("correlator_analysis")
+    params = {
+        "analysis_method": "lsqfit",
+        "component": "re",
+        "fit_scope": ["2pt+3pt_ratio"],
+        "nstate": {"2pt": [2], "3pt_ratio": [1]},
+        "fitting_form": "Breit",
+        "model_average": False,
+        "pt2_windows": [{"tmin": 3, "tmax": 8}],
+        "pt3_windows": [{"tsep_ls": [8], "tau_cut": 2}],
+        "svdcut": 1e-6,
+        "posterior_prior_error_scale": 1.0,
+        "q_min": 0.05,
+    }
+    assert evaluate_rules(params, contract.PARAM_RULES) == []
+    assert (
+        evaluate_checks(
+            contract.CHECKS,
+            CheckContext({}, "correlator_analysis", "job", params, {}),
+        )
+        == []
+    )
+
+
 def test_correlator_contract_allows_model_average() -> None:
     contract = _load_stage_contract("correlator_analysis")
     params = {
         "analysis_method": "lsqfit",
         "component": "re",
         "fit_scope": ["2pt+3pt"],
-        "nstate": {"2pt+3pt": [1, 2]},
+        "nstate": {"2pt": [1, 2], "3pt": [1, 2]},
         "fitting_form": "Breit",
         "model_average": True,
         "pt2_windows": [{"tmin": 3, "tmax": 8}],
