@@ -150,7 +150,7 @@ def combine_matrix_samples(models: list[dict[str, Any]]) -> dict[str, Any]:
             sample_weights = np.zeros(len(models), dtype=float)
             sample_weights[valid] = loggbf_weights(log_gbf[valid, sample_index, coord_index])
             weights[:, sample_index, coord_index] = sample_weights
-            combined[sample_index, coord_index] = np.sum(sample_weights * values)
+            combined[sample_index, coord_index] = np.sum(sample_weights[valid] * values[valid])
     mean_weights = np.mean(weights, axis=(1, 2))
     primary_index = int(np.argmax(mean_weights))
     real_means = np.asarray([np.nanmean(np.real(values), axis=0) for values in stacked], dtype=float)

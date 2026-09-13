@@ -42,7 +42,6 @@ def list_kernel_ids(root: str | Path | None = None) -> list[str]:
 def matching_kernel_id(
     attrs: Mapping[str, Any],
     *,
-    scheme: str,
     order: str,
     resummation: str = "",
 ) -> str:
@@ -51,12 +50,13 @@ def matching_kernel_id(
     observable = attrs.get("target_observable", attrs.get("observable"))
     gauge = attrs.get("gfix")
     operator = attrs.get("kernel_operator", attrs.get("operator"))
+    scheme = attrs.get("renormalization_scheme")
     values = {
         "parton": parton,
         "observable": observable,
         "gfix": gauge,
         "kernel_operator": operator,
-        "scheme": scheme,
+        "renormalization_scheme": scheme,
         "order": order,
     }
     for name, value in values.items():

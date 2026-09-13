@@ -454,18 +454,23 @@ The denominator may be an earlier job, a NetCDF file, or a finite nonzero
 constant where the contract permits it. Hybrid jobs additionally use `zs_fm`,
 `m0_gev`, and `delta_m_gev` to join short- and long-distance prescriptions.
 
-Perturbative matching has its own `scheme`, `order`, and `resummation`. The
-matching kernel id is derived at runtime from those choices and the upstream
-NetCDF provenance (`parton`, `target_observable`, `gfix`, `kernel_operator`,
-and `source_component`). Empty resummation selects fixed-order NLO; `rgr`
+Configure `scheme` and the hybrid switching distance `zs_fm` only in
+renormalization. Its output records `renormalization_scheme` and, for hybrid,
+`zs_fm` in `EnsembleData.attrs`; Fourier preserves them and matching reads them
+directly. Matching configures `order` and `resummation`. Its kernel id is derived
+from those choices and upstream NetCDF provenance (`parton`, `target_observable`,
+`gfix`, `kernel_operator`, `renormalization_scheme`, and `source_component`). Empty resummation selects fixed-order NLO; `rgr`
 automatically uses the upstream `re` or `im` source component as its kernel
 suffix, while `lrr` has no component suffix. Fourier outputs distinguish that
 matrix-element provenance from `output_component`: standard Hermitian
 coordinate-space completions publish a real x-space quasi-distribution even
 when its contribution came from the imaginary matrix element, while paired
 non-forward GPD flows may remain complex.
-Manifests containing the removed `resummation_part` field must be migrated, and
-Fourier artifacts that only carry the former `component` attr must be regenerated.
+Remove matching-stage `scheme`, `zs_fm`, and `resummation_part` from existing
+manifests. Reused Fourier artifacts must carry `renormalization_scheme`, hybrid
+`zs_fm`, and the new component attrs; regenerate artifacts missing this provenance.
+Kernel-specific parameter types are checked against the loaded kernel signature
+before numerical matching. `kernel_parameters` cannot override `zs_fm`.
 
 ### `inputs.correlators[].polarization` and Fourier sectors
 

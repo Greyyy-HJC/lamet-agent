@@ -308,6 +308,10 @@ def run(context: ToolContext) -> dict[str, object]:
             else:
                 result = ratio(target, denominator)
     attrs = result.attrs
+    if scheme == "hybrid":
+        attrs["zs_fm"] = float(params["zs_fm"])
+    else:
+        attrs.pop("zs_fm", None)
     attrs.update(
         {
             "operation": "apply",

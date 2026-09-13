@@ -335,3 +335,26 @@ def test_sample_priors_cannot_combine_with_sample_prior_scale() -> None:
     prior = gv.BufferDict({"amplitude": gv.gvar(1.0, 1.0)})
     with pytest.raises(ValueError, match="cannot be combined"):
         nonlinear_fit(data, amplitude_model, prior, sample_prior_scale=2.0, sample_priors=[prior, prior])
+
+
+def test_carried_posterior_parameters_leave_current_fit_unchanged() -> None:
+    from lamet_agent.stages.correlator_analysis.physics import _overlay_posterior
+
+    posterior = gv.BufferDict({"amplitude": gv.gvar(0.8, 0.2), "O01_re": gv.gvar(2.0, 0.3)})
+    authored = gv.BufferDict({"amplitude": gv.gvar(1.0, 2.0)})
+    carried = _overlay_posterior(authored, posterior, 3.0)
+    active = gv.BufferDict({"amplitude": carried["amplitude"]})
+    assert gv.sdev(carried["amplitude"]) == pytest.approx(0.6)
+    data = EnsembleData(None, "bootstrap", [[1.0], [1.1], [0.9]], ["x"], {"x": [0]})
+    reference = nonlinear_fit(data, amplitude_model, active)
+    result = nonlinear_fit(data, amplitude_model, carried)
+    for key in ("chi2", "dof", "Q", "logGBF"):
+        assert getattr(result, key) == pytest.approx(getattr(reference, key))
+    assert gv.mean(result.p["amplitude"]) == pytest.approx(gv.mean(reference.p["amplitude"]))
+    assert gv.sdev(result.p["amplitude"]) == pytest.approx(gv.sdev(reference.p["amplitude"]))
+    assert gv.mean(result.p["O01_re"]) == pytest.approx(2.0)
+    assert gv.sdev(result.p["O01_re"]) == pytest.approx(0.3)
+    for sample, widths, expected in zip(result.samples, result.sample_sdevs, reference.samples, strict=True):
+        assert sample["amplitude"] == pytest.approx(expected["amplitude"])
+        assert sample["O01_re"] == pytest.approx(2.0)
+        assert widths["O01_re"] == pytest.approx(0.3)

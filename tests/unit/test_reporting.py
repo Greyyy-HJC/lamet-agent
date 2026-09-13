@@ -925,11 +925,11 @@ def test_matching_stage_report_embeds_shipped_kernel_document(tmp_path: Path) ->
             "source_component": "both",
             "output_component": "both",
             "kernel_id": "quark_da_gi_gzg5_ratio_nlo",
+            "renormalization_scheme": "ratio",
         },
         values=[[0.7, 0.9], [0.8, 1.0]],
     )
     params = {
-        "scheme": "ratio",
         "order": "nlo",
         "resummation": "",
         "mu": 2.0,

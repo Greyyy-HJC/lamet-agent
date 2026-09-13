@@ -419,7 +419,6 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "scheme": "ratio",
         "order": "nlo",
         "resummation": "",
         "mu": 2.0,

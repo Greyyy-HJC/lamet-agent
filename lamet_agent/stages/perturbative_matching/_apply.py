@@ -61,8 +61,9 @@ def run(context: ToolContext) -> dict[str, object]:
         "momentum_gev": float(momentum),
         "scale_gev": float(context.params["mu"]),
     }
-    if context.params["scheme"] == "hybrid":
-        kernel_arguments["zs_fm"] = float(context.params["zs_fm"])
+    scheme = str(data.attrs["renormalization_scheme"]).strip().lower()
+    if scheme == "hybrid":
+        kernel_arguments["zs_fm"] = float(data.attrs["zs_fm"])
     kernel_arguments.update(kernel_parameters)
     matrix = kernel(**kernel_arguments)
     matrix = np.asarray(matrix)
@@ -159,7 +160,7 @@ def run(context: ToolContext) -> dict[str, object]:
         "result": "matched_distribution",
         "decisions": {
             "kernel_id": context.params["kernel_id"],
-            "scheme": context.params["scheme"],
+            "scheme": scheme,
             "order": context.params.get("order", "nlo"),
             "resummation": context.params.get("resummation", ""),
             "mu": context.params["mu"],

@@ -134,7 +134,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
         quasi_integral, matched_integral, relative = _diagnostics(record)
         cached_diagnostics[record.job_id] = (quasi_integral, matched_integral, relative)
         lines.append(
-            f"| `{record.job_id}` | `{_record_kernel_id(record)}` | `{record.params['scheme']}` | "
+            f"| `{record.job_id}` | `{_record_kernel_id(record)}` | `{attrs['renormalization_scheme']}` | "
             f"{format_value(attrs.get('momentum_gev'))} | {format_value(record.params['mu'])} | "
             f"{format_value(quasi_integral)} | {format_value(matched_integral)} | {format_value(100.0 * relative)}% |"
         )
@@ -151,12 +151,13 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
             "|---|---|",
             "| `order` | Explicit perturbative order; currently only `nlo` is supported and it is encoded in the "
             "kernel filename. |",
-            "| `kernel_id` | Runtime-derived public kernel filename stem built from upstream provenance, `scheme`, "
+            "| `kernel_id` | Runtime-derived public kernel filename stem built from upstream "
+            "renormalization and operator provenance, "
             "`order`, and resummation options. |",
             "| `resummation` | Empty selects fixed-order NLO; `rgr` derives its `re` or `im` kernel suffix "
             "from upstream `source_component`; `lrr` has no component suffix. |",
             "| `mu` | MSbar renormalization/matching scale in GeV. |",
-            "| `zs_fm` | Hybrid Wilson-line switching distance; absent for ratio/MSbar kernels. |",
+            "| `zs_fm` | Wilson-line switching distance inherited from upstream hybrid renormalization. |",
             "| `kernel_parameters` | Kernel-signature parameters not supplied by the stage, such as `kappa` "
             "and `mu_min_gev`. |",
             "| matching matrix | Discretized convolution from the quasi input grid to the requested light-cone "
@@ -209,11 +210,11 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "| quantity | value |",
                 "|---|---|",
                 f"| kernel | `{_record_kernel_id(record)}` |",
-                f"| scheme | `{record.params['scheme']}` |",
+                f"| scheme | `{attrs['renormalization_scheme']}` |",
                 f"| order | `{record.params.get('order', 'nlo')}` |",
                 f"| momentum | {format_value(attrs.get('momentum_gev'))} GeV |",
                 f"| renormalization scale | {format_value(record.params['mu'])} GeV |",
-                f"| hybrid switch | {format_value(record.params.get('zs_fm'))} fm |",
+                f"| hybrid switch | {format_value(attrs.get('zs_fm'))} fm |",
                 f"| quasi grid | {describe_grid(quasi.coords['x'], symbol='x')} |",
                 f"| light-cone grid | {describe_grid(record.output.coords['x'], symbol='x')} |",
                 f"| kernel parameters | {format_value(record.params['kernel_parameters'])} |",
@@ -249,7 +250,7 @@ def write_stage_report(*, records: tuple[StageReportRecord, ...], artifact_direc
                 "",
                 "### Matching Scheme",
                 "",
-                _scheme_text(str(record.params["scheme"])),
+                _scheme_text(str(attrs["renormalization_scheme"])),
                 "",
                 "The LO contribution is the identity. The shipped kernel document above is the source of truth "
                 "for the implemented NLO coefficient, plus prescription, support regions, and any RGR or hybrid "

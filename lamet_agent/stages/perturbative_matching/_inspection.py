@@ -7,6 +7,7 @@ import math
 
 from lamet_agent.agent import ToolContext
 from lamet_agent.kernels import load_kernel, load_kernel_document, matching_kernel_id
+from lamet_agent.stages.perturbative_matching.contract import _kernel_parameter_issues
 from lamet_agent.stages.perturbative_matching.physics import inspect_callable, load_data, select_output_component
 
 
@@ -38,26 +39,40 @@ def run(context: ToolContext) -> dict[str, object]:
     root = context.state.get("kernel_root")
     kernel_id = matching_kernel_id(
         data.attrs,
-        scheme=str(context.params["scheme"]),
         order=str(context.params.get("order", "nlo")),
         resummation=str(context.params.get("resummation", "")),
     )
     context.params["kernel_id"] = kernel_id
+    scheme = str(data.attrs["renormalization_scheme"]).strip().lower()
     kernel = load_kernel(kernel_id, root=root)
     parameter_values = dict(context.params["kernel_parameters"])
+    if "zs_fm" in parameter_values:
+        raise ValueError("kernel_parameters.zs_fm is supplied by upstream renormalization attrs")
     kernel_uses_zs = "zs_fm" in inspect.signature(kernel).parameters
-    scheme_uses_zs = context.params["scheme"] == "hybrid"
+    scheme_uses_zs = scheme == "hybrid"
     if kernel_uses_zs != scheme_uses_zs:
         expected = "include" if scheme_uses_zs else "omit"
-        raise ValueError(f"kernel '{kernel_id}' must {expected} zs_fm for scheme {context.params['scheme']!r}")
+        raise ValueError(f"kernel '{kernel_id}' must {expected} zs_fm for scheme {scheme!r}")
     if scheme_uses_zs:
-        parameter_values.setdefault("zs_fm", context.params["zs_fm"])
+        switch = data.attrs.get("zs_fm")
+        if (
+            not isinstance(switch, (int, float))
+            or isinstance(switch, bool)
+            or not math.isfinite(float(switch))
+            or switch <= 0
+        ):
+            raise ValueError("hybrid quasi input requires a finite positive zs_fm attr")
+        parameter_values["zs_fm"] = float(switch)
+    issues = _kernel_parameter_issues(kernel, parameter_values)
+    if issues:
+        raise ValueError("; ".join(f"{issue.path}: {issue.message}" for issue in issues))
     parameter_names, required = inspect_callable(kernel, parameter_values=parameter_values)
     document = load_kernel_document(kernel_id, root=root)
     context.state["kernel"] = kernel
     context.state["quasi"] = data
     context.state["kernel_inspection"] = {
         "kernel_id": kernel_id,
+        "scheme": scheme,
         "parameters": parameter_names,
         "required": required,
         "x_count": len(data.coords.get("x", [])),

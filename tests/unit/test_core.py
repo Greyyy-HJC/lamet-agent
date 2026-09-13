@@ -2199,14 +2199,12 @@ def test_correlator_descriptors_use_physical_field_names() -> None:
 def test_matching_contract_rejects_removed_resummation_part() -> None:
     contract = _load_stage_contract("perturbative_matching")
     params = {
-        "scheme": "hybrid",
         "order": "nlo",
         "resummation": "rgr",
         "resummation_part": "re",
         "mu": 2.0,
         "lc_x_ls": [0.0, 1.0],
         "kernel_parameters": {},
-        "zs_fm": 0.18,
     }
     issues = evaluate_rules(params, contract.PARAM_RULES)
     assert [(issue.path, issue.message) for issue in issues] == [("resummation_part", "unknown key 'resummation_part'")]
@@ -2217,13 +2215,11 @@ def test_matching_contract_accepts_resummation_combinations() -> None:
 
     def issues(resummation: str):
         params = {
-            "scheme": "hybrid",
             "order": "nlo",
             "resummation": resummation,
             "mu": 2.0,
             "lc_x_ls": [0.0, 1.0],
             "kernel_parameters": {},
-            "zs_fm": 0.18,
         }
         context = CheckContext({}, "perturbative_matching", "job", params, {"quasi": "earlier"})
         return evaluate_checks(contract.CHECKS, context)
@@ -3625,3 +3621,11 @@ def test_finish_rejects_a_declared_artifact_that_does_not_exist(tmp_path: Path) 
     }
     with pytest.raises(FileNotFoundError, match="missing.md"):
         context.finish("report", summary)
+
+
+@pytest.mark.parametrize(("key", "value"), [("scheme", "hybrid"), ("zs_fm", 0.18)])
+def test_matching_contract_rejects_manual_renormalization_settings(key, value) -> None:
+    contract = _load_stage_contract("perturbative_matching")
+    params = {"order": "nlo", "mu": 2.0, "lc_x_ls": [0.25, 0.75], "kernel_parameters": {}, key: value}
+    issues = evaluate_rules(params, contract.PARAM_RULES)
+    assert [(issue.path, issue.message) for issue in issues] == [(key, f"unknown key '{key}'")]

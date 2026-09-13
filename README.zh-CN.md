@@ -387,7 +387,7 @@ $$
 
 denominator 可以是先前的 job、NetCDF 文件，或者 contract 允许的有限非零常量。Hybrid jobs 还使用 `zs_fm`、`m0_gev` 和 `delta_m_gev` 来衔接短程与长程 prescription。
 
-Perturbative matching 使用 `scheme`、`order` 和 `resummation`。目前 `order` 只支持 `nlo`。kernel id 会在运行时根据这些参数和上游 NetCDF attrs（`parton`、`target_observable`、`gfix`、`kernel_operator`、`source_component`）自动拼接。`resummation` 为空时使用固定阶 NLO；`rgr` 自动使用上游 `re` 或 `im` 来源通道作为 kernel 后缀，`lrr` 不带 component 后缀。Fourier 输出用 `source_component` 记录矩阵元来源、用 `output_component` 记录 x 空间数值分量：标准 Hermitian 坐标空间补全总是发布实数 quasi-distribution，即使贡献来自矩阵元虚部；成对的非前向 GPD flow 则可以保留复数。包含已删除 `resummation_part` 的 manifest 必须迁移，只有旧 `component` attr 的 Fourier artifact 必须重新生成。
+`scheme` 和 hybrid 的 `zs_fm` 只在 renormalization 中配置，输出将其记录为 `EnsembleData.attrs` 中的 `renormalization_scheme` 和 `zs_fm`，经过 Fourier 传递后由 matching 直接读取。Matching 配置 `order` 和 `resummation`，目前 `order` 只支持 `nlo`。kernel id 根据这些选择和上游 attrs（`parton`、`target_observable`、`gfix`、`kernel_operator`、`renormalization_scheme`、`source_component`）自动生成。`rgr` 使用来源通道 `re` 或 `im` 作为后缀，`lrr` 不带通道后缀。`source_component` 记录矩阵元来源，`output_component` 记录 x 空间数值分量；标准 Hermitian 补全输出实数，成对非前向 GPD flow 可以保留复数。已有 manifest 需删除 matching 中的 `scheme`、`zs_fm` 和 `resummation_part`；缺少上述 attrs 的旧 Fourier artifact 需重新生成。加载实际 kernel 后会按函数注解检查 kernel 参数类型，`kernel_parameters` 不允许覆盖 `zs_fm`。
 
 ### `inputs.correlators[].polarization` 和 Fourier sectors
 

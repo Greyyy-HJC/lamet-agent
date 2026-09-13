@@ -265,8 +265,11 @@ def run(context: ToolContext, *, candidate_id: str) -> dict[str, object]:
         if combined_result is not None:
             data = combined_result["data"]
             artifact_source = combined_result["primary_model"]
+            selected = artifact_source
     elif not isinstance(data, EnsembleData) and applied:
-        data = applied[0]["data"]
+        selected = applied[0]
+        artifact_source = selected
+        data = selected["data"]
     if combined_result is None and isinstance(data, EnsembleData):
         data.array.attrs["model_average"] = "true" if model_average else "false"
         data.array.attrs["selected_models"] = json.dumps([str(selected["id"])])

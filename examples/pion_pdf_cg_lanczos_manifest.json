@@ -109,7 +109,6 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "scheme": "hybrid",
         "order": "nlo",
         "resummation": "rgr",
         "mu": 2.0,
@@ -120,8 +119,7 @@
         "kernel_parameters": {
           "kappa": 1.0,
           "mu_min_gev": 0.6
-        },
-        "zs_fm": 0.18
+        }
       },
       "jobs": [
         {

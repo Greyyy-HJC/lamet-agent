@@ -258,7 +258,7 @@ def matrix_element_prior(
         if form != "Breit":
             raise ValueError("qDA fitting supports only Breit kinematics")
         qda_n_states = max(counts[atom] for atom in atoms if atom in {"qda", "qda_ratio"})
-        if denominator_kind == "qda_z0" and "2pt" not in atoms:
+        if denominator_kind == "qda_z0":
             for state in range(qda_n_states):
                 prior.setdefault(f"zprime{state}", gv.gvar(1.0, 10.0 * width_scale) / 3**state)
         for state in range(qda_n_states):
@@ -290,8 +290,8 @@ def _sample_diagnostic_records(result: Any) -> list[dict[str, float | int]]:
 def _overlay_posterior(
     prior: Mapping[str, Any], posterior: Mapping[str, Any], scale: float
 ) -> gv.BufferDict:
-    """Copy overlapping posterior keys into an authored prior, widening the widths."""
-    updated = gv.BufferDict()
+    """Carry all independent posteriors forward; widen only current model keys."""
+    updated = gv.BufferDict({key: gv.gvar(gv.mean(value), gv.sdev(value)) for key, value in posterior.items()})
     for key, authored in prior.items():
         if key not in posterior:
             updated[key] = authored
@@ -744,7 +744,7 @@ def fit_matrix_element_samples(
                 )
             if result is None or fit_prior is None or observations is None:
                 raise RuntimeError("fit_scope produced no ordinary fit stage")
-            n_params = sum(int(np.size(gv.mean(fit_prior[key]))) for key in fit_prior)
+            n_params = sum(int(np.size(gv.mean(value))) for value in authored_prior.values())
             energy_keys = ("E0_i", "E0_f") if fitting_form == "NonBreit" else ("E0",)
             energy_summary = {}
             for energy_key in energy_keys:
@@ -1343,7 +1343,7 @@ def fit_qda_samples(
                     "E0_sdev": energy_sdev,
                     "E0_samples": energy_samples,
                     "n_data": int(observations.shape[1]),
-                    "n_params": sum(int(np.size(gv.mean(value))) for value in fit_prior.values()),
+                    "n_params": sum(int(np.size(gv.mean(value))) for value in authored_prior.values()),
                     "sample_diagnostics": _sample_diagnostic_records(result) if fit_samples else [],
                     "sample0_plot": sample0_plot,
                     "stages": stage_diagnostics,

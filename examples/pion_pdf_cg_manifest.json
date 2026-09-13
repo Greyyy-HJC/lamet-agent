@@ -147,14 +147,12 @@
     },
     "perturbative_matching": {
       "defaults": {
-        "scheme": "hybrid",
         "order": "nlo",
         "mu": 2.0,
         "lc_x_ls": {
           "start": 0.0,
           "stop": 1.0
-        },
-        "zs_fm": 0.18
+        }
       },
       "jobs": [
         {
